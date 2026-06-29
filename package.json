@@ -1,0 +1,16 @@
+{
+  "name": "ccmsg",
+  "version": "0.0.0",
+  "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
+  "license": "MIT",
+  "author": "kawaz",
+  "repository": "github:kawaz/claude-ccmsg",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "echo '(skeleton) typecheck not configured yet — add tsc --noEmit when packages/ has TS code'"
+  }
+}

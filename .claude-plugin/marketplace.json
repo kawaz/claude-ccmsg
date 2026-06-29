@@ -1,0 +1,16 @@
+{
+  "name": "ccmsg",
+  "owner": { "name": "kawaz" },
+  "metadata": {
+    "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
+    "version": "0.0.0",
+    "license": "MIT"
+  },
+  "plugins": [
+    {
+      "name": "ccmsg",
+      "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
+      "source": "./"
+    }
+  ]
+}
