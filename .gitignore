@@ -1,0 +1,31 @@
+# Bun
+node_modules/
+bun.lockb.tmp
+.bun/
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log
+logs/
+
+# Local env
+.env
+.env.local
+
+# Runtime (will be replaced by proper paths once daemon is implemented)
+*.sock
+*.pid
