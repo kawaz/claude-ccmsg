@@ -58,13 +58,13 @@ ci: lint typecheck test validate
 lint:
     just --fmt --check --unstable
 
-# 型チェック (skeleton 段階では no-op、packages/ に TS code が入ったら tsc --noEmit に差し替え)
+# 型チェック (monorepo 全体を tsc --noEmit)
 typecheck: lint
-    @echo '(skeleton) typecheck not configured yet'
+    bun x tsc --noEmit
 
-# テスト (skeleton 段階では no-op、packages/ に test が入ったら bun test に差し替え)
+# テスト (bun test で全 package の *.test.ts を実行)
 test: lint typecheck
-    @echo '(skeleton) tests not configured yet'
+    bun test
 
 # Claude Plugin の構造検証
 validate: lint
