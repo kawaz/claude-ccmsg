@@ -46,7 +46,7 @@ p2p 方式の cmux-msg で複数セッション会話 (die / grapheme.mbt / time
 kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
 - **room = 会話単位**。複数セッション議論は room に寄せる
-- **room ID は daemon が発行する** (`r-XXXXXXXX`)。ハッシュ生成ではない。「A が B と話したい」と daemon に依頼 → daemon が r を発行し、**A・B 両方に開設通知**が届く
+- **room ID は daemon が発行する**。ハッシュ生成ではなく、形式ルールも課さない (連番でも良い) [kawaz]。「A が B と話したい」と daemon に依頼 → daemon が room を発行し、**A・B 両方に開設通知**が届く
 - **同時開設は daemon が直列化して重複排除**: 直近 room リストを daemon が把握しており、同一ペアの後発 create は無視する (先発の開設通知が両者に飛ぶので、どちらが作ったかは気にしなくてよい)
   - [提案] 後発 create に添えられた初期メッセージは捨てずに既存 room への post として追記する
 - **member identity = room 内参加順 seq** (`uid: 1, 2, 3...`)。`0` は **kawaz (User) の予約 uid**。sid は長いので room 内では seq で参照し、member イベントが `sid / repo / ws / cwd / joined_at` の対応を持つ
