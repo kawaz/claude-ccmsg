@@ -27,7 +27,7 @@ Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses i
 
 - **Single host** — laptop or workstation, no federation. Mobile access via tailscale over LAN.
 - **Central daemon** (bun) — the only writer. Issues room IDs, serializes and deduplicates concurrent room creation, and assigns per-room monotonic message IDs (`mid`).
-- **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / `move` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-mid.
+- **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / thread-links `next`/`prev` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-mid.
 - **Delivery** — full message bodies are pushed to all room members; `to` is a mention (attention) marker, not a visibility filter. No echo back of your own posts.
 - **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. HTTP arrives with the web UI phase: same protocol behind a security layer, bound to `127.0.0.1` + tailscale interface only.
 - **Clients** — a per-session `subscribe` sidecar (feeds the Claude Code Monitor tool), a user-facing CLI (the human is reserved member `0` of every room), and later a web UI. Every client silently health-checks and auto-starts the daemon.

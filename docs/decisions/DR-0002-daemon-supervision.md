@@ -1,6 +1,6 @@
 # DR-0002: Daemon supervision & lifecycle
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-07-03)
 - **Date**: 2026-07-03
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) §9 が本 DR に委譲した必須項目を確定する
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])

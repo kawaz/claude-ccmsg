@@ -49,16 +49,16 @@ kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 - **room ID は daemon が発行する** (`r-XXXXXXXX`)。ハッシュ生成ではない。「A が B と話したい」と daemon に依頼 → daemon が r を発行し、**A・B 両方に開設通知**が届く
 - **同時開設は daemon が直列化して重複排除**: 直近 room リストを daemon が把握しており、同一ペアの後発 create は無視する (先発の開設通知が両者に飛ぶので、どちらが作ったかは気にしなくてよい)
   - [提案] 後発 create に添えられた初期メッセージは捨てずに既存 room への post として追記する
-- **member identity = room 内参加順 seq** (`id: 1, 2, 3...`)。`0` は **kawaz (User) の予約 ID**。sid は長いので room 内では seq で参照し、member イベントが `sid / repo / ws / cwd / joined_at` の対応を持つ
+- **member identity = room 内参加順 seq** (`uid: 1, 2, 3...`)。`0` は **kawaz (User) の予約 uid**。sid は長いので room 内では seq で参照し、member イベントが `sid / repo / ws / cwd / joined_at` の対応を持つ
   - [提案] `from` はクライアント自称ではなく daemon が接続 identity から刻印する (同 UID 内 trust は前提としつつ、なりすまし записи を構造的に防ぐ)
 - **メンバーは後から増やせる** (room ID は member set からの単射である必要なし)。不要になったら **leave できる** (member イベントの対)
-- **move (引越し) イベント**: 会話が別 room に移る時 `{t:"move", to_room, reason}` を旧 room に追記する。引越しは強制ではない — 旧 room で続けても、新 room に移っても良い
+- **次スレ/前スレリンク**: 会話が長くなったら次スレ (新 room) に分割できる。daemon が旧 room に `next`、新 room に `prev` のリンクイベントを対で書き、全 member に次スレ開設が通知される。移行は強制ではなく旧スレもそのまま使える (詳細は DR-0003)
 
 ### 4. Event log = room ごとに 1 JSONL (これが唯一の永続状態) [kawaz]
 
 - 各 room = 1 つの append-only JSONL ファイル。各行 = 1 イベント。過去の行は書き換えない
-- イベント型: `member` / `leave` / `msg` / `move` / (title 等の見た目イベントも可)
-- `msg` 行: `{t:"msg", mid, from, to?, ts, msg}`。**mid は room 内追記順の連番で daemon が採番**
+- イベント型: `member` / `leave` / `msg` / `next` / `prev` / (title 等の見た目イベントも可)
+- `msg` 行: `{type:"msg", mid, from, to?, ts, msg}`。**mid は room 内追記順の連番で daemon が採番**
 - **room メタデータも JSONL に行を足すだけ** (一次資料 §2「roomに対するメタデータもjsonlを足すだけ」)
 - [提案] **sqlite は MVP に入れない**。§6 の既読管理レス化で server 側の可変状態が消えるため、残る room 一覧・member 対応はプロセス内 index (起動時に JSONL をスキャンして再構築) で足りる。個人スケールでは十分で、永続状態が JSONL 一種類になり crash recovery の話が単純になる。検索等で必要になったら後から cache として追加する (kawaz の元発言「隣にもう1ファイルか、1プロセスならsqliteとかでも良いか」(§3) はどちらも確定ではなく、本提案はその範囲内の単純化)
 
