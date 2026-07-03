@@ -4,4 +4,4 @@
 
 | ID | Status | Title |
 |---|---|---|
-| [DR-0001](./DR-0001-central-daemon-architecture.md) | Proposed | Central daemon architecture (rewrite from cmux-msg) |
+| [DR-0001](./DR-0001-central-daemon-architecture.md) | Proposed | Central daemon + room messaging architecture (rewrite from cmux-msg) |

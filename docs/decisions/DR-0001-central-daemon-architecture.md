@@ -1,213 +1,164 @@
-# DR-0001: Central daemon architecture
+# DR-0001: Central daemon + room messaging architecture
 
 - **Status**: Proposed
-- **Date**: 2026-06-29
-- **Author**: kawaz (with AI agent integration / codex review)
+- **Date**: 2026-07-03
+- **Author**: kawaz (整理: AI agent)
 - **Origin**: rewrite from [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p)
-- **Source materials** (cmux-msg side, will be archived after this DR is Accepted):
-  - `docs/issue/2026-06-29-central-daemon-architecture.md` — kawaz 方針 + codex review + kawaz レビュー回答
-  - `docs/issue/2026-06-29-room-based-messaging-v2-proposal.md` — die セッションからの v2 提案
+- **一次資料** (本 DR はパラフレーズ。意図が割れたら一次資料が優先):
+  - [docs/research/2026-06-29-kawaz-design-statements.md](../research/2026-06-29-kawaz-design-statements.md) — kawaz 発言の逐語集
+  - [docs/research/2026-06-29-die-v2-proposal-message.md](../research/2026-06-29-die-v2-proposal-message.md) — die セッション発 v2 提案全文
+
+## 記述規約 (attribution)
+
+各決定に出所を明示する:
+
+- **[kawaz]** — kawaz が明示した決定・スケッチ (一次資料に逐語あり)
+- **[提案]** — エージェント/codex 由来の提案で、kawaz の明示裁可がまだないもの。本 DR が Accepted になった時点で決定に昇格する
+- **[保留]** — 意図的に未決。後続 DR または実装時に決める
 
 ## Context
 
-`cmux-msg` は Claude Code セッション間 messaging を **p2p (UNIX perm + lockfile + PID 検査)** で実装してきたが、kawaz の複数セッション dogfood で **5 つの構造的問題** が観察された:
+p2p 方式の cmux-msg で複数セッション会話 (die / grapheme.mbt / timespec.mbt の 3 セッション + kawaz) を実施した結果、kawaz が 5 つの構造的問題を観察した (逐語は一次資料 §1):
 
-1. **クロス爆発**: 1 対 1 通信のみで N peer 増えると組合せ爆発
-2. **同一指示の負担**: kawaz が複数 peer に同じ依頼 → AI 双方が同じ行動 → 受け手の負担
-3. **AI 間の無駄会話**: 「相手はああ言ってた」系の伝聞が peer 間で増殖
-4. **メール調社交辞令**: `msg / send / reply` の語感が長文社交辞令を誘発
-5. **kawaz 混入コスト**: kawaz が 1 peer ずつ宛先指定でコピペ、その間に AI 同士で「kawaz がこんなこと」を転送し合う
+1. **クロス爆発**: 1 対 1 通信のみのため類似会話が pair ごとに重複、4-5 セッションで組合せ爆発
+2. **同一指示の負担**: kawaz が N セッションに同じ依頼をコピペ → 受け手にも同種行動が重複
+3. **AI 間の無駄会話**: 「あいつはこう言ってた」の伝聞転送が増殖
+4. **メール調社交辞令**: msg / send の語感が形式ばった長文と褒め合いを誘発
+5. **kawaz 混入コスト**: kawaz は 1 peer ずつしか発信できず、コピペ中に (3) が加速
 
-room-based-messaging v2 提案 (die セッション提案、kawaz レビュー済み) で `post / create_room` 中心の room layer が示されたが、**既存 cmux-msg を改修するのではなく、別リポで rewrite** する方針を取る。
-
-理由:
-- cmux-msg は p2p の threat model / API contract / lib 構造 / branding が p2p 前提に最適化されている
-- room layer 追加は実質的に新規アーキ。改修よりも別物として作る方が cognitive load が低い
-- cmux-msg は p2p 機能のまま **安定維持** することで、rewrite 完成までの dogfood 連続性を保てる
+解決の骨格は kawaz の room protocol スケッチ (2026-06-29、一次資料 §1-2) と中央デーモン方式の提示 (同 §3)。既存 cmux-msg の改修ではなく **別リポ rewrite** とする方針はエージェント提案を kawaz が承認済み (cmux-msg は p2p のまま安定維持し、dogfood の連続性を保つ)。
 
 ## Decision
 
-### 1. Single host (multi-host scope 外)
+### 1. Single host [kawaz]
 
-- 1 マシン (laptop or workstation) で daemon が完結する設計
-- multi-host sync / federation / CRDT eventual consistency は **明示的に scope 外**
-- mobile / 外出先からのアクセスは **webui を tailscale (LAN VPN) 経由** で「LAN 内 remote access」として扱う (= 分散 messaging ではない)
-- 想定されない (= 不要) なシナリオ:
-  - laptop + workstation 並用 (= kawaz は基本 1 マシン)
-  - SSH/tmux 越し他 host で Claude 起動 (= Claude 自体は host 上で完結、daemon は同 host で OK)
-  - リモート同僚との room 共有 (= 個人ツール)
+- daemon は 1 マシンで完結。multi-host sync / federation / CRDT は scope 外
+- mobile / 外出先からのアクセスは webui を tailscale (LAN VPN) 経由で使う「LAN 内 remote access」として扱う
+- 出所: 一次資料 §4 回答 1
 
-### 2. 中央デーモン (bun + hono)
+### 2. 中央デーモン = 単一 writer [kawaz]
 
-- **書き込みを単一プロセスに集約**
-- 構成: `packages/daemon/` 配下に bun + hono で実装
-- 言語選定理由:
-  - daemon + cli + webui を **同一言語で統一**できる
-  - kawaz は bun 慣れあり、開発速度で勝る
-  - サーバプロセスのパフォーマンス / セキュリティ実績は bun / Go 両方とも問題なし (Go は daemon 安定性で強い trade-off があるが、webui 統一の優位性が上回る)
-- MVP 実装時に **実機検証する点**:
-  - crash 特性 (bun runtime の長時間稼働安定性)
-  - single binary 配布 (`bun build --compile`)
-  - sqlite-WAL / UDS (UNIX Domain Socket) 周りの bun 固有挙動
+- **書き込みを 1 プロセス (daemon) に集約**することで競合問題をシンプルにする (一次資料 §3)
+- p2p 時代の subscribe lock 競合・SIGKILL hijack はこれで構造的に消える。ただし脅威は消滅ではなく **daemon 中心への境界移動** (daemon socket 乗っ取り / impersonation / log 改竄等は残る)
 
-### 3. Storage: jsonl (source of truth) + sqlite (cache)
+### 3. Room model [kawaz]
 
-- **room ログ = 1 room あたり 1 JSONL ファイル** (append-only, immutable)
-- 各行 = 1 event: `{t: "msg"|"member"|"move"|..., mid, from, to?, ts, payload}`
-- daemon が **mid (room 内 monotonic ID) を採番**
-- **既読 cursor / membership / room メタデータ = sqlite** (regenerable cache、crash 時は jsonl から再構築可能)
-- **source of truth は jsonl 一択**。sqlite が壊れたら jsonl から rebuild する
+kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
-### 4. Transport: UDS + HTTP
+- **room = 会話単位**。複数セッション議論は room に寄せる
+- **room ID は daemon が発行する** (`r-XXXXXXXX`)。ハッシュ生成ではない。「A が B と話したい」と daemon に依頼 → daemon が r を発行し、**A・B 両方に開設通知**が届く
+- **同時開設は daemon が直列化して重複排除**: 直近 room リストを daemon が把握しており、同一ペアの後発 create は無視する (先発の開設通知が両者に飛ぶので、どちらが作ったかは気にしなくてよい)
+  - [提案] 後発 create に添えられた初期メッセージは捨てずに既存 room への post として追記する
+- **member identity = room 内参加順 seq** (`id: 1, 2, 3...`)。`0` は **kawaz (User) の予約 ID**。sid は長いので room 内では seq で参照し、member イベントが `sid / repo / ws / cwd / joined_at` の対応を持つ
+  - [提案] `from` はクライアント自称ではなく daemon が接続 identity から刻印する (同 UID 内 trust は前提としつつ、なりすまし записи を構造的に防ぐ)
+- **メンバーは後から増やせる** (room ID は member set からの単射である必要なし)。不要になったら **leave できる** (member イベントの対)
+- **move (引越し) イベント**: 会話が別 room に移る時 `{t:"move", to_room, reason}` を旧 room に追記する。引越しは強制ではない — 旧 room で続けても、新 room に移っても良い
 
-- **CLI / sidecar**: UNIX Domain Socket
-  - file mode `0600` + UID check (= 同一 UID 内 trust)
-  - 内部 protocol (= MVP では line-delimited JSON)
-- **Web UI**: HTTP via hono
-  - bind は `127.0.0.1` + tailscale interface (`100.x.x.x`) のみ
-  - 認証は **tailscale ACL に委譲** (= mTLS / token rotation / public origin 制限は MVP では不要)
-  - 外部公開 (= public internet exposure) は **完全に scope 外**、必要になったら別 DR
-- 内部 socket と HTTP は **同じ event model を流す** (= transport bridge のみが違う)
+### 4. Event log = room ごとに 1 JSONL (これが唯一の永続状態) [kawaz]
 
-### 5. Auth boundary
+- 各 room = 1 つの append-only JSONL ファイル。各行 = 1 イベント。過去の行は書き換えない
+- イベント型: `member` / `leave` / `msg` / `move` / (title 等の見た目イベントも可)
+- `msg` 行: `{t:"msg", mid, from, to?, ts, msg}`。**mid は room 内追記順の連番で daemon が採番**
+- **room メタデータも JSONL に行を足すだけ** (一次資料 §2「roomに対するメタデータもjsonlを足すだけ」)
+- [提案] **sqlite は MVP に入れない**。§6 の既読管理レス化で server 側の可変状態が消えるため、残る room 一覧・member 対応はプロセス内 index (起動時に JSONL をスキャンして再構築) で足りる。個人スケールでは十分で、永続状態が JSONL 一種類になり crash recovery の話が単純になる。検索等で必要になったら後から cache として追加する (kawaz の元発言「隣にもう1ファイルか、1プロセスならsqliteとかでも良いか」(§3) はどちらも確定ではなく、本提案はその範囲内の単純化)
 
-- 同一 UID プロセス間 trust が前提 (= cmux-msg と同じ threat model)
-- daemon socket: `0600` + UID check で同 UID 内 trust
-- Web API: tailscale interface bind + tailscale ACL に認証委譲
-- **「中央デーモン化で p2p の脅威が消える」のではなく、脅威の境界が変わる** (= 同 UID 内プロセス相互の局所脅威は消えるが、daemon socket 乗っ取り / daemon impersonation / web API 露出 / token 漏洩 / log 改竄 等の **daemon 中心の脅威に集中**する)
+### 5. 配送 = 本文込み push、`to` = mention [kawaz]
 
-### 6. Repo 戦略: rewrite で別リポ
+- **subscribe 通知には本文を展開済みで載せる**。「どうせ通知受けたら read で全文読むんだから最初から展開済みで受信した方がコンテキスト得」(一次資料 §1)。AI の 1 read = 1 ターンなので、notify-then-pull はターン浪費になる
+- **room 内メッセージは全メンバーに本文配送**。`to` は可視性フィルタではなく **アテンション (mention) 指定** (2026-07-03 決定、一次資料 §5)
+- **echo back なし**: 自分の post は自分に通知されない
+- **room 外への共有は明示 read**: room 非メンバーに見せたい時は mid 範囲を指定して読ませる (「Cにmid10-15辺り読んでとか言えば良い」)。fetch はメンバー限定にしない (同 UID 内 trust の BBS モデル)
 
-- 本リポ `claude-ccmsg` を新規作成 (= 本 DR の親リポ)
-- 既存 `cmux-msg` は **p2p 機能のまま安定維持** (新機能追加禁止、bug fix と small refinement のみ)
-- `cmux-msg` の DR-0013 (cmux-msg → ccmsg rename) は **不要化** (= 別リポなのでリネーム不要)
-- migration:
-  - cmux-msg と ccmsg は **完全に別ツール、別ストレージ**
-  - merged view は作らない
-  - 移行期は両方の subscribe を Monitor で並行起動
-  - bridge を作るなら **cmux-msg → ccmsg の片方向 import だけ** (one-shot tool、必要性は実装時判断)
-  - ccmsg が安定したら cmux-msg は deprecation
+### 6. 既読管理レス (BBS モデル) [kawaz]
 
-### 7. Repo 構造: monorepo
+- **server 側の既読 cursor を持たない**。「各エージェントは読んだ mid 把握してるし。昔の BBS を覗いてるイメージで各自好きに読んだり読み飛ばしたりでよさそ」(一次資料 §5)
+- 各エージェントは自分の会話コンテキストが既読状態そのもの。subscribe 再接続時はクライアントが since-mid を渡して差分を受ける。mid が連番なので抜けの検出も fetch での遡りもクライアント側で自明にできる
+- 既読スルー可。reaction / read marker といった専用機構は作らず、絵文字や「りょ」の短文 msg + それを肯定する SKILL 記述で済ませる (一次資料 §2)
+- **新規参加者への初期配信**: 全履歴、ただし上限 N 件 (それより前が気になれば fetch で遡る)。[保留] N の既定値は実装時に調整
 
-- `claude-ccmsg/packages/{daemon, cli, webui}/` で MVP 開始
-- API 激変期は repo 分割摩擦が大きい → monorepo で開始
-- 安定後に webui の別リポ化を再評価
+### 7. Transport: UDS + (後で) HTTP、同一プロトコル + セキュリティ層 [kawaz]
 
-### 8. MVP スコープ最小化
+- **CLI / sidecar**: UNIX Domain Socket (0600 + UID check、同一 UID 内 trust)
+- **webui**: daemon に web API を持たせ、UI 自体は別サブプロジェクトでもよい。bind は 127.0.0.1 + tailscale interface のみ、認証は tailscale 側に委ねる (一次資料 §4 回答 1)
+- **socket と web は「セキュリティに関しての層」を挟んで同じプロトコルを喋る** (一次資料 §3)。transport ごとの差分は認可層に隔離し、イベント model は共通
+- MVP は UDS のみ。HTTP / webui は後 phase ([保留] daemon 内蔵か別 bridge プロセスかは webui phase の DR で決める)
 
-MVP に **入れる**:
-- local daemon (UDS のみ、HTTP 後送り)
-- `create_room` / `post` / `subscribe` の 3 コマンド
-- jsonl room log + sqlite cursor
-- minimal CLI (= cmux-msg `subscribe` の置き換えとして AI agent に line-delimited JSON stream を渡せる程度)
+### 8. クライアント 3 種 [kawaz]
 
-MVP に **入れない** (= 後 phase):
-- web UI (HTTP transport, hono, ブラウザ UI)
-- mTLS / public exposure
-- mobile emergency access (= 当面 tailscale 経由で十分)
-- 検索 / room 一覧の高機能化
-- merged view (= cmux-msg と並走時の統合表示)
-- AI-to-AI noise 抑制 (= room 権限 / mention 必須 / rate limit は post-MVP)
+一次資料 §3 の通り:
 
-### 9. Daemon supervision (= 詳細は次 DR で)
+1. **sidecar 購読モニタ**: 各 Claude セッションに 1 つ。socket のイベント待ちループで、Monitor ツールに JSONL stream を流す
+2. **ユーザ UI となる CLI**: kawaz が直接叩く。post / read / rooms を持ち、**問題 (5) の解消経路を webui を待たずに検証する**。CLI からの post は `from:0` (User)
+3. **webui**: 後 phase。スマホからは tailscale 経由
+- CLI / sidecar とも **daemon チェック + 自動起動ロジックを持つ** (daemon の存在をユーザが意識しない)
 
-- 起動経路: SessionStart hook spawn + (任意) launchd/systemd
-- PID file + socket stale 検出
-- health check (= ping/pong over socket)
-- crash 時の exponential backoff
-- crash counter (= N 回連続 crash で警告通知)
-- partial write 対策: jsonl は **fsync per record** (= 性能影響は MVP 実装時測定)
+### 9. Daemon lifecycle [kawaz スケッチ + 詳細は DR-0002]
 
-詳細は別 DR (DR-0002 想定) で起こす。
+- 起動: SessionStart / ターン毎 hook + 各クライアントの「軽量静寂にチェック + 自動起動」(一次資料 §3)。launchd/systemd 常駐は必須にしない
+- DR-0002 で決める必須項目: 同時 spawn の単一インスタンス保証 (socket bind 勝ち等) / plugin update 後の version mismatch 検出と自動再起動 / JSONL 末尾の torn line 回復と mid 連番の復元 / health check / crash 時 backoff / observability (`ccmsg status` 相当)
 
-### 10. Backpressure / queue overflow
+### 10. 言語: bun (webui phase で hono) [kawaz]
 
-- daemon push + sidecar subscribe で詰まらないように:
-  - **per-client ring buffer** + **drop policy**
-  - durable cursor は sqlite (= push 漏れは pull で取り戻せる)
-  - **push は通知のみ、本文取得は pull** (= push payload を最小化)
-  - **無制限 queue は禁止**
+- kawaz 判断: 「webui まで視野に入れると bun+hono 辺りかな。サーバプロセスとしてのパフォーマンスやセキュリティ関連などの実績はどちらも問題ないという認識」(一次資料 §4 回答 3)。daemon / cli / webui を同一言語で書ける
+- hono は HTTP 用なので **MVP (UDS のみ) では未使用**
+- MVP 実装時の実機検証項目: bun 長時間稼働の安定性 / `bun build --compile` での配布可否 / UDS 周りの bun 固有挙動。[保留] 配布形態 (bun runtime 前提 or compile 済み binary 同梱) は MVP パッケージング時に決める
 
-## Alternatives Considered
+### 11. Repo 戦略: rewrite 別リポ + monorepo [kawaz 承認]
 
-### A. cmux-msg リポを改修して room layer を追加
+- 本リポ `claude-ccmsg` に rewrite。既存 cmux-msg は p2p のまま安定維持 (新機能追加せず bug fix のみ)
+- `packages/{daemon, cli, webui}` の monorepo で開始 (codex 推奨をエージェントが採用し、リポ skeleton として kawaz に提示・承認済み)。API 安定後に webui 別リポ化を再評価
 
-不採用:
-- p2p 前提の threat model / API / lib 構造を引きずる
-- 改修と新規追加の境界が曖昧になり cognitive load 増
-- branding (cmux-msg) と新方式 (room/daemon) の不整合
+### 12. MVP スコープ
 
-### B. CRDT eventual consistency
+**入れる**:
 
-不採用:
-- multi-host を一級要件としない (= 1 host single writer なら CRDT 不要)
-- CRDT は衝突解決 / 因果順序 / 削除編集意味論まで抱えるが、append-only chat log の価値を大きく増やさない
-- multi-host を本気でやる場合だけ再検討対象
+- daemon (UDS のみ、JSONL storage、in-memory index)
+- コマンド: `create_room` / `post` / `subscribe` + 補完の `read` (mid 範囲 fetch) / `rooms` (一覧)
+- sidecar subscribe (cmux-msg subscribe の置き換え、Monitor に JSONL stream)
+- **kawaz 用 CLI 経路** (post / read / rooms) — 問題 (5) の検証はこれで行う
 
-### C. Message broker (NATS / Redis Streams / MQTT / ZeroMQ)
+**入れない** (後 phase):
 
-不採用:
-- 「個人 local plugin として意識せず使う」運用と外部 daemon 追加が衝突
-- broker 採用は「常駐基盤」化を意味し、設計目的と衝突
-- 設計パターン (durable consumer / ack / replay / backpressure) は参考にする (= Redis Streams, NATS JetStream)
+- webui / HTTP transport / hono
+- 検索、room 一覧の高機能化
+- cmux-msg との merged view (並走期は両方の subscribe を Monitor で並行起動)
+- AI-to-AI noise の運用制御 (room 権限 / rate limit 等) — mention 意味論と短文文化 SKILL でまず運用し、観測してから
 
-### D. k/v store + watcher
+### 13. Migration [kawaz 承認 + 移行 blocker 1 件]
 
-不採用:
-- watch の信頼性 / イベント順序 / 再送 / cursor / compaction を自前で再実装することになる
-- jsonl + sqlite のほうがイベントログと可変メタを分ける点で素直
+- cmux-msg と ccmsg は別ツール・別ストレージ。bridge を作るなら cmux-msg → ccmsg の一方向 import のみ (必要性は実装時判断)
+- **移行 blocker**: kawaz の push-workflow が `cmux-msg notify --self` に依存している。room model での self-notify 相当 (self room か専用 primitive か) を **DR-0003 (wire protocol) で決めてから** ccmsg への乗り換えを始める。echo back なし原則との整合もそこで扱う
 
-### E. Go (daemon) + 別言語 (webui)
+## Alternatives considered
 
-不採用:
-- daemon + cli + webui を同一言語で統一できる利点を捨てることになる
-- Go の daemon 安定性 / 配布 single binary は魅力だが、kawaz の開発速度 (bun 慣れ) と統一性が上回る
-
-### F. Matrix / XMPP
-
-不採用 (cautionary tale):
-- federation / event graph / state resolution は local Claude session messenger には過剰
-- XMPP の extension 地獄 / client 互換性問題を持ち込まない
+- **既存 cmux-msg リポ内で room layer 改修**: 不採用。p2p 前提の threat model / API / 構造を引きずり、安定 dogfood と rewrite が混線する
+- **notify-then-pull (push は通知のみ、本文は pull)**: 不採用。大規模 pub/sub の定石だが、消費者が AI エージェントである本ツールでは pull の 1 read = 1 ターンの追加コストが支配的。本文込み push + mention 意味論が正 (§5)。payload 肥大が実測で問題になったら room 単位で notify-only を opt-in できる余地は残す
+- **room ID = member set のハッシュ**: 不採用 (2026-07-03)。daemon 発行 + daemon 側重複排除の方が、メンバー可変 (単射不要) とも冪等性とも素直に整合する
+- **server 側既読 cursor (sqlite)**: 不採用 (2026-07-03)。読者状態はクライアント側が持つ BBS モデルで足り、daemon の可変状態が消える
+- **CRDT / message broker (NATS, Redis Streams 等) / k-v store + watcher / Matrix・XMPP**: 不採用 (codex レビュー、kawaz にサマリ提示済み)。single host 単一 writer に対して過剰。Redis Streams / NATS JetStream の設計パターン (cursor / replay / backpressure) は参考として見る
+- **Go daemon**: 不採用。kawaz の認識は「サーバ実績は bun / Go どちらも問題ない」であり、その上で webui まで同一言語で書ける bun を選ぶ (一次資料 §4 注記)
 
 ## Consequences
 
-### Positive
+- (1) クロス爆発と (2) 同一指示コピペは room への 1 post で構造的に解消する。(2) の後半 (受け手 N 人が同じ作業を重複実行する) は room の履歴共有で互いに見えるようにはなるが、担当調停は運用課題として残る
+- (3) 伝聞の増殖は履歴共有で原因が消える。ただし room 内での AI 同士の水増し会話自体は arch では止まらない — mention 意味論 + 短文文化 SKILL で運用し、観測して必要なら制御を足す
+- (4) は post / 短文肯定の記法で誘因を減らす仮説。dogfood で検証する
+- (5) は MVP の kawaz CLI で解消経路を検証し、webui で仕上げる
+- 中央 daemon が died すると room messaging 全体が止まる。supervision (DR-0002) が実用性の要
+- 永続状態が JSONL のみになるため、backup / 調査 / 手修復が「ファイルを読む」に還元される
 
-- 書き込み 1 点集約で **subscribe lock 競合 / SIGKILL hijack / sid spoof の局所脅威が消える**
-- room layer で **5 つの構造問題の (1)–(4) が構造解決される**
-- webui で **(5) も部分解決**: kawaz が同じ room に post すれば全 peer に届く
+## Open questions (後続 DR / 実装時)
 
-### Negative / 注意
-
-- 脅威の **境界が変わる** だけで消えるわけではない (上記 §5)
-- 中央デーモン crash で全 room messaging が止まる (= supervision 強化が必要、DR-0002 で詳細化)
-- p2p 時代より **インストール / ライフサイクル管理が複雑** (= daemon spawn / lock / health check)
-- cmux-msg と並走期間の cognitive load (= 2 ツールの存在を認識する必要)
-
-### AI-to-AI noise は arch だけでは解けない
-
-room を導入しても、AI が「ねえ X、これどう思う?」を post し続ければ context は浪費される。対策は arch ではなく **運用レイヤ**:
-
-- room 権限 (= 誰が post できるか)
-- mention 必須 (= `@user` mention がない post は宛先不明として弾く / 通知抑制)
-- bot-to-bot 自動投稿制限
-- per-room rate limit
-
-これらは MVP 後に観測ベースで追加する。
-
-## Open questions (= 後続 DR / 実装時判断)
-
-- room ID 命名: random UUID/ULID + human display name か、hash か
-- read cursor の粒度: `(room_id, principal_id, device_id?)` か単純に `(room_id, principal_id)` か
-- message envelope の最小フィールド: `{type, room, mid, from, to?, ts, payload}` で十分か、`seq / causality / schema_version / client_msg_id` を MVP に入れるか
-- daemon 自動起動 trigger: SessionStart hook 単独で十分か、launchd/systemd 経路も MVP に必要か
-- sidecar 抽象: 「CLI subscribe コマンドの常駐実装」で十分か、独立した subscriber framework が必要か (codex は前者推奨)
+- `to` (mention) の複数指定を許すか — DR-0003
+- ペア重複排除の「直近」の定義 (active room の条件、dormant 化した room との再会話で reuse するか新規か) — DR-0003
+- 初期配信上限 N の既定値 — 実装時
+- CLI 実行者の identity 判定 (Claude セッション内から叩いた時の sid 取得経路、素のターミナル = User の判定) — DR-0003
+- retention / compaction — 当面なし想定 (個人スケール)。問題が観測されたら起票
 
 ## Next steps
 
-1. **本 DR を Accepted に上げる** (= kawaz 最終確認後)
-2. **DR-0002: Daemon supervision detail** を起こす
-3. **DR-0003: Wire protocol** を起こす (= socket + HTTP で共通の event envelope)
-4. **MVP 実装着手**: `packages/daemon/` に bun + hono の skeleton、`packages/cli/` に subscribe sidecar
-5. **bun 実機検証**: crash 特性 / single binary 配布 / sqlite-WAL / UDS の dogfood
+1. 本 DR を kawaz 確認のうえ Accepted に上げる ([提案] 印の項目はその時点で決定化)
+2. DR-0002: daemon supervision (§9 の必須項目)
+3. DR-0003: wire protocol (envelope 詳細 / subscribe handshake / self-notify / identity 判定)
+4. MVP 実装着手: `packages/daemon` + `packages/cli`
+5. bun 実機検証 (§10)
