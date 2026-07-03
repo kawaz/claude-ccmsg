@@ -214,6 +214,10 @@ function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorUid: n
 
 // --- room creation ---------------------------------------------------------
 
+// Room ids are opaque, daemon-issued, unique strings — the `r-` shape here is a free
+// implementation choice, NOT a wire contract. Clients (and the daemon's own lookup /
+// filename mapping) treat ids as opaque, so this could be a bare counter or any other
+// unique token without changing semantics. Never parse structure out of a room id.
 function generateRoomId(daemon: Daemon): string {
   for (;;) {
     const id = `r-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
