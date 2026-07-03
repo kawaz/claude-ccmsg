@@ -104,10 +104,11 @@ check-versions:
     @bump-semver get {{ version-files }} --no-hint >/dev/null
 
 # push 成功直後の local 反映: 現セッションの marketplace + plugin を update する。
+# ccmsg が未 install の環境 (skeleton 段階等) では skip 扱いにする (- prefix)。
 [private]
 _local-plugin-reload:
-    claude plugin marketplace update ccmsg
-    claude plugin update ccmsg@ccmsg
+    -claude plugin marketplace update ccmsg
+    -claude plugin update ccmsg@ccmsg
     @echo ""
     @echo "[hint] /reload-plugins to apply in this session without restart"
 
