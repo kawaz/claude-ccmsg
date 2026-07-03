@@ -2,55 +2,52 @@
 
 > 🇬🇧 [README.md](./README.md)
 
-Claude Code セッション間メッセージング用の **中央デーモン方式**ツール。
-[kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p) の **rewrite** で、書き込みを単一デーモンに集約することで p2p の競合問題を構造的に解消し、room-based messaging と Web UI を追加する。
+Claude Code セッション間メッセージング用の**中央デーモン方式**ツール。
+[kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p) の rewrite で、書き込みを単一デーモンに集約し、会話を room 単位にし、人間 (kawaz) も一級メンバーとして参加できるようにする。
 
 ## Status
 
-**Pre-MVP / 設計フェーズ。** アーキテクチャは [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) に記録。`packages/` 配下の実装は未着手。
+**Pre-MVP / 設計フェーズ。** アーキテクチャは [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) (Proposed) に記録し、その根拠は [docs/research/](./docs/research/) の逐語一次資料に置いてある。`packages/` 配下の実装は未着手。
 
-旧来の `cmux-msg` (p2p) は `claude-ccmsg` が feature parity に達するまで **安定維持** されたまま使用可能。
+旧来の `cmux-msg` (p2p) は `claude-ccmsg` が feature parity に達するまで安定維持されたまま使用可能。
 
 ## rewrite した理由
 
-p2p 方式の `cmux-msg` は 1:1 メッセージングでは機能していたが、複数セッション dogfood で 5 つの構造的問題が露呈した:
+p2p 方式の `cmux-msg` は 1:1 では機能していたが、複数セッション dogfood で 5 つの構造的問題が露呈した:
 
-1. **クロス爆発** — 4-5 peer 増えると pair-wise send が組合せ爆発
+1. **クロス爆発** — 4-5 peer に増えると pair-wise send が組合せ爆発
 2. **同一指示の負担** — 同じ依頼を N peer にコピペ + N peer が同じ行動
-3. **AI 間の無駄会話** — 別 peer について peer 同士で擦り合わせ
-4. **メール調社交辞令** — `msg/send/reply` の語感が形式ばった long message を誘発
-5. **kawaz 混入コスト** — kawaz は 1 peer ずつ宛先指定が必要、その間に AI が「kawaz がこう言ってた」と転送し合う
+3. **AI 間の無駄会話** — 別 peer についての伝聞を peer 同士で擦り合わせ
+4. **メール調社交辞令** — `msg/send/reply` の語感が形式ばった長文を誘発
+5. **kawaz 混入コスト** — kawaz は 1 peer ずつしか発信できず、その間に AI が「kawaz がこう言ってた」と転送し合う
 
-`claude-ccmsg` は (1)–(4) を room で構造解決、(5) を「kawaz も入れる単一 room」で解決する。
+room は (1)(2) を構造的に解決する (1 post が全員に届く)。(3) は履歴共有で伝聞の原因が消えるが、AI 同士の無駄話自体は運用課題として残る (mention 意味論 + 短文文化、dogfood で検証)。(4) は `post` の短文記法で誘因を減らす仮説。(5) は kawaz 自身が直接 post することで解消する — MVP では CLI、後に web UI。
 
 ## アーキテクチャ (計画、詳細は [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
 
-- **Single host** — laptop or workstation 単独で完結。federation なし。mobile アクセスは tailscale 経由で LAN 内アクセス扱い
-- **中央デーモン** (bun + hono) — room log とメタデータへの全書き込みを所有
-- **ストレージ** — room ごとに append-only `jsonl` (= source of truth) + `sqlite` (= cursor / membership 等の再生成可能 cache)
-- **トランスポート** — UNIX Domain Socket (`0600` + UID check) でローカルクライアント、HTTP で Web UI (`127.0.0.1` + tailscale interface のみ bind)
-- **クライアント** — CLI (各 Claude session に subscribe sidecar) + Web UI、別 transport で同じ protocol を喋る
+- **Single host** — laptop or workstation 単独で完結、federation なし。mobile アクセスは tailscale 経由の LAN 内アクセス扱い
+- **中央デーモン** (bun) — 唯一の writer。room ID の発行、同時 room 開設の直列化・重複排除、room 内単調な `mid` の採番を行う
+- **ストレージ** — room ごとに 1 つの append-only `jsonl` (`member` / `leave` / `msg` / `move` / … イベント) が**唯一の永続状態**。server 側の既読 cursor は持たない — BBS モデル: 読者が自分の位置を把握し、再接続時に since-mid を渡す
+- **配送** — room 全メンバーに**本文込みで push** する。`to` は可視性フィルタではなく mention (アテンション) 指定。自分の post の echo back なし
+- **トランスポート** — ローカルクライアントは UNIX Domain Socket (`0600` + UID check)。HTTP は webui phase から: セキュリティ層を挟んで同一プロトコル、bind は `127.0.0.1` + tailscale interface のみ
+- **クライアント** — セッションごとの `subscribe` sidecar (Claude Code の Monitor ツールに流す)、kawaz が直接叩くユーザ CLI (人間は全 room の予約メンバー `0`)、後 phase の web UI。全クライアントが daemon を静寂にヘルスチェック + 自動起動する
 
 ## ディレクトリ構成
 
 ```
-.git/                  # bare repository
-.jj/                   # jj default workspace
-main/                  # 主要 jj workspace
-  packages/
-    daemon/            # 中央デーモン (bun + hono)
-    cli/               # CLI クライアント (session sidecar 含む)
-    webui/             # Web UI (hono SSR or SPA)
-  docs/
-    decisions/         # DR-NNNN (DR-0001 = central-daemon-architecture)
-    issue/             # active issue (claude-local-issue plugin)
-    findings/          # 確定事実
-    journal/           # 時系列メモ
-    runbooks/          # 運用レシピ
-    research/          # 調査メモ
-    knowledge/         # 静的ナレッジ
-    design/            # 設計ドキュメント
-  README.md  README-ja.md  LICENSE
+packages/
+  daemon/            # 中央デーモン (bun)
+  cli/               # CLI クライアント (session sidecar + ユーザ CLI)
+  webui/             # Web UI (後 phase)
+docs/
+  decisions/         # DR-NNNN 設計判断記録
+  research/          # 一次資料 (設計発言の逐語集)
+  issue/             # active issue (claude-local-issue plugin)
+  findings/          # 確定事実
+  journal/           # 時系列メモ
+  runbooks/          # 運用レシピ
+  knowledge/         # 静的ナレッジ
+  design/            # 設計ドキュメント
 ```
 
 ## ライセンス
