@@ -1,6 +1,6 @@
 # DR-0001: Central daemon + room messaging architecture
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-07-03)
 - **Date**: 2026-07-03
 - **Author**: kawaz (整理: AI agent)
 - **Origin**: rewrite from [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p)
@@ -13,7 +13,7 @@
 各決定に出所を明示する:
 
 - **[kawaz]** — kawaz が明示した決定・スケッチ (一次資料に逐語あり)
-- **[提案]** — エージェント/codex 由来の提案で、kawaz の明示裁可がまだないもの。本 DR が Accepted になった時点で決定に昇格する
+- **[提案]** — エージェント/codex 由来の提案。本 DR の Accepted をもって決定に昇格済み (出所区分として印は残す)
 - **[保留]** — 意図的に未決。後続 DR または実装時に決める
 
 ## Context
@@ -157,8 +157,7 @@ kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 
 ## Next steps
 
-1. 本 DR を kawaz 確認のうえ Accepted に上げる ([提案] 印の項目はその時点で決定化)
-2. DR-0002: daemon supervision (§9 の必須項目)
-3. DR-0003: wire protocol (envelope 詳細 / subscribe handshake / self-notify / identity 判定)
-4. MVP 実装着手: `packages/daemon` + `packages/cli`
-5. bun 実機検証 (§10)
+1. DR-0002: daemon supervision (§9 の必須項目)
+2. DR-0003: wire protocol (envelope 詳細 / subscribe handshake / self-notify / identity 判定)
+3. MVP 実装着手: `packages/daemon` + `packages/cli`
+4. bun 実機検証 (§10)
