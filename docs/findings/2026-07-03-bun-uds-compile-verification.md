@@ -20,6 +20,8 @@ DR-0001 §10 が要求する MVP 実装前の bun 実機検証項目 (UDS 周り
 
 7. **途中で切れた行の破損検出**: プロセスが書き込み途中で kill されたケースを模して、改行なしで JSON の途中まで書かれた断片をファイル末尾に追記したところ、行分割 + `JSON.parse` で該当行のみ `Unterminated string` 例外として検出できた。前後の正常な行のパースには影響しない。
 
+8. **UDS パス長 (MVP 実装時の追試)**: macOS の伝統的な socket パス上限は 104 bytes とされるが、Bun 1.3.13 は約 180 文字の socket path でも bind に成功した。実装・テストは短い state dir パス前提のため実運用影響はないが、104 制約は Bun 経由では文書より緩い可能性がある。
+
 ## 実用的な示唆
 
 - **JSONL への追記実装は `fs.appendFileSync` か `fs.createWriteStream(path, {flags: 'a'})` を使う。`Bun.file().writer()` は追記用途では使わない** (truncate されるため room イベントログ等の追記ストレージに使うと事故る)。
