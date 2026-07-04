@@ -15,11 +15,11 @@ set script-interpreter := ["bash", "-eu", "-o", "pipefail"]
 
 # ---------- variables ----------
 # bump-version トリガとなる product code パス (テンプレ流用時に各リポで上書き)。
-# docs/ や *.md / justfile / version ファイル自身などは除外。
-# 注: skeleton 段階では packages/*/ がコード本体、追って bin / hooks / skills / completions
-# 等が追加されたらここに足す。
+# 配布物 (packages/ の CLI・daemon、launcher、hook スクリプト、skill) と、その挙動を
+# 左右する lock / tsconfig を対象にする。docs/ や *.md / justfile / version ファイル
+# 自身などは除外。completions 等を足したらここに追記する。
 
-bump-trigger-paths := "packages/ bun.lock tsconfig.json"
+bump-trigger-paths := "packages/ bin/ hooks/ skills/ bun.lock tsconfig.json"
 
 # bump 対象の version ファイル群 (claude-plugin 固有: 3 ファイルの version 一致は bump-semver が保証)
 
