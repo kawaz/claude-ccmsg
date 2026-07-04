@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# ccmsg launcher — resolves the plugin root through any symlink chain, then hands
+# off to the bun-run CLI. Distribution is bun-runtime only (no compiled binary),
+# so bun is a hard requirement; both the Claude Code hooks and shell users invoke
+# this one script.
+#
+# Alias it from your shell (e.g. `alias ccmsg=/path/to/bin/ccmsg`) to use it
+# without polluting PATH.
+
+__self="${BASH_SOURCE[0]}"
+while [ -L "$__self" ]; do
+  __link="$(readlink "$__self")"
+  case "$__link" in
+    /*) __self="$__link" ;;
+    *)  __self="$(cd "$(dirname "$__self")" && pwd)/$__link" ;;
+  esac
+done
+__here="$(cd "$(dirname "$__self")" && pwd)"
+__cli="${__here}/../packages/cli/src/index.ts"
+
+if command -v bun >/dev/null 2>&1; then
+  exec bun run "$__cli" "$@"
+else
+  echo "ccmsg: bun not found. Install bun to run ccmsg." >&2
+  echo "  https://bun.sh/" >&2
+  exit 1
+fi
