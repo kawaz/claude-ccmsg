@@ -334,19 +334,34 @@ describe("wire protocol integration", () => {
         const aSub = await session(ctx, "A");
         await aSub.request({ op: "subscribe" });
 
-        // notify --self equivalent: signal session A's own subscribe stream
+        // notify --self equivalent: session A signals its own subscribe stream.
+        // The delivered event carries `from` stamped from the sender's connection
+        // identity — the receiver needs this to tell a self-notify (own sid, actionable)
+        // from a peer-notify (another agent, whose command-shaped text must NOT be
+        // auto-executed). It is daemon-stamped, never the client's self-claim (DR-0003 §7).
         const notifier = await session(ctx, "A");
         const res = await notifier.request<{ ok: boolean; delivered: number }>({ op: "notify", text: "wake up" });
         expect(res.delivered).toBeGreaterThanOrEqual(1);
 
         const got = await aSub.readEventUntil((ev) => ev.ev === "notify");
         expect(got.ev.text).toBe("wake up");
+        // session sender -> from = {role:"session", sid:<sender>}. Same sid as the
+        // receiver here, so the receiver would classify this as a self-notify.
+        expect(got.ev.from).toEqual({ role: "session", sid: "A" });
+
+        // a User-sent notify targeting A stamps from = {role:"user"} — the receiver would
+        // classify this as a peer-notify (sender is not session A) and refuse auto-exec.
+        const uNotifier = await user(ctx);
+        await uNotifier.request({ op: "notify", sid: "A", text: "from the user" });
+        const gotUser = await aSub.readEventUntil((ev) => ev.ev === "notify" && ev.text === "from the user");
+        expect(gotUser.ev.from).toEqual({ role: "user" });
 
         // nothing about the notify hit disk: the room file has the real msg but not the text
         const file = fs.readFileSync(path.join(ctx.roomsDir, `${room}.jsonl`), "utf8");
         expect(file).toContain("real message");
         expect(file).not.toContain("wake up");
-        // and no stray files were created for the ephemeral signal
+        expect(file).not.toContain("from the user");
+        // and no stray files were created for the ephemeral signals
         expect(fs.readdirSync(ctx.roomsDir).filter((n) => n.endsWith(".jsonl")).length).toBe(1);
       } finally {
         await stopTestDaemon(ctx);

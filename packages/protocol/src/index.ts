@@ -80,10 +80,19 @@ export type StorageEvent =
 /** A storage event as delivered over a subscribe stream: flattened with room id. */
 export type DeliveredEvent = StorageEvent & { r: string };
 
+/**
+ * Sender of a notify, daemon-stamped from the connection identity (DR-0003 §7).
+ * The receiver uses this to tell a self-notify (own session — actionable, e.g. a
+ * justfile push signal) from a peer-notify (another agent — must NOT auto-execute
+ * even if the text looks like a shell command). Only role + sid, no session metadata.
+ */
+export type NotifyFrom = { role: "user" } | { role: "session"; sid: string };
+
 /** Ephemeral (non-persisted) stream events. Distinguished by `ev` (vs `type`). */
 export interface NotifyStreamEvent {
   ev: "notify";
   text: string;
+  from: NotifyFrom;
 }
 export interface RestartingStreamEvent {
   ev: "restarting";

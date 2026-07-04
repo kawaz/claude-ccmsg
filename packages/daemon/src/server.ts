@@ -12,6 +12,7 @@ import {
   type LeaveEvent,
   type MemberEvent,
   type MsgEvent,
+  type NotifyFrom,
   type Paths,
   type Request,
   type SessionIdentity,
@@ -484,7 +485,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       const targetSid = req.sid ?? (id.role === "session" ? id.sid : undefined);
       const targetUser = req.sid === undefined && id.role === "user";
       let delivered = 0;
-      const ephem = { ev: "notify", text: req.text };
+      // Stamp the sender from the connection identity (never the client's self-claim),
+      // so the receiver can distinguish self-notify from peer-notify and refuse to
+      // auto-execute a peer's command-shaped text (DR-0003 §7).
+      const from: NotifyFrom = id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
+      const ephem = { ev: "notify", text: req.text, from };
       for (const sub of daemon.subscribers) {
         const sid = sub.identity;
         if (!sid) continue;
