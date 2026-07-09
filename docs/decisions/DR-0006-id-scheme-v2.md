@@ -1,6 +1,6 @@
 # DR-0006: ID 体系 v2 — member id を u/a namespace の型付き文字列に分離
 
-- **Status**: Proposed (2026-07-09。2026-07-04 の消失した合意の回収。実装先行、明示レビュー待ち)
+- **Status**: Accepted (2026-07-10 kawaz 確認「そのセッションが拾えてれば OK、記憶とも一致」)
 - **Date**: 2026-07-09
 - **Author**: kawaz (発掘・整理: AI agent)
 - **一次資料**: [docs/research/2026-07-04-kawaz-id-scheme-statements.md](../research/2026-07-04-kawaz-id-scheme-statements.md)
