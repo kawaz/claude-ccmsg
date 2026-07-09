@@ -1,8 +1,8 @@
-// UDS server + wire protocol dispatch + delivery (DR-0003).
+// UDS + HTTP/WS server + wire protocol dispatch + delivery (DR-0003, DR-0004).
 import * as fs from "node:fs";
-import type { Socket } from "bun";
 import {
   DEFAULT_DEDUP_WINDOW_MS,
+  DEFAULT_HTTP_BIND,
   DEFAULT_JOIN_BACKLOG,
   ErrorCode,
   USER_UID,
@@ -21,6 +21,7 @@ import {
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
+import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import {
   appendEvent,
   closeRoom,
@@ -33,10 +34,13 @@ import {
   type Room,
 } from "./storage.ts";
 
-interface Conn {
-  socket: Socket<Conn>;
-  decoder: TextDecoder;
-  buffer: string;
+/**
+ * A connection abstracted over its transport. UDS and HTTP/WS conns both boil down
+ * to "can accept a line of wire protocol"; dispatch/delivery/subscribe never touch
+ * the transport directly (DR-0004 §2 seam).
+ */
+export interface Conn {
+  write(line: string): void;
   identity: Identity | null;
   subscribed: boolean;
 }
@@ -50,7 +54,7 @@ interface Listener {
   stop(closeActiveConnections?: boolean): void;
 }
 
-interface Daemon {
+export interface Daemon {
   paths: Paths;
   version: string;
   startTime: number;
@@ -63,17 +67,18 @@ interface Daemon {
   log: Logger;
   lock: LockHandle;
   server: Listener | null;
+  httpListeners: HttpListener[];
   dedupWindowMs: number;
   shuttingDown: boolean;
 }
 
 const nowIso = (): string => new Date().toISOString();
 
-function send(conn: Conn, obj: unknown): void {
+export function send(conn: Conn, obj: unknown): void {
   try {
-    conn.socket.write(`${JSON.stringify(obj)}\n`);
+    conn.write(`${JSON.stringify(obj)}\n`);
   } catch {
-    // socket may be closing; delivery is best-effort
+    // transport may be closing; delivery is best-effort
   }
 }
 
@@ -99,7 +104,7 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
   entry.conns.add(conn);
 }
 
-function removeConn(daemon: Daemon, conn: Conn): void {
+export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
   const id = conn.identity;
@@ -266,7 +271,7 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 
 const IDENTITY_OPS = new Set(["post", "create_room", "next_room", "subscribe", "notify", "leave"]);
 
-function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
+export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   let req: Request;
   try {
     req = JSON.parse(line) as Request;
@@ -323,6 +328,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         pid: process.pid,
         rooms: daemon.rooms.size,
         clients: daemon.connections.size,
+        http: daemon.httpListeners.map((l) => l.address),
       });
       return;
     }
@@ -564,11 +570,13 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   } catch {
     // ignore
   }
+  // Notify every connection — UDS and WS alike, `send` doesn't care which — before
+  // tearing down the HTTP listeners so the WS side actually gets the frame out.
   const ev = { ev: "restarting", ...(reason ? { reason } : {}) };
-  for (const conn of daemon.connections) {
+  for (const conn of daemon.connections) send(conn, ev);
+  for (const listener of daemon.httpListeners) {
     try {
-      conn.socket.write(`${JSON.stringify(ev)}\n`);
-      conn.socket.flush();
+      listener.stop();
     } catch {
       // ignore
     }
@@ -590,6 +598,19 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
 
 export interface StartOptions {
   foreground?: boolean;
+  /** Non-/ws HTTP requests are delegated here (e.g. webui static/app routes); 404 if absent. */
+  fallback?: HttpFallback;
+}
+
+/** `CCMSG_HTTP_BIND`: comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
+function resolveHttpBinds(): string[] {
+  const raw = process.env.CCMSG_HTTP_BIND;
+  if (raw === "off") return [];
+  const spec = raw && raw.trim() !== "" ? raw : DEFAULT_HTTP_BIND;
+  return spec
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
 }
 
 export function startDaemon(opts: StartOptions = {}): void {
@@ -625,37 +646,49 @@ export function startDaemon(opts: StartOptions = {}): void {
     log,
     lock,
     server: null,
+    httpListeners: [],
     dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
   };
 
-  const server = Bun.listen<Conn>({
+  interface UdsConnState {
+    conn: Conn;
+    decoder: TextDecoder;
+    buffer: string;
+  }
+
+  const server = Bun.listen<UdsConnState>({
     unix: paths.sock,
     socket: {
       open(socket) {
         const conn: Conn = {
-          socket,
-          decoder: new TextDecoder(),
-          buffer: "",
+          write(line) {
+            try {
+              socket.write(line);
+              socket.flush();
+            } catch {
+              // socket may be closing; delivery is best-effort
+            }
+          },
           identity: null,
           subscribed: false,
         };
-        socket.data = conn;
+        socket.data = { conn, decoder: new TextDecoder(), buffer: "" };
         daemon.connections.add(conn);
       },
       data(socket, chunk) {
-        const conn = socket.data;
-        conn.buffer += conn.decoder.decode(chunk, { stream: true });
+        const state = socket.data;
+        state.buffer += state.decoder.decode(chunk, { stream: true });
         let idx: number;
-        while ((idx = conn.buffer.indexOf("\n")) >= 0) {
-          const rawLine = conn.buffer.slice(0, idx);
-          conn.buffer = conn.buffer.slice(idx + 1);
-          if (rawLine.trim() !== "") handleRequest(daemon, conn, rawLine);
+        while ((idx = state.buffer.indexOf("\n")) >= 0) {
+          const rawLine = state.buffer.slice(0, idx);
+          state.buffer = state.buffer.slice(idx + 1);
+          if (rawLine.trim() !== "") handleRequest(daemon, state.conn, rawLine);
         }
       },
       close(socket) {
-        const conn = socket.data;
-        if (conn) removeConn(daemon, conn);
+        const state = socket.data;
+        if (state) removeConn(daemon, state.conn);
       },
       error(_socket, err) {
         daemon.log.error(`socket error: ${String(err)}`);
@@ -667,6 +700,18 @@ export function startDaemon(opts: StartOptions = {}): void {
   fs.chmodSync(paths.sock, 0o600);
   fs.writeFileSync(paths.pid, `${process.pid}\n`);
   log.info(`listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`);
+
+  const httpListeners: HttpListener[] = [];
+  for (const bindSpec of resolveHttpBinds()) {
+    try {
+      const listener = startHttpListener(daemon, bindSpec, opts.fallback);
+      httpListeners.push(listener);
+      log.info(`http listening on ${listener.address}`);
+    } catch (e) {
+      log.error(`failed to bind http ${bindSpec}: ${String(e)}`);
+    }
+  }
+  daemon.httpListeners = httpListeners;
 
   process.on("SIGTERM", () => gracefulShutdown(daemon, "signal"));
   process.on("SIGINT", () => gracefulShutdown(daemon, "signal"));

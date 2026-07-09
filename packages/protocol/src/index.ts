@@ -20,6 +20,9 @@ export const DEFAULT_JOIN_BACKLOG = 50;
 /** Default dedup window for create_room (DR-0003 §4, minute-order). */
 export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
 
+/** Default HTTP/WS bind for `/ws` (DR-0004 §3). `CCMSG_HTTP_BIND=off` disables it. */
+export const DEFAULT_HTTP_BIND = "127.0.0.1:8642";
+
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
 // ordering; `mid` (msg only) is a per-room daemon-assigned sequence.
@@ -284,6 +287,8 @@ export interface PingResponse {
   pid: number;
   rooms: number;
   clients: number;
+  /** actual HTTP/WS bind addresses ("host:port"); empty when CCMSG_HTTP_BIND=off (DR-0004 §3). */
+  http: string[];
 }
 export interface ShutdownResponse {
   ok: true;

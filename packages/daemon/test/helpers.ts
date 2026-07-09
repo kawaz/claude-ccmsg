@@ -31,7 +31,10 @@ export function spawnDaemonProc(
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
-    env: { ...process.env, CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, ...extraEnv },
+    // HTTP off by default so parallel test daemons never fight over the fixed
+    // default port (8642); tests that need HTTP pass CCMSG_HTTP_BIND explicitly
+    // (typically 127.0.0.1:0 for an ephemeral port) via extraEnv, which wins below.
+    env: { ...process.env, CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, CCMSG_HTTP_BIND: "off", ...extraEnv },
   });
 }
 
@@ -59,7 +62,12 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
-  const env: Record<string, string> = { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, ...extraEnv };
+  const env: Record<string, string> = {
+    CCMSG_STATE_DIR: stateDir,
+    CCMSG_DATA_DIR: dataDir,
+    CCMSG_HTTP_BIND: "off",
+    ...extraEnv,
+  };
   const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
