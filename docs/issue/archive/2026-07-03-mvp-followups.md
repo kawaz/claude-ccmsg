@@ -1,6 +1,6 @@
 ---
 title: MVP (v0.0.1) からの引き継ぎ残課題 3 点
-status: open
+status: resolved
 category: task
 created: 2026-07-03T23:09:37+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-09T22:23:21+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: Linux flock 検証 (GitHub Actions CI ubuntu-latest 新設, run 29020981122 で bun test の flock 二重起動防止テスト green)", "done: version mismatch 自動テスト (packages/cli/test/version-mismatch.test.ts 新設、test-only env シーム CCMSG_VERSION_OVERRIDE / CCMSG_DAEMON_ENTRY)", "done: CLI leave サブコマンド追加 + daemon leave op 統合テスト4件新設、v0.0.3 として push 済み"]
 blocked_by:
 origin: 自リポ TODO
 ---
