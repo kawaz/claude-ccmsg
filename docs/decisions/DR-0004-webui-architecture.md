@@ -39,7 +39,7 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 - 既定 ON (127.0.0.1 のみなので安全側)。前提: single-user マシン (127.0.0.1 は同一ホストの他 UNIX ユーザからも届く点は UDS 0600 より弱いが、個人機前提で許容)。マルチユーザ環境では `off` にする
 - `ccmsg status` / `ping` 応答に http bind 情報を出す (observability、DR-0002 §7 の延長)
 
-### 4. UI は packages/webui、ビルドステップなし [提案]
+### 4. UI は packages/webui、ビルドステップなし [提案] (クライアント実装方式は DR-0005 が supersede)
 
 - **hono** app を `packages/webui` が export し、daemon の HTTP handler が `/ws` 以外を mount する (UI の責務分離。kawaz の「ui 自体は別サブプロジェクトにしても良い」の monorepo 内実現)
 - クライアントは **vanilla ESM JS + CSS (フレームワーク・bundler なし)**。理由: UI スコープ (room 一覧 / room view / post / live 追記) は素の DOM で足りる規模で、build 成果物が無ければ plugin 配布 (bun run 直実行) がそのまま成立する。dist/ は .gitignore 済みで配布に乗らないため、build 前提の SPA は配布形態を複雑化する
