@@ -60,9 +60,11 @@ lint:
     bun x oxlint
     bun x oxfmt --check
 
-# 型チェック (monorepo 全体を tsc --noEmit)
+# 型チェック (monorepo 全体を tsc --noEmit。webui の client (preact/TSX, DOM lib)
+# はルート tsconfig の除外先なので packages/webui/tsconfig.json で別途チェック)
 typecheck: lint
     bun x tsc --noEmit
+    bun x tsc --noEmit -p packages/webui
 
 # テスト (bun test で全 package の *.test.ts を実行)
 test: lint typecheck

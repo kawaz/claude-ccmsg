@@ -1,0 +1,30 @@
+// Presentation helpers shared by components. Kept out of store.ts because
+// these are display-only (locale strings, truncation) and out of the reducer
+// (which must stay a pure function of state + action).
+import type { RoomState } from "./store.ts";
+import { USER_UID } from "./store.ts";
+
+/** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
+export function relTime(iso: string | null): string {
+  if (!iso) return "";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const s = Math.max(0, Math.floor(diffMs / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+export function memberLabel(uid: number, room: RoomState | undefined): string {
+  if (uid === USER_UID) return "User";
+  const m = room?.membersByUid.get(uid);
+  if (!m) return `u${uid}`;
+  const short = m.sid ? m.sid.slice(0, 8) : `u${uid}`;
+  return m.repo ? `${short} (${m.repo})` : short;
+}
+
+export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
+  return [...rooms.values()].sort((a, b) => (b.lastTs ?? "").localeCompare(a.lastTs ?? ""));
+}

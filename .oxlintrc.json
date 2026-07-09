@@ -15,5 +15,5 @@
   "env": {
     "builtin": true
   },
-  "ignorePatterns": ["node_modules", "docs", "packages/webui/src/public"]
+  "ignorePatterns": ["node_modules", "docs"]
 }

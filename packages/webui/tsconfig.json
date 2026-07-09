@@ -3,8 +3,10 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["bun"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "strict": true,
     "noEmit": true,
     "noUnusedLocals": true,
@@ -16,12 +18,8 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
     "paths": {
-      "@ccmsg/protocol": ["./packages/protocol/src/index.ts"],
-      "@ccmsg/daemon": ["./packages/daemon/src/server.ts"],
-      "@ccmsg/daemon/run": ["./packages/daemon/src/run.ts"],
-      "@ccmsg/webui": ["./packages/webui/src/index.ts"]
+      "@ccmsg/protocol": ["../../packages/protocol/src/index.ts"]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "hooks/**/*.ts"],
-  "exclude": ["packages/webui/src/client/**"]
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx"]
 }

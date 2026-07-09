@@ -1,6 +1,7 @@
-// Outline test for the hono app contract (DR-0004 §4): serves the HTML shell
-// and static assets, 404s everything else. Browser/WS integration is covered
-// once the daemon mounts this app (out of scope here).
+// Outline test for the hono app contract (DR-0004 §4, DR-0005 §3): serves the
+// HTML shell, serve-time-bundles the preact/TSX client on first request to
+// /assets/app.js, serves static assets, 404s everything else. Full browser/WS
+// integration is covered once the daemon mounts this app (out of scope here).
 import { describe, expect, test } from "bun:test";
 import { createWebuiApp } from "../src/index.ts";
 
@@ -12,25 +13,26 @@ describe("createWebuiApp", () => {
     expect(res.headers.get("content-type")).toContain("text/html");
     const body = await res.text();
     expect(body).toContain("<title>ccmsg</title>");
-    expect(body).toContain('src="/app.js"');
+    expect(body).toContain('src="/assets/app.js"');
   });
 
-  test("GET /app.js returns the client entry as JS", async () => {
+  test("GET /assets/app.js bundles the preact client entry as JS", async () => {
     const app = createWebuiApp();
-    const res = await app.fetch(new Request("http://localhost/app.js"));
+    const res = await app.fetch(new Request("http://localhost/assets/app.js"));
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/javascript");
+    expect(res.headers.get("content-type")).toContain("javascript");
     const body = await res.text();
-    expect(body).toContain("WsClient");
+    // preact is bundled in (no external <script> import), and the client's
+    // own connect-on-load call is present in the output.
+    expect(body).toContain("preact");
+    expect(body).toContain("hashchange");
   });
 
-  test("GET /ws-client.js returns the wire-protocol client as JS", async () => {
+  test("GET /assets/app.js is served from an in-memory cache on repeat requests", async () => {
     const app = createWebuiApp();
-    const res = await app.fetch(new Request("http://localhost/ws-client.js"));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/javascript");
-    const body = await res.text();
-    expect(body).toContain("export class WsClient");
+    const first = await (await app.fetch(new Request("http://localhost/assets/app.js"))).text();
+    const second = await (await app.fetch(new Request("http://localhost/assets/app.js"))).text();
+    expect(second).toBe(first);
   });
 
   test("GET /app.css returns the stylesheet as CSS", async () => {
