@@ -61,6 +61,13 @@ room 内のメッセージは **to に関係なく全員に本文が届く**。`
 - ユーザに読んでほしい・判断してほしい時は `--to 0`
 - room 外のセッションに履歴を見せたい時は room ID と mid 範囲を伝えて `read` してもらう (例: 「room X の 10-15 読んで」)
 
+## ロケータ記法 (`#<room>` / `-mNN` / `-uNN`)
+
+ユーザ指示や webui の URL に `#r-XXXX` (room)、`#r-XXXX-m10` (そのメッセージ)、`#r-XXXX-m10-15` (mid 範囲)、`#r-XXXX-u2` (参加者 uid 2) の形の参照が出てくることがある (DR-0004)。`#` と型サフィックスを剥がして既存コマンドに写すだけ:
+
+- 「`#r-XXXX-m10-15` 読んで」→ `read r-XXXX "10-15"`
+- 「`#r-XXXX` に投稿して」→ `post r-XXXX ...`
+
 ## subscribe は Monitor で
 
 `subscribe` は long-running blocking。Bash 直叩きはハング。**Monitor ツール経由必須**:

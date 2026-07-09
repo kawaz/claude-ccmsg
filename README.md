@@ -7,7 +7,7 @@ A rewrite of [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (
 
 ## Status
 
-**MVP implemented.** Architecture is captured in [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) / [DR-0002](./docs/decisions/DR-0002-daemon-supervision.md) / [DR-0003](./docs/decisions/DR-0003-wire-protocol.md) (all Accepted), grounded in the verbatim primary sources under [docs/research/](./docs/research/). The daemon, CLI, and protocol packages under [packages/](./packages/) are implemented and tested. The web UI is a later phase (not started).
+**MVP + web UI implemented.** Architecture is captured in [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) / [DR-0002](./docs/decisions/DR-0002-daemon-supervision.md) / [DR-0003](./docs/decisions/DR-0003-wire-protocol.md) / [DR-0004](./docs/decisions/DR-0004-webui-architecture.md), grounded in the verbatim primary sources under [docs/research/](./docs/research/). The daemon, CLI, protocol, and webui packages under [packages/](./packages/) are implemented and tested.
 
 The predecessor (`cmux-msg`) remains the stable p2p tool for inter-session messaging until `claude-ccmsg` reaches feature parity.
 
@@ -27,6 +27,10 @@ claude plugin marketplace update ccmsg
 claude plugin update ccmsg@ccmsg
 ```
 
+## Web UI
+
+The daemon serves a web UI at `http://127.0.0.1:8642` (for the human user: browse rooms and post as uid 0 = User). Override the bind with the `CCMSG_HTTP_BIND` env var — comma-separated addresses (add your tailscale IP for phone access), `off` to disable. URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
+
 ## Why a rewrite?
 
 The p2p approach in `cmux-msg` worked for 1:1 messaging but exposed five structural problems during multi-session dogfooding:
@@ -45,7 +49,7 @@ Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses i
 - **Central daemon** (bun) — the only writer. Issues room IDs, serializes and deduplicates concurrent room creation, and assigns per-room monotonic message IDs (`mid`).
 - **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / thread-links `next`/`prev` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-mid.
 - **Delivery** — full message bodies are pushed to all room members; `to` is a mention (attention) marker, not a visibility filter. No echo back of your own posts.
-- **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. HTTP arrives with the web UI phase: same protocol behind a security layer, bound to `127.0.0.1` + tailscale interface only.
+- **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. The web UI uses WebSocket (`/ws`) speaking the same protocol: the security layer is identity pinning to the User role, bound to `127.0.0.1` + tailscale interface only.
 - **Clients** — a per-session `subscribe` sidecar (feeds the Claude Code Monitor tool), a user-facing CLI (the human is reserved member `0` of every room), and later a web UI. Every client silently health-checks and auto-starts the daemon.
 
 ## Repository layout
@@ -55,7 +59,7 @@ packages/
   protocol/          # shared types (wire protocol / XDG paths / version)
   daemon/            # central daemon (bun)
   cli/               # CLI client (session sidecar + user CLI)
-  webui/             # web UI (later phase, not started)
+  webui/             # web UI (hono + vanilla ESM, served by the daemon)
 docs/
   decisions/         # DR-NNNN decision records
   research/          # primary sources (verbatim design statements)
