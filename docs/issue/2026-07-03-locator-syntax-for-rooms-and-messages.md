@@ -3,7 +3,7 @@ title: room / message / participant のロケータ記法
 status: idea
 category: design
 created: 2026-07-03T22:44:44+09:00
-last_read:
+last_read: 2026-07-09T23:08:43+09:00
 open_entered:
 wip_entered:
 blocked_entered:
