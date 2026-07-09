@@ -1,6 +1,6 @@
 ---
 title: room / message / participant のロケータ記法
-status: idea
+status: resolved
 category: design
 created: 2026-07-03T22:44:44+09:00
 last_read: 2026-07-09T23:08:43+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-09T23:29:03+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0004","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -45,4 +45,4 @@ MVP スコープ外、webui/SKILL 設計時に再訪。
 ## 受け入れ条件
 
 - [x] `#tNN` の `t` が何を指すか kawaz に確認 (thread 想定だった可能性、採用候補からは除外)
-- [ ] webui / SKILL 設計時にロケータ記法の採否を判断
+- [x] webui / SKILL 設計時にロケータ記法の採否を判断: DR-0004 §5 で確定。`#r`/`#m`/`#u` を採用 (webui の URL fragment = `#<room id>`、メッセージアンカー `#<room id>-mNN` として実装済み)、`#t` は不採用 (kawaz 2026-07-09 回答)。SKILL.md にもロケータ→read/post の写像を記載済み。参加者ロケータからの Finder/VSCode 起動は DR-0004 §5 の通り後続スコープ (必要が観測されたら再起票)
