@@ -7,9 +7,25 @@ A rewrite of [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (
 
 ## Status
 
-**Pre-MVP / design phase.** Architecture is captured in [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) (Proposed), grounded in the verbatim primary sources under [docs/research/](./docs/research/). Implementation under [packages/](./packages/) has not started.
+**MVP implemented.** Architecture is captured in [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) / [DR-0002](./docs/decisions/DR-0002-daemon-supervision.md) / [DR-0003](./docs/decisions/DR-0003-wire-protocol.md) (all Accepted), grounded in the verbatim primary sources under [docs/research/](./docs/research/). The daemon, CLI, and protocol packages under [packages/](./packages/) are implemented and tested. The web UI is a later phase (not started).
 
 The predecessor (`cmux-msg`) remains the stable p2p tool for inter-session messaging until `claude-ccmsg` reaches feature parity.
+
+## Install
+
+Requires [bun](https://bun.sh/) (the CLI and daemon run on bun).
+
+```
+claude plugin marketplace add kawaz/claude-ccmsg
+claude plugin install ccmsg@ccmsg
+```
+
+Update:
+
+```
+claude plugin marketplace update ccmsg
+claude plugin update ccmsg@ccmsg
+```
 
 ## Why a rewrite?
 
@@ -23,7 +39,7 @@ The p2p approach in `cmux-msg` worked for 1:1 messaging but exposed five structu
 
 Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses its cause because history is shared, though residual AI chatter is an operational concern (mention semantics + short-message culture, verified by dogfooding). (4) is a hypothesis that the `post` short-message framing reduces bloat. (5) is addressed by the user posting directly — via CLI in the MVP, web UI later.
 
-## Architecture (planned, see [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
+## Architecture (see [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
 
 - **Single host** — laptop or workstation, no federation. Mobile access via tailscale over LAN.
 - **Central daemon** (bun) — the only writer. Issues room IDs, serializes and deduplicates concurrent room creation, and assigns per-room monotonic message IDs (`mid`).
@@ -36,9 +52,10 @@ Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses i
 
 ```
 packages/
+  protocol/          # shared types (wire protocol / XDG paths / version)
   daemon/            # central daemon (bun)
   cli/               # CLI client (session sidecar + user CLI)
-  webui/             # web UI (later phase)
+  webui/             # web UI (later phase, not started)
 docs/
   decisions/         # DR-NNNN decision records
   research/          # primary sources (verbatim design statements)

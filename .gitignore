@@ -26,6 +26,6 @@ logs/
 .env
 .env.local
 
-# Runtime (will be replaced by proper paths once daemon is implemented)
+# Runtime
 *.sock
 *.pid
