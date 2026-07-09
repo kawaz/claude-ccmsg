@@ -2,7 +2,7 @@
 // these are display-only (locale strings, truncation) and out of the reducer
 // (which must stay a pure function of state + action).
 import type { RoomState } from "./store.ts";
-import { USER_UID } from "./store.ts";
+import { ADMIN_ID } from "./store.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -17,11 +17,11 @@ export function relTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d`;
 }
 
-export function memberLabel(uid: number, room: RoomState | undefined): string {
-  if (uid === USER_UID) return "User";
-  const m = room?.membersByUid.get(uid);
-  if (!m) return `u${uid}`;
-  const short = m.sid ? m.sid.slice(0, 8) : `u${uid}`;
+export function memberLabel(id: string, room: RoomState | undefined): string {
+  if (id === ADMIN_ID) return "User";
+  const m = room?.membersById.get(id);
+  if (!m) return id;
+  const short = m.sid ? m.sid.slice(0, 8) : id;
   return m.repo ? `${short} (${m.repo})` : short;
 }
 

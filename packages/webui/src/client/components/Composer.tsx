@@ -1,10 +1,10 @@
 import { useState } from "preact/hooks";
-import { USER_UID } from "../store.ts";
+import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { memberLabel } from "../utils.ts";
 
-export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<number> }) {
+export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<string> }) {
   const { store, ws } = useApp();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -23,7 +23,7 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
           event: {
             type: "msg",
             mid: res.mid,
-            from: USER_UID,
+            from: ADMIN_ID,
             ...(to.length ? { to } : {}),
             ts: new Date().toISOString(),
             msg: trimmed,
@@ -41,7 +41,7 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
     <form class="composer" onSubmit={(e) => void submit(e)}>
       <div class="composer-mention">
         {mentionTo.size
-          ? `→ ${[...mentionTo].map((u) => memberLabel(u, room)).join(", ")}`
+          ? `→ ${[...mentionTo].map((id) => memberLabel(id, room)).join(", ")}`
           : "room 全体へ (member chip をクリックで mention)"}
       </div>
       <textarea

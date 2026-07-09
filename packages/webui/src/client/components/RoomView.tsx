@@ -1,5 +1,5 @@
 import { useEffect } from "preact/hooks";
-import { USER_UID } from "../store.ts";
+import { ADMIN_ID } from "../store.ts";
 import type { AppState } from "../store.ts";
 import { anchorId } from "../locator.ts";
 import { MemberChip } from "./MemberChip.tsx";
@@ -27,7 +27,7 @@ export function RoomView({ state }: { state: AppState }) {
   }
 
   const activeMembers = room.memberOrder
-    .map((uid) => room.membersByUid.get(uid))
+    .map((id) => room.membersById.get(id))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && !m.left);
 
   return (
@@ -35,9 +35,9 @@ export function RoomView({ state }: { state: AppState }) {
       <header class="room-header">
         <h2>{room.title || room.id}</h2>
         <div class="member-chips">
-          <MemberChip uid={USER_UID} room={room} selected={state.mentionTo.has(USER_UID)} />
+          <MemberChip id={ADMIN_ID} room={room} selected={state.mentionTo.has(ADMIN_ID)} />
           {activeMembers.map((m) => (
-            <MemberChip key={m.uid} uid={m.uid} room={room} selected={state.mentionTo.has(m.uid)} />
+            <MemberChip key={m.id} id={m.id} room={room} selected={state.mentionTo.has(m.id)} />
           ))}
         </div>
       </header>

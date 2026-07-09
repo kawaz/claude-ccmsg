@@ -55,12 +55,12 @@ describe("ccmsg CLI end-to-end", () => {
       expect(created.ok).toBe(true);
       const room = created.room;
 
-      // session identity was applied: the room's sole member is S1 (uid 1)
+      // session identity was applied: the room's sole member is S1 (id "a1")
       const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
-        rooms: { id: string; members: { uid: number; sid: string }[] }[];
+        rooms: { id: string; members: { id: string; sid: string }[] }[];
       };
       expect(rooms.rooms.length).toBe(1);
-      expect(rooms.rooms[0]!.members[0]).toMatchObject({ uid: 1, sid: "S1" });
+      expect(rooms.rooms[0]!.members[0]).toMatchObject({ id: "a1", sid: "S1" });
 
       // post + read round trip
       const posted = JSON.parse(
@@ -101,7 +101,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("Usage:");
       expect(help.out).toContain("Environment Variables:");
 
-      // --as-user: the User (uid 0) is implicit, so the created room's only member row is the listed peer Z
+      // --as-user: the User (id "u1") is implicit, so the created room's only member row is the listed peer Z
       const created = JSON.parse(
         (await runCli(["--as-user", "create-room", "--members", "Z"], env)).out,
       ) as {
@@ -110,10 +110,10 @@ describe("ccmsg CLI end-to-end", () => {
       };
       expect(created.ok).toBe(true);
       const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
-        rooms: { members: { uid: number; sid: string }[] }[];
+        rooms: { members: { id: string; sid: string }[] }[];
       };
       expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["Z"]);
-      expect(rooms.rooms[0]!.members[0]!.uid).toBe(1);
+      expect(rooms.rooms[0]!.members[0]!.id).toBe("a1");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();

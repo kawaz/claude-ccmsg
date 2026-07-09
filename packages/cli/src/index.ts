@@ -55,12 +55,12 @@ function str(opts: Record<string, string | boolean>, key: string): string | unde
   return typeof v === "string" ? v : undefined;
 }
 
-function parseUidList(s: string | undefined): number[] | undefined {
+function parseIdList(s: string | undefined): string[] | undefined {
   if (s === undefined) return undefined;
   const out = s
     .split(",")
-    .map((t) => Number(t.trim()))
-    .filter((n) => Number.isInteger(n));
+    .map((t) => t.trim())
+    .filter((t) => t !== "");
   return out.length > 0 ? out : undefined;
 }
 
@@ -122,7 +122,7 @@ async function runSubscribe(
   // an intentional User subscribe states it with --as-user and is not warned.
   if (identity.role === "user" && opts["as-user"] !== true) {
     process.stderr.write(
-      "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_SESSION_ID unset) — subscribing as the User (uid 0). For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
+      "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_SESSION_ID unset) — subscribing as the User (u1). For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
     );
   }
   const paths = resolvePaths();
@@ -212,18 +212,18 @@ Commands:
   daemon stop                  Gracefully stop the running daemon
 
 Command Options:
-  --to <uids>                  post: mention uid(s), comma-separated (e.g. 0,2)
+  --to <ids>                   post: mention member id(s), comma-separated (e.g. u1,a2)
   --members <sids>             create-room: participant sids, comma-separated
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
-  --since <json>               subscribe: per-room last-seen mid, e.g. '{"r-ab12cd34":7}'
+  --since <json>               subscribe: per-room last-seen mid, e.g. '{"r7":7}'
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
   --foreground                 daemon run: also log to stderr
 
 Global Options:
-  --as-user                    Act as the User (uid 0), overriding session detection
+  --as-user                    Act as the User (u1), overriding session detection
   --sid <sid>                  Act as this session id (for 'notify', --sid is the
                                target instead; use --as-session to set identity there)
   --as-session <sid>           Act as this session id (works for every command)
@@ -267,10 +267,10 @@ async function main(): Promise<void> {
 
   switch (cmd) {
     case "post": {
-      const usage = "ccmsg post <room> <msg> [--to <uids>]";
+      const usage = "ccmsg post <room> <msg> [--to <ids>]";
       const room = requireArg(args[0], "room", usage);
       const msg = requireArg(args[1], "msg", usage);
-      const to = parseUidList(str(opts, "to"));
+      const to = parseIdList(str(opts, "to"));
       await runOnce(identity, { op: "post", room, msg, ...(to ? { to } : {}) });
       return;
     }
@@ -302,7 +302,7 @@ async function main(): Promise<void> {
       return;
     }
     case "read": {
-      const usage = 'ccmsg read <room> <mids>   (e.g. ccmsg read r-ab12cd34 "10-15,18")';
+      const usage = 'ccmsg read <room> <mids>   (e.g. ccmsg read r7 "10-15,18")';
       const room = requireArg(args[0], "room", usage);
       const mids = requireArg(args[1], "mids", usage);
       await runOnce(identity, { op: "read", room, mids });

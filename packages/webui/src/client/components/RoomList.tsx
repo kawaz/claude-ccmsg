@@ -6,7 +6,7 @@ export function RoomList({ state }: { state: AppState }) {
   return (
     <ul id="room-list">
       {activeRoomsSorted(state.rooms).map((room) => {
-        const memberCount = [...room.membersByUid.values()].filter((m) => !m.left).length;
+        const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
         return (
           <li key={room.id} class={room.id === state.currentRoomId ? "active" : undefined}>
             <a href={roomHref(room.id)}>

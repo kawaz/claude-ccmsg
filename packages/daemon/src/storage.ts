@@ -34,20 +34,33 @@ export interface Room {
 
 export interface PresentMember extends MemberEvent {}
 
-/** Derive the currently-present members (member minus leave), in uid order. */
-export function presentMembers(room: Room): PresentMember[] {
-  const byUid = new Map<number, MemberEvent>();
-  for (const ev of room.events) {
-    if (ev.type === "member") byUid.set(ev.uid, ev);
-    else if (ev.type === "leave") byUid.delete(ev.uid);
-  }
-  return [...byUid.values()].sort((a, b) => a.uid - b.uid);
+/** Sort key for member ids: `u` namespace before `a`, then numeric suffix ascending. */
+function idSortKey(id: string): [number, number] {
+  const m = /^([ua])(\d+)$/.exec(id);
+  if (!m) return [2, 0]; // unrecognized shape sorts last
+  return [m[1] === "u" ? 0 : 1, Number(m[2])];
 }
 
-/** Map present member sid -> uid. */
-export function memberUidBySid(room: Room): Map<string, number> {
-  const m = new Map<string, number>();
-  for (const mem of presentMembers(room)) m.set(mem.sid, mem.uid);
+function compareIds(a: string, b: string): number {
+  const [ap, an] = idSortKey(a);
+  const [bp, bn] = idSortKey(b);
+  return ap === bp ? an - bn : ap - bp;
+}
+
+/** Derive the currently-present members (member minus leave), in id order (u before a). */
+export function presentMembers(room: Room): PresentMember[] {
+  const byId = new Map<string, MemberEvent>();
+  for (const ev of room.events) {
+    if (ev.type === "member") byId.set(ev.id, ev);
+    else if (ev.type === "leave") byId.delete(ev.id);
+  }
+  return [...byId.values()].sort((a, b) => compareIds(a.id, b.id));
+}
+
+/** Map present member sid -> id. */
+export function memberIdBySid(room: Room): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const mem of presentMembers(room)) m.set(mem.sid, mem.id);
   return m;
 }
 

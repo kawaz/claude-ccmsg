@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   //
   // CCMSG_SID must be embedded in the suggested command: CLAUDE_SESSION_ID is
   // NOT exported to the Bash/Monitor subprocess environment, so without it the
-  // subscribe would silently hello as the User (uid 0) — no peers entry, no
+  // subscribe would silently hello as the User (u1) — no peers entry, no
   // echo suppression. The hook is the one place that reliably knows session_id.
   const sidPrefix = input.session_id ? `CCMSG_SID=${input.session_id} ` : "";
   const additionalContext = [

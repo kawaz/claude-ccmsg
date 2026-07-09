@@ -7,7 +7,7 @@ import {
   appendEvent,
   closeRoom,
   loadRoom,
-  memberUidBySid,
+  memberIdBySid,
   parseMidSelector,
   presentMembers,
   readMsgs,
@@ -47,11 +47,11 @@ describe("loadRoom: torn tail recovery (DR-0002 §6)", () => {
     const { file, log, cleanup } = tmpFile();
     try {
       const good =
-        `${JSON.stringify({ type: "member", uid: 1, sid: "A", repo: "", ws: "", cwd: "", joined_at: "2026-07-03T00:00:00.000Z" })}\n` +
-        `${JSON.stringify({ type: "msg", mid: 1, from: 1, ts: "2026-07-03T00:00:01.000Z", msg: "hi" })}\n` +
-        `${JSON.stringify({ type: "msg", mid: 2, from: 1, ts: "2026-07-03T00:00:02.000Z", msg: "yo" })}\n`;
+        `${JSON.stringify({ type: "member", id: "a1", sid: "A", repo: "", ws: "", cwd: "", joined_at: "2026-07-03T00:00:00.000Z" })}\n` +
+        `${JSON.stringify({ type: "msg", mid: 1, from: "a1", ts: "2026-07-03T00:00:01.000Z", msg: "hi" })}\n` +
+        `${JSON.stringify({ type: "msg", mid: 2, from: "a1", ts: "2026-07-03T00:00:02.000Z", msg: "yo" })}\n`;
       // simulate a process killed partway through writing msg 3 (no trailing newline)
-      const torn = `{"type":"msg","mid":3,"from":1,"ts":"2026-07-03T00:00:03.00`;
+      const torn = `{"type":"msg","mid":3,"from":"a1","ts":"2026-07-03T00:00:03.00`;
       fs.writeFileSync(file, good + torn);
 
       const room = loadRoom(file, "r-test", log);
@@ -83,7 +83,7 @@ describe("loadRoom: torn tail recovery (DR-0002 §6)", () => {
       const line = JSON.stringify({
         type: "msg",
         mid: 1,
-        from: 1,
+        from: "a1",
         ts: "2026-07-03T00:00:01.000Z",
         msg: "hi",
       });
@@ -107,7 +107,7 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
       let room = loadRoom(file, "r-test", log);
       appendEvent(room, {
         type: "member",
-        uid: 1,
+        id: "a1",
         sid: "A",
         repo: "",
         ws: "",
@@ -117,14 +117,14 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
       appendEvent(room, {
         type: "msg",
         mid: room.lastMid + 1,
-        from: 1,
+        from: "a1",
         ts: new Date().toISOString(),
         msg: "a",
       });
       appendEvent(room, {
         type: "msg",
         mid: room.lastMid + 1,
-        from: 1,
+        from: "a1",
         ts: new Date().toISOString(),
         msg: "b",
       });
@@ -137,7 +137,7 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
       appendEvent(room, {
         type: "msg",
         mid: nextMid,
-        from: 1,
+        from: "a1",
         ts: new Date().toISOString(),
         msg: "c",
       });
@@ -150,16 +150,17 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
 });
 
 describe("membership derivation", () => {
-  // Present membership = member events minus subsequent leave events. uid order is the
-  // join order (DR-0003 §2). A left member disappears from the present set.
-  test("leave removes a member; present set is uid-ordered", () => {
+  // Present membership = member events minus subsequent leave events. id order is the
+  // join order within a namespace, u before a (DR-0006). A left member disappears
+  // from the present set.
+  test("leave removes a member; present set is id-ordered", () => {
     const { file, log, cleanup } = tmpFile();
     try {
       const room = loadRoom(file, "r-test", log);
       const ts = new Date().toISOString();
       appendEvent(room, {
         type: "member",
-        uid: 1,
+        id: "a1",
         sid: "A",
         repo: "",
         ws: "",
@@ -168,7 +169,7 @@ describe("membership derivation", () => {
       });
       appendEvent(room, {
         type: "member",
-        uid: 2,
+        id: "a2",
         sid: "B",
         repo: "",
         ws: "",
@@ -177,20 +178,54 @@ describe("membership derivation", () => {
       });
       appendEvent(room, {
         type: "member",
-        uid: 3,
+        id: "a3",
         sid: "C",
         repo: "",
         ws: "",
         cwd: "",
         joined_at: ts,
       });
-      appendEvent(room, { type: "leave", uid: 2, ts });
+      appendEvent(room, { type: "leave", id: "a2", ts });
       const present = presentMembers(room);
-      expect(present.map((m) => m.uid)).toEqual([1, 3]);
-      const bySid = memberUidBySid(room);
-      expect(bySid.get("A")).toBe(1);
+      expect(present.map((m) => m.id)).toEqual(["a1", "a3"]);
+      const bySid = memberIdBySid(room);
+      expect(bySid.get("A")).toBe("a1");
       expect(bySid.has("B")).toBe(false);
-      expect(bySid.get("C")).toBe(3);
+      expect(bySid.get("C")).toBe("a3");
+      closeRoom(room);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // u-namespace (guest) members sort before a-namespace (agent) members regardless
+  // of join order, and each namespace's numeric suffix orders within itself.
+  test("present set sorts u-namespace before a-namespace", () => {
+    const { file, log, cleanup } = tmpFile();
+    try {
+      const room = loadRoom(file, "r-test", log);
+      const ts = new Date().toISOString();
+      appendEvent(room, {
+        type: "member",
+        id: "a1",
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
+      appendEvent(room, {
+        type: "member",
+        id: "u2",
+        sid: "B",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+        role: "guest",
+      });
+      const present = presentMembers(room);
+      expect(present.map((m) => m.id)).toEqual(["u2", "a1"]);
       closeRoom(room);
     } finally {
       cleanup();
@@ -208,7 +243,7 @@ describe("readMsgs", () => {
       const ts = new Date().toISOString();
       appendEvent(room, {
         type: "member",
-        uid: 1,
+        id: "a1",
         sid: "A",
         repo: "",
         ws: "",
@@ -216,7 +251,7 @@ describe("readMsgs", () => {
         joined_at: ts,
       });
       for (let i = 1; i <= 5; i++) {
-        appendEvent(room, { type: "msg", mid: i, from: 1, ts, msg: `m${i}` });
+        appendEvent(room, { type: "msg", mid: i, from: "a1", ts, msg: `m${i}` });
       }
       const got = readMsgs(room, parseMidSelector("2-4"));
       expect(got.map((m) => m.mid)).toEqual([2, 3, 4]);

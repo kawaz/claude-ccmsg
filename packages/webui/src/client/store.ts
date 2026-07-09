@@ -5,10 +5,15 @@
 // Effects (WS connect/reconnect, hello/subscribe handshake, localStorage) live
 // in ws.ts and dispatch actions here; nothing in this file touches the network
 // or the DOM.
-import type { DeliveredEvent, MemberEvent, PeerInfo, RoomSummary } from "@ccmsg/protocol";
+import {
+  ADMIN_ID,
+  type DeliveredEvent,
+  type MemberEvent,
+  type PeerInfo,
+  type RoomSummary,
+} from "@ccmsg/protocol";
 
-/** Reserved uid for the User (kawaz); mirrors @ccmsg/protocol USER_UID. */
-export const USER_UID = 0;
+export { ADMIN_ID };
 
 export interface MemberInfo extends MemberEvent {
   left: boolean;
@@ -17,8 +22,8 @@ export interface MemberInfo extends MemberEvent {
 export interface RoomState {
   id: string;
   title?: string;
-  membersByUid: Map<number, MemberInfo>;
-  memberOrder: number[];
+  membersById: Map<string, MemberInfo>;
+  memberOrder: string[];
   msgs: Map<number, DeliveredEvent & { type: "msg" }>;
   timeline: DeliveredEvent[];
   lastMid: number;
@@ -34,7 +39,7 @@ export interface AppState {
   /** message anchor requested by the URL locator (`#room-mNN`), if any. */
   currentMid: number | null;
   /** mention targets staged for the composer of the current room. */
-  mentionTo: Set<number>;
+  mentionTo: Set<string>;
   connStatus: ConnStatus;
   sidebarOpen: boolean;
 }
@@ -57,14 +62,14 @@ export type Action =
   | { type: "peers/loaded"; peers: PeerInfo[] }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; room: string | null; mid: number | null }
-  | { type: "mention/toggle"; uid: number }
+  | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean };
 
 function newRoom(id: string): RoomState {
   return {
     id,
     title: undefined,
-    membersByUid: new Map(),
+    membersById: new Map(),
     memberOrder: [],
     msgs: new Map(),
     timeline: [],
@@ -82,10 +87,10 @@ function withRoom(rooms: Map<string, RoomState>, id: string): [RoomState, Map<st
 }
 
 function upsertMember(room: RoomState, m: MemberEvent): RoomState {
-  const membersByUid = new Map(room.membersByUid);
-  const memberOrder = membersByUid.has(m.uid) ? room.memberOrder : [...room.memberOrder, m.uid];
-  membersByUid.set(m.uid, { ...m, left: membersByUid.get(m.uid)?.left ?? false });
-  return { ...room, membersByUid, memberOrder };
+  const membersById = new Map(room.membersById);
+  const memberOrder = membersById.has(m.id) ? room.memberOrder : [...room.memberOrder, m.id];
+  membersById.set(m.id, { ...m, left: membersById.get(m.id)?.left ?? false });
+  return { ...room, membersById, memberOrder };
 }
 
 function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
@@ -116,10 +121,10 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
       room = { ...room, timeline: [...room.timeline, ev] };
       break;
     case "leave": {
-      const membersByUid = new Map(room.membersByUid);
-      const m = membersByUid.get(ev.uid);
-      if (m) membersByUid.set(ev.uid, { ...m, left: true });
-      room = { ...room, membersByUid, timeline: [...room.timeline, ev] };
+      const membersById = new Map(room.membersById);
+      const m = membersById.get(ev.id);
+      if (m) membersById.set(ev.id, { ...m, left: true });
+      room = { ...room, membersById, timeline: [...room.timeline, ev] };
       break;
     }
     case "msg":
@@ -165,8 +170,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "mention/toggle": {
       const mentionTo = new Set(state.mentionTo);
-      if (mentionTo.has(action.uid)) mentionTo.delete(action.uid);
-      else mentionTo.add(action.uid);
+      if (mentionTo.has(action.id)) mentionTo.delete(action.id);
+      else mentionTo.add(action.id);
       return { ...state, mentionTo };
     }
     case "sidebar/set":

@@ -1,5 +1,5 @@
 // HTTP/WS transport (DR-0004): /ws speaks the same line protocol as UDS, browsers are
-// identity-pinned to uid 0 (User), and CCMSG_HTTP_BIND controls whether it exists at all.
+// identity-pinned to id "u1" (User), and CCMSG_HTTP_BIND controls whether it exists at all.
 import { describe, expect, test } from "bun:test";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
 
@@ -189,7 +189,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
-    "identity pinning: a hello claiming role:session over WS is repinned to user (post.from === 0)",
+    'identity pinning: a hello claiming role:session over WS is repinned to user (post.from === "u1")',
     async () => {
       const ctx = await startHttpDaemon();
       try {
@@ -215,12 +215,12 @@ describe("HTTP/WS transport (DR-0004)", () => {
         });
         expect(posted.ok).toBe(true);
 
-        const read = await ws.request<{ ok: true; msgs: { from: number }[] }>({
+        const read = await ws.request<{ ok: true; msgs: { from: string }[] }>({
           op: "read",
           room: created.room,
           mids: [posted.mid],
         });
-        expect(read.msgs[0]!.from).toBe(0); // USER_UID, not a session member uid
+        expect(read.msgs[0]!.from).toBe("u1"); // ADMIN_ID, not a session member id
 
         ws.close();
         owner.close();
@@ -252,7 +252,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
         await wsUser.hello({ role: "user" });
         await wsUser.request({ op: "subscribe" });
 
-        // UDS session posts -> WS user (uid 0, sees every room per DR-0003 §5) receives it live
+        // UDS session posts -> WS user (id "u1", sees every room per DR-0003 §5) receives it live
         await udsSession.request({ op: "post", room, msg: "from uds" });
         const { ev: fromUds } = await wsUser.readEventUntil(
           (e) => e.type === "msg" && e.msg === "from uds",
@@ -264,7 +264,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
         const { ev: fromWs } = await udsSub.readEventUntil(
           (e) => e.type === "msg" && e.msg === "from ws",
         );
-        expect(fromWs.from).toBe(0); // the WS poster, pinned to user
+        expect(fromWs.from).toBe("u1"); // the WS poster, pinned to user
 
         udsSession.close();
         udsSub.close();

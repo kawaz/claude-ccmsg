@@ -2,7 +2,7 @@
 // DR-0005 §1: "副作用...は store の外 (effect 層) に隔離"). Owns the
 // WebSocket lifecycle (connect/reconnect/hello/subscribe handshake) and
 // translates everything it observes into store actions; the reducer never
-// touches the network. HTTP/WS connections are pinned to role "user" (uid 0)
+// touches the network. HTTP/WS connections are pinned to role "user" (u1)
 // server-side regardless of what we send, so we always hello as user.
 //
 // Responses vs. pushed events share one socket with no request id in the wire
@@ -48,7 +48,7 @@ function saveSince(since: Record<string, number>): void {
 export interface WsHandle {
   connect(): void;
   close(): void;
-  post(room: string, msg: string, to?: number[]): Promise<PostResponse | ErrorResponse>;
+  post(room: string, msg: string, to?: string[]): Promise<PostResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
 }

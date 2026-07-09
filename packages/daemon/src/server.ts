@@ -1,11 +1,11 @@
 // UDS + HTTP/WS server + wire protocol dispatch + delivery (DR-0003, DR-0004).
 import * as fs from "node:fs";
 import {
+  ADMIN_ID,
   DEFAULT_DEDUP_WINDOW_MS,
   DEFAULT_HTTP_BIND,
   DEFAULT_JOIN_BACKLOG,
   ErrorCode,
-  USER_UID,
   VERSION,
   resolvePaths,
   type Identity,
@@ -26,7 +26,7 @@ import {
   appendEvent,
   closeRoom,
   lastTs,
-  memberUidBySid,
+  memberIdBySid,
   parseMidSelector,
   presentMembers,
   readMsgs,
@@ -117,26 +117,26 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   }
 }
 
-/** uid the connection posts as in this room: 0 for user, member uid for a session, null if a session that isn't a member. */
-function resolveFrom(conn: Conn, room: Room): number | null {
+/** id the connection posts as in this room: "u1" for the admin user, member id for a session, null if a session that isn't a member. */
+function resolveFrom(conn: Conn, room: Room): string | null {
   const id = conn.identity;
   if (!id) return null;
-  if (id.role === "user") return USER_UID;
-  return memberUidBySid(room).get(id.sid) ?? null;
+  if (id.role === "user") return ADMIN_ID;
+  return memberIdBySid(room).get(id.sid) ?? null;
 }
 
 function subscriberSeesRoom(conn: Conn, room: Room): boolean {
   const id = conn.identity;
   if (!id) return false;
-  if (id.role === "user") return true; // user (uid 0) sees every room (DR-0003 §5)
-  return memberUidBySid(room).has(id.sid);
+  if (id.role === "user") return true; // admin (u1) sees every room (DR-0003 §5)
+  return memberIdBySid(room).has(id.sid);
 }
 
-function normalizeTo(to: number | number[] | undefined): number[] | undefined {
+function normalizeTo(to: string | string[] | undefined): string[] | undefined {
   if (to === undefined) return undefined;
   const arr = Array.isArray(to) ? to : [to];
-  const ints = arr.filter((n) => Number.isInteger(n));
-  return ints.length > 0 ? ints : undefined;
+  const ids = arr.filter((s): s is string => typeof s === "string" && s.length > 0);
+  return ids.length > 0 ? ids : undefined;
 }
 
 // --- delivery --------------------------------------------------------------
@@ -176,9 +176,9 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
  * Initial/backlog delivery of a room to one subscriber.
  * - with sinceMid: positional delta — everything after the msg with that mid (BBS replay).
  * - without: present member state + title/link events + the last N=50 msgs (join snapshot).
- * suppressAuthorUid drops the author's own just-posted msg from their snapshot (echo rule).
+ * suppressAuthorId drops the author's own just-posted msg from their snapshot (echo rule).
  */
-function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorUid?: number): void {
+function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId?: string): void {
   if (sinceMid !== undefined) {
     // resume just after the last msg the client has already seen. Anchoring on
     // "last msg with mid <= sinceMid" is correct at both ends: a caught-up client
@@ -195,45 +195,48 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorUi
     return;
   }
 
-  const presentUids = new Set(presentMembers(room).map((m) => m.uid));
+  const presentIds = new Set(presentMembers(room).map((m) => m.id));
   const msgEvents = room.events.filter((e): e is MsgEvent => e.type === "msg");
   const recent = new Set(msgEvents.slice(-DEFAULT_JOIN_BACKLOG));
   for (const ev of room.events) {
     if (ev.type === "leave") continue;
-    if (ev.type === "member" && !presentUids.has(ev.uid)) continue;
+    if (ev.type === "member" && !presentIds.has(ev.id)) continue;
     if (ev.type === "msg") {
       if (!recent.has(ev)) continue;
-      if (suppressAuthorUid !== undefined && ev.from === suppressAuthorUid) continue;
+      if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
     }
     writeDelivered(conn, room.id, ev);
   }
 }
 
 /** Deliver a brand-new room's snapshot to every subscriber that sees it. */
-function deliverNewRoom(
-  daemon: Daemon,
-  room: Room,
-  author: Author,
-  authorUid: number | null,
-): void {
+function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: string | null): void {
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
-    const suppress = isAuthorSub(sub, author) && authorUid !== null ? authorUid : undefined;
+    const suppress = isAuthorSub(sub, author) && authorId !== null ? authorId : undefined;
     sendBacklog(sub, room, undefined, suppress);
   }
 }
 
 // --- room creation ---------------------------------------------------------
 
-// Room ids are opaque, daemon-issued, unique strings — the `r-` shape here is a free
-// implementation choice, NOT a wire contract. Clients (and the daemon's own lookup /
-// filename mapping) treat ids as opaque, so this could be a bare counter or any other
-// unique token without changing semantics. Never parse structure out of a room id.
+// Room ids are opaque, daemon-issued, unique strings — the `rN` shape here is a free
+// generation choice (DR-0006 §3), NOT a wire contract. Clients (and the daemon's own
+// lookup / filename mapping) treat ids as opaque. Never parse structure out of a room
+// id. The next number is derived from the highest `rN` already on disk/in-memory, so
+// numbering survives a daemon restart without colliding with existing rooms.
 function generateRoomId(daemon: Daemon): string {
-  for (;;) {
-    const id = `r-${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`;
-    if (!daemon.rooms.has(id)) return id;
+  let n = 1;
+  for (const id of daemon.rooms.keys()) {
+    const m = /^r(\d+)$/.exec(id);
+    if (m) {
+      const v = Number(m[1]);
+      if (v >= n) n = v + 1;
+    }
   }
+  let id = `r${n}`;
+  while (daemon.rooms.has(id)) id = `r${++n}`;
+  return id;
 }
 
 function createRoom(daemon: Daemon, orderedSids: string[], dedupEligible: boolean): Room {
@@ -256,12 +259,12 @@ function createRoom(daemon: Daemon, orderedSids: string[], dedupEligible: boolea
 }
 
 function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
-  let uid = 1;
+  let seq = 1;
   for (const sid of orderedSids) {
     const meta = daemon.sessions.get(sid)?.meta;
     const ev: MemberEvent = {
       type: "member",
-      uid: uid++,
+      id: `a${seq++}`,
       sid,
       repo: meta?.repo ?? "",
       ws: meta?.ws ?? "",
@@ -409,16 +412,16 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       if (req.title)
         appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
       let mid: number | undefined;
-      let authorUid: number | null = null;
+      let authorId: string | null = null;
       if (req.msg) {
-        authorUid = resolveFrom(conn, room);
-        if (authorUid !== null) {
+        authorId = resolveFrom(conn, room);
+        if (authorId !== null) {
           mid = room.lastMid + 1;
-          appendEvent(room, { type: "msg", mid, from: authorUid, ts: nowIso(), msg: req.msg });
+          appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
         }
       }
       daemon.dedupIndex.set(room.dedupKey, room.id);
-      deliverNewRoom(daemon, room, authorOf(conn), authorUid);
+      deliverNewRoom(daemon, room, authorOf(conn), authorId);
       send(conn, { ok: true, room: room.id, reused: false, ...(mid !== undefined ? { mid } : {}) });
       return;
     }
@@ -439,16 +442,21 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         inherited.map((m) => m.sid),
         false,
       );
-      let uid = 1;
+      // Renumber per namespace, preserving each member's u/a namespace and relative
+      // join order. Guests (u2+) stay guests; agents (a-namespace) stay agents.
+      let aSeq = 1;
+      let uSeq = 2; // u1 is the implicit admin, never present in `inherited`
       for (const m of inherited) {
+        const isGuest = m.id.startsWith("u");
         appendEvent(room, {
           type: "member",
-          uid: uid++,
+          id: isGuest ? `u${uSeq++}` : `a${aSeq++}`,
           sid: m.sid,
           repo: m.repo,
           ws: m.ws,
           cwd: m.cwd,
           joined_at: nowIso(),
+          ...(isGuest ? { role: "guest" as const } : {}),
         } satisfies MemberEvent);
       }
       appendEvent(room, { type: "prev", room: old.id, ts: nowIso() });
@@ -457,17 +465,17 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       if (req.title)
         appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
       let mid: number | undefined;
-      let authorUid: number | null = null;
+      let authorId: string | null = null;
       if (req.msg) {
-        authorUid = resolveFrom(conn, room);
-        if (authorUid !== null) {
+        authorId = resolveFrom(conn, room);
+        if (authorId !== null) {
           mid = room.lastMid + 1;
-          appendEvent(room, { type: "msg", mid, from: authorUid, ts: nowIso(), msg: req.msg });
+          appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
         }
       }
       // old room subscribers see the `next` link live; new room subscribers get its snapshot
       deliver(daemon, old, nextEv, authorOf(conn));
-      deliverNewRoom(daemon, room, authorOf(conn), authorUid);
+      deliverNewRoom(daemon, room, authorOf(conn), authorId);
       send(conn, { ok: true, room: room.id, ...(mid !== undefined ? { mid } : {}) });
       return;
     }
@@ -548,12 +556,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
         return;
       }
-      const uid = resolveFrom(conn, room);
-      if (uid === null || uid === USER_UID) {
+      const memberId = resolveFrom(conn, room);
+      if (memberId === null || memberId === ADMIN_ID) {
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      const ev: LeaveEvent = { type: "leave", uid, ts: nowIso() };
+      const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
       // capture recipients before membership shrinks so the leaver gets confirmation too
       const recipients = [...daemon.subscribers].filter((s) => subscriberSeesRoom(s, room));
       appendEvent(room, ev);

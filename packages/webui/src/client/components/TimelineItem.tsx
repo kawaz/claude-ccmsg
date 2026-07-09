@@ -1,5 +1,5 @@
 import type { DeliveredEvent } from "@ccmsg/protocol";
-import { USER_UID } from "../store.ts";
+import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { memberLabel, relTime } from "../utils.ts";
@@ -9,13 +9,13 @@ export function TimelineItem({ event, room }: { event: DeliveredEvent; room: Roo
     case "msg":
       return (
         <div
-          class={"msg" + (event.from === USER_UID ? " msg-user" : "")}
+          class={"msg" + (event.from === ADMIN_ID ? " msg-user" : "")}
           id={anchorId(room.id, event.mid)}
         >
           <div class="msg-meta">
             <span class="msg-from">{memberLabel(event.from, room)}</span>
             {event.to?.length ? (
-              <span class="msg-to">→ {event.to.map((u) => memberLabel(u, room)).join(", ")}</span>
+              <span class="msg-to">→ {event.to.map((id) => memberLabel(id, room)).join(", ")}</span>
             ) : null}
             <span class="msg-time">{relTime(event.ts)}</span>
             <a class="msg-anchor" href={messageHref(room.id, event.mid)}>
@@ -26,9 +26,9 @@ export function TimelineItem({ event, room }: { event: DeliveredEvent; room: Roo
         </div>
       );
     case "member":
-      return <div class="event event-member">+ {memberLabel(event.uid, room)} が参加</div>;
+      return <div class="event event-member">+ {memberLabel(event.id, room)} が参加</div>;
     case "leave":
-      return <div class="event event-leave">− {memberLabel(event.uid, room)} が退出</div>;
+      return <div class="event event-leave">− {memberLabel(event.id, room)} が退出</div>;
     case "title":
       return <div class="event event-title">title: {event.title}</div>;
     case "next":

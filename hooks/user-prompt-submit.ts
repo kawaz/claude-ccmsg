@@ -154,7 +154,7 @@ async function main(): Promise<void> {
 
   const bin = resolveBin();
   // CCMSG_SID prefix: CLAUDE_SESSION_ID is not exported to Monitor subprocesses,
-  // so a bare `ccmsg subscribe` would hello as the User (uid 0) instead of this
+  // so a bare `ccmsg subscribe` would hello as the User (u1) instead of this
   // session (no peers entry, no echo suppression). See session-start.ts.
   const sidPrefix = sessionId ? `CCMSG_SID=${sessionId} ` : "";
   // stdout is injected into the next turn as a <system-reminder>.

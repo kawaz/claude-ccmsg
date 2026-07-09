@@ -5,11 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import type { DeliveredEvent, MemberEvent, RoomSummary } from "@ccmsg/protocol";
 import {
+  ADMIN_ID,
   type Action,
   type AppState,
   initialState,
   reducer,
-  USER_UID,
 } from "../src/client/store.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
@@ -18,7 +18,7 @@ function dispatch(state: AppState, action: Action): AppState {
 
 const member: MemberEvent = {
   type: "member",
-  uid: 1,
+  id: "a1",
   sid: "sid-abcdefgh",
   repo: "kawaz/claude-ccmsg",
   ws: "main",
@@ -45,9 +45,9 @@ describe("reducer / rooms/loaded", () => {
     expect(room).toBeDefined();
     expect(room?.title).toBe("hello");
     expect(room?.lastMid).toBe(3);
-    expect(room?.membersByUid.get(1)?.repo).toBe("kawaz/claude-ccmsg");
-    expect(room?.membersByUid.get(1)?.left).toBe(false);
-    expect(room?.memberOrder).toEqual([1]);
+    expect(room?.membersById.get("a1")?.repo).toBe("kawaz/claude-ccmsg");
+    expect(room?.membersById.get("a1")?.left).toBe(false);
+    expect(room?.memberOrder).toEqual(["a1"]);
   });
 
   test("does not mutate the previous state (reducer purity)", () => {
@@ -68,7 +68,7 @@ describe("reducer / protocol-event msg", () => {
     const ev: DeliveredEvent = {
       type: "msg",
       mid: 1,
-      from: USER_UID,
+      from: ADMIN_ID,
       ts: "2026-07-09T00:00:00.000Z",
       msg: "hi",
       r: "r1",
@@ -85,7 +85,7 @@ describe("reducer / protocol-event msg", () => {
     const ev: DeliveredEvent = {
       type: "msg",
       mid: 1,
-      from: USER_UID,
+      from: ADMIN_ID,
       ts: "2026-07-09T00:00:00.000Z",
       msg: "hi",
       r: "r1",
@@ -98,25 +98,25 @@ describe("reducer / protocol-event msg", () => {
   test("lastMid tracks the max seen mid even out of order", () => {
     const first = dispatch(initialState(), {
       type: "protocol-event",
-      event: { type: "msg", mid: 5, from: USER_UID, ts: "t1", msg: "a", r: "r1" },
+      event: { type: "msg", mid: 5, from: ADMIN_ID, ts: "t1", msg: "a", r: "r1" },
     });
     const second = dispatch(first, {
       type: "protocol-event",
-      event: { type: "msg", mid: 2, from: USER_UID, ts: "t2", msg: "b", r: "r1" },
+      event: { type: "msg", mid: 2, from: ADMIN_ID, ts: "t2", msg: "b", r: "r1" },
     });
     expect(second.rooms.get("r1")?.lastMid).toBe(5);
   });
 });
 
 describe("reducer / protocol-event member & leave", () => {
-  test("member event adds to membersByUid and memberOrder, in-order timeline entry", () => {
+  test("member event adds to membersById and memberOrder, in-order timeline entry", () => {
     const state = dispatch(initialState(), {
       type: "protocol-event",
       event: { ...member, r: "r1" },
     });
     const room = state.rooms.get("r1");
-    expect(room?.membersByUid.get(1)?.left).toBe(false);
-    expect(room?.memberOrder).toEqual([1]);
+    expect(room?.membersById.get("a1")?.left).toBe(false);
+    expect(room?.memberOrder).toEqual(["a1"]);
     expect(room?.timeline).toHaveLength(1);
   });
 
@@ -127,20 +127,20 @@ describe("reducer / protocol-event member & leave", () => {
     });
     const left = dispatch(joined, {
       type: "protocol-event",
-      event: { type: "leave", uid: 1, ts: "2026-07-09T00:02:00.000Z", r: "r1" },
+      event: { type: "leave", id: "a1", ts: "2026-07-09T00:02:00.000Z", r: "r1" },
     });
     const room = left.rooms.get("r1");
-    expect(room?.membersByUid.get(1)?.left).toBe(true);
-    expect(room?.memberOrder).toEqual([1]); // still listed, just marked left
+    expect(room?.membersById.get("a1")?.left).toBe(true);
+    expect(room?.memberOrder).toEqual(["a1"]); // still listed, just marked left
     expect(room?.timeline).toHaveLength(2);
   });
 
-  test("leave for an unknown uid is a no-op on membersByUid but still recorded in timeline", () => {
+  test("leave for an unknown id is a no-op on membersById but still recorded in timeline", () => {
     const state = dispatch(initialState(), {
       type: "protocol-event",
-      event: { type: "leave", uid: 99, ts: "t", r: "r1" },
+      event: { type: "leave", id: "a99", ts: "t", r: "r1" },
     });
-    expect(state.rooms.get("r1")?.membersByUid.has(99)).toBe(false);
+    expect(state.rooms.get("r1")?.membersById.has("a99")).toBe(false);
     expect(state.rooms.get("r1")?.timeline).toHaveLength(1);
   });
 });
@@ -180,7 +180,7 @@ describe("reducer / conn/status", () => {
 
 describe("reducer / locator/changed", () => {
   test("sets currentRoomId + currentMid and resets mentionTo + closes mobile sidebar", () => {
-    const withMention = dispatch(initialState(), { type: "mention/toggle", uid: 1 });
+    const withMention = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
     const withSidebar = dispatch(withMention, { type: "sidebar/set", open: true });
     const state = dispatch(withSidebar, { type: "locator/changed", room: "r1", mid: 4 });
     expect(state.currentRoomId).toBe("r1");
@@ -196,11 +196,11 @@ describe("reducer / locator/changed", () => {
 });
 
 describe("reducer / mention/toggle", () => {
-  test("toggles a uid in and out of mentionTo", () => {
-    const added = dispatch(initialState(), { type: "mention/toggle", uid: 1 });
-    expect(added.mentionTo.has(1)).toBe(true);
-    const removed = dispatch(added, { type: "mention/toggle", uid: 1 });
-    expect(removed.mentionTo.has(1)).toBe(false);
+  test("toggles an id in and out of mentionTo", () => {
+    const added = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
+    expect(added.mentionTo.has("a1")).toBe(true);
+    const removed = dispatch(added, { type: "mention/toggle", id: "a1" });
+    expect(removed.mentionTo.has("a1")).toBe(false);
   });
 });
 

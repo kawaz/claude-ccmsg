@@ -48,6 +48,8 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 ### 5. ロケータ記法を webui の URL/anchor として採用 [kawaz §7 メモの採用判断]
 
 - room 選択は `/#rXXXX`、メッセージ位置は `/#rXXXX-mNN` (fragment がそのまま locator になる)。member 表示は uid (`uNN`) を添える
+
+> **Superseded by [DR-0006](./DR-0006-id-scheme-v2.md)**: member 表示は uid ではなく型付き文字列 `id` (`u1`/`a2`...) をそのまま添える (`#r7-u1` / `#r7-a2`)。
 - issue `2026-07-03-locator-syntax-for-rooms-and-messages` の「webui 設計時に採否判断」への回答: **`#r` / `#m` / `#u` を採用、`#t` は不採用** (kawaz 2026-07-09 回答: thread 想定だった可能性、room 系列は `#r` で足りる)
 - member イベントの repo/ws/cwd から Finder / VSCode / gh を開く機能 [kawaz §7] は本 MVP では**表示のみ** (リンク起動は後続。ブラウザ→ローカルアプリ起動は tailscale 越しスマホでは意味を持たないため設計を分ける必要がある)
 

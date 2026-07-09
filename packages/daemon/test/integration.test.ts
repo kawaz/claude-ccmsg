@@ -67,18 +67,18 @@ describe("wire protocol integration", () => {
         await aSub.request({ op: "subscribe" });
         await bSub.request({ op: "subscribe" });
 
-        await aPost.request({ op: "post", room, msg: "from A" }); // mid 1, from uid 1
-        await bPost.request({ op: "post", room, msg: "from B" }); // mid 2, from uid 2
+        await aPost.request({ op: "post", room, msg: "from A" }); // mid 1, from a1
+        await bPost.request({ op: "post", room, msg: "from B" }); // mid 2, from a2
 
         // A's stream skips its own mid 1 (echo) and first sees B's mid 2
         const aFirst = await aSub.readEventUntil((ev) => ev.type === "msg");
         expect(aFirst.ev.mid).toBe(2);
-        expect(aFirst.ev.from).toBe(2);
+        expect(aFirst.ev.from).toBe("a2");
 
         // B's stream skips its own mid 2 and first sees A's mid 1
         const bFirst = await bSub.readEventUntil((ev) => ev.type === "msg");
         expect(bFirst.ev.mid).toBe(1);
-        expect(bFirst.ev.from).toBe(1);
+        expect(bFirst.ev.from).toBe("a1");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -107,16 +107,16 @@ describe("wire protocol integration", () => {
         await cSub.request({ op: "subscribe" });
         await aSub.request({ op: "subscribe" });
 
-        // A mentions only B (uid 2). C (uid 3) is NOT mentioned.
-        await aPost.request({ op: "post", room, msg: "hey", to: [2] });
+        // A mentions only B (a2). C (a3) is NOT mentioned.
+        await aPost.request({ op: "post", room, msg: "hey", to: ["a2"] });
 
         // both the mentioned member (B) and the unmentioned member (C) receive it
         const bGot = await bSub.readEventUntil((ev) => ev.type === "msg");
         expect(bGot.ev.msg).toBe("hey");
-        expect(bGot.ev.to).toEqual([2]);
+        expect(bGot.ev.to).toEqual(["a2"]);
         const cGot = await cSub.readEventUntil((ev) => ev.type === "msg");
         expect(cGot.ev.msg).toBe("hey");
-        expect(cGot.ev.to).toEqual([2]); // C sees the mention marker but is still delivered
+        expect(cGot.ev.to).toEqual(["a2"]); // C sees the mention marker but is still delivered
 
         // the author still gets no echo: after a co-member posts, A's first msg is that one
         await bPost.request({ op: "post", room, msg: "second" }); // mid 2 from B
@@ -231,7 +231,7 @@ describe("wire protocol integration", () => {
         const bNewMember = await bSub.readEventUntil(
           (ev) => ev.r === newRoom && ev.type === "member" && ev.sid === "B",
         );
-        expect(bNewMember.ev.uid).toBe(2);
+        expect(bNewMember.ev.id).toBe("a2");
 
         // the durable link pair is recorded on both sides (DR-0003 §2/§4)
         const oldRead = await aPost.request<{ msgs: unknown[] }>({
@@ -329,15 +329,15 @@ describe("wire protocol integration", () => {
   );
 
   test(
-    "uid 0 (User) is an implicit member of every room; a non-member session cannot post",
+    "id u1 (User) is an implicit member of every room; a non-member session cannot post",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const a = await session(ctx, "A");
         const created = await a.request<{ room: string }>({ op: "create_room", members: [] });
-        const room = created.room; // members: just A (uid 1)
+        const room = created.room; // members: just A (a1)
 
-        // the User posts without any member row and is stamped from = 0
+        // the User posts without any member row and is stamped from = "u1"
         const u = await user(ctx);
         const posted = await u.request<{ ok: boolean; mid: number }>({
           op: "post",
@@ -345,8 +345,8 @@ describe("wire protocol integration", () => {
           msg: "hi from user",
         });
         expect(posted.ok).toBe(true);
-        const read = await u.request<{ msgs: { from: number }[] }>({ op: "read", room, mids: "1" });
-        expect(read.msgs[0]!.from).toBe(0);
+        const read = await u.request<{ msgs: { from: string }[] }>({ op: "read", room, mids: "1" });
+        expect(read.msgs[0]!.from).toBe("u1");
 
         // a session that isn't a member is refused (only User is implicit)
         const c = await session(ctx, "C");
@@ -362,7 +362,7 @@ describe("wire protocol integration", () => {
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe" });
         const seenMsg = await uSub.readEventUntil((ev) => ev.type === "msg" && ev.r === room);
-        expect(seenMsg.ev.from).toBe(0);
+        expect(seenMsg.ev.from).toBe("u1");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -536,7 +536,7 @@ describe("wire protocol integration", () => {
         const bLeave = await session(ctx, "B");
         await aSub.request({ op: "subscribe" });
 
-        // leave is a member-only op: uid must resolve and must not be the implicit User (uid 0)
+        // leave is a member-only op: id must resolve and must not be the implicit User (u1)
         const left = await bLeave.request<{ ok: boolean; room: string }>({ op: "leave", room });
         expect(left.ok).toBe(true);
         expect(left.room).toBe(room);
@@ -545,7 +545,7 @@ describe("wire protocol integration", () => {
         // server.ts's "capture recipients before membership shrinks" comment, but we only
         // assert on A here since B closed its read loop by requesting leave synchronously)
         const aLeaveEv = await aSub.readEventUntil((ev) => ev.type === "leave");
-        expect(aLeaveEv.ev.uid).toBe(2); // B was uid 2 (A=1, B=2 in member order)
+        expect(aLeaveEv.ev.id).toBe("a2"); // B was a2 (A=a1, B=a2 in member order)
 
         // presentMembers (via rooms listing) no longer lists B
         const rooms = await aPost.request<{ rooms: { id: string; members: { sid: string }[] }[] }>({
@@ -555,7 +555,7 @@ describe("wire protocol integration", () => {
         expect(listed.members.map((m) => m.sid)).toEqual(["A"]);
 
         // live delivery still works for the remaining room after a leave: use the User
-        // (uid 0, implicit member of every room, DR-0003 §3) as a third-party observer
+        // (u1, implicit member of every room, DR-0003 §3) as a third-party observer
         // since A never sees its own post (echo rule).
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe" });
@@ -632,8 +632,8 @@ describe("wire protocol integration", () => {
         expect(notMember.ok).toBe(false);
         expect(notMember.error!.code).toBe("not_a_member");
 
-        // the implicit User (uid 0) is never a real member row, so leave is refused too
-        // (uid resolves to USER_UID, which the handler explicitly excludes)
+        // the implicit User (u1) is never a real member row, so leave is refused too
+        // (id resolves to ADMIN_ID, which the handler explicitly excludes)
         const u = await user(ctx);
         const userLeave = await u.request<{ ok: boolean; error?: { code: string } }>({
           op: "leave",
@@ -667,7 +667,7 @@ describe("wire protocol integration", () => {
 
         // the leave line is on disk before restart
         const fileBefore = fs.readFileSync(path.join(base.roomsDir, `${room}.jsonl`), "utf8");
-        expect(fileBefore).toContain('"type":"leave","uid":2');
+        expect(fileBefore).toContain('"type":"leave","id":"a2"');
 
         // hard restart (kill, not graceful shutdown) — membership must rebuild from the log
         base.proc.kill();

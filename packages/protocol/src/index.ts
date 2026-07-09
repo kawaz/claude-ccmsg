@@ -4,15 +4,17 @@
 //   - storage: room event log, one <room-id>.jsonl per room, append-only
 //   - wire: client<->daemon request/response, plus subscribe event stream
 //
-// `uid` = room-internal participant seq (1,2,3...). uid 0 is the reserved User
-// (kawaz), who is implicitly present in every room with no member row (DR-0003 §2).
-// This is NOT the Unix UID.
+// `id` = typed member identifier, `u1`/`a3` style (DR-0006). The `u`/`a` namespace
+// disambiguates human vs agent members sharing a single `from`/`to` field. `u1` is
+// the reserved User (kawaz) admin, implicitly present in every room with no member
+// row. `u2+` are guests (room-local, explicit member row, `role: "guest"`). Agents
+// get `a1, a2, ...` in room join order. This is NOT the Unix UID.
 
 export { VERSION } from "./version.ts";
 export * from "./paths.ts";
 
-/** Reserved uid for the User (kawaz). Implicit member of every room. */
-export const USER_UID = 0;
+/** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
+export const ADMIN_ID = "u1";
 
 /** Default initial-delivery cap on join (DR-0003 §5, N=50). */
 export const DEFAULT_JOIN_BACKLOG = 50;
@@ -30,26 +32,28 @@ export const DEFAULT_HTTP_BIND = "127.0.0.1:8642";
 
 export interface MemberEvent {
   type: "member";
-  uid: number;
+  id: string;
   sid: string;
   repo: string;
   ws: string;
   cwd: string;
   joined_at: string;
+  /** guest role marker; absent = regular member (agent, or admin's implicit row is absent entirely). */
+  role?: "admin" | "guest";
 }
 
 export interface LeaveEvent {
   type: "leave";
-  uid: number;
+  id: string;
   ts: string;
 }
 
 export interface MsgEvent {
   type: "msg";
   mid: number;
-  from: number;
-  /** attention (mention) targets, uid[]. Absent = everyone. Not a visibility filter. */
-  to?: number[];
+  from: string;
+  /** attention (mention) targets, member id[]. Absent = everyone. Not a visibility filter. */
+  to?: string[];
   ts: string;
   msg: string;
 }
@@ -130,8 +134,8 @@ export interface PostRequest {
   op: "post";
   room: string;
   msg: string;
-  /** mention target uid(s). number | number[]; absent = everyone. */
-  to?: number | number[];
+  /** mention target member id(s). string | string[]; absent = everyone. */
+  to?: string | string[];
 }
 
 export interface CreateRoomRequest {
