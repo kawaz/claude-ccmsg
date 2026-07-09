@@ -54,9 +54,11 @@ ci: lint typecheck test validate
 
 # ---------- dev recipes (push/ci の依存、利用者が直接叩くこともある) ----------
 
-# lint (justfile フォーマット確認のみ。TS の型チェックは typecheck recipe で行う)
+# lint (justfile フォーマット確認 + oxlint (type-aware) + oxfmt の整形確認。TS の型チェックは typecheck recipe で行う)
 lint:
     just --fmt --check --unstable
+    bun x oxlint
+    bun x oxfmt --check
 
 # 型チェック (monorepo 全体を tsc --noEmit)
 typecheck: lint

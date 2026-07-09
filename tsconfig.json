@@ -15,12 +15,11 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
-    "baseUrl": ".",
     "paths": {
-      "@ccmsg/protocol": ["packages/protocol/src/index.ts"],
-      "@ccmsg/daemon": ["packages/daemon/src/server.ts"],
-      "@ccmsg/daemon/run": ["packages/daemon/src/run.ts"],
-      "@ccmsg/webui": ["packages/webui/src/index.ts"]
+      "@ccmsg/protocol": ["./packages/protocol/src/index.ts"],
+      "@ccmsg/daemon": ["./packages/daemon/src/server.ts"],
+      "@ccmsg/daemon/run": ["./packages/daemon/src/run.ts"],
+      "@ccmsg/webui": ["./packages/webui/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "hooks/**/*.ts"]
