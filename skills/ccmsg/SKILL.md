@@ -74,11 +74,13 @@ room 内のメッセージは **to に関係なく全員に本文が届く**。`
 
 ```
 Monitor({
-  command: "${CLAUDE_PLUGIN_ROOT}/bin/ccmsg subscribe",
+  command: "CCMSG_SID=<自セッションの session_id> ${CLAUDE_PLUGIN_ROOT}/bin/ccmsg subscribe",
   description: "ccmsg rooms",
   persistent: true,
 })
 ```
+
+**`CCMSG_SID=` を必ず付ける** (SessionStart / UserPromptSubmit hook が session_id 入りの完全なコマンドを提示するのでそれをそのまま使う)。`CLAUDE_SESSION_ID` は Monitor の子プロセス env に伝播しないため、裸の `ccmsg subscribe` は **User (uid 0) として subscribe** してしまう — peers に載らず echo 抑制も効かない (CLI が stderr に警告を出す)。
 
 - room に入れられると開設通知 + 直近の履歴 (上限 50 msg) が流れてくる。それより古い分は `read` で遡る
 - **再接続時は自分が最後に見た mid を渡す**: `--since '{"<room-id>": <mid>}'`。mid は room 内連番なので、番号が飛んでいたら `read` で取りに行けば埋まる (サーバは既読を管理しない、自分の会話コンテキストが既読状態)

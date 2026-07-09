@@ -139,10 +139,12 @@ function subscribeRunning(): boolean {
 }
 
 async function main(): Promise<void> {
+  let sessionId: string | undefined;
   try {
-    await Bun.stdin.text();
+    const input = JSON.parse(await Bun.stdin.text()) as { session_id?: string };
+    sessionId = input.session_id;
   } catch {
-    process.exit(0);
+    // Non-JSON stdin: still useful to nag, just without the sid prefix.
   }
 
   if (subscribeRunning()) {
@@ -151,10 +153,14 @@ async function main(): Promise<void> {
   }
 
   const bin = resolveBin();
+  // CCMSG_SID prefix: CLAUDE_SESSION_ID is not exported to Monitor subprocesses,
+  // so a bare `ccmsg subscribe` would hello as the User (uid 0) instead of this
+  // session (no peers entry, no echo suppression). See session-start.ts.
+  const sidPrefix = sessionId ? `CCMSG_SID=${sessionId} ` : "";
   // stdout is injected into the next turn as a <system-reminder>.
   process.stdout.write(
     `[ccmsg] subscribe stream not detected in this session's process tree. ` +
-      `Open it with the **Monitor tool** (persistent: true), not Bash: ${bin} subscribe\n`,
+      `Open it with the **Monitor tool** (persistent: true), not Bash: ${sidPrefix}${bin} subscribe\n`,
   );
 }
 

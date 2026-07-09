@@ -116,6 +116,15 @@ async function runSubscribe(
   identity: Identity,
   opts: Record<string, string | boolean>,
 ): Promise<never> {
+  // A session sidecar that lost its sid (CCMSG_SID / CLAUDE_SESSION_ID unset in
+  // the Monitor subprocess env) silently degrades to a User subscribe: no peers
+  // entry, no echo suppression. Surface that on stderr (stdout stays pure jsonl);
+  // an intentional User subscribe states it with --as-user and is not warned.
+  if (identity.role === "user" && opts["as-user"] !== true) {
+    process.stderr.write(
+      "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_SESSION_ID unset) — subscribing as the User (uid 0). For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
+    );
+  }
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
   const since = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;

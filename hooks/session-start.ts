@@ -28,8 +28,9 @@ function resolveBin(): string {
 }
 
 async function main(): Promise<void> {
+  let input: SessionStartInput;
   try {
-    JSON.parse(await Bun.stdin.text()) as SessionStartInput;
+    input = JSON.parse(await Bun.stdin.text()) as SessionStartInput;
   } catch {
     // Non-JSON stdin: nothing to do, stay silent.
     process.exit(0);
@@ -54,12 +55,18 @@ async function main(): Promise<void> {
 
   // (b) Guide the AI. subscribe is a long-running blocking stream, so it must run
   // under the Monitor tool (persistent), never the Bash tool.
+  //
+  // CCMSG_SID must be embedded in the suggested command: CLAUDE_SESSION_ID is
+  // NOT exported to the Bash/Monitor subprocess environment, so without it the
+  // subscribe would silently hello as the User (uid 0) — no peers entry, no
+  // echo suppression. The hook is the one place that reliably knows session_id.
+  const sidPrefix = input.session_id ? `CCMSG_SID=${input.session_id} ` : "";
   const additionalContext = [
     "ccmsg is available: file-backed messaging between Claude Code sessions via a central daemon.",
     `Launcher (use this absolute path, not PATH): ${bin}`,
     "",
     "Start the new-message stream now with the **Monitor tool** (persistent: true):",
-    `  ${bin} subscribe`,
+    `  ${sidPrefix}${bin} subscribe`,
     "subscribe is long-running and blocking — running it in the Bash tool will hang the turn.",
     "Its stdout is JSONL (one room event per line) for Monitor / jq to consume.",
     "Without it you cannot proactively notice incoming messages (the UserPromptSubmit hook only nags you on your next turn).",
