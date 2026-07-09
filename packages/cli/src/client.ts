@@ -92,6 +92,17 @@ async function tryConnect(sockPath: string): Promise<Client | null> {
 /** Command to (re-)invoke ourselves as the daemon. Handles both source and compiled forms. */
 function daemonSpawnCmd(): string[] {
   const exec = process.execPath;
+  // Design rationale: `CCMSG_DAEMON_ENTRY` is a test-only seam. When running
+  // `ensureDaemon` from `bun test`, `process.argv[1]` points at the test runner
+  // rather than the cli entry, so the auto-detected relaunch command wouldn't
+  // land on `daemon run`. Setting this env var lets the automated tests (see
+  // packages/cli/test/version-mismatch.test.ts) point spawn at the daemon
+  // entry file directly. Production callers always relaunch via the cli
+  // entry (path detected below) and never set this. Env-var form matches the
+  // existing CCMSG_* overrides; adding a parameter would leak a test-only
+  // knob into `ensureDaemon`'s public signature.
+  const override = process.env.CCMSG_DAEMON_ENTRY;
+  if (override && override !== "") return [exec, override, "daemon", "run"];
   const script = process.argv[1];
   const execBase = exec.split("/").pop() ?? exec;
   if ((execBase === "bun" || execBase === "bun-debug") && script) {
