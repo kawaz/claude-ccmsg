@@ -8,11 +8,7 @@
 // growth is acceptable for now.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type {
-  MemberEvent,
-  MsgEvent,
-  StorageEvent,
-} from "@ccmsg/protocol";
+import type { MemberEvent, MsgEvent, StorageEvent } from "@ccmsg/protocol";
 import type { Logger } from "./log.ts";
 
 const FSYNC_DEBOUNCE_MS = 100;
@@ -59,12 +55,7 @@ export function memberUidBySid(room: Room): Map<string, number> {
 export function lastTs(room: Room): string | null {
   for (let i = room.events.length - 1; i >= 0; i--) {
     const ev = room.events[i]!;
-    const ts =
-      ev.type === "member"
-        ? ev.joined_at
-        : "ts" in ev
-          ? ev.ts
-          : null;
+    const ts = ev.type === "member" ? ev.joined_at : "ts" in ev ? ev.ts : null;
     if (ts) return ts;
   }
   return null;
@@ -171,7 +162,9 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
     try {
       fs.writeFileSync(tornPath, raw.subarray(keepLen));
       fs.truncateSync(file, keepLen);
-      log.warn(`room ${id}: torn tail recovered to ${path.basename(tornPath)} (${raw.length - keepLen} bytes)`);
+      log.warn(
+        `room ${id}: torn tail recovered to ${path.basename(tornPath)} (${raw.length - keepLen} bytes)`,
+      );
     } catch (e) {
       log.error(`room ${id}: torn tail recovery failed: ${String(e)}`);
     }

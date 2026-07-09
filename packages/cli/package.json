@@ -2,12 +2,12 @@
   "name": "@ccmsg/cli",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
   "bin": {
     "ccmsg": "./src/index.ts"
   },
+  "type": "module",
   "dependencies": {
-    "@ccmsg/protocol": "workspace:*",
-    "@ccmsg/daemon": "workspace:*"
+    "@ccmsg/daemon": "workspace:*",
+    "@ccmsg/protocol": "workspace:*"
   }
 }

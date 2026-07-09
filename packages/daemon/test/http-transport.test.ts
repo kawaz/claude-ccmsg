@@ -67,7 +67,14 @@ class WsTestClient {
   }
   async hello(identity: { role: "user" } | { role: "session"; sid: string }): Promise<any> {
     if (identity.role === "user") return this.request({ op: "hello", role: "user" });
-    return this.request({ op: "hello", role: "session", sid: identity.sid, repo: "", ws: "", cwd: "" });
+    return this.request({
+      op: "hello",
+      role: "session",
+      sid: identity.sid,
+      repo: "",
+      ws: "",
+      cwd: "",
+    });
   }
   close(): void {
     try {
@@ -144,7 +151,10 @@ describe("HTTP/WS transport (DR-0004)", () => {
         // set one up over UDS first, the way an AI session normally would.
         const owner = await connect(ctx.sock);
         await owner.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
-        const created = await owner.request<{ ok: true; room: string }>({ op: "create_room", members: [] });
+        const created = await owner.request<{ ok: true; room: string }>({
+          op: "create_room",
+          members: [],
+        });
         expect(created.ok).toBe(true);
 
         const ws = await connectWs(ctx);
@@ -185,11 +195,17 @@ describe("HTTP/WS transport (DR-0004)", () => {
       try {
         const owner = await connect(ctx.sock);
         await owner.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
-        const created = await owner.request<{ ok: true; room: string }>({ op: "create_room", members: [] });
+        const created = await owner.request<{ ok: true; room: string }>({
+          op: "create_room",
+          members: [],
+        });
 
         const ws = await connectWs(ctx);
         // claim to be a session; DR-0004 §2 says the daemon must ignore this and pin to user
-        const helloRes = await ws.hello({ role: "session", sid: "browser-pretending-to-be-a-session" });
+        const helloRes = await ws.hello({
+          role: "session",
+          sid: "browser-pretending-to-be-a-session",
+        });
         expect(helloRes.ok).toBe(true);
 
         const posted = await ws.request<{ ok: true; mid: number }>({
@@ -238,12 +254,16 @@ describe("HTTP/WS transport (DR-0004)", () => {
 
         // UDS session posts -> WS user (uid 0, sees every room per DR-0003 §5) receives it live
         await udsSession.request({ op: "post", room, msg: "from uds" });
-        const { ev: fromUds } = await wsUser.readEventUntil((e) => e.type === "msg" && e.msg === "from uds");
+        const { ev: fromUds } = await wsUser.readEventUntil(
+          (e) => e.type === "msg" && e.msg === "from uds",
+        );
         expect(fromUds.r).toBe(room);
 
         // WS user posts -> UDS subscriber (a different connection, so no echo suppression applies) receives it live
         await wsUser.request({ op: "post", room, msg: "from ws" });
-        const { ev: fromWs } = await udsSub.readEventUntil((e) => e.type === "msg" && e.msg === "from ws");
+        const { ev: fromWs } = await udsSub.readEventUntil(
+          (e) => e.type === "msg" && e.msg === "from ws",
+        );
         expect(fromWs.from).toBe(0); // the WS poster, pinned to user
 
         udsSession.close();

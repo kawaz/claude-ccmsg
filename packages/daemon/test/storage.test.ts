@@ -80,7 +80,13 @@ describe("loadRoom: torn tail recovery (DR-0002 §6)", () => {
   test("normalizes a valid final line that lacks a trailing newline", () => {
     const { file, log, cleanup } = tmpFile();
     try {
-      const line = JSON.stringify({ type: "msg", mid: 1, from: 1, ts: "2026-07-03T00:00:01.000Z", msg: "hi" });
+      const line = JSON.stringify({
+        type: "msg",
+        mid: 1,
+        from: 1,
+        ts: "2026-07-03T00:00:01.000Z",
+        msg: "hi",
+      });
       fs.writeFileSync(file, `${line}`); // no newline
       const room = loadRoom(file, "r-test", log);
       expect(room.events.length).toBe(1);
@@ -99,16 +105,42 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
     const { file, log, cleanup } = tmpFile();
     try {
       let room = loadRoom(file, "r-test", log);
-      appendEvent(room, { type: "member", uid: 1, sid: "A", repo: "", ws: "", cwd: "", joined_at: new Date().toISOString() });
-      appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: 1, ts: new Date().toISOString(), msg: "a" });
-      appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: 1, ts: new Date().toISOString(), msg: "b" });
+      appendEvent(room, {
+        type: "member",
+        uid: 1,
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: new Date().toISOString(),
+      });
+      appendEvent(room, {
+        type: "msg",
+        mid: room.lastMid + 1,
+        from: 1,
+        ts: new Date().toISOString(),
+        msg: "a",
+      });
+      appendEvent(room, {
+        type: "msg",
+        mid: room.lastMid + 1,
+        from: 1,
+        ts: new Date().toISOString(),
+        msg: "b",
+      });
       expect(room.lastMid).toBe(2);
       closeRoom(room);
 
       room = loadRoom(file, "r-test", log);
       expect(room.lastMid).toBe(2);
       const nextMid = room.lastMid + 1;
-      appendEvent(room, { type: "msg", mid: nextMid, from: 1, ts: new Date().toISOString(), msg: "c" });
+      appendEvent(room, {
+        type: "msg",
+        mid: nextMid,
+        from: 1,
+        ts: new Date().toISOString(),
+        msg: "c",
+      });
       expect(nextMid).toBe(3);
       closeRoom(room);
     } finally {
@@ -125,9 +157,33 @@ describe("membership derivation", () => {
     try {
       const room = loadRoom(file, "r-test", log);
       const ts = new Date().toISOString();
-      appendEvent(room, { type: "member", uid: 1, sid: "A", repo: "", ws: "", cwd: "", joined_at: ts });
-      appendEvent(room, { type: "member", uid: 2, sid: "B", repo: "", ws: "", cwd: "", joined_at: ts });
-      appendEvent(room, { type: "member", uid: 3, sid: "C", repo: "", ws: "", cwd: "", joined_at: ts });
+      appendEvent(room, {
+        type: "member",
+        uid: 1,
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
+      appendEvent(room, {
+        type: "member",
+        uid: 2,
+        sid: "B",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
+      appendEvent(room, {
+        type: "member",
+        uid: 3,
+        sid: "C",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
       appendEvent(room, { type: "leave", uid: 2, ts });
       const present = presentMembers(room);
       expect(present.map((m) => m.uid)).toEqual([1, 3]);
@@ -150,7 +206,15 @@ describe("readMsgs", () => {
     try {
       const room = loadRoom(file, "r-test", log);
       const ts = new Date().toISOString();
-      appendEvent(room, { type: "member", uid: 1, sid: "A", repo: "", ws: "", cwd: "", joined_at: ts });
+      appendEvent(room, {
+        type: "member",
+        uid: 1,
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
       for (let i = 1; i <= 5; i++) {
         appendEvent(room, { type: "msg", mid: i, from: 1, ts, msg: `m${i}` });
       }

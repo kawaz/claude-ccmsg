@@ -75,7 +75,8 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
   if (opts["as-user"] === true) return { role: "user" };
   // `notify` uses --sid for its target, so it must not double as an identity override
   // there; --as-session still works everywhere.
-  const sidOverride = cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
+  const sidOverride =
+    cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
   const sid = sidOverride ?? process.env.CCMSG_SID ?? process.env.CLAUDE_SESSION_ID;
   if (sid) {
     return {
@@ -111,12 +112,18 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   process.exit(output(res));
 }
 
-async function runSubscribe(identity: Identity, opts: Record<string, string | boolean>): Promise<never> {
+async function runSubscribe(
+  identity: Identity,
+  opts: Record<string, string | boolean>,
+): Promise<never> {
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
   const since = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
   const client = await ensureDaemon(paths, identity);
-  const ack = await client.request<{ ok?: boolean }>({ op: "subscribe", ...(since ? { since } : {}) });
+  const ack = await client.request<{ ok?: boolean }>({
+    op: "subscribe",
+    ...(since ? { since } : {}),
+  });
   if (ack.ok === false) process.exit(output(ack as Record<string, unknown>));
   // stream event lines verbatim to stdout (jsonl for Monitor / jq)
   for (;;) {
@@ -261,7 +268,10 @@ async function main(): Promise<void> {
     case "create-room": {
       const membersStr = str(opts, "members");
       const members = membersStr
-        ? membersStr.split(",").map((s) => s.trim()).filter((s) => s !== "")
+        ? membersStr
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s !== "")
         : [];
       await runOnce(identity, {
         op: "create_room",
@@ -304,7 +314,11 @@ async function main(): Promise<void> {
       return;
     }
     case "notify": {
-      const text = requireArg(str(opts, "text"), "text", "ccmsg notify [--self | --sid <sid>] --text <text>");
+      const text = requireArg(
+        str(opts, "text"),
+        "text",
+        "ccmsg notify [--self | --sid <sid>] --text <text>",
+      );
       const sid = str(opts, "sid");
       await runOnce(identity, { op: "notify", ...(sid ? { sid } : {}), text });
       return;

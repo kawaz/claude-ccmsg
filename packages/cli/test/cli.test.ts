@@ -40,118 +40,117 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
 }
 
 describe("ccmsg CLI end-to-end", () => {
-  test(
-    "auto-spawns the daemon, does a round trip, and stops it",
-    async () => {
-      const { env, cleanup } = makeEnv();
-      try {
-        // status before anything: no daemon, and status must not spawn one
-        const s0 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
-        expect(s0.running).toBe(false);
+  test("auto-spawns the daemon, does a round trip, and stops it", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      // status before anything: no daemon, and status must not spawn one
+      const s0 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(s0.running).toBe(false);
 
-        // first real command auto-spawns the daemon (ensure-daemon). Identity = session S1.
-        const created = JSON.parse((await runCli(["--sid", "S1", "create-room"], env)).out) as {
-          ok: boolean;
-          room: string;
-        };
-        expect(created.ok).toBe(true);
-        const room = created.room;
+      // first real command auto-spawns the daemon (ensure-daemon). Identity = session S1.
+      const created = JSON.parse((await runCli(["--sid", "S1", "create-room"], env)).out) as {
+        ok: boolean;
+        room: string;
+      };
+      expect(created.ok).toBe(true);
+      const room = created.room;
 
-        // session identity was applied: the room's sole member is S1 (uid 1)
-        const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
-          rooms: { id: string; members: { uid: number; sid: string }[] }[];
-        };
-        expect(rooms.rooms.length).toBe(1);
-        expect(rooms.rooms[0]!.members[0]).toMatchObject({ uid: 1, sid: "S1" });
+      // session identity was applied: the room's sole member is S1 (uid 1)
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { id: string; members: { uid: number; sid: string }[] }[];
+      };
+      expect(rooms.rooms.length).toBe(1);
+      expect(rooms.rooms[0]!.members[0]).toMatchObject({ uid: 1, sid: "S1" });
 
-        // post + read round trip
-        const posted = JSON.parse((await runCli(["--sid", "S1", "post", room, "hello"], env)).out) as { mid: number };
-        expect(posted.mid).toBe(1);
-        const read = JSON.parse((await runCli(["read", room, "1"], env)).out) as { msgs: { msg: string }[] };
-        expect(read.msgs[0]!.msg).toBe("hello");
+      // post + read round trip
+      const posted = JSON.parse(
+        (await runCli(["--sid", "S1", "post", room, "hello"], env)).out,
+      ) as { mid: number };
+      expect(posted.mid).toBe(1);
+      const read = JSON.parse((await runCli(["read", room, "1"], env)).out) as {
+        msgs: { msg: string }[];
+      };
+      expect(read.msgs[0]!.msg).toBe("hello");
 
-        // status now reports the live daemon at our version
-        const s1 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean; version: string };
-        expect(s1.running).toBe(true);
-        expect(s1.version).toBe(VERSION);
+      // status now reports the live daemon at our version
+      const s1 = JSON.parse((await runCli(["status"], env)).out) as {
+        running: boolean;
+        version: string;
+      };
+      expect(s1.running).toBe(true);
+      expect(s1.version).toBe(VERSION);
 
-        // stop, then confirm it's gone
-        const stopped = JSON.parse((await runCli(["daemon", "stop"], env)).out) as { stopped?: boolean };
-        expect(stopped.stopped).toBe(true);
-        const s2 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
-        expect(s2.running).toBe(false);
-      } finally {
-        await runCli(["daemon", "stop"], env).catch(() => {});
-        cleanup();
-      }
-    },
-    30000,
-  );
+      // stop, then confirm it's gone
+      const stopped = JSON.parse((await runCli(["daemon", "stop"], env)).out) as {
+        stopped?: boolean;
+      };
+      expect(stopped.stopped).toBe(true);
+      const s2 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(s2.running).toBe(false);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 
-  test(
-    "no args prints help; --as-user creates a room without a caller member row",
-    async () => {
-      const { env, cleanup } = makeEnv();
-      try {
-        // no args -> help to stdout (kawaz CLI convention)
-        const help = await runCli([], env);
-        expect(help.out).toContain("Usage:");
-        expect(help.out).toContain("Environment Variables:");
+  test("no args prints help; --as-user creates a room without a caller member row", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      // no args -> help to stdout (kawaz CLI convention)
+      const help = await runCli([], env);
+      expect(help.out).toContain("Usage:");
+      expect(help.out).toContain("Environment Variables:");
 
-        // --as-user: the User (uid 0) is implicit, so the created room's only member row is the listed peer Z
-        const created = JSON.parse((await runCli(["--as-user", "create-room", "--members", "Z"], env)).out) as {
-          ok: boolean;
-          room: string;
-        };
-        expect(created.ok).toBe(true);
-        const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
-          rooms: { members: { uid: number; sid: string }[] }[];
-        };
-        expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["Z"]);
-        expect(rooms.rooms[0]!.members[0]!.uid).toBe(1);
-      } finally {
-        await runCli(["daemon", "stop"], env).catch(() => {});
-        cleanup();
-      }
-    },
-    30000,
-  );
+      // --as-user: the User (uid 0) is implicit, so the created room's only member row is the listed peer Z
+      const created = JSON.parse(
+        (await runCli(["--as-user", "create-room", "--members", "Z"], env)).out,
+      ) as {
+        ok: boolean;
+        room: string;
+      };
+      expect(created.ok).toBe(true);
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { members: { uid: number; sid: string }[] }[];
+      };
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["Z"]);
+      expect(rooms.rooms[0]!.members[0]!.uid).toBe(1);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 
-  test(
-    "leave: a member session leaves a room and disappears from its member list",
-    async () => {
-      const { env, cleanup } = makeEnv();
-      try {
-        // S1 creates a room with S2 as a peer member
-        const created = JSON.parse(
-          (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
-        ) as { ok: boolean; room: string };
-        expect(created.ok).toBe(true);
-        const room = created.room;
+  test("leave: a member session leaves a room and disappears from its member list", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      // S1 creates a room with S2 as a peer member
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      const room = created.room;
 
-        // register S2 as a resolvable session so its member row exists (create-room adds it eagerly)
-        const before = JSON.parse((await runCli(["rooms"], env)).out) as {
-          rooms: { members: { sid: string }[] }[];
-        };
-        expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
+      // register S2 as a resolvable session so its member row exists (create-room adds it eagerly)
+      const before = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { members: { sid: string }[] }[];
+      };
+      expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
 
-        // S2 leaves: the room's present-member list must drop S2 but keep S1
-        const left = JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out) as {
-          ok: boolean;
-          room: string;
-        };
-        expect(left.ok).toBe(true);
-        expect(left.room).toBe(room);
+      // S2 leaves: the room's present-member list must drop S2 but keep S1
+      const left = JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out) as {
+        ok: boolean;
+        room: string;
+      };
+      expect(left.ok).toBe(true);
+      expect(left.room).toBe(room);
 
-        const after = JSON.parse((await runCli(["rooms"], env)).out) as {
-          rooms: { members: { sid: string }[] }[];
-        };
-        expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1"]);
-      } finally {
-        await runCli(["daemon", "stop"], env).catch(() => {});
-        cleanup();
-      }
-    },
-    30000,
-  );
+      const after = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { members: { sid: string }[] }[];
+      };
+      expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1"]);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 });

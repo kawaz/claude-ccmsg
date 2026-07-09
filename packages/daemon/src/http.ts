@@ -50,7 +50,11 @@ function pinHelloToUser(line: string): string {
   return line;
 }
 
-export function startHttpListener(daemon: Daemon, bindSpec: string, fallback?: HttpFallback): HttpListener {
+export function startHttpListener(
+  daemon: Daemon,
+  bindSpec: string,
+  fallback?: HttpFallback,
+): HttpListener {
   const { hostname, port } = parseBindSpec(bindSpec);
   const server = Bun.serve<WsData>({
     hostname,
@@ -94,6 +98,8 @@ export function startHttpListener(daemon: Daemon, bindSpec: string, fallback?: H
   });
   return {
     address: `${server.hostname}:${server.port}`,
-    stop: () => server.stop(),
+    stop: () => {
+      void server.stop();
+    },
   };
 }

@@ -43,7 +43,11 @@ function isClaudeCommand(command: string): boolean {
 }
 
 /** Walk ppid from startPid until a `claude` process is found; null if none (cycle/PID 1 guarded). */
-export function findClaudeAncestor(rows: ProcRow[], startPid: number, maxDepth = 32): number | null {
+export function findClaudeAncestor(
+  rows: ProcRow[],
+  startPid: number,
+  maxDepth = 32,
+): number | null {
   const byPid = new Map<number, ProcRow>();
   for (const r of rows) byPid.set(r.pid, r);
   const seen = new Set<number>();
@@ -90,7 +94,10 @@ export function collectDescendants(rows: ProcRow[], rootPid: number): Set<number
  * `subscribe`. Descendant-of-claude scoping keeps false positives negligible.
  */
 export function isSubscribeCommand(command: string): boolean {
-  const tokens = command.trim().split(/\s+/).filter((t) => t !== "");
+  const tokens = command
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t !== "");
   for (let i = 0; i < tokens.length - 1; i++) {
     const base = tokens[i]!.split("/").pop();
     const isEntry = base === "ccmsg" || base === "index.ts";

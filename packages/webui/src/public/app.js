@@ -31,7 +31,16 @@ const el = {
 function ensureRoom(id) {
   let room = state.rooms.get(id);
   if (!room) {
-    room = { id, title: undefined, membersByUid: new Map(), memberOrder: [], msgs: new Map(), timeline: [], lastMid: 0, lastTs: null };
+    room = {
+      id,
+      title: undefined,
+      membersByUid: new Map(),
+      memberOrder: [],
+      msgs: new Map(),
+      timeline: [],
+      lastMid: 0,
+      lastTs: null,
+    };
     state.rooms.set(id, room);
   }
   return room;
@@ -382,7 +391,9 @@ el.peersRefresh.addEventListener("click", async () => {
 
 const client = new WsClient();
 client.addEventListener("connecting-done", () => setStatus("connected", "status-ok"));
-client.addEventListener("disconnected", () => setStatus("disconnected – 再接続中…", "status-error"));
+client.addEventListener("disconnected", () =>
+  setStatus("disconnected – 再接続中…", "status-error"),
+);
 client.addEventListener("restarting", () => setStatus("daemon 再起動中…", "status-warn"));
 client.addEventListener("rooms", (e) => applyRoomsResponse(e.detail));
 client.addEventListener("subscribed", async () => {

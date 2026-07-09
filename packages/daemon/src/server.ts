@@ -210,7 +210,12 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorUi
 }
 
 /** Deliver a brand-new room's snapshot to every subscriber that sees it. */
-function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorUid: number | null): void {
+function deliverNewRoom(
+  daemon: Daemon,
+  room: Room,
+  author: Author,
+  authorUid: number | null,
+): void {
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
     const suppress = isAuthorSub(sub, author) && authorUid !== null ? authorUid : undefined;
@@ -346,7 +351,14 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       }
       const to = normalizeTo(req.to);
       const mid = room.lastMid + 1;
-      const ev: MsgEvent = { type: "msg", mid, from, ...(to ? { to } : {}), ts: nowIso(), msg: req.msg };
+      const ev: MsgEvent = {
+        type: "msg",
+        mid,
+        from,
+        ...(to ? { to } : {}),
+        ts: nowIso(),
+        msg: req.msg,
+      };
       appendEvent(room, ev);
       deliver(daemon, room, ev, authorOf(conn));
       send(conn, { ok: true, room: room.id, mid });
@@ -358,7 +370,8 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       const ordered: string[] = [];
       const id = conn.identity!;
       if (id.role === "session") ordered.push(id.sid);
-      for (const sid of members) if (typeof sid === "string" && !ordered.includes(sid)) ordered.push(sid);
+      for (const sid of members)
+        if (typeof sid === "string" && !ordered.includes(sid)) ordered.push(sid);
       if (ordered.length === 0) {
         sendErr(conn, ErrorCode.invalid_args, "create_room needs at least one member");
         return;
@@ -366,7 +379,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       const key = [...new Set(ordered)].sort().join(",");
       const existingId = daemon.dedupIndex.get(key);
       const existing = existingId ? daemon.rooms.get(existingId) : undefined;
-      if (existing && existing.dedupEligible && Date.now() - existing.createdAt < daemon.dedupWindowMs) {
+      if (
+        existing &&
+        existing.dedupEligible &&
+        Date.now() - existing.createdAt < daemon.dedupWindowMs
+      ) {
         // dedup: fold the late create's initial msg into the existing room (DR-0003 §4)
         let mid: number | undefined;
         if (req.msg) {
@@ -378,13 +395,19 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
             deliver(daemon, existing, ev, authorOf(conn));
           }
         }
-        send(conn, { ok: true, room: existing.id, reused: true, ...(mid !== undefined ? { mid } : {}) });
+        send(conn, {
+          ok: true,
+          room: existing.id,
+          reused: true,
+          ...(mid !== undefined ? { mid } : {}),
+        });
         return;
       }
 
       const room = createRoom(daemon, ordered, true);
       writeMembers(daemon, room, ordered);
-      if (req.title) appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
+      if (req.title)
+        appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
       let mid: number | undefined;
       let authorUid: number | null = null;
       if (req.msg) {
@@ -411,7 +434,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const inherited = presentMembers(old);
-      const room = createRoom(daemon, inherited.map((m) => m.sid), false);
+      const room = createRoom(
+        daemon,
+        inherited.map((m) => m.sid),
+        false,
+      );
       let uid = 1;
       for (const m of inherited) {
         appendEvent(room, {
@@ -427,7 +454,8 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       appendEvent(room, { type: "prev", room: old.id, ts: nowIso() });
       const nextEv: StorageEvent = { type: "next", room: room.id, ts: nowIso() };
       appendEvent(old, nextEv);
-      if (req.title) appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
+      if (req.title)
+        appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
       let mid: number | undefined;
       let authorUid: number | null = null;
       if (req.msg) {
@@ -481,7 +509,9 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "peers": {
-      const peers = [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta);
+      const peers = [...daemon.sessions.values()]
+        .filter((s) => s.conns.size > 0)
+        .map((s) => s.meta);
       send(conn, { ok: true, peers });
       return;
     }
@@ -494,7 +524,8 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       // Stamp the sender from the connection identity (never the client's self-claim),
       // so the receiver can distinguish self-notify from peer-notify and refuse to
       // auto-execute a peer's command-shaped text (DR-0003 §7).
-      const from: NotifyFrom = id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
+      const from: NotifyFrom =
+        id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
       const ephem = { ev: "notify", text: req.text, from };
       for (const sub of daemon.subscribers) {
         const sid = sub.identity;
@@ -699,7 +730,9 @@ export function startDaemon(opts: StartOptions = {}): void {
 
   fs.chmodSync(paths.sock, 0o600);
   fs.writeFileSync(paths.pid, `${process.pid}\n`);
-  log.info(`listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`);
+  log.info(
+    `listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`,
+  );
 
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {

@@ -72,13 +72,7 @@ export interface TitleEvent {
   ts: string;
 }
 
-export type StorageEvent =
-  | MemberEvent
-  | LeaveEvent
-  | MsgEvent
-  | NextEvent
-  | PrevEvent
-  | TitleEvent;
+export type StorageEvent = MemberEvent | LeaveEvent | MsgEvent | NextEvent | PrevEvent | TitleEvent;
 
 /** A storage event as delivered over a subscribe stream: flattened with room id. */
 export type DeliveredEvent = StorageEvent & { r: string };

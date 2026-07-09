@@ -98,7 +98,8 @@ export class WsClient extends EventTarget {
   #onClose() {
     this.dispatchEvent(new Event("disconnected"));
     if (this.#closedByUs) return;
-    const delay = RECONNECT_DELAYS_MS[Math.min(this.#reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
+    const delay =
+      RECONNECT_DELAYS_MS[Math.min(this.#reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];
     this.#reconnectAttempt++;
     setTimeout(() => this.connect(), delay);
   }

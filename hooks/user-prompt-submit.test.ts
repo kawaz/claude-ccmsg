@@ -34,7 +34,9 @@ describe("isSubscribeCommand", () => {
   // The launcher exec's `bun run <root>/packages/cli/src/index.ts subscribe`, so the
   // live process shows the CLI entry (index.ts) followed by `subscribe`.
   test("matches bun-run of the CLI entry", () => {
-    expect(isSubscribeCommand("bun run /p/ccmsg/0.0.1/packages/cli/src/index.ts subscribe")).toBe(true);
+    expect(isSubscribeCommand("bun run /p/ccmsg/0.0.1/packages/cli/src/index.ts subscribe")).toBe(
+      true,
+    );
   });
 
   // Direct launcher invocation (before/without exec) shows basename `ccmsg`.

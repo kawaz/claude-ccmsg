@@ -34,7 +34,13 @@ export function spawnDaemonProc(
     // HTTP off by default so parallel test daemons never fight over the fixed
     // default port (8642); tests that need HTTP pass CCMSG_HTTP_BIND explicitly
     // (typically 127.0.0.1:0 for an ephemeral port) via extraEnv, which wins below.
-    env: { ...process.env, CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, CCMSG_HTTP_BIND: "off", ...extraEnv },
+    env: {
+      ...process.env,
+      CCMSG_STATE_DIR: stateDir,
+      CCMSG_DATA_DIR: dataDir,
+      CCMSG_HTTP_BIND: "off",
+      ...extraEnv,
+    },
   });
 }
 
@@ -173,7 +179,11 @@ export class TestClient {
       if (pred(ev)) return { ev: ev as T, seen };
     }
   }
-  async hello(identity: { role: "user" } | { role: "session"; sid: string; repo?: string; ws?: string; cwd?: string }): Promise<any> {
+  async hello(
+    identity:
+      | { role: "user" }
+      | { role: "session"; sid: string; repo?: string; ws?: string; cwd?: string },
+  ): Promise<any> {
     if (identity.role === "user") return this.request({ op: "hello", role: "user" });
     return this.request({
       op: "hello",

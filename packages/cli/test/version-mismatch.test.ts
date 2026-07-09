@@ -24,7 +24,12 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION, resolvePaths } from "@ccmsg/protocol";
 import { ensureDaemon } from "../src/client.ts";
-import { connect, spawnDaemonProc, waitConnectable, type TestClient } from "../../daemon/test/helpers.ts";
+import {
+  connect,
+  spawnDaemonProc,
+  waitConnectable,
+  type TestClient,
+} from "../../daemon/test/helpers.ts";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
 const OLD_VERSION = "0.0.0-old-for-test";
@@ -144,7 +149,9 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       // ensureDaemon が完了した時点で、繋がっている daemon の version は現行 VERSION
       // でなければならない (= mismatch を検知 → shutdown → respawn が完走した証拠)。
       // ping で version を確認するのが自然 (hello の応答値は ensureDaemon 内部で消費済み)。
-      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({ op: "ping" });
+      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+        op: "ping",
+      });
       expect(pong.ok).toBe(true);
       expect(pong.version).toBe(VERSION);
 
@@ -189,7 +196,13 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
 
       // ensureDaemon で upgrade を発動。
       const paths = resolvePaths();
-      const client = await ensureDaemon(paths, { role: "session", sid: "S-r", repo: "r", ws: "w", cwd: "/tmp" });
+      const client = await ensureDaemon(paths, {
+        role: "session",
+        sid: "S-r",
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+      });
 
       const { ev } = await restartingSeen;
       // 通知 shape: {ev:"restarting", reason:"upgrade"}。reason は shutdown 送信時の
@@ -227,7 +240,9 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       });
 
       // version 一致経路: ping の pid が起動時の PID と同一 = 同一プロセス継続。
-      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({ op: "ping" });
+      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+        op: "ping",
+      });
       expect(pong.ok).toBe(true);
       expect(pong.version).toBe(VERSION);
       expect(pong.pid).toBe(pidBefore!);
