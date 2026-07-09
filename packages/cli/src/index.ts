@@ -2,7 +2,7 @@
 // ccmsg CLI. Subcommand style, long options, no-args prints help (per kawaz CLI
 // conventions). Every command except `daemon run` goes through ensure-daemon.
 import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
-import { startDaemon } from "@ccmsg/daemon";
+import { runDaemon } from "@ccmsg/daemon/run";
 import { Client, connectIfRunning, ensureDaemon, waitDaemonGone } from "./client.ts";
 
 // --- arg parsing -----------------------------------------------------------
@@ -162,7 +162,7 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
   const sub = positionals[0];
   if (sub === "run") {
     // blocks: the listen socket keeps the event loop alive
-    startDaemon({ foreground: opts.foreground === true });
+    runDaemon({ foreground: opts.foreground === true });
     return;
   }
   if (sub === "stop") {
@@ -219,6 +219,8 @@ Environment Variables:
   CCMSG_SID / CLAUDE_SESSION_ID  Session id for identity auto-detection
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
+  CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
+                               (daemon side, default 127.0.0.1:8642, "off" to disable)
 `);
 }
 

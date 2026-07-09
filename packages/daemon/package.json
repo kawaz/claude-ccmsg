@@ -5,9 +5,11 @@
   "type": "module",
   "main": "./src/server.ts",
   "exports": {
-    ".": "./src/server.ts"
+    ".": "./src/server.ts",
+    "./run": "./src/run.ts"
   },
   "dependencies": {
-    "@ccmsg/protocol": "workspace:*"
+    "@ccmsg/protocol": "workspace:*",
+    "@ccmsg/webui": "workspace:*"
   }
 }
