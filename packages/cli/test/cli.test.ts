@@ -116,4 +116,42 @@ describe("ccmsg CLI end-to-end", () => {
     },
     30000,
   );
+
+  test(
+    "leave: a member session leaves a room and disappears from its member list",
+    async () => {
+      const { env, cleanup } = makeEnv();
+      try {
+        // S1 creates a room with S2 as a peer member
+        const created = JSON.parse(
+          (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+        ) as { ok: boolean; room: string };
+        expect(created.ok).toBe(true);
+        const room = created.room;
+
+        // register S2 as a resolvable session so its member row exists (create-room adds it eagerly)
+        const before = JSON.parse((await runCli(["rooms"], env)).out) as {
+          rooms: { members: { sid: string }[] }[];
+        };
+        expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
+
+        // S2 leaves: the room's present-member list must drop S2 but keep S1
+        const left = JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out) as {
+          ok: boolean;
+          room: string;
+        };
+        expect(left.ok).toBe(true);
+        expect(left.room).toBe(room);
+
+        const after = JSON.parse((await runCli(["rooms"], env)).out) as {
+          rooms: { members: { sid: string }[] }[];
+        };
+        expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1"]);
+      } finally {
+        await runCli(["daemon", "stop"], env).catch(() => {});
+        cleanup();
+      }
+    },
+    30000,
+  );
 });

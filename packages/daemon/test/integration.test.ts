@@ -458,6 +458,167 @@ describe("wire protocol integration", () => {
     },
     T,
   );
+  test(
+    "leave removes the member from presentMembers, live delivery, and the rooms listing",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const room = created.room;
+
+        const aSub = await session(ctx, "A");
+        const bLeave = await session(ctx, "B");
+        await aSub.request({ op: "subscribe" });
+
+        // leave is a member-only op: uid must resolve and must not be the implicit User (uid 0)
+        const left = await bLeave.request<{ ok: boolean; room: string }>({ op: "leave", room });
+        expect(left.ok).toBe(true);
+        expect(left.room).toBe(room);
+
+        // A's live stream sees the leave event (the leaver is still a recipient too, per
+        // server.ts's "capture recipients before membership shrinks" comment, but we only
+        // assert on A here since B closed its read loop by requesting leave synchronously)
+        const aLeaveEv = await aSub.readEventUntil((ev) => ev.type === "leave");
+        expect(aLeaveEv.ev.uid).toBe(2); // B was uid 2 (A=1, B=2 in member order)
+
+        // presentMembers (via rooms listing) no longer lists B
+        const rooms = await aPost.request<{ rooms: { id: string; members: { sid: string }[] }[] }>({ op: "rooms" });
+        const listed = rooms.rooms.find((r) => r.id === room)!;
+        expect(listed.members.map((m) => m.sid)).toEqual(["A"]);
+
+        // live delivery still works for the remaining room after a leave: use the User
+        // (uid 0, implicit member of every room, DR-0003 §3) as a third-party observer
+        // since A never sees its own post (echo rule).
+        const uSub = await user(ctx);
+        await uSub.request({ op: "subscribe" });
+        await aPost.request({ op: "post", room, msg: "after B left" });
+        const uGot = await uSub.readEventUntil((ev) => ev.type === "msg" && ev.r === room);
+        expect(uGot.ev.msg).toBe("after B left");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "leave then post: a former member is refused with not_a_member",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const bPost = await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const room = created.room;
+
+        // B posts fine while still a member
+        const ok1 = await bPost.request<{ ok: boolean }>({ op: "post", room, msg: "before leave" });
+        expect(ok1.ok).toBe(true);
+
+        const bLeave = await session(ctx, "B");
+        const left = await bLeave.request<{ ok: boolean }>({ op: "leave", room });
+        expect(left.ok).toBe(true);
+
+        // the same B session (a fresh connection, same sid) is no longer a member: post is refused
+        const bAfter = await session(ctx, "B");
+        const denied = await bAfter.request<{ ok: boolean; error?: { code: string } }>({
+          op: "post",
+          room,
+          msg: "after leave",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("not_a_member");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "leave on an unknown room or by a non-member errors cleanly",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
+        const room = created.room;
+
+        // unknown room -> room_not_found
+        const missing = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "leave",
+          room: "r-nope",
+        });
+        expect(missing.ok).toBe(false);
+        expect(missing.error!.code).toBe("room_not_found");
+
+        // a session that never joined this room -> not_a_member
+        const c = await session(ctx, "C");
+        const notMember = await c.request<{ ok: boolean; error?: { code: string } }>({ op: "leave", room });
+        expect(notMember.ok).toBe(false);
+        expect(notMember.error!.code).toBe("not_a_member");
+
+        // the implicit User (uid 0) is never a real member row, so leave is refused too
+        // (uid resolves to USER_UID, which the handler explicitly excludes)
+        const u = await user(ctx);
+        const userLeave = await u.request<{ ok: boolean; error?: { code: string } }>({ op: "leave", room });
+        expect(userLeave.ok).toBe(false);
+        expect(userLeave.error!.code).toBe("not_a_member");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "leave is persisted to the room's jsonl and survives a daemon restart",
+    async () => {
+      const base = await startTestDaemon();
+      try {
+        const aPost = await session(base, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: ["B"] });
+        const room = created.room;
+        const bLeave = await session(base, "B");
+        const left = await bLeave.request<{ ok: boolean }>({ op: "leave", room });
+        expect(left.ok).toBe(true);
+        aPost.close();
+        bLeave.close();
+
+        // the leave line is on disk before restart
+        const fileBefore = fs.readFileSync(path.join(base.roomsDir, `${room}.jsonl`), "utf8");
+        expect(fileBefore).toContain('"type":"leave","uid":2');
+
+        // hard restart (kill, not graceful shutdown) — membership must rebuild from the log
+        base.proc.kill();
+        await base.proc.exited;
+        const proc2 = spawnDaemonProc(base.stateDir, base.dataDir);
+        await waitConnectable(base.sock);
+
+        const a2 = await session(base, "A");
+        const rooms = await a2.request<{ rooms: { id: string; members: { sid: string }[] }[] }>({ op: "rooms" });
+        const listed = rooms.rooms.find((r) => r.id === room)!;
+        // B stays left: replaying member+leave from the log yields only A as present
+        expect(listed.members.map((m) => m.sid)).toEqual(["A"]);
+
+        // and B (same sid, fresh connection) still can't post post-restart
+        const b2 = await session(base, "B");
+        const denied = await b2.request<{ ok: boolean; error?: { code: string } }>({ op: "post", room, msg: "nope" });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("not_a_member");
+
+        const c = await connect(base.sock);
+        await c.request({ op: "shutdown" });
+        c.close();
+        await proc2.exited;
+      } finally {
+        await stopTestDaemon(base);
+      }
+    },
+    T,
+  );
 });
 
 describe("error handling & boundaries", () => {

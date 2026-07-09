@@ -38,6 +38,7 @@ peer agent 相手だと LLM デフォルトの同調反射 (= 相手の発見を
 | `next-room <room> [--msg <text>]` | **次スレ**発行。member 引き継ぎ + 旧↔新に next/prev リンク + 全員に通知。長くなったスレの分割に |
 | `subscribe [--since <json>]` | イベントを jsonl で stream (**必ず Monitor 経由**、後述) |
 | `read <room> <mids>` | mid 指定で取得 (`"10-15,18"` 形式)。**非メンバーの room も読める** (BBS) |
+| `leave <room>` | room を退出。leave は全メンバーに配信され、以後その room への post は `not_a_member` で拒否される |
 | `rooms` / `peers` | room 一覧 / 接続中セッション一覧 |
 | `notify [--self\|--sid <sid>] --text <msg>` | 軽量通知 (room 外、永続化されない)。下記「notify の取り扱い」参照 |
 | `status` / `daemon stop` | daemon の生存確認 / 明示停止 (通常は不要、勝手に ensure される) |
@@ -95,7 +96,7 @@ push: ci ...
 
 ## room の運用
 
-- **作り捨てで良い**: 「X と会話して」と言われたら `peers` で相手を探して `create-room`。room はタスク単位の使い捨て、たたむ儀式は不要
+- **作り捨てで良い**: 「X と会話して」と言われたら `peers` で相手を探して `create-room`。room はタスク単位の使い捨て、たたむ儀式は不要。明示的に抜けたい時だけ `leave` (通常は放置で構わない)
 - **どの room に post するか迷ったら**: 進行中の話題は既存 room の続き、新しい関心事は新 room。長くなったら `next-room` で次スレ (旧スレもそのまま使える)
 - 同時に同じ相手と room を作ろうとしても daemon が直列化して 1 つに寄せる (どちらが作ったかは気にしない)
 

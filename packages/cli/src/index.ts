@@ -187,6 +187,7 @@ Commands:
   next-room <room>             Spawn the next thread of a room (--msg, --title)
   subscribe                    Stream room events as jsonl to stdout (--since)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
+  leave <room>                 Leave a room
   rooms                        List rooms (id / title / members / last_mid)
   peers                        List connected sessions
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
@@ -284,6 +285,12 @@ async function main(): Promise<void> {
       const room = requireArg(args[0], "room", usage);
       const mids = requireArg(args[1], "mids", usage);
       await runOnce(identity, { op: "read", room, mids });
+      return;
+    }
+    case "leave": {
+      const usage = "ccmsg leave <room>";
+      const room = requireArg(args[0], "room", usage);
+      await runOnce(identity, { op: "leave", room });
       return;
     }
     case "rooms": {
