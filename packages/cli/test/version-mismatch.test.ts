@@ -8,6 +8,9 @@
 //      を broadcast する (= DR-0002 §4 の restarting 通知契約、sidecar 再接続の起点)。
 //   3. version が一致していれば daemon は再起動しない (= 誤爆しない側の輪郭、
 //      毎ターン hook の常時 ensure がコストゼロで済むための不変条件)。
+//   4. daemon が client より新しい (= client が古い) 場合も daemon は再起動しない
+//      (= newer-wins ポリシー、docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md。
+//      gradual rollout 中の新旧混在で降格・昇格の綱引きが起きないための不変条件)。
 //
 // テスト用シームの根拠 (Design rationale):
 // - CCMSG_VERSION_OVERRIDE: 旧 version の実バイナリを別途用意しなくても
@@ -250,6 +253,54 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       // proc がまだ生きている (= 再起動していない) ことを別経路でも確認: exited は
       // subprocess が終了したときに解決される Promise なので、Promise.race で
       // 短時間タイムアウトさせて「まだ生きている」を実測する。
+      const stillAliveMarker = Symbol("alive");
+      const raceResult = await Promise.race([
+        proc.exited.then(() => "exited" as const),
+        new Promise<typeof stillAliveMarker>((res) => setTimeout(() => res(stillAliveMarker), 100)),
+      ]);
+      expect(raceResult).toBe(stillAliveMarker);
+
+      client.close();
+    },
+    T,
+  );
+
+  test(
+    "daemon が新しい (client が古い) 場合は再起動しない (newer-wins ポリシー)",
+    async () => {
+      // 「何を保証するか」: gradual rollout 中に旧 client が新 daemon へ接続しても、
+      // 旧 client 側が「version 不一致」を理由に新 daemon を降格させてはいけない
+      // (docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md)。
+      // ここでは「daemon の方が client より新しい」を、実 VERSION より大きい
+      // synthetic override ("99.0.0") を daemon に名乗らせることで再現する
+      // (client 側はテストプロセスの実 VERSION のままで固定、それより確実に新しい
+      // 数字を daemon 側に与えれば compareVersions(VERSION, hello.version) < 0 になる)。
+      const FUTURE_VERSION = "99.0.0";
+      const proc = spawnDaemonProc(env.stateDir, env.dataDir, {
+        CCMSG_VERSION_OVERRIDE: FUTURE_VERSION,
+      });
+      await waitConnectable(env.sock);
+      const pidBefore = readPid(env.pidFile);
+      expect(pidBefore).not.toBeNull();
+
+      const paths = resolvePaths();
+      const client = await ensureDaemon(paths, {
+        role: "session",
+        sid: "S-newer-daemon",
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+      });
+
+      // daemon はそのまま (= 降格されず FUTURE_VERSION を名乗り続け、pid も不変)。
+      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+        op: "ping",
+      });
+      expect(pong.ok).toBe(true);
+      expect(pong.version).toBe(FUTURE_VERSION);
+      expect(pong.pid).toBe(pidBefore!);
+
+      // proc がまだ生きていることも別経路で確認 (version 一致テストと同じ手法)。
       const stillAliveMarker = Symbol("alive");
       const raceResult = await Promise.race([
         proc.exited.then(() => "exited" as const),

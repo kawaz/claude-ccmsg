@@ -11,6 +11,7 @@
 // get `a1, a2, ...` in room join order. This is NOT the Unix UID.
 
 export { VERSION } from "./version.ts";
+export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */

@@ -1,10 +1,13 @@
 // UDS client + ensure-daemon (DR-0002 §2/§4/§5).
 //
 // ensure-daemon path: connect -> (fail) spawn -> backoff-retry connect -> hello.
-// If the running daemon's version differs from ours, shut it down and re-spawn the
-// current one (client-driven upgrade, DR-0002 §4).
+// If the running daemon's version is OLDER than ours, shut it down and re-spawn
+// the current one (client-driven upgrade, DR-0002 §4, newer-wins policy per
+// docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md: a
+// same-or-newer daemon is left alone so old and new clients don't fight over
+// which version should run during a gradual plugin rollout).
 import type { Socket } from "bun";
-import { VERSION, type Identity, type Paths } from "@ccmsg/protocol";
+import { compareVersions, VERSION, type Identity, type Paths } from "@ccmsg/protocol";
 
 export class Client {
   private socket!: Socket;
@@ -166,8 +169,9 @@ function helloRequest(identity: Identity): Record<string, unknown> {
 export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Client> {
   let client = await connectWithSpawn(paths.sock);
   let hello = await client.request<{ ok: boolean; version?: string }>(helloRequest(identity));
-  if (hello.ok && hello.version && hello.version !== VERSION) {
-    // running daemon is a different version: shut it down and spawn ours
+  if (hello.ok && hello.version && compareVersions(VERSION, hello.version) > 0) {
+    // we are strictly newer than the running daemon: shut it down and spawn ours.
+    // A same-or-newer daemon is left running (newer-wins, see file header).
     try {
       await client.request({ op: "shutdown", reason: "upgrade" });
     } catch {
