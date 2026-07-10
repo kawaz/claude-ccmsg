@@ -1,6 +1,6 @@
 ---
 title: webui の HTTPS 化検討
-status: idea
+status: resolved
 category: design
 created: 2026-07-10T10:43:53+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-10T18:18:05+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:kawaz裁定2026-07-10でtailscale serve採用により解決 (DR-0004§3追補・bind/allowlist縮退見直しは未実施だがkawaz裁定によりresolved)","idea/webrtc-datachannel-transport (将来の別案として別途追跡)"]
 blocked_by:
 origin: 自リポ TODO
 ---
