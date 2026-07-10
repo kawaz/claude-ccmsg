@@ -306,19 +306,51 @@ body {
   cursor: pointer;
 }
 
-/* --- Session view: FileTree + FileViewer panes (DR-0008) --- */
+/* --- Session view: FileTree + FileViewer panes (DR-0008), Timeline (DR-0009) --- */
 
 #session-view {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
   overflow: hidden;
+}
+
+.session-tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  flex-shrink: 0;
+}
+
+.session-tab {
+  display: inline-block;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.session-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.session-tab.disabled {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .session-panes {
   flex: 1;
   min-width: 0;
   display: flex;
+  min-height: 0;
 }
 
 .file-tree {
@@ -466,6 +498,151 @@ body {
 
 .viewer-text {
   white-space: pre;
+}
+
+/* --- Timeline view: transcript jsonl (DR-0009) --- */
+
+.timeline-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.tl-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  position: sticky;
+  top: 0;
+}
+
+.tl-toolbar button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.tl-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tl-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.tl-line {
+  font-size: 0.85rem;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+}
+
+.tl-time {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-turn-user {
+  background: var(--user-bg);
+  align-self: flex-start;
+  max-width: 90%;
+}
+
+.tl-turn-assistant {
+  background: var(--bg-alt);
+  max-width: 90%;
+}
+
+.tl-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.2rem;
+}
+
+.tl-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tl-fold summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.tl-fold-body {
+  margin: 0.25rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.tl-meta {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.tl-meta summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.tl-meta-summary {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tl-broken {
+  border: 1px solid var(--danger);
+}
+
+.tl-broken-raw {
+  margin: 0;
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.tl-empty,
+.tl-loading,
+.tl-empty-turn {
+  color: var(--fg-muted);
+  padding: 1rem;
+}
+
+.tl-error {
+  color: var(--danger);
+  padding: 1rem;
+}
+
+.tl-error button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.7rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
 }
 
 @media (max-width: 720px) {

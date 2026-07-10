@@ -9,6 +9,7 @@ import {
   parseHash,
   roomHref,
   sessionHref,
+  timelineHref,
   type Locator,
 } from "../src/client/locator.ts";
 
@@ -94,7 +95,35 @@ describe("parseHash / session form (DR-0008)", () => {
   });
 });
 
-describe("parseHash / room and session forms never collide", () => {
+describe("parseHash / timeline form (DR-0009)", () => {
+  // Bare `#t<sid>`: the Timeline pane has no client-chosen path (byte-offset
+  // paging state lives in the store, not the URL), so — unlike the session
+  // form — there is no `:<something>` sub-form to test here.
+  test("#t<sid> -> timeline view for that sid", () => {
+    expect(parseHash("#tabc123")).toEqual({ view: "timeline", sid: "abc123" });
+  });
+
+  test("timelineHref round-trips through parseHash", () => {
+    expect(parseHash(timelineHref("sess-1"))).toEqual({ view: "timeline", sid: "sess-1" });
+  });
+
+  // Same encode/decode symmetry the session form guarantees for sid: a raw
+  // sid containing characters with syntactic meaning elsewhere (':', '#')
+  // must still survive because timelineHref encodes the whole segment.
+  test("sid containing ':' and '#' survives the round-trip", () => {
+    const loc: Locator = { view: "timeline", sid: "weird:sid#1" };
+    expect(parseHash(timelineHref(loc.sid))).toEqual(loc);
+  });
+
+  // Malformed percent-encoding must not throw, same policy as the session
+  // form's sid fallback (falls back to the raw, still-encoded sid).
+  test("malformed percent-encoding in the sid segment falls back to the raw sid, not a thrown error", () => {
+    expect(() => parseHash("#t%zz")).not.toThrow();
+    expect(parseHash("#t%zz")).toEqual({ view: "timeline", sid: "%zz" });
+  });
+});
+
+describe("parseHash / room, session, and timeline forms never collide", () => {
   // Room ids are always daemon-assigned as "r<n>" (server.ts), so a session
   // locator's leading literal "s" cannot be produced by roomHref, and no
   // existing room id starts with "s" — this test pins that invariant from
@@ -107,5 +136,12 @@ describe("parseHash / room and session forms never collide", () => {
   test("a hash starting with 'r' is always parsed as a room locator", () => {
     const loc = parseHash("#r1");
     expect(loc.view).toBe("room");
+  });
+
+  // Same invariant for the timeline form's leading "t" (DR-0009): no
+  // daemon-assigned room id starts with "t" either.
+  test("a hash starting with 't' is always parsed as a timeline locator", () => {
+    const loc = parseHash("#t1");
+    expect(loc.view).toBe("timeline");
   });
 });

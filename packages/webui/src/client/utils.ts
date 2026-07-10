@@ -18,6 +18,17 @@ export function relTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+/** HH:MM:SS in the viewer's local timezone, for a Timeline turn's timestamp
+ * (DR-0009). Returns "" for a missing/unparseable timestamp (some transcript
+ * line types, e.g. file-history-snapshot, carry none) rather than "Invalid
+ * Date" or throwing. */
+export function formatClockTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toTimeString().slice(0, 8);
+}
+
 export function memberLabel(id: string, room: RoomState | undefined): string {
   if (id === ADMIN_ID) return "User";
   const m = room?.membersById.get(id);

@@ -30,7 +30,11 @@ export function App() {
           class={state.sidebarOpen ? "visible" : undefined}
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
-        {state.view === "session" ? <SessionView state={state} /> : <RoomView state={state} />}
+        {state.view === "session" || state.view === "timeline" ? (
+          <SessionView state={state} />
+        ) : (
+          <RoomView state={state} />
+        )}
       </div>
     </div>
   );

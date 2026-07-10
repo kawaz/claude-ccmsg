@@ -211,6 +211,58 @@ describe("createWsClient pending queue on close/reconnect", () => {
     if (res.ok) expect(res.content).toBe("hello");
   });
 
+  // DR-0009: transcript_read wire shape. `before`/`max_bytes` are only sent
+  // when the caller actually passed them, mirroring fsList's "omit path when
+  // absent" minimal-request convention above.
+  test("transcriptRead sends {op:'transcript_read', sid} without before/max_bytes when opts is omitted", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.transcriptRead("sess-1");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_read", sid: "sess-1" });
+
+    ws1.triggerMessage(
+      JSON.stringify({ ok: true, sid: "sess-1", lines: ["a"], start: 0, end: 2, size: 2 }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.lines).toEqual(["a"]);
+  });
+
+  test("transcriptRead sends {op:'transcript_read', sid, before} when paging older", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    void handle.transcriptRead("sess-1", { before: 100 });
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "transcript_read",
+      sid: "sess-1",
+      before: 100,
+    });
+  });
+
+  test("transcriptRead sends max_bytes only when explicitly passed", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    void handle.transcriptRead("sess-1", { before: 100, max_bytes: 4096 });
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "transcript_read",
+      sid: "sess-1",
+      before: 100,
+      max_bytes: 4096,
+    });
+  });
+
   // Guards against the stale-socket mis-delivery found in the adversarial
   // review of the fix above: connect() used to swap `ws` without detaching
   // the old socket's listeners or closing it, so a late reply/close on the

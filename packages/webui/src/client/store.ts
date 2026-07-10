@@ -14,6 +14,7 @@ import {
   type MemberEvent,
   type PeerInfo,
   type RoomSummary,
+  type TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import type { Locator } from "./locator.ts";
 
@@ -36,7 +37,7 @@ export interface RoomState {
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
 
-export type View = "room" | "session";
+export type View = "room" | "session" | "timeline";
 
 /** Selected-file state within a SessionTreeState (DR-0008): mirrors the
  * loading/loaded/error lifecycle of a single fs_read round trip. `path` lets
@@ -51,9 +52,33 @@ export interface FileViewState {
   error?: string;
 }
 
+/** Timeline (transcript) state for one session (DR-0009), cached alongside
+ * the file tree so switching tabs/sessions never discards loaded pages. Mirrors
+ * FileViewState's loading/loaded/error split; "idle" (not in FileViewState)
+ * exists because the Timeline additionally has a real "never fetched yet"
+ * moment distinct from "loaded 0 lines" (an empty transcript). */
+export interface TimelineState {
+  status: "idle" | "loading" | "loaded" | "error";
+  /** raw jsonl lines currently cached, oldest first (client parses each as JSON) */
+  lines: string[];
+  /** byte offset of the earliest loaded line — pass as `before` to page older */
+  start: number;
+  /** byte offset just past the last loaded line's newline, as of the last
+   * tail read (a "load older" page doesn't move this: it only extends
+   * backwards from `start`, see applyTimelineLoaded) */
+  end: number;
+  /** transcript size as of the last response received (daemon-reported) */
+  size: number;
+  /** true once a response's `start` was 0 — no more "older" to load */
+  atStart: boolean;
+  /** present when status is "error" */
+  error?: string;
+}
+
 /** Per-session file-browsing state (DR-0008), keyed by sid in AppState so
  * switching between sessions preserves each one's expanded dirs / loaded
- * listings / open file instead of refetching on every visit. */
+ * listings / open file instead of refetching on every visit. Also holds the
+ * session's Timeline cache (DR-0009) — same per-sid keying, same rationale. */
 export interface SessionTreeState {
   /** loaded directory listings, keyed by relpath ("" = session root) */
   dirs: Map<string, FsEntry[]>;
@@ -64,6 +89,7 @@ export interface SessionTreeState {
   /** relpath selected via the `#s<sid>:<relpath>` locator, if any */
   selectedPath: string | null;
   file: FileViewState | null;
+  timeline: TimelineState;
 }
 
 export interface AppState {
@@ -117,6 +143,18 @@ export type Action =
       path: string;
       response?: FsReadResponse;
       error?: string;
+    }
+  | { type: "timeline/loading"; sid: string }
+  // "replace" (initial load / refresh, before omitted) discards the cache and
+  // takes the response as-is; "prepend" (older-page load) splices the older
+  // lines in front of what's cached — see applyTimelineLoaded for the offset
+  // bookkeeping either mode implies. error XOR response, never both.
+  | {
+      type: "timeline/loaded";
+      sid: string;
+      mode: "replace" | "prepend";
+      response?: TranscriptReadResponse;
+      error?: string;
     };
 
 function newRoom(id: string): RoomState {
@@ -140,6 +178,17 @@ function withRoom(rooms: Map<string, RoomState>, id: string): [RoomState, Map<st
   return [existing, next];
 }
 
+function newTimelineState(): TimelineState {
+  return {
+    status: "idle",
+    lines: [],
+    start: 0,
+    end: 0,
+    size: 0,
+    atStart: false,
+  };
+}
+
 function newSessionTree(): SessionTreeState {
   return {
     dirs: new Map(),
@@ -147,6 +196,7 @@ function newSessionTree(): SessionTreeState {
     expanded: new Set(),
     selectedPath: null,
     file: null,
+    timeline: newTimelineState(),
   };
 }
 
@@ -225,11 +275,12 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
   return { ...state, rooms };
 }
 
-/** Fold a URL-locator change (DR-0008: `#rXXXX[-mNN]` or `#s<sid>[:<path>]`)
- * into which top-level view is shown and which room/session+path it points
- * at. This only records *what's selected*; it doesn't fetch anything —
- * FileTree/FileViewer own the fs_list/fs_read round trips their own
- * useEffects trigger off `currentSid`/`selectedPath` (DR-0005 §1: reducer
+/** Fold a URL-locator change (DR-0008: `#rXXXX[-mNN]` or `#s<sid>[:<path>]`;
+ * DR-0009: `#t<sid>`) into which top-level view is shown and which
+ * room/session(+path) it points at. This only records *what's selected*; it
+ * doesn't fetch anything — FileTree/FileViewer/Timeline own the
+ * fs_list/fs_read/transcript_read round trips their own useEffects trigger
+ * off `currentSid`/`selectedPath`/`timeline.status` (DR-0005 §1: reducer
  * stays pure, effects live in components/ws.ts). */
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "room") {
@@ -238,6 +289,20 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       view: "room",
       currentRoomId: locator.room,
       currentMid: locator.mid,
+      mentionTo: new Set(),
+      sidebarOpen: false,
+    };
+  }
+  if (locator.view === "timeline") {
+    // Ensures a tree (and its nested idle TimelineState) exists so Timeline's
+    // effect has something to read on first visit — same reasoning as the
+    // session/path branch below, just without a selectedPath to set.
+    const [, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
+    return {
+      ...state,
+      view: "timeline",
+      currentSid: locator.sid,
+      sessionTrees,
       mentionTo: new Set(),
       sidebarOpen: false,
     };
@@ -256,6 +321,46 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     mentionTo: new Set(),
     sidebarOpen: false,
   };
+}
+
+/** Fold `timeline/loaded` into the sid's cached TimelineState (DR-0009). Two
+ * merge modes, matching the two calls Timeline.tsx makes:
+ *  - "replace" (before omitted: initial load or the "更新" refresh button)
+ *    discards whatever was cached and takes the response as the new tail.
+ *  - "prepend" ("older を読み込む": before = current `start`) splices the
+ *    older page in front of the cached lines. `end` deliberately keeps the
+ *    *previous* value rather than the response's own `end` — this page's
+ *    `end` describes where *this older batch* stops (at/around the old
+ *    `start`), not how far into the file we've read overall, which is still
+ *    bounded by the last tail read. `start` moves back to the response's
+ *    `start`, becoming the new "how far back have we loaded" boundary for any
+ *    further "older" page. */
+function applyTimelineLoaded(
+  state: AppState,
+  action: Extract<Action, { type: "timeline/loaded" }>,
+): AppState {
+  const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+  if (action.error !== undefined) {
+    sessionTrees.set(action.sid, {
+      ...tree,
+      timeline: { ...tree.timeline, status: "error", error: action.error },
+    });
+    return { ...state, sessionTrees };
+  }
+  const res = action.response;
+  if (!res) return state; // unreachable: loaded always carries error xor response
+  const prev = tree.timeline;
+  const lines = action.mode === "prepend" ? [...res.lines, ...prev.lines] : res.lines;
+  const timeline: TimelineState = {
+    status: "loaded",
+    lines,
+    start: res.start,
+    end: action.mode === "prepend" ? prev.end : res.end,
+    size: res.size,
+    atStart: res.start === 0,
+  };
+  sessionTrees.set(action.sid, { ...tree, timeline });
+  return { ...state, sessionTrees };
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -317,6 +422,16 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "sidebar/set":
       return { ...state, sidebarOpen: action.open };
+    case "timeline/loading": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      sessionTrees.set(action.sid, {
+        ...tree,
+        timeline: { ...tree.timeline, status: "loading", error: undefined },
+      });
+      return { ...state, sessionTrees };
+    }
+    case "timeline/loaded":
+      return applyTimelineLoaded(state, action);
     default:
       return state;
   }

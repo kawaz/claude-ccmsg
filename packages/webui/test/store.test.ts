@@ -3,7 +3,12 @@
 // tests exercise that fold directly (no WS, no DOM) — the whole point of
 // making the reducer pure is that its contract is testable this way.
 import { describe, expect, test } from "bun:test";
-import type { DeliveredEvent, MemberEvent, RoomSummary } from "@ccmsg/protocol";
+import type {
+  DeliveredEvent,
+  MemberEvent,
+  RoomSummary,
+  TranscriptReadResponse,
+} from "@ccmsg/protocol";
 import {
   ADMIN_ID,
   type Action,
@@ -373,5 +378,219 @@ describe("reducer / peers/loaded and sidebar/set", () => {
   test("sidebar/set toggles sidebarOpen independent of locator changes", () => {
     const opened = dispatch(initialState(), { type: "sidebar/set", open: true });
     expect(opened.sidebarOpen).toBe(true);
+  });
+});
+
+describe("reducer / locator/changed (timeline view, DR-0009)", () => {
+  // Bare `#t<sid>`: switches to the timeline view and creates a fresh
+  // per-session tree (with an idle TimelineState) on first visit — no fetch
+  // happens here (that's Timeline.tsx's job), the reducer only records
+  // what's selected, same division of labor as the session/Files form.
+  test("#t<sid> switches view to 'timeline', sets currentSid, creates an idle timeline cache", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1" },
+    });
+    expect(state.view).toBe("timeline");
+    expect(state.currentSid).toBe("sess-1");
+    const tree = state.sessionTrees.get("sess-1");
+    expect(tree).toBeDefined();
+    expect(tree?.timeline.status).toBe("idle");
+    expect(tree?.timeline.lines).toEqual([]);
+  });
+
+  // Revisiting a session's timeline (e.g. Files -> Timeline -> Files ->
+  // Timeline) must not discard already-loaded lines — same non-refetch
+  // guarantee store.test.ts already pins for the Files tree above.
+  test("navigating away and back to a session's timeline preserves its loaded lines", () => {
+    const visited = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1" },
+    });
+    const res: TranscriptReadResponse = {
+      ok: true,
+      sid: "sess-1",
+      lines: ['{"type":"user"}'],
+      start: 0,
+      end: 20,
+      size: 20,
+    };
+    const loaded = dispatch(visited, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: res,
+    });
+    const awayAndBack = dispatch(
+      dispatch(loaded, {
+        type: "locator/changed",
+        locator: { view: "room", room: "r1", mid: null },
+      }),
+      { type: "locator/changed", locator: { view: "timeline", sid: "sess-1" } },
+    );
+    expect(awayAndBack.sessionTrees.get("sess-1")?.timeline.lines).toEqual(['{"type":"user"}']);
+  });
+
+  // The Files (`#s<sid>`) and Timeline (`#t<sid>`) locators share one
+  // per-sid tree: loading the Files tab's directory listing must not be
+  // clobbered by later switching to Timeline for the same sid.
+  test("Files tree state survives switching to that session's Timeline tab", () => {
+    const filesLoaded = dispatch(
+      dispatch(initialState(), {
+        type: "locator/changed",
+        locator: { view: "session", sid: "sess-1", path: null },
+      }),
+      { type: "fs/dir-loaded", sid: "sess-1", path: "", entries: [{ name: "src", type: "dir" }] },
+    );
+    const toTimeline = dispatch(filesLoaded, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1" },
+    });
+    expect(toTimeline.sessionTrees.get("sess-1")?.dirs.get("")).toEqual([
+      { name: "src", type: "dir" },
+    ]);
+  });
+});
+
+describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
+  test("timeline/loading sets status 'loading' and clears any prior error", () => {
+    const errored = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      error: "session_not_found",
+    });
+    const loading = dispatch(errored, { type: "timeline/loading", sid: "sess-1" });
+    const timeline = loading.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.status).toBe("loading");
+    expect(timeline?.error).toBeUndefined();
+  });
+
+  // "replace" mode (initial load / 更新 refresh, `before` omitted): the cache
+  // is discarded and the response's own start/end/size/lines become the new
+  // cache verbatim.
+  test("timeline/loaded (replace) stores the response as the new cache", () => {
+    const res: TranscriptReadResponse = {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a", "b"],
+      start: 100,
+      end: 150,
+      size: 150,
+    };
+    const state = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: res,
+    });
+    const timeline = state.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline).toEqual({
+      status: "loaded",
+      lines: ["a", "b"],
+      start: 100,
+      end: 150,
+      size: 150,
+      atStart: false,
+    });
+  });
+
+  // "replace" with start:0 (the whole transcript fit in one tail read) must
+  // flip atStart true — no "older" button should be enabled from here.
+  test("timeline/loaded (replace) with start:0 sets atStart true", () => {
+    const res: TranscriptReadResponse = {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 10,
+      size: 10,
+    };
+    const state = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: res,
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.atStart).toBe(true);
+  });
+
+  // "prepend" mode ("older を読み込む", `before` = the cache's current
+  // `start`): the older page's lines go in FRONT of what's cached, `start`
+  // moves back to the response's `start`, but `end` deliberately keeps the
+  // PREVIOUS cached value (the older page's own `end` describes where that
+  // batch stops, not how far into the file the overall cache reaches — see
+  // applyTimelineLoaded's doc comment in store.ts).
+  test("timeline/loaded (prepend) splices older lines in front, moves start back, keeps end unchanged", () => {
+    const initial: TranscriptReadResponse = {
+      ok: true,
+      sid: "sess-1",
+      lines: ["tail-1", "tail-2"],
+      start: 100,
+      end: 200,
+      size: 200,
+    };
+    const afterInitial = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: initial,
+    });
+    const older: TranscriptReadResponse = {
+      ok: true,
+      sid: "sess-1",
+      lines: ["older-1", "older-2"],
+      start: 20,
+      end: 100,
+      size: 200,
+    };
+    const afterOlder = dispatch(afterInitial, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "prepend",
+      response: older,
+    });
+    const timeline = afterOlder.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["older-1", "older-2", "tail-1", "tail-2"]);
+    expect(timeline?.start).toBe(20);
+    expect(timeline?.end).toBe(200); // unchanged from the initial (tail) load
+    expect(timeline?.atStart).toBe(false);
+  });
+
+  // Prepending a page whose own `start` is 0 reaches the true beginning of
+  // the transcript — atStart must flip true so the "older" button disables.
+  test("timeline/loaded (prepend) reaching start:0 sets atStart true", () => {
+    const afterInitial = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["tail"], start: 50, end: 100, size: 100 },
+    });
+    const afterOlder = dispatch(afterInitial, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "prepend",
+      response: { ok: true, sid: "sess-1", lines: ["first"], start: 0, end: 50, size: 100 },
+    });
+    expect(afterOlder.sessionTrees.get("sess-1")?.timeline.atStart).toBe(true);
+  });
+
+  test("timeline/loaded (error) flips status to error and records the message, does not touch lines", () => {
+    const withLines = dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["a"], start: 0, end: 5, size: 5 },
+    });
+    const errored = dispatch(withLines, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      error: "session_not_found",
+    });
+    const timeline = errored.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.status).toBe("error");
+    expect(timeline?.error).toBe("session_not_found");
+    expect(timeline?.lines).toEqual(["a"]); // last-good lines preserved, not cleared
   });
 });

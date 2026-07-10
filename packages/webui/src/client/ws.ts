@@ -23,6 +23,7 @@ import type {
   Response,
   RoomsResponse,
   StreamEvent,
+  TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import type { Action } from "./store.ts";
 
@@ -57,6 +58,13 @@ export interface WsHandle {
   fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
   fsRead(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  /** Read a slice of a connected session's transcript jsonl (DR-0009
+   * transcript_read). `before` omitted = tail of the file; pass the previous
+   * reply's `start` to page older. */
+  transcriptRead(
+    sid: string,
+    opts?: { before?: number; max_bytes?: number },
+  ): Promise<TranscriptReadResponse | ErrorResponse>;
 }
 
 export function createWsClient(dispatch: (action: Action) => void): WsHandle {
@@ -203,5 +211,12 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     read: (room, mids) => send({ op: "read", room, mids }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
+    transcriptRead: (sid, opts) =>
+      send({
+        op: "transcript_read",
+        sid,
+        ...(opts?.before !== undefined ? { before: opts.before } : {}),
+        ...(opts?.max_bytes !== undefined ? { max_bytes: opts.max_bytes } : {}),
+      }),
   };
 }
