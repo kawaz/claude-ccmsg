@@ -29,7 +29,7 @@ claude plugin update ccmsg@ccmsg
 
 ## Web UI
 
-The daemon serves a web UI at `http://0.0.0.0:8642` by default (for the human user: browse rooms and post as uid 0 = User), reachable over loopback and — no extra config needed — your tailscale IP, since your phone is already on the tailnet. Access is gated by a source-IP allowlist, not by which interfaces are bound: the default `CCMSG_HTTP_ALLOW` is `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale's CGNAT/ULA ranges), and anything outside it gets `403 Forbidden`. Override with `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) and `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
+The daemon serves a web UI at `http://0.0.0.0:8642` by default (for the human user: browse rooms and post as `u1` = User), reachable over loopback and — no extra config needed — your tailscale IP, since your phone is already on the tailnet. Access is gated by a source-IP allowlist, not by which interfaces are bound: the default `CCMSG_HTTP_ALLOW` is `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale's CGNAT/ULA ranges), and anything outside it gets `403 Forbidden`. Override with `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) and `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
 
 ## Why a rewrite?
 
@@ -50,7 +50,7 @@ Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses i
 - **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / thread-links `next`/`prev` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-mid.
 - **Delivery** — full message bodies are pushed to all room members; `to` is a mention (attention) marker, not a visibility filter. No echo back of your own posts.
 - **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. The web UI uses WebSocket (`/ws`) speaking the same protocol: the security layer is identity pinning to the User role, gated by a source-IP allowlist (loopback + tailscale, `CCMSG_HTTP_ALLOW`).
-- **Clients** — a per-session `subscribe` sidecar (feeds the Claude Code Monitor tool), a user-facing CLI (the human is reserved member `0` of every room), and later a web UI. Every client silently health-checks and auto-starts the daemon.
+- **Clients** — a per-session `subscribe` sidecar (feeds the Claude Code Monitor tool), a user-facing CLI (the human is reserved member `u1` of every room), and later a web UI. Every client silently health-checks and auto-starts the daemon.
 
 ## Repository layout
 
