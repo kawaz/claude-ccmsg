@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  buildSubscribeCommand,
   candidateBinDirs,
   declineMarkerPath,
   detectPathInstallCandidate,
@@ -121,5 +122,51 @@ describe("detectPathInstallCandidate", () => {
     } finally {
       fs.chmodSync(localBin, 0o700);
     }
+  });
+});
+
+// buildSubscribeCommand (DR-0009): the suggested `ccmsg subscribe` command line
+// gets CCMSG_SID / CCMSG_TRANSCRIPT_PATH env prefixes stitched on, each only
+// when its source value is present.
+describe("buildSubscribeCommand", () => {
+  const bin = "/opt/ccmsg/bin/ccmsg";
+
+  // Neither session_id nor transcript_path known (degenerate hook input):
+  // no env prefix at all, just the bare launcher + subcommand.
+  test("session_id も transcript_path も無ければ prefix なし", () => {
+    expect(buildSubscribeCommand(bin, undefined, undefined)).toBe(`${bin} subscribe`);
+  });
+
+  // session_id だけの場合は既存挙動どおり CCMSG_SID= だけが前置される
+  // (回帰防止: CCMSG_TRANSCRIPT_PATH 追加で既存の CCMSG_SID 単独ケースを壊していないか)。
+  test("session_id のみなら CCMSG_SID= だけが前置される", () => {
+    expect(buildSubscribeCommand(bin, "sess-123", undefined)).toBe(
+      `CCMSG_SID=sess-123 ${bin} subscribe`,
+    );
+  });
+
+  // 両方揃っている本来のケース: CCMSG_SID の隣に CCMSG_TRANSCRIPT_PATH が
+  // single-quote された絶対パスとともに続く (DR-0009 の申告経路)。
+  test("session_id と transcript_path が両方あれば CCMSG_SID の隣に CCMSG_TRANSCRIPT_PATH が続く", () => {
+    expect(buildSubscribeCommand(bin, "sess-123", "/home/u/.claude/proj/sess-123.jsonl")).toBe(
+      `CCMSG_SID=sess-123 CCMSG_TRANSCRIPT_PATH='/home/u/.claude/proj/sess-123.jsonl' ${bin} subscribe`,
+    );
+  });
+
+  // transcript_path のみ (session_id が欠けているような異常な hook 入力) でも
+  // CCMSG_TRANSCRIPT_PATH 側は独立して前置される。
+  test("transcript_path のみなら CCMSG_TRANSCRIPT_PATH だけが前置される", () => {
+    expect(buildSubscribeCommand(bin, undefined, "/tmp/x.jsonl")).toBe(
+      `CCMSG_TRANSCRIPT_PATH='/tmp/x.jsonl' ${bin} subscribe`,
+    );
+  });
+
+  // シェル安全性: パスに単一引用符が含まれても `'\''` エスケープで壊れずに
+  // 埋め込まれる (= あり得ない想定だが、シェルコマンド生成である以上防御する)。
+  test("transcript_path にシングルクォートが含まれてもシェル安全にエスケープされる", () => {
+    const got = buildSubscribeCommand(bin, "s1", "/tmp/it's-a-path/s1.jsonl");
+    expect(got).toBe(
+      `CCMSG_SID=s1 CCMSG_TRANSCRIPT_PATH='/tmp/it'\\''s-a-path/s1.jsonl' ${bin} subscribe`,
+    );
   });
 });

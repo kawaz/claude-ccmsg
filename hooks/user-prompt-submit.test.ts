@@ -9,6 +9,7 @@ import {
   collectDescendants,
   isSubscribeCommand,
   detectSubscribeInTree,
+  buildNagMessage,
 } from "./user-prompt-submit.ts";
 
 describe("parsePs", () => {
@@ -139,5 +140,41 @@ describe("detectSubscribeInTree", () => {
       { pid: 99, ppid: 1, command: "bun run /x/packages/cli/src/index.ts subscribe" },
     ];
     expect(detectSubscribeInTree(otherTree, 50)).toBe(false);
+  });
+});
+
+// buildNagMessage (DR-0009 addendum): the re-subscribe command this hook nags
+// with must announce CCMSG_TRANSCRIPT_PATH exactly like SessionStart's does
+// (via the same buildSubscribeCommand), so a subscribe restarted from *this*
+// hook's suggestion doesn't hello without transcript_path and (pre-fix)
+// silently clear an already-adopted one.
+describe("buildNagMessage", () => {
+  const bin = "/opt/ccmsg/bin/ccmsg";
+
+  test("session_id と transcript_path が両方あれば nag メッセージのコマンドに両方の prefix が乗る", () => {
+    const msg = buildNagMessage(bin, "sess-123", "/home/u/.claude/proj/sess-123.jsonl");
+    expect(msg).toBe(
+      `[ccmsg] subscribe stream not detected in this session's process tree. ` +
+        `Open it with the **Monitor tool** (persistent: true), not Bash: ` +
+        `CCMSG_SID=sess-123 CCMSG_TRANSCRIPT_PATH='/home/u/.claude/proj/sess-123.jsonl' ${bin} subscribe\n`,
+    );
+  });
+
+  // 回帰防止: transcript_path 追加前の既存挙動 (CCMSG_SID のみ) を壊していないか。
+  test("transcript_path が無ければ CCMSG_SID のみが前置される", () => {
+    const msg = buildNagMessage(bin, "sess-123", undefined);
+    expect(msg).toBe(
+      `[ccmsg] subscribe stream not detected in this session's process tree. ` +
+        `Open it with the **Monitor tool** (persistent: true), not Bash: ` +
+        `CCMSG_SID=sess-123 ${bin} subscribe\n`,
+    );
+  });
+
+  test("どちらも無ければ prefix なしの裸コマンドになる", () => {
+    const msg = buildNagMessage(bin, undefined, undefined);
+    expect(msg).toBe(
+      `[ccmsg] subscribe stream not detected in this session's process tree. ` +
+        `Open it with the **Monitor tool** (persistent: true), not Bash: ${bin} subscribe\n`,
+    );
   });
 });

@@ -27,6 +27,34 @@ import { resolvePaths } from "@ccmsg/protocol";
 interface SessionStartInput {
   session_id?: string;
   source?: string;
+  /** absolute path of this session's Claude Code transcript jsonl, per Claude
+   *  Code's SessionStart hook input schema (DR-0009). */
+  transcript_path?: string;
+}
+
+/** Single-quote a value for safe embedding in a shell command line
+ *  (`'` -> `'\''`, whole value wrapped in `'...'`). */
+function shellSingleQuote(value: string): string {
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * Builds the `ccmsg subscribe` command line suggested to the AI: CCMSG_SID
+ * (from `session_id`) and, when this hook received a transcript_path from
+ * stdin (DR-0009), CCMSG_TRANSCRIPT_PATH — so the subscribe process announces
+ * the session's transcript at hello time. Either prefix is omitted when its
+ * source value is absent.
+ */
+export function buildSubscribeCommand(
+  bin: string,
+  sessionId: string | undefined,
+  transcriptPath: string | undefined,
+): string {
+  const sidPrefix = sessionId ? `CCMSG_SID=${sessionId} ` : "";
+  const transcriptPrefix = transcriptPath
+    ? `CCMSG_TRANSCRIPT_PATH=${shellSingleQuote(transcriptPath)} `
+    : "";
+  return `${sidPrefix}${transcriptPrefix}${bin} subscribe`;
 }
 
 /** Absolute path to the launcher, robust to a missing CLAUDE_PLUGIN_ROOT. */
@@ -141,13 +169,15 @@ async function main(): Promise<void> {
   // NOT exported to the Bash/Monitor subprocess environment, so without it the
   // subscribe would silently hello as the User (u1) — no peers entry, no
   // echo suppression. The hook is the one place that reliably knows session_id.
-  const sidPrefix = input.session_id ? `CCMSG_SID=${input.session_id} ` : "";
+  // CCMSG_TRANSCRIPT_PATH rides along the same way (DR-0009): the subscribe
+  // process's hello announces it so the webui gets a Timeline view for this sid.
+  const subscribeCmd = buildSubscribeCommand(bin, input.session_id, input.transcript_path);
   const contextLines = [
     "ccmsg is available: file-backed messaging between Claude Code sessions via a central daemon.",
     `Launcher (use this absolute path, not PATH): ${bin}`,
     "",
     "Start the new-message stream now with the **Monitor tool** (persistent: true):",
-    `  ${sidPrefix}${bin} subscribe`,
+    `  ${subscribeCmd}`,
     "subscribe is long-running and blocking — running it in the Bash tool will hang the turn.",
     "Its stdout is JSONL (one room event per line) for Monitor / jq to consume.",
     "Without it you cannot proactively notice incoming messages (the UserPromptSubmit hook only nags you on your next turn).",

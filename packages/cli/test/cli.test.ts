@@ -153,6 +153,53 @@ describe("ccmsg CLI end-to-end", () => {
       cleanup();
     }
   }, 30000);
+
+  // DR-0009: resolveIdentity picks up CCMSG_TRANSCRIPT_PATH from the process env
+  // (the SessionStart hook's suggested prefix, see hooks/session-start.ts) and
+  // sends it in hello; the daemon's own validation (transcript.test.ts) is what
+  // decides whether it's actually adopted — here we just confirm a valid one
+  // round-trips end to end into `peers`.
+  test("CCMSG_TRANSCRIPT_PATH env はセッションの transcript_path として peers に現れる", async () => {
+    const { env, cleanup } = makeEnv();
+    const transcriptFile = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-tr-")),
+      "S1.jsonl",
+    );
+    fs.writeFileSync(transcriptFile, "");
+    try {
+      const peers = JSON.parse(
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "S1",
+            CCMSG_TRANSCRIPT_PATH: transcriptFile,
+          })
+        ).out,
+      ) as { peers: { sid: string; transcript_path?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.transcript_path).toBe(transcriptFile);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(path.dirname(transcriptFile), { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // 空文字は「未指定」と同じ扱い (env が存在してしまうだけの CI/シェル環境事故を
+  // transcript_path: "" として daemon に送りつけない、DR-0009)。
+  test("CCMSG_TRANSCRIPT_PATH が空文字なら peers に transcript_path が出ない", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_TRANSCRIPT_PATH: "" })).out,
+      ) as { peers: { sid: string; transcript_path?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.transcript_path).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 });
 
 describe("ccmsg CLI --version / version (DR-0007 §3)", () => {

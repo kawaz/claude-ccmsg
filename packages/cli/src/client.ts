@@ -162,6 +162,7 @@ export function helloRequest(identity: Identity): Record<string, unknown> {
     repo: identity.repo,
     ws: identity.ws,
     cwd: identity.cwd,
+    ...(identity.transcript_path ? { transcript_path: identity.transcript_path } : {}),
   };
 }
 

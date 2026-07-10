@@ -22,6 +22,7 @@ import {
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { fsList, fsRead } from "./fs-access.ts";
+import { transcriptRead, validateTranscriptPath } from "./transcript.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
@@ -49,7 +50,14 @@ export interface Conn {
 }
 
 interface SessionEntry {
-  meta: { sid: string; repo: string; ws: string; cwd: string };
+  meta: {
+    sid: string;
+    repo: string;
+    ws: string;
+    cwd: string;
+    /** present iff hello announced a transcript_path that validated (DR-0009). */
+    transcript_path?: string;
+  };
   conns: Set<Conn>;
 }
 
@@ -99,12 +107,29 @@ function writeDelivered(conn: Conn, roomId: string, ev: StorageEvent): void {
 
 function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void {
   let entry = daemon.sessions.get(id.sid);
+  // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
+  // exception (DR-0009 addendum): unlike repo/ws/cwd, it only ever arrives via
+  // the hook-supplied CCMSG_TRANSCRIPT_PATH env prefix (session-start.ts /
+  // user-prompt-submit.ts), and a re-subscribe after the stream died is a
+  // common, legitimate path that omits it (e.g. a UserPromptSubmit-suggested
+  // `CCMSG_SID=<sid> ccmsg subscribe` typed without the transcript prefix). A
+  // hello that omits transcript_path preserves whatever was already adopted
+  // instead of clearing it — otherwise every such re-subscribe would silently
+  // kill the webui's Timeline view for a session that never stopped having a
+  // transcript.
+  const transcriptPath = id.transcript_path ?? entry?.meta.transcript_path;
+  const meta = {
+    sid: id.sid,
+    repo: id.repo,
+    ws: id.ws,
+    cwd: id.cwd,
+    ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+  };
   if (!entry) {
-    entry = { meta: { sid: id.sid, repo: id.repo, ws: id.ws, cwd: id.cwd }, conns: new Set() };
+    entry = { meta, conns: new Set() };
     daemon.sessions.set(id.sid, entry);
   } else {
-    // latest hello wins for metadata
-    entry.meta = { sid: id.sid, repo: id.repo, ws: id.ws, cwd: id.cwd };
+    entry.meta = meta;
   }
   entry.conns.add(conn);
 }
@@ -287,12 +312,12 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 
 // --- request dispatch ------------------------------------------------------
 
-// fs_list/fs_read require hello too (DR-0008): the containment check itself
-// (fs-access.ts) doesn't depend on the *caller's* identity — it only cares
-// about the target sid's registered cwd. Requiring hello here is defense in
-// depth (DR-0008 §4): it keeps every op that touches session state on one
-// uniform "must identify first" rule rather than special-casing these two
-// as the sole unauthenticated readers of another session's filesystem.
+// fs_list/fs_read/transcript_read require hello too (DR-0008 / DR-0009): the
+// containment/lookup check itself doesn't depend on the *caller's* identity —
+// it only cares about the target sid's registered state. Requiring hello here
+// is defense in depth: it keeps every op that touches session state on one
+// uniform "must identify first" rule rather than special-casing these as the
+// sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS = new Set([
   "post",
   "create_room",
@@ -302,6 +327,7 @@ const IDENTITY_OPS = new Set([
   "leave",
   "fs_list",
   "fs_read",
+  "transcript_read",
 ]);
 
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
@@ -338,12 +364,14 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");
           return;
         }
+        const transcriptPath = validateTranscriptPath(req.sid, req.transcript_path);
         const id: SessionIdentity = {
           role: "session",
           sid: req.sid,
           repo: req.repo ?? "",
           ws: req.ws ?? "",
           cwd: req.cwd ?? "",
+          ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
         };
         conn.identity = id;
         registerSession(daemon, conn, id);
@@ -588,6 +616,16 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
 
     case "fs_read": {
       const result = fsRead(daemon.sessions, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "transcript_read": {
+      const result = transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

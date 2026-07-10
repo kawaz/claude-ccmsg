@@ -15,6 +15,7 @@
  * claude ancestor) falls to the safe side — nag — rather than staying silent.
  */
 import * as path from "node:path";
+import { buildSubscribeCommand } from "./session-start.ts";
 
 interface ProcRow {
   pid: number;
@@ -117,6 +118,35 @@ function resolveBin(): string {
   return path.join(root, "bin", "ccmsg");
 }
 
+interface UserPromptSubmitInput {
+  session_id?: string;
+  /** absolute path of this session's Claude Code transcript jsonl, same field
+   *  SessionStart receives (DR-0009 addendum). Present so the re-subscribe
+   *  command this hook nags with also announces it — without this, a
+   *  subscribe restarted from this hook's suggestion (rather than
+   *  SessionStart's) would hello without transcript_path and, pre-DR-0009-
+   *  addendum, would have silently cleared an already-adopted one. */
+  transcript_path?: string;
+}
+
+/**
+ * Builds the nag message's suggested command via the same
+ * `buildSubscribeCommand` SessionStart uses (DR-0009 addendum) — so a
+ * subscribe restarted from *this* hook's suggestion announces
+ * CCMSG_TRANSCRIPT_PATH exactly like one restarted from SessionStart's would.
+ */
+export function buildNagMessage(
+  bin: string,
+  sessionId: string | undefined,
+  transcriptPath: string | undefined,
+): string {
+  const cmd = buildSubscribeCommand(bin, sessionId, transcriptPath);
+  return (
+    `[ccmsg] subscribe stream not detected in this session's process tree. ` +
+    `Open it with the **Monitor tool** (persistent: true), not Bash: ${cmd}\n`
+  );
+}
+
 /** Detect a live subscribe in the current session's tree; false on any uncertainty (safe side = nag). */
 function subscribeRunning(): boolean {
   let rows: ProcRow[];
@@ -140,11 +170,13 @@ function subscribeRunning(): boolean {
 
 async function main(): Promise<void> {
   let sessionId: string | undefined;
+  let transcriptPath: string | undefined;
   try {
-    const input = JSON.parse(await Bun.stdin.text()) as { session_id?: string };
+    const input = JSON.parse(await Bun.stdin.text()) as UserPromptSubmitInput;
     sessionId = input.session_id;
+    transcriptPath = input.transcript_path;
   } catch {
-    // Non-JSON stdin: still useful to nag, just without the sid prefix.
+    // Non-JSON stdin: still useful to nag, just without the sid/transcript prefixes.
   }
 
   if (subscribeRunning()) {
@@ -152,16 +184,13 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const bin = resolveBin();
-  // CCMSG_SID prefix: CLAUDE_SESSION_ID is not exported to Monitor subprocesses,
-  // so a bare `ccmsg subscribe` would hello as the User (u1) instead of this
-  // session (no peers entry, no echo suppression). See session-start.ts.
-  const sidPrefix = sessionId ? `CCMSG_SID=${sessionId} ` : "";
+  // CCMSG_SID / CCMSG_TRANSCRIPT_PATH prefixes: CLAUDE_SESSION_ID is not
+  // exported to Monitor subprocesses, so a bare `ccmsg subscribe` would hello
+  // as the User (u1) instead of this session (no peers entry, no echo
+  // suppression, and DR-0009: no transcript_path announced either). See
+  // session-start.ts / buildSubscribeCommand.
   // stdout is injected into the next turn as a <system-reminder>.
-  process.stdout.write(
-    `[ccmsg] subscribe stream not detected in this session's process tree. ` +
-      `Open it with the **Monitor tool** (persistent: true), not Bash: ${sidPrefix}${bin} subscribe\n`,
-  );
+  process.stdout.write(buildNagMessage(resolveBin(), sessionId, transcriptPath));
 }
 
 if (import.meta.main) {

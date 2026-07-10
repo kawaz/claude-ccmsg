@@ -85,12 +85,16 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
     cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
   const sid = sidOverride ?? process.env.CCMSG_SID ?? process.env.CLAUDE_SESSION_ID;
   if (sid) {
+    // Empty string is treated the same as unset (falsy `?` guard below) — an
+    // env var present-but-blank must not turn into transcript_path: "".
+    const transcriptPath = process.env.CCMSG_TRANSCRIPT_PATH;
     return {
       role: "session",
       sid,
       repo: process.env.CCMSG_REPO ?? "",
       ws: process.env.CCMSG_WS ?? "",
       cwd: process.cwd(),
+      ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
     };
   }
   return { role: "user" };
@@ -289,6 +293,9 @@ Environment Variables:
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl)
   CCMSG_SID / CLAUDE_SESSION_ID  Session id for identity auto-detection
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
+  CCMSG_TRANSCRIPT_PATH        This session's Claude Code transcript jsonl path,
+                               sent in hello (set by the SessionStart hook,
+                               DR-0009); adopted only if the daemon accepts it
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
