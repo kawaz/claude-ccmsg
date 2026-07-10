@@ -3,7 +3,7 @@ title: tailscale serve origin の自動許可 (zero-config) — env 頼みでは
 status: wip
 category: design
 created: 2026-07-11T00:33:27+09:00
-last_read:
+last_read: 2026-07-11T00:35:17+09:00
 open_entered:
 wip_entered: 2026-07-11T00:33:27+09:00
 blocked_entered:
