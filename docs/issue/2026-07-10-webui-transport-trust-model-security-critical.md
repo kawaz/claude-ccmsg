@@ -1,11 +1,11 @@
 ---
 title: Critical: HTTP/WS の trust model 見直し (Origin 検証 + 127.0.0.1 bind 回帰 + tailnet allow 削除)
-status: open
+status: wip
 category: design
 created: 2026-07-10T19:12:09+09:00
 last_read:
 open_entered: 2026-07-10T19:12:09+09:00
-wip_entered:
+wip_entered: 2026-07-10T20:06:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:

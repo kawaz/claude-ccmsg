@@ -1,11 +1,11 @@
 ---
 title: codex レビュー Minor 指摘 3 件 (pending flush / ln quoting / DR-0002 crash-loop 乖離)
-status: open
+status: wip
 category: design
 created: 2026-07-10T19:16:21+09:00
 last_read:
 open_entered: 2026-07-10T19:16:21+09:00
-wip_entered:
+wip_entered: 2026-07-10T20:06:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
