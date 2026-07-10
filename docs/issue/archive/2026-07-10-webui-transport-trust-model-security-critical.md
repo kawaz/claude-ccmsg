@@ -1,6 +1,6 @@
 ---
 title: Critical: HTTP/WS の trust model 見直し (Origin 検証 + 127.0.0.1 bind 回帰 + tailnet allow 削除)
-status: wip
+status: resolved
 category: design
 created: 2026-07-10T19:12:09+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-10T20:06:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-10T20:42:29+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","fixed:bind loopback 回帰修正","fixed:tailnet allow 削除","fixed:Origin 検証追加","dr/DR-0004","fixed:Major 2/3 も同時解決","adversarial-review-done"]
 blocked_by:
 origin: 自リポ TODO
 ---

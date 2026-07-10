@@ -1,6 +1,6 @@
 ---
 title: codex レビュー Minor 指摘 3 件 (pending flush / ln quoting / DR-0002 crash-loop 乖離)
-status: wip
+status: resolved
 category: design
 created: 2026-07-10T19:16:21+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-10T20:06:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-10T20:42:29+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","fixed:pending flush + stale socket ガード","fixed:ln・touch quoting","dr/DR-0002","fixed:DR-0002 を実装に合わせ簡略化"]
 blocked_by:
 origin: 自リポ TODO
 ---

@@ -1,6 +1,6 @@
 ---
 title: storage.ts appendEvent の順序反転 (in-memory 先行問題)
-status: wip
+status: resolved
 category: design
 created: 2026-07-10T19:14:20+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-10T20:06:40+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-10T20:42:29+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","fixed:write-first 順序反転","fixed:short write 検証","test:失敗時 in-memory 不変を保証"]
 blocked_by:
 origin: 自リポ TODO
 ---
