@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -142,6 +142,113 @@ describe("loadRoom + appendEvent: mid continuity across reload", () => {
         msg: "c",
       });
       expect(nextMid).toBe(3);
+      closeRoom(room);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("appendEvent: write-failure atomicity (docs/issue/2026-07-10-storage-append-atomicity.md)", () => {
+  // If fs.writeSync throws (disk full / EIO), the in-memory mirror (events /
+  // lastMid / title / next / prev) must not have moved ahead of what's durably
+  // on disk. Otherwise a daemon that survives the failure (no restart) could
+  // hand out a `mid` that was never actually persisted, and a later real
+  // append would reuse that same mid (duplicate mid assignment). Disk-first
+  // ordering in appendEvent (write before mutating room state) is what
+  // guarantees this.
+  test("writeSync failure throws and leaves in-memory state untouched", () => {
+    const { file, log, cleanup } = tmpFile();
+    try {
+      const room = loadRoom(file, "r-test", log);
+      const ts = new Date().toISOString();
+      appendEvent(room, {
+        type: "member",
+        id: "a1",
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
+      appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: "a1", ts, msg: "ok" });
+
+      // snapshot state right before the simulated disk failure
+      const eventsBefore = [...room.events];
+      const lastMidBefore = room.lastMid;
+
+      const spy = spyOn(fs, "writeSync").mockImplementation(() => {
+        throw new Error("ENOSPC: no space left on device");
+      });
+      try {
+        expect(() =>
+          appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: "a1", ts, msg: "lost" }),
+        ).toThrow();
+      } finally {
+        spy.mockRestore();
+      }
+
+      // in-memory mirror must be byte-for-byte identical to the pre-failure snapshot:
+      // no extra event pushed, lastMid not advanced past what's on disk.
+      expect(room.events).toEqual(eventsBefore);
+      expect(room.lastMid).toBe(lastMidBefore);
+
+      // the daemon keeps running after the failure (no restart): a subsequent
+      // successful append must continue from the real (unadvanced) lastMid,
+      // not skip a "lost" mid or collide with one already assigned.
+      const nextMid = room.lastMid + 1;
+      appendEvent(room, { type: "msg", mid: nextMid, from: "a1", ts, msg: "recovered" });
+      expect(nextMid).toBe(lastMidBefore + 1);
+      expect(room.lastMid).toBe(lastMidBefore + 1);
+      closeRoom(room);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // POSIX write(2) can return having written fewer bytes than requested without
+  // throwing (e.g. disk fills up mid-write) — a "short write". appendEvent must
+  // treat that the same as a thrown error: throw before touching in-memory state,
+  // never advance room.events/lastMid past what's actually durable on disk.
+  test("short write (fewer bytes written than requested, no throw) is treated as a failure", () => {
+    const { file, log, cleanup } = tmpFile();
+    try {
+      const room = loadRoom(file, "r-test", log);
+      const ts = new Date().toISOString();
+      appendEvent(room, {
+        type: "member",
+        id: "a1",
+        sid: "A",
+        repo: "",
+        ws: "",
+        cwd: "",
+        joined_at: ts,
+      });
+      appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: "a1", ts, msg: "ok" });
+
+      const eventsBefore = [...room.events];
+      const lastMidBefore = room.lastMid;
+
+      // Simulate write(2) reporting a partial write (returns a byte count
+      // smaller than the buffer) instead of throwing.
+      const spy = spyOn(fs, "writeSync").mockImplementation(() => 1);
+      try {
+        expect(() =>
+          appendEvent(room, { type: "msg", mid: room.lastMid + 1, from: "a1", ts, msg: "lost" }),
+        ).toThrow();
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Same invariant as the throwing-write case: in-memory mirror must not
+      // have moved ahead of disk.
+      expect(room.events).toEqual(eventsBefore);
+      expect(room.lastMid).toBe(lastMidBefore);
+
+      const nextMid = room.lastMid + 1;
+      appendEvent(room, { type: "msg", mid: nextMid, from: "a1", ts, msg: "recovered" });
+      expect(nextMid).toBe(lastMidBefore + 1);
+      expect(room.lastMid).toBe(lastMidBefore + 1);
       closeRoom(room);
     } finally {
       cleanup();

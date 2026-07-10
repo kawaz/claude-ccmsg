@@ -203,8 +203,39 @@ function tryParse(line: string): StorageEvent | null {
   }
 }
 
-/** Append one event to the room's file (durable log) and in-memory mirror. */
+/**
+ * Append one event to the room's file (durable log) and in-memory mirror.
+ *
+ * Design rationale: disk write happens first, in-memory mirror update second.
+ * If `fs.writeSync` (or the lazy `fs.openSync`) throws (disk full / EIO), the
+ * exception propagates before any in-memory field is touched, so `events` /
+ * `lastMid` / `title` / `next` / `prev` never get ahead of what's durably on
+ * disk. Reversing this order (memory first) would let a write failure leave
+ * `lastMid` advanced past disk, risking duplicate mid assignment on the next
+ * `msg` append while the daemon keeps running (server.ts's handleRequest
+ * try/catch turns the thrown error into a sendErr response to the caller).
+ *
+ * `fs.writeSync` doesn't always throw on a failed write: POSIX write(2) may
+ * return having written fewer bytes than requested (short write) without
+ * signalling an error, e.g. when disk space runs out mid-call. Left
+ * unchecked, that would silently leave a truncated/corrupt line on disk while
+ * this function still advances `room.events`/`lastMid` as if the full event
+ * was durably persisted — the exact in-memory-ahead-of-disk hazard this
+ * function is designed to prevent. Comparing the returned byte count against
+ * what was requested turns a short write into the same throw-before-mutating
+ * path as any other write failure.
+ */
 export function appendEvent(room: Room, ev: StorageEvent): void {
+  const line = `${JSON.stringify(ev)}\n`;
+  if (room.fd === null) room.fd = fs.openSync(room.file, "a");
+  const expected = Buffer.byteLength(line);
+  const written = fs.writeSync(room.fd, line);
+  if (written !== expected) {
+    throw new Error(
+      `short write appending to room ${room.id}: wrote ${written} of ${expected} bytes`,
+    );
+  }
+
   room.events.push(ev);
   if (ev.type === "msg" && ev.mid > room.lastMid) room.lastMid = ev.mid;
   if (ev.type === "title") room.title = ev.title;
@@ -213,9 +244,6 @@ export function appendEvent(room: Room, ev: StorageEvent): void {
     room.prev.push(ev.room);
     room.dedupEligible = false;
   }
-  const line = `${JSON.stringify(ev)}\n`;
-  if (room.fd === null) room.fd = fs.openSync(room.file, "a");
-  fs.writeSync(room.fd, line);
   scheduleFsync(room);
 }
 
