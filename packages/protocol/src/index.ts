@@ -40,6 +40,11 @@ export const DEFAULT_HTTP_BIND = "127.0.0.1:8642,[::1]:8642";
  *  distinguish this daemon's own webui from any other page open in the same browser. */
 export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
 
+/** fs_read (DR-0008) sends at most this many bytes of a file's head; larger
+ * files come back `truncated: true` so the viewer can say so instead of
+ * silently showing a partial file. */
+export const FS_READ_MAX_BYTES = 512 * 1024;
+
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
 // ordering; `mid` (msg only) is a per-room daemon-assigned sequence.
@@ -196,6 +201,30 @@ export interface NotifyRequest {
   text: string;
 }
 
+/**
+ * Workspace file access (DR-0008): read-only browsing of a connected
+ * session's project files from the webui. The browsable universe is strictly
+ * "the cwd of a currently-connected session" — the client names a session
+ * (`sid`), never a filesystem root, and `path` is always relative to that
+ * session's cwd. The daemon resolves and containment-checks every path
+ * (realpath prefix check, so symlinks cannot escape the root) before touching
+ * the filesystem.
+ */
+export interface FsListRequest {
+  op: "fs_list";
+  /** session whose project root (its cwd) to browse */
+  sid: string;
+  /** directory path relative to the session root; "" / "." / absent = root */
+  path?: string;
+}
+
+export interface FsReadRequest {
+  op: "fs_read";
+  sid: string;
+  /** file path relative to the session root */
+  path: string;
+}
+
 export interface PingRequest {
   op: "ping";
 }
@@ -220,6 +249,8 @@ export type Request =
   | RoomsRequest
   | PeersRequest
   | NotifyRequest
+  | FsListRequest
+  | FsReadRequest
   | PingRequest
   | ShutdownRequest
   | LeaveRequest;
@@ -292,6 +323,37 @@ export interface NotifyResponse {
   ok: true;
   delivered: number;
 }
+/** One directory entry from fs_list. `type:"symlink"` is reported as-is for
+ * links whose target stays inside the root (out-of-root links are listed but
+ * refuse to resolve); sockets/FIFOs/devices collapse to "other". */
+export interface FsEntry {
+  name: string;
+  type: "file" | "dir" | "symlink" | "other";
+  /** bytes, files only */
+  size?: number;
+  /** ISO 8601 mtime, best-effort */
+  mtime?: string;
+}
+export interface FsListResponse {
+  ok: true;
+  sid: string;
+  /** normalized directory path relative to the root ("" = root itself) */
+  path: string;
+  entries: FsEntry[];
+}
+export interface FsReadResponse {
+  ok: true;
+  sid: string;
+  path: string;
+  /** true byte size on disk (may exceed what `content` carries) */
+  size: number;
+  /** content was cut at FS_READ_MAX_BYTES */
+  truncated: boolean;
+  /** NUL byte seen in the first 8 KiB — content omitted for binaries */
+  binary: boolean;
+  /** UTF-8 text content; "" when binary */
+  content: string;
+}
 export interface PingResponse {
   ok: true;
   pong: true;
@@ -325,6 +387,8 @@ export type Response =
   | RoomsResponse
   | PeersResponse
   | NotifyResponse
+  | FsListResponse
+  | FsReadResponse
   | PingResponse
   | ShutdownResponse
   | LeaveResponse;
@@ -340,5 +404,9 @@ export const ErrorCode = {
   not_a_member: "not_a_member",
   unknown_op: "unknown_op",
   invalid_args: "invalid_args",
+  // Workspace file access (DR-0008)
+  session_not_found: "session_not_found",
+  path_forbidden: "path_forbidden",
+  not_found: "not_found",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -14,7 +14,13 @@ import pkg from "../../../package.json";
 // CCMSG_STATE_DIR / CCMSG_DATA_DIR / CCMSG_DEDUP_WINDOW_MS pattern instead of
 // threading a version parameter through startDaemon (which would leak a
 // test-only knob into the public API).
+// `typeof process` guard: this module is part of the browser bundle too (the
+// webui imports protocol constants as values, e.g. FS_READ_MAX_BYTES / ADMIN_ID),
+// and browsers have no `process` global — an unguarded access at module load
+// crashes the whole app before render.
+const versionOverride =
+  typeof process !== "undefined" ? process.env.CCMSG_VERSION_OVERRIDE : undefined;
 export const VERSION: string =
-  process.env.CCMSG_VERSION_OVERRIDE && process.env.CCMSG_VERSION_OVERRIDE !== ""
-    ? process.env.CCMSG_VERSION_OVERRIDE
+  versionOverride && versionOverride !== ""
+    ? versionOverride
     : (pkg as { version: string }).version;
