@@ -1,6 +1,6 @@
 # DR-0005: webui フロントエンドアーキテクチャ (workspace 化を見込んだ器)
 
-- **Status**: Proposed (2026-07-09、kawaz の vision 表明を受けて実装先行。明示レビュー待ち)
+- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)
 - **Date**: 2026-07-09
 - **Author**: AI agent
 - **一次資料**: [docs/research/2026-07-09-kawaz-webui-vision-statement.md](../research/2026-07-09-kawaz-webui-vision-statement.md)

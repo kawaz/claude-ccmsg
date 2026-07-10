@@ -1,6 +1,6 @@
 # DR-0004: webui アーキテクチャ (HTTP/WS transport + UI)
 
-- **Status**: Proposed (2026-07-09、kawaz の「進められそうならやって欲しい」を受けて実装先行。明示レビュー待ち)
+- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)
 - **Date**: 2026-07-09
 - **Author**: AI agent (一次資料の kawaz 発言に基づく)
 - **一次資料**: [docs/research/2026-06-29-kawaz-design-statements.md](../research/2026-06-29-kawaz-design-statements.md) §3, §4 回答 1・3, §7
