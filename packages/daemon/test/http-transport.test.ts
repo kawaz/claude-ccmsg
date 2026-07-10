@@ -303,24 +303,175 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
-    "default CCMSG_HTTP_ALLOW (loopback + tailscale): loopback connections are not blocked, and ping reports the active allowlist",
+    "default CCMSG_HTTP_ALLOW (loopback only, 2026-07-10 trust-model addendum): loopback connections are not blocked, and ping reports the active allowlist",
     async () => {
       const ctx = await startHttpDaemon();
       try {
         const c = await connect(ctx.sock);
         await c.hello({ role: "user" });
         const pong = await c.request<{ httpAllow: string[] }>({ op: "ping" });
-        expect(pong.httpAllow).toEqual([
-          "127.0.0.0/8",
-          "::1",
-          "100.64.0.0/10",
-          "fd7a:115c:a1e0::/48",
-        ]);
+        // tailscale CGNAT/ULA ranges removed from the default: source-IP alone can't
+        // distinguish "this daemon's own webui" from "any browser tab kawaz has open"
+        // on a device he owns via tailscale (docs/issue/2026-07-10-webui-transport-
+        // trust-model-security-critical.md). The Origin check (see below) is the
+        // actual trust boundary for browser clients now.
+        expect(pong.httpAllow).toEqual(["127.0.0.0/8", "::1"]);
         c.close();
 
         const addr = await httpAddress(ctx);
         const res = await fetch(`http://${addr}/`);
         expect(res.status).not.toBe(403); // no fallback wired in tests -> 404, but never 403
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "Origin check: matching self-origin passes, a forged evil origin gets 403 (both plain HTTP and the WS upgrade path)",
+    async () => {
+      // DR-0004 trust-model addendum: source IP alone can't tell this daemon's own
+      // webui apart from any other page a browser has open (both connect from
+      // 127.0.0.1). Origin is the only signal that can.
+      const ctx = await startHttpDaemon();
+      try {
+        const addr = await httpAddress(ctx);
+
+        // self-origin (what the daemon's own webui would send) passes.
+        const okRes = await fetch(`http://${addr}/`, { headers: { Origin: `http://${addr}` } });
+        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+
+        // an unrelated page's origin is rejected, plain HTTP...
+        const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
+        expect(evilRes.status).toBe(403);
+
+        // ...and the WS upgrade path (fetch() is where upgrade happens, same gate).
+        // Bun's WebSocket accepts a non-standard `headers` option (real browsers don't
+        // let page JS set Origin); this simulates the forgeable request a raw client
+        // (or a browser's sandboxed-iframe null-origin trick) could send.
+        const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: "http://evil.com" } });
+        const outcome = await new Promise<"open" | "rejected">((resolve) => {
+          ws.addEventListener("open", () => resolve("open"));
+          ws.addEventListener("error", () => resolve("rejected"));
+          ws.addEventListener("close", () => resolve("rejected"));
+        });
+        expect(outcome).toBe("rejected");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "Origin check: a missing Origin header passes (non-browser client, e.g. this daemon's own test WebSocket/fetch clients)",
+    async () => {
+      const ctx = await startHttpDaemon();
+      try {
+        const addr = await httpAddress(ctx);
+        // plain fetch() from Bun doesn't send an Origin header by itself (verified:
+        // req.headers.get("Origin") === null on the server side for this exact call).
+        const res = await fetch(`http://${addr}/`);
+        expect(res.status).not.toBe(403);
+
+        // same for the WS upgrade path: every round-trip test above already relies on
+        // this (WsTestClient never sets Origin), this just asserts it explicitly.
+        const ws = await connectWs(ctx);
+        const helloRes = await ws.hello({ role: "user" });
+        expect(helloRes.ok).toBe(true);
+        ws.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "Origin check: localhost is accepted as an alias of a loopback bind (2026-07-10 loopback-aliasing addendum)",
+    async () => {
+      // startHttpDaemon binds 127.0.0.1:<ephemeral>. Opening the webui via
+      // http://localhost:<port> instead of the literal bind address is an
+      // equally legitimate way to reach this same daemon and must not 403.
+      const ctx = await startHttpDaemon();
+      try {
+        const addr = await httpAddress(ctx);
+        const port = addr.split(":").pop();
+
+        const okRes = await fetch(`http://${addr}/`, {
+          headers: { Origin: `http://localhost:${port}` },
+        });
+        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+
+        const ws = new WebSocket(`ws://${addr}/ws`, {
+          headers: { Origin: `http://localhost:${port}` },
+        });
+        const outcome = await new Promise<"open" | "rejected">((resolve) => {
+          ws.addEventListener("open", () => resolve("open"));
+          ws.addEventListener("error", () => resolve("rejected"));
+          ws.addEventListener("close", () => resolve("rejected"));
+        });
+        expect(outcome).toBe("open");
+        ws.close();
+
+        // The aliasing is same-port only: a different port on localhost is still 403.
+        const wrongPortRes = await fetch(`http://${addr}/`, {
+          headers: { Origin: `http://localhost:${Number(port) + 1}` },
+        });
+        expect(wrongPortRes.status).toBe(403);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "Origin check: localhost aliasing also holds on an IPv6 [::1] bind (Bun reports srv.hostname in bracket notation)",
+    async () => {
+      // The default bind is "127.0.0.1:8642,[::1]:8642" and `localhost` may resolve
+      // to ::1, landing the browser on the IPv6 listener. Bun's srv.hostname for that
+      // listener is the bracketed literal "[::1]", so loopback detection must accept
+      // bracket notation too — otherwise localhost aliasing works on the v4 listener
+      // but 403s on the v6 one, an inconsistency invisible until the OS happens to
+      // prefer ::1 for localhost.
+      const ctx = await startHttpDaemon({ CCMSG_HTTP_BIND: "[::1]:0" });
+      try {
+        const addr = await httpAddress(ctx);
+        const port = addr.split(":").pop();
+
+        const okRes = await fetch(`http://${addr}/`, {
+          headers: { Origin: `http://localhost:${port}` },
+        });
+        expect(okRes.status).not.toBe(403); // no fallback wired -> 404, never 403
+
+        // Cross-origin from an arbitrary site is still rejected on this listener.
+        const evilRes = await fetch(`http://${addr}/`, {
+          headers: { Origin: "https://evil.example" },
+        });
+        expect(evilRes.status).toBe(403);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "CCMSG_HTTP_ALLOW_ORIGIN: an explicitly configured extra origin (e.g. a tailscale serve HTTPS front) passes",
+    async () => {
+      const extraOrigin = "https://my-machine.tailnet-name.ts.net";
+      const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW_ORIGIN: extraOrigin });
+      try {
+        const addr = await httpAddress(ctx);
+
+        const okRes = await fetch(`http://${addr}/`, { headers: { Origin: extraOrigin } });
+        expect(okRes.status).not.toBe(403);
+
+        // an origin NOT in the extra list is still rejected even with the env var set.
+        const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
+        expect(evilRes.status).toBe(403);
       } finally {
         await stopTestDaemon(ctx);
       }

@@ -144,8 +144,16 @@ describe("DEFAULT_HTTP_ALLOW (daemon's actual out-of-the-box policy)", () => {
 
   test("loopback v4 allowed", () => expect(isAllowed("127.0.0.1", cidrs)).toBe(true));
   test("loopback v6 allowed", () => expect(isAllowed("::1", cidrs)).toBe(true));
-  test("tailscale v4 allowed", () => expect(isAllowed("100.100.50.4", cidrs)).toBe(true));
-  test("tailscale v6 allowed", () => expect(isAllowed("fd7a:115c:a1e0:abcd::1", cidrs)).toBe(true));
+  // tailscale CGNAT/ULA ranges removed from the default (2026-07-10 trust-model
+  // addendum, docs/issue/2026-07-10-webui-transport-trust-model-security-critical.md):
+  // source IP alone can't distinguish this daemon's own webui from any other browser
+  // tab open on a device kawaz owns via a shared tailnet. Origin verification
+  // (http.ts isAllowedOrigin) is the actual trust boundary for that case now;
+  // CCMSG_HTTP_ALLOW_ORIGIN is the opt-in path for a tailscale-serve front.
+  test("tailscale v4 no longer allowed by default", () =>
+    expect(isAllowed("100.100.50.4", cidrs)).toBe(false));
+  test("tailscale v6 no longer allowed by default", () =>
+    expect(isAllowed("fd7a:115c:a1e0:abcd::1", cidrs)).toBe(false));
   test("public v4 denied", () => expect(isAllowed("8.8.8.8", cidrs)).toBe(false));
   test("public v6 denied", () => expect(isAllowed("2001:4860:4860::8888", cidrs)).toBe(false));
   test("private LAN (192.168.0.0/16, not in the default list) denied", () =>

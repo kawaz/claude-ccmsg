@@ -666,6 +666,22 @@ function resolveHttpAllowSpec(): string {
   return raw && raw.trim() !== "" ? raw : DEFAULT_HTTP_ALLOW;
 }
 
+/** `CCMSG_HTTP_ALLOW_ORIGIN`: comma-separated extra allowed `Origin` values, on top of
+ *  the request's own bind address (always implicitly allowed, see http.ts
+ *  isAllowedOrigin). For a reverse proxy in front of this daemon (tailscale serve:
+ *  `https://<machine>.<tailnet>.ts.net`) whose Origin doesn't match any bind literally
+ *  (2026-07-10, DR-0004 trust-model addendum). Unset/empty = no extra origins. */
+function resolveHttpAllowOrigin(): Set<string> {
+  const raw = process.env.CCMSG_HTTP_ALLOW_ORIGIN;
+  if (!raw || raw.trim() === "") return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s !== ""),
+  );
+}
+
 export function startDaemon(opts: StartOptions = {}): void {
   const paths = resolvePaths();
   fs.mkdirSync(paths.stateDir, { recursive: true });
@@ -773,10 +789,17 @@ export function startDaemon(opts: StartOptions = {}): void {
     `listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`,
   );
 
+  const httpAllowOrigin = resolveHttpAllowOrigin();
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
-      const listener = startHttpListener(daemon, bindSpec, httpAllowCidrs, opts.fallback);
+      const listener = startHttpListener(
+        daemon,
+        bindSpec,
+        httpAllowCidrs,
+        httpAllowOrigin,
+        opts.fallback,
+      );
       httpListeners.push(listener);
       log.info(`http listening on ${listener.address}`);
     } catch (e) {

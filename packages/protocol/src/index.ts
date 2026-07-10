@@ -23,16 +23,22 @@ export const DEFAULT_JOIN_BACKLOG = 50;
 /** Default dedup window for create_room (DR-0003 §4, minute-order). */
 export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
 
-/** Default HTTP/WS bind for `/ws` (DR-0004 §3, addendum). `CCMSG_HTTP_BIND=off`
- *  disables it. Binds all interfaces by default — reachability is not the trust
- *  boundary here, `DEFAULT_HTTP_ALLOW` (source-IP allowlist) is. */
-export const DEFAULT_HTTP_BIND = "0.0.0.0:8642";
+/** Default HTTP/WS bind for `/ws` (DR-0004 §3, 2026-07-10 trust-model addendum).
+ *  `CCMSG_HTTP_BIND=off` disables it. Loopback only — a browser's Same-Origin
+ *  Policy does not gate WebSocket connections, so binding beyond loopback (or
+ *  trusting source-IP alone, e.g. a shared tailnet CGNAT range) would let any
+ *  page a browser has open reach this daemon. tailscale serve (or any other
+ *  reverse proxy) forwards to loopback from the outside; see `CCMSG_HTTP_ALLOW_ORIGIN`
+ *  for allowing that proxy's Origin through the check below. */
+export const DEFAULT_HTTP_BIND = "127.0.0.1:8642,[::1]:8642";
 
-/** Default source-IP allowlist for `/ws` and HTTP fallback (DR-0004 §3 addendum).
- *  loopback + tailscale CGNAT IPv4 (100.64.0.0/10) + tailscale ULA IPv6
- *  (fd7a:115c:a1e0::/48) — i.e. "this machine" or "a device kawaz owns via
- *  tailscale". Override with `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). */
-export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48";
+/** Default source-IP allowlist for `/ws` and HTTP fallback (DR-0004 §3 addendum,
+ *  2026-07-10 trust-model addendum). loopback only — override with `CCMSG_HTTP_ALLOW`
+ *  (comma-separated CIDR/IP). This is a defense-in-depth belt against a misconfigured
+ *  `CCMSG_HTTP_BIND`; the actual trust boundary for browser clients is the `Origin`
+ *  header check (see `CCMSG_HTTP_ALLOW_ORIGIN`), since source IP alone can't
+ *  distinguish this daemon's own webui from any other page open in the same browser. */
+export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
 
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
