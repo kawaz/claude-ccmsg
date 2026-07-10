@@ -52,9 +52,29 @@ class MockWebSocket {
 let instances: MockWebSocket[] = [];
 let storage: Record<string, string> = {};
 
+// bun test runs every test file in one shared process: these globals must be
+// *restored* to whatever Bun had (WebSocket is a real builtin there), not
+// deleted — `delete globalThis.WebSocket` permanently removes the builtin and
+// breaks any later test file that talks to a real daemon over WS. (This
+// exact leak made packages/daemon/test/http-transport.test.ts fail with
+// "WebSocket is not defined" on CI runners where this file happens to run
+// first; locally the file order differed and hid it.)
+const originalGlobals: Record<string, unknown> = {};
+const MOCKED_GLOBALS = ["WebSocket", "location", "localStorage"] as const;
+
+// Every handle created in a test is closed in afterEach even if the test
+// fails mid-way: close() also cancels the client's scheduled auto-reconnect
+// timer, which would otherwise fire *after* the mocks are torn down and blow
+// up an unrelated later test file with "location is not defined".
+let openHandles: Array<{ close(): void }> = [];
+
 beforeEach(() => {
   instances = [];
   storage = {};
+  openHandles = [];
+  for (const key of MOCKED_GLOBALS) {
+    originalGlobals[key] = (globalThis as any)[key];
+  }
   (globalThis as any).WebSocket = MockWebSocket;
   (globalThis as any).location = { protocol: "http:", host: "localhost:8642" };
   (globalThis as any).localStorage = {
@@ -66,15 +86,21 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete (globalThis as any).WebSocket;
-  delete (globalThis as any).location;
-  delete (globalThis as any).localStorage;
+  for (const handle of openHandles) handle.close();
+  for (const key of MOCKED_GLOBALS) {
+    if (originalGlobals[key] === undefined) {
+      delete (globalThis as any)[key];
+    } else {
+      (globalThis as any)[key] = originalGlobals[key];
+    }
+  }
 });
 
 describe("createWsClient pending queue on close/reconnect", () => {
   test("onClose settles in-flight requests instead of hanging their Promise forever", async () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     expect(ws1).toBeDefined();
@@ -99,6 +125,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
 
   test("connect() clears stale pending entries so a fresh reply after reconnect isn't mis-delivered to them", async () => {
     const handle = createWsClient(() => {});
+    openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
@@ -135,6 +162,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
   // that close) to prove the guard, not just the close, is what stops it.
   test("stale socket's delayed message does not settle the new socket's pending request", async () => {
     const handle = createWsClient(() => {});
+    openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
@@ -165,9 +193,32 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(freshResult.ok).toBe(true);
   });
 
+  // close() must mean "stop", including a reconnect that onClose already
+  // queued: an unexpected close schedules setTimeout(connect, 250ms), and a
+  // close() arriving in that window used to leave the timer armed — the
+  // client would silently resurrect itself (and, in tests, the leaked timer
+  // fired after this file's mocks were torn down, crashing an unrelated
+  // later test file). The 300ms real-time wait deliberately outlives the
+  // first RECONNECT_DELAYS_MS slot (250ms) so an armed timer would fire
+  // inside this test if close() failed to cancel it.
+  test("close() cancels an already-scheduled auto-reconnect", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    ws1.triggerClose(); // unexpected drop -> reconnect scheduled (250ms)
+    handle.close(); // user says stop before the timer fires
+
+    await new Promise((r) => setTimeout(r, 300));
+    expect(instances.length).toBe(1); // no resurrected socket
+  });
+
   test("stale socket's delayed close does not re-trigger disconnect/reconnect for the new connection", async () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
     handle.connect();
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;

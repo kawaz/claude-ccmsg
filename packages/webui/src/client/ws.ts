@@ -58,6 +58,7 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
   let pending: Array<(v: Response) => void> = [];
   let reconnectAttempt = 0;
   let closedByUs = false;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   const since = loadSince();
 
   function send<T extends Response>(req: Request): Promise<T> {
@@ -131,11 +132,17 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     const delay =
       RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ?? 30000;
     reconnectAttempt++;
-    setTimeout(connect, delay);
+    reconnectTimer = setTimeout(connect, delay);
   }
 
   function connect(): void {
     closedByUs = false;
+    // A manual connect() supersedes any scheduled auto-reconnect; without this,
+    // the pending timer would fire later and knock down the fresh socket.
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     // Belt-and-suspenders: also flush on connect() itself, in case it's ever
     // invoked (e.g. a manual reconnect) without onClose having run first.
     flushPending();
@@ -177,6 +184,12 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     connect,
     close() {
       closedByUs = true;
+      // Cancel a scheduled auto-reconnect too: close() means "stop", including
+      // the reconnect already queued by a close event that preceded this call.
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       ws?.close();
     },
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
