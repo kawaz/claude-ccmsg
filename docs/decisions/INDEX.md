@@ -11,3 +11,4 @@
 | [DR-0005](./DR-0005-webui-frontend-architecture.md) | Accepted | webui frontend architecture (workspace 化を見込んだ器) |
 | [DR-0006](./DR-0006-id-scheme-v2.md) | Accepted | ID 体系 v2 (member id を u/a namespace の型付き文字列に分離) |
 | [DR-0007](./DR-0007-path-installation.md) | Accepted | PATH への symlink インストールと自己更新 |
+| [DR-0008](./DR-0008-workspace-file-access.md) | Accepted | Workspace file access (fs_list / fs_read op) |
