@@ -21,6 +21,7 @@ import {
   type TitleEvent,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
+import { fsList, fsRead } from "./fs-access.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
@@ -229,6 +230,11 @@ function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: st
 // lookup / filename mapping) treat ids as opaque. Never parse structure out of a room
 // id. The next number is derived from the highest `rN` already on disk/in-memory, so
 // numbering survives a daemon restart without colliding with existing rooms.
+//
+// The webui's locator (packages/webui/src/client/locator.ts) splits hash-fragment
+// routing between room and session views on the leading literal "r" vs "s" — that
+// disambiguation relies on room ids always starting with "r". If this id format ever
+// changes, check that invariant test too.
 function generateRoomId(daemon: Daemon): string {
   let n = 1;
   for (const id of daemon.rooms.keys()) {
@@ -281,7 +287,22 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 
 // --- request dispatch ------------------------------------------------------
 
-const IDENTITY_OPS = new Set(["post", "create_room", "next_room", "subscribe", "notify", "leave"]);
+// fs_list/fs_read require hello too (DR-0008): the containment check itself
+// (fs-access.ts) doesn't depend on the *caller's* identity — it only cares
+// about the target sid's registered cwd. Requiring hello here is defense in
+// depth (DR-0008 §4): it keeps every op that touches session state on one
+// uniform "must identify first" rule rather than special-casing these two
+// as the sole unauthenticated readers of another session's filesystem.
+const IDENTITY_OPS = new Set([
+  "post",
+  "create_room",
+  "next_room",
+  "subscribe",
+  "notify",
+  "leave",
+  "fs_list",
+  "fs_read",
+]);
 
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   let req: Request;
@@ -555,6 +576,26 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "fs_list": {
+      const result = fsList(daemon.sessions, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_read": {
+      const result = fsRead(daemon.sessions, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
     case "leave": {
       const room = daemon.rooms.get(req.room);
       if (!room) {
@@ -741,6 +782,47 @@ export function startDaemon(opts: StartOptions = {}): void {
     conn: Conn;
     decoder: TextDecoder;
     buffer: string;
+    /** Bytes not yet accepted by the kernel due to backpressure (DR-0008: fs_read
+     *  responses can be hundreds of KB, well past the point tiny room/post replies
+     *  ever hit). `socket.write()` uses sendto(2) directly and returns a short
+     *  count instead of blocking/queueing when the socket buffer is full — unlike
+     *  Bun's higher-level `ws.send()` on the HTTP/WS side, nothing retries the
+     *  remainder for us. `flushPending` below is that retry, driven by both the
+     *  writer and the socket's own `drain` event. */
+    pending: Buffer[];
+  }
+
+  function flushPending(socket: Bun.Socket<UdsConnState>): void {
+    const state = socket.data;
+    while (state.pending.length > 0) {
+      const chunk = state.pending[0]!;
+      let n: number;
+      try {
+        n = socket.write(chunk);
+      } catch {
+        // socket closing mid-flush; drop the rest, delivery is best-effort
+        state.pending.length = 0;
+        return;
+      }
+      if (n < 0) {
+        // socket closed/shutting down (Bun: write() returns -1)
+        state.pending.length = 0;
+        return;
+      }
+      if (n === chunk.length) {
+        state.pending.shift();
+        continue;
+      }
+      // partial write: keep the unsent remainder at the front of the queue and
+      // wait for the next `drain` event rather than busy-retrying here.
+      state.pending[0] = chunk.subarray(n);
+      break;
+    }
+    try {
+      socket.flush();
+    } catch {
+      // socket may be closing; delivery is best-effort
+    }
   }
 
   const server = Bun.listen<UdsConnState>({
@@ -749,18 +831,18 @@ export function startDaemon(opts: StartOptions = {}): void {
       open(socket) {
         const conn: Conn = {
           write(line) {
-            try {
-              socket.write(line);
-              socket.flush();
-            } catch {
-              // socket may be closing; delivery is best-effort
-            }
+            const state = socket.data;
+            state.pending.push(Buffer.from(line, "utf-8"));
+            flushPending(socket);
           },
           identity: null,
           subscribed: false,
         };
-        socket.data = { conn, decoder: new TextDecoder(), buffer: "" };
+        socket.data = { conn, decoder: new TextDecoder(), buffer: "", pending: [] };
         daemon.connections.add(conn);
+      },
+      drain(socket) {
+        flushPending(socket);
       },
       data(socket, chunk) {
         const state = socket.data;
