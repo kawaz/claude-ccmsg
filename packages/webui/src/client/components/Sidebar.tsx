@@ -1,7 +1,7 @@
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { RoomList } from "./RoomList.tsx";
-import { PeerList } from "./PeerList.tsx";
+import { SessionList } from "./SessionList.tsx";
 
 function PeersRefreshButton() {
   const { store, ws } = useApp();
@@ -28,11 +28,11 @@ export function Sidebar({ state }: { state: AppState }) {
         <h2>Rooms</h2>
         <RoomList state={state} />
       </section>
-      <section id="peers-panel">
+      <section id="sessions-panel">
         <h2>
-          Peers <PeersRefreshButton />
+          Sessions <PeersRefreshButton />
         </h2>
-        <PeerList peers={state.peers} />
+        <SessionList peers={state.peers} currentSid={state.currentSid} />
       </section>
     </nav>
   );

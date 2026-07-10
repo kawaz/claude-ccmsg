@@ -3,6 +3,7 @@ import { useApp } from "../context.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
+import { SessionView } from "./SessionView.tsx";
 
 export function App() {
   const { store } = useApp();
@@ -29,7 +30,7 @@ export function App() {
           class={state.sidebarOpen ? "visible" : undefined}
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
-        <RoomView state={state} />
+        {state.view === "session" ? <SessionView state={state} /> : <RoomView state={state} />}
       </div>
     </div>
   );

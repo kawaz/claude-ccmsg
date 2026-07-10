@@ -152,6 +152,65 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(freshResult.ok).toBe(true);
   });
 
+  // DR-0008: fs_list/fs_read wire shape. `path` is only sent when the caller
+  // actually passed one (fsList's root call omits it — daemon treats absent
+  // as root — rather than send an empty string, keeping the request minimal).
+  test("fsList sends {op:'fs_list', sid} without path when path is omitted (root)", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.fsList("sess-1");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "fs_list", sid: "sess-1" });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1", path: "", entries: [] }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+  });
+
+  test("fsList sends {op:'fs_list', sid, path} when a subdirectory path is given", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    void handle.fsList("sess-1", "src");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "fs_list", sid: "sess-1", path: "src" });
+  });
+
+  test("fsRead sends {op:'fs_read', sid, path} and resolves the file response", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.fsRead("sess-1", "README.md");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "fs_read",
+      sid: "sess-1",
+      path: "README.md",
+    });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        sid: "sess-1",
+        path: "README.md",
+        size: 5,
+        truncated: false,
+        binary: false,
+        content: "hello",
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.content).toBe("hello");
+  });
+
   // Guards against the stale-socket mis-delivery found in the adversarial
   // review of the fix above: connect() used to swap `ws` without detaching
   // the old socket's listeners or closing it, so a late reply/close on the

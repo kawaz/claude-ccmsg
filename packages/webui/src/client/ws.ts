@@ -14,6 +14,8 @@
 import type {
   DeliveredEvent,
   ErrorResponse,
+  FsListResponse,
+  FsReadResponse,
   PeersResponse,
   PostResponse,
   ReadResponse,
@@ -51,6 +53,10 @@ export interface WsHandle {
   post(room: string, msg: string, to?: string[]): Promise<PostResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
+  /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
+  fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
+  /** Read a file under a connected session's cwd (DR-0008 fs_read). */
+  fsRead(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
 }
 
 export function createWsClient(dispatch: (action: Action) => void): WsHandle {
@@ -195,5 +201,7 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
+    fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
+    fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
   };
 }

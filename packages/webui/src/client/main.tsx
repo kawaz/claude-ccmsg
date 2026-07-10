@@ -12,8 +12,8 @@ const store = createStore(initialState());
 const ws = createWsClient((action) => store.dispatch(action));
 
 function applyLocator(): void {
-  const { room, mid } = parseHash(location.hash);
-  store.dispatch({ type: "locator/changed", room, mid });
+  const locator = parseHash(location.hash);
+  store.dispatch({ type: "locator/changed", locator });
 }
 
 window.addEventListener("hashchange", applyLocator);

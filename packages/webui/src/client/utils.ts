@@ -1,6 +1,7 @@
 // Presentation helpers shared by components. Kept out of store.ts because
 // these are display-only (locale strings, truncation) and out of the reducer
 // (which must stay a pure function of state + action).
+import type { PeerInfo } from "@ccmsg/protocol";
 import type { RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 
@@ -27,4 +28,11 @@ export function memberLabel(id: string, room: RoomState | undefined): string {
 
 export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
   return [...rooms.values()].sort((a, b) => (b.lastTs ?? "").localeCompare(a.lastTs ?? ""));
+}
+
+/** Sidebar Sessions-section label (DR-0008): repo · ws · last path segment of
+ * cwd, so entries stay identifiable without eating the whole absolute path. */
+export function sessionLabel(peer: PeerInfo): string {
+  const cwdTail = peer.cwd.split("/").filter(Boolean).pop() ?? peer.cwd;
+  return [peer.repo || "?", peer.ws || "?", cwdTail].join(" · ");
 }

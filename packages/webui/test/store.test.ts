@@ -178,11 +178,15 @@ describe("reducer / conn/status", () => {
   });
 });
 
-describe("reducer / locator/changed", () => {
+describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
   test("sets currentRoomId + currentMid and resets mentionTo + closes mobile sidebar", () => {
     const withMention = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
     const withSidebar = dispatch(withMention, { type: "sidebar/set", open: true });
-    const state = dispatch(withSidebar, { type: "locator/changed", room: "r1", mid: 4 });
+    const state = dispatch(withSidebar, {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: 4 },
+    });
+    expect(state.view).toBe("room");
     expect(state.currentRoomId).toBe("r1");
     expect(state.currentMid).toBe(4);
     expect(state.mentionTo.size).toBe(0);
@@ -190,8 +194,161 @@ describe("reducer / locator/changed", () => {
   });
 
   test("room-only locator (#rXXXX, no message anchor) leaves currentMid null", () => {
-    const state = dispatch(initialState(), { type: "locator/changed", room: "r1", mid: null });
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+    });
     expect(state.currentMid).toBeNull();
+  });
+});
+
+describe("reducer / locator/changed (session view, DR-0008)", () => {
+  // Bare `#s<sid>`: switches to the session view and creates a fresh
+  // per-session tree state on first visit — no fetch happens here (that's
+  // FileTree's job), the reducer only records what's selected.
+  test("#s<sid> switches view to 'session', sets currentSid, creates an empty tree", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: null },
+    });
+    expect(state.view).toBe("session");
+    expect(state.currentSid).toBe("sess-1");
+    const tree = state.sessionTrees.get("sess-1");
+    expect(tree).toBeDefined();
+    expect(tree?.selectedPath).toBeNull();
+    expect(tree?.dirs.size).toBe(0);
+  });
+
+  // `#s<sid>:<path>` additionally records the selected file path on that
+  // session's tree, distinct from any other session's tree in the Map.
+  test("#s<sid>:<path> records selectedPath on that session's tree only", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: "src/index.ts" },
+    });
+    expect(state.sessionTrees.get("sess-1")?.selectedPath).toBe("src/index.ts");
+    expect(state.sessionTrees.has("sess-2")).toBe(false);
+  });
+
+  // Revisiting a session (locator fires again with the same sid/path, e.g. a
+  // duplicate hashchange) must not discard tree state already loaded for it —
+  // this is the whole point of keying sessionTrees by sid instead of holding
+  // one global tree.
+  test("navigating back to a previously-visited session preserves its loaded dirs", () => {
+    const visited = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: null },
+    });
+    const loaded = dispatch(visited, {
+      type: "fs/dir-loaded",
+      sid: "sess-1",
+      path: "",
+      entries: [{ name: "src", type: "dir" }],
+    });
+    const awayAndBack = dispatch(
+      dispatch(loaded, {
+        type: "locator/changed",
+        locator: { view: "room", room: "r1", mid: null },
+      }),
+      { type: "locator/changed", locator: { view: "session", sid: "sess-1", path: null } },
+    );
+    expect(awayAndBack.sessionTrees.get("sess-1")?.dirs.get("")).toEqual([
+      { name: "src", type: "dir" },
+    ]);
+  });
+});
+
+describe("reducer / fs/dir-toggled and fs/dir-loaded (DR-0008)", () => {
+  test("fs/dir-toggled flips a path in and out of the expanded set", () => {
+    const opened = dispatch(initialState(), {
+      type: "fs/dir-toggled",
+      sid: "sess-1",
+      path: "src",
+    });
+    expect(opened.sessionTrees.get("sess-1")?.expanded.has("src")).toBe(true);
+    const closed = dispatch(opened, { type: "fs/dir-toggled", sid: "sess-1", path: "src" });
+    expect(closed.sessionTrees.get("sess-1")?.expanded.has("src")).toBe(false);
+  });
+
+  test("fs/dir-loaded stores entries for the path and clears any prior error there", () => {
+    const failed = dispatch(initialState(), {
+      type: "fs/dir-loaded",
+      sid: "sess-1",
+      path: "src",
+      error: "path_forbidden",
+    });
+    expect(failed.sessionTrees.get("sess-1")?.dirErrors.get("src")).toBe("path_forbidden");
+    const retried = dispatch(failed, {
+      type: "fs/dir-loaded",
+      sid: "sess-1",
+      path: "src",
+      entries: [{ name: "index.ts", type: "file", size: 10 }],
+    });
+    expect(retried.sessionTrees.get("sess-1")?.dirs.get("src")).toEqual([
+      { name: "index.ts", type: "file", size: 10 },
+    ]);
+    expect(retried.sessionTrees.get("sess-1")?.dirErrors.has("src")).toBe(false);
+  });
+
+  test("fs/dir-loaded with an error does not touch dirs for that path", () => {
+    const state = dispatch(initialState(), {
+      type: "fs/dir-loaded",
+      sid: "sess-1",
+      path: "secret",
+      error: "path_forbidden",
+    });
+    expect(state.sessionTrees.get("sess-1")?.dirs.has("secret")).toBe(false);
+  });
+});
+
+describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
+  test("fs/file-loading sets a loading placeholder for the path", () => {
+    const state = dispatch(initialState(), {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "README.md",
+    });
+    const file = state.sessionTrees.get("sess-1")?.file;
+    expect(file?.status).toBe("loading");
+    expect(file?.path).toBe("README.md");
+  });
+
+  test("fs/file-loaded (success) stores the FsReadResponse and flips status to loaded", () => {
+    const loading = dispatch(initialState(), {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "README.md",
+    });
+    const state = dispatch(loading, {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "README.md",
+      response: {
+        ok: true,
+        sid: "sess-1",
+        path: "README.md",
+        size: 5,
+        truncated: false,
+        binary: false,
+        content: "hello",
+      },
+    });
+    const file = state.sessionTrees.get("sess-1")?.file;
+    expect(file?.status).toBe("loaded");
+    expect(file?.response?.content).toBe("hello");
+  });
+
+  test("fs/file-loaded (error) flips status to error and records the message, no stale response", () => {
+    const state = dispatch(initialState(), {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "secret.env",
+      error: "path_forbidden",
+    });
+    const file = state.sessionTrees.get("sess-1")?.file;
+    expect(file?.status).toBe("error");
+    expect(file?.error).toBe("path_forbidden");
+    expect(file?.response).toBeUndefined();
   });
 });
 
