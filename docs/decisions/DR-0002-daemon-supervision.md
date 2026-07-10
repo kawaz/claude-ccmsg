@@ -41,7 +41,14 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 ### 5. Crash 回復 [提案]
 
 - 監視プロセスは置かない。crash → 次のクライアント接触 (ターン毎 hook 含む) で再 spawn される = 自然回復
-- crash loop 対策はクライアント側: spawn リトライは exponential backoff (1s → 2s → 4s → 上限 30s)、5 回連続失敗で hook は 1 回だけ警告を出し、以降そのセッション中は沈黙する (静寂原則)
+- crash loop 対策はクライアント側: spawn 後の接続確立を短い間隔 (25ms → 3000ms、計 12 回) でリトライし、
+  全て失敗したら `throw` してエラーを呼び出し元に伝播させる。hook 側の warn-once + 沈黙のような専用状態管理は置かない
+  (エラーは hook の `try/catch` を通じて自然に表面化するため、追加の通知ロジックを持つ複雑さに見合う価値がない)
+- **追補 (2026-07-10)**: 当初案は「5 回連続失敗で 1 回だけ警告し以降そのセッション中は沈黙する」だったが、
+  実装 (`packages/cli/src/client.ts` の `connectWithSpawn`) は上記の retry→throw のみで完結しており、
+  セッション単位の警告状態は持っていない。乖離が codex レビュー (2026-07-10, Minor 2) で指摘され、
+  実害が小さい (daemon 起動失敗時に best-effort の hook が理由を出せないだけ) ことを確認したうえで、
+  DR を実装の実挙動に合わせて簡略化した (詳細評価: `docs/findings/2026-07-10-codex-review-evaluation.md`)
 
 ### 6. JSONL 耐久性と torn tail 回復 [提案]
 
@@ -66,7 +73,6 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 ## Open questions
 
 - daemon.log のローテ形式 / 世代数 — 実装時
-- crash loop 警告の文言・通知経路 (hook stderr か say か) — 実装時
 
 ## Next steps
 

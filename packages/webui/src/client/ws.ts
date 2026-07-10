@@ -112,8 +112,21 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     dispatch({ type: "protocol-event", event: delivered });
   }
 
+  // Settles every in-flight send() with a synthetic error response instead of
+  // leaving its Promise pending forever, and empties the queue so a stale
+  // resolver can never be mis-matched (via onMessage's pending.shift()) to a
+  // reply that arrives on a later, reconnected socket.
+  function flushPending(): void {
+    const stale = pending;
+    pending = [];
+    for (const settle of stale) {
+      settle({ ok: false, error: { code: "connection_closed", msg: "ws connection closed" } });
+    }
+  }
+
   function onClose(): void {
     dispatch({ type: "conn/status", status: "disconnected" });
+    flushPending();
     if (closedByUs) return;
     const delay =
       RECONNECT_DELAYS_MS[Math.min(reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ?? 30000;
@@ -123,12 +136,41 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
 
   function connect(): void {
     closedByUs = false;
+    // Belt-and-suspenders: also flush on connect() itself, in case it's ever
+    // invoked (e.g. a manual reconnect) without onClose having run first.
+    flushPending();
+    const previous = ws;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(`${proto}//${location.host}/ws`);
     ws = socket;
-    socket.addEventListener("open", () => void onOpen());
-    socket.addEventListener("message", (e) => onMessage(e.data as string));
-    socket.addEventListener("close", onClose);
+    // Every listener below is guarded with `socket !== ws`: once `connect()`
+    // runs again, `ws` points at the newer socket but this `socket` const
+    // still names the one this closure was created for. A stale socket's
+    // events (a delayed reply, or its own close firing after we've already
+    // moved on) must never touch `pending`/dispatch on behalf of the current
+    // connection — that's the mis-delivery this whole file exists to avoid.
+    socket.addEventListener("open", () => {
+      if (socket !== ws) return;
+      void onOpen();
+    });
+    socket.addEventListener("message", (e) => {
+      if (socket !== ws) return;
+      onMessage(e.data as string);
+    });
+    socket.addEventListener("close", () => {
+      if (socket !== ws) return;
+      onClose();
+    });
+    // Close the outgoing socket now that `ws` no longer references it, so it
+    // stops holding a live connection open in the background. Its close
+    // event (real or synthetic) is a no-op thanks to the guard above.
+    if (previous) {
+      try {
+        previous.close();
+      } catch {
+        // best-effort; the socket is being discarded either way.
+      }
+    }
   }
 
   return {

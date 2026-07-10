@@ -23,5 +23,5 @@
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "hooks/**/*.ts", "bin/**/*.ts"],
-  "exclude": ["packages/webui/src/client/**"]
+  "exclude": ["packages/webui/src/client/**", "packages/webui/test/**"]
 }

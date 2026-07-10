@@ -164,8 +164,8 @@ async function main(): Promise<void> {
         "",
         `ccmsg is not on PATH, but ${candidate.dir} is on PATH and writable. Ask the user ` +
           "with AskUserQuestion whether to add a stable `ccmsg` command there:",
-        `  - If they agree: ln -sfn ${bin} ${candidate.binPath}`,
-        `  - If they decline: touch ${decline}`,
+        `  - If they agree: ln -sfn '${bin}' '${candidate.binPath}'`,
+        `  - If they decline: touch '${decline}'`,
         "Do this at most once per session, and only after an explicit answer — don't run either command without asking first.",
       );
     }
