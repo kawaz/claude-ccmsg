@@ -10,3 +10,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | webui 配信経路を自作 Bun.build+キャッシュ構成から Bun 1.3 公式 fullstack 機能 (HTML import + Bun.serve routes) へ置換できないか検討 |
 | 2026-07-10 | design | open | [webui-transport-trust-model-security-critical](./2026-07-10-webui-transport-trust-model-security-critical.md) | **Critical**: HTTP/WS trust model 見直し (Origin 検証 + 127.0.0.1 bind 回帰 + tailnet allow 削除)、悪意 Web ページからの DoS/情報漏洩/偽メッセージ注入を防ぐ |
 | 2026-07-10 | design | open | [storage-append-atomicity](./2026-07-10-storage-append-atomicity.md) | storage.ts appendEvent の in-memory 更新が disk 書き込みより先行、write 失敗時に状態分岐 (codex レビュー Major 4 起票) |
+| 2026-07-10 | design | open | [codex-review-nitpick-cleanup](./2026-07-10-codex-review-nitpick-cleanup.md) | codex レビュー Minor 指摘 3 件まとめ (webui pending flush 漏れ / ln quoting / DR-0002 crash-loop 仕様乖離) |
