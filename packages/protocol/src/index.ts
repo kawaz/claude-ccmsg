@@ -45,6 +45,10 @@ export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
  * silently showing a partial file. */
 export const FS_READ_MAX_BYTES = 512 * 1024;
 
+/** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
+ * per request; the viewer pages with byte offsets instead of asking for more. */
+export const TRANSCRIPT_READ_MAX_BYTES = 256 * 1024;
+
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
 // ordering; `mid` (msg only) is a per-room daemon-assigned sequence.
@@ -131,6 +135,11 @@ export interface SessionIdentity {
   repo: string;
   ws: string;
   cwd: string;
+  /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
+   * Announced by the SessionStart hook via CCMSG_TRANSCRIPT_PATH; the daemon
+   * validates it at hello time and it is the ONLY file transcript_read serves
+   * for this sid. */
+  transcript_path?: string;
 }
 export interface UserIdentity {
   role: "user";
@@ -148,6 +157,7 @@ export interface HelloRequest {
   repo?: string;
   ws?: string;
   cwd?: string;
+  transcript_path?: string;
 }
 
 export interface PostRequest {
@@ -225,6 +235,24 @@ export interface FsReadRequest {
   path: string;
 }
 
+/**
+ * Session transcript access (DR-0009): read a slice of a connected session's
+ * Claude Code transcript jsonl. Unlike fs_read there is NO client-supplied
+ * path — the daemon only ever serves the single file the session announced
+ * (and it validated) at hello time, so no traversal surface exists. Paging is
+ * by byte offset, aligned to line boundaries, so a multi-hundred-MB transcript
+ * never needs a full scan or a line index: the viewer starts from the tail
+ * (`before` absent) and pages older by passing the previous reply's `start`.
+ */
+export interface TranscriptReadRequest {
+  op: "transcript_read";
+  sid: string;
+  /** read lines that END at or before this byte offset (exclusive); absent = file end */
+  before?: number;
+  /** cap on returned line bytes; clamped to TRANSCRIPT_READ_MAX_BYTES */
+  max_bytes?: number;
+}
+
 export interface PingRequest {
   op: "ping";
 }
@@ -251,6 +279,7 @@ export type Request =
   | NotifyRequest
   | FsListRequest
   | FsReadRequest
+  | TranscriptReadRequest
   | PingRequest
   | ShutdownRequest
   | LeaveRequest;
@@ -314,6 +343,9 @@ export interface PeerInfo {
   repo: string;
   ws: string;
   cwd: string;
+  /** present iff the session announced a transcript the daemon accepted —
+   * the webui uses this to decide whether a Timeline view is available */
+  transcript_path?: string;
 }
 export interface PeersResponse {
   ok: true;
@@ -340,6 +372,20 @@ export interface FsListResponse {
   /** normalized directory path relative to the root ("" = root itself) */
   path: string;
   entries: FsEntry[];
+}
+export interface TranscriptReadResponse {
+  ok: true;
+  sid: string;
+  /** complete raw jsonl lines, oldest first (client parses each as JSON) */
+  lines: string[];
+  /** byte offset of the first returned line — pass as `before` to page older;
+   * 0 means the beginning of the transcript is included */
+  start: number;
+  /** byte offset just past the last returned line's newline */
+  end: number;
+  /** current transcript size in bytes (grows while the session runs — pass as
+   * `before` later to page content that appeared after this read) */
+  size: number;
 }
 export interface FsReadResponse {
   ok: true;
@@ -389,6 +435,7 @@ export type Response =
   | NotifyResponse
   | FsListResponse
   | FsReadResponse
+  | TranscriptReadResponse
   | PingResponse
   | ShutdownResponse
   | LeaveResponse;
