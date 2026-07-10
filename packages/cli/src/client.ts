@@ -153,7 +153,7 @@ async function waitDaemonGone(sockPath: string): Promise<void> {
   // give up waiting; the re-spawn below will unlink a stale socket anyway
 }
 
-function helloRequest(identity: Identity): Record<string, unknown> {
+export function helloRequest(identity: Identity): Record<string, unknown> {
   if (identity.role === "user") return { op: "hello", role: "user" };
   return {
     op: "hello",
@@ -189,6 +189,50 @@ export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Cl
 /** Connect only if a daemon is already running (does not spawn). Used by `daemon stop`/`status`. */
 export async function connectIfRunning(paths: Paths): Promise<Client | null> {
   return tryConnect(paths.sock);
+}
+
+/**
+ * Reconnect + re-subscribe **without spawning** the daemon (subscribe transparent
+ * reconnect path; see docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md).
+ *
+ * Design rationale:
+ * - No-spawn: an intentional `ccmsg daemon stop` must not be resurrected by a
+ *   long-lived subscribe. The initial subscribe path (via `ensureDaemon`) already
+ *   handles spawn; reconnect is strictly "attach if a daemon is available".
+ * - No upgrade dance: the initial `ensureDaemon` above handles version mismatch
+ *   (newer-wins). Reconnect just re-attaches to whatever daemon is now listening —
+ *   an old-client reconnect to a newer daemon must NOT retrigger the upgrade path
+ *   (would flap during gradual rollout, cf. DR-0002 §4 追補).
+ * - Returns null when the socket is not connectable, hello fails, or subscribe ack
+ *   is not ok. Callers handle backoff/retry.
+ */
+export async function reconnectSubscribeNoSpawn(
+  paths: Paths,
+  identity: Identity,
+  since: Record<string, number>,
+): Promise<Client | null> {
+  const client = await tryConnect(paths.sock);
+  if (!client) return null;
+  try {
+    const hello = await client.request<{ ok?: boolean }>(helloRequest(identity));
+    if (!hello.ok) {
+      client.close();
+      return null;
+    }
+    const ack = await client.request<{ ok?: boolean }>({
+      op: "subscribe",
+      ...(Object.keys(since).length > 0 ? { since } : {}),
+    });
+    if (ack.ok === false) {
+      client.close();
+      return null;
+    }
+    return client;
+  } catch {
+    // connection dropped mid-handshake (daemon may be shutting down again)
+    client.close();
+    return null;
+  }
 }
 
 export { waitDaemonGone };

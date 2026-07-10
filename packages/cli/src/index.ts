@@ -3,7 +3,13 @@
 // conventions). Every command except `daemon run` goes through ensure-daemon.
 import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
-import { Client, connectIfRunning, ensureDaemon, waitDaemonGone } from "./client.ts";
+import {
+  Client,
+  connectIfRunning,
+  ensureDaemon,
+  reconnectSubscribeNoSpawn,
+  waitDaemonGone,
+} from "./client.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -127,20 +133,67 @@ async function runSubscribe(
   }
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
-  const since = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
-  const client = await ensureDaemon(paths, identity);
+  const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
+  // sinceMap は「これまで stdout に出したことがある msg の per-room 最大 mid」。
+  // 再接続時に daemon へ渡し、backlog を「未受信ぶんだけ」に絞る (BBS delta model,
+  // DR-0003 §5)。ユーザ指定の --since を初期値として seed し、以降は受信した msg
+  // 毎に更新する。
+  const sinceMap: Record<string, number> = { ...initialSince };
+  let client: Client = await ensureDaemon(paths, identity);
   const ack = await client.request<{ ok?: boolean }>({
     op: "subscribe",
-    ...(since ? { since } : {}),
+    ...(initialSince ? { since: initialSince } : {}),
   });
   if (ack.ok === false) process.exit(output(ack as Record<string, unknown>));
-  // stream event lines verbatim to stdout (jsonl for Monitor / jq)
-  for (;;) {
-    const line = await client.readLine();
-    if (line === null) break; // daemon closed (e.g. restarting)
-    process.stdout.write(`${line}\n`);
+  // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
+  // Monitor 相当のセッション寿命プロセスなので、上限に達したら fixed 5s で
+  // 回り続ける (docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md)。
+  const BACKOFFS_MS = [250, 500, 1000, 2000, 4000, 5000] as const;
+  let attempt = 0;
+  outer: for (;;) {
+    for (;;) {
+      const line = await client.readLine();
+      if (line === null) break; // socket closed → 再接続へ
+      // 1 行 parse して 2 つの副作用を掛ける:
+      //   (a) `ev:"restarting"` は stdout に流さない (透過再接続が目的で、上流の
+      //       Monitor へノイズ行を送らない)。この行の直後に daemon が socket を閉じる
+      //       ので、次ループで readLine() が null を返し再接続経路に入る。
+      //   (b) `type:"msg"` の r/mid で sinceMap を更新し、再接続 subscribe の
+      //       since 引数に反映する。他の event (member/leave/next/prev/title/notify)
+      //       は mid を持たないので sinceMap を触らない。
+      let filtered = false;
+      try {
+        const ev = JSON.parse(line) as {
+          ev?: string;
+          type?: string;
+          r?: string;
+          mid?: number;
+        };
+        if (ev.ev === "restarting") {
+          filtered = true;
+        } else if (ev.type === "msg" && typeof ev.r === "string" && typeof ev.mid === "number") {
+          const prev = sinceMap[ev.r] ?? 0;
+          if (ev.mid > prev) sinceMap[ev.r] = ev.mid;
+        }
+      } catch {
+        // 非 JSON 行 (現契約では発生しないが、防御的に素通し)
+      }
+      if (!filtered) process.stdout.write(`${line}\n`);
+    }
+    // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
+    // `ccmsg daemon stop` を subscribe が resurrection しない契約。
+    for (;;) {
+      const c = await reconnectSubscribeNoSpawn(paths, identity, sinceMap);
+      if (c !== null) {
+        client = c;
+        attempt = 0;
+        continue outer;
+      }
+      const delay = BACKOFFS_MS[Math.min(attempt, BACKOFFS_MS.length - 1)]!;
+      attempt++;
+      await new Promise<void>((res) => setTimeout(res, delay));
+    }
   }
-  process.exit(0);
 }
 
 async function runStatus(): Promise<never> {
