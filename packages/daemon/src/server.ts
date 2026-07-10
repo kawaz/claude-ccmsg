@@ -26,6 +26,7 @@ import { transcriptRead, validateTranscriptPath } from "./transcript.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
+import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
 import {
   appendEvent,
   closeRoom,
@@ -927,6 +928,27 @@ export function startDaemon(opts: StartOptions = {}): void {
     }
   }
   daemon.httpListeners = httpListeners;
+
+  // Zero-config tailscale serve origin auto-allow (docs/issue/2026-07-11-tailscale-
+  // serve-origin-auto-allow.md, DR-0004 trust-model addendum): best-effort, async,
+  // never delays or blocks startup. `extraOrigins`/`httpAllowOrigin` is the very Set
+  // instance each HTTP listener's closure already holds (see isAllowedOrigin in
+  // http.ts) — mutating it after the fact is enough for future requests to see the
+  // added origins, no wiring needed back into the listeners themselves.
+  if (httpListeners.length > 0) {
+    const boundPorts = new Set(
+      httpListeners
+        .map((l) => Number(l.address.slice(l.address.lastIndexOf(":") + 1)))
+        .filter((p) => Number.isInteger(p)),
+    );
+    const tailscaleBin = process.env.CCMSG_TAILSCALE_BIN;
+    void fetchTailscaleServeOrigins(boundPorts, {
+      ...(tailscaleBin && tailscaleBin !== "" ? { bin: tailscaleBin } : {}),
+      log,
+    }).then((origins) => {
+      for (const origin of origins) httpAllowOrigin.add(origin);
+    });
+  }
 
   process.on("SIGTERM", () => gracefulShutdown(daemon, "signal"));
   process.on("SIGINT", () => gracefulShutdown(daemon, "signal"));

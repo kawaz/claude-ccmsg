@@ -175,3 +175,35 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
 > 見せかけて他マシンから到達する唯一の経路は `/etc/hosts` や DNS の
 > `localhost` 解決を書き換えることだが、それを実行できる時点で host 自体が
 > 既に侵害済みであり、この Origin 検証をバイパスする必要すら無い。
+>
+> **tailscale serve origin の zero-config 自動許可** [提案、2026-07-11 追補、
+> `docs/issue/2026-07-11-tailscale-serve-origin-auto-allow.md`]: `CCMSG_HTTP_ALLOW_ORIGIN`
+> は daemon が respawn されるたび (`packages/cli` は任意セッションの env から
+> daemon を再起動しうる) に再設定が必要で、env を付け忘れた respawn が起きると
+> ts.net 経由アクセスが再び 403 になる実地障害が起きた。これを解消するため、
+> daemon 起動時に `tailscale serve status --json` を best-effort (timeout 1s、
+> 失敗は黙って空集合、ログ 1 行のみ) で問い合わせ (`packages/daemon/src/
+> tailscale-origin.ts`)、**このマシンの tailscale serve がこの daemon 自身の
+> bind ポートへ proxy している** ts.net hostname の origin を自動で
+> `extraOrigins` (isAllowedOrigin が見る Set) へ追加する。
+>
+> **trust 根拠**: その `https://<hostname>.<tailnet>.ts.net` origin をブラウザが
+> 名乗れるページは、tailscale serve がこのマシン自身で TLS 終端して配信した
+> ものだけ (serve は tailscale 側の認証を経てこのマシンにトラフィックを
+> 中継する)。加えて、serve の proxy 先が **この daemon 自身が bind している
+> ポート**であることを毎回確認してから許可する — 「serve 構成が存在する」
+> だけでなく「その serve がこの daemon 宛て」であることを見て初めて信頼する。
+> serve が同一マシン内の**別のローカルアプリ**へ向いているケース (この daemon
+> とは無関係な serve 設定) は、bind ポート不一致として自動許可の対象外になる。
+> 一方、同一マシン上の別プロセスが自分の serve 設定を持ち、たまたま **この
+> daemon と同じポート**を指す構成に細工した場合は許可されてしまいうるが、
+> これは「同 UID で任意のプロセスを走らせられる攻撃者」を前提とする既存の
+> trust boundary (上記「u1 の真正性は同 UID 内で信頼する」と同根) の範囲内であり、
+> 新たな trust boundary の拡張ではない。
+>
+> `CCMSG_HTTP_ALLOW_ORIGIN` (手動拡張) は自動許可と併存し、tailscale 以外の
+> reverse proxy 等では引き続きこちらを使う。tailscale 未インストール/未 serve
+> 環境では単に何も追加されず、daemon 起動自体は一切ブロックされない (`void` で
+> 投げっぱなしの非同期呼び出し)。`CCMSG_TAILSCALE_BIN` はテスト専用シーム
+> (`CCMSG_DAEMON_ENTRY` と同じ流儀) で、実 tailscale バイナリの代わりに
+> fake script を注入できる。

@@ -1,6 +1,9 @@
 // HTTP/WS transport (DR-0004): /ws speaks the same line protocol as UDS, browsers are
 // identity-pinned to id "u1" (User), and CCMSG_HTTP_BIND controls whether it exists at all.
 import { describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
 
 const T = 15000;
@@ -500,6 +503,156 @@ describe("HTTP/WS transport (DR-0004)", () => {
         // the daemon already exited via shutdown; stopTestDaemon tolerates that (falls
         // back to proc.kill(), which is a no-op on an already-dead process)
         await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+});
+
+// tailscale serve origin auto-allow (docs/issue/2026-07-11-tailscale-serve-origin-auto-
+// allow.md): the daemon-startup wiring and its subprocess seam. extractProxiedOrigins'
+// own JSON-shape unit tests live in tailscale-origin.test.ts; no test here depends on a
+// real tailscale binary (CI has none) — everything goes through CCMSG_TAILSCALE_BIN.
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+/** A free TCP port, grabbed by binding :0 and immediately releasing it. Best-effort like
+ *  the rest of this test harness (waitConnectable's retry-until-connectable is the same
+ *  idea): there's a race between release and the daemon binding it for real, acceptable
+ *  for a test that already retries past transient failures below. */
+async function freeTcpPort(): Promise<number> {
+  const srv = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { data() {}, open() {}, close() {}, error() {}, drain() {} },
+  });
+  const port = srv.port;
+  srv.stop(true);
+  return port;
+}
+
+/** Writes an executable shell script that mimics `tailscale serve status --json`,
+ *  reporting a single Web entry fronting `port` on `hostname`. The fake blocks until
+ *  `gatePath` exists before answering, so the test can deterministically assert the
+ *  "auto-allow has NOT landed yet" state first and then open the gate. (A fixed
+ *  `sleep 0.3` window here raced with full-suite load: the test's own first fetch
+ *  could arrive after the window and find the origin already allowed.) The wait is
+ *  bounded (~5s) so a test bug can't strand the daemon's subprocess: on timeout it
+ *  exits non-zero, the origin never gets allowed, and waitForOriginAllowed reports
+ *  that visibly. */
+function writeFakeTailscale(dir: string, hostname: string, port: number, gatePath: string): string {
+  const scriptPath = path.join(dir, "fake-tailscale");
+  const json = JSON.stringify({
+    Web: { [`${hostname}:443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } },
+  });
+  fs.writeFileSync(
+    scriptPath,
+    `#!/bin/sh
+i=0
+while [ ! -f '${gatePath}' ]; do
+  i=$((i + 1))
+  [ "$i" -gt 100 ] && exit 1
+  sleep 0.05
+done
+if [ "$1 $2 $3" = "serve status --json" ]; then echo '${json}'; exit 0; fi
+exit 1
+`,
+  );
+  fs.chmodSync(scriptPath, 0o755);
+  return scriptPath;
+}
+
+/** Retries a same-origin-tagged fetch until the daemon's async serve-origin lookup has
+ *  landed (or timeoutMs elapses) — there is no event to await for "subprocess finished
+ *  and its result got folded into extraOrigins", so polling the externally-observable
+ *  effect (the Origin check itself) is the only option, same rationale as
+ *  waitConnectable's retry-until-connectable. */
+async function waitForOriginAllowed(addr: string, origin: string, timeoutMs = 4000): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    const res = await fetch(`http://${addr}/`, { headers: { Origin: origin } });
+    if (res.status !== 403) return;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`origin ${origin} never became allowed within ${timeoutMs}ms`);
+    }
+    await sleep(50);
+  }
+}
+
+describe("tailscale serve origin auto-allow (docs/issue/2026-07-11)", () => {
+  test(
+    "tailscale binary absent (CCMSG_TAILSCALE_BIN points nowhere): daemon still starts promptly and serves requests",
+    async () => {
+      const start = Date.now();
+      const ctx = await startTestDaemon({
+        CCMSG_HTTP_BIND: "127.0.0.1:0",
+        CCMSG_TAILSCALE_BIN: "/nonexistent/path/definitely-not-a-tailscale-binary",
+      });
+      try {
+        // startTestDaemon already waited for the UDS socket via waitConnectable; the
+        // absent-binary lookup must not have delayed that (it's fired off with `void`,
+        // never awaited by daemon startup) — bounding total elapsed time here catches a
+        // regression where it accidentally becomes synchronous/blocking.
+        expect(Date.now() - start).toBeLessThan(5000);
+        const c = await connect(ctx.sock);
+        const pong = await c.request<{ ok: true; pong: true }>({ op: "ping" });
+        expect(pong.ok).toBe(true);
+        c.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "fake tailscale reports a serve config fronting this daemon's bind port: that ts.net origin's WS connects without CCMSG_HTTP_ALLOW_ORIGIN",
+    async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fake-ts-"));
+      try {
+        const port = await freeTcpPort();
+        const hostname = "fake-machine.tail1234.ts.net";
+        const gatePath = path.join(dir, "gate");
+        const bin = writeFakeTailscale(dir, hostname, port, gatePath);
+        const ctx = await startTestDaemon({
+          CCMSG_HTTP_BIND: `127.0.0.1:${port}`,
+          CCMSG_TAILSCALE_BIN: bin,
+        });
+        try {
+          const origin = `https://${hostname}`;
+          const addr = `127.0.0.1:${port}`;
+
+          // before auto-allow lands, the origin is not yet trusted (proves the WS
+          // success below is actually caused by the auto-allow, not some pre-existing
+          // implicit allow).
+          const tooSoon = await fetch(`http://${addr}/`, { headers: { Origin: origin } });
+          expect(tooSoon.status).toBe(403);
+
+          // Open the gate: the fake answers, the daemon folds the origin in.
+          fs.writeFileSync(gatePath, "");
+          await waitForOriginAllowed(addr, origin);
+
+          const ws = new WebSocket(`ws://${addr}/ws`, { headers: { Origin: origin } });
+          const outcome = await new Promise<"open" | "rejected">((resolve) => {
+            ws.addEventListener("open", () => resolve("open"));
+            ws.addEventListener("error", () => resolve("rejected"));
+            ws.addEventListener("close", () => resolve("rejected"));
+          });
+          expect(outcome).toBe("open");
+          ws.close();
+
+          // an origin NOT reported by (fake) tailscale is still rejected.
+          const evilRes = await fetch(`http://${addr}/`, {
+            headers: { Origin: "https://evil.example" },
+          });
+          expect(evilRes.status).toBe(403);
+        } finally {
+          await stopTestDaemon(ctx);
+        }
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     },
     T,
