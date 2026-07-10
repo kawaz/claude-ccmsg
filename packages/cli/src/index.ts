@@ -236,7 +236,10 @@ Environment Variables:
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
-                               (daemon side, default 127.0.0.1:8642, "off" to disable)
+                               (daemon side, default 0.0.0.0:8642, "off" to disable)
+  CCMSG_HTTP_ALLOW             webui/HTTP source-IP allowlist, comma-separated CIDR/IP
+                               (daemon side, default 127.0.0.0/8,::1,100.64.0.0/10,
+                               fd7a:115c:a1e0::/48 — loopback + tailscale)
 `);
 }
 

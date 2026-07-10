@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import {
   ADMIN_ID,
   DEFAULT_DEDUP_WINDOW_MS,
+  DEFAULT_HTTP_ALLOW,
   DEFAULT_HTTP_BIND,
   DEFAULT_JOIN_BACKLOG,
   ErrorCode,
@@ -22,6 +23,7 @@ import {
 import { Logger } from "./log.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
+import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
 import {
   appendEvent,
   closeRoom,
@@ -68,6 +70,8 @@ export interface Daemon {
   lock: LockHandle;
   server: Listener | null;
   httpListeners: HttpListener[];
+  /** raw CCMSG_HTTP_ALLOW entries currently in effect, for status/ping display. */
+  httpAllow: string[];
   dedupWindowMs: number;
   shuttingDown: boolean;
 }
@@ -337,6 +341,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         rooms: daemon.rooms.size,
         clients: daemon.connections.size,
         http: daemon.httpListeners.map((l) => l.address),
+        httpAllow: daemon.httpAllow,
       });
       return;
     }
@@ -652,6 +657,15 @@ function resolveHttpBinds(): string[] {
     .filter((s) => s !== "");
 }
 
+/** `CCMSG_HTTP_ALLOW`: comma-separated CIDR/IP source allowlist, default
+ *  DEFAULT_HTTP_ALLOW (DR-0004 §3 addendum). Empty/whitespace-only falls back to the
+ *  default rather than "allow nothing" — an explicit empty allowlist isn't a supported
+ *  way to lock the transport down; use CCMSG_HTTP_BIND=off for that. */
+function resolveHttpAllowSpec(): string {
+  const raw = process.env.CCMSG_HTTP_ALLOW;
+  return raw && raw.trim() !== "" ? raw : DEFAULT_HTTP_ALLOW;
+}
+
 export function startDaemon(opts: StartOptions = {}): void {
   const paths = resolvePaths();
   fs.mkdirSync(paths.stateDir, { recursive: true });
@@ -672,6 +686,22 @@ export function startDaemon(opts: StartOptions = {}): void {
     // ignore
   }
 
+  const httpAllowSpec = resolveHttpAllowSpec();
+  let httpAllowCidrs: Cidr[];
+  try {
+    httpAllowCidrs = parseAllowList(httpAllowSpec);
+  } catch (e) {
+    const msg = `invalid CCMSG_HTTP_ALLOW: ${String(e)}`;
+    log.error(msg);
+    if (opts.foreground) process.stderr.write(`ccmsg: ${msg}\n`);
+    lock.release();
+    process.exit(1);
+  }
+  const httpAllow = httpAllowSpec
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+
   const rooms = scanRooms(paths.roomsDir, log);
   const daemon: Daemon = {
     paths,
@@ -686,6 +716,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     lock,
     server: null,
     httpListeners: [],
+    httpAllow,
     dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
   };
@@ -745,7 +776,7 @@ export function startDaemon(opts: StartOptions = {}): void {
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
-      const listener = startHttpListener(daemon, bindSpec, opts.fallback);
+      const listener = startHttpListener(daemon, bindSpec, httpAllowCidrs, opts.fallback);
       httpListeners.push(listener);
       log.info(`http listening on ${listener.address}`);
     } catch (e) {

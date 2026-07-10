@@ -23,8 +23,16 @@ export const DEFAULT_JOIN_BACKLOG = 50;
 /** Default dedup window for create_room (DR-0003 §4, minute-order). */
 export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
 
-/** Default HTTP/WS bind for `/ws` (DR-0004 §3). `CCMSG_HTTP_BIND=off` disables it. */
-export const DEFAULT_HTTP_BIND = "127.0.0.1:8642";
+/** Default HTTP/WS bind for `/ws` (DR-0004 §3, addendum). `CCMSG_HTTP_BIND=off`
+ *  disables it. Binds all interfaces by default — reachability is not the trust
+ *  boundary here, `DEFAULT_HTTP_ALLOW` (source-IP allowlist) is. */
+export const DEFAULT_HTTP_BIND = "0.0.0.0:8642";
+
+/** Default source-IP allowlist for `/ws` and HTTP fallback (DR-0004 §3 addendum).
+ *  loopback + tailscale CGNAT IPv4 (100.64.0.0/10) + tailscale ULA IPv6
+ *  (fd7a:115c:a1e0::/48) — i.e. "this machine" or "a device kawaz owns via
+ *  tailscale". Override with `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). */
+export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48";
 
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
@@ -288,6 +296,8 @@ export interface PingResponse {
   clients: number;
   /** actual HTTP/WS bind addresses ("host:port"); empty when CCMSG_HTTP_BIND=off (DR-0004 §3). */
   http: string[];
+  /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */
+  httpAllow: string[];
 }
 export interface ShutdownResponse {
   ok: true;

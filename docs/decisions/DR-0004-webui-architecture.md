@@ -33,11 +33,14 @@ DR-0001 §7 が [保留] にした「HTTP を daemon 内蔵にするか別 bridg
   - 根拠: HTTP に到達できるのは 127.0.0.1 (= 本人のマシン) か tailscale (= 本人のデバイス) のみで、いずれも「kawaz 本人」。browser を session として参加させる要件はない
 - daemon 内部の seam: `Conn` の write を socket 直書きから transport 非依存の `write(line)` に抽象化する。dispatch / delivery / subscribe は一切 transport を知らない
 
-### 3. bind と port [kawaz 制約 + 提案の既定値]
+### 3. bind と source-IP allowlist [kawaz 制約 + 提案の既定値、2026-07-10 追補で allowlist を追加]
 
-- 既定 bind: `127.0.0.1:8642`。env `CCMSG_HTTP_BIND` で上書き (カンマ区切りで複数 bind 可、例 `127.0.0.1:8642,100.101.102.103:8642` で tailscale IP を追加)。`off` で無効化
-- 既定 ON (127.0.0.1 のみなので安全側)。前提: single-user マシン (127.0.0.1 は同一ホストの他 UNIX ユーザからも届く点は UDS 0600 より弱いが、個人機前提で許容)。マルチユーザ環境では `off` にする
-- `ccmsg status` / `ping` 応答に http bind 情報を出す (observability、DR-0002 §7 の延長)
+- 既定 bind: `0.0.0.0:8642` (全 interface)。env `CCMSG_HTTP_BIND` で上書き (カンマ区切りで複数 bind 可)。`off` で無効化
+- 既定 allow: `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale CGNAT IPv4 + tailscale ULA IPv6)。env `CCMSG_HTTP_ALLOW` で上書き (カンマ区切り CIDR/IP)。source IP が allowlist に無い接続は fetch (WS upgrade 前を含む) で 403、判定不能 (`requestIP` が null 等) も拒否側に倒す
+- **trust boundary は bind でなく source-IP allowlist**: tailscale interface は起動時に存在しないことがあるため、interface 個別 bind ではなく全 interface bind + allowlist を採用。「127.0.0.1/tailscale に届く者 = 本人」という §2 の identity pinning の前提は、allowlist が同じ集合を審査することで維持される
+- `ccmsg status` / `ping` 応答に http bind + allowlist 情報を出す (observability、DR-0002 §7 の延長)
+
+> **2026-07-10 追補**: kawaz 要望「tailscale 経由でスマホから繋ぎたい、127.0.0.1 と tailscale レンジ以外は弾く」を受けて、bind を `127.0.0.1:8642` 固定から `0.0.0.0:8642` + source-IP allowlist に変更。旧構成 (127.0.0.1 固定 bind、tailscale IP を追加するには `CCMSG_HTTP_BIND` にホスト自身の tailscale IP を都度書く必要があった) は、tailscale IP が起動時点で未確定 (tailscaled 起動順序・IP 変更) だと bind に失敗する運用上の弱点があった。allowlist 方式なら bind は常に全 interface で成功し、接続元審査だけで同じ trust boundary を実現する。
 
 ### 4. UI は packages/webui、ビルドステップなし [提案] (クライアント実装方式は DR-0005 が supersede)
 

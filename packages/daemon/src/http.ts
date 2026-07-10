@@ -2,6 +2,7 @@
 // §1): 1 WS message frame = 1 JSON request in, 1 JSON response/event per frame out.
 // The daemon's dispatch/delivery code (server.ts) never touches this file — it only
 // sees `Conn.write`, so UDS and HTTP/WS are interchangeable to it.
+import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
 
 export interface HttpFallback {
@@ -53,6 +54,7 @@ function pinHelloToUser(line: string): string {
 export function startHttpListener(
   daemon: Daemon,
   bindSpec: string,
+  allow: Cidr[],
   fallback?: HttpFallback,
 ): HttpListener {
   const { hostname, port } = parseBindSpec(bindSpec);
@@ -60,6 +62,16 @@ export function startHttpListener(
     hostname,
     port,
     fetch(req, srv) {
+      // Source-IP allowlist (DR-0004 §3 addendum): the default 0.0.0.0 bind means
+      // "reachable" no longer implies "kawaz" by itself, so this gate is what makes
+      // identity pinning's threat model (pinHelloToUser below) hold. Runs before the
+      // WS upgrade too, since fetch() is where upgrade happens. requestIP() returning
+      // null (e.g. a unix-socket-backed Request in tests) is treated as not-allowed —
+      // fail closed, never fail open on an unknown remote.
+      const remote = srv.requestIP(req);
+      if (remote === null || !isAllowed(remote.address, allow)) {
+        return new Response("Forbidden", { status: 403 });
+      }
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
         const conn: Conn = { write: () => {}, identity: null, subscribed: false };

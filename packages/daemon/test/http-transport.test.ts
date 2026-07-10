@@ -277,6 +277,58 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
+    "CCMSG_HTTP_ALLOW restricted to a non-loopback range: loopback gets 403 for both plain HTTP and the WS upgrade path",
+    async () => {
+      // DR-0004 §3 addendum: allowlist gates fetch() itself, so it must cover the
+      // WS upgrade too (upgrade happens inside fetch(), not a separate handler).
+      const ctx = await startHttpDaemon({ CCMSG_HTTP_ALLOW: "100.64.0.0/10" });
+      try {
+        const addr = await httpAddress(ctx);
+
+        const res = await fetch(`http://${addr}/`);
+        expect(res.status).toBe(403);
+
+        const ws = new WebSocket(`ws://${addr}/ws`);
+        const outcome = await new Promise<"open" | "rejected">((resolve) => {
+          ws.addEventListener("open", () => resolve("open"));
+          ws.addEventListener("error", () => resolve("rejected"));
+          ws.addEventListener("close", () => resolve("rejected"));
+        });
+        expect(outcome).toBe("rejected");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "default CCMSG_HTTP_ALLOW (loopback + tailscale): loopback connections are not blocked, and ping reports the active allowlist",
+    async () => {
+      const ctx = await startHttpDaemon();
+      try {
+        const c = await connect(ctx.sock);
+        await c.hello({ role: "user" });
+        const pong = await c.request<{ httpAllow: string[] }>({ op: "ping" });
+        expect(pong.httpAllow).toEqual([
+          "127.0.0.0/8",
+          "::1",
+          "100.64.0.0/10",
+          "fd7a:115c:a1e0::/48",
+        ]);
+        c.close();
+
+        const addr = await httpAddress(ctx);
+        const res = await fetch(`http://${addr}/`);
+        expect(res.status).not.toBe(403); // no fallback wired in tests -> 404, but never 403
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "graceful shutdown delivers a restarting event to WS subscribers too",
     async () => {
       const ctx = await startHttpDaemon();
