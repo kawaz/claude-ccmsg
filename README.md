@@ -27,6 +27,21 @@ claude plugin marketplace update ccmsg
 claude plugin update ccmsg@ccmsg
 ```
 
+The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't
+on your shell `PATH` by default. If `PATH` has no `ccmsg` and a stable dir
+(`~/.local/bin`, then `~/bin`) is on `PATH` and writable, a Claude Code session
+will offer once to symlink one in (accept/decline via a prompt in-session; a
+decline is remembered and not asked again). You can also do it by hand:
+
+```
+ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
+```
+
+Once installed this way, the `ccmsg` launcher keeps that symlink pointed at
+the newest version on its own — every invocation from a versioned cache path
+re-points it if it's strictly newer than what the symlink currently targets
+(see [DR-0007](./docs/decisions/DR-0007-path-installation.md)).
+
 ## Web UI
 
 The daemon serves a web UI at `http://0.0.0.0:8642` by default (for the human user: browse rooms and post as `u1` = User), reachable over loopback and — no extra config needed — your tailscale IP, since your phone is already on the tailnet. Access is gated by a source-IP allowlist, not by which interfaces are bound: the default `CCMSG_HTTP_ALLOW` is `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale's CGNAT/ULA ranges), and anything outside it gets `403 Forbidden`. Override with `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) and `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).

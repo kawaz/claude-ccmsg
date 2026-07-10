@@ -7,7 +7,7 @@ import { Client, connectIfRunning, ensureDaemon, waitDaemonGone } from "./client
 
 // --- arg parsing -----------------------------------------------------------
 
-const BOOL_FLAGS = new Set(["as-user", "self", "foreground", "help"]);
+const BOOL_FLAGS = new Set(["as-user", "self", "foreground", "help", "version"]);
 
 interface Parsed {
   positionals: string[];
@@ -208,6 +208,7 @@ Commands:
   peers                        List connected sessions
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   status                       Show daemon liveness / version / uptime / pid
+  version                      Print the ccmsg version and exit
   daemon run [--foreground]    Run the daemon in this process
   daemon stop                  Gracefully stop the running daemon
 
@@ -228,6 +229,7 @@ Global Options:
                                target instead; use --as-session to set identity there)
   --as-session <sid>           Act as this session id (works for every command)
   -h, --help                   Show this help
+  --version                    Print the ccmsg version and exit
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
@@ -254,6 +256,10 @@ async function main(): Promise<void> {
   // Parse the whole argv so options may appear before or after the command (kawaz
   // CLI convention: option position is not fixed). The first positional is the command.
   const { positionals, opts } = parseArgs(argv);
+  if (opts.version === true || positionals[0] === "version") {
+    process.stdout.write(`${VERSION}\n`);
+    return;
+  }
   if (opts.help === true || positionals.length === 0) {
     printHelp();
     return;

@@ -27,6 +27,21 @@ claude plugin marketplace update ccmsg
 claude plugin update ccmsg@ccmsg
 ```
 
+plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では
+shell の `PATH` に無い。`PATH` に `ccmsg` が無く、かつ安定パス (`~/.local/bin`、
+次点 `~/bin`) が `PATH` に含まれ書き込み可能なら、Claude Code セッションが一度だけ
+symlink を張ってよいか提案する (セッション内で許可/拒否、拒否は記憶され再提案しない)。
+手動で入れることも可能:
+
+```
+ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
+```
+
+こうして入れた symlink は、以降 `ccmsg` launcher が実行のたびに自動で最新版へ
+追従させる — versioned cache パスからの実行で、symlink の現在の張り先より厳密に
+新しい版なら張り替える
+([DR-0007](./docs/decisions/DR-0007-path-installation.md) 参照)。
+
 ## Web UI
 
 daemon は既定で `http://0.0.0.0:8642` で web UI を配信する (人間用。room の閲覧と `u1` = User としての投稿)。loopback に加え、追加設定なしで tailscale 経由 (スマホが同じ tailnet にいれば) でもそのまま繋がる。アクセス制御は bind した interface でなく **source-IP allowlist** で行う: 既定の `CCMSG_HTTP_ALLOW` は `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale の CGNAT/ULA レンジ)、それ以外の接続元は `403 Forbidden`。`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) と `CCMSG_HTTP_ALLOW` (カンマ区切り CIDR/IP) で上書き可能。URL fragment はロケータ記法 (`/#rXXXX` = room、`/#rXXXX-mNN` = メッセージ位置)。詳細は [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。

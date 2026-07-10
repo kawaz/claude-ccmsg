@@ -6,22 +6,136 @@
 #
 # Alias it from your shell (e.g. `alias ccmsg=/path/to/bin/ccmsg`) to use it
 # without polluting PATH.
+#
+# Self-update (DR-0007 §2): when run from a versioned plugin cache path
+# (.../ccmsg/<version>/bin/ccmsg) and PATH has a `ccmsg` symlink pointing into
+# the same kind of versioned cache, re-point that symlink to this launcher if
+# this launcher's version is strictly newer. All of this is best-effort and
+# silent — a failure here must never affect the real command below.
+#
+# Functions are defined unconditionally so this file can be `source`d for
+# testing; the launch logic itself only runs when executed directly (the
+# BASH_SOURCE/0 guard at the bottom).
 
-__self="${BASH_SOURCE[0]}"
-while [ -L "$__self" ]; do
-  __link="$(readlink "$__self")"
-  case "$__link" in
-    /*) __self="$__link" ;;
-    *)  __self="$(cd "$(dirname "$__self")" && pwd)/$__link" ;;
+# Chases a symlink chain to an absolute real path (relative links resolved
+# against their containing directory at each hop).
+__ccmsg_resolve_symlink() {
+  local __p="$1"
+  while [ -L "$__p" ]; do
+    local __link
+    __link="$(readlink "$__p")"
+    case "$__link" in
+      /*) __p="$__link" ;;
+      *)  __p="$(cd "$(dirname "$__p")" && pwd)/$__link" ;;
+    esac
+  done
+  printf '%s' "$(cd "$(dirname "$__p")" && pwd)/$(basename "$__p")"
+}
+
+# Extracts the version segment from a plugin-cache-shaped path, i.e. the first
+# path component matching /ccmsg/<digit...>/ scanning left to right. Prints
+# nothing (empty) when the path has no such component — e.g. a dev checkout,
+# or a symlink target outside any ccmsg version cache.
+__ccmsg_extract_version() {
+  local __p="$1"
+  if [[ "$__p" =~ /ccmsg/([0-9][^/]*)/ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# Compares two dotted-triple (+ optional -suffix) version strings, mirroring
+# packages/protocol/src/version-compare.ts's newer-wins policy: numeric
+# major/minor/patch compare first; on a 3-way tie, a version with no suffix is
+# considered newer than one with a suffix (release beats prerelease/dev), and
+# two suffixed versions tie. Non-numeric segments are treated as 0 rather than
+# erroring, since this only ever runs on our own generated paths.
+# Prints -1, 0, or 1.
+__ccmsg_version_compare() {
+  local __v1="$1" __v2="$2"
+  local __base1="${__v1%%-*}" __base2="${__v2%%-*}"
+  local __suffix1="" __suffix2=""
+  [[ "$__v1" == *-* ]] && __suffix1="${__v1#*-}"
+  [[ "$__v2" == *-* ]] && __suffix2="${__v2#*-}"
+  local __maj1 __min1 __pat1 __maj2 __min2 __pat2
+  IFS=. read -r __maj1 __min1 __pat1 <<<"$__base1"
+  IFS=. read -r __maj2 __min2 __pat2 <<<"$__base2"
+  [[ "$__maj1" =~ ^[0-9]+$ ]] || __maj1=0
+  [[ "$__min1" =~ ^[0-9]+$ ]] || __min1=0
+  [[ "$__pat1" =~ ^[0-9]+$ ]] || __pat1=0
+  [[ "$__maj2" =~ ^[0-9]+$ ]] || __maj2=0
+  [[ "$__min2" =~ ^[0-9]+$ ]] || __min2=0
+  [[ "$__pat2" =~ ^[0-9]+$ ]] || __pat2=0
+  if ((__maj1 != __maj2)); then
+    ((__maj1 > __maj2)) && echo 1 || echo -1
+    return
+  fi
+  if ((__min1 != __min2)); then
+    ((__min1 > __min2)) && echo 1 || echo -1
+    return
+  fi
+  if ((__pat1 != __pat2)); then
+    ((__pat1 > __pat2)) && echo 1 || echo -1
+    return
+  fi
+  if [[ -z "$__suffix1" && -n "$__suffix2" ]]; then
+    echo 1
+    return
+  fi
+  if [[ -n "$__suffix1" && -z "$__suffix2" ]]; then
+    echo -1
+    return
+  fi
+  echo 0
+}
+
+# Best-effort self-update: re-points PATH's `ccmsg` symlink at $1 (this
+# launcher's resolved real path) iff all DR-0007 §2 conditions hold. Always
+# returns 0 — never propagates a failure to the caller.
+__ccmsg_self_update() {
+  local __self_real="$1"
+
+  local __self_version
+  __self_version="$(__ccmsg_extract_version "$__self_real")"
+  [ -z "$__self_version" ] && return 0
+
+  local __path_ccmsg
+  __path_ccmsg="$(command -v ccmsg 2>/dev/null)"
+  [ -z "$__path_ccmsg" ] && return 0
+  [ -L "$__path_ccmsg" ] || return 0
+
+  local __link_target
+  __link_target="$(readlink "$__path_ccmsg" 2>/dev/null)"
+  [ -z "$__link_target" ] && return 0
+  case "$__link_target" in
+    /*) : ;;
+    *) __link_target="$(cd "$(dirname "$__path_ccmsg")" 2>/dev/null && pwd)/$__link_target" ;;
   esac
-done
-__here="$(cd "$(dirname "$__self")" && pwd)"
-__cli="${__here}/../packages/cli/src/index.ts"
+  [ -z "$__link_target" ] && return 0
 
-if command -v bun >/dev/null 2>&1; then
-  exec bun run "$__cli" "$@"
-else
-  echo "ccmsg: bun not found. Install bun to run ccmsg." >&2
-  echo "  https://bun.sh/" >&2
-  exit 1
+  local __link_version
+  __link_version="$(__ccmsg_extract_version "$__link_target")"
+  [ -z "$__link_version" ] && return 0
+
+  local __cmp
+  __cmp="$(__ccmsg_version_compare "$__self_version" "$__link_version")"
+  [ "$__cmp" = "1" ] || return 0
+
+  ln -sfn "$__self_real" "$__path_ccmsg" 2>/dev/null
+  return 0
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  __self="$(__ccmsg_resolve_symlink "${BASH_SOURCE[0]}")"
+  __here="$(cd "$(dirname "$__self")" && pwd)"
+  __cli="${__here}/../packages/cli/src/index.ts"
+
+  __ccmsg_self_update "$__self" 2>/dev/null || true
+
+  if command -v bun >/dev/null 2>&1; then
+    exec bun run "$__cli" "$@"
+  else
+    echo "ccmsg: bun not found. Install bun to run ccmsg." >&2
+    echo "  https://bun.sh/" >&2
+    exit 1
+  fi
 fi

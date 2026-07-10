@@ -154,3 +154,47 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 });
+
+describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
+  // 何を保証するか: 人間が PATH の ccmsg の版を確認する手段。daemon には触らない
+  // (DR-0007 §3 の通り、自己更新の判定にはこの経路を使わない — ここは CLI 衛生のみ)。
+  test("--version は daemon を起動せず VERSION 文字列だけを stdout に出す", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["--version"], env);
+      expect(res.code).toBe(0);
+      expect(res.out).toBe(`${VERSION}\n`);
+      expect(res.err).toBe("");
+
+      // daemon が起動していないことも確認 (= --version が ensure-daemon を通っていない)
+      const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(status.running).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // `version` サブコマンドも同じ出力になる (フラグ形と併記される DR-0007 §3 の両方)。
+  test("version サブコマンドも同じ出力", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["version"], env);
+      expect(res.code).toBe(0);
+      expect(res.out).toBe(`${VERSION}\n`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // --version は他の位置引数より優先される (help と同格の早期リターン)。
+  test("--version は他の positional より優先される", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["rooms", "--version"], env);
+      expect(res.code).toBe(0);
+      expect(res.out).toBe(`${VERSION}\n`);
+    } finally {
+      cleanup();
+    }
+  });
+});
