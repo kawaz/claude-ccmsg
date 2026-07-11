@@ -33,34 +33,58 @@ function peer(overrides: Partial<PeerInfo>): PeerInfo {
 }
 
 describe("sessionLabel", () => {
-  // DR-0008 addendum: cwd IS the workspace root here (tail "main" === ws
-  // "main") — the third segment would just repeat `ws`, so it's dropped.
-  test("drops the cwd-tail segment when cwd is the workspace root", () => {
-    expect(
-      sessionLabel(peer({ repo: "claude-ccmsg", ws: "main", cwd: "/repos/claude-ccmsg/main" })),
-    ).toBe("claude-ccmsg · main");
+  // Common case: workspace name and checked-out branch happen to match
+  // (a named jj workspace checked out at its own bookmark) — showing both
+  // would just repeat the same word, so `branch` collapses into `ws`.
+  test("collapses branch into ws when they're equal", () => {
+    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "main", branch: "main" }))).toBe(
+      "claude-ccmsg · main",
+    );
   });
 
-  // Plain (non-worktree) checkout: ws is often set equal to repo. cwd tail
-  // then equals `repo`, not `ws` — still redundant, still dropped.
-  test("drops the cwd-tail segment when cwd tail equals repo (non-worktree checkout)", () => {
+  // ws (workspace/worktree name) and branch (the actual checkout) can
+  // genuinely differ — e.g. a workspace named after an issue number, or a
+  // detached/rebased checkout. Both carry distinct information, so both show.
+  test("shows repo, ws, and branch as three distinct segments when they differ", () => {
     expect(
-      sessionLabel(peer({ repo: "claude-ccmsg", ws: "claude-ccmsg", cwd: "/repos/claude-ccmsg" })),
-    ).toBe("claude-ccmsg · claude-ccmsg");
+      sessionLabel(peer({ repo: "claude-ccmsg", ws: "review-42", branch: "fix/webui-label" })),
+    ).toBe("claude-ccmsg · review-42 · fix/webui-label");
   });
 
-  // cwd is a subdirectory *within* the workspace — the tail carries real
-  // information (which subdir the session is in), so it's kept.
-  test("keeps the cwd-tail segment when cwd is a subdirectory of the workspace", () => {
-    expect(
-      sessionLabel(
-        peer({ repo: "claude-ccmsg", ws: "main", cwd: "/repos/claude-ccmsg/main/packages/webui" }),
-      ),
-    ).toBe("claude-ccmsg · main · webui");
+  // repo === ws is NOT collapsed (unlike ws/branch) — a plain non-worktree
+  // checkout legitimately has ws set equal to repo, and that repetition is
+  // still meaningful (distinguishes "has a workspace layer" from "doesn't").
+  test("does not collapse repo and ws even when equal", () => {
+    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "claude-ccmsg", branch: "main" }))).toBe(
+      "claude-ccmsg · claude-ccmsg · main",
+    );
   });
 
-  test('falls back to "?" for missing repo/ws', () => {
-    expect(sessionLabel(peer({ repo: "", ws: "", cwd: "/x/y/z" }))).toBe("? · ? · z");
+  // Missing segments are skipped outright, not shown as "?" placeholders —
+  // only the segments that are actually known appear.
+  test("skips an empty ws segment rather than showing a placeholder", () => {
+    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "", branch: "main" }))).toBe(
+      "claude-ccmsg · main",
+    );
+  });
+
+  test("skips an empty branch segment rather than showing a placeholder", () => {
+    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "main", branch: "" }))).toBe(
+      "claude-ccmsg · main",
+    );
+  });
+
+  test("shows repo alone when ws and branch are both empty", () => {
+    expect(sessionLabel(peer({ repo: "claude-ccmsg", ws: "", branch: "" }))).toBe("claude-ccmsg");
+  });
+
+  // No VCS metadata announced at all: falling back to "?" (or an empty
+  // string) would make every such session indistinguishable in the list, so
+  // the first 8 chars of sid — always present, always unique — stand in.
+  test("falls back to the first 8 chars of sid when repo/ws/branch are all empty", () => {
+    expect(sessionLabel(peer({ sid: "s1234567890abcdef", repo: "", ws: "", branch: "" }))).toBe(
+      "s1234567",
+    );
   });
 });
 

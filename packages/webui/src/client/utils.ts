@@ -41,24 +41,21 @@ export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
   return [...rooms.values()].sort((a, b) => (b.lastTs ?? "").localeCompare(a.lastTs ?? ""));
 }
 
-/** Sidebar Sessions-section label (DR-0008): repo · ws · last path segment of
- * cwd, so entries stay identifiable without eating the whole absolute path.
- * When cwd *is* the workspace root (cwdTail equals ws, or equals repo for a
- * plain non-worktree checkout), the third segment is dropped rather than
- * repeating information already shown by repo/ws (e.g. "claude-ccmsg · main
- * · main" collapses to "claude-ccmsg · main"). A session whose cwd is a
- * subdirectory *within* the workspace still shows the tail — that's the
- * case the third segment carries real information for (DR-0008 addendum). */
+/** Sidebar Sessions-section label: `repo · ws · branch`, each segment shown
+ * only when non-empty (no more "?" placeholders — a missing field is simply
+ * absent rather than noise). `ws` and `branch` collapse to one segment when
+ * equal (the common case: a named workspace/worktree checked out at its own
+ * branch), so "claude-ccmsg · main · main" reads as "claude-ccmsg · main".
+ * The full cwd is shown separately via the list item's `title` attribute
+ * (hover), not folded into this label. When repo/ws/branch are all absent
+ * (a session that never announced VCS metadata), falls back to the first 8
+ * chars of `sid` — an empty label would make such a session indistinguishable
+ * from any other in the list. */
 export function sessionLabel(peer: PeerInfo): string {
-  const cwdTail = peer.cwd.split("/").filter(Boolean).pop() ?? peer.cwd;
-  const parts = [peer.repo || "?", peer.ws || "?"];
-  // Known edge case: a subdirectory of cwd that happens to share ws's name
-  // (e.g. cwd=".../main/main") also collapses the third segment here, same
-  // as cwd being ws's root itself — repo_root isn't available to this
-  // function to disambiguate the two, and accepting the ambiguity is judged
-  // cheaper than threading repo_root through just for this label.
-  if (cwdTail !== peer.ws && cwdTail !== peer.repo) parts.push(cwdTail);
-  return parts.join(" · ");
+  const parts = [peer.repo, peer.ws, peer.branch !== peer.ws ? peer.branch : undefined].filter(
+    (s): s is string => !!s,
+  );
+  return parts.length > 0 ? parts.join(" · ") : peer.sid.slice(0, 8);
 }
 
 /** First path segment of `peer.cwd` relative to `peer.repo_root` — the
