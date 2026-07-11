@@ -44,7 +44,7 @@ re-points it if it's strictly newer than what the symlink currently targets
 
 ## Web UI
 
-The daemon serves a web UI at `http://0.0.0.0:8642` by default (for the human user: browse rooms and post as `u1` = User), reachable over loopback and — no extra config needed — your tailscale IP, since your phone is already on the tailnet. Access is gated by a source-IP allowlist, not by which interfaces are bound: the default `CCMSG_HTTP_ALLOW` is `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale's CGNAT/ULA ranges), and anything outside it gets `403 Forbidden`. Override with `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) and `CCMSG_HTTP_ALLOW` (comma-separated CIDR/IP). URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
+The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human user: browse rooms, sessions, files, and transcripts, and post as `u1` = User). Binding is loopback-only and browser access is gated by an `Origin` check: loopback origins pass by default, a `tailscale serve` front for this port is detected and allowed automatically (zero config for remote/phone access over your tailnet), and other reverse-proxy origins can be added with `CCMSG_HTTP_ALLOW_ORIGIN` (comma-separated). A source-IP allowlist (`CCMSG_HTTP_ALLOW`, default loopback) remains as defense in depth, and `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) overrides the bind. URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position, `/#s<sid>` = session files, `/#t<sid>` = session timeline). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
 
 ## Why a rewrite?
 

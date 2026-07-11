@@ -44,7 +44,7 @@ ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 
 ## Web UI
 
-daemon は既定で `http://0.0.0.0:8642` で web UI を配信する (人間用。room の閲覧と `u1` = User としての投稿)。loopback に加え、追加設定なしで tailscale 経由 (スマホが同じ tailnet にいれば) でもそのまま繋がる。アクセス制御は bind した interface でなく **source-IP allowlist** で行う: 既定の `CCMSG_HTTP_ALLOW` は `127.0.0.0/8,::1,100.64.0.0/10,fd7a:115c:a1e0::/48` (loopback + tailscale の CGNAT/ULA レンジ)、それ以外の接続元は `403 Forbidden`。`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) と `CCMSG_HTTP_ALLOW` (カンマ区切り CIDR/IP) で上書き可能。URL fragment はロケータ記法 (`/#rXXXX` = room、`/#rXXXX-mNN` = メッセージ位置)。詳細は [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
+daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。room・セッション・ファイル・transcript の閲覧と `u1` = User としての投稿)。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。URL fragment はロケータ記法 (`/#rXXXX` = room、`/#rXXXX-mNN` = メッセージ位置、`/#s<sid>` = セッションファイル、`/#t<sid>` = タイムライン)。詳細は [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
 
 ## rewrite した理由
 
