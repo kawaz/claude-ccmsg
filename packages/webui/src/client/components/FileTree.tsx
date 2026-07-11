@@ -7,7 +7,9 @@ import type { FsEntry } from "@ccmsg/protocol";
 import { useEffect } from "preact/hooks";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
+import { errorMessage } from "../utils.ts";
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -46,10 +48,18 @@ function DirNode({
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
     if (!expanded && entries === undefined) {
-      void ws.fsList(sid, path).then((res) => {
-        if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
-        else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
-      });
+      void ws
+        .fsList(sid, path)
+        .then((res) => {
+          if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
+          else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
+        })
+        // A rejection here (e.g. the socket dropped/hasn't opened yet, see
+        // ws.ts send()) must still resolve the "loading…" placeholder above
+        // into something the user can act on, same as an ok:false reply.
+        .catch((err) => {
+          store.dispatch({ type: "fs/dir-loaded", sid, path, error: errorMessage(err) });
+        });
     }
   }
 
@@ -186,18 +196,31 @@ function Nodes({
 
 export function FileTree({ sid, tree }: { sid: string; tree: SessionTreeState }) {
   const { store, ws } = useApp();
+  const connStatus = useStoreState(store).connStatus;
   const rootEntries = tree.dirs.get("");
   const rootError = tree.dirErrors.get("");
 
   // Root listing loads eagerly on mount / session switch — everything below
-  // it is lazy, click-driven (see DirNode.toggle above).
+  // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
+  // so a direct `#s<sid>` link opened before the WS handshake completes
+  // doesn't race ws.send() (which synchronously rejects while the socket
+  // isn't open, see ws.ts): the effect just waits, and re-evaluates once
+  // connStatus flips to "connected" since it's in the dep list. Still
+  // per-tree idle-gated (rootEntries/rootError both undefined) so a
+  // reconnect after a successful/failed load never refetches.
   useEffect(() => {
     if (rootEntries !== undefined || rootError !== undefined) return;
-    void ws.fsList(sid).then((res) => {
-      if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path: "", entries: res.entries });
-      else store.dispatch({ type: "fs/dir-loaded", sid, path: "", error: res.error.msg });
-    });
-  }, [sid, rootEntries, rootError]);
+    if (connStatus !== "connected") return;
+    void ws
+      .fsList(sid)
+      .then((res) => {
+        if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path: "", entries: res.entries });
+        else store.dispatch({ type: "fs/dir-loaded", sid, path: "", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "fs/dir-loaded", sid, path: "", error: errorMessage(err) });
+      });
+  }, [sid, rootEntries, rootError, connStatus]);
 
   return (
     <div class="file-tree">

@@ -5,7 +5,8 @@
 import { useEffect, useMemo } from "preact/hooks";
 import type { TimelineState } from "../store.ts";
 import { useApp } from "../context.ts";
-import { formatClockTime } from "../utils.ts";
+import { useStoreState } from "../useStore.ts";
+import { errorMessage, formatClockTime } from "../utils.ts";
 import {
   lineByteOffsets,
   parseTranscriptLine,
@@ -83,26 +84,46 @@ function LineView({ line }: { line: ParsedLine }) {
 
 export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineState }) {
   const { store, ws } = useApp();
+  const connStatus = useStoreState(store).connStatus;
 
   // Tail-load on first visit only — re-visiting a session whose Timeline is
   // already "loaded"/"error" must not refetch (mirrors FileViewer's
-  // path-keyed effect guard).
+  // path-keyed effect guard). Gated on connStatus so a direct `#t<sid>` link
+  // opened before the WS handshake completes doesn't race ws.send() (rejects
+  // synchronously while not open, see ws.ts) — status stays "idle" (still
+  // rendered as "読み込み中…" below) until connStatus flips to "connected",
+  // which re-evaluates this effect via the dep list.
   useEffect(() => {
     if (timeline.status !== "idle") return;
+    if (connStatus !== "connected") return;
     store.dispatch({ type: "timeline/loading", sid });
-    void ws.transcriptRead(sid).then((res) => {
-      if (res.ok) store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-      else store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-    });
-  }, [sid, timeline.status]);
+    void ws
+      .transcriptRead(sid)
+      .then((res) => {
+        if (res.ok)
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
+        else
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
+      });
+  }, [sid, timeline.status, connStatus]);
 
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
     store.dispatch({ type: "timeline/loading", sid });
-    void ws.transcriptRead(sid, { before: timeline.start }).then((res) => {
-      if (res.ok) store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", response: res });
-      else store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", error: res.error.msg });
-    });
+    void ws
+      .transcriptRead(sid, { before: timeline.start })
+      .then((res) => {
+        if (res.ok)
+          store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", response: res });
+        else
+          store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", error: errorMessage(err) });
+      });
   }
 
   // "更新" (refresh): re-reads the tail (before omitted) and replaces the
@@ -114,10 +135,17 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   function refresh() {
     if (timeline.status === "loading") return;
     store.dispatch({ type: "timeline/loading", sid });
-    void ws.transcriptRead(sid).then((res) => {
-      if (res.ok) store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
-      else store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
-    });
+    void ws
+      .transcriptRead(sid)
+      .then((res) => {
+        if (res.ok)
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
+        else
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
+      });
   }
 
   // Re-parsing on every render is cheap (pure JSON.parse over cached

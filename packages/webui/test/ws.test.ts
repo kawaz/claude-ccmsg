@@ -326,6 +326,62 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(instances.length).toBe(1); // no resurrected socket
   });
 
+  // Guards the exact race the webui bugfix (direct `#s<sid>[:<path>]` /
+  // `#t<sid>` links opened before the WS handshake completes) is built on:
+  // FileTree/FileViewer/Timeline's first-fetch effects call fsList/fsRead/
+  // transcriptRead, and send() rejects synchronously (not "resolves with an
+  // error response") when the socket isn't open yet. Callers must `.catch()`
+  // this, not just `.then()` — these tests document the rejection shape so a
+  // regression that turned it back into a hang would show up here first.
+  test("fsList rejects with 'ws not open' before the socket has ever opened", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    expect(ws1).toBeDefined();
+    expect(ws1.readyState).toBe(MockWebSocket.CONNECTING); // not OPEN yet
+
+    let caught: unknown;
+    try {
+      await handle.fsList("sess-1");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("ws not open");
+    expect(ws1.sent.length).toBe(0); // send() bailed before touching the socket
+  });
+
+  test("fsRead rejects with 'ws not open' before the socket has ever opened", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+
+    let caught: unknown;
+    try {
+      await handle.fsRead("sess-1", "README.md");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("ws not open");
+  });
+
+  test("transcriptRead rejects with 'ws not open' before the socket has ever opened", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+
+    let caught: unknown;
+    try {
+      await handle.transcriptRead("sess-1");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("ws not open");
+  });
+
   test("stale socket's delayed close does not re-trigger disconnect/reconnect for the new connection", async () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));

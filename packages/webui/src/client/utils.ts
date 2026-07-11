@@ -47,3 +47,12 @@ export function sessionLabel(peer: PeerInfo): string {
   const cwdTail = peer.cwd.split("/").filter(Boolean).pop() ?? peer.cwd;
   return [peer.repo || "?", peer.ws || "?", cwdTail].join(" · ");
 }
+
+/** Renders a caught value from a rejected ws.ts send() (e.g. `Error("ws not
+ * open")` when a request races a not-yet-open/dropped socket) into the same
+ * plain-string shape as `ErrorResponse["error"]["msg"]`, so callers can fold
+ * a rejection into their existing error-state dispatch without a second code
+ * path (DR-0008/DR-0009 fs_list/fs_read/transcript_read effects). */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
