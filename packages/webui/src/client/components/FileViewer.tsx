@@ -1,7 +1,8 @@
 // Line-number file viewer for SessionView, with syntax highlighting for
 // recognized extensions (DR-0008 v1 shipped plain-only and deferred
 // highlighting to a follow-up issue over bundle-size concerns; see
-// highlight.ts for the size evaluation that unblocked it). Owns the fs_read
+// highlight.ts for the fine-grained Shiki bundle that unblocked it). Owns
+// the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
 import { useEffect, useState } from "preact/hooks";
@@ -199,8 +200,8 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
                 <span class="viewer-text">
                   {spans
                     ? spans.map((span, j) =>
-                        span.type ? (
-                          <span class={`shj-syn-${span.type}`} key={j}>
+                        span.style ? (
+                          <span class="shiki-tok" style={span.style} key={j}>
                             {span.text}
                           </span>
                         ) : (

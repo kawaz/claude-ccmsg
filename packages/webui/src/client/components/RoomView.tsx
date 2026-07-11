@@ -5,6 +5,7 @@ import { anchorId } from "../locator.ts";
 import { MemberChip } from "./MemberChip.tsx";
 import { TimelineItem } from "./TimelineItem.tsx";
 import { Composer } from "./Composer.tsx";
+import { RoomTitle } from "./RoomTitle.tsx";
 
 export function RoomView({ state }: { state: AppState }) {
   const room = state.currentRoomId ? state.rooms.get(state.currentRoomId) : undefined;
@@ -33,7 +34,7 @@ export function RoomView({ state }: { state: AppState }) {
   return (
     <main id="room-view">
       <header class="room-header">
-        <h2>{room.title || room.id}</h2>
+        <RoomTitle room={room} />
         <div class="member-chips">
           <MemberChip id={ADMIN_ID} room={room} selected={state.mentionTo.has(ADMIN_ID)} />
           {activeMembers.map((m) => (

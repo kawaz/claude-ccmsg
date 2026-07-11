@@ -22,6 +22,7 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SetTitleResponse,
   StreamEvent,
   TranscriptReadResponse,
 } from "@ccmsg/protocol";
@@ -52,6 +53,10 @@ export interface WsHandle {
   connect(): void;
   close(): void;
   post(room: string, msg: string, to?: string[]): Promise<PostResponse | ErrorResponse>;
+  /** Rename a room (set_title); the new title reaches all clients (incl. this
+   * one) via the broadcast title event on the subscribe stream, not this
+   * response — callers don't need to dispatch anything themselves. */
+  setTitle(room: string, title: string): Promise<SetTitleResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
   /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
@@ -207,6 +212,7 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
       ws?.close();
     },
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
+    setTitle: (room, title) => send({ op: "set_title", room, title }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),

@@ -8,12 +8,15 @@ import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { errorMessage, formatClockTime } from "../utils.ts";
 import {
+  foldGroupLabel,
+  groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
   type ParsedLine,
   type Segment,
+  type TimelineEntry,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 
@@ -29,10 +32,15 @@ function SegmentView({ segment }: { segment: Segment }) {
         </div>
       );
     case "thinking":
+      // thinking の中身は markdown (DR-0010 と同じレンダラを再利用)。視覚的な
+      // 薄い色は .tl-thinking-body 側で維持する (他の tl-fold-body は JSON dump
+      // 用の等幅 pre 表示なので流用しない)。
       return (
-        <details class="tl-fold">
+        <details class="tl-fold tl-thinking">
           <summary>thinking</summary>
-          <pre class="tl-fold-body">{segment.text}</pre>
+          <div class="tl-thinking-body">
+            <MarkdownView source={segment.text} />
+          </div>
         </details>
       );
     case "tool-use":
@@ -104,6 +112,37 @@ function LineView({
         )}
       </div>
     </div>
+  );
+}
+
+// Tools folding (kawaz spec): the run of thinking/tool_use/tool_result/meta
+// entries between a user prompt and the assistant's next user-facing final
+// response, collapsed into one <details> — default-collapsed via the native
+// <details> element itself (no manual open/close state to manage, matches
+// every other tl-fold in this file), label text from
+// transcript-model.ts's foldGroupLabel (grouping/counting stays a pure,
+// unit-tested function; this component only renders it).
+function FoldGroup({
+  entries,
+  registerUserTurnRef,
+}: {
+  entries: TimelineEntry[];
+  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+}) {
+  return (
+    <details class="tl-line tl-fold-group">
+      <summary>{foldGroupLabel(entries)}</summary>
+      <div class="tl-fold-group-body">
+        {entries.map(({ offset, line }) => (
+          <LineView
+            key={offset}
+            line={line}
+            offsetKey={offset}
+            registerUserTurnRef={registerUserTurnRef}
+          />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -183,6 +222,11 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     () => lineByteOffsets(timeline.start, timeline.lines),
     [timeline.start, timeline.lines],
   );
+  // Tools folding (kawaz spec): boundary lines (user prompts / assistant
+  // user-facing final responses) stay standalone entries, everything between
+  // them collapses into one fold group — see transcript-model.ts's
+  // groupTimelineLines doc comment.
+  const groups = useMemo(() => groupTimelineLines(parsed, offsets), [parsed, offsets]);
 
   // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
   // top/bottom of the loaded transcript and to the previous/next user-text
@@ -343,14 +387,22 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           {parsed.length === 0 ? (
             <p class="tl-empty">(空の transcript)</p>
           ) : (
-            parsed.map((line, i) => (
-              <LineView
-                key={offsets[i]}
-                line={line}
-                offsetKey={offsets[i]}
-                registerUserTurnRef={registerUserTurnRef}
-              />
-            ))
+            groups.map((group) =>
+              group.kind === "entry" ? (
+                <LineView
+                  key={group.offset}
+                  line={group.line}
+                  offsetKey={group.offset}
+                  registerUserTurnRef={registerUserTurnRef}
+                />
+              ) : (
+                <FoldGroup
+                  key={group.entries[0]!.offset}
+                  entries={group.entries}
+                  registerUserTurnRef={registerUserTurnRef}
+                />
+              ),
+            )
           )}
         </div>
       )}

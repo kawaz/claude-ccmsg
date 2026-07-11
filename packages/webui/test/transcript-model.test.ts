@@ -7,13 +7,54 @@
 // coverage.
 import { describe, expect, test } from "bun:test";
 import {
+  foldGroupLabel,
+  groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
   type ParsedLine,
   type Segment,
+  type TimelineEntry,
 } from "../src/client/transcript-model.ts";
+
+// Terse ParsedLine builders for groupTimelineLines/foldGroupLabel tests below
+// — these tests care about kind/role/segment shape, not the full jsonl
+// round trip already covered by the parseTranscriptLine describe blocks
+// above, so hand-constructing ParsedLine values keeps each case to one line.
+function userText(text: string): ParsedLine {
+  return { kind: "turn", ts: null, role: "user", segments: [{ kind: "text", role: "user", text }] };
+}
+function userToolResult(toolUseId: string): ParsedLine {
+  return {
+    kind: "turn",
+    ts: null,
+    role: "user",
+    segments: [{ kind: "tool-result", toolUseId, isError: false, text: "ok" }],
+  };
+}
+function assistantThinking(text: string): ParsedLine {
+  return { kind: "turn", ts: null, role: "assistant", segments: [{ kind: "thinking", text }] };
+}
+function assistantToolUse(name: string): ParsedLine {
+  return {
+    kind: "turn",
+    ts: null,
+    role: "assistant",
+    segments: [{ kind: "tool-use", name, input: {} }],
+  };
+}
+function assistantText(text: string): ParsedLine {
+  return {
+    kind: "turn",
+    ts: null,
+    role: "assistant",
+    segments: [{ kind: "text", role: "assistant", text }],
+  };
+}
+function metaLine(type: string): ParsedLine {
+  return { kind: "meta", ts: null, type, summary: type, raw: "{}" };
+}
 
 // lineByteOffsets (DR-0009 addendum): Timeline.tsx's Preact `key`s. The whole
 // point is stability across a "load older" prepend — see the two-part test
@@ -403,5 +444,172 @@ describe("scrollPositionToUserTurnIndex", () => {
 
   test("single loaded turn, scrolled to it -> 1", () => {
     expect(scrollPositionToUserTurnIndex([200], 200)).toBe(1);
+  });
+});
+
+// groupTimelineLines (webui Timeline "tools folding" UI improvement, kawaz
+// spec): boundary lines (user prompts / assistant user-facing final
+// responses) stay standalone "entry" groups, everything strictly between two
+// boundaries collapses into one "fold" group.
+describe("groupTimelineLines", () => {
+  test("no intermediate lines: two boundaries in a row stay two standalone entries, no fold group", () => {
+    const lines = [userText("hi"), assistantText("hello")];
+    const offsets = [0, 10];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "entry", offset: 10, line: lines[1] },
+    ]);
+  });
+
+  // The core case: a user prompt, a run of thinking/tool_use/tool_result,
+  // then the assistant's final user-facing text — the middle run becomes one
+  // fold group, both boundaries stay standalone.
+  test("thinking + tool_use + tool_result between two boundaries fold into one group", () => {
+    const lines = [
+      userText("do the thing"),
+      assistantThinking("let me check"),
+      assistantToolUse("Bash"),
+      userToolResult("tu_1"),
+      assistantText("done"),
+    ];
+    const offsets = [0, 1, 2, 3, 4];
+    const groups = groupTimelineLines(lines, offsets);
+    expect(groups).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      {
+        kind: "fold",
+        entries: [
+          { offset: 1, line: lines[1] },
+          { offset: 2, line: lines[2] },
+          { offset: 3, line: lines[3] },
+        ],
+      },
+      { kind: "entry", offset: 4, line: lines[4] },
+    ]);
+  });
+
+  // Meta lines (mode変更/permission系/その他, transcript-model.ts's MetaLine)
+  // fold the same as thinking/tool_use/tool_result — no special-casing by
+  // top-level `type`, matching this module's "one generic fold path" design
+  // rationale (see the module doc comment at the top of this file).
+  test("meta lines fold alongside tool entries in the same group", () => {
+    const lines = [
+      userText("go"),
+      metaLine("mode-change"),
+      assistantToolUse("Read"),
+      metaLine("permission-request"),
+      assistantText("ok done"),
+    ];
+    const offsets = [0, 1, 2, 3, 4];
+    const groups = groupTimelineLines(lines, offsets);
+    expect(groups).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      {
+        kind: "fold",
+        entries: [
+          { offset: 1, line: lines[1] },
+          { offset: 2, line: lines[2] },
+          { offset: 3, line: lines[3] },
+        ],
+      },
+      { kind: "entry", offset: 4, line: lines[4] },
+    ]);
+  });
+
+  // A trailing run with no closing boundary yet (turn still in progress,
+  // e.g. the session hasn't produced its final text response) still folds —
+  // there's simply no following "entry" group after it.
+  test("trailing intermediate run with no closing boundary still folds", () => {
+    const lines = [userText("go"), assistantThinking("thinking...")];
+    const offsets = [0, 1];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "fold", entries: [{ offset: 1, line: lines[1] }] },
+    ]);
+  });
+
+  // A leading run before the first boundary (e.g. transcript starts with
+  // meta lines before any user prompt) also folds.
+  test("leading intermediate run before the first boundary folds", () => {
+    const lines = [metaLine("file-history-snapshot"), userText("hi")];
+    const offsets = [0, 1];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "fold", entries: [{ offset: 0, line: lines[0] }] },
+      { kind: "entry", offset: 1, line: lines[1] },
+    ]);
+  });
+
+  // An assistant turn mixing text with thinking/tool_use in the *same* line
+  // (parseTranscriptLine's "text + thinking + tool_use blocks" case) is a
+  // boundary as a whole line — grouping operates at line granularity, not
+  // segment granularity, so this single line never gets folded, its
+  // thinking/tool_use segments render inline via SegmentView instead.
+  test("an assistant line mixing text with thinking/tool_use segments is a boundary, not folded", () => {
+    const mixed: ParsedLine = {
+      kind: "turn",
+      ts: null,
+      role: "assistant",
+      segments: [
+        { kind: "thinking", text: "let me check" },
+        { kind: "tool-use", name: "Bash", input: {} },
+        { kind: "text", role: "assistant", text: "done" },
+      ],
+    };
+    const lines = [userText("go"), mixed];
+    const offsets = [0, 1];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "entry", offset: 1, line: mixed },
+    ]);
+  });
+
+  // A tool_result-only "user"-typed line (Anthropic API convention, see
+  // isUserTextTurn's doc comment) is not a real user prompt — it must fold
+  // like any other intermediate entry, not stand alone as a boundary.
+  test("a tool_result-only user-typed line folds (not a real user prompt)", () => {
+    const lines = [userText("go"), userToolResult("tu_1"), assistantText("done")];
+    const offsets = [0, 1, 2];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "fold", entries: [{ offset: 1, line: lines[1] }] },
+      { kind: "entry", offset: 2, line: lines[2] },
+    ]);
+  });
+
+  test("empty input -> empty output", () => {
+    expect(groupTimelineLines([], [])).toEqual([]);
+  });
+});
+
+// foldGroupLabel (webui Timeline "tools folding" UI improvement, kawaz spec):
+// "▶︎ N tools" vs "▶︎ N items" wording — "tools" only when every folded entry
+// is a tool-use/tool-result-only turn line, "items" for a mixed group
+// (thinking / meta / broken lines involved).
+describe("foldGroupLabel", () => {
+  function entry(offset: number, line: ParsedLine): TimelineEntry {
+    return { offset, line };
+  }
+
+  test("all tool-use/tool-result entries -> 'N tools'", () => {
+    const entries = [
+      entry(0, assistantToolUse("Bash")),
+      entry(1, userToolResult("tu_1")),
+      entry(2, assistantToolUse("Read")),
+    ];
+    expect(foldGroupLabel(entries)).toBe("3 tools");
+  });
+
+  test("a thinking entry mixed in -> 'N items' (not 'tools')", () => {
+    const entries = [entry(0, assistantThinking("hmm")), entry(1, assistantToolUse("Bash"))];
+    expect(foldGroupLabel(entries)).toBe("2 items");
+  });
+
+  test("a meta line mixed in -> 'N items'", () => {
+    const entries = [entry(0, assistantToolUse("Bash")), entry(1, metaLine("mode-change"))];
+    expect(foldGroupLabel(entries)).toBe("2 items");
+  });
+
+  test("single tool entry -> '1 tools' (count reflects entry count, not pluralization)", () => {
+    expect(foldGroupLabel([entry(0, assistantToolUse("Bash"))])).toBe("1 tools");
   });
 });

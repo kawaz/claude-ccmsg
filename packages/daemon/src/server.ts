@@ -353,6 +353,7 @@ const IDENTITY_OPS = new Set([
   "post",
   "create_room",
   "next_room",
+  "set_title",
   "subscribe",
   "notify",
   "leave",
@@ -360,6 +361,9 @@ const IDENTITY_OPS = new Set([
   "fs_read",
   "transcript_read",
 ]);
+
+/** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
+const SET_TITLE_MAX_LEN = 200;
 
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   let req: Request;
@@ -574,6 +578,38 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       deliver(daemon, old, nextEv, authorOf(conn));
       deliverNewRoom(daemon, room, authorOf(conn), authorId);
       send(conn, { ok: true, room: room.id, ...(mid !== undefined ? { mid } : {}) });
+      return;
+    }
+
+    case "set_title": {
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      // same authorization as post: admin User (implicit member of every room) or a
+      // resolvable member session. Non-member sessions are refused.
+      if (resolveFrom(conn, room) === null) {
+        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
+        return;
+      }
+      const title = typeof req.title === "string" ? req.title.trim() : "";
+      if (title === "") {
+        sendErr(conn, ErrorCode.invalid_args, "set_title requires a non-empty title");
+        return;
+      }
+      if (title.length > SET_TITLE_MAX_LEN) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `title must be ${SET_TITLE_MAX_LEN} characters or fewer`,
+        );
+        return;
+      }
+      const ev: TitleEvent = { type: "title", title, ts: nowIso() };
+      appendEvent(room, ev);
+      deliver(daemon, room, ev, authorOf(conn));
+      send(conn, { ok: true, room: room.id, title });
       return;
     }
 

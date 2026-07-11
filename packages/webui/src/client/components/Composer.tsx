@@ -9,8 +9,7 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
 
-  async function submit(e: SubmitEvent): Promise<void> {
-    e.preventDefault();
+  async function send(): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
     setSending(true);
@@ -37,6 +36,21 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
     }
   }
 
+  async function submit(e: SubmitEvent): Promise<void> {
+    e.preventDefault();
+    await send();
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.key !== "Enter") return;
+    // IME 変換確定の Enter は isComposing が true になるため送信しない
+    if (e.isComposing) return;
+    // Shift+Enter のみ送信、素の Enter は textarea 既定の改行に任せる
+    if (!e.shiftKey) return;
+    e.preventDefault();
+    void send();
+  }
+
   return (
     <form class="composer" onSubmit={(e) => void submit(e)}>
       <div class="composer-mention">
@@ -45,10 +59,11 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
           : "room 全体へ (member chip をクリックで mention)"}
       </div>
       <textarea
-        placeholder="メッセージを入力"
+        placeholder="メッセージを入力 (Shift+Enter で送信)"
         rows={2}
         value={text}
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+        onKeyDown={onKeyDown}
       />
       <button type="submit" disabled={sending}>
         送信

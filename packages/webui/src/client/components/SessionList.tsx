@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { PeerInfo } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { formatDuration, sessionLabel } from "../utils.ts";
+import { Avatar } from "../avatar.tsx";
 
 const TICK_MS = 10_000;
 
@@ -41,7 +42,10 @@ export function SessionList({
           : peer.cwd;
         return (
           <li key={peer.sid} class={peer.sid === currentSid ? "active" : undefined} title={title}>
-            <a href={sessionHref(peer.sid)}>{sessionLabel(peer)}</a>
+            <a href={sessionHref(peer.sid)}>
+              <Avatar seed={peer.sid} size={16} />
+              {sessionLabel(peer)}
+            </a>
             {peer.last_activity_at && (
               <span class="session-idle">
                 {formatDuration(Date.now() - new Date(peer.last_activity_at).getTime())}

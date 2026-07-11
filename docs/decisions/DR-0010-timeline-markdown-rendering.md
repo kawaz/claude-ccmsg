@@ -4,7 +4,7 @@
 - **Date**: 2026-07-11
 - **Author**: AI agent (worker session、team-lead セッションの委譲プロンプトに基づく)
 - **一次資料**: team-lead セッションからの委譲メッセージ (2026-07-11、下記 Context に要旨転記)
-- **前提 DR**: DR-0005 (frontend architecture、preact/JSX 方針)・DR-0008 §6 follow-up (syntax highlighting の bundle-size 評価と `@speed-highlight/core` 採用)・DR-0009 (Timeline の transcript レンダリング基盤)
+- **前提 DR**: DR-0005 (frontend architecture、preact/JSX 方針)・DR-0008 §6 follow-up (syntax highlighting の bundle-size 評価と `@speed-highlight/core` 採用。**Note**: highlight.ts のパイプラインはその後 Shiki に置き換え済み、DR-0008 §6 の実測値・パッケージ名は stale — 追補 DR 未起票)・DR-0009 (Timeline の transcript レンダリング基盤)
 
 ## 記述規約 (attribution)
 

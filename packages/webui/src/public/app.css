@@ -10,19 +10,6 @@
   --user-bubble-bg: #dcf8c6;
   --danger: #dc2626;
   --warn: #b45309;
-  /* Syntax highlight token colors (FileViewer, highlight.ts). Keys match
-     speed-highlight's ShjToken names 1:1 via `.shj-syn-<type>`. */
-  --syn-kwd: #d73a49;
-  --syn-str: #22863a;
-  --syn-cmnt: #6a737d;
-  --syn-num: #005cc5;
-  --syn-func: #6f42c1;
-  --syn-type: #005cc5;
-  --syn-var: var(--fg);
-  --syn-oper: var(--fg-muted);
-  --syn-insert: #22863a;
-  --syn-deleted: #d73a49;
-  --syn-section: var(--accent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,17 +25,6 @@
     --user-bubble-bg: #1f4023;
     --danger: #f87171;
     --warn: #fbbf24;
-    --syn-kwd: #ff7b72;
-    --syn-str: #7ee787;
-    --syn-cmnt: #8b949e;
-    --syn-num: #79c0ff;
-    --syn-func: #d2a8ff;
-    --syn-type: #79c0ff;
-    --syn-var: var(--fg);
-    --syn-oper: var(--fg-muted);
-    --syn-insert: #7ee787;
-    --syn-deleted: #ff7b72;
-    --syn-section: var(--accent);
   }
 }
 
@@ -247,6 +223,54 @@ body {
 
 .room-header h2 {
   margin: 0 0 0.4rem;
+}
+
+.room-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.room-title h2 {
+  margin: 0 0 0.4rem;
+}
+
+.room-title-edit-btn {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.2rem 0.4rem;
+  line-height: 1;
+}
+
+.room-title-edit-btn:hover {
+  color: var(--fg);
+}
+
+.room-title-edit {
+  margin-bottom: 0.4rem;
+}
+
+.room-title-edit input {
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 600;
+  width: 100%;
+  max-width: 24rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.room-title-edit-error {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.85rem;
+  color: var(--danger);
 }
 
 .member-chips {
@@ -697,52 +721,25 @@ body {
   white-space: pre;
 }
 
-.shj-syn-kwd {
-  color: var(--syn-kwd);
+/* Shiki token styling (FileViewer/CodeBlock, highlight.ts). Each token
+   carries its own `--shiki-light`/`--shiki-dark` (+ optional `-font-style`/
+   `-font-weight`) custom properties inline (dual-theme tokenization), so this
+   class only has to pick which pair is active per the same
+   prefers-color-scheme signal the rest of this file's palette uses. */
+.shiki-tok {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style, normal);
+  font-weight: var(--shiki-light-font-weight, normal);
+  text-decoration: var(--shiki-light-text-decoration, none);
 }
 
-.shj-syn-str {
-  color: var(--syn-str);
-}
-
-.shj-syn-cmnt {
-  color: var(--syn-cmnt);
-  font-style: italic;
-}
-
-.shj-syn-num,
-.shj-syn-bool {
-  color: var(--syn-num);
-}
-
-.shj-syn-func {
-  color: var(--syn-func);
-}
-
-.shj-syn-class,
-.shj-syn-type {
-  color: var(--syn-type);
-}
-
-.shj-syn-var {
-  color: var(--syn-var);
-}
-
-.shj-syn-oper {
-  color: var(--syn-oper);
-}
-
-.shj-syn-insert {
-  color: var(--syn-insert);
-}
-
-.shj-syn-deleted,
-.shj-syn-err {
-  color: var(--syn-deleted);
-}
-
-.shj-syn-section {
-  color: var(--syn-section);
+@media (prefers-color-scheme: dark) {
+  .shiki-tok {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style, normal);
+    font-weight: var(--shiki-dark-font-weight, normal);
+    text-decoration: var(--shiki-dark-text-decoration, none);
+  }
 }
 
 /* --- Timeline view: transcript jsonl (DR-0009) --- */
@@ -977,6 +974,50 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
+}
+
+/* thinking の markdown 本文 (tl-fold-body の等幅 JSON 表示は流用しない) —
+ * 薄い色で他セグメントと区別する既存の見た目を維持。 */
+.tl-thinking-body {
+  margin-top: 0.25rem;
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+
+/* tools folding (kawaz spec): ユーザプロンプトと次のユーザ向けアシスタント
+ * 最終レスポンスの間に挟まる thinking/tool_use/tool_result/meta 行をまとめて
+ * 1 グループに折り畳む。中身は既存の .tl-line 群をそのまま縦に並べるだけな
+ * ので、外枠は .tl-meta と同じ薄いトーンに揃える。 */
+.tl-fold-group {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+/* list-style:none はブラウザ標準の disclosure marker を消すので (Safari は
+ * ::-webkit-details-marker 側)、開閉 affordance の ▶/▼ を ::before で自前
+ * 描画して全ブラウザ統一する (kawaz spec の「▶︎ 13 tools」表示)。 */
+.tl-fold-group summary {
+  cursor: pointer;
+  list-style: none;
+}
+.tl-fold-group summary::-webkit-details-marker {
+  display: none;
+}
+.tl-fold-group summary::before {
+  content: "▶";
+  display: inline-block;
+  margin-right: 0.35em;
+  font-size: 0.85em;
+}
+.tl-fold-group[open] > summary::before {
+  content: "▼";
+}
+
+.tl-fold-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
 }
 
 .tl-meta {

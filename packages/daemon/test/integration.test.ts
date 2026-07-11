@@ -703,6 +703,227 @@ describe("wire protocol integration", () => {
     },
     T,
   );
+  test(
+    "set_title: a member session renames the room, broadcasts the title, and rooms reflects it",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room;
+
+        const bSub = await session(ctx, "B");
+        await bSub.request({ op: "subscribe" });
+
+        const renamed = await aPost.request<{ ok: boolean; room: string; title: string }>({
+          op: "set_title",
+          room,
+          title: "new title",
+        });
+        expect(renamed.ok).toBe(true);
+        expect(renamed.room).toBe(room);
+        expect(renamed.title).toBe("new title");
+
+        // broadcast: a co-member subscriber sees the title event live (title events go
+        // to everyone incl. the actor, unlike msg's echo suppression)
+        const got = await bSub.readEventUntil((ev) => ev.type === "title" && ev.r === room);
+        expect(got.ev.title).toBe("new title");
+
+        // rooms listing reflects the latest title (last-title-wins, same rule as
+        // create_room/next_room titles)
+        const rooms = await aPost.request<{ rooms: { id: string; title?: string }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.title).toBe("new title");
+
+        // durable: the title line landed on disk
+        const file = fs.readFileSync(path.join(ctx.roomsDir, `${room}.jsonl`), "utf8");
+        expect(file).toContain('"type":"title","title":"new title"');
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: the admin User can also rename any room (implicit member of every room)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        const u = await user(ctx);
+        const renamed = await u.request<{ ok: boolean; title: string }>({
+          op: "set_title",
+          room,
+          title: "admin renamed",
+        });
+        expect(renamed.ok).toBe(true);
+        expect(renamed.title).toBe("admin renamed");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: a non-member session is refused with not_a_member",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
+        const room = created.room;
+
+        const c = await session(ctx, "C");
+        const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
+          op: "set_title",
+          room,
+          title: "hijacked",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("not_a_member");
+
+        // the room's title is untouched
+        const rooms = await aPost.request<{ rooms: { id: string; title?: string }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.title).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: empty or whitespace-only title is rejected with invalid_args",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        const empty = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "set_title",
+          room,
+          title: "",
+        });
+        expect(empty.ok).toBe(false);
+        expect(empty.error!.code).toBe("invalid_args");
+
+        const whitespace = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "set_title",
+          room,
+          title: "   ",
+        });
+        expect(whitespace.ok).toBe(false);
+        expect(whitespace.error!.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: an unknown room errors with room_not_found",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const a = await session(ctx, "A");
+        const denied = await a.request<{ ok: boolean; error?: { code: string } }>({
+          op: "set_title",
+          room: "r-nope",
+          title: "x",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("room_not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: title is trimmed before length-checking and storing",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        // leading/trailing whitespace is stripped, not just checked for
+        // non-emptiness: the trimmed value is what's echoed back and stored.
+        const renamed = await aPost.request<{ ok: boolean; title: string }>({
+          op: "set_title",
+          room,
+          title: " x ",
+        });
+        expect(renamed.ok).toBe(true);
+        expect(renamed.title).toBe("x");
+
+        const rooms = await aPost.request<{ rooms: { id: string; title?: string }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.title).toBe("x");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "set_title: title at SET_TITLE_MAX_LEN (200 UTF-16 code units) is accepted, 201 is rejected",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        // boundary: exactly 200 chars is the documented limit (`SET_TITLE_MAX_LEN`,
+        // same UTF-16 code-unit unit as the client's <input maxLength={200}>).
+        const ok200 = await aPost.request<{ ok: boolean; title: string }>({
+          op: "set_title",
+          room,
+          title: "a".repeat(200),
+        });
+        expect(ok200.ok).toBe(true);
+        expect(ok200.title.length).toBe(200);
+
+        // one char over the boundary is rejected.
+        const over = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "set_title",
+          room,
+          title: "a".repeat(201),
+        });
+        expect(over.ok).toBe(false);
+        expect(over.error!.code).toBe("invalid_args");
+
+        // the rejected attempt didn't clobber the previously-accepted title.
+        const rooms = await aPost.request<{ rooms: { id: string; title?: string }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.title).toBe("a".repeat(200));
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 });
 
 describe("error handling & boundaries", () => {

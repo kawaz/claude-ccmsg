@@ -8,6 +8,7 @@
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
 import { h, type VNode } from "preact";
+import { useMemo } from "preact/hooks";
 import { parse } from "@mizchi/markdown";
 import type {
   Blockquote,
@@ -245,6 +246,11 @@ export function renderMarkdownAst(root: Root): VNode {
   return <div class="md">{renderChildren(root.children, "md")}</div>;
 }
 
+// `useMemo` keyed on `source`: parse+render は Timeline のような親が高頻度
+// (接続状態変化等) で re-render される文脈で使われるため、source が変わって
+// いなければ再パースしない。`<details>` (thinking の折り畳み等) は collapsed
+// でも Preact が中身を描画し続けるので、折り畳み自体はコスト削減にならない
+// — この memo がそれを補う。
 export function MarkdownView({ source }: { source: string }) {
-  return renderMarkdownAst(parse(source));
+  return useMemo(() => renderMarkdownAst(parse(source)), [source]);
 }

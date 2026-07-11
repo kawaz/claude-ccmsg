@@ -190,6 +190,93 @@ export function scrollPositionToUserTurnIndex(topOffsets: number[], scrollTop: n
   return idx;
 }
 
+/** One cached line paired with its stable Preact key (see `lineByteOffsets`
+ * doc comment) — the unit `groupTimelineLines` operates on and emits inside
+ * a fold group. */
+export interface TimelineEntry {
+  offset: number;
+  line: ParsedLine;
+}
+
+/** Timeline.tsx's render unit after tools-folding (kawaz spec): either a
+ * boundary line rendered directly (a real user prompt, or the assistant's
+ * next user-facing final response), or a run of everything in between
+ * (thinking / tool_use / tool_result / meta lines / broken lines) collapsed
+ * into one foldable group. */
+export type TimelineGroup =
+  | { kind: "entry"; offset: number; line: ParsedLine }
+  | { kind: "fold"; entries: TimelineEntry[] };
+
+/** True for a line that should render on its own (never folded into a tools
+ * group): a real user utterance (`isUserTextTurn`), or an assistant turn
+ * carrying at least one `text` segment — the "次のユーザ向けアシスタント最終
+ * レスポンス" that ends a run of intermediate entries. An assistant turn
+ * with only thinking/tool_use segments (no text yet) is NOT a boundary, so
+ * it folds with the rest of the run until a text-bearing turn (or the next
+ * user prompt) closes it. */
+function isBoundaryLine(line: ParsedLine): boolean {
+  if (isUserTextTurn(line)) return true;
+  return (
+    line.kind === "turn" &&
+    line.role === "assistant" &&
+    line.segments.some((s) => s.kind === "text")
+  );
+}
+
+/**
+ * Groups the run of entries strictly between one boundary line and the next
+ * into `{kind:"fold"}` groups, leaving boundary lines (user prompts, and the
+ * assistant's user-facing final responses) as standalone `{kind:"entry"}`
+ * groups in their original order (kawaz spec: "tools folding"). A trailing
+ * run with no closing boundary yet (an in-progress turn) still folds — there
+ * is simply no following boundary entry after it.
+ *
+ * `offsets` must be the same length as `lines` (Timeline.tsx's
+ * `lineByteOffsets` output) so each entry keeps its stable Preact key.
+ */
+export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): TimelineGroup[] {
+  const groups: TimelineGroup[] = [];
+  let pending: TimelineEntry[] = [];
+  const flushPending = () => {
+    if (pending.length > 0) {
+      groups.push({ kind: "fold", entries: pending });
+      pending = [];
+    }
+  };
+  lines.forEach((line, i) => {
+    const offset = offsets[i]!;
+    if (isBoundaryLine(line)) {
+      flushPending();
+      groups.push({ kind: "entry", offset, line });
+    } else {
+      pending.push({ offset, line });
+    }
+  });
+  flushPending();
+  return groups;
+}
+
+/** True if every entry in a fold group is a turn line whose segments are
+ * exclusively tool-use/tool-result (no thinking, no meta/broken lines mixed
+ * in) — the "▶︎ N tools" wording. A mixed group (thinking / meta / broken
+ * lines present) falls back to the generic "▶︎ N items" wording since "tools"
+ * would misdescribe what's inside. */
+function isToolOnlyEntry(entry: TimelineEntry): boolean {
+  const { line } = entry;
+  return (
+    line.kind === "turn" &&
+    line.segments.length > 0 &&
+    line.segments.every((s) => s.kind === "tool-use" || s.kind === "tool-result")
+  );
+}
+
+/** Folded-group summary label (kawaz spec: "▶︎ 13 tools" style, count = number
+ * of intermediate entries in the group). */
+export function foldGroupLabel(entries: TimelineEntry[]): string {
+  const noun = entries.every(isToolOnlyEntry) ? "tools" : "items";
+  return `${entries.length} ${noun}`;
+}
+
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into
  * a renderable event. Never throws — a malformed line becomes `BrokenLine`,
  * an unrecognized-but-valid shape becomes `MetaLine`/`unknown-segment`. */

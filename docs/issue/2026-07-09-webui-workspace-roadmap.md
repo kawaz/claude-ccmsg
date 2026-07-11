@@ -56,5 +56,5 @@ kawaz 裁定 (2026-07-10) により優先順を以下の通り確定。1〜3 は
 - [x] セッション選択 → ファイルツリー + コードビューア (DR-0008、fs_list/fs_read 実装 + 実ブラウザ検証済み)
 - [x] jsonl リッチビューア (DR-0009、transcript_read op + Timeline ビュー実装、実ブラウザ検証済み)
 - [ ] 作業操作系 (範囲は要すり合わせ、kawaz と「基本的な作業」の定義すり合わせ待ち)
-- [x] シンタックスハイライト (任意) — @speed-highlight/core 採用、実測 gzip +10KB、XSS 安全設計、実ブラウザ検証済み
+- [x] シンタックスハイライト (任意) — Shiki (@shikijs/core + JS regex engine) 採用、ts/js/jsx 系は tsx グラマー 1 本に集約して実測 gzip +138KB (47.7KB→185KB)、XSS 安全設計。増分は loopback/tailscale 配信のローカルツールとして許容の裁定 (メイン 2026-07-12)。さらなる削減は lazy chunk 分割が open option
 - [ ] transcript の live 追従 stream (DR-0009 で延期と記録済み、必要になったら着手)

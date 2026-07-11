@@ -196,6 +196,16 @@ export interface NextRoomRequest {
   title?: string;
 }
 
+/** Rename a room: appends a TitleEvent to the room log (the log's LAST title
+ * event wins, same rule create_room/next_room titles already follow) and
+ * broadcasts it to subscribers. Allowed for the admin User and for member
+ * sessions of the room. */
+export interface SetTitleRequest {
+  op: "set_title";
+  room: string;
+  title: string;
+}
+
 export interface SubscribeRequest {
   op: "subscribe";
   /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). */
@@ -285,6 +295,7 @@ export type Request =
   | PostRequest
   | CreateRoomRequest
   | NextRoomRequest
+  | SetTitleRequest
   | SubscribeRequest
   | ReadRequest
   | RoomsRequest
@@ -330,6 +341,11 @@ export interface NextRoomResponse {
   ok: true;
   room: string;
   mid?: number;
+}
+export interface SetTitleResponse {
+  ok: true;
+  room: string;
+  title: string;
 }
 export interface SubscribeAck {
   ok: true;
@@ -452,6 +468,7 @@ export type Response =
   | PostResponse
   | CreateRoomResponse
   | NextRoomResponse
+  | SetTitleResponse
   | SubscribeAck
   | ReadResponse
   | RoomsResponse

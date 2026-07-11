@@ -1,9 +1,9 @@
 /** @jsxImportSource preact */
 // Fenced-code-block renderer for markdown-view.tsx. Reuses FileViewer.tsx's
-// async speed-highlight pipeline (highlight.ts) instead of a second
-// tokenizer: a fence's info-string language name (e.g. "ts", "py") is fed
-// through `detectLanguage` by treating it as a synthetic file extension, the
-// same lookup table FileViewer already uses for real file paths.
+// async Shiki pipeline (highlight.ts) instead of a second tokenizer: a
+// fence's info-string language name (e.g. "ts", "py") is fed through
+// `detectLanguage` by treating it as a synthetic file extension, the same
+// lookup table FileViewer already uses for real file paths.
 import { useEffect, useState } from "preact/hooks";
 import {
   detectLanguage,
@@ -50,8 +50,8 @@ export function CodeBlock({ code, lang }: { code: string; lang: string | null })
         {lines.map((spans, i) => (
           <span class="md-code-line" key={i}>
             {spans.map((span, j) =>
-              span.type ? (
-                <span class={`shj-syn-${span.type}`} key={j}>
+              span.style ? (
+                <span class="shiki-tok" style={span.style} key={j}>
                   {span.text}
                 </span>
               ) : (
