@@ -1,6 +1,6 @@
 ---
 title: caddy-app-proxy 経由の webui オリジン許可を daemon respawn 越しに永続化したい
-status: wip
+status: resolved
 category: task
 created: 2026-07-12T00:51:50+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-12T02:10:28+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-12T02:20:02+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.20.0 で origins-file.ts + `ccmsg origins add/remove/list` をリリース。newer-wins upgrade 後の daemon v0.20.0 (CCMSG_HTTP_ALLOW_ORIGIN env 無し) で allowed-origins.json 経由の許可を実 URL で確認 (正規 origin 200 / evil origin 403)。TODO の respawn 越し確認は daemon 実体切替 (respawn 相当) 越しで完了。"]
 blocked_by:
 origin: 自リポ TODO
 ---
