@@ -8,7 +8,6 @@ import type { RoomState } from "../src/client/store.ts";
 import { ADMIN_ID } from "../src/client/store.ts";
 import {
   badgeLabel,
-  canExpandSiblings,
   clampPaneRatio,
   errorMessage,
   formatDuration,
@@ -30,10 +29,10 @@ import {
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
-  siblingWorkspaceEntries,
   sortPeers,
   splitRoomsByArchived,
   toSessionRow,
+  workspaceRootEntries,
   type PeerSortKey,
   type SessionRow,
 } from "../src/client/utils.ts";
@@ -681,43 +680,77 @@ describe("sessionRowRepoWs", () => {
   });
 });
 
-describe("canExpandSiblings", () => {
-  test("true only when the row is connected AND has a repo_root", () => {
-    expect(
-      canExpandSiblings(sessionRow({ connected: true, repo_root: "/repos/claude-ccmsg" })),
-    ).toBe(true);
-  });
-
-  test("false when disconnected (agent-only row), even with a repo_root", () => {
-    expect(
-      canExpandSiblings(sessionRow({ connected: false, repo_root: "/repos/claude-ccmsg" })),
-    ).toBe(false);
-  });
-
-  test("false when connected but no repo_root announced/accepted", () => {
-    expect(canExpandSiblings(sessionRow({ connected: true, repo_root: undefined }))).toBe(false);
-  });
-});
-
 function fsEntry(overrides: Partial<FsEntry>): FsEntry {
   return { name: "x", type: "dir", ...overrides };
 }
 
-describe("siblingWorkspaceEntries", () => {
-  test("keeps only directory entries", () => {
+describe("workspaceRootEntries", () => {
+  // FileTree's repo-container-root ws list (kawaz 2026-07-12): only
+  // non-dotfile directories qualify as a workspace — files (README.md) and
+  // dot-entries (.git, .envrc) never show at this level, even though a plain
+  // fs_list("") against the container root would report them all.
+  test("keeps only non-dotfile directories, dropping files and dot-entries", () => {
     const entries = [
       fsEntry({ name: "main", type: "dir" }),
       fsEntry({ name: "README.md", type: "file" }),
+      fsEntry({ name: ".git", type: "dir" }),
+      fsEntry({ name: ".envrc", type: "file" }),
     ];
-    expect(siblingWorkspaceEntries(entries, null).map((e) => e.name)).toEqual(["main"]);
+    expect(workspaceRootEntries(entries, null).map((e) => e.name)).toEqual(["main"]);
   });
 
-  test("excludes the row's own workspace segment", () => {
+  // "そのセッションの wt/ws は常に一番上の位置": own workspace sorts first
+  // regardless of its name, ahead of every alphabetically-earlier sibling —
+  // FileTree relies on this ordering (plus its own auto-expand effect) to
+  // default-open the row a session actually cares about.
+  test("pins the own workspace first even when it doesn't sort first alphabetically", () => {
     const entries = [
+      fsEntry({ name: "aaa-review", type: "dir" }),
       fsEntry({ name: "main", type: "dir" }),
-      fsEntry({ name: "review-42", type: "dir" }),
+      fsEntry({ name: "zzz-wip", type: "dir" }),
     ];
-    expect(siblingWorkspaceEntries(entries, "main").map((e) => e.name)).toEqual(["review-42"]);
+    expect(workspaceRootEntries(entries, "main").map((e) => e.name)).toEqual([
+      "main",
+      "aaa-review",
+      "zzz-wip",
+    ]);
+  });
+
+  // No workspace to pin (ownWsPath null, or not among the entries — e.g. a
+  // stale/mismatched cwd segment) falls back to plain alphabetical, same as
+  // any other directory listing.
+  test("sorts the rest alphabetically when there's no own workspace to pin", () => {
+    const entries = [
+      fsEntry({ name: "zzz-wip", type: "dir" }),
+      fsEntry({ name: "aaa-review", type: "dir" }),
+    ];
+    expect(workspaceRootEntries(entries, null).map((e) => e.name)).toEqual([
+      "aaa-review",
+      "zzz-wip",
+    ]);
+    expect(workspaceRootEntries(entries, "not-present").map((e) => e.name)).toEqual([
+      "aaa-review",
+      "zzz-wip",
+    ]);
+  });
+
+  // adversarial review nit: a dot-prefixed own workspace (e.g. a jj/git
+  // workspace literally named with a leading dot) must still be pinned —
+  // the dotfile filter is meant to hide *other* dotfiles (.git, .jj) from
+  // this level, not the session's own workspace regardless of its name.
+  // Checking `ownWsPath` before the dotfile filter (rather than filtering
+  // dotfiles first, which would drop a dot-named own ws before the pin
+  // check ever sees it) is what makes this hold.
+  test("pins a dot-prefixed own workspace instead of dropping it as a dotfile", () => {
+    const entries = [
+      fsEntry({ name: ".hidden-ws", type: "dir" }),
+      fsEntry({ name: "main", type: "dir" }),
+      fsEntry({ name: ".git", type: "dir" }),
+    ];
+    expect(workspaceRootEntries(entries, ".hidden-ws").map((e) => e.name)).toEqual([
+      ".hidden-ws",
+      "main",
+    ]);
   });
 });
 

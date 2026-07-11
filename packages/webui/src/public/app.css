@@ -209,8 +209,8 @@ body {
 }
 
 /* U1: each Sessions-list row is 3 stacked lines (repo/ws+badges+idle, sid,
- * cwd) plus an optional "▷ 展開" sibling-workspace list, instead of the
- * previous single-line `<a>` — see SessionList.tsx's SessionRowItem. */
+ * cwd), instead of the previous single-line `<a>` — see SessionList.tsx's
+ * SessionRowItem. */
 .session-row {
   padding: 0.3rem 0.5rem;
   border-radius: 0.4rem;
@@ -232,26 +232,6 @@ body {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-}
-
-.session-expand-toggle {
-  flex-shrink: 0;
-  width: 1rem;
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: 0.7rem;
-  padding: 0;
-}
-
-.session-row.active .session-expand-toggle {
-  color: var(--accent-fg);
-}
-
-.session-expand-spacer {
-  flex-shrink: 0;
-  width: 1rem;
 }
 
 .session-main-link {
@@ -343,20 +323,6 @@ body {
 .session-line3.session-cwd-full {
   white-space: normal;
   word-break: break-all;
-}
-
-.session-siblings {
-  list-style: none;
-  margin: 0.15rem 0 0.3rem;
-  padding: 0 0 0 2.3rem;
-  font-size: 0.7rem;
-  color: var(--fg-muted);
-}
-
-.session-siblings-loading,
-.session-siblings-error,
-.session-siblings-empty {
-  opacity: 0.7;
 }
 
 .room-title {
@@ -885,6 +851,39 @@ button.session-tab {
   cursor: col-resize;
   touch-action: none;
   user-select: none;
+}
+
+/* Enlarges the splitter's touch/pointer hit area to ~32px total (4px visible
+ * + 14px extra each side) without widening the visible 4px bar itself — the
+ * bar alone is too narrow to reliably grab on a touchscreen. Scoped to
+ * `pointer: coarse` (adversarial review, major finding): an always-on ±14px
+ * box sits, as a positioned element, on top of the static `.file-tree` /
+ * `.file-viewer` panes beneath it — on a mouse+classic-scrollbar desktop
+ * that dead-zones `.file-tree`'s scrollbar drag, the right ~14px of every
+ * tree row's click, and wheel/touch-scroll starting in that strip. A mouse
+ * doesn't need the enlarged box anyway (the bare 4px bar is already easy to
+ * land with a pointer), so scoping to coarse pointers keeps the touch
+ * affordance this was added for without the desktop hit-stealing.
+ * `z-index: 1` is explicit rather than relying on paint order: `.session-
+ * splitter` and `.viewer-header` (`.file-viewer`'s `position: sticky`
+ * header) both end up in the same "positioned, z-index:auto" paint layer,
+ * and `.viewer-header` sits later in document order (nested inside
+ * `.session-pane-viewer`, which comes after `.session-splitter`), so without
+ * this it would paint over the right-side extension for the header's own
+ * height and swallow the grab there. FilesPanes.tsx's
+ * onSplitterPointer{Down,Move,Up} read `e.currentTarget` (`.session-splitter`
+ * itself, pointer capture and all), so this enlarged hit area routes
+ * straight into the existing drag logic with no JS change. */
+@media (pointer: coarse) {
+  .session-splitter::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -14px;
+    right: -14px;
+    z-index: 1;
+  }
 }
 
 .file-tree {
@@ -1570,6 +1569,15 @@ button.session-tab {
   .session-splitter {
     flex-basis: 4px;
     cursor: row-resize;
+  }
+
+  /* Touch hit-area axis swap to match: column layout drags along Y, so the
+   * overlay extends top/bottom instead of left/right (same ~32px total). */
+  .session-splitter::before {
+    top: -14px;
+    bottom: -14px;
+    left: 0;
+    right: 0;
   }
 }
 

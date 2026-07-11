@@ -195,10 +195,11 @@ export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
  * nothing to highlight relative to it), or when cwd unexpectedly isn't
  * inside repo_root (defensive — the daemon's hello-time validation already
  * guarantees ancestry, but this stays a pure function of the input alone and
- * shouldn't throw on a malformed peer). Parameter is the narrow `{repo_root,
- * cwd}` shape (not `PeerInfo` itself) so U1's SessionRow — which carries the
- * same two fields but isn't a PeerInfo for agent-only rows — can reuse this
- * for its own "▷ 展開" sibling-workspace highlight without a duplicate copy. */
+ * shouldn't throw on a malformed peer). FileTree uses this both to pin/
+ * auto-expand the tree's own-workspace entry (see workspaceRootEntries) and
+ * to mark it `tree-own-ws` in the rendered tree. Parameter is the narrow
+ * `{repo_root, cwd}` shape (not `PeerInfo` itself) so it stays reusable by
+ * any caller that only carries those two fields. */
 export function ownWorkspaceSegment(peer: { repo_root?: string; cwd: string }): string | null {
   if (!peer.repo_root) return null;
   const root = peer.repo_root.replace(/\/+$/, "");
@@ -217,6 +218,29 @@ export function repoRootLabel(peer: PeerInfo): string | null {
   if (!peer.repo_root) return null;
   const parts = peer.repo_root.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? peer.repo_root;
+}
+
+/** FileTree's top-level listing when the tree root has been widened to the
+ * repo container (kawaz 2026-07-12: "Files は ws を root にしてほしい" — the
+ * container root's raw fs_list result mixes .git/.jj/dotfiles in with every
+ * sibling ws/wt, which isn't what a "pick a workspace" top level should show).
+ * Heuristic: a workspace is any directory directly under the container root;
+ * non-dotfile ones sort in alphabetically, dot-prefixed ones are dropped
+ * (they still show up normally once a ws is opened, this only narrows the
+ * root itself) *unless* they're the session's own workspace. The own
+ * workspace (`ownWsPath`, from `ownWorkspaceSegment`) is always pinned first
+ * when present — checked before the dotfile filter (adversarial review nit)
+ * so a dot-prefixed own ws (e.g. jj's default `.` workspace name, or any
+ * dotfile-named workspace directory) still gets pinned+auto-expanded instead
+ * of silently vanishing from this level — FileTree auto-expands it and
+ * leaves every other entry closed. */
+export function workspaceRootEntries(entries: FsEntry[], ownWsPath: string | null): FsEntry[] {
+  const dirs = entries.filter((e) => e.type === "dir");
+  const own = dirs.filter((e) => e.name === ownWsPath);
+  const rest = dirs
+    .filter((e) => e.name !== ownWsPath && !e.name.startsWith("."))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...own, ...rest];
 }
 
 /** Renders a caught value from a rejected ws.ts send() (e.g. `Error("ws not
@@ -421,28 +445,6 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
 export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } {
   if (row.repo || row.ws) return { repo: row.repo, ws: row.ws };
   return { repo: "", ws: row.agent?.name || lastPathSegment(row.cwd) };
-}
-
-/** Whether a Sessions-list row's repo/ws label should render as a clickable
- * "▷" that expands sibling workspaces/worktrees inline (U1). Requires both a
- * live connection (fs_list only works against a currently-connected sid) and
- * an accepted repo_root (fs_list's containment root only widens past cwd
- * when the daemon accepted one at hello time, DR-0008 addendum) — without a
- * repo_root, `fs_list(sid, "")` would just list files inside this session's
- * own cwd, not sibling workspaces, which isn't what "▷" promises here. */
-export function canExpandSiblings(row: SessionRow): boolean {
-  return row.connected && !!row.repo_root;
-}
-
-/** Sibling workspace/worktree directories for the "▷" expansion (U1): the
- * directory-type entries from an `fs_list(sid, "")` call against a row with
- * an accepted repo_root, minus the row's own workspace segment (already
- * shown on the row itself — repeating it in the expansion would be noise).
- * Non-directory entries (stray files sitting at the repo container root)
- * are dropped outright; this expansion promises "other workspaces", not
- * "everything at this level". */
-export function siblingWorkspaceEntries(entries: FsEntry[], ownSegment: string | null): FsEntry[] {
-  return entries.filter((e) => e.type === "dir" && e.name !== ownSegment);
 }
 
 /** Primary busy/idle/done/offline status of a Sessions-list row — the single

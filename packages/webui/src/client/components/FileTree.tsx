@@ -11,7 +11,12 @@ import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
 import type { WsHandle } from "../ws.ts";
-import { errorMessage, ownWorkspaceSegment, repoRootLabel } from "../utils.ts";
+import {
+  errorMessage,
+  ownWorkspaceSegment,
+  repoRootLabel,
+  workspaceRootEntries,
+} from "../utils.ts";
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -161,6 +166,7 @@ function Nodes({
   tree,
   selectedPath,
   ownWsPath,
+  sorted = false,
 }: {
   sid: string;
   parentPath: string;
@@ -169,10 +175,19 @@ function Nodes({
   tree: SessionTreeState;
   selectedPath: string | null;
   ownWsPath: string | null;
+  /** Skips the directories-first/alphabetical sortEntries pass — set by
+   * FileTree's repo-container-root ws list, which has already ordered
+   * `entries` itself (own workspace pinned first, see workspaceRootEntries)
+   * and would otherwise have that ordering undone by sortEntries' plain
+   * alphabetical pass. Every recursive Nodes call from inside DirNode omits
+   * this (defaults false), so every level below the root still sorts the
+   * conventional way. */
+  sorted?: boolean;
 }) {
+  const ordered = sorted ? entries : sortEntries(entries);
   return (
     <>
-      {sortEntries(entries).map((entry) => {
+      {ordered.map((entry) => {
         const path = joinPath(parentPath, entry.name);
         if (entry.type === "dir") {
           return (
@@ -291,14 +306,34 @@ export function FileTree({
         <p class="tree-loading">loading…</p>
       ) : (
         <ul class="tree-root">
+          {/* DR-0008 addendum session (rootLabel !== null, tree root widened
+           * to the repo container): show only the ws/wt directories at this
+           * level (kawaz 2026-07-12), own workspace pinned first — the raw
+           * container listing (.git/.jj/dotfiles/other ws) doesn't appear
+           * here once `peer` (state.peers) has arrived, only inside an
+           * opened ws's own subtree. Filtering keys off `peer`, not the
+           * fs_list result itself: a direct `#s<sid>` link can have the
+           * fs_list("") response land before the (separately-driven, see
+           * ws.ts's peers request in onOpen) peers/loaded dispatch, in which
+           * case `rootLabel` is still null here and this one paint shows the
+           * unfiltered listing — self-corrects on the next render once
+           * `peer` arrives (adversarial review minor: known, accepted as
+           * cosmetic — fixing the race would mean gating the root fs_list
+           * effect on peers too, which delays every session's tree for a
+           * property only repo_root sessions use). A session with no
+           * repo_root (rootLabel === null) keeps the unfiltered cwd listing
+           * permanently, unchanged from before this task. */}
           <Nodes
             sid={sid}
             parentPath=""
-            entries={rootEntries}
+            entries={
+              rootLabel !== null ? workspaceRootEntries(rootEntries, ownWsPath) : rootEntries
+            }
             depth={0}
             tree={tree}
             selectedPath={tree.selectedPath}
             ownWsPath={ownWsPath}
+            sorted={rootLabel !== null}
           />
         </ul>
       )}

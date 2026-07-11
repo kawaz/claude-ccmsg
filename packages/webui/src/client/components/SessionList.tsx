@@ -1,22 +1,18 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
+import type { PeerInfo } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
 import {
   badgeLabel,
-  canExpandSiblings,
-  errorMessage,
   formatDuration,
   groupSessionsBySection,
   indexAgentsBySid,
   offlineAgentRows,
-  ownWorkspaceSegment,
   sessionBadges,
   sessionRowRepoWs,
   shortSid,
-  siblingWorkspaceEntries,
   toSessionRow,
   type SessionRow,
 } from "../utils.ts";
@@ -36,67 +32,21 @@ function useTick(intervalMs: number): void {
   }, [intervalMs]);
 }
 
-/** "▷ 展開" sibling-workspace listing (U1): fetched on mount via the existing
- * fs_list op (sid + path:"" — widened to the repo container root when the
- * session announced/got-accepted a repo_root, DR-0008 addendum) and dropped
- * on unmount. Deliberately not cached across collapse/re-expand (unlike
- * FileTree's per-dir cache in sessionTrees) — this is a small, rarely-toggled
- * sidebar affordance, not the main file browser, so the simplicity of
- * "always fresh" outweighs the cost of an extra round trip on re-expand. */
-function SessionSiblings({ sid, ownSegment }: { sid: string; ownSegment: string | null }) {
-  const { ws } = useApp();
-  const [state, setState] = useState<{
-    status: "loading" | "loaded" | "error";
-    entries?: FsEntry[];
-    error?: string;
-  }>({ status: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    void ws
-      .fsList(sid, "")
-      .then((res) => {
-        if (cancelled) return;
-        if (res.ok) setState({ status: "loaded", entries: res.entries });
-        else setState({ status: "error", error: res.error.msg });
-      })
-      .catch((err) => {
-        if (!cancelled) setState({ status: "error", error: errorMessage(err) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [sid, ws]);
-
-  if (state.status === "loading") return <li class="session-siblings-loading">loading…</li>;
-  if (state.status === "error") return <li class="session-siblings-error">{state.error}</li>;
-  const siblings = siblingWorkspaceEntries(state.entries ?? [], ownSegment);
-  if (siblings.length === 0) return <li class="session-siblings-empty">(他の ws/wt なし)</li>;
-  return (
-    <>
-      {siblings.map((e) => (
-        <li key={e.name} class="session-sibling" title={e.name}>
-          {e.name}
-        </li>
-      ))}
-    </>
-  );
-}
-
 /** One row of the Sessions list (U1): three lines (repo/ws + badges + idle,
- * sid, cwd) instead of the previous single-line label, plus an optional "▷"
- * that inlines the row's sibling workspaces/worktrees. `row` is a merged
+ * sid, cwd) instead of the previous single-line label. `row` is a merged
  * SessionRow (see utils.ts's toSessionRow/offlineAgentRows) — either a
  * connected peer (optionally agent-enriched) or an agent-only "ccmsg 未起動"
- * row. */
+ * row.
+ *
+ * kawaz 2026-07-12: the row's former "▷" sibling-workspace expansion was
+ * removed — the request behind it ("三角押したら wt/ws が下に開いてそっちの
+ * ファイルも見れるように") turned out to be a Files-tree concern, not a
+ * SESSIONS-list concern, so it now lives as FileTree's ws-rooted top level
+ * instead (see workspaceRootEntries in utils.ts). */
 function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: string | null }) {
-  const [expanded, setExpanded] = useState(false);
   const [cwdFull, setCwdFull] = useState(false);
   const { repo, ws: wsLabel } = sessionRowRepoWs(row);
   const badges = sessionBadges(row);
-  const ownSegment = ownWorkspaceSegment({ repo_root: row.repo_root, cwd: row.cwd });
-  const canExpand = canExpandSiblings(row);
   const idleMs = row.last_activity_at
     ? Date.now() - new Date(row.last_activity_at).getTime()
     : null;
@@ -126,18 +76,6 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
             : undefined
         }
       >
-        {canExpand ? (
-          <button
-            type="button"
-            class="session-expand-toggle"
-            aria-label="他の ws/wt を表示"
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? "▾" : "▷"}
-          </button>
-        ) : (
-          <span class="session-expand-spacer" />
-        )}
         <a
           // U3: a row that announced (and had accepted) a transcript opens
           // straight to Timeline — that's the view kawaz actually wants on
@@ -192,11 +130,6 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
       >
         {row.cwd}
       </div>
-      {expanded && canExpand ? (
-        <ul class="session-siblings">
-          <SessionSiblings sid={row.sid} ownSegment={ownSegment} />
-        </ul>
-      ) : null}
     </li>
   );
 }
