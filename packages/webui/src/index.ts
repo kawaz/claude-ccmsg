@@ -46,23 +46,27 @@ async function bundleClient(): Promise<string> {
   return output.text();
 }
 
+// Serve-time bundle of the preact/TSX client (DR-0005 §3): built once per
+// PROCESS (module-level memo, not per createWebuiApp instance) on the first
+// `/assets/app.js` request, then kept in memory for the process lifetime (no
+// dist/ committed or generated on disk). Process-level (vs per-app) matters
+// beyond economy: test suites create many app instances, and concurrent
+// Bun.build runs over the large @mizchi/markdown parser have been observed to
+// fail flakily on Linux with EBADF/"Unexpected reading file" — one shared
+// build removes that surface. A build failure is surfaced as a 500 with the
+// error text — never a silent fallback to stale or missing content — and is
+// not cached, so the next request retries the build.
+let bundlePromise: Promise<string> | null = null;
+function getBundle(): Promise<string> {
+  bundlePromise ??= bundleClient().catch((err: unknown) => {
+    bundlePromise = null;
+    throw err;
+  });
+  return bundlePromise;
+}
+
 export function createWebuiApp(): WebuiApp {
   const app = new Hono();
-
-  // Serve-time bundle of the preact/TSX client (DR-0005 §3): built once per
-  // process on the first `/assets/app.js` request, then kept in memory for
-  // the process lifetime (no dist/ committed or generated on disk). A build
-  // failure is surfaced as a 500 with the error text — never a silent
-  // fallback to stale or missing content — and is not cached, so the next
-  // request retries the build.
-  let bundlePromise: Promise<string> | null = null;
-  function getBundle(): Promise<string> {
-    bundlePromise ??= bundleClient().catch((err: unknown) => {
-      bundlePromise = null;
-      throw err;
-    });
-    return bundlePromise;
-  }
 
   app.get("/assets/app.js", async (c) => {
     try {
