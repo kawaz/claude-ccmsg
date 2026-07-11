@@ -1,4 +1,4 @@
-# webui UI 改善 3 Wave (v0.18.0 → v0.20.0) + 運用トラブル 2 件
+# webui UI 改善 4 Wave (v0.18.0 → v0.21.0) + 運用トラブル 2 件
 
 kawaz の UI 改善要望リスト (2026-07-11 夜) を ultracode (Workflow 3 本、実装 12 worker +
 Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。kawaz 就寝中の自律進行。
@@ -20,6 +20,13 @@ Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。
   live/replay/join-snapshot 3 経路、不正 to は invalid_args)、invite op + SESSIONS 行の
   DnD 招待 (招待先へ snapshot 配送)、ROOM メンバー表示を repo名/ws 形式 (owner カット)、
   許可 Origin 永続化 (allowed-origins.json + ccmsg origins add/remove/list)
+- **v0.21.0 (Wave4, DR-0012)**: room アーカイブ (archive_room op、表示整理のみ・
+  post/配信は不変、リスト最下部の折り畳みへ)、kick op (admin 専用 ✕ ボタン、通常 leave
+  と同一意味論、kick/leave 後は dedupEligible 解除 = dedup fold への msg 消失防止)、
+  チャットメッセージ行に identicon、メンバーチップの非接続グレー + 打ち消し線、
+  システム由来 user メッセージの folding 包含 (境界 = 本物のユーザ発話 + assistant text)、
+  セッションリストの status セクション化 (Busy/Idle/Done/未起動、バッジ撤去)、
+  クリック時デフォルト Timeline、モバイルサイドバー 85vw
 
 ## ハマり所 → 解決
 
