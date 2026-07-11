@@ -315,8 +315,21 @@ interface Watch {
    *  Lets checkNow tell "the same file grew/shrank" apart from "this path
    *  now names a DIFFERENT file" (rewrite via unlink+recreate, or a rename
    *  swap) — a same-or-larger-size replacement is invisible to the
-   *  size<lastEnd truncate check alone (see checkNow's doc comment). */
+   *  size<lastEnd truncate check alone (see checkNow's doc comment).
+   *  NOT sufficient alone: ext4 (GitHub Actions runners) eagerly reuses the
+   *  just-freed inode number for the next create, so an unlink+recreate can
+   *  come back with the SAME ino — hence the birthtime and sawMissing belts
+   *  below (a CI-only failure observed on v0.19.0's run #29160237229). */
   ino: number;
+  /** birthtime (ms) captured alongside `ino` — second identity belt for the
+   *  ino-reuse case above. Compared only when both sides are > 0, because
+   *  filesystems without creation-time support report 0/epoch. */
+  birthtimeMs: number;
+  /** true once a checkNow saw the path missing (statSync ENOENT). The next
+   *  successful stat then resets unconditionally: a path that disappeared
+   *  and came back is a different file by definition, even if the new file
+   *  reuses the inode AND lands in the same birthtime tick. */
+  sawMissing: boolean;
   subscribers: Set<TailConn>;
   fsWatcher: fs.FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
@@ -403,10 +416,20 @@ function checkNow(watch: Watch, log: TailLog): void {
   try {
     stat = fs.statSync(watch.file);
   } catch {
-    return; // vanished; leave lastEnd as-is, a later check may find it again
+    // vanished; leave lastEnd as-is but remember we saw the gap — if the
+    // path comes back it is a different file even when ext4 hands the new
+    // file the just-freed inode number (see Watch.ino / Watch.sawMissing).
+    watch.sawMissing = true;
+    return;
   }
-  if (stat.ino !== watch.ino) {
+  const identityChanged =
+    stat.ino !== watch.ino ||
+    watch.sawMissing ||
+    (stat.birthtimeMs > 0 && watch.birthtimeMs > 0 && stat.birthtimeMs !== watch.birthtimeMs);
+  if (identityChanged) {
     watch.ino = stat.ino;
+    watch.birthtimeMs = stat.birthtimeMs;
+    watch.sawMissing = false;
     watch.lastEnd = stat.size;
     broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
     return;
@@ -551,6 +574,8 @@ export function transcriptSubscribe(
       file: resolved.file,
       lastEnd: stat.size,
       ino: stat.ino,
+      birthtimeMs: stat.birthtimeMs,
+      sawMissing: false,
       subscribers: new Set(),
       fsWatcher: null,
       pollTimer: null,
