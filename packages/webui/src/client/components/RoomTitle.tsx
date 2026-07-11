@@ -1,11 +1,15 @@
 import { useRef, useState } from "preact/hooks";
 import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 
-/** Room title with inline rename (set_title). Confirm は Shift+Enter、
- * Escape とフォーカスアウトはキャンセル (誤爆保存防止)。保存後の表示反映は
- * subscribe 経由で届く title イベントを store が拾うので、ここでは
- * set_title のリクエストを送るだけで自前の楽観更新は行わない。 */
+/** Room title with inline rename (set_title). Confirm は Shift+Enter か
+ * [保存] ボタン、Escape か [キャンセル] ボタンか編集フォーム外クリックは
+ * キャンセル (誤爆保存防止)。iPad 等 Shift+Enter を打てない環境でも完結でき
+ * るよう、キー操作とボタンは同じ confirm/cancel を両方から呼ぶ (kawaz
+ * 2026-07-12)。保存後の表示反映は subscribe 経由で届く title イベントを
+ * store が拾うので、ここでは set_title のリクエストを送るだけで自前の楽観
+ * 更新は行わない。 */
 export function RoomTitle({ room }: { room: RoomState }) {
   const { ws } = useApp();
   const [editing, setEditing] = useState(false);
@@ -14,10 +18,16 @@ export function RoomTitle({ room }: { room: RoomState }) {
   // set_title の失敗 (daemon エラー応答、または ws 未接続で send() が reject)
   // を editor 上にそのまま表示する。null は「未表示」。
   const [error, setError] = useState<string | null>(null);
-  // Escape で isComposing を経由せず即キャンセルしたときも onBlur が発火する
-  // (input が消えてフォーカスが外れる) — 二重キャンセル/二重保存を避けるため
-  // "確定済み" を同期的に判定するフラグとして使う。
+  // Escape キーでの cancel と外側クリックでの cancel が同一フレーム内で
+  // 両方走る余地がある (キー操作の直後に pointerdown リスナーの cleanup が
+  // 走り切る前など) — 二重キャンセル/二重保存を避けるため "確定済み" を
+  // 同期的に判定するフラグとして使う。
   const settledRef = useRef(false);
+  // フォーム全体 (input + 保存/キャンセルボタン) を包む要素。外側クリックで
+  // キャンセルする判定に使う — onBlur ベースだと mousedown で先にフォーカス
+  // が外れて blur が発火するため [保存] ボタンの click が届く前にキャンセル
+  // されてしまい、ボタンが押せなかった (kawaz 2026-07-12)。
+  const containerRef = useRef<HTMLDivElement>(null);
 
   function startEdit(): void {
     settledRef.current = false;
@@ -76,9 +86,15 @@ export function RoomTitle({ room }: { room: RoomState }) {
     void confirm();
   }
 
+  // saving 中は input/ボタンとも disabled — 外側クリックによる cancel も
+  // 同期して無効化する。有効なままだと confirm() の await 中に外側を触れた
+  // 場合、確定前にフォームが閉じてしまい、後から届く res.ok=false のエラー
+  // 表示先を失う (kawaz 2026-07-12)。
+  useDismissOnOutsidePointer(containerRef, editing && !saving, cancel);
+
   if (editing) {
     return (
-      <div class="room-title-edit">
+      <div class="room-title-edit" ref={containerRef}>
         <input
           autoFocus
           type="text"
@@ -88,8 +104,18 @@ export function RoomTitle({ room }: { room: RoomState }) {
           placeholder="room タイトル (Shift+Enter で確定, Escape でキャンセル)"
           onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
           onKeyDown={onKeyDown}
-          onBlur={cancel}
         />
+        <button
+          type="button"
+          class="room-title-save-btn"
+          disabled={saving}
+          onClick={() => void confirm()}
+        >
+          保存
+        </button>
+        <button type="button" class="room-title-cancel-btn" disabled={saving} onClick={cancel}>
+          キャンセル
+        </button>
         {error && <span class="room-title-edit-error">{error}</span>}
       </div>
     );

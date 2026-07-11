@@ -8,6 +8,10 @@
   --accent-fg: #ffffff;
   --user-bg: #eef2ff;
   --user-bubble-bg: #dcf8c6;
+  /* Timeline チャット吹き出し (kawaz spec): ccmsg メッセージを含むシステム
+   * メッセージ用の「第三者」カラー。本物のユーザ発話 (--user-bubble-bg,
+   * 緑系) / アシスタント最終応答 (--bg-alt, 無彩色) と見分けが付く青系。 */
+  --peer-bubble-bg: #dbeafe;
   --danger: #dc2626;
   --warn: #b45309;
 }
@@ -23,6 +27,7 @@
     --accent-fg: #0b1020;
     --user-bg: #232a44;
     --user-bubble-bg: #1f4023;
+    --peer-bubble-bg: #1e3a5f;
     --danger: #f87171;
     --warn: #fbbf24;
   }
@@ -415,6 +420,10 @@ body {
 }
 
 .room-title-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
   margin-bottom: 0.4rem;
 }
 
@@ -431,8 +440,48 @@ body {
   color: var(--fg);
 }
 
+/* iPad 等 Shift+Enter が打てない環境向けの明示ボタン (kawaz 2026-07-12)。
+ * 確定系は Composer の送信ボタンと同じ accent トーン、キャンセル系は
+ * new-room-btn と同じニュートラルなボーダートーンに揃える。 */
+.room-title-save-btn,
+.new-room-confirm-btn {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.room-title-cancel-btn,
+.new-room-cancel-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  color: var(--fg-muted);
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.room-title-cancel-btn:hover,
+.new-room-cancel-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.room-title-save-btn:disabled,
+.new-room-confirm-btn:disabled,
+.room-title-cancel-btn:disabled,
+.new-room-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .room-title-edit-error {
   display: block;
+  width: 100%;
   margin-top: 0.2rem;
   font-size: 0.85rem;
   color: var(--danger);
@@ -488,6 +537,15 @@ body {
 .room-archive-toggle:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* RoomTitle が編集モードの間、アーカイブ toggle を隠す — 編集中は入力欄の
+ * すぐ隣という押しやすい位置にアーカイブボタンが来てしまい、誤クリックしや
+ * すい (kawaz 2026-07-12)。RoomTitle が編集モードで返す DOM のルート要素の
+ * class (.room-title-edit) を CSS 側で検知するだけで済むため、編集状態を
+ * RoomView へ持ち上げる (state のリフトアップ) を避けられる。 */
+.room-header-top:has(.room-title-edit) .room-archive-toggle {
+  display: none;
 }
 
 /* DR-0011 §1-4: highlight the message list while a Sessions-list row is
@@ -772,6 +830,13 @@ button.session-tab {
 .new-room-btn:hover {
   color: var(--fg);
   border-color: var(--fg-muted);
+}
+
+.new-room-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .new-room-form input {
@@ -1123,11 +1188,6 @@ button.session-tab {
   font-variant-numeric: tabular-nums;
 }
 
-.tl-turn-assistant {
-  background: var(--bg-alt);
-  max-width: 90%;
-}
-
 .tl-segments {
   display: flex;
   flex-direction: column;
@@ -1140,19 +1200,60 @@ button.session-tab {
   word-break: break-word;
 }
 
-/* User chat bubble (kawaz spec): only the actual text segment of a user turn
- * bubbles right — a tool_result carried on the same "user"-typed line (see
- * transcript-model.ts's isUserTextTurn doc) renders through its own
- * .tl-fold, never through .tl-text, so it never gets this treatment. Kept to
- * a minimal padding/max-width so real chat turns don't eat vertical space —
- * per kawaz: "無駄な空白を増やし過ぎて画面の情報量減らす方向はやり過ぎNG". */
-.tl-text-user {
-  align-self: flex-end;
-  background: var(--user-bubble-bg);
-  border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
-  padding: 0.3rem 0.55rem;
+/* --- チャット吹き出し (表示形式統一タスク, kawaz spec):
+ * 「timeline のユーザプロンプトとエージェントアウトプットは ROOM のチャット
+ * に寄せた表現にしたい」。ROOM チャット (TimelineItem.tsx の .msg 表示) の
+ * 角丸・背景・メタ行構成に寄せた見た目を .tl-bubble-* として独自定義する
+ * (ROOM 側のクラス/コードは参照のみ、変更しない)。吹き出しになるのは 3 種
+ * のみ: 本物のユーザプロンプト (右寄せ, 緑系 .tl-bubble-right) / メイン
+ * セッションのアシスタント最終応答 (左寄せ .tl-bubble-left) / ccmsg メッ
+ * セージを含むシステムメッセージ (左寄せ・第三者カラー .tl-bubble-peer)。
+ * .tl-lines がすでに flex-direction:column なので、吹き出し自身は
+ * align-self で左右に振り分けるだけで済む (親側の変更不要)。 */
+.tl-bubble {
+  display: flex;
+  flex-direction: column;
   max-width: 85%;
+}
+
+.tl-bubble-right {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.tl-bubble-left {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.tl-bubble-body {
+  border-radius: 0.7rem 0.7rem 0.7rem 0.15rem;
+  padding: 0.3rem 0.55rem;
   width: fit-content;
+  background: var(--bg-alt);
+}
+
+.tl-bubble-right .tl-bubble-body {
+  border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
+  background: var(--user-bubble-bg);
+}
+
+.tl-bubble-peer .tl-bubble-body {
+  background: var(--peer-bubble-bg);
+}
+
+.tl-bubble-time {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  margin-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-bubble-from {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  margin-bottom: 0.2rem;
 }
 
 /* --- Markdown rendering (DR-0010): assistant text segments only, walked
@@ -1268,10 +1369,41 @@ button.session-tab {
   word-break: break-word;
 }
 
-.tl-fold summary {
+/* 表示形式統一タスク (kawaz spec): fold 対象アイテム (thinking/tool_use/
+ * tool_result/meta 行/システム由来 user メッセージ) は全て「▶ 時刻 ラベル」
+ * の同一 1 行 summary 形式に揃える — list-style:none はブラウザ標準の
+ * disclosure marker を消すので (Safari は ::-webkit-details-marker 側)、
+ * 開閉 affordance の ▶/▼ を ::before で自前描画して全ブラウザ統一する。
+ * .tl-fold-group (「N thinkings + M items」の外枠) も同じマーカーを使うので
+ * セレクタを併記。 */
+.tl-fold summary,
+.tl-fold-group summary {
   cursor: pointer;
   font-size: 0.75rem;
   color: var(--fg-muted);
+  list-style: none;
+}
+.tl-fold summary::-webkit-details-marker,
+.tl-fold-group summary::-webkit-details-marker {
+  display: none;
+}
+.tl-fold summary::before,
+.tl-fold-group summary::before {
+  content: "▶";
+  display: inline-block;
+  margin-right: 0.35em;
+  font-size: 0.85em;
+}
+.tl-fold[open] > summary::before,
+.tl-fold-group[open] > summary::before {
+  content: "▼";
+}
+
+/* fold summary のラベル部分 (時刻の隣) — 以前 meta 行だけが持っていた等幅
+ * トーンを全 fold 種別 (tool_use/tool_result/thinking/meta 行/システム由来
+ * user メッセージ) に統一適用する。 */
+.tl-fold-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .tl-fold-body {
@@ -1323,61 +1455,14 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
-/* システム由来の "type:user" メッセージ分類チップ (U2 kawaz spec,
- * transcript-model.ts's classifyUserMessage) — 本物のユーザ発話 (緑吹き出し
- * .tl-text-user) と視覚的に区別するためのラベル。.tl-meta-summary と同じ
- * 等幅トーンを流用し、システム由来であることを一目で示す。 */
-.tl-user-kind-chip {
-  display: inline-block;
-  margin-right: 0.4rem;
-  padding: 0.05rem 0.4rem;
-  border-radius: 0.3rem;
-  background: var(--bg-alt);
-  color: var(--fg-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
-}
-
-/* classifyUserMessage が "user-prompt" 以外と判定した行 (.tl-turn-syskind,
- * LineView) では、role:"user" の text セグメントに付く緑吹き出しスタイル
- * (.tl-text-user, 上の「User chat bubble」ブロック) を打ち消し、本物のユーザ
- * 発話と混同されないようにする。 */
-.tl-turn-syskind .tl-text-user {
-  align-self: stretch;
-  background: none;
-  border-radius: 0;
-  padding: 0;
-  max-width: none;
-  width: auto;
-}
-
 /* tools folding (kawaz spec): ユーザプロンプトと次のユーザ向けアシスタント
- * 最終レスポンスの間に挟まる thinking/tool_use/tool_result/meta 行をまとめて
- * 1 グループに折り畳む。中身は既存の .tl-line 群をそのまま縦に並べるだけな
- * ので、外枠は .tl-meta と同じ薄いトーンに揃える。 */
+ * 最終レスポンスの間に挟まる thinking/tool_use/tool_result/meta 行/ccmsg
+ * メッセージを含まないシステムメッセージをまとめて 1 グループに折り畳む。
+ * 中身は既存の .tl-line 群をそのまま縦に並べるだけなので、外枠は他の fold
+ * 要素と同じ薄いトーンに揃える (▶/▼ マーカーは上の .tl-fold と共通定義)。 */
 .tl-fold-group {
   color: var(--fg-muted);
   font-size: 0.75rem;
-}
-
-/* list-style:none はブラウザ標準の disclosure marker を消すので (Safari は
- * ::-webkit-details-marker 側)、開閉 affordance の ▶/▼ を ::before で自前
- * 描画して全ブラウザ統一する (kawaz spec の「▶︎ 13 tools」表示)。 */
-.tl-fold-group summary {
-  cursor: pointer;
-  list-style: none;
-}
-.tl-fold-group summary::-webkit-details-marker {
-  display: none;
-}
-.tl-fold-group summary::before {
-  content: "▶";
-  display: inline-block;
-  margin-right: 0.35em;
-  font-size: 0.85em;
-}
-.tl-fold-group[open] > summary::before {
-  content: "▼";
 }
 
 .tl-fold-group-body {
@@ -1385,20 +1470,6 @@ button.session-tab {
   flex-direction: column;
   gap: 0.3rem;
   margin-top: 0.3rem;
-}
-
-.tl-meta {
-  color: var(--fg-muted);
-  font-size: 0.75rem;
-}
-
-.tl-meta summary {
-  cursor: pointer;
-  list-style: none;
-}
-
-.tl-meta-summary {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .tl-broken {

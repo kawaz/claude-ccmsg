@@ -1,4 +1,5 @@
 import type { AppState, RoomState } from "../store.ts";
+import { selectedRoomId } from "../store.ts";
 import { roomHref } from "../locator.ts";
 import { activeRoomsSorted, relTime, splitRoomsByArchived } from "../utils.ts";
 
@@ -25,11 +26,12 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
  * list as before this feature. */
 export function RoomList({ state }: { state: AppState }) {
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
+  const currentRoomId = selectedRoomId(state);
   return (
     <>
       <ul id="room-list">
         {active.map((room) => (
-          <RoomRow key={room.id} room={room} active={room.id === state.currentRoomId} />
+          <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
         ))}
       </ul>
       {archived.length > 0 && (
@@ -37,7 +39,7 @@ export function RoomList({ state }: { state: AppState }) {
           <summary>アーカイブ ({archived.length})</summary>
           <ul>
             {archived.map((room) => (
-              <RoomRow key={room.id} room={room} active={room.id === state.currentRoomId} />
+              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>
         </details>

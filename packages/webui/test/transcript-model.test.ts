@@ -7,7 +7,9 @@
 // coverage.
 import { describe, expect, test } from "bun:test";
 import {
+  classifyBoundaryLine,
   classifyUserMessage,
+  extractCcmsgMessages,
   foldGroupLabel,
   groupTimelineLines,
   isUserTextTurn,
@@ -598,36 +600,62 @@ describe("groupTimelineLines", () => {
   });
 });
 
-// foldGroupLabel (webui Timeline "tools folding" UI improvement, kawaz spec):
-// "▶︎ N tools" vs "▶︎ N items" wording — "tools" only when every folded entry
-// is a tool-use/tool-result-only turn line, "items" for a mixed group
-// (thinking / meta / broken lines involved).
+// foldGroupLabel (webui Timeline display-unification task, kawaz spec,
+// 2026-07-12 revision): "N thinkings + M items" wording — thinking-only
+// entries are counted out on their own noun ("thinkings"), every other
+// folded entry kind (tool_use/tool_result/meta/broken) is lumped into the
+// generic "items" count. Supersedes the previous "N tools"/"N items" split
+// (tool_use/tool_result no longer get their own noun — kawaz: 「▶ 3
+// thinkings + 10 items」).
 describe("foldGroupLabel", () => {
   function entry(offset: number, line: ParsedLine): TimelineEntry {
     return { offset, line };
   }
 
-  test("all tool-use/tool-result entries -> 'N tools'", () => {
+  // No thinking entries at all -> "M items" regardless of what the
+  // non-thinking entries actually are (tool_use/tool_result here).
+  test("no thinking entries -> 'N items'", () => {
     const entries = [
       entry(0, assistantToolUse("Bash")),
       entry(1, userToolResult("tu_1")),
       entry(2, assistantToolUse("Read")),
     ];
-    expect(foldGroupLabel(entries)).toBe("3 tools");
+    expect(foldGroupLabel(entries)).toBe("3 items");
   });
 
-  test("a thinking entry mixed in -> 'N items' (not 'tools')", () => {
+  // Every entry is thinking-only -> "N thinkings", no "+ 0 items" suffix.
+  test("every entry is thinking-only -> 'N thinkings' (no '+ 0 items')", () => {
+    const entries = [entry(0, assistantThinking("a")), entry(1, assistantThinking("b"))];
+    expect(foldGroupLabel(entries)).toBe("2 thinkings");
+  });
+
+  // Mixed: one thinking + one non-thinking -> "1 thinkings + 1 items".
+  test("thinking mixed with a non-thinking entry -> 'N thinkings + M items'", () => {
     const entries = [entry(0, assistantThinking("hmm")), entry(1, assistantToolUse("Bash"))];
-    expect(foldGroupLabel(entries)).toBe("2 items");
+    expect(foldGroupLabel(entries)).toBe("1 thinkings + 1 items");
   });
 
-  test("a meta line mixed in -> 'N items'", () => {
+  // A meta line mixed in (no thinking present) -> plain "items" count.
+  test("a meta line mixed in, no thinking -> 'N items'", () => {
     const entries = [entry(0, assistantToolUse("Bash")), entry(1, metaLine("mode-change"))];
     expect(foldGroupLabel(entries)).toBe("2 items");
   });
 
-  test("single tool entry -> '1 tools' (count reflects entry count, not pluralization)", () => {
-    expect(foldGroupLabel([entry(0, assistantToolUse("Bash"))])).toBe("1 tools");
+  // Single non-thinking entry -> '1 items' (count reflects entry count, not
+  // pluralization — matches the module's existing convention elsewhere).
+  test("single non-thinking entry -> '1 items'", () => {
+    expect(foldGroupLabel([entry(0, assistantToolUse("Bash"))])).toBe("1 items");
+  });
+
+  // Multiple thinkings + multiple items together -> both counts shown.
+  test("multiple thinkings + multiple items -> both counts", () => {
+    const entries = [
+      entry(0, assistantThinking("a")),
+      entry(1, assistantThinking("b")),
+      entry(2, assistantToolUse("Bash")),
+      entry(3, metaLine("mode-change")),
+    ];
+    expect(foldGroupLabel(entries)).toBe("2 thinkings + 2 items");
   });
 });
 
@@ -736,6 +764,35 @@ describe("classifyUserMessage", () => {
         message: { role: "user", content: "<task-notification>\n<task-id>x</task-id>" },
       };
       expect(classifyUserMessage(entry)).toBe("task-notification");
+    });
+
+    // ハーネスは background-task 通知の前に "[SYSTEM NOTIFICATION - NOT USER
+    // INPUT]" の定型バナーを付けることがあり、その場合 content は
+    // <task-notification> で「始まらない」。バナー自体が決定的な注入マーカー
+    // (人間のプロンプトがこの文字列で始まることはない) なので、これを
+    // user-prompt に落とすと巨大な緑吹き出しとして誤表示される (2026-07-12 に
+    // 実セッションの transcript で観測、修正)。
+    test("'[SYSTEM NOTIFICATION - NOT USER INPUT]' banner + <task-notification> body -> task-notification", () => {
+      const entry = {
+        message: {
+          role: "user",
+          content:
+            "[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event, NOT a message from the user.\n\n<task-notification>\n<task-id>bx1</task-id>\n<summary>Monitor event</summary>\n</task-notification>",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("task-notification");
+    });
+
+    // 同バナーだが task-notification ブロックを持たない変種 (将来の別種通知)
+    // も、バナーがある時点でユーザ発話ではない — 汎用の unknown-meta へ。
+    test("'[SYSTEM NOTIFICATION - NOT USER INPUT]' banner without task-notification -> unknown-meta", () => {
+      const entry = {
+        message: {
+          role: "user",
+          content: "[SYSTEM NOTIFICATION - NOT USER INPUT]\nSome future notification shape.",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("unknown-meta");
     });
 
     test("'Another Claude session sent a message:' prefix -> peer-message", () => {
@@ -1025,5 +1082,222 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
       { kind: "entry", offset: 1, line: realPrompt },
       { kind: "entry", offset: 2, line: lines[2] },
     ]);
+  });
+});
+
+// extractCcmsgMessages (webui Timeline chat-bubble task, kawaz spec):
+// recovers ccmsg room messages (`type:"msg"` events) embedded inside a
+// system-injected "type:user" line, regardless of which wrapper carries them
+// — a Task-tool `teammate-message` relay, or a Monitor-tool
+// `task-notification`'s `<event>` jsonl body. Fixtures below use
+// parseTranscriptLine (not hand-built ParsedLine) so the text actually goes
+// through parseSegments/classifyUserMessage the same way a live transcript
+// line would.
+describe("extractCcmsgMessages", () => {
+  function userLine(content: string): ParsedLine {
+    return parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content } }),
+    );
+  }
+
+  test("teammate-message body is a ccmsg type:msg event -> one CcmsgMessage", () => {
+    const msgEvent = {
+      type: "msg",
+      mid: 12,
+      from: "a3",
+      r: "r7",
+      ts: "2026-07-12T01:00:00.000Z",
+      msg: "レビュー終わりました",
+    };
+    const line = userLine(
+      `Another Claude session sent a message:\n<teammate-message teammate_id="reviewer" color="blue">\n${JSON.stringify(msgEvent)}\n</teammate-message>\n\nThis came from another Claude session...`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      {
+        from: "a3",
+        to: undefined,
+        room: "r7",
+        msg: "レビュー終わりました",
+        ts: "2026-07-12T01:00:00.000Z",
+      },
+    ]);
+  });
+
+  // idle_notification (実観測パターン) は type:"msg" ではないので除外 — 従来
+  // 通り fold されるべき (吹き出し化しない)。
+  test("teammate-message body is an idle_notification -> excluded (not a msg event)", () => {
+    const idleEvent = {
+      type: "idle_notification",
+      from: "a3",
+      timestamp: "2026-07-12T01:00:00.000Z",
+      idleReason: "available",
+    };
+    const line = userLine(
+      `Another Claude session sent a message:\n<teammate-message teammate_id="a3" color="blue">\n${JSON.stringify(idleEvent)}\n</teammate-message>\n\nThis came from another Claude session...`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
+  test("task-notification <event> jsonl body with a single type:msg line -> one CcmsgMessage", () => {
+    const msgEvent = {
+      type: "msg",
+      mid: 3,
+      from: "u1",
+      to: ["a1"],
+      r: "r2",
+      ts: "2026-07-12T02:00:00.000Z",
+      msg: "確認して",
+    };
+    const line = userLine(
+      `<task-notification>\n<task-id>x</task-id>\n<summary>Monitor event</summary>\n<event>${JSON.stringify(msgEvent)}</event>\nIf this event is something the user would act on now...\n</task-notification>`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      { from: "u1", to: ["a1"], room: "r2", msg: "確認して", ts: "2026-07-12T02:00:00.000Z" },
+    ]);
+  });
+
+  // ccmsg subscribe の Monitor は stdout 1 行 = 1 event の jsonl を出す —
+  // 複数行 (複数 msg) が同じ <event> ブロックにまとまって来ることがある。
+  test("task-notification <event> body with multiple type:msg jsonl lines -> multiple CcmsgMessages", () => {
+    const e1 = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "one" };
+    const e2 = { type: "msg", mid: 2, from: "a2", r: "r1", ts: "t2", msg: "two" };
+    const line = userLine(
+      `<task-notification>\n<event>${JSON.stringify(e1)}\n${JSON.stringify(e2)}</event>\n</task-notification>`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      { from: "a1", to: undefined, room: "r1", msg: "one", ts: "t1" },
+      { from: "a2", to: undefined, room: "r1", msg: "two", ts: "t2" },
+    ]);
+  });
+
+  // ccmsg と無関係な task-notification (通常の Monitor イベント文言、JSON
+  // ですらない) は空 — 従来通り fold される。
+  test("a task-notification unrelated to ccmsg (plain event text) -> empty", () => {
+    const line = userLine(
+      "<task-notification>\n<task-id>x</task-id>\n<event>[run:change] workflow:CI status:success</event>\nIf this event is something the user would act on now...\n</task-notification>",
+    );
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
+  // <event> の中身が JSON として壊れている場合は例外を投げず空 fallback。
+  test("malformed JSON inside <event> -> empty, no throw", () => {
+    const line = userLine("<task-notification>\n<event>{not json\n</event>\n</task-notification>");
+    expect(() => extractCcmsgMessages(line)).not.toThrow();
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
+  // タグそのものが無い通常のユーザ発話は当然空。
+  test("a real user prompt with no teammate-message/task-notification tag -> empty", () => {
+    expect(extractCcmsgMessages(userLine("hello"))).toEqual([]);
+  });
+
+  // 既知の false-negative (extractCcmsgMessages doc comment 参照): msg 値
+  // 自体が閉じタグと同じ literal 文字列を含むと、非貪欲 regex がそこで
+  // マッチを終えてしまい、切り詰められた fragment の JSON.parse が失敗
+  // する。仕様限界として固定 — throw せず空 fallback (行ごと従来 fold) に
+  // なることだけを保証する。
+  test("msg value containing the literal closing tag text truncates the match -> falls back to empty, no throw", () => {
+    const msgEvent = {
+      type: "msg",
+      from: "u1",
+      r: "r1",
+      ts: "t1",
+      msg: "見て </event> ここ",
+    };
+    const line = userLine(
+      `<task-notification>\n<event>${JSON.stringify(msgEvent)}</event>\n</task-notification>`,
+    );
+    expect(() => extractCcmsgMessages(line)).not.toThrow();
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
+  // assistant turn / meta / broken line は role:"user" ではない (or turn です
+  // らない) ので常に空。
+  test("assistant turn -> empty (not role:user)", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+      }),
+    );
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
+  test("meta line -> empty", () => {
+    expect(
+      extractCcmsgMessages(parseTranscriptLine(JSON.stringify({ type: "queue-operation" }))),
+    ).toEqual([]);
+  });
+
+  test("broken line -> empty", () => {
+    expect(extractCcmsgMessages(parseTranscriptLine("{not json"))).toEqual([]);
+  });
+});
+
+// classifyBoundaryLine (webui Timeline chat-bubble task, kawaz spec): the
+// single source of truth both `isBoundaryLine` (fold/no-fold split) and
+// Timeline.tsx (which bubble to render) key off of. Only the "ccmsg" branch
+// is new here — "user-prompt"/"assistant-response" are already covered by
+// the isUserTextTurn/groupTimelineLines describe blocks above via
+// isBoundaryLine's behavior.
+describe("classifyBoundaryLine", () => {
+  test("a system-origin line carrying a ccmsg type:msg event -> {kind:'ccmsg', messages:[...]}", () => {
+    const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n<teammate-message teammate_id="a1">\n${JSON.stringify(msgEvent)}\n</teammate-message>`,
+        },
+      }),
+    );
+    expect(classifyBoundaryLine(line)).toEqual({
+      kind: "ccmsg",
+      messages: [{ from: "a1", to: undefined, room: "r1", msg: "hi", ts: "t1" }],
+    });
+  });
+
+  // ccmsg メッセージを含む行は groupTimelineLines でも境界 (standalone
+  // entry) として扱われる — fold group の中に埋もれない。
+  test("a ccmsg-carrying line stands alone as a boundary in groupTimelineLines, not folded", () => {
+    const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
+    const ccmsgLine = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n<teammate-message teammate_id="a1">\n${JSON.stringify(msgEvent)}\n</teammate-message>`,
+        },
+      }),
+    );
+    const lines = [userText("go"), ccmsgLine, assistantText("done")];
+    const offsets = [0, 1, 2];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "entry", offset: 1, line: ccmsgLine },
+      { kind: "entry", offset: 2, line: lines[2] },
+    ]);
+  });
+
+  test("a real user prompt -> {kind:'user-prompt'}", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+    );
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "user-prompt" });
+  });
+
+  test("an assistant text turn -> {kind:'assistant-response'}", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+      }),
+    );
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+  });
+
+  test("a non-boundary line (thinking-only assistant turn) -> null", () => {
+    expect(classifyBoundaryLine(assistantThinking("hmm"))).toBeNull();
   });
 });

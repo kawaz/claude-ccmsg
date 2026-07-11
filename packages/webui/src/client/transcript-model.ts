@@ -239,23 +239,52 @@ export type TimelineGroup =
   | { kind: "entry"; offset: number; line: ParsedLine }
   | { kind: "fold"; entries: TimelineEntry[] };
 
-/** True for a line that should render on its own (never folded into a tools
- * group): a real user utterance (`isUserTextTurn`, which — U2 — already
- * excludes system-origin "type:user" messages such as teammate-message /
- * task-notification / slash-command plumbing, so those fold like any other
- * intermediate entry instead of standing alone), or an assistant turn
- * carrying at least one `text` segment — the "次のユーザ向けアシスタント最終
- * レスポンス" that ends a run of intermediate entries. An assistant turn
- * with only thinking/tool_use segments (no text yet) is NOT a boundary, so
- * it folds with the rest of the run until a text-bearing turn (or the next
- * user prompt) closes it. */
-function isBoundaryLine(line: ParsedLine): boolean {
-  if (isUserTextTurn(line)) return true;
-  return (
+/** Which of the three chat-bubble kinds (webui Timeline display unification
+ * task, kawaz spec) a boundary line renders as — `null` for every non-boundary
+ * line (folds instead). The single source of truth both `isBoundaryLine`
+ * (groupTimelineLines' fold/no-fold split) and Timeline.tsx (which bubble
+ * component + alignment to render) key off of, so the two can never disagree
+ * about which lines are boundaries. */
+export type BoundaryKind =
+  | { kind: "user-prompt" }
+  | { kind: "assistant-response" }
+  | { kind: "ccmsg"; messages: CcmsgMessage[] };
+
+/**
+ * Classifies a boundary line (kawaz spec order, first match wins): a real
+ * user utterance (`isUserTextTurn`, which — U2 — already excludes
+ * system-origin "type:user" messages such as teammate-message/
+ * task-notification/slash-command plumbing, so those fold like any other
+ * intermediate entry instead of standing alone) is `"user-prompt"`; an
+ * assistant turn carrying at least one `text` segment — the "次のユーザ向け
+ * アシスタント最終レスポンス" that ends a run of intermediate entries — is
+ * `"assistant-response"`; a system-origin "type:user" line that itself
+ * carries at least one ccmsg room message (`extractCcmsgMessages`, checked
+ * last since it's the least common case and the function does its own
+ * `kind==="turn"` guard) is `"ccmsg"`. Anything else — including an assistant
+ * turn with only thinking/tool_use segments (no text yet), which folds with
+ * the rest of the run until a text-bearing turn or the next user prompt
+ * closes it — is `null` (not a boundary).
+ */
+export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
+  if (isUserTextTurn(line)) return { kind: "user-prompt" };
+  if (
     line.kind === "turn" &&
     line.role === "assistant" &&
     line.segments.some((s) => s.kind === "text")
-  );
+  )
+    return { kind: "assistant-response" };
+  const ccmsgMessages = extractCcmsgMessages(line);
+  return ccmsgMessages.length > 0 ? { kind: "ccmsg", messages: ccmsgMessages } : null;
+}
+
+/** True for a line that should render on its own (never folded into a tools
+ * group) — see `classifyBoundaryLine`'s doc comment for the three cases this
+ * covers. Kept as its own boolean predicate (rather than making every caller
+ * check `!== null`) since `groupTimelineLines` only needs the yes/no split,
+ * not which kind. */
+function isBoundaryLine(line: ParsedLine): boolean {
+  return classifyBoundaryLine(line) !== null;
 }
 
 /**
@@ -292,24 +321,30 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
 }
 
 /** True if every entry in a fold group is a turn line whose segments are
- * exclusively tool-use/tool-result (no thinking, no meta/broken lines mixed
- * in) — the "▶︎ N tools" wording. A mixed group (thinking / meta / broken
- * lines present) falls back to the generic "▶︎ N items" wording since "tools"
- * would misdescribe what's inside. */
-function isToolOnlyEntry(entry: TimelineEntry): boolean {
+ * exclusively thinking blocks — split out of the generic "items" count so
+ * `foldGroupLabel` can report "N thinkings + M items" (webui Timeline display
+ * unification task, kawaz spec) instead of lumping thinking in with
+ * tool_use/tool_result/meta/broken under one undifferentiated count. */
+function isThinkingOnlyEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   return (
     line.kind === "turn" &&
     line.segments.length > 0 &&
-    line.segments.every((s) => s.kind === "tool-use" || s.kind === "tool-result")
+    line.segments.every((s) => s.kind === "thinking")
   );
 }
 
-/** Folded-group summary label (kawaz spec: "▶︎ 13 tools" style, count = number
- * of intermediate entries in the group). */
+/** Folded-group summary label (kawaz spec, revised for the display
+ * unification task): "N thinkings + M items" when the group mixes both,
+ * "N thinkings" when every entry is thinking-only, otherwise "M items" — the
+ * previous "N tools"/"N items" wording is retired since thinking is now
+ * counted out on its own rather than lumped into one undifferentiated noun. */
 export function foldGroupLabel(entries: TimelineEntry[]): string {
-  const noun = entries.every(isToolOnlyEntry) ? "tools" : "items";
-  return `${entries.length} ${noun}`;
+  const thinkingCount = entries.filter(isThinkingOnlyEntry).length;
+  const itemCount = entries.length - thinkingCount;
+  if (thinkingCount === 0) return `${itemCount} items`;
+  if (itemCount === 0) return `${thinkingCount} thinkings`;
+  return `${thinkingCount} thinkings + ${itemCount} items`;
 }
 
 /**
@@ -435,9 +470,148 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   }
 
   if (text.startsWith("<task-notification>")) return "task-notification";
+  // The harness prefixes background-task notifications with a fixed banner
+  // line ("[SYSTEM NOTIFICATION - NOT USER INPUT]\n...") before the
+  // <task-notification> block — a decisive injected-content marker no human
+  // prompt starts with. Without this branch such lines fall through to
+  // "user-prompt" and render as a (huge, green) user bubble instead of
+  // folding (observed on this very session's transcript, 2026-07-12).
+  if (text.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
+    return text.includes("<task-notification>") ? "task-notification" : "unknown-meta";
+  }
   if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
 
   return "user-prompt";
+}
+
+/** One ccmsg room message recovered from inside a `teammate-message`/
+ * `task-notification` system line (webui Timeline chat-bubble task, kawaz
+ * spec) — a trimmed-down `MsgEvent` (`@ccmsg/protocol`): `room` is that
+ * event's `r` field (room id), renamed here since this module has no
+ * dependency on `@ccmsg/protocol`'s wire types and `extractCcmsgMessages`
+ * only needs the fields the bubble UI renders. */
+export interface CcmsgMessage {
+  from: string;
+  to?: string[];
+  room: string;
+  msg: string;
+  ts: string;
+}
+
+/** Matches Claude Code's Task-tool teammate relay wrapper (see
+ * `classifyUserMessage`'s "Another Claude session sent a message:" prefix,
+ * `peer-message` kind) — one tag per relayed teammate turn, body is normally
+ * one JSON object. Global so a single line carrying several relays (observed
+ * in practice: a session going idle twice in a row) yields one match per tag. */
+const TEAMMATE_MESSAGE_RE = /<teammate-message[^>]*>([\s\S]*?)<\/teammate-message>/g;
+
+/** Matches the `<event>...</event>` body Claude Code's Monitor-tool
+ * `task-notification` wrapper carries (see `classifyUserMessage`'s
+ * `task-notification` kind) — a ccmsg `subscribe` Monitor prints one JSON
+ * event per stdout line, so this tag's body can itself be multi-line jsonl,
+ * not a single JSON value like `teammate-message`'s. */
+const EVENT_TAG_RE = /<event>([\s\S]*?)<\/event>/g;
+
+/** Duck-types `obj` as a ccmsg `MsgEvent` delivered over `subscribe` (wire
+ * shape: `{type:"msg", mid, from, to?, ts, msg, r}` — `r` is the room id
+ * DeliveredEvent flattening adds, `@ccmsg/protocol`). Every field this module
+ * renders is checked; `mid` isn't (not used downstream) so its absence alone
+ * doesn't reject an otherwise-valid message. False for any other event shape
+ * this line might carry (`idle_notification`, `ev:"notify"`, member/leave/
+ * title/... — anything whose `type`/`ev` isn't exactly `"msg"`), which is the
+ * whole point: only a real room message becomes a chat bubble, everything
+ * else stays inside the fold. */
+function isCcmsgMsgEventLike(
+  obj: unknown,
+): obj is { type: "msg"; from: string; to?: string[]; r: string; msg: string; ts: string } {
+  if (!obj || typeof obj !== "object") return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    o.type === "msg" &&
+    typeof o.from === "string" &&
+    typeof o.r === "string" &&
+    typeof o.msg === "string" &&
+    typeof o.ts === "string" &&
+    (o.to === undefined || (Array.isArray(o.to) && o.to.every((t) => typeof t === "string")))
+  );
+}
+
+/** Parses one candidate fragment (a `teammate-message` tag body, or one line
+ * of a `task-notification`'s `<event>` jsonl body) into a `CcmsgMessage`.
+ * Returns null — never throws — for invalid JSON or a validly-parsed value
+ * that isn't a ccmsg `type:"msg"` event (kawaz spec: "壊れた JSON は空で
+ * fallback", and non-msg events like `idle_notification` must NOT become a
+ * bubble). */
+function tryParseCcmsgMessage(fragment: string): CcmsgMessage | null {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(fragment.trim());
+  } catch {
+    return null;
+  }
+  if (!isCcmsgMsgEventLike(obj)) return null;
+  return { from: obj.from, to: obj.to, room: obj.r, msg: obj.msg, ts: obj.ts };
+}
+
+/**
+ * Recovers every ccmsg room message (`type:"msg"` events) embedded in a
+ * `role:"user"` line's text, regardless of which system-injection wrapper
+ * carries it — a `teammate-message` relay (Task-tool teammate turn) or a
+ * `task-notification`'s `<event>` body (a ccmsg `subscribe` Monitor's stdout,
+ * which is itself jsonl and can hold several events per notification). Both
+ * patterns are scanned unconditionally rather than gating on
+ * `classifyUserMessage`'s verdict first: a tag that doesn't match either
+ * regex contributes nothing, so the result is the same either way, and this
+ * keeps the function self-contained (works on a hand-built `ParsedLine` too,
+ * not only ones that went through `parseTranscriptLine`/`classifyUserMessage`).
+ *
+ * Non-turn lines, assistant turns, and any fragment that isn't a `type:"msg"`
+ * event (an `idle_notification` teammate-message body, a `task-notification`
+ * `<event>` with no ccmsg activity at all, ...) all yield `[]` — the caller
+ * (Timeline.tsx's chat-bubble rendering, and `isBoundaryLine` above) treats
+ * an empty result as "render this line the ordinary way", not as an error.
+ *
+ * Known false-negative (accepted, not fixed here — same category as
+ * `classifyUserMessage`'s documented false-negative above): `TEAMMATE_MESSAGE_RE`/
+ * `EVENT_TAG_RE` are non-greedy, so if a `msg` field's *value* itself contains
+ * the literal closing-tag text (e.g. someone pastes `</event>` into a ccmsg
+ * message), the regex closes early at that literal occurrence instead of the
+ * wrapper's real closing tag. The truncated fragment fails `JSON.parse`
+ * (`tryParseCcmsgMessage` returns `null`, never throws), so that one message
+ * silently falls back to the ordinary fold-line rendering instead of becoming
+ * a chat bubble — degrades safely, doesn't crash or corrupt other messages in
+ * the same line. No JSON-escaping trick can hide the literal (the value is
+ * substring-matched against the raw wrapper text, not the JSON-decoded
+ * string), so fixing this for real would need tag-aware scanning (e.g.
+ * last-closing-tag-wins) rather than a regex tweak.
+ */
+export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
+  if (line.kind !== "turn" || line.role !== "user") return [];
+  const text = line.segments
+    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+    .map((s) => s.text)
+    .join("\n");
+  if (!text) return [];
+  // 早期 return: どちらのタグも含まない (大半の user 行、システム注入行は
+  // 本文が巨大になりがち) なら matchAll を 2 本走らせるまでもない — join
+  // コスト自体は避けられないが、この関数は classifyBoundaryLine 経由で
+  // groups が変わるたび (load older / tail 追記 / refresh, Timeline.tsx)
+  // に呼ばれるので、軽いほど再分類コストが下がる。
+  if (!text.includes("<teammate-message") && !text.includes("<event>")) return [];
+  const results: CcmsgMessage[] = [];
+  for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
+    const parsed = tryParseCcmsgMessage(m[1]!);
+    if (parsed) results.push(parsed);
+  }
+  for (const m of text.matchAll(EVENT_TAG_RE)) {
+    for (const eventLine of m[1]!.split("\n")) {
+      const trimmed = eventLine.trim();
+      if (!trimmed) continue;
+      const parsed = tryParseCcmsgMessage(trimmed);
+      if (parsed) results.push(parsed);
+    }
+  }
+  return results;
 }
 
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into

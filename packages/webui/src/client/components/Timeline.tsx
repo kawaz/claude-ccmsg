@@ -8,15 +8,18 @@ import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { errorMessage, formatClockTime } from "../utils.ts";
 import {
+  classifyBoundaryLine,
   foldGroupLabel,
   groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
+  type CcmsgMessage,
   type ParsedLine,
   type Segment,
   type TimelineEntry,
+  type TurnLine,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
@@ -27,23 +30,62 @@ import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
 // にする、というよくあるチャット UI の慣習値。
 const NEAR_BOTTOM_PX = 80;
 
+// 表示形式の統一 (kawaz spec 2026-07-12): fold 対象アイテム (thinking/
+// tool_use/tool_result/meta 行/システム由来 user メッセージ) は全て同一の
+// 「▶ HH:MM:SS ラベル」1 行 summary + <details> 展開に統一する — 以前は meta
+// 行だけこの形、tool_use/tool_result は「時刻の行」+「▶ ラベルの行」の 2 行、
+// システム由来 user メッセージは fold すらされず時刻+チップ+本文全開、と
+// 3 通りに割れていた (kawaz: 「時刻表示の位置や出る出ないが不規則」)。ts が
+// null の行 (Segment 自体は ts を持たないので親 TurnLine の ts を渡す) は
+// 時刻 span を省略して詰める。
+function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
+  return (
+    <summary>
+      {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
+      <span class="tl-fold-label">{label}</span>
+    </summary>
+  );
+}
+
 // thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える
 //環境でのみ original|ja タブを描画する (feature-detect は hasTranslatorApi
 // 呼び出し側で行う。タブ自体を出さない = レイアウト変化なし、という spec の
 // 要件を満たすためモジュールレベルで一度だけ判定してコンポーネントに渡す)。
 function ThinkingSegment({
   text,
+  ts,
   translatorAvailable,
+  // fold グループ (FoldGroup の <details>) が開いているか — 表示形式統一
+  // タスクの kawaz spec: 「fold を開いた時、中の thinking は details open +
+  // ja タブ選択がデフォルト」。fold 外 (境界行に混在する thinking 等) から
+  // 呼ばれるときは常に false で渡り、その場合は従来通り閉じたまま
+  // (「fold 外に単独で出る thinking の従来デフォルト (閉) は変えない」)。
+  foldGroupOpen,
 }: {
   text: string;
+  ts: string | null;
   translatorAvailable: boolean;
+  foldGroupOpen: boolean;
 }) {
   const [tab, setTab] = useState<"original" | "ja">("original");
-  // null = まだ翻訳していない (ja タブ初回クリックで遅延実行、kawaz spec)。
-  // 翻訳結果自体は translate.ts 側で段落単位にメモリキャッシュされるので、
-  // fold 開閉やタブ往復で再翻訳は起きない。
+  // null = まだ翻訳していない (ja タブ初回クリック、または fold group の
+  // 初回オープンで遅延実行、kawaz spec)。翻訳結果自体は translate.ts 側で
+  // 段落単位にメモリキャッシュされるので、fold 開閉やタブ往復で再翻訳は
+  // 起きない。
   const [jaText, setJaText] = useState<string | null>(null);
   const [translating, setTranslating] = useState(false);
+  // <details open> を FoldGroup 開閉に連動させる側 (uncontrolled 初期値 +
+  // onToggle 同期) — open={foldGroupOpen} と直に結ぶと、ユーザーが手動で
+  // この thinking だけ閉じた後にも再レンダーで強制的に開き直されてしまう
+  // (Preact は同じ prop 値なら DOM に書き戻さないが、親の再レンダーで一度
+  // false→true を経由すると上書きされる)。ここでは自前 state に落として
+  // onToggle で追従させることでユーザーの手動 close を尊重する。
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // fold group が最初に開かれた瞬間だけ自動オープン+ja選択を発火させる
+  // ためのワンショットフラグ。2 回目以降の開閉では発火しない (ユーザーが
+  // その後 original タブへ戻したり details を閉じたりしても、再度の
+  // fold 開閉で勝手に上書きされない)。
+  const autoOpenedRef = useRef(false);
 
   function selectJa() {
     setTab("ja");
@@ -56,11 +98,34 @@ function ThinkingSegment({
     }
   }
 
+  // selectJa は毎レンダー新しい参照になるが、上の autoOpenedRef ガードで
+  // 実行は fold group の初回オープン 1 回だけに絞られるため、依存配列に
+  // 含めなくても安全 (毎回作り直される関数を追いかける必要がない)。
+  //
+  // details open と ja タブ選択は別ゲート (kawaz spec: 「fold を開いた時、
+  // 中の thinking は details open + ja タブ選択がデフォルト」— ja 選択が
+  // Translator 前提なのは当然だが、details open まで Translator の有無に
+  // 依存する理由はない)。両方を translatorAvailable で一括ゲートすると、
+  // Chrome built-in Translator API が無い環境 (Safari/Firefox 等) では
+  // fold を開いても thinking が閉じたままになり、spec の "details open"
+  // 部分が非対応ブラウザで丸ごと落ちてしまう。
+  useEffect(() => {
+    if (foldGroupOpen && !autoOpenedRef.current) {
+      autoOpenedRef.current = true;
+      setDetailsOpen(true);
+      if (translatorAvailable) selectJa();
+    }
+  }, [foldGroupOpen, translatorAvailable]);
+
   const bodyText = tab === "ja" && jaText !== null ? jaText : text;
 
   return (
-    <details class="tl-fold tl-thinking">
-      <summary>thinking</summary>
+    <details
+      class="tl-fold tl-thinking"
+      open={detailsOpen}
+      onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <FoldSummary ts={ts} label="thinking" />
       {translatorAvailable ? (
         <div class="tl-thinking-tabs">
           <button
@@ -94,9 +159,15 @@ function ThinkingSegment({
 function SegmentView({
   segment,
   translatorAvailable,
+  ts,
+  foldGroupOpen,
 }: {
   segment: Segment;
   translatorAvailable: boolean;
+  // 親 TurnLine の ts (Segment 自体は持たない) — 表示形式統一タスクの
+  // 「fold 対象アイテムは全て時刻を持つ」を満たすため各 fold summary に渡す。
+  ts: string | null;
+  foldGroupOpen: boolean;
 }) {
   switch (segment.kind) {
     case "text":
@@ -109,44 +180,54 @@ function SegmentView({
         </div>
       );
     case "thinking":
-      return <ThinkingSegment text={segment.text} translatorAvailable={translatorAvailable} />;
+      return (
+        <ThinkingSegment
+          text={segment.text}
+          ts={ts}
+          translatorAvailable={translatorAvailable}
+          foldGroupOpen={foldGroupOpen}
+        />
+      );
     case "tool-use":
       return (
         <details class="tl-fold">
-          <summary>tool_use: {segment.name}</summary>
+          <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
           <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
         </details>
       );
     case "tool-result":
       return (
         <details class="tl-fold">
-          <summary>tool_result{segment.isError ? " (error)" : ""}</summary>
+          <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
           <pre class="tl-fold-body">{segment.text}</pre>
         </details>
       );
     case "unknown-segment":
       return (
         <details class="tl-fold">
-          <summary>{segment.type}</summary>
+          <FoldSummary ts={ts} label={segment.type} />
           <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
         </details>
       );
   }
 }
 
+// fold group 内 (非境界) の 1 entry を描画する — thinking/tool_use-only の
+// assistant turn、tool-result-only の user turn、meta 行、broken 行、
+// そしてシステム由来 user メッセージ (ccmsg メッセージを含まないもの、含む
+// 場合は境界として CcmsgBubble 側に回る) を扱う。境界行 (本物のユーザ発話/
+// アシスタント最終応答/ccmsg メッセージ) は Timeline() 側の
+// UserPromptBubble/AssistantBubble/CcmsgBubble が担当するため、
+// registerUserTurnRef はここでは不要 (fold group 内に isUserTextTurn な行は
+// 絶対に来ない — classifyBoundaryLine が boundary として弾くため)。
 function LineView({
   line,
-  offsetKey,
-  registerUserTurnRef,
   translatorAvailable,
+  foldGroupOpen,
 }: {
   line: ParsedLine;
-  offsetKey: number;
-  // Registers/unregisters this line's root element for a user-text turn only
-  // (isUserTextTurn) — the "👤 N/M" nav indicator's DOM-measurement side, see
-  // Timeline()'s userTurnRefs. No-op for every other line kind.
-  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
   translatorAvailable: boolean;
+  foldGroupOpen: boolean;
 }) {
   if (line.kind === "broken") {
     return (
@@ -157,44 +238,62 @@ function LineView({
   }
   if (line.kind === "meta") {
     return (
-      <details class="tl-line tl-meta">
-        <summary>
-          {line.ts ? <span class="tl-time">{formatClockTime(line.ts)}</span> : null}
-          <span class="tl-meta-summary">{line.summary}</span>
-        </summary>
+      <details class="tl-line tl-fold">
+        <FoldSummary ts={line.ts} label={line.summary} />
         <pre class="tl-fold-body">{line.raw}</pre>
       </details>
     );
   }
-  const isUserText = isUserTextTurn(line);
   // システム由来の "type:user" メッセージ分類 (U2 kawaz spec,
   // transcript-model.ts's classifyUserMessage): role:"user" かつ
-  // "user-prompt" (= 本物のユーザ発話) 以外の kind が付いているラインだけ
-  // チップを出し、緑吹き出しスタイル (.tl-text-user) を打ち消す
-  // (.tl-turn-syskind, app.css)。この LineView 自体は「fold group の中の
-  // 1 entry」としても「standalone entry」としても同じ描画ロジックを使う
-  // (FoldGroup が entries.map で LineView を再利用) ので、グルーピングが
-  // 変わってもチップ表示は変わらない。isUserTextTurn (U2 で改訂:
-  // userMessageKind !== "user-prompt" なシステム由来メッセージは false) は
-  // isBoundaryLine の判定にも使われるため、システム由来メッセージは境界に
-  // ならず fold group 側に入る — その場合もここで同じチップ付き表示になる。
+  // "user-prompt" (= 本物のユーザ発話) 以外の kind が付いているラインは
+  // 表示形式統一タスクで details 化 (以前は常時全文表示だった —
+  // kawaz: 「task-notification が fold されてない」)。summary は
+  // 「▶ HH:MM:SS <kind>」形式 (kind をそのままラベルに)。
   const sysKind =
     line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt"
       ? line.userMessageKind
       : null;
+  if (sysKind) {
+    return (
+      <details class="tl-line tl-fold">
+        <FoldSummary ts={line.ts} label={sysKind} />
+        <div class="tl-fold-body tl-segments">
+          {line.segments.length === 0 ? (
+            <span class="tl-empty-turn">(空)</span>
+          ) : (
+            line.segments.map((seg, i) => (
+              <SegmentView
+                key={i}
+                segment={seg}
+                translatorAvailable={translatorAvailable}
+                ts={null}
+                foldGroupOpen={foldGroupOpen}
+              />
+            ))
+          )}
+        </div>
+      </details>
+    );
+  }
+  // 残り: thinking/tool_use-only の assistant turn、tool-result-only の
+  // user turn — 中身の各 segment 自体が (SegmentView 経由で) fold 済みの
+  // 1 行 summary を持つので、turn の外枠はプレーンな container のまま
+  // (二重に時刻を出さない)。
   return (
-    <div
-      class={"tl-line tl-turn tl-turn-" + line.role + (sysKind ? " tl-turn-syskind" : "")}
-      ref={isUserText ? (el) => registerUserTurnRef(offsetKey, el) : undefined}
-    >
-      {line.ts ? <span class="tl-time">{formatClockTime(line.ts)}</span> : null}
-      {sysKind ? <span class="tl-user-kind-chip">{sysKind}</span> : null}
+    <div class="tl-line">
       <div class="tl-segments">
         {line.segments.length === 0 ? (
           <span class="tl-empty-turn">(空)</span>
         ) : (
           line.segments.map((seg, i) => (
-            <SegmentView key={i} segment={seg} translatorAvailable={translatorAvailable} />
+            <SegmentView
+              key={i}
+              segment={seg}
+              translatorAvailable={translatorAvailable}
+              ts={line.ts}
+              foldGroupOpen={foldGroupOpen}
+            />
           ))
         )}
       </div>
@@ -208,31 +307,153 @@ function LineView({
 // <details> element itself (no manual open/close state to manage, matches
 // every other tl-fold in this file), label text from
 // transcript-model.ts's foldGroupLabel (grouping/counting stays a pure,
-// unit-tested function; this component only renders it).
+// unit-tested function; this component only renders it). Open state is
+// lifted into React state (rather than left fully uncontrolled) so it can be
+// threaded down to each entry's ThinkingSegment as `foldGroupOpen` — the
+// signal that drives the "fold を開いた時 thinking は details open + ja
+// デフォルト" behavior (kawaz spec).
 function FoldGroup({
   entries,
-  registerUserTurnRef,
   translatorAvailable,
 }: {
   entries: TimelineEntry[];
-  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
   translatorAvailable: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details class="tl-line tl-fold-group">
+    <details
+      class="tl-line tl-fold-group"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary>{foldGroupLabel(entries)}</summary>
       <div class="tl-fold-group-body">
         {entries.map(({ offset, line }) => (
           <LineView
             key={offset}
             line={line}
-            offsetKey={offset}
-            registerUserTurnRef={registerUserTurnRef}
             translatorAvailable={translatorAvailable}
+            foldGroupOpen={open}
           />
         ))}
       </div>
     </details>
+  );
+}
+
+// --- 境界行の吹き出し表示 (kawaz spec: 「timeline のユーザプロンプトと
+// エージェントアウトプットは ROOM のチャットに寄せた表現にしたい」) ---
+// 吹き出しになるのは 3 種のみ: 本物のユーザプロンプト (右寄せ, 緑系) /
+// メインセッションのアシスタント最終応答 (左寄せ) / ccmsg メッセージを含む
+// システムメッセージ (左寄せ, 第三者カラー)。見た目は ROOM チャット
+// (TimelineItem.tsx の .msg 表示) の角丸・背景・メタ行構成に寄せるが、
+// ROOM 側のコードそのものは参照のみで変更しない (app.css に .tl-bubble-*
+// として別定義)。
+
+function UserPromptBubble({
+  line,
+  offsetKey,
+  registerUserTurnRef,
+  translatorAvailable,
+}: {
+  line: TurnLine;
+  offsetKey: number;
+  // "👤 N/M" nav indicator の DOM 測定対象として登録する — 実ユーザ発話
+  // (isUserTextTurn) はこの吹き出し以外の経路には現れないので、fold-inner
+  // 側 (LineView) はこの登録を一切行わない。
+  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+  translatorAvailable: boolean;
+}) {
+  return (
+    <div class="tl-bubble tl-bubble-right" ref={(el) => registerUserTurnRef(offsetKey, el)}>
+      <div class="tl-bubble-body tl-bubble-body-user">
+        {line.segments.length === 0 ? (
+          <span class="tl-empty-turn">(空)</span>
+        ) : (
+          line.segments.map((seg, i) => (
+            <SegmentView
+              key={i}
+              segment={seg}
+              translatorAvailable={translatorAvailable}
+              ts={line.ts}
+              foldGroupOpen={false}
+            />
+          ))
+        )}
+      </div>
+      {/* 右寄せ吹き出しは時刻も右に揃える (kawaz: 「ユーザメッセージは右に
+       * あるのに時刻が左」)。 */}
+      {line.ts ? <span class="tl-bubble-time">{formatClockTime(line.ts)}</span> : null}
+    </div>
+  );
+}
+
+function AssistantBubble({
+  line,
+  translatorAvailable,
+}: {
+  line: TurnLine;
+  translatorAvailable: boolean;
+}) {
+  return (
+    <div class="tl-bubble tl-bubble-left">
+      <div class="tl-bubble-body">
+        {line.segments.map((seg, i) => (
+          <SegmentView
+            key={i}
+            segment={seg}
+            translatorAvailable={translatorAvailable}
+            ts={line.ts}
+            foldGroupOpen={false}
+          />
+        ))}
+      </div>
+      {line.ts ? <span class="tl-bubble-time">{formatClockTime(line.ts)}</span> : null}
+    </div>
+  );
+}
+
+// ccmsg メッセージ吹き出し (kawaz spec): msg/raw 切替は thinking の
+// original|ja タブと同じ UI 流儀 (下タブボタン列)。raw は抽出元行の生
+// テキスト全文 (extractCcmsgMessages が読んだのと同じ text segment 結合、
+// 複数 msg が同じ行から来た場合は全吹き出しで同じ raw を共有する — 各
+// メッセージ個別の断片ではなく「この行に何が書いてあったか」を見るためのタブ
+// なので、行単位で共通の全文がふさわしい)。
+function CcmsgBubble({ message, rawText }: { message: CcmsgMessage; rawText: string }) {
+  const [tab, setTab] = useState<"msg" | "raw">("msg");
+  return (
+    <div class="tl-bubble tl-bubble-left tl-bubble-peer">
+      <div class="tl-bubble-body">
+        <div class="tl-bubble-from">
+          {message.from}
+          {message.to?.length ? ` → ${message.to.join(", ")}` : ""}
+          {" · #"}
+          {message.room}
+        </div>
+        <div class="tl-thinking-tabs">
+          <button
+            type="button"
+            class={"tl-thinking-tab" + (tab === "msg" ? " active" : "")}
+            onClick={() => setTab("msg")}
+          >
+            msg
+          </button>
+          <button
+            type="button"
+            class={"tl-thinking-tab" + (tab === "raw" ? " active" : "")}
+            onClick={() => setTab("raw")}
+          >
+            raw
+          </button>
+        </div>
+        {tab === "msg" ? (
+          <MarkdownView source={message.msg} />
+        ) : (
+          <pre class="tl-fold-body">{rawText}</pre>
+        )}
+      </div>
+      <span class="tl-bubble-time">{formatClockTime(message.ts)}</span>
+    </div>
   );
 }
 
@@ -371,6 +592,20 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // them collapses into one fold group — see transcript-model.ts's
   // groupTimelineLines doc comment.
   const groups = useMemo(() => groupTimelineLines(parsed, offsets), [parsed, offsets]);
+  // groups.map (render 本体) が毎レンダー classifyBoundaryLine を呼び直す
+  // と、"👤 N/M" nav の scroll ハンドラ (rAF スロットル済みとはいえ
+  // currentUserIdx の setState 経由で毎回 Timeline 全体を再レンダーさせる)
+  // のたびに全 boundary entry を再分類することになり、長い transcript +
+  // 大きい task-notification 本文 (ccmsg 判定側の JSON.parse を含む) で
+  // scroll 中の CPU を無駄に食う。groups が変わった時だけ計算しメモ化する
+  // (index を groups と揃え、entry 以外は使わないので null のまま)。
+  const boundaries = useMemo(
+    () =>
+      groups.map((g) =>
+        g.kind === "entry" && g.line.kind === "turn" ? classifyBoundaryLine(g.line) : null,
+      ),
+    [groups],
+  );
 
   // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
   // top/bottom of the loaded transcript and to the previous/next user-text
@@ -575,24 +810,57 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           {parsed.length === 0 ? (
             <p class="tl-empty">(空の transcript)</p>
           ) : (
-            groups.map((group) =>
-              group.kind === "entry" ? (
-                <LineView
-                  key={group.offset}
-                  line={group.line}
-                  offsetKey={group.offset}
-                  registerUserTurnRef={registerUserTurnRef}
-                  translatorAvailable={translatorAvailable}
-                />
-              ) : (
-                <FoldGroup
-                  key={group.entries[0]!.offset}
-                  entries={group.entries}
-                  registerUserTurnRef={registerUserTurnRef}
-                  translatorAvailable={translatorAvailable}
-                />
-              ),
-            )
+            groups.map((group, i) => {
+              if (group.kind === "fold") {
+                return (
+                  <FoldGroup
+                    key={group.entries[0]!.offset}
+                    entries={group.entries}
+                    translatorAvailable={translatorAvailable}
+                  />
+                );
+              }
+              const { line, offset } = group;
+              // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+              // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+              // fold group に送るので groups の "entry" 側には来ない) —
+              // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+              // 実データ上も自明に成り立つ。
+              if (line.kind !== "turn") return null;
+              // boundaries[i] は上の useMemo で groups と同じ index で
+              // 計算済み (render のたびの再分類を避けるため)。
+              const boundary = boundaries[i]!;
+              if (boundary === null) return null;
+              switch (boundary.kind) {
+                case "user-prompt":
+                  return (
+                    <UserPromptBubble
+                      key={offset}
+                      line={line}
+                      offsetKey={offset}
+                      registerUserTurnRef={registerUserTurnRef}
+                      translatorAvailable={translatorAvailable}
+                    />
+                  );
+                case "assistant-response":
+                  return (
+                    <AssistantBubble
+                      key={offset}
+                      line={line}
+                      translatorAvailable={translatorAvailable}
+                    />
+                  );
+                case "ccmsg": {
+                  const rawText = line.segments
+                    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+                    .map((s) => s.text)
+                    .join("\n");
+                  return boundary.messages.map((m, i) => (
+                    <CcmsgBubble key={`${offset}-${i}`} message={m} rawText={rawText} />
+                  ));
+                }
+              }
+            })
           )}
         </div>
       )}

@@ -5,13 +5,16 @@
 // room, so the result reads as "session + User"). New-room title input
 // follows RoomTitle.tsx's confirm/cancel convention: Shift+Enter confirms,
 // Escape cancels, isComposing (IME) is ignored so composition doesn't
-// trigger an accidental submit.
+// trigger an accidental submit, and [作成]/[キャンセル] buttons + outside-click
+// cancel mirror RoomTitle.tsx's edit form (useDismissOnOutsidePointer, kawaz
+// 2026-07-12).
 import { useRef, useState } from "preact/hooks";
 import type { AppState, RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { roomHref } from "../locator.ts";
 import { relTime } from "../utils.ts";
 import { roomsForSession, roomsForSids, sameCwdSids } from "../rooms-filter.ts";
+import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 
 function RoomRow({ room }: { room: RoomState }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
@@ -33,9 +36,14 @@ function NewRoomForm({ sid }: { sid: string }) {
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Escape で isComposing を経由せず即キャンセルしたときも onBlur が発火する
-  // ため、二重キャンセル/二重確定を避ける同期フラグ (RoomTitle.tsx と同じ手法)。
+  // Escape キーでの cancel と外側クリックでの cancel が同一フレーム内で両方
+  // 走る余地があるため、二重キャンセル/二重確定を避ける同期フラグ
+  // (RoomTitle.tsx と同じ手法)。
   const settledRef = useRef(false);
+  // フォーム全体 (input + 作成/キャンセルボタン) を包む要素。外側クリックで
+  // キャンセルする判定に使う (RoomTitle.tsx と同じ手法、理由は
+  // useDismissOnOutsidePointer.ts 参照)。
+  const containerRef = useRef<HTMLDivElement>(null);
 
   function start(): void {
     settledRef.current = false;
@@ -84,6 +92,12 @@ function NewRoomForm({ sid }: { sid: string }) {
     void confirm();
   }
 
+  // saving 中は input/ボタンとも disabled — 外側クリックによる cancel も
+  // 同期して無効化する。有効なままだと confirm() の await 中に外側を触れた
+  // 場合、確定前にキャンセルされたにもかかわらず後から res.ok が返って
+  // location.hash が無条件遷移してしまう (kawaz 2026-07-12)。
+  useDismissOnOutsidePointer(containerRef, open && !saving, cancel);
+
   if (!open) {
     return (
       <button type="button" class="new-room-btn" onClick={start}>
@@ -93,7 +107,7 @@ function NewRoomForm({ sid }: { sid: string }) {
   }
 
   return (
-    <div class="new-room-form">
+    <div class="new-room-form" ref={containerRef}>
       <input
         autoFocus
         type="text"
@@ -103,8 +117,18 @@ function NewRoomForm({ sid }: { sid: string }) {
         placeholder="room タイトル (省略可, Shift+Enter で作成, Escape でキャンセル)"
         onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
         onKeyDown={onKeyDown}
-        onBlur={cancel}
       />
+      <button
+        type="button"
+        class="new-room-confirm-btn"
+        disabled={saving}
+        onClick={() => void confirm()}
+      >
+        作成
+      </button>
+      <button type="button" class="new-room-cancel-btn" disabled={saving} onClick={cancel}>
+        キャンセル
+      </button>
       {error && <span class="room-title-edit-error">{error}</span>}
     </div>
   );

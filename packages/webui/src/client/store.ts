@@ -206,6 +206,31 @@ export type Action =
       size: number;
     };
 
+/** Which room the sidebar's RoomList should highlight as "active" (kawaz
+ * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
+ * 「元の SESSION クリックしても遷移しない」ように見えていた). Root cause:
+ * `currentRoomId`/`currentSid` are two independently-updated fields —
+ * `applyLocatorChanged`'s room branch never clears `currentSid`, and its
+ * session/timeline branch never clears `currentRoomId` — deliberately, since
+ * each still backs its own per-view state (SessionTreeState caching, the
+ * room-mid anchor-scroll effect, etc.) across a view switch. But the
+ * sidebar's "which row is highlighted" question only has one right answer:
+ * whichever the locator (`state.view`) currently points at. These two
+ * selectors are the single source of truth for that — RoomList/SessionList
+ * must read active-ness through them, never through `currentRoomId`/
+ * `currentSid` directly. */
+export function selectedRoomId(state: AppState): string | null {
+  return state.view === "room" ? state.currentRoomId : null;
+}
+
+/** Sidebar SessionList counterpart to `selectedRoomId` — see its doc comment
+ * for the shared root-cause analysis. Active for both "session" (Files tab)
+ * and "timeline" views, since SessionRowItem's href picks whichever of the
+ * two a row leads to and both represent "this session is selected". */
+export function selectedSid(state: AppState): string | null {
+  return state.view === "session" || state.view === "timeline" ? state.currentSid : null;
+}
+
 function newRoom(id: string): RoomState {
   return {
     id,

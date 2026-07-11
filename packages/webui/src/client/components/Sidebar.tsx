@@ -1,5 +1,6 @@
 import { useMemo, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
+import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { RoomList } from "./RoomList.tsx";
@@ -83,7 +84,7 @@ export function Sidebar({ state }: { state: AppState }) {
           />{" "}
           <PeersRefreshButton />
         </h2>
-        <SessionList peers={sortedPeers} currentSid={state.currentSid} />
+        <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
       </section>
     </nav>
   );

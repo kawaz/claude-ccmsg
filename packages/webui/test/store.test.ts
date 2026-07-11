@@ -15,6 +15,8 @@ import {
   type AppState,
   initialState,
   reducer,
+  selectedRoomId,
+  selectedSid,
 } from "../src/client/store.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
@@ -980,5 +982,88 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
     // it either way (proving the two trees don't bleed into each other).
     expect(state.sessionTrees.has("sess-2")).toBe(false);
     expect(state.sessionTrees.size).toBe(1);
+  });
+});
+
+// selectedRoomId/selectedSid (kawaz 2026-07-12): the sidebar's RoomList and
+// SessionList must highlight exactly the row the locator (state.view)
+// currently points at, never a leftover id from a previously-visited view.
+// `currentRoomId`/`currentSid` themselves are NOT cleared on a cross-view
+// locator change (they keep backing per-view state like sessionTrees/anchor
+// scroll independently of each other) — these selectors are the one place
+// that derives "what's actually selected right now" from state.view, so
+// RoomList/SessionList read active-ness through them instead of the raw
+// fields directly.
+describe("reducer / selectedRoomId and selectedSid (selection one-source-of-truth)", () => {
+  test("room view: selectedRoomId is the room, selectedSid is null", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+    });
+    expect(selectedRoomId(state)).toBe("r1");
+    expect(selectedSid(state)).toBeNull();
+  });
+
+  test("session (Files) view: selectedSid is the sid, selectedRoomId is null", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: null },
+    });
+    expect(selectedSid(state)).toBe("sess-1");
+    expect(selectedRoomId(state)).toBeNull();
+  });
+
+  test("timeline view: selectedSid is the sid (same as session view), selectedRoomId is null", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sess-1" },
+    });
+    expect(selectedSid(state)).toBe("sess-1");
+    expect(selectedRoomId(state)).toBeNull();
+  });
+
+  // The regression this pins: selecting a session then a room used to leave
+  // SessionList's row for that session still highlighted, because
+  // currentSid was never cleared by the room-view branch of
+  // applyLocatorChanged. selectedSid must reflect the *current* view, not
+  // whatever sid was last visited.
+  test("session -> room: selectedSid clears even though currentSid is still retained on state", () => {
+    const onSession = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: null },
+    });
+    const onRoom = dispatch(onSession, {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+    });
+    // currentSid itself is untouched (still backs sess-1's cached tree) ...
+    expect(onRoom.currentSid).toBe("sess-1");
+    // ... but the selector — what RoomList/SessionList must actually read —
+    // reports no session selected while a room is the active view.
+    expect(selectedSid(onRoom)).toBeNull();
+    expect(selectedRoomId(onRoom)).toBe("r1");
+  });
+
+  // Symmetric case: room -> session leaves currentRoomId on state (so a
+  // later back-to-room doesn't need a refetch) but selectedRoomId must
+  // reflect the session view is now active, not the stale room.
+  test("room -> session: selectedRoomId clears even though currentRoomId is still retained on state", () => {
+    const onRoom = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+    });
+    const onSession = dispatch(onRoom, {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: null },
+    });
+    expect(onSession.currentRoomId).toBe("r1");
+    expect(selectedRoomId(onSession)).toBeNull();
+    expect(selectedSid(onSession)).toBe("sess-1");
+  });
+
+  test("initial state (no locator applied yet): both selectors report nothing selected", () => {
+    const state = initialState();
+    expect(selectedRoomId(state)).toBeNull();
+    expect(selectedSid(state)).toBeNull();
   });
 });
