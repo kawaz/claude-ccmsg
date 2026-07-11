@@ -13,3 +13,4 @@
 | [DR-0007](./DR-0007-path-installation.md) | Accepted | PATH への symlink インストールと自己更新 |
 | [DR-0008](./DR-0008-workspace-file-access.md) | Accepted | Workspace file access (fs_list / fs_read op) |
 | [DR-0009](./DR-0009-session-transcript-access.md) | Accepted | Session transcript access (transcript_read op) |
+| [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker) |
