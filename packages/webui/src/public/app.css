@@ -9,6 +9,19 @@
   --user-bg: #eef2ff;
   --danger: #dc2626;
   --warn: #b45309;
+  /* Syntax highlight token colors (FileViewer, highlight.ts). Keys match
+     speed-highlight's ShjToken names 1:1 via `.shj-syn-<type>`. */
+  --syn-kwd: #d73a49;
+  --syn-str: #22863a;
+  --syn-cmnt: #6a737d;
+  --syn-num: #005cc5;
+  --syn-func: #6f42c1;
+  --syn-type: #005cc5;
+  --syn-var: var(--fg);
+  --syn-oper: var(--fg-muted);
+  --syn-insert: #22863a;
+  --syn-deleted: #d73a49;
+  --syn-section: var(--accent);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,6 +36,17 @@
     --user-bg: #232a44;
     --danger: #f87171;
     --warn: #fbbf24;
+    --syn-kwd: #ff7b72;
+    --syn-str: #7ee787;
+    --syn-cmnt: #8b949e;
+    --syn-num: #79c0ff;
+    --syn-func: #d2a8ff;
+    --syn-type: #79c0ff;
+    --syn-var: var(--fg);
+    --syn-oper: var(--fg-muted);
+    --syn-insert: #7ee787;
+    --syn-deleted: #ff7b72;
+    --syn-section: var(--accent);
   }
 }
 
@@ -498,6 +522,54 @@ body {
 
 .viewer-text {
   white-space: pre;
+}
+
+.shj-syn-kwd {
+  color: var(--syn-kwd);
+}
+
+.shj-syn-str {
+  color: var(--syn-str);
+}
+
+.shj-syn-cmnt {
+  color: var(--syn-cmnt);
+  font-style: italic;
+}
+
+.shj-syn-num,
+.shj-syn-bool {
+  color: var(--syn-num);
+}
+
+.shj-syn-func {
+  color: var(--syn-func);
+}
+
+.shj-syn-class,
+.shj-syn-type {
+  color: var(--syn-type);
+}
+
+.shj-syn-var {
+  color: var(--syn-var);
+}
+
+.shj-syn-oper {
+  color: var(--syn-oper);
+}
+
+.shj-syn-insert {
+  color: var(--syn-insert);
+}
+
+.shj-syn-deleted,
+.shj-syn-err {
+  color: var(--syn-deleted);
+}
+
+.shj-syn-section {
+  color: var(--syn-section);
 }
 
 /* --- Timeline view: transcript jsonl (DR-0009) --- */

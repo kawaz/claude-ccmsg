@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@speed-highlight/core": "1.2.17",
     "hono": "^4.6.0",
     "preact": "^10.29.7"
   }
