@@ -1,4 +1,4 @@
-# webui UI 改善 4 Wave (v0.18.0 → v0.21.0) + 運用トラブル 2 件
+# webui UI 改善 6 Wave (v0.18.0 → v0.23.0) + 運用トラブル 2 件
 
 kawaz の UI 改善要望リスト (2026-07-11 夜) を ultracode (Workflow 3 本、実装 12 worker +
 Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。kawaz 就寝中の自律進行。
@@ -27,6 +27,18 @@ Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。
   システム由来 user メッセージの folding 包含 (境界 = 本物のユーザ発話 + assistant text)、
   セッションリストの status セクション化 (Busy/Idle/Done/未起動、バッジ撤去)、
   クリック時デフォルト Timeline、モバイルサイドバー 85vw
+- **v0.22.0 (Wave5/5b)**: Timeline 全 fold アイテムを「▶ 時刻 ラベル」1 行 summary に
+  統一 (task-notification 等も details 化)、チャット吹き出し化 (ユーザ右/アシスタント左/
+  ccmsg 第三者色 + msg/raw タブ、extractCcmsgMessages で teammate-message・
+  task-notification 内の type:"msg" を抽出)、fold ラベル「N thinkings + M items」、
+  fold 展開で thinking 自動 open + ja、[SYSTEM NOTIFICATION] バナー付き通知の
+  user-prompt 誤判定修正 (実 transcript E2E で発見)。フォームの [保存][作成] ボタン
+  (iPad)、フォーム外タップキャンセル (useDismissOnOutsidePointer、pointerdown+up
+  移動量判定でスクロール誤爆防止)、編集中アーカイブボタン非表示 (:has())、
+  SESSIONS/ROOMS 選択の hash 一元化 (selectedRoomId/selectedSid)
+- **v0.23.0 (Wave6)**: Files ツリー最上層の ws 層化 (dot 非表示、自 ws 先頭 + open)、
+  SESSIONS の ▷ 完全撤去、スプリッタのタッチヒット拡大 (pointer:coarse 限定 —
+  マウス環境で拡張するとツリーのスクロールバーを奪うことがレビューで判明)
 
 ## ハマり所 → 解決
 
