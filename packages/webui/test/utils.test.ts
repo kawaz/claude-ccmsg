@@ -5,13 +5,20 @@
 import { describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import {
+  clampPaneRatio,
   errorMessage,
   formatDuration,
+  isMarkdownPath,
   nextPeerSortKey,
   ownWorkspaceSegment,
+  paneRatioFromPointer,
+  parsePaneCollapse,
   repoRootLabel,
   sessionLabel,
+  SESSION_PANE_MAX_RATIO,
+  SESSION_PANE_MIN_RATIO,
   sortPeers,
+  togglePaneCollapse,
   type PeerSortKey,
 } from "../src/client/utils.ts";
 
@@ -237,5 +244,188 @@ describe("sortPeers", () => {
     const before = [...peers];
     sortPeers(peers, "name");
     expect(peers).toEqual(before);
+  });
+});
+
+describe("clampPaneRatio", () => {
+  // In-window values pass through unchanged — a persisted 40/60 split
+  // reloads to exactly 0.4, not "close to 0.4".
+  test("passes an in-range ratio through unchanged", () => {
+    expect(clampPaneRatio(0.4)).toBe(0.4);
+    expect(clampPaneRatio(0.5)).toBe(0.5);
+  });
+
+  // Boundary values are inclusive — dragging the splitter all the way to
+  // one edge should land on the constant the caller sees, not one epsilon
+  // inside, otherwise "dragged to min" and "one pixel past min" would
+  // persist differently after a reload.
+  test("keeps boundary values (min, max) as-is", () => {
+    expect(clampPaneRatio(SESSION_PANE_MIN_RATIO)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(clampPaneRatio(SESSION_PANE_MAX_RATIO)).toBe(SESSION_PANE_MAX_RATIO);
+  });
+
+  // Below-min / above-max clamp to the boundary — the splitter never lets
+  // the pointer push a pane past the usability floor/ceiling, and the
+  // localStorage loader uses the same clamp so a stale value from an old
+  // build with wider bounds shrinks to today's window without discarding
+  // it outright.
+  test("clamps below-min up and above-max down", () => {
+    expect(clampPaneRatio(0)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(clampPaneRatio(-0.5)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(clampPaneRatio(1)).toBe(SESSION_PANE_MAX_RATIO);
+    expect(clampPaneRatio(1.5)).toBe(SESSION_PANE_MAX_RATIO);
+  });
+
+  // Non-finite falls to min (see the doc comment on clampPaneRatio for
+  // why min rather than default): the caller feeds this parseFloat's
+  // result on a garbage/missing storage read, and picking either edge is
+  // less surprising than silently substituting the default and hiding
+  // the corruption.
+  test("returns min for non-finite input (NaN / Infinity)", () => {
+    expect(clampPaneRatio(Number.NaN)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(clampPaneRatio(Number.POSITIVE_INFINITY)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(clampPaneRatio(Number.NEGATIVE_INFINITY)).toBe(SESSION_PANE_MIN_RATIO);
+  });
+
+  // Caller-supplied custom bounds override the module defaults — used in
+  // tests, and in case a future callsite wants a different window (e.g. a
+  // narrower "tree hidden" mode). Verifies the arg plumbing, not just the
+  // default constants.
+  test("honors custom min/max bounds", () => {
+    expect(clampPaneRatio(0.5, 0.2, 0.8)).toBe(0.5);
+    expect(clampPaneRatio(0.1, 0.2, 0.8)).toBe(0.2);
+    expect(clampPaneRatio(0.9, 0.2, 0.8)).toBe(0.8);
+  });
+});
+
+describe("paneRatioFromPointer", () => {
+  // Straightforward midpoint case: pointer sits exactly halfway across a
+  // 1000px container starting at x=0, so the tree pane should occupy 50%.
+  test("midpoint of the container gives ratio 0.5", () => {
+    expect(paneRatioFromPointer(500, 0, 1000)).toBe(0.5);
+  });
+
+  // Container start offset (container isn't flush with viewport 0) — the
+  // pointer is at clientX 300 but the container starts at 100, so the
+  // split is at (300-100)/800 = 0.25 of the container's own width.
+  test("subtracts containerStart from pointer before dividing", () => {
+    expect(paneRatioFromPointer(300, 100, 800)).toBe(0.25);
+  });
+
+  // Pointer past either edge — the drag handler doesn't stop pointermove
+  // events at the container's edges (pointer capture keeps them coming
+  // even after leaving the element), so this function has to clamp the
+  // out-of-container drag to the usability window itself.
+  test("clamps a pointer past the container's edges", () => {
+    expect(paneRatioFromPointer(-100, 0, 1000)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(paneRatioFromPointer(2000, 0, 1000)).toBe(SESSION_PANE_MAX_RATIO);
+  });
+
+  // Zero / negative container size — a tab hidden mid-resize, or a
+  // display:none race — must not divide by zero. Falls back to min (see
+  // doc comment) so the caller gets a defined value it can still write
+  // to state without an NaN propagating into React style props.
+  test("returns min for zero or negative container size", () => {
+    expect(paneRatioFromPointer(500, 0, 0)).toBe(SESSION_PANE_MIN_RATIO);
+    expect(paneRatioFromPointer(500, 0, -100)).toBe(SESSION_PANE_MIN_RATIO);
+  });
+
+  // Axis-agnosticism check: the same function drives both horizontal
+  // (clientX / .left / .width) and vertical (clientY / .top / .height)
+  // splits — the CSS `flex-direction` swap at ≤720px is the only thing
+  // that changes. A vertical-style call with a 300px-tall container
+  // should compute the same fraction as an equivalent horizontal one.
+  test("axis-agnostic: works for vertical (Y) inputs the same way", () => {
+    expect(paneRatioFromPointer(150, 0, 300)).toBe(0.5);
+    expect(paneRatioFromPointer(90, 30, 300)).toBe(0.2);
+  });
+});
+
+describe("togglePaneCollapse", () => {
+  // Fold a currently-visible pane by clicking its own fold button.
+  test("collapses a visible pane when its own button is clicked", () => {
+    expect(togglePaneCollapse("none", "tree")).toBe("tree");
+    expect(togglePaneCollapse("none", "viewer")).toBe("viewer");
+  });
+
+  // Un-fold by clicking the same button again — the fold button doubles
+  // as a restore button, so the user doesn't have to hunt for a separate
+  // affordance when the pane is hidden.
+  test("restores when the same pane's button is clicked again", () => {
+    expect(togglePaneCollapse("tree", "tree")).toBe("none");
+    expect(togglePaneCollapse("viewer", "viewer")).toBe("none");
+  });
+
+  // Clicking the *other* pane's button while one is folded swaps
+  // directly to hiding the newly-targeted pane instead — no
+  // intermediate "restore both, then re-pick" step. Each button's
+  // glyph reads as its literal action ("hide tree" / "hide viewer"),
+  // so pressing the viewer's hide button always ends with the viewer
+  // hidden regardless of what was hidden before it. Restore-both is
+  // reached by clicking the folded pane's own button (the case above).
+  test("clicking the opposite pane's button while folded swaps directly", () => {
+    expect(togglePaneCollapse("tree", "viewer")).toBe("viewer");
+    expect(togglePaneCollapse("viewer", "tree")).toBe("tree");
+  });
+});
+
+describe("parsePaneCollapse", () => {
+  // Known values round-trip identity — the persisted string is the same
+  // enum value the code uses, so no translation table needed.
+  test("returns known values as-is", () => {
+    expect(parsePaneCollapse("none")).toBe("none");
+    expect(parsePaneCollapse("tree")).toBe("tree");
+    expect(parsePaneCollapse("viewer")).toBe("viewer");
+  });
+
+  // Anything else (missing key, corrupted, older build's enum) collapses
+  // to "none" — a first-time user must see both panes; hiding one by
+  // default because of an unrecognized value would be a bad first
+  // impression.
+  test("falls back to none for null / unknown / older values", () => {
+    expect(parsePaneCollapse(null)).toBe("none");
+    expect(parsePaneCollapse("")).toBe("none");
+    expect(parsePaneCollapse("both")).toBe("none");
+    expect(parsePaneCollapse("TREE")).toBe("none"); // case-sensitive on purpose: matches saveKey exactly
+  });
+});
+
+describe("isMarkdownPath", () => {
+  // Canonical extensions — both DR-0010's rendering path and casual
+  // ".markdown"-suffix repos should trigger the preview toggle.
+  test("accepts .md and .markdown as canonical markdown extensions", () => {
+    expect(isMarkdownPath("README.md")).toBe(true);
+    expect(isMarkdownPath("docs/DESIGN.markdown")).toBe(true);
+    expect(isMarkdownPath("packages/webui/README.md")).toBe(true);
+  });
+
+  // Case-insensitive because case-insensitive filesystems (macOS default,
+  // Windows) commonly ship "README.MD" — surprising the viewer with "not
+  // markdown here" because of casing would be a bug, not a feature.
+  test("accepts uppercase / mixed-case extensions", () => {
+    expect(isMarkdownPath("README.MD")).toBe(true);
+    expect(isMarkdownPath("NOTES.Md")).toBe(true);
+    expect(isMarkdownPath("README.MARKDOWN")).toBe(true);
+  });
+
+  // Similar-looking extensions must be rejected: .mdx is JSX-embedded and
+  // the safe walker in markdown-view.tsx doesn't render its JSX blocks
+  // correctly; .txt is plain text (renders as pre already); .md.bak is a
+  // backup file, not markdown itself.
+  test("rejects mdx / txt / backup / no-extension files", () => {
+    expect(isMarkdownPath("README.mdx")).toBe(false);
+    expect(isMarkdownPath("NOTES.txt")).toBe(false);
+    expect(isMarkdownPath("README.md.bak")).toBe(false);
+    expect(isMarkdownPath("Makefile")).toBe(false);
+    expect(isMarkdownPath("")).toBe(false);
+  });
+
+  // Dotfile edge: a bare ".md" (no name-part) is technically a hidden
+  // file whose whole name is the extension. Treating it as markdown is
+  // fine — no realistic dotfile is named exactly ".md", and if one is,
+  // rendering it as markdown does no harm (the toggle is opt-in from the
+  // viewer's default code mode).
+  test("bare .md filename is treated as markdown", () => {
+    expect(isMarkdownPath(".md")).toBe(true);
   });
 });

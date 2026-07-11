@@ -188,3 +188,103 @@ export function repoRootLabel(peer: PeerInfo): string | null {
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+// --- SessionView pane splitter (FileTree / FileViewer) --- //
+
+/** Lower/upper clamp for the tree-pane fraction of the session-panes flex
+ * container. Values chosen so neither pane can shrink to a hairline: at the
+ * lower bound the tree still shows at least one full row of names, at the
+ * upper bound the viewer's line-number gutter + a chunk of the first line
+ * still fit. Not a user preference — a hard usability floor/ceiling that
+ * the drag handler and the persisted-ratio loader both funnel through. */
+export const SESSION_PANE_MIN_RATIO = 0.1;
+export const SESSION_PANE_MAX_RATIO = 0.9;
+
+/** Default first-pane (tree) fraction when nothing is persisted. Roughly
+ * matches the pre-splitter fixed 280px tree width at a ~1000px viewport
+ * (280/1000 = 0.28) so the first render after upgrading doesn't jump. */
+export const SESSION_PANE_DEFAULT_RATIO = 0.28;
+
+/** Clamps a pane-split fraction into the usability window. Kept as a plain
+ * `[min, max]` clamp (not a bias-toward-default) so a persisted ratio the
+ * user deliberately dragged near a limit reloads exactly where they left
+ * it. NaN falls through to `min` because callers get NaN from `parseFloat`
+ * on garbage localStorage values (private mode wipe, cross-origin
+ * migration, etc.) — snapping to the closer edge of the range would just
+ * silently pick one for them. */
+export function clampPaneRatio(
+  ratio: number,
+  min: number = SESSION_PANE_MIN_RATIO,
+  max: number = SESSION_PANE_MAX_RATIO,
+): number {
+  if (!Number.isFinite(ratio)) return min;
+  if (ratio < min) return min;
+  if (ratio > max) return max;
+  return ratio;
+}
+
+/** Turns a pointer position (clientX for horizontal splits, clientY for
+ * vertical / mobile stack) into the new tree-pane fraction. Callers pass
+ * the container's own `bounding{Left,Top}` and `.{width,height}` — this
+ * function is deliberately axis-agnostic so the same code path drives both
+ * the desktop side-by-side layout and the 720px-and-below column layout
+ * (the CSS `flex-direction` swap is the only thing that changes). Returns
+ * `min` when the container has collapsed to zero size (mid-resize, tab
+ * hidden) rather than dividing by zero. */
+export function paneRatioFromPointer(
+  pointerPos: number,
+  containerStart: number,
+  containerSize: number,
+  min: number = SESSION_PANE_MIN_RATIO,
+  max: number = SESSION_PANE_MAX_RATIO,
+): number {
+  if (containerSize <= 0) return min;
+  return clampPaneRatio((pointerPos - containerStart) / containerSize, min, max);
+}
+
+/** Which pane (if any) is collapsed out of view via the splitter's
+ * fold-buttons. Kept as a single enum instead of two independent booleans
+ * because collapsing both panes at once is never a valid state (nothing
+ * would be visible) — an enum makes that impossible by construction. */
+export type PaneCollapse = "none" | "tree" | "viewer";
+
+/** Fold-button click handler for the tree/viewer panes. Three cases:
+ *   - target matches the currently-folded pane (user clicked "restore
+ *     me" on the pane whose button doubles as the un-fold affordance) →
+ *     restore both panes (goes to "none")
+ *   - nothing is folded → collapse the target pane
+ *   - the OTHER pane is currently folded → swap directly to hiding
+ *     `target` instead (single-click swap)
+ * The direct swap keeps each button's meaning literal to its glyph
+ * ("◀" = hide tree, "▶" = hide viewer): pressing "hide X" always ends
+ * with X hidden, no matter what was hidden before. A two-click
+ * "un-fold, then pick again" dance is more surprising than useful here
+ * — restoring both panes is done by clicking the folded pane's own
+ * button (the first case above). */
+export function togglePaneCollapse(current: PaneCollapse, target: "tree" | "viewer"): PaneCollapse {
+  return current === target ? "none" : target;
+}
+
+/** Parses a persisted pane collapse string. Anything that isn't one of the
+ * three known values (missing key, private mode read failure, corrupted
+ * value from an older build with a different enum) falls back to "none" so
+ * a brand-new user always sees both panes on first load. */
+export function parsePaneCollapse(raw: string | null): PaneCollapse {
+  if (raw === "tree" || raw === "viewer" || raw === "none") return raw;
+  return "none";
+}
+
+/** File-extension predicate for FileViewer's Markdown preview toggle. Only
+ * `.md` and `.markdown` are accepted — deliberately not `.mdx` (JSX
+ * embedded, not a plain markdown superset the safe walker in
+ * markdown-view.tsx renders correctly) and not `.txt` (plain text isn't
+ * markdown, users would be surprised to see it get list/heading treatment).
+ * Case-insensitive because README.MD on case-insensitive filesystems is
+ * common. Extension must be the actual last segment past the final dot;
+ * `foo.md.bak` is a backup file, not markdown. */
+export function isMarkdownPath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) return false;
+  const ext = path.slice(dot).toLowerCase();
+  return ext === ".md" || ext === ".markdown";
+}

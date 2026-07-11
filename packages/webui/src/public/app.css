@@ -409,9 +409,90 @@ body {
   min-height: 0;
 }
 
+/* Splitter-managed pane wrappers (FilesPanes.tsx). The tree/viewer wrappers
+ * carry the flex-basis derived from the persisted ratio; the inner
+ * .file-tree / .file-viewer stay layout-agnostic so they render the same
+ * way whether they're 280px or 60% of the session-panes container. */
+.session-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.session-pane-tree {
+  /* The tree wrapper carries the persisted ratio's flex-basis inline
+   * (see FilesPanes.tsx). Left border-right on .file-tree below for the
+   * seam between panes — kept there so the fold-to-zero state still
+   * shows a hairline transition rather than a floating splitter. */
+}
+
+/* Drag handle between tree and viewer. Deliberately narrow (4px) plus a
+ * transparent margin extending the hit area so touch users can grab it
+ * without pixel-perfect aim. The buttons inside sit on top and get their
+ * own hit area via pointerdown-stopPropagation in FilesPanes.tsx. */
+.session-splitter {
+  flex: 0 0 4px;
+  position: relative;
+  background: var(--border);
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* touch-action:none tells the browser not to interpret pointer drags
+   * on this element as scroll gestures — otherwise mobile Safari would
+   * eat the drag and the ratio would never update on touch devices. */
+  touch-action: none;
+  user-select: none;
+}
+
+.session-splitter-folded {
+  /* When a pane is folded the splitter still renders (as the restore
+   * affordance) but must not read as draggable — a col-resize cursor on
+   * a bar that ignores drags would be a lie. */
+  cursor: default;
+}
+
+.session-splitter-btn {
+  /* Fold/restore buttons live INSIDE the splitter track. Positioned
+   * absolutely so the two buttons can overlap the 4px track without
+   * shoving each other or bloating the track width. On the desktop
+   * row layout the two buttons stack vertically inside the vertical
+   * track (tree above, viewer below); on the ≤720px column layout
+   * the media query below simply re-anchors them via `left` so they
+   * sit side-by-side inside the now-horizontal track (tree on the
+   * left = top pane, viewer on the right = bottom pane). No CSS
+   * `transform: rotate` is applied — the arrow glyphs stay ◀/▶ on
+   * both layouts, and the semantic meaning is carried by the
+   * per-button title/aria-label set in FilesPanes.tsx. */
+  position: absolute;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.session-splitter-btn-tree {
+  top: calc(50% - 1.1rem);
+}
+
+.session-splitter-btn-viewer {
+  top: calc(50% + 0.2rem);
+}
+
+.session-splitter-btn:hover {
+  color: var(--fg);
+  background: var(--bg);
+}
+
 .file-tree {
-  width: 280px;
-  flex-shrink: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
   border-right: 1px solid var(--border);
   padding: 0.5rem 0;
@@ -501,11 +582,50 @@ body {
 }
 
 .file-viewer {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: auto;
+}
+
+/* Preview/Code toggle in the viewer header (FileViewer.tsx). Pushed to the
+ * right edge of the header via margin-left:auto — same pattern as
+ * .tl-user-nav in the timeline toolbar — so it stays at the far end no
+ * matter how long the path label or the truncated-banner text gets. */
+.viewer-mode-toggle {
+  margin-left: auto;
+  display: flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.viewer-mode-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.viewer-mode-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* Preview body: MarkdownView already emits a `.md` wrapper with all its
+ * typography rules (see the `.md ...` block above), so the preview
+ * container only needs padding + scrolling. Keeps the preview visually
+ * distinct from the code viewer's monospace gutter. */
+.viewer-preview {
+  padding: 0.75rem 1rem;
+  overflow: auto;
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .viewer-header {
@@ -948,8 +1068,32 @@ body {
 
   .file-tree {
     width: 100%;
-    max-height: 40vh;
+    /* max-height dropped: the flex-basis on .session-pane-tree (set
+     * inline from the persisted ratio) is now the source of truth for
+     * how tall the tree pane gets in column layout — same fraction as
+     * the desktop row layout, just measured along the Y axis. */
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  /* Splitter swaps to a horizontal bar in column layout: 4px tall (not
+   * wide), row-resize cursor, buttons re-anchored to left/right of the
+   * track instead of top/bottom. The pointer-axis logic in
+   * FilesPanes.tsx reads flex-direction from getComputedStyle, so the
+   * drag automatically follows this row/column layout swap with no JS
+   * branch here. */
+  .session-splitter {
+    flex-basis: 4px;
+    cursor: row-resize;
+  }
+
+  .session-splitter-btn-tree {
+    top: auto;
+    left: calc(50% - 2.5rem);
+  }
+
+  .session-splitter-btn-viewer {
+    top: auto;
+    left: calc(50% + 0.5rem);
   }
 }

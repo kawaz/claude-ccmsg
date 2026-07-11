@@ -5,8 +5,7 @@
 // switching tabs never refetches what's already loaded.
 import type { AppState, SessionTreeState } from "../store.ts";
 import { sessionHref, timelineHref } from "../locator.ts";
-import { FileTree } from "./FileTree.tsx";
-import { FileViewer } from "./FileViewer.tsx";
+import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 
 const EMPTY_TREE: SessionTreeState = {
@@ -68,10 +67,7 @@ export function SessionView({ state }: { state: AppState }) {
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )
       ) : (
-        <div class="session-panes">
-          <FileTree sid={sid} tree={tree} peer={peer} />
-          <FileViewer sid={sid} tree={tree} />
-        </div>
+        <FilesPanes sid={sid} tree={tree} peer={peer} />
       )}
     </main>
   );

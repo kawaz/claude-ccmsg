@@ -9,13 +9,14 @@ import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { errorMessage } from "../utils.ts";
+import { errorMessage, isMarkdownPath } from "../utils.ts";
 import {
   detectLanguage,
   isHighlightEligible,
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
+import { MarkdownView } from "../markdown-view.tsx";
 
 function splitLines(content: string): string[] {
   const lines = content === "" ? [] : content.split("\n");
@@ -68,6 +69,20 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
   const [highlighted, setHighlighted] = useState<{ path: string; lines: HighlightSpan[][] } | null>(
     null,
   );
+
+  // Markdown preview toggle (kawaz spec): only offered for .md / .markdown
+  // paths (isMarkdownPath), default is "code" so a new file always opens
+  // in the same line-numbered viewer users expect. Reset to "code" on
+  // every path change — leaving "preview" sticky would render the next
+  // file (which might not even be markdown) as an empty/garbled preview
+  // for one frame before the toggle re-hid itself, which is worse than a
+  // small extra click when navigating md→md. HTML preview is deliberately
+  // not implemented (see comment on the toggle-button block below).
+  const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  const markdownEligible = path != null && isMarkdownPath(path);
+  useEffect(() => {
+    setViewMode("code");
+  }, [path]);
   useEffect(() => {
     if (!highlightEligible || !res || !lang || !path) return;
     let cancelled = false;
@@ -118,6 +133,7 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
 
   const lines = splitLines(res.content);
   const highlightedLines = highlighted && highlighted.path === path ? highlighted.lines : null;
+  const showPreview = markdownEligible && viewMode === "preview";
 
   return (
     <div class="file-viewer">
@@ -129,8 +145,49 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
             bytes)
           </span>
         ) : null}
+        {/* Preview/Code toggle: rendered only for markdown-eligible paths
+         * (isMarkdownPath) so non-markdown files don't get a dead button.
+         * Deliberately not offered for .html (kawaz decision, security
+         * scope: an HTML preview would need a sandbox we haven't built
+         * yet — a separate-origin iframe / CSP scaffolding is the topic
+         * of a future issue, and shipping raw innerHTML in the same
+         * origin as the daemon UI is not acceptable). */}
+        {markdownEligible ? (
+          <div class="viewer-mode-toggle" role="tablist" aria-label="表示モード">
+            <button
+              type="button"
+              class={"viewer-mode-btn" + (viewMode === "code" ? " active" : "")}
+              role="tab"
+              aria-selected={viewMode === "code"}
+              onClick={() => setViewMode("code")}
+            >
+              コード
+            </button>
+            <button
+              type="button"
+              class={"viewer-mode-btn" + (viewMode === "preview" ? " active" : "")}
+              role="tab"
+              aria-selected={viewMode === "preview"}
+              onClick={() => setViewMode("preview")}
+            >
+              プレビュー
+            </button>
+          </div>
+        ) : null}
       </header>
-      {lines.length === 0 ? (
+      {showPreview ? (
+        // Feed the full loaded content to MarkdownView (which parses and
+        // walks mdast → JSX, DR-0010). For truncated files, that's the
+        // head bytes the daemon actually sent — the banner above already
+        // tells the user why the tail is missing, so rendering "the
+        // markdown of the head" is more useful than refusing to preview.
+        // The trailing chunk may parse as an unclosed fence or half a
+        // paragraph; that's a visible cue matching the banner, not a
+        // silent truncation.
+        <div class="viewer-preview">
+          <MarkdownView source={res.content} />
+        </div>
+      ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>
       ) : (
         <pre class="viewer-body">
