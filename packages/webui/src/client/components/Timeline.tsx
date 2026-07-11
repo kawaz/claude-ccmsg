@@ -2,22 +2,32 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { useEffect, useMemo } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TimelineState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { errorMessage, formatClockTime } from "../utils.ts";
 import {
+  isUserTextTurn,
   lineByteOffsets,
   parseTranscriptLine,
+  scrollPositionToUserTurnIndex,
   type ParsedLine,
   type Segment,
 } from "../transcript-model.ts";
+import { MarkdownView } from "../markdown-view.tsx";
 
 function SegmentView({ segment }: { segment: Segment }) {
   switch (segment.kind) {
     case "text":
-      return <div class={"tl-text tl-text-" + segment.role}>{segment.text}</div>;
+      // Markdown rendering (DR-0010) is assistant-only: a user turn's text
+      // is what the human actually typed, so it's shown verbatim rather than
+      // interpreted as markdown syntax.
+      return (
+        <div class={"tl-text tl-text-" + segment.role}>
+          {segment.role === "assistant" ? <MarkdownView source={segment.text} /> : segment.text}
+        </div>
+      );
     case "thinking":
       return (
         <details class="tl-fold">
@@ -49,7 +59,18 @@ function SegmentView({ segment }: { segment: Segment }) {
   }
 }
 
-function LineView({ line }: { line: ParsedLine }) {
+function LineView({
+  line,
+  offsetKey,
+  registerUserTurnRef,
+}: {
+  line: ParsedLine;
+  offsetKey: number;
+  // Registers/unregisters this line's root element for a user-text turn only
+  // (isUserTextTurn) — the "👤 N/M" nav indicator's DOM-measurement side, see
+  // Timeline()'s userTurnRefs. No-op for every other line kind.
+  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+}) {
   if (line.kind === "broken") {
     return (
       <div class="tl-line tl-broken">
@@ -68,8 +89,12 @@ function LineView({ line }: { line: ParsedLine }) {
       </details>
     );
   }
+  const isUserText = isUserTextTurn(line);
   return (
-    <div class={"tl-line tl-turn tl-turn-" + line.role}>
+    <div
+      class={"tl-line tl-turn tl-turn-" + line.role}
+      ref={isUserText ? (el) => registerUserTurnRef(offsetKey, el) : undefined}
+    >
       {line.ts ? <span class="tl-time">{formatClockTime(line.ts)}</span> : null}
       <div class="tl-segments">
         {line.segments.length === 0 ? (
@@ -159,6 +184,104 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     [timeline.start, timeline.lines],
   );
 
+  // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
+  // top/bottom of the loaded transcript and to the previous/next user-text
+  // turn, plus a live "current position" counter. ---
+
+  // Preact-key (byte offset, stable across prepend) of every currently-loaded
+  // user-text turn, in document order — the "M" denominator and the index
+  // space goPrevUserTurn/goNextUserTurn/scrollPositionToUserTurnIndex work in.
+  const userTurnKeys = useMemo(
+    () =>
+      parsed
+        .map((line, i) => (isUserTextTurn(line) ? offsets[i] : null))
+        .filter((k): k is number => k !== null),
+    [parsed, offsets],
+  );
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // key (byte offset) -> mounted DOM node for each user-text turn, populated
+  // by LineView's ref callback. Only ever read for keys currently in
+  // userTurnKeys; entries for turns dropped by a "更新" (replace) reload are
+  // pruned below rather than left to leak.
+  const userTurnRefs = useRef(new Map<number, HTMLDivElement>());
+  const registerUserTurnRef = useCallback((key: number, el: HTMLDivElement | null) => {
+    if (el) userTurnRefs.current.set(key, el);
+    else userTurnRefs.current.delete(key);
+  }, []);
+
+  // 1-based "you're currently past turn N" count (0 = scrolled above the
+  // first loaded user turn). Recomputed on scroll (rAF-throttled) and
+  // whenever the loaded lines change (older-load/refresh shift both the
+  // denominator and which turn is "current").
+  const [currentUserIdx, setCurrentUserIdx] = useState(0);
+
+  const recomputeCurrentUserIdx = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    const tops = userTurnKeys
+      .map((key) => userTurnRefs.current.get(key))
+      .filter((el): el is HTMLDivElement => el != null)
+      .map((el) => el.getBoundingClientRect().top - containerTop + container.scrollTop);
+    setCurrentUserIdx(scrollPositionToUserTurnIndex(tops, container.scrollTop));
+  }, [userTurnKeys]);
+
+  useEffect(() => {
+    // Drop refs for turns that no longer exist post-reload (a "更新" replace
+    // swaps in an entirely new key set) so the Map doesn't accumulate
+    // detached nodes across repeated refreshes.
+    const validKeys = new Set(userTurnKeys);
+    for (const key of userTurnRefs.current.keys()) {
+      if (!validKeys.has(key)) userTurnRefs.current.delete(key);
+    }
+
+    const container = scrollRef.current;
+    if (!container) return;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        recomputeCurrentUserIdx();
+        ticking = false;
+      });
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    // Recompute once immediately — otherwise the indicator stays "0/M" until
+    // the first scroll event fires (e.g. right after the initial tail load).
+    recomputeCurrentUserIdx();
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [userTurnKeys, recomputeCurrentUserIdx]);
+
+  function scrollToTop() {
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function scrollToBottom() {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }
+
+  function scrollToUserTurn(oneBasedIdx: number) {
+    const key = userTurnKeys[oneBasedIdx - 1];
+    if (key === undefined) return;
+    userTurnRefs.current.get(key)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // No "turn 0" — prev is only meaningful once we've passed at least a
+  // second turn (currentUserIdx <= 1 means we're at/before the first).
+  function goPrevUserTurn() {
+    if (currentUserIdx <= 1) return;
+    scrollToUserTurn(currentUserIdx - 1);
+  }
+
+  function goNextUserTurn() {
+    if (currentUserIdx >= userTurnKeys.length) return;
+    scrollToUserTurn(currentUserIdx + 1);
+  }
+
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
     return (
       <div class="timeline-view">
@@ -168,7 +291,7 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   }
 
   return (
-    <div class="timeline-view">
+    <div class="timeline-view" ref={scrollRef}>
       <div class="tl-toolbar">
         <button
           type="button"
@@ -180,6 +303,33 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
         <button type="button" disabled={timeline.status === "loading"} onClick={refresh}>
           更新
         </button>
+        <button type="button" onClick={scrollToTop} title="最上部へ">
+          ⤒
+        </button>
+        <button type="button" onClick={scrollToBottom} title="最下部へ">
+          ⤓
+        </button>
+        <div class="tl-user-nav">
+          <span class="tl-user-nav-count">
+            👤 {currentUserIdx}/{userTurnKeys.length}
+          </span>
+          <button
+            type="button"
+            disabled={currentUserIdx <= 1}
+            onClick={goPrevUserTurn}
+            title="前のユーザ発言へ"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            disabled={currentUserIdx >= userTurnKeys.length}
+            onClick={goNextUserTurn}
+            title="次のユーザ発言へ"
+          >
+            ↓
+          </button>
+        </div>
       </div>
       {timeline.status === "error" ? (
         <div class="tl-error">
@@ -193,7 +343,14 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           {parsed.length === 0 ? (
             <p class="tl-empty">(空の transcript)</p>
           ) : (
-            parsed.map((line, i) => <LineView key={offsets[i]} line={line} />)
+            parsed.map((line, i) => (
+              <LineView
+                key={offsets[i]}
+                line={line}
+                offsetKey={offsets[i]}
+                registerUserTurnRef={registerUserTurnRef}
+              />
+            ))
           )}
         </div>
       )}

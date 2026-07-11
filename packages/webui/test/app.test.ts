@@ -22,9 +22,13 @@ describe("createWebuiApp", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("javascript");
     const body = await res.text();
-    // preact is bundled in (no external <script> import), and the client's
-    // own connect-on-load call is present in the output.
-    expect(body).toContain("preact");
+    // The client (preact runtime included) is bundled inline. The bundle is
+    // minified, so identifier names like "preact" don't survive — assert on
+    // string literals that do: the client-only localStorage since-key and the
+    // hashchange listener registration. (A "no import statements" negative
+    // check is deliberately absent: minified code legitimately contains
+    // `from "` / `import(`-shaped byte sequences inside string literals.)
+    expect(body).toContain("ccmsg.since");
     expect(body).toContain("hashchange");
   });
 

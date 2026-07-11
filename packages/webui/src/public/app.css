@@ -7,6 +7,7 @@
   --accent: #2563eb;
   --accent-fg: #ffffff;
   --user-bg: #eef2ff;
+  --user-bubble-bg: #dcf8c6;
   --danger: #dc2626;
   --warn: #b45309;
   /* Syntax highlight token colors (FileViewer, highlight.ts). Keys match
@@ -34,6 +35,7 @@
     --accent: #5b8dfd;
     --accent-fg: #0b1020;
     --user-bg: #232a44;
+    --user-bubble-bg: #1f4023;
     --danger: #f87171;
     --warn: #fbbf24;
     --syn-kwd: #ff7b72;
@@ -659,6 +661,24 @@ body {
   cursor: default;
 }
 
+/* Right-aligned "👤 N/M ↑ ↓" user-turn nav (kawaz spec) — pushed to the
+ * toolbar's far end via margin-left: auto rather than a separate flex
+ * justify-content split, so it stays put regardless of how many buttons
+ * precede it. */
+.tl-user-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.tl-user-nav-count {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .tl-lines {
   display: flex;
   flex-direction: column;
@@ -679,12 +699,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.tl-turn-user {
-  background: var(--user-bg);
-  align-self: flex-start;
-  max-width: 90%;
-}
-
 .tl-turn-assistant {
   background: var(--bg-alt);
   max-width: 90%;
@@ -698,6 +712,134 @@ body {
 }
 
 .tl-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* User chat bubble (kawaz spec): only the actual text segment of a user turn
+ * bubbles right — a tool_result carried on the same "user"-typed line (see
+ * transcript-model.ts's isUserTextTurn doc) renders through its own
+ * .tl-fold, never through .tl-text, so it never gets this treatment. Kept to
+ * a minimal padding/max-width so real chat turns don't eat vertical space —
+ * per kawaz: "無駄な空白を増やし過ぎて画面の情報量減らす方向はやり過ぎNG". */
+.tl-text-user {
+  align-self: flex-end;
+  background: var(--user-bubble-bg);
+  border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
+  padding: 0.3rem 0.55rem;
+  max-width: 85%;
+  width: fit-content;
+}
+
+/* --- Markdown rendering (DR-0010): assistant text segments only, walked
+ * from mdast into JSX by markdown-view.tsx. Kept compact (small margins) to
+ * match kawaz's "無駄な空白を増やし過ぎない" spec for the timeline — this is
+ * a chat transcript, not a rendered document. */
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0.2rem 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  margin: 0.4rem 0 0.2rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.md h1 {
+  font-size: 1.15rem;
+}
+.md h2 {
+  font-size: 1.08rem;
+}
+.md h3 {
+  font-size: 1.02rem;
+}
+.md h4,
+.md h5,
+.md h6 {
+  font-size: 0.95rem;
+}
+
+.md ul,
+.md ol {
+  margin: 0.2rem 0;
+  padding-left: 1.3rem;
+}
+.md li {
+  margin: 0.1rem 0;
+}
+
+.md blockquote {
+  margin: 0.3rem 0;
+  padding: 0.15rem 0.6rem;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.md a {
+  color: var(--accent);
+}
+
+/* Image references (DR-0010: never auto-fetched, shown as a clickable link
+ * instead — see markdown-view.tsx's "image" case doc comment). */
+.md-image-link {
+  color: var(--fg-muted);
+}
+
+.md-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: var(--bg-alt);
+  padding: 0.05rem 0.3rem;
+  border-radius: 0.25rem;
+}
+
+.md-code {
+  margin: 0.3rem 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-alt);
+  border-radius: 0.4rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+.md-code code {
+  white-space: pre;
+}
+
+.md table {
+  border-collapse: collapse;
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+}
+.md th,
+.md td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.5rem;
+  text-align: left;
+}
+.md th {
+  background: var(--bg-alt);
+}
+
+/* Raw HTML mdast nodes (DR-0010): never parsed/executed, shown as their
+ * literal source text so information isn't dropped — see markdown-view.tsx's
+ * "html" case doc comment. */
+.md-raw-html {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  color: var(--fg-muted);
   white-space: pre-wrap;
   word-break: break-word;
 }

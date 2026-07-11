@@ -154,6 +154,42 @@ export function lineByteOffsets(start: number, lines: string[]): number[] {
   return offsets;
 }
 
+/**
+ * True for a real human utterance — a "user" turn holding at least one text
+ * segment — as opposed to a tool_result-only user turn (Anthropic API
+ * convention wraps tool results in a user-typed line, see the
+ * parseTranscriptLine/user-turns test above) or any non-turn line. Shared by
+ * Timeline.tsx's chat-bubble styling and its "👤 N/M" user-turn nav counter,
+ * so a turn can't count toward one and not the other — kawaz's spec ties both
+ * to the same "ユーザ発言 (tool_result は除く)" definition.
+ */
+export function isUserTextTurn(line: ParsedLine): boolean {
+  return (
+    line.kind === "turn" && line.role === "user" && line.segments.some((s) => s.kind === "text")
+  );
+}
+
+/**
+ * Given the vertical pixel offsets (ascending, top-to-bottom) of every
+ * currently-loaded user-text turn inside the Timeline's scroll container, and
+ * the container's current `scrollTop`, returns how many of those turns sit at
+ * or above the current scroll position — the 1-based "you're currently past
+ * turn N" count behind the toolbar's "👤 N/M" indicator (Timeline.tsx).
+ * Returns 0 when scrolled above every turn (or none are loaded).
+ *
+ * Turning DOM refs into `topOffsets` (impure, `getBoundingClientRect`) lives
+ * in Timeline.tsx; this is the pure, unit-testable half of that calculation
+ * per kawaz's spec ("位置算出ロジックは可能な範囲で純関数に切り出して単体テスト").
+ */
+export function scrollPositionToUserTurnIndex(topOffsets: number[], scrollTop: number): number {
+  let idx = 0;
+  for (const top of topOffsets) {
+    if (top > scrollTop) break;
+    idx++;
+  }
+  return idx;
+}
+
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into
  * a renderable event. Never throws — a malformed line becomes `BrokenLine`,
  * an unrecognized-but-valid shape becomes `MetaLine`/`unknown-segment`. */

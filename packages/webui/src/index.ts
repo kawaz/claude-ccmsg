@@ -32,6 +32,10 @@ async function bundleClient(): Promise<string> {
     entrypoints: [CLIENT_ENTRY.pathname],
     target: "browser",
     tsconfig: CLIENT_TSCONFIG.pathname,
+    // Serve-time build ships to a real browser, so minify like a production
+    // bundle: with @mizchi/markdown's unminified 456KB parser on board this is
+    // the difference between ~74KB and ~40KB gzip for the whole app.js.
+    minify: true,
     throw: false,
   });
   if (!result.success) {

@@ -7,8 +7,11 @@
 // coverage.
 import { describe, expect, test } from "bun:test";
 import {
+  isUserTextTurn,
   lineByteOffsets,
   parseTranscriptLine,
+  scrollPositionToUserTurnIndex,
+  type ParsedLine,
   type Segment,
 } from "../src/client/transcript-model.ts";
 
@@ -289,5 +292,116 @@ describe("parseTranscriptLine / turn with empty content array", () => {
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
     expect(line.segments).toEqual([]);
+  });
+});
+
+// isUserTextTurn (webui Timeline UI improvement, kawaz spec): shared
+// definition of "ユーザ発言" for both the chat-bubble styling and the
+// "👤 N/M" nav counter — a tool_result-only "user" line must count as neither.
+describe("isUserTextTurn", () => {
+  test("user turn with a text segment -> true", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+    );
+    expect(isUserTextTurn(line)).toBe(true);
+  });
+
+  // The Anthropic-API tool_result-wrapping convention (see the
+  // parseTranscriptLine/user-turns describe block above): mechanical, must
+  // not count.
+  test("user turn with only a tool_result segment -> false", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "42 files" }],
+        },
+      }),
+    );
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  // Mixed content (text alongside a tool_result block, seen in practice for
+  // API-shaped turns): the presence of *any* text segment is enough to count
+  // as a real utterance — "tool_result は除く" excludes the tool_result
+  // segment from bubble styling, not the whole turn from the counter.
+  test("user turn with text + tool_result -> true (has at least one text segment)", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "tu_1", content: "ok" },
+            { type: "text", text: "thanks" },
+          ],
+        },
+      }),
+    );
+    expect(isUserTextTurn(line)).toBe(true);
+  });
+
+  test("user turn with zero segments -> false", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "" } }),
+    );
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  test("assistant turn with a text segment -> false (not a user turn)", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+      }),
+    );
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  test("meta line -> false", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "queue-operation", operation: "dequeue" }),
+    );
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  test("broken line -> false", () => {
+    const line: ParsedLine = parseTranscriptLine("{not json");
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+});
+
+// scrollPositionToUserTurnIndex (webui Timeline UI improvement, kawaz spec):
+// the pure "topOffsets + scrollTop -> index" half of the "👤 N/M" nav
+// indicator; DOM measurement (Timeline.tsx) supplies topOffsets.
+describe("scrollPositionToUserTurnIndex", () => {
+  test("no loaded user turns -> 0 regardless of scrollTop", () => {
+    expect(scrollPositionToUserTurnIndex([], 0)).toBe(0);
+    expect(scrollPositionToUserTurnIndex([], 9999)).toBe(0);
+  });
+
+  test("scrolled above the first turn -> 0", () => {
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 50)).toBe(0);
+  });
+
+  // "at or above" is inclusive of an exact match — scrolled exactly to a
+  // turn's top counts that turn as reached.
+  test("scrollTop exactly at a turn's offset counts that turn", () => {
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 100)).toBe(1);
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 300)).toBe(2);
+  });
+
+  test("scrollTop strictly between two offsets counts only the earlier one", () => {
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 299)).toBe(1);
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 301)).toBe(2);
+  });
+
+  test("scrolled past the last turn -> full count", () => {
+    expect(scrollPositionToUserTurnIndex([100, 300, 500], 9999)).toBe(3);
+  });
+
+  test("single loaded turn, scrolled to it -> 1", () => {
+    expect(scrollPositionToUserTurnIndex([200], 200)).toBe(1);
   });
 });
