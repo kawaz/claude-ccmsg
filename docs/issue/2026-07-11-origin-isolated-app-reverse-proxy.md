@@ -36,6 +36,12 @@ AI 評価: origin 分離の定石で方向性は正。以下の論点あり。
 3. **docroot-hash は分離キーであって秘密ではない**。capability URL にするなら random token 別設計
 4. **build or buy**: Caddy (wildcard DNS-01 + `reverse_proxy`) が設定のみでほぼ満たすので、まず Caddy で検証 → apps ホットリロードや ccmsg からの docroot 動的登録 API 等の自作価値が見えたら自作置換が低リスク
 
+公開範囲の論点は解決済み — kawaz 裁定 (2026-07-11 verbatim):
+
+> *.{myhost}.{mydomain} はtailnetのホスト名へのCNAMEにする予定なので公開の心配もない筈
+
+解決先が tailnet IP (100.x) になるため tailnet 外から経路が存在せず、ACME は DNS-01 なので到達性不要。補足: TLS 終端は自前 proxy の仕事 (tailscale serve は *.ts.net の証明書しか持てない)。wildcard 証明書は個別サブドメイン名が Certificate Transparency ログに漏れない副次的利点もある。
+
 関連:
 
 - webui の html プレビューは本構想までセキュリティ理由で見送り (kawaz 裁定「セキュリティ考えると今はhtmlは要らない」)
