@@ -11,7 +11,7 @@ import {
   candidateBinDirs,
   declineMarkerPath,
   deriveRepoRoot,
-  deriveRepoWs,
+  deriveWs,
   detectPathInstallCandidate,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
@@ -29,82 +29,55 @@ describe("candidateBinDirs", () => {
   });
 });
 
-// deriveRepoWs: `bump-semver vcs get` の実測結果 (root / backend / worktree-name
-// / current-branch) から repo/ws を組み立てる純関数。パス文字列の規約パースは
-// 廃止 (kawaz 裁定、2026-07-11) — 全ケース実機観測済み (このリポ = jj 標準形、
-// claude-rules-personal 親ディレクトリ = jj colocated 無ネスト、
-// ansible-role-postfix-relay = git 単一 checkout、mermaid-aa-pr1 = git linked
-// worktree)。
-describe("deriveRepoWs", () => {
-  // jj 標準形: kawaz の jj リポは常に <repo>/<ws> にネストされ (このリポ自身で
-  // 実測: root=".../claude-ccmsg/main", worktree-name="main")、root は *workspace*
-  // の root であって repo の root ではない。よって repo は dirname(root) から
-  // basename を取る必要がある (basename(root) だと ws 名 "main" を repo と
-  // 誤認する)。
-  test("jj: worktree-name があれば repo は dirname(root) から、ws は worktree-name から取る", () => {
+// deriveWs: `bump-semver vcs get` の実測結果 (root / worktree-name /
+// current-branch) から ws だけを組み立てる純関数。repo はもう path 由来では
+// なく `bump-semver vcs get repository` の生値をそのまま使う (getRepoWsFromVcs
+// 側、deriveWs の doc 参照) ので、ここでは ws のフォールバック輪郭だけを検証する。
+describe("deriveWs", () => {
+  // worktree-name があればそれを ws に採用する (workspace 名優先)。
+  test("worktree-name があればそれを ws に採用する", () => {
     expect(
-      deriveRepoWs({
+      deriveWs({
         backend: "jj",
         root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
         worktreeName: "main",
-        currentBranch: "",
+        currentBranch: "feature/other",
       }),
-    ).toEqual({ repo: "claude-ccmsg", ws: "main" });
+    ).toBe("main");
   });
 
-  // jj colocated かつネスト無し (claude-rules-personal の親ディレクトリで実測:
-  // .jj がリポ直下にあり、そこで実行すると worktree-name="" / current-branch は
-  // ambiguous で exit 4 = 呼び出し側で "" に丸める)。ws 層が無いので repo は
-  // basename(root) をそのまま使う (dirname を遡ると親の "kawaz" ディレクトリに
-  // なってしまうため、worktree-name が空の間は遡らない)。
-  test("jj: worktree-name が空ならネストを想定せず basename(root) を repo にする", () => {
+  // worktree-name が空なら current-branch にフォールバックする (kawaz の
+  // 「workspace 名があれば workspace 名、無ければ branch/bookmark 名」優先どおり)。
+  test("worktree-name が空なら current-branch にフォールバックする", () => {
     expect(
-      deriveRepoWs({
-        backend: "jj",
-        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal",
-        worktreeName: "",
-        currentBranch: "",
-      }),
-    ).toEqual({ repo: "claude-rules-personal", ws: "" });
-  });
-
-  // git 単一 checkout (ansible-role-postfix-relay で実測: worktree-name="",
-  // current-branch="default")。root がそのまま repo dir なので basename(root)
-  // が repo。ws 層が無いので current-branch ("default") にフォールバックする
-  // (kawaz の「workspace 名があれば workspace 名、無ければ branch/bookmark 名」
-  // 優先どおり)。
-  test("git: worktree-name が空なら current-branch を ws にフォールバックする", () => {
-    expect(
-      deriveRepoWs({
+      deriveWs({
         backend: "git",
         root: "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay",
         worktreeName: "",
         currentBranch: "default",
       }),
-    ).toEqual({ repo: "ansible-role-postfix-relay", ws: "default" });
+    ).toBe("default");
   });
 
-  // git linked worktree (mermaid-aa-pr1 で実測: root=".../mermaid-aa-pr1" 自体が
-  // worktree dir で bare 本体 (mermaid-aa) の兄弟。bump-semver に本体へ遡る
-  // getter が無いため、repo は worktree 自身の名前に解決される既知の制約
-  // (= ws と同値になる)。パス文字列パースへの復帰はしない設計判断。
-  test("git: linked worktree では repo が worktree 名と同値になる (既知の制約)", () => {
+  // worktree-name/current-branch とも空なら ws も空文字になる (workspace 層
+  // なし + branch も未解決 = 情報なし)。
+  test("worktree-name/current-branch とも空なら ws は空文字になる", () => {
     expect(
-      deriveRepoWs({
-        backend: "git",
-        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/mermaid-aa-pr1",
-        worktreeName: "mermaid-aa-pr1",
+      deriveWs({
+        backend: "jj",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal",
+        worktreeName: "",
         currentBranch: "",
       }),
-    ).toEqual({ repo: "mermaid-aa-pr1", ws: "mermaid-aa-pr1" });
+    ).toBe("");
   });
 
   // root が空 (VCS facts が取れなかった = getRepoWsFromVcs 側で早期 bail した
   // 場合の入力): 常に空フォールバック、他フィールドの値によらない。
-  test("root が空なら常に repo/ws とも空文字になる", () => {
+  test("root が空なら常に空文字になる", () => {
     expect(
-      deriveRepoWs({ backend: "git", root: "", worktreeName: "main", currentBranch: "main" }),
-    ).toEqual({ repo: "", ws: "" });
+      deriveWs({ backend: "git", root: "", worktreeName: "main", currentBranch: "main" }),
+    ).toBe("");
   });
 });
 
@@ -195,27 +168,32 @@ describe("getRepoWsFromVcs", () => {
       bin: "/nonexistent/path/definitely-not-bump-semver",
       timeoutMs: 500,
     });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
   });
 
   // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
   test("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
   });
 
-  // 正常系 (jj, worktree-name あり): backend/root/worktree-name の 3 回の呼び出し
-  // だけで解決し、current-branch は呼ばれない (worktree-name が非空なら不要な
-  // 呼び出しを省略する設計)。repoRoot も同じ facts から (追加の subprocess 無しで)
-  // 導出される: dirname(root) = ".../claude-ccmsg"。
-  test("正常系 (jj, worktree-name あり) は backend/root/worktree-name から解決する", async () => {
+  // 正常系 (jj, worktree-name あり): backend/root/worktree-name/current-branch/
+  // repository の 5 回の呼び出しで解決する。repo は repository getter の生値
+  // (owner/repo slug) をそのまま使う — root からの basename/dirname パースは
+  // していない。current-branch は ws のフォールバック計算には使われない
+  // (worktree-name が非空なので deriveWs は worktree-name を優先する) が、
+  // branch 独自フィールドのために worktree-name の有無に関わらず常に呼ばれる。
+  // repoRoot も同じ facts から (追加の subprocess 無しで) 導出される:
+  // dirname(root) = ".../claude-ccmsg"。
+  test("正常系 (jj, worktree-name あり) は repository/worktree-name/current-branch から解決する", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
   root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
   worktree-name) echo main ;;
-  current-branch) echo "SHOULD_NOT_BE_CALLED"; exit 1 ;;
+  current-branch) echo main ;;
+  repository) echo "kawaz/claude-ccmsg" ;;
   *) exit 2 ;;
 esac
 `);
@@ -224,27 +202,77 @@ esac
     // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
     expect(got).toEqual({
-      repo: "claude-ccmsg",
+      repo: "kawaz/claude-ccmsg",
       ws: "main",
       repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
+      branch: "main",
     });
   });
 
-  // 正常系 (git, worktree-name 空): current-branch へのフォールバック呼び出しが
-  // 実際に行われ、その値が ws に反映される。worktree-name が空なので repoRoot は
-  // "" (ws 層が無く、広げる先が無い)。
-  test("正常系 (git, worktree-name 空) は current-branch を ws にフォールバックする", async () => {
+  // 正常系 (git, worktree-name 空): current-branch の呼び出しが ws のフォール
+  // バックと branch フィールドの両方に使われる。worktree-name が空なので
+  // repoRoot は "" (ws 層が無く、広げる先が無い)。
+  test("正常系 (git, worktree-name 空) は current-branch を ws にフォールバックしつつ branch にも記録する", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo git ;;
   root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay" ;;
   worktree-name) echo "" ;;
   current-branch) echo default ;;
+  repository) echo "kawaz/ansible-role-postfix-relay" ;;
   *) exit 2 ;;
 esac
 `);
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
-    expect(got).toEqual({ repo: "ansible-role-postfix-relay", ws: "default", repoRoot: "" });
+    expect(got).toEqual({
+      repo: "kawaz/ansible-role-postfix-relay",
+      ws: "default",
+      repoRoot: "",
+      branch: "default",
+    });
+  });
+
+  // git linked worktree (mermaid-aa-pr1): repository getter がリモート URL 由来
+  // なので、worktree 名 ("mermaid-aa-pr1") と無関係に本体の正しいリポ名
+  // ("kawaz/mermaid-aa") を返す。旧 basename/dirname パースが抱えていた
+  // 「repo が worktree 名と同値になる」既知の制約はここで解消される。
+  test("git linked worktree でも repository getter が本体の正しいリポ名を返す", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh
+case "$3" in
+  backend) echo git ;;
+  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/mermaid-aa-pr1" ;;
+  worktree-name) echo mermaid-aa-pr1 ;;
+  current-branch) echo "" ;;
+  repository) echo "kawaz/mermaid-aa" ;;
+  *) exit 2 ;;
+esac
+`);
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    expect(got.repo).toBe("kawaz/mermaid-aa");
+    expect(got.ws).toBe("mermaid-aa-pr1");
+  });
+
+  // repository getter だけが失敗 (リモート未設定 / 曖昧 = bump-semver exit 3/4)
+  // しても、他フィールド (ws/repoRoot/branch) の解決は妨げない — repo だけが
+  // 空文字に degrade する (fail-open、DR-0041)。
+  test("repository getter だけ失敗しても ws/repoRoot/branch は解決される", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh
+case "$3" in
+  backend) echo jj ;;
+  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
+  worktree-name) echo main ;;
+  current-branch) echo main ;;
+  repository) exit 3 ;;
+  *) exit 2 ;;
+esac
+`);
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    expect(got).toEqual({
+      repo: "",
+      ws: "main",
+      repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
+      branch: "main",
+    });
   });
 
   // タイムアウト: バイナリが応答を返さず固まった場合、timeoutMs を超えたら
@@ -257,7 +285,7 @@ esac
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexec sleep 10\n`);
     const start = Date.now();
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 300 });
-    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
     // 実際に timeoutMs (300ms) 前後で打ち切られたことを確認する (= sleep 10 の
     // 10 秒丸ごと待たされていない = AbortSignal.timeout が効いている)。
     const elapsed = Date.now() - start;

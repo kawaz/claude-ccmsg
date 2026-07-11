@@ -91,6 +91,7 @@ interface StoredSessionFile {
   repo?: unknown;
   ws?: unknown;
   repo_root?: unknown;
+  branch?: unknown;
 }
 
 /** Mirrors hooks/session-start.ts's sessionFilePath — same reasoning as
@@ -154,6 +155,11 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
     // boundary (absolute + realpath-resolvable + strict ancestor of cwd + not
     // "/"/$HOME), so this CLI layer only needs to not forward a blank string.
     const repoRoot = strField(process.env.CCMSG_REPO_ROOT) ?? strField(stored?.repo_root);
+    // CCMSG_BRANCH is the same override-knob pattern as CCMSG_REPO/CCMSG_WS/
+    // CCMSG_REPO_ROOT (manual invocation, tests) — env wins over the
+    // hook-written session file. Optional like repo_root (branch may be
+    // unknown/detached), not defaulted to "" like repo/ws.
+    const branch = strField(process.env.CCMSG_BRANCH) ?? strField(stored?.branch);
     return {
       role: "session",
       sid,
@@ -162,6 +168,7 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
       cwd: process.cwd(),
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),
+      ...(branch ? { branch } : {}),
     };
   }
   return { role: "user" };
@@ -360,6 +367,8 @@ Environment Variables:
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl)
   CCMSG_SID / CLAUDE_SESSION_ID  Session id for identity auto-detection
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
+  CCMSG_BRANCH                 Current branch/bookmark of the session's checkout,
+                               sent in hello (informational, webui session list)
   CCMSG_TRANSCRIPT_PATH        This session's Claude Code transcript jsonl path,
                                sent in hello (set by the SessionStart hook,
                                DR-0009); adopted only if the daemon accepts it

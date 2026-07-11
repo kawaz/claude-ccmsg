@@ -60,6 +60,8 @@ interface SessionEntry {
     transcript_path?: string;
     /** present iff hello announced a repo_root that validated (DR-0008 addendum). */
     repo_root?: string;
+    /** present iff hello announced a non-empty branch/bookmark name. */
+    branch?: string;
   };
   conns: Set<Conn>;
 }
@@ -131,7 +133,8 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
   // checkout with no workspace layer), that reflects the session's *current*
   // state; silently keeping a stale, wider containment root across such a
   // change would be a fs-access scoping regression, not a UX nicety worth
-  // preserving.
+  // preserving. branch rides the same per-hello payload, so it follows the
+  // same latest-hello-wins, no-preserve-on-omit rule.
   const transcriptPath = id.transcript_path ?? entry?.meta.transcript_path;
   const meta = {
     sid: id.sid,
@@ -140,6 +143,7 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     cwd: id.cwd,
     ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
     ...(id.repo_root ? { repo_root: id.repo_root } : {}),
+    ...(id.branch ? { branch: id.branch } : {}),
   };
   if (!entry) {
     entry = { meta, conns: new Set() };
@@ -391,6 +395,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           cwd,
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
+          ...(req.branch ? { branch: req.branch } : {}),
         };
         conn.identity = id;
         registerSession(daemon, conn, id);

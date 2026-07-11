@@ -148,6 +148,9 @@ export interface SessionIdentity {
    * as the containment root instead of cwd — so sibling workspaces of the
    * same repo become browsable. Rejected or absent = cwd root as before. */
   repo_root?: string;
+  /** current branch / bookmark name of the session's checkout (informational,
+   * for the webui session list). Empty/absent when detached or unknown. */
+  branch?: string;
 }
 export interface UserIdentity {
   role: "user";
@@ -167,6 +170,7 @@ export interface HelloRequest {
   cwd?: string;
   transcript_path?: string;
   repo_root?: string;
+  branch?: string;
 }
 
 export interface PostRequest {
@@ -359,6 +363,8 @@ export interface PeerInfo {
    * fs browsing is rooted here (all workspaces/worktrees visible) instead of
    * cwd, and the webui highlights the session's own workspace within it */
   repo_root?: string;
+  /** current branch / bookmark of the session's checkout, "" / absent if unknown */
+  branch?: string;
 }
 export interface PeersResponse {
   ok: true;

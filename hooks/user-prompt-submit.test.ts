@@ -192,15 +192,17 @@ describe("ensureSessionFile", () => {
     return scriptPath;
   }
 
-  // ファイルが存在しない場合は新規に書く。repo/ws/repo_root は cwd から
+  // ファイルが存在しない場合は新規に書く。repo/ws/repo_root/branch は cwd から
   // bump-semver 経由で導出される (SessionStart の書き込みロジックと同じ
   // getRepoWsFromVcs を使う)。
-  test("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root を書く", async () => {
+  test("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root/branch を書く", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
   root) echo "${dir}/repo/main" ;;
   worktree-name) echo main ;;
+  current-branch) echo main ;;
+  repository) echo "kawaz/repo" ;;
   *) exit 2 ;;
 esac
 `);
@@ -213,12 +215,13 @@ esac
     const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
     expect(written.transcript_path).toBe("/home/u/.claude/proj/sess-1.jsonl");
     expect(written.cwd).toBe(dir);
-    // jj + worktree-name あり: repo は basename(dirname(root)) = basename(`${dir}/repo`) = "repo"、
-    // ws は worktree-name の "main" (deriveRepoWs のロジックそのまま)。
-    expect(written.repo).toBe("repo");
+    // repo は repository getter の生値 (owner/repo slug)、ws は worktree-name の
+    // "main" (deriveWs のロジックそのまま)。
+    expect(written.repo).toBe("kawaz/repo");
     expect(written.ws).toBe("main");
     // repo_root は dirname(root) = `${dir}/repo` (deriveRepoRoot、worktree-name 非空)。
     expect(written.repo_root).toBe(`${dir}/repo`);
+    expect(written.branch).toBe("main");
     expect(typeof written.updated_at).toBe("string");
   });
 

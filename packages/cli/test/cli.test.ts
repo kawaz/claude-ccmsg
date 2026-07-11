@@ -270,6 +270,65 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
+  // session state file の branch が env 未設定なら peers に現れる (repo/ws と
+  // 同じ latest-hello-wins の経路)。
+  test("session state file の branch が env 未設定なら peers に現れる", async () => {
+    const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({ branch: "feat/branch-label", updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
+    try {
+      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+        peers: { sid: string; branch?: string }[];
+      };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.branch).toBe("feat/branch-label");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // CCMSG_BRANCH env は session state file の branch より優先される
+  // (CCMSG_REPO/CCMSG_WS/CCMSG_REPO_ROOT と同じ override パターン)。
+  test("CCMSG_BRANCH env は session state file の branch より優先される", async () => {
+    const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({ branch: "from-file", updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
+    try {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_BRANCH: "from-env" })).out,
+      ) as { peers: { sid: string; branch?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.branch).toBe("from-env");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 空文字は「未指定」と同じ扱い (transcript_path の空文字ケースと同型)。
+  test("CCMSG_BRANCH が空文字なら peers に branch が出ない", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const peers = JSON.parse(
+        (await runCli(["peers"], { ...env, CCMSG_SID: "S1", CCMSG_BRANCH: "" })).out,
+      ) as { peers: { sid: string; branch?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.branch).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
   // session state file の repo_root (DR-0008 addendum, hooks/session-start.ts
   // が worktree-name 非空のときだけ書く) が hello に載り、daemon の受理判定
   // (絶対 + realpath 可 + cwd の strict ancestor + not "/"/$HOME) を通れば

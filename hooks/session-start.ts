@@ -47,10 +47,10 @@ interface SessionStartInput {
 }
 
 /** Raw VCS facts `getRepoWsFromVcs` reads via `bump-semver vcs get <key>`, and
- *  the input to the pure `deriveRepoWs` below. Empty string means "the getter
- *  ran but had nothing to report" (e.g. main worktree/workspace, or a
- *  bookmark/branch that couldn't be resolved) — distinct from "the getter
- *  failed", which callers collapse to empty before this point. */
+ *  the input to the pure `deriveWs`/`deriveRepoRoot` below. Empty string means
+ *  "the getter ran but had nothing to report" (e.g. main worktree/workspace,
+ *  or a bookmark/branch that couldn't be resolved) — distinct from "the
+ *  getter failed", which callers collapse to empty before this point. */
 export interface VcsFacts {
   backend: string; // "git" | "jj" (or "" if undetected)
   root: string; // absolute repo/workspace root; "" if not in a VCS repo
@@ -59,43 +59,32 @@ export interface VcsFacts {
 }
 
 /**
- * Derives {repo, ws} from `bump-semver vcs get` facts (real-machine verified
- * 2026-07-11 across this repo (jj) and several git repos, see journal for the
- * full matrix). `root`'s meaning differs by backend, which is why `repo`
- * can't just be `basename(root)` uniformly:
- *   - jj: kawaz's repos always nest a named workspace one level under the
- *     repo dir (`<repo>/<ws>`, confirmed jj never leaves this un-nested in
- *     practice), and `root` is the *workspace* root — so when worktreeName
- *     is non-empty, `repo` must climb one level (`basename(dirname(root))`)
- *     or it would resolve to the workspace name instead of the repo name.
- *   - git: `root` is already the repo/worktree dir itself (no nesting), so
- *     `basename(root)` is correct. Known limitation: a linked worktree's
- *     `root` *is* the worktree dir (siblings of the primary checkout, not
- *     nested under it) and bump-semver has no getter back to the primary
- *     repo, so `repo` there resolves to the worktree's own name (duplicating
- *     `ws`) rather than the true repo name — no path-parsing fallback for
- *     this by design (that approach is exactly what this replaces).
- * `ws` prefers the worktree/workspace name; falls back to the current
- * branch/bookmark only when there's no workspace layer to report (kawaz's
- * "workspace name if present, else branch name" priority). Never throws;
- * `root === ""` (no VCS facts available) short-circuits to `{ "", "" }`.
+ * Derives `ws` from `bump-semver vcs get` facts: prefers the worktree/workspace
+ * name; falls back to the current branch/bookmark only when there's no
+ * workspace layer to report (kawaz's "workspace name if present, else branch
+ * name" priority). Never throws; `root === ""` (no VCS facts available)
+ * short-circuits to `""`.
+ *
+ * `repo` is NOT derived here — unlike `ws`/`repoRoot`, it no longer comes from
+ * parsing `root`'s path (basename/dirname heuristics that differed by backend
+ * and, for a git linked worktree, had no way back to the true repo name — see
+ * `deriveRepoRoot`'s doc for why that path-based container lookup remains
+ * git-limited). `getRepoWsFromVcs` below sources `repo` straight from
+ * `bump-semver vcs get repository` (the remote URL's owner/repo slug, DR-0041)
+ * instead: a single value shared across every worktree/workspace of a repo,
+ * with no backend-specific parsing needed.
  *
  * Design rationale: the `bump-semver` dependency is deliberate, kawaz-environment-
  * specific tooling (it's already on kawaz's PATH everywhere ccmsg runs). If this
  * plugin is ever distributed more broadly, a from-scratch fallback (`git
  * rev-parse --show-toplevel` / `jj workspace root`, etc.) should be built in
  * rather than assuming the binary exists — `getRepoWsFromVcs` below already
- * degrades to `{ repo: "", ws: "" }` when it's absent, so nothing breaks in the
- * meantime, it just loses the repo/ws enrichment.
+ * degrades to `{ repo: "", ws: "", ... }` when it's absent, so nothing breaks
+ * in the meantime, it just loses the repo/ws enrichment.
  */
-export function deriveRepoWs(vcs: VcsFacts): { repo: string; ws: string } {
-  if (vcs.root === "") return { repo: "", ws: "" };
-  const repo =
-    vcs.backend === "jj" && vcs.worktreeName !== ""
-      ? path.basename(path.dirname(vcs.root))
-      : path.basename(vcs.root);
-  const ws = vcs.worktreeName !== "" ? vcs.worktreeName : vcs.currentBranch;
-  return { repo, ws };
+export function deriveWs(vcs: VcsFacts): string {
+  if (vcs.root === "") return "";
+  return vcs.worktreeName !== "" ? vcs.worktreeName : vcs.currentBranch;
 }
 
 /**
@@ -158,17 +147,24 @@ async function raceExit(
 }
 
 /** Best-effort: runs `bump-semver vcs get <key>` (backend, root, worktree-name,
- *  and current-branch only when there's no workspace/worktree layer to prefer)
- *  in `cwd`, then folds the facts through `deriveRepoWs`. Binary absent, `cwd`
- *  outside any VCS repo, a subprocess error, or exceeding `timeoutMs` (default
- *  1000ms — a shared deadline across every call, so a slow first call leaves
- *  less budget for the rest rather than each call getting its own fresh
- *  1000ms) all collapse to `{ repo: "", ws: "" }` — this must never throw or
- *  delay the hook's turn over a "?" fallback. */
+ *  current-branch, repository) in `cwd`, then folds backend/root/worktree-name/
+ *  current-branch through `deriveWs`/`deriveRepoRoot` while `repository`'s raw
+ *  slug becomes `repo` directly (see `deriveWs`'s doc for why `repo` is no
+ *  longer path-derived). Binary absent, `cwd` outside any VCS repo, a
+ *  subprocess error, or exceeding `timeoutMs` (default 1000ms — a shared
+ *  deadline across every call, so a slow first call leaves less budget for
+ *  the rest rather than each call getting its own fresh 1000ms) all collapse
+ *  to `{ repo: "", ws: "", repoRoot: "", branch: "" }` — this must never
+ *  throw or delay the hook's turn over a "?" fallback.
+ *
+ *  `repository` failing on its own (no forge remote configured, ambiguous
+ *  remote selection — bump-semver exit 3/4) degrades only `repo` to "",
+ *  independent of whether backend/root/worktree-name/current-branch
+ *  succeeded — a repo with no `origin` remote still gets ws/repoRoot/branch. */
 export async function getRepoWsFromVcs(
   cwd: string,
   opts: VcsRepoWsOptions = {},
-): Promise<{ repo: string; ws: string; repoRoot: string }> {
+): Promise<{ repo: string; ws: string; repoRoot: string; branch: string }> {
   const bin = opts.bin ?? "bump-semver";
   const deadline = Date.now() + (opts.timeoutMs ?? 1000);
 
@@ -193,13 +189,17 @@ export async function getRepoWsFromVcs(
   const backend = await runGet("backend");
   const root = await runGet("root");
   if (backend === undefined || root === undefined || root === "")
-    return { repo: "", ws: "", repoRoot: "" };
+    return { repo: "", ws: "", repoRoot: "", branch: "" };
   const worktreeName = (await runGet("worktree-name")) ?? "";
-  // current-branch is only useful as a fallback when there's no workspace/worktree
-  // name to prefer — skip the call entirely in the common (named workspace) case.
-  const currentBranch = worktreeName === "" ? ((await runGet("current-branch")) ?? "") : "";
+  const currentBranch = (await runGet("current-branch")) ?? "";
+  const repository = (await runGet("repository")) ?? "";
   const facts: VcsFacts = { backend, root, worktreeName, currentBranch };
-  return { ...deriveRepoWs(facts), repoRoot: deriveRepoRoot(facts) };
+  return {
+    repo: repository,
+    ws: deriveWs(facts),
+    repoRoot: deriveRepoRoot(facts),
+    branch: currentBranch,
+  };
 }
 
 /** `CCMSG_BUMP_SEMVER_BIN` overrides the `bump-semver` binary looked up on
@@ -229,6 +229,9 @@ export interface SessionFileData {
   /** absolute path of the repo container holding all workspaces/worktrees
    *  (DR-0008 addendum); see deriveRepoRoot's doc for when this is present. */
   repo_root?: string;
+  /** current branch/bookmark of the session's checkout (informational, for
+   *  the webui session list); absent when detached or unresolvable. */
+  branch?: string;
   updated_at: string;
 }
 
@@ -405,15 +408,16 @@ async function main(): Promise<void> {
   // UserPromptSubmit's "only if missing" — this is the fresh, authoritative source
   // per session start, e.g. a `/cd` or `claude --resume` should refresh it).
   if (input.session_id) {
-    const { repo, ws, repoRoot } = input.cwd
+    const { repo, ws, repoRoot, branch } = input.cwd
       ? await getRepoWsFromVcs(input.cwd, { bin: resolveBumpSemverBin() })
-      : { repo: "", ws: "", repoRoot: "" };
+      : { repo: "", ws: "", repoRoot: "", branch: "" };
     writeSessionFile(stateDir, input.session_id, {
       ...(input.transcript_path ? { transcript_path: input.transcript_path } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(repo ? { repo } : {}),
       ...(ws ? { ws } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),
+      ...(branch ? { branch } : {}),
       updated_at: new Date().toISOString(),
     });
   }
