@@ -338,8 +338,13 @@ describe("parseTranscriptLine / turn with empty content array", () => {
 });
 
 // isUserTextTurn (webui Timeline UI improvement, kawaz spec): shared
-// definition of "ユーザ発言" for both the chat-bubble styling and the
-// "👤 N/M" nav counter — a tool_result-only "user" line must count as neither.
+// definition of "ユーザ発言" for the chat-bubble styling, the "👤 N/M" nav
+// counter, and (U2) groupTimelineLines' boundary test — a tool_result-only
+// "user" line, or (U2) any other classifyUserMessage verdict besides
+// "user-prompt", must count as none of the three. See the dedicated
+// "system-origin user messages fold (U2)" describe block below for the
+// classification-driven cases (teammate-message etc.); this block covers the
+// pre-existing segment-shape cases.
 describe("isUserTextTurn", () => {
   test("user turn with a text segment -> true", () => {
     const line = parseTranscriptLine(
@@ -365,10 +370,18 @@ describe("isUserTextTurn", () => {
   });
 
   // Mixed content (text alongside a tool_result block, seen in practice for
-  // API-shaped turns): the presence of *any* text segment is enough to count
-  // as a real utterance — "tool_result は除く" excludes the tool_result
-  // segment from bubble styling, not the whole turn from the counter.
-  test("user turn with text + tool_result -> true (has at least one text segment)", () => {
+  // API-shaped turns): U2 revised this from the pre-classification behavior
+  // (segment-shape only, ignoring userMessageKind) to defer to
+  // classifyUserMessage's verdict whenever the line went through
+  // parseTranscriptLine — and classifyUserMessage's array branch gives
+  // tool_result priority over any accompanying text block
+  // (`hasToolResultBlock` check runs first, see its doc comment), so this
+  // line's userMessageKind is "tool-result", not "user-prompt". A mechanical
+  // tool_result echo isn't a real utterance just because Claude Code happened
+  // to attach a text block to it, so it now folds like any other
+  // tool_result-bearing line instead of standing alone as a boundary/nav
+  // stop.
+  test("user turn with text + tool_result -> false (classifyUserMessage gives tool_result priority)", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -381,7 +394,10 @@ describe("isUserTextTurn", () => {
         },
       }),
     );
-    expect(isUserTextTurn(line)).toBe(true);
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("tool-result");
+    expect(isUserTextTurn(line)).toBe(false);
   });
 
   test("user turn with zero segments -> false", () => {
@@ -935,5 +951,79 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
     expect(line.userMessageKind).toBeUndefined();
+  });
+});
+
+// isUserTextTurn / groupTimelineLines, system-origin "type:user" messages
+// (U2 folding-scope fix): kawaz — "システムメッセージも tool や thinking と
+// 同じで folding しといて". Before this fix, isUserTextTurn only excluded
+// tool_result-only user turns, so a teammate-message/task-notification/
+// slash-command-invocation line (any classifyUserMessage kind other than
+// "user-prompt") both stood alone as a groupTimelineLines boundary *and*
+// inflated the "👤 N/M" nav counter. Both bugs share one root cause (both
+// read isUserTextTurn), so one fixed definition closes both.
+describe("isUserTextTurn / groupTimelineLines — system-origin user messages fold (U2)", () => {
+  // A real, parsed system-origin line (not a hand-built fixture) so
+  // userMessageKind is actually populated by classifyUserMessage, exercising
+  // the same code path Timeline.tsx sees for a live transcript.
+  function parsedTeammateMessage(): ParsedLine {
+    return parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: "Another Claude session sent a message: hi from room",
+        },
+      }),
+    );
+  }
+
+  test("a system-origin user message (peer-message) -> isUserTextTurn false despite having a text segment", () => {
+    const line = parsedTeammateMessage();
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("peer-message");
+    expect(line.segments.some((s) => s.kind === "text")).toBe(true);
+    expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  // Explicit userMessageKind:"user-prompt" (as parseTranscriptLine actually
+  // produces for a real utterance, not the compat-fixture undefined case
+  // covered by the "isUserTextTurn" describe block above) must still count.
+  test("userMessageKind explicitly 'user-prompt' -> isUserTextTurn true", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "real question" } }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("user-prompt");
+    expect(isUserTextTurn(line)).toBe(true);
+  });
+
+  test("a system-origin user message folds into the surrounding group instead of standing as a boundary", () => {
+    const sysLine = parsedTeammateMessage();
+    const lines = [userText("go"), sysLine, assistantText("done")];
+    const offsets = [0, 1, 2];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "fold", entries: [{ offset: 1, line: sysLine }] },
+      { kind: "entry", offset: 2, line: lines[2] },
+    ]);
+  });
+
+  // A real user-prompt turn between two other boundaries still stays
+  // standalone — the fold-scope change only pulls in system-origin messages,
+  // not genuine human utterances.
+  test("a real user-prompt turn between boundaries stays a standalone entry, not folded", () => {
+    const realPrompt = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "follow-up question" } }),
+    );
+    const lines = [assistantText("first answer"), realPrompt, assistantText("second answer")];
+    const offsets = [0, 1, 2];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "entry", offset: 1, line: realPrompt },
+      { kind: "entry", offset: 2, line: lines[2] },
+    ]);
   });
 });

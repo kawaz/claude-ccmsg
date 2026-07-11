@@ -24,6 +24,10 @@ export function RoomView({ state }: { state: AppState }) {
   // request — stays until the next drop attempt, mirroring RoomTitle's
   // error-until-retry convention (DR-0011 says "RoomTitle のエラー表示の流儀").
   const [notice, setNotice] = useState<{ kind: "already" | "error"; text: string } | null>(null);
+  // アーカイブ toggle 送信中の二重クリック防止 (DR-0012)。楽観更新はしない —
+  // 反映は他の archive_room 同様、broadcast される archive イベントを store が
+  // 拾う (RoomTitle の set_title と同じ非楽観方針)。
+  const [archiving, setArchiving] = useState(false);
 
   // `#room-mNN` anchor scroll (DR-0004 §5): only fires when the locator's
   // room/mid pair changes, not on every timeline update, so it doesn't fight
@@ -61,6 +65,25 @@ export function RoomView({ state }: { state: AppState }) {
   // the broadcast member event on the subscribe stream, which the reducer
   // already folds in (applyProtocolEvent's "member" case) the same as any
   // other join — this handler only surfaces already/error feedback.
+  // DR-0012: ヘッダのアーカイブ toggle ボタン。set_title と同じく非楽観 —
+  // 成功時は broadcast される archive イベントで収束する。失敗時は既存の
+  // notice state (RoomTitle / drop-invite と同じ error-until-retry 慣習) に
+  // 乗せる — 黙って何も起きないように見せない。
+  async function handleToggleArchive(): Promise<void> {
+    if (!room || archiving) return;
+    setArchiving(true);
+    try {
+      const res = await ws.archiveRoom(room.id, !room.archived);
+      if (!res.ok) {
+        setNotice({ kind: "error", text: res.error.msg });
+      }
+    } catch {
+      setNotice({ kind: "error", text: "接続エラーのためアーカイブ状態を変更できませんでした" });
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   async function handleDrop(e: DragEvent): Promise<void> {
     e.preventDefault();
     setDragOver(false);
@@ -83,11 +106,34 @@ export function RoomView({ state }: { state: AppState }) {
   return (
     <main id="room-view">
       <header class="room-header">
-        <RoomTitle room={room} />
+        <div class="room-header-top">
+          <RoomTitle room={room} />
+          <button
+            type="button"
+            class="room-archive-toggle"
+            title={room.archived ? "アーカイブ解除" : "アーカイブ"}
+            aria-label={room.archived ? "アーカイブ解除" : "アーカイブ"}
+            disabled={archiving}
+            onClick={() => void handleToggleArchive()}
+          >
+            {room.archived ? "アーカイブ解除" : "📥"}
+          </button>
+        </div>
         <div class="member-chips">
-          <MemberChip id={ADMIN_ID} room={room} selected={state.mentionTo.has(ADMIN_ID)} />
+          <MemberChip
+            id={ADMIN_ID}
+            room={room}
+            selected={state.mentionTo.has(ADMIN_ID)}
+            peers={state.peers}
+          />
           {activeMembers.map((m) => (
-            <MemberChip key={m.id} id={m.id} room={room} selected={state.mentionTo.has(m.id)} />
+            <MemberChip
+              key={m.id}
+              id={m.id}
+              room={room}
+              selected={state.mentionTo.has(m.id)}
+              peers={state.peers}
+            />
           ))}
         </div>
         {notice && (

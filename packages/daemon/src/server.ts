@@ -9,6 +9,7 @@ import {
   ErrorCode,
   VERSION,
   resolvePaths,
+  type ArchiveEvent,
   type Identity,
   type LeaveEvent,
   type MemberEvent,
@@ -334,6 +335,26 @@ function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: st
   }
 }
 
+/** Append a LeaveEvent for `memberId` and broadcast it to every subscriber that sees
+ *  the room. Recipients are captured before membership shrinks so a leaving/kicked
+ *  member's own subscribed connection still gets the confirmation. Shared by
+ *  voluntary `leave` and admin-only `kick` (DR-0012) — both produce the identical
+ *  storage event, only the actor/authorization differs. */
+function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): void {
+  const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
+  const recipients = [...daemon.subscribers].filter((s) => subscriberSeesRoom(s, room));
+  appendEvent(room, ev);
+  // membership shrank below the sid set that seeded room.dedupKey (invite's
+  // mirror image, see the identical comment on the `invite` case below): a
+  // same-sid create_room within the dedup window must no longer fold into
+  // this room, otherwise the fold's resolveFrom(leaver, room) comes back
+  // null, the msg silently fails to append, and the caller still gets back
+  // `{ok:true, reused:true}` with no mid — a swallowed post disguised as
+  // success.
+  room.dedupEligible = false;
+  for (const r of recipients) writeDelivered(r, room.id, ev);
+}
+
 // --- room creation ---------------------------------------------------------
 
 // Room ids are opaque, daemon-issued, unique strings — the `rN` shape here is a free
@@ -370,6 +391,7 @@ function createRoom(daemon: Daemon, orderedSids: string[], dedupEligible: boolea
     createdAt: Date.now(),
     dedupEligible,
     dedupKey: [...new Set(orderedSids)].sort().join(","),
+    archived: false,
     next: [],
     prev: [],
     fd: null,
@@ -409,6 +431,8 @@ const IDENTITY_OPS = new Set([
   "create_room",
   "next_room",
   "set_title",
+  "archive_room",
+  "kick",
   "subscribe",
   "notify",
   "leave",
@@ -691,6 +715,67 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "archive_room": {
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      // same authorization as set_title: admin User (implicit member of every room)
+      // or a resolvable member session.
+      if (resolveFrom(conn, room) === null) {
+        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
+        return;
+      }
+      if (typeof req.archived !== "boolean") {
+        sendErr(conn, ErrorCode.invalid_args, "archive_room requires a boolean archived");
+        return;
+      }
+      const archived = req.archived;
+      if (room.archived === archived) {
+        // toggle already at the requested value: skip the redundant append/broadcast
+        // (DR-0012 — archive is a display flag, re-asserting the same state is a no-op).
+        send(conn, { ok: true, room: room.id, archived });
+        return;
+      }
+      const ev: ArchiveEvent = { type: "archive", archived, ts: nowIso() };
+      appendEvent(room, ev);
+      deliver(daemon, room, ev, authorOf(conn));
+      send(conn, { ok: true, room: room.id, archived });
+      return;
+    }
+
+    case "kick": {
+      // admin User only (DR-0012): a room's agents must not be able to evict each
+      // other. Unlike member-scoped ops (post/set_title/leave), a session caller here
+      // gets a straight permission rejection rather than not_a_member — same pattern
+      // as the other user-role-only ops below (agents/transcript_subscribe).
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'kick' requires user role");
+        return;
+      }
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      const targetId = typeof req.id === "string" ? req.id : "";
+      // ADMIN_ID (u1) has no member row (implicit member, DR-0006) so it's never in
+      // presentIds — self-kick is naturally invalid_args, no separate guard needed.
+      const presentIds = new Set(presentMembers(room).map((m) => m.id));
+      if (targetId === "" || !presentIds.has(targetId)) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `not a member of ${req.room}: ${targetId || "(missing id)"}`,
+        );
+        return;
+      }
+      appendLeaveAndBroadcast(daemon, room, targetId);
+      send(conn, { ok: true, room: room.id, id: targetId });
+      return;
+    }
+
     case "subscribe": {
       conn.subscribed = true;
       daemon.subscribers.add(conn);
@@ -738,6 +823,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         members: presentMembers(r),
         last_mid: r.lastMid,
         last_ts: lastTs(r),
+        ...(r.archived ? { archived: true } : {}),
       }));
       send(conn, { ok: true, rooms });
       return;
@@ -869,11 +955,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
-      // capture recipients before membership shrinks so the leaver gets confirmation too
-      const recipients = [...daemon.subscribers].filter((s) => subscriberSeesRoom(s, room));
-      appendEvent(room, ev);
-      for (const r of recipients) writeDelivered(r, room.id, ev);
+      appendLeaveAndBroadcast(daemon, room, memberId);
       send(conn, { ok: true, room: room.id });
       return;
     }

@@ -171,9 +171,13 @@ function LineView({
   // transcript-model.ts's classifyUserMessage): role:"user" かつ
   // "user-prompt" (= 本物のユーザ発話) 以外の kind が付いているラインだけ
   // チップを出し、緑吹き出しスタイル (.tl-text-user) を打ち消す
-  // (.tl-turn-syskind, app.css)。fold group に入る位置のもの (= isUserText
-  // が false になる tool_result-only turn 等) は今まで通り従来の描画のまま
-  // — グルーピング判定 (isBoundaryLine/isUserTextTurn) 自体は変更しない。
+  // (.tl-turn-syskind, app.css)。この LineView 自体は「fold group の中の
+  // 1 entry」としても「standalone entry」としても同じ描画ロジックを使う
+  // (FoldGroup が entries.map で LineView を再利用) ので、グルーピングが
+  // 変わってもチップ表示は変わらない。isUserTextTurn (U2 で改訂:
+  // userMessageKind !== "user-prompt" なシステム由来メッセージは false) は
+  // isBoundaryLine の判定にも使われるため、システム由来メッセージは境界に
+  // ならず fold group 側に入る — その場合もここで同じチップ付き表示になる。
   const sysKind =
     line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt"
       ? line.userMessageKind

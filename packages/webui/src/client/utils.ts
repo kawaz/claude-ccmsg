@@ -66,6 +66,34 @@ export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
   return [...rooms.values()].sort((a, b) => (b.lastTs ?? "").localeCompare(a.lastTs ?? ""));
 }
 
+/** Splits an already-sorted room list (see `activeRoomsSorted`) into
+ * non-archived / archived buckets, each keeping the input's relative order
+ * (DR-0012: RoomList shows non-archived rooms as before, archived ones
+ * folded into a bottom "アーカイブ (N)" `<details>`). A plain `.filter()`
+ * twice would work too, but doing it in one pass keeps the "which bucket"
+ * decision (`archived === true`) in exactly one place. */
+export function splitRoomsByArchived(rooms: RoomState[]): {
+  active: RoomState[];
+  archived: RoomState[];
+} {
+  const active: RoomState[] = [];
+  const archived: RoomState[] = [];
+  for (const room of rooms) (room.archived ? archived : active).push(room);
+  return { active, archived };
+}
+
+/** Whether a room member (by sid) is currently reachable over an open ws
+ * connection — the `peers` op response only ever lists connected sessions,
+ * so "not present" means offline (DR-0012: MemberChip's grey/strikethrough
+ * treatment for a member whose session has disconnected, distinct from
+ * `left` which means "left the room" — a member can be present-but-offline
+ * without having left the room). Pure over the narrow `{sid}` shape (mirrors
+ * `ownWorkspaceSegment`'s narrowing) so it doesn't need the full MemberInfo
+ * import just to read one field. */
+export function isMemberConnected(member: { sid: string }, peers: PeerInfo[]): boolean {
+  return peers.some((p) => p.sid === member.sid);
+}
+
 /** Sidebar Sessions-section label: `repo · ws · branch`, each segment shown
  * only when non-empty (no more "?" placeholders — a missing field is simply
  * absent rather than noise). `ws` and `branch` collapse to one segment when
@@ -311,6 +339,11 @@ export interface SessionRow {
   connected_at?: string;
   last_activity_at?: string;
   repo_root?: string;
+  /** present iff the peer announced a transcript the daemon accepted (U3) —
+   * SessionList uses this to route a row's click to the Timeline tab instead
+   * of Files. Always absent on an agent-only row (offlineAgentRows): those
+   * come from `claude agents --json`, which carries no transcript info. */
+  transcript_path?: string;
   agent?: AgentInfo;
   connected: boolean;
 }
@@ -341,6 +374,7 @@ export function toSessionRow(peer: PeerInfo, agentsBySid: Map<string, AgentInfo>
     connected_at: peer.connected_at,
     last_activity_at: peer.last_activity_at,
     repo_root: peer.repo_root,
+    transcript_path: peer.transcript_path,
     agent: agentsBySid.get(peer.sid),
     connected: true,
   };
@@ -411,6 +445,28 @@ export function siblingWorkspaceEntries(entries: FsEntry[], ownSegment: string |
   return entries.filter((e) => e.type === "dir" && e.name !== ownSegment);
 }
 
+/** Primary busy/idle/done/offline status of a Sessions-list row — the single
+ * source of truth both `sessionBadges` (U1, being retired per-row in U3 down
+ * to just the `"bg"` tag) and `groupSessionsBySection` (U3) read, so the two
+ * can never disagree about what one row's status is.
+ * - A disconnected (agent-only, "ccmsg 未起動") row is always `"offline"`,
+ *   regardless of what its matched agent's `status`/`state` say — offline
+ *   rows form their own section (U3), not a busy/idle/done bucket.
+ * - A *connected* row with no matched agent (older CLI, `claude agents`
+ *   hasn't polled yet, or a non-Claude ccmsg client) has no distinct signal
+ *   to report — before U3 this meant "no badge at all"; now that every row
+ *   must land in exactly one section, it falls into `"idle"` (the "nothing
+ *   to report" bucket) rather than inventing a fifth section the U3 spec
+ *   (Busy / Idle / Done / ccmsg未起動) doesn't call for. */
+export type SessionStatus = "offline" | "busy" | "idle" | "done";
+
+export function sessionStatus(row: SessionRow): SessionStatus {
+  if (!row.connected) return "offline";
+  if (!row.agent) return "idle";
+  if (row.agent.state === "done") return "done";
+  return row.agent.status === "busy" ? "busy" : "idle";
+}
+
 /** Status/state badges for one Sessions-list row (U1), in display order.
  * - `"offline"` (agent-only row, no ccmsg connection) is exclusive of the
  *   busy/idle/done tri-state below — an offline row shows only "offline"
@@ -421,13 +477,16 @@ export function siblingWorkspaceEntries(entries: FsEntry[], ownSegment: string |
  *   no badges at all — "従来通り" per the U1 spec: there's nothing from
  *   `claude agents` to report, so nothing is shown instead of guessing.
  * - `"bg"` is additive: a background agent still gets its busy/idle/done
- *   badge too, `"bg"` just tags kind separately. */
+ *   badge too, `"bg"` just tags kind separately.
+ * U3 note: SessionList.tsx no longer renders the busy/idle/done/offline
+ * badges this returns (that status now shows via the row's section instead)
+ * — it only renders the `"bg"` entry, if present. The function itself is
+ * kept as-is (tests still pin its full return value) since `"bg"`'s presence
+ * still depends on this same busy/idle/done/offline computation. */
 export function sessionBadges(row: SessionRow): Array<"offline" | "busy" | "idle" | "done" | "bg"> {
   if (!row.connected) return ["offline"];
   if (!row.agent) return [];
-  const badges: Array<"offline" | "busy" | "idle" | "done" | "bg"> = [
-    row.agent.state === "done" ? "done" : row.agent.status === "busy" ? "busy" : "idle",
-  ];
+  const badges: Array<"offline" | "busy" | "idle" | "done" | "bg"> = [sessionStatus(row)];
   if (row.agent.kind === "background") badges.push("bg");
   return badges;
 }
@@ -435,4 +494,49 @@ export function sessionBadges(row: SessionRow): Array<"offline" | "busy" | "idle
 /** Display text for a badge kind (SessionList.tsx renders these verbatim). */
 export function badgeLabel(kind: "offline" | "busy" | "idle" | "done" | "bg"): string {
   return kind === "offline" ? "ccmsg未起動" : kind;
+}
+
+// --- Sidebar Sessions-list: status sections (U3) --- //
+
+/** Section display order + label, keyed by `sessionStatus`. Busy first
+ * (kawaz's stated reason for sectioning at all: "busy 表示邪魔" — busy
+ * sessions are the ones worth noticing first), offline ("ccmsg未起動") last
+ * (least actionable — nothing to do from the webui for a session that
+ * hasn't connected). */
+const SESSION_SECTION_ORDER: SessionStatus[] = ["busy", "idle", "done", "offline"];
+
+const SESSION_SECTION_LABELS: Record<SessionStatus, string> = {
+  busy: "Busy",
+  idle: "Idle",
+  done: "Done",
+  offline: "ccmsg未起動",
+};
+
+export interface SessionSection {
+  key: SessionStatus;
+  label: string;
+  rows: SessionRow[];
+}
+
+/** Groups Sessions-list rows into busy/idle/done/offline sections (U3, kawaz
+ * 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション切ってフォル
+ * ディングもできるように。で各アイテムの busy は取る"). Only sections that
+ * actually have a row appear — an empty section would just be a heading with
+ * nothing under it. Row order *within* each section is the input array's
+ * order (already the Sidebar's abc/idle/new sort by the time `rows` reaches
+ * here, see SessionList.tsx) — this function only partitions, it never
+ * reorders. */
+export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
+  const buckets = new Map<SessionStatus, SessionRow[]>();
+  for (const row of rows) {
+    const key = sessionStatus(row);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(row);
+    else buckets.set(key, [row]);
+  }
+  return SESSION_SECTION_ORDER.filter((key) => buckets.has(key)).map((key) => ({
+    key,
+    label: SESSION_SECTION_LABELS[key],
+    rows: buckets.get(key)!, // non-null: key came from buckets.has() just above
+  }));
 }

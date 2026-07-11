@@ -171,6 +171,62 @@ describe("reducer / protocol-event title, next, prev", () => {
   });
 });
 
+// DR-0012: room archive flag. Mirrors the title event tests above ("last
+// event wins", store folds the broadcast in) since ArchiveEvent follows the
+// exact same last-wins convention as TitleEvent.
+describe("reducer / protocol-event archive (DR-0012)", () => {
+  test("archive event sets room.archived and appends to timeline", () => {
+    const state = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { type: "archive", archived: true, ts: "t", r: "r1" },
+    });
+    const room = state.rooms.get("r1");
+    expect(room?.archived).toBe(true);
+    expect(room?.timeline).toHaveLength(1);
+  });
+
+  // Last event wins (same rule as title, DR-0012 §1): a later archived:false
+  // flips the room back, it doesn't merge/OR with the earlier true.
+  test("a later archive:false event un-archives the room", () => {
+    const archived = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { type: "archive", archived: true, ts: "t1", r: "r1" },
+    });
+    const unarchived = dispatch(archived, {
+      type: "protocol-event",
+      event: { type: "archive", archived: false, ts: "t2", r: "r1" },
+    });
+    expect(unarchived.rooms.get("r1")?.archived).toBe(false);
+    expect(unarchived.rooms.get("r1")?.timeline).toHaveLength(2);
+  });
+});
+
+describe("reducer / rooms/loaded carries archived (DR-0012)", () => {
+  test("a RoomSummary with archived:true seeds room.archived", () => {
+    const summaries: RoomSummary[] = [
+      { id: "r1", members: [], last_mid: 0, last_ts: null, archived: true },
+    ];
+    const state = dispatch(initialState(), { type: "rooms/loaded", rooms: summaries });
+    expect(state.rooms.get("r1")?.archived).toBe(true);
+  });
+
+  // absent `archived` (older daemon, or a room that was never toggled) must
+  // not force the field to false and shadow a value already folded in from
+  // a prior rooms/loaded or protocol-event — same "if defined" merge as
+  // summary.title's `if (summary.title) ...` guard just above in the reducer.
+  test("a RoomSummary with no archived field leaves an already-known archived flag untouched", () => {
+    const withArchive = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { type: "archive", archived: true, ts: "t", r: "r1" },
+    });
+    const reloaded = dispatch(withArchive, {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [], last_mid: 0, last_ts: null }],
+    });
+    expect(reloaded.rooms.get("r1")?.archived).toBe(true);
+  });
+});
+
 describe("reducer / conn/status", () => {
   // restarting → 再接続状態: daemon 再起動中の ev frame は WS effect 層が
   // 直接この action に正規化する (ws.ts)。reducer 側は connStatus を素通しで

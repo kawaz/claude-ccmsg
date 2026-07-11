@@ -423,6 +423,80 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect((caught as Error).message).toBe("ws not open");
   });
 
+  // DR-0012: archive_room wire shape (RoomView's header toggle button).
+  test("archiveRoom sends {op:'archive_room', room, archived} and resolves the new flag", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.archiveRoom("room-1", true);
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "archive_room",
+      room: "room-1",
+      archived: true,
+    });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", archived: true }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.archived).toBe(true);
+  });
+
+  // Un-archiving sends archived:false explicitly (not omitted) — the daemon
+  // needs the toggle's target value, not just "some change happened".
+  test("archiveRoom(room, false) sends archived:false explicitly", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    void handle.archiveRoom("room-1", false);
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "archive_room",
+      room: "room-1",
+      archived: false,
+    });
+  });
+
+  // DR-0012: kick wire shape (MemberChip's ✕ button, admin User only).
+  test("kick sends {op:'kick', room, id} and resolves the removed id", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.kick("room-1", "a2");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "kick", room: "room-1", id: "a2" });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "a2" }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.id).toBe("a2");
+  });
+
+  test("kick resolves the daemon's error response verbatim (e.g. not admin)", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.kick("room-1", "a2");
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: false,
+        error: { code: "invalid_args", msg: "kick is admin-only" },
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("invalid_args");
+  });
+
   // DR-0011 §1-4: invite wire shape (SessionList drag -> RoomView drop).
   test("invite sends {op:'invite', room, sid} and resolves id/already", async () => {
     const handle = createWsClient(() => {});

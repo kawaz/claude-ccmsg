@@ -137,10 +137,31 @@ body {
 }
 
 #room-list,
-#session-list {
+#session-list,
+.session-section-list {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* U3: Sessions list grouped into Busy/Idle/Done/ccmsg未起動 <details>
+ * sections (SessionList.tsx's groupSessionsBySection) — #session-list itself
+ * is a plain div now (was the <ul> before this task), the list-reset above
+ * applies to each section's own .session-section-list <ul> instead. */
+.session-section + .session-section {
+  margin-top: 0.4rem;
+}
+
+.session-section-summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.3rem 0.5rem;
+  color: var(--fg-muted);
+}
+
+.session-section-summary::-webkit-details-marker {
+  color: var(--fg-muted);
 }
 
 #room-list li a {
@@ -154,6 +175,32 @@ body {
 #room-list li.active a {
   background: var(--accent);
   color: var(--accent-fg);
+}
+
+/* DR-0012: collapsed "アーカイブ (N)" section at the bottom of the room
+ * list, default-closed (no `open` attribute). Rows inside reuse #room-list's
+ * `<li><a>` styling verbatim (RoomList.tsx renders the same RoomRow), so
+ * only the `<details>`/`<summary>` chrome needs its own rules here. */
+#room-list-archived {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+}
+
+#room-list-archived summary {
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+  color: var(--fg-muted);
+  list-style: none;
+}
+
+#room-list-archived summary::-webkit-details-marker {
+  display: none;
+}
+
+#room-list-archived ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 /* U1: each Sessions-list row is 3 stacked lines (repo/ws+badges+idle, sid,
@@ -239,32 +286,14 @@ body {
   white-space: nowrap;
 }
 
-.session-badge-busy {
-  background: var(--accent);
-  color: var(--accent-fg);
-}
-
-.session-badge-idle {
-  background: var(--bg);
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-}
-
-.session-badge-done {
-  background: #16a34a;
-  color: #ffffff;
-}
-
+/* U3: busy/idle/done/offline no longer render as per-row badges (that status
+ * now shows via the Sessions-list section heading instead, see
+ * .session-section-summary above) — .session-badge-bg is the only badge kind
+ * SessionRowItem still emits (kind, not status: a background agent tag). */
 .session-badge-bg {
   background: var(--bg);
   color: var(--fg-muted);
   border: 1px solid var(--border);
-}
-
-.session-badge-offline {
-  background: none;
-  color: var(--fg-muted);
-  border: 1px dashed var(--border);
 }
 
 .session-idle {
@@ -425,6 +454,42 @@ body {
   color: var(--fg-muted);
 }
 
+/* DR-0012: wraps RoomTitle + the archive toggle button on one line, title
+ * taking the remaining width (RoomTitle's own inner flex handles its own
+ * name/edit-button layout; this is one level up). */
+.room-header-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.room-header-top .room-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.room-archive-toggle {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  line-height: 1.6;
+}
+
+.room-archive-toggle:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.room-archive-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* DR-0011 §1-4: highlight the message list while a Sessions-list row is
  * dragged over it, accepting the drop as an invite. */
 .timeline-drop-active {
@@ -460,6 +525,58 @@ body {
   border-color: var(--accent);
 }
 
+/* DR-0012: member chip whose session isn't in the live `peers` roster
+ * (disconnected, distinct from `left` — see MemberChip.tsx / isMemberConnected
+ * doc comment). Grey + strikethrough per kawaz spec ("非アクティブなセッション
+ * は打ち消し線やグレー表示"), kept subtle (opacity, not a border/bg change) so
+ * it doesn't compete with .chip-selected's accent highlight when both apply. */
+.chip-offline {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* Wraps a member's <button class="chip"> + its adjacent kick "✕" button so
+ * they lay out as one inline unit inside .member-chips' flex-wrap row. */
+.chip-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+/* DR-0012 kick button (admin User only, see MemberChip.tsx — never rendered
+ * for ADMIN_ID itself). Hidden until the chip pair is hovered/focused so it
+ * doesn't visually compete with every chip's label at rest; opacity (not
+ * display:none) keeps it keyboard-focusable without a hover. */
+.chip-kick {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.15rem 0.25rem;
+  border-radius: 999px;
+}
+
+.chip-wrap:hover .chip-kick,
+.chip-kick:focus-visible {
+  opacity: 1;
+}
+
+/* Touch devices have no hover, so the above rule never fires — the ✕ would
+ * stay invisible while its hit area remains live (silent-tap risk, guarded
+ * only by the confirm() dialog). Show it always where hover isn't available. */
+@media (hover: none) {
+  .chip-kick {
+    opacity: 1;
+  }
+}
+
+.chip-kick:hover {
+  background: var(--bg-alt);
+}
+
 .timeline {
   flex: 1;
   display: flex;
@@ -481,10 +598,19 @@ body {
 
 .msg-meta {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   font-size: 0.7rem;
   color: var(--fg-muted);
   margin-bottom: 0.15rem;
+}
+
+/* U1 icon addendum (DR-0012): the from-avatar (TimelineItem.tsx's
+ * FromAvatar) sits directly in .msg-meta's flex row — Avatar/UserAvatar
+ * already carry their own margin-right inline, this just cancels the extra
+ * .msg-meta gap so the icon doesn't get double-spaced from .msg-from. */
+.msg-meta .avatar {
+  margin-right: 0 !important;
 }
 
 .msg-anchor {
@@ -1323,6 +1449,13 @@ button.session-tab {
     bottom: 0;
     left: 0;
     z-index: 20;
+    /* U3 (kawaz report): the fixed 280px desktop width truncated repo names /
+     * ws labels in the mobile overlay. Widened to a viewport-relative 85vw
+     * (capped at 400px so it doesn't span edge-to-edge on a tablet-width
+     * viewport still under the 720px breakpoint) — desktop's #sidebar rule
+     * above keeps its own fixed 280px, this only applies inside the overlay. */
+    width: 85vw;
+    max-width: 400px;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2);

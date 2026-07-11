@@ -34,6 +34,10 @@ export interface RoomState {
   timeline: DeliveredEvent[];
   lastMid: number;
   lastTs: string | null;
+  /** archived flag (DR-0012), last archive event wins; absent/false = not
+   * archived. Mirrors RoomSummary.archived / ArchiveEvent — a display-
+   * organization flag only, no lifecycle effect on the room itself. */
+  archived?: boolean;
 }
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
@@ -269,6 +273,7 @@ function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
     let room: RoomState;
     [room, rooms] = withRoom(rooms, summary.id);
     if (summary.title) room = { ...room, title: summary.title };
+    if (summary.archived !== undefined) room = { ...room, archived: summary.archived };
     room = {
       ...room,
       lastMid: summary.last_mid ?? room.lastMid,
@@ -281,20 +286,25 @@ function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
   return { ...state, rooms };
 }
 
-/** Fold one delivered protocol event (subscribe backlog/live, DR-0003) into room state. */
+/** Fold one delivered protocol event (subscribe backlog/live, DR-0003) into room state.
+ * Every branch also refreshes `lastTs` from its own event's timestamp (member's
+ * `joined_at`, everything else's `ts`) to match daemon storage.ts's `lastTs()`, which
+ * takes the last *any* event's ts, not just msg — otherwise a live-subscribed client's
+ * room-list order (e.g. after an archive toggle) would only match a post-reload refetch
+ * once a msg happened to land afterward. */
 function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
   const roomId = ev.r;
   let [room, rooms] = withRoom(state.rooms, roomId);
   switch (ev.type) {
     case "member":
       room = upsertMember(room, ev);
-      room = { ...room, timeline: [...room.timeline, ev] };
+      room = { ...room, timeline: [...room.timeline, ev], lastTs: ev.joined_at };
       break;
     case "leave": {
       const membersById = new Map(room.membersById);
       const m = membersById.get(ev.id);
       if (m) membersById.set(ev.id, { ...m, left: true });
-      room = { ...room, membersById, timeline: [...room.timeline, ev] };
+      room = { ...room, membersById, timeline: [...room.timeline, ev], lastTs: ev.ts };
       break;
     }
     case "msg":
@@ -306,11 +316,14 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
       room = { ...room, lastMid: Math.max(room.lastMid, ev.mid), lastTs: ev.ts };
       break;
     case "title":
-      room = { ...room, title: ev.title, timeline: [...room.timeline, ev] };
+      room = { ...room, title: ev.title, timeline: [...room.timeline, ev], lastTs: ev.ts };
+      break;
+    case "archive":
+      room = { ...room, archived: ev.archived, timeline: [...room.timeline, ev], lastTs: ev.ts };
       break;
     case "next":
     case "prev":
-      room = { ...room, timeline: [...room.timeline, ev] };
+      room = { ...room, timeline: [...room.timeline, ev], lastTs: ev.ts };
       break;
     default:
       return state;

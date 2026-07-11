@@ -12,8 +12,10 @@ import {
   clampPaneRatio,
   errorMessage,
   formatDuration,
+  groupSessionsBySection,
   indexAgentsBySid,
   isMarkdownPath,
+  isMemberConnected,
   lastPathSegment,
   memberLabel,
   nextPeerSortKey,
@@ -24,11 +26,13 @@ import {
   sessionBadges,
   sessionLabel,
   sessionRowRepoWs,
+  sessionStatus,
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
   siblingWorkspaceEntries,
   sortPeers,
+  splitRoomsByArchived,
   toSessionRow,
   type PeerSortKey,
   type SessionRow,
@@ -185,6 +189,64 @@ describe("memberLabel", () => {
     const room = roomWithMember(member({ id: "other" }));
     expect(memberLabel("missing", room)).toBe("missing");
     expect(memberLabel("missing", undefined)).toBe("missing");
+  });
+});
+
+// --- DR-0012: room archive folding + member connectivity --- //
+
+function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
+  return {
+    id: "r1",
+    membersById: new Map(),
+    memberOrder: [],
+    msgs: new Map(),
+    timeline: [],
+    lastMid: 0,
+    lastTs: null,
+    ...overrides,
+  };
+}
+
+describe("splitRoomsByArchived", () => {
+  test("buckets by the archived flag, preserving each bucket's relative input order", () => {
+    const rooms = [
+      makeRoom({ id: "r1", archived: false }),
+      makeRoom({ id: "r2", archived: true }),
+      makeRoom({ id: "r3", archived: false }),
+      makeRoom({ id: "r4", archived: true }),
+    ];
+    const { active, archived } = splitRoomsByArchived(rooms);
+    expect(active.map((r) => r.id)).toEqual(["r1", "r3"]);
+    expect(archived.map((r) => r.id)).toEqual(["r2", "r4"]);
+  });
+
+  // absent `archived` (never toggled, or an older daemon's RoomSummary) is
+  // treated as not-archived — same "falsy = active" rule the reducer's
+  // `room.archived ? ... : ...` ternary in RoomView/RoomList relies on.
+  test("a room with archived left undefined lands in the active bucket", () => {
+    const { active, archived } = splitRoomsByArchived([makeRoom({ id: "r1" })]);
+    expect(active.map((r) => r.id)).toEqual(["r1"]);
+    expect(archived).toEqual([]);
+  });
+
+  test("empty input yields two empty buckets", () => {
+    expect(splitRoomsByArchived([])).toEqual({ active: [], archived: [] });
+  });
+});
+
+describe("isMemberConnected", () => {
+  test("true when a peer with the member's sid is present", () => {
+    const peers: PeerInfo[] = [peer({ sid: "s1" }), peer({ sid: "s2" })];
+    expect(isMemberConnected({ sid: "s1" }, peers)).toBe(true);
+  });
+
+  test("false when no peer matches the member's sid (session disconnected)", () => {
+    const peers: PeerInfo[] = [peer({ sid: "s2" })];
+    expect(isMemberConnected({ sid: "s1" }, peers)).toBe(false);
+  });
+
+  test("false against an empty peers list", () => {
+    expect(isMemberConnected({ sid: "s1" }, [])).toBe(false);
   });
 });
 
@@ -704,5 +766,137 @@ describe("sessionBadges / badgeLabel", () => {
     expect(badgeLabel("idle")).toBe("idle");
     expect(badgeLabel("done")).toBe("done");
     expect(badgeLabel("bg")).toBe("bg");
+  });
+});
+
+// --- U3: Sessions-list status sections --- //
+
+describe("sessionStatus", () => {
+  test("disconnected (agent-only) row is always 'offline', regardless of agent status/state", () => {
+    expect(sessionStatus(sessionRow({ connected: false, agent: agent({ status: "busy" }) }))).toBe(
+      "offline",
+    );
+    expect(sessionStatus(sessionRow({ connected: false, agent: agent({ state: "done" }) }))).toBe(
+      "offline",
+    );
+  });
+
+  // Connected + no matched agent: no distinct signal from `claude agents` —
+  // falls into "idle" (see sessionStatus's doc comment for why "idle" and
+  // not a fifth section) rather than the "no badges" of pre-U3 sessionBadges.
+  test("connected row with no matched agent -> 'idle'", () => {
+    expect(sessionStatus(sessionRow({ connected: true, agent: undefined }))).toBe("idle");
+  });
+
+  test("connected + agent busy -> 'busy'", () => {
+    expect(sessionStatus(sessionRow({ connected: true, agent: agent({ status: "busy" }) }))).toBe(
+      "busy",
+    );
+  });
+
+  test("connected + agent with no status -> 'idle' (upstream omits status when idle)", () => {
+    expect(
+      sessionStatus(sessionRow({ connected: true, agent: agent({ status: undefined }) })),
+    ).toBe("idle");
+  });
+
+  // state:"done" takes priority over status:"busy" — same precedence as
+  // sessionBadges (both read this off the same underlying computation).
+  test("agent.state 'done' takes priority over status 'busy'", () => {
+    expect(
+      sessionStatus(
+        sessionRow({ connected: true, agent: agent({ status: "busy", state: "done" }) }),
+      ),
+    ).toBe("done");
+  });
+});
+
+describe("groupSessionsBySection", () => {
+  // Core U3 behavior (kawaz: "リスト側に busy とかのやつでセクション切って"):
+  // rows land in the section matching sessionStatus(row).
+  test("partitions rows into their sessionStatus section", () => {
+    const rows = [
+      sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "b", connected: true, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "c", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "d", connected: false, agent: agent({}) }),
+    ];
+    const sections = groupSessionsBySection(rows);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "idle", "done", "offline"]);
+    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a"], ["b"], ["c"], ["d"]]);
+  });
+
+  // "実データに存在するセクションだけ表示" (task spec): a section with zero
+  // rows must not appear at all — no empty "Done (0)" heading.
+  test("omits a section with no rows", () => {
+    const rows = [sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) })];
+    const sections = groupSessionsBySection(rows);
+    expect(sections.map((s) => s.key)).toEqual(["busy"]);
+  });
+
+  test("empty input yields no sections", () => {
+    expect(groupSessionsBySection([])).toEqual([]);
+  });
+
+  // Section order is fixed (busy, idle, done, offline) regardless of the
+  // input array's row order — this is a *section* ordering, independent of
+  // the abc/idle/new row-level sort the input already carries.
+  test("section order is fixed: busy, idle, done, offline", () => {
+    const rows = [
+      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
+      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
+    ];
+    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual([
+      "busy",
+      "idle",
+      "done",
+      "offline",
+    ]);
+  });
+
+  // Row order *within* a section must be preserved from the input — the
+  // Sidebar's abc/idle/new sort already ran before rows reach this function
+  // (see SessionList.tsx), and grouping must not reshuffle it.
+  test("preserves input row order within a section", () => {
+    const rows = [
+      sessionRow({ sid: "z", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "a", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "m", connected: true, agent: agent({ status: "busy" }) }),
+    ];
+    const sections = groupSessionsBySection(rows);
+    expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["z", "a", "m"]);
+  });
+
+  // Section label text, used verbatim by SessionList.tsx's <summary>.
+  test("labels: Busy / Idle / Done / ccmsg未起動", () => {
+    const rows = [
+      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
+    ];
+    const labels = Object.fromEntries(groupSessionsBySection(rows).map((s) => [s.key, s.label]));
+    expect(labels).toEqual({
+      busy: "Busy",
+      idle: "Idle",
+      done: "Done",
+      offline: "ccmsg未起動",
+    });
+  });
+});
+
+describe("toSessionRow: transcript_path passthrough (U3)", () => {
+  test("carries transcript_path through when the peer announced one", () => {
+    const idx = indexAgentsBySid([]);
+    const row = toSessionRow(peer({ sid: "s1", transcript_path: "/tmp/t.jsonl" }), idx);
+    expect(row.transcript_path).toBe("/tmp/t.jsonl");
+  });
+
+  test("leaves transcript_path undefined when the peer didn't announce one", () => {
+    const idx = indexAgentsBySid([]);
+    const row = toSessionRow(peer({ sid: "s1", transcript_path: undefined }), idx);
+    expect(row.transcript_path).toBeUndefined();
   });
 });

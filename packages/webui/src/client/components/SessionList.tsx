@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
-import { sessionHref } from "../locator.ts";
+import { sessionHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
@@ -9,6 +9,7 @@ import {
   canExpandSiblings,
   errorMessage,
   formatDuration,
+  groupSessionsBySection,
   indexAgentsBySid,
   offlineAgentRows,
   ownWorkspaceSegment,
@@ -138,7 +139,13 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
           <span class="session-expand-spacer" />
         )}
         <a
-          href={sessionHref(row.sid)}
+          // U3: a row that announced (and had accepted) a transcript opens
+          // straight to Timeline — that's the view kawaz actually wants on
+          // click for a live Claude session; Files stays the default for a
+          // row with no transcript (e.g. a non-Claude ccmsg client, or an
+          // agent-only "ccmsg 未起動" row, which never carries transcript_path
+          // — see SessionRow's doc comment).
+          href={row.transcript_path ? timelineHref(row.sid) : sessionHref(row.sid)}
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
           <Avatar seed={row.sid} size={16} />
@@ -151,11 +158,17 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
             <span class="session-branch">{row.branch}</span>
           ) : null}
         </a>
-        {badges.map((b) => (
-          <span key={b} class={`session-badge session-badge-${b}`}>
-            {badgeLabel(b)}
-          </span>
-        ))}
+        {/* U3: busy/idle/done/offline no longer render per-row (kawaz: "busy
+         * 表示邪魔") — that status now only shows via the row's section
+         * heading (see SessionList's <details>). "bg" is a separate axis
+         * (kind, not status) and stays on the row itself. */}
+        {badges
+          .filter((b) => b === "bg")
+          .map((b) => (
+            <span key={b} class={`session-badge session-badge-${b}`}>
+              {badgeLabel(b)}
+            </span>
+          ))}
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
       <div class="session-line2">
@@ -195,7 +208,13 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
  * store rather than threaded through as a prop, since Sidebar.tsx's own
  * props surface is out of this task's scope) so a session `claude agents`
  * can see but whose ccmsg CLI hasn't connected yet still shows up, grouped
- * as its own "ccmsg 未起動" tail (see offlineAgentRows). */
+ * as its own "ccmsg 未起動" tail (see offlineAgentRows).
+ *
+ * U3 (kawaz 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション
+ * 切ってフォルディングもできるように"): the merged rows are further split
+ * into Busy/Idle/Done/ccmsg未起動 sections (groupSessionsBySection), each its
+ * own `<details open>` so a section can be collapsed — sort order (abc/idle/
+ * new) still applies *within* each section, unchanged from before this task. */
 export function SessionList({
   peers,
   currentSid,
@@ -211,11 +230,21 @@ export function SessionList({
     () => [...peers.map((p) => toSessionRow(p, agentsBySid)), ...offlineAgentRows(peers, agents)],
     [peers, agents, agentsBySid],
   );
+  const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
   return (
-    <ul id="session-list">
-      {rows.map((row) => (
-        <SessionRowItem key={row.sid} row={row} currentSid={currentSid} />
+    <div id="session-list">
+      {sections.map((section) => (
+        <details key={section.key} open class="session-section">
+          <summary class="session-section-summary">
+            {section.label} ({section.rows.length})
+          </summary>
+          <ul class="session-section-list">
+            {section.rows.map((row) => (
+              <SessionRowItem key={row.sid} row={row} currentSid={currentSid} />
+            ))}
+          </ul>
+        </details>
       ))}
-    </ul>
+    </div>
   );
 }

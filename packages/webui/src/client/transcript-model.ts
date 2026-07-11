@@ -163,18 +163,42 @@ export function lineByteOffsets(start: number, lines: string[]): number[] {
 }
 
 /**
- * True for a real human utterance — a "user" turn holding at least one text
- * segment — as opposed to a tool_result-only user turn (Anthropic API
- * convention wraps tool results in a user-typed line, see the
- * parseTranscriptLine/user-turns test above) or any non-turn line. Shared by
- * Timeline.tsx's chat-bubble styling and its "👤 N/M" user-turn nav counter,
- * so a turn can't count toward one and not the other — kawaz's spec ties both
- * to the same "ユーザ発言 (tool_result は除く)" definition.
+ * True for a real human utterance — a "user" turn classified (or, for
+ * hand-built fixtures, assumed) as `userMessageKind === "user-prompt"` — as
+ * opposed to a tool_result-only user turn (Anthropic API convention wraps
+ * tool results in a user-typed line, see the parseTranscriptLine/user-turns
+ * test above), a system-origin "type:user" line (teammate-message /
+ * task-notification / slash-command plumbing / etc., see
+ * `classifyUserMessage`), or any non-turn line. `userMessageKind` is only
+ * `undefined` for hand-built `ParsedLine` values that never went through
+ * `parseTranscriptLine` (test fixtures, see `TurnLine.userMessageKind`'s doc
+ * comment) — those fall back to the text-segment check below rather than
+ * being unconditionally excluded.
+ *
+ * A classified `"user-prompt"` counts even with zero *text* segments as long
+ * as it has *some* segment: an image-only paste (no caption) is real human
+ * input per `classifyUserMessage` (an array of only text/image blocks), but
+ * `parseSegments` has no `image` case yet, so an image block yields an
+ * `unknown-segment` rather than `{kind:"text"}` — requiring a text segment
+ * specifically would wrongly fold it. The `segments.length > 0` guard still
+ * excludes a `content: ""` turn (zero segments, `classifyUserMessage` even
+ * classifies empty string as `"user-prompt"` since no exclusion pattern
+ * matches) from counting as a real utterance.
+ *
+ * Shared by Timeline.tsx's chat-bubble styling, its "👤 N/M" user-turn nav
+ * counter, and `isBoundaryLine` below — so a turn can't count toward one and
+ * not the others: kawaz's U2 spec ties all three to the same "本物のユーザ
+ * 発話 (tool_result・システム由来メッセージは除く)" definition (U2:
+ * previously this only excluded tool_result-only turns, letting
+ * system-origin messages both stand outside tools-folding *and* pollute the
+ * nav counter — kawaz: "システムメッセージも tool や thinking と同じで
+ * folding しといて").
  */
 export function isUserTextTurn(line: ParsedLine): boolean {
-  return (
-    line.kind === "turn" && line.role === "user" && line.segments.some((s) => s.kind === "text")
-  );
+  if (line.kind !== "turn" || line.role !== "user") return false;
+  if (line.userMessageKind !== undefined && line.userMessageKind !== "user-prompt") return false;
+  if (line.userMessageKind === "user-prompt") return line.segments.length > 0;
+  return line.segments.some((s) => s.kind === "text");
 }
 
 /**
@@ -216,7 +240,10 @@ export type TimelineGroup =
   | { kind: "fold"; entries: TimelineEntry[] };
 
 /** True for a line that should render on its own (never folded into a tools
- * group): a real user utterance (`isUserTextTurn`), or an assistant turn
+ * group): a real user utterance (`isUserTextTurn`, which — U2 — already
+ * excludes system-origin "type:user" messages such as teammate-message /
+ * task-notification / slash-command plumbing, so those fold like any other
+ * intermediate entry instead of standing alone), or an assistant turn
  * carrying at least one `text` segment — the "次のユーザ向けアシスタント最終
  * レスポンス" that ends a run of intermediate entries. An assistant turn
  * with only thinking/tool_use segments (no text yet) is NOT a boundary, so

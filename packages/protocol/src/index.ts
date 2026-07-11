@@ -108,7 +108,23 @@ export interface TitleEvent {
   ts: string;
 }
 
-export type StorageEvent = MemberEvent | LeaveEvent | MsgEvent | NextEvent | PrevEvent | TitleEvent;
+/** Room archive toggle (DR-0012): a display-organization flag, NOT a lifecycle
+ * change — an archived room still accepts posts and still delivers events.
+ * Appended per toggle; the log's LAST archive event wins (same rule as title). */
+export interface ArchiveEvent {
+  type: "archive";
+  archived: boolean;
+  ts: string;
+}
+
+export type StorageEvent =
+  | MemberEvent
+  | LeaveEvent
+  | MsgEvent
+  | NextEvent
+  | PrevEvent
+  | TitleEvent
+  | ArchiveEvent;
 
 /** A storage event as delivered over a subscribe stream: flattened with room id. */
 export type DeliveredEvent = StorageEvent & { r: string };
@@ -240,6 +256,28 @@ export interface SetTitleRequest {
   title: string;
 }
 
+/** Toggle a room's archived flag (DR-0012). Same permission as set_title
+ * (admin User or member session). Appends an ArchiveEvent + broadcasts it;
+ * the webui folds archived rooms into an "アーカイブ" section at the bottom
+ * of the room list. No behavioral change to the room itself. */
+export interface ArchiveRoomRequest {
+  op: "archive_room";
+  room: string;
+  archived: boolean;
+}
+
+/** Force-remove a member from a room (DR-0012, webui の ✕ ボタン). Appends
+ * the same LeaveEvent a voluntary `leave` would and broadcasts it. Admin
+ * User only — a room's agents must not be able to evict each other. NOT a
+ * ban: nothing prevents a later re-invite/re-join (deliberate, kawaz
+ * 2026-07-12: 「再joinを制限までは今のとこ不要」). */
+export interface KickRequest {
+  op: "kick";
+  room: string;
+  /** member id (e.g. "a2") as shown in the room's member list */
+  id: string;
+}
+
 export interface SubscribeRequest {
   op: "subscribe";
   /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). */
@@ -364,6 +402,8 @@ export type Request =
   | CreateRoomRequest
   | NextRoomRequest
   | SetTitleRequest
+  | ArchiveRoomRequest
+  | KickRequest
   | SubscribeRequest
   | ReadRequest
   | RoomsRequest
@@ -419,6 +459,16 @@ export interface SetTitleResponse {
   room: string;
   title: string;
 }
+export interface ArchiveRoomResponse {
+  ok: true;
+  room: string;
+  archived: boolean;
+}
+export interface KickResponse {
+  ok: true;
+  room: string;
+  id: string;
+}
 export interface SubscribeAck {
   ok: true;
   subscribed: true;
@@ -434,6 +484,8 @@ export interface RoomSummary {
   members: MemberEvent[];
   last_mid: number;
   last_ts: string | null;
+  /** archived flag (DR-0012), last archive event wins; absent = not archived */
+  archived?: boolean;
 }
 export interface RoomsResponse {
   ok: true;
@@ -594,6 +646,8 @@ export type Response =
   | CreateRoomResponse
   | NextRoomResponse
   | SetTitleResponse
+  | ArchiveRoomResponse
+  | KickResponse
   | SubscribeAck
   | ReadResponse
   | RoomsResponse

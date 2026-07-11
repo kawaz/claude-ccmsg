@@ -14,12 +14,14 @@
 import type {
   AgentsResponse,
   AgentsStreamEvent,
+  ArchiveRoomResponse,
   CreateRoomResponse,
   DeliveredEvent,
   ErrorResponse,
   FsListResponse,
   FsReadResponse,
   InviteResponse,
+  KickResponse,
   PeersResponse,
   PingResponse,
   PostResponse,
@@ -64,6 +66,16 @@ export interface WsHandle {
    * one) via the broadcast title event on the subscribe stream, not this
    * response — callers don't need to dispatch anything themselves. */
   setTitle(room: string, title: string): Promise<SetTitleResponse | ErrorResponse>;
+  /** Toggle a room's archived flag (DR-0012 archive_room). The new flag
+   * reaches all clients (incl. this one) via the broadcast archive event on
+   * the subscribe stream, not this response — same non-optimistic-update
+   * convention as setTitle above. */
+  archiveRoom(room: string, archived: boolean): Promise<ArchiveRoomResponse | ErrorResponse>;
+  /** Force-remove a member from a room (DR-0012 kick, admin User only). The
+   * removal reaches all clients via the broadcast leave event on the
+   * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
+   * this response. */
+  kick(room: string, id: string): Promise<KickResponse | ErrorResponse>;
   /** Create a room whose sole initial member (besides the always-implicit
    * User/u1) is `memberSid` (U3: SessionView's "+ 新規 Room"). `title`
    * omitted lets the daemon default it, same as any other create_room call. */
@@ -285,6 +297,8 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     },
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
     setTitle: (room, title) => send({ op: "set_title", room, title }),
+    archiveRoom: (room, archived) => send({ op: "archive_room", room, archived }),
+    kick: (room, id) => send({ op: "kick", room, id }),
     createRoom: (memberSid, title) =>
       send({ op: "create_room", members: [memberSid], ...(title ? { title } : {}) }),
     peers: () => send({ op: "peers" }),

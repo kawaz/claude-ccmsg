@@ -25,6 +25,8 @@ export interface Room {
   /** sorted, unique original member sids — the dedup key. */
   dedupKey: string;
   title?: string;
+  /** last-wins archive flag (DR-0012), same rule as title. */
+  archived: boolean;
   next: string[];
   prev: string[];
   // append fd, lazily opened on first write and kept open to hold the fsync target.
@@ -101,6 +103,7 @@ function computeDerived(room: Room): void {
   let earliestJoin = Number.POSITIVE_INFINITY;
   const sids = new Set<string>();
   let title: string | undefined;
+  let archived = false;
   const next: string[] = [];
   const prev: string[] = [];
   for (const ev of room.events) {
@@ -117,6 +120,9 @@ function computeDerived(room: Room): void {
       case "title":
         title = ev.title;
         break;
+      case "archive":
+        archived = ev.archived;
+        break;
       case "next":
         next.push(ev.room);
         break;
@@ -128,6 +134,7 @@ function computeDerived(room: Room): void {
   room.lastMid = lastMid;
   room.createdAt = Number.isFinite(earliestJoin) ? earliestJoin : Date.now();
   room.title = title;
+  room.archived = archived;
   room.next = next;
   room.prev = prev;
   room.dedupEligible = prev.length === 0;
@@ -150,6 +157,7 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
     createdAt: Date.now(),
     dedupEligible: true,
     dedupKey: "",
+    archived: false,
     next: [],
     prev: [],
     fd: null,
@@ -261,6 +269,7 @@ export function appendEvent(room: Room, ev: StorageEvent): void {
   room.events.push(ev);
   if (ev.type === "msg" && ev.mid > room.lastMid) room.lastMid = ev.mid;
   if (ev.type === "title") room.title = ev.title;
+  if (ev.type === "archive") room.archived = ev.archived;
   if (ev.type === "next") room.next.push(ev.room);
   if (ev.type === "prev") {
     room.prev.push(ev.room);

@@ -1124,6 +1124,330 @@ describe("wire protocol integration", () => {
   );
 
   test(
+    "archive_room: a member session toggles archived, broadcasts an archive event, and rooms reflects it; re-asserting the same value is a no-op (no extra append/broadcast)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room;
+
+        const bSub = await session(ctx, "B");
+        await bSub.request({ op: "subscribe" });
+
+        // set archived: true
+        const archived = await aPost.request<{ ok: boolean; room: string; archived: boolean }>({
+          op: "archive_room",
+          room,
+          archived: true,
+        });
+        expect(archived.ok).toBe(true);
+        expect(archived.archived).toBe(true);
+
+        // broadcast: an archive event goes to every subscriber incl. the actor
+        // (same non-msg broadcast rule as title/leave/member).
+        const got = await bSub.readEventUntil((ev) => ev.type === "archive" && ev.r === room);
+        expect(got.ev.archived).toBe(true);
+
+        // rooms reflects the flag
+        const roomsAfterSet = await aPost.request<{ rooms: { id: string; archived?: boolean }[] }>({
+          op: "rooms",
+        });
+        expect(roomsAfterSet.rooms.find((r) => r.id === room)?.archived).toBe(true);
+
+        // durable: the archive line landed on disk
+        const file = fs.readFileSync(path.join(ctx.roomsDir, `${room}.jsonl`), "utf8");
+        expect(file).toContain('"type":"archive","archived":true');
+
+        // re-asserting the same value (true -> true) is an idempotent no-op: it
+        // succeeds but appends/broadcasts nothing (DR-0012 toggle semantics).
+        const reassert = await aPost.request<{ ok: boolean; archived: boolean }>({
+          op: "archive_room",
+          room,
+          archived: true,
+        });
+        expect(reassert.ok).toBe(true);
+        expect(reassert.archived).toBe(true);
+        // confirm no-op by checking no second archive line was appended
+        const fileAfterReassert = fs.readFileSync(path.join(ctx.roomsDir, `${room}.jsonl`), "utf8");
+        expect((fileAfterReassert.match(/"type":"archive"/g) ?? []).length).toBe(1);
+
+        // unset archived: false
+        const unarchived = await aPost.request<{ ok: boolean; archived: boolean }>({
+          op: "archive_room",
+          room,
+          archived: false,
+        });
+        expect(unarchived.ok).toBe(true);
+        expect(unarchived.archived).toBe(false);
+        const gotUnset = await bSub.readEventUntil(
+          (ev) => ev.type === "archive" && ev.r === room && ev.archived === false,
+        );
+        expect(gotUnset.ev.archived).toBe(false);
+
+        // rooms omits the field once unarchived (false = field absent, RoomSummary contract)
+        const roomsAfterUnset = await aPost.request<{
+          rooms: { id: string; archived?: boolean }[];
+        }>({ op: "rooms" });
+        expect(roomsAfterUnset.rooms.find((r) => r.id === room)?.archived).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "archive_room: the admin User can also toggle any room (implicit member of every room)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        const u = await user(ctx);
+        const archived = await u.request<{ ok: boolean; archived: boolean }>({
+          op: "archive_room",
+          room,
+          archived: true,
+        });
+        expect(archived.ok).toBe(true);
+        expect(archived.archived).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "archive_room: a non-member session is refused with not_a_member",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
+        const room = created.room;
+
+        const c = await session(ctx, "C");
+        const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
+          op: "archive_room",
+          room,
+          archived: true,
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("not_a_member");
+
+        const rooms = await aPost.request<{ rooms: { id: string; archived?: boolean }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.archived).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "kick: the admin User force-leaves a member, broadcasts the same LeaveEvent a voluntary leave would, and rooms reflects it",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const bPost = await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room; // A=a1, B=a2
+
+        const aSub = await session(ctx, "A");
+        await aSub.request({ op: "subscribe" });
+
+        const u = await user(ctx);
+        const kicked = await u.request<{ ok: boolean; room: string; id: string }>({
+          op: "kick",
+          room,
+          id: "a2",
+        });
+        expect(kicked.ok).toBe(true);
+        expect(kicked.room).toBe(room);
+        expect(kicked.id).toBe("a2");
+
+        // broadcast: a remaining member sees the leave event live, identical shape to
+        // a voluntary leave (type/id/ts only, no kick-specific marker on the wire).
+        const got = await aSub.readEventUntil((ev) => ev.type === "leave" && ev.r === room);
+        expect(got.ev.id).toBe("a2");
+
+        // rooms no longer lists the kicked member
+        const rooms = await aPost.request<{ rooms: { id: string; members: { id: string }[] }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.members.map((m) => m.id)).toEqual(["a1"]);
+
+        // durable: the leave line landed on disk
+        const file = fs.readFileSync(path.join(ctx.roomsDir, `${room}.jsonl`), "utf8");
+        expect(file).toContain('"type":"leave","id":"a2"');
+
+        // kicked-out session is no longer a member: further posts are refused
+        const afterKick = await bPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "post",
+          room,
+          msg: "still here?",
+        });
+        expect(afterKick.ok).toBe(false);
+        expect(afterKick.error!.code).toBe("not_a_member");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "kick: a member session (non-admin) is refused — kick is admin-User-only, unlike leave",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room; // A=a1, B=a2
+
+        const denied = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "kick",
+          room,
+          id: "a2",
+        });
+        expect(denied.ok).toBe(false);
+        // straight permission rejection, not not_a_member (same pattern as the other
+        // user-role-only ops, e.g. "agents"/"transcript_subscribe").
+        expect(denied.error!.code).toBe("bad_request");
+
+        // B is still a member — the rejected kick didn't touch membership
+        const rooms = await aPost.request<{ rooms: { id: string; members: { id: string }[] }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.members.map((m) => m.id)).toEqual([
+          "a1",
+          "a2",
+        ]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "kick: a non-member id is rejected with invalid_args, including the implicit admin (u1) itself",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A=a1 only
+        const room = created.room;
+
+        const u = await user(ctx);
+
+        // an id that was never a member of this room
+        const unknownId = await u.request<{ ok: boolean; error?: { code: string } }>({
+          op: "kick",
+          room,
+          id: "a99",
+        });
+        expect(unknownId.ok).toBe(false);
+        expect(unknownId.error!.code).toBe("invalid_args");
+
+        // the implicit admin (u1) has no member row and is never kickable, even by
+        // itself: naturally falls out of the presentIds check as invalid_args.
+        const selfKick = await u.request<{ ok: boolean; error?: { code: string } }>({
+          op: "kick",
+          room,
+          id: "u1",
+        });
+        expect(selfKick.ok).toBe(false);
+        expect(selfKick.error!.code).toBe("invalid_args");
+
+        // membership untouched by either rejected attempt
+        const rooms = await aPost.request<{ rooms: { id: string; members: { id: string }[] }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)?.members.map((m) => m.id)).toEqual(["a1"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "kick: a kicked member can be re-invited (kick is not a ban, DR-0012)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const bPost = await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room; // A=a1, B=a2
+
+        const u = await user(ctx);
+        const kicked = await u.request<{ ok: boolean }>({ op: "kick", room, id: "a2" });
+        expect(kicked.ok).toBe(true);
+
+        // B, still connected, can be re-invited — no re-join restriction (kawaz
+        // 2026-07-12: 「再joinを制限までは今のとこ不要」).
+        const reinvited = await aPost.request<{ ok: boolean; id: string; already: boolean }>({
+          op: "invite",
+          room,
+          sid: "B",
+        });
+        expect(reinvited.ok).toBe(true);
+        expect(reinvited.already).toBe(false);
+
+        // B can post again post-reinvite
+        const posted = await bPost.request<{ ok: boolean }>({ op: "post", room, msg: "back" });
+        expect(posted.ok).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "kick: an unknown room errors with room_not_found",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        const denied = await u.request<{ ok: boolean; error?: { code: string } }>({
+          op: "kick",
+          room: "r-nope",
+          id: "a1",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("room_not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "invite: a member session adds a connected, non-member session and it's live-broadcast to existing subscribers",
     async () => {
       const ctx = await startTestDaemon();
