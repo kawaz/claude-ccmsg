@@ -158,10 +158,10 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    const got = await getRepoWsFromVcs(
-      "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
-      { bin, timeoutMs: 500 },
-    );
+    // cwd (第 1 引数) は spawn の作業ディレクトリとして実在する必要がある —
+    // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
+    // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
     expect(got).toEqual({ repo: "claude-ccmsg", ws: "main" });
   });
 
