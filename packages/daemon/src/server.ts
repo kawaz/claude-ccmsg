@@ -22,7 +22,23 @@ import {
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { fsList, fsRead, validateRepoRoot } from "./fs-access.ts";
-import { transcriptRead, validateTranscriptPath } from "./transcript.ts";
+import {
+  createTranscriptTailStore,
+  stopAllTailWatches,
+  transcriptRead,
+  transcriptSubscribe,
+  transcriptUnsubscribe,
+  transcriptUnsubscribeAll,
+  validateTranscriptPath,
+  type TranscriptTailStore,
+} from "./transcript.ts";
+import {
+  createAgentsPoller,
+  maybeStartAgentsPoller,
+  maybeStopAgentsPoller,
+  stopAgentsPoller,
+  type AgentsPoller,
+} from "./agents.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
@@ -99,6 +115,10 @@ export interface Daemon {
   httpAllow: string[];
   dedupWindowMs: number;
   shuttingDown: boolean;
+  /** `claude agents --json` merged poll state (DR-0009-agents addendum). */
+  agentsPoller: AgentsPoller;
+  /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
+  transcriptTail: TranscriptTailStore;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -168,6 +188,8 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
 export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
+  maybeStopAgentsPoller(daemon.agentsPoller, daemon.subscribers);
+  transcriptUnsubscribeAll(daemon.transcriptTail, conn);
   const id = conn.identity;
   if (id && id.role === "session") {
     const entry = daemon.sessions.get(id.sid);
@@ -360,6 +382,9 @@ const IDENTITY_OPS = new Set([
   "fs_list",
   "fs_read",
   "transcript_read",
+  "agents",
+  "transcript_subscribe",
+  "transcript_unsubscribe",
 ]);
 
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
@@ -436,6 +461,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         pid: process.pid,
         rooms: daemon.rooms.size,
         clients: daemon.connections.size,
+        // provenance (DR-0009-agents addendum): which bun executable and entry
+        // script this running daemon actually is, so version skew across faces
+        // (e.g. ~/.claude-personal vs a work overlay) is observable.
+        exe: process.execPath,
+        script: Bun.main,
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
       });
@@ -623,6 +653,22 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         const sinceMid = req.since?.[room.id];
         sendBacklog(conn, room, sinceMid);
       }
+      // agents polling (DR-0009-agents addendum) only ever runs while a user-role
+      // subscriber is connected — a session subscribing never starts it.
+      if (conn.identity?.role === "user") {
+        maybeStartAgentsPoller(
+          daemon.agentsPoller,
+          daemon.subscribers,
+          daemon.log,
+          (agents, polledAt) => {
+            for (const sub of daemon.subscribers) {
+              if (sub.identity?.role === "user") {
+                send(sub, { ev: "agents", agents, polled_at: polledAt });
+              }
+            }
+          },
+        );
+      }
       return;
     }
 
@@ -717,6 +763,53 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    // user role only (webui-only op): the merged `claude agents --json` poll
+    // result is not something a session (AI) needs to see.
+    case "agents": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'agents' requires user role");
+        return;
+      }
+      send(conn, {
+        ok: true,
+        agents: daemon.agentsPoller.cache.agents,
+        polled_at: daemon.agentsPoller.cache.polledAt,
+      });
+      return;
+    }
+
+    // user role only, same rationale as "agents": live-tailing a transcript is a
+    // webui viewer feature, not something a session needs from the wire protocol.
+    case "transcript_subscribe": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'transcript_subscribe' requires user role");
+        return;
+      }
+      const result = transcriptSubscribe(
+        daemon.transcriptTail,
+        daemon.sessions,
+        req.sid,
+        conn,
+        daemon.log,
+      );
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "transcript_unsubscribe": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'transcript_unsubscribe' requires user role");
+        return;
+      }
+      const result = transcriptUnsubscribe(daemon.transcriptTail, req.sid, conn);
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
     case "leave": {
       const room = daemon.rooms.get(req.room);
       if (!room) {
@@ -771,6 +864,8 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   if (daemon.shuttingDown) return;
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
+  stopAgentsPoller(daemon.agentsPoller);
+  stopAllTailWatches(daemon.transcriptTail);
   try {
     daemon.server?.stop();
   } catch {
@@ -897,6 +992,8 @@ export function startDaemon(opts: StartOptions = {}): void {
     httpAllow,
     dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
+    agentsPoller: createAgentsPoller(),
+    transcriptTail: createTranscriptTailStore(),
   };
 
   interface UdsConnState {

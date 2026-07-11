@@ -12,11 +12,15 @@
 // ephemeral `ev` frame), never a reply. That's the only reliable way to tell
 // the two apart from the client side.
 import type {
+  AgentsResponse,
+  AgentsStreamEvent,
+  CreateRoomResponse,
   DeliveredEvent,
   ErrorResponse,
   FsListResponse,
   FsReadResponse,
   PeersResponse,
+  PingResponse,
   PostResponse,
   ReadResponse,
   Request,
@@ -25,6 +29,8 @@ import type {
   SetTitleResponse,
   StreamEvent,
   TranscriptReadResponse,
+  TranscriptSubscribeResponse,
+  TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
 import type { Action } from "./store.ts";
 
@@ -57,6 +63,10 @@ export interface WsHandle {
    * one) via the broadcast title event on the subscribe stream, not this
    * response — callers don't need to dispatch anything themselves. */
   setTitle(room: string, title: string): Promise<SetTitleResponse | ErrorResponse>;
+  /** Create a room whose sole initial member (besides the always-implicit
+   * User/u1) is `memberSid` (U3: SessionView's "+ 新規 Room"). `title`
+   * omitted lets the daemon default it, same as any other create_room call. */
+  createRoom(memberSid: string, title?: string): Promise<CreateRoomResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
   /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
@@ -70,6 +80,21 @@ export interface WsHandle {
     sid: string,
     opts?: { before?: number; max_bytes?: number },
   ): Promise<TranscriptReadResponse | ErrorResponse>;
+  /** Follow a connected session's transcript live (DR-0009 live-tail
+   * addendum): appended complete lines arrive as `ev:"transcript"` pushes
+   * (handled in onMessage below, folded into store as `timeline/tail`) until
+   * transcriptUnsubscribe or disconnect. */
+  transcriptSubscribe(sid: string): Promise<TranscriptSubscribeResponse | ErrorResponse>;
+  transcriptUnsubscribe(sid: string): Promise<TranscriptUnsubscribeResponse | ErrorResponse>;
+  /** One-shot fetch of the latest `claude agents --json` poll result (U1).
+   * Called once in onOpen's handshake for the initial paint; subsequent
+   * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
+  agents(): Promise<AgentsResponse | ErrorResponse>;
+  /** Round trip to the daemon, carrying provenance (exe/script/version, U1
+   * footer) alongside the existing liveness fields. Called once in onOpen's
+   * handshake, not polled — provenance only changes across a daemon restart,
+   * which already re-runs the whole handshake. */
+  ping(): Promise<PingResponse | ErrorResponse>;
 }
 
 export function createWsClient(dispatch: (action: Action) => void): WsHandle {
@@ -101,6 +126,20 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
       await send({ op: "subscribe", since });
       const peers = await send<PeersResponse>({ op: "peers" });
       if (peers.ok) dispatch({ type: "peers/loaded", peers: peers.peers });
+      // U1: initial `claude agents --json` paint + daemon provenance for the
+      // footer. Neither failure here should abort the handshake above (both
+      // already landed) — a rejection just falls through to the catch below
+      // and skips these two dispatches, same as any other mid-handshake drop.
+      const agentsRes = await send<AgentsResponse>({ op: "agents" });
+      if (agentsRes.ok) dispatch({ type: "agents/loaded", agents: agentsRes.agents });
+      const ping = await send<PingResponse>({ op: "ping" });
+      if (ping.ok)
+        dispatch({
+          type: "daemon-info/loaded",
+          version: ping.version,
+          exe: ping.exe,
+          script: ping.script,
+        });
     } catch {
       // socket dropped mid-handshake; onClose already schedules the reconnect.
     }
@@ -124,6 +163,31 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
       return;
     }
     if ("ev" in streamEv && streamEv.ev === "notify") return; // not surfaced in the UI (yet)
+    // U1: live push whenever the daemon's merged `claude agents --json` poll
+    // result changes (only emitted while >=1 user-role subscriber is
+    // connected) — folds straight into the same agents/loaded action the
+    // one-shot op:"agents" reply in onOpen uses, so the reducer has exactly
+    // one code path for "replace the agents list".
+    if ("ev" in streamEv && streamEv.ev === "agents") {
+      dispatch({ type: "agents/loaded", agents: (streamEv as AgentsStreamEvent).agents });
+      return;
+    }
+    // Live-tail push for a session's transcript (DR-0009 addendum,
+    // transcript_subscribe): folded into the sid's TimelineState by the
+    // reducer's applyTimelineTail, which is the one place that decides
+    // whether this batch is contiguous with what's cached (see its doc
+    // comment) — this layer just relays the wire shape verbatim.
+    if ("ev" in streamEv && streamEv.ev === "transcript") {
+      dispatch({
+        type: "timeline/tail",
+        sid: streamEv.sid,
+        lines: streamEv.lines,
+        start: streamEv.start,
+        end: streamEv.end,
+        size: streamEv.size,
+      });
+      return;
+    }
     const delivered = streamEv as DeliveredEvent;
     if (delivered.type === "msg") {
       since[delivered.r] = Math.max(since[delivered.r] ?? 0, delivered.mid);
@@ -213,6 +277,8 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     },
     post: (room, msg, to) => send({ op: "post", room, msg, ...(to && to.length ? { to } : {}) }),
     setTitle: (room, title) => send({ op: "set_title", room, title }),
+    createRoom: (memberSid, title) =>
+      send({ op: "create_room", members: [memberSid], ...(title ? { title } : {}) }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
@@ -224,5 +290,9 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
         ...(opts?.before !== undefined ? { before: opts.before } : {}),
         ...(opts?.max_bytes !== undefined ? { max_bytes: opts.max_bytes } : {}),
       }),
+    transcriptSubscribe: (sid) => send({ op: "transcript_subscribe", sid }),
+    transcriptUnsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
+    agents: () => send({ op: "agents" }),
+    ping: () => send({ op: "ping" }),
   };
 }

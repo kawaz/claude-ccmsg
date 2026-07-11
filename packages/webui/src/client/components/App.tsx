@@ -36,6 +36,14 @@ export function App() {
           <RoomView state={state} />
         )}
       </div>
+      <footer id="app-footer">
+        {state.daemonInfo ? (
+          <span title={state.daemonInfo.exe ?? undefined}>
+            daemon v{state.daemonInfo.version}
+            {state.daemonInfo.script ? ` · ${state.daemonInfo.script}` : ""}
+          </span>
+        ) : null}
+      </footer>
     </div>
   );
 }

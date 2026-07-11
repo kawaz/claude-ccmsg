@@ -8,6 +8,7 @@
 // network or the DOM.
 import {
   ADMIN_ID,
+  type AgentInfo,
   type DeliveredEvent,
   type FsEntry,
   type FsReadResponse,
@@ -73,6 +74,15 @@ export interface TimelineState {
   atStart: boolean;
   /** present when status is "error" */
   error?: string;
+  /** set when a `timeline/tail` push arrived non-contiguous with the cached
+   * `end` (subscribe/read race, or a gap opened while disconnected) — see
+   * applyTimelineTail's doc comment for why the push itself is still
+   * dropped. Timeline.tsx's resync effect watches this flag and issues a
+   * background transcript_read to catch the cache up; a later
+   * `timeline/loaded` (which never carries this field) clears it. Absent
+   * (not just `false`) in the common case so existing equality-style
+   * assertions on a fresh TimelineState are unaffected. */
+  needsResync?: boolean;
 }
 
 /** Per-session file-browsing state (DR-0008), keyed by sid in AppState so
@@ -92,9 +102,26 @@ export interface SessionTreeState {
   timeline: TimelineState;
 }
 
+/** Provenance of the running daemon (U1 footer), from a `ping` reply's
+ * exe/script/version fields — which face's plugin cache (personal / a work
+ * overlay / ...) this daemon actually runs from was previously unobservable
+ * from the webui. `null` until the first ping reply lands (ws.ts's onOpen
+ * handshake fires one after hello). */
+export interface DaemonInfo {
+  version: string;
+  exe?: string;
+  script?: string;
+}
+
 export interface AppState {
   rooms: Map<string, RoomState>;
   peers: PeerInfo[];
+  /** `claude agents --json` rows, merged with `peers` by sessionId in the
+   * Sidebar Sessions list (U1, see utils.ts's toSessionRow/offlineAgentRows).
+   * Populated by ws.ts's onOpen `op:"agents"` fetch and kept live via
+   * `ev:"agents"` push — no manual refresh needed. */
+  agents: AgentInfo[];
+  daemonInfo: DaemonInfo | null;
   /** which top-level screen the locator currently selects. */
   view: View;
   currentRoomId: string | null;
@@ -113,6 +140,8 @@ export function initialState(): AppState {
   return {
     rooms: new Map(),
     peers: [],
+    agents: [],
+    daemonInfo: null,
     view: "room",
     currentRoomId: null,
     currentMid: null,
@@ -128,6 +157,11 @@ export type Action =
   | { type: "conn/status"; status: ConnStatus }
   | { type: "rooms/loaded"; rooms: RoomSummary[] }
   | { type: "peers/loaded"; peers: PeerInfo[] }
+  // Both the one-shot `op:"agents"` reply (initial paint) and the pushed
+  // `ev:"agents"` stream event (subsequent changes) fold in here — the
+  // reducer just replaces the list either way, same as peers/loaded.
+  | { type: "agents/loaded"; agents: AgentInfo[] }
+  | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "mention/toggle"; id: string }
@@ -155,6 +189,17 @@ export type Action =
       mode: "replace" | "prepend";
       response?: TranscriptReadResponse;
       error?: string;
+    }
+  // Live-tail push (DR-0009 addendum, transcript_subscribe): relayed
+  // verbatim from ws.ts's `ev:"transcript"` handler. See applyTimelineTail
+  // for the contiguity check that decides whether it's actually appended.
+  | {
+      type: "timeline/tail";
+      sid: string;
+      lines: string[];
+      start: number;
+      end: number;
+      size: number;
     };
 
 function newRoom(id: string): RoomState {
@@ -363,6 +408,46 @@ function applyTimelineLoaded(
   return { ...state, sessionTrees };
 }
 
+/** Fold a `timeline/tail` live-tail push into the sid's cached TimelineState
+ * (DR-0009 addendum). Only appended when contiguous with what's cached
+ * (`action.start === tree.timeline.end`) and the cache is actually
+ * "loaded" — a subscribe response can start delivering before the initial
+ * transcript_read lands, or the tail's `start` can land mid-gap after a
+ * "load older" page (whose `end` deliberately doesn't move, see
+ * applyTimelineLoaded). Still "loaded" but non-contiguous (the gap case, not
+ * the not-loaded-yet case) sets `needsResync` instead of just dropping the
+ * push — without it the daemon's tail cursor and this cache's `end` diverge
+ * permanently (every later push's `start` keeps tracking the daemon's
+ * cursor, never this cache's stale `end` again), so live tail would go
+ * silent until a manual "更新" click. Timeline.tsx's resync effect reads
+ * `needsResync` and issues the background re-read that clears it (via the
+ * next `timeline/loaded`, which constructs a fresh TimelineState with no
+ * `needsResync` field at all). While a resync is already flagged, further
+ * pushes are dropped without re-flagging (`prev.needsResync` guard) so the
+ * effect isn't re-triggered on every subsequent push before its own re-read
+ * lands. */
+function applyTimelineTail(
+  state: AppState,
+  action: Extract<Action, { type: "timeline/tail" }>,
+): AppState {
+  const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+  const prev = tree.timeline;
+  if (prev.status !== "loaded" || prev.needsResync) return state;
+  if (action.start !== prev.end) {
+    const timeline: TimelineState = { ...prev, needsResync: true };
+    sessionTrees.set(action.sid, { ...tree, timeline });
+    return { ...state, sessionTrees };
+  }
+  const timeline: TimelineState = {
+    ...prev,
+    lines: [...prev.lines, ...action.lines],
+    end: action.end,
+    size: action.size,
+  };
+  sessionTrees.set(action.sid, { ...tree, timeline });
+  return { ...state, sessionTrees };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "conn/status":
@@ -371,6 +456,13 @@ export function reducer(state: AppState, action: Action): AppState {
       return applyRoomsLoaded(state, action.rooms);
     case "peers/loaded":
       return { ...state, peers: action.peers };
+    case "agents/loaded":
+      return { ...state, agents: action.agents };
+    case "daemon-info/loaded":
+      return {
+        ...state,
+        daemonInfo: { version: action.version, exe: action.exe, script: action.script },
+      };
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":
@@ -432,6 +524,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "timeline/loaded":
       return applyTimelineLoaded(state, action);
+    case "timeline/tail":
+      return applyTimelineTail(state, action);
     default:
       return state;
   }

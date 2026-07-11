@@ -76,7 +76,15 @@ export interface MsgEvent {
   type: "msg";
   mid: number;
   from: string;
-  /** attention (mention) targets, member id[]. Absent = everyone. Not a visibility filter. */
+  /** DELIVERY targets, member id[]. Absent = deliver to every member. When
+   * present, the subscribe stream (live and since-replay both) delivers this
+   * msg only to the listed members, the sender, and the admin User (u1 —
+   * exempt because the webui is an observation surface and the User has no
+   * agent-style context cost). NOT a storage/visibility filter: the event
+   * stays in the room log, every member sees the mid gap in `rooms` /
+   * neighboring mids, and `read` serves it to any member on request
+   * (deliberate pull, kawaz 2026-07-12: skipped mids signal "a conversation
+   * you weren't part of happened; read it iff you care"). */
   to?: string[];
   ts: string;
   msg: string;
@@ -123,7 +131,32 @@ export interface RestartingStreamEvent {
   ev: "restarting";
   reason?: string;
 }
-export type StreamEvent = DeliveredEvent | NotifyStreamEvent | RestartingStreamEvent;
+/** Push update of the `claude agents --json` poll result (user-role subscribers
+ * only). Emitted when the merged agent list changes; the daemon polls only
+ * while at least one user-role subscriber is connected. */
+export interface AgentsStreamEvent {
+  ev: "agents";
+  agents: AgentInfo[];
+  polled_at: string;
+}
+/** Appended transcript lines for a session the subscriber asked to follow via
+ * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
+ * are delivered; byte offsets line up with transcript_read paging so a client
+ * can stitch tail events onto a paged view without re-reading. */
+export interface TranscriptStreamEvent {
+  ev: "transcript";
+  sid: string;
+  lines: string[];
+  start: number;
+  end: number;
+  size: number;
+}
+export type StreamEvent =
+  | DeliveredEvent
+  | NotifyStreamEvent
+  | RestartingStreamEvent
+  | AgentsStreamEvent
+  | TranscriptStreamEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -177,7 +210,8 @@ export interface PostRequest {
   op: "post";
   room: string;
   msg: string;
-  /** mention target member id(s). string | string[]; absent = everyone. */
+  /** delivery target member id(s) (see MsgEvent.to). string | string[];
+   * absent = deliver to everyone. */
   to?: string | string[];
 }
 
@@ -276,6 +310,27 @@ export interface TranscriptReadRequest {
   max_bytes?: number;
 }
 
+/** One-shot fetch of the latest `claude agents --json` poll result (user role
+ * only). The webui uses this for the initial paint; subsequent changes arrive
+ * as `ev:"agents"` stream events. */
+export interface AgentsRequest {
+  op: "agents";
+}
+
+/** Follow a connected session's transcript live (user role only): after this,
+ * appended complete lines arrive as `ev:"transcript"` events on this
+ * connection's subscribe stream until transcript_unsubscribe / disconnect.
+ * Same no-traversal property as transcript_read — the daemon only ever tails
+ * the hello-validated transcript of `sid`. */
+export interface TranscriptSubscribeRequest {
+  op: "transcript_subscribe";
+  sid: string;
+}
+export interface TranscriptUnsubscribeRequest {
+  op: "transcript_unsubscribe";
+  sid: string;
+}
+
 export interface PingRequest {
   op: "ping";
 }
@@ -288,6 +343,19 @@ export interface ShutdownRequest {
 export interface LeaveRequest {
   op: "leave";
   room: string;
+}
+
+/** Add a connected session to an existing room (webui drag-a-session-onto-
+ * the-chat, or a member session pulling in a collaborator). Appends a
+ * MemberEvent and broadcasts it. Allowed for the admin User and member
+ * sessions; the target must be a currently connected session (its metadata
+ * comes from the live registry, same as create_room members). Inviting an
+ * existing member is a no-op (already: true). */
+export interface InviteRequest {
+  op: "invite";
+  room: string;
+  /** sid of the session to add */
+  sid: string;
 }
 
 export type Request =
@@ -304,9 +372,13 @@ export type Request =
   | FsListRequest
   | FsReadRequest
   | TranscriptReadRequest
+  | AgentsRequest
+  | TranscriptSubscribeRequest
+  | TranscriptUnsubscribeRequest
   | PingRequest
   | ShutdownRequest
-  | LeaveRequest;
+  | LeaveRequest
+  | InviteRequest;
 
 // ---------------------------------------------------------------------------
 // Wire: responses (daemon -> client)
@@ -440,6 +512,44 @@ export interface FsReadResponse {
   /** UTF-8 text content; "" when binary */
   content: string;
 }
+/** One row of `claude agents --json` output, annotated with which
+ * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
+ * (camelCase preserved via passthrough) — `kind`/`status`/`state` stay plain
+ * strings so newer CLI values don't break older daemons. */
+export interface AgentInfo {
+  pid: number;
+  cwd: string;
+  /** "interactive" | "background" (upstream values, open set) */
+  kind: string;
+  /** epoch ms */
+  startedAt: number;
+  sessionId: string;
+  name?: string;
+  /** e.g. "busy"; absent = idle (upstream omits it) */
+  status?: string;
+  /** background sessions only, e.g. "done" */
+  state?: string;
+  /** background sessions only: short id */
+  id?: string;
+  /** the CLAUDE_CONFIG_DIR this row was polled from (auto-detected ~/.claude* dirs) */
+  config_dir: string;
+}
+export interface AgentsResponse {
+  ok: true;
+  agents: AgentInfo[];
+  /** ISO time of the poll that produced `agents`; null when no poll has run yet */
+  polled_at: string | null;
+}
+export interface TranscriptSubscribeResponse {
+  ok: true;
+  sid: string;
+  /** current transcript size — tail events start from here */
+  size: number;
+}
+export interface TranscriptUnsubscribeResponse {
+  ok: true;
+  sid: string;
+}
 export interface PingResponse {
   ok: true;
   pong: true;
@@ -448,6 +558,13 @@ export interface PingResponse {
   pid: number;
   rooms: number;
   clients: number;
+  /** provenance of the running daemon: the bun executable and the entry
+   * script path (Bun.main). The entry script tells which face's plugin cache
+   * (e.g. ~/.claude-personal vs a work overlay) this daemon actually runs
+   * from — version skew across faces is resolved by the newer-wins upgrade,
+   * but provenance was previously unobservable. */
+  exe?: string;
+  script?: string;
   /** actual HTTP/WS bind addresses ("host:port"); empty when CCMSG_HTTP_BIND=off (DR-0004 §3). */
   http: string[];
   /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */
@@ -460,6 +577,14 @@ export interface ShutdownResponse {
 export interface LeaveResponse {
   ok: true;
   room: string;
+}
+export interface InviteResponse {
+  ok: true;
+  room: string;
+  /** member id assigned to (or already held by) the invited session */
+  id: string;
+  /** true = the session was already a member, nothing appended */
+  already: boolean;
 }
 
 export type Response =
@@ -477,9 +602,13 @@ export type Response =
   | FsListResponse
   | FsReadResponse
   | TranscriptReadResponse
+  | AgentsResponse
+  | TranscriptSubscribeResponse
+  | TranscriptUnsubscribeResponse
   | PingResponse
   | ShutdownResponse
-  | LeaveResponse;
+  | LeaveResponse
+  | InviteResponse;
 
 // ---------------------------------------------------------------------------
 // Error codes (string, per DR-0003 §1)

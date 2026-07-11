@@ -40,6 +40,13 @@ async function sessionHello(
   return c;
 }
 
+/** Connect + hello as the admin user. */
+async function userHello(ctx: DaemonCtx): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.request({ op: "hello", role: "user" });
+  return c;
+}
+
 interface PeerLite {
   sid: string;
   transcript_path?: string;
@@ -55,6 +62,19 @@ interface TranscriptReadOk {
 interface ErrLite {
   ok: false;
   error: { code: string };
+}
+interface TranscriptSubscribeOk {
+  ok: true;
+  sid: string;
+  size: number;
+}
+interface TranscriptTailEvent {
+  ev: "transcript";
+  sid: string;
+  lines: string[];
+  start: number;
+  end: number;
+  size: number;
 }
 
 describe("hello transcript_path validation (DR-0009)", () => {
@@ -691,6 +711,300 @@ describe("transcript_read pagination", () => {
         expect(page2.start).toBeLessThan(page1.start);
         expect(page2.start).toBeGreaterThan(0);
         expect(page2.end).toBe(page2.start);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+describe("transcript live tail (DR-0009 live-tail addendum)", () => {
+  test(
+    "session role からの transcript_subscribe / transcript_unsubscribe は bad_request (user role only)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const c = await sessionHello(ctx, "A");
+        const subRes = await c.request<ErrLite>({ op: "transcript_subscribe", sid: "A" });
+        expect(subRes.ok).toBe(false);
+        expect(subRes.error.code).toBe("bad_request");
+        const unsubRes = await c.request<ErrLite>({ op: "transcript_unsubscribe", sid: "A" });
+        expect(unsubRes.ok).toBe(false);
+        expect(unsubRes.error.code).toBe("bad_request");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "session_not_found: 接続していない sid を subscribe しようとする",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await userHello(ctx);
+        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: "no-such-sid" });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("session_not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "not_found: sid は接続中だが transcript_path が未申告",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        await sessionHello(ctx, "A"); // no transcript_path
+        const u = await userHello(ctx);
+        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: "A" });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "追記された完全な行が ev:'transcript' として届く (start/end/size が実際の追記と一致)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "L0\n"); // 3 bytes already on disk before subscribing
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u = await userHello(ctx);
+        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        expect(sub.ok).toBe(true);
+        expect(sub.size).toBe(3); // anchored at current size — pre-existing content is not replayed
+
+        fs.appendFileSync(file, "L1\nL2\n"); // 6 bytes appended, both lines complete
+        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        expect(ev.sid).toBe(sid);
+        expect(ev.lines).toEqual(["L1", "L2"]);
+        expect(ev.start).toBe(3);
+        expect(ev.end).toBe(9);
+        expect(ev.size).toBe(9);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "行境界: 改行なしの部分書き込みだけでは配信されず、次の追記で完成した行としてまとめて届く",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "");
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u = await userHello(ctx);
+        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        expect(sub.size).toBe(0);
+
+        // Partial write with no trailing newline — must not surface as a line.
+        fs.appendFileSync(file, "partial-no-newline-yet");
+        // Complete the line, then append one more full line — the first event
+        // must contain BOTH as whole, uncorrupted lines (proves the partial
+        // fragment was deferred rather than dropped or split wrongly).
+        fs.appendFileSync(file, " done\nsecond\n");
+
+        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        expect(ev.lines).toEqual(["partial-no-newline-yet done", "second"]);
+        expect(ev.start).toBe(0);
+        expect(ev.end).toBe(fs.statSync(file).size);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "truncate 検知: サイズが縮んだら安全側で offset をリセットし、空 lines のイベントで新サイズを通知する",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u = await userHello(ctx);
+        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        expect(sub.size).toBe(9);
+
+        // Simulate a log rotation / rewrite: file shrinks to 4 bytes.
+        fs.writeFileSync(file, "X0\n\n"); // deliberately not a clean jsonl line, tests the reset itself
+        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        expect(ev.lines).toEqual([]); // safe-side reset never tries to diff stale content
+        expect(ev.start).toBe(4);
+        expect(ev.end).toBe(4);
+        expect(ev.size).toBe(4);
+
+        // Tail resumes correctly from the new offset for content appended after the reset.
+        fs.appendFileSync(file, "Y0\n");
+        const { ev: ev2 } = await u.readEventUntil<TranscriptTailEvent>(
+          (e) => e.ev === "transcript" && e.lines.length > 0,
+        );
+        expect(ev2.lines).toEqual(["Y0"]);
+        expect(ev2.start).toBe(4);
+        expect(ev2.end).toBe(7);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // Regression (adversarial review, transcript.ts minor finding): a rewrite
+  // via unlink+recreate at the same path (e.g. a compaction tool rewriting
+  // the transcript) gets a NEW inode even when the new content is the same
+  // size as, or larger than, what was there before — the size<lastEnd
+  // truncate check alone can't see this case, only an inode check can.
+  // Without it, tail would resume from the old (now-wrong) lastEnd offset
+  // and read a corrupted mid-line fragment of the new content.
+  test(
+    "inode 変化検知: unlink+recreate による書き換えは同サイズ/大きいサイズでも安全側リセットされる",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "L0\nL1\nL2\n"); // 9 bytes
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u = await userHello(ctx);
+        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        expect(sub.size).toBe(9);
+
+        // Rewrite via unlink+recreate (NOT an in-place write) at the same
+        // path — a fresh inode, with a LARGER size (12 bytes) than the old
+        // lastEnd (9), so a size<lastEnd-only check would wrongly treat this
+        // as ordinary growth and try to read [9, 12) of the new file.
+        fs.rmSync(file);
+        fs.writeFileSync(file, "Y0\nY1\nY2\nY3\n"); // 12 bytes, new inode
+        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        expect(ev.lines).toEqual([]); // safe-side reset, no attempt to diff stale content
+        expect(ev.start).toBe(12);
+        expect(ev.end).toBe(12);
+        expect(ev.size).toBe(12);
+
+        // Tail resumes correctly from the new offset for content appended after the reset.
+        fs.appendFileSync(file, "Y4\n");
+        const { ev: ev2 } = await u.readEventUntil<TranscriptTailEvent>(
+          (e) => e.ev === "transcript" && e.lines.length > 0,
+        );
+        expect(ev2.lines).toEqual(["Y4"]);
+        expect(ev2.start).toBe(12);
+        expect(ev2.end).toBe(15);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "transcript_unsubscribe 後は追記してもイベントが届かない",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "");
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u = await userHello(ctx);
+        // Room-level subscribe too (distinct from transcript_subscribe): the
+        // marker msg used below to gate "did a transcript event sneak in"
+        // arrives only to daemon.subscribers, so without this the marker
+        // itself would never reach `u` and the test would hang instead of
+        // proving anything.
+        await u.request({ op: "subscribe" });
+        await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        fs.appendFileSync(file, "L0\n");
+        await u.readEventUntil((e) => e.ev === "transcript"); // confirm the tail really was live
+
+        const unsub = await u.request<{ ok: true; sid: string }>({
+          op: "transcript_unsubscribe",
+          sid,
+        });
+        expect(unsub.ok).toBe(true);
+
+        fs.appendFileSync(file, "L1\n");
+        // Drive a distinguishable event through the SAME connection's stream (a
+        // msg from a fresh session in a fresh room) and confirm no "transcript"
+        // event snuck in among the events collected while waiting for it.
+        const s2 = await sessionHello(ctx, "B");
+        const created = await s2.request<{ room: string }>({ op: "create_room", members: [] });
+        await s2.request({ op: "post", room: created.room, msg: "marker" });
+        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        expect(seen.some((e: any) => e.ev === "transcript")).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "接続の close で自動的に unsubscribe される (以降のイベントを購読しない)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "");
+        await sessionHello(ctx, sid, { transcript_path: file });
+
+        const u1 = await userHello(ctx);
+        await u1.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        fs.appendFileSync(file, "L0\n");
+        await u1.readEventUntil((e) => e.ev === "transcript");
+        u1.close();
+
+        // A second subscriber re-subscribing to the same sid after the first's
+        // disconnect must still work: the last subscriber leaving tears the
+        // Watch down (fs.watch .close()d), and this new subscribe recreates it
+        // from scratch. This guards a real bug found empirically (macOS/Bun,
+        // 2026-07): re-opening `fs.watch()` on the exact same FILE path right
+        // after closing a prior watcher on it silently never fires again — no
+        // error, just permanent silence — whereas watching the parent
+        // directory (what startWatching actually does) survives the same
+        // close/reopen cycle cleanly. This test would hang forever on the
+        // regression.
+        const u2 = await userHello(ctx);
+        const sub2 = await u2.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        expect(sub2.ok).toBe(true);
+        fs.appendFileSync(file, "L1\n");
+        const { ev } = await u2.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        expect(ev.lines).toEqual(["L1"]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

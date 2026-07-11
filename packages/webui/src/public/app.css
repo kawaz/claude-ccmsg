@@ -143,8 +143,7 @@ body {
   padding: 0;
 }
 
-#room-list li a,
-#session-list li a {
+#room-list li a {
   display: block;
   padding: 0.4rem 0.5rem;
   border-radius: 0.4rem;
@@ -152,14 +151,120 @@ body {
   color: var(--fg);
 }
 
-#session-list li {
-  display: flex;
-  align-items: center;
+#room-list li.active a {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
-#session-list li a {
+/* U1: each Sessions-list row is 3 stacked lines (repo/ws+badges+idle, sid,
+ * cwd) plus an optional "▷ 展開" sibling-workspace list, instead of the
+ * previous single-line `<a>` — see SessionList.tsx's SessionRowItem. */
+.session-row {
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+}
+
+.session-row.active {
+  background: var(--accent);
+}
+
+.session-row.active .session-main-link,
+.session-row.active .session-repo-ws,
+.session-row.active .session-branch,
+.session-row.active .session-sid-btn,
+.session-row.active .session-line3 {
+  color: var(--accent-fg);
+}
+
+.session-line1 {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.session-expand-toggle {
+  flex-shrink: 0;
+  width: 1rem;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0;
+}
+
+.session-row.active .session-expand-toggle {
+  color: var(--accent-fg);
+}
+
+.session-expand-spacer {
+  flex-shrink: 0;
+  width: 1rem;
+}
+
+.session-main-link {
+  display: flex;
+  align-items: center;
   flex: 1;
   min-width: 0;
+  text-decoration: none;
+  color: var(--fg);
+  overflow: hidden;
+}
+
+.session-main-link.session-disconnected {
+  opacity: 0.6;
+}
+
+.session-repo-ws {
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-branch {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  margin-left: 0.35rem;
+}
+
+.session-badge {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  line-height: 1;
+  padding: 0.15rem 0.35rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.session-badge-busy {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.session-badge-idle {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+}
+
+.session-badge-done {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+.session-badge-bg {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+}
+
+.session-badge-offline {
+  background: none;
+  color: var(--fg-muted);
+  border: 1px dashed var(--border);
 }
 
 .session-idle {
@@ -167,14 +272,57 @@ body {
   font-size: 0.65rem;
   color: var(--fg-muted);
   opacity: 0.65;
-  padding-right: 0.5rem;
   white-space: nowrap;
 }
 
-#room-list li.active a,
-#session-list li.active a {
-  background: var(--accent);
-  color: var(--accent-fg);
+.session-line2 {
+  padding-left: 1.3rem;
+}
+
+.session-sid-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.65rem;
+  font-family: ui-monospace, monospace;
+  color: var(--fg-muted);
+  opacity: 0.75;
+  cursor: pointer;
+}
+
+.session-sid-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.session-line3 {
+  padding-left: 1.3rem;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-line3.session-cwd-full {
+  white-space: normal;
+  word-break: break-all;
+}
+
+.session-siblings {
+  list-style: none;
+  margin: 0.15rem 0 0.3rem;
+  padding: 0 0 0 2.3rem;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+
+.session-siblings-loading,
+.session-siblings-error,
+.session-siblings-empty {
+  opacity: 0.7;
 }
 
 .room-title {
@@ -190,18 +338,6 @@ body {
   display: block;
   font-size: 0.75rem;
   opacity: 0.75;
-}
-
-#session-list li a {
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#session-list li.active a {
-  color: var(--accent-fg);
 }
 
 #sidebar-backdrop {
@@ -426,6 +562,79 @@ body {
   cursor: not-allowed;
 }
 
+/* Rooms tab (U3) is a <button>, not an <a> like Files/Timeline (no locator
+ * form of its own — see SessionView.tsx) — reset button chrome so it matches
+ * the link tabs exactly. */
+button.session-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+#session-rooms {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0.75rem 1rem;
+}
+
+.session-rooms-section {
+  margin-bottom: 1.25rem;
+}
+
+.session-rooms-section h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+.session-rooms-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.session-rooms-list li a {
+  display: block;
+  padding: 0.4rem 0.5rem;
+  border-radius: 0.4rem;
+  text-decoration: none;
+  color: var(--fg);
+}
+
+.session-rooms-list li a:hover {
+  background: var(--bg-alt);
+}
+
+.new-room-btn {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 0.4rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+}
+
+.new-room-btn:hover {
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.new-room-form input {
+  font: inherit;
+  width: 100%;
+  max-width: 24rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
 .session-panes {
   flex: 1;
   min-width: 0;
@@ -447,72 +656,20 @@ body {
 
 .session-pane-tree {
   /* The tree wrapper carries the persisted ratio's flex-basis inline
-   * (see FilesPanes.tsx). Left border-right on .file-tree below for the
-   * seam between panes — kept there so the fold-to-zero state still
-   * shows a hairline transition rather than a floating splitter. */
+   * (see FilesPanes.tsx); the pane seam is .file-tree's border-right. */
 }
 
-/* Drag handle between tree and viewer. Deliberately narrow (4px) plus a
- * transparent margin extending the hit area so touch users can grab it
- * without pixel-perfect aim. The buttons inside sit on top and get their
- * own hit area via pointerdown-stopPropagation in FilesPanes.tsx. */
+/* Drag handle between tree and viewer. Deliberately narrow (4px) plus
+ * touch-action:none so touch drags reach the pointer handlers instead of
+ * being interpreted as scroll gestures. Drag-only — the pane fold buttons
+ * were removed per kawaz (twin ◀/▶ read as noise). */
 .session-splitter {
   flex: 0 0 4px;
   position: relative;
   background: var(--border);
   cursor: col-resize;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* touch-action:none tells the browser not to interpret pointer drags
-   * on this element as scroll gestures — otherwise mobile Safari would
-   * eat the drag and the ratio would never update on touch devices. */
   touch-action: none;
   user-select: none;
-}
-
-.session-splitter-folded {
-  /* When a pane is folded the splitter still renders (as the restore
-   * affordance) but must not read as draggable — a col-resize cursor on
-   * a bar that ignores drags would be a lie. */
-  cursor: default;
-}
-
-.session-splitter-btn {
-  /* Fold/restore buttons live INSIDE the splitter track. Positioned
-   * absolutely so the two buttons can overlap the 4px track without
-   * shoving each other or bloating the track width. On the desktop
-   * row layout the two buttons stack vertically inside the vertical
-   * track (tree above, viewer below); on the ≤720px column layout
-   * the media query below simply re-anchors them via `left` so they
-   * sit side-by-side inside the now-horizontal track (tree on the
-   * left = top pane, viewer on the right = bottom pane). No CSS
-   * `transform: rotate` is applied — the arrow glyphs stay ◀/▶ on
-   * both layouts, and the semantic meaning is carried by the
-   * per-button title/aria-label set in FilesPanes.tsx. */
-  position: absolute;
-  background: var(--bg-alt);
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
-  border-radius: 0.25rem;
-  font-size: 0.7rem;
-  line-height: 1;
-  padding: 0.15rem 0.3rem;
-  cursor: pointer;
-  z-index: 1;
-}
-
-.session-splitter-btn-tree {
-  top: calc(50% - 1.1rem);
-}
-
-.session-splitter-btn-viewer {
-  top: calc(50% + 0.2rem);
-}
-
-.session-splitter-btn:hover {
-  color: var(--fg);
-  background: var(--bg);
 }
 
 .file-tree {
@@ -984,6 +1141,66 @@ body {
   font-size: 0.8rem;
 }
 
+/* thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える
+ * 環境でのみ Timeline.tsx が描画する original|ja タブ。summary (「thinking」
+ * の折り畳みトグル) の直下、本文の直前に置く小さなタブ列。 */
+.tl-thinking-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.tl-thinking-tab {
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.tl-thinking-tab.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.tl-thinking-translating {
+  margin: 0.25rem 0 0;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+
+/* システム由来の "type:user" メッセージ分類チップ (U2 kawaz spec,
+ * transcript-model.ts's classifyUserMessage) — 本物のユーザ発話 (緑吹き出し
+ * .tl-text-user) と視覚的に区別するためのラベル。.tl-meta-summary と同じ
+ * 等幅トーンを流用し、システム由来であることを一目で示す。 */
+.tl-user-kind-chip {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.3rem;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+}
+
+/* classifyUserMessage が "user-prompt" 以外と判定した行 (.tl-turn-syskind,
+ * LineView) では、role:"user" の text セグメントに付く緑吹き出しスタイル
+ * (.tl-text-user, 上の「User chat bubble」ブロック) を打ち消し、本物のユーザ
+ * 発話と混同されないようにする。 */
+.tl-turn-syskind .tl-text-user {
+  align-self: stretch;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  max-width: none;
+  width: auto;
+}
+
 /* tools folding (kawaz spec): ユーザプロンプトと次のユーザ向けアシスタント
  * 最終レスポンスの間に挟まる thinking/tool_use/tool_result/meta 行をまとめて
  * 1 グループに折り畳む。中身は既存の .tl-line 群をそのまま縦に並べるだけな
@@ -1118,23 +1335,33 @@ body {
   }
 
   /* Splitter swaps to a horizontal bar in column layout: 4px tall (not
-   * wide), row-resize cursor, buttons re-anchored to left/right of the
-   * track instead of top/bottom. The pointer-axis logic in
-   * FilesPanes.tsx reads flex-direction from getComputedStyle, so the
-   * drag automatically follows this row/column layout swap with no JS
+   * wide), row-resize cursor. The pointer-axis logic in FilesPanes.tsx
+   * reads flex-direction from getComputedStyle, so the drag
+   * automatically follows this row/column layout swap with no JS
    * branch here. */
   .session-splitter {
     flex-basis: 4px;
     cursor: row-resize;
   }
+}
 
-  .session-splitter-btn-tree {
-    top: auto;
-    left: calc(50% - 2.5rem);
-  }
+/* U1: daemon provenance strip (exe/script/version from a `ping` reply) — a
+ * thin, low-emphasis footer so it's visible without competing with the
+ * room/session content above it. Empty (no daemonInfo yet, e.g. still
+ * connecting) collapses to 0 height via :empty rather than reserving a
+ * blank bar before the first successful ping. */
+#app-footer {
+  flex-shrink: 0;
+  padding: 0.15rem 0.75rem;
+  font-size: 0.65rem;
+  color: var(--fg-muted);
+  opacity: 0.6;
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
-  .session-splitter-btn-viewer {
-    top: auto;
-    left: calc(50% + 0.5rem);
-  }
+#app-footer:empty {
+  display: none;
 }

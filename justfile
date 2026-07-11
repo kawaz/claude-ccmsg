@@ -113,8 +113,22 @@ check-versions:
 _local-plugin-reload:
     -claude plugin marketplace update ccmsg
     -claude plugin update ccmsg@ccmsg
+    -@just _local-daemon-upgrade
     @echo ""
     @echo "[hint] /reload-plugins to apply in this session without restart"
+
+# push 直後に最新 plugin cache 実体で daemon へ 1 回接触し、newer-wins upgrade を
+# 即時発動させる (issue 2026-07-12-post-release-daemon-upgrade-lag 案 (a))。
+# これが無いと新バージョン client の初接触まで旧 daemon (旧 webui bundle) が
+# 配信され続ける。接触は read-only の rooms op で行う。
+[private]
+[script]
+_local-daemon-upgrade:
+    cache_dir="$HOME/.claude-personal/plugins/cache/ccmsg/ccmsg"
+    latest=$(ls "$cache_dir" | sort -V | tail -1)
+    [ -x "$cache_dir/$latest/bin/ccmsg" ] || exit 0
+    "$cache_dir/$latest/bin/ccmsg" rooms > /dev/null 2>&1 || true
+    echo "[local-daemon-upgrade] contacted daemon with v$latest client (newer-wins)"
 
 # 翻訳ペア (NAME-ja.md / NAME.md) の整合性チェック
 check-translations: ensure-clean check-translation-freshness (_check-translation-headers "README")

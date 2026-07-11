@@ -19,8 +19,85 @@ import {
   type TimelineEntry,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
+import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
 
-function SegmentView({ segment }: { segment: Segment }) {
+// Live tail 自動スクロール追従 (U2 kawaz spec: 「ユーザが最下部付近を見ている
+// 時だけ自動スクロール追従、上にスクロール中は追従しない」) の「最下部付近」
+// のしきい値 (px)。ちょうど末端に張り付いていなくても数行分の余裕は追従対象
+// にする、というよくあるチャット UI の慣習値。
+const NEAR_BOTTOM_PX = 80;
+
+// thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える
+//環境でのみ original|ja タブを描画する (feature-detect は hasTranslatorApi
+// 呼び出し側で行う。タブ自体を出さない = レイアウト変化なし、という spec の
+// 要件を満たすためモジュールレベルで一度だけ判定してコンポーネントに渡す)。
+function ThinkingSegment({
+  text,
+  translatorAvailable,
+}: {
+  text: string;
+  translatorAvailable: boolean;
+}) {
+  const [tab, setTab] = useState<"original" | "ja">("original");
+  // null = まだ翻訳していない (ja タブ初回クリックで遅延実行、kawaz spec)。
+  // 翻訳結果自体は translate.ts 側で段落単位にメモリキャッシュされるので、
+  // fold 開閉やタブ往復で再翻訳は起きない。
+  const [jaText, setJaText] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+
+  function selectJa() {
+    setTab("ja");
+    if (jaText === null && !translating) {
+      setTranslating(true);
+      void translateThinkingText(text).then((result) => {
+        setJaText(result);
+        setTranslating(false);
+      });
+    }
+  }
+
+  const bodyText = tab === "ja" && jaText !== null ? jaText : text;
+
+  return (
+    <details class="tl-fold tl-thinking">
+      <summary>thinking</summary>
+      {translatorAvailable ? (
+        <div class="tl-thinking-tabs">
+          <button
+            type="button"
+            class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
+            onClick={() => setTab("original")}
+          >
+            original
+          </button>
+          <button
+            type="button"
+            class={"tl-thinking-tab" + (tab === "ja" ? " active" : "")}
+            onClick={selectJa}
+          >
+            ja
+          </button>
+        </div>
+      ) : null}
+      <div class="tl-thinking-body">
+        {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
+         * markdown レンダリング」) — original と同じ MarkdownView を再利用。 */}
+        <MarkdownView source={bodyText} />
+        {tab === "ja" && translating && jaText === null ? (
+          <p class="tl-thinking-translating">翻訳中…</p>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function SegmentView({
+  segment,
+  translatorAvailable,
+}: {
+  segment: Segment;
+  translatorAvailable: boolean;
+}) {
   switch (segment.kind) {
     case "text":
       // Markdown rendering (DR-0010) is assistant-only: a user turn's text
@@ -32,17 +109,7 @@ function SegmentView({ segment }: { segment: Segment }) {
         </div>
       );
     case "thinking":
-      // thinking の中身は markdown (DR-0010 と同じレンダラを再利用)。視覚的な
-      // 薄い色は .tl-thinking-body 側で維持する (他の tl-fold-body は JSON dump
-      // 用の等幅 pre 表示なので流用しない)。
-      return (
-        <details class="tl-fold tl-thinking">
-          <summary>thinking</summary>
-          <div class="tl-thinking-body">
-            <MarkdownView source={segment.text} />
-          </div>
-        </details>
-      );
+      return <ThinkingSegment text={segment.text} translatorAvailable={translatorAvailable} />;
     case "tool-use":
       return (
         <details class="tl-fold">
@@ -71,6 +138,7 @@ function LineView({
   line,
   offsetKey,
   registerUserTurnRef,
+  translatorAvailable,
 }: {
   line: ParsedLine;
   offsetKey: number;
@@ -78,6 +146,7 @@ function LineView({
   // (isUserTextTurn) — the "👤 N/M" nav indicator's DOM-measurement side, see
   // Timeline()'s userTurnRefs. No-op for every other line kind.
   registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+  translatorAvailable: boolean;
 }) {
   if (line.kind === "broken") {
     return (
@@ -98,17 +167,31 @@ function LineView({
     );
   }
   const isUserText = isUserTextTurn(line);
+  // システム由来の "type:user" メッセージ分類 (U2 kawaz spec,
+  // transcript-model.ts's classifyUserMessage): role:"user" かつ
+  // "user-prompt" (= 本物のユーザ発話) 以外の kind が付いているラインだけ
+  // チップを出し、緑吹き出しスタイル (.tl-text-user) を打ち消す
+  // (.tl-turn-syskind, app.css)。fold group に入る位置のもの (= isUserText
+  // が false になる tool_result-only turn 等) は今まで通り従来の描画のまま
+  // — グルーピング判定 (isBoundaryLine/isUserTextTurn) 自体は変更しない。
+  const sysKind =
+    line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt"
+      ? line.userMessageKind
+      : null;
   return (
     <div
-      class={"tl-line tl-turn tl-turn-" + line.role}
+      class={"tl-line tl-turn tl-turn-" + line.role + (sysKind ? " tl-turn-syskind" : "")}
       ref={isUserText ? (el) => registerUserTurnRef(offsetKey, el) : undefined}
     >
       {line.ts ? <span class="tl-time">{formatClockTime(line.ts)}</span> : null}
+      {sysKind ? <span class="tl-user-kind-chip">{sysKind}</span> : null}
       <div class="tl-segments">
         {line.segments.length === 0 ? (
           <span class="tl-empty-turn">(空)</span>
         ) : (
-          line.segments.map((seg, i) => <SegmentView key={i} segment={seg} />)
+          line.segments.map((seg, i) => (
+            <SegmentView key={i} segment={seg} translatorAvailable={translatorAvailable} />
+          ))
         )}
       </div>
     </div>
@@ -125,9 +208,11 @@ function LineView({
 function FoldGroup({
   entries,
   registerUserTurnRef,
+  translatorAvailable,
 }: {
   entries: TimelineEntry[];
   registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+  translatorAvailable: boolean;
 }) {
   return (
     <details class="tl-line tl-fold-group">
@@ -139,6 +224,7 @@ function FoldGroup({
             line={line}
             offsetKey={offset}
             registerUserTurnRef={registerUserTurnRef}
+            translatorAvailable={translatorAvailable}
           />
         ))}
       </div>
@@ -149,6 +235,29 @@ function FoldGroup({
 export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineState }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
+
+  // Chrome built-in Translator API の feature-detect (U2 kawaz spec): 環境が
+  // 変わらない限り再評価不要なので mount 時に一度だけ判定する。
+  const translatorAvailable = useMemo(() => hasTranslatorApi(), []);
+
+  // Live tail (DR-0009 addendum, transcript_subscribe): このセッションの
+  // Timeline が表示されている間だけ subscribe し、タブ切替/セッション切替/
+  // unmount (依存 [sid, connStatus] のいずれかが変わる、またはアンマウント)
+  // で unsubscribe する。届いた行は ws.ts の ev:"transcript" ハンドラが
+  // `timeline/tail` action に変換し、store.ts の applyTimelineTail が
+  // contiguous なときだけ追記する — このコンポーネントは購読の開始/終了だけ
+  // 管理し、フォールドロジックには関与しない。send() は socket が open で
+  // ない間 reject するので (ws.ts) catch で握りつぶす — 再接続後の
+  // onOpen 側で改めて subscribe できる余地を持たせるため、ここではエラー
+  // 表示もリトライも行わない (次の connStatus 変化でこの effect が再実行
+  // される)。
+  useEffect(() => {
+    if (connStatus !== "connected") return;
+    void ws.transcriptSubscribe(sid).catch(() => {});
+    return () => {
+      void ws.transcriptUnsubscribe(sid).catch(() => {});
+    };
+  }, [sid, connStatus]);
 
   // Tail-load on first visit only — re-visiting a session whose Timeline is
   // already "loaded"/"error" must not refetch (mirrors FileViewer's
@@ -173,6 +282,37 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
   }, [sid, timeline.status, connStatus]);
+
+  // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
+  // review fix): applyTimelineTail (store.ts) can only detect that a
+  // `timeline/tail` push doesn't line up with the cached `end` — it can't
+  // fetch, so it flags `timeline.needsResync` instead of just dropping the
+  // push and leaving live tail silently stuck (DR-0005 §1: side effects stay
+  // out of the reducer). This effect is the side effect: a background
+  // "replace" read that catches the cache up. Deliberately does NOT dispatch
+  // `timeline/loading` first (unlike every other transcriptRead call site in
+  // this component) — flipping status to "loading" would blank the pane
+  // (Timeline's "読み込み中…" branch below) for what should be an invisible
+  // catch-up, not a user-visible reload. If the re-read's own result is
+  // already stale by the time it lands (more appends happened meanwhile),
+  // the next tail push simply re-flags needsResync and this effect fires
+  // again — self-healing, no bound on retries needed since each attempt is
+  // a normal full tail read.
+  useEffect(() => {
+    if (!timeline.needsResync) return;
+    if (connStatus !== "connected") return;
+    void ws
+      .transcriptRead(sid)
+      .then((res) => {
+        if (res.ok)
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
+        else
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
+      });
+  }, [sid, timeline.needsResync, connStatus]);
 
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
@@ -271,6 +411,20 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     setCurrentUserIdx(scrollPositionToUserTurnIndex(tops, container.scrollTop));
   }, [userTurnKeys]);
 
+  // Live tail 自動スクロール追従 (kawaz spec) のための「今ユーザは最下部付近
+  // を見ているか」フラグ。scroll イベント (下の rAF スロットル済み onScroll)
+  // でだけ更新する ref — レンダーごとの再計算は不要 (DOM 位置に依存する値を
+  // state に上げると余計な再レンダーを誘発するため、ref に留める)。初期値
+  // true: マウント直後 (まだ何もスクロールしていない状態) は「最下部相当」
+  // とみなし、直後に届く tail に自然に追従させる。
+  const isNearBottomRef = useRef(true);
+  const checkNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isNearBottomRef.current = distance < NEAR_BOTTOM_PX;
+  }, []);
+
   useEffect(() => {
     // Drop refs for turns that no longer exist post-reload (a "更新" replace
     // swaps in an entirely new key set) so the Map doesn't accumulate
@@ -288,6 +442,7 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
       ticking = true;
       requestAnimationFrame(() => {
         recomputeCurrentUserIdx();
+        checkNearBottom();
         ticking = false;
       });
     };
@@ -295,8 +450,37 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     // Recompute once immediately — otherwise the indicator stays "0/M" until
     // the first scroll event fires (e.g. right after the initial tail load).
     recomputeCurrentUserIdx();
+    checkNearBottom();
     return () => container.removeEventListener("scroll", onScroll);
-  }, [userTurnKeys, recomputeCurrentUserIdx]);
+  }, [userTurnKeys, recomputeCurrentUserIdx, checkNearBottom]);
+
+  // セッション切替時、前セッションの「どこまで読んだか (byte end)」を引き
+  // 継がないようにリセットする — このリセットを先に走らせておくことで、下の
+  // tail 検知 effect が「セッション切替による end の変化」を「tail 追記」と
+  // 誤認して意図しない自動スクロールを起こさない (両 effect の実行順序は
+  // 定義順、[sid] だけに依存するこの effect が先に走る)。
+  const prevEndRef = useRef(timeline.end);
+  useEffect(() => {
+    prevEndRef.current = timeline.end;
+    isNearBottomRef.current = true;
+    // 依存は [sid] のみ意図的 — timeline.end を含めると「セッション切替
+    // 検知」ではなく毎回の tail 追記でもリセットされてしまい、下の
+    // tail-append effect の appended 判定が常に false になってしまう。
+  }, [sid]);
+
+  // Live tail で新しい行が追記されたとき (`timeline.end` が伸びる) だけ、か
+  // つユーザが最下部付近を見ているときだけ自動スクロールする (kawaz spec)。
+  // `end` は「load older」prepend では変わらない (applyTimelineLoaded) の
+  // で、この条件は自然に prepend を除外し、tail 追記 (と初回 tail ロード)
+  // だけに反応する。smooth アニメーションなし — 高頻度で届く tail 行ごとに
+  // アニメーションが重なるとかえって読みにくいため、即座にジャンプする。
+  useEffect(() => {
+    const appended = timeline.end > prevEndRef.current;
+    prevEndRef.current = timeline.end;
+    if (!appended || !isNearBottomRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [timeline.end]);
 
   function scrollToTop() {
     scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -394,12 +578,14 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
                   line={group.line}
                   offsetKey={group.offset}
                   registerUserTurnRef={registerUserTurnRef}
+                  translatorAvailable={translatorAvailable}
                 />
               ) : (
                 <FoldGroup
                   key={group.entries[0]!.offset}
                   entries={group.entries}
                   registerUserTurnRef={registerUserTurnRef}
+                  translatorAvailable={translatorAvailable}
                 />
               ),
             )

@@ -14,3 +14,4 @@
 | [DR-0008](./DR-0008-workspace-file-access.md) | Accepted | Workspace file access (fs_list / fs_read op) |
 | [DR-0009](./DR-0009-session-transcript-access.md) | Accepted | Session transcript access (transcript_read op) |
 | [DR-0010](./DR-0010-timeline-markdown-rendering.md) | Accepted | Timeline アシスタント発言の Markdown レンダリング (mdast → JSX walker) |
+| [DR-0011](./DR-0011-to-delivery-filter.md) | Accepted | `to` を mention から配信フィルタへ変更 + drag & drop invite |

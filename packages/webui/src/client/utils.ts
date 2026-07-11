@@ -1,7 +1,7 @@
 // Presentation helpers shared by components. Kept out of store.ts because
 // these are display-only (locale strings, truncation) and out of the reducer
 // (which must stay a pure function of state + action).
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, FsEntry, PeerInfo } from "@ccmsg/protocol";
 import type { RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 
@@ -158,9 +158,12 @@ export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
  * session didn't announce/get-accepted a repo_root (fs root is still cwd,
  * nothing to highlight relative to it), or when cwd unexpectedly isn't
  * inside repo_root (defensive — the daemon's hello-time validation already
- * guarantees ancestry, but this stays a pure function of PeerInfo alone and
- * shouldn't throw on a malformed peer). */
-export function ownWorkspaceSegment(peer: PeerInfo): string | null {
+ * guarantees ancestry, but this stays a pure function of the input alone and
+ * shouldn't throw on a malformed peer). Parameter is the narrow `{repo_root,
+ * cwd}` shape (not `PeerInfo` itself) so U1's SessionRow — which carries the
+ * same two fields but isn't a PeerInfo for agent-only rows — can reuse this
+ * for its own "▷ 展開" sibling-workspace highlight without a duplicate copy. */
+export function ownWorkspaceSegment(peer: { repo_root?: string; cwd: string }): string | null {
   if (!peer.repo_root) return null;
   const root = peer.repo_root.replace(/\/+$/, "");
   if (!peer.cwd.startsWith(`${root}/`)) return null;
@@ -242,38 +245,6 @@ export function paneRatioFromPointer(
   return clampPaneRatio((pointerPos - containerStart) / containerSize, min, max);
 }
 
-/** Which pane (if any) is collapsed out of view via the splitter's
- * fold-buttons. Kept as a single enum instead of two independent booleans
- * because collapsing both panes at once is never a valid state (nothing
- * would be visible) — an enum makes that impossible by construction. */
-export type PaneCollapse = "none" | "tree" | "viewer";
-
-/** Fold-button click handler for the tree/viewer panes. Three cases:
- *   - target matches the currently-folded pane (user clicked "restore
- *     me" on the pane whose button doubles as the un-fold affordance) →
- *     restore both panes (goes to "none")
- *   - nothing is folded → collapse the target pane
- *   - the OTHER pane is currently folded → swap directly to hiding
- *     `target` instead (single-click swap)
- * The direct swap keeps each button's meaning literal to its glyph
- * ("◀" = hide tree, "▶" = hide viewer): pressing "hide X" always ends
- * with X hidden, no matter what was hidden before. A two-click
- * "un-fold, then pick again" dance is more surprising than useful here
- * — restoring both panes is done by clicking the folded pane's own
- * button (the first case above). */
-export function togglePaneCollapse(current: PaneCollapse, target: "tree" | "viewer"): PaneCollapse {
-  return current === target ? "none" : target;
-}
-
-/** Parses a persisted pane collapse string. Anything that isn't one of the
- * three known values (missing key, private mode read failure, corrupted
- * value from an older build with a different enum) falls back to "none" so
- * a brand-new user always sees both panes on first load. */
-export function parsePaneCollapse(raw: string | null): PaneCollapse {
-  if (raw === "tree" || raw === "viewer" || raw === "none") return raw;
-  return "none";
-}
-
 /** File-extension predicate for FileViewer's Markdown preview toggle. Only
  * `.md` and `.markdown` are accepted — deliberately not `.mdx` (JSX
  * embedded, not a plain markdown superset the safe walker in
@@ -287,4 +258,173 @@ export function isMarkdownPath(path: string): boolean {
   if (dot < 0) return false;
   const ext = path.slice(dot).toLowerCase();
   return ext === ".md" || ext === ".markdown";
+}
+
+// --- Sidebar Sessions-list: peers x agents merge (U1) --- //
+
+/** Number of leading hex chars a Sessions-list row shows for its sid (the
+ * full value is always still available via the row's `title` attribute /
+ * click-to-copy) — matches the truncation `sessionLabel`'s sid fallback and
+ * `memberLabel` already use elsewhere, kept as a named constant here since
+ * SessionList now truncates a sid on its own dedicated line rather than as
+ * a fallback inside a joined label. */
+export const SID_SHORT_LEN = 8;
+
+/** Truncates a sid to its Sessions-list display length. The full value stays
+ * reachable via the caller's `title` attribute / click-to-copy handler. */
+export function shortSid(sid: string): string {
+  return sid.slice(0, SID_SHORT_LEN);
+}
+
+/** Last non-empty `/`-separated segment of a path — used as a Sessions-list
+ * row's fallback label when neither `repo`/`ws` (peers) nor `agent.name`
+ * (agents-only rows) is available, so a row is never blank. Falls back to
+ * the input itself for a path with no `/` at all (e.g. a bare cwd like
+ * `/`), which is still better than an empty string. */
+export function lastPathSegment(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] || path;
+}
+
+/** One row of the Sidebar Sessions list (U1): either a connected ccmsg
+ * session (`connected: true`, from PeersResponse) optionally enriched with
+ * the matching `claude agents --json` row (same sessionId), or — when
+ * `claude agents` reports a session with no matching PeerInfo — an
+ * agent-only row (`connected: false`) for a Claude session that hasn't
+ * started/connected its ccmsg CLI. `agent` is the raw AgentInfo either way,
+ * so its `pid`/`kind`/`status`/`state`/`startedAt`/`config_dir` fields are
+ * reachable without a second lookup. */
+export interface SessionRow {
+  sid: string;
+  repo: string;
+  ws: string;
+  cwd: string;
+  branch?: string;
+  connected_at?: string;
+  last_activity_at?: string;
+  repo_root?: string;
+  agent?: AgentInfo;
+  connected: boolean;
+}
+
+/** Indexes `claude agents --json` rows by sessionId for O(1) lookup while
+ * merging — built once per peers/agents pair (e.g. in a `useMemo`), not
+ * per-row, since AgentsResponse.agents can be large across every
+ * CLAUDE_CONFIG_DIR the daemon polls. */
+export function indexAgentsBySid(agents: AgentInfo[]): Map<string, AgentInfo> {
+  const bySid = new Map<string, AgentInfo>();
+  for (const a of agents) bySid.set(a.sessionId, a);
+  return bySid;
+}
+
+/** Builds one SessionRow for a connected peer, attaching the matching agent
+ * (if `claude agents` has polled one with the same sessionId) — used for
+ * every entry in the Sidebar's already-sorted peers array, so the existing
+ * abc/idle/new ordering (Sidebar.tsx's sortPeers over `peers`) carries
+ * straight through unchanged; this function only adds fields, never
+ * reorders. */
+export function toSessionRow(peer: PeerInfo, agentsBySid: Map<string, AgentInfo>): SessionRow {
+  return {
+    sid: peer.sid,
+    repo: peer.repo,
+    ws: peer.ws,
+    cwd: peer.cwd,
+    branch: peer.branch,
+    connected_at: peer.connected_at,
+    last_activity_at: peer.last_activity_at,
+    repo_root: peer.repo_root,
+    agent: agentsBySid.get(peer.sid),
+    connected: true,
+  };
+}
+
+/** Agent-only SessionRows (U1): `claude agents --json` sessions with no
+ * matching PeerInfo — a Claude session running without (or not yet with) a
+ * connected ccmsg CLI. Rendered as a distinct "ccmsg 未起動" group appended
+ * after the peers rows (see SessionList.tsx) rather than interleaved into
+ * the peers abc/idle/new ordering: these rows have no connected_at /
+ * last_activity_at to drive that ordering, and grouping "not actually
+ * reachable via ccmsg yet" rows together — instead of scattering them among
+ * live sessions — reads as the more useful default. Sorted newest-started
+ * first (the closest available proxy for "worth noticing"). */
+export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): SessionRow[] {
+  const peerSids = new Set(peers.map((p) => p.sid));
+  // De-dup by sessionId (Map.set, last-wins — same policy as
+  // indexAgentsBySid) before building rows: `claude agents --json` from more
+  // than one config_dir could in theory report the same sessionId (see
+  // indexAgentsBySid's doc comment), which would otherwise produce two
+  // SessionRows sharing the same `sid` — SessionList's `key={row.sid}` needs
+  // that to stay unique (nit finding, adversarial review).
+  const bySid = new Map<string, AgentInfo>();
+  for (const a of agents) if (!peerSids.has(a.sessionId)) bySid.set(a.sessionId, a);
+  return [...bySid.values()]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .map((a) => ({
+      sid: a.sessionId,
+      repo: "",
+      ws: a.name ?? lastPathSegment(a.cwd),
+      cwd: a.cwd,
+      agent: a,
+      connected: false,
+    }));
+}
+
+/** Sessions-list row label (U1 first line): `{repo, ws}` when the row has
+ * either (every peers row does), else falls back to the matched agent's
+ * `name`, then the cwd's last path segment — an agent-only row never has
+ * repo/ws (`claude agents --json` carries no VCS metadata), so this is the
+ * only path that ever exercises the fallback in practice, but a peers row
+ * with an empty repo/ws (session announced neither) takes the same
+ * fallback rather than rendering a blank first line. */
+export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } {
+  if (row.repo || row.ws) return { repo: row.repo, ws: row.ws };
+  return { repo: "", ws: row.agent?.name || lastPathSegment(row.cwd) };
+}
+
+/** Whether a Sessions-list row's repo/ws label should render as a clickable
+ * "▷" that expands sibling workspaces/worktrees inline (U1). Requires both a
+ * live connection (fs_list only works against a currently-connected sid) and
+ * an accepted repo_root (fs_list's containment root only widens past cwd
+ * when the daemon accepted one at hello time, DR-0008 addendum) — without a
+ * repo_root, `fs_list(sid, "")` would just list files inside this session's
+ * own cwd, not sibling workspaces, which isn't what "▷" promises here. */
+export function canExpandSiblings(row: SessionRow): boolean {
+  return row.connected && !!row.repo_root;
+}
+
+/** Sibling workspace/worktree directories for the "▷" expansion (U1): the
+ * directory-type entries from an `fs_list(sid, "")` call against a row with
+ * an accepted repo_root, minus the row's own workspace segment (already
+ * shown on the row itself — repeating it in the expansion would be noise).
+ * Non-directory entries (stray files sitting at the repo container root)
+ * are dropped outright; this expansion promises "other workspaces", not
+ * "everything at this level". */
+export function siblingWorkspaceEntries(entries: FsEntry[], ownSegment: string | null): FsEntry[] {
+  return entries.filter((e) => e.type === "dir" && e.name !== ownSegment);
+}
+
+/** Status/state badges for one Sessions-list row (U1), in display order.
+ * - `"offline"` (agent-only row, no ccmsg connection) is exclusive of the
+ *   busy/idle/done tri-state below — an offline row shows only "offline"
+ *   since `agent` is always present for such a row (that's how it exists),
+ *   so the loop below would otherwise also emit an idle/busy badge for it.
+ * - A *connected* row (`row.connected`) with no matched agent (older CLI,
+ *   `claude agents` hasn't polled yet, or a non-Claude ccmsg client) gets
+ *   no badges at all — "従来通り" per the U1 spec: there's nothing from
+ *   `claude agents` to report, so nothing is shown instead of guessing.
+ * - `"bg"` is additive: a background agent still gets its busy/idle/done
+ *   badge too, `"bg"` just tags kind separately. */
+export function sessionBadges(row: SessionRow): Array<"offline" | "busy" | "idle" | "done" | "bg"> {
+  if (!row.connected) return ["offline"];
+  if (!row.agent) return [];
+  const badges: Array<"offline" | "busy" | "idle" | "done" | "bg"> = [
+    row.agent.state === "done" ? "done" : row.agent.status === "busy" ? "busy" : "idle",
+  ];
+  if (row.agent.kind === "background") badges.push("bg");
+  return badges;
+}
+
+/** Display text for a badge kind (SessionList.tsx renders these verbatim). */
+export function badgeLabel(kind: "offline" | "busy" | "idle" | "done" | "bg"): string {
+  return kind === "offline" ? "ccmsg未起動" : kind;
 }

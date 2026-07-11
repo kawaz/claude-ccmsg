@@ -425,6 +425,29 @@ describe("wire protocol integration", () => {
   );
 
   test(
+    "ping reports provenance: exe is this bun executable, script is this daemon's entry file",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const c = await connect(ctx.sock);
+        const pong = await c.request<{ ok: true; exe?: string; script?: string }>({ op: "ping" });
+        // exe: the running daemon subprocess's own bun executable — same
+        // interpreter this test harness spawned it with (process.execPath),
+        // not a hardcoded guess at a bun install location.
+        expect(pong.exe).toBe(process.execPath);
+        // script: the daemon's entry file — real fs path, ends in the entry
+        // module's own filename (index.ts, per spawnDaemonProc's argv).
+        expect(pong.script).toBeTruthy();
+        expect(pong.script?.endsWith("index.ts")).toBe(true);
+        expect(fs.existsSync(pong.script as string)).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "flock guarantees a single instance: the second daemon process fails to start",
     async () => {
       const ctx = await startTestDaemon();

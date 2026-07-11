@@ -31,6 +31,14 @@ export interface TurnLine {
   ts: string | null;
   role: "user" | "assistant";
   segments: Segment[];
+  /** classifyUserMessage's verdict for a role:"user" line — which pattern of
+   * "type:user に見えるシステム由来メッセージ" (or a real human utterance,
+   * "user-prompt") this line matches. Absent for role:"assistant"
+   * (classification only concerns Claude Code's user-role injection
+   * patterns; see classifyUserMessage's doc comment) and for hand-built
+   * ParsedLine values elsewhere (e.g. test fixtures) that never went through
+   * parseTranscriptLine. */
+  userMessageKind?: UserMessageKind;
 }
 
 /** Any top-level `type` other than "user"/"assistant" — see module doc
@@ -277,6 +285,134 @@ export function foldGroupLabel(entries: TimelineEntry[]): string {
   return `${entries.length} ${noun}`;
 }
 
+/**
+ * Classification of a `type:"user"` jsonl entry's actual origin (webui
+ * Timeline UI improvement, kawaz spec): Claude Code's harness injects
+ * several kinds of system-generated content under the wire-protocol "user"
+ * role (slash-command plumbing, Monitor/Task notifications, ccmsg
+ * teammate-message relays, tool_result echoes, ...), which would otherwise
+ * render identically to a real human utterance. See
+ * `docs/findings/2026-07-1?-jsonl-user-message-patterns.md`-style research
+ * (scratchpad `jsonl-user-message-patterns.md`, U2 delegation) for the full
+ * sample-derived pattern catalog this mirrors — kept as one flat union
+ * rather than a nested taxonomy so a genuinely new/unseen pattern degrades
+ * to "unknown-meta"/"unknown-array" (both still rendered, not dropped)
+ * instead of needing a new case to compile.
+ */
+export type UserMessageKind =
+  | "user-prompt"
+  | "tool-result"
+  | "user-interrupt-marker"
+  | "skill-invocation-preamble"
+  | "system-caveat"
+  | "slash-command-invocation"
+  | "slash-command-stdout"
+  | "tool-retry-hint"
+  | "task-notification"
+  | "peer-message"
+  | "unknown-meta"
+  | "unknown-array";
+
+/** True if `content` contains at least one `{type:"tool_result"}` block —
+ * shared by classifyUserMessage's array branch. */
+function hasToolResultBlock(content: unknown[]): boolean {
+  return content.some(
+    (b) =>
+      b !== null && typeof b === "object" && (b as Record<string, unknown>).type === "tool_result",
+  );
+}
+
+/** True for a `{type:"text"}` or `{type:"image"}` content block — the two
+ * block kinds Claude Code emits for a real human utterance (a plain typed
+ * message, and an image paste, which arrives as one or more `image` blocks
+ * alongside an optional `text` block). Shared by classifyUserMessage's array
+ * branch to recognize a real-utterance array shape without hardcoding the
+ * two-block-exactly case. */
+function isTextOrImageBlock(b: unknown): boolean {
+  if (b === null || typeof b !== "object") return false;
+  const t = (b as Record<string, unknown>).type;
+  return t === "text" || t === "image";
+}
+
+/**
+ * Classifies one raw jsonl `type:"user"` entry (the full top-level parsed
+ * object, so both `isMeta` and `message.content` are visible) into a
+ * `UserMessageKind`. Judged in this order, matching the research's
+ * discriminating axes:
+ *
+ * 1. array `content` — tool_result echo, `[Request interrupted...]`
+ *    marker, Skill-tool invocation preamble (isMeta + specific prefix), or a
+ *    real human utterance with an image/file paste (array of only text/image
+ *    blocks, no tool_result — Claude Code emits this shape for a pasted
+ *    image, with or without a caption)
+ * 2. `isMeta === true` — Claude Code CLI/harness UI injection (slash
+ *    command caveat/invocation/stdout, malformed-tool-call retry hint)
+ * 3. `isMeta` not true, string `content` with a literal system-injection
+ *    prefix — task-notification (Monitor/Workflow/subagent) or peer-message
+ *    (ccmsg teammate relay), both delivered as ordinary prompts
+ *    (`promptId`-bearing) so `isMeta` alone can't catch them
+ * 4. anything else — a real human utterance
+ *
+ * Known false-negative (documented in the research, not fixed here): a real
+ * user who types text starting with one of the exact literal prefixes below
+ * (`<task-notification>`, `Another Claude session sent a message:`) is
+ * misclassified as the system kind — `isMeta` doesn't distinguish this case
+ * from the wire. Accepted per the research's own limits section; not
+ * observed in any sampled real transcript.
+ */
+export function classifyUserMessage(entry: Record<string, unknown>): UserMessageKind {
+  const message = entry.message as Record<string, unknown> | undefined;
+  const content = message?.content;
+  const isMeta = entry.isMeta === true;
+
+  if (Array.isArray(content)) {
+    if (hasToolResultBlock(content)) return "tool-result";
+    if (content.length === 1) {
+      const block = content[0];
+      if (
+        block !== null &&
+        typeof block === "object" &&
+        (block as Record<string, unknown>).type === "text"
+      ) {
+        const text = (block as Record<string, unknown>).text;
+        const t = typeof text === "string" ? text : "";
+        if (t.startsWith("[Request interrupted by user")) return "user-interrupt-marker";
+        if (isMeta && t.startsWith("Base directory for this skill:"))
+          return "skill-invocation-preamble";
+        // A lone text block matching none of the above stays the
+        // conservative unknown-array fallback below — real plain-text
+        // prompts arrive as a bare string `content`, not a single-element
+        // array (see the "single text block ... unknown-array" tests), so
+        // this shape has no confirmed real-utterance reading to fall back to.
+        return "unknown-array";
+      }
+    }
+    // A real human utterance carrying an image/file paste (with or without a
+    // caption): Claude Code emits these as an array made up entirely of
+    // text/image blocks, no tool_result. Any block type this module hasn't
+    // seen (alone or mixed in) keeps the safe unknown-array fallback instead
+    // — this module's forward-compat design (see the module doc comment).
+    if (content.length > 0 && content.every(isTextOrImageBlock)) return "user-prompt";
+    return "unknown-array";
+  }
+
+  const text = typeof content === "string" ? content : "";
+
+  if (isMeta) {
+    if (text.startsWith("<local-command-caveat>")) return "system-caveat";
+    if (text.startsWith("<command-name>")) return "slash-command-invocation";
+    if (text.startsWith("<local-command-stdout>")) return "slash-command-stdout";
+    if (text === "Your tool call was malformed and could not be parsed. Please retry.")
+      return "tool-retry-hint";
+    return "unknown-meta";
+  }
+
+  if (text.startsWith("<task-notification>")) return "task-notification";
+  if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
+
+  return "user-prompt";
+}
+
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into
  * a renderable event. Never throws — a malformed line becomes `BrokenLine`,
  * an unrecognized-but-valid shape becomes `MetaLine`/`unknown-segment`. */
@@ -296,7 +432,8 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     const role = o.type;
     const message = o.message as Record<string, unknown> | undefined;
     const segments = message ? parseSegments(message.content, role) : [];
-    return { kind: "turn", ts, role, segments };
+    const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
+    return { kind: "turn", ts, role, segments, userMessageKind };
   }
   return {
     kind: "meta",

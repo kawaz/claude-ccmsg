@@ -381,6 +381,57 @@ describe("reducer / peers/loaded and sidebar/set", () => {
   });
 });
 
+// U1: agents/loaded (initial op:"agents" fetch AND the pushed ev:"agents"
+// stream event both fold in through this one action — see ws.ts) and
+// daemon-info/loaded (a `ping` reply's provenance fields, for the footer).
+describe("reducer / agents/loaded and daemon-info/loaded (U1)", () => {
+  test("initial state has an empty agents list and no daemonInfo", () => {
+    const state = initialState();
+    expect(state.agents).toEqual([]);
+    expect(state.daemonInfo).toBeNull();
+  });
+
+  test("agents/loaded replaces the agents list wholesale", () => {
+    const first = dispatch(initialState(), {
+      type: "agents/loaded",
+      agents: [
+        {
+          pid: 1,
+          cwd: "/repo",
+          kind: "interactive",
+          startedAt: 1,
+          sessionId: "s1",
+          config_dir: "/home/.claude",
+        },
+      ],
+    });
+    expect(first.agents).toHaveLength(1);
+    // A later push with a different (e.g. shrunk) set replaces rather than
+    // merges — the daemon's poll result is already the full merged list.
+    const second = dispatch(first, { type: "agents/loaded", agents: [] });
+    expect(second.agents).toEqual([]);
+  });
+
+  test("daemon-info/loaded stores version/exe/script for the footer", () => {
+    const state = dispatch(initialState(), {
+      type: "daemon-info/loaded",
+      version: "0.19.0",
+      exe: "/usr/local/bin/bun",
+      script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
+    });
+    expect(state.daemonInfo).toEqual({
+      version: "0.19.0",
+      exe: "/usr/local/bin/bun",
+      script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
+    });
+  });
+
+  test("daemon-info/loaded tolerates a reply with no exe/script (older daemon)", () => {
+    const state = dispatch(initialState(), { type: "daemon-info/loaded", version: "0.10.0" });
+    expect(state.daemonInfo).toEqual({ version: "0.10.0", exe: undefined, script: undefined });
+  });
+});
+
 describe("reducer / locator/changed (timeline view, DR-0009)", () => {
   // Bare `#t<sid>`: switches to the timeline view and creates a fresh
   // per-session tree (with an idle TimelineState) on first visit — no fetch
@@ -592,5 +643,286 @@ describe("reducer / timeline/loading and timeline/loaded (DR-0009)", () => {
     expect(timeline?.status).toBe("error");
     expect(timeline?.error).toBe("session_not_found");
     expect(timeline?.lines).toEqual(["a"]); // last-good lines preserved, not cleared
+  });
+});
+
+// timeline/tail (U2 live-tail addendum, DR-0009): folds a
+// transcript_subscribe push (relayed verbatim by ws.ts's ev:"transcript"
+// handler) into the cached TimelineState. The core contract under test is
+// applyTimelineTail's contiguity guard — it must never splice a push at the
+// wrong offset.
+describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
+  function loaded(sid: string, res: TranscriptReadResponse): AppState {
+    return dispatch(initialState(), {
+      type: "timeline/loaded",
+      sid,
+      mode: "replace",
+      response: res,
+    });
+  }
+
+  // Core case: a tail push whose `start` exactly matches the cache's `end`
+  // (the daemon's contiguity invariant, DR-0009 addendum) appends its lines
+  // and moves both `end`/`size` forward — no reload needed for the live-tail
+  // UI requirement ("リロード不要").
+  test("contiguous push (start === cached end) appends lines and advances end/size", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a", "b"],
+      start: 0,
+      end: 100,
+      size: 100,
+    });
+    const state = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["c"],
+      start: 100,
+      end: 130,
+      size: 130,
+    });
+    const timeline = state.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["a", "b", "c"]);
+    expect(timeline?.end).toBe(130);
+    expect(timeline?.size).toBe(130);
+    // start/atStart/status are untouched by a tail append (only the tail end
+    // of the cache grows, the "load older" boundary doesn't move).
+    expect(timeline?.start).toBe(0);
+    expect(timeline?.status).toBe("loaded");
+  });
+
+  // Multiple contiguous pushes in a row (the common live-tail case: several
+  // small batches as Claude Code appends lines) keep chaining correctly —
+  // each push's `start` must line up with the *previous push's* `end`, not
+  // just the original load's `end`.
+  test("a second contiguous push chains onto the first push's new end", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const afterFirst = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["b"],
+      start: 50,
+      end: 80,
+      size: 80,
+    });
+    const afterSecond = dispatch(afterFirst, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["c"],
+      start: 80,
+      end: 120,
+      size: 120,
+    });
+    const timeline = afterSecond.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["a", "b", "c"]);
+    expect(timeline?.end).toBe(120);
+  });
+
+  // Non-contiguous push (a gap between cached `end` and the push's `start`,
+  // e.g. a subscribe response racing an in-flight transcript_read, or a
+  // "load older" page leaving `end` at a stale value) must be dropped rather
+  // than spliced at the wrong offset — see applyTimelineTail's doc comment.
+  // The cache's lines/end/size are left exactly as they were; `needsResync`
+  // is the signal Timeline.tsx's resync effect uses to auto-recover (below),
+  // not a "更新"-button-only recovery — see the applyTimelineTail
+  // "non-contiguous push sets needsResync" test for that half.
+  test("non-contiguous push (gap) is dropped, cache lines/end/size unchanged", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const state = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["gap-skipped"],
+      start: 999, // does not match cached end (50)
+      end: 1050,
+      size: 1050,
+    });
+    const timeline = state.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["a"]);
+    expect(timeline?.end).toBe(50);
+    expect(timeline?.size).toBe(50);
+  });
+
+  // Regression (adversarial review, store.ts major finding): a non-contiguous
+  // push must not just silently drop forever — it flags `needsResync` so
+  // Timeline.tsx's resync effect can issue a background transcript_read and
+  // catch the cache back up, instead of live tail going permanently silent
+  // until a manual "更新" click.
+  test("non-contiguous push (gap) sets needsResync", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const state = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["gap-skipped"],
+      start: 999,
+      end: 1050,
+      size: 1050,
+    });
+    expect(state.sessionTrees.get("sess-1")?.timeline.needsResync).toBe(true);
+  });
+
+  // While needsResync is already flagged (a resync re-read is presumably
+  // in flight), further non-contiguous pushes must not re-flag or otherwise
+  // touch the cache — avoids re-triggering Timeline.tsx's resync effect on
+  // every subsequent push before its own re-read lands.
+  test("further pushes while needsResync is set are dropped without re-touching the cache", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const afterGap = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["gap-skipped"],
+      start: 999,
+      end: 1050,
+      size: 1050,
+    });
+    const afterSecondGap = dispatch(afterGap, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["still-skipped"],
+      start: 2000,
+      end: 2050,
+      size: 2050,
+    });
+    const timeline = afterSecondGap.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.lines).toEqual(["a"]);
+    expect(timeline?.end).toBe(50);
+    expect(timeline?.needsResync).toBe(true);
+  });
+
+  // A fresh `timeline/loaded` (the resync effect's background re-read
+  // landing) must clear needsResync — applyTimelineLoaded constructs a
+  // brand-new TimelineState literal rather than spreading `prev`, so a stale
+  // `needsResync: true` can never survive into it.
+  test("a subsequent timeline/loaded clears needsResync", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const afterGap = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["gap-skipped"],
+      start: 999,
+      end: 1050,
+      size: 1050,
+    });
+    expect(afterGap.sessionTrees.get("sess-1")?.timeline.needsResync).toBe(true);
+    const resynced = dispatch(afterGap, {
+      type: "timeline/loaded",
+      sid: "sess-1",
+      mode: "replace",
+      response: { ok: true, sid: "sess-1", lines: ["a", "b"], start: 0, end: 1050, size: 1050 },
+    });
+    expect(resynced.sessionTrees.get("sess-1")?.timeline.needsResync).toBeUndefined();
+    expect(resynced.sessionTrees.get("sess-1")?.timeline.lines).toEqual(["a", "b"]);
+  });
+
+  // A push for a sid whose TimelineState is still "idle" (never loaded yet —
+  // e.g. transcript_subscribe's ack raced ahead of the initial
+  // transcript_read) must not fabricate a cache out of just the tail lines;
+  // the initial load's own "replace" is what establishes the real `start`.
+  test("push while TimelineState is still idle (never loaded) is dropped", () => {
+    const state = dispatch(initialState(), {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["too-early"],
+      start: 0,
+      end: 30,
+      size: 30,
+    });
+    // Dropped before withSessionTree's copy-on-write even commits — no
+    // sess-1 entry is fabricated in sessionTrees at all (applyTimelineTail
+    // returns the untouched `state` on its early-return branch).
+    expect(state.sessionTrees.has("sess-1")).toBe(false);
+  });
+
+  // A push while the cache is mid-"更新" (status:"loading", e.g. the refresh
+  // button was just clicked) must also be dropped — the loading reload is
+  // about to overwrite everything anyway, splicing onto stale lines here
+  // would just be discarded seconds later, and worse, could resurrect data
+  // that's about to be replaced with the wrong `end` bookkeeping.
+  test("push while status is 'loading' (mid-refresh) is dropped", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const loading = dispatch(initial, { type: "timeline/loading", sid: "sess-1" });
+    const state = dispatch(loading, {
+      type: "timeline/tail",
+      sid: "sess-1",
+      lines: ["b"],
+      start: 50,
+      end: 80,
+      size: 80,
+    });
+    const timeline = state.sessionTrees.get("sess-1")?.timeline;
+    expect(timeline?.status).toBe("loading");
+    expect(timeline?.lines).toEqual(["a"]);
+  });
+
+  // A tail push for a sid that isn't the one currently loaded (e.g. a stale
+  // subscription that outlived a session switch) must only affect that
+  // sid's own tree, never bleed into an unrelated session's cache.
+  test("push targets only its own sid's tree, unrelated sessions untouched", () => {
+    const initial = loaded("sess-1", {
+      ok: true,
+      sid: "sess-1",
+      lines: ["a"],
+      start: 0,
+      end: 50,
+      size: 50,
+    });
+    const state = dispatch(initial, {
+      type: "timeline/tail",
+      sid: "sess-2",
+      lines: ["b"],
+      start: 0,
+      end: 30,
+      size: 30,
+    });
+    // sess-1 (loaded, but start !== 0 so this push wouldn't be contiguous
+    // for it anyway) is untouched — the push targets sess-2, not sess-1.
+    expect(state.sessionTrees.get("sess-1")?.timeline.lines).toEqual(["a"]);
+    // sess-2 had no prior load (idle) so its push is dropped too, and no
+    // sess-2 entry is fabricated — crucially, sess-1's tree is untouched by
+    // it either way (proving the two trees don't bleed into each other).
+    expect(state.sessionTrees.has("sess-2")).toBe(false);
+    expect(state.sessionTrees.size).toBe(1);
   });
 });

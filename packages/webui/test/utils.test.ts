@@ -3,23 +3,32 @@
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, FsEntry, PeerInfo } from "@ccmsg/protocol";
 import {
+  badgeLabel,
+  canExpandSiblings,
   clampPaneRatio,
   errorMessage,
   formatDuration,
+  indexAgentsBySid,
   isMarkdownPath,
+  lastPathSegment,
   nextPeerSortKey,
+  offlineAgentRows,
   ownWorkspaceSegment,
   paneRatioFromPointer,
-  parsePaneCollapse,
   repoRootLabel,
+  sessionBadges,
   sessionLabel,
+  sessionRowRepoWs,
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
+  shortSid,
+  siblingWorkspaceEntries,
   sortPeers,
-  togglePaneCollapse,
+  toSessionRow,
   type PeerSortKey,
+  type SessionRow,
 } from "../src/client/utils.ts";
 
 describe("errorMessage", () => {
@@ -341,55 +350,6 @@ describe("paneRatioFromPointer", () => {
   });
 });
 
-describe("togglePaneCollapse", () => {
-  // Fold a currently-visible pane by clicking its own fold button.
-  test("collapses a visible pane when its own button is clicked", () => {
-    expect(togglePaneCollapse("none", "tree")).toBe("tree");
-    expect(togglePaneCollapse("none", "viewer")).toBe("viewer");
-  });
-
-  // Un-fold by clicking the same button again — the fold button doubles
-  // as a restore button, so the user doesn't have to hunt for a separate
-  // affordance when the pane is hidden.
-  test("restores when the same pane's button is clicked again", () => {
-    expect(togglePaneCollapse("tree", "tree")).toBe("none");
-    expect(togglePaneCollapse("viewer", "viewer")).toBe("none");
-  });
-
-  // Clicking the *other* pane's button while one is folded swaps
-  // directly to hiding the newly-targeted pane instead — no
-  // intermediate "restore both, then re-pick" step. Each button's
-  // glyph reads as its literal action ("hide tree" / "hide viewer"),
-  // so pressing the viewer's hide button always ends with the viewer
-  // hidden regardless of what was hidden before it. Restore-both is
-  // reached by clicking the folded pane's own button (the case above).
-  test("clicking the opposite pane's button while folded swaps directly", () => {
-    expect(togglePaneCollapse("tree", "viewer")).toBe("viewer");
-    expect(togglePaneCollapse("viewer", "tree")).toBe("tree");
-  });
-});
-
-describe("parsePaneCollapse", () => {
-  // Known values round-trip identity — the persisted string is the same
-  // enum value the code uses, so no translation table needed.
-  test("returns known values as-is", () => {
-    expect(parsePaneCollapse("none")).toBe("none");
-    expect(parsePaneCollapse("tree")).toBe("tree");
-    expect(parsePaneCollapse("viewer")).toBe("viewer");
-  });
-
-  // Anything else (missing key, corrupted, older build's enum) collapses
-  // to "none" — a first-time user must see both panes; hiding one by
-  // default because of an unrecognized value would be a bad first
-  // impression.
-  test("falls back to none for null / unknown / older values", () => {
-    expect(parsePaneCollapse(null)).toBe("none");
-    expect(parsePaneCollapse("")).toBe("none");
-    expect(parsePaneCollapse("both")).toBe("none");
-    expect(parsePaneCollapse("TREE")).toBe("none"); // case-sensitive on purpose: matches saveKey exactly
-  });
-});
-
 describe("isMarkdownPath", () => {
   // Canonical extensions — both DR-0010's rendering path and casual
   // ".markdown"-suffix repos should trigger the preview toggle.
@@ -427,5 +387,242 @@ describe("isMarkdownPath", () => {
   // viewer's default code mode).
   test("bare .md filename is treated as markdown", () => {
     expect(isMarkdownPath(".md")).toBe(true);
+  });
+});
+
+// --- U1: Sidebar Sessions-list peers x agents merge --- //
+
+function agent(overrides: Partial<AgentInfo>): AgentInfo {
+  return {
+    pid: 1234,
+    cwd: "/repos/claude-ccmsg/main",
+    kind: "interactive",
+    startedAt: 1_700_000_000_000,
+    sessionId: "s1",
+    config_dir: "/home/kawaz/.claude",
+    ...overrides,
+  };
+}
+
+describe("shortSid / lastPathSegment", () => {
+  test("shortSid truncates to 8 chars, leaves shorter sids untouched", () => {
+    expect(shortSid("s1234567890abcdef")).toBe("s1234567");
+    expect(shortSid("s1")).toBe("s1");
+  });
+
+  test("lastPathSegment returns the final non-empty / segment", () => {
+    expect(lastPathSegment("/repos/claude-ccmsg/main")).toBe("main");
+    expect(lastPathSegment("/repos/claude-ccmsg/main/")).toBe("main"); // trailing slash ignored
+  });
+
+  test("lastPathSegment falls back to the input for a path with no segments", () => {
+    expect(lastPathSegment("/")).toBe("/");
+    expect(lastPathSegment("")).toBe("");
+  });
+});
+
+describe("indexAgentsBySid / toSessionRow", () => {
+  test("indexAgentsBySid keys agents by sessionId", () => {
+    const idx = indexAgentsBySid([agent({ sessionId: "s1" }), agent({ sessionId: "s2" })]);
+    expect(idx.size).toBe(2);
+    expect(idx.get("s1")?.sessionId).toBe("s1");
+  });
+
+  test("toSessionRow attaches the matching agent and marks connected: true", () => {
+    const idx = indexAgentsBySid([agent({ sessionId: "s1", status: "busy" })]);
+    const row = toSessionRow(peer({ sid: "s1" }), idx);
+    expect(row.connected).toBe(true);
+    expect(row.agent?.status).toBe("busy");
+  });
+
+  test("toSessionRow leaves agent undefined when claude agents hasn't reported this sid", () => {
+    const idx = indexAgentsBySid([agent({ sessionId: "other" })]);
+    const row = toSessionRow(peer({ sid: "s1" }), idx);
+    expect(row.connected).toBe(true);
+    expect(row.agent).toBeUndefined();
+  });
+});
+
+describe("offlineAgentRows", () => {
+  test("returns only agents with no matching peer sid, connected: false", () => {
+    const peers = [peer({ sid: "s1" })];
+    const agents = [agent({ sessionId: "s1" }), agent({ sessionId: "s2", cwd: "/repos/other" })];
+    const rows = offlineAgentRows(peers, agents);
+    expect(rows.map((r) => r.sid)).toEqual(["s2"]);
+    expect(rows[0]?.connected).toBe(false);
+    expect(rows[0]?.agent?.sessionId).toBe("s2");
+  });
+
+  test("returns an empty array when every agent has a matching peer", () => {
+    const peers = [peer({ sid: "s1" })];
+    const agents = [agent({ sessionId: "s1" })];
+    expect(offlineAgentRows(peers, agents)).toEqual([]);
+  });
+
+  test("sorts newest-started (startedAt desc) first", () => {
+    const agents = [
+      agent({ sessionId: "old", startedAt: 1_000 }),
+      agent({ sessionId: "new", startedAt: 3_000 }),
+      agent({ sessionId: "mid", startedAt: 2_000 }),
+    ];
+    expect(offlineAgentRows([], agents).map((r) => r.sid)).toEqual(["new", "mid", "old"]);
+  });
+
+  // Regression (adversarial review nit finding): the same sessionId reported
+  // from more than one config_dir (theoretically possible per
+  // indexAgentsBySid's doc comment — a copied config dir, say) must produce
+  // exactly one row, not two rows sharing the same `sid` (SessionList's
+  // `key={row.sid}` needs uniqueness). Last-wins, matching indexAgentsBySid's
+  // Map.set policy.
+  test("duplicate sessionId across config dirs collapses to one row (last-wins)", () => {
+    const rows = offlineAgentRows(
+      [],
+      [
+        agent({ sessionId: "dup", config_dir: "/home/.claude-a", cwd: "/a" }),
+        agent({ sessionId: "dup", config_dir: "/home/.claude-b", cwd: "/b" }),
+      ],
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.agent?.config_dir).toBe("/home/.claude-b");
+  });
+
+  test("ws falls back to agent.name, then to cwd's last segment", () => {
+    const withName = offlineAgentRows(
+      [],
+      [agent({ sessionId: "s1", name: "my-agent", cwd: "/repos/x/y" })],
+    );
+    expect(withName[0]?.ws).toBe("my-agent");
+
+    const withoutName = offlineAgentRows(
+      [],
+      [agent({ sessionId: "s1", name: undefined, cwd: "/repos/x/y" })],
+    );
+    expect(withoutName[0]?.ws).toBe("y");
+  });
+});
+
+function sessionRow(overrides: Partial<SessionRow>): SessionRow {
+  return {
+    sid: "s1",
+    repo: "claude-ccmsg",
+    ws: "main",
+    cwd: "/repos/claude-ccmsg/main",
+    connected: true,
+    ...overrides,
+  };
+}
+
+describe("sessionRowRepoWs", () => {
+  test("uses repo/ws as-is when the row has either", () => {
+    expect(sessionRowRepoWs(sessionRow({ repo: "claude-ccmsg", ws: "main" }))).toEqual({
+      repo: "claude-ccmsg",
+      ws: "main",
+    });
+  });
+
+  // agents-only rows never carry repo/ws (claude agents --json has no VCS
+  // metadata) — falls back to the matched agent's name.
+  test("falls back to agent.name when repo and ws are both empty", () => {
+    const row = sessionRow({
+      repo: "",
+      ws: "",
+      cwd: "/repos/x/y",
+      connected: false,
+      agent: agent({ name: "my-agent" }),
+    });
+    expect(sessionRowRepoWs(row)).toEqual({ repo: "", ws: "my-agent" });
+  });
+
+  test("falls back to cwd's last segment when repo/ws/agent.name are all absent", () => {
+    const row = sessionRow({ repo: "", ws: "", cwd: "/repos/x/y", connected: false });
+    expect(sessionRowRepoWs(row)).toEqual({ repo: "", ws: "y" });
+  });
+});
+
+describe("canExpandSiblings", () => {
+  test("true only when the row is connected AND has a repo_root", () => {
+    expect(
+      canExpandSiblings(sessionRow({ connected: true, repo_root: "/repos/claude-ccmsg" })),
+    ).toBe(true);
+  });
+
+  test("false when disconnected (agent-only row), even with a repo_root", () => {
+    expect(
+      canExpandSiblings(sessionRow({ connected: false, repo_root: "/repos/claude-ccmsg" })),
+    ).toBe(false);
+  });
+
+  test("false when connected but no repo_root announced/accepted", () => {
+    expect(canExpandSiblings(sessionRow({ connected: true, repo_root: undefined }))).toBe(false);
+  });
+});
+
+function fsEntry(overrides: Partial<FsEntry>): FsEntry {
+  return { name: "x", type: "dir", ...overrides };
+}
+
+describe("siblingWorkspaceEntries", () => {
+  test("keeps only directory entries", () => {
+    const entries = [
+      fsEntry({ name: "main", type: "dir" }),
+      fsEntry({ name: "README.md", type: "file" }),
+    ];
+    expect(siblingWorkspaceEntries(entries, null).map((e) => e.name)).toEqual(["main"]);
+  });
+
+  test("excludes the row's own workspace segment", () => {
+    const entries = [
+      fsEntry({ name: "main", type: "dir" }),
+      fsEntry({ name: "review-42", type: "dir" }),
+    ];
+    expect(siblingWorkspaceEntries(entries, "main").map((e) => e.name)).toEqual(["review-42"]);
+  });
+});
+
+describe("sessionBadges / badgeLabel", () => {
+  test("agent-only (disconnected) row gets exactly one 'offline' badge, no busy/idle/done", () => {
+    const row = sessionRow({ connected: false, agent: agent({ status: "busy" }) });
+    expect(sessionBadges(row)).toEqual(["offline"]);
+  });
+
+  test("connected row with no matched agent gets no badges (従来通り)", () => {
+    const row = sessionRow({ connected: true, agent: undefined });
+    expect(sessionBadges(row)).toEqual([]);
+  });
+
+  test("connected + agent busy -> ['busy']", () => {
+    const row = sessionRow({ connected: true, agent: agent({ status: "busy" }) });
+    expect(sessionBadges(row)).toEqual(["busy"]);
+  });
+
+  test("connected + agent with no status -> ['idle'] (upstream omits status when idle)", () => {
+    const row = sessionRow({ connected: true, agent: agent({ status: undefined }) });
+    expect(sessionBadges(row)).toEqual(["idle"]);
+  });
+
+  // state:"done" takes priority over status:"busy" — a background agent
+  // that finished shouldn't still read as busy.
+  test("agent.state 'done' takes priority over status 'busy'", () => {
+    const row = sessionRow({
+      connected: true,
+      agent: agent({ status: "busy", state: "done", kind: "background" }),
+    });
+    expect(sessionBadges(row)).toEqual(["done", "bg"]);
+  });
+
+  test("kind:'background' adds an additive 'bg' badge alongside busy/idle/done", () => {
+    const row = sessionRow({
+      connected: true,
+      agent: agent({ status: "busy", kind: "background" }),
+    });
+    expect(sessionBadges(row)).toEqual(["busy", "bg"]);
+  });
+
+  test("badgeLabel renders 'offline' as the Japanese ccmsg未起動 string, others as-is", () => {
+    expect(badgeLabel("offline")).toBe("ccmsg未起動");
+    expect(badgeLabel("busy")).toBe("busy");
+    expect(badgeLabel("idle")).toBe("idle");
+    expect(badgeLabel("done")).toBe("done");
+    expect(badgeLabel("bg")).toBe("bg");
   });
 });

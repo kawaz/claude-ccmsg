@@ -3,10 +3,12 @@
 // (App.tsx routes here instead of RoomView when state.view is "session" or
 // "timeline"). Both tabs share one sid-keyed SessionTreeState cache so
 // switching tabs never refetches what's already loaded.
+import { useEffect, useState } from "preact/hooks";
 import type { AppState, SessionTreeState } from "../store.ts";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
+import { SessionRooms } from "./SessionRooms.tsx";
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -19,6 +21,22 @@ const EMPTY_TREE: SessionTreeState = {
 
 export function SessionView({ state }: { state: AppState }) {
   const sid = state.currentSid;
+  // Rooms is a third tab layered on top of the Files/Timeline locator routing
+  // (`#s<sid>` / `#t<sid>`, see locator.ts) rather than a locator form of its
+  // own — it has no per-sid persisted sub-state worth round-tripping through
+  // the URL (unlike Files' selectedPath or Timeline's paging position), so a
+  // local toggle is enough. Clicking Files/Timeline (both real `<a href>`
+  // locator links) clears it back to whatever state.view says.
+  const [roomsOpen, setRoomsOpen] = useState(false);
+
+  // Reset back to the locator-driven tab (Files/Timeline) on a session
+  // switch (adversarial review nit finding): SessionView doesn't remount
+  // across a sid change (sidebar navigation just changes `state.currentSid`),
+  // so without this a Rooms tab left open before switching sessions would
+  // keep showing Rooms for the newly-selected session too, inconsistent with
+  // Files/Timeline's locator-driven behavior (every other tab always matches
+  // the URL for the session you just navigated to).
+  useEffect(() => setRoomsOpen(false), [sid]);
 
   if (!sid) {
     return (
@@ -31,7 +49,7 @@ export function SessionView({ state }: { state: AppState }) {
   // The reducer always creates a tree on the locator/changed that sets
   // currentSid, so this fallback is type-safety only, never hit in practice.
   const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
-  const tab = state.view === "timeline" ? "timeline" : "files";
+  const tab = roomsOpen ? "rooms" : state.view === "timeline" ? "timeline" : "files";
   // Timeline requires the session to have announced+had-validated a
   // transcript_path at hello time (DR-0009 §2); peers is the only place that
   // fact is visible client-side (PeersResponse.transcript_path, absent when
@@ -42,11 +60,19 @@ export function SessionView({ state }: { state: AppState }) {
   return (
     <main id="session-view">
       <div class="session-tabs">
-        <a class={"session-tab" + (tab === "files" ? " active" : "")} href={sessionHref(sid)}>
+        <a
+          class={"session-tab" + (tab === "files" ? " active" : "")}
+          href={sessionHref(sid)}
+          onClick={() => setRoomsOpen(false)}
+        >
           Files
         </a>
         {hasTranscript ? (
-          <a class={"session-tab" + (tab === "timeline" ? " active" : "")} href={timelineHref(sid)}>
+          <a
+            class={"session-tab" + (tab === "timeline" ? " active" : "")}
+            href={timelineHref(sid)}
+            onClick={() => setRoomsOpen(false)}
+          >
             Timeline
           </a>
         ) : (
@@ -54,8 +80,17 @@ export function SessionView({ state }: { state: AppState }) {
             Timeline
           </span>
         )}
+        <button
+          type="button"
+          class={"session-tab" + (tab === "rooms" ? " active" : "")}
+          onClick={() => setRoomsOpen(true)}
+        >
+          Rooms
+        </button>
       </div>
-      {tab === "timeline" ? (
+      {tab === "rooms" ? (
+        <SessionRooms sid={sid} state={state} />
+      ) : tab === "timeline" ? (
         // Guard against a stale/hand-typed `#t<sid>` link outliving the
         // session's transcript announcement (e.g. reconnect without hello
         // re-sending transcript_path) — the disabled tab above already tells

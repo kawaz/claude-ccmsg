@@ -47,6 +47,14 @@ class MockWebSocket {
     this.readyState = MockWebSocket.CLOSED;
     for (const cb of this.listeners.close ?? []) cb(undefined);
   }
+
+  // U1: fires the "open" listener connect() registers, so a test can drive
+  // createWsClient's actual onOpen handshake (hello -> rooms -> subscribe ->
+  // peers -> agents -> ping) instead of only exercising the standalone
+  // send()-wrapper methods (agents()/ping()/peers()/...) directly.
+  triggerOpen(): void {
+    for (const cb of this.listeners.open ?? []) cb(undefined);
+  }
 }
 
 let instances: MockWebSocket[] = [];
@@ -263,6 +271,39 @@ describe("createWsClient pending queue on close/reconnect", () => {
     });
   });
 
+  // U2 live-tail addendum (DR-0009): transcript_subscribe/unsubscribe wire
+  // shape, mirroring the transcriptRead coverage above.
+  test("transcriptSubscribe sends {op:'transcript_subscribe', sid} and resolves size", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.transcriptSubscribe("sess-1");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_subscribe", sid: "sess-1" });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1", size: 200 }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.size).toBe(200);
+  });
+
+  test("transcriptUnsubscribe sends {op:'transcript_unsubscribe', sid}", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.transcriptUnsubscribe("sess-1");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_unsubscribe", sid: "sess-1" });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1" }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+  });
+
   // Guards against the stale-socket mis-delivery found in the adversarial
   // review of the fix above: connect() used to swap `ws` without detaching
   // the old socket's listeners or closing it, so a late reply/close on the
@@ -405,5 +446,262 @@ describe("createWsClient pending queue on close/reconnect", () => {
 
     expect(actions).toEqual([]);
     expect(instances.length).toBe(2); // no extra reconnect socket was created
+  });
+});
+
+// U1: agents()/ping() wire shape, and the onOpen handshake's initial
+// op:"agents"/op:"ping" fetch (mirrors the peers() coverage above).
+describe("createWsClient agents/ping (U1)", () => {
+  test("agents sends {op:'agents'} and resolves the agents list", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.agents();
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "agents" });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        agents: [
+          {
+            pid: 1,
+            cwd: "/repo",
+            kind: "interactive",
+            startedAt: 1,
+            sessionId: "s1",
+            config_dir: "/home/.claude",
+          },
+        ],
+        polled_at: "2026-07-11T00:00:00.000Z",
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.agents).toHaveLength(1);
+  });
+
+  test("ping sends {op:'ping'} and resolves exe/script/version", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.ping();
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "ping" });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        pong: true,
+        version: "0.19.0",
+        uptime: 10,
+        pid: 999,
+        rooms: 0,
+        clients: 1,
+        exe: "/usr/local/bin/bun",
+        script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
+        http: [],
+        httpAllow: [],
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.script).toBe("/repos/claude-ccmsg/main/packages/daemon/src/index.ts");
+    }
+  });
+
+  // The onOpen handshake (hello -> rooms -> subscribe -> peers -> agents ->
+  // ping) dispatches agents/loaded and daemon-info/loaded once the sockets
+  // "answer" each request in order — this drives the whole handshake through
+  // a live-ish mock instead of calling the two ops directly, to guard the
+  // wiring in onOpen itself (a regression there wouldn't show up in the two
+  // unit tests above, which call agents()/ping() standalone).
+  test("onOpen handshake dispatches agents/loaded and daemon-info/loaded after peers", async () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    // Drive onOpen by firing its own "open" listener (readyState is already
+    // OPEN above so send() inside onOpen will succeed).
+    ws1.triggerOpen();
+
+    // Each `await send(...)` in onOpen only resumes (and issues the *next*
+    // send()) on a microtask tick after its reply settles — triggerMessage()
+    // resolves synchronously but the continuation runs later, so a
+    // triggerMessage() fired before that continuation has run lands on an
+    // empty `pending` queue and is silently dropped (settle?.() no-ops).
+    // `tick()` flushes enough microtasks between each reply for onOpen to
+    // reach its next `await send(...)` before the next message arrives.
+    const tick = () => Promise.resolve().then(() => Promise.resolve());
+
+    // hello
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" }));
+    await tick();
+    // rooms
+    ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
+    await tick();
+    // subscribe
+    ws1.triggerMessage(JSON.stringify({ ok: true, subscribed: true }));
+    await tick();
+    // peers
+    ws1.triggerMessage(JSON.stringify({ ok: true, peers: [] }));
+    await tick();
+    // agents
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        agents: [
+          {
+            pid: 1,
+            cwd: "/repo",
+            kind: "interactive",
+            startedAt: 1,
+            sessionId: "s1",
+            config_dir: "/home/.claude",
+          },
+        ],
+        polled_at: null,
+      }),
+    );
+    await tick();
+    // ping
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        pong: true,
+        version: "0.19.0",
+        uptime: 1,
+        pid: 1,
+        rooms: 0,
+        clients: 1,
+        exe: "/usr/local/bin/bun",
+        script: "entry.ts",
+        http: [],
+        httpAllow: [],
+      }),
+    );
+    await tick();
+
+    const agentsAction = actions.find((a) => a.type === "agents/loaded");
+    const daemonAction = actions.find((a) => a.type === "daemon-info/loaded");
+    expect(agentsAction).toBeDefined();
+    expect(daemonAction).toBeDefined();
+    if (agentsAction?.type === "agents/loaded") expect(agentsAction.agents).toHaveLength(1);
+    if (daemonAction?.type === "daemon-info/loaded") expect(daemonAction.script).toBe("entry.ts");
+  });
+
+  test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "agents",
+        agents: [
+          {
+            pid: 2,
+            cwd: "/repo2",
+            kind: "background",
+            startedAt: 2,
+            sessionId: "s2",
+            config_dir: "/home/.claude",
+          },
+        ],
+        polled_at: "2026-07-11T00:00:00.000Z",
+      }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "agents/loaded",
+        agents: [
+          {
+            pid: 2,
+            cwd: "/repo2",
+            kind: "background",
+            startedAt: 2,
+            sessionId: "s2",
+            config_dir: "/home/.claude",
+          },
+        ],
+      },
+    ]);
+  });
+});
+
+// U2 live-tail addendum (DR-0009): ev:"transcript" pushes relayed as
+// timeline/tail actions, mirroring the ev:"agents" coverage above.
+describe("createWsClient transcript live-tail push (U2)", () => {
+  test("ev:'transcript' push dispatches timeline/tail with the wire fields verbatim", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "transcript",
+        sid: "sess-1",
+        lines: ['{"type":"user"}'],
+        start: 100,
+        end: 130,
+        size: 130,
+      }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "timeline/tail",
+        sid: "sess-1",
+        lines: ['{"type":"user"}'],
+        start: 100,
+        end: 130,
+        size: 130,
+      },
+    ]);
+  });
+
+  // Multiple lines in one push (the daemon batches contiguous appends) must
+  // all reach the dispatched action, not just the first.
+  test("ev:'transcript' push with multiple lines carries all of them", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "transcript",
+        sid: "sess-1",
+        lines: ["line-a", "line-b", "line-c"],
+        start: 0,
+        end: 50,
+        size: 50,
+      }),
+    );
+
+    const action = actions[0];
+    expect(action?.type).toBe("timeline/tail");
+    if (action?.type === "timeline/tail")
+      expect(action.lines).toEqual(["line-a", "line-b", "line-c"]);
   });
 });
