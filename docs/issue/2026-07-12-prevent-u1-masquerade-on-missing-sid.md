@@ -35,6 +35,7 @@ origin: 依頼元プロジェクト
 
 - agent 文脈での SID 無し post を hard-fail 化する
 - 警告を stderr でなく応答 payload (post のレスポンス JSON 等) に昇格し、agent から見える形にする
+- (c) hook が書く state ファイル (`sessions/<sid>.json`) から sid を推定するフォールバック — ただし CLI からは自分がどのセッション由来か判別する情報が env 以外に無いため、単独では成立しない可能性が高い。tty 判定や `CLAUDECODE` 系 env の存在検査と組み合わせる場合の補助案として記録 (出典: main セッション (9e0f2326) が同問題を実地で踏んだ際の検討)
 
 ## 受け入れ条件
 
