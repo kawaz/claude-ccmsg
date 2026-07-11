@@ -141,6 +141,13 @@ export interface SessionIdentity {
    * CCMSG_TRANSCRIPT_PATH as an override; the daemon validates it at hello time
    * and it is the ONLY file transcript_read serves for this sid. */
   transcript_path?: string;
+  /** absolute path of the repository container holding ALL of this repo's
+   * workspaces/worktrees (DR-0008 addendum). When announced and accepted by
+   * the daemon's hello-time validation (absolute, realpath-resolvable, a
+   * strict ancestor of cwd, not "/" or $HOME itself), fs_list/fs_read use it
+   * as the containment root instead of cwd — so sibling workspaces of the
+   * same repo become browsable. Rejected or absent = cwd root as before. */
+  repo_root?: string;
 }
 export interface UserIdentity {
   role: "user";
@@ -159,6 +166,7 @@ export interface HelloRequest {
   ws?: string;
   cwd?: string;
   transcript_path?: string;
+  repo_root?: string;
 }
 
 export interface PostRequest {
@@ -347,6 +355,10 @@ export interface PeerInfo {
   /** present iff the session announced a transcript the daemon accepted —
    * the webui uses this to decide whether a Timeline view is available */
   transcript_path?: string;
+  /** present iff the session announced a repo container the daemon accepted —
+   * fs browsing is rooted here (all workspaces/worktrees visible) instead of
+   * cwd, and the webui highlights the session's own workspace within it */
+  repo_root?: string;
 }
 export interface PeersResponse {
   ok: true;
