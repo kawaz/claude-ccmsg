@@ -3,16 +3,37 @@
 // cached in state.sessionTrees[sid].dirs, so re-collapsing/re-expanding never
 // re-fetches. This file owns the fs_list round trip; the reducer only stores
 // what it's told (DR-0005 §1: effects in components, not the reducer).
-import type { FsEntry } from "@ccmsg/protocol";
-import { useEffect } from "preact/hooks";
+import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
+import { useEffect, useRef } from "preact/hooks";
+import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
-import { errorMessage } from "../utils.ts";
+import type { WsHandle } from "../ws.ts";
+import { errorMessage, ownWorkspaceSegment, repoRootLabel } from "../utils.ts";
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
+}
+
+/** fs_list round trip for one directory, shared by DirNode's click-to-expand
+ * and FileTree's auto-expand-own-workspace effect below — both just need
+ * "dispatch the loaded entries or error", differing only in when they call
+ * it. Kept out of the reducer per DR-0005 §1 (effects live in components). */
+function loadDir(store: Store, ws: WsHandle, sid: string, path: string): void {
+  void ws
+    .fsList(sid, path)
+    .then((res) => {
+      if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
+      else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
+    })
+    // A rejection here (e.g. the socket dropped/hasn't opened yet, see
+    // ws.ts send()) must still resolve the "loading…" placeholder above
+    // into something the user can act on, same as an ok:false reply.
+    .catch((err) => {
+      store.dispatch({ type: "fs/dir-loaded", sid, path, error: errorMessage(err) });
+    });
 }
 
 // Directories first, then everything else, alphabetical within each group —
@@ -32,6 +53,7 @@ function DirNode({
   depth,
   tree,
   selectedPath,
+  ownWsPath,
 }: {
   sid: string;
   path: string;
@@ -39,37 +61,30 @@ function DirNode({
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;
+  ownWsPath: string | null;
 }) {
   const { store, ws } = useApp();
   const expanded = tree.expanded.has(path);
   const entries = tree.dirs.get(path);
   const error = tree.dirErrors.get(path);
+  const isOwnWs = ownWsPath !== null && path === ownWsPath;
 
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
-    if (!expanded && entries === undefined) {
-      void ws
-        .fsList(sid, path)
-        .then((res) => {
-          if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
-          else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
-        })
-        // A rejection here (e.g. the socket dropped/hasn't opened yet, see
-        // ws.ts send()) must still resolve the "loading…" placeholder above
-        // into something the user can act on, same as an ok:false reply.
-        .catch((err) => {
-          store.dispatch({ type: "fs/dir-loaded", sid, path, error: errorMessage(err) });
-        });
-    }
+    if (!expanded && entries === undefined) loadDir(store, ws, sid, path);
   }
 
   return (
     <li>
       <button
         type="button"
-        class="tree-row tree-dir"
+        class={"tree-row tree-dir" + (isOwnWs ? " tree-own-ws" : "")}
         style={{ paddingLeft: `${depth}rem` }}
         onClick={toggle}
+        // DR-0008 addendum: marks the session's own workspace/worktree dir
+        // when the tree root has been widened to the repo container — a
+        // hint distinct from tree-selected (which tracks the open file).
+        title={isOwnWs ? "このセッションのワークスペース" : undefined}
       >
         <span class="tree-caret">{expanded ? "▾" : "▸"}</span> {name}
       </button>
@@ -91,6 +106,7 @@ function DirNode({
               depth={depth + 1}
               tree={tree}
               selectedPath={selectedPath}
+              ownWsPath={ownWsPath}
             />
           )}
         </ul>
@@ -144,6 +160,7 @@ function Nodes({
   depth,
   tree,
   selectedPath,
+  ownWsPath,
 }: {
   sid: string;
   parentPath: string;
@@ -151,6 +168,7 @@ function Nodes({
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;
+  ownWsPath: string | null;
 }) {
   return (
     <>
@@ -166,6 +184,7 @@ function Nodes({
               depth={depth}
               tree={tree}
               selectedPath={selectedPath}
+              ownWsPath={ownWsPath}
             />
           );
         }
@@ -194,11 +213,25 @@ function Nodes({
   );
 }
 
-export function FileTree({ sid, tree }: { sid: string; tree: SessionTreeState }) {
+export function FileTree({
+  sid,
+  tree,
+  peer,
+}: {
+  sid: string;
+  tree: SessionTreeState;
+  /** Peer record for `sid`, as seen in state.peers — carries repo_root/cwd
+   * for the DR-0008-addendum root label + own-workspace auto-expand below.
+   * Undefined for a sid that hasn't shown up in a peers/loaded response yet
+   * (same fallback posture as SessionView's hasTranscript lookup). */
+  peer: PeerInfo | undefined;
+}) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
   const rootEntries = tree.dirs.get("");
   const rootError = tree.dirErrors.get("");
+  const rootLabel = peer ? repoRootLabel(peer) : null;
+  const ownWsPath = peer ? ownWorkspaceSegment(peer) : null;
 
   // Root listing loads eagerly on mount / session switch — everything below
   // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
@@ -222,8 +255,36 @@ export function FileTree({ sid, tree }: { sid: string; tree: SessionTreeState })
       });
   }, [sid, rootEntries, rootError, connStatus]);
 
+  // DR-0008 addendum: once the (now possibly repo-container-wide) root is
+  // loaded, auto-expand the session's own workspace/worktree dir so the
+  // tree doesn't open on an undifferentiated list of sibling workspaces.
+  //
+  // Idempotency can't be keyed off `tree.expanded.has(ownWsPath)`: toggling a
+  // dir *removes* it from `expanded` (see the `fs/dir-toggled` reducer), so a
+  // user collapsing their own workspace made this effect's dep (`tree.expanded`)
+  // change and re-fire, reading `has(ownWsPath)` as false again and forcing it
+  // back open — the user's collapse could never stick. Instead, remember (per
+  // sid) that auto-expand has already run at all — attempted once, never again,
+  // regardless of what the user does to `expanded` afterward.
+  const autoExpandedForSid = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ownWsPath || rootEntries === undefined) return;
+    if (autoExpandedForSid.current === sid) return;
+    const isDir = rootEntries.some((e) => e.name === ownWsPath && e.type === "dir");
+    if (!isDir) return;
+    autoExpandedForSid.current = sid;
+    if (!tree.expanded.has(ownWsPath))
+      store.dispatch({ type: "fs/dir-toggled", sid, path: ownWsPath });
+    if (tree.dirs.get(ownWsPath) === undefined) loadDir(store, ws, sid, ownWsPath);
+  }, [sid, ownWsPath, rootEntries]);
+
   return (
     <div class="file-tree">
+      {rootLabel ? (
+        <p class="tree-root-label" title={peer?.repo_root}>
+          {rootLabel}
+        </p>
+      ) : null}
       {rootError ? (
         <p class="tree-error">{rootError}</p>
       ) : rootEntries === undefined ? (
@@ -237,6 +298,7 @@ export function FileTree({ sid, tree }: { sid: string; tree: SessionTreeState })
             depth={0}
             tree={tree}
             selectedPath={tree.selectedPath}
+            ownWsPath={ownWsPath}
           />
         </ul>
       )}

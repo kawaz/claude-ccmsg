@@ -42,10 +42,51 @@ export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {
 }
 
 /** Sidebar Sessions-section label (DR-0008): repo · ws · last path segment of
- * cwd, so entries stay identifiable without eating the whole absolute path. */
+ * cwd, so entries stay identifiable without eating the whole absolute path.
+ * When cwd *is* the workspace root (cwdTail equals ws, or equals repo for a
+ * plain non-worktree checkout), the third segment is dropped rather than
+ * repeating information already shown by repo/ws (e.g. "claude-ccmsg · main
+ * · main" collapses to "claude-ccmsg · main"). A session whose cwd is a
+ * subdirectory *within* the workspace still shows the tail — that's the
+ * case the third segment carries real information for (DR-0008 addendum). */
 export function sessionLabel(peer: PeerInfo): string {
   const cwdTail = peer.cwd.split("/").filter(Boolean).pop() ?? peer.cwd;
-  return [peer.repo || "?", peer.ws || "?", cwdTail].join(" · ");
+  const parts = [peer.repo || "?", peer.ws || "?"];
+  // Known edge case: a subdirectory of cwd that happens to share ws's name
+  // (e.g. cwd=".../main/main") also collapses the third segment here, same
+  // as cwd being ws's root itself — repo_root isn't available to this
+  // function to disambiguate the two, and accepting the ambiguity is judged
+  // cheaper than threading repo_root through just for this label.
+  if (cwdTail !== peer.ws && cwdTail !== peer.repo) parts.push(cwdTail);
+  return parts.join(" · ");
+}
+
+/** First path segment of `peer.cwd` relative to `peer.repo_root` — the
+ * session's own workspace/worktree directory as it appears under the tree's
+ * (now repo-container-rooted, DR-0008 addendum) root. `null` when the
+ * session didn't announce/get-accepted a repo_root (fs root is still cwd,
+ * nothing to highlight relative to it), or when cwd unexpectedly isn't
+ * inside repo_root (defensive — the daemon's hello-time validation already
+ * guarantees ancestry, but this stays a pure function of PeerInfo alone and
+ * shouldn't throw on a malformed peer). */
+export function ownWorkspaceSegment(peer: PeerInfo): string | null {
+  if (!peer.repo_root) return null;
+  const root = peer.repo_root.replace(/\/+$/, "");
+  if (!peer.cwd.startsWith(`${root}/`)) return null;
+  const rel = peer.cwd.slice(root.length + 1);
+  const seg = rel.split("/")[0];
+  return seg || null;
+}
+
+/** Last path segment of `peer.repo_root`, for the FileTree's root label
+ * (DR-0008 addendum) — tells the viewer what the (now possibly
+ * container-wide) tree root actually is, since it's no longer always "this
+ * session's cwd". `null` when there's no repo_root to label (tree root is
+ * still cwd, no label shown — same as today). */
+export function repoRootLabel(peer: PeerInfo): string | null {
+  if (!peer.repo_root) return null;
+  const parts = peer.repo_root.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? peer.repo_root;
 }
 
 /** Renders a caught value from a rejected ws.ts send() (e.g. `Error("ws not

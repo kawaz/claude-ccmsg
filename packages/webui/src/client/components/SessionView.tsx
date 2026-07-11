@@ -37,7 +37,8 @@ export function SessionView({ state }: { state: AppState }) {
   // transcript_path at hello time (DR-0009 §2); peers is the only place that
   // fact is visible client-side (PeersResponse.transcript_path, absent when
   // the daemon rejected or the session never sent one).
-  const hasTranscript = state.peers.some((p) => p.sid === sid && p.transcript_path);
+  const peer = state.peers.find((p) => p.sid === sid);
+  const hasTranscript = !!peer?.transcript_path;
 
   return (
     <main id="session-view">
@@ -68,7 +69,7 @@ export function SessionView({ state }: { state: AppState }) {
         )
       ) : (
         <div class="session-panes">
-          <FileTree sid={sid} tree={tree} />
+          <FileTree sid={sid} tree={tree} peer={peer} />
           <FileViewer sid={sid} tree={tree} />
         </div>
       )}
