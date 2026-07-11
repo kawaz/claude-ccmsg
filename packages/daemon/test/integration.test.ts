@@ -86,8 +86,13 @@ describe("wire protocol integration", () => {
     T,
   );
 
+  // DR-0011 changed `to` from a mention (attention marker, full-room delivery) to a
+  // delivery filter: a `to`-bearing msg is now live-delivered only to the listed
+  // members, the sender, and the admin User (u1, exempt). This replaces the prior
+  // "to is a mention, not a visibility filter: every member is delivered" test, which
+  // asserted the opposite (pre-DR-0011) behavior.
   test(
-    "to is a mention, not a visibility filter: every member is delivered",
+    "to is a delivery filter (DR-0011): only to-listed members, the sender, and admin (u1) are delivered live; excluded members still see the mid gap and can `read`/`rooms` it",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -103,25 +108,195 @@ describe("wire protocol integration", () => {
         const bSub = await session(ctx, "B");
         const cSub = await session(ctx, "C");
         const aSub = await session(ctx, "A");
+        const uSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
         await cSub.request({ op: "subscribe" });
         await aSub.request({ op: "subscribe" });
+        await uSub.request({ op: "subscribe" });
 
-        // A mentions only B (a2). C (a3) is NOT mentioned.
-        await aPost.request({ op: "post", room, msg: "hey", to: ["a2"] });
+        // A sends to only B (a2). C (a3) is excluded from live delivery.
+        await aPost.request({ op: "post", room, msg: "hey", to: ["a2"] }); // mid 1
 
-        // both the mentioned member (B) and the unmentioned member (C) receive it
+        // the listed member (B) is delivered
         const bGot = await bSub.readEventUntil((ev) => ev.type === "msg");
+        expect(bGot.ev.mid).toBe(1);
         expect(bGot.ev.msg).toBe("hey");
         expect(bGot.ev.to).toEqual(["a2"]);
-        const cGot = await cSub.readEventUntil((ev) => ev.type === "msg");
-        expect(cGot.ev.msg).toBe("hey");
-        expect(cGot.ev.to).toEqual(["a2"]); // C sees the mention marker but is still delivered
 
-        // the author still gets no echo: after a co-member posts, A's first msg is that one
-        await bPost.request({ op: "post", room, msg: "second" }); // mid 2 from B
+        // admin User (u1) is delivered too — exempt from the filter (DR-0011 §1: the
+        // webui is an observation surface, no agent-style context cost for the User).
+        const uGot = await uSub.readEventUntil((ev) => ev.type === "msg");
+        expect(uGot.ev.mid).toBe(1);
+
+        // C is excluded: a follow-up to-less broadcast (mid 2) is C's FIRST seen msg,
+        // proving mid 1 never reached C's stream (events arrive in mid order).
+        await bPost.request({ op: "post", room, msg: "broadcast" }); // mid 2, no `to`
+        const cGot = await cSub.readEventUntil((ev) => ev.type === "msg");
+        expect(cGot.ev.mid).toBe(2);
+
+        // echo suppression (DR-0003 §5) is unchanged by the `to` filter: A's own
+        // to-filtered mid 1 is never echoed back; A's first seen msg is B's mid 2.
         const aGot = await aSub.readEventUntil((ev) => ev.type === "msg");
         expect(aGot.ev.mid).toBe(2);
+
+        // storage/read/rooms stay unfiltered (DR-0011 §1-3): C can still pull the
+        // skipped mid on request, and the mid gap is visible in `rooms.last_mid`.
+        const read = await cSub.request<{ msgs: { mid: number; msg: string }[] }>({
+          op: "read",
+          room,
+          mids: "1",
+        });
+        expect(read.msgs[0]!.msg).toBe("hey");
+        const rooms = await cSub.request<{ rooms: { id: string; last_mid: number }[] }>({
+          op: "rooms",
+        });
+        expect(rooms.rooms.find((r) => r.id === room)!.last_mid).toBe(2);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "to-less msg still delivers to every member (DR-0011: filter only applies when `to` is present)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B"); // register B as a resolvable peer
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room;
+        const bSub = await session(ctx, "B");
+        await bSub.request({ op: "subscribe" });
+
+        await aPost.request({ op: "post", room, msg: "broadcast to all" }); // mid 1, no `to`
+        const bGot = await bSub.readEventUntil((ev) => ev.type === "msg");
+        expect(bGot.ev.mid).toBe(1);
+        expect(bGot.ev.to).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "since replay applies the same to-filter as live delivery (DR-0011 §1-2)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B", "C"],
+        });
+        const room = created.room;
+        await session(ctx, "C");
+
+        // B (a2) is the `to` target throughout; C (a3) never is.
+        await aPost.request({ op: "post", room, msg: "m1", to: ["a2"] }); // mid 1, excludes C
+        await aPost.request({ op: "post", room, msg: "m2" }); // mid 2, everyone
+        await aPost.request({ op: "post", room, msg: "m3", to: ["a2"] }); // mid 3, excludes C
+
+        // C reconnects with since=0 (full replay of everything after mid 0) — the
+        // replay path must skip mids 1 and 3 exactly like live delivery would.
+        const cSub = await session(ctx, "C");
+        await cSub.request({ op: "subscribe", since: { [room]: 0 } });
+
+        await aPost.request({ op: "post", room, msg: "m4" }); // live terminator, mid 4
+        const { seen } = await cSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 4);
+        const mids = seen.filter((e) => e.type === "msg").map((e) => e.mid);
+        expect(mids).toEqual([2, 4]); // mid 1, 3 filtered out of the replay
+
+        // meanwhile B (the `to` target) replaying the same since=0 sees every mid,
+        // unfiltered — the request's `subscribe` ack arrives first, then the replayed
+        // backlog streams as further lines on the same connection.
+        const bSub = await session(ctx, "B");
+        await bSub.request({ op: "subscribe", since: { [room]: 0 } });
+        await aPost.request({ op: "post", room, msg: "m5" }); // live terminator, mid 5
+        const { seen: bSeen } = await bSub.readEventUntil(
+          (ev) => ev.type === "msg" && ev.mid === 5,
+        );
+        const bMids = bSeen.filter((e) => e.type === "msg").map((e) => e.mid);
+        expect(bMids).toEqual([1, 2, 3, 4, 5]); // B (the to-target) sees every mid, unfiltered
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "join-snapshot (subscribe without `since`) applies the same to-filter as live/replay (DR-0011 §1-2)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        await session(ctx, "B");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B", "C"],
+        });
+        const room = created.room;
+        await session(ctx, "C");
+
+        // both posted before anyone subscribes, so the join snapshot (not live delivery
+        // or since-replay) is what has to apply the filter here.
+        await aPost.request({ op: "post", room, msg: "m1", to: ["a2"] }); // mid 1, excludes C
+        await aPost.request({ op: "post", room, msg: "m2" }); // mid 2, everyone
+
+        // C subscribes with no `since` — first-time join snapshot path (sendBacklog's
+        // non-sinceMid branch), distinct from the sinceMid replay branch covered above.
+        const cSub = await session(ctx, "C");
+        await cSub.request({ op: "subscribe" });
+        const { seen: cSeen } = await cSub.readEventUntil(
+          (ev) => ev.type === "msg" && ev.mid === 2,
+        );
+        const cMids = cSeen.filter((e) => e.type === "msg").map((e) => e.mid);
+        expect(cMids).toEqual([2]); // mid 1 filtered out of C's join snapshot
+
+        // admin User (u1) is exempt in the join snapshot too, same as live/replay.
+        const uSub = await user(ctx);
+        await uSub.request({ op: "subscribe" });
+        const { seen: uSeen } = await uSub.readEventUntil(
+          (ev) => ev.type === "msg" && ev.mid === 2,
+        );
+        const uMids = uSeen.filter((e) => e.type === "msg").map((e) => e.mid);
+        expect(uMids).toEqual([1, 2]); // u1 sees both
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "member/leave/title/next/prev events ignore the to-filter and always reach every subscriber (DR-0011: msg-only)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B", "C"],
+        });
+        const room = created.room;
+        await session(ctx, "B");
+        await session(ctx, "C");
+
+        const cSub = await session(ctx, "C");
+        await cSub.request({ op: "subscribe" });
+
+        // even though C is never a `to` target below, a title change is a non-msg
+        // event and must still reach C in full.
+        await aPost.request({ op: "set_title", room, title: "renamed" });
+        const titleGot = await cSub.readEventUntil((ev) => ev.type === "title");
+        expect(titleGot.ev.title).toBe("renamed");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -941,6 +1116,251 @@ describe("wire protocol integration", () => {
           op: "rooms",
         });
         expect(rooms.rooms.find((r) => r.id === room)?.title).toBe("a".repeat(200));
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: a member session adds a connected, non-member session and it's live-broadcast to existing subscribers",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A only (a1)
+        const room = created.room;
+
+        // B must be a currently connected session (invite reads the live registry,
+        // same as create_room's `members`) but is NOT yet a member of the room.
+        await session(ctx, "B");
+
+        const aSub = await session(ctx, "A");
+        await aSub.request({ op: "subscribe" });
+
+        const invited = await aPost.request<{
+          ok: boolean;
+          room: string;
+          id: string;
+          already: boolean;
+        }>({ op: "invite", room, sid: "B" });
+        expect(invited.ok).toBe(true);
+        expect(invited.room).toBe(room);
+        expect(invited.already).toBe(false);
+        expect(invited.id).toBe("a2"); // next free agent-namespace id after A's a1
+
+        // broadcast: an existing subscriber sees the new MemberEvent live (member
+        // events go to everyone incl. the actor, same as title/leave — DR-0011 §1 only
+        // filters `msg`). aSub's subscribe backlog snapshot already delivered A's own
+        // member row (a1), so filter specifically for the invited id.
+        const got = await aSub.readEventUntil(
+          (ev) => ev.type === "member" && ev.r === room && ev.id === "a2",
+        );
+        expect(got.ev.sid).toBe("B");
+
+        // B is now a resolvable member and can post
+        const bPost = await session(ctx, "B");
+        const posted = await bPost.request<{ ok: boolean; mid: number }>({
+          op: "post",
+          room,
+          msg: "hi, I'm in",
+        });
+        expect(posted.ok).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: an already-subscribed target gets the full room snapshot (title/members/backlog), not just the bare MemberEvent line",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A only (a1)
+        const room = created.room;
+        await aPost.request({ op: "set_title", room, title: "pre-invite title" });
+        await aPost.request({ op: "post", room, msg: "hello before you joined" }); // mid 1
+
+        // B connects and subscribes BEFORE being invited — while not yet a member, its
+        // initial subscribe snapshot must skip this room entirely (subscriberSeesRoom is
+        // false), so anything it later sees for `room` has to come from the invite path.
+        const bSub = await session(ctx, "B");
+        await bSub.request({ op: "subscribe" });
+
+        await aPost.request({ op: "invite", room, sid: "B" });
+
+        // the snapshot arrives as an ordered burst (member A, title, msg mid 1, member
+        // B) — wait for the LAST one (B's own member row) and inspect everything seen
+        // along the way, rather than chaining separate readEventUntil calls (which
+        // would each discard earlier events and deadlock on the second wait).
+        const { seen } = await bSub.readEventUntil((ev) => ev.type === "member" && ev.sid === "B");
+
+        // B must have received the pre-existing msg (mid 1) as part of its post-invite
+        // snapshot — a plain live-broadcast of the invite's own MemberEvent (the prior
+        // behavior) could never carry it, since mid 1 predates B's membership.
+        const hello = seen.find((ev) => ev.type === "msg" && ev.msg === "hello before you joined");
+        expect(hello?.mid).toBe(1);
+
+        // the room title (set before B joined) is also part of the snapshot.
+        const title = seen.find((ev) => ev.type === "title");
+        expect(title?.title).toBe("pre-invite title");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: the admin User can also invite (implicit member of every room)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+        await session(ctx, "B");
+
+        const u = await user(ctx);
+        const invited = await u.request<{ ok: boolean; id: string; already: boolean }>({
+          op: "invite",
+          room,
+          sid: "B",
+        });
+        expect(invited.ok).toBe(true);
+        expect(invited.already).toBe(false);
+        expect(invited.id).toBe("a2");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: a non-member session is refused with not_a_member",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] }); // A is the sole member
+        const room = created.room;
+        await session(ctx, "B");
+
+        const c = await session(ctx, "C"); // C is connected but not a member of `room`
+        const denied = await c.request<{ ok: boolean; error?: { code: string } }>({
+          op: "invite",
+          room,
+          sid: "B",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("not_a_member");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: an unconnected sid errors with session_not_found",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = created.room;
+
+        const denied = await aPost.request<{ ok: boolean; error?: { code: string } }>({
+          op: "invite",
+          room,
+          sid: "ghost-not-connected",
+        });
+        expect(denied.ok).toBe(false);
+        expect(denied.error!.code).toBe("session_not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite: inviting an already-member session is a no-op, returning already:true and the existing id",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"], // B is already a member (a2) from room creation
+        });
+        const room = created.room;
+        await session(ctx, "B");
+
+        const invited = await aPost.request<{ ok: boolean; id: string; already: boolean }>({
+          op: "invite",
+          room,
+          sid: "B",
+        });
+        expect(invited.ok).toBe(true);
+        expect(invited.already).toBe(true);
+        expect(invited.id).toBe("a2");
+
+        // no new member line was appended: rooms still lists exactly A and B
+        const rooms = await aPost.request<{ rooms: { id: string; members: { id: string }[] }[] }>({
+          op: "rooms",
+        });
+        const ids = rooms.rooms.find((r) => r.id === room)!.members.map((m) => m.id);
+        expect(ids.sort()).toEqual(["a1", "a2"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "invite marks the room dedup-ineligible, so a later create_room with the original sids doesn't fold a stranger back in",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created1 = await aPost.request<{ room: string; reused: boolean }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room1 = created1.room;
+        expect(created1.reused).toBe(false);
+        await session(ctx, "B");
+        await session(ctx, "C");
+
+        // C joins room1 via invite — NOT part of room1's original dedupKey ("A,B").
+        await aPost.request({ op: "invite", room: room1, sid: "C" });
+
+        // within the dedup window, A calls create_room with the exact same sid set
+        // ["A","B"] again. Pre-fix, dedupKey/dedupEligible are untouched by invite, so
+        // this would fold into room1 — dropping the initial msg into a room C can see,
+        // even though C was never part of this create_room call.
+        const created2 = await aPost.request<{ room: string; reused: boolean }>({
+          op: "create_room",
+          members: ["B"],
+          msg: "fresh start",
+        });
+        expect(created2.reused).toBe(false);
+        expect(created2.room).not.toBe(room1);
+
+        const rooms = await aPost.request<{
+          rooms: { id: string; members: { id: string }[] }[];
+        }>({ op: "rooms" });
+        const room2Members = rooms.rooms
+          .find((r) => r.id === created2.room)!
+          .members.map((m) => m.id);
+        expect(room2Members.sort()).toEqual(["a1", "a2"]); // A, B only — no C
       } finally {
         await stopTestDaemon(ctx);
       }

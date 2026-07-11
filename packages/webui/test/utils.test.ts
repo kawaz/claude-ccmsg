@@ -3,7 +3,9 @@
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
-import type { AgentInfo, FsEntry, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, FsEntry, MemberEvent, PeerInfo } from "@ccmsg/protocol";
+import type { RoomState } from "../src/client/store.ts";
+import { ADMIN_ID } from "../src/client/store.ts";
 import {
   badgeLabel,
   canExpandSiblings,
@@ -13,6 +15,7 @@ import {
   indexAgentsBySid,
   isMarkdownPath,
   lastPathSegment,
+  memberLabel,
   nextPeerSortKey,
   offlineAgentRows,
   ownWorkspaceSegment,
@@ -105,6 +108,83 @@ describe("sessionLabel", () => {
     expect(sessionLabel(peer({ sid: "s1234567890abcdef", repo: "", ws: "", branch: "" }))).toBe(
       "s1234567",
     );
+  });
+});
+
+// --- ROOM member chip / from-display label (U2) --- //
+
+function member(overrides: Partial<MemberEvent>): MemberEvent {
+  return {
+    type: "member",
+    id: "m1",
+    sid: "s1234567890abcdef",
+    repo: "kawaz/claude-ccmsg",
+    ws: "main",
+    cwd: "/repos/claude-ccmsg/main",
+    joined_at: "2026-07-10T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function roomWithMember(m: MemberEvent): RoomState {
+  return {
+    id: "r1",
+    membersById: new Map([[m.id, { ...m, left: false }]]),
+    memberOrder: [m.id],
+    msgs: new Map(),
+    timeline: [],
+    lastMid: 0,
+    lastTs: null,
+  };
+}
+
+describe("memberLabel", () => {
+  test("ADMIN_ID always renders as 'User', regardless of room state", () => {
+    expect(memberLabel(ADMIN_ID, undefined)).toBe("User");
+  });
+
+  // Core U2 behavior: repo's owner/org segment (`kawaz/`) is cut, and ws is
+  // appended after a "/" — e.g. repo:"kawaz/claude-ccmsg", ws:"main" reads as
+  // "claude-ccmsg/main". This is deliberately different from sessionLabel
+  // (Sidebar Sessions list keeps the owner-qualified repo, per kawaz's
+  // explicit "SESSIONS 側は今のまま" instruction) — see memberLabel's doc
+  // comment for the rationale.
+  test("strips the owner/org segment from repo and appends ws", () => {
+    const room = roomWithMember(member({ id: "m1", repo: "kawaz/claude-ccmsg", ws: "main" }));
+    expect(memberLabel("m1", room)).toBe("claude-ccmsg/main");
+  });
+
+  // A repo with more than one leading segment (nested org path) still
+  // collapses to just its final segment — only the last "/"-separated part
+  // is the repo's own name, everything before it is ownership/grouping.
+  test("collapses a multi-segment repo path to its final segment", () => {
+    const room = roomWithMember(member({ id: "m1", repo: "org/team/claude-ccmsg", ws: "main" }));
+    expect(memberLabel("m1", room)).toBe("claude-ccmsg/main");
+  });
+
+  // ws empty: shows the repo name alone, no trailing "/" — an empty ws
+  // segment must not leave a dangling separator.
+  test("shows repo name alone when ws is empty", () => {
+    const room = roomWithMember(member({ id: "m1", repo: "kawaz/claude-ccmsg", ws: "" }));
+    expect(memberLabel("m1", room)).toBe("claude-ccmsg");
+  });
+
+  // repo empty: falls back to the pre-existing behavior (first 8 chars of
+  // sid) — a session that hasn't announced VCS metadata is still
+  // distinguishable in the chip list, same fallback as before this change.
+  test("falls back to the first 8 chars of sid when repo is empty", () => {
+    const room = roomWithMember(
+      member({ id: "m1", sid: "s1234567890abcdef", repo: "", ws: "main" }),
+    );
+    expect(memberLabel("m1", room)).toBe("s1234567");
+  });
+
+  // Unknown member id (not in membersById, e.g. a stale mention target) or
+  // no room at all: falls back to the raw id so callers never render "".
+  test("falls back to the raw id when the member isn't found in the room", () => {
+    const room = roomWithMember(member({ id: "other" }));
+    expect(memberLabel("missing", room)).toBe("missing");
+    expect(memberLabel("missing", undefined)).toBe("missing");
   });
 });
 

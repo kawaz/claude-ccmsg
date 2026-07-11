@@ -18,6 +18,12 @@ export interface Paths {
   lock: string;
   pid: string;
   log: string;
+  /** persisted extra allowed `Origin` values (JSON string[]), managed by
+   * `ccmsg origins add/remove/list` and read by the daemon's Origin check.
+   * Lives in data/ (not state/) because it is user configuration that must
+   * survive daemon restarts — unlike CCMSG_HTTP_ALLOW_ORIGIN, which vanishes
+   * whenever a client respawns the daemon without that env set. */
+  allowedOrigins: string;
 }
 
 function home(): string {
@@ -47,5 +53,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     lock: path.join(stateDir, "daemon.lock"),
     pid: path.join(stateDir, "daemon.pid"),
     log: path.join(stateDir, "daemon.log"),
+    allowedOrigins: path.join(dataDir, "allowed-origins.json"),
   };
 }

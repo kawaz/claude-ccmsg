@@ -56,14 +56,14 @@ The p2p approach in `cmux-msg` worked for 1:1 messaging but exposed five structu
 4. **Mail-bloat** — `msg/send/reply` framing pushes models toward formal long messages.
 5. **User-mixing overhead** — the human user can only target one peer at a time, while AIs gossip about what the user said.
 
-Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses its cause because history is shared, though residual AI chatter is an operational concern (mention semantics + short-message culture, verified by dogfooding). (4) is a hypothesis that the `post` short-message framing reduces bloat. (5) is addressed by the user posting directly — via CLI in the MVP, web UI later.
+Rooms solve (1) and (2) structurally: one post reaches every member. (3) loses its cause because history is shared, and the `to` delivery filter (DR-0011) now scopes noisy exchanges away from uninvolved peers on top of short-message culture. (4) is a hypothesis that the `post` short-message framing reduces bloat. (5) is addressed by the user posting directly — via CLI in the MVP, web UI later.
 
 ## Architecture (see [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md))
 
 - **Single host** — laptop or workstation, no federation. Mobile access via tailscale over LAN.
 - **Central daemon** (bun) — the only writer. Issues room IDs, serializes and deduplicates concurrent room creation, and assigns per-room monotonic message IDs (`mid`).
 - **Storage** — one append-only `jsonl` file per room (`member` / `leave` / `msg` / thread-links `next`/`prev` / … events) as the **only persistent state**. No server-side read cursors — BBS model: each reader tracks its own position and reconnects with a since-mid.
-- **Delivery** — full message bodies are pushed to all room members; `to` is a mention (attention) marker, not a visibility filter. No echo back of your own posts.
+- **Delivery** — `to`-less messages are pushed to all room members. A `to`-bearing message is delivered only to the listed member(s), the sender, and the admin User (`u1`, always exempt) — a delivery filter, not just an attention marker (DR-0011). Storage stays unfiltered: any member can `read` a message they weren't delivered, a skipped `mid` is a deliberate pull signal. No echo back of your own posts.
 - **Transport** — UNIX Domain Socket (`0600` + UID check) for local clients. The web UI uses WebSocket (`/ws`) speaking the same protocol: the security layer is identity pinning to the User role, gated by loopback-only binds, a source-IP allowlist (loopback, `CCMSG_HTTP_ALLOW`) and browser `Origin` validation (loopback origins by default, extras via `CCMSG_HTTP_ALLOW_ORIGIN`, e.g. for tailscale serve).
 - **Clients** — a per-session `subscribe` sidecar (feeds the Claude Code Monitor tool), a user-facing CLI (the human is reserved member `u1` of every room), and later a web UI. Every client silently health-checks and auto-starts the daemon.
 

@@ -409,6 +409,30 @@ body {
   color: var(--danger);
 }
 
+/* DR-0011 §1-4: invite-drop feedback shown under the member chips. */
+.room-invite-error,
+.room-invite-notice {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+}
+
+.room-invite-error {
+  color: var(--danger);
+}
+
+.room-invite-notice {
+  color: var(--fg-muted);
+}
+
+/* DR-0011 §1-4: highlight the message list while a Sessions-list row is
+ * dragged over it, accepting the drop as an invite. */
+.timeline-drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 0.4rem;
+}
+
 .member-chips {
   display: flex;
   flex-wrap: wrap;

@@ -3,6 +3,7 @@
 // The daemon's dispatch/delivery code (server.ts) never touches this file — it only
 // sees `Conn.write`, so UDS and HTTP/WS are interchangeable to it.
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
+import type { OriginsFile } from "./origins-file.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
 
 export interface HttpFallback {
@@ -121,6 +122,7 @@ export function startHttpListener(
   allow: Cidr[],
   extraOrigins: Set<string>,
   fallback?: HttpFallback,
+  originsFile?: OriginsFile,
 ): HttpListener {
   const { hostname, port } = parseBindSpec(bindSpec);
   const server = Bun.serve<WsData>({
@@ -138,7 +140,14 @@ export function startHttpListener(
       }
       // Origin check (see isAllowedOrigin doc comment above) — the actual trust
       // boundary for browser clients, source-IP allowlisting can't express it.
-      if (!isAllowedOrigin(req.headers.get("Origin"), srv, extraOrigins)) {
+      // The persisted origins file is consulted only on failure of every other
+      // check (env / self-origin / tailscale): the happy path stays fs-free and
+      // an `origins add` takes effect on the next request without a restart.
+      const origin = req.headers.get("Origin");
+      if (
+        !isAllowedOrigin(origin, srv, extraOrigins) &&
+        !(origin !== null && originsFile?.get().has(origin))
+      ) {
         return new Response("Forbidden", { status: 403 });
       }
       const url = new URL(req.url);

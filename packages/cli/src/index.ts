@@ -329,7 +329,7 @@ Usage:
   ccmsg <command> [args] [options]
 
 Commands:
-  post <room> <msg>            Post a message to a room (--to for mentions)
+  post <room> <msg>            Post a message to a room (--to to filter delivery)
   create-room                  Open a room with peers (--members, --msg, --title)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
   subscribe                    Stream room events as jsonl to stdout (--since)
@@ -339,12 +339,16 @@ Commands:
   peers                        List connected sessions
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   status                       Show daemon liveness / version / uptime / pid
+  origins [list]               List persisted extra allowed Origins (webui reverse proxy)
+  origins add <origin>         Allow an Origin (e.g. "https://ccmsg.example.com"), effective immediately
+  origins remove <origin>      Remove a persisted Origin
   version                      Print the ccmsg version and exit
   daemon run [--foreground]    Run the daemon in this process
   daemon stop                  Gracefully stop the running daemon
 
 Command Options:
-  --to <ids>                   post: mention member id(s), comma-separated (e.g. u1,a2)
+  --to <ids>                   post: deliver only to these member id(s) + sender + u1,
+                               comma-separated (e.g. u1,a2); others can still read it
   --members <sids>             create-room: participant sids, comma-separated
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
@@ -493,12 +497,83 @@ async function main(): Promise<void> {
       await runStatus();
       return;
     }
+    case "origins": {
+      runOrigins(args);
+      return;
+    }
     default: {
       process.stderr.write(`ccmsg: unknown command '${cmd}'\n\n`);
       printHelp();
       process.exitCode = 1;
       return;
     }
+  }
+}
+
+/** `ccmsg origins <list|add|remove> [origin]` — manage the persisted extra
+ * allowed Origins file (<dataDir>/allowed-origins.json) that the daemon's
+ * Origin check consults on misses (origins-file.ts). Pure file manipulation,
+ * no daemon round-trip: the daemon re-reads the file on its next failing
+ * Origin lookup, so an add here is live from the next request. Origins are
+ * scheme://host[:port] with no path/trailing slash (the exact string a
+ * browser sends in the Origin header). */
+function runOrigins(args: string[]): void {
+  const usage =
+    "ccmsg origins list | ccmsg origins add <origin> | ccmsg origins remove <origin>\n" +
+    '  <origin> は scheme://host[:port] 形式 (例: "https://ccmsg.example.com")';
+  const paths = resolvePaths(process.env);
+  const file = paths.allowedOrigins;
+  const load = (): string[] => {
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  const save = (origins: string[]): void => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(origins, null, 2)}\n`);
+  };
+  const sub = args[0];
+  switch (sub) {
+    case "list":
+    case undefined: {
+      process.stdout.write(`${JSON.stringify({ ok: true, file, origins: load() })}\n`);
+      return;
+    }
+    case "add": {
+      const origin = requireArg(args[1], "origin", usage);
+      let parsed: URL;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        throw new Error(`invalid origin (not a URL): ${origin}\n${usage}`);
+      }
+      if (parsed.origin !== origin) {
+        throw new Error(
+          `invalid origin: ${origin} — use the exact origin form ${parsed.origin} (no path / trailing slash)`,
+        );
+      }
+      const origins = load();
+      const already = origins.includes(origin);
+      if (!already) {
+        origins.push(origin);
+        save(origins);
+      }
+      process.stdout.write(`${JSON.stringify({ ok: true, origin, already, origins })}\n`);
+      return;
+    }
+    case "remove": {
+      const origin = requireArg(args[1], "origin", usage);
+      const origins = load();
+      const removed = origins.includes(origin);
+      if (removed) save(origins.filter((o) => o !== origin));
+      process.stdout.write(`${JSON.stringify({ ok: true, origin, removed, origins: load() })}\n`);
+      return;
+    }
+    default:
+      throw new Error(`unknown origins subcommand '${sub}'\n${usage}`);
   }
 }
 

@@ -64,6 +64,28 @@ export function memberIdBySid(room: Room): Map<string, string> {
   return m;
 }
 
+/**
+ * Next free agent-namespace member id for `invite` (DR-0011 §1-4). Scans every
+ * `member` event ever appended to the room (not just present members) so a
+ * leave doesn't free up an id for reuse — the id already appears in earlier
+ * `msg`/`member` lines in the log and reassigning it would make those lines
+ * ambiguous about who they referred to. Invite targets are always connected
+ * sessions (agents), never the `u`-namespace (guest) that next_room's
+ * relabeling preserves, so this only ever mints `a<n>`.
+ */
+export function nextAgentMemberId(room: Room): string {
+  let maxA = 0;
+  for (const ev of room.events) {
+    if (ev.type !== "member") continue;
+    const m = /^a(\d+)$/.exec(ev.id);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > maxA) maxA = n;
+    }
+  }
+  return `a${maxA + 1}`;
+}
+
 /** ts of the last event, or null for an empty room. */
 export function lastTs(room: Room): string | null {
   for (let i = room.events.length - 1; i >= 0; i--) {

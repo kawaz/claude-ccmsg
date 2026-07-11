@@ -423,6 +423,59 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect((caught as Error).message).toBe("ws not open");
   });
 
+  // DR-0011 §1-4: invite wire shape (SessionList drag -> RoomView drop).
+  test("invite sends {op:'invite', room, sid} and resolves id/already", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.invite("room-1", "sess-2");
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "invite", room: "room-1", sid: "sess-2" });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: false }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.id).toBe("m2");
+      expect(res.already).toBe(false);
+    }
+  });
+
+  test("invite resolves already:true without error when the sid is already a member", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.invite("room-1", "sess-2");
+    ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: true }));
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.already).toBe(true);
+  });
+
+  test("invite resolves the daemon's error response verbatim (e.g. unknown/disconnected sid)", async () => {
+    const handle = createWsClient(() => {});
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.invite("room-1", "sess-ghost");
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: false,
+        error: { code: "not_found", msg: "session not connected: sess-ghost" },
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("not_found");
+  });
+
   test("stale socket's delayed close does not re-trigger disconnect/reconnect for the new connection", async () => {
     const actions: Action[] = [];
     const handle = createWsClient((a) => actions.push(a));

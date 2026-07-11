@@ -19,6 +19,7 @@ import type {
   ErrorResponse,
   FsListResponse,
   FsReadResponse,
+  InviteResponse,
   PeersResponse,
   PingResponse,
   PostResponse,
@@ -69,6 +70,13 @@ export interface WsHandle {
   createRoom(memberSid: string, title?: string): Promise<CreateRoomResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
+  /** Add a connected session to an existing room (DR-0011 §1-4: SessionList's
+   * drag-a-session-row-onto-the-chat gesture, handled in RoomView's drop
+   * zone). Success reaches this room's member list via the broadcast member
+   * event on the subscribe stream (same as any other member join), not this
+   * response — the caller only needs `already` to decide whether to show a
+   * soft "already a member" notice. */
+  invite(room: string, sid: string): Promise<InviteResponse | ErrorResponse>;
   /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
   fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
@@ -281,6 +289,7 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
       send({ op: "create_room", members: [memberSid], ...(title ? { title } : {}) }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
+    invite: (room, sid) => send({ op: "invite", room, sid }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
     transcriptRead: (sid, opts) =>

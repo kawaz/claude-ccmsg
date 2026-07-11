@@ -3,6 +3,7 @@ import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { setSidDragPayload } from "../dnd.ts";
 import {
   badgeLabel,
   canExpandSiblings,
@@ -109,7 +110,21 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
       class={row.sid === currentSid ? "active session-row" : "session-row"}
       title={titleParts.join("\n")}
     >
-      <div class="session-line1">
+      <div
+        class="session-line1"
+        // DR-0011 §1-4: drag onto a room's chat area to invite this session.
+        // Only meaningful for a connected (ccmsg-started) row — invite needs
+        // the sid to be in the daemon's live connection registry, which an
+        // agents-only row (row.connected === false, "ccmsg 未起動") never is.
+        draggable={row.connected}
+        onDragStart={
+          row.connected
+            ? (e) => {
+                if (e.dataTransfer) setSidDragPayload(e.dataTransfer, row.sid);
+              }
+            : undefined
+        }
+      >
         {canExpand ? (
           <button
             type="button"

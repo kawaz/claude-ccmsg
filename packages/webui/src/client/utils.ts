@@ -46,12 +46,20 @@ export function formatClockTime(iso: string | null): string {
   return d.toTimeString().slice(0, 8);
 }
 
+/** ROOM 内メンバー表示ラベル (Sidebar Sessions リストの `sessionLabel` とは別軸:
+ * ROOM 内では repo の owner/org 部分 (`kawaz/`) を落とし `repo/ws` の短い形で示す
+ * — 同じ owner 配下のメンバーが並ぶ chip 一覧で owner の反復はノイズなので、
+ * kawaz 指示 (2026-07-11) により意図的に非対称。SESSIONS リスト側の owner 込み
+ * 表示は変更しない。`m.repo` が空 (未アナウンス) なセッションは従来通り sid 先頭
+ * 8 桁にフォールバックする。 */
 export function memberLabel(id: string, room: RoomState | undefined): string {
   if (id === ADMIN_ID) return "User";
   const m = room?.membersById.get(id);
   if (!m) return id;
   const short = m.sid ? m.sid.slice(0, 8) : id;
-  return m.repo ? `${short} (${m.repo})` : short;
+  if (!m.repo) return short;
+  const repoName = lastPathSegment(m.repo);
+  return m.ws ? `${repoName}/${m.ws}` : repoName;
 }
 
 export function activeRoomsSorted(rooms: Map<string, RoomState>): RoomState[] {

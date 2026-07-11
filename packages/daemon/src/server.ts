@@ -42,12 +42,14 @@ import {
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
+import { createOriginsFile } from "./origins-file.ts";
 import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
 import {
   appendEvent,
   closeRoom,
   lastTs,
   memberIdBySid,
+  nextAgentMemberId,
   parseMidSelector,
   presentMembers,
   readMsgs,
@@ -215,6 +217,27 @@ function subscriberSeesRoom(conn: Conn, room: Room): boolean {
   return memberIdBySid(room).has(id.sid);
 }
 
+/**
+ * DR-0011 §1: `to`-delivery filter for a single msg event, applied to both live
+ * `deliver` and since-replay/backlog. A `to`-less msg is visible to anyone who
+ * already passed `subscriberSeesRoom` (unchanged, full-room behavior). A
+ * `to`-bearing msg additionally requires the subscriber to be: the admin User
+ * (u1, exempt — the webui is an observation surface, no agent-style context
+ * cost), the msg's own sender (resolved to their member id), or a member id
+ * listed in `to`. This does NOT gate storage/`read`/`rooms` — those stay
+ * unfiltered so a skipped mid is a deliberate pull signal, not a hidden one.
+ */
+function msgVisibleTo(sub: Conn, room: Room, ev: MsgEvent): boolean {
+  if (!ev.to) return true;
+  const id = sub.identity;
+  if (!id) return false;
+  if (id.role === "user") return true; // admin exempt
+  const memberId = memberIdBySid(room).get(id.sid);
+  if (memberId === undefined) return false;
+  if (memberId === ev.from) return true; // sender always counts as a recipient of their own msg
+  return ev.to.includes(memberId);
+}
+
 function normalizeTo(to: string | string[] | undefined): string[] | undefined {
   if (to === undefined) return undefined;
   const arr = Array.isArray(to) ? to : [to];
@@ -245,12 +268,16 @@ function isAuthorSub(sub: Conn, author: Author): boolean {
 /**
  * Live-deliver a single event to all subscribers that see the room.
  * echo suppression (DR-0003 §5) applies to `msg` only: the author's own post is
- * never pushed back to them. Membership/link/title events go to everyone incl. the actor.
+ * never pushed back to them. Membership/link/title events go to everyone incl. the actor
+ * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
  */
 function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
-    if (ev.type === "msg" && isAuthorSub(sub, author)) continue;
+    if (ev.type === "msg") {
+      if (isAuthorSub(sub, author)) continue;
+      if (!msgVisibleTo(sub, room, ev)) continue;
+    }
     writeDelivered(sub, room.id, ev);
   }
 }
@@ -260,6 +287,9 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
  * - with sinceMid: positional delta — everything after the msg with that mid (BBS replay).
  * - without: present member state + title/link events + the last N=50 msgs (join snapshot).
  * suppressAuthorId drops the author's own just-posted msg from their snapshot (echo rule).
+ * Both paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
+ * offline member reconnecting via since-replay must not see a `to` msg that excluded
+ * them any more than a live subscriber would.
  */
 function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId?: string): void {
   if (sinceMid !== undefined) {
@@ -273,7 +303,9 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
       if (ev.type === "msg" && ev.mid <= sinceMid) start = i + 1;
     }
     for (let i = start; i < room.events.length; i++) {
-      writeDelivered(conn, room.id, room.events[i]!);
+      const ev = room.events[i]!;
+      if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
+      writeDelivered(conn, room.id, ev);
     }
     return;
   }
@@ -287,6 +319,7 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
     if (ev.type === "msg") {
       if (!recent.has(ev)) continue;
       if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
+      if (!msgVisibleTo(conn, room, ev)) continue;
     }
     writeDelivered(conn, room.id, ev);
   }
@@ -379,6 +412,7 @@ const IDENTITY_OPS = new Set([
   "subscribe",
   "notify",
   "leave",
+  "invite",
   "fs_list",
   "fs_read",
   "transcript_read",
@@ -484,6 +518,20 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const to = normalizeTo(req.to);
+      if (to) {
+        // `to` is a delivery filter now (DR-0011 §1): an unresolvable id silently
+        // drops the msg into a black hole (delivered to nobody but the sender/u1),
+        // with no error and no observable signal to the poster. Reject typos/stale
+        // ids up front instead — present member ids (memberIdBySid) plus the
+        // always-exempt admin (ADMIN_ID) are the only valid delivery targets.
+        const known = new Set(memberIdBySid(room).values());
+        known.add(ADMIN_ID);
+        const unknown = to.filter((t) => !known.has(t));
+        if (unknown.length > 0) {
+          sendErr(conn, ErrorCode.invalid_args, `to: unknown member id(s): ${unknown.join(", ")}`);
+          return;
+        }
+      }
       const mid = room.lastMid + 1;
       const ev: MsgEvent = {
         type: "msg",
@@ -830,6 +878,68 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "invite": {
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      // same authorization as set_title: admin User or a resolvable member session.
+      if (resolveFrom(conn, room) === null) {
+        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
+        return;
+      }
+      const targetSid = typeof req.sid === "string" ? req.sid : "";
+      if (targetSid === "") {
+        sendErr(conn, ErrorCode.invalid_args, "invite requires sid");
+        return;
+      }
+      // the invite target must be a currently connected session — same live registry
+      // create_room's `members` reads from, not an arbitrary historical sid.
+      const targetEntry = daemon.sessions.get(targetSid);
+      if (!targetEntry) {
+        sendErr(conn, ErrorCode.session_not_found, `no connected session: ${targetSid}`);
+        return;
+      }
+      const existingId = memberIdBySid(room).get(targetSid);
+      if (existingId !== undefined) {
+        send(conn, { ok: true, room: room.id, id: existingId, already: true });
+        return;
+      }
+      const id = nextAgentMemberId(room);
+      const ev: MemberEvent = {
+        type: "member",
+        id,
+        sid: targetSid,
+        repo: targetEntry.meta.repo,
+        ws: targetEntry.meta.ws,
+        cwd: targetEntry.meta.cwd,
+        joined_at: nowIso(),
+      };
+      appendEvent(room, ev);
+      // invite changes membership outside the create_room([...]) sid set that seeded
+      // room.dedupKey, so a same-sid create_room within the dedup window (DR-0003 §4)
+      // must no longer fold into this room — same treatment as next_room's `prev` link
+      // (storage.ts appendEvent), applied here since a plain "member" event can't be
+      // distinguished from an initial create_room member by type alone.
+      room.dedupEligible = false;
+      // the invited target, if already subscribed, gets a full room snapshot (title,
+      // member list, recent history) just like a brand-new create_room/next_room member
+      // (deliverNewRoom) — this is genuinely new context to them, not an incremental
+      // update. Existing members only need the single MemberEvent line.
+      const targetSub = [...daemon.subscribers].find(
+        (s) => s.identity?.role === "session" && s.identity.sid === targetSid,
+      );
+      if (targetSub) sendBacklog(targetSub, room);
+      for (const sub of daemon.subscribers) {
+        if (sub === targetSub) continue; // already covered by their snapshot above
+        if (!subscriberSeesRoom(sub, room)) continue;
+        writeDelivered(sub, room.id, ev);
+      }
+      send(conn, { ok: true, room: room.id, id, already: false });
+      return;
+    }
+
     case "shutdown": {
       send(conn, { ok: true, stopping: true });
       gracefulShutdown(daemon, req.reason);
@@ -1090,6 +1200,10 @@ export function startDaemon(opts: StartOptions = {}): void {
   );
 
   const httpAllowOrigin = resolveHttpAllowOrigin();
+  // Persisted extra origins (`ccmsg origins add`, origins-file.ts) — read
+  // lazily by the listener on Origin-check misses, so additions apply to the
+  // next request with no daemon restart and no env involved.
+  const originsFile = createOriginsFile(paths.allowedOrigins, log);
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
@@ -1099,6 +1213,7 @@ export function startDaemon(opts: StartOptions = {}): void {
         httpAllowCidrs,
         httpAllowOrigin,
         opts.fallback,
+        originsFile,
       );
       httpListeners.push(listener);
       log.info(`http listening on ${listener.address}`);
