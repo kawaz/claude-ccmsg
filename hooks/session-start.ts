@@ -98,6 +98,31 @@ export function deriveRepoWs(vcs: VcsFacts): { repo: string; ws: string } {
   return { repo, ws };
 }
 
+/**
+ * Derives `repo_root` (DR-0008 addendum): the absolute path of the container
+ * directory holding ALL of a repo's workspaces, for the daemon's fs_list/
+ * fs_read containment root to widen to (sibling workspaces become browsable)
+ * instead of staying pinned to this session's own cwd.
+ *
+ * Restricted to jj with a named workspace: kawaz's jj repos always nest a
+ * named workspace exactly one level under the repo dir (`<repo>/<ws>`), so
+ * `dirname(root)` IS that container and nothing wider — verified real-machine
+ * for this repo. git is deliberately excluded even though `worktreeName` is
+ * non-empty for linked worktrees: a git linked worktree's `root` is the
+ * worktree dir itself, sitting as a sibling of *every other repo* under the
+ * owner directory (verified: `github.com/kawaz/mermaid-aa-pr1` sits directly
+ * among dozens of unrelated repos, not nested under a `mermaid-aa` container)
+ * — `dirname(root)` there would widen fs_list/fs_read to "all of the owner's
+ * repos", not "this repo's worktrees". Determining the true git worktree
+ * container needs corroboration from `git worktree list` (which repo a
+ * worktree belongs to), not deducible from `root` alone — deferred as a known
+ * limitation until that lookup is added; for now git always reports "".
+ */
+export function deriveRepoRoot(vcs: VcsFacts): string {
+  if (vcs.root === "" || vcs.backend !== "jj" || vcs.worktreeName === "") return "";
+  return path.dirname(vcs.root);
+}
+
 export interface VcsRepoWsOptions {
   /** overrides the `bump-semver` binary looked up on PATH (test seam, mirrors
    *  CCMSG_TAILSCALE_BIN's precedent in packages/daemon/src/server.ts). */
@@ -143,7 +168,7 @@ async function raceExit(
 export async function getRepoWsFromVcs(
   cwd: string,
   opts: VcsRepoWsOptions = {},
-): Promise<{ repo: string; ws: string }> {
+): Promise<{ repo: string; ws: string; repoRoot: string }> {
   const bin = opts.bin ?? "bump-semver";
   const deadline = Date.now() + (opts.timeoutMs ?? 1000);
 
@@ -167,12 +192,14 @@ export async function getRepoWsFromVcs(
 
   const backend = await runGet("backend");
   const root = await runGet("root");
-  if (backend === undefined || root === undefined || root === "") return { repo: "", ws: "" };
+  if (backend === undefined || root === undefined || root === "")
+    return { repo: "", ws: "", repoRoot: "" };
   const worktreeName = (await runGet("worktree-name")) ?? "";
   // current-branch is only useful as a fallback when there's no workspace/worktree
   // name to prefer — skip the call entirely in the common (named workspace) case.
   const currentBranch = worktreeName === "" ? ((await runGet("current-branch")) ?? "") : "";
-  return deriveRepoWs({ backend, root, worktreeName, currentBranch });
+  const facts: VcsFacts = { backend, root, worktreeName, currentBranch };
+  return { ...deriveRepoWs(facts), repoRoot: deriveRepoRoot(facts) };
 }
 
 /** `CCMSG_BUMP_SEMVER_BIN` overrides the `bump-semver` binary looked up on
@@ -199,6 +226,9 @@ export interface SessionFileData {
   cwd?: string;
   repo?: string;
   ws?: string;
+  /** absolute path of the repo container holding all workspaces/worktrees
+   *  (DR-0008 addendum); see deriveRepoRoot's doc for when this is present. */
+  repo_root?: string;
   updated_at: string;
 }
 
@@ -375,14 +405,15 @@ async function main(): Promise<void> {
   // UserPromptSubmit's "only if missing" — this is the fresh, authoritative source
   // per session start, e.g. a `/cd` or `claude --resume` should refresh it).
   if (input.session_id) {
-    const { repo, ws } = input.cwd
+    const { repo, ws, repoRoot } = input.cwd
       ? await getRepoWsFromVcs(input.cwd, { bin: resolveBumpSemverBin() })
-      : { repo: "", ws: "" };
+      : { repo: "", ws: "", repoRoot: "" };
     writeSessionFile(stateDir, input.session_id, {
       ...(input.transcript_path ? { transcript_path: input.transcript_path } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(repo ? { repo } : {}),
       ...(ws ? { ws } : {}),
+      ...(repoRoot ? { repo_root: repoRoot } : {}),
       updated_at: new Date().toISOString(),
     });
   }

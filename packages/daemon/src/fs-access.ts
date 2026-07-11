@@ -7,6 +7,7 @@
 // session's sid — so a client can never browse outside sessions it can
 // already see peers for.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   ErrorCode,
@@ -20,7 +21,69 @@ import {
  *  (rather than importing `Daemon`/`SessionEntry` from server.ts) so this
  *  module has no dependency edge back to the module that imports it. */
 export interface SessionLookup {
-  get(sid: string): { meta: { cwd: string }; conns: { size: number } } | undefined;
+  get(
+    sid: string,
+  ): { meta: { cwd: string; repo_root?: string }; conns: { size: number } } | undefined;
+}
+
+/**
+ * Hello-time validation (DR-0008 addendum): a session's self-declared
+ * `repo_root` is adopted only if ALL of the following hold — any failure
+ * returns `undefined` (silent no-op, fail-open): hello still succeeds, and
+ * fs_list/fs_read simply keep using cwd as the containment root, same as a
+ * session that never announced one.
+ *
+ *  1. absolute path (same shape requirement as fs_list/fs_read's own `path`
+ *     contract — no client-facing way to name a root via a relative string).
+ *  2. `cwd` itself is present/absolute and realpath-resolvable — the "widen
+ *     the root" request is meaningless without a real anchor to widen from.
+ *  3. `repo_root` is realpath-resolvable (the container directory must
+ *     actually exist on this machine right now).
+ *  4. realpath(repo_root) is a *strict* ancestor of realpath(cwd) — not cwd
+ *     itself. This is the crux of DR-0008's containment guarantee: the
+ *     announced root may only ever *widen* browsing to siblings of the
+ *     session's own workspace, never point somewhere unrelated to where the
+ *     session actually is.
+ *  5. realpath(repo_root) is neither "/" nor `$HOME` nor any ancestor of
+ *     `$HOME` (e.g. `/Users` above `$HOME=/Users/kawaz`) — all of these are
+ *     catastrophically wide containers (the entire filesystem / the user's
+ *     whole home directory / everything alongside it), and accepting any of
+ *     them would defeat the "sibling workspaces of this repo" scoping
+ *     DR-0008 intends. `$HOME` is resolved via `os.homedir()` (not an env
+ *     var) so a spoofed `HOME` in the session's environment can't be used to
+ *     pick a different exclusion target than the daemon process's own actual
+ *     home; it's also realpath'd before comparison so a symlinked home
+ *     doesn't slip past the ancestor check.
+ */
+export function validateRepoRoot(cwd: unknown, repoRootCandidate: unknown): string | undefined {
+  if (typeof repoRootCandidate !== "string" || repoRootCandidate === "") return undefined;
+  if (!path.isAbsolute(repoRootCandidate)) return undefined;
+  if (typeof cwd !== "string" || cwd === "" || !path.isAbsolute(cwd)) return undefined;
+
+  let realRoot: string;
+  let realCwd: string;
+  try {
+    realRoot = fs.realpathSync(repoRootCandidate);
+    realCwd = fs.realpathSync(cwd);
+  } catch {
+    return undefined;
+  }
+
+  if (realRoot === "/") return undefined;
+  let home: string;
+  try {
+    home = fs.realpathSync(os.homedir());
+  } catch {
+    home = "";
+  }
+  // realRoot must not be $HOME itself, nor an ancestor of $HOME (e.g. "/Users"
+  // sitting above "/Users/kawaz") — an ancestor-or-self check, not just "===".
+  if (home !== "" && (home === realRoot || home.startsWith(realRoot + path.sep))) return undefined;
+
+  const prefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+  if (realRoot === realCwd || !realCwd.startsWith(prefix)) return undefined;
+
+  return realRoot;
 }
 
 export type FsAccessResult<T> = { ok: true; data: T } | { ok: false; code: ErrorCode; msg: string };
@@ -37,17 +100,20 @@ interface RootErr {
   msg: string;
 }
 
-/** Resolve `sid` to its containment root. Every failure mode here — unknown
- *  sid, sid with no live connection, missing/relative cwd, cwd that no
- *  longer exists on disk — collapses to `session_not_found`: from the
- *  client's point of view there is simply no browsable root for that sid. */
+/** Resolve `sid` to its containment root: the session's accepted `repo_root`
+ *  (DR-0008 addendum) when present — widening browsing to sibling
+ *  workspaces/worktrees — else its plain `cwd`, exactly as before that
+ *  addendum. Every failure mode here — unknown sid, sid with no live
+ *  connection, missing/relative base, base that no longer exists on disk —
+ *  collapses to `session_not_found`: from the client's point of view there
+ *  is simply no browsable root for that sid. */
 function resolveRoot(sessions: SessionLookup, sid: string): RootOk | RootErr {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) {
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
   }
-  const cwd = entry.meta.cwd;
-  if (!cwd || !path.isAbsolute(cwd)) {
+  const base = entry.meta.repo_root ?? entry.meta.cwd;
+  if (!base || !path.isAbsolute(base)) {
     return {
       ok: false,
       code: ErrorCode.session_not_found,
@@ -55,7 +121,7 @@ function resolveRoot(sessions: SessionLookup, sid: string): RootOk | RootErr {
     };
   }
   try {
-    return { ok: true, root: fs.realpathSync(cwd) };
+    return { ok: true, root: fs.realpathSync(base) };
   } catch {
     return {
       ok: false,

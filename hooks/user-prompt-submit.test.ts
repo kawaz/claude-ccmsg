@@ -192,9 +192,10 @@ describe("ensureSessionFile", () => {
     return scriptPath;
   }
 
-  // ファイルが存在しない場合は新規に書く。repo/ws は cwd から bump-semver 経由で
-  // 導出される (SessionStart の書き込みロジックと同じ getRepoWsFromVcs を使う)。
-  test("ファイルが無ければ transcript_path/cwd/repo/ws を書く", async () => {
+  // ファイルが存在しない場合は新規に書く。repo/ws/repo_root は cwd から
+  // bump-semver 経由で導出される (SessionStart の書き込みロジックと同じ
+  // getRepoWsFromVcs を使う)。
+  test("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root を書く", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
@@ -216,6 +217,8 @@ esac
     // ws は worktree-name の "main" (deriveRepoWs のロジックそのまま)。
     expect(written.repo).toBe("repo");
     expect(written.ws).toBe("main");
+    // repo_root は dirname(root) = `${dir}/repo` (deriveRepoRoot、worktree-name 非空)。
+    expect(written.repo_root).toBe(`${dir}/repo`);
     expect(typeof written.updated_at).toBe("string");
   });
 

@@ -10,6 +10,7 @@ import {
   buildSubscribeCommand,
   candidateBinDirs,
   declineMarkerPath,
+  deriveRepoRoot,
   deriveRepoWs,
   detectPathInstallCandidate,
   getRepoWsFromVcs,
@@ -107,6 +108,65 @@ describe("deriveRepoWs", () => {
   });
 });
 
+// deriveRepoRoot (DR-0008 addendum): repo_root = dirname(root) whenever
+// worktree-name is non-empty, backend-agnostic (both kawaz's jj workspace and
+// git bare+worktree layouts nest one level under a shared container — see the
+// function's own doc for why no backend branch is needed here, unlike repo).
+describe("deriveRepoRoot", () => {
+  // jj, worktree-name あり (このリポ自身で実測した root/worktree-name):
+  // dirname(root) が container ("claude-ccmsg") になる。
+  test("worktree-name があれば dirname(root) を返す (jj)", () => {
+    expect(
+      deriveRepoRoot({
+        backend: "jj",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
+        worktreeName: "main",
+        currentBranch: "",
+      }),
+    ).toBe("/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg");
+  });
+
+  // git は worktree-name があっても常に空文字 (既知の制約): 実測で
+  // github.com/kawaz/mermaid-aa-pr1 (linked worktree) の root は本体
+  // (mermaid-aa) の兄弟ではなく、owner ディレクトリ直下に他の無関係な
+  // 数十リポと同列に並ぶ。dirname(root) を返すと「このリポの worktree 群」
+  // ではなく「owner の全リポ」まで fs_list/fs_read の containment root が
+  // 広がってしまう。真の worktree container を得るには `git worktree list`
+  // による裏取りが必要 (bump-semver に該当 getter が無い) — 未対応の既知の
+  // 制約として、必要になったら拡張する前提で今は "" を返す。
+  test("git は worktree-name があっても常に空文字を返す (既知の制約、拡張未対応)", () => {
+    expect(
+      deriveRepoRoot({
+        backend: "git",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/mermaid-aa-pr1",
+        worktreeName: "mermaid-aa-pr1",
+        currentBranch: "",
+      }),
+    ).toBe("");
+  });
+
+  // worktree-name が空 (ws 層が無い通常 checkout): root 自体が唯一のメンバーで
+  // cwd から既に全体が見えているので、広げる先が無い = "" (フィールド省略の
+  // トリガーになる、main() / ensureSessionFile 参照)。
+  test("worktree-name が空なら空文字を返す (ws 層なしの通常 checkout)", () => {
+    expect(
+      deriveRepoRoot({
+        backend: "git",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay",
+        worktreeName: "",
+        currentBranch: "default",
+      }),
+    ).toBe("");
+  });
+
+  // root が空 (VCS facts 未取得): worktree-name の値によらず常に空文字。
+  test("root が空なら worktree-name の値によらず空文字になる", () => {
+    expect(
+      deriveRepoRoot({ backend: "git", root: "", worktreeName: "main", currentBranch: "" }),
+    ).toBe("");
+  });
+});
+
 // getRepoWsFromVcs: `bump-semver` サブプロセスの起動〜フォールバックを含む結合層。
 // 実 VCS 状態には依存させず (このリポ自身に対して実行すると環境依存になる)、
 // CCMSG_TAILSCALE_BIN と同じ流儀のテストシーム (fake bin script への差し替え)
@@ -135,19 +195,20 @@ describe("getRepoWsFromVcs", () => {
       bin: "/nonexistent/path/definitely-not-bump-semver",
       timeoutMs: 500,
     });
-    expect(got).toEqual({ repo: "", ws: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
   });
 
   // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
   test("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
-    expect(got).toEqual({ repo: "", ws: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
   });
 
   // 正常系 (jj, worktree-name あり): backend/root/worktree-name の 3 回の呼び出し
   // だけで解決し、current-branch は呼ばれない (worktree-name が非空なら不要な
-  // 呼び出しを省略する設計)。
+  // 呼び出しを省略する設計)。repoRoot も同じ facts から (追加の subprocess 無しで)
+  // 導出される: dirname(root) = ".../claude-ccmsg"。
   test("正常系 (jj, worktree-name あり) は backend/root/worktree-name から解決する", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
@@ -162,11 +223,16 @@ esac
     // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
     // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
-    expect(got).toEqual({ repo: "claude-ccmsg", ws: "main" });
+    expect(got).toEqual({
+      repo: "claude-ccmsg",
+      ws: "main",
+      repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
+    });
   });
 
   // 正常系 (git, worktree-name 空): current-branch へのフォールバック呼び出しが
-  // 実際に行われ、その値が ws に反映される。
+  // 実際に行われ、その値が ws に反映される。worktree-name が空なので repoRoot は
+  // "" (ws 層が無く、広げる先が無い)。
   test("正常系 (git, worktree-name 空) は current-branch を ws にフォールバックする", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
@@ -178,7 +244,7 @@ case "$3" in
 esac
 `);
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
-    expect(got).toEqual({ repo: "ansible-role-postfix-relay", ws: "default" });
+    expect(got).toEqual({ repo: "ansible-role-postfix-relay", ws: "default", repoRoot: "" });
   });
 
   // タイムアウト: バイナリが応答を返さず固まった場合、timeoutMs を超えたら
@@ -191,7 +257,7 @@ esac
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexec sleep 10\n`);
     const start = Date.now();
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 300 });
-    expect(got).toEqual({ repo: "", ws: "" });
+    expect(got).toEqual({ repo: "", ws: "", repoRoot: "" });
     // 実際に timeoutMs (300ms) 前後で打ち切られたことを確認する (= sleep 10 の
     // 10 秒丸ごと待たされていない = AbortSignal.timeout が効いている)。
     const elapsed = Date.now() - start;
@@ -357,6 +423,26 @@ describe("writeSessionFile", () => {
       cwd: "/some/cwd",
       repo: "claude-ccmsg",
       ws: "main",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    });
+  });
+
+  // repo_root (DR-0008 addendum) も他フィールドと同じく素通しで書ける
+  // (worktree-name 非空の場合のみ main() が渡す値、フィールド自体は optional)。
+  test("repo_root が渡されれば書き込まれる", () => {
+    writeSessionFile(dir, "sess-1", {
+      cwd: "/repo/main",
+      repo: "repo",
+      ws: "main",
+      repo_root: "/repo",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    });
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written).toEqual({
+      cwd: "/repo/main",
+      repo: "repo",
+      ws: "main",
+      repo_root: "/repo",
       updated_at: "2026-07-11T00:00:00.000Z",
     });
   });

@@ -2,11 +2,12 @@
 // Each test spawns a real daemon over UDS and a separate real filesystem
 // fixture directory (distinct from the daemon's own state dir) that plays
 // the role of a connected session's project root.
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
+import { validateRepoRoot } from "../src/fs-access.ts";
 import {
   connect,
   startTestDaemon,
@@ -21,6 +22,28 @@ const T = 15000;
 async function sessionAt(ctx: DaemonCtx, sid: string, cwd: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.hello({ role: "session", sid, repo: "r", ws: "w", cwd });
+  return c;
+}
+
+/** A session connection whose hello advertises both `cwd` and `repo_root`
+ *  (DR-0008 addendum) — raw request, bypassing TestClient.hello's narrower
+ *  typed signature (same pattern as transcript.test.ts's sessionHello). */
+async function sessionAtWithRoot(
+  ctx: DaemonCtx,
+  sid: string,
+  cwd: string,
+  repoRoot: string,
+): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.request({
+    op: "hello",
+    role: "session",
+    sid,
+    repo: "r",
+    ws: "w",
+    cwd,
+    repo_root: repoRoot,
+  });
   return c;
 }
 
@@ -561,4 +584,372 @@ describe("fs_list / fs_read", () => {
     },
     T,
   );
+});
+
+// repo_root containment (DR-0008 addendum): a session's self-declared
+// repo_root, once hello-time-validated (fs-access.ts's validateRepoRoot),
+// widens fs_list/fs_read's containment root from "just this session's cwd" to
+// "the whole repo container" — sibling workspaces/worktrees become browsable.
+// An unvalidated/rejected repo_root is a silent no-op: root stays cwd exactly
+// as if repo_root had never been announced (fail-open).
+describe("repo_root containment (DR-0008 addendum)", () => {
+  test(
+    "採用時: sibling workspace のファイルが fs_list/fs_read で読める",
+    async () => {
+      const ctx = await startTestDaemon();
+      const container = mkfixture(); // plays the role of repo_root
+      const main = path.join(container, "main");
+      const feature = path.join(container, "feature");
+      fs.mkdirSync(main);
+      fs.mkdirSync(feature);
+      fs.writeFileSync(path.join(feature, "note.txt"), "hello from feature");
+      try {
+        // session's own cwd is "main"; repo_root announces the container
+        // that also holds the sibling "feature" workspace.
+        const c = await sessionAtWithRoot(ctx, "A", main, container);
+
+        // root listing now shows the *container's* children (main, feature),
+        // not main's own (empty) children — proof the root actually widened.
+        const rootList = await c.request<{
+          ok: true;
+          path: string;
+          entries: { name: string; type: string }[];
+        }>({ op: "fs_list", sid: "A" });
+        expect(rootList.path).toBe("");
+        expect(rootList.entries.map((e) => e.name).sort()).toEqual(["feature", "main"]);
+
+        // sibling workspace is listable...
+        const listed = await c.request<{ ok: true; entries: { name: string }[] }>({
+          op: "fs_list",
+          sid: "A",
+          path: "feature",
+        });
+        expect(listed.entries.map((e) => e.name)).toEqual(["note.txt"]);
+
+        // ...and its file is readable, despite living outside cwd entirely.
+        const read = await c.request<{ ok: true; content: string }>({
+          op: "fs_read",
+          sid: "A",
+          path: "feature/note.txt",
+        });
+        expect(read.content).toBe("hello from feature");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(container, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "検証輪郭: 相対パスの repo_root は不採用 (peers に現れない)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, "relative/not-allowed");
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "検証輪郭: cwd の ancestor でない (無関係な兄弟パス) repo_root は不採用",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      const unrelated = mkfixture(); // a sibling tmpdir, NOT an ancestor of cwd
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, unrelated);
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+        fs.rmSync(unrelated, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "検証輪郭: cwd 自身を repo_root に指定しても不採用 (strict ancestor 違反)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, cwd);
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    '検証輪郭: repo_root="/" は不採用 (cwd がその strict ancestor であっても)',
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture(); // any tmpdir is trivially a strict descendant of "/"
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, "/");
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "検証輪郭: repo_root=$HOME は不採用 (cwd が $HOME 配下であっても)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const home = os.homedir();
+      // cwd must genuinely be a descendant of $HOME for this to isolate the
+      // $HOME-exclusion branch (condition 5) from the ancestor check
+      // (condition 4) — a tmpdir under os.tmpdir() usually isn't under $HOME.
+      const cwd = fs.mkdtempSync(path.join(home, ".ccmsg-fsroot-home-test-"));
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, home);
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "検証輪郭: repo_root が $HOME の ancestor (例: /Users) でも不採用 (完全一致だけでなく祖先も塞ぐ)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const home = os.homedir();
+      const homeAncestor = path.dirname(home);
+      // homeAncestor が "/" になる環境 (home 自体が "/" 直下、例: CI の
+      // "/root") では realRoot==="/" の既存チェックが先に効いてしまい、
+      // 本テストが検証したい「home の ancestor-or-self」分岐を通らない
+      // ("/" チェックとの重複になるだけで、期待する不採用の結論自体は
+      // どのみち成立するため test 自体は skip せず進める)。
+      const cwd = fs.mkdtempSync(path.join(home, ".ccmsg-fsroot-homeanc-test-"));
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", cwd, homeAncestor);
+        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+          op: "peers",
+        });
+        expect(peers.peers.find((p) => p.sid === "A")!.repo_root).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "回帰確認: $HOME 配下の通常 container (= $HOME 自身でもその ancestor でもない) は採用される",
+    async () => {
+      const ctx = await startTestDaemon();
+      const home = os.homedir();
+      // $HOME 配下に container/{main,feature} を作る — 修正2 の ancestor-or-self
+      // 拒否は「home 自身 / home の祖先」だけを狙うもので、home の子孫である
+      // 通常の repo container まで巻き込んで拒否してはいけないことの確認。
+      const container = fs.mkdtempSync(path.join(home, ".ccmsg-fsroot-homeok-test-"));
+      const main = path.join(container, "main");
+      const feature = path.join(container, "feature");
+      fs.mkdirSync(main);
+      fs.mkdirSync(feature);
+      fs.writeFileSync(path.join(feature, "note.txt"), "hello from feature");
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", main, container);
+        const rootList = await c.request<{
+          ok: true;
+          path: string;
+          entries: { name: string; type: string }[];
+        }>({ op: "fs_list", sid: "A" });
+        expect(rootList.path).toBe("");
+        expect(rootList.entries.map((e) => e.name).sort()).toEqual(["feature", "main"]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(container, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "不採用時は従来どおり cwd root のままで traversal が塞がっている",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      const unrelated = mkfixture();
+      try {
+        // repo_root announced but rejected (unrelated, not an ancestor of cwd) —
+        // fs_list/fs_read must still resolve strictly against cwd, exactly as
+        // if repo_root had never been sent at all.
+        const c = await sessionAtWithRoot(ctx, "A", cwd, unrelated);
+        const res = await c.request<{ ok: false; error: { code: string } }>({
+          op: "fs_list",
+          sid: "A",
+          path: "../etc",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+        fs.rmSync(unrelated, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "採用時でも repo_root の外への traversal は塞がっている",
+    async () => {
+      const ctx = await startTestDaemon();
+      const container = mkfixture();
+      const main = path.join(container, "main");
+      fs.mkdirSync(main);
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", main, container);
+        // ".." from cwd ("main") lands exactly on the accepted root
+        // (container) itself, which is a legitimate, in-root address — but
+        // going one level further ("../..") must still escape and be
+        // forbidden, proving containment tracks the *widened* root, not "no
+        // containment at all".
+        const res = await c.request<{ ok: false; error: { code: string } }>({
+          op: "fs_list",
+          sid: "A",
+          path: "../../etc",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(container, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "採用時でも repo_root 内からの symlink 脱出は塞がっている",
+    async () => {
+      const ctx = await startTestDaemon();
+      const container = mkfixture();
+      const main = path.join(container, "main");
+      const outside = mkfixture();
+      fs.mkdirSync(main);
+      fs.writeFileSync(path.join(outside, "secret.txt"), "outside secret");
+      fs.symlinkSync(path.join(outside, "secret.txt"), path.join(main, "link_out"));
+      try {
+        const c = await sessionAtWithRoot(ctx, "A", main, container);
+        const res = await c.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read",
+          sid: "A",
+          path: "main/link_out",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(container, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+// validateRepoRoot デシジョンテーブルの欠け行 (hello 経由の統合テストでは
+// 組みにくい/冗長になるケースを純関数への直接呼び出しで埋める)。
+describe("validateRepoRoot decision table", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-validateroot-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  // (a) repo_root candidate 自体が実在しないパス: fs.realpathSync が ENOENT で
+  // 例外を投げ、catch で undefined に丸める (存在確認できない container を
+  // 「container として widen する」のは無意味なので不採用)。
+  test("repo_root candidate が実在しないパスなら不採用", () => {
+    const cwd = path.join(dir, "main");
+    fs.mkdirSync(cwd);
+    const got = validateRepoRoot(cwd, path.join(dir, "does-not-exist"));
+    expect(got).toBeUndefined();
+  });
+
+  // (b) cwd が実在しないパス: repo_root 自体は実在していても、widen 元となる
+  // cwd を realpath できなければ「そもそも widen する意味がある anchor か」を
+  // 確認できないので不採用 (fail-open: hello 自体は成功し、呼び出し元
+  // resolveRoot は cwd をそのまま使う従来経路にフォールバックする — 検証する
+  // のは validateRepoRoot 単体の戻り値であって resolveRoot の縮退動作ではない)。
+  test("cwd が実在しないパスなら不採用", () => {
+    const got = validateRepoRoot(path.join(dir, "no-such-cwd"), dir);
+    expect(got).toBeUndefined();
+  });
+
+  // cwd が空文字の場合も同様に不採用 (typeof/空文字ガードで即座に弾かれる、
+  // realpath すら呼ばれない経路)。
+  test("cwd が空文字なら不採用", () => {
+    const got = validateRepoRoot("", dir);
+    expect(got).toBeUndefined();
+  });
+
+  // (c) repo_root candidate 自体が symlink: realpath で解決された実体パスが
+  // 採用され、cwd (の実体) がその配下にあれば通る。symlink 越しに指定しても
+  // containment root は実体パスに正規化される。
+  test("repo_root candidate が symlink でも realpath 正規化されて採用される", () => {
+    const container = path.join(dir, "container");
+    const cwd = path.join(container, "main");
+    fs.mkdirSync(cwd, { recursive: true });
+    const link = path.join(dir, "container-link");
+    fs.symlinkSync(container, link);
+
+    const got = validateRepoRoot(cwd, link);
+    expect(got).toBe(fs.realpathSync(container));
+  });
+
+  // (d) cwd から見て 2 階層以上離れた深い ancestor でも、strict ancestor
+  // でありさえすれば仕様として採用される (kawaz 環境の repos ディレクトリ
+  // 構成のような、cwd の直接の親より上位の container を container として
+  // 指定するケースを想定した運用 knob。DR-0008 は「$HOME / "/" 自体を除く
+  // strict ancestor なら widen 先として許容する」設計であり、階層数そのもの
+  // には上限を設けていない — 意図的な許容であって見落としではない)。
+  test("cwd の直接の親より深い ancestor でも strict ancestor なら採用される", () => {
+    const shallow = path.join(dir, "repos"); // ~/.local/share/repos 相当
+    const cwd = path.join(shallow, "github.com", "kawaz", "claude-ccmsg", "main");
+    fs.mkdirSync(cwd, { recursive: true });
+
+    const got = validateRepoRoot(cwd, shallow);
+    expect(got).toBe(fs.realpathSync(shallow));
+  });
 });

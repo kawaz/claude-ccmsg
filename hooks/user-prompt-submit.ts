@@ -173,14 +173,15 @@ export async function ensureSessionFile(
   opts: { bin?: string } = {},
 ): Promise<void> {
   if (fs.existsSync(sessionFilePath(stateDir, sid))) return;
-  const { repo, ws } = input.cwd
+  const { repo, ws, repoRoot } = input.cwd
     ? await getRepoWsFromVcs(input.cwd, { bin: opts.bin })
-    : { repo: "", ws: "" };
+    : { repo: "", ws: "", repoRoot: "" };
   writeSessionFile(stateDir, sid, {
     ...(input.transcriptPath ? { transcript_path: input.transcriptPath } : {}),
     ...(input.cwd ? { cwd: input.cwd } : {}),
     ...(repo ? { repo } : {}),
     ...(ws ? { ws } : {}),
+    ...(repoRoot ? { repo_root: repoRoot } : {}),
     updated_at: new Date().toISOString(),
   });
 }

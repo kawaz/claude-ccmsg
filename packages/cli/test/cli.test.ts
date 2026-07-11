@@ -270,6 +270,99 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
+  // session state file の repo_root (DR-0008 addendum, hooks/session-start.ts
+  // が worktree-name 非空のときだけ書く) が hello に載り、daemon の受理判定
+  // (絶対 + realpath 可 + cwd の strict ancestor + not "/"/$HOME) を通れば
+  // peers に現れる。ここでは daemon 側の受理条件を満たすよう、実在する
+  // tmpdir ツリー ("<root>/<sub>" を cwd に、"<root>" を repo_root に) を使う。
+  test("session state file の repo_root が daemon の受理判定を通れば peers に現れる", async () => {
+    const { env, cleanup } = makeEnv();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-rr-"));
+    const cwd = path.join(repoRoot, "main");
+    fs.mkdirSync(cwd);
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({ repo_root: repoRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
+    try {
+      const proc = Bun.spawn([process.execPath, CLI, "peers"], {
+        cwd,
+        env: { ...process.env, ...env, CCMSG_SID: "S1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      const peers = JSON.parse(out) as { peers: { sid: string; repo_root?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.repo_root).toBe(fs.realpathSync(repoRoot));
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // CCMSG_REPO_ROOT env が設定されていれば session state file の repo_root より
+  // 優先される (CCMSG_REPO/CCMSG_WS と同じ override パターン)。
+  test("CCMSG_REPO_ROOT env は session state file の repo_root より優先される", async () => {
+    const { env, cleanup } = makeEnv();
+    const envRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-rrenv-"));
+    const cwd = path.join(envRoot, "main");
+    fs.mkdirSync(cwd);
+    const fileRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-rrfile-"));
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({ repo_root: fileRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
+    try {
+      const proc = Bun.spawn([process.execPath, CLI, "peers"], {
+        cwd,
+        env: { ...process.env, ...env, CCMSG_SID: "S1", CCMSG_REPO_ROOT: envRoot },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await new Response(proc.stdout).text();
+      await proc.exited;
+      const peers = JSON.parse(out) as { peers: { sid: string; repo_root?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.repo_root).toBe(fs.realpathSync(envRoot));
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(envRoot, { recursive: true, force: true });
+      fs.rmSync(fileRoot, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // repo_root が daemon の受理条件 (cwd の strict ancestor) を満たさなければ
+  // (= cwd と無関係な tmpdir) 黙って不採用、peers には現れない (fail-open)。
+  test("repo_root が cwd の ancestor でなければ peers に現れない", async () => {
+    const { env, cleanup } = makeEnv();
+    const unrelated = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-rrbad-"));
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({ repo_root: unrelated, updated_at: "2026-07-11T00:00:00.000Z" }),
+    );
+    try {
+      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+        peers: { sid: string; repo_root?: string }[];
+      };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.repo_root).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(unrelated, { recursive: true, force: true });
+    }
+  }, 30000);
+
   // 壊れた JSON の session state file は黙って無視される (未申告になるだけで
   // クラッシュしない — state file は optional enrichment、必須依存ではない)。
   test("session state file が壊れた JSON でもクラッシュせず未申告になる", async () => {

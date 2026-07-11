@@ -90,6 +90,7 @@ interface StoredSessionFile {
   transcript_path?: unknown;
   repo?: unknown;
   ws?: unknown;
+  repo_root?: unknown;
 }
 
 /** Mirrors hooks/session-start.ts's sessionFilePath — same reasoning as
@@ -146,6 +147,13 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
       transcriptPathCandidate !== undefined && fs.existsSync(transcriptPathCandidate)
         ? transcriptPathCandidate
         : undefined;
+    // CCMSG_REPO_ROOT is the same override-knob pattern as CCMSG_REPO/CCMSG_WS
+    // (manual invocation, tests) — env wins over the hook-written session file.
+    // No existence/shape check here (unlike transcript_path's fs.existsSync):
+    // the daemon's hello-time validation (DR-0008 addendum) is the actual trust
+    // boundary (absolute + realpath-resolvable + strict ancestor of cwd + not
+    // "/"/$HOME), so this CLI layer only needs to not forward a blank string.
+    const repoRoot = strField(process.env.CCMSG_REPO_ROOT) ?? strField(stored?.repo_root);
     return {
       role: "session",
       sid,
@@ -153,6 +161,7 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
       ws: strField(process.env.CCMSG_WS) ?? strField(stored?.ws) ?? "",
       cwd: process.cwd(),
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+      ...(repoRoot ? { repo_root: repoRoot } : {}),
     };
   }
   return { role: "user" };
@@ -354,6 +363,11 @@ Environment Variables:
   CCMSG_TRANSCRIPT_PATH        This session's Claude Code transcript jsonl path,
                                sent in hello (set by the SessionStart hook,
                                DR-0009); adopted only if the daemon accepts it
+  CCMSG_REPO_ROOT              Absolute path of this repo's workspace/worktree
+                               container, sent in hello (set by the SessionStart
+                               hook, DR-0008 addendum); adopted only if the
+                               daemon accepts it (widens fs_list/fs_read to
+                               sibling workspaces instead of just cwd)
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,

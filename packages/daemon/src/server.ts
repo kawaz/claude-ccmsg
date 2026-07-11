@@ -21,7 +21,7 @@ import {
   type TitleEvent,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
-import { fsList, fsRead } from "./fs-access.ts";
+import { fsList, fsRead, validateRepoRoot } from "./fs-access.ts";
 import { transcriptRead, validateTranscriptPath } from "./transcript.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
@@ -58,6 +58,8 @@ interface SessionEntry {
     cwd: string;
     /** present iff hello announced a transcript_path that validated (DR-0009). */
     transcript_path?: string;
+    /** present iff hello announced a repo_root that validated (DR-0008 addendum). */
+    repo_root?: string;
   };
   conns: Set<Conn>;
 }
@@ -118,6 +120,18 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
   // instead of clearing it — otherwise every such re-subscribe would silently
   // kill the webui's Timeline view for a session that never stopped having a
   // transcript.
+  //
+  // repo_root (DR-0008 addendum) follows the repo/ws/cwd rule instead
+  // (latest-hello-wins, no preserve-on-omit): unlike transcript_path's
+  // historical env-prefix-only sourcing, repo_root rides in the very same
+  // per-hello session-state-file payload the CLI's resolveIdentity already
+  // reads fresh for repo/ws on every hello (see hooks/session-start.ts's
+  // SessionFileData) — so it's just as reliably present on every re-hello.
+  // If a later hello genuinely omits/rejects it (e.g. cwd moved to a plain
+  // checkout with no workspace layer), that reflects the session's *current*
+  // state; silently keeping a stale, wider containment root across such a
+  // change would be a fs-access scoping regression, not a UX nicety worth
+  // preserving.
   const transcriptPath = id.transcript_path ?? entry?.meta.transcript_path;
   const meta = {
     sid: id.sid,
@@ -125,6 +139,7 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     ws: id.ws,
     cwd: id.cwd,
     ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+    ...(id.repo_root ? { repo_root: id.repo_root } : {}),
   };
   if (!entry) {
     entry = { meta, conns: new Set() };
@@ -366,13 +381,16 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           return;
         }
         const transcriptPath = validateTranscriptPath(req.sid, req.transcript_path);
+        const cwd = req.cwd ?? "";
+        const repoRoot = validateRepoRoot(cwd, req.repo_root);
         const id: SessionIdentity = {
           role: "session",
           sid: req.sid,
           repo: req.repo ?? "",
           ws: req.ws ?? "",
-          cwd: req.cwd ?? "",
+          cwd,
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+          ...(repoRoot ? { repo_root: repoRoot } : {}),
         };
         conn.identity = id;
         registerSession(daemon, conn, id);
