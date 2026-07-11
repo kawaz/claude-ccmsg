@@ -64,6 +64,17 @@ interface SessionEntry {
     branch?: string;
   };
   conns: Set<Conn>;
+  /** ISO time this entry was first created in this daemon process; a later
+   * hello for the same sid reuses the existing entry and never touches this
+   * (DR: webui session-list ordering wants a stable "connected since", not a
+   * value that jumps on every reconnect). Only a full sid removal (conns
+   * drops to zero, see removeConn) followed by a fresh hello resets it. */
+  connectedAt: string;
+  /** ISO time of this sid's most recent request on any of its connections;
+   * unset until the first request after hello. Updated from the single
+   * choke point in handleRequest so subscribe-stream pushes (which aren't
+   * requests) correctly leave a session looking idle. */
+  lastActivityAt?: string;
 }
 
 interface Listener {
@@ -146,7 +157,7 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     ...(id.branch ? { branch: id.branch } : {}),
   };
   if (!entry) {
-    entry = { meta, conns: new Set() };
+    entry = { meta, conns: new Set(), connectedAt: nowIso() };
     daemon.sessions.set(id.sid, entry);
   } else {
     entry.meta = meta;
@@ -371,6 +382,14 @@ export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   } catch (e) {
     daemon.log.error(`op '${req.op}' failed: ${String(e)}`);
     sendErr(conn, "internal", String(e));
+  }
+  // single choke point for "this sid did something" (checked post-dispatch so
+  // a session's very first request, hello itself, also counts — conn.identity
+  // is null until dispatch's "hello" case sets it).
+  const id = conn.identity;
+  if (id && id.role === "session") {
+    const entry = daemon.sessions.get(id.sid);
+    if (entry) entry.lastActivityAt = nowIso();
   }
 }
 
@@ -597,7 +616,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     case "peers": {
       const peers = [...daemon.sessions.values()]
         .filter((s) => s.conns.size > 0)
-        .map((s) => s.meta);
+        .map((s) => ({
+          ...s.meta,
+          connected_at: s.connectedAt,
+          ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
+        }));
       send(conn, { ok: true, peers });
       return;
     }

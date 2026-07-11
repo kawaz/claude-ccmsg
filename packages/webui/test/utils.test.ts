@@ -6,9 +6,13 @@ import { describe, expect, test } from "bun:test";
 import type { PeerInfo } from "@ccmsg/protocol";
 import {
   errorMessage,
+  formatDuration,
+  nextPeerSortKey,
   ownWorkspaceSegment,
   repoRootLabel,
   sessionLabel,
+  sortPeers,
+  type PeerSortKey,
 } from "../src/client/utils.ts";
 
 describe("errorMessage", () => {
@@ -133,5 +137,105 @@ describe("repoRootLabel", () => {
 
   test("returns null when the peer has no repo_root", () => {
     expect(repoRootLabel(peer({ repo_root: undefined }))).toBeNull();
+  });
+});
+
+describe("formatDuration", () => {
+  // seconds-only band: no unit crossed yet, so a single unit is enough
+  test("< 1 minute renders seconds only", () => {
+    expect(formatDuration(0)).toBe("0s");
+    expect(formatDuration(999)).toBe("0s"); // floors to whole seconds
+    expect(formatDuration(5_000)).toBe("5s");
+    expect(formatDuration(59_000)).toBe("59s");
+  });
+
+  // minutes band: keeps the trailing seconds so "just went idle" (1m0s) and
+  // "idle most of the next minute" (1m59s) stay distinguishable
+  test("< 1 hour renders minutes + seconds", () => {
+    expect(formatDuration(60_000)).toBe("1m0s");
+    expect(formatDuration(80_000)).toBe("1m20s");
+    expect(formatDuration(5 * 60_000 + 20_000)).toBe("5m20s");
+    expect(formatDuration(59 * 60_000 + 59_000)).toBe("59m59s");
+  });
+
+  // hours band
+  test("< 1 day renders hours + minutes", () => {
+    expect(formatDuration(60 * 60_000)).toBe("1h0m");
+    expect(formatDuration(60 * 60_000 + 10 * 60_000)).toBe("1h10m");
+    expect(formatDuration(23 * 60 * 60_000 + 59 * 60_000)).toBe("23h59m");
+  });
+
+  // days band
+  test(">= 1 day renders days + hours", () => {
+    expect(formatDuration(24 * 60 * 60_000)).toBe("1d0h");
+    expect(formatDuration(2 * 24 * 60 * 60_000 + 3 * 60 * 60_000)).toBe("2d3h");
+  });
+
+  // negative input (clock skew / stale snapshot) shouldn't render "-5s"
+  test("clamps negative input to 0s", () => {
+    expect(formatDuration(-500)).toBe("0s");
+  });
+});
+
+describe("nextPeerSortKey", () => {
+  test("cycles name -> idle -> connected -> name", () => {
+    const seq: PeerSortKey[] = [];
+    let k: PeerSortKey = "name";
+    for (let i = 0; i < 4; i++) {
+      seq.push(k);
+      k = nextPeerSortKey(k);
+    }
+    expect(seq).toEqual(["name", "idle", "connected", "name"]);
+  });
+});
+
+describe("sortPeers", () => {
+  test("name key: repo, then ws, then branch, then sid — matches sessionLabel's fields", () => {
+    const peers = [
+      peer({ sid: "z", repo: "b-repo", ws: "main", branch: "main" }),
+      peer({ sid: "y", repo: "a-repo", ws: "main", branch: "main" }),
+      peer({ sid: "x", repo: "a-repo", ws: "main", branch: "feat" }),
+    ];
+    expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["x", "y", "z"]);
+  });
+
+  test("name key: ties break on sid so ordering is deterministic", () => {
+    const peers = [
+      peer({ sid: "b", repo: "r", ws: "w", branch: "m" }),
+      peer({ sid: "a", repo: "r", ws: "w", branch: "m" }),
+    ];
+    expect(sortPeers(peers, "name").map((p) => p.sid)).toEqual(["a", "b"]);
+  });
+
+  test("idle key: most recently active (last_activity_at) first", () => {
+    const peers = [
+      peer({ sid: "old", last_activity_at: "2026-07-10T00:00:00.000Z" }),
+      peer({ sid: "new", last_activity_at: "2026-07-10T00:05:00.000Z" }),
+      peer({ sid: "mid", last_activity_at: "2026-07-10T00:02:00.000Z" }),
+    ];
+    expect(sortPeers(peers, "idle").map((p) => p.sid)).toEqual(["new", "mid", "old"]);
+  });
+
+  test("idle key: peers missing last_activity_at sort after every peer that has one", () => {
+    const peers = [
+      peer({ sid: "no-activity", last_activity_at: undefined }),
+      peer({ sid: "has-activity", last_activity_at: "2026-07-10T00:00:00.000Z" }),
+    ];
+    expect(sortPeers(peers, "idle").map((p) => p.sid)).toEqual(["has-activity", "no-activity"]);
+  });
+
+  test("connected key: most recently connected (connected_at) first", () => {
+    const peers = [
+      peer({ sid: "old", connected_at: "2026-07-10T00:00:00.000Z" }),
+      peer({ sid: "new", connected_at: "2026-07-10T00:05:00.000Z" }),
+    ];
+    expect(sortPeers(peers, "connected").map((p) => p.sid)).toEqual(["new", "old"]);
+  });
+
+  test("does not mutate the input array", () => {
+    const peers = [peer({ sid: "b", repo: "b" }), peer({ sid: "a", repo: "a" })];
+    const before = [...peers];
+    sortPeers(peers, "name");
+    expect(peers).toEqual(before);
   });
 });

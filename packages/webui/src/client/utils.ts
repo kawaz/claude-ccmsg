@@ -18,6 +18,23 @@ export function relTime(iso: string | null): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+/** Elapsed-time text for a session-list row's idle indicator, e.g. "5s" /
+ * "5m20s" / "1h10m" / "2d3h". Unlike `relTime` (single coarsest unit, used
+ * for Timeline turns where sub-unit precision doesn't matter), this keeps
+ * two units once the value crosses into minutes so "just went idle" and
+ * "idle most of an hour" are distinguishable at a glance in a list that's
+ * otherwise sorted by this exact value. */
+export function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  if (totalSec < 60) return `${totalSec}s`;
+  const totalMin = Math.floor(totalSec / 60);
+  if (totalMin < 60) return `${totalMin}m${totalSec % 60}s`;
+  const totalHour = Math.floor(totalMin / 60);
+  if (totalHour < 24) return `${totalHour}h${totalMin % 60}m`;
+  const days = Math.floor(totalHour / 24);
+  return `${days}d${totalHour % 24}h`;
+}
+
 /** HH:MM:SS in the viewer's local timezone, for a Timeline turn's timestamp
  * (DR-0009). Returns "" for a missing/unparseable timestamp (some transcript
  * line types, e.g. file-history-snapshot, carry none) rather than "Invalid
@@ -56,6 +73,83 @@ export function sessionLabel(peer: PeerInfo): string {
     (s): s is string => !!s,
   );
   return parts.length > 0 ? parts.join(" · ") : peer.sid.slice(0, 8);
+}
+
+/** Sidebar Sessions-list ordering keys, cycled by the sort-toggle button
+ * (see Sidebar.tsx): "name" is the default (lexicographic on `sessionLabel`'s
+ * fields, so it doubles as an alphabetical grouping by repo/ws/branch),
+ * "idle" surfaces the most recently active session first, "connected"
+ * surfaces the most recently (re)connected session first. */
+export type PeerSortKey = "name" | "idle" | "connected";
+
+const PEER_SORT_CYCLE: PeerSortKey[] = ["name", "idle", "connected"];
+
+/** Short label for the sort-toggle button, so its current mode is visible
+ * without hovering for the title attribute. */
+export function peerSortButtonLabel(key: PeerSortKey): string {
+  switch (key) {
+    case "idle":
+      return "idle";
+    case "connected":
+      return "new";
+    default:
+      return "abc";
+  }
+}
+
+export function nextPeerSortKey(key: PeerSortKey): PeerSortKey {
+  return PEER_SORT_CYCLE[(PEER_SORT_CYCLE.indexOf(key) + 1) % PEER_SORT_CYCLE.length];
+}
+
+/** repo → ws → branch → sid, each segment compared with localeCompare — same
+ * fields `sessionLabel` renders, so "name" order reads as alphabetical
+ * grouping by the label the user actually sees. sid is the final tiebreak so
+ * two sessions with identical repo/ws/branch (e.g. two plain checkouts of the
+ * same repo with no workspace layer) still sort deterministically instead of
+ * however they happened to arrive in `peers`. */
+function cmpByName(a: PeerInfo, b: PeerInfo): number {
+  const pa = [a.repo ?? "", a.ws ?? "", a.branch ?? "", a.sid];
+  const pb = [b.repo ?? "", b.ws ?? "", b.branch ?? "", b.sid];
+  for (let i = 0; i < pa.length; i++) {
+    const c = pa[i].localeCompare(pb[i]);
+    if (c !== 0) return c;
+  }
+  return 0;
+}
+
+/** Descending compare on an optional ISO timestamp field (newest first);
+ * a peer missing the field (older daemon, or a session that hasn't made a
+ * request yet for "idle") sorts after every peer that has one, tiebroken by
+ * `cmpByName` so the ordering within "missing" and within equal timestamps
+ * stays deterministic rather than following daemon Map insertion order. */
+function cmpByTsDesc(a: PeerInfo, b: PeerInfo, field: "last_activity_at" | "connected_at"): number {
+  const ta = a[field];
+  const tb = b[field];
+  if (ta === tb) return cmpByName(a, b);
+  if (ta === undefined) return 1;
+  if (tb === undefined) return -1;
+  const c = tb.localeCompare(ta);
+  return c !== 0 ? c : cmpByName(a, b);
+}
+
+/** Pure sort used by the Sidebar Sessions list (see Sidebar.tsx / SessionList.tsx):
+ * a stable, click-independent ordering so a peers refresh never reshuffles
+ * rows out from under a pointer mid-click (the daemon's own `peers` order is
+ * Map insertion order, which shifts on reconnect — see server.ts's
+ * `sessions` Map). Never mutates its input. */
+export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
+  const sorted = [...peers];
+  switch (key) {
+    case "idle":
+      sorted.sort((a, b) => cmpByTsDesc(a, b, "last_activity_at"));
+      break;
+    case "connected":
+      sorted.sort((a, b) => cmpByTsDesc(a, b, "connected_at"));
+      break;
+    default:
+      sorted.sort(cmpByName);
+  }
+  return sorted;
 }
 
 /** First path segment of `peer.cwd` relative to `peer.repo_root` — the

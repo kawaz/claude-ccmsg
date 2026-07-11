@@ -1,7 +1,29 @@
+import { useMemo, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { RoomList } from "./RoomList.tsx";
 import { SessionList } from "./SessionList.tsx";
+
+const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
+
+function loadSortKey(): PeerSortKey {
+  try {
+    const raw = localStorage.getItem(SORT_KEY_STORAGE);
+    if (raw === "name" || raw === "idle" || raw === "connected") return raw;
+  } catch {
+    // storage unavailable (private mode) — fall through to default
+  }
+  return "name";
+}
+
+function saveSortKey(key: PeerSortKey): void {
+  try {
+    localStorage.setItem(SORT_KEY_STORAGE, key);
+  } catch {
+    // storage unavailable — the button still works, just doesn't persist
+  }
+}
 
 function PeersRefreshButton() {
   const { store, ws } = useApp();
@@ -21,7 +43,27 @@ function PeersRefreshButton() {
   );
 }
 
+function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: () => void }) {
+  const titles: Record<PeerSortKey, string> = {
+    name: "sorted by name (repo · ws · branch) — click for idle time",
+    idle: "sorted by idle time (most recently active first) — click for connect time",
+    connected: "sorted by connect time (most recently connected first) — click for name",
+  };
+  return (
+    <button id="peers-sort" type="button" title={titles[sortKey]} onClick={onCycle}>
+      {peerSortButtonLabel(sortKey)}
+    </button>
+  );
+}
+
 export function Sidebar({ state }: { state: AppState }) {
+  const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
+  // Sorting only ever depends on the peers array reference and the chosen
+  // key — never on wall-clock time — so a session list re-render triggered
+  // purely by SessionList's idle-time tick doesn't reshuffle rows (see
+  // sortPeers's doc comment in utils.ts and SessionList.tsx's tick).
+  const sortedPeers = useMemo(() => sortPeers(state.peers, sortKey), [state.peers, sortKey]);
+
   return (
     <nav id="sidebar" class={state.sidebarOpen ? "open" : undefined}>
       <section id="rooms-panel">
@@ -30,9 +72,18 @@ export function Sidebar({ state }: { state: AppState }) {
       </section>
       <section id="sessions-panel">
         <h2>
-          Sessions <PeersRefreshButton />
+          Sessions{" "}
+          <PeersSortButton
+            sortKey={sortKey}
+            onCycle={() => {
+              const next = nextPeerSortKey(sortKey);
+              setSortKey(next);
+              saveSortKey(next);
+            }}
+          />{" "}
+          <PeersRefreshButton />
         </h2>
-        <SessionList peers={state.peers} currentSid={state.currentSid} />
+        <SessionList peers={sortedPeers} currentSid={state.currentSid} />
       </section>
     </nav>
   );

@@ -365,6 +365,11 @@ export interface PeerInfo {
   repo_root?: string;
   /** current branch / bookmark of the session's checkout, "" / absent if unknown */
   branch?: string;
+  /** ISO time this session first registered with the running daemon (stable
+   * across reconnects while the daemon lives; resets on daemon restart) */
+  connected_at?: string;
+  /** ISO time of this session's most recent request on any of its connections */
+  last_activity_at?: string;
 }
 export interface PeersResponse {
   ok: true;
