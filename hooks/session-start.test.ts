@@ -10,7 +10,12 @@ import {
   buildSubscribeCommand,
   candidateBinDirs,
   declineMarkerPath,
+  deriveRepoWs,
   detectPathInstallCandidate,
+  getRepoWsFromVcs,
+  pruneOldSessionFiles,
+  sessionFilePath,
+  writeSessionFile,
 } from "./session-start.ts";
 
 describe("candidateBinDirs", () => {
@@ -20,6 +25,178 @@ describe("candidateBinDirs", () => {
       path.join("/home/u", ".local", "bin"),
       path.join("/home/u", "bin"),
     ]);
+  });
+});
+
+// deriveRepoWs: `bump-semver vcs get` の実測結果 (root / backend / worktree-name
+// / current-branch) から repo/ws を組み立てる純関数。パス文字列の規約パースは
+// 廃止 (kawaz 裁定、2026-07-11) — 全ケース実機観測済み (このリポ = jj 標準形、
+// claude-rules-personal 親ディレクトリ = jj colocated 無ネスト、
+// ansible-role-postfix-relay = git 単一 checkout、mermaid-aa-pr1 = git linked
+// worktree)。
+describe("deriveRepoWs", () => {
+  // jj 標準形: kawaz の jj リポは常に <repo>/<ws> にネストされ (このリポ自身で
+  // 実測: root=".../claude-ccmsg/main", worktree-name="main")、root は *workspace*
+  // の root であって repo の root ではない。よって repo は dirname(root) から
+  // basename を取る必要がある (basename(root) だと ws 名 "main" を repo と
+  // 誤認する)。
+  test("jj: worktree-name があれば repo は dirname(root) から、ws は worktree-name から取る", () => {
+    expect(
+      deriveRepoWs({
+        backend: "jj",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
+        worktreeName: "main",
+        currentBranch: "",
+      }),
+    ).toEqual({ repo: "claude-ccmsg", ws: "main" });
+  });
+
+  // jj colocated かつネスト無し (claude-rules-personal の親ディレクトリで実測:
+  // .jj がリポ直下にあり、そこで実行すると worktree-name="" / current-branch は
+  // ambiguous で exit 4 = 呼び出し側で "" に丸める)。ws 層が無いので repo は
+  // basename(root) をそのまま使う (dirname を遡ると親の "kawaz" ディレクトリに
+  // なってしまうため、worktree-name が空の間は遡らない)。
+  test("jj: worktree-name が空ならネストを想定せず basename(root) を repo にする", () => {
+    expect(
+      deriveRepoWs({
+        backend: "jj",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-rules-personal",
+        worktreeName: "",
+        currentBranch: "",
+      }),
+    ).toEqual({ repo: "claude-rules-personal", ws: "" });
+  });
+
+  // git 単一 checkout (ansible-role-postfix-relay で実測: worktree-name="",
+  // current-branch="default")。root がそのまま repo dir なので basename(root)
+  // が repo。ws 層が無いので current-branch ("default") にフォールバックする
+  // (kawaz の「workspace 名があれば workspace 名、無ければ branch/bookmark 名」
+  // 優先どおり)。
+  test("git: worktree-name が空なら current-branch を ws にフォールバックする", () => {
+    expect(
+      deriveRepoWs({
+        backend: "git",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay",
+        worktreeName: "",
+        currentBranch: "default",
+      }),
+    ).toEqual({ repo: "ansible-role-postfix-relay", ws: "default" });
+  });
+
+  // git linked worktree (mermaid-aa-pr1 で実測: root=".../mermaid-aa-pr1" 自体が
+  // worktree dir で bare 本体 (mermaid-aa) の兄弟。bump-semver に本体へ遡る
+  // getter が無いため、repo は worktree 自身の名前に解決される既知の制約
+  // (= ws と同値になる)。パス文字列パースへの復帰はしない設計判断。
+  test("git: linked worktree では repo が worktree 名と同値になる (既知の制約)", () => {
+    expect(
+      deriveRepoWs({
+        backend: "git",
+        root: "/Users/kawaz/.local/share/repos/github.com/kawaz/mermaid-aa-pr1",
+        worktreeName: "mermaid-aa-pr1",
+        currentBranch: "",
+      }),
+    ).toEqual({ repo: "mermaid-aa-pr1", ws: "mermaid-aa-pr1" });
+  });
+
+  // root が空 (VCS facts が取れなかった = getRepoWsFromVcs 側で早期 bail した
+  // 場合の入力): 常に空フォールバック、他フィールドの値によらない。
+  test("root が空なら常に repo/ws とも空文字になる", () => {
+    expect(
+      deriveRepoWs({ backend: "git", root: "", worktreeName: "main", currentBranch: "main" }),
+    ).toEqual({ repo: "", ws: "" });
+  });
+});
+
+// getRepoWsFromVcs: `bump-semver` サブプロセスの起動〜フォールバックを含む結合層。
+// 実 VCS 状態には依存させず (このリポ自身に対して実行すると環境依存になる)、
+// CCMSG_TAILSCALE_BIN と同じ流儀のテストシーム (fake bin script への差し替え)
+// で検証する。
+describe("getRepoWsFromVcs", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-vcsws-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeFakeBumpSemver(script: string): string {
+    const scriptPath = path.join(dir, "fake-bump-semver");
+    fs.writeFileSync(scriptPath, script);
+    fs.chmodSync(scriptPath, 0o755);
+    return scriptPath;
+  }
+
+  // バイナリ不在 (ENOENT) は黙って空フォールバックする (= hook の起動を壊さない)。
+  test("バイナリが存在しなければ空フォールバックになる", async () => {
+    const got = await getRepoWsFromVcs(dir, {
+      bin: "/nonexistent/path/definitely-not-bump-semver",
+      timeoutMs: 500,
+    });
+    expect(got).toEqual({ repo: "", ws: "" });
+  });
+
+  // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
+  test("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    expect(got).toEqual({ repo: "", ws: "" });
+  });
+
+  // 正常系 (jj, worktree-name あり): backend/root/worktree-name の 3 回の呼び出し
+  // だけで解決し、current-branch は呼ばれない (worktree-name が非空なら不要な
+  // 呼び出しを省略する設計)。
+  test("正常系 (jj, worktree-name あり) は backend/root/worktree-name から解決する", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh
+case "$3" in
+  backend) echo jj ;;
+  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
+  worktree-name) echo main ;;
+  current-branch) echo "SHOULD_NOT_BE_CALLED"; exit 1 ;;
+  *) exit 2 ;;
+esac
+`);
+    const got = await getRepoWsFromVcs(
+      "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main",
+      { bin, timeoutMs: 500 },
+    );
+    expect(got).toEqual({ repo: "claude-ccmsg", ws: "main" });
+  });
+
+  // 正常系 (git, worktree-name 空): current-branch へのフォールバック呼び出しが
+  // 実際に行われ、その値が ws に反映される。
+  test("正常系 (git, worktree-name 空) は current-branch を ws にフォールバックする", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh
+case "$3" in
+  backend) echo git ;;
+  root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay" ;;
+  worktree-name) echo "" ;;
+  current-branch) echo default ;;
+  *) exit 2 ;;
+esac
+`);
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    expect(got).toEqual({ repo: "ansible-role-postfix-relay", ws: "default" });
+  });
+
+  // タイムアウト: バイナリが応答を返さず固まった場合、timeoutMs を超えたら
+  // 空フォールバックで打ち切る (hook の起動を体感で遅くしないための上限)。
+  // `exec sleep 10` (`sh -c 'sleep 10'` ではなく) で fake script プロセス自体を
+  // sleep に置き換える: raceExit の kill 対象は fake script の直接子である
+  // sleep そのものになるため、シェルの孫プロセスが stdout パイプを握ったまま
+  // 残る (= kill してもテストプロセス自体がハングする) 事故を避けられる。
+  test("バイナリが応答しなければ timeoutMs で打ち切り空フォールバックになる", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh\nexec sleep 10\n`);
+    const start = Date.now();
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 300 });
+    expect(got).toEqual({ repo: "", ws: "" });
+    // 実際に timeoutMs (300ms) 前後で打ち切られたことを確認する (= sleep 10 の
+    // 10 秒丸ごと待たされていない = AbortSignal.timeout が効いている)。
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(250);
+    expect(elapsed).toBeLessThan(2000);
   });
 });
 
@@ -125,48 +302,120 @@ describe("detectPathInstallCandidate", () => {
   });
 });
 
-// buildSubscribeCommand (DR-0009): the suggested `ccmsg subscribe` command line
-// gets CCMSG_SID / CCMSG_TRANSCRIPT_PATH env prefixes stitched on, each only
-// when its source value is present.
+// buildSubscribeCommand: 提示コマンドは CCMSG_SID prefix (+ launcher + subscribe)
+// のみ。transcript_path/repo/ws は (2026-07-11 kawaz 裁定で) コマンドラインへの
+// 埋め込みをやめ、session state file 経由で CLI 側が自分で読むようにした
+// (= writeSessionFile / sessionFilePath 参照)。
 describe("buildSubscribeCommand", () => {
   const bin = "/opt/ccmsg/bin/ccmsg";
 
-  // Neither session_id nor transcript_path known (degenerate hook input):
-  // no env prefix at all, just the bare launcher + subcommand.
-  test("session_id も transcript_path も無ければ prefix なし", () => {
-    expect(buildSubscribeCommand(bin, undefined, undefined)).toBe(`${bin} subscribe`);
+  // session_id 無し (degenerate hook input): prefix なし、裸コマンドのみ。
+  test("session_id が無ければ prefix なしの裸コマンドになる", () => {
+    expect(buildSubscribeCommand(bin, undefined)).toBe(`${bin} subscribe`);
   });
 
-  // session_id だけの場合は既存挙動どおり CCMSG_SID= だけが前置される
-  // (回帰防止: CCMSG_TRANSCRIPT_PATH 追加で既存の CCMSG_SID 単独ケースを壊していないか)。
-  test("session_id のみなら CCMSG_SID= だけが前置される", () => {
-    expect(buildSubscribeCommand(bin, "sess-123", undefined)).toBe(
-      `CCMSG_SID=sess-123 ${bin} subscribe`,
+  // 通常ケース: CCMSG_SID= だけが前置される。
+  test("session_id があれば CCMSG_SID= が前置される", () => {
+    expect(buildSubscribeCommand(bin, "sess-123")).toBe(`CCMSG_SID=sess-123 ${bin} subscribe`);
+  });
+});
+
+// sessionFilePath: <stateDir>/sessions/<sid>.json という固定規則。CLI 側
+// (packages/cli/src/index.ts) が独立に同じ規則で計算する対応先。
+describe("sessionFilePath", () => {
+  test("stateDir 配下の sessions/<sid>.json を返す", () => {
+    expect(sessionFilePath("/state", "sess-123")).toBe(
+      path.join("/state", "sessions", "sess-123.json"),
     );
   });
+});
 
-  // 両方揃っている本来のケース: CCMSG_SID の隣に CCMSG_TRANSCRIPT_PATH が
-  // single-quote された絶対パスとともに続く (DR-0009 の申告経路)。
-  test("session_id と transcript_path が両方あれば CCMSG_SID の隣に CCMSG_TRANSCRIPT_PATH が続く", () => {
-    expect(buildSubscribeCommand(bin, "sess-123", "/home/u/.claude/proj/sess-123.jsonl")).toBe(
-      `CCMSG_SID=sess-123 CCMSG_TRANSCRIPT_PATH='/home/u/.claude/proj/sess-123.jsonl' ${bin} subscribe`,
-    );
+// writeSessionFile: mkdir -p + JSON 書き込みの best-effort I/O。
+describe("writeSessionFile", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-sessfile-"));
   });
 
-  // transcript_path のみ (session_id が欠けているような異常な hook 入力) でも
-  // CCMSG_TRANSCRIPT_PATH 側は独立して前置される。
-  test("transcript_path のみなら CCMSG_TRANSCRIPT_PATH だけが前置される", () => {
-    expect(buildSubscribeCommand(bin, undefined, "/tmp/x.jsonl")).toBe(
-      `CCMSG_TRANSCRIPT_PATH='/tmp/x.jsonl' ${bin} subscribe`,
-    );
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  // シェル安全性: パスに単一引用符が含まれても `'\''` エスケープで壊れずに
-  // 埋め込まれる (= あり得ない想定だが、シェルコマンド生成である以上防御する)。
-  test("transcript_path にシングルクォートが含まれてもシェル安全にエスケープされる", () => {
-    const got = buildSubscribeCommand(bin, "s1", "/tmp/it's-a-path/s1.jsonl");
-    expect(got).toBe(
-      `CCMSG_SID=s1 CCMSG_TRANSCRIPT_PATH='/tmp/it'\\''s-a-path/s1.jsonl' ${bin} subscribe`,
-    );
+  // sessions/ ディレクトリが存在しなくても mkdir -p して書き込める。
+  test("sessions/ ディレクトリが無くても作成して書き込む", () => {
+    writeSessionFile(dir, "sess-1", {
+      transcript_path: "/home/u/.claude/proj/sess-1.jsonl",
+      cwd: "/some/cwd",
+      repo: "claude-ccmsg",
+      ws: "main",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    });
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written).toEqual({
+      transcript_path: "/home/u/.claude/proj/sess-1.jsonl",
+      cwd: "/some/cwd",
+      repo: "claude-ccmsg",
+      ws: "main",
+      updated_at: "2026-07-11T00:00:00.000Z",
+    });
+  });
+
+  // 既存ファイルは上書きされる (SessionStart は毎回「最新」を書く仕様)。
+  test("既存ファイルは上書きされる", () => {
+    writeSessionFile(dir, "sess-1", { updated_at: "2026-07-11T00:00:00.000Z" });
+    writeSessionFile(dir, "sess-1", { repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written).toEqual({ repo: "newrepo", updated_at: "2026-07-11T01:00:00.000Z" });
+  });
+
+  // stateDir が書き込み不可なら例外を投げず黙って何もしない (best-effort)。
+  test("書き込み不可な stateDir では例外を投げず何もしない", () => {
+    fs.chmodSync(dir, 0o500);
+    try {
+      expect(() =>
+        writeSessionFile(dir, "sess-1", { updated_at: "2026-07-11T00:00:00.000Z" }),
+      ).not.toThrow();
+      expect(fs.existsSync(sessionFilePath(dir, "sess-1"))).toBe(false);
+    } finally {
+      fs.chmodSync(dir, 0o700); // rmSync (afterEach) のため復元
+    }
+  });
+});
+
+// pruneOldSessionFiles: sessions/*.json の age-based GC (best-effort)。
+describe("pruneOldSessionFiles", () => {
+  let dir: string;
+  const NOW = Date.parse("2026-07-11T00:00:00.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-prune-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeAged(sid: string, ageMs: number): void {
+    const file = sessionFilePath(dir, sid);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{}");
+    fs.utimesSync(file, new Date(NOW - ageMs), new Date(NOW - ageMs));
+  }
+
+  // 30 日超 (mtime) のファイルは削除、30 日以内は残す。
+  test("30 日超のファイルだけ削除し、30 日以内は残す", () => {
+    writeAged("old", 31 * DAY_MS);
+    writeAged("fresh", 29 * DAY_MS);
+    pruneOldSessionFiles(dir, NOW);
+    expect(fs.existsSync(sessionFilePath(dir, "old"))).toBe(false);
+    expect(fs.existsSync(sessionFilePath(dir, "fresh"))).toBe(true);
+  });
+
+  // sessions/ ディレクトリ自体が存在しない場合も例外を投げず何もしない
+  // (SessionStart 初回起動時など)。
+  test("sessions/ ディレクトリが無くても例外を投げない", () => {
+    expect(() => pruneOldSessionFiles(dir, NOW)).not.toThrow();
   });
 });

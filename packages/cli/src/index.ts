@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // ccmsg CLI. Subcommand style, long options, no-args prints help (per kawaz CLI
 // conventions). Every command except `daemon run` goes through ensure-daemon.
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
@@ -77,6 +79,48 @@ function requireArg(v: string | undefined, name: string, usage: string): string 
 
 // --- identity --------------------------------------------------------------
 
+/** Shape the SessionStart/UserPromptSubmit hooks write to
+ *  `<stateDir>/sessions/<sid>.json` (see hooks/session-start.ts's
+ *  SessionFileData). Kept as a separate, loosely-typed mirror here rather than
+ *  importing that type: hooks/ isn't a workspace package the CLI can depend on
+ *  (only packages/* are), and this file only ever reads string fields off of
+ *  it — a shared protocol-level type was considered but deferred to keep this
+ *  change's footprint small (see the delegation report). */
+interface StoredSessionFile {
+  transcript_path?: unknown;
+  repo?: unknown;
+  ws?: unknown;
+}
+
+/** Mirrors hooks/session-start.ts's sessionFilePath — same reasoning as
+ *  StoredSessionFile above for why this isn't a shared import. */
+function sessionFilePath(stateDir: string, sid: string): string {
+  return path.join(stateDir, "sessions", `${sid}.json`);
+}
+
+/** Best-effort read of the hook-written session state file. Missing file,
+ *  unreadable, or malformed/non-object JSON all resolve to undefined — this is
+ *  an optional enrichment (repo/ws/transcript_path for a richer hello), never a
+ *  hard requirement for `hello` to succeed (mirrors the pre-existing "session
+ *  file didn't exist" degrade path this replaces). */
+function readSessionFile(stateDir: string, sid: string): StoredSessionFile | undefined {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(sessionFilePath(stateDir, sid), "utf8"));
+    if (parsed === null || typeof parsed !== "object") return undefined;
+    return parsed as StoredSessionFile;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Non-empty-string coercion: `undefined`, non-string, and `""` all collapse to
+ *  `undefined` — an env var present-but-blank (a CI/shell environment accident)
+ *  must not shadow a real value from the session file, and a session file field
+ *  of the wrong JSON type must not be trusted. */
+function strField(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
 function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): Identity {
   if (opts["as-user"] === true) return { role: "user" };
   // `notify` uses --sid for its target, so it must not double as an identity override
@@ -85,14 +129,28 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
     cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
   const sid = sidOverride ?? process.env.CCMSG_SID ?? process.env.CLAUDE_SESSION_ID;
   if (sid) {
-    // Empty string is treated the same as unset (falsy `?` guard below) — an
-    // env var present-but-blank must not turn into transcript_path: "".
-    const transcriptPath = process.env.CCMSG_TRANSCRIPT_PATH;
+    // CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS env vars are an override knob
+    // (manual invocation, tests) — when present they win over whatever the
+    // SessionStart/UserPromptSubmit hooks wrote to the session file. Absent,
+    // fall back to the file; absent there too, degrade to "" / no
+    // transcript_path exactly like a session with no hook-derived metadata at
+    // all always has.
+    const stored = readSessionFile(resolvePaths().stateDir, sid);
+    const transcriptPathCandidate =
+      strField(process.env.CCMSG_TRANSCRIPT_PATH) ?? strField(stored?.transcript_path);
+    // Only announce transcript_path if the file it names still exists — the
+    // session file is written once at hook time and read here, possibly much
+    // later; the transcript could have been rotated/removed meanwhile, and the
+    // daemon (DR-0009) only checks path *shape*, not existence.
+    const transcriptPath =
+      transcriptPathCandidate !== undefined && fs.existsSync(transcriptPathCandidate)
+        ? transcriptPathCandidate
+        : undefined;
     return {
       role: "session",
       sid,
-      repo: process.env.CCMSG_REPO ?? "",
-      ws: process.env.CCMSG_WS ?? "",
+      repo: strField(process.env.CCMSG_REPO) ?? strField(stored?.repo) ?? "",
+      ws: strField(process.env.CCMSG_WS) ?? strField(stored?.ws) ?? "",
       cwd: process.cwd(),
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
     };

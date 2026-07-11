@@ -2,7 +2,11 @@
 // the pure functions the hook builds on; the hook itself only wires stdin + ps +
 // stdout around them (verified by running it with mock stdin). Importing the hook
 // module is side-effect free because main() is guarded by `import.meta.main`.
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { sessionFilePath } from "./session-start.ts";
 import {
   parsePs,
   findClaudeAncestor,
@@ -10,6 +14,7 @@ import {
   isSubscribeCommand,
   detectSubscribeInTree,
   buildNagMessage,
+  ensureSessionFile,
 } from "./user-prompt-submit.ts";
 
 describe("parsePs", () => {
@@ -143,26 +148,14 @@ describe("detectSubscribeInTree", () => {
   });
 });
 
-// buildNagMessage (DR-0009 addendum): the re-subscribe command this hook nags
-// with must announce CCMSG_TRANSCRIPT_PATH exactly like SessionStart's does
-// (via the same buildSubscribeCommand), so a subscribe restarted from *this*
-// hook's suggestion doesn't hello without transcript_path and (pre-fix)
-// silently clear an already-adopted one.
+// buildNagMessage: 提示コマンドは CCMSG_SID prefix のみ (transcript_path/repo/ws
+// はコマンドラインへの埋め込みをやめ session state file 経由に変更、
+// 2026-07-11 kawaz 裁定。session-start.ts の buildSubscribeCommand と同じ)。
 describe("buildNagMessage", () => {
   const bin = "/opt/ccmsg/bin/ccmsg";
 
-  test("session_id と transcript_path が両方あれば nag メッセージのコマンドに両方の prefix が乗る", () => {
-    const msg = buildNagMessage(bin, "sess-123", "/home/u/.claude/proj/sess-123.jsonl");
-    expect(msg).toBe(
-      `[ccmsg] subscribe stream not detected in this session's process tree. ` +
-        `Open it with the **Monitor tool** (persistent: true), not Bash: ` +
-        `CCMSG_SID=sess-123 CCMSG_TRANSCRIPT_PATH='/home/u/.claude/proj/sess-123.jsonl' ${bin} subscribe\n`,
-    );
-  });
-
-  // 回帰防止: transcript_path 追加前の既存挙動 (CCMSG_SID のみ) を壊していないか。
-  test("transcript_path が無ければ CCMSG_SID のみが前置される", () => {
-    const msg = buildNagMessage(bin, "sess-123", undefined);
+  test("session_id があれば CCMSG_SID= prefix 付きのコマンドになる", () => {
+    const msg = buildNagMessage(bin, "sess-123");
     expect(msg).toBe(
       `[ccmsg] subscribe stream not detected in this session's process tree. ` +
         `Open it with the **Monitor tool** (persistent: true), not Bash: ` +
@@ -170,11 +163,81 @@ describe("buildNagMessage", () => {
     );
   });
 
-  test("どちらも無ければ prefix なしの裸コマンドになる", () => {
-    const msg = buildNagMessage(bin, undefined, undefined);
+  test("session_id が無ければ prefix なしの裸コマンドになる", () => {
+    const msg = buildNagMessage(bin, undefined);
     expect(msg).toBe(
       `[ccmsg] subscribe stream not detected in this session's process tree. ` +
         `Open it with the **Monitor tool** (persistent: true), not Bash: ${bin} subscribe\n`,
     );
+  });
+});
+
+// ensureSessionFile: SessionStart が書き損ねた (未起動 plugin / prune 済み等の)
+// session state file を UserPromptSubmit 側で救済する「無い時だけ書く」ロジック。
+describe("ensureSessionFile", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-ensuresf-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeFakeBumpSemver(script: string): string {
+    const scriptPath = path.join(dir, "fake-bump-semver");
+    fs.writeFileSync(scriptPath, script);
+    fs.chmodSync(scriptPath, 0o755);
+    return scriptPath;
+  }
+
+  // ファイルが存在しない場合は新規に書く。repo/ws は cwd から bump-semver 経由で
+  // 導出される (SessionStart の書き込みロジックと同じ getRepoWsFromVcs を使う)。
+  test("ファイルが無ければ transcript_path/cwd/repo/ws を書く", async () => {
+    const bin = writeFakeBumpSemver(`#!/bin/sh
+case "$3" in
+  backend) echo jj ;;
+  root) echo "${dir}/repo/main" ;;
+  worktree-name) echo main ;;
+  *) exit 2 ;;
+esac
+`);
+    await ensureSessionFile(
+      dir,
+      "sess-1",
+      { transcriptPath: "/home/u/.claude/proj/sess-1.jsonl", cwd: dir },
+      { bin },
+    );
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written.transcript_path).toBe("/home/u/.claude/proj/sess-1.jsonl");
+    expect(written.cwd).toBe(dir);
+    // jj + worktree-name あり: repo は basename(dirname(root)) = basename(`${dir}/repo`) = "repo"、
+    // ws は worktree-name の "main" (deriveRepoWs のロジックそのまま)。
+    expect(written.repo).toBe("repo");
+    expect(written.ws).toBe("main");
+    expect(typeof written.updated_at).toBe("string");
+  });
+
+  // 既にファイルが存在する場合は一切書き換えない (= SessionStart の新しい値を
+  // 上書きしない)。bump-semver も一切呼ばれない (無駄な subprocess を避ける)。
+  test("ファイルが既にあれば書き換えず、bump-semver も呼ばれない", async () => {
+    fs.mkdirSync(path.dirname(sessionFilePath(dir, "sess-1")), { recursive: true });
+    fs.writeFileSync(sessionFilePath(dir, "sess-1"), JSON.stringify({ repo: "existing" }));
+    const bin = writeFakeBumpSemver(`#!/bin/sh\necho SHOULD_NOT_BE_CALLED >&2\nexit 1\n`);
+    await ensureSessionFile(dir, "sess-1", { cwd: dir }, { bin });
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written).toEqual({ repo: "existing" });
+  });
+
+  // cwd が無ければ repo/ws 導出を試みず (bump-semver 呼び出しなし)、
+  // transcript_path だけを書く。
+  test("cwd が無ければ repo/ws は導出されない", async () => {
+    await ensureSessionFile(dir, "sess-1", { transcriptPath: "/tmp/sess-1.jsonl" });
+    const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
+    expect(written).toEqual({
+      transcript_path: "/tmp/sess-1.jsonl",
+      updated_at: written.updated_at,
+    });
   });
 });

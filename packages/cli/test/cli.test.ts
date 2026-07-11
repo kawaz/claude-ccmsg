@@ -200,6 +200,124 @@ describe("ccmsg CLI end-to-end", () => {
       cleanup();
     }
   }, 30000);
+
+  // session state file (hooks/session-start.ts が書く <stateDir>/sessions/<sid>.json)
+  // 経由の transcript_path/repo/ws が env 未設定時に peers へ反映される
+  // (2026-07-11 kawaz 裁定: env 埋め込みから state file 経由に切替)。
+  test("session state file の transcript_path/repo/ws が env 未設定なら peers に現れる", async () => {
+    const { env, cleanup } = makeEnv();
+    const transcriptFile = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-sf-")),
+      "S1.jsonl",
+    );
+    fs.writeFileSync(transcriptFile, "");
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({
+        transcript_path: transcriptFile,
+        repo: "claude-ccmsg",
+        ws: "main",
+        updated_at: "2026-07-11T00:00:00.000Z",
+      }),
+    );
+    try {
+      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+        peers: { sid: string; transcript_path?: string; repo?: string; ws?: string }[];
+      };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.transcript_path).toBe(transcriptFile);
+      expect(me.repo).toBe("claude-ccmsg");
+      expect(me.ws).toBe("main");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+      fs.rmSync(path.dirname(transcriptFile), { recursive: true, force: true });
+    }
+  }, 30000);
+
+  // env が設定されていれば state file より優先される (override 用に env を存置)。
+  test("CCMSG_REPO/CCMSG_WS env は session state file の値より優先される", async () => {
+    const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({
+        repo: "from-file",
+        ws: "from-file-ws",
+        updated_at: "2026-07-11T00:00:00.000Z",
+      }),
+    );
+    try {
+      const peers = JSON.parse(
+        (
+          await runCli(["peers"], {
+            ...env,
+            CCMSG_SID: "S1",
+            CCMSG_REPO: "from-env",
+            CCMSG_WS: "from-env-ws",
+          })
+        ).out,
+      ) as { peers: { sid: string; repo?: string; ws?: string }[] };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.repo).toBe("from-env");
+      expect(me.ws).toBe("from-env-ws");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 壊れた JSON の session state file は黙って無視される (未申告になるだけで
+  // クラッシュしない — state file は optional enrichment、必須依存ではない)。
+  test("session state file が壊れた JSON でもクラッシュせず未申告になる", async () => {
+    const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionsDir, "S1.json"), "{not valid json");
+    try {
+      const res = await runCli(["peers"], { ...env, CCMSG_SID: "S1" });
+      expect(res.code).toBe(0);
+      const peers = JSON.parse(res.out) as {
+        peers: { sid: string; repo?: string; ws?: string; transcript_path?: string }[];
+      };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.repo).toBe("");
+      expect(me.ws).toBe("");
+      expect(me.transcript_path).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // session state file が指す transcript_path のファイルが実在しなければ
+  // (rotate/削除済み等) 未申告になる — daemon 側はパス *形状* のみ検証し実在は
+  // 見ないため、実在確認は CLI 側の責務 (指示どおり)。
+  test("session state file の transcript_path が実在しなければ未申告になる", async () => {
+    const { env, cleanup } = makeEnv();
+    const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, "S1.json"),
+      JSON.stringify({
+        transcript_path: "/nonexistent/path/S1.jsonl",
+        updated_at: "2026-07-11T00:00:00.000Z",
+      }),
+    );
+    try {
+      const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
+        peers: { sid: string; transcript_path?: string }[];
+      };
+      const me = peers.peers.find((p) => p.sid === "S1")!;
+      expect(me.transcript_path).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 });
 
 describe("ccmsg CLI --version / version (DR-0007 §3)", () => {

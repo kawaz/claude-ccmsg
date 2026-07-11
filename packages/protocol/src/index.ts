@@ -136,9 +136,10 @@ export interface SessionIdentity {
   ws: string;
   cwd: string;
   /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
-   * Announced by the SessionStart hook via CCMSG_TRANSCRIPT_PATH; the daemon
-   * validates it at hello time and it is the ONLY file transcript_read serves
-   * for this sid. */
+   * Sourced by the CLI's resolveIdentity from the SessionStart/UserPromptSubmit
+   * hooks' session state file (`<stateDir>/sessions/<sid>.json`), or from
+   * CCMSG_TRANSCRIPT_PATH as an override; the daemon validates it at hello time
+   * and it is the ONLY file transcript_read serves for this sid. */
   transcript_path?: string;
 }
 export interface UserIdentity {

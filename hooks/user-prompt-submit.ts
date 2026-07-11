@@ -13,9 +13,21 @@
  * process, so we walk our own ppid chain up to claude, then look for a
  * `ccmsg subscribe` process among claude's descendants. Any failure (no ps, no
  * claude ancestor) falls to the safe side — nag — rather than staying silent.
+ *
+ * It also rescues a session whose SessionStart never wrote a state file (see
+ * ensureSessionFile below) — but only ever fills in a *missing* file, never
+ * overwrites the fresher one SessionStart already wrote.
  */
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildSubscribeCommand } from "./session-start.ts";
+import { resolvePaths } from "@ccmsg/protocol";
+import {
+  buildSubscribeCommand,
+  getRepoWsFromVcs,
+  resolveBumpSemverBin,
+  sessionFilePath,
+  writeSessionFile,
+} from "./session-start.ts";
 
 interface ProcRow {
   pid: number;
@@ -121,30 +133,56 @@ function resolveBin(): string {
 interface UserPromptSubmitInput {
   session_id?: string;
   /** absolute path of this session's Claude Code transcript jsonl, same field
-   *  SessionStart receives (DR-0009 addendum). Present so the re-subscribe
-   *  command this hook nags with also announces it — without this, a
-   *  subscribe restarted from this hook's suggestion (rather than
-   *  SessionStart's) would hello without transcript_path and, pre-DR-0009-
-   *  addendum, would have silently cleared an already-adopted one. */
+   *  SessionStart receives (DR-0009 addendum). Only used here to rescue a
+   *  missing session state file (see ensureSessionFile) — no longer embedded
+   *  in the nag's suggested command (kawaz decision 2026-07-11, see
+   *  session-start.ts's module header). */
   transcript_path?: string;
+  /** event-time cwd (hooks common-field table); fed to ensureSessionFile so a
+   *  rescued state file also gets repo/ws via getRepoWsFromVcs. */
+  cwd?: string;
 }
 
 /**
  * Builds the nag message's suggested command via the same
- * `buildSubscribeCommand` SessionStart uses (DR-0009 addendum) — so a
- * subscribe restarted from *this* hook's suggestion announces
- * CCMSG_TRANSCRIPT_PATH exactly like one restarted from SessionStart's would.
+ * `buildSubscribeCommand` SessionStart uses — just `CCMSG_SID=<sid> ccmsg
+ * subscribe`, since transcript_path/repo/ws now ride through the session
+ * state file (see session-start.ts) rather than the command line.
  */
-export function buildNagMessage(
-  bin: string,
-  sessionId: string | undefined,
-  transcriptPath: string | undefined,
-): string {
-  const cmd = buildSubscribeCommand(bin, sessionId, transcriptPath);
+export function buildNagMessage(bin: string, sessionId: string | undefined): string {
+  const cmd = buildSubscribeCommand(bin, sessionId);
   return (
     `[ccmsg] subscribe stream not detected in this session's process tree. ` +
     `Open it with the **Monitor tool** (persistent: true), not Bash: ${cmd}\n`
   );
+}
+
+/**
+ * Rescue path for a session whose SessionStart never wrote a state file (e.g.
+ * the plugin was installed/updated mid-session, or the file was pruned) — writes
+ * one iff `sessionFilePath(stateDir, sid)` doesn't already exist. Every other
+ * prompt in a session leaves SessionStart's (fresher, cwd-at-launch) write alone
+ * rather than re-deriving repo/ws via a `bump-semver` subprocess on every single
+ * turn. Best-effort: any failure (unwritable stateDir, bump-semver absent, ...)
+ * is swallowed by the caller, same as the rest of this hook.
+ */
+export async function ensureSessionFile(
+  stateDir: string,
+  sid: string,
+  input: { transcriptPath?: string; cwd?: string },
+  opts: { bin?: string } = {},
+): Promise<void> {
+  if (fs.existsSync(sessionFilePath(stateDir, sid))) return;
+  const { repo, ws } = input.cwd
+    ? await getRepoWsFromVcs(input.cwd, { bin: opts.bin })
+    : { repo: "", ws: "" };
+  writeSessionFile(stateDir, sid, {
+    ...(input.transcriptPath ? { transcript_path: input.transcriptPath } : {}),
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(repo ? { repo } : {}),
+    ...(ws ? { ws } : {}),
+    updated_at: new Date().toISOString(),
+  });
 }
 
 /** Detect a live subscribe in the current session's tree; false on any uncertainty (safe side = nag). */
@@ -171,12 +209,28 @@ function subscribeRunning(): boolean {
 async function main(): Promise<void> {
   let sessionId: string | undefined;
   let transcriptPath: string | undefined;
+  let cwd: string | undefined;
   try {
     const input = JSON.parse(await Bun.stdin.text()) as UserPromptSubmitInput;
     sessionId = input.session_id;
     transcriptPath = input.transcript_path;
+    cwd = input.cwd;
   } catch {
-    // Non-JSON stdin: still useful to nag, just without the sid/transcript prefixes.
+    // Non-JSON stdin: still useful to nag, just without the sid, and no session
+    // file rescue to attempt.
+  }
+
+  if (sessionId) {
+    try {
+      await ensureSessionFile(
+        resolvePaths().stateDir,
+        sessionId,
+        { transcriptPath, cwd },
+        { bin: resolveBumpSemverBin() },
+      );
+    } catch {
+      // best-effort
+    }
   }
 
   if (subscribeRunning()) {
@@ -184,13 +238,12 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // CCMSG_SID / CCMSG_TRANSCRIPT_PATH prefixes: CLAUDE_SESSION_ID is not
-  // exported to Monitor subprocesses, so a bare `ccmsg subscribe` would hello
-  // as the User (u1) instead of this session (no peers entry, no echo
-  // suppression, and DR-0009: no transcript_path announced either). See
+  // CCMSG_SID must be embedded: CLAUDE_SESSION_ID is not exported to Monitor
+  // subprocesses, so a bare `ccmsg subscribe` would hello as the User (u1)
+  // instead of this session (no peers entry, no echo suppression). See
   // session-start.ts / buildSubscribeCommand.
   // stdout is injected into the next turn as a <system-reminder>.
-  process.stdout.write(buildNagMessage(resolveBin(), sessionId, transcriptPath));
+  process.stdout.write(buildNagMessage(resolveBin(), sessionId));
 }
 
 if (import.meta.main) {
