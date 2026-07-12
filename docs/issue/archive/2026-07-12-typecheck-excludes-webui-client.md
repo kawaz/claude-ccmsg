@@ -1,6 +1,6 @@
 ---
 title: just typecheck が packages/webui のクライアント/テストコードを検査していない
-status: open
+status: resolved
 category: bug
 created: 2026-07-12T05:10:57+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-12T17:01:00+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:justfile typecheck recipe は既に bun x tsc --noEmit -p packages/webui を含みカバー済み (issue の前提は半分誤り)","done:package.json の typecheck script (worker検証規約で使用) を tsc --noEmit && tsc --noEmit -p packages/webui に修正・動作確認済み","done:root tsconfig の exclude は妥当な構成 (root=lib:ESNext+bun型、webui client=DOM+preact JSX) のため存置"]
 blocked_by:
 origin: 自リポ TODO
 ---
