@@ -1,0 +1,58 @@
+---
+title: bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡
+status: open
+category: bug
+created: 2026-07-12T17:40:21+09:00
+last_read:
+open_entered: 2026-07-12T17:40:21+09:00
+wip_entered:
+blocked_entered:
+pending_entered:
+discarded_entered:
+resolved_entered:
+discard_reason:
+pending_reason:
+close_reason:
+blocked_by:
+origin: 自リポ TODO
+---
+
+# bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡
+
+## 概要
+
+`bun test` をフルスイートで並列実行したとき、稀に 1 件だけ fail するケースが観測されている。
+`test-failure-no-tampering` ルールに基づき、根拠なく「flaky」ラベルで蓋をせず、
+fail するテスト名の確定と不安定さの軸の特定を進めるための追跡 issue。
+
+## 背景
+
+観測事実 (いずれも未確定 / 単発観測):
+
+- (a) 2026-07-12 Wave6 worker が `hooks/user-prompt-submit.test.ts` の fail を 1 回観測。
+  単独実行では green、フルスイート再実行でも green (再現せず)
+- (b) 同日メイン監査で 705 tests 中 1 fail を 1 回観測。直後の再実行 2 回は green。
+  fail したテスト名はログ取得前に流れてしまい未特定
+
+傾向 (推測含む、要検証):
+
+- フルスイート並列実行 (31 ファイル、daemon プロセス多数 spawn) の高負荷時のみ発生する模様
+- 再現率は体感 1/4 程度 (サンプル数不足、機械的閾値ではない)
+
+未特定事項:
+
+- fail するテスト名の確定 (b の事例は未特定のまま)
+- 不安定さの軸: プロセス数上限 / ポート競合 / tmpdir 競合 / タイマ遅延のいずれが原因か未特定
+
+## 受け入れ条件
+
+- [ ] `bun test` フルスイート実行の出力を `tee` 等でファイルに保存する監査手順を確立し、fail 時にテスト名を確実に確定できるようにする
+- [ ] 上記手順で複数回のフルスイート実行を行い、fail するテスト名を再現込みで確定する
+- [ ] 不安定さの軸 (プロセス数上限 / ポート競合 / tmpdir 競合 / タイマ遅延) を観測データで切り分ける
+- [ ] 軸が特定できたら根本対策 (fixture 分離 / タイムアウト調整 / 並列度制御等) を実施するか、対策不能なら `#[ignore]` 相当の明示 skip + 追跡理由を残す
+
+## TODO
+
+- [ ] `bun test` 実行を `tee` でログ保存するラッパー/手順を用意する
+- [ ] フルスイートを複数回 (最低 3-5 回) 実行してログを収集する
+- [ ] 収集ログから fail テスト名と発生パターンを集計する
