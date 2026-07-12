@@ -1,4 +1,4 @@
-# webui UI 改善 6 Wave (v0.18.0 → v0.23.0) + 運用トラブル 2 件
+# webui UI 改善 7 Wave (v0.18.0 → v0.24.0) + 運用トラブル 2 件
 
 kawaz の UI 改善要望リスト (2026-07-11 夜) を ultracode (Workflow 3 本、実装 12 worker +
 Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。kawaz 就寝中の自律進行。
@@ -39,6 +39,13 @@ Fable adversarial レビュー 3 本 + fix 3 本) で順次出荷した記録。
 - **v0.23.0 (Wave6)**: Files ツリー最上層の ws 層化 (dot 非表示、自 ws 先頭 + open)、
   SESSIONS の ▷ 完全撤去、スプリッタのタッチヒット拡大 (pointer:coarse 限定 —
   マウス環境で拡張するとツリーのスクロールバーを奪うことがレビューで判明)
+- **v0.24.0 (Wave7、kawaz 外出中の自律進行)**: ev:"peers" push (チップのグレー表示
+  live 化、issue close)、user role の join backlog 無制限化 (リロード後の ROOM
+  過去ログ全件表示、kawaz 指示)、**WS 送信の backpressure 修正** (v0.6.0 で UDS 側
+  だけ直していた無音欠落の WS 対称対応 — 無制限化で顕在化する前にレビューが検出)、
+  システムメッセージの rich|raw タブ、接続中メンバーチップに TL リンク、
+  package.json typecheck の webui 追加 (盲点 issue close)。フルスイート flaky
+  (1/4 で 1 fail、未特定) は追跡 issue 起票
 
 ## ハマり所 → 解決
 
