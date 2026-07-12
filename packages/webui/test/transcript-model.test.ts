@@ -14,8 +14,10 @@ import {
   groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
+  parseSystemMessageFields,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
+  stripAnsiEscapes,
   type ParsedLine,
   type Segment,
   type TimelineEntry,
@@ -1299,5 +1301,276 @@ describe("classifyBoundaryLine", () => {
 
   test("a non-boundary line (thinking-only assistant turn) -> null", () => {
     expect(classifyBoundaryLine(assistantThinking("hmm"))).toBeNull();
+  });
+});
+
+// stripAnsiEscapes (U2 rich display task): strips ANSI CSI escape sequences
+// (color codes etc.) from a `<local-command-stdout>` body before it renders
+// as plain <pre> text (kawaz spec: 「ANSI エスケープ除去」).
+describe("stripAnsiEscapes", () => {
+  test("SGR color codes are removed, plain text kept", () => {
+    // \x1b[32m = green, \x1b[0m = reset — a typical colored-stdout snippet.
+    expect(stripAnsiEscapes("\x1b[32mOK\x1b[0m done")).toBe("OK done");
+  });
+
+  test("text with no escape sequences is returned unchanged", () => {
+    expect(stripAnsiEscapes("plain text, no color")).toBe("plain text, no color");
+  });
+
+  test("multiple sequences in one string are all removed", () => {
+    expect(stripAnsiEscapes("\x1b[1m\x1b[31mBOLD RED\x1b[0m\x1b[39m")).toBe("BOLD RED");
+  });
+
+  // DEC private mode CSI (adversarial review finding, 2026-07-12): the `?` prefix
+  // byte (0x3F) is a CSI parameter byte per ECMA-48, same class as digits/`;` —
+  // spinner-style CLIs commonly emit `\x1b[?25l` / `\x1b[?25h` to hide/show the
+  // cursor around a progress animation. A regex whose parameter-byte class was
+  // narrowed to `[0-9;]` (missing `?`) would leave these in the rendered <pre>.
+  test("DEC private mode CSI (cursor hide/show) is removed", () => {
+    expect(stripAnsiEscapes("\x1b[?25lLoading...\x1b[?25hdone")).toBe("Loading...done");
+  });
+});
+
+// parseSystemMessageFields (U2 kawaz spec: システムメッセージ details 展開の
+// rich タブ). Covers each kind's representative shape, a missing-field
+// variant, and malformed input — the three axes the delegation asked for
+// ("各タイプの代表 + 壊れた入力 + フィールド欠落"). Never throws for any
+// input (module doc comment) — every test below also asserts that directly.
+//
+// Naming mismatch note (see transcript-model.ts's parseSystemMessageFields
+// doc comment): the delegation spec calls this kind "teammate-message", but
+// classifyUserMessage's actual UserMessageKind for a `<teammate-message>`-
+// wrapped body is "peer-message" — tests below use the real kind name.
+describe("parseSystemMessageFields", () => {
+  describe("task-notification", () => {
+    // Representative case: task-id/summary/event/output-file all present
+    // (output-file per the delegation spec's field list, not observed in any
+    // sampled real transcript but the generic XML-child-tag scan picks it up
+    // the same way as task-id/summary/event with no dedicated code path).
+    test("full fixture -> summary promoted to heading, remaining fields listed (excluding summary)", () => {
+      const raw =
+        "<task-notification>\n<task-id>b0f9a5r1q</task-id>\n<summary>Monitor event</summary>\n<event>[run:change] status:success</event>\n<output-file>/tmp/out.jsonl</output-file>\n</task-notification>";
+      expect(() => parseSystemMessageFields("task-notification", raw)).not.toThrow();
+      expect(parseSystemMessageFields("task-notification", raw)).toEqual({
+        display: "fields",
+        heading: "Monitor event",
+        fields: [
+          { name: "task-id", value: "b0f9a5r1q" },
+          { name: "event", value: "[run:change] status:success" },
+          { name: "output-file", value: "/tmp/out.jsonl" },
+        ],
+      });
+    });
+
+    // フィールド欠落: summary が無い -> heading は null (「見出しなし」を
+    // 明示的に表す、空文字列に丸めない)。
+    test("no <summary> tag -> heading null, other fields still listed", () => {
+      const raw = "<task-notification>\n<task-id>x</task-id>\n</task-notification>";
+      expect(parseSystemMessageFields("task-notification", raw)).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [{ name: "task-id", value: "x" }],
+      });
+    });
+
+    // フィールド欠落 (極端形): 子タグが1つも無い -> fields:[] (SystemMessageRichView
+    // が「(フィールドなし)」を出す入力)。
+    test("no child tags at all -> empty fields array, heading null", () => {
+      const raw =
+        "<task-notification>\nIf this event is something the user would act on now...\n</task-notification>";
+      expect(parseSystemMessageFields("task-notification", raw)).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [],
+      });
+    });
+
+    // 壊れた入力: 閉じタグが無い (切り詰められた transcript 行等) —
+    // unwrapOuterTag が outer wrapper を見つけられず null を返すので、
+    // rawText 全体を対象に子タグ探索する fallback に落ちる。それでも
+    // 独立して閉じている <task-id> は拾える (throw しない、部分的に有用な
+    // 結果を返す)。
+    test("missing closing </task-notification> tag -> no throw, still recovers well-formed child tags", () => {
+      const raw = "<task-notification>\n<task-id>abc</task-id>\n<summary>unterminated";
+      expect(() => parseSystemMessageFields("task-notification", raw)).not.toThrow();
+      expect(parseSystemMessageFields("task-notification", raw)).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [{ name: "task-id", value: "abc" }],
+      });
+    });
+
+    // 壊れた入力 (最悪形): タグが全く無いプレーンテキスト -> fields:[] のまま
+    // (throw しない)。
+    test("no tags at all (plain garbage text) -> empty fields, no throw", () => {
+      expect(() => parseSystemMessageFields("task-notification", "not xml at all")).not.toThrow();
+      expect(parseSystemMessageFields("task-notification", "not xml at all")).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [],
+      });
+    });
+  });
+
+  // peer-message (デリゲーション spec の "teammate-message" — 上のファイル
+  // コメント参照): <teammate-message teammate_id=... color=...> ラッパーの
+  // 属性 + ボディを整形。
+  describe("peer-message", () => {
+    test("representative fixture -> attrs + plain-text body as fields", () => {
+      const raw =
+        'Another Claude session sent a message:\n<teammate-message teammate_id="poc5" color="blue">\n本文\n</teammate-message>\n\nThis came from another Claude session...';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [
+          { name: "teammate_id", value: "poc5" },
+          { name: "color", value: "blue" },
+          { name: "body", value: "本文" },
+        ],
+      });
+    });
+
+    // ボディが JSON (例: idle_notification イベント) なら pretty-print される
+    // (kawaz spec: 「ボディが JSON なら pretty-print」)。type:"msg" イベント
+    // は classifyBoundaryLine が先に ccmsg 境界として吹き出し化するのでここ
+    // には来ない (transcript-model.ts のドキュメントコメント参照) —
+    // idle_notification のような non-msg イベントが代表例。
+    test("JSON body (e.g. idle_notification) is pretty-printed, not left as one line", () => {
+      const idleEvent = { type: "idle_notification", from: "a3", idleReason: "available" };
+      const raw = `Another Claude session sent a message:\n<teammate-message teammate_id="a3" color="blue">\n${JSON.stringify(idleEvent)}\n</teammate-message>\n\nThis came from another Claude session...`;
+      const result = parseSystemMessageFields("peer-message", raw);
+      expect(result.display).toBe("fields");
+      if (result.display !== "fields") return;
+      const bodyField = result.fields.find((f) => f.name === "body");
+      expect(bodyField?.value).toBe(JSON.stringify(idleEvent, null, 2));
+    });
+
+    // フィールド欠落: 属性なし (teammate_id/color 無し) でもボディだけの
+    // fields で描画できる。
+    test("no attributes on the opening tag -> only a body field", () => {
+      const raw = "<teammate-message>\nhi\n</teammate-message>";
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "fields",
+        heading: null,
+        fields: [{ name: "body", value: "hi" }],
+      });
+    });
+
+    // 壊れた入力: <teammate-message> タグ自体が無い (将来の別 peer-message
+    // 変種) -> text フォールバック、rawText がそのまま保持される (raw タブと
+    // 同じ内容になる = 情報を失わない)。
+    test("no <teammate-message> tag at all -> text fallback carrying the raw text unchanged", () => {
+      const raw = "Another Claude session sent a message: some future shape with no tag";
+      expect(() => parseSystemMessageFields("peer-message", raw)).not.toThrow();
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({ display: "text", text: raw });
+    });
+  });
+
+  describe("slash-command-invocation", () => {
+    // Representative case observed in classifyUserMessage's own test fixture:
+    // command-name + command-message (no command-args).
+    test("command-name + command-message -> chip label '/model', detail from command-message", () => {
+      const raw = "<command-name>/model</command-name>\n<command-message>model</command-message>";
+      expect(parseSystemMessageFields("slash-command-invocation", raw)).toEqual({
+        display: "chip",
+        label: "/model",
+        detail: "model",
+      });
+    });
+
+    // command-args がある場合は command-message より優先 (kawaz spec:
+    // 「<command-name>/<command-args> をチップ風に」— args がより「実際に
+    // 打たれた引数」に近いため message より優先表示する判断)。
+    test("command-args takes priority over command-message when both are present", () => {
+      const raw =
+        "<command-name>/deploy</command-name>\n<command-args>--env staging</command-args>\n<command-message>deploy</command-message>";
+      expect(parseSystemMessageFields("slash-command-invocation", raw)).toEqual({
+        display: "chip",
+        label: "/deploy",
+        detail: "--env staging",
+      });
+    });
+
+    // フィールド欠落: command-name だけ (引数なしのスラッシュコマンド) ->
+    // detail は null。
+    test("command-name only (no args/message) -> detail null", () => {
+      const raw = "<command-name>/clear</command-name>";
+      expect(parseSystemMessageFields("slash-command-invocation", raw)).toEqual({
+        display: "chip",
+        label: "/clear",
+        detail: null,
+      });
+    });
+
+    // 壊れた入力: command-name タグ自体が無い -> text フォールバック。
+    test("missing <command-name> tag -> text fallback, no throw", () => {
+      const raw = "<command-message>something without a name tag</command-message>";
+      expect(() => parseSystemMessageFields("slash-command-invocation", raw)).not.toThrow();
+      expect(parseSystemMessageFields("slash-command-invocation", raw)).toEqual({
+        display: "text",
+        text: raw,
+      });
+    });
+  });
+
+  describe("slash-command-stdout", () => {
+    test("wrapped stdout -> unwrapped text, ANSI stripped", () => {
+      const raw = "<local-command-stdout>Set model to \x1b[1mFable 5\x1b[0m</local-command-stdout>";
+      expect(parseSystemMessageFields("slash-command-stdout", raw)).toEqual({
+        display: "text",
+        text: "Set model to Fable 5",
+      });
+    });
+
+    // フィールド欠落/壊れた入力扱い: ラッパータグが無い (閉じタグ欠落等) ->
+    // unwrapOuterTag が null を返すので rawText 全体を text として使う
+    // (ANSI ストリップは引き続き適用、throw しない)。
+    test("missing wrapper tag -> falls back to the raw text itself, still ANSI-stripped, no throw", () => {
+      const raw = "\x1b[32mSet model to Fable 5\x1b[0m";
+      expect(() => parseSystemMessageFields("slash-command-stdout", raw)).not.toThrow();
+      expect(parseSystemMessageFields("slash-command-stdout", raw)).toEqual({
+        display: "text",
+        text: "Set model to Fable 5",
+      });
+    });
+  });
+
+  // system-caveat / その他 (kawaz spec bullet 5: 「定型文はそのまま <pre>
+  // (rich と raw が同じでもタブは出して構造統一)」) — 専用レイアウトを持たない
+  // 全 kind (system-caveat 自身に加え、tool-retry-hint / user-interrupt-marker
+  // / unknown-meta / unknown-array / skill-invocation-preamble / tool-result /
+  // kind 自体が undefined の場合) が同じ text フォールバックに落ちることを
+  // 確認する。
+  describe("fallback kinds (no dedicated layout) -> text carrying the raw text unchanged", () => {
+    const raw =
+      "<local-command-caveat>Caveat: The messages below were generated by the user while running local commands.";
+
+    test.each([
+      "system-caveat",
+      "tool-retry-hint",
+      "user-interrupt-marker",
+      "unknown-meta",
+      "unknown-array",
+      "skill-invocation-preamble",
+      "tool-result",
+    ] as const)("kind '%s' -> {display:'text', text: rawText}", (kind) => {
+      expect(() => parseSystemMessageFields(kind, raw)).not.toThrow();
+      expect(parseSystemMessageFields(kind, raw)).toEqual({ display: "text", text: raw });
+    });
+
+    // kind が undefined (parseTranscriptLine を通らない手組み ParsedLine 等)
+    // でも同じ fallback、throw しない。
+    test("kind undefined -> text fallback, no throw", () => {
+      expect(() => parseSystemMessageFields(undefined, raw)).not.toThrow();
+      expect(parseSystemMessageFields(undefined, raw)).toEqual({ display: "text", text: raw });
+    });
+
+    // 空文字列 (segments が空、または text セグメントが無い line からの
+    // 呼び出し — SystemMessageBody の rawText 計算が "" を渡すケース) も
+    // throw しない。
+    test("empty rawText -> text fallback with empty text, no throw", () => {
+      expect(() => parseSystemMessageFields("system-caveat", "")).not.toThrow();
+      expect(parseSystemMessageFields("system-caveat", "")).toEqual({ display: "text", text: "" });
+    });
   });
 });

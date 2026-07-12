@@ -18,6 +18,38 @@ export interface HttpListener {
 
 interface WsData {
   conn: Conn;
+  /** Lines `ws.send()` reported as DROPPED (status 0 — Bun/uWebSockets returns this
+   *  once bufferedAmount exceeds backpressureLimit, regardless of closeOnBackpressureLimit;
+   *  verified against packages/bun-uws/src/WebSocket.h's send()). A -1 (BACKPRESSURE)
+   *  status is NOT queued here: that message is already buffered internally by Bun and
+   *  will be sent, so re-queuing it would double-send. `flushPending` below is the
+   *  retry for actually-dropped lines, driven by both the writer and the socket's own
+   *  `drain` event — the WS-side counterpart to the UDS pending queue in server.ts
+   *  (`UdsConnState.pending` / `flushPending`), closing the gap where a large `join`
+   *  backlog (server.ts sendBacklog, now uncapped for user-role subscribers) could
+   *  silently drop lines past 16MB with no retry. */
+  pending: string[];
+}
+
+/** Drain queued lines for one WS connection, same retry-until-still-dropped shape as
+ *  the UDS side's flushPending. Stops (without emptying the queue) on the first line
+ *  that's still over backpressureLimit, so it doesn't busy-loop; the next `drain`
+ *  event resumes from there. */
+function flushWsPending(ws: { data: WsData; send(line: string): number }): void {
+  const state = ws.data;
+  while (state.pending.length > 0) {
+    const line = state.pending[0]!;
+    let status: number;
+    try {
+      status = ws.send(line);
+    } catch {
+      // ws closing mid-flush; drop the rest, delivery is best-effort
+      state.pending.length = 0;
+      return;
+    }
+    if (status === 0) return; // still dropped: wait for the next drain
+    state.pending.shift(); // -1 (already buffered by Bun) or >0 (sent): done with this line
+  }
 }
 
 function parseBindSpec(spec: string): { hostname: string; port: number } {
@@ -153,7 +185,7 @@ export function startHttpListener(
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
         const conn: Conn = { write: () => {}, identity: null, subscribed: false };
-        const upgraded = srv.upgrade(req, { data: { conn } });
+        const upgraded = srv.upgrade(req, { data: { conn, pending: [] } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade required", { status: 400 });
       }
@@ -164,11 +196,20 @@ export function startHttpListener(
       open(ws) {
         const conn = ws.data.conn;
         conn.write = (line: string) => {
+          const state = ws.data;
+          if (state.pending.length > 0) {
+            // already draining a backlog: queue behind it to keep delivery order
+            state.pending.push(line);
+            return;
+          }
+          let status: number;
           try {
-            ws.send(line);
+            status = ws.send(line);
           } catch {
             // ws may be closing; delivery is best-effort, mirrors UDS send()
+            return;
           }
+          if (status === 0) state.pending.push(line); // dropped: retry on drain
         };
         daemon.connections.add(conn);
       },
@@ -180,6 +221,9 @@ export function startHttpListener(
           if (trimmed === "") continue;
           handleRequest(daemon, conn, pinHelloToUser(trimmed));
         }
+      },
+      drain(ws) {
+        flushWsPending(ws);
       },
       close(ws) {
         removeConn(daemon, ws.data.conn);

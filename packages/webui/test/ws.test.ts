@@ -767,6 +767,47 @@ describe("createWsClient agents/ping (U1)", () => {
       },
     ]);
   });
+
+  // U1: ev:"peers" push (issue 2026-07-12-peers-live-update-protocol) —
+  // mirrors the ev:"agents" coverage above, dispatches into the same
+  // peers/loaded action the one-shot op:"peers" reply in onOpen uses.
+  test("ev:'peers' push dispatches peers/loaded (live update, no request needed)", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient((a) => actions.push(a));
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "peers",
+        peers: [
+          {
+            sid: "s2",
+            repo: "repo2",
+            ws: "main",
+            cwd: "/repo2",
+          },
+        ],
+      }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "peers/loaded",
+        peers: [
+          {
+            sid: "s2",
+            repo: "repo2",
+            ws: "main",
+            cwd: "/repo2",
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 // U2 live-tail addendum (DR-0009): ev:"transcript" pushes relayed as

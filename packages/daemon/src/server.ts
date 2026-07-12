@@ -16,6 +16,7 @@ import {
   type MsgEvent,
   type NotifyFrom,
   type Paths,
+  type PeerInfo,
   type Request,
   type SessionIdentity,
   type StorageEvent,
@@ -122,6 +123,11 @@ export interface Daemon {
   agentsPoller: AgentsPoller;
   /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
   transcriptTail: TranscriptTailStore;
+  /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
+   * peers-live-update-protocol) — lets maybeBroadcastPeers skip a push when a
+   * hello re-send (or any other registerSession/removeConn call) didn't actually
+   * change the peers list. "" before the first push. */
+  peersSnapshot: string;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -186,6 +192,34 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     entry.meta = meta;
   }
   entry.conns.add(conn);
+  // Push ev:"peers" on: new sid registration (entry was just created above) or a
+  // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
+  // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
+  // its JSON snapshot compare (issue 2026-07-12-peers-live-update-protocol) — this
+  // call site doesn't need to distinguish "new" from "updated" from "unchanged".
+  maybeBroadcastPeers(daemon);
+}
+
+/** Stop counting `conn` under `sid`'s session entry — the shared tail end of both
+ *  a full disconnect (removeConn) and a re-hello that moves this conn to a
+ *  different sid or away from session role entirely (dispatch's "hello" case).
+ *  Without this second caller, a conn that re-hellos under a new identity stayed
+ *  in its *previous* sid's `conns` Set forever (that sid's entry.conns.size never
+ *  dropped to 0 on its own), so the stale sid lingered in `peers`/ev:"peers" as a
+ *  ghost peer until the conn closed entirely — adversarial review finding,
+ *  2026-07-12, made externally visible by ev:"peers" push + the webui's live peer
+ *  list (the underlying registry gap predates that push). */
+function detachSession(daemon: Daemon, conn: Conn, sid: string): void {
+  const entry = daemon.sessions.get(sid);
+  if (!entry) return;
+  entry.conns.delete(conn);
+  if (entry.conns.size === 0) daemon.sessions.delete(sid);
+  // Deliberately does NOT call maybeBroadcastPeers itself: both callers (removeConn,
+  // dispatch's "hello" case) may follow this with a registerSession/further mutation
+  // of their own in the same turn, and pushing here too would mean two ev:"peers"
+  // frames (one showing the stale mid-transition state) for what's semantically one
+  // registry change. Each caller pushes once, after every mutation it's going to make
+  // is done.
 }
 
 export function removeConn(daemon: Daemon, conn: Conn): void {
@@ -195,11 +229,61 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   transcriptUnsubscribeAll(daemon.transcriptTail, conn);
   const id = conn.identity;
   if (id && id.role === "session") {
-    const entry = daemon.sessions.get(id.sid);
-    if (entry) {
-      entry.conns.delete(conn);
-      if (entry.conns.size === 0) daemon.sessions.delete(id.sid);
-    }
+    detachSession(daemon, conn, id.sid);
+    // full disconnect (last conn for this sid gone, not just one of several)
+    // (issue 2026-07-12-peers-live-update-protocol) — a session with another
+    // still-open conn stays in the peers list, so maybeBroadcastPeers itself
+    // no-ops via its snapshot compare when detachSession didn't actually remove
+    // the sessions entry.
+    maybeBroadcastPeers(daemon);
+  }
+}
+
+/** Compute the peers list exactly as the `peers` op returns it (only sessions
+ * with at least one live connection) — shared by that op and the ev:"peers"
+ * push below so the two never drift apart. */
+function currentPeers(daemon: Daemon): PeerInfo[] {
+  return [...daemon.sessions.values()]
+    .filter((s) => s.conns.size > 0)
+    .map((s) => ({
+      ...s.meta,
+      connected_at: s.connectedAt,
+      ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
+    }));
+}
+
+/** The subset of currentPeers() compared to decide whether anything worth a push
+ * actually changed. Deliberately excludes `last_activity_at`: that field is
+ * re-stamped on literally every request (handleRequest's post-dispatch choke
+ * point), including the very hello call that runs registerSession/removeConn's
+ * maybeBroadcastPeers itself — comparing it would make an identical hello
+ * re-send look "changed" purely from its own request landing between the two
+ * snapshots, defeating the "no push on unchanged re-hello" requirement (issue
+ * 2026-07-12-peers-live-update-protocol). `connected_at` stays in: it's stable
+ * across re-hellos for the same still-open sid (registerSession never touches
+ * it) and only differs across a genuine full-disconnect-then-rejoin. */
+function peersCompareKey(daemon: Daemon): string {
+  return JSON.stringify(
+    [...daemon.sessions.values()]
+      .filter((s) => s.conns.size > 0)
+      .map((s) => ({ ...s.meta, connected_at: s.connectedAt })),
+  );
+}
+
+/** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for
+ * webui-only push events) to every subscriber, but only when peersCompareKey
+ * actually differs from the last broadcast — a hello re-send with unchanged
+ * repo/ws/branch/transcript_path/repo_root must not spam a push (issue
+ * 2026-07-12-peers-live-update-protocol). No polling: called only from the two
+ * registry mutation points (registerSession, removeConn) that can change the
+ * result, so this stays purely event-driven, unlike the agents poller. */
+function maybeBroadcastPeers(daemon: Daemon): void {
+  const key = peersCompareKey(daemon);
+  if (key === daemon.peersSnapshot) return;
+  daemon.peersSnapshot = key;
+  const peers = currentPeers(daemon);
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
   }
 }
 
@@ -286,7 +370,10 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
 /**
  * Initial/backlog delivery of a room to one subscriber.
  * - with sinceMid: positional delta — everything after the msg with that mid (BBS replay).
- * - without: present member state + title/link events + the last N=50 msgs (join snapshot).
+ * - without: present member state + title/link events + the last N=50 msgs (join snapshot);
+ *   a user-role subscriber's conn gets every msg instead of just the last 50 (issue
+ *   2026-07-12-peers-live-update-protocol's sibling change — the cap only protects an
+ *   agent session's context budget).
  * suppressAuthorId drops the author's own just-posted msg from their snapshot (echo rule).
  * Both paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
  * offline member reconnecting via since-replay must not see a `to` msg that excluded
@@ -313,7 +400,14 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
 
   const presentIds = new Set(presentMembers(room).map((m) => m.id));
   const msgEvents = room.events.filter((e): e is MsgEvent => e.type === "msg");
-  const recent = new Set(msgEvents.slice(-DEFAULT_JOIN_BACKLOG));
+  // user role has no context budget to protect (kawaz 2026-07-12: "ユーザ向けは
+  // コンテキストとか気にする必要ないのでないなら全部流し直して") — only session
+  // (agent) subscribers keep the DEFAULT_JOIN_BACKLOG=50 cap that exists to bound
+  // an agent's context cost. subscribe requires hello (IDENTITY_OPS), so
+  // conn.identity is always set here.
+  const capped =
+    conn.identity?.role === "user" ? msgEvents : msgEvents.slice(-DEFAULT_JOIN_BACKLOG);
+  const recent = new Set(capped);
   for (const ev of room.events) {
     if (ev.type === "leave") continue;
     if (ev.type === "member" && !presentIds.has(ev.id)) continue;
@@ -483,8 +577,10 @@ export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
 function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
   switch (req.op) {
     case "hello": {
+      const prevId = conn.identity;
+      let newId: Identity;
       if (req.role === "user") {
-        conn.identity = { role: "user" };
+        newId = { role: "user" };
       } else {
         if (!req.sid) {
           sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");
@@ -493,7 +589,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         const transcriptPath = validateTranscriptPath(req.sid, req.transcript_path);
         const cwd = req.cwd ?? "";
         const repoRoot = validateRepoRoot(cwd, req.repo_root);
-        const id: SessionIdentity = {
+        newId = {
           role: "session",
           sid: req.sid,
           repo: req.repo ?? "",
@@ -503,8 +599,23 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           ...(repoRoot ? { repo_root: repoRoot } : {}),
           ...(req.branch ? { branch: req.branch } : {}),
         };
-        conn.identity = id;
-        registerSession(daemon, conn, id);
+      }
+      // A re-hello that moves this conn away from its previous sid (a different
+      // sid, or role no longer "session") must stop counting it there first, or
+      // the old sid's entry never reaches conns.size===0 on its own and lingers
+      // as a ghost peer (see detachSession's doc comment).
+      const movedAwayFromSession =
+        prevId?.role === "session" && (newId.role !== "session" || newId.sid !== prevId.sid);
+      if (movedAwayFromSession) detachSession(daemon, conn, prevId.sid);
+      conn.identity = newId;
+      if (newId.role === "session") {
+        // pushes ev:"peers" itself, covering both the detach above and this
+        // registration as one combined change (see detachSession's doc comment).
+        registerSession(daemon, conn, newId);
+      } else if (movedAwayFromSession) {
+        // detach-only change (session -> user role): still need the push detachSession
+        // deliberately didn't make.
+        maybeBroadcastPeers(daemon);
       }
       send(conn, { ok: true, version: daemon.version });
       return;
@@ -830,14 +941,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "peers": {
-      const peers = [...daemon.sessions.values()]
-        .filter((s) => s.conns.size > 0)
-        .map((s) => ({
-          ...s.meta,
-          connected_at: s.connectedAt,
-          ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
-        }));
-      send(conn, { ok: true, peers });
+      send(conn, { ok: true, peers: currentPeers(daemon) });
       return;
     }
 
@@ -1186,6 +1290,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
     transcriptTail: createTranscriptTailStore(),
+    peersSnapshot: "",
   };
 
   interface UdsConnState {

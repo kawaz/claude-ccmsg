@@ -474,6 +474,57 @@ describe("wire protocol integration", () => {
   );
 
   test(
+    // kawaz 2026-07-12: "ユーザ向けはコンテキストとか気にする必要ないのでないなら
+    // 全部流し直して" — the DEFAULT_JOIN_BACKLOG=50 cap exists to bound an agent
+    // session's context cost, so it stays for session-role joins but is lifted
+    // entirely for user-role joins (the webui). Both roles subscribe to the SAME
+    // 55-msg room here so the two outcomes are directly comparable.
+    "user role の join snapshot は 50 件 cap を受けず全 msg が届く (session role は従来通り 50 cap)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const aPost = await session(ctx, "A");
+        const created = await aPost.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        const room = created.room;
+        await session(ctx, "B"); // ensure B is a resolvable peer/member
+        for (let i = 1; i <= 55; i++) {
+          await aPost.request({ op: "post", room, msg: `m${i}` }); // mids 1..55
+        }
+
+        const bSub = await session(ctx, "B");
+        const u = await user(ctx);
+        await bSub.request({ op: "subscribe" }); // session role: capped join snapshot (mids 6..55)
+        await u.request({ op: "subscribe" }); // user role (admin): uncapped join snapshot (mids 1..55)
+
+        // post one more so both subscribers have a live terminator to read up to
+        await aPost.request({ op: "post", room, msg: "m56" }); // mid 56
+        const { seen: bSeen } = await bSub.readEventUntil(
+          (ev) => ev.type === "msg" && ev.mid === 56,
+        );
+        const { seen: uSeen } = await u.readEventUntil((ev) => ev.type === "msg" && ev.mid === 56);
+
+        const bMids = bSeen
+          .filter((e: { type: string; mid?: number }) => e.type === "msg" && e.mid! <= 55)
+          .map((e: { mid: number }) => e.mid);
+        const uMids = uSeen
+          .filter((e: { type: string; mid?: number }) => e.type === "msg" && e.mid! <= 55)
+          .map((e: { mid: number }) => e.mid);
+
+        expect(bMids.length).toBe(50); // session role: unchanged DEFAULT_JOIN_BACKLOG cap
+        expect(Math.min(...bMids)).toBe(6);
+        expect(uMids.length).toBe(55); // user role: no cap, every msg replayed
+        expect(Math.min(...uMids)).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "subscribe since replays only the positional delta; mids stay contiguous for gap detection",
     async () => {
       const ctx = await startTestDaemon();

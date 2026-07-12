@@ -614,6 +614,196 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   return results;
 }
 
+// --- rich|raw タブの rich 側パース (U2 kawaz spec: 「分類済みシステム
+// メッセージの details 展開時の本文に rich | raw のタブ切替を追加、ccmsg
+// 吹き出しの msg/raw タブと同じ UI 流儀」) ---
+//
+// 対象は Timeline.tsx の LineView が `sysKind` (= role:"user" かつ
+// userMessageKind !== "user-prompt") と判定した全 fold — task-notification /
+// peer-message / slash-command-invocation / slash-command-stdout / それ以外
+// すべて。「壊れた入力は raw fallback」(throw しない) という要件を満たすため、
+// 認識できないタグ形状は常に `{display:"text", text: rawText}` に degrade する
+// — raw タブ (LineView が今までどおり描画する segments) と同じ生テキストを
+// 保持するので、rich タブが空振りしても情報は失われない。
+
+/** One name/value pair recovered from an XML-ish `<tag>...</tag>` child (or
+ * an opening tag's attribute) inside a system-origin line's raw text. `value`
+ * is trimmed but otherwise untouched — JSON pretty-printing (peer-message's
+ * body) happens at the call site, not here, since only some fields are JSON. */
+export interface SystemMessageField {
+  name: string;
+  value: string;
+}
+
+/** Rich-display shape `parseSystemMessageFields` returns — `SystemMessageBody`
+ * (Timeline.tsx) renders one of these three layouts. `"text"` is also the
+ * universal fallback for a kind with no dedicated layout (system-caveat,
+ * tool-retry-hint, user-interrupt-marker, unknown-meta, unknown-array,
+ * skill-invocation-preamble, tool-result, and any unmatched/malformed input)
+ * — kawaz spec bullet 5: 「定型文はそのまま <pre> (rich と raw が同じでも
+ * タブは出して構造統一)」. */
+export type SystemMessageRich =
+  | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
+  | { display: "chip"; label: string; detail: string | null }
+  | { display: "text"; text: string };
+
+/** Matches a top-level (non-nested) `<tag>...</tag>` pair — the backreference
+ * `\1` ties the close tag to the same name as the open tag it matched, so
+ * this only needs one pass regardless of which tag names actually appear
+ * (task-id/summary/event/output-file/... for task-notification,
+ * command-name/command-message/command-args/... for
+ * slash-command-invocation — no whitelist, matching this module's existing
+ * "no hardcoded whitelist of known fields" design, see the module doc
+ * comment). Doesn't handle same-name tags nested inside each other (not
+ * observed in any sampled pattern), and a tag's own content containing the
+ * literal closing-tag text truncates the match early — same accepted
+ * false-negative shape as `TEAMMATE_MESSAGE_RE`/`EVENT_TAG_RE` above,
+ * degrading to a missing field rather than a throw. */
+const XML_CHILD_TAG_RE = /<([a-zA-Z][\w-]*)>([\s\S]*?)<\/\1>/g;
+
+function extractXmlFields(text: string): SystemMessageField[] {
+  const fields: SystemMessageField[] = [];
+  for (const m of text.matchAll(XML_CHILD_TAG_RE)) {
+    fields.push({ name: m[1]!, value: m[2]!.trim() });
+  }
+  return fields;
+}
+
+/** Strips one specific outer `<tagName>...</tagName>` wrapper (e.g.
+ * `<task-notification>`, whose banner-prefixed variant per
+ * `classifyUserMessage`'s doc comment still contains this tag somewhere, not
+ * necessarily at index 0 — hence a search, not an anchored match) and returns
+ * only its inner content, so a follow-up `extractXmlFields` call sees the
+ * *children* (task-id/summary/event/...) as top-level matches instead of the
+ * whole wrapper consuming itself as one match. Returns null (not `text`
+ * itself) when the wrapper isn't found, so callers can tell "unwrapped" from
+ * "wrapper missing" apart rather than silently scanning the un-unwrapped text
+ * for children that were never there. */
+function unwrapOuterTag(text: string, tagName: string): string | null {
+  const re = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`);
+  const m = text.match(re);
+  return m ? m[1]! : null;
+}
+
+/** Matches Claude Code's `<teammate-message teammate_id="..." color="...">`
+ * wrapper (see `TEAMMATE_MESSAGE_RE` above) but — unlike that regex — also
+ * captures the opening tag's attribute string (group 1) alongside the body
+ * (group 2), since the rich "peer-message" display needs both. Not `g`: only
+ * the first relay in a line is shown in rich mode (a line carrying several
+ * relays is a rare "idle twice in a row" case per `TEAMMATE_MESSAGE_RE`'s doc
+ * comment, and the raw tab still shows the full text for that case). */
+const TEAMMATE_MESSAGE_ATTRS_RE = /<teammate-message([^>]*)>([\s\S]*?)<\/teammate-message>/;
+
+const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
+
+function parseXmlAttrs(attrString: string): SystemMessageField[] {
+  const fields: SystemMessageField[] = [];
+  for (const m of attrString.matchAll(XML_ATTR_RE)) {
+    fields.push({ name: m[1]!, value: m[2]! });
+  }
+  return fields;
+}
+
+// ANSI CSI escape sequences (color codes, cursor movement, DEC private modes
+// like cursor hide/show, ...) — a `<local-command-stdout>` body can carry these
+// verbatim when the local command's own stdout was terminal-color-coded (kawaz
+// spec: 「ANSI エスケープ除去」). Matches the full ECMA-48 CSI shape: `ESC [`,
+// then parameter bytes 0x30-0x3F (digits/`;`/`?`/`<`/`=`/`>` — `?` covers the
+// DEC private mode prefix spinner-style CLIs use for `\x1b[?25l`/`\x1b[?25h`
+// cursor hide/show), then intermediate bytes 0x20-0x2F, then a final byte
+// 0x40-0x7E. Doesn't attempt to handle every ECMA-48 escape family (OSC/DCS),
+// which this harness's local commands haven't been observed to emit.
+// oxlint-disable-next-line no-control-regex -- ESC は ANSI CSI の定義そのもので意図的
+const ANSI_CSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
+/** Strips ANSI CSI escape sequences from `text` — exported since it's a
+ * generically useful primitive, not only used by `parseSystemMessageFields`. */
+export function stripAnsiEscapes(text: string): string {
+  return text.replace(ANSI_CSI_RE, "");
+}
+
+/** JSON.parse + pretty-print `text` if it parses, otherwise returns `text`
+ * unchanged (never throws) — shared by any rich-display case whose body may
+ * or may not be JSON (currently just peer-message's body, kawaz spec: 「ボディ
+ * が JSON なら pretty-print」). */
+function prettyJsonOrRaw(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Rich-display parsing for a `sysKind` fold's "rich" tab (U2 kawaz spec:
+ * task-notification / teammate-message / system-caveat / slash-command-
+ * invocation / slash-command-stdout / skill-invocation-preamble 等の details
+ * 展開時の本文に rich | raw のタブ切替、デフォルト rich). Given the line's
+ * `userMessageKind` (Timeline.tsx's `sysKind` — any classified kind other
+ * than `"user-prompt"`) and the line's raw text (joined text segments, same
+ * input `extractCcmsgMessages` reads), returns one of the three
+ * `SystemMessageRich` shapes. Never throws — any tag this doesn't recognize,
+ * or a kind with no dedicated layout, degrades to `{display:"text", text:
+ * rawText}` (see the module-level comment above this section).
+ *
+ * Delegation-note mismatch (reported per policy, not silently resolved): the
+ * U2 spec names one target kind "teammate-message", but this module's
+ * `UserMessageKind` union (`classifyUserMessage`) has no such value — the
+ * kind that actually carries a `<teammate-message>`-wrapped body is
+ * `"peer-message"` (Claude Code's Task-tool relay, "Another Claude session
+ * sent a message:" prefix, see `classifyUserMessage`'s doc comment). This
+ * function's `"peer-message"` case is what the spec's "teammate-message"
+ * bullet describes; `type:"msg"` ccmsg events inside it never reach here at
+ * all — `classifyBoundaryLine` promotes those lines to a standalone `"ccmsg"`
+ * boundary (`CcmsgBubble`) before Timeline.tsx's fold path ever runs, so the
+ * peer-message case here only ever sees the non-ccmsg bodies (idle
+ * notifications, plain relayed text, ...).
+ */
+export function parseSystemMessageFields(
+  kind: UserMessageKind | undefined,
+  rawText: string,
+): SystemMessageRich {
+  switch (kind) {
+    case "task-notification": {
+      const inner = unwrapOuterTag(rawText, "task-notification") ?? rawText;
+      const fields = extractXmlFields(inner);
+      const summary = fields.find((f) => f.name === "summary")?.value ?? null;
+      return {
+        display: "fields",
+        heading: summary,
+        fields: fields.filter((f) => f.name !== "summary"),
+      };
+    }
+    case "peer-message": {
+      const m = rawText.match(TEAMMATE_MESSAGE_ATTRS_RE);
+      if (!m) return { display: "text", text: rawText };
+      const attrs = parseXmlAttrs(m[1]!);
+      const body = prettyJsonOrRaw(m[2]!.trim());
+      return {
+        display: "fields",
+        heading: null,
+        fields: [...attrs, { name: "body", value: body }],
+      };
+    }
+    case "slash-command-invocation": {
+      const fields = extractXmlFields(rawText);
+      const command = fields.find((f) => f.name === "command-name")?.value ?? null;
+      if (command === null) return { display: "text", text: rawText };
+      const detail =
+        fields.find((f) => f.name === "command-args")?.value ??
+        fields.find((f) => f.name === "command-message")?.value ??
+        null;
+      return { display: "chip", label: command, detail };
+    }
+    case "slash-command-stdout": {
+      const inner = unwrapOuterTag(rawText, "local-command-stdout") ?? rawText;
+      return { display: "text", text: stripAnsiEscapes(inner) };
+    }
+    default:
+      return { display: "text", text: rawText };
+  }
+}
+
 /** Parse one raw jsonl line (as returned by `transcript_read`, DR-0009) into
  * a renderable event. Never throws — a malformed line becomes `BrokenLine`,
  * an unrecognized-but-valid shape becomes `MetaLine`/`unknown-segment`. */

@@ -2,6 +2,7 @@ import type { PeerInfo } from "@ccmsg/protocol";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { timelineHref } from "../locator.ts";
 import { isMemberConnected, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar } from "../avatar.tsx";
 
@@ -55,6 +56,20 @@ export function MemberChip({
         {isAdmin ? <UserAvatar size={16} /> : <Avatar seed={avatarSeed} size={16} />}
         {memberLabel(id, room)}
       </button>
+      {/* 接続中 (peers に居る = セッションが生きている) メンバーだけ、その
+       * セッションの Timeline へ飛ぶリンクを添える (kawaz 2026-07-12)。chip
+       * 本体のクリックは mention トグルのままにしたいので、別アンカーとして
+       * 隣に置く。offline メンバーはセッション view が空振りするので出さない。 */}
+      {!isAdmin && member && !offline && (
+        <a
+          class="chip-timeline-link"
+          href={timelineHref(member.sid)}
+          title={`${memberLabel(id, room)} の Timeline を開く`}
+          aria-label={`${memberLabel(id, room)} の Timeline を開く`}
+        >
+          TL
+        </a>
+      )}
       {!isAdmin && (
         <button
           type="button"

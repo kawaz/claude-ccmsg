@@ -13,13 +13,16 @@ import {
   groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
+  parseSystemMessageFields,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
+  type SystemMessageRich,
   type TimelineEntry,
   type TurnLine,
+  type UserMessageKind,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
@@ -212,6 +215,119 @@ function SegmentView({
   }
 }
 
+// システム由来 user メッセージの rich 表示 (U2 kawaz spec): transcript-model.ts's
+// parseSystemMessageFields が返す SystemMessageRich の 3 レイアウトを描画する
+// だけの純表示コンポーネント — パース自体は行わない (ロジックは transcript-
+// model.ts 側でユニットテスト可能に保つ、他の *-model.ts / Timeline.tsx の
+// 分業と同じ)。"event" フィールドだけ等幅フォントを当てる (kawaz spec:
+// 「event 本文は monospace で」) — task-notification 以外の kind がたまたま
+// 同名フィールドを持つことは想定していないが、フィールド名一致だけで判定する
+// のでどの kind から来ても等幅になる (副作用として無害)。
+function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
+  switch (rich.display) {
+    case "fields":
+      return (
+        <div class="tl-sysmsg-fields">
+          {rich.heading ? <div class="tl-sysmsg-heading">{rich.heading}</div> : null}
+          {rich.fields.length === 0 ? (
+            <span class="tl-empty-turn">(フィールドなし)</span>
+          ) : (
+            <dl class="tl-sysmsg-dl">
+              {rich.fields.map((f, i) => (
+                <div class="tl-sysmsg-field" key={i}>
+                  <dt>{f.name}</dt>
+                  <dd class={f.name === "event" ? "tl-sysmsg-mono" : undefined}>{f.value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </div>
+      );
+    case "chip":
+      return (
+        <div class="tl-sysmsg-chip-row">
+          <span class="tl-sysmsg-chip">{rich.label}</span>
+          {rich.detail ? <span class="tl-sysmsg-chip-detail">{rich.detail}</span> : null}
+        </div>
+      );
+    case "text":
+      return <pre class="tl-fold-body">{rich.text}</pre>;
+  }
+}
+
+// rich|raw タブ (U2 kawaz spec: 「ccmsg 吹き出しの msg/raw タブと同じ UI
+// 流儀」、デフォルト rich) — LineView の sysKind 分岐 (システム由来 user
+// メッセージの details 本文) から呼ばれる。raw タブは変更前と全く同じ描画
+// (segments.map + SegmentView) を保つことで、rich 側のパースが空振りしても
+// 元の情報は raw タブから必ず参照できる ("壊れた入力は raw fallback" 要件)。
+function SystemMessageBody({
+  kind,
+  line,
+  translatorAvailable,
+  foldGroupOpen,
+}: {
+  kind: UserMessageKind;
+  line: TurnLine;
+  translatorAvailable: boolean;
+  foldGroupOpen: boolean;
+}) {
+  const [tab, setTab] = useState<"rich" | "raw">("rich");
+  // extractCcmsgMessages (transcript-model.ts) が使うのと同じ「text segment
+  // だけを \n 結合」の抽出 — tool-result/unknown-segment 主体の line (例:
+  // userMessageKind "tool-result") では空文字列になり、rich タブは text
+  // フォールバックで空表示になるが、raw タブ側は元通り全 segment を描画する
+  // ので情報は失われない。
+  const rawText = useMemo(
+    () =>
+      line.segments
+        .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+        .map((s) => s.text)
+        .join("\n"),
+    [line.segments],
+  );
+  const rich = useMemo(() => parseSystemMessageFields(kind, rawText), [kind, rawText]);
+
+  return (
+    <div class="tl-sysmsg">
+      <div class="tl-thinking-tabs">
+        <button
+          type="button"
+          class={"tl-thinking-tab" + (tab === "rich" ? " active" : "")}
+          onClick={() => setTab("rich")}
+        >
+          rich
+        </button>
+        <button
+          type="button"
+          class={"tl-thinking-tab" + (tab === "raw" ? " active" : "")}
+          onClick={() => setTab("raw")}
+        >
+          raw
+        </button>
+      </div>
+      {tab === "rich" ? (
+        <SystemMessageRichView rich={rich} />
+      ) : (
+        <div class="tl-fold-body tl-segments">
+          {line.segments.length === 0 ? (
+            <span class="tl-empty-turn">(空)</span>
+          ) : (
+            line.segments.map((seg, i) => (
+              <SegmentView
+                key={i}
+                segment={seg}
+                translatorAvailable={translatorAvailable}
+                ts={null}
+                foldGroupOpen={foldGroupOpen}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // fold group 内 (非境界) の 1 entry を描画する — thinking/tool_use-only の
 // assistant turn、tool-result-only の user turn、meta 行、broken 行、
 // そしてシステム由来 user メッセージ (ccmsg メッセージを含まないもの、含む
@@ -249,7 +365,8 @@ function LineView({
   // "user-prompt" (= 本物のユーザ発話) 以外の kind が付いているラインは
   // 表示形式統一タスクで details 化 (以前は常時全文表示だった —
   // kawaz: 「task-notification が fold されてない」)。summary は
-  // 「▶ HH:MM:SS <kind>」形式 (kind をそのままラベルに)。
+  // 「▶ HH:MM:SS <kind>」形式 (kind をそのままラベルに)。本文は
+  // SystemMessageBody の rich|raw タブに委譲 (U2 リッチ表示タスク)。
   const sysKind =
     line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt"
       ? line.userMessageKind
@@ -258,21 +375,12 @@ function LineView({
     return (
       <details class="tl-line tl-fold">
         <FoldSummary ts={line.ts} label={sysKind} />
-        <div class="tl-fold-body tl-segments">
-          {line.segments.length === 0 ? (
-            <span class="tl-empty-turn">(空)</span>
-          ) : (
-            line.segments.map((seg, i) => (
-              <SegmentView
-                key={i}
-                segment={seg}
-                translatorAvailable={translatorAvailable}
-                ts={null}
-                foldGroupOpen={foldGroupOpen}
-              />
-            ))
-          )}
-        </div>
+        <SystemMessageBody
+          kind={sysKind}
+          line={line}
+          translatorAvailable={translatorAvailable}
+          foldGroupOpen={foldGroupOpen}
+        />
       </details>
     );
   }

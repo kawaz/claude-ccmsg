@@ -23,6 +23,7 @@ import type {
   InviteResponse,
   KickResponse,
   PeersResponse,
+  PeersStreamEvent,
   PingResponse,
   PostResponse,
   ReadResponse,
@@ -190,6 +191,16 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
     // one code path for "replace the agents list".
     if ("ev" in streamEv && streamEv.ev === "agents") {
       dispatch({ type: "agents/loaded", agents: (streamEv as AgentsStreamEvent).agents });
+      return;
+    }
+    // U1: live push whenever the connected-session list changes (registers,
+    // fully disconnects, or updates hello metadata) — folds straight into the
+    // same peers/loaded action the one-shot op:"peers" reply in onOpen uses,
+    // so the reducer has exactly one code path for "replace the peers list"
+    // (same pattern as ev:"agents" above; issue
+    // 2026-07-12-peers-live-update-protocol).
+    if ("ev" in streamEv && streamEv.ev === "peers") {
+      dispatch({ type: "peers/loaded", peers: (streamEv as PeersStreamEvent).peers });
       return;
     }
     // Live-tail push for a session's transcript (DR-0009 addendum,

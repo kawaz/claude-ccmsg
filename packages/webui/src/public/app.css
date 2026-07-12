@@ -601,6 +601,35 @@ body {
   background: var(--bg-alt);
 }
 
+/* Timeline jump link for connected members (MemberChip.tsx) — same
+ * hover-reveal treatment as .chip-kick so chips stay quiet at rest, and the
+ * same @media (hover: none) always-on fallback for touch devices. */
+.chip-timeline-link {
+  opacity: 0;
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 0.15rem 0.25rem;
+  border-radius: 999px;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--border);
+}
+
+.chip-wrap:hover .chip-timeline-link,
+.chip-timeline-link:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chip-timeline-link {
+    opacity: 1;
+  }
+}
+
+.chip-timeline-link:hover {
+  background: var(--bg-alt);
+}
+
 .timeline {
   flex: 1;
   display: flex;
@@ -1451,6 +1480,79 @@ button.session-tab {
 .tl-thinking-translating {
   margin: 0.25rem 0 0;
   font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+
+/* システムメッセージ rich|raw タブ (U2 kawaz spec: 「分類済みシステムメッ
+ * セージの details 展開時の本文に rich | raw のタブ切替、ccmsg 吹き出しの
+ * msg/raw タブと同じ UI 流儀」)。タブボタン自体は .tl-thinking-tabs/
+ * .tl-thinking-tab を再利用する (Timeline.tsx)、以下は rich 側の中身の
+ * レイアウトのみを追加する。 */
+.tl-sysmsg-fields {
+  margin-top: 0.3rem;
+}
+
+.tl-sysmsg-heading {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+/* task-notification の各フィールド (task-id/summary除外後/event/output-file
+ * 等) を定義リストで並べる — フィールド名の集合が未知の入力にも耐えるよう
+ * transcript-model.ts 側は固定タグ名をハードコードしない設計 (module doc
+ * comment) なので、ここも「何個来ても縦に並ぶ」grid で対応する。*/
+.tl-sysmsg-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.6rem;
+  margin: 0;
+}
+
+.tl-sysmsg-field {
+  display: contents;
+}
+
+.tl-sysmsg-field dt {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.tl-sysmsg-field dd {
+  margin: 0;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* task-notification の "event" フィールドだけ等幅 (kawaz spec: 「event 本文
+ * は monospace で」) — JSON/イベントログを読みやすくする。 */
+.tl-sysmsg-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+/* slash-command-invocation のチップ表示 (kawaz spec: 「"/model" + args を
+ * チップ風に」)。 */
+.tl-sysmsg-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.tl-sysmsg-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.3rem;
+  background: var(--bg-alt);
+}
+
+.tl-sysmsg-chip-detail {
+  font-size: 0.78rem;
   color: var(--fg-muted);
 }
 

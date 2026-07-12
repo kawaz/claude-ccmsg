@@ -155,6 +155,15 @@ export interface AgentsStreamEvent {
   agents: AgentInfo[];
   polled_at: string;
 }
+/** Push update of the connected-session list (user-role subscribers only,
+ * same shape the `peers` op returns). Emitted whenever a session registers
+ * (hello), fully disconnects, or updates its hello metadata — so the webui's
+ * member-connectivity display (chip greying) and session list stay live
+ * without manual refresh (issue 2026-07-12-peers-live-update-protocol). */
+export interface PeersStreamEvent {
+  ev: "peers";
+  peers: PeerInfo[];
+}
 /** Appended transcript lines for a session the subscriber asked to follow via
  * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
  * are delivered; byte offsets line up with transcript_read paging so a client
@@ -172,6 +181,7 @@ export type StreamEvent =
   | NotifyStreamEvent
   | RestartingStreamEvent
   | AgentsStreamEvent
+  | PeersStreamEvent
   | TranscriptStreamEvent;
 
 // ---------------------------------------------------------------------------

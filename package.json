@@ -11,7 +11,7 @@
   ],
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/webui",
     "test": "bun test"
   },
   "devDependencies": {
