@@ -7,7 +7,7 @@
 //   - session (DR-0008): `#s<sid>` selects a session's file-browsing view,
 //     `#s<sid>:<relpath>` additionally selects a file within it. Unlike room
 //     ids, `sid` has no reserved shape of its own (it comes from
-//     `CCMSG_SID`/`CLAUDE_SESSION_ID`, DR-0006), so the leading literal `s` is
+//     `CCMSG_SID`/`CLAUDE_CODE_SESSION_ID`, DR-0006), so the leading literal `s` is
 //     a real syntax marker here, not a character baked into the id — that's
 //     also why the file path uses a distinct `:` separator rather than
 //     reusing room's `-m`, since a raw sid could plausibly contain `-`.
