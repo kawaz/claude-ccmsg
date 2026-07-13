@@ -686,7 +686,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       const members = Array.isArray(req.members) ? req.members : [];
       const ordered: string[] = [];
       const id = conn.identity!;
-      if (id.role === "session") ordered.push(id.sid);
+      // Auto-prepend caller sid unless include_self=false (CLI --exclude-self,
+      // for an observer session that watches a room without participating).
+      // User-role callers (webui backend) never auto-include either way — u1 is
+      // implicit in every room already (DR-0006 §2).
+      const includeSelf = req.include_self !== false;
+      if (id.role === "session" && includeSelf) ordered.push(id.sid);
       for (const sid of members)
         if (typeof sid === "string" && !ordered.includes(sid)) ordered.push(sid);
       if (ordered.length === 0) {
