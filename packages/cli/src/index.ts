@@ -15,7 +15,16 @@ import {
 
 // --- arg parsing -----------------------------------------------------------
 
-const BOOL_FLAGS = new Set(["as-user", "self", "foreground", "help", "version"]);
+const BOOL_FLAGS = new Set(["exclude-self", "self", "foreground", "help", "version"]);
+
+/** Write ops require a session identity; without one the CLI refuses to run
+ * rather than silently posting as u1 (the User admin), which would forge
+ * user-authored msgs (see docs/decisions/DR-0003 §3, docs/issue/2026-07-12-
+ * prevent-u1-masquerade-on-missing-sid.md). read/rooms/peers/status stay
+ * available identity-less because they only observe. subscribe also stays
+ * available (with a stderr warning) so kawaz can observe as u1 until the
+ * webui is up. */
+const WRITE_OPS = new Set(["post", "create-room", "next-room", "leave", "notify"]);
 
 interface Parsed {
   positionals: string[];
@@ -123,13 +132,34 @@ function strField(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
 }
 
-function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): Identity {
-  if (opts["as-user"] === true) return { role: "user" };
+/** Resolve a session identity from flags + env, or null when no sid is
+ * available. The CLI intentionally does NOT fall back to `{ role: "user" }`
+ * (u1, admin) for a missing sid — that fallback is what forged u1-authored
+ * msgs when a Monitor subprocess inherited an env without CCMSG_SID (DR-0003
+ * §3 revision, docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
+ * Callers of write ops turn this null into a hard error; observe-only ops
+ * (subscribe/read/rooms/peers/status) treat null as user role (with a stderr
+ * warning for subscribe). */
+function resolveSessionIdentity(
+  opts: Record<string, string | boolean>,
+  cmd: string,
+): Identity | null {
   // `notify` uses --sid for its target, so it must not double as an identity override
   // there; --as-session still works everywhere.
   const sidOverride =
     cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
-  const sid = sidOverride ?? process.env.CCMSG_SID ?? process.env.CLAUDE_SESSION_ID;
+  // Env auto-detect: CCMSG_SID first (kawaz's explicit hook prefix, session-
+  // start.ts / user-prompt-submit.ts), then CLAUDE_CODE_SESSION_ID (Claude
+  // Code's own env, present in the parent process but NOT reliably exported
+  // into Monitor/Bash subprocesses — that's the very gap the hook's CCMSG_SID
+  // prefix exists to close). The old CLAUDE_SESSION_ID (never actually set by
+  // Claude Code — inherited from the pre-hook design) is removed to shrink the
+  // "which env do I set?" surface area. `strField` collapses empty strings to
+  // undefined so `CCMSG_SID=""` (a shell/CI env accident) doesn't shadow a
+  // real CLAUDE_CODE_SESSION_ID; same pattern used elsewhere in this function
+  // for CCMSG_TRANSCRIPT_PATH and friends.
+  const sid =
+    sidOverride ?? strField(process.env.CCMSG_SID) ?? strField(process.env.CLAUDE_CODE_SESSION_ID);
   if (sid) {
     // CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS env vars are an override knob
     // (manual invocation, tests) — when present they win over whatever the
@@ -171,7 +201,36 @@ function resolveIdentity(opts: Record<string, string | boolean>, cmd: string): I
       ...(branch ? { branch } : {}),
     };
   }
-  return { role: "user" };
+  return null;
+}
+
+/** stderr message + exit code for write ops invoked without a sid. Centralized
+ * so post/create-room/next-room/leave/notify all reject the same way, and the
+ * message names every env var and flag a caller might expect to work. */
+function refuseWriteWithoutSid(cmd: string): never {
+  process.stderr.write(
+    `ccmsg: '${cmd}' requires a session identity; refusing to post as u1 (User).\n` +
+      "  Set one of:\n" +
+      "    CCMSG_SID=<sid>            (the SessionStart / UserPromptSubmit hook prefix)\n" +
+      "    CLAUDE_CODE_SESSION_ID=<sid>  (Claude Code's own env; auto-detected when exported)\n" +
+      "    --as-session <sid>         (explicit override on the command line)\n" +
+      "  From a Claude Code session, prefer the exact command the hook suggested\n" +
+      "  (it already carries CCMSG_SID=).\n",
+  );
+  process.exit(1);
+}
+
+/** Subscribe stays open under an identity-less env (kawaz's u1 observation
+ * path, until webui is up). Warns loudly on stderr so a session sidecar that
+ * lost its CCMSG_SID doesn't silently degrade into a no-op observer with no
+ * peers entry and no echo suppression. stdout stays pure jsonl (Monitor
+ * downstream). */
+function warnSubscribingAsUser(): void {
+  process.stderr.write(
+    "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_CODE_SESSION_ID unset) — " +
+      "subscribing as the User (u1). No peers entry, no echo suppression. " +
+      "For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
+  );
 }
 
 // --- output ----------------------------------------------------------------
@@ -200,15 +259,9 @@ async function runSubscribe(
   identity: Identity,
   opts: Record<string, string | boolean>,
 ): Promise<never> {
-  // A session sidecar that lost its sid (CCMSG_SID / CLAUDE_SESSION_ID unset in
-  // the Monitor subprocess env) silently degrades to a User subscribe: no peers
-  // entry, no echo suppression. Surface that on stderr (stdout stays pure jsonl);
-  // an intentional User subscribe states it with --as-user and is not warned.
-  if (identity.role === "user" && opts["as-user"] !== true) {
-    process.stderr.write(
-      "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_SESSION_ID unset) — subscribing as the User (u1). For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
-    );
-  }
+  // The "subscribing as u1" stderr warning is emitted by main() before this
+  // (see warnSubscribingAsUser) so the branch stays out of the hot path once
+  // the connection is up. stdout is pure jsonl for the downstream Monitor.
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
   const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
@@ -330,7 +383,8 @@ Usage:
 
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
-  create-room                  Open a room with peers (--members, --msg, --title)
+  create-room                  Open a room with peers (--members, --msg, --title,
+                               --exclude-self to keep the caller out of the room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
   subscribe                    Stream room events as jsonl to stdout (--since)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
@@ -350,6 +404,9 @@ Command Options:
   --to <ids>                   post: deliver only to these member id(s) + sender + u1,
                                comma-separated (e.g. u1,a2); others can still read it
   --members <sids>             create-room: participant sids, comma-separated
+                               (do NOT pass 'u1' — the User admin is always implicit)
+  --exclude-self               create-room: don't auto-add the caller session as a
+                               member (observer/setup use case; default is include)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
   --since <json>               subscribe: per-room last-seen mid, e.g. '{"r7":7}'
@@ -359,17 +416,25 @@ Command Options:
   --foreground                 daemon run: also log to stderr
 
 Global Options:
-  --as-user                    Act as the User (u1), overriding session detection
   --sid <sid>                  Act as this session id (for 'notify', --sid is the
                                target instead; use --as-session to set identity there)
   --as-session <sid>           Act as this session id (works for every command)
   -h, --help                   Show this help
   --version                    Print the ccmsg version and exit
 
+Notes:
+  Write ops (post, create-room, next-room, leave, notify) require a session
+  identity (CCMSG_SID / CLAUDE_CODE_SESSION_ID / --as-session). Without one the
+  CLI exits with a non-zero status rather than posting as the User (u1). The
+  User admin identity is issued by the webui backend only; the CLI cannot act
+  as u1 for write ops. subscribe still runs without a sid (with a stderr
+  warning), giving kawaz a plain-terminal observation path until the webui.
+
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl)
-  CCMSG_SID / CLAUDE_SESSION_ID  Session id for identity auto-detection
+  CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection
+                               (CCMSG_SID wins; both are ignored for --as-session)
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
   CCMSG_BRANCH                 Current branch/bookmark of the session's checkout,
                                sent in hello (informational, webui session list)
@@ -420,7 +485,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const identity = resolveIdentity(opts, cmd);
+  const sessionIdentity = resolveSessionIdentity(opts, cmd);
+  // Write ops refuse to run without a sid — silently degrading to u1 was the
+  // masquerade bug (docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md).
+  if (sessionIdentity === null && WRITE_OPS.has(cmd)) refuseWriteWithoutSid(cmd);
+  // Observe ops fall back to user role. hello is required by the daemon for
+  // subscribe/notify anyway (IDENTITY_OPS in server.ts); read/rooms/peers/status
+  // don't need identity but hello with role=user is harmless and uniform.
+  const identity: Identity = sessionIdentity ?? { role: "user" };
 
   switch (cmd) {
     case "post": {
@@ -439,9 +511,26 @@ async function main(): Promise<void> {
             .map((s) => s.trim())
             .filter((s) => s !== "")
         : [];
+      // u1 is the reserved User admin id, implicitly a member of every room
+      // (DR-0006 §2) — passing it via --members would try to register u1 as a
+      // regular sid entry, both nonsensical and error-prone. Reject up front
+      // so the caller notices, rather than silently letting the daemon create
+      // a room with a bogus "u1" member row.
+      if (members.includes("u1")) {
+        process.stderr.write(
+          "ccmsg create-room: u1 is always implicitly a member of every room; " +
+            "do not pass it via --members.\n",
+        );
+        process.exit(1);
+      }
+      // --exclude-self opt-out: default is include (session caller is added to
+      // the room they create). The rare observe-without-join case (session
+      // watching a room they set up between other peers) uses --exclude-self.
+      const excludeSelf = opts["exclude-self"] === true;
       await runOnce(identity, {
         op: "create_room",
         members,
+        ...(excludeSelf ? { include_self: false } : {}),
         ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
         ...(str(opts, "title") ? { title: str(opts, "title") } : {}),
       });
@@ -490,6 +579,7 @@ async function main(): Promise<void> {
       return;
     }
     case "subscribe": {
+      if (sessionIdentity === null) warnSubscribingAsUser();
       await runSubscribe(identity, opts);
       return;
     }
