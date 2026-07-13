@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { ADMIN_ID } from "../store.ts";
 import type { AppState } from "../store.ts";
 import { anchorId } from "../locator.ts";
@@ -8,6 +8,7 @@ import { MemberChip } from "./MemberChip.tsx";
 import { TimelineItem } from "./TimelineItem.tsx";
 import { Composer } from "./Composer.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
+import { isAtBottom } from "./timeline-autoscroll.ts";
 
 // DR-0011 §1-4: "already a member" is a soft notice, auto-dismissed — it's
 // not a failure, just feedback that the drop didn't need to do anything.
@@ -36,6 +37,28 @@ export function RoomView({ state }: { state: AppState }) {
     if (!room || mid === null) return;
     document.getElementById(anchorId(room.id, mid))?.scrollIntoView({ block: "center" });
   }, [room?.id, mid]);
+
+  // 末尾に居た時だけ新着で末尾追随する (kawaz 2026-07-13、timeline-autoscroll.ts)。
+  // 判定は「毎 scroll イベントで末尾判定を Ref に記録」→「timeline (event 配列)
+  // が更新されて再 render された paint 前の useLayoutEffect で Ref を見て
+  // scrollTop = scrollHeight を書く」の 2 段。Store の event append は状態更新を
+  // 経て commit に載るので、useLayoutEffect 内で読める scrollHeight は
+  // 「新 event を含めた後の DOM 高さ」であり、そこへ飛ばせば結果として最新
+  // TimelineItem が可視領域に入る。
+  //
+  // 初期値 true = 「新規 room 入り = 末尾扱い」。room を切り替えた瞬間の 1 回
+  // 目の effect で末尾へ飛ばして最新から見せる意図。room.id 変更時にも true に
+  // 戻す (前 room で上へ遡っていた状態を持ち越さない)。
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  useEffect(() => {
+    stickToBottomRef.current = true;
+  }, [room?.id]);
+  useLayoutEffect(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [room?.timeline]);
 
   // Switching rooms discards any leftover invite notice from the previous one.
   useEffect(() => {
@@ -143,7 +166,13 @@ export function RoomView({ state }: { state: AppState }) {
         )}
       </header>
       <div
+        ref={timelineRef}
         class={dragOver ? "timeline timeline-drop-active" : "timeline"}
+        onScroll={(e) => {
+          // 末尾判定を Ref に記録。次の timeline 更新時に useLayoutEffect が
+          // これを見て「末尾に居たなら追随、離れていたなら放置」を決める。
+          stickToBottomRef.current = isAtBottom(e.currentTarget);
+        }}
         onDragOver={(e) => {
           if (!e.dataTransfer || !hasSidDragPayload(e.dataTransfer)) return;
           e.preventDefault();

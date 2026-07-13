@@ -5,18 +5,21 @@ import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { memberLabel, relTime } from "../utils.ts";
 import { Avatar, UserAvatar } from "../avatar.tsx";
 
-/** DR-0012 (U1 icon addendum): the from-avatar next to a msg's from label.
- * `room.membersById` keeps a member's row after they leave (`left: true`,
- * see store.ts's applyProtocolEvent "leave" case — the row is flipped, never
- * deleted), so this resolves a sid for messages from members who have since
- * left the room, not just currently-active ones. ADMIN_ID gets the fixed
- * UserAvatar (seed-independent, same convention as MemberChip); an unknown
- * `from` (member row somehow absent — shouldn't happen but the log is the
- * source of truth, not membersById) renders no icon rather than guessing a
- * seed. */
-function FromAvatar({ from, room }: { from: string; room: RoomState }) {
-  if (from === ADMIN_ID) return <UserAvatar size={16} />;
-  const sid = room.membersById.get(from)?.sid;
+/** DR-0012 (U1 icon addendum): a member's avatar shown next to its label
+ * in msg-meta. Used both for the message sender (`from`) and for each
+ * mention target in `to` — kawaz 2026-07-13 requested the same avatar
+ * treatment on the `→ X, Y, Z` mention list so it reads symmetrically with
+ * the sender. `room.membersById` keeps a member's row after they leave
+ * (`left: true`, see store.ts's applyProtocolEvent "leave" case — the row is
+ * flipped, never deleted), so this resolves a sid for messages / mentions
+ * involving members who have since left the room, not just currently-active
+ * ones. ADMIN_ID gets the fixed UserAvatar (seed-independent, same
+ * convention as MemberChip); an unknown id (member row somehow absent —
+ * shouldn't happen but the log is the source of truth, not membersById)
+ * renders no icon rather than guessing a seed. */
+function MemberAvatar({ id, room }: { id: string; room: RoomState }) {
+  if (id === ADMIN_ID) return <UserAvatar size={16} />;
+  const sid = room.membersById.get(id)?.sid;
   if (!sid) return null;
   return <Avatar seed={sid} size={16} />;
 }
@@ -30,10 +33,22 @@ export function TimelineItem({ event, room }: { event: DeliveredEvent; room: Roo
           id={anchorId(room.id, event.mid)}
         >
           <div class="msg-meta">
-            <FromAvatar from={event.from} room={room} />
+            <MemberAvatar id={event.from} room={room} />
             <span class="msg-from">{memberLabel(event.from, room)}</span>
             {event.to?.length ? (
-              <span class="msg-to">→ {event.to.map((id) => memberLabel(id, room)).join(", ")}</span>
+              <span class="msg-to">
+                →{" "}
+                {event.to.map((id, i) => (
+                  // ": " 区切りテキストとアイコン+名前ペアを混ぜる。key は id 単体だと
+                  // 同一 id が to に重複した時に衝突するので `${id}-${i}` にする
+                  // (protocol 的には重複しない想定だが、防御的に i を混ぜる)。
+                  <span key={`${id}-${i}`} class="msg-to-item">
+                    {i > 0 ? ", " : null}
+                    <MemberAvatar id={id} room={room} />
+                    {memberLabel(id, room)}
+                  </span>
+                ))}
+              </span>
             ) : null}
             <span class="msg-time">{relTime(event.ts)}</span>
             <a class="msg-anchor" href={messageHref(room.id, event.mid)}>

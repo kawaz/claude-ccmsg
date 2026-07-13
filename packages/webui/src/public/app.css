@@ -644,9 +644,16 @@ body {
   max-width: 90%;
 }
 
+/* u1 (User) 発言は自分の発言として右寄せ + LINE/iMessage 風の緑系背景で他の
+ * ROOM 参加者からの発言と一目で区別する (kawaz 2026-07-13)。緑系
+ * (--user-bubble-bg) は既に Timeline (transcript) 側の tl-bubble-right で
+ * 「本物のユーザ発話」の吹き出し色として使っている既存デザイントークン。
+ * ROOM の from:u1 も同じ「自分の発話」意味論なので同じトークンに寄せる —
+ * 以前使っていた --user-bg (青系) はエージェント側の TimelineItem 吹き出しと
+ * 色相が近く識別性が弱かった。 */
 .msg-user {
   align-self: flex-end;
-  background: var(--user-bg);
+  background: var(--user-bubble-bg);
 }
 
 .msg-meta {
@@ -658,12 +665,22 @@ body {
   margin-bottom: 0.15rem;
 }
 
-/* U1 icon addendum (DR-0012): the from-avatar (TimelineItem.tsx's
- * FromAvatar) sits directly in .msg-meta's flex row — Avatar/UserAvatar
- * already carry their own margin-right inline, this just cancels the extra
- * .msg-meta gap so the icon doesn't get double-spaced from .msg-from. */
+/* U1 icon addendum (DR-0012): the from-avatar and per-target mention avatars
+ * (TimelineItem.tsx's MemberAvatar) sit directly in .msg-meta's flex row —
+ * Avatar/UserAvatar already carry their own margin-right inline, this just
+ * cancels the extra .msg-meta gap so the icon doesn't get double-spaced
+ * from the adjacent name label. */
 .msg-meta .avatar {
   margin-right: 0 !important;
+}
+
+/* mention 先の (avatar + name) 1 ペアを inline-flex でまとめ、カンマ区切りの
+ * 途中で改行しても avatar と name が離れないようにする (kawaz 2026-07-13:
+ * mention 先アイコン追加)。gap は avatar と label の識別性用の 3px。 */
+.msg-to-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .msg-anchor {
@@ -705,14 +722,20 @@ body {
   color: var(--fg-muted);
 }
 
+/* textarea の高さは Composer.tsx の autosizeTextarea が content に追随して
+ * 直接 style.height を書き換える (kawaz 2026-07-13: 入力欄自動リサイズ)。
+ * `resize: none` にすることでユーザによる手動リサイズを禁じ、auto-grow と
+ * ハンドル操作の競合を避ける。上限を超えたら textarea 内スクロールに切替
+ * (max-height は JS 側 = COMPOSER_MAX_HEIGHT_REM が同じ 10 行相当を計算する)。 */
 .composer textarea {
-  resize: vertical;
+  resize: none;
   font: inherit;
   padding: 0.4rem;
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
+  overflow-y: auto;
 }
 
 .composer button {
