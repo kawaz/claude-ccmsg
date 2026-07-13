@@ -105,17 +105,33 @@ describe("ccmsg subscribe daemon restart transparency", () => {
   test("daemon 再起動を跨いで subscribe が生存し、跨ぎ前後の post が両方 stdout に出る (restarting は出ない)", async () => {
     const { env, sock, cleanup } = makeEnv();
     try {
-      // Setup: --as-user (u1) が S1 との room を作成。u1 は subscribe 側、
-      // S1 は post 役。u1 が room member なので S1 の post が subscribe に届く。
+      // Setup: 別 session CREATOR が --exclude-self で S1 のみ member の room を
+      // 作成する (CLI の write ops は identity 必須になったので、u1 として
+      // create-room する経路は廃止。u1 は暗黙参加のため subscribe には引き続き
+      // 届く)。改修前は --as-user create-room で同型の room を作っていた。
       const created = JSON.parse(
-        (await runCli(["--as-user", "create-room", "--members", "S1"], env)).out,
+        (
+          await runCli(
+            ["--sid", "CREATOR", "create-room", "--members", "S1", "--exclude-self"],
+            env,
+          )
+        ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       const room = created.room;
 
-      // subscribe を長寿命 subprocess として起動 (実 CLI 経路)。
-      const sub = Bun.spawn([process.execPath, CLI, "--as-user", "subscribe"], {
-        env: { ...process.env, ...env },
+      // subscribe を長寿命 subprocess として起動 (実 CLI 経路)。sid 環境変数を
+      // 一切 export しないので CLI は u1 として hello し、u1 は全 room に暗黙参加
+      // (DR-0003 §5) なので room 開設・S1 の post が subscribe に届く。stderr に
+      // 「subscribing as u1」警告が出るが stdout は pure jsonl。
+      const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
+        env: {
+          ...process.env,
+          ...env,
+          CCMSG_SID: "",
+          CLAUDE_CODE_SESSION_ID: "",
+          CLAUDE_SESSION_ID: "",
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -228,8 +244,16 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       // 代わりに: subscribe 起動 → daemon stop → しばらく待って daemon 不在維持
       // を確認、という順で検証する。
 
-      const sub = Bun.spawn([process.execPath, CLI, "--as-user", "subscribe"], {
-        env: { ...process.env, ...env },
+      // 改修前は --as-user で明示的に u1 として subscribe していた。改修後は sid
+      // 環境変数を空にすることで CLI の u1 fallback (subscribe だけ許容) に乗る。
+      const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
+        env: {
+          ...process.env,
+          ...env,
+          CCMSG_SID: "",
+          CLAUDE_CODE_SESSION_ID: "",
+          CLAUDE_SESSION_ID: "",
+        },
         stdout: "pipe",
         stderr: "pipe",
       });

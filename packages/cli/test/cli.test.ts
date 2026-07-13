@@ -93,27 +93,193 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  test("no args prints help; --as-user creates a room without a caller member row", async () => {
+  // help は独立させる (write ops の identity 必須化で --as-user が消えたため
+  // 旧テストが「no args + --as-user」の 2 検証を束ねていたのを分割)。
+  test("no args prints help", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      // no args -> help to stdout (kawaz CLI convention)
       const help = await runCli([], env);
       expect(help.out).toContain("Usage:");
       expect(help.out).toContain("Environment Variables:");
+    } finally {
+      cleanup();
+    }
+  }, 30000);
 
-      // --as-user: the User (id "u1") is implicit, so the created room's only member row is the listed peer Z
+  // 何を保証するか (DR-0003 §3 revision): create-room は呼び出し元 session を
+  // members の先頭に自動 include する。指示から「呼び出し元 sid を毎回書かせる」
+  // 冗長さを消し、S1 が S2 と 1:1 room を張る時に `--members S2` だけで済む。
+  test("create-room は呼び出し元 session を members 先頭に自動 include する", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
       const created = JSON.parse(
-        (await runCli(["--as-user", "create-room", "--members", "Z"], env)).out,
-      ) as {
-        ok: boolean;
-        room: string;
-      };
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
         rooms: { members: { id: string; sid: string }[] }[];
       };
-      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["Z"]);
+      // 順序は S1 (呼び出し元、a1) → S2 (a2)
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
+      expect(rooms.rooms[0]!.members.map((m) => m.id)).toEqual(["a1", "a2"]);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: --exclude-self を渡すと呼び出し元は自動 include されない
+  // (観測用途 room のセットアップ経路)。protocol の include_self:false 経路を
+  // 経由することを確認する。
+  test("create-room --exclude-self は呼び出し元を自動 include しない", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2", "--exclude-self"], env))
+          .out,
+      ) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { members: { id: string; sid: string }[] }[];
+      };
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S2"]);
       expect(rooms.rooms[0]!.members[0]!.id).toBe("a1");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: u1 は暗黙参加 (DR-0006 §2) なので、--members に "u1" を
+  // 書くのは仕様上の誤り。CLI が daemon に投げる前に reject して「u1 という
+  // 名の sid で room が作られる」誤動作を防ぐ。
+  test("create-room --members に u1 が含まれると reject される", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["--sid", "S1", "create-room", "--members", "S2,u1"], env);
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("u1 is always implicitly a member");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (docs/issue/2026-07-12-prevent-u1-masquerade-on-missing-sid.md):
+  // write 系 5 op は session identity が取れなければ error で exit 非零。
+  // 旧挙動 (identity 無しで u1 名義に暗黙 fallback して post) を明示的に禁止
+  // する回帰 test。stderr のエラーメッセージには sid の env 名も明示される。
+  test("write 系 op は identity 無しで exit 非零 + stderr にエラーメッセージ", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      // env から sid を完全に排除する (test runner の CLAUDE_CODE_SESSION_ID
+      // 継承事故を防ぐため空文字で上書き)。
+      const bareEnv: Record<string, string> = {
+        ...env,
+        CCMSG_SID: "",
+        CLAUDE_CODE_SESSION_ID: "",
+        CLAUDE_SESSION_ID: "",
+      };
+      const cases: [string, string[]][] = [
+        ["post", ["post", "r1", "hi"]],
+        ["create-room", ["create-room", "--members", "S2"]],
+        ["next-room", ["next-room", "r1"]],
+        ["leave", ["leave", "r1"]],
+        ["notify", ["notify", "--self", "--text", "hi"]],
+      ];
+      for (const [name, args] of cases) {
+        const res = await runCli(args, bareEnv);
+        expect(res.code).not.toBe(0);
+        expect(res.err).toContain(`'${name}' requires a session identity`);
+        expect(res.err).toContain("CCMSG_SID=");
+        expect(res.err).toContain("CLAUDE_CODE_SESSION_ID=");
+        expect(res.err).toContain("--as-session");
+        // daemon には接続しない (=巻き添えで spawn しない) ことを追認: identity
+        // ガードは request 送信の前段で走る。
+        expect(res.out).toBe("");
+      }
+      // 追認: daemon は起動していない (identity ガードは runOnce の前で切る)
+      const st = JSON.parse((await runCli(["status"], bareEnv)).out) as { running: boolean };
+      expect(st.running).toBe(false);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: env の優先順位。CCMSG_SID > CLAUDE_CODE_SESSION_ID > null。
+  // 旧 CLAUDE_SESSION_ID (実環境に存在しないデッド env) は削除済みで、値を
+  // セットしても拾わない。
+  test("CLAUDE_CODE_SESSION_ID から sid を自動採用する", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      // CLAUDE_CODE_SESSION_ID だけで post が成功 (write op が identity ありと
+      // 判定される)。
+      const createdRes = await runCli(["create-room", "--members", "PEER"], {
+        ...env,
+        CLAUDE_CODE_SESSION_ID: "S1",
+        CCMSG_SID: "",
+        CLAUDE_SESSION_ID: "",
+      });
+      const created = JSON.parse(createdRes.out) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      // 呼び出し元 sid = S1 が member に入っている
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { members: { sid: string }[] }[];
+      };
+      expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "PEER"]);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: 旧 CLAUDE_SESSION_ID env は拾わない (削除済み)。値を
+  // セットしても identity 無し扱いで write op は error になる。
+  test("旧 CLAUDE_SESSION_ID env は sid として拾わない (write op は error)", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["create-room", "--members", "PEER"], {
+        ...env,
+        CCMSG_SID: "",
+        CLAUDE_CODE_SESSION_ID: "",
+        CLAUDE_SESSION_ID: "SHOULD_BE_IGNORED",
+      });
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("requires a session identity");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: subscribe は identity 無しでも起動 (u1 fallback、DR-0003 §3)、
+  // 起動直後の stderr に「subscribing as u1」警告が出る。stdout は pure jsonl のまま
+  // (Monitor 経由の consumer を汚さない)。
+  test("subscribe は sid 無しでも起動し stderr に u1 fallback 警告が出る", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
+        env: {
+          ...process.env,
+          ...env,
+          CCMSG_SID: "",
+          CLAUDE_CODE_SESSION_ID: "",
+          CLAUDE_SESSION_ID: "",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // 警告は subscribe stream 開始前に main() が同期的に出すので、subprocess
+      // 起動 → ensure-daemon 完了 (数百 ms 目安) を待って kill、それから stderr を
+      // 全部読み切って assert する。stream 途中の race を避けるためこの手順が最も単純。
+      await new Promise<void>((r) => setTimeout(r, 1500));
+      sub.kill();
+      await sub.exited;
+      const errText = await new Response(sub.stderr).text();
+      expect(errText).toContain("subscribing as the User (u1)");
+      expect(errText).toContain("CCMSG_SID");
+      expect(errText).toContain("CLAUDE_CODE_SESSION_ID");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
