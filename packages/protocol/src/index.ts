@@ -243,10 +243,16 @@ export interface PostRequest {
 
 export interface CreateRoomRequest {
   op: "create_room";
-  /** participant sids (caller session is auto-added). */
+  /** participant sids. If the caller is a session and include_self is not false,
+   * the caller's own sid is auto-prepended (dedup-safe, see server.ts create_room). */
   members: string[];
   msg?: string;
   title?: string;
+  /** Default true. When false, a session caller is NOT auto-added to the room's
+   * members — used by the CLI's `--exclude-self` opt-out when the caller wants
+   * a room that observes without participating. Ignored for user-role callers
+   * (who never auto-include either way). */
+  include_self?: boolean;
 }
 
 export interface NextRoomRequest {
