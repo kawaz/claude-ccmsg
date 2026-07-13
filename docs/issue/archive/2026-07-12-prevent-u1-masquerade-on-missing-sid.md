@@ -1,6 +1,6 @@
 ---
 title: CCMSG_SID 未設定投稿が u1 (ユーザ) 名義に化けるのを防ぐ
-status: wip
+status: resolved
 category: bug
 created: 2026-07-12T01:05:45+09:00
 last_read: 2026-07-13T13:53:14+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-13T14:00:00+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-13T14:08:34+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.25.0 (c24b5ea6)","dr/DR-0003","CLI write系5opがidentity無しでhard-fail、CLAUDE_CODE_SESSION_IDを自動採用、--as-userを削除","skills/ccmsg/SKILL.mdに「write系はsession identity必須」節+「room運用の作法」節を追加","根拠:r10 mid=9(kawaz裁定)、実装:worker=u1-fix、team-lead監査済み"]
 blocked_by:
 origin: 依頼元プロジェクト
 ---
@@ -55,4 +55,4 @@ origin: 依頼元プロジェクト
 - [x] `packages/cli/test/cli.test.ts` に回帰 test 5 種追加 (write hard-fail / u1 members reject / auto-include / --exclude-self / CLAUDE_CODE_SESSION_ID 拾える / CLAUDE_SESSION_ID 拾わない / subscribe stderr 警告)
 - [x] `packages/cli/test/reconnect.test.ts` の `--as-user` 削除で壊れた 2 test を修正 (sid 環境変数を空にして u1 fallback 経路に乗せる)
 - [x] hooks / webui コメントの CLAUDE_SESSION_ID 参照を CLAUDE_CODE_SESSION_ID に置換
-- [ ] commit landing 後に `/local-issue:update ... close` で resolved 遷移 (親セッションの担当)
+- [x] commit landing 後に `/local-issue:update ... close` で resolved 遷移 (親セッションの担当)
