@@ -240,9 +240,9 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // CCMSG_SID must be embedded: CLAUDE_SESSION_ID is not exported to Monitor
-  // subprocesses, so a bare `ccmsg subscribe` would hello as the User (u1)
-  // instead of this session (no peers entry, no echo suppression). See
+  // CCMSG_SID must be embedded: CLAUDE_CODE_SESSION_ID is not reliably exported
+  // to Monitor subprocesses, so a bare `ccmsg subscribe` would hello as the User
+  // (u1) instead of this session (no peers entry, no echo suppression). See
   // session-start.ts / buildSubscribeCommand.
   // stdout is injected into the next turn as a <system-reminder>.
   process.stdout.write(buildNagMessage(resolveBin(), sessionId));

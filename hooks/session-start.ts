@@ -426,10 +426,11 @@ async function main(): Promise<void> {
   // (c) Guide the AI. subscribe is a long-running blocking stream, so it must run
   // under the Monitor tool (persistent), never the Bash tool.
   //
-  // CCMSG_SID must be embedded in the suggested command: CLAUDE_SESSION_ID is
-  // NOT exported to the Bash/Monitor subprocess environment, so without it the
-  // subscribe would silently hello as the User (u1) — no peers entry, no
-  // echo suppression. The hook is the one place that reliably knows session_id.
+  // CCMSG_SID must be embedded in the suggested command: CLAUDE_CODE_SESSION_ID
+  // is not reliably exported to the Bash/Monitor subprocess environment, so
+  // without it the subscribe would silently hello as the User (u1) — no peers
+  // entry, no echo suppression. The hook is the one place that reliably knows
+  // session_id.
   const subscribeCmd = buildSubscribeCommand(bin, input.session_id);
   const contextLines = [
     "ccmsg is available: file-backed messaging between Claude Code sessions via a central daemon.",
