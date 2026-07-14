@@ -55,7 +55,11 @@ kawaz が新機能を発案 (r12 mid=35、verbatim §7):
   - 画像アップロードボタン (`<input type="file" accept="image/*" capture="library">`、iOS で写真ライブラリを開く)
   - ファイルアップロードボタン (`<input type="file">`、iOS でファイル App / iCloud を開く)
 - 選択時 **即 upload**、直ちに送信はしない [kawaz]
-- 入力欄下に添付一覧を「`FILE<N>: <filename>`」の小さめフォントで並べる (存在アピール)
+- **upload は非同期 fetch + 進捗付き** [kawaz、r12 mid=37]。`fetch()` の Response body を streaming で受ける or `XMLHttpRequest.upload.onprogress` (fetch API は upload progress を公式に持たないため、素直な実装は XHR 経由の progress 監視、または fetch + `ReadableStream` の request body で自前 chunked upload):
+  - 添付一覧の各 entry に **進捗状態** を持たせる (`uploading` / `done` / `error`)、UI で「アップロード中… 42%」を表示
+  - upload 中の添付は本文への `[FILE<N>]` プレースホルダ挿入をどう扱うか — [提案] upload 開始時点で `[FILE<N>]` を挿入し、完了で filename を確定、失敗時は削除ボタンを目立たせる (中断/削除で本文から `[FILE<N>]` も removed)
+  - **送信時**: 未完了 upload があれば送信ボタンを disable (or 送信で全 upload の Promise.all を待つ)
+- 入力欄下に添付一覧を「`FILE<N>: <filename>`」の小さめフォントで並べる (存在アピール)。upload 中は「`FILE<N>: <filename> (42%)`」等の進捗も併記
 - 送信 or 手動除去 (× ボタン) で添付一覧から消える
 - **clipboard paste**: Composer に paste event listener を張り、`ClipboardEvent.clipboardData.items` に `image/*` mime があれば file として抽出して upload 経路に流す [kawaz]
 
