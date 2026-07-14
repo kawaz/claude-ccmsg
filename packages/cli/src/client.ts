@@ -224,7 +224,7 @@ export async function reconnectSubscribeNoSpawn(
     }
     const ack = await client.request<{ ok?: boolean }>({
       op: "subscribe",
-      ...(Object.keys(since).length > 0 ? { since } : {}),
+      ...(Object.keys(since).length > 0 ? { since_seq: since } : {}),
     });
     if (ack.ok === false) {
       client.close();

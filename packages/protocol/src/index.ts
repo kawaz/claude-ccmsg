@@ -56,7 +56,13 @@ export const TRANSCRIPT_READ_MAX_BYTES = 2 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
-// ordering; `mid` (msg only) is a per-room daemon-assigned sequence.
+// ordering; `mid` (msg only) is a per-room daemon-assigned sequence. `seq`
+// (DR-0016) is a SEPARATE per-room daemon-assigned sequence spanning ALL event
+// types (msg, member, leave, next, prev, title, archive, kind) — the cursor
+// coordinate for subscribe reconnect. Optional only for pre-append event
+// construction (caller hasn't been stamped yet) and legacy log rows written
+// before this field existed (in-memory backfilled by loadRoom, see storage.ts);
+// every appended/delivered event carries one.
 // ---------------------------------------------------------------------------
 
 export interface MemberEvent {
@@ -69,12 +75,16 @@ export interface MemberEvent {
   joined_at: string;
   /** guest role marker; absent = regular member (agent, or admin's implicit row is absent entirely). */
   role?: "admin" | "guest";
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export interface LeaveEvent {
   type: "leave";
   id: string;
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export interface MsgEvent {
@@ -93,24 +103,32 @@ export interface MsgEvent {
   to?: string[];
   ts: string;
   msg: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export interface NextEvent {
   type: "next";
   room: string;
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export interface PrevEvent {
   type: "prev";
   room: string;
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export interface TitleEvent {
   type: "title";
   title: string;
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 /** Room archive toggle (DR-0012): a display-organization flag, NOT a lifecycle
@@ -120,6 +138,8 @@ export interface ArchiveEvent {
   type: "archive";
   archived: boolean;
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 /** Room kind marker (DR-0013 broadcast / DR-0014 1on1). Written exactly once
@@ -132,6 +152,8 @@ export interface KindEvent {
   type: "kind";
   kind: "broadcast" | "1on1";
   ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
 }
 
 export type StorageEvent =
@@ -339,8 +361,15 @@ export interface KickRequest {
 
 export interface SubscribeRequest {
   op: "subscribe";
-  /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). */
+  /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). Retained
+   * for old-client compat; a room present in `since_seq` uses that cursor
+   * instead (DR-0016 §2.3). */
   since?: Record<string, number>;
+  /** per-room last-seen seq for delta replay, spanning ALL event types
+   * (DR-0016 §2.3) — supersedes `since` (mid, msg-only) for any room key it
+   * covers. Do NOT derive this from a stored `since` value: seq >= mid always
+   * holds, so reinterpreting a mid as a seq would skip events. */
+  since_seq?: Record<string, number>;
 }
 
 export interface ReadRequest {

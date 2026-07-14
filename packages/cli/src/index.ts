@@ -273,15 +273,15 @@ async function runSubscribe(
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
   const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
-  // sinceMap は「これまで stdout に出したことがある msg の per-room 最大 mid」。
-  // 再接続時に daemon へ渡し、backlog を「未受信ぶんだけ」に絞る (BBS delta model,
-  // DR-0003 §5)。ユーザ指定の --since を初期値として seed し、以降は受信した msg
-  // 毎に更新する。
+  // sinceMap は「stdout に出した event の per-room 最大 seq」(DR-0016 §2.4)。
+  // 再接続時に daemon へ since_seq として渡し、backlog を「未受信ぶんだけ」に絞る
+  // (BBS delta model, DR-0003 §5)。ユーザ指定の --since を初期値として seed し、
+  // 以降は受信した event 毎に更新する。
   const sinceMap: Record<string, number> = { ...initialSince };
   let client: Client = await ensureDaemon(paths, identity);
   const ack = await client.request<{ ok?: boolean }>({
     op: "subscribe",
-    ...(initialSince ? { since: initialSince } : {}),
+    ...(initialSince ? { since_seq: initialSince } : {}),
   });
   if (ack.ok === false) process.exit(output(ack as Record<string, unknown>));
   // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
@@ -297,22 +297,22 @@ async function runSubscribe(
       //   (a) `ev:"restarting"` は stdout に流さない (透過再接続が目的で、上流の
       //       Monitor へノイズ行を送らない)。この行の直後に daemon が socket を閉じる
       //       ので、次ループで readLine() が null を返し再接続経路に入る。
-      //   (b) `type:"msg"` の r/mid で sinceMap を更新し、再接続 subscribe の
-      //       since 引数に反映する。他の event (member/leave/next/prev/title/notify)
-      //       は mid を持たないので sinceMap を触らない。
+      //   (b) r + seq を持つ全 StorageEvent 配信で sinceMap を更新し、再接続
+      //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
+      //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
+      //       ので自然に対象外。
       let filtered = false;
       try {
         const ev = JSON.parse(line) as {
           ev?: string;
-          type?: string;
           r?: string;
-          mid?: number;
+          seq?: number;
         };
         if (ev.ev === "restarting") {
           filtered = true;
-        } else if (ev.type === "msg" && typeof ev.r === "string" && typeof ev.mid === "number") {
+        } else if (typeof ev.r === "string" && typeof ev.seq === "number") {
           const prev = sinceMap[ev.r] ?? 0;
-          if (ev.mid > prev) sinceMap[ev.r] = ev.mid;
+          if (ev.seq > prev) sinceMap[ev.r] = ev.seq;
         }
       } catch {
         // 非 JSON 行 (現契約では発生しないが、防御的に素通し)
@@ -424,7 +424,7 @@ Command Options:
                                single sid)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
-  --since <json>               subscribe: per-room last-seen mid, e.g. '{"r7":7}'
+  --since <json>               subscribe: per-room last-seen seq, e.g. '{"r7":7}'
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text

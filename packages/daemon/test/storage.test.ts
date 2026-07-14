@@ -176,6 +176,7 @@ describe("appendEvent: write-failure atomicity (docs/issue/2026-07-10-storage-ap
       // snapshot state right before the simulated disk failure
       const eventsBefore = [...room.events];
       const lastMidBefore = room.lastMid;
+      const lastSeqBefore = room.lastSeq;
 
       const spy = spyOn(fs, "writeSync").mockImplementation(() => {
         throw new Error("ENOSPC: no space left on device");
@@ -189,17 +190,24 @@ describe("appendEvent: write-failure atomicity (docs/issue/2026-07-10-storage-ap
       }
 
       // in-memory mirror must be byte-for-byte identical to the pre-failure snapshot:
-      // no extra event pushed, lastMid not advanced past what's on disk.
+      // no extra event pushed, lastMid/lastSeq not advanced past what's on disk.
+      // (seq is stamped onto the event object BEFORE the write — the one
+      // pre-write mutation appendEvent makes — but the room's own high-water
+      // mark must not move: a stale stamp on a never-persisted event is
+      // harmless, an advanced lastSeq would burn a hole in the sequence.)
       expect(room.events).toEqual(eventsBefore);
       expect(room.lastMid).toBe(lastMidBefore);
+      expect(room.lastSeq).toBe(lastSeqBefore);
 
       // the daemon keeps running after the failure (no restart): a subsequent
       // successful append must continue from the real (unadvanced) lastMid,
-      // not skip a "lost" mid or collide with one already assigned.
+      // not skip a "lost" mid or collide with one already assigned. Same for
+      // seq: the retry reuses the failed attempt's number, leaving no gap.
       const nextMid = room.lastMid + 1;
       appendEvent(room, { type: "msg", mid: nextMid, from: "a1", ts, msg: "recovered" });
       expect(nextMid).toBe(lastMidBefore + 1);
       expect(room.lastMid).toBe(lastMidBefore + 1);
+      expect(room.lastSeq).toBe(lastSeqBefore + 1);
       closeRoom(room);
     } finally {
       cleanup();

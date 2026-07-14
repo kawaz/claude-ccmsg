@@ -520,18 +520,62 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
 }
 
 /**
+ * `since_seq` value validity (DR-0016 §2.5): must be a finite non-negative
+ * number. A room's `since_seq` entry reaches here straight from
+ * `JSON.parse(line) as Request` with no schema validation upstream, so a
+ * malformed/malicious value (string, negative, NaN, Infinity) is a real
+ * possibility, not just a type-checker formality. An invalid value is treated
+ * as "no cursor for this room" — safe side is full backlog replay (duplicate
+ * delivery), never an out-of-range array/loop hazard.
+ */
+function isValidSeqCursor(v: number | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0;
+}
+
+/**
  * Initial/backlog delivery of a room to one subscriber.
- * - with sinceMid: positional delta — everything after the msg with that mid (BBS replay).
- * - without: present member state + title/link events + the last N=50 msgs (join snapshot);
- *   a user-role subscriber's conn gets every msg instead of just the last 50 (issue
- *   2026-07-12-peers-live-update-protocol's sibling change — the cap only protects an
- *   agent session's context budget).
+ * - with sinceSeq (valid per isValidSeqCursor): positional delta anchored on
+ *   `seq`, which spans EVERY event type (DR-0016) — takes priority over
+ *   sinceMid when both are supplied.
+ * - else with sinceMid: positional delta — everything after the msg with that mid
+ *   (BBS replay, msg-only cursor, old-client compat).
+ * - without either: present member state + title/link events + the last N=50 msgs
+ *   (join snapshot); a user-role subscriber's conn gets every msg instead of just
+ *   the last 50 (issue 2026-07-12-peers-live-update-protocol's sibling change —
+ *   the cap only protects an agent session's context budget).
  * suppressAuthorId drops the author's own just-posted msg from their snapshot (echo rule).
- * Both paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
+ * All paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
  * offline member reconnecting via since-replay must not see a `to` msg that excluded
  * them any more than a live subscriber would.
  */
-function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId?: string): void {
+function sendBacklog(
+  conn: Conn,
+  room: Room,
+  sinceMid?: number,
+  suppressAuthorId?: string,
+  sinceSeq?: number,
+): void {
+  if (isValidSeqCursor(sinceSeq)) {
+    // Anchoring on "last event with seq <= sinceSeq" is correct at both ends:
+    // a caught-up client (sinceSeq >= room.lastSeq) gets nothing, a client
+    // whose cursor predates the room's start gets everything. Every event in
+    // room.events carries a seq by this point (loadRoom backfills legacy rows,
+    // appendEvent stamps new ones — DR-0016 §2.1/§2.2), so this is a plain
+    // positional scan, not a search over possibly-undefined values.
+    let start = 0;
+    for (let i = 0; i < room.events.length; i++) {
+      const ev = room.events[i]!;
+      if (ev.seq !== undefined && ev.seq <= sinceSeq) start = i + 1;
+    }
+    for (let i = start; i < room.events.length; i++) {
+      const ev = room.events[i]!;
+      // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
+      if (isSuppressedForBroadcastStream(room, ev)) continue;
+      if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
+      writeDelivered(conn, room, ev);
+    }
+    return;
+  }
   if (sinceMid !== undefined) {
     // resume just after the last msg the client has already seen. Anchoring on
     // "last msg with mid <= sinceMid" is correct at both ends: a caught-up client
@@ -647,6 +691,7 @@ function createRoom(
     file: `${daemon.paths.roomsDir}/${id}.jsonl`,
     events: [],
     lastMid: 0,
+    lastSeq: 0,
     createdAt: Date.now(),
     // broadcast rooms are always dedup-exempt regardless of the caller's request
     // — multiple broadcasts with the same member set (dev / debug / ...) are
@@ -1225,7 +1270,8 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       for (const room of daemon.rooms.values()) {
         if (!subscriberSeesRoom(conn, room)) continue;
         const sinceMid = req.since?.[room.id];
-        sendBacklog(conn, room, sinceMid);
+        const sinceSeq = req.since_seq?.[room.id];
+        sendBacklog(conn, room, sinceMid, undefined, sinceSeq);
       }
       // agents polling (DR-0009-agents addendum) only ever runs while a user-role
       // subscriber is connected — a session subscribing never starts it.

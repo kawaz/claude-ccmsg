@@ -804,19 +804,19 @@ describe("createWsClient agents/ping (U1)", () => {
   });
 
   // kawaz 2026-07-14 webui reload bug: after a page reload the SPA store is
-  // fresh empty, but the `since` cursor persisted in localStorage still points
-  // at "we've seen up to mid N". Forwarding it makes the daemon replay only
-  // msgs after N, so every RoomView opened with an empty scrollback (past
-  // history never delivered). Reload is distinguished from an in-page
+  // fresh empty, but the `since_seq` cursor persisted in localStorage still
+  // points at "we've seen up to seq N". Forwarding it makes the daemon replay
+  // only events after N, so every RoomView opened with an empty scrollback
+  // (past history never delivered). Reload is distinguished from an in-page
   // reconnect by state emptiness: a fresh store means we need the full
   // backlog; a store with rooms means BBS delta replay is correct/cheap
   // (mirrors the cli reconnect.test.ts contract for daemon-restart
-  // transparency, which relies on `since` on reconnect).
-  test("onOpen omits `since` from subscribe when the store has no rooms (fresh reload)", async () => {
+  // transparency, which relies on `since_seq` on reconnect).
+  test("onOpen omits `since_seq` from subscribe when the store has no rooms (fresh reload)", async () => {
     const actions: Action[] = [];
     // Persisted cursor from a pre-reload session — must be ignored while the
     // store is empty.
-    storage["ccmsg.since"] = JSON.stringify({ r1: 5 });
+    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
     const handle = createWsClient(
       (a) => actions.push(a),
       () => initialState(),
@@ -833,7 +833,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] })); // rooms
     await tick();
 
-    // 3rd request is subscribe — must not carry `since` since the store is empty.
+    // 3rd request is subscribe — must not carry `since_seq` since the store is empty.
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
     expect(subscribeReq).toEqual({ op: "subscribe" });
   });
@@ -842,11 +842,11 @@ describe("createWsClient agents/ping (U1)", () => {
   // dispatches rooms/loaded, so any getState() read *after* that point sees a
   // non-empty rooms map even on a fresh reload. The fresh/reload distinction
   // has to be captured at t0 (before hello runs), not right before subscribe;
-  // otherwise the reload would look like a reconnect and `since` would be
+  // otherwise the reload would look like a reconnect and `since_seq` would be
   // sent — exactly the bug this file's fresh-reload test aims to prevent.
-  test("onOpen decides `since` at handshake start, not after `rooms` repopulates the store", async () => {
+  test("onOpen decides `since_seq` at handshake start, not after `rooms` repopulates the store", async () => {
     const actions: Action[] = [];
-    storage["ccmsg.since"] = JSON.stringify({ r1: 5 });
+    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
     // Wire dispatch into a real store so the `rooms` reply below actually
     // repopulates `state.rooms` (mirroring runtime), and read spaHasState
     // through that store.
@@ -879,7 +879,7 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    // Must be the fresh-reload shape (no `since`), because the store was
+    // Must be the fresh-reload shape (no `since_seq`), because the store was
     // empty at handshake start even though rooms/loaded has since filled it.
     expect(subscribeReq).toEqual({ op: "subscribe" });
     // Sanity: state really did get repopulated by rooms/loaded — a getState()
@@ -888,9 +888,9 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(store.getState().rooms.size).toBe(1);
   });
 
-  test("onOpen sends `since` on subscribe when the store retained rooms (in-page reconnect)", async () => {
+  test("onOpen sends `since_seq` on subscribe when the store retained rooms (in-page reconnect)", async () => {
     const actions: Action[] = [];
-    storage["ccmsg.since"] = JSON.stringify({ r1: 5 });
+    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
     // A non-empty rooms map simulates an in-page reconnect: the SPA disconnected
     // (transient network drop, daemon restart) but the store wasn't wiped.
     const stateWithRoom = {
@@ -929,7 +929,7 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    expect(subscribeReq).toEqual({ op: "subscribe", since: { r1: 5 } });
+    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
   });
 
   test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {
