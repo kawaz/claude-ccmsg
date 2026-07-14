@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AttachmentUploadResponse } from "@ccmsg/protocol";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -14,6 +13,7 @@ import {
   type ComposerAttachment,
 } from "./composer-attachments.ts";
 import { ComposerAttachments } from "./ComposerAttachments.tsx";
+import { uploadAttachment } from "./composer-upload.ts";
 
 /** Composer 入力欄の上限行数 (これを超えたら textarea 内スクロールに切替)。
  * 1 行あたり CSS 側 `.composer textarea` の line-height 相応 (グローバル body
@@ -64,45 +64,6 @@ function autosizeTextarea(el: HTMLTextAreaElement, maxHeightRem: number): void {
   el.style.height = "auto";
   const next = Math.min(el.scrollHeight, maxPx);
   el.style.height = `${next}px`;
-}
-
-/** DR-0015 §2.2 attachment upload. Uses XHR because `fetch` has no public
- * upload-progress hook — `xhr.upload.onprogress` is the only cross-browser
- * way to surface bytes-sent as a percentage on the composer chip. Resolves
- * with the daemon's `AttachmentUploadResponse`; rejects with a message on
- * non-2xx or transport errors so the caller can flip the entry to
- * status="error" + surface it in the chip. */
-function uploadAttachment(
-  file: File,
-  onProgress: (percent: number) => void,
-): Promise<AttachmentUploadResponse> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append("file", file);
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/attachment", true);
-    xhr.responseType = "json";
-    xhr.upload.onprogress = (e) => {
-      // total may be 0 on some browsers when Content-Length can't be
-      // computed; clamp to 0-100 and only report meaningful values.
-      if (!e.lengthComputable || e.total === 0) return;
-      onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        const body = xhr.response as AttachmentUploadResponse | null;
-        if (body && body.ok) resolve(body);
-        else reject(new Error(`unexpected response body: ${xhr.responseText}`));
-      } else {
-        // 413 = size cap、400 = invalid form、500 = write failure。error msg に
-        // status を含めて chip の tooltip に載せる。
-        reject(new Error(`HTTP ${xhr.status}: ${xhr.responseText || xhr.statusText}`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("upload transport error"));
-    xhr.onabort = () => reject(new Error("upload aborted"));
-    xhr.send(form);
-  });
 }
 
 export function Composer({
