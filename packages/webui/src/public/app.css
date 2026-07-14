@@ -255,6 +255,15 @@ body {
   color: var(--accent-fg);
 }
 
+/* 選択中セッション行の時間表示 (kawaz r15 mid=11、2026-07-14): 通常状態は
+ * fg-muted + opacity:0.65 でグレーになっているが、accent 背景の上では
+ * コントラスト不足で「ほぼ読めない」。他の row 内テキストと同じ accent-fg
+ * に上書きし、opacity は 0.85 (完全不透明だと存在感が強すぎるので若干残す)。 */
+.session-row.active .session-idle {
+  color: var(--accent-fg);
+  opacity: 0.85;
+}
+
 .session-line1 {
   display: flex;
   align-items: center;
