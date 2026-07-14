@@ -1928,19 +1928,6 @@ button.session-tab {
   border-radius: 0.2rem;
 }
 
-.one-on-one-close {
-  background: none;
-  border: none;
-  color: var(--fg-muted);
-  font-size: 1.1rem;
-  cursor: pointer;
-  padding: 0 0.25rem;
-}
-
-.one-on-one-close:hover {
-  color: var(--fg);
-}
-
 .one-on-one-textarea {
   resize: vertical;
   min-height: 5rem;

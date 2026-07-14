@@ -19,7 +19,7 @@
 //    で行う (title 文字列一致は typo に弱い)" rule.
 //  - When none exists, `createOneOnOneRoom` opens one with title
 //    `"<repo> 1on1 <sid8>"` (§4.4), then posts the draft to the fresh room.
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState, RoomState } from "../store.ts";
 
@@ -197,6 +197,35 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     setError(null);
   }, []);
 
+  // フォーム外タップで閉じる (kawaz r15 mid=2、2026-07-14)。× ボタンは
+  // 廃止して、パネル外の任意クリックで close する UX に統一。open 中だけ
+  // listener を張る (閉じてる間は無駄 listener を避ける)。
+  // - `mousedown` (`click` でなく) を選ぶのは、テキスト選択 drag が panel
+  //   内から panel 外にはみ出したときに click.target が panel 外扱いになって
+  //   意図しない close を起こす事故を避けるため。mousedown なら drag 開始時点
+  //   の target が確定していて、そこが panel 外かどうかで単純判定できる
+  // - `touchstart` も同時に張ってモバイルで動くようにする (iOS Safari は
+  //   click 委譲より touch event の方が早く発火する)
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const isOutside = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Node)) return false;
+      const panel = panelRef.current;
+      if (!panel) return false;
+      return !panel.contains(target);
+    };
+    const onPointer = (e: MouseEvent | TouchEvent) => {
+      if (isOutside(e.target)) handleClose();
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("touchstart", onPointer);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("touchstart", onPointer);
+    };
+  }, [open, handleClose]);
+
   const handleSubmit = useCallback(async () => {
     const body = text.trim();
     if (body === "") return;
@@ -254,14 +283,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   }
 
   return (
-    <div class="one-on-one-panel" role="dialog" aria-label="1on1 priv composer">
+    <div class="one-on-one-panel" role="dialog" aria-label="1on1 priv composer" ref={panelRef}>
       <header class="one-on-one-panel-header">
         <span>
           1on1 to <code>{sid.slice(0, 8)}</code>
         </span>
-        <button type="button" class="one-on-one-close" onClick={handleClose} aria-label="閉じる">
-          ×
-        </button>
       </header>
       <textarea
         class="one-on-one-textarea"
