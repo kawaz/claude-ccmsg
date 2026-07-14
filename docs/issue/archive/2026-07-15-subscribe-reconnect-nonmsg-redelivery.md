@@ -1,6 +1,6 @@
 ---
 title: subscribe 再接続時、msg 以外の StorageEvent (archive/title/kind/next/prev) が重複再配信される (mid ベース since cursor が msg 専用のため)
-status: wip
+status: resolved
 category: bug
 created: 2026-07-15T00:17:06+09:00
 last_read: 2026-07-15T02:52:18+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-15T02:35:08+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-15T04:37:22+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0016","implemented","done:v0.33.0 でrelease。全 StorageEvent に daemon 採番 seq を追加し、subscribe 再接続 cursor を msg 専用 mid から全 event 型横断の since_seq に拡張。旧 jsonl は load 時 in-memory backfill、旧 client は since (mid) fallback で互換維持。event-seq.test.ts に受け入れテスト6本追加 (812 tests green)。commit d3760397"]
 blocked_by:
 origin: kuu (部外者セッション) からのフィードバック起票
 ---
