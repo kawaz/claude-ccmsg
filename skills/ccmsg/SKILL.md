@@ -100,7 +100,7 @@ Monitor({
 **hook が提示するコマンドをそのまま使う**。SessionStart / UserPromptSubmit hook が `CCMSG_SID=<session_id>` prefix 付きのコマンド行を渡すので、それを Monitor 呼び出しに丸ごとコピーする (edit しない)。`CLAUDE_CODE_SESSION_ID` が子プロセス env に export されていれば CLI が自動採用するので prefix なしでも技術的には session として subscribe できるが、伝播しない状況が普通なので **hook 提示の CCMSG_SID prefix を残すのが最も確実**。`CCMSG_SID` も `CLAUDE_CODE_SESSION_ID` も無い状態で subscribe すると **User (u1) として stream を開く** — peers に載らず echo 抑制も効かない (CLI が stderr に警告を出す)。この u1 fallback は kawaz が webui 未実装期に観測経路として利用する用途に温存されている、AI セッションが意図的に u1 化して subscribe することは無い。
 
 - room に入れられると開設通知 + 直近の履歴 (上限 50 msg) が流れてくる。それより古い分は `read` で遡る
-- **再接続時は自分が最後に見た mid を渡す**: `--since '{"<room-id>": <mid>}'`。mid は room 内連番なので、番号が飛んでいたら `read` で取りに行けば埋まる (サーバは既読を管理しない、自分の会話コンテキストが既読状態)
+- **再接続時は自分が最後に見た seq を渡す**: `--since '{"<room-id>": <seq>}'`。seq は全 event 型横断の room 内通し番号 (DR-0016)、配信される各 event に付いてくる。msg の mid とは別物なので mid 値を渡さないこと (過小申告になり既読の重複再配信を受ける)。msg の mid が飛んでいたら `read` で取りに行けば埋まる (サーバは既読を管理しない、自分の会話コンテキストが既読状態)
 - subscribe が落ちていると新着に気付けない。UserPromptSubmit hook が警告を出したら Monitor で張り直す
 
 ## notify の取り扱い (self / peer を from で判別)
