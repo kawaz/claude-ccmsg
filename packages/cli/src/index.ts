@@ -241,6 +241,14 @@ function output(res: { ok?: boolean } & Record<string, unknown>): number {
     process.stderr.write(line);
     return 1;
   }
+  // DR-0013 §2.9: daemon が付けた non-fatal warning (現状は broadcast の
+  // --members 無視) は stderr に別行で流す。stdout の JSON にも `warning` は
+  // 残しているので、pipeline consumer は JSON 側だけを見ていれば従来通り動く
+  // — stderr 側は kawaz や AI が対話中に「その --members は意味がなかった」と
+  // 気付くための誘導。
+  if (res && typeof res.warning === "string" && res.warning !== "") {
+    process.stderr.write(`ccmsg: ${res.warning}\n`);
+  }
   process.stdout.write(line);
   return 0;
 }
@@ -384,7 +392,8 @@ Usage:
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
   create-room                  Open a room with peers (--members, --msg, --title,
-                               --exclude-self to keep the caller out of the room)
+                               --exclude-self to keep the caller out of the room,
+                               --kind broadcast for a session-broadcast room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
   subscribe                    Stream room events as jsonl to stdout (--since)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
@@ -407,6 +416,9 @@ Command Options:
                                (do NOT pass 'u1' — the User admin is always implicit)
   --exclude-self               create-room: don't auto-add the caller session as a
                                member (observer/setup use case; default is include)
+  --kind <kind>                create-room: 'normal' (default) or 'broadcast'
+                               (DR-0013: auto-populated session broadcast; --members
+                               ignored, agent posts must include u1 in --to)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
   --since <json>               subscribe: per-room last-seen mid, e.g. '{"r7":7}'
@@ -527,12 +539,23 @@ async function main(): Promise<void> {
       // the room they create). The rare observe-without-join case (session
       // watching a room they set up between other peers) uses --exclude-self.
       const excludeSelf = opts["exclude-self"] === true;
+      // DR-0013: --kind broadcast で broadcast room を開設。指定なしは "normal"
+      // と同じ。値検証は CLI 側で先に (typo で silently normal room が立つのは
+      // 意図と乖離するので早めに落とす)。
+      const kindRaw = str(opts, "kind");
+      if (kindRaw !== undefined && kindRaw !== "normal" && kindRaw !== "broadcast") {
+        process.stderr.write(
+          `ccmsg create-room: --kind must be 'normal' or 'broadcast' (got '${kindRaw}')\n`,
+        );
+        process.exit(1);
+      }
       await runOnce(identity, {
         op: "create_room",
         members,
         ...(excludeSelf ? { include_self: false } : {}),
         ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
         ...(str(opts, "title") ? { title: str(opts, "title") } : {}),
+        ...(kindRaw === "broadcast" ? { kind: "broadcast" as const } : {}),
       });
       return;
     }

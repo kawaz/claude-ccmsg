@@ -638,6 +638,74 @@ describe("ccmsg CLI end-to-end", () => {
   }, 30000);
 });
 
+describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
+  // 何を保証するか (§4.3 + §2.1): `--kind broadcast` を渡すと broadcast room が
+  // 開設され、rooms 出力に kind:"broadcast" が返る (通常 room は kind 省略)。
+  // 呼び出し元 sid の member 保持は long-running session 前提なので (CLI 単発は
+  // exit 時に auto-leave が走る = §2.2)、ここでは検証せず daemon 側 test に譲る。
+  test("--kind broadcast は broadcast room を開設し rooms に kind が現れる", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--kind", "broadcast"], env)).out,
+      ) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { id: string; kind?: string }[];
+      };
+      const room = rooms.rooms.find((r) => r.id === created.room)!;
+      expect(room.kind).toBe("broadcast");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (§2.9 「明示 `--members` は 無視 + stderr warning で受理」):
+  // --members を broadcast と一緒に渡すと reject にはならず、無視 + JSON の
+  // warning フィールド + stderr の 1 行 (CLI の output() が echo する)。
+  test("--kind broadcast + --members は無視 + stderr に warning が echo される", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(
+        ["--sid", "S1", "create-room", "--kind", "broadcast", "--members", "S2,S3"],
+        env,
+      );
+      expect(res.code).toBe(0); // 非致命的 warning、exit は 0
+      const created = JSON.parse(res.out) as { ok: boolean; room: string; warning?: string };
+      expect(created.ok).toBe(true);
+      expect(created.warning).toBe(
+        "--members is ignored for broadcast rooms (members are auto-populated)",
+      );
+      expect(res.err).toContain("--members is ignored for broadcast rooms");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: `--kind` の値検証は CLI 側で早期に落とす (typo で "boadcast"
+  // 等が silently normal room を立てる回帰を防ぐ)。daemon には接続しない。
+  test("--kind に不正値を渡すと exit 非零 + stderr に案内", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(
+        ["--sid", "S1", "create-room", "--kind", "boadcast"], // typo
+        env,
+      );
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("--kind must be 'normal' or 'broadcast'");
+      expect(res.out).toBe("");
+      // daemon には接続しないこと (前段で早期 reject)
+      const st = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(st.running).toBe(false);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+});
+
 describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   // 何を保証するか: 人間が PATH の ccmsg の版を確認する手段。daemon には触らない
   // (DR-0007 §3 の通り、自己更新の判定にはこの経路を使わない — ここは CLI 衛生のみ)。
