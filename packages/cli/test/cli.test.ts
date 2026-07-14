@@ -694,7 +694,7 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
         env,
       );
       expect(res.code).not.toBe(0);
-      expect(res.err).toContain("--kind must be 'normal' or 'broadcast'");
+      expect(res.err).toContain("--kind must be 'normal', 'broadcast', or '1on1'");
       expect(res.out).toBe("");
       // daemon には接続しないこと (前段で早期 reject)
       const st = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };

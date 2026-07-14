@@ -393,7 +393,8 @@ Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
   create-room                  Open a room with peers (--members, --msg, --title,
                                --exclude-self to keep the caller out of the room,
-                               --kind broadcast for a session-broadcast room)
+                               --kind broadcast for a session-broadcast room,
+                               --kind 1on1 --members <sid> for a webui 1on1 priv room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
   subscribe                    Stream room events as jsonl to stdout (--since)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
@@ -416,9 +417,11 @@ Command Options:
                                (do NOT pass 'u1' — the User admin is always implicit)
   --exclude-self               create-room: don't auto-add the caller session as a
                                member (observer/setup use case; default is include)
-  --kind <kind>                create-room: 'normal' (default) or 'broadcast'
-                               (DR-0013: auto-populated session broadcast; --members
-                               ignored, agent posts must include u1 in --to)
+  --kind <kind>                create-room: 'normal' (default), 'broadcast', or '1on1'
+                               (DR-0013 broadcast: auto-populated session broadcast;
+                               --members ignored, agent posts must include u1 in --to.
+                               DR-0014 1on1: u1 + one session; --members must be a
+                               single sid)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
   --since <json>               subscribe: per-room last-seen mid, e.g. '{"r7":7}'
@@ -539,23 +542,36 @@ async function main(): Promise<void> {
       // the room they create). The rare observe-without-join case (session
       // watching a room they set up between other peers) uses --exclude-self.
       const excludeSelf = opts["exclude-self"] === true;
-      // DR-0013: --kind broadcast で broadcast room を開設。指定なしは "normal"
-      // と同じ。値検証は CLI 側で先に (typo で silently normal room が立つのは
-      // 意図と乖離するので早めに落とす)。
+      // DR-0013 broadcast / DR-0014 1on1: --kind で room の性格を切替える。
+      // 指定なしは "normal"。値検証は CLI 側で先に (typo で silently normal room
+      // が立つのは意図と乖離するので早めに落とす)。1on1 の member 個数チェックは
+      // daemon 側の one_on_one_requires_single_member に任せる (CLI で二重に持つと
+      // ドリフトするため)。
       const kindRaw = str(opts, "kind");
-      if (kindRaw !== undefined && kindRaw !== "normal" && kindRaw !== "broadcast") {
+      if (
+        kindRaw !== undefined &&
+        kindRaw !== "normal" &&
+        kindRaw !== "broadcast" &&
+        kindRaw !== "1on1"
+      ) {
         process.stderr.write(
-          `ccmsg create-room: --kind must be 'normal' or 'broadcast' (got '${kindRaw}')\n`,
+          `ccmsg create-room: --kind must be 'normal', 'broadcast', or '1on1' (got '${kindRaw}')\n`,
         );
         process.exit(1);
       }
+      const kindPayload =
+        kindRaw === "broadcast"
+          ? { kind: "broadcast" as const }
+          : kindRaw === "1on1"
+            ? { kind: "1on1" as const }
+            : {};
       await runOnce(identity, {
         op: "create_room",
         members,
         ...(excludeSelf ? { include_self: false } : {}),
         ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
         ...(str(opts, "title") ? { title: str(opts, "title") } : {}),
-        ...(kindRaw === "broadcast" ? { kind: "broadcast" as const } : {}),
+        ...kindPayload,
       });
       return;
     }
