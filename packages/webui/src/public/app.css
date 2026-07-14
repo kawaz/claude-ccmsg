@@ -78,6 +78,23 @@ body {
   cursor: pointer;
 }
 
+/* SPA 内リロードボタン (App.tsx、kawaz 2026-07-14 RLD-Q1=a)。iOS PWA でブラウザ
+ * リロードが無い時のフォールバック。ConnectionStatus の隣に配置、他 topbar
+ * ボタン (#menu-toggle) と同じ pill 系スタイル。&#8635; (↻) は system font
+ * が表現する回転矢印。 */
+#app-reload {
+  background: none;
+  border: none;
+  font-size: 1.15rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+#app-reload:hover {
+  color: var(--fg);
+}
+
 .status {
   font-size: 0.8rem;
   padding: 0.15rem 0.5rem;
