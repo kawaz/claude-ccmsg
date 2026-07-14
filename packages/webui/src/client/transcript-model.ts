@@ -828,33 +828,32 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   }
   // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
   // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列
-  // (kawaz r15 mid=10、2026-07-14)。ここで拾いたいのは **kawaz が作業中に
-  // タイプした純粋な発話**だけ — その場合 user turn として parse し直して
-  // 緑・右寄せの吹き出しに乗せる。
-  //
-  // 一方 content が **task-notification / peer-message / [SYSTEM NOTIFICATION]
-  // wrapper の system 由来メッセージ** だった場合は user turn 化しない:
-  // その event は既に Monitor tool_result 側 (通常の type:"user" 経路) か
-  // 直接注入で transcript に載っており、ここで重ねて拾うと同じ ccmsg msg が
-  // CcmsgBubble に 2 個並ぶ (kawaz r15 mid=17、2026-07-14 の実観測)。system
-  // wrapper 系は fall-through させて MetaLine (queue-operation の 1 行 summary)
-  // に落とし、本命の event 描画はもう片方の経路だけに任せる。
+  // (kawaz r15 mid=10、2026-07-14)。content 冒頭のプレフィクスに応じて
+  // classifyUserMessage 相当の再分類を掛ける — system wrapper (task-notification /
+  // peer-message / [SYSTEM NOTIFICATION]) の場合も **常に user turn として
+  // parse する**: kawaz が作業中 busy のときは task-notification 経路 (Monitor
+  // tool_result) が届かず queue-operation enqueue のみが transcript に載る
+  // ケースがある (kawaz r15 mid=21、2026-07-14 の実観測)。両経路とも CcmsgBubble
+  // に流し、重複表示は Timeline.tsx の render 側 (r, mid) 二重登場除去で処理
+  // する (v0.32.1 で system wrapper を meta に fall through させた fix は
+  // "作業中のみ enqueue で届いた msg が tl に出ない" 副作用を招いたため撤回)。
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     const content = o.content;
-    const isSystemWrapper =
-      content.startsWith("<task-notification>") ||
-      content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]") ||
-      content.startsWith("Another Claude session sent a message:");
-    if (!isSystemWrapper) {
-      return {
-        kind: "turn",
-        ts,
-        role: "user",
-        segments: [{ kind: "text", role: "user", text: content }],
-        userMessageKind: "user-prompt",
-      };
+    let kind: UserMessageKind = "user-prompt";
+    if (content.startsWith("<task-notification>")) {
+      kind = "task-notification";
+    } else if (content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
+      kind = content.includes("<task-notification>") ? "task-notification" : "unknown-meta";
+    } else if (content.startsWith("Another Claude session sent a message:")) {
+      kind = "peer-message";
     }
-    // system wrapper のときは以下の meta return に fall through
+    return {
+      kind: "turn",
+      ts,
+      role: "user",
+      segments: [{ kind: "text", role: "user", text: content }],
+      userMessageKind: kind,
+    };
   }
   return {
     kind: "meta",

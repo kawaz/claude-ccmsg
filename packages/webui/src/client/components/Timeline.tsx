@@ -987,57 +987,71 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           {parsed.length === 0 ? (
             <p class="tl-empty">(空の transcript)</p>
           ) : (
-            groups.map((group, i) => {
-              if (group.kind === "fold") {
-                return (
-                  <FoldGroup
-                    key={group.entries[0]!.offset}
-                    entries={group.entries}
-                    translatorAvailable={translatorAvailable}
-                  />
-                );
-              }
-              const { line, offset } = group;
-              // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-              // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-              // fold group に送るので groups の "entry" 側には来ない) —
-              // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-              // 実データ上も自明に成り立つ。
-              if (line.kind !== "turn") return null;
-              // boundaries[i] は上の useMemo で groups と同じ index で
-              // 計算済み (render のたびの再分類を避けるため)。
-              const boundary = boundaries[i]!;
-              if (boundary === null) return null;
-              switch (boundary.kind) {
-                case "user-prompt":
+            // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
+            // 抽出されるとき (queue-operation enqueue と task-notification 経由の
+            // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
+            // 2026-07-14) の二重表示を避ける。この Set は本 iteration 内でだけ
+            // 変化させる: React/Preact の render は同期 1 pass なので closure
+            // 越しの mutation で問題ないが、次回 render では新規 Set が必要
+            // (前回の Set を持ち越さない) — なので groups.map の直前でリセット
+            // される形にしておく。
+            ((seenCcmsg: Set<string>) =>
+              groups.map((group, i) => {
+                if (group.kind === "fold") {
                   return (
-                    <UserPromptBubble
-                      key={offset}
-                      line={line}
-                      offsetKey={offset}
-                      registerUserTurnRef={registerUserTurnRef}
+                    <FoldGroup
+                      key={group.entries[0]!.offset}
+                      entries={group.entries}
                       translatorAvailable={translatorAvailable}
                     />
                   );
-                case "assistant-response":
-                  return (
-                    <AssistantBubble
-                      key={offset}
-                      line={line}
-                      translatorAvailable={translatorAvailable}
-                    />
-                  );
-                case "ccmsg": {
-                  const rawText = line.segments
-                    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
-                    .map((s) => s.text)
-                    .join("\n");
-                  return boundary.messages.map((m, i) => (
-                    <CcmsgBubble key={`${offset}-${i}`} message={m} rawText={rawText} />
-                  ));
                 }
-              }
-            })
+                const { line, offset } = group;
+                // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                // fold group に送るので groups の "entry" 側には来ない) —
+                // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                // 実データ上も自明に成り立つ。
+                if (line.kind !== "turn") return null;
+                // boundaries[i] は上の useMemo で groups と同じ index で
+                // 計算済み (render のたびの再分類を避けるため)。
+                const boundary = boundaries[i]!;
+                if (boundary === null) return null;
+                switch (boundary.kind) {
+                  case "user-prompt":
+                    return (
+                      <UserPromptBubble
+                        key={offset}
+                        line={line}
+                        offsetKey={offset}
+                        registerUserTurnRef={registerUserTurnRef}
+                        translatorAvailable={translatorAvailable}
+                      />
+                    );
+                  case "assistant-response":
+                    return (
+                      <AssistantBubble
+                        key={offset}
+                        line={line}
+                        translatorAvailable={translatorAvailable}
+                      />
+                    );
+                  case "ccmsg": {
+                    const rawText = line.segments
+                      .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+                      .map((s) => s.text)
+                      .join("\n");
+                    return boundary.messages
+                      .map((m, j) => {
+                        const dedupKey = `${m.room}|${m.ts}|${m.from}|${m.msg}`;
+                        if (seenCcmsg.has(dedupKey)) return null;
+                        seenCcmsg.add(dedupKey);
+                        return <CcmsgBubble key={`${offset}-${j}`} message={m} rawText={rawText} />;
+                      })
+                      .filter((n) => n !== null);
+                  }
+                }
+              }))(new Set<string>())
           )}
         </div>
       )}
