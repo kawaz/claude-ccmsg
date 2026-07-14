@@ -46,8 +46,13 @@ export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
 export const FS_READ_MAX_BYTES = 512 * 1024;
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
- * per request; the viewer pages with byte offsets instead of asking for more. */
-export const TRANSCRIPT_READ_MAX_BYTES = 256 * 1024;
+ * per request; the viewer pages with byte offsets instead of asking for more.
+ * 2 MB ≒ 数千行相当 (kawaz r15 mid=18、2026-07-14: 「初期表示分の tl が
+ * 少なすぎる、5-10 倍出して」の 8 倍相当)。SPA rendering 側は既に fold
+ * group (thinking/tool_use を折り畳み) で見た目を圧縮しているため、生 payload
+ * を増やしても実 UX は「reload 後の older 連打」を大幅減らせる方が体感で
+ * 勝つ、というのが実測ベースの判断。 */
+export const TRANSCRIPT_READ_MAX_BYTES = 2 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
