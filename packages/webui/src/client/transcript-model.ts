@@ -827,18 +827,33 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     return { kind: "turn", ts, role, segments, userMessageKind };
   }
   // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
-  // 積まれた記録」で、`content` field が本物の user 発話文字列 (kawaz r15
-  // mid=10、2026-07-14)。task-notification と同じ JSON 枠折り畳みに落ちて
-  // しまっていたのを、通常の user turn として扱い直して緑・右寄せの吹き出しで
-  // 表示する。dequeue は content を持たないので meta の 1 行 summary のまま
-  // (取り出したイベントを user 発話として二重表示しないため)。
+  // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列
+  // (kawaz r15 mid=10、2026-07-14)。ただしその prompt が **task-notification /
+  // peer-message wrapper の system 由来メッセージだった場合** (kawaz が
+  // 作業中に画面を触ったのではなく、Monitor / teammate 経由の system prompt
+  // が queue に載っただけのケース) までも緑・右寄せ user 吹き出しにすると
+  // task-notification 本文がそのまま user メッセージに化けてしまう
+  // (kawaz r15 mid=13、2026-07-14 の kuu.mbt session で観測)。classifyUserMessage
+  // と同じ前置プレフィクス判定を content 文字列に対して再適用し、判定結果
+  // を userMessageKind に載せる — Timeline 側は既に fold 処理を kind に基づき
+  // 行うので、system 由来なら通常の fold に流れ、本物の user 発話だけが
+  // "user-prompt" として緑吹き出し経路に乗る。
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
+    const content = o.content;
+    let kind: UserMessageKind = "user-prompt";
+    if (content.startsWith("<task-notification>")) {
+      kind = "task-notification";
+    } else if (content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
+      kind = content.includes("<task-notification>") ? "task-notification" : "unknown-meta";
+    } else if (content.startsWith("Another Claude session sent a message:")) {
+      kind = "peer-message";
+    }
     return {
       kind: "turn",
       ts,
       role: "user",
-      segments: [{ kind: "text", role: "user", text: o.content }],
-      userMessageKind: "user-prompt",
+      segments: [{ kind: "text", role: "user", text: content }],
+      userMessageKind: kind,
     };
   }
   return {
