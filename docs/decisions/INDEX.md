@@ -19,3 +19,4 @@
 | [DR-0013](./DR-0013-broadcast-room.md) | Accepted | broadcast room (auto-populated session broadcast) |
 | [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | Proposed | 1on1 room + msg 応答経路 hint (reply_via) |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) |
+| [DR-0016](./DR-0016-storage-event-seq.md) | Accepted | StorageEvent 横断の per-room 連番 `seq` (subscribe 再接続 cursor の全 event 型拡張) |
