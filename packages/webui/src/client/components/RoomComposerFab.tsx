@@ -47,34 +47,26 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
     setOpen(false);
   }, []);
 
-  // フォーム外タップで閉じる (OneOnOneComposer と同じ pattern)。
-  // - `mousedown` を選ぶ理由: click だと panel 内から panel 外へ text 選択
-  //   drag した際に click.target が panel 外扱いになって意図しない close を
-  //   起こす事故を避ける。mousedown なら drag 開始点で判定できる。
-  // - `touchstart` を並列に張るのは iOS Safari で click 委譲より touch event
-  //   の方が早く発火するため。
-  // - **sending 中は listener を張らない** = 外部タップ無視。post の中断リスク
-  //   を avoid。sending が false に戻れば再び listener が張られる。
+  // フォーム外の **click** で閉じる (OneOnOneComposer と同じ pattern、
+  // kawaz r17 mid=8,10,11)。mousedown/touchstart 判定はスクロール目的の
+  // タッチ (指を置いた瞬間) でも閉じてしまい不便なので不可 — click は
+  // tap 完了 (押して離す) でだけ発火し、スクロール gesture では発火しない。
+  // - **sending 中は listener を張らない** = 外部クリック無視。post の中断
+  //   リスクを avoid。sending が false に戻れば再び listener が張られる。
   // - `open === false` の間 (fab 表示中) も張らない — fab クリック自体を
-  //   閉じ扱いする事故を防ぐ。fab は Composer panel の外なので isOutside=true
-  //   になり、open にできない事態を避ける。
+  //   閉じ扱いする事故を防ぐ (open にした click は listener 登録 (re-render
+  //   後) より前のイベントなので二重発火もしない)。
   useEffect(() => {
     if (!open) return;
     if (sending) return;
-    const isOutside = (target: EventTarget | null): boolean => {
-      if (!(target instanceof Node)) return false;
+    const onClick = (e: MouseEvent) => {
       const panel = panelRef.current;
-      if (!panel) return false;
-      return !panel.contains(target);
+      if (!panel || !(e.target instanceof Node)) return;
+      if (!panel.contains(e.target)) closePanel();
     };
-    const onPointer = (e: MouseEvent | TouchEvent) => {
-      if (isOutside(e.target)) closePanel();
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("touchstart", onPointer);
+    document.addEventListener("click", onClick);
     return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("touchstart", onPointer);
+      document.removeEventListener("click", onClick);
     };
   }, [open, sending, closePanel]);
 

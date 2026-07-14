@@ -11,6 +11,7 @@ import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { errorMessage, isMarkdownPath } from "../utils.ts";
+import { loadFilesView, saveFilesView } from "../files-view-store.ts";
 import {
   detectLanguage,
   isHighlightEligible,
@@ -79,11 +80,28 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
   // for one frame before the toggle re-hid itself, which is worse than a
   // small extra click when navigating md→md. HTML preview is deliberately
   // not implemented (see comment on the toggle-button block below).
+  //
+  // 例外 (kawaz r17 mid=5): localStorage に保存された per-sid record
+  // (files-view-store.ts) の path が現 path と一致するなら viewMode を復元
+  // する — タブ切替やリロードで「さっき preview で見ていた md」に戻った時
+  // だけ preview が復活し、別ファイルへの遷移は従来通り "code" に戻る。
+  // 同じ effect 内で record も更新する (復元値を含めた確定値を書くので、
+  // 初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const markdownEligible = path != null && isMarkdownPath(path);
   useEffect(() => {
-    setViewMode("code");
-  }, [path]);
+    if (path === null) return;
+    const saved = loadFilesView(sid);
+    const restored = saved && saved.path === path && isMarkdownPath(path) ? saved.viewMode : "code";
+    setViewMode(restored);
+    saveFilesView(sid, { path, viewMode: restored });
+  }, [sid, path]);
+  // viewMode のユーザ操作は state 更新と同時に record へ書く (effect 監視
+  // でなく操作起点 — 復元由来の setViewMode と書き込みが交錯しないように)。
+  const selectViewMode = (mode: "code" | "preview") => {
+    setViewMode(mode);
+    if (path !== null) saveFilesView(sid, { path, viewMode: mode });
+  };
   useEffect(() => {
     if (!highlightEligible || !res || !lang || !path) return;
     let cancelled = false;
@@ -200,7 +218,7 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
               class={"viewer-mode-btn" + (viewMode === "code" ? " active" : "")}
               role="tab"
               aria-selected={viewMode === "code"}
-              onClick={() => setViewMode("code")}
+              onClick={() => selectViewMode("code")}
             >
               コード
             </button>
@@ -209,7 +227,7 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
               class={"viewer-mode-btn" + (viewMode === "preview" ? " active" : "")}
               role="tab"
               aria-selected={viewMode === "preview"}
-              onClick={() => setViewMode("preview")}
+              onClick={() => selectViewMode("preview")}
             >
               プレビュー
             </button>

@@ -22,8 +22,16 @@
    * ため、両方右下 (--composer-fab-offset) で被らない。 */
   --composer-fab-size: 3.2rem;
   --composer-fab-offset: 1.2rem;
-  --composer-panel-width: min(24rem, calc(100vw - 2rem));
+  /* PC / iPad では 24rem は狭すぎる (kawaz r17 mid=8) — 広め既定。
+   * スマホ幅は 720px breakpoint (下の @media) で従来幅に絞る。 */
+  --composer-panel-width: min(40rem, calc(100vw - 4rem));
   --z-composer: 40;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --composer-panel-width: min(24rem, calc(100vw - 2rem));
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -207,7 +215,12 @@ body {
   color: var(--fg-muted);
 }
 
-#room-list li a {
+/* Room 行の `<li><a>` は #room-list (非アーカイブ) と #room-list-archived
+ * (アーカイブ折り畳み内、同じ RoomRow を render) の両方に現れる — 後者を
+ * セレクタから漏らすとデフォルトの青下線リンクで表示される
+ * (kawaz r17 mid=12 の実観測)。 */
+#room-list li a,
+#room-list-archived li a {
   display: block;
   padding: 0.4rem 0.5rem;
   border-radius: 0.4rem;
@@ -215,15 +228,16 @@ body {
   color: var(--fg);
 }
 
-#room-list li.active a {
+#room-list li.active a,
+#room-list-archived li.active a {
   background: var(--accent);
   color: var(--accent-fg);
 }
 
 /* DR-0012: collapsed "アーカイブ (N)" section at the bottom of the room
- * list, default-closed (no `open` attribute). Rows inside reuse #room-list's
- * `<li><a>` styling verbatim (RoomList.tsx renders the same RoomRow), so
- * only the `<details>`/`<summary>` chrome needs its own rules here. */
+ * list, default-closed (no `open` attribute). Rows inside render the same
+ * RoomRow as #room-list (styled by the shared selectors above), so only the
+ * `<details>`/`<summary>` chrome needs its own rules here. */
 #room-list-archived {
   margin-top: 0.5rem;
   font-size: 0.8rem;
@@ -408,7 +422,8 @@ body {
   vertical-align: 0.05em;
 }
 
-#room-list li.active a .room-kind-badge {
+#room-list li.active a .room-kind-badge,
+#room-list-archived li.active a .room-kind-badge {
   background: var(--accent-fg);
   color: var(--accent);
 }
@@ -1495,6 +1510,14 @@ button.session-tab {
   background: var(--bg-alt);
 }
 
+/* ccmsg msg 本文 (CcmsgBubble の msg タブ) はチャット様式: 段落内の単一
+ * 改行 (markdown AST の text "\n") をそのまま行分けとして表示する
+ * (kawaz r17 mid=13 — 添付リンク前後の改行が潰れて 1 行に繋がっていた)。
+ * 文書様式の assistant markdown には適用しない。 */
+.tl-ccmsg-msg .md p {
+  white-space: pre-wrap;
+}
+
 .tl-bubble-right .tl-bubble-body {
   border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
   background: var(--user-bubble-bg);
@@ -2039,6 +2062,12 @@ button.session-tab {
   align-items: center;
   gap: 0.3rem;
   min-width: 0;
+}
+
+/* avatar 自身の inline margin-right (6px) と flex gap が二重に効いて
+ * アイコンとリポ名の間が空きすぎる (kawaz r17 mid=7) — gap に一本化。 */
+.one-on-one-target .avatar {
+  margin-right: 0 !important;
 }
 
 .one-on-one-target code {

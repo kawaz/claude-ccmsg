@@ -312,32 +312,24 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     setError(null);
   }, []);
 
-  // フォーム外タップで閉じる (kawaz r15 mid=2、2026-07-14)。× ボタンは
-  // 廃止して、パネル外の任意クリックで close する UX に統一。open 中だけ
-  // listener を張る (閉じてる間は無駄 listener を避ける)。
-  // - `mousedown` (`click` でなく) を選ぶのは、テキスト選択 drag が panel
-  //   内から panel 外にはみ出したときに click.target が panel 外扱いになって
-  //   意図しない close を起こす事故を避けるため。mousedown なら drag 開始時点
-  //   の target が確定していて、そこが panel 外かどうかで単純判定できる
-  // - `touchstart` も同時に張ってモバイルで動くようにする (iOS Safari は
-  //   click 委譲より touch event の方が早く発火する)
+  // フォーム外の **click** で閉じる (kawaz r17 mid=8,10,11、2026-07-14)。
+  // × ボタンは廃止して、パネル外クリックで close する UX (r15 mid=2)。
+  // mousedown/touchstart 判定はスクロール目的のタッチ (指を置いた瞬間) でも
+  // 閉じてしまい不便なので不可 — click は tap 完了 (押して離す) でだけ発火し、
+  // スクロール gesture では発火しない。kawaz 明言「フォーム関連要素以外の
+  // click イベントで閉じて」。open 中だけ listener を張る (閉じてる間は
+  // 無駄 listener を避ける)。
   const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;
-    const isOutside = (target: EventTarget | null): boolean => {
-      if (!(target instanceof Node)) return false;
+    const onClick = (e: MouseEvent) => {
       const panel = panelRef.current;
-      if (!panel) return false;
-      return !panel.contains(target);
+      if (!panel || !(e.target instanceof Node)) return;
+      if (!panel.contains(e.target)) handleClose();
     };
-    const onPointer = (e: MouseEvent | TouchEvent) => {
-      if (isOutside(e.target)) handleClose();
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("touchstart", onPointer);
+    document.addEventListener("click", onClick);
     return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("touchstart", onPointer);
+      document.removeEventListener("click", onClick);
     };
   }, [open, handleClose]);
 

@@ -570,7 +570,14 @@ function CcmsgBubble({ message, rawText }: { message: CcmsgMessage; rawText: str
           </button>
         </div>
         {tab === "msg" ? (
-          <MarkdownView source={message.msg} />
+          // tl-ccmsg-msg: chat 様式の本文なので単一改行を行分けとして見せる
+          // (CSS の white-space: pre-wrap、kawaz r17 mid=13)。markdown AST は
+          // 段落内の改行を text node "\n" のまま保持しており、素の <p> では
+          // 空白に潰れる。文書様式が前提の assistant markdown には波及させない
+          // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
+          <div class="tl-ccmsg-msg">
+            <MarkdownView source={message.msg} />
+          </div>
         ) : (
           <pre class="tl-fold-body">{rawText}</pre>
         )}

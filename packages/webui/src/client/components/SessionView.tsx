@@ -5,7 +5,8 @@
 // switching tabs never refetches what's already loaded.
 import { useEffect, useState } from "preact/hooks";
 import type { AppState, SessionTreeState } from "../store.ts";
-import { sessionHref, timelineHref } from "../locator.ts";
+import { fileHref, sessionHref, timelineHref } from "../locator.ts";
+import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
@@ -38,6 +39,29 @@ export function SessionView({ state }: { state: AppState }) {
   // Files/Timeline's locator-driven behavior (every other tab always matches
   // the URL for the session you just navigated to).
   useEffect(() => setRoomsOpen(false), [sid]);
+
+  // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
+  // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
+  // セッション切替のたびに selectedPath が null に戻る。path なしの Files
+  // locator に居て per-sid の保存 record (files-view-store.ts) があれば、
+  // 保存 path の fileHref へ location.replace で差し替える (replace なのは
+  // 「path なし → 復元後」の中間状態を history に残さないため — back で
+  // 直前の画面に戻れる挙動を維持する)。viewMode の復元は FileViewer 側
+  // (path 一致時のみ) が担う。
+  const selectedPath = sid ? (state.sessionTrees.get(sid)?.selectedPath ?? null) : null;
+  useEffect(() => {
+    if (!sid || state.view !== "session" || selectedPath !== null) return;
+    const saved = loadFilesView(sid);
+    if (saved) location.replace(fileHref(sid, saved.path));
+  }, [sid, state.view, selectedPath]);
+
+  // 保存 record の mount-time sweep (OneOnOneComposer の draft sweep と同じ
+  // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
+  // (空) は比較対象がないので待つ — 以降の peers 増減では再実行しない
+  // (mount あたり 1 回で十分、再訪時にまた走る)。
+  useEffect(() => {
+    if (state.peers.length > 0) cleanupStaleFilesViews(state);
+  }, [state.peers.length]);
 
   if (!sid) {
     return (
