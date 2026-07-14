@@ -5,10 +5,22 @@ import { activeRoomsSorted, relTime, splitRoomsByArchived } from "../utils.ts";
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
+  // DR-0013: broadcast rooms carry a small text badge in the row title. The
+  // badge sits at the left so ellipsis clips the title tail (not the badge)
+  // when the sidebar is narrow; a background color via `.room-kind-badge`
+  // makes it read as a chip in both light and dark themes without invasive
+  // markup. Text-based (not an emoji glyph) so screen readers pronounce it.
   return (
     <li key={room.id} class={active ? "active" : undefined}>
       <a href={roomHref(room.id)}>
-        <span class="room-title">{room.title || room.id}</span>
+        <span class="room-title">
+          {room.kind === "broadcast" && (
+            <span class="room-kind-badge" title="broadcast room (DR-0013)">
+              BC
+            </span>
+          )}
+          {room.title || room.id}
+        </span>
         <span class="room-meta">
           {memberCount} 名 · #{room.lastMid} · {relTime(room.lastTs)}
         </span>

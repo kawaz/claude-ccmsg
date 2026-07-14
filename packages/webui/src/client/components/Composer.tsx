@@ -108,16 +108,30 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
     void send();
   }
 
+  // DR-0013 §2.5 / §4.4: broadcast room では Composer の説明を「配信対象の選択」
+  // 文脈に切り替える。webui は role:"user" (u1) hello で post するため §2.4 の
+  // agent-must-target-u1 制約は適用されず、既存の member chip → mentionTo → to
+  // 配列という配信フィルタ経路 (DR-0011) をそのまま再利用できる。未選択は
+  // 通常 room では「room 全体へ」だが broadcast では「全 active session に個別
+  // 配信」の意図を明示する。
+  const isBroadcast = room.kind === "broadcast";
+  const hint = mentionTo.size
+    ? `→ ${[...mentionTo].map((id) => memberLabel(id, room)).join(", ")}`
+    : isBroadcast
+      ? "broadcast: 全 active session へ (member chip をクリックで個別 session に絞る)"
+      : "room 全体へ (member chip をクリックで mention)";
+  const placeholder = isBroadcast
+    ? "メッセージを入力 (broadcast, ⌘+Enter で送信)"
+    : "メッセージを入力 (⌘+Enter で送信)";
   return (
-    <form class="composer" onSubmit={(e) => void submit(e)}>
-      <div class="composer-mention">
-        {mentionTo.size
-          ? `→ ${[...mentionTo].map((id) => memberLabel(id, room)).join(", ")}`
-          : "room 全体へ (member chip をクリックで mention)"}
-      </div>
+    <form
+      class={isBroadcast ? "composer composer-broadcast" : "composer"}
+      onSubmit={(e) => void submit(e)}
+    >
+      <div class="composer-mention">{hint}</div>
       <textarea
         ref={textareaRef}
-        placeholder="メッセージを入力 (⌘+Enter で送信)"
+        placeholder={placeholder}
         rows={3}
         value={text}
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}

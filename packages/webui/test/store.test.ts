@@ -229,6 +229,68 @@ describe("reducer / rooms/loaded carries archived (DR-0012)", () => {
   });
 });
 
+describe("reducer / broadcast kind (DR-0013)", () => {
+  // 何を保証するか (§4.4 + store.ts の applyProtocolEvent "kind" 分岐):
+  // KindEvent が subscribe stream から届いたら room.kind が反映され、UI 側の
+  // Composer variant / RoomList のバッジ判定が動く。timeline にも event が
+  // 積まれるのは他 display-metadata event (archive / title) と同じ扱い。
+  test("kind event sets room.kind to broadcast and appends to timeline", () => {
+    const state = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { type: "kind", kind: "broadcast", ts: "t", r: "r1" },
+    });
+    const room = state.rooms.get("r1");
+    expect(room?.kind).toBe("broadcast");
+    expect(room?.timeline).toHaveLength(1);
+  });
+
+  // 何を保証するか (§2.1 rooms 応答経由の初期反映): op:"rooms" 応答に
+  // kind:"broadcast" が含まれていれば applyRoomsLoaded で room.kind が
+  // "broadcast" になる。webui の初期 paint (ws.ts の onOpen 内の rooms fetch)
+  // でここが動かないと reload 直後は kind バッジが出ない。
+  test("rooms/loaded seeds room.kind from RoomSummary.kind", () => {
+    const summaries: RoomSummary[] = [
+      { id: "r1", members: [], last_mid: 0, last_ts: null, kind: "broadcast" },
+    ];
+    const state = dispatch(initialState(), { type: "rooms/loaded", rooms: summaries });
+    expect(state.rooms.get("r1")?.kind).toBe("broadcast");
+  });
+
+  // 何を保証するか: kind が省略された RoomSummary は "normal" が既に入って
+  // いれば触らない — archive/title 同型の "if defined" merge。broadcast だと
+  // 分かった room が rooms/loaded の再取得で normal 扱いに戻る回帰を防ぐ。
+  test("rooms/loaded with no kind field leaves an already-known kind untouched", () => {
+    const withKind = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { type: "kind", kind: "broadcast", ts: "t", r: "r1" },
+    });
+    const reloaded = dispatch(withKind, {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [], last_mid: 0, last_ts: null }],
+    });
+    expect(reloaded.rooms.get("r1")?.kind).toBe("broadcast");
+  });
+
+  // 新規 room (create_room から subscribe stream で流れてくる初回 event 群) は
+  // kind → member → msg の順で届く。newRoom の default が "normal" なので、
+  // kind event が来る前に room が構築されていても kind 反映で上書きされる
+  // 経路 (KindEvent が member より先着) を単に確認する。
+  test("newRoom defaults to kind:'normal'", () => {
+    const state = dispatch(initialState(), {
+      type: "protocol-event",
+      event: {
+        type: "msg",
+        mid: 1,
+        from: "u1",
+        ts: "t",
+        msg: "hi",
+        r: "r1",
+      },
+    });
+    expect(state.rooms.get("r1")?.kind).toBe("normal");
+  });
+});
+
 describe("reducer / conn/status", () => {
   // restarting → 再接続状態: daemon 再起動中の ev frame は WS effect 層が
   // 直接この action に正規化する (ws.ts)。reducer 側は connStatus を素通しで

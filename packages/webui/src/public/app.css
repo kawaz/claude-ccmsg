@@ -357,6 +357,32 @@ body {
   opacity: 0.75;
 }
 
+/* DR-0013: broadcast room badge in the sidebar RoomList. Sits to the left of
+ * the title text so ellipsis truncates the title tail (not the badge). Uses
+ * the accent chip that .session-badge already established for the sessions
+ * list — same visual grammar for "this row is a special kind of thing".
+ * `.active a` reverses the row background/foreground; we override so the
+ * badge stays a chip in either state (light/dark and active/inactive). */
+.room-kind-badge {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.35rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  margin-right: 0.25rem;
+  vertical-align: 0.05em;
+}
+
+#room-list li.active a .room-kind-badge {
+  background: var(--accent-fg);
+  color: var(--accent);
+}
+
 #sidebar-backdrop {
   display: none;
 }

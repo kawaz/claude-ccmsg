@@ -14,6 +14,7 @@ import {
   type FsReadResponse,
   type MemberEvent,
   type PeerInfo,
+  type RoomKind,
   type RoomSummary,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
@@ -38,6 +39,10 @@ export interface RoomState {
    * archived. Mirrors RoomSummary.archived / ArchiveEvent — a display-
    * organization flag only, no lifecycle effect on the room itself. */
   archived?: boolean;
+  /** room kind (DR-0013). "broadcast" opens the broadcast Composer variant
+   * (hint + broadcast-target picker) and paints the sidebar row with a
+   * broadcast badge. Absent = "normal" (default at construction below). */
+  kind: RoomKind;
 }
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
@@ -241,6 +246,7 @@ function newRoom(id: string): RoomState {
     timeline: [],
     lastMid: 0,
     lastTs: null,
+    kind: "normal",
   };
 }
 
@@ -299,6 +305,10 @@ function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
     [room, rooms] = withRoom(rooms, summary.id);
     if (summary.title) room = { ...room, title: summary.title };
     if (summary.archived !== undefined) room = { ...room, archived: summary.archived };
+    // DR-0013: broadcast kind reaches the initial paint via the `op:"rooms"`
+    // reply — subsequent creates come through the KindEvent path in
+    // applyProtocolEvent below. Absent = "normal", already the newRoom default.
+    if (summary.kind !== undefined) room = { ...room, kind: summary.kind };
     room = {
       ...room,
       lastMid: summary.last_mid ?? room.lastMid,
@@ -345,6 +355,15 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
       break;
     case "archive":
       room = { ...room, archived: ev.archived, timeline: [...room.timeline, ev], lastTs: ev.ts };
+      break;
+    case "kind":
+      // DR-0013: KindEvent lands in a fresh broadcast room's initial snapshot
+      // (deliverNewRoom → sendBacklog); folding it into room.kind keeps the
+      // sidebar badge and Composer variant live even without an intervening
+      // `op:"rooms"` refresh. lastTs bumped like the other display-metadata
+      // events so the room-list order matches storage.ts's lastTs() at the
+      // moment the new broadcast lands.
+      room = { ...room, kind: ev.kind, timeline: [...room.timeline, ev], lastTs: ev.ts };
       break;
     case "next":
     case "prev":
