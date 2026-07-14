@@ -105,7 +105,27 @@ function uploadAttachment(
   });
 }
 
-export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<string> }) {
+export function Composer({
+  room,
+  mentionTo,
+  onSent,
+  onSendingChange,
+  focusOnOpen,
+}: {
+  room: RoomState;
+  mentionTo: Set<string>;
+  /** UNIF-Q1=b: 送信 (post ok) 完了で親に close を促す (popup 用)。省略時は
+   *  従来の inline 挙動 (親は何も反応しない)。 */
+  onSent?: () => void;
+  /** UNIF-Q1=b: send 中の遷移を親に通知 (popup が外部タップ close を無効化
+   *  するため)。省略時は inline 挙動 (親は sending を関知しない)。 */
+  onSendingChange?: (sending: boolean) => void;
+  /** UNIF-Q1=b: popup が「開いた」タイミングで textarea にフォーカスするための
+   *  カウンタ。値が変わった (前回と異なる) たびに 1 度 focus() する。0 は
+   *  「未 open」sentinel でスキップする — RoomComposerFab 側で fab クリックの
+   *  たびにインクリメントして渡す。 */
+  focusOnOpen?: number;
+}) {
   const { store, ws } = useApp();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -122,6 +142,21 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
     if (!el) return;
     autosizeTextarea(el, COMPOSER_MAX_HEIGHT_REM);
   }, [text]);
+
+  // UNIF-Q1=b: focusOnOpen が変わった (0 でない値 = fab がクリックされた) 時
+  // だけ textarea にフォーカスを移す。inline mode (focusOnOpen 省略) では
+  // 何もしない。値の同一比較で「一度だけ」を担保するので、popup が既に
+  // 開いた状態のまま再 render しても余計な focus 移動は起きない。
+  useEffect(() => {
+    if (focusOnOpen === undefined || focusOnOpen === 0) return;
+    textareaRef.current?.focus();
+  }, [focusOnOpen]);
+
+  // UNIF-Q1=b: sending 遷移を親に通知。popup 側が sending 中の外部タップを
+  // 無視するため。inline mode では onSendingChange 未指定なので no-op。
+  useEffect(() => {
+    onSendingChange?.(sending);
+  }, [sending, onSendingChange]);
 
   /** 添付エントリを一件追加し、XHR upload を開始する。DR-0015 §2.5 の
    *  「選択時 即 upload、直ちに送信はしない」経路。placeholder 挿入は
@@ -237,6 +272,10 @@ export function Composer({ room, mentionTo }: { room: RoomState; mentionTo: Set<
         });
         setText("");
         setAttachments([]);
+        // UNIF-Q1=b: 送信成功で popup を閉じる (inline mode では省略で no-op)。
+        // 失敗時 (res.ok=false) は開いたまま — text/attachments はまだ残って
+        // いるので再送 UI を維持する。
+        onSent?.();
       }
     } finally {
       setSending(false);

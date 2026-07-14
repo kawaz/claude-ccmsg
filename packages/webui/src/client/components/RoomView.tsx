@@ -6,7 +6,7 @@ import { useApp } from "../context.ts";
 import { hasSidDragPayload, parseSidDragPayload } from "../dnd.ts";
 import { MemberChip } from "./MemberChip.tsx";
 import { TimelineItem } from "./TimelineItem.tsx";
-import { Composer } from "./Composer.tsx";
+import { RoomComposerFab } from "./RoomComposerFab.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
 
@@ -193,7 +193,11 @@ export function RoomView({ state }: { state: AppState }) {
           <TimelineItem key={i} event={ev} room={room} />
         ))}
       </div>
-      <Composer room={room} mentionTo={state.mentionTo} />
+      {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer
+       *  を 1on1 と同じ「右下 + fab → floating popup」に統一。inline
+       *  Composer は廃止。attachment / broadcast / mention の全機能は
+       *  RoomComposerFab 内の Composer にそのまま委譲される。 */}
+      <RoomComposerFab room={room} mentionTo={state.mentionTo} />
     </main>
   );
 }
