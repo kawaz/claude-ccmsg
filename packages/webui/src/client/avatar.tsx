@@ -1,3 +1,4 @@
+/** @jsxImportSource preact */
 // 決定論的アバター生成 (identicon 系)。
 //
 // ライブラリ選定メモ (2026-07-11):

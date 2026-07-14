@@ -77,6 +77,17 @@ body {
   font-size: 1rem;
   margin: 0;
   flex: 1;
+  /* TopbarTitle: avatar + テキストの横並び。長い room title / repo 名は
+   * 1 行のまま ellipsis で切る (スマホ幅で topbar が縦に膨れないように)。 */
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#topbar h1 .topbar-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #menu-toggle {
@@ -1371,6 +1382,9 @@ button.session-tab {
 
 .tl-toolbar {
   display: flex;
+  /* スマホ幅でボタンが収まらないときは行を折り返す (ボタン内で文字を
+   * 折り返して縦長に潰れるのを防ぐ — kawaz r17 mid=1、2026-07-14)。 */
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
@@ -1388,6 +1402,9 @@ button.session-tab {
   background: var(--bg);
   color: var(--fg);
   cursor: pointer;
+  /* ラベルはボタン内で折り返さない (折り返しは .tl-toolbar の flex-wrap
+   * がボタン単位で行う)。 */
+  white-space: nowrap;
 }
 
 .tl-toolbar button:disabled {
@@ -2013,6 +2030,21 @@ button.session-tab {
   background: var(--bg-alt);
   padding: 0 0.25rem;
   border-radius: 0.2rem;
+}
+
+/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): avatar とテキストを
+ * 中央揃えで横並びに。長い repo 名は ellipsis。 */
+.one-on-one-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.one-on-one-target code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .one-on-one-textarea {

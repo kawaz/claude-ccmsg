@@ -22,6 +22,8 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState, RoomState } from "../store.ts";
+import { Avatar } from "../avatar.tsx";
+import { lastPathSegment } from "../utils.ts";
 import {
   extractPastedImages,
   hasPendingUpload,
@@ -175,6 +177,10 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // パネルヘッダの宛先ラベル (kawaz r17 mid=1): repo → ws → cwd 末尾 → sid8。
+  const targetPeer = state.peers.find((p) => p.sid === sid);
+  const targetLabel =
+    targetPeer?.repo || targetPeer?.ws || lastPathSegment(targetPeer?.cwd ?? "") || sid.slice(0, 8);
 
   // Mount-time cleanup — depends on peers.length so the sweep waits for the
   // peers list to hydrate (empty on the very first render before ws.ts's
@@ -402,8 +408,14 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   return (
     <div class="one-on-one-panel" role="dialog" aria-label="1on1 priv composer" ref={panelRef}>
       <header class="one-on-one-panel-header">
-        <span>
-          1on1 to <code>{sid.slice(0, 8)}</code>
+        {/* 宛先はセッション ID でなくアイコン + リポ名で示す (kawaz r17
+            mid=1、2026-07-14): sid の 8 桁 hex は人間には識別子として
+            機能しない。identicon (Sidebar と同じ seed=sid) + repo 名なら
+            どのセッション宛か一目で分かる。repo 未 announce のセッション
+            は ws / cwd 末尾 / sid8 に fallback。 */}
+        <span class="one-on-one-target">
+          1on1 to <Avatar seed={sid} size={16} />
+          <code>{targetLabel}</code>
         </span>
       </header>
       <textarea
