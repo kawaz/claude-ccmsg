@@ -120,6 +120,37 @@ push: ci ...
     ccmsg notify --self --text "Monitor で 'just watch' を起動して"
 ```
 
+## broadcast room (DR-0013)
+
+kawaz が「全 active session に一斉送信」したい時に使う **特殊 kind の room**。通常 room との差分は 2 点だけ:
+
+1. **auto-populate**: hello した session が全 broadcast room に自動 join、disconnect で自動 leave。kawaz は member 列挙不要。member/leave イベントは jsonl に残る (監査用) が **subscribe stream には配信しない** — broadcast room で他 session の出入り通知が agent コンテキストを埋めないようにするため
+2. **agent post 制約**: broadcast room 内で agent (role=session) が post するときは `--to u1` (u1 を含む to 配列) が **必須**。違反すると `broadcast_agent_target_required` error で reject される。u1 (User) 発の post は制約なし
+
+### 判別方法
+
+- `rooms` op の応答 (webui backend / CLI 経由) で `kind: "broadcast"` フィールドが返る (通常 room は kind 省略 = normal)
+- CLI の rooms 出力 / webui のルームリストで **BC バッジ** が付く
+
+### AI が broadcast room に post する時
+
+- **必ず `--to u1` 付ける**。相談したい他 session がいれば `--to u1,a3` のように追加できる
+- 「全員に」と言われても agent 発の broadcast (u1 抜きの全員配信) は許可されない。まず u1 に届け、u1 から他 session に配信させる
+- 返信は broadcast room の timeline に集約される (kawaz が webui で見る) — 通常 room と同じ
+
+### kawaz が新規 broadcast room を作る例
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/ccmsg create-room --kind broadcast --title "dev broadcast" --msg "各セッションの状況を教えて"
+```
+
+- `--members` を付けても無視される + stderr に警告 (broadcast は auto-populate なので `--members` は redundant)
+- `--kind broadcast` の CLI は webui backend (u1 発行経路) 前提。CLI から session identity 付きで叩いた場合も broadcast の新設は可能 (auto-populate は同じく全 active session を拾う)
+
+### 使い捨てで良い
+
+「ゴミが溜まったら適宜アーカイブして新規で作る」運用が推奨 (DR-0013 §2.7)。broadcast room の title/next スレも通常 room と同じ archive_room / next_room が使える (次スレの kind も broadcast を継承)。
+
 ## room の運用
 
 - **作り捨てで良い**: 「X と会話して」と言われたら `peers` で相手を探して `create-room`。room はタスク単位の使い捨て、たたむ儀式は不要。明示的に抜けたい時だけ `leave` (通常は放置で構わない)
