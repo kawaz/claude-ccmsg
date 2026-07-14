@@ -15,7 +15,11 @@ import { describe, expect, test } from "bun:test";
 import type { VNode } from "preact";
 import type { Root } from "mdast";
 import { parse } from "@mizchi/markdown";
-import { isSafeUrl, renderMarkdownAst } from "../src/client/markdown-view.tsx";
+import {
+  attachmentUrlFromPath,
+  isSafeUrl,
+  renderMarkdownAst,
+} from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
 
 function isVNode(x: unknown): x is VNode {
@@ -424,5 +428,150 @@ describe("renderMarkdownAst / structural coverage", () => {
     const vnode = renderMarkdownAst(root);
     expect(collect(vnode, (n) => n.type === "p")).toHaveLength(1);
     expect(flattenText(vnode)).toBe("hello world");
+  });
+});
+
+// DR-0015 §2.6 attachment path recognition + rendering. Composer sends
+// message bodies with `[FILE<N>:<name>](<abs path to TMPDIR>)` links; the
+// receiving webui rewrites those absolute paths to the daemon's HTTP endpoint
+// (`/attachment/<basename>`) and, when the extension is an image MIME,
+// upgrades the anchor to an inline <img>. All non-attachment URLs must go
+// through the existing safe-URL / disarming path unchanged — the attachment
+// short-circuit is additive.
+describe("attachmentUrlFromPath (DR-0015 §2.6)", () => {
+  // 何を保証する: TMPDIR path を daemon の GET URL に変換 + 画像拡張子判定。
+  test("matches TMPDIR attachment path, extracts basename, and flags image mime by extension", () => {
+    const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/abc-uuid.png");
+    expect(got).not.toBeNull();
+    expect(got!.url).toBe("/attachment/abc-uuid.png");
+    expect(got!.isImage).toBe(true);
+  });
+
+  // 非画像拡張子は isImage=false — link のまま daemon URL に投げる (webui は
+  // 通常の <a href> で表示、click で inline 表示 or download)。
+  test("non-image extension gets isImage=false but still rewrites the URL", () => {
+    const got = attachmentUrlFromPath("/private/tmp/claude-ccmsg-501/attachment/xyz.pdf");
+    expect(got).not.toBeNull();
+    expect(got!.url).toBe("/attachment/xyz.pdf");
+    expect(got!.isImage).toBe(false);
+  });
+
+  // 拡張子なしの basename (Makefile 等) も daemon URL に変換される。isImage=false
+  // — MIME sniff は daemon 側の職務。
+  test("extension-less basename is still rewritten (isImage=false)", () => {
+    const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/bareuuid");
+    expect(got).not.toBeNull();
+    expect(got!.url).toBe("/attachment/bareuuid");
+    expect(got!.isImage).toBe(false);
+  });
+
+  // 別 uid も TMPDIR path prefix にマッチする (macOS `/private/tmp/claude-ccmsg-1000/...`
+  // 等、Linux/macOS 差分に依存しない挙動を凍結)。
+  test("matches regardless of prefix path segments before /claude-ccmsg-<uid>/", () => {
+    expect(
+      attachmentUrlFromPath("/var/folders/xx/claude-ccmsg-1000/attachment/f.png"),
+    ).not.toBeNull();
+    expect(attachmentUrlFromPath("/claude-ccmsg-501/attachment/f.png")).not.toBeNull();
+  });
+
+  // 非マッチ: 通常の TMPDIR 外 URL、hostile shape、http URL 等はすべて null。
+  test("returns null for non-attachment URLs (http URL / random path / traversal-shaped)", () => {
+    expect(attachmentUrlFromPath("https://example.com/pic.png")).toBeNull();
+    expect(attachmentUrlFromPath("/etc/passwd")).toBeNull();
+    // `attachment/` を含んでも `/claude-ccmsg-` prefix が無ければ非マッチ。
+    expect(attachmentUrlFromPath("/tmp/random/attachment/x.png")).toBeNull();
+    // basename に `/` があれば regex の `[^/]+` に落ちて非マッチ (traversal 防御)。
+    expect(attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/../etc")).toBeNull();
+  });
+
+  // 拡張子は大小文字非依存で判定される (PNG 等の upload に対応)。
+  test("image extension check is case-insensitive", () => {
+    const got = attachmentUrlFromPath("/tmp/claude-ccmsg-501/attachment/uuid.PNG");
+    expect(got!.isImage).toBe(true);
+  });
+});
+
+describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
+  // 何を保証する: link node の URL が TMPDIR attachment path + image 拡張子なら
+  // <img> にアップグレードする。Composer が送る `[FILE1:diagram.png](/tmp/...)`
+  // の受信 rendering ケース。
+  test("image-mime attachment link renders as inline <img> wrapped in <a>", () => {
+    const root: Root = {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "link",
+              url: "/tmp/claude-ccmsg-501/attachment/abc.png",
+              children: [{ type: "text", value: "FILE1:diagram.png" }],
+            },
+          ],
+        },
+      ],
+    };
+    const vnode = renderMarkdownAst(root);
+    const imgs = collect(vnode, (n) => n.type === "img");
+    expect(imgs).toHaveLength(1);
+    // src は daemon の GET endpoint。生の TMPDIR path は browser sandbox 越えで
+    // fetch できないので、そのまま出したら壊れる → GET URL に変換が必須。
+    expect((imgs[0]!.props as { src?: string }).src).toBe("/attachment/abc.png");
+    // alt は link text から抽出 (`FILE1:diagram.png` 表記のまま)。
+    expect((imgs[0]!.props as { alt?: string }).alt).toBe("FILE1:diagram.png");
+    // 親 <a> の href も同じ GET URL — click で開くルートを維持。
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    expect((links[0]!.props as { href?: string }).href).toBe("/attachment/abc.png");
+  });
+
+  // 非画像添付 (pdf 等): <img> にはならず、link のまま daemon URL を href に持つ。
+  test("non-image attachment link renders as plain <a href> to daemon URL, no <img>", () => {
+    const root: Root = {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "link",
+              url: "/tmp/claude-ccmsg-501/attachment/uuid.pdf",
+              children: [{ type: "text", value: "FILE1:notes.pdf" }],
+            },
+          ],
+        },
+      ],
+    };
+    const vnode = renderMarkdownAst(root);
+    expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    expect((links[0]!.props as { href?: string }).href).toBe("/attachment/uuid.pdf");
+    expect(flattenText(links[0])).toBe("FILE1:notes.pdf");
+  });
+
+  // 非 attachment link は既存 (disarming / <a href> 経路) を通る。
+  // attachment 分岐が既存挙動を壊していないことの regression pin。
+  test("non-attachment https link still renders as plain <a> (regression pin for the existing safe-url path)", () => {
+    const root: Root = {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "link",
+              url: "https://example.com/",
+              children: [{ type: "text", value: "outside" }],
+            },
+          ],
+        },
+      ],
+    };
+    const vnode = renderMarkdownAst(root);
+    expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    expect((links[0]!.props as { href?: string }).href).toBe("https://example.com/");
   });
 });

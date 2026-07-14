@@ -39,6 +39,53 @@ import { CodeBlock } from "./components/CodeBlock.tsx";
 // render the link's text without an `href` rather than trust the URL.
 const ALLOWED_URL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
 
+// DR-0015 §2.6 attachment image extensions. Kept as a set (not re-derived
+// from the daemon's MIME table) so this file stays browser-only and doesn't
+// pull the daemon's node-only helpers via cross-package imports. The daemon
+// upload path stores files with the extensions this set filters on, so a
+// mismatch would surface immediately as a broken `<img>` — the failure mode
+// is loud, not silent.
+const ATTACHMENT_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".avif",
+  ".bmp",
+  ".ico",
+]);
+
+/**
+ * DR-0015 §2.6 attachment path recognizer. Given a Markdown link's `url` from
+ * a message body, returns `{url, isImage}` when it points at the daemon's
+ * TMPDIR attachment area (`/…/claude-ccmsg-<uid>/attachment/<basename>`), or
+ * `null` otherwise. The returned `url` is rewritten to the daemon's HTTP
+ * endpoint (`/attachment/<basename>`) — the raw filesystem path a browser
+ * cannot fetch (`file://` is sandbox-blocked) becomes a fetchable
+ * same-origin URL, which the caller renders as either `<img>` (image mime)
+ * or a normal `<a>`.
+ *
+ * The pattern intentionally matches only trailing basenames — one segment,
+ * no slashes — under the `attachment/` directory. Anchoring at the end + the
+ * `[^/]+` guard means a path like `/foo/claude-ccmsg-501/attachment/../etc`
+ * would not match at all (`..` fails the character class), so a hostile
+ * message body can't rewrite arbitrary daemon URLs. The daemon's own GET
+ * route does its own uuid/ext re-validation regardless.
+ */
+export function attachmentUrlFromPath(url: string): { url: string; isImage: boolean } | null {
+  const m = /\/claude-ccmsg-[^/]+\/attachment\/([^/]+)$/.exec(url);
+  if (!m) return null;
+  const basename = m[1]!;
+  const dot = basename.lastIndexOf(".");
+  const ext = dot >= 0 ? basename.slice(dot).toLowerCase() : "";
+  return {
+    url: `/attachment/${basename}`,
+    isImage: ATTACHMENT_IMAGE_EXTENSIONS.has(ext),
+  };
+}
+
 /**
  * True if `url` is safe to place in an `href`/`src`. Exported for unit
  * testing (DR-0010's required-coverage list: "javascript: リンクが無害化される").
@@ -122,6 +169,44 @@ function renderNode(node: AnyNode, key: string): VNode | string {
 
     case "link": {
       const link = node as Link;
+      // DR-0015 §2.6: attachment paths (`.../claude-ccmsg-<uid>/attachment/…`)
+      // are rewritten to the daemon's HTTP endpoint (`/attachment/<basename>`)
+      // and image mimes are rendered inline as <img>. Same-origin (the webui
+      // backend), so the auto-fetch privacy concern in the `image` case
+      // below does not apply — the target is this daemon's own file, served
+      // by this same origin.
+      const attachment = attachmentUrlFromPath(link.url);
+      if (attachment) {
+        const label = renderChildren(link.children, key);
+        // Extract text-only alt for the <img>; falls back to link text as-is
+        // when children include non-text (rare for `[FILE1:name](path)` shape
+        // which is a single text run, but be defensive).
+        const alt = link.children.map((c) => (c.type === "text" ? (c as Text).value : "")).join("");
+        if (attachment.isImage) {
+          return (
+            <a
+              key={key}
+              class="md-attachment-image-link"
+              href={attachment.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <img class="md-attachment-image" src={attachment.url} alt={alt || attachment.url} />
+            </a>
+          );
+        }
+        return (
+          <a
+            key={key}
+            class="md-attachment-link"
+            href={attachment.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {label}
+          </a>
+        );
+      }
       if (!isSafeUrl(link.url)) {
         // Disarmed: render the link's own text with no <a>/href at all so a
         // hostile URL scheme can never reach the DOM, while the human-visible
