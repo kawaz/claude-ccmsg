@@ -838,6 +838,56 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(subscribeReq).toEqual({ op: "subscribe" });
   });
 
+  // Regression guard for the snapshot-order bug: onOpen's own `rooms` reply
+  // dispatches rooms/loaded, so any getState() read *after* that point sees a
+  // non-empty rooms map even on a fresh reload. The fresh/reload distinction
+  // has to be captured at t0 (before hello runs), not right before subscribe;
+  // otherwise the reload would look like a reconnect and `since` would be
+  // sent — exactly the bug this file's fresh-reload test aims to prevent.
+  test("onOpen decides `since` at handshake start, not after `rooms` repopulates the store", async () => {
+    const actions: Action[] = [];
+    storage["ccmsg.since"] = JSON.stringify({ r1: 5 });
+    // Wire dispatch into a real store so the `rooms` reply below actually
+    // repopulates `state.rooms` (mirroring runtime), and read spaHasState
+    // through that store.
+    const { createStore } = await import("../src/client/useStore.ts");
+    const store = createStore(initialState());
+    const handle = createWsClient(
+      (a) => {
+        actions.push(a);
+        store.dispatch(a);
+      },
+      () => store.getState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+
+    const tick = () => Promise.resolve().then(() => Promise.resolve());
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" })); // hello
+    await tick();
+    // Server replies with a non-empty rooms list — rooms/loaded will fill
+    // state.rooms *before* the subscribe request is composed.
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        rooms: [{ id: "r1", members: [], last_mid: 5, last_ts: null }],
+      }),
+    );
+    await tick();
+
+    const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
+    // Must be the fresh-reload shape (no `since`), because the store was
+    // empty at handshake start even though rooms/loaded has since filled it.
+    expect(subscribeReq).toEqual({ op: "subscribe" });
+    // Sanity: state really did get repopulated by rooms/loaded — a getState()
+    // read at this point would see a non-empty map, confirming the snapshot
+    // must have happened earlier.
+    expect(store.getState().rooms.size).toBe(1);
+  });
+
   test("onOpen sends `since` on subscribe when the store retained rooms (in-page reconnect)", async () => {
     const actions: Action[] = [];
     storage["ccmsg.since"] = JSON.stringify({ r1: 5 });
