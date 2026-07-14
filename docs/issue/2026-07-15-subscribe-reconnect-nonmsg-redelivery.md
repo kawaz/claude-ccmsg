@@ -1,11 +1,11 @@
 ---
 title: subscribe 再接続時、msg 以外の StorageEvent (archive/title/kind/next/prev) が重複再配信される (mid ベース since cursor が msg 専用のため)
-status: open
+status: wip
 category: bug
 created: 2026-07-15T00:17:06+09:00
 last_read:
 open_entered: 2026-07-15T00:17:06+09:00
-wip_entered:
+wip_entered: 2026-07-15T02:35:08+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
