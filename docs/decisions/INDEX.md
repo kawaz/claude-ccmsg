@@ -18,3 +18,4 @@
 | [DR-0012](./DR-0012-room-archive-and-kick.md) | Accepted | room アーカイブ (表示整理フラグ) + 強制 leave (kick、admin 専用) |
 | [DR-0013](./DR-0013-broadcast-room.md) | Accepted | broadcast room (auto-populated session broadcast) |
 | [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | Proposed | 1on1 room + msg 応答経路 hint (reply_via) |
+| [DR-0015](./DR-0015-composer-attachments.md) | Proposed | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) |
