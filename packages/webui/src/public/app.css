@@ -1994,7 +1994,9 @@ button.session-tab {
 
 .one-on-one-actions {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .one-on-one-send {

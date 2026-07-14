@@ -22,6 +22,17 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState, RoomState } from "../store.ts";
+import {
+  extractPastedImages,
+  hasPendingUpload,
+  insertPlaceholder,
+  nextAttachmentNumber,
+  removePlaceholder,
+  substitutePlaceholders,
+  type ComposerAttachment,
+} from "./composer-attachments.ts";
+import { ComposerAttachments } from "./ComposerAttachments.tsx";
+import { uploadAttachment } from "./composer-upload.ts";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -156,6 +167,15 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
+  // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
+  // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
+  // すると本文の [FILE<N>] プレースホルダは復元されるが attachments 一覧は
+  // 空 (未解決の [FILE<N>] は送信時 substitute でリテラル残る)。
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Mount-time cleanup — depends on peers.length so the sweep waits for the
   // peers list to hydrate (empty on the very first render before ws.ts's
@@ -172,10 +192,15 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // Restore draft when the panel opens for this sid — also re-runs when the
   // sid changes while open (e.g. user opened the panel on session A, then
   // navigated to session B before submitting), reloading B's own draft.
+  // attachments も同時にリセット: 別 sid の 1on1 に持ち込むと [FILE<N>] が
+  // 別 room の相手向けの UUID を指してしまうため。localStorage に attachments
+  // を保存しない設計 (§2.6 draft は text のみ) の帰結として、sid 切替は
+  // attachments を捨てる必要がある。
   useEffect(() => {
     if (!open) return;
     const draft = loadDraft(sid);
     setText(draft?.text ?? "");
+    setAttachments([]);
     setError(null);
   }, [open, sid]);
 
@@ -191,6 +216,91 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     }
     saveDraft(sid, text);
   }, [open, sid, text]);
+
+  // DR-0015 §2.5 attachment upload 開始 (通常 Composer と同じロジック)。
+  // caret 位置にプレースホルダ挿入 + XHR upload、progress は state に反映、
+  // 送信ボタン disable は hasPendingUpload に委ねる。
+  const beginUpload = useCallback(
+    (file: File) => {
+      const el = textareaRef.current;
+      const caret = el ? el.selectionStart : text.length;
+      let assignedN = 0;
+      setAttachments((prev) => {
+        const n = nextAttachmentNumber(prev);
+        assignedN = n;
+        return [...prev, { n, name: file.name || "upload", status: "uploading", progress: 0 }];
+      });
+      setText((current) => {
+        const n = assignedN || nextAttachmentNumber(attachments) || 1;
+        return insertPlaceholder(current, caret, n);
+      });
+      const n = assignedN;
+      void (async () => {
+        try {
+          const meta = await uploadAttachment(file, (percent) => {
+            setAttachments((prev) =>
+              prev.map((a) => (a.n === n ? { ...a, progress: percent } : a)),
+            );
+          });
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.n === n
+                ? {
+                    ...a,
+                    status: "done",
+                    progress: 100,
+                    uuid: meta.uuid,
+                    ext: meta.ext,
+                    size: meta.size,
+                    mime: meta.mime,
+                    path: meta.path,
+                    name: meta.name,
+                  }
+                : a,
+            ),
+          );
+        } catch (err) {
+          setAttachments((prev) =>
+            prev.map((a) =>
+              a.n === n
+                ? {
+                    ...a,
+                    status: "error",
+                    errorMsg: err instanceof Error ? err.message : String(err),
+                  }
+                : a,
+            ),
+          );
+        }
+      })();
+    },
+    [text, attachments],
+  );
+
+  const removeAttachment = useCallback((n: number) => {
+    setAttachments((prev) => prev.filter((a) => a.n !== n));
+    setText((current) => removePlaceholder(current, n));
+  }, []);
+
+  const onPaste = useCallback(
+    (e: ClipboardEvent) => {
+      if (!e.clipboardData) return;
+      const images = extractPastedImages(e.clipboardData.items);
+      if (images.length === 0) return; // 通常テキスト paste は default に任せる
+      e.preventDefault();
+      for (const f of images) beginUpload(f);
+    },
+    [beginUpload],
+  );
+
+  const onFilesPicked = useCallback(
+    (input: HTMLInputElement | null) => {
+      if (!input?.files) return;
+      for (const f of Array.from(input.files)) beginUpload(f);
+      input.value = ""; // 同じファイルの再選択を可能に (change event が発火するように)
+    },
+    [beginUpload],
+  );
 
   const handleClose = useCallback(() => {
     setOpen(false);
@@ -229,9 +339,16 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const handleSubmit = useCallback(async () => {
     const body = text.trim();
     if (body === "") return;
+    if (hasPendingUpload(attachments)) return; // safety net (ボタン disable 済)
     setSending(true);
     setError(null);
     try {
+      // DR-0015 §2.4 送信時 substitute: [FILE<N>] を [FILE<N>:<name>](<path>)
+      // に置換してから post。未完了 (upload 中 / error) の entry は substitute
+      // が skip するので、text にリテラル [FILE<N>] が残る (pending は上の
+      // hasPendingUpload で送信自体を止めているのでここには来ない、error は
+      // × で消してから送信する運用)。
+      const finalText = substitutePlaceholders(body, attachments);
       const existing = findExistingOneOnOne(state, sid);
       let roomId: string;
       if (existing) {
@@ -253,7 +370,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         }
         roomId = created.room;
       }
-      const posted = await ws.post(roomId, body);
+      const posted = await ws.post(roomId, finalText);
       if (!posted.ok) {
         setError(posted.error?.msg ?? "post に失敗しました");
         setSending(false);
@@ -261,13 +378,14 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       }
       clearDraft(sid);
       setText("");
+      setAttachments([]);
       setSending(false);
       setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSending(false);
     }
-  }, [ws, state, sid, text]);
+  }, [ws, state, sid, text, attachments]);
 
   if (!open) {
     return (
@@ -290,24 +408,52 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         </span>
       </header>
       <textarea
+        ref={textareaRef}
         class="one-on-one-textarea"
         placeholder="この session に priv..."
         value={text}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+        onPaste={onPaste}
         disabled={sending}
         rows={4}
       />
+      <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}
       <div class="one-on-one-actions">
+        <div class="composer-attach-buttons">
+          {/* DR-0015 §2.5: 画像/ファイル 2 ボタン。通常 Composer と同じ
+              paradigm (hidden input + label wrapper で iOS picker を発火)。 */}
+          <label class="composer-attach-btn" aria-label="画像を添付">
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={() => onFilesPicked(imageInputRef.current)}
+              hidden
+            />
+            <span aria-hidden="true">📷</span>
+          </label>
+          <label class="composer-attach-btn" aria-label="ファイルを添付">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={() => onFilesPicked(fileInputRef.current)}
+              hidden
+            />
+            <span aria-hidden="true">📎</span>
+          </label>
+        </div>
         <button
           type="button"
           class="one-on-one-send"
           onClick={() => {
             void handleSubmit();
           }}
-          disabled={sending || text.trim() === ""}
+          disabled={sending || text.trim() === "" || hasPendingUpload(attachments)}
         >
-          {sending ? "送信中..." : "送信"}
+          {sending ? "送信中..." : hasPendingUpload(attachments) ? "アップロード中..." : "送信"}
         </button>
       </div>
     </div>
