@@ -117,15 +117,15 @@ export interface ArchiveEvent {
   ts: string;
 }
 
-/** Room kind marker (DR-0013). Written exactly once at room creation for
- * broadcast rooms — normal rooms carry no `kind` event and default to `normal`
- * on load. Persisting it as its own event keeps rooms/*.jsonl append-only and
- * lets scanRooms recover the kind on daemon restart without inventing a
- * separate metadata sidecar. Only `"broadcast"` is stored; `"normal"` is the
- * absence of this event. */
+/** Room kind marker (DR-0013 broadcast / DR-0014 1on1). Written exactly once
+ * at room creation for non-`"normal"` rooms — a normal room carries no `kind`
+ * event and defaults to `"normal"` on load. Persisting it as its own event
+ * keeps rooms/*.jsonl append-only and lets scanRooms recover the kind on
+ * daemon restart without inventing a separate metadata sidecar. `"normal"` is
+ * the absence of this event. */
 export interface KindEvent {
   type: "kind";
-  kind: "broadcast";
+  kind: "broadcast" | "1on1";
   ts: string;
 }
 
@@ -139,13 +139,25 @@ export type StorageEvent =
   | ArchiveEvent
   | KindEvent;
 
-/** Room kind (DR-0013). `"broadcast"` = auto-populated by session lifecycle,
- * agent post is restricted to `to: ["u1", ...]`, member/leave events are
- * suppressed from the subscribe stream. `"normal"` = every other room. */
-export type RoomKind = "normal" | "broadcast";
+/** Room kind (DR-0013 broadcast / DR-0014 1on1).
+ * - `"normal"` = every other room (default).
+ * - `"broadcast"` = auto-populated by session lifecycle, agent post is
+ *   restricted to `to: ["u1", ...]`, member/leave events are suppressed from
+ *   the subscribe stream.
+ * - `"1on1"` = a fixed 2-party room (u1 + a single session), created by the
+ *   webui's SessionView floating composer for kawaz→session priv. No
+ *   auto-populate, no agent post restriction (2 参加者確定なので配信対象は
+ *   必然的に絞られる), reply_via = "tl" for u1 posts (§2.5). */
+export type RoomKind = "normal" | "broadcast" | "1on1";
 
-/** A storage event as delivered over a subscribe stream: flattened with room id. */
-export type DeliveredEvent = StorageEvent & { r: string };
+/** A storage event as delivered over a subscribe stream: flattened with room id.
+ * `msg` events additionally carry `reply_via` (DR-0014 §2.4) — a per-recipient
+ * hint string telling the receiving agent where its response should land
+ * (r<id> / r<id>u1 / r<id>u1a32a35 / tl / none). Injected at delivery time,
+ * NOT persisted in the room jsonl: the value differs by recipient (excludes
+ * the receiver from the `to` reconstruction), so a per-msg common storage
+ * field would be a contradiction. Only present on `type:"msg"` deliveries. */
+export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_via?: string };
 
 /**
  * Sender of a notify, daemon-stamped from the connection identity (DR-0003 §7).
@@ -271,11 +283,13 @@ export interface CreateRoomRequest {
    * a room that observes without participating. Ignored for user-role callers
    * (who never auto-include either way). */
   include_self?: boolean;
-  /** Room kind (DR-0013). Default `"normal"`. `"broadcast"` opens a broadcast
-   * room whose members are auto-populated from the live session registry (all
-   * connected sessions at creation + every subsequent hello, minus every
-   * disconnect) — `members` is ignored in that case and the daemon returns a
-   * `warning` field explaining so (§2.9). */
+  /** Room kind (DR-0013 broadcast / DR-0014 1on1). Default `"normal"`.
+   * - `"broadcast"` opens a broadcast room whose members are auto-populated
+   *   from the live session registry — `members` is ignored and the daemon
+   *   returns a `warning` field explaining so (§2.9).
+   * - `"1on1"` opens a 2-party priv room (u1 + a single session). `members`
+   *   MUST contain exactly one sid; empty or multiple returns
+   *   `one_on_one_requires_single_member` (DR-0014 §2.1). */
   kind?: RoomKind;
 }
 
@@ -731,5 +745,10 @@ export const ErrorCode = {
   // Broadcast room (DR-0013 §2.4): agent post to a broadcast room must include
   // "u1" in `to`. "u1 に届かない agent 発話" を broadcast の意味論で禁じるため。
   broadcast_agent_target_required: "broadcast_agent_target_required",
+  // 1on1 room (DR-0014 §2.1): create_room --kind 1on1 requires exactly one sid
+  // in `members`. Empty or multiple is refused up front — a 1on1 room's
+  // meaning is "u1 と 1 session の 2 者確定"、複数 session なら通常 room /
+  // broadcast room を使う。
+  one_on_one_requires_single_member: "one_on_one_requires_single_member",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
