@@ -728,6 +728,37 @@ export type Response =
   | InviteResponse;
 
 // ---------------------------------------------------------------------------
+// HTTP-only responses (not part of the WS/UDS line-protocol Response union).
+// DR-0015 §2.3: attachment upload runs over multipart HTTP, not the wire
+// protocol, so the response shape is defined here but not appended to the
+// Response union above — the WS handler never emits it.
+// ---------------------------------------------------------------------------
+
+/** DR-0015 §2.2 `POST /attachment` success body. `path` is the absolute file
+ * path under `TMPDIR/claude-ccmsg-<uid>/attachment/<uuid>.<ext>` (same-UID
+ * trust per DR-0001 §5 — the webui inlines it verbatim into the message body's
+ * Markdown link so agents on the same UID can `Read`/`Bash` it directly). */
+export interface AttachmentUploadResponse {
+  ok: true;
+  uuid: string;
+  /** filename extension including the leading `.` (e.g. `.png`), or `""` when
+   * the uploaded filename had no extension. */
+  ext: string;
+  size: number;
+  /** MIME type, from `Content-Type` header if the client sent one, else
+   * extension-based lookup (DR-0015 Open question §5: extension-based to
+   * start, magic-byte sniff only if false positives show up in practice). */
+  mime: string;
+  path: string;
+  /** original filename basename (display-only label for the Markdown link). */
+  name: string;
+}
+
+/** DR-0015 §2.2 default upload size cap (bytes). Overridable via
+ * `CCMSG_ATTACHMENT_MAX_BYTES`; upload exceeding this returns HTTP 413. */
+export const DEFAULT_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
 // Error codes (string, per DR-0003 §1)
 // ---------------------------------------------------------------------------
 
