@@ -9,7 +9,10 @@ import { createWsClient } from "./ws.ts";
 import { parseHash } from "./locator.ts";
 
 const store = createStore(initialState());
-const ws = createWsClient((action) => store.dispatch(action));
+const ws = createWsClient(
+  (action) => store.dispatch(action),
+  () => store.getState(),
+);
 
 function applyLocator(): void {
   const locator = parseHash(location.hash);

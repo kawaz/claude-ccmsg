@@ -36,7 +36,7 @@ import type {
   TranscriptSubscribeResponse,
   TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
-import type { Action } from "./store.ts";
+import type { Action, AppState } from "./store.ts";
 
 const SINCE_KEY = "ccmsg.since";
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
@@ -118,7 +118,10 @@ export interface WsHandle {
   ping(): Promise<PingResponse | ErrorResponse>;
 }
 
-export function createWsClient(dispatch: (action: Action) => void): WsHandle {
+export function createWsClient(
+  dispatch: (action: Action) => void,
+  getState: () => AppState,
+): WsHandle {
   let ws: WebSocket | null = null;
   let pending: Array<(v: Response) => void> = [];
   let reconnectAttempt = 0;
@@ -144,7 +147,18 @@ export function createWsClient(dispatch: (action: Action) => void): WsHandle {
       await send({ op: "hello", role: "user" });
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
-      await send({ op: "subscribe", since });
+      // Page reload starts from a fresh empty store — the localStorage-carried
+      // `since` cursor is stale in the sense that "we've seen up to mid N"
+      // no longer holds against an empty scrollback. Omit `since` so the
+      // daemon replays the full backlog (u1 role is uncapped, see server.ts's
+      // sendBacklog non-since branch) and RoomView paints with real history
+      // instead of only msgs newer than the pre-reload cursor (kawaz 2026-07-14:
+      // "ROOMを選択した時に過去ログが空になる… ユーザ向けには全ログを再送信して復元されるように").
+      // In-page reconnects still send `since` — the store retained its state
+      // across the disconnect, so BBS delta replay is the correct/cheap thing
+      // (packages/cli's reconnect.test.ts contract for daemon-restart transparency).
+      const spaHasState = getState().rooms.size > 0;
+      await send(spaHasState ? { op: "subscribe", since } : { op: "subscribe" });
       const peers = await send<PeersResponse>({ op: "peers" });
       if (peers.ok) dispatch({ type: "peers/loaded", peers: peers.peers });
       // U1: initial `claude agents --json` paint + daemon provenance for the
