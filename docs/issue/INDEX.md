@@ -15,3 +15,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-12 | bug | open | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (fail テスト名未確定、不安定さの軸調査中) |
 | 2026-07-12 | bug | open | [daemon-startup-notification-noise](./2026-07-12-daemon-startup-notification-noise.md) | デーモン先起動のたびに既存セッションへ通知が飛んでうるさい、先起動時の通知抑止 + lazy ensure 一本化の検討依頼 (cache-warden からの部外者フィードバック) |
 | 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
+| 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
