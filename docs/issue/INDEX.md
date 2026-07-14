@@ -14,4 +14,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-12 | design | open | [peers-live-update-protocol](./2026-07-12-peers-live-update-protocol.md) | state.peers に live 更新経路が無く、接続/切断がリアルタイム反映されない (ev:"peers" push の protocol 拡張案) |
 | 2026-07-12 | bug | open | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (fail テスト名未確定、不安定さの軸調査中) |
 | 2026-07-12 | bug | open | [daemon-startup-notification-noise](./2026-07-12-daemon-startup-notification-noise.md) | デーモン先起動のたびに既存セッションへ通知が飛んでうるさい、先起動時の通知抑止 + lazy ensure 一本化の検討依頼 (cache-warden からの部外者フィードバック) |
-| 2026-07-14 | design | idea | [session-tl-refresh-on-revisit](./2026-07-14-session-tl-refresh-on-revisit.md) | SessionView Timeline tab で離席中の live tail 更新が反映されず、再訪時に最新ログが抜ける (SessionTreeState cache 保持設計とのトレードオフ、fix 候補複数あり裁定要) |
+| 2026-07-14 | design | wip | [session-tl-refresh-on-revisit](./2026-07-14-session-tl-refresh-on-revisit.md) | SessionView Timeline tab で離席中の live tail 更新が反映されず、再訪時に最新ログが抜ける (TLR-Q1=b 裁定済み: tab 復帰時に自動 refresh、実装は worker 委譲予定) |

@@ -1,11 +1,11 @@
 ---
 title: SessionView Timeline tab で離席中の live tail 更新が反映されず、再訪時に最新ログが抜ける
-status: idea
+status: wip
 category: design
 created: 2026-07-14T20:27:04+09:00
 last_read:
 open_entered:
-wip_entered:
+wip_entered: 2026-07-14T23:10:51+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -27,16 +27,25 @@ kawaz の r12 mid=12 (2026-07-14) 観測: SessionView の Timeline tab で最新
 
 webui-history-fix worker の調査による原因判明: `Timeline.tsx` が `SessionTreeState` cache を session/tab 切替時に「loaded」状態のまま保持する設計になっている (`packages/webui/src/client/store.ts` 60-66 行目のコメントに明記された意図的挙動: 「session/tab 切替でも discard しない」)。この cache 保持中、当該 session を離席している間に来た live tail 更新は `transcript_unsubscribe` 済みのため反映されない。結果として tab に戻った時点で cache が古いまま = 最新ログが抜けて見える。
 
-既存の意図的な cache 設計とのトレードオフのため、fix 候補は複数あり設計裁定が必要:
+既存の意図的な cache 設計とのトレードオフのため、fix 候補は複数あった:
 
 - (a) 常時 `transcript_subscribe` を維持し unsubscribe しない — 複数 session 同時購読で帯域負荷が増える
 - (b) tab 復帰時に自動 refresh (`transcript_read` で最新を取り直す)
 - (c) cache に TTL を導入する
 - (d) UI 側に手動「更新」ボタンを設け、明示的リフレッシュに倒す
 
-DR を追加して裁定する選択肢もある。優先度中 (kawaz の観測ベースで、実害の頻度は未計測)。
+## 裁定 (TLR-Q1)
+
+kawaz r15 mid=4 (2026-07-14) で **(b) tab 復帰時に自動 refresh** を選択。
+(a) は帯域負荷増、(c)/(d) は cache TTL・手動ボタンとも不要と判断し不採用。
+
+### 実装方針
+
+SessionView の Timeline tab (or Files tab) が sid 訪問時に自動で `transcript_read` を叩き、`SessionTreeState` cache を最新化する。cache TTL や UI の手動更新ボタンは導入しない。
+
+実装は worker 委譲予定 (別 task)。
 
 ## 受け入れ条件
 
-- [ ] Timeline tab 再訪時に、離席中に来た live tail 更新が反映される (またはユーザが明示的にトリガできる) 方式が決まる
-- [ ] 選んだ方式のトレードオフ (帯域 / 実装コスト / 既存 cache 設計との整合) が DR またはこの issue に記録される
+- [ ] Timeline tab (or Files tab) の sid 訪問時に自動で `transcript_read` が呼ばれ、cache が最新化される
+- [ ] worker への実装委譲 task が完了する
