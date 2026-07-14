@@ -80,6 +80,19 @@ for (let i = start; i < room.events.length; i++) {
 
 再接続自体の頻度 (daemon self-upgrade 起因の可能性など) は本起票の範囲外で未調査。
 
+### 追加観測 (別セッション、独立観測、鵜呑み注意)
+
+別セッション (cache-warden プロジェクト、セッション SID `73b73642-d9e1-467d-9615-63279ebe8ac5`、部外者観測) で、
+2026-07-14〜2026-07-15 の間に本 issue と同種の重複再配信を観測した。
+
+- room `r8` (`2026-07-13T04:46:28Z` の archive イベント) が subscribe stream から **同一 payload で 10 回以上連続再送**された
+- `TaskStop` → Monitor 再起動を行っても数分で再発 (history replay の後、同じ archive イベントが繰り返し流れる) —
+  一次観測の r13 (6 回 / 約 1.5 時間) より高頻度、かつ Monitor 再起動でも回復しない持続性を示すデータ
+- 実害: cache-warden 側の Block 3b e2e 試験で観察に使っていた通知チャネル (Monitor 経由) が archive 通知で埋め尽くされ、
+  有効な TouchID grand truth の観察が埋もれた
+- 上記の根本原因仮説 (`packages/cli/src/index.ts` の `sinceMap` が msg 専用 mid ベースで、
+  `archive`/`title`/`kind`/`next`/`prev` には dedup cursor が無い) と整合する追加データ点
+
 ## 受け入れ条件
 
 - [ ] （当事者セッションで判断） 非 msg StorageEvent の重複再配信が意図した挙動か、bug かを裁定する
