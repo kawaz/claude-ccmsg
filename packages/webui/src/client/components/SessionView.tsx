@@ -9,6 +9,7 @@ import { sessionHref, timelineHref } from "../locator.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
+import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -104,6 +105,13 @@ export function SessionView({ state }: { state: AppState }) {
       ) : (
         <FilesPanes sid={sid} tree={tree} peer={peer} />
       )}
+      {/* DR-0014 §2.6 floating 1on1 composer: only makes sense on the
+       * Files/Timeline tabs (kawaz can already open a room directly from
+       * the Rooms tab, so an extra FAB there would be noise). Positioned
+       * over the tab content via position:fixed in app.css; each tab
+       * switch keeps the same instance so an in-progress compose survives
+       * a Files↔Timeline hop. */}
+      {tab !== "rooms" ? <OneOnOneComposer sid={sid} state={state} /> : null}
     </main>
   );
 }

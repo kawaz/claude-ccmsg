@@ -81,6 +81,16 @@ export interface WsHandle {
    * User/u1) is `memberSid` (U3: SessionView's "+ 新規 Room"). `title`
    * omitted lets the daemon default it, same as any other create_room call. */
   createRoom(memberSid: string, title?: string): Promise<CreateRoomResponse | ErrorResponse>;
+  /** Create a `kind:"1on1"` priv room for `memberSid` (DR-0014 §2.2 auto-
+   * create, called by SessionView's floating composer when no existing 1on1
+   * exists for this session). The daemon enforces exactly one member (empty
+   * or multiple returns `one_on_one_requires_single_member`) and the returned
+   * room carries `kind:"1on1"` in its rooms-response entry, so subsequent
+   * lookups can dedupe by that field rather than trusting the title string. */
+  createOneOnOneRoom(
+    memberSid: string,
+    title?: string,
+  ): Promise<CreateRoomResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
   /** Add a connected session to an existing room (DR-0011 §1-4: SessionList's
@@ -332,6 +342,13 @@ export function createWsClient(
     kick: (room, id) => send({ op: "kick", room, id }),
     createRoom: (memberSid, title) =>
       send({ op: "create_room", members: [memberSid], ...(title ? { title } : {}) }),
+    createOneOnOneRoom: (memberSid, title) =>
+      send({
+        op: "create_room",
+        members: [memberSid],
+        kind: "1on1",
+        ...(title ? { title } : {}),
+      }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     invite: (room, sid) => send({ op: "invite", room, sid }),

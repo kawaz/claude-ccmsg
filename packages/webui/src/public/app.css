@@ -1785,3 +1785,110 @@ button.session-tab {
 #app-footer:empty {
   display: none;
 }
+
+/* DR-0014 §2.6 1on1 floating composer for SessionView. Sits pinned to the
+ * bottom-right of the viewport with position:fixed so it stays reachable no
+ * matter how far kawaz has scrolled the Timeline / FileViewer pane. z-index
+ * keeps it above the tab content and below any global modal/toast the app
+ * might grow later (arbitrary but "well above content, well below nothing"). */
+.one-on-one-fab {
+  position: fixed;
+  right: 1.2rem;
+  bottom: 1.2rem;
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 40;
+}
+
+.one-on-one-fab:hover {
+  filter: brightness(1.05);
+}
+
+.one-on-one-panel {
+  position: fixed;
+  right: 1.2rem;
+  bottom: 1.2rem;
+  width: min(24rem, calc(100vw - 2rem));
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  z-index: 40;
+}
+
+.one-on-one-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+.one-on-one-panel-header code {
+  color: var(--fg);
+  background: var(--bg-alt);
+  padding: 0 0.25rem;
+  border-radius: 0.2rem;
+}
+
+.one-on-one-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+
+.one-on-one-close:hover {
+  color: var(--fg);
+}
+
+.one-on-one-textarea {
+  resize: vertical;
+  min-height: 5rem;
+  font: inherit;
+  padding: 0.4rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.one-on-one-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #d0324c;
+}
+
+.one-on-one-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.one-on-one-send {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.4rem 1.2rem;
+  cursor: pointer;
+  font: inherit;
+}
+
+.one-on-one-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
