@@ -92,7 +92,6 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // text 変化のたび textarea の高さを content に追随させる (上限で頭打ち)。
@@ -289,25 +288,11 @@ export function Composer({
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       <div class="composer-actions">
         <div class="composer-attach-buttons">
-          {/* DR-0015 §2.5: 画像ボタンは iOS で写真ライブラリを開く。
-              `capture="library"` はドラフト非標準だが iOS Safari が拾う; 拒否
-              されたブラウザでは通常の accept="image/*" が効くので害はない。
-              button 要素で input[type=file] を hidden 発火するのは、
-              iOS が <input> 自体をタップされないと picker を開かないための
-              慣用パターン (=input を直接見せる必要がある)。 */}
-          <label class="composer-attach-btn" aria-label="画像を添付">
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/*"
-              // capture 属性は browser 依存: iOS は "library" を認識、Android は
-              // "environment"/"user" を要求するので image/* + 無指定が安全
-              multiple
-              onChange={() => onFilesPicked(imageInputRef.current)}
-              hidden
-            />
-            <span aria-hidden="true">📷</span>
-          </label>
+          {/* DR-0015 §2.5 + kawaz r15 mid=8 (2026-07-14): 画像/ファイルボタン
+              の区別は不要、クリップマーク 1 個に統一。iOS のファイル App /
+              iCloud も accept 無指定なら写真ライブラリと同じ picker から
+              呼び出せる。paste 経由の image mime 添付経路 (§2.5) は独立で
+              残る。 */}
           <label class="composer-attach-btn" aria-label="ファイルを添付">
             <input
               ref={fileInputRef}

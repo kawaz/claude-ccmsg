@@ -174,7 +174,6 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // 空 (未解決の [FILE<N>] は送信時 substitute でリテラル残る)。
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Mount-time cleanup — depends on peers.length so the sweep waits for the
@@ -421,19 +420,9 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}
       <div class="one-on-one-actions">
         <div class="composer-attach-buttons">
-          {/* DR-0015 §2.5: 画像/ファイル 2 ボタン。通常 Composer と同じ
-              paradigm (hidden input + label wrapper で iOS picker を発火)。 */}
-          <label class="composer-attach-btn" aria-label="画像を添付">
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={() => onFilesPicked(imageInputRef.current)}
-              hidden
-            />
-            <span aria-hidden="true">📷</span>
-          </label>
+          {/* DR-0015 §2.5 + kawaz r15 mid=8 (2026-07-14): 画像/ファイルボタン
+              の区別は不要、クリップマーク 1 個に統一。paste 経由の image
+              mime 添付経路 (§2.5) は独立で残る。 */}
           <label class="composer-attach-btn" aria-label="ファイルを添付">
             <input
               ref={fileInputRef}
