@@ -1111,6 +1111,22 @@ button.session-tab {
   white-space: nowrap;
 }
 
+/* ファイル再取得ボタン (FileViewer.tsx、kawaz 2026-07-14 task #23)。
+ * viewer-header の path 直後、他 header 要素 (banner, mode-toggle) の前に置く。
+ * ページ全体の topbar reload とは別で、fs_read の再フェッチだけを掛ける。 */
+.viewer-refetch {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 0.25rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.viewer-refetch:hover {
+  color: var(--fg);
+}
+
 .viewer-banner {
   color: var(--warn);
 }

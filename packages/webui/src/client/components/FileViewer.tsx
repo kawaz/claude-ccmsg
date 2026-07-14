@@ -95,6 +95,40 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
     };
   }, [highlightEligible, res?.content, lang, path]);
 
+  // 開いているファイルを強制再取得する (kawaz 2026-07-14、task #23)。fs_read は
+  // 別プロセスによる更新を picking しないため (現在の DR-0008 は push notify を
+  // 持たない)、viewer が古い内容を掴んだままになりうる。↻ ボタンで明示的に
+  // 現 path を再フェッチする。useEffect の deps に依らず直接叩くのは
+  // 「path 不変で content だけ更新したい」意図を通すため — 通常の path 遷移
+  // 経路 (dispatch(fs/file-loading) → useEffect が fs_read) と同じ action を
+  // 手で発火する形にして、reducer/state 遷移の一貫性を保つ。
+  const canRefetch = path != null && connStatus === "connected";
+  const handleRefetch = () => {
+    if (!canRefetch) return;
+    store.dispatch({ type: "fs/file-loading", sid, path });
+    void ws
+      .fsRead(sid, path)
+      .then((r) => {
+        if (r.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: r });
+        else store.dispatch({ type: "fs/file-loaded", sid, path, error: r.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
+      });
+  };
+  const RefetchButton = () =>
+    canRefetch ? (
+      <button
+        type="button"
+        class="viewer-refetch"
+        aria-label="ファイルを再取得"
+        title="ファイルを再取得"
+        onClick={handleRefetch}
+      >
+        {"↻"}
+      </button>
+    ) : null;
+
   if (!path) {
     return (
       <div class="file-viewer">
@@ -114,6 +148,10 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
   if (file.status === "error") {
     return (
       <div class="file-viewer">
+        <header class="viewer-header">
+          <span class="viewer-path">{path}</span>
+          <RefetchButton />
+        </header>
         <p class="viewer-error">{file.error}</p>
       </div>
     );
@@ -126,6 +164,7 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
       <div class="file-viewer">
         <header class="viewer-header">
           <span class="viewer-path">{path}</span>
+          <RefetchButton />
         </header>
         <p class="viewer-binary">バイナリファイル ({res.size.toLocaleString()} bytes)</p>
       </div>
@@ -140,6 +179,7 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
     <div class="file-viewer">
       <header class="viewer-header">
         <span class="viewer-path">{path}</span>
+        <RefetchButton />
         {res.truncated ? (
           <span class="viewer-banner">
             先頭 {Math.floor(FS_READ_MAX_BYTES / 1024)}KB のみ表示 (全 {res.size.toLocaleString()}{" "}
