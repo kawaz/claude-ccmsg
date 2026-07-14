@@ -8,7 +8,7 @@
 // growth is acceptable for now.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { MemberEvent, MsgEvent, StorageEvent } from "@ccmsg/protocol";
+import type { MemberEvent, MsgEvent, RoomKind, StorageEvent } from "@ccmsg/protocol";
 import type { Logger } from "./log.ts";
 
 const FSYNC_DEBOUNCE_MS = 100;
@@ -27,6 +27,10 @@ export interface Room {
   title?: string;
   /** last-wins archive flag (DR-0012), same rule as title. */
   archived: boolean;
+  /** room kind (DR-0013). "normal" is the absence of any KindEvent in the log;
+   * "broadcast" is set exactly once at creation by createRoom and recovered on
+   * daemon restart by computeDerived reading the KindEvent back. */
+  kind: RoomKind;
   next: string[];
   prev: string[];
   // append fd, lazily opened on first write and kept open to hold the fsync target.
@@ -104,6 +108,7 @@ function computeDerived(room: Room): void {
   const sids = new Set<string>();
   let title: string | undefined;
   let archived = false;
+  let kind: RoomKind = "normal";
   const next: string[] = [];
   const prev: string[] = [];
   for (const ev of room.events) {
@@ -123,6 +128,9 @@ function computeDerived(room: Room): void {
       case "archive":
         archived = ev.archived;
         break;
+      case "kind":
+        kind = ev.kind;
+        break;
       case "next":
         next.push(ev.room);
         break;
@@ -135,9 +143,15 @@ function computeDerived(room: Room): void {
   room.createdAt = Number.isFinite(earliestJoin) ? earliestJoin : Date.now();
   room.title = title;
   room.archived = archived;
+  room.kind = kind;
   room.next = next;
   room.prev = prev;
-  room.dedupEligible = prev.length === 0;
+  // broadcast rooms never dedup — the same-sid-set dedup key would fold every
+  // create_room{kind:"broadcast"} call into the very first broadcast room, and
+  // "kawaz が dev broadcast と debug broadcast を並存させたい" (DR-0013 §2.1、
+  // 「複数の broadcast room を並存できる」) が満たせなくなる。dedupEligible
+  // false は next_room が生成する `prev` link 付き room と同じ扱い。
+  room.dedupEligible = prev.length === 0 && kind !== "broadcast";
   room.dedupKey = [...sids].sort().join(",");
 }
 
@@ -158,6 +172,7 @@ export function loadRoom(file: string, id: string, log: Logger): Room {
     dedupEligible: true,
     dedupKey: "",
     archived: false,
+    kind: "normal",
     next: [],
     prev: [],
     fd: null,
@@ -270,6 +285,13 @@ export function appendEvent(room: Room, ev: StorageEvent): void {
   if (ev.type === "msg" && ev.mid > room.lastMid) room.lastMid = ev.mid;
   if (ev.type === "title") room.title = ev.title;
   if (ev.type === "archive") room.archived = ev.archived;
+  if (ev.type === "kind") {
+    room.kind = ev.kind;
+    // broadcast rooms are dedup-exempt (see computeDerived's identical
+    // comment) — createRoom already seeds dedupEligible=false for a broadcast
+    // room, but a later kind mutation must never re-enable folding either.
+    if (ev.kind === "broadcast") room.dedupEligible = false;
+  }
   if (ev.type === "next") room.next.push(ev.room);
   if (ev.type === "prev") {
     room.prev.push(ev.room);

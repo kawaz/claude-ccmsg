@@ -11,6 +11,7 @@ import {
   resolvePaths,
   type ArchiveEvent,
   type Identity,
+  type KindEvent,
   type LeaveEvent,
   type MemberEvent,
   type MsgEvent,
@@ -18,6 +19,7 @@ import {
   type Paths,
   type PeerInfo,
   type Request,
+  type RoomKind,
   type SessionIdentity,
   type StorageEvent,
   type TitleEvent,
@@ -150,6 +152,54 @@ function writeDelivered(conn: Conn, roomId: string, ev: StorageEvent): void {
 
 // --- identity / registry ---------------------------------------------------
 
+/**
+ * DR-0013 §2.2 auto-populate: append a MemberEvent to every broadcast room
+ * this sid is not already a member of. Called from the "new session entry
+ * appeared" side of registerSession — a re-hello that only updates metadata
+ * (repo/ws/branch) must not append duplicate member rows, and never for the
+ * admin User (u1 is implicit in every room, DR-0006 §2). The auto-populate
+ * event is DELIBERATELY not deliver()-ed to subscribers (§2.3 asks for the
+ * append-to-jsonl side but skips the stream); appendEvent alone gives us that.
+ */
+function joinAllBroadcasts(daemon: Daemon, sid: string): void {
+  const entry = daemon.sessions.get(sid);
+  if (!entry) return;
+  for (const room of daemon.rooms.values()) {
+    if (room.kind !== "broadcast") continue;
+    if (memberIdBySid(room).has(sid)) continue;
+    const ev: MemberEvent = {
+      type: "member",
+      id: nextAgentMemberId(room),
+      sid,
+      repo: entry.meta.repo,
+      ws: entry.meta.ws,
+      cwd: entry.meta.cwd,
+      joined_at: nowIso(),
+    };
+    appendEvent(room, ev);
+  }
+}
+
+/**
+ * DR-0013 §2.2 auto-populate: append a LeaveEvent to every broadcast room
+ * this sid was a member of. Called from the "session entry fully removed"
+ * side of detachSession — a partial detach (this conn moved to a different sid
+ * but the sid still has other conns open, e.g. the user opened a second webui
+ * tab as an observer of the same session) must NOT leave the room, so we key
+ * off "did the sessions map entry disappear?" rather than "did this conn go
+ * away?". Same "storage only, not delivered" treatment as the join side
+ * (§2.3).
+ */
+function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
+  for (const room of daemon.rooms.values()) {
+    if (room.kind !== "broadcast") continue;
+    const memberId = memberIdBySid(room).get(sid);
+    if (memberId === undefined) continue;
+    const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
+    appendEvent(room, ev);
+  }
+}
+
 function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void {
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
@@ -185,6 +235,7 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     ...(id.repo_root ? { repo_root: id.repo_root } : {}),
     ...(id.branch ? { branch: id.branch } : {}),
   };
+  const isNewEntry = !entry;
   if (!entry) {
     entry = { meta, conns: new Set(), connectedAt: nowIso() };
     daemon.sessions.set(id.sid, entry);
@@ -192,6 +243,12 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     entry.meta = meta;
   }
   entry.conns.add(conn);
+  // DR-0013 §2.2 auto-populate: first hello for this sid → add it to every
+  // broadcast room. A re-hello (isNewEntry === false) is deliberately a no-op:
+  // this sid is already a member of every broadcast room from its earlier
+  // registration, and the auto-populate contract talks about session lifecycle
+  // ("hello 到達 = 新規 session"), not per-connection re-hellos.
+  if (isNewEntry) joinAllBroadcasts(daemon, id.sid);
   // Push ev:"peers" on: new sid registration (entry was just created above) or a
   // hello that actually changed repo/ws/branch/transcript_path/repo_root (entry.meta
   // reassigned above). maybeBroadcastPeers itself no-ops a same-content re-hello via
@@ -213,7 +270,16 @@ function detachSession(daemon: Daemon, conn: Conn, sid: string): void {
   const entry = daemon.sessions.get(sid);
   if (!entry) return;
   entry.conns.delete(conn);
-  if (entry.conns.size === 0) daemon.sessions.delete(sid);
+  if (entry.conns.size === 0) {
+    daemon.sessions.delete(sid);
+    // DR-0013 §2.2 auto-populate: session fully gone → append LeaveEvent to
+    // every broadcast room it was in. A partial detach (this conn is closing
+    // but the sid still has other conns) must NOT leave, hence the size===0
+    // gate — the sid is still "connected" as far as the broadcast contract is
+    // concerned. Same "not delivered to subscribers" treatment as the join
+    // side (see leaveAllBroadcasts's doc comment / §2.3).
+    leaveAllBroadcasts(daemon, sid);
+  }
   // Deliberately does NOT call maybeBroadcastPeers itself: both callers (removeConn,
   // dispatch's "hello" case) may follow this with a registerSession/further mutation
   // of their own in the same turn, and pushing here too would mean two ev:"peers"
@@ -350,6 +416,15 @@ function isAuthorSub(sub: Conn, author: Author): boolean {
   return id.role === "session" && id.sid === author.sid;
 }
 
+/** DR-0013 §2.3: broadcast room の member / leave イベントは jsonl には残るが
+ * subscribe stream には配信しない (通常 room は現状通り配信)。auto-populate で
+ * session が increments/decrements するたびに他 broadcast member の agent
+ * コンテキストが「A が join した / A が leave した」で埋まるのを避けるため。
+ * kind / title / archive / msg / next / prev はいずれも通常 room と同じく配信。 */
+function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
+  return room.kind === "broadcast" && (ev.type === "member" || ev.type === "leave");
+}
+
 /**
  * Live-deliver a single event to all subscribers that see the room.
  * echo suppression (DR-0003 §5) applies to `msg` only: the author's own post is
@@ -357,6 +432,7 @@ function isAuthorSub(sub: Conn, author: Author): boolean {
  * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
  */
 function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
+  if (isSuppressedForBroadcastStream(room, ev)) return;
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
     if (ev.type === "msg") {
@@ -392,6 +468,10 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
     }
     for (let i = start; i < room.events.length; i++) {
       const ev = room.events[i]!;
+      // DR-0013 §2.3: broadcast room の member/leave は since replay でも配信しない。
+      // live deliver と since replay の両輪でスキップして、遅れて再接続した member
+      // の subscribe stream にも noise を復元させない。
+      if (isSuppressedForBroadcastStream(room, ev)) continue;
       if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
       writeDelivered(conn, room.id, ev);
     }
@@ -411,6 +491,10 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
   for (const ev of room.events) {
     if (ev.type === "leave") continue;
     if (ev.type === "member" && !presentIds.has(ev.id)) continue;
+    // DR-0013 §2.3: broadcast room の member は snapshot 経路でも配信しない
+    // (webui は rooms 応答で member 一覧を取得する契約)。leave は上の一律 continue
+    // で既に落ちているので追加の broadcast チェック不要。
+    if (room.kind === "broadcast" && ev.type === "member") continue;
     if (ev.type === "msg") {
       if (!recent.has(ev)) continue;
       if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
@@ -475,7 +559,12 @@ function generateRoomId(daemon: Daemon): string {
   return id;
 }
 
-function createRoom(daemon: Daemon, orderedSids: string[], dedupEligible: boolean): Room {
+function createRoom(
+  daemon: Daemon,
+  orderedSids: string[],
+  dedupEligible: boolean,
+  kind: RoomKind = "normal",
+): Room {
   const id = generateRoomId(daemon);
   const room: Room = {
     id,
@@ -483,9 +572,14 @@ function createRoom(daemon: Daemon, orderedSids: string[], dedupEligible: boolea
     events: [],
     lastMid: 0,
     createdAt: Date.now(),
-    dedupEligible,
+    // broadcast rooms are always dedup-exempt regardless of the caller's request
+    // — multiple broadcasts with the same member set (dev / debug / ...) are
+    // explicitly allowed (DR-0013 §2.1, r12 mid=3「一個限定である必要無し」)
+    // and would otherwise fold into the same room.
+    dedupEligible: kind === "broadcast" ? false : dedupEligible,
     dedupKey: [...new Set(orderedSids)].sort().join(","),
     archived: false,
+    kind,
     next: [],
     prev: [],
     fd: null,
@@ -653,6 +747,23 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const to = normalizeTo(req.to);
+      // DR-0013 §2.4: broadcast room では role:"session" (agent) からの post は
+      // `to` に "u1" (ADMIN_ID) を含めることが必須。「u1 に届かない agent の
+      // broadcast 発話」を意味論として封じる (broadcast の目的は kawaz への
+      // 集約通信なので、u1 抜きの agent 発話は broadcast context の外側)。
+      // u1 (User) 発の post は制約なし — 既存の to semantics (省略=全員 /
+      // 単一 / 複数 mention) がそのまま働く (§2.5)。u1 の実装位置は
+      // conn.identity.role === "user"、ADMIN_ID 決定は resolveFrom を経由。
+      if (room.kind === "broadcast" && conn.identity?.role === "session") {
+        if (!to || !to.includes(ADMIN_ID)) {
+          sendErr(
+            conn,
+            ErrorCode.broadcast_agent_target_required,
+            `broadcast room post from an agent must include '${ADMIN_ID}' in to`,
+          );
+          return;
+        }
+      }
       if (to) {
         // `to` is a delivery filter now (DR-0011 §1): an unresolvable id silently
         // drops the msg into a black hole (delivered to nobody but the sender/u1),
@@ -683,7 +794,80 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "create_room": {
-      const members = Array.isArray(req.members) ? req.members : [];
+      const explicitMembers = Array.isArray(req.members) ? req.members : [];
+      const kind: RoomKind = req.kind === "broadcast" ? "broadcast" : "normal";
+
+      if (kind === "broadcast") {
+        // DR-0013 §2.2 broadcast rooms auto-populate from the live session
+        // registry; the caller's `members` list is irrelevant and (§2.9) folded
+        // to a non-fatal warning rather than an error. The warning is echoed
+        // by the CLI to stderr (index.ts) so a habitual `--members` on a
+        // broadcast create still visibly nags. `include_self` is likewise
+        // ignored — the caller's own sid enters through the normal
+        // auto-populate scan just like every other active session.
+        const warning =
+          explicitMembers.length > 0
+            ? "--members is ignored for broadcast rooms (members are auto-populated)"
+            : undefined;
+        const room = createRoom(daemon, [], false, "broadcast");
+        // KindEvent is written FIRST so a mid-creation crash between here and
+        // the member snapshot below still recovers the room as broadcast on
+        // daemon restart (storage.ts computeDerived reads events in order).
+        // If it came last, a partial file could resurface as "normal" and
+        // then start dedup-folding future broadcast creates into it.
+        appendEvent(room, { type: "kind", kind: "broadcast", ts: nowIso() } satisfies KindEvent);
+        if (req.title)
+          appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
+        // Snapshot every currently-connected session as initial members (§2.2
+        // 「broadcast room 作成時に既に active な session も同一契機で自動 join」).
+        // Sorting by sid keeps the a1/a2/... assignment deterministic across
+        // daemon restarts / test runs so a downstream that reads member.id
+        // sees a stable order.
+        const activeSids = [...daemon.sessions.values()]
+          .filter((s) => s.conns.size > 0)
+          .map((s) => s.meta.sid)
+          .sort();
+        let seq = 1;
+        for (const sid of activeSids) {
+          const meta = daemon.sessions.get(sid)!.meta;
+          appendEvent(room, {
+            type: "member",
+            id: `a${seq++}`,
+            sid,
+            repo: meta.repo,
+            ws: meta.ws,
+            cwd: meta.cwd,
+            joined_at: nowIso(),
+          } satisfies MemberEvent);
+        }
+        // Initial msg is treated as a normal post from the caller (§2.10:
+        // the §2.4 agent-must-target-u1 rule DELIBERATELY does not apply to
+        // create_room's own initial msg — u1's own opening line has no
+        // "must be addressed to u1" self-reference to enforce, and forbidding
+        // a session caller's opener would just push kawaz to a two-step
+        // create + post workflow with no meaningful gain).
+        let mid: number | undefined;
+        let authorId: string | null = null;
+        if (req.msg) {
+          authorId = resolveFrom(conn, room);
+          if (authorId !== null) {
+            mid = room.lastMid + 1;
+            appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
+          }
+        }
+        // Broadcast rooms are dedup-exempt (see createRoom's kind === broadcast
+        // branch); we deliberately do NOT populate dedupIndex.
+        deliverNewRoom(daemon, room, authorOf(conn), authorId);
+        send(conn, {
+          ok: true,
+          room: room.id,
+          reused: false,
+          ...(mid !== undefined ? { mid } : {}),
+          ...(warning ? { warning } : {}),
+        });
+        return;
+      }
+
       const ordered: string[] = [];
       const id = conn.identity!;
       // Auto-prepend caller sid unless include_self=false (CLI --exclude-self,
@@ -692,7 +876,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       // implicit in every room already (DR-0006 §2).
       const includeSelf = req.include_self !== false;
       if (id.role === "session" && includeSelf) ordered.push(id.sid);
-      for (const sid of members)
+      for (const sid of explicitMembers)
         if (typeof sid === "string" && !ordered.includes(sid)) ordered.push(sid);
       if (ordered.length === 0) {
         sendErr(conn, ErrorCode.invalid_args, "create_room needs at least one member");
@@ -760,7 +944,17 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         daemon,
         inherited.map((m) => m.sid),
         false,
+        // DR-0013 §2.8 「next_room で作られる新 room は kind を継承」: broadcast の
+        // 次スレも broadcast のままにする (auto-populate と §2.4 post 制約もそのまま
+        // 新 room に適用される)。ここで作成時 kind を broadcast にしておくと、以降
+        // hello / disconnect 時の join/leaveAllBroadcasts が新 room も対象に拾う。
+        old.kind,
       );
+      // KindEvent must be written BEFORE members / prev so a mid-creation crash
+      // still recovers the next-room as broadcast on daemon restart (same
+      // rationale as create_room's broadcast branch above).
+      if (old.kind === "broadcast")
+        appendEvent(room, { type: "kind", kind: "broadcast", ts: nowIso() } satisfies KindEvent);
       // Renumber per namespace, preserving each member's u/a namespace and relative
       // join order. Guests (u2+) stay guests; agents (a-namespace) stay agents.
       let aSeq = 1;
@@ -940,6 +1134,9 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         last_mid: r.lastMid,
         last_ts: lastTs(r),
         ...(r.archived ? { archived: true } : {}),
+        // DR-0013: surface broadcast kind so CLI can badge and webui can pick
+        // the broadcast Composer variant. "normal" is the absence of the field.
+        ...(r.kind !== "normal" ? { kind: r.kind } : {}),
       }));
       send(conn, { ok: true, rooms });
       return;
