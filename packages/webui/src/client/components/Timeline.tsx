@@ -647,6 +647,48 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
       });
   }, [sid, timeline.needsResync, connStatus]);
 
+  // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
+  // 2026-07-14-session-tl-refresh-on-revisit): SessionTreeState's timeline
+  // cache is intentionally preserved across tab/session switches (store.ts's
+  // newSessionTree — clicking Files/Rooms and returning must not discard
+  // what's already loaded), but the transcript_subscribe above is torn down
+  // alongside this component's unmount. Any live-tail updates that landed
+  // while the Timeline was unmounted never reached the cache, so a revisit
+  // sees an `end` byte frozen at unmount time — the symptom kawaz observed
+  // (SessionView Timeline "空だったり", r12 mid=12 2026-07-14). This effect
+  // re-reads the tail once per "arrival at a Timeline to look at" so the
+  // stale cache is caught up before the user sees it.
+  //
+  // - Skipped when status is "idle" (initial-load effect above owns first
+  //   visit) or "loading" (a fetch is already in flight; overlapping it
+  //   would just collide on the same replace dispatch).
+  // - Dep list is [sid, connStatus] deliberately, NOT timeline.status: this
+  //   should fire once when Timeline mounts / the sid changes / a reconnect
+  //   lands, not on the loading→loaded flip caused by our own fetch (which
+  //   would loop). status is closed over from the render that scheduled
+  //   this effect, sufficient to gate the "no revisit needed" cases.
+  // - mode: "replace" because DR-0009's transcript_read has no "after"
+  //   parameter — an incremental "just what's new" is not representable in
+  //   the current protocol. The response's own start/end/lines become the
+  //   new cache wholesale (same shape as refresh() below).
+  useEffect(() => {
+    if (connStatus !== "connected") return;
+    if (timeline.status !== "loaded" && timeline.status !== "error") return;
+    store.dispatch({ type: "timeline/loading", sid });
+    void ws
+      .transcriptRead(sid)
+      .then((res) => {
+        if (res.ok)
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
+        else
+          store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
+      })
+      .catch((err) => {
+        store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
+      });
+    // timeline.status is intentionally not in deps — see doc comment above.
+  }, [sid, connStatus]);
+
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
     store.dispatch({ type: "timeline/loading", sid });
