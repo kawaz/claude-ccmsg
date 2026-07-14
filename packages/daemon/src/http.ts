@@ -2,6 +2,7 @@
 // §1): 1 WS message frame = 1 JSON request in, 1 JSON response/event per frame out.
 // The daemon's dispatch/delivery code (server.ts) never touches this file — it only
 // sees `Conn.write`, so UDS and HTTP/WS are interchangeable to it.
+import { handleAttachmentServe, handleAttachmentUpload } from "./attachment.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
@@ -188,6 +189,15 @@ export function startHttpListener(
         const upgraded = srv.upgrade(req, { data: { conn, pending: [] } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade required", { status: 400 });
+      }
+      // DR-0015 attachment endpoints. Must fire before the fallback so the
+      // webui Hono app never sees these paths (it would 404 them, drowning
+      // out the real 400/413/500 status the upload/serve routes produce).
+      if (url.pathname === "/attachment" && req.method === "POST") {
+        return handleAttachmentUpload(req);
+      }
+      if (url.pathname.startsWith("/attachment/") && req.method === "GET") {
+        return handleAttachmentServe(url.pathname.slice("/attachment/".length));
       }
       if (fallback) return fallback(req);
       return new Response("Not Found", { status: 404 });
