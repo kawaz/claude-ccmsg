@@ -615,20 +615,21 @@ describe("transcript_read pagination", () => {
   );
 
   test(
-    "300KiB 超の単一行 (cap 超) をまたぐ before ページングが STUCK せず全行を返す (soft cap)",
+    "cap 超の単一行 (soft cap) をまたぐ before ページングが STUCK せず全行を返す",
     async () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
         const sid = "A";
         const file = path.join(dir, `${sid}.jsonl`);
-        // giant line's body alone (300 KiB - 1 bytes of content + its own \n)
-        // exceeds TRANSCRIPT_READ_MAX_BYTES (256 KiB): the bug this guards
-        // against only shows up once a page boundary lands exactly at this
-        // line's own end, so a small line follows it (page1 = tail read
+        // giant line body must exceed TRANSCRIPT_READ_MAX_BYTES: the bug this
+        // guards against only shows up once a page boundary lands exactly at
+        // this line's own end, so a small line follows it (page1 = tail read
         // picks up only that trailing small line, page2 = "older" from
-        // page1.start is the exact repro window).
-        const giantContent = "H".repeat(300 * 1024 - 1);
+        // page1.start is the exact repro window). Size derived from the
+        // protocol constant so raising the cap (e.g. r15 mid=18, 256KB→2MB)
+        // doesn't break this test's cap-crossing invariant.
+        const giantContent = "H".repeat(TRANSCRIPT_READ_MAX_BYTES + 1024 - 1);
         fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
@@ -679,18 +680,19 @@ describe("transcript_read pagination", () => {
   );
 
   test(
-    "cap + 4MiB 走査上限を超える巨大行は soft cap 回収を諦めるが進行は保証する",
+    "cap + 内部 backward scan 予算を超える巨大行は soft cap 回収を諦めるが進行は保証する",
     async () => {
       const ctx = await startTestDaemon();
       const dir = mkfixtureDir();
       try {
         const sid = "A";
         const file = path.join(dir, `${sid}.jsonl`);
-        // 5 MiB comfortably exceeds TRANSCRIPT_READ_MAX_BYTES (256 KiB) plus
-        // transcript.ts's internal 4 MiB backward-scan budget (~4.25 MiB
-        // combined) — the scan must give up rather than buffer this whole
-        // line unbounded.
-        const giantContent = "H".repeat(5 * 1024 * 1024 - 1);
+        // Must comfortably exceed TRANSCRIPT_READ_MAX_BYTES + transcript.ts's
+        // internal 4 MiB backward-scan budget — the scan must give up rather
+        // than buffer this whole line unbounded. Size derived from the
+        // protocol cap so raising it (e.g. r15 mid=18) doesn't accidentally
+        // shrink the fixture below the scan-give-up threshold.
+        const giantContent = "H".repeat(TRANSCRIPT_READ_MAX_BYTES + 5 * 1024 * 1024 - 1);
         fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
