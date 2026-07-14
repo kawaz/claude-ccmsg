@@ -1,6 +1,6 @@
 # DR-0013: broadcast room (auto-populated session broadcast)
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-07-14)
 - **Date**: 2026-07-13
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1 予約参加、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0012](./DR-0012-room-archive-and-kick.md) の archive/kick を前提とする
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
@@ -67,13 +67,18 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 
 - **archive_room / next_room** は broadcast room に対しても通常 room と同じ挙動を維持する
 - **kick は broadcast room では想定外の運用** [kawaz 2026-07-14、DR13-Q2]。daemon の auto-join と衝突して事実上効かないが、そもそも broadcast 用途で kick を使わない前提とし、SKILL への注記もしない
-- **next_room** で作られる新 room は kind を継承する ([提案]、broadcast の次スレも broadcast)
+- **next_room** で作られる新 room は kind を継承する [kawaz 2026-07-14、DR13-Q3=a]。broadcast の次スレも broadcast (auto-populate と post 制約もそのまま新 room に適用)
 
 ### 2.9 `create_room --kind broadcast --members <sid,...>` の扱い [kawaz 2026-07-14、DR13-Q1=a]
 
 - 明示 `--members` は **無視 + stderr warning** で受理する
 - broadcast の意義は auto-populate であり、明示 members は redundant。ただし CLI 呼び出し側の慣性で書いてしまうことを配慮して error にはしない (kawaz 裁定)
 - warning 文言: `warning: --members is ignored for broadcast rooms (members are auto-populated)`
+
+### 2.10 broadcast room 作成時の初期 msg [kawaz 2026-07-14、DR13-Q4=a]
+
+- `create_room --kind broadcast --msg "..."` の初期 msg は **u1 発の post とみなして受け入れる** (通常 room の create_room と同じ挙動)
+- §2.4 の agent post 制約 (`to: ["u1"]` 必須) は初期 msg には適用しない。u1 発話に対して「u1 宛必須」を課すのは意味論的におかしいため — 通常 room と同じ扱いで済ませる
 
 ## 3. Alternatives considered
 
@@ -115,8 +120,7 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 
 ## 5. Open questions
 
-- **next_room で作られた新 room の kind 継承**: [提案] broadcast を継承する。ただし kawaz レビュー要
-- **broadcast room 作成時の初期 msg**: `create_room --kind broadcast --msg "..."` の初期 msg は u1 発の post とみなして受け入れる (通常 room と同じ、post 制約はかからない)
+(なし — 全 open questions は kawaz 裁定 2026-07-14 で §2 に確定済み)
 
 ## 6. verbatim (kawaz、r12 mid=1 / mid=3)
 
@@ -133,7 +137,5 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 
 ## 7. Next steps
 
-1. 本 DR を kawaz 確認のうえ Accepted へ
-2. Open questions のうち (next_room の kind 継承 / kick の扱い記述) を r12 で追認して確定
-3. 実装: protocol → daemon (auto-populate + subscribe filter + post validate) → CLI → webui → SKILL 追記 の順で 1 バッチ
-4. v0.27.0 (minor bump、broadcast は additive feature)
+1. 実装: protocol → daemon (auto-populate + subscribe filter + post validate) → CLI → webui → SKILL 追記 の順で 1 バッチ
+2. v0.27.0 (minor bump、broadcast は additive feature)
