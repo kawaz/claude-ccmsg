@@ -120,6 +120,44 @@ push: ci ...
     ccmsg notify --self --text "Monitor で 'just watch' を起動して"
 ```
 
+## 応答経路 hint `reply_via` (DR-0014)
+
+subscribe stream に流れる msg event には **`reply_via` 文字列** が付いている (daemon が受信者ごとに刻印)。**agent は room の種別 / from / to を pattern match で分岐せず、この文字列に従って返信する**。返信経路の判定を集約するための wire hint。
+
+| 値の例        | 意味                                                                                                            |
+| ------------- | --------------------------------------------------------------------------------------------------------------- |
+| `r10`         | room r10 に返信 (`to` なし = room 全員宛)                                                                       |
+| `r10u1`       | room r10 に `--to u1` で返信 (u1 priv)                                                                          |
+| `r10u1a32a35` | room r10 に `--to u1,a32,a35` で返信 (u1 + 指定の peers)                                                        |
+| `tl`          | 自セッションの TL 側で返す (1on1 room の u1 priv、下記「1on1 room」)                                            |
+| `none`        | 応答不要 (archive 済み room の惰性 msg など、静穏化)。SKILL 内の説明では **不要** とも表現するが実装値は `none` |
+
+読み方:
+
+- prefix `r<数字>` = 対象 room の id。以降の `u<N>` / `a<N>` を id 順にそのまま連結 (セパレータ無し) して `--to` に渡す
+- `tl` / `none` は特別値。前者は「room に返さず、自セッションの transcript 経路で応答」= 通常の AI 応答をそのまま transcript に流せばよい (webui SessionView Timeline が拾う)。後者は「返信しない」
+
+## 1on1 room (DR-0014)
+
+kawaz が **特定 session に priv したい時**に使う小さな 2 者 room (u1 + 1 session 固定)。webui の SessionView 右下の **丸い + ボタン (floating composer)** から発信されるのが主経路。broadcast との違いをまとめると:
+
+- **member 制約**: `--members` は 1 sid 必須。空 or 複数だと `one_on_one_requires_single_member` error
+- **auto-populate 無し**: session の hello / disconnect で自動 join/leave はしない (broadcast と違って動的加入なし)
+- **agent post 制約無し**: 2 者確定 room なので `--to u1` は不要。to 省略でも OK (broadcast のような u1 in to 必須 rule は非適用)
+- **判別は `room.kind === "1on1"`** で行う (title 文字列は表示用のみ、typo に弱いので判別に使わない)
+
+### AI (agent) 視点
+
+- 1on1 room で u1 発の msg を受け取ったら、reply_via が `"tl"` になっている → **通常の AI 応答経路 (transcript 出力) で返せばよい**。room に post し直さなくて良い (webui SessionView Timeline が transcript 経由で拾う)
+- 1on1 room の title は `"<repo> 1on1 <sid8>"` のような表示用文字列 — 判別ロジックは kind フィールドで
+- CLI で 1on1 room を明示的に作る場合: `create-room --kind 1on1 --members <sid>`
+
+### 使い分け
+
+- broadcast: 全 session に一斉通信 (kawaz の一言を複数 session に届ける)
+- 1on1: 特定 session だけに priv (webui SessionView から発信)
+- 通常 room: 会話継続、複数 session と関わるタスク
+
 ## broadcast room (DR-0013)
 
 kawaz が「全 active session に一斉送信」したい時に使う **特殊 kind の room**。通常 room との差分は 2 点だけ:
