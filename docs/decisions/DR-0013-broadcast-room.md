@@ -69,6 +69,12 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
   - **kick は daemon の auto-join と衝突する** (kick した session が次の hello / 現在のコネクションで即 auto-join される)。broadcast room で kick を使う運用は事実上機能しない旨を SKILL に注記 (Open questions §5 参照)
   - **next_room** で作られる新 room は kind を継承する ([提案]、broadcast の次スレも broadcast)
 
+### 2.9 `create_room --kind broadcast --members <sid,...>` の扱い [kawaz 2026-07-14、DR13-Q1=a]
+
+- 明示 `--members` は **無視 + stderr warning** で受理する
+- broadcast の意義は auto-populate であり、明示 members は redundant。ただし CLI 呼び出し側の慣性で書いてしまうことを配慮して error にはしない (kawaz 裁定)
+- warning 文言: `warning: --members is ignored for broadcast rooms (members are auto-populated)`
+
 ## 3. Alternatives considered
 
 - **完全に別 primitive `create_broadcast` op を新設**: 不採用。既存 room の kind 拡張で足り、CLI/webui/storage が二重にならない。archive/kick も既存 op が使える
@@ -109,7 +115,6 @@ kawaz が新機能を発案 (r12 mid=1、verbatim は §6):
 
 ## 5. Open questions
 
-- **create_room --kind broadcast --members <sid,...> の扱い**: broadcast の意義は auto-populate、明示 `--members` は redundant。案 = 無視 + stderr warning [保留]
 - **broadcast room での kick の意味**: kick 直後の hello で再 join される → kick が事実上効かない。「再 join 拒否リスト」を持つかは post-MVP [保留]。DR 上は「kick は使える op として残すが、broadcast では意味を持たない旨 SKILL に注記」で足りる
 - **next_room で作られた新 room の kind 継承**: [提案] broadcast を継承する。ただし kawaz レビュー要
 - **broadcast room 作成時の初期 msg**: `create_room --kind broadcast --msg "..."` の初期 msg は u1 発の post とみなして受け入れる (通常 room と同じ、post 制約はかからない)
