@@ -781,14 +781,99 @@ body {
   overflow-y: auto;
 }
 
-.composer button {
-  align-self: flex-end;
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.composer-attach-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.composer-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+  color: var(--fg-muted);
+  background: transparent;
+}
+
+.composer-attach-btn:hover {
+  background: var(--bg-alt);
+  color: var(--fg);
+}
+
+.composer button[type="submit"] {
   background: var(--accent);
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
   padding: 0.4rem 1rem;
   cursor: pointer;
+}
+
+.composer button[type="submit"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.composer-attachments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.composer-attachment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.composer-attachment-error {
+  color: var(--danger, #c33);
+}
+
+.composer-attachment-remove {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 0.3rem;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.composer-attachment-remove:hover {
+  color: var(--fg);
+}
+
+/* --- DR-0015 attachment inline rendering in Timeline (image mime becomes
+ *     <img>, others become plain <a> pointing at the daemon /attachment/
+ *     endpoint). max-width keeps a huge screenshot from blowing out the
+ *     Timeline column width; the wrapping <a> is left as flow-inline so a
+ *     paragraph's mix of text + image + text keeps its natural order. --- */
+.md-attachment-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.35rem;
+  display: block;
+}
+
+.md-attachment-image-link {
+  display: inline-block;
+  max-width: 20rem;
 }
 
 /* --- Session view: FileTree + FileViewer panes (DR-0008), Timeline (DR-0009) --- */
