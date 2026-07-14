@@ -1,6 +1,6 @@
 ---
 title: SessionView Timeline tab で離席中の live tail 更新が反映されず、再訪時に最新ログが抜ける
-status: wip
+status: resolved
 category: design
 created: 2026-07-14T20:27:04+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-14T23:10:51+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-14T23:31:06+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.30.0 (546acacb)", "Timeline.tsx に mount/sid/connStatus 変化時の auto-refresh useEffect を追加、既存の refresh() 経路 (transcript_read mode:replace) を再利用", "tlr-impl worker 実装、team-lead 監査済み", "DR-0009 の transcript_read には after パラメータがないため append merge は不採用、全 tail 再取得となるが個人スケールで実害なし", "既存 refresh() 手動ボタンは残置 (edge case 用途)"]
 blocked_by:
 origin: 自リポ TODO
 ---
