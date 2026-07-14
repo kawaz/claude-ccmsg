@@ -51,6 +51,7 @@ import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
 import {
   appendEvent,
   closeRoom,
+  compareIds,
   lastTs,
   memberIdBySid,
   nextAgentMemberId,
@@ -146,8 +147,83 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
-function writeDelivered(conn: Conn, roomId: string, ev: StorageEvent): void {
-  send(conn, { ...ev, r: roomId });
+/** id the connection acts as inside `room`, for delivery-time bookkeeping like
+ * reply_via. Returns ADMIN_ID for the user role, the member id for a member
+ * session, or null when the subscriber isn't a member (u1 always resolves;
+ * a non-member session subscriber never reaches writeDelivered because
+ * subscriberSeesRoom would have filtered them out first). */
+function recipientId(conn: Conn, room: Room): string | null {
+  const id = conn.identity;
+  if (!id) return null;
+  if (id.role === "user") return ADMIN_ID;
+  return memberIdBySid(room).get(id.sid) ?? null;
+}
+
+/** DR-0014 §2.4-2.5 reply_via composer. Returns the wire hint string a receiver
+ * should copy into any reply — encodes room + reconstructed `to` list minus the
+ * receiver itself, so agents don't have to pattern-match room/kind/from
+ * themselves at post time.
+ *
+ * Values:
+ * - `"none"`: archived room, silent (no response expected).
+ * - `"tl"`: 1on1 room + u1-authored, agent should reply on its own session TL
+ *   (webui SessionView picks it up via the existing u1-msg transcript path).
+ * - `"r<id>"`: normal room + author addressed the whole room (`to` absent).
+ *   Reply broadcasts back to the room.
+ * - `"r<id>u1"`: broadcast room + u1-authored, no explicit `to` — agent replies
+ *   with `to: ["u1"]` (priv back to kawaz, satisfying §2.4's u1-target rule).
+ * - `"r<id>u1a3a5..."`: broadcast + u1-authored with explicit multi-target
+ *   `to` — reply preserves the u1 hop and the other addressed peers, minus
+ *   the receiver.
+ * - `"r<id>u1a3..."` / `"r<id>a1a3..."` etc. (generic form): normal room with
+ *   `to` present, or broadcast room's session-authored `to` (§2.4 requires u1
+ *   inside it so the same generic path emits `u1`). Reply list is
+ *   sender + original `to` - receiver, sorted by canonical id order.
+ *
+ * `receiverId` = the receiving connection's id in `room` (ADMIN_ID for u1,
+ * member id for a session). The receiver never appears in the concatenated
+ * tail — replying to yourself is not a hint kawaz nor any agent has ever
+ * needed. */
+function computeReplyVia(room: Room, ev: MsgEvent, receiverId: string): string {
+  if (room.archived) return "none";
+  if (room.kind === "1on1" && ev.from === ADMIN_ID) return "tl";
+  if (room.kind === "broadcast" && ev.from === ADMIN_ID) {
+    // u1's own broadcast: agents priv back to u1 (§2.4 target rule) plus any
+    // other peers u1 explicitly addressed, minus the receiver. `to` absent =
+    // full-room broadcast, only the u1 hint survives.
+    const prefix = `${room.id}u1`;
+    if (!ev.to || ev.to.length === 0) return prefix;
+    const others = ev.to.filter((t) => t !== ADMIN_ID && t !== receiverId).sort(compareIds);
+    return prefix + others.join("");
+  }
+  // Generic path — normal + any author, broadcast + session-author (must
+  // include u1 in `to` per §2.4, so the generic set-arithmetic covers it),
+  // 1on1 + session-author (rare: agent-initiated msg in its 1on1 room; the
+  // receiver here is u1 via the webui, "r<id>a<N>" nudges the agent that its
+  // own next post goes back to the same room to be picked up by u1).
+  if (!ev.to || ev.to.length === 0) return room.id;
+  const parts = new Set<string>([ev.from, ...ev.to]);
+  parts.delete(receiverId);
+  const sorted = [...parts].sort(compareIds);
+  return room.id + sorted.join("");
+}
+
+function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
+  if (ev.type === "msg") {
+    const rid = recipientId(conn, room);
+    if (rid !== null) {
+      // reply_via is a per-recipient wire hint (§2.4) — computed at delivery
+      // time from the receiver's viewpoint, never stored in the room's jsonl.
+      // Persisting it would either lock in one recipient's viewpoint for
+      // everybody else or bloat every msg line with a per-recipient map, both
+      // strictly worse than recomputing on the O(members × delivered_msgs)
+      // subscribe-stream path (fast in-memory joins on a Map + sort).
+      const reply_via = computeReplyVia(room, ev, rid);
+      send(conn, { ...ev, r: room.id, reply_via });
+      return;
+    }
+  }
+  send(conn, { ...ev, r: room.id });
 }
 
 // --- identity / registry ---------------------------------------------------
@@ -439,7 +515,7 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
       if (isAuthorSub(sub, author)) continue;
       if (!msgVisibleTo(sub, room, ev)) continue;
     }
-    writeDelivered(sub, room.id, ev);
+    writeDelivered(sub, room, ev);
   }
 }
 
@@ -473,7 +549,7 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
       // の subscribe stream にも noise を復元させない。
       if (isSuppressedForBroadcastStream(room, ev)) continue;
       if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
-      writeDelivered(conn, room.id, ev);
+      writeDelivered(conn, room, ev);
     }
     return;
   }
@@ -500,7 +576,7 @@ function sendBacklog(conn: Conn, room: Room, sinceMid?: number, suppressAuthorId
       if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
       if (!msgVisibleTo(conn, room, ev)) continue;
     }
-    writeDelivered(conn, room.id, ev);
+    writeDelivered(conn, room, ev);
   }
 }
 
@@ -530,7 +606,7 @@ function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): 
   // `{ok:true, reused:true}` with no mid — a swallowed post disguised as
   // success.
   room.dedupEligible = false;
-  for (const r of recipients) writeDelivered(r, room.id, ev);
+  for (const r of recipients) writeDelivered(r, room, ev);
 }
 
 // --- room creation ---------------------------------------------------------
@@ -795,7 +871,62 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
 
     case "create_room": {
       const explicitMembers = Array.isArray(req.members) ? req.members : [];
-      const kind: RoomKind = req.kind === "broadcast" ? "broadcast" : "normal";
+      const kind: RoomKind =
+        req.kind === "broadcast" ? "broadcast" : req.kind === "1on1" ? "1on1" : "normal";
+
+      if (kind === "1on1") {
+        // DR-0014 §2.1 1on1 room = "u1 + 単一 session の 2 者 room".
+        // members must be exactly one non-empty sid string. Empty / multiple /
+        // non-string entries all fail with one_on_one_requires_single_member so
+        // the caller can't accidentally open a 3-party or 0-party priv room —
+        // 1on1's whole point is "2 者確定なので配信対象は必然的に絞られる".
+        const targetSids = explicitMembers.filter(
+          (s): s is string => typeof s === "string" && s !== "",
+        );
+        if (targetSids.length !== 1) {
+          sendErr(
+            conn,
+            ErrorCode.one_on_one_requires_single_member,
+            "create_room --kind 1on1 requires exactly one member sid",
+          );
+          return;
+        }
+        const targetSid = targetSids[0]!;
+        // include_self is deliberately NOT honored for 1on1 (§2.1: session-role
+        // caller does NOT auto-prepend). If a session creates a 1on1 with its
+        // OWN sid, the resulting room has member.sid == self.sid, member.id = a1,
+        // and u1 stays implicit — the same 2-party shape as a webui-created one.
+        const room = createRoom(daemon, [targetSid], false, "1on1");
+        // Kind marker first (same rationale as broadcast: mid-creation crash
+        // recovery must not resurface a 1on1 as "normal" and then start
+        // dedup-folding future creates into it).
+        appendEvent(room, { type: "kind", kind: "1on1", ts: nowIso() } satisfies KindEvent);
+        if (req.title)
+          appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
+        writeMembers(daemon, room, [targetSid]);
+        let mid: number | undefined;
+        let authorId: string | null = null;
+        if (req.msg) {
+          authorId = resolveFrom(conn, room);
+          if (authorId !== null) {
+            mid = room.lastMid + 1;
+            appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
+          }
+        }
+        // 1on1 rooms are dedup-exempt (createRoom seeded dedupEligible=false,
+        // storage.ts's computeDerived enforces the same on restart) — the
+        // webui's "reuse existing 1on1 with this sid, else create" auto-create
+        // (§2.2) does its own lookup by kind==="1on1" instead of relying on
+        // the dedup index. So we deliberately do NOT populate dedupIndex here.
+        deliverNewRoom(daemon, room, authorOf(conn), authorId);
+        send(conn, {
+          ok: true,
+          room: room.id,
+          reused: false,
+          ...(mid !== undefined ? { mid } : {}),
+        });
+        return;
+      }
 
       if (kind === "broadcast") {
         // DR-0013 §2.2 broadcast rooms auto-populate from the live session
@@ -944,17 +1075,17 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         daemon,
         inherited.map((m) => m.sid),
         false,
-        // DR-0013 §2.8 「next_room で作られる新 room は kind を継承」: broadcast の
-        // 次スレも broadcast のままにする (auto-populate と §2.4 post 制約もそのまま
-        // 新 room に適用される)。ここで作成時 kind を broadcast にしておくと、以降
-        // hello / disconnect 時の join/leaveAllBroadcasts が新 room も対象に拾う。
+        // DR-0013 §2.8 / DR-0014 §2 next_room inherits kind: broadcast の
+        // 次スレは broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
+        // 適用され、以降の hello/disconnect が新 room も拾う)、1on1 の次スレは
+        // 1on1 (reply_via = "tl" 挙動もそのまま維持)。normal はそのまま normal。
         old.kind,
       );
       // KindEvent must be written BEFORE members / prev so a mid-creation crash
-      // still recovers the next-room as broadcast on daemon restart (same
-      // rationale as create_room's broadcast branch above).
-      if (old.kind === "broadcast")
-        appendEvent(room, { type: "kind", kind: "broadcast", ts: nowIso() } satisfies KindEvent);
+      // still recovers the next-room's kind on daemon restart (same rationale
+      // as create_room's non-`"normal"` branches above).
+      if (old.kind !== "normal")
+        appendEvent(room, { type: "kind", kind: old.kind, ts: nowIso() } satisfies KindEvent);
       // Renumber per namespace, preserving each member's u/a namespace and relative
       // join order. Guests (u2+) stay guests; agents (a-namespace) stay agents.
       let aSeq = 1;
@@ -1134,8 +1265,10 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         last_mid: r.lastMid,
         last_ts: lastTs(r),
         ...(r.archived ? { archived: true } : {}),
-        // DR-0013: surface broadcast kind so CLI can badge and webui can pick
-        // the broadcast Composer variant. "normal" is the absence of the field.
+        // DR-0013 broadcast / DR-0014 1on1: surface non-`"normal"` kind so
+        // CLI can badge and webui can pick the right Composer variant (or
+        // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
+        // absence of the field.
         ...(r.kind !== "normal" ? { kind: r.kind } : {}),
       }));
       send(conn, { ok: true, rooms });
@@ -1322,7 +1455,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       for (const sub of daemon.subscribers) {
         if (sub === targetSub) continue; // already covered by their snapshot above
         if (!subscriberSeesRoom(sub, room)) continue;
-        writeDelivered(sub, room.id, ev);
+        writeDelivered(sub, room, ev);
       }
       send(conn, { ok: true, room: room.id, id, already: false });
       return;

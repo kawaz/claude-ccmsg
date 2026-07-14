@@ -47,7 +47,12 @@ function idSortKey(id: string): [number, number] {
   return [m[1] === "u" ? 0 : 1, Number(m[2])];
 }
 
-function compareIds(a: string, b: string): number {
+/** Member id ordering: `u` namespace before `a`, then numeric suffix ascending.
+ * Exported so server.ts's reply_via composer (DR-0014 §2.4) can concatenate the
+ * `u<N>` / `a<N>` fragments in the same canonical order the wire protocol
+ * documents (`r10u1a32a35`), regardless of how the underlying `to` was ordered
+ * at post time. */
+export function compareIds(a: string, b: string): number {
   const [ap, an] = idSortKey(a);
   const [bp, bn] = idSortKey(b);
   return ap === bp ? an - bn : ap - bp;
@@ -146,12 +151,16 @@ function computeDerived(room: Room): void {
   room.kind = kind;
   room.next = next;
   room.prev = prev;
-  // broadcast rooms never dedup — the same-sid-set dedup key would fold every
-  // create_room{kind:"broadcast"} call into the very first broadcast room, and
-  // "kawaz が dev broadcast と debug broadcast を並存させたい" (DR-0013 §2.1、
-  // 「複数の broadcast room を並存できる」) が満たせなくなる。dedupEligible
-  // false は next_room が生成する `prev` link 付き room と同じ扱い。
-  room.dedupEligible = prev.length === 0 && kind !== "broadcast";
+  // Non-`"normal"` rooms never dedup:
+  // - broadcast: kawaz needs multiple parallel broadcast rooms (dev / debug /
+  //   ...) — a same-sid-set dedup key would fold every create_room{kind:"broadcast"}
+  //   call into the very first one (DR-0013 §2.1, r12 mid=3).
+  // - 1on1: pairing is (u1, target_sid); another create_room --kind 1on1 for
+  //   the same sid must NOT fold into a different room's dedup entry, and
+  //   webui's "reuse-if-exists" auto-create (DR-0014 §2.2) does its own lookup
+  //   by kind === "1on1" instead of trusting the dedup index.
+  // `dedupEligible: false` here matches next_room's prev-linked room treatment.
+  room.dedupEligible = prev.length === 0 && kind === "normal";
   room.dedupKey = [...sids].sort().join(",");
 }
 
@@ -287,10 +296,11 @@ export function appendEvent(room: Room, ev: StorageEvent): void {
   if (ev.type === "archive") room.archived = ev.archived;
   if (ev.type === "kind") {
     room.kind = ev.kind;
-    // broadcast rooms are dedup-exempt (see computeDerived's identical
-    // comment) — createRoom already seeds dedupEligible=false for a broadcast
-    // room, but a later kind mutation must never re-enable folding either.
-    if (ev.kind === "broadcast") room.dedupEligible = false;
+    // Non-`"normal"` rooms (broadcast / 1on1) are dedup-exempt (see
+    // computeDerived's identical comment) — createRoom already seeds
+    // dedupEligible=false for these, but a later kind mutation must never
+    // re-enable folding either.
+    room.dedupEligible = false;
   }
   if (ev.type === "next") room.next.push(ev.room);
   if (ev.type === "prev") {
