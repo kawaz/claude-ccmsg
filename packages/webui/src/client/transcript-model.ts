@@ -826,6 +826,25 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
     return { kind: "turn", ts, role, segments, userMessageKind };
   }
+  // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
+  // 積まれた記録」で、`content` field が本物の user 発話文字列 (kawaz r15
+  // mid=10、2026-07-14)。task-notification と同じ JSON 枠折り畳みに落ちて
+  // しまっていたのを、通常の user turn として扱い直して緑・右寄せの吹き出しで
+  // 表示する。dequeue は content を持たないので meta の 1 行 summary のまま
+  // (取り出したイベントを user 発話として二重表示しないため)。
+  if (
+    o.type === "queue-operation" &&
+    o.operation === "enqueue" &&
+    typeof o.content === "string"
+  ) {
+    return {
+      kind: "turn",
+      ts,
+      role: "user",
+      segments: [{ kind: "text", role: "user", text: o.content }],
+      userMessageKind: "user-prompt",
+    };
+  }
   return {
     kind: "meta",
     ts,
