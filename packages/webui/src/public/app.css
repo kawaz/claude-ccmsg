@@ -14,6 +14,16 @@
   --peer-bubble-bg: #dbeafe;
   --danger: #dc2626;
   --warn: #b45309;
+
+  /* UNIF-Q1=b (kawaz r15 mid=3、2026-07-14): floating "+" fab + popup panel
+   * を SessionView 1on1 と RoomView 通常/broadcast の Composer で共通化。
+   * 位置・寸法値をここで 1 箇所に集約し、両 fab class から参照する。
+   * RoomView と SessionView は App.tsx で排他表示 (同時に画面に出ない) の
+   * ため、両方右下 (--composer-fab-offset) で被らない。 */
+  --composer-fab-size: 3.2rem;
+  --composer-fab-offset: 1.2rem;
+  --composer-panel-width: min(24rem, calc(100vw - 2rem));
+  --z-composer: 40;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1871,17 +1881,17 @@ button.session-tab {
   display: none;
 }
 
-/* DR-0014 §2.6 1on1 floating composer for SessionView. Sits pinned to the
- * bottom-right of the viewport with position:fixed so it stays reachable no
- * matter how far kawaz has scrolled the Timeline / FileViewer pane. z-index
- * keeps it above the tab content and below any global modal/toast the app
- * might grow later (arbitrary but "well above content, well below nothing"). */
-.one-on-one-fab {
+/* DR-0014 §2.6 1on1 floating composer for SessionView + UNIF-Q1=b の RoomView
+ * floating composer 共通スタイル。position:fixed で bottom-right pin、
+ * SessionView と RoomView は App.tsx で排他表示なので同座標でも被らない。
+ * 位置・寸法値は :root の --composer-fab-* 変数 1 箇所で管理。 */
+.one-on-one-fab,
+.room-composer-fab {
   position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  width: 3.2rem;
-  height: 3.2rem;
+  right: var(--composer-fab-offset);
+  bottom: var(--composer-fab-offset);
+  width: var(--composer-fab-size);
+  height: var(--composer-fab-size);
   border-radius: 50%;
   border: none;
   background: var(--accent);
@@ -1890,18 +1900,19 @@ button.session-tab {
   line-height: 1;
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  z-index: 40;
+  z-index: var(--z-composer);
 }
 
-.one-on-one-fab:hover {
+.one-on-one-fab:hover,
+.room-composer-fab:hover {
   filter: brightness(1.05);
 }
 
 .one-on-one-panel {
   position: fixed;
-  right: 1.2rem;
-  bottom: 1.2rem;
-  width: min(24rem, calc(100vw - 2rem));
+  right: var(--composer-fab-offset);
+  bottom: var(--composer-fab-offset);
+  width: var(--composer-panel-width);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 0.6rem;
@@ -1910,7 +1921,43 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  z-index: 40;
+  z-index: var(--z-composer);
+}
+
+/* UNIF-Q1=b: RoomView 通常/broadcast の Composer を 1on1 と同じ floating
+ * popup に統一 (kawaz r15 mid=1/mid=3、2026-07-14)。panel は常時 mount
+ * (display 切替) で内包 Composer の text/attachments state を close 中も
+ * 維持する — kawaz 明示指定: 入力途中で外部タップされても書きかけは残す
+ * (再度 fab タップで復元、attachment upload 進行中も維持)。
+ * `.room-composer-panel-hidden` = 非表示、fab クリックで表示に切替。 */
+.room-composer-panel {
+  position: fixed;
+  right: var(--composer-fab-offset);
+  bottom: var(--composer-fab-offset);
+  width: var(--composer-panel-width);
+  max-height: calc(100vh - 6rem);
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 0.6rem;
+  z-index: var(--z-composer);
+}
+
+.room-composer-panel-hidden {
+  display: none;
+}
+
+/* panel 内に埋め込まれた Composer は inline sticky (`.composer` の
+ * `position: sticky; bottom: 0; margin-top; padding-top; border-top`) が
+ * 無意味 — popup の中は独立レイアウトなので打ち消す。 */
+.room-composer-panel .composer {
+  position: static;
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+  background: transparent;
 }
 
 .one-on-one-panel-header {
