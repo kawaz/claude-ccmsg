@@ -828,33 +828,33 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   }
   // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
   // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列
-  // (kawaz r15 mid=10、2026-07-14)。ただしその prompt が **task-notification /
-  // peer-message wrapper の system 由来メッセージだった場合** (kawaz が
-  // 作業中に画面を触ったのではなく、Monitor / teammate 経由の system prompt
-  // が queue に載っただけのケース) までも緑・右寄せ user 吹き出しにすると
-  // task-notification 本文がそのまま user メッセージに化けてしまう
-  // (kawaz r15 mid=13、2026-07-14 の kuu.mbt session で観測)。classifyUserMessage
-  // と同じ前置プレフィクス判定を content 文字列に対して再適用し、判定結果
-  // を userMessageKind に載せる — Timeline 側は既に fold 処理を kind に基づき
-  // 行うので、system 由来なら通常の fold に流れ、本物の user 発話だけが
-  // "user-prompt" として緑吹き出し経路に乗る。
+  // (kawaz r15 mid=10、2026-07-14)。ここで拾いたいのは **kawaz が作業中に
+  // タイプした純粋な発話**だけ — その場合 user turn として parse し直して
+  // 緑・右寄せの吹き出しに乗せる。
+  //
+  // 一方 content が **task-notification / peer-message / [SYSTEM NOTIFICATION]
+  // wrapper の system 由来メッセージ** だった場合は user turn 化しない:
+  // その event は既に Monitor tool_result 側 (通常の type:"user" 経路) か
+  // 直接注入で transcript に載っており、ここで重ねて拾うと同じ ccmsg msg が
+  // CcmsgBubble に 2 個並ぶ (kawaz r15 mid=17、2026-07-14 の実観測)。system
+  // wrapper 系は fall-through させて MetaLine (queue-operation の 1 行 summary)
+  // に落とし、本命の event 描画はもう片方の経路だけに任せる。
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     const content = o.content;
-    let kind: UserMessageKind = "user-prompt";
-    if (content.startsWith("<task-notification>")) {
-      kind = "task-notification";
-    } else if (content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
-      kind = content.includes("<task-notification>") ? "task-notification" : "unknown-meta";
-    } else if (content.startsWith("Another Claude session sent a message:")) {
-      kind = "peer-message";
+    const isSystemWrapper =
+      content.startsWith("<task-notification>") ||
+      content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]") ||
+      content.startsWith("Another Claude session sent a message:");
+    if (!isSystemWrapper) {
+      return {
+        kind: "turn",
+        ts,
+        role: "user",
+        segments: [{ kind: "text", role: "user", text: content }],
+        userMessageKind: "user-prompt",
+      };
     }
-    return {
-      kind: "turn",
-      ts,
-      role: "user",
-      segments: [{ kind: "text", role: "user", text: content }],
-      userMessageKind: kind,
-    };
+    // system wrapper のときは以下の meta return に fall through
   }
   return {
     kind: "meta",
