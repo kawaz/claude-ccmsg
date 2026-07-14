@@ -180,11 +180,11 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
 
   // 何を保証するか (対極 — 誤爆防止): the sweep leaves alone localStorage
   // keys that don't carry the ccmsg.1on1. prefix (other webui state like
-  // `ccmsg.since`), and preserves a still-fresh draft even when its peer's
+  // `ccmsg.since_seq`), and preserves a still-fresh draft even when its peer's
   // last_activity_at is missing (the safe-default path when neither peer
   // activity nor the draft is >10 days old).
   test("leaves unrelated keys and fresh drafts alone", () => {
-    localStorage.setItem("ccmsg.since", '{"r1":5}');
+    localStorage.setItem("ccmsg.since_seq", '{"r1":5}');
     saveDraft("sid-fresh", "keep me");
 
     const state: AppState = {
@@ -193,7 +193,7 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
     };
     cleanupStaleDrafts(state);
 
-    expect(localStorage.getItem("ccmsg.since")).toBe('{"r1":5}');
+    expect(localStorage.getItem("ccmsg.since_seq")).toBe('{"r1":5}');
     expect(loadDraft("sid-fresh")?.text).toBe("keep me");
   });
 });
