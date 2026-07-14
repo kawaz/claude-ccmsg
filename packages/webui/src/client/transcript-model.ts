@@ -832,11 +832,7 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   // しまっていたのを、通常の user turn として扱い直して緑・右寄せの吹き出しで
   // 表示する。dequeue は content を持たないので meta の 1 行 summary のまま
   // (取り出したイベントを user 発話として二重表示しないため)。
-  if (
-    o.type === "queue-operation" &&
-    o.operation === "enqueue" &&
-    typeof o.content === "string"
-  ) {
+  if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     return {
       kind: "turn",
       ts,
