@@ -12,14 +12,18 @@ import { useRef, useState } from "preact/hooks";
 import type { AppState, RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { roomHref } from "../locator.ts";
-import { relTime } from "../utils.ts";
+import { relTime, splitRoomsByArchived } from "../utils.ts";
 import { roomsForSession, roomsForSids, sameCwdSids } from "../rooms-filter.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 
 function RoomRow({ room }: { room: RoomState }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
+  // アーカイブ済みは .room-archived で opacity を下げて視覚的に区別
+  // (kawaz r15 mid=14、2026-07-14)。sidebar 側 RoomList は details 折り畳み
+  // で「隠す」区別のみだったが、session Rooms タブは開いた状態で archived
+  // 行も見えるので、行そのものに淡色化を効かせて active と一目で分かるように。
   return (
-    <li>
+    <li class={room.archived ? "room-archived" : undefined}>
       <a href={roomHref(room.id)}>
         <span class="room-title">{room.title || room.id}</span>
         <span class="room-meta">
@@ -27,6 +31,33 @@ function RoomRow({ room }: { room: RoomState }) {
         </span>
       </a>
     </li>
+  );
+}
+
+/** DR-0012 と同じ「active を上、archived を折り畳みで下」を SessionRooms の
+ * 各セクションにも適用 (kawaz r15 mid=14、2026-07-14)。既存 sidebar
+ * RoomList と同じ splitRoomsByArchived を使い、archived が 0 件のときは
+ * <details> 自体を出さない (共通ケースは変化なし)。 */
+function RoomListWithArchive({ rooms }: { rooms: RoomState[] }) {
+  const { active, archived } = splitRoomsByArchived(rooms);
+  return (
+    <>
+      <ul class="session-rooms-list">
+        {active.map((room) => (
+          <RoomRow key={room.id} room={room} />
+        ))}
+      </ul>
+      {archived.length > 0 && (
+        <details class="session-rooms-archived">
+          <summary>アーカイブ ({archived.length})</summary>
+          <ul class="session-rooms-list">
+            {archived.map((room) => (
+              <RoomRow key={room.id} room={room} />
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
   );
 }
 
@@ -146,11 +177,7 @@ export function SessionRooms({ sid, state }: { sid: string; state: AppState }) {
         {own.length === 0 ? (
           <p id="empty-state">参加中の room はありません</p>
         ) : (
-          <ul class="session-rooms-list">
-            {own.map((room) => (
-              <RoomRow key={room.id} room={room} />
-            ))}
-          </ul>
+          <RoomListWithArchive rooms={own} />
         )}
         <NewRoomForm sid={sid} />
       </section>
@@ -160,11 +187,7 @@ export function SessionRooms({ sid, state }: { sid: string; state: AppState }) {
           {related.length === 0 ? (
             <p id="empty-state">該当する room はありません</p>
           ) : (
-            <ul class="session-rooms-list">
-              {related.map((room) => (
-                <RoomRow key={room.id} room={room} />
-              ))}
-            </ul>
+            <RoomListWithArchive rooms={related} />
           )}
         </section>
       )}

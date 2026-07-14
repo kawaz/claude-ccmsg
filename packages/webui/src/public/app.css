@@ -988,6 +988,31 @@ button.session-tab {
   background: var(--bg-alt);
 }
 
+/* SessionRooms tab のアーカイブ節 (kawaz r15 mid=14、2026-07-14)。sidebar
+ * RoomList と同じ「アーカイブ (N)」の折り畳み <details> 見出し慣習を踏襲。 */
+.session-rooms-archived {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.session-rooms-archived summary {
+  cursor: pointer;
+  padding: 0.3rem 0.5rem;
+  color: var(--fg-muted);
+  list-style: none;
+}
+.session-rooms-archived summary::-webkit-details-marker {
+  display: none;
+}
+
+/* アーカイブ済み room 行の淡色化 (kawaz r15 mid=14): 折り畳みで隠すだけ
+ * でなく、開いた状態で active と一目で区別できるよう行そのものを薄く。
+ * sidebar 側 RoomList でも共通で使う global class として定義しておく
+ * (現状 sidebar は details 折り畳みだけで class 未付与、必要になれば
+ * RoomList.tsx 側で class を足すだけで淡色化が乗る)。 */
+.room-archived {
+  opacity: 0.55;
+}
+
 .new-room-btn {
   background: none;
   border: 1px dashed var(--border);
