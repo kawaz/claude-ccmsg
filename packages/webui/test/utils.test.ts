@@ -138,6 +138,7 @@ function roomWithMember(m: MemberEvent): RoomState {
     timeline: [],
     lastMid: 0,
     lastTs: null,
+    kind: "normal",
   };
 }
 
@@ -202,6 +203,7 @@ function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
     timeline: [],
     lastMid: 0,
     lastTs: null,
+    kind: "normal",
     ...overrides,
   };
 }

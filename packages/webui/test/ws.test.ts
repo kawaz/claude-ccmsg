@@ -907,6 +907,7 @@ describe("createWsClient agents/ping (U1)", () => {
             timeline: [],
             lastMid: 5,
             lastTs: null,
+            kind: "normal" as const,
           },
         ],
       ]),

@@ -117,6 +117,18 @@ export interface ArchiveEvent {
   ts: string;
 }
 
+/** Room kind marker (DR-0013). Written exactly once at room creation for
+ * broadcast rooms — normal rooms carry no `kind` event and default to `normal`
+ * on load. Persisting it as its own event keeps rooms/*.jsonl append-only and
+ * lets scanRooms recover the kind on daemon restart without inventing a
+ * separate metadata sidecar. Only `"broadcast"` is stored; `"normal"` is the
+ * absence of this event. */
+export interface KindEvent {
+  type: "kind";
+  kind: "broadcast";
+  ts: string;
+}
+
 export type StorageEvent =
   | MemberEvent
   | LeaveEvent
@@ -124,7 +136,13 @@ export type StorageEvent =
   | NextEvent
   | PrevEvent
   | TitleEvent
-  | ArchiveEvent;
+  | ArchiveEvent
+  | KindEvent;
+
+/** Room kind (DR-0013). `"broadcast"` = auto-populated by session lifecycle,
+ * agent post is restricted to `to: ["u1", ...]`, member/leave events are
+ * suppressed from the subscribe stream. `"normal"` = every other room. */
+export type RoomKind = "normal" | "broadcast";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id. */
 export type DeliveredEvent = StorageEvent & { r: string };
@@ -253,6 +271,12 @@ export interface CreateRoomRequest {
    * a room that observes without participating. Ignored for user-role callers
    * (who never auto-include either way). */
   include_self?: boolean;
+  /** Room kind (DR-0013). Default `"normal"`. `"broadcast"` opens a broadcast
+   * room whose members are auto-populated from the live session registry (all
+   * connected sessions at creation + every subsequent hello, minus every
+   * disconnect) — `members` is ignored in that case and the daemon returns a
+   * `warning` field explaining so (§2.9). */
+  kind?: RoomKind;
 }
 
 export interface NextRoomRequest {
@@ -464,6 +488,12 @@ export interface CreateRoomResponse {
   room: string;
   reused: boolean;
   mid?: number;
+  /** Advisory notice about the request (DR-0013 §2.9: `kind:"broadcast"` +
+   * non-empty `members` returns a warning that the explicit members list was
+   * ignored — broadcast rooms auto-populate from the session registry, so any
+   * caller-supplied list is redundant). Non-fatal; the room is still created.
+   * Absent when there's nothing to warn about. */
+  warning?: string;
 }
 export interface NextRoomResponse {
   ok: true;
@@ -502,6 +532,9 @@ export interface RoomSummary {
   last_ts: string | null;
   /** archived flag (DR-0012), last archive event wins; absent = not archived */
   archived?: boolean;
+  /** room kind (DR-0013); absent = "normal". webui shows a broadcast badge
+   * and swaps the Composer for a broadcast-target picker when this is set. */
+  kind?: RoomKind;
 }
 export interface RoomsResponse {
   ok: true;
@@ -695,5 +728,8 @@ export const ErrorCode = {
   session_not_found: "session_not_found",
   path_forbidden: "path_forbidden",
   not_found: "not_found",
+  // Broadcast room (DR-0013 §2.4): agent post to a broadcast room must include
+  // "u1" in `to`. "u1 に届かない agent 発話" を broadcast の意味論で禁じるため。
+  broadcast_agent_target_required: "broadcast_agent_target_required",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
