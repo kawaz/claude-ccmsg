@@ -782,6 +782,12 @@ body {
  * (max-height は JS 側 = COMPOSER_MAX_HEIGHT_REM が同じ 10 行相当を計算する)。 */
 .composer textarea {
   resize: none;
+  /* 初期高さ最小 (kawaz r15 mid=9、2026-07-14): fab で開いた最初の状態でも
+   * 作業分 (7 行程度) の入力域を確保する。autosizeTextarea は content 起点で
+   * height を書き換えるが、content が空/1 行なら 1 行分になってしまい、
+   * kawaz が「小さすぎてつぶれちゃってる」と観測した状態になっていた。
+   * min-height で下限を保証、上限は JS の COMPOSER_MAX_HEIGHT_REM (10 行)。 */
+  min-height: 7rem;
   font: inherit;
   padding: 0.4rem;
   border-radius: 0.4rem;
@@ -1977,7 +1983,10 @@ button.session-tab {
 
 .one-on-one-textarea {
   resize: vertical;
-  min-height: 5rem;
+  /* 初期高さ (kawaz r15 mid=9、2026-07-14): 5rem では作業分に足りなかった。
+   * 通常 Composer と同じ 7rem で作業分を確保。ユーザは resize:vertical で
+   * さらに広げられる。 */
+  min-height: 7rem;
   font: inherit;
   padding: 0.4rem;
   border-radius: 0.4rem;
