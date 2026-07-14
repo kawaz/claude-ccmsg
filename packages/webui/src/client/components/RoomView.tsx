@@ -59,6 +59,20 @@ export function RoomView({ state }: { state: AppState }) {
     if (!el) return;
     if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [room?.timeline]);
+  // room 切替 (id 変化) 直後にも確実に末尾へ (kawaz r15 mid=7、2026-07-14)。
+  // 上の useLayoutEffect は `room?.timeline` (配列参照) 変化に依存するが、
+  // 同じ room 再訪で timeline 参照が変わらないケースや、cache の hydrate
+  // タイミング次第で mount 直後の render では scrollHeight が確定して
+  // いないことがあり、「開いた瞬間だけ上から表示される」現象が観測された。
+  // setTimeout(0) で initial paint 完了を待ってから scrollTop を書く。
+  useEffect(() => {
+    if (!room) return;
+    const id = setTimeout(() => {
+      const el = timelineRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }, 0);
+    return () => clearTimeout(id);
+  }, [room?.id]);
 
   // Switching rooms discards any leftover invite notice from the previous one.
   useEffect(() => {

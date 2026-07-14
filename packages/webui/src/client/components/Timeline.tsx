@@ -4,8 +4,10 @@
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { TimelineState } from "../store.ts";
+import { ADMIN_ID } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { UserAvatar } from "../avatar.tsx";
 import { errorMessage, formatClockTime } from "../utils.ts";
 import {
   classifyBoundaryLine,
@@ -527,12 +529,25 @@ function AssistantBubble({
 // 複数 msg が同じ行から来た場合は全吹き出しで同じ raw を共有する — 各
 // メッセージ個別の断片ではなく「この行に何が書いてあったか」を見るためのタブ
 // なので、行単位で共通の全文がふさわしい)。
+//
+// from:u1 (ADMIN_ID) は本物のユーザ発話と同じ「右寄せ + user 吹き出し
+// 色」で表示する (kawaz r15 mid=6、2026-07-14)。RoomView TimelineItem
+// の .msg-user と同じ意味論を transcript 側に横展開する形。それ以外
+// (agent 発 ccmsg msg) は従来通り .tl-bubble-left .tl-bubble-peer (青系)。
 function CcmsgBubble({ message, rawText }: { message: CcmsgMessage; rawText: string }) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
+  const isUser = message.from === ADMIN_ID;
   return (
-    <div class="tl-bubble tl-bubble-left tl-bubble-peer">
-      <div class="tl-bubble-body">
+    <div
+      class={
+        isUser
+          ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
+          : "tl-bubble tl-bubble-left tl-bubble-peer"
+      }
+    >
+      <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
         <div class="tl-bubble-from">
+          {isUser ? <UserAvatar size={16} /> : null}
           {message.from}
           {message.to?.length ? ` → ${message.to.join(", ")}` : ""}
           {" · #"}
@@ -848,10 +863,22 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // tail 検知 effect が「セッション切替による end の変化」を「tail 追記」と
   // 誤認して意図しない自動スクロールを起こさない (両 effect の実行順序は
   // 定義順、[sid] だけに依存するこの effect が先に走る)。
+  //
+  // 追加 (kawaz r15 mid=7、2026-07-14): mount / sid 切替直後にも最下部へ
+  // スクロールする。既存 tail-append effect は `timeline.end` の伸びに反応
+  // する形式なので、cache がすでに埋まった状態 (前訪問済 or 再訪 revalidate)
+  // で end が変わらないケースで scroll が発火せず「一番上のまま」になる
+  // ことがあった。setTimeout(0) で initial render 完了を待ってから scroll
+  // を書く — mount 直後の scrollHeight は content flush 前で 0 相当のため。
   const prevEndRef = useRef(timeline.end);
   useEffect(() => {
     prevEndRef.current = timeline.end;
     isNearBottomRef.current = true;
+    const id = setTimeout(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }, 0);
+    return () => clearTimeout(id);
     // 依存は [sid] のみ意図的 — timeline.end を含めると「セッション切替
     // 検知」ではなく毎回の tail 追記でもリセットされてしまい、下の
     // tail-append effect の appended 判定が常に false になってしまう。
