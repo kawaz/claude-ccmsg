@@ -6,6 +6,16 @@
 // 本文からも placeholder が消える — 実処理は Composer.tsx 側)。
 import type { ComposerAttachment } from "./composer-attachments.ts";
 
+/** upload 済み添付のプレビュー URL (daemon の /attachment/<uuid>.<ext>
+ * endpoint)。TMPDIR の生パスはブラウザから開けないので、markdown-view.tsx
+ * の表示変換と同じ endpoint に写す。uuid が無い (未完了) entry は null。 */
+function previewHref(a: ComposerAttachment): string | null {
+  if (a.status !== "done" || !a.uuid) return null;
+  // ext は AttachmentUploadResponse 由来で leading `.` 込み (`.png`)、拡張子
+  // なしなら ""。
+  return `/attachment/${a.uuid}${a.ext ?? ""}`;
+}
+
 export function ComposerAttachments({
   attachments,
   onRemove,
@@ -27,9 +37,24 @@ export function ComposerAttachments({
           a.status === "error"
             ? "composer-attachment composer-attachment-error"
             : "composer-attachment";
+        const href = previewHref(a);
         return (
           <li key={a.n} class={cls}>
-            <span class="composer-attachment-label">{label}</span>
+            {/* upload 済みはファイル名クリックでプレビューを新タブに開く
+             * (kawaz r17 mid=44、2026-07-15)。送信前の内容確認用 — 画像は
+             * ブラウザがインライン表示、他 mime はダウンロード等の既定挙動。 */}
+            {href !== null ? (
+              <a
+                class="composer-attachment-label"
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {label}
+              </a>
+            ) : (
+              <span class="composer-attachment-label">{label}</span>
+            )}
             <button
               type="button"
               class="composer-attachment-remove"

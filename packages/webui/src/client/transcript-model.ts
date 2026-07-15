@@ -559,15 +559,51 @@ function isCcmsgMsgEventLike(
  * that isn't a ccmsg `type:"msg"` event (kawaz spec: "壊れた JSON は空で
  * fallback", and non-msg events like `idle_notification` must NOT become a
  * bubble). */
-function tryParseCcmsgMessage(fragment: string): CcmsgMessage | null {
+function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMessage | null {
   let obj: unknown;
   try {
     obj = JSON.parse(fragment.trim());
   } catch {
-    return null;
+    return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
   }
   if (!isCcmsgMsgEventLike(obj)) return null;
   return { from: obj.from, to: obj.to, room: obj.r, msg: obj.msg, ts: obj.ts };
+}
+
+/** Monitor 通知の <event> は長い msg を「...(truncated)」で切り詰めることが
+ * あり (harness 側の通知サイズ上限)、その行は JSON として壊れて上の parse が
+ * 落ちる — 従来はそのまま null → CcmsgBubble にならず生 JSON の fold 表示に
+ * なっていた (kawaz r17 mid=43 の実観測)。切れていても field 順は固定
+ * (type,mid,from,ts,msg,... — daemon の JSON.stringify 順) なので、msg の
+ * 途中までを regex で抜けば「途中まで + 切り詰め注記」の bubble にできる。
+ * 読める形が生 JSON より常に良い、が判断 (全文は webui の room 表示か read
+ * で見られる)。
+ *
+ * room (`r`) は wire 上 msg より後ろの field なので truncation でほぼ必ず
+ * 失われる — 呼び出し側 (extractCcmsgMessages) が同じ <event> ブロック内の
+ * parse できた行から補完した `fallbackRoom` を渡す (subscribe の 1 通知は
+ * room event のバッチで、実観測の形は kind/title/member 行が同居する)。
+ * 補完も無ければ bubble は諦める (dedup key とアンカーに room が必須)。 */
+function tryParseTruncatedCcmsgMessage(
+  fragment: string,
+  fallbackRoom?: string,
+): CcmsgMessage | null {
+  if (!fragment.endsWith("(truncated)")) return null;
+  if (!fragment.startsWith('{"type":"msg"')) return null;
+  const from = fragment.match(/"from":"((?:[^"\\]|\\.)*)"/)?.[1];
+  const ts = fragment.match(/"ts":"((?:[^"\\]|\\.)*)"/)?.[1];
+  const room = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom;
+  const msgMatch = fragment.match(/"msg":"((?:[^"\\]|\\.)*)/)?.[1];
+  if (!from || !ts || !room || msgMatch === undefined) return null;
+  let msg: string;
+  try {
+    // 抜き出した半端な JSON string 断片を JSON.parse でデコード (escape 解決)。
+    // 断片が escape の途中で切れていたら最後の \ を落として再試行。
+    msg = JSON.parse(`"${msgMatch.replace(/\\$/, "")}"`) as string;
+  } catch {
+    return null;
+  }
+  return { from, room, msg: `${msg}…(切り詰め — 全文は room で)`, ts };
 }
 
 /**
@@ -621,10 +657,19 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
     if (parsed) results.push(parsed);
   }
   for (const m of text.matchAll(EVENT_TAG_RE)) {
+    // truncated 行の room 補完用: 同じ <event> ブロック内で parse できた
+    // event の r (subscribe の 1 通知は同一 room のバッチが普通)。
+    let blockRoom: string | undefined;
     for (const eventLine of m[1]!.split("\n")) {
       const trimmed = eventLine.trim();
       if (!trimmed) continue;
-      const parsed = tryParseCcmsgMessage(trimmed);
+      try {
+        const o = JSON.parse(trimmed) as { r?: unknown };
+        if (typeof o.r === "string") blockRoom = o.r;
+      } catch {
+        // truncated 等の壊れ行 — blockRoom はそのまま
+      }
+      const parsed = tryParseCcmsgMessage(trimmed, blockRoom);
       if (parsed) results.push(parsed);
     }
   }

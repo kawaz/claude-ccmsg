@@ -930,6 +930,14 @@ body {
   color: var(--danger, #c33);
 }
 
+/* 添付のファイル名リンク (upload 済みのプレビュー、kawaz r17 mid=44) —
+ * 一覧の淡色トーンを保ちつつ、クリックできることは下線で示す。 */
+a.composer-attachment-label {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .composer-attachment-remove {
   background: transparent;
   border: none;

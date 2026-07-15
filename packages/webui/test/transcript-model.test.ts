@@ -1139,6 +1139,49 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
 // through parseSegments/classifyUserMessage the same way a live transcript
 // line would.
 describe("extractCcmsgMessages", () => {
+  // Monitor 通知の <event> は長い msg を「...(truncated)」で切ることがあり、
+  // その行は JSON として壊れる (kawaz r17 mid=43 の実観測 — bubble にならず
+  // 生 JSON の fold 表示になっていた)。field 順は daemon の stringify 順で
+  // 固定なので、切れていても from/ts/r/msg 冒頭を復元して「途中まで +
+  // 切り詰め注記」の bubble にする。
+  test("a truncated <event> msg line still yields a bubble with the partial text", () => {
+    const truncated =
+      '{"type":"msg","mid":43,"from":"u1","ts":"2026-07-15T04:02:43.478Z","msg":"[FILE1:スクショ.png](/tmp/x.png)\\nさっき間違えてemeradacoのセッションで1on1送信して...(truncated)';
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>\n<event>${"{"}"type":"kind","kind":"1on1","ts":"t","seq":1,"r":"r20"}\n${truncated}</event>\n</task-notification>`,
+        },
+        timestamp: "2026-07-15T04:02:44.000Z",
+      }),
+    );
+    const msgs = extractCcmsgMessages(line);
+    expect(msgs.length).toBe(1);
+    expect(msgs[0]!.from).toBe("u1");
+    expect(msgs[0]!.room).toBe("r20");
+    expect(msgs[0]!.msg).toContain("さっき間違えて");
+    expect(msgs[0]!.msg).toContain("切り詰め");
+  });
+
+  // 対極 (誤爆防止): truncated marker があっても msg event でない行 (kind 等)
+  // や、必須 field (r) が切り落とされた断片は bubble にしない。
+  test("a truncated non-msg or r-less fragment stays out of bubbles", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            '<task-notification>\n<event>{"type":"member","id":"a1","sid":"x...(truncated)</event>\n</task-notification>',
+        },
+        timestamp: "2026-07-15T04:02:44.000Z",
+      }),
+    );
+    expect(extractCcmsgMessages(line)).toEqual([]);
+  });
+
   function userLine(content: string): ParsedLine {
     return parseTranscriptLine(
       JSON.stringify({ type: "user", message: { role: "user", content } }),
