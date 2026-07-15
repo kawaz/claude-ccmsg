@@ -19,7 +19,6 @@ import {
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
-  scrollPositionToUserTurnIndex,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
@@ -918,13 +917,9 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // them collapses into one fold group — see transcript-model.ts's
   // groupTimelineLines doc comment.
   const groups = useMemo(() => groupTimelineLines(parsed, offsets), [parsed, offsets]);
-  // groups.map (render 本体) が毎レンダー classifyBoundaryLine を呼び直す
-  // と、"👤 N/M" nav の scroll ハンドラ (rAF スロットル済みとはいえ
-  // currentUserIdx の setState 経由で毎回 Timeline 全体を再レンダーさせる)
-  // のたびに全 boundary entry を再分類することになり、長い transcript +
-  // 大きい task-notification 本文 (ccmsg 判定側の JSON.parse を含む) で
-  // scroll 中の CPU を無駄に食う。groups が変わった時だけ計算しメモ化する
-  // (index を groups と揃え、entry 以外は使わないので null のまま)。
+  // groups.map (render 本体) が毎レンダー classifyBoundaryLine を呼び直すのを
+  // 避けるため、groups が変わった時だけ計算しメモ化する (index を groups と
+  // 揃え、entry 以外は使わないので null のまま)。
   const boundaries = useMemo(
     () =>
       groups.map((g) =>
@@ -959,22 +954,11 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     else userTurnRefs.current.delete(key);
   }, []);
 
-  // 1-based "you're currently past turn N" count (0 = scrolled above the
-  // first loaded user turn). Recomputed on scroll (rAF-throttled) and
-  // whenever the loaded lines change (older-load/refresh shift both the
-  // denominator and which turn is "current").
+  // "👤 N/M" nav の N (kawaz r17 mid=54, 2026-07-15): 以前はスクロール位置から
+  // 推定していたが「変な挙動しかしないゴミ」と判定され仕様変更 — リロード /
+  // 初回読み込み時に最大値 (M) で初期化し、以降は ↑↓ ボタンで増減してユーザ
+  // が明示的にジャンプした値だけを保持する (スクロール位置とは独立)。
   const [currentUserIdx, setCurrentUserIdx] = useState(0);
-
-  const recomputeCurrentUserIdx = useCallback(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const containerTop = container.getBoundingClientRect().top;
-    const tops = userTurnKeys
-      .map((key) => userTurnRefs.current.get(key))
-      .filter((el): el is HTMLDivElement => el != null)
-      .map((el) => el.getBoundingClientRect().top - containerTop + container.scrollTop);
-    setCurrentUserIdx(scrollPositionToUserTurnIndex(tops, container.scrollTop));
-  }, [userTurnKeys]);
 
   // Live tail 自動スクロール追従 (kawaz spec) のための「今ユーザは最下部付近
   // を見ているか」フラグ。scroll イベント (下の rAF スロットル済み onScroll)
@@ -999,6 +983,9 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
       if (!validKeys.has(key)) userTurnRefs.current.delete(key);
     }
 
+    // scroll イベント購読は自動 tail 追従の isNearBottomRef 更新用のみ (kawaz
+    // r17 mid=54 で currentUserIdx の scroll 判定は廃止された — 上の
+    // currentUserIdx 節参照)。
     const container = scrollRef.current;
     if (!container) return;
     let ticking = false;
@@ -1006,18 +993,14 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
-        recomputeCurrentUserIdx();
         checkNearBottom();
         ticking = false;
       });
     };
     container.addEventListener("scroll", onScroll, { passive: true });
-    // Recompute once immediately — otherwise the indicator stays "0/M" until
-    // the first scroll event fires (e.g. right after the initial tail load).
-    recomputeCurrentUserIdx();
     checkNearBottom();
     return () => container.removeEventListener("scroll", onScroll);
-  }, [userTurnKeys, recomputeCurrentUserIdx, checkNearBottom]);
+  }, [userTurnKeys, checkNearBottom]);
 
   // セッション切替時、前セッションの「どこまで読んだか (byte end)」を引き
   // 継がないようにリセットする — このリセットを先に走らせておくことで、下の
@@ -1092,6 +1075,11 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     const appended = timeline.end > prevEndRef.current;
     const initialLoad = prevEndRef.current === 0 && timeline.end > 0;
     prevEndRef.current = timeline.end;
+    // currentUserIdx を最大値に初期化 (kawaz r17 mid=54): リロード直後
+    // (refresh: end が減る/等しい) と初回読み込み (initialLoad) の両方で
+    // "末尾ユーザメッセージ" を選択状態にする。tail 追記 (appended) 時は
+    // ユーザが今どこを読んでいるかに関係なく数値を勝手に増やさない。
+    if (initialLoad || !appended) setCurrentUserIdx(userTurnKeys.length);
     if (!appended) return;
     // 初回 tail ロード (リロード直後: mount 時の [sid] effect は空 timeline
     // に空振りし、ここが実質の初回スクロール) は位置ガードなしで必ず末尾へ
@@ -1106,32 +1094,42 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     return scrollToBottomSettled();
   }, [timeline.end]);
 
+  // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
+  // エフェクトはウザいので削除)。
   function scrollToTop() {
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: 0 });
   }
 
   function scrollToBottom() {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    el.scrollTo({ top: el.scrollHeight });
   }
 
   function scrollToUserTurn(oneBasedIdx: number) {
     const key = userTurnKeys[oneBasedIdx - 1];
     if (key === undefined) return;
-    userTurnRefs.current.get(key)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // block:"start" + scroll-margin-top (.tl-line 側の CSS) で sticky な
+    // tl-toolbar の下 = TL 上部の可視領域に置く (kawaz r17 mid=54)。
+    // behavior 指定なし = 即座 (smooth エフェクト廃止)。
+    userTurnRefs.current.get(key)?.scrollIntoView({ block: "start" });
   }
 
-  // No "turn 0" — prev is only meaningful once we've passed at least a
-  // second turn (currentUserIdx <= 1 means we're at/before the first).
+  // kawaz r17 mid=54: state を減増してから対応要素へジャンプする単純な形
+  // (以前は scroll 位置から currentUserIdx を推定していたので 1 段目の state
+  // 更新が不要だった)。境界は 1 ≤ idx ≤ M。
   function goPrevUserTurn() {
     if (currentUserIdx <= 1) return;
-    scrollToUserTurn(currentUserIdx - 1);
+    const next = currentUserIdx - 1;
+    setCurrentUserIdx(next);
+    scrollToUserTurn(next);
   }
 
   function goNextUserTurn() {
     if (currentUserIdx >= userTurnKeys.length) return;
-    scrollToUserTurn(currentUserIdx + 1);
+    const next = currentUserIdx + 1;
+    setCurrentUserIdx(next);
+    scrollToUserTurn(next);
   }
 
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
@@ -1151,9 +1149,6 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           onClick={loadOlder}
         >
           {timeline.atStart ? "先頭まで読み込み済み" : "older を読み込む"}
-        </button>
-        <button type="button" disabled={timeline.status === "loading"} onClick={refresh}>
-          更新
         </button>
         <button type="button" onClick={scrollToTop} title="最上部へ">
           ⤒

@@ -1507,6 +1507,12 @@ button.session-tab {
   font-size: 0.85rem;
   border-radius: 0.4rem;
   padding: 0.35rem 0.5rem;
+  /* 👤 nav の scrollIntoView({block:"start"}) 先が sticky な tl-toolbar
+   * (padding 0.5rem + wrap 可能な button 群、実測でおおよそ 2.5-3.5rem)
+   * の下に出るように余白を確保する (kawaz r17 mid=54: TL 上部の位置に
+   * スクロール要求。toolbar に潜り込んで読めないと意味がない)。少し多め
+   * (4rem) にしておいて 2 行 wrap 時にも余裕を持たせる。 */
+  scroll-margin-top: 4rem;
 }
 
 /* fold 展開部 (縦線ガイドの右) に入った行は .tl-line の横 padding を落とす
