@@ -1435,6 +1435,16 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  /* 横あふれの clip はここで担う (2026-07-15 playwright-cli で切り分けた
+   * バグ、kawaz r17 mid=53): 以前は子 .tl-lines に overflow-x:hidden を
+   * 付けていたが、overflow-x 単独指定は overflow-y を暗黙 "auto" にキャスト
+   * する CSS 仕様 (visible 以外の片側指定は反対側にも波及) のため、
+   * .tl-lines が 20k px の中身を持ちながら要素自身は 587px に縦 clip され、
+   * 結果として .timeline-view の scrollHeight は clientHeight と同じ = 一切
+   * スクロール不能になっていた (⤒⤓ ボタンも自動 scroll も全滅)。親 (自身)
+   * に overflow-x:hidden を持たせれば同じ clip 効果は得られ、かつ子は
+   * overflow visible のままで縦方向の自然な伸長が親 scrollHeight に届く。 */
+  overflow-x: hidden;
 }
 
 .tl-toolbar {
@@ -1448,6 +1458,10 @@ button.session-tab {
   background: var(--bg-alt);
   position: sticky;
   top: 0;
+  /* sticky ヘッダが後続の tl-line 系要素 (details / img / fold group) より
+   * z 軸で下に潜ると背面に隠れて操作できない (kawaz r17 mid=53 続報、
+   * 2026-07-15)。同一 stacking context 内の後続要素より確実に上に置く。 */
+  z-index: 1;
 }
 
 .tl-toolbar button {
@@ -1493,10 +1507,11 @@ button.session-tab {
   gap: 0.3rem;
   padding: 0.5rem 0.75rem;
   /* 横長 pre の幅がここまで伝播してページ横スクロールになるのを遮断
-   * (kawaz r17 mid=33、.tl-bubble の同旨コメント参照)。 */
+   * (kawaz r17 mid=33)。overflow-x:hidden は親 .timeline-view で担う
+   * (mid=53 の scroll 死亡 bug の根本原因はここに overflow-x:hidden を
+   * 置いていたこと — 詳細は .timeline-view の同旨コメント)。 */
   min-width: 0;
   max-width: 100%;
-  overflow-x: hidden;
   /* 最下部に composer パネル高相当の空き (kawaz r17 mid=24、2026-07-15):
    * floating composer (1on1 FAB/panel) がスマホで末尾メッセージや fold
    * summary を隠して押しづらい。機能は載せない、ただの余白。 */
