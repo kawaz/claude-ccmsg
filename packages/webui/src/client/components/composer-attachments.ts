@@ -41,6 +41,23 @@ export function nextAttachmentNumber(existing: ComposerAttachment[]): number {
   return max + 1;
 }
 
+/** The largest `[FILE<N>]` number already present in `text`, 0 if none.
+ * 採番は attachments 配列だけでなく本文のプレースホルダとも衝突してはいけない
+ * (kawaz r17 mid=33 の実事故、2026-07-15): 1on1 の draft 復元は text
+ * ([FILE1] 入り) を戻すが attachments は空リセットするため、reopen 後の
+ * 新規添付が再び n=1 を取り、送信時の substitute (global regex) が古い
+ * [FILE1] と新しい [FILE1] を両方とも新 upload の path に置換してしまう —
+ * 「2 ファイル添付したら両方同じリンク」になる。採番側が本文の最大 N も
+ * 跨ぐことで、stale placeholder は設計通りリテラルのまま残る。 */
+export function maxPlaceholderNumber(text: string): number {
+  let max = 0;
+  for (const m of text.matchAll(/\[FILE(\d+)\]/g)) {
+    const n = Number(m[1]);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
 /** Insert `[FILE<N>]` into `text` at the caret. If `caret` is out of range
  * (negative or past the end), the placeholder is appended to the end —
  * matches Composer.tsx's fallback when the textarea ref is unavailable. */

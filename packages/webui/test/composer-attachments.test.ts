@@ -9,6 +9,7 @@ import {
   extractPastedImages,
   hasPendingUpload,
   insertPlaceholder,
+  maxPlaceholderNumber,
   nextAttachmentNumber,
   removePlaceholder,
   substitutePlaceholders,
@@ -182,5 +183,25 @@ describe("extractPastedImages", () => {
   test("returns [] when the paste has no image (text paste falls through)", () => {
     const items = [fakeItem("string", "text/plain", null)];
     expect(extractPastedImages(items)).toEqual([]);
+  });
+});
+
+describe("maxPlaceholderNumber", () => {
+  // 何を保証するか (kawaz r17 mid=33 の実事故対策): 採番は attachments 配列
+  // だけでなく本文中の [FILE<N>] とも衝突してはいけない。1on1 の draft 復元は
+  // text ([FILE1] 入り) を戻すが attachments は空リセットするため、本文側の
+  // max を採番の下限に使う (Composer/OneOnOneComposer の beginUpload)。
+  // stale placeholder は番号がずれることで substitute の global regex に
+  // 巻き込まれず、設計通りリテラルのまま残る。
+  test("returns the largest [FILE<N>] in the text", () => {
+    expect(maxPlaceholderNumber("a [FILE1] b [FILE3] c")).toBe(3);
+  });
+  test("returns 0 when the text has no placeholder", () => {
+    expect(maxPlaceholderNumber("no placeholders here")).toBe(0);
+  });
+  // 置換済みの markdown link 形 ([FILE1:name](path)) は「未解決 placeholder」
+  // ではないので対象外 — 送信済み本文を引用しても採番を無駄に押し上げない。
+  test("ignores already-substituted [FILE<N>:name](path) links", () => {
+    expect(maxPlaceholderNumber("[FILE2:img.png](/tmp/x.png)")).toBe(0);
   });
 });

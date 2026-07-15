@@ -7,6 +7,7 @@ import {
   extractPastedImages,
   hasPendingUpload,
   insertPlaceholder,
+  maxPlaceholderNumber,
   nextAttachmentNumber,
   removePlaceholder,
   substitutePlaceholders,
@@ -122,12 +123,18 @@ export function Composer({
    *  「選択時 即 upload、直ちに送信はしない」経路。placeholder 挿入は
    *  ここで済ませ、送信ボタン disable は hasPendingUpload に任せる。 */
   function beginUpload(file: File): void {
-    // 1. 番号を決めて uploading entry を state に足す
+    // 1. 番号を決めて uploading entry を state に足す。attachments 配列の
+    //    max だけでなく本文中の [FILE<N>] の max も跨ぐ (kawaz r17 mid=33):
+    //    draft 復元などで「本文に placeholder が残っているのに attachments
+    //    が空」の状態から添付すると番号が再利用され、送信時の substitute
+    //    (global regex) が古い placeholder まで新 upload の path に置換して
+    //    「複数ファイルが全部同じリンク」になる。
     const el = textareaRef.current;
     const caret = el ? el.selectionStart : text.length;
+    const textFloor = maxPlaceholderNumber(text);
     let assignedN = 0;
     setAttachments((prev) => {
-      const n = nextAttachmentNumber(prev);
+      const n = Math.max(nextAttachmentNumber(prev), textFloor + 1);
       assignedN = n;
       return [...prev, { n, name: file.name || "upload", status: "uploading", progress: 0 }];
     });

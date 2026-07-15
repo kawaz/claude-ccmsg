@@ -28,6 +28,7 @@ import {
   extractPastedImages,
   hasPendingUpload,
   insertPlaceholder,
+  maxPlaceholderNumber,
   nextAttachmentNumber,
   removePlaceholder,
   substitutePlaceholders,
@@ -229,9 +230,14 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     (file: File) => {
       const el = textareaRef.current;
       const caret = el ? el.selectionStart : text.length;
+      // 本文中の [FILE<N>] の max も跨いで採番 (kawaz r17 mid=33): 1on1 は
+      // draft 復元 (text は [FILE<N>] 入りで戻るが attachments は空リセット、
+      // §2.6) があるため、attachments 配列だけ見た採番は番号を再利用して
+      // 送信時 substitute が新旧 placeholder を同じ path に潰してしまう。
+      const textFloor = maxPlaceholderNumber(text);
       let assignedN = 0;
       setAttachments((prev) => {
-        const n = nextAttachmentNumber(prev);
+        const n = Math.max(nextAttachmentNumber(prev), textFloor + 1);
         assignedN = n;
         return [...prev, { n, name: file.name || "upload", status: "uploading", progress: 0 }];
       });

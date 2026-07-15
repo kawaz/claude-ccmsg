@@ -12,11 +12,12 @@
    * メッセージ用の「第三者」カラー。本物のユーザ発話 (--user-bubble-bg,
    * 緑系) / アシスタント最終応答 (--assistant-bubble-*) と見分けが付く青系。 */
   --peer-bubble-bg: #dbeafe;
-  /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
-   * 無彩色 --bg-alt では枠が目立たず、別セッション msg の青系とも紛れる —
-   * 紫系の専用色 + はっきりした枠線で「この画面の主役の発話」と分かる色に。 */
-  --assistant-bubble-bg: #f3eefc;
-  --assistant-bubble-border: #b79ae8;
+  /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28、
+   * mid=33 で紫 → 暗いオレンジに変更): 無彩色 --bg-alt では枠が目立たず、
+   * 別セッション msg の青系とも紛れる — 暗めのオレンジ系 + はっきりした
+   * 枠線で「この画面の主役の発話」と分かる色に。 */
+  --assistant-bubble-bg: #fbf1e5;
+  --assistant-bubble-border: #c2680c;
   --danger: #dc2626;
   --warn: #b45309;
 
@@ -51,8 +52,8 @@
     --user-bg: #232a44;
     --user-bubble-bg: #1f4023;
     --peer-bubble-bg: #1e3a5f;
-    --assistant-bubble-bg: #2a2438;
-    --assistant-bubble-border: #6d55a3;
+    --assistant-bubble-bg: #302416;
+    --assistant-bubble-border: #96560f;
     --danger: #f87171;
     --warn: #fbbf24;
   }
@@ -1475,6 +1476,11 @@ button.session-tab {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.5rem 0.75rem;
+  /* 横長 pre の幅がここまで伝播してページ横スクロールになるのを遮断
+   * (kawaz r17 mid=33、.tl-bubble の同旨コメント参照)。 */
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   /* 最下部に composer パネル高相当の空き (kawaz r17 mid=24、2026-07-15):
    * floating composer (1on1 FAB/panel) がスマホで末尾メッセージや fold
    * summary を隠して押しづらい。機能は載せない、ただの余白。 */
@@ -1520,6 +1526,18 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   max-width: 85%;
+  /* 横長 pre (md-code / tl-fold-body) が bubble → tl-lines → tl 全体の
+   * 横幅を押し広げてページ横スクロールを生む (kawaz r17 mid=33) のを遮断。
+   * flex 子の暗黙 min-width:auto を潰すことで、内側の overflow-x: auto が
+   * 「はみ出す代わりに自分でスクロールする」ように働く。 */
+  min-width: 0;
+}
+
+/* 同じ遮断を bubble 本文にも: width: fit-content が pre の実幅まで伸びよう
+ * とするのを max-width で止め、pre 側の overflow-x: auto に流す。 */
+.tl-bubble-body {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .tl-bubble-right {

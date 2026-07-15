@@ -905,7 +905,9 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // が伸びるケースを 1 発では取り零す。ユーザが先に手動スクロールして末尾から
   // 離れたら (isNearBottomRef が false になったら) 以降の書き込みは中断。
   const scrollToBottomSettled = useCallback(() => {
-    const ids = [0, 60, 300].map((ms) =>
+    // 末尾 1000ms はリロード直後の初期 fetch (2MB) 向け: 大量行の markdown
+    // 描画 + Shiki highlight の非同期差し替えで数百 ms 後も高さが伸びる。
+    const ids = [0, 60, 300, 1000].map((ms) =>
       setTimeout(() => {
         const el = scrollRef.current;
         if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
@@ -932,8 +934,14 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     const appended = timeline.end > prevEndRef.current;
     prevEndRef.current = timeline.end;
     if (!appended || !isNearBottomRef.current) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    // settled 方式 (0/60/300ms の複数回書き) なのはページリロード直後の
+    // 初回 tail ロードのため (kawaz r17 mid=34): mount 時の [sid] effect は
+    // まだ空の timeline に対して空振りし、ここが実質の初回スクロールになる。
+    // 初期 fetch (2MB) の大量行は markdown / highlight の非同期差し替えで
+    // effect 後も scrollHeight が伸びるので、1 発の書き込みでは上に取り
+    // 残される。live tail の高頻度追記でも余計な再ジャンプは起きない
+    // (isNearBottomRef ガードで末尾に居る時しか書かない)。
+    return scrollToBottomSettled();
   }, [timeline.end]);
 
   function scrollToTop() {
