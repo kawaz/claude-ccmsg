@@ -96,6 +96,23 @@ export function splitRoomsByArchived(rooms: RoomState[]): {
   return { active, archived };
 }
 
+/** Further splits a non-archived room list (the `active` bucket from
+ * `splitRoomsByArchived`) into 1on1 rooms and everything else, keeping each
+ * bucket's relative order — same one-pass-single-decision shape as
+ * `splitRoomsByArchived` (mid=61: 1on1 rooms get folded into a collapsed
+ * "1on1 (N)" `<details>`, mirroring the "アーカイブ (N)" group). Run this
+ * *after* `splitRoomsByArchived` so an archived 1on1 room lands in the
+ * archived group, not duplicated into both. */
+export function splitRoomsByKind(rooms: RoomState[]): {
+  flat: RoomState[];
+  oneOnOne: RoomState[];
+} {
+  const flat: RoomState[] = [];
+  const oneOnOne: RoomState[] = [];
+  for (const room of rooms) (room.kind === "1on1" ? oneOnOne : flat).push(room);
+  return { flat, oneOnOne };
+}
+
 /** Whether a room member (by sid) is currently reachable over an open ws
  * connection — the `peers` op response only ever lists connected sessions,
  * so "not present" means offline (DR-0012: MemberChip's grey/strikethrough

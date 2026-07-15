@@ -87,6 +87,8 @@ body {
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
+  /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
+  touch-action: manipulation;
 }
 
 #topbar h1 {
@@ -224,12 +226,13 @@ body {
   color: var(--fg-muted);
 }
 
-/* Room 行の `<li><a>` は #room-list (非アーカイブ) と #room-list-archived
- * (アーカイブ折り畳み内、同じ RoomRow を render) の両方に現れる — 後者を
- * セレクタから漏らすとデフォルトの青下線リンクで表示される
- * (kawaz r17 mid=12 の実観測)。 */
+/* Room 行の `<li><a>` は #room-list (非アーカイブ・非1on1) と
+ * #room-list-archived / #room-list-1on1 (折り畳みグループ内、同じ RoomRow
+ * を render) のいずれにも現れる — 後者をセレクタから漏らすとデフォルトの
+ * 青下線リンクで表示される (kawaz r17 mid=12 の実観測)。 */
 #room-list li a,
-#room-list-archived li a {
+#room-list-archived li a,
+#room-list-1on1 li a {
   display: block;
   padding: 0.4rem 0.5rem;
   border-radius: 0.4rem;
@@ -238,32 +241,38 @@ body {
 }
 
 #room-list li.active a,
-#room-list-archived li.active a {
+#room-list-archived li.active a,
+#room-list-1on1 li.active a {
   background: var(--accent);
   color: var(--accent-fg);
 }
 
-/* DR-0012: collapsed "アーカイブ (N)" section at the bottom of the room
- * list, default-closed (no `open` attribute). Rows inside render the same
- * RoomRow as #room-list (styled by the shared selectors above), so only the
+/* DR-0012: collapsed group `<details>` below the flat room list,
+ * default-closed (no `open` attribute) — "アーカイブ (N)" and "1on1 (N)"
+ * (mid=61) share these chrome rules. Rows inside render the same RoomRow as
+ * #room-list (styled by the shared selectors above), so only the
  * `<details>`/`<summary>` chrome needs its own rules here. */
-#room-list-archived {
+#room-list-archived,
+#room-list-1on1 {
   margin-top: 0.5rem;
   font-size: 0.8rem;
 }
 
-#room-list-archived summary {
+#room-list-archived summary,
+#room-list-1on1 summary {
   cursor: pointer;
   padding: 0.3rem 0.5rem;
   color: var(--fg-muted);
   list-style: none;
 }
 
-#room-list-archived summary::-webkit-details-marker {
+#room-list-archived summary::-webkit-details-marker,
+#room-list-1on1 summary::-webkit-details-marker {
   display: none;
 }
 
-#room-list-archived ul {
+#room-list-archived ul,
+#room-list-1on1 ul {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -447,7 +456,8 @@ body {
 }
 
 #room-list li.active a .room-kind-badge,
-#room-list-archived li.active a .room-kind-badge {
+#room-list-archived li.active a .room-kind-badge,
+#room-list-1on1 li.active a .room-kind-badge {
   background: var(--accent-fg);
   color: var(--accent);
 }
@@ -986,6 +996,8 @@ a.composer-attachment-label {
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   flex-shrink: 0;
+  /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
+  touch-action: manipulation;
 }
 
 .session-tab {
@@ -1462,6 +1474,8 @@ button.session-tab {
    * z 軸で下に潜ると背面に隠れて操作できない (kawaz r17 mid=53 続報、
    * 2026-07-15)。同一 stacking context 内の後続要素より確実に上に置く。 */
   z-index: 1;
+  /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
+  touch-action: manipulation;
 }
 
 .tl-toolbar button {
@@ -1831,7 +1845,10 @@ button.session-tab {
 .tl-thinking-tabs {
   display: flex;
   gap: 0.25rem;
-  margin-top: 0.3rem;
+  /* tl-thinking-body の中に置く (kawaz r17 mid=64、2026-07-15): 枠外に
+   * 出すとどの thinking セグメントに属するかが視覚的に切れるうえ、fold
+   * ガイドの縦線に乗ってしまう。body の上部に配置して 1 枠にまとめる。 */
+  margin-bottom: 0.3rem;
 }
 
 .tl-thinking-tab {

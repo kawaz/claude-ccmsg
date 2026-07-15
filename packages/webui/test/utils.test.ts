@@ -31,6 +31,7 @@ import {
   shortSid,
   sortPeers,
   splitRoomsByArchived,
+  splitRoomsByKind,
   toSessionRow,
   workspaceRootEntries,
   type PeerSortKey,
@@ -232,6 +233,33 @@ describe("splitRoomsByArchived", () => {
 
   test("empty input yields two empty buckets", () => {
     expect(splitRoomsByArchived([])).toEqual({ active: [], archived: [] });
+  });
+});
+
+// mid=61: 1on1 rooms fold into a collapsed "1on1 (N)" group, same pattern as
+// splitRoomsByArchived's アーカイブ group — this split runs on whatever
+// splitRoomsByArchived left in `active`.
+describe("splitRoomsByKind", () => {
+  test("buckets kind:1on1 rooms separately, preserving each bucket's relative input order", () => {
+    const rooms = [
+      makeRoom({ id: "r1", kind: "normal" }),
+      makeRoom({ id: "r2", kind: "1on1" }),
+      makeRoom({ id: "r3", kind: "broadcast" }),
+      makeRoom({ id: "r4", kind: "1on1" }),
+    ];
+    const { flat, oneOnOne } = splitRoomsByKind(rooms);
+    expect(flat.map((r) => r.id)).toEqual(["r1", "r3"]);
+    expect(oneOnOne.map((r) => r.id)).toEqual(["r2", "r4"]);
+  });
+
+  test("a room with no 1on1 rooms present leaves oneOnOne empty", () => {
+    const { flat, oneOnOne } = splitRoomsByKind([makeRoom({ id: "r1", kind: "normal" })]);
+    expect(flat.map((r) => r.id)).toEqual(["r1"]);
+    expect(oneOnOne).toEqual([]);
+  });
+
+  test("empty input yields two empty buckets", () => {
+    expect(splitRoomsByKind([])).toEqual({ flat: [], oneOnOne: [] });
   });
 });
 

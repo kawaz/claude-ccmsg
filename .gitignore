@@ -29,3 +29,6 @@ logs/
 # Runtime
 *.sock
 *.pid
+
+# playwright-cli の action ログ (page snapshot yaml / screenshot png)
+.playwright-cli/

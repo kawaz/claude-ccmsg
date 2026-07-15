@@ -170,36 +170,45 @@ function ThinkingSegment({
       onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
       <FoldSummary ts={ts} label="thinking" />
-      {translatorAvailable ? (
-        <div class="tl-thinking-tabs">
-          <button
-            type="button"
-            class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
-            onClick={() => setTab("original")}
-          >
-            original
-          </button>
-          <button
-            type="button"
-            class={"tl-thinking-tab" + (tab === "ja" ? " active" : "")}
-            onClick={selectJa}
-          >
-            ja
-          </button>
-        </div>
-      ) : (
-        <div class="tl-thinking-tabs">
-          <button type="button" class="tl-thinking-tab" onClick={selectAllBody}>
-            select
-          </button>
-        </div>
-      )}
       <div class="tl-guided">
         <FoldGuide />
-        <div class="tl-thinking-body" ref={bodyRef}>
+        <div class="tl-thinking-body">
+          {/* tabs (translator あり = original/ja、なし = select) は枠内の
+           * 上部にトゥールバーとして置く (kawaz r17 mid=64、2026-07-15)。
+           * 枠外に出すと属す thinking が視覚的に切れ、fold ガイドの縦線に
+           * ボタンが乗ってしまう。 */}
+          {translatorAvailable ? (
+            <div class="tl-thinking-tabs">
+              <button
+                type="button"
+                class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
+                onClick={() => setTab("original")}
+              >
+                original
+              </button>
+              <button
+                type="button"
+                class={"tl-thinking-tab" + (tab === "ja" ? " active" : "")}
+                onClick={selectJa}
+              >
+                ja
+              </button>
+            </div>
+          ) : (
+            <div class="tl-thinking-tabs">
+              <button type="button" class="tl-thinking-tab" onClick={selectAllBody}>
+                select
+              </button>
+            </div>
+          )}
           {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
-           * markdown レンダリング」) — original と同じ MarkdownView を再利用。 */}
-          <MarkdownView source={bodyText} />
+           * markdown レンダリング」) — original と同じ MarkdownView を再利用。
+           * bodyRef は「本文だけ」を選択対象にするため MarkdownView を包む
+           * 内 div に付ける (tabs 自身の "select"/"original"/"ja" 文字を
+           * selectAllBody 経由で選択したくない)。 */}
+          <div ref={bodyRef}>
+            <MarkdownView source={bodyText} />
+          </div>
           {tab === "ja" && translating && jaText === null ? (
             <p class="tl-thinking-translating">翻訳中…</p>
           ) : null}
