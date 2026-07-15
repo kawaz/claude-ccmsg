@@ -34,6 +34,7 @@ import {
   substitutePlaceholders,
   type ComposerAttachment,
 } from "./composer-attachments.ts";
+import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
 
@@ -457,9 +458,17 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       <textarea
         ref={textareaRef}
         class="one-on-one-textarea"
-        placeholder="この session に priv..."
+        placeholder="この session に priv... (⌘+Enter で送信)"
         value={text}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+        onKeyDown={(e) => {
+          // ⌘/Ctrl+Enter 送信 (kawaz r20、2026-07-15): 通常 Composer と同じ
+          // shouldSendOnKeyDown 判定 (素の Enter / IME 確定は改行のまま)。
+          // 1on1 panel には従来この配線が無く「送信できない」と報告された。
+          if (!shouldSendOnKeyDown(e)) return;
+          e.preventDefault();
+          void handleSubmit();
+        }}
         onPaste={onPaste}
         disabled={sending}
         rows={4}

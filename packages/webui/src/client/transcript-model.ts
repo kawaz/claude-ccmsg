@@ -469,6 +469,15 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return "unknown-meta";
   }
 
+  // slash command の invocation/stdout は isMeta 付きが通常形だが、isMeta
+  // なしで届く transcript もある (kawaz r20、2026-07-15 実観測 — /reload-plugins
+  // 等が緑のユーザ発話バブルで表示された)。タグ prefix は人間の発話が取り得
+  // ない形なので、meta フラグに依らず同じ分類に落とす。
+  if (text.startsWith("<command-name>") || text.startsWith("<command-message>")) {
+    return "slash-command-invocation";
+  }
+  if (text.startsWith("<local-command-stdout>")) return "slash-command-stdout";
+
   if (text.startsWith("<task-notification>")) return "task-notification";
   // The harness prefixes background-task notifications with a fixed banner
   // line ("[SYSTEM NOTIFICATION - NOT USER INPUT]\n...") before the

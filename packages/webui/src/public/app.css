@@ -1781,6 +1781,9 @@ button.session-tab {
   border: 1px dashed var(--assistant-bubble-border);
   border-radius: 0.5rem;
   padding: 0.35rem 0.5rem;
+  /* 左寄せメッセージの慣習に合わせた右側余白 (kawaz r20、2026-07-15):
+   * .tl-bubble の max-width: 85% と同じ「左の発話」シグナル。 */
+  max-width: 85%;
 }
 
 /* thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える

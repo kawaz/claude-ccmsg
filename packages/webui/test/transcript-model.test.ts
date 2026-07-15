@@ -800,6 +800,30 @@ describe("classifyUserMessage", () => {
     // SendMessage relay は banner なしの <agent-message ...> 直開始形もある
     // (kawaz r17 mid=38 の実観測 — user-prompt に落ちて緑のユーザ発話として
     // 表示されていた)。teammate-message も同系 wrapper として防御的に拾う。
+    // slash command は isMeta なしで届く transcript もある (kawaz r20 の
+    // 実観測 — /reload-plugins が緑のユーザ発話で表示)。タグ prefix は人間の
+    // 発話が取り得ない形なので meta フラグに依らず同じ分類に落ちる。
+    test("bare <command-name>/<command-message> without isMeta -> slash-command-invocation", () => {
+      const entry = {
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            "<command-name>/reload-plugins</command-name>\n<command-message>reload-plugins</command-message>",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("slash-command-invocation");
+      const msgFirst = {
+        type: "user",
+        message: {
+          role: "user",
+          content:
+            "<command-message>ccmsg:ccmsg</command-message>\n<command-name>/ccmsg:ccmsg</command-name>",
+        },
+      };
+      expect(classifyUserMessage(msgFirst)).toBe("slash-command-invocation");
+    });
+
     test("bare <agent-message>/<teammate-message> prefix -> peer-message", () => {
       const agentEntry = {
         type: "user",
