@@ -332,3 +332,43 @@ describe("DR-0014 findExistingOneOnOne (§2.2 kind-based lookup)", () => {
     expect(findExistingOneOnOne(state, "sid-A")).toBeNull();
   });
 });
+
+describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
+  // 何を保証するか: upload 完了 (done) の添付メタが draft に保存・復元される。
+  // 以前は text のみ保存で、close→reopen 後の送信で [FILE<N>] placeholder が
+  // substitute 対象を失いリテラルのまま届いていた (実事故)。
+  test("saveDraft persists done attachments and loadDraft restores them", () => {
+    saveDraft("sid-att", "see [FILE1]", [
+      { n: 1, name: "a.png", status: "done", progress: 100, path: "/tmp/a.png" },
+    ]);
+    const got = loadDraft("sid-att");
+    expect(got?.attachments?.length).toBe(1);
+    expect(got?.attachments?.[0]).toMatchObject({ n: 1, status: "done", path: "/tmp/a.png" });
+  });
+
+  // 何を保証するか: uploading / error の途中状態は保存されない (XHR は復元
+  // 不能な transient)。done が 0 件なら attachments キー自体を書かない。
+  test("saveDraft drops non-done attachments", () => {
+    saveDraft("sid-up", "text [FILE1]", [
+      { n: 1, name: "b.png", status: "uploading", progress: 40 },
+    ]);
+    expect(loadDraft("sid-up")?.attachments).toBeUndefined();
+  });
+
+  // 何を保証するか (壊れた record への degrade): attachments の shape が
+  // 崩れていたら text だけの復元に落とす — 壊れた添付メタで送信経路を
+  // 詰まらせない。
+  test("loadDraft drops malformed attachments but keeps the text", () => {
+    localStorage.setItem(
+      "ccmsg.1on1.sid-bad",
+      JSON.stringify({
+        text: "hello [FILE1]",
+        attachments: [{ n: "one", status: "done" }],
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    const got = loadDraft("sid-bad");
+    expect(got?.text).toBe("hello [FILE1]");
+    expect(got?.attachments).toBeUndefined();
+  });
+});

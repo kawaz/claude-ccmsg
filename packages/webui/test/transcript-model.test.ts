@@ -797,6 +797,25 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("unknown-meta");
     });
 
+    // SendMessage relay は banner なしの <agent-message ...> 直開始形もある
+    // (kawaz r17 mid=38 の実観測 — user-prompt に落ちて緑のユーザ発話として
+    // 表示されていた)。teammate-message も同系 wrapper として防御的に拾う。
+    test("bare <agent-message>/<teammate-message> prefix -> peer-message", () => {
+      const agentEntry = {
+        type: "user",
+        message: { role: "user", content: '<agent-message from="a1">report</agent-message>' },
+      };
+      expect(classifyUserMessage(agentEntry)).toBe("peer-message");
+      const teammateEntry = {
+        type: "user",
+        message: {
+          role: "user",
+          content: '<teammate-message teammate_id="x">hello</teammate-message>',
+        },
+      };
+      expect(classifyUserMessage(teammateEntry)).toBe("peer-message");
+    });
+
     test("'Another Claude session sent a message:' prefix -> peer-message", () => {
       const entry = {
         message: {

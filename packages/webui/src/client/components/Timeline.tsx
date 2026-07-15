@@ -125,6 +125,20 @@ function ThinkingSegment({
 
   const bodyText = tab === "ja" && jaText !== null ? jaText : text;
 
+  // Translator API の無い環境 (Safari 等) 向けの全選択ボタン (kawaz r17
+  // mid=39): thinking は英語が多く、iOS では選択範囲のタップメニューから
+  // OS の翻訳がすぐ呼べる — 本文を 1 タップで全選択できれば十分機能する。
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const selectAllBody = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, []);
+
   return (
     <details
       class="tl-fold tl-thinking"
@@ -149,8 +163,14 @@ function ThinkingSegment({
             ja
           </button>
         </div>
-      ) : null}
-      <div class="tl-thinking-body">
+      ) : (
+        <div class="tl-thinking-tabs">
+          <button type="button" class="tl-thinking-tab" onClick={selectAllBody}>
+            select
+          </button>
+        </div>
+      )}
+      <div class="tl-thinking-body" ref={bodyRef}>
         {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
          * markdown レンダリング」) — original と同じ MarkdownView を再利用。 */}
         <MarkdownView source={bodyText} />
@@ -907,13 +927,39 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   const scrollToBottomSettled = useCallback(() => {
     // 末尾 1000ms はリロード直後の初期 fetch (2MB) 向け: 大量行の markdown
     // 描画 + Shiki highlight の非同期差し替えで数百 ms 後も高さが伸びる。
+    //
+    // 中断条件は scroll 位置でなく **ユーザ入力 (wheel / touch / キー)** で
+    // 判定する (kawaz r17 mid=37 のリグレッション対策): 位置ベースの
+    // isNearBottomRef ガードだと、初回ロード直後の「まだ top に居る」状態を
+    // 「ユーザが上に離れた」と誤認して全タイマーが空振りし、末尾ジャンプが
+    // 一切効かなくなる。programmatic scroll はこれらのイベントを発火しない
+    // ので、ユーザの意図した離脱だけを正確に拾える。
+    const el0 = scrollRef.current;
+    let cancelled = false;
+    const onUserInput = () => {
+      cancelled = true;
+      detach();
+    };
+    const detach = () => {
+      el0?.removeEventListener("wheel", onUserInput);
+      el0?.removeEventListener("touchstart", onUserInput);
+      el0?.removeEventListener("keydown", onUserInput);
+    };
+    el0?.addEventListener("wheel", onUserInput, { passive: true });
+    el0?.addEventListener("touchstart", onUserInput, { passive: true });
+    el0?.addEventListener("keydown", onUserInput);
     const ids = [0, 60, 300, 1000].map((ms) =>
       setTimeout(() => {
         const el = scrollRef.current;
-        if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
+        if (el && !cancelled) el.scrollTop = el.scrollHeight;
       }, ms),
     );
-    return () => ids.forEach(clearTimeout);
+    const lastId = setTimeout(detach, 1001);
+    return () => {
+      ids.forEach(clearTimeout);
+      clearTimeout(lastId);
+      detach();
+    };
   }, []);
   useEffect(() => {
     prevEndRef.current = timeline.end;
@@ -932,15 +978,19 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // アニメーションが重なるとかえって読みにくいため、即座にジャンプする。
   useEffect(() => {
     const appended = timeline.end > prevEndRef.current;
+    const initialLoad = prevEndRef.current === 0 && timeline.end > 0;
     prevEndRef.current = timeline.end;
-    if (!appended || !isNearBottomRef.current) return;
-    // settled 方式 (0/60/300ms の複数回書き) なのはページリロード直後の
-    // 初回 tail ロードのため (kawaz r17 mid=34): mount 時の [sid] effect は
-    // まだ空の timeline に対して空振りし、ここが実質の初回スクロールになる。
-    // 初期 fetch (2MB) の大量行は markdown / highlight の非同期差し替えで
-    // effect 後も scrollHeight が伸びるので、1 発の書き込みでは上に取り
-    // 残される。live tail の高頻度追記でも余計な再ジャンプは起きない
-    // (isNearBottomRef ガードで末尾に居る時しか書かない)。
+    if (!appended) return;
+    // 初回 tail ロード (リロード直後: mount 時の [sid] effect は空 timeline
+    // に空振りし、ここが実質の初回スクロール) は位置ガードなしで必ず末尾へ
+    // (kawaz r17 mid=34,37 — 「まだ top に居る」を「ユーザが離れた」と誤認
+    // する位置ベース判定が末尾ジャンプを殺していた)。以降の live tail 追記は
+    // 従来通り「末尾付近に居る時だけ」追従 (kawaz spec、上へ遡り中の読書を
+    // 吹っ飛ばさない)。
+    if (!initialLoad && !isNearBottomRef.current) return;
+    // settled 方式 (0/60/300/1000ms の複数回書き): 初期 fetch (2MB) の
+    // 大量行は markdown / highlight の非同期差し替えで effect 後も
+    // scrollHeight が伸びるので、1 発の書き込みでは上に取り残される。
     return scrollToBottomSettled();
   }, [timeline.end]);
 

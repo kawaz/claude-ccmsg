@@ -43,6 +43,15 @@ export const CLEANUP_STALE_MS = CLEANUP_STALE_DAYS * 24 * 60 * 60 * 1000;
 
 export interface StoredDraft {
   text: string;
+  /** upload 完了済み (status:"done") の添付メタ (kawaz r17 mid=36、
+   * 2026-07-15): 以前は text のみ保存で、close→reopen / リロード後に
+   * 本文の [FILE<N>] placeholder だけ残って attachments が空になり、送信時
+   * substitute の対象を失った placeholder がリテラルのまま届いていた。
+   * upload は選択時に即完了しファイルは TMPDIR に残るので、メタを draft に
+   * 含めれば復元後もそのまま送信できる。uploading/error の途中状態は保存
+   * しない (XHR は復元できない)。旧 draft (attachments 無し) も loadDraft
+   * が受理する (optional)。 */
+  attachments?: ComposerAttachment[];
   /** ISO-8601 wall-clock stamp of the last edit; used by the cleanup sweep
    * as a fallback when peers.last_activity_at isn't available. */
   updatedAt: string;
@@ -63,6 +72,25 @@ export function loadDraft(sid: string): StoredDraft | null {
       typeof (parsed as StoredDraft).text === "string" &&
       typeof (parsed as StoredDraft).updatedAt === "string"
     ) {
+      // attachments は shape が崩れていたら黙って落とす (text だけの復元に
+      // degrade) — 壊れた添付メタで送信経路を詰まらせない。
+      const att = (parsed as StoredDraft).attachments;
+      if (att !== undefined) {
+        const valid =
+          Array.isArray(att) &&
+          att.every(
+            (a) =>
+              a &&
+              typeof a === "object" &&
+              typeof a.n === "number" &&
+              a.status === "done" &&
+              typeof a.path === "string",
+          );
+        if (!valid) {
+          const { attachments: _drop, ...rest } = parsed as StoredDraft;
+          return rest;
+        }
+      }
       return parsed as StoredDraft;
     }
     return null;
@@ -71,9 +99,16 @@ export function loadDraft(sid: string): StoredDraft | null {
   }
 }
 
-export function saveDraft(sid: string, text: string): void {
+export function saveDraft(sid: string, text: string, attachments?: ComposerAttachment[]): void {
   try {
-    const payload: StoredDraft = { text, updatedAt: new Date().toISOString() };
+    // 添付は done (upload 完了、path 確定) だけ保存 — uploading の XHR や
+    // error 表示は復元不能な transient state。
+    const done = (attachments ?? []).filter((a) => a.status === "done");
+    const payload: StoredDraft = {
+      text,
+      ...(done.length > 0 ? { attachments: done } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     localStorage.setItem(keyFor(sid), JSON.stringify(payload));
   } catch {
     // storage unavailable (private mode / quota): drop silently — the next
@@ -198,30 +233,30 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // Restore draft when the panel opens for this sid — also re-runs when the
   // sid changes while open (e.g. user opened the panel on session A, then
   // navigated to session B before submitting), reloading B's own draft.
-  // attachments も同時にリセット: 別 sid の 1on1 に持ち込むと [FILE<N>] が
-  // 別 room の相手向けの UUID を指してしまうため。localStorage に attachments
-  // を保存しない設計 (§2.6 draft は text のみ) の帰結として、sid 切替は
-  // attachments を捨てる必要がある。
+  // 添付も draft から復元する (kawaz r17 mid=36): draft は per-sid 保存
+  // なので、復元される添付メタが別 sid の相手に混ざることはない。draft の
+  // 無い sid では空リセット。
   useEffect(() => {
     if (!open) return;
     const draft = loadDraft(sid);
     setText(draft?.text ?? "");
-    setAttachments([]);
+    setAttachments(draft?.attachments ?? []);
     setError(null);
   }, [open, sid]);
 
-  // Persist text as the user types. Empty text explicitly clears the entry
-  // rather than storing an empty draft — an unused compose that never gets
-  // typed shouldn't count as a draft needing later cleanup. A per-keystroke
-  // localStorage.setItem is cheap enough not to need debouncing here.
+  // Persist text + done attachments as the user types/uploads. Empty text
+  // explicitly clears the entry rather than storing an empty draft — an
+  // unused compose that never gets typed shouldn't count as a draft needing
+  // later cleanup. A per-keystroke localStorage.setItem is cheap enough not
+  // to need debouncing here.
   useEffect(() => {
     if (!open) return;
     if (text === "") {
       clearDraft(sid);
       return;
     }
-    saveDraft(sid, text);
-  }, [open, sid, text]);
+    saveDraft(sid, text, attachments);
+  }, [open, sid, text, attachments]);
 
   // DR-0015 §2.5 attachment upload 開始 (通常 Composer と同じロジック)。
   // caret 位置にプレースホルダ挿入 + XHR upload、progress は state に反映、

@@ -13,11 +13,11 @@
    * 緑系) / アシスタント最終応答 (--assistant-bubble-*) と見分けが付く青系。 */
   --peer-bubble-bg: #dbeafe;
   /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28、
-   * mid=33 で紫 → 暗いオレンジに変更): 無彩色 --bg-alt では枠が目立たず、
-   * 別セッション msg の青系とも紛れる — 暗めのオレンジ系 + はっきりした
-   * 枠線で「この画面の主役の発話」と分かる色に。 */
-  --assistant-bubble-bg: #fbf1e5;
-  --assistant-bubble-border: #c2680c;
+   * mid=33 でオレンジを試し mid=36 で紫に確定): 無彩色 --bg-alt では枠が
+   * 目立たず、別セッション msg の青系とも紛れる — 紫系の専用色 +
+   * はっきりした枠線で「この画面の主役の発話」と分かる色に。 */
+  --assistant-bubble-bg: #f3eefc;
+  --assistant-bubble-border: #b79ae8;
   --danger: #dc2626;
   --warn: #b45309;
 
@@ -52,8 +52,8 @@
     --user-bg: #232a44;
     --user-bubble-bg: #1f4023;
     --peer-bubble-bg: #1e3a5f;
-    --assistant-bubble-bg: #302416;
-    --assistant-bubble-border: #96560f;
+    --assistant-bubble-bg: #2a2438;
+    --assistant-bubble-border: #6d55a3;
     --danger: #f87171;
     --warn: #fbbf24;
   }
@@ -1762,6 +1762,14 @@ button.session-tab {
   margin-top: 0.25rem;
   color: var(--fg-muted);
   font-size: 0.8rem;
+  /* thinking にも「通常出力に次ぐ」メッセージ枠を当てる (kawaz r17 mid=40):
+   * アシスタント出力 (assistant-bubble、実線 + 濃い背景) と同系統の色で、
+   * 破線 + 薄い背景により格の違いを見せる。フォントサイズは従来の小ささを
+   * 維持。 */
+  background: var(--assistant-bubble-bg);
+  border: 1px dashed var(--assistant-bubble-border);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.5rem;
 }
 
 /* thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える

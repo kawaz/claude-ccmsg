@@ -480,6 +480,14 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return text.includes("<task-notification>") ? "task-notification" : "unknown-meta";
   }
   if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
+  // SendMessage (agent-team 間通信) の relay は "Another Claude session..."
+  // banner なしで <agent-message ...> タグから直接始まる形もある (kawaz r17
+  // mid=38 の実観測 — user-prompt に fall through して緑のユーザ発話として
+  // 表示されていた)。teammate-message は現契約では banner 付きだが、同系の
+  // wrapper として防御的に両方拾う。
+  if (text.startsWith("<agent-message") || text.startsWith("<teammate-message")) {
+    return "peer-message";
+  }
 
   return "user-prompt";
 }
