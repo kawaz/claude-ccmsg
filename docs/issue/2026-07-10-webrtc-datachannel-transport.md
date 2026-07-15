@@ -3,7 +3,7 @@ title: WebRTC DataChannel transport 構想
 status: idea
 category: design
 created: 2026-07-10T18:16:15+09:00
-last_read:
+last_read: 2026-07-15T15:31:50+09:00
 open_entered:
 wip_entered:
 blocked_entered:
