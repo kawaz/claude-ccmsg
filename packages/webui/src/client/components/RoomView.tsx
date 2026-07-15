@@ -9,6 +9,7 @@ import { TimelineItem } from "./TimelineItem.tsx";
 import { RoomComposerFab } from "./RoomComposerFab.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
+import { useNow } from "../useNow.ts";
 
 // DR-0011 §1-4: "already a member" is a soft notice, auto-dismissed — it's
 // not a failure, just feedback that the drop didn't need to do anything.
@@ -29,6 +30,8 @@ export function RoomView({ state }: { state: AppState }) {
   // 反映は他の archive_room 同様、broadcast される archive イベントを store が
   // 拾う (RoomTitle の set_title と同じ非楽観方針)。
   const [archiving, setArchiving] = useState(false);
+  // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30)。
+  const now = useNow();
 
   // `#room-mNN` anchor scroll (DR-0004 §5): only fires when the locator's
   // room/mid pair changes, not on every timeline update, so it doesn't fight
@@ -215,7 +218,7 @@ export function RoomView({ state }: { state: AppState }) {
         onDrop={(e) => void handleDrop(e)}
       >
         {room.timeline.map((ev, i) => (
-          <TimelineItem key={i} event={ev} room={room} />
+          <TimelineItem key={i} event={ev} room={room} now={now} />
         ))}
       </div>
       {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer

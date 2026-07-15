@@ -87,11 +87,10 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
           <Avatar seed={row.sid} size={16} />
-          <span class="session-repo-ws">
-            {repo}
-            {repo && wsLabel ? " ▸ " : ""}
-            {wsLabel}
-          </span>
+          {/* 1 行目は repo のみ (kawaz r17 mid=29: 横幅が狭く ws まで入れると
+           * 詰まる)。ws は 2 行目 (sid の後ろ) に移動。repo 無し行 (agent-only
+           * 等) は従来通り ws/cwd 末尾の fallback をここに出す。 */}
+          <span class="session-repo-ws">{repo || wsLabel}</span>
           {row.branch && row.branch !== wsLabel ? (
             <span class="session-branch">{row.branch}</span>
           ) : null}
@@ -123,6 +122,9 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
         >
           {shortSid(row.sid)}
         </button>
+        {/* ws は 1 行目から移動してここ (kawaz r17 mid=29)。repo 無し行は
+         * 1 行目が既に wsLabel を出しているので重複させない。 */}
+        {repo && wsLabel ? <span class="session-line2-ws">{wsLabel}</span> : null}
       </div>
       <div
         class={cwdFull ? "session-line3 session-cwd-full" : "session-line3"}

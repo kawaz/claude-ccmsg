@@ -2,7 +2,7 @@ import type { DeliveredEvent } from "@ccmsg/protocol";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
-import { memberLabel, relTime } from "../utils.ts";
+import { formatMsgTime, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar } from "../avatar.tsx";
 
 /** DR-0012 (U1 icon addendum): a member's avatar shown next to its label
@@ -24,7 +24,15 @@ function MemberAvatar({ id, room }: { id: string; room: RoomState }) {
   return <Avatar seed={sid} size={16} />;
 }
 
-export function TimelineItem({ event, room }: { event: DeliveredEvent; room: RoomState }) {
+export function TimelineItem({
+  event,
+  room,
+  now,
+}: {
+  event: DeliveredEvent;
+  room: RoomState;
+  now: number;
+}) {
   switch (event.type) {
     case "msg":
       return (
@@ -50,7 +58,10 @@ export function TimelineItem({ event, room }: { event: DeliveredEvent; room: Roo
                 ))}
               </span>
             ) : null}
-            <span class="msg-time">{relTime(event.ts)}</span>
+            {/* 年月日 + 時刻 + 相対時間 (kawaz r17 mid=30): 時刻だけだと日を
+             * 跨いだ msg の古さが読めない。now は RoomView の useNow (3 分
+             * おきの雑更新)。 */}
+            <span class="msg-time">{formatMsgTime(event.ts, now)}</span>
             <a class="msg-anchor" href={messageHref(room.id, event.mid)}>
               #{room.id}-m{event.mid}
             </a>

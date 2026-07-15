@@ -8,7 +8,8 @@ import { ADMIN_ID } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { UserAvatar } from "../avatar.tsx";
-import { errorMessage, formatClockTime } from "../utils.ts";
+import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
+import { useNow } from "../useNow.ts";
 import {
   classifyBoundaryLine,
   foldGroupLabel,
@@ -465,6 +466,7 @@ function UserPromptBubble({
   offsetKey,
   registerUserTurnRef,
   translatorAvailable,
+  now,
 }: {
   line: TurnLine;
   offsetKey: number;
@@ -473,6 +475,7 @@ function UserPromptBubble({
   // 側 (LineView) はこの登録を一切行わない。
   registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
   translatorAvailable: boolean;
+  now: number;
 }) {
   return (
     <div class="tl-bubble tl-bubble-right" ref={(el) => registerUserTurnRef(offsetKey, el)}>
@@ -493,7 +496,7 @@ function UserPromptBubble({
       </div>
       {/* 右寄せ吹き出しは時刻も右に揃える (kawaz: 「ユーザメッセージは右に
        * あるのに時刻が左」)。 */}
-      {line.ts ? <span class="tl-bubble-time">{formatClockTime(line.ts)}</span> : null}
+      {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
     </div>
   );
 }
@@ -501,12 +504,14 @@ function UserPromptBubble({
 function AssistantBubble({
   line,
   translatorAvailable,
+  now,
 }: {
   line: TurnLine;
   translatorAvailable: boolean;
+  now: number;
 }) {
   return (
-    <div class="tl-bubble tl-bubble-left">
+    <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
       <div class="tl-bubble-body">
         {line.segments.map((seg, i) => (
           <SegmentView
@@ -518,7 +523,7 @@ function AssistantBubble({
           />
         ))}
       </div>
-      {line.ts ? <span class="tl-bubble-time">{formatClockTime(line.ts)}</span> : null}
+      {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
     </div>
   );
 }
@@ -534,7 +539,15 @@ function AssistantBubble({
 // 色」で表示する (kawaz r15 mid=6、2026-07-14)。RoomView TimelineItem
 // の .msg-user と同じ意味論を transcript 側に横展開する形。それ以外
 // (agent 発 ccmsg msg) は従来通り .tl-bubble-left .tl-bubble-peer (青系)。
-function CcmsgBubble({ message, rawText }: { message: CcmsgMessage; rawText: string }) {
+function CcmsgBubble({
+  message,
+  rawText,
+  now,
+}: {
+  message: CcmsgMessage;
+  rawText: string;
+  now: number;
+}) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
   const isUser = message.from === ADMIN_ID;
   return (
@@ -582,7 +595,7 @@ function CcmsgBubble({ message, rawText }: { message: CcmsgMessage; rawText: str
           <pre class="tl-fold-body">{rawText}</pre>
         )}
       </div>
-      <span class="tl-bubble-time">{formatClockTime(message.ts)}</span>
+      <span class="tl-bubble-time">{formatMsgTime(message.ts, now)}</span>
     </div>
   );
 }
@@ -594,6 +607,9 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // Chrome built-in Translator API の feature-detect (U2 kawaz spec): 環境が
   // 変わらない限り再評価不要なので mount 時に一度だけ判定する。
   const translatorAvailable = useMemo(() => hasTranslatorApi(), []);
+  // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
+  // 3 分おきの再描画で十分。
+  const now = useNow();
 
   // Live tail (DR-0009 addendum, transcript_subscribe): このセッションの
   // Timeline が表示されている間だけ subscribe し、タブ切替/セッション切替/
@@ -1048,6 +1064,7 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
                         offsetKey={offset}
                         registerUserTurnRef={registerUserTurnRef}
                         translatorAvailable={translatorAvailable}
+                        now={now}
                       />
                     );
                   case "assistant-response":
@@ -1056,6 +1073,7 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
                         key={offset}
                         line={line}
                         translatorAvailable={translatorAvailable}
+                        now={now}
                       />
                     );
                   case "ccmsg": {
@@ -1068,7 +1086,14 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
                         const dedupKey = `${m.room}|${m.ts}|${m.from}|${m.msg}`;
                         if (seenCcmsg.has(dedupKey)) return null;
                         seenCcmsg.add(dedupKey);
-                        return <CcmsgBubble key={`${offset}-${j}`} message={m} rawText={rawText} />;
+                        return (
+                          <CcmsgBubble
+                            key={`${offset}-${j}`}
+                            message={m}
+                            rawText={rawText}
+                            now={now}
+                          />
+                        );
                       })
                       .filter((n) => n !== null);
                   }

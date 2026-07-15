@@ -18,7 +18,14 @@ function TopbarTitle({ state }: { state: AppState }) {
     const sid = state.currentSid;
     if (sid !== null) {
       const peer = state.peers.find((p) => p.sid === sid);
-      const label = peer?.repo || peer?.ws || lastPathSegment(peer?.cwd ?? "") || sid.slice(0, 8);
+      // repo ▸ ws の 2 段構成 (kawaz r17 mid=29): repo だけだと同一リポの
+      // 複数 worktree セッションが区別できない。
+      const repo = peer?.repo || "";
+      const ws = peer?.ws || "";
+      const label =
+        repo && ws
+          ? `${repo} ▸ ${ws}`
+          : repo || ws || lastPathSegment(peer?.cwd ?? "") || sid.slice(0, 8);
       return (
         <h1 class="topbar-title">
           <Avatar seed={sid} size={18} />

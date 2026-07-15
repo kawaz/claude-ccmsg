@@ -46,6 +46,20 @@ export function formatClockTime(iso: string | null): string {
   return d.toTimeString().slice(0, 8);
 }
 
+/** msg 時刻の完全形 "2026-07-15 10:46:59 · 3h10m" (kawaz r17 mid=30、
+ * 2026-07-15): 時刻だけだと日を跨いだ msg の古さが読めない — 年月日 +
+ * 相対時間 (formatDuration の 2 単位形) を併記する。`now` は再描画の
+ * 起点 (呼び出し側が数分おきの雑更新 tick で渡す)。 */
+export function formatMsgTime(iso: string | null, now: number = Date.now()): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ymd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const hms = d.toTimeString().slice(0, 8);
+  return `${ymd} ${hms} · ${formatDuration(now - d.getTime())}`;
+}
+
 /** ROOM 内メンバー表示ラベル (Sidebar Sessions リストの `sessionLabel` とは別軸:
  * ROOM 内では repo の owner/org 部分 (`kawaz/`) を落とし `repo/ws` の短い形で示す
  * — 同じ owner 配下のメンバーが並ぶ chip 一覧で owner の反復はノイズなので、

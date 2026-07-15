@@ -10,8 +10,13 @@
   --user-bubble-bg: #dcf8c6;
   /* Timeline チャット吹き出し (kawaz spec): ccmsg メッセージを含むシステム
    * メッセージ用の「第三者」カラー。本物のユーザ発話 (--user-bubble-bg,
-   * 緑系) / アシスタント最終応答 (--bg-alt, 無彩色) と見分けが付く青系。 */
+   * 緑系) / アシスタント最終応答 (--assistant-bubble-*) と見分けが付く青系。 */
   --peer-bubble-bg: #dbeafe;
+  /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
+   * 無彩色 --bg-alt では枠が目立たず、別セッション msg の青系とも紛れる —
+   * 紫系の専用色 + はっきりした枠線で「この画面の主役の発話」と分かる色に。 */
+  --assistant-bubble-bg: #f3eefc;
+  --assistant-bubble-border: #b79ae8;
   --danger: #dc2626;
   --warn: #b45309;
 
@@ -46,6 +51,8 @@
     --user-bg: #232a44;
     --user-bubble-bg: #1f4023;
     --peer-bubble-bg: #1e3a5f;
+    --assistant-bubble-bg: #2a2438;
+    --assistant-bubble-border: #6d55a3;
     --danger: #f87171;
     --warn: #fbbf24;
   }
@@ -352,6 +359,20 @@ body {
 
 .session-line2 {
   padding-left: 1.3rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+/* ws (workspace/worktree 名) — 1 行目の横幅が狭いため sid の後ろに置く
+ * (kawaz r17 mid=29)。長い名前は ellipsis。 */
+.session-line2-ws {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-sid-btn {
@@ -1533,6 +1554,15 @@ button.session-tab {
 
 .tl-bubble-peer .tl-bubble-body {
   background: var(--peer-bubble-bg);
+}
+
+/* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
+ * 無彩色ではどれが「この画面の主役の発話」か目立たない — 紫系の専用色 +
+ * はっきりした枠線。別セッション msg (青系 .tl-bubble-peer) / ユーザ発話
+ * (緑系 .tl-bubble-right) と三者三色で見分けが付く。 */
+.tl-bubble-assistant .tl-bubble-body {
+  background: var(--assistant-bubble-bg);
+  border: 1px solid var(--assistant-bubble-border);
 }
 
 .tl-bubble-time {
