@@ -52,10 +52,9 @@ function idSortKey(id: string): [number, number] {
 }
 
 /** Member id ordering: `u` namespace before `a`, then numeric suffix ascending.
- * Exported so server.ts's reply_via composer (DR-0014 §2.4) can concatenate the
- * `u<N>` / `a<N>` fragments in the same canonical order the wire protocol
- * documents (`r10u1a32a35`), regardless of how the underlying `to` was ordered
- * at post time. */
+ * Exported so server.ts's reply op (DR-0017 §2.2) can emit its constructed
+ * `to` list in the same canonical order regardless of how the original msg's
+ * `to` was ordered at post time. */
 export function compareIds(a: string, b: string): number {
   const [ap, an] = idSortKey(a);
   const [bp, bn] = idSortKey(b);

@@ -1,19 +1,18 @@
-// DR-0014 1on1 room + reply_via integration.
+// DR-0014 1on1 room + DR-0017 reply_hint integration.
 //
 // Coverage layout (each `test` documents "何を保証するか" per §):
-//   §2.1 create_room --kind 1on1 member-count validation, session role,
+//   DR-0014 §2.1 create_room --kind 1on1 member-count validation, session role,
 //        rooms-response kind badge
-//   §2.4-2.5 reply_via wire hint composer: 6 documented patterns (normal / normal+to
-//        / broadcast+u1 / broadcast+u1+to / 1on1+u1 / archived → none)
-//   §2 storage: reply_via is per-recipient at delivery time, NEVER persisted in
-//        the room jsonl (共通 event として保存すると受信者ごとに矛盾する)
-//   §2 next_room kind inheritance for 1on1 (broadcast test already covers its side)
-//   §2 kind persistence across daemon restart (KindEvent recovered as 1on1)
+//   DR-0017 §2.3 reply_hint composer: exactly 3 shapes (r<N>m<M> / tl / none)
+//   DR-0017 §2.3 storage: reply_hint is a delivery-time field, NEVER persisted
+//        in the room jsonl (archive で後から none に変わる live 状態依存の値)
+//   DR-0014 §2 next_room kind inheritance for 1on1 (broadcast test already covers its side)
+//   DR-0014 §2 kind persistence across daemon restart (KindEvent recovered as 1on1)
 //
 // Each test spawns a real daemon (helpers.startTestDaemon) and drives it via
 // UDS, matching the broadcast integration test's harness — the wire contract
 // is what actually ships, so mocking around storage/dispatch would let a
-// per-recipient reply_via bug hide behind a "unit works" green.
+// delivery-path reply_hint bug hide behind a "unit works" green.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import {
@@ -159,9 +158,9 @@ describe("DR-0014 1on1 room creation", () => {
   );
 
   // 何を保証するか (§2 next_room kind inheritance): 1on1 の次スレも 1on1 の
-  // ままにする (broadcast の同じ挙動 §2.8 を 1on1 に一般化)。reply_via の
-  // "tl" 分岐もそのまま新 room に適用されることを、u1 発の msg → recipient
-  // の reply_via 値で確認する。
+  // ままにする (broadcast の同じ挙動 §2.8 を 1on1 に一般化)。reply_hint の
+  // "tl" 分岐 (DR-0017 §2.3) もそのまま新 room に適用されることを、u1 発の
+  // msg → recipient の reply_hint 値で確認する。
   test(
     "next_room from a 1on1 produces another 1on1 (kind inherited)",
     async () => {
@@ -183,7 +182,7 @@ describe("DR-0014 1on1 room creation", () => {
         }>({ op: "rooms" });
         expect(rooms.rooms.find((r) => r.id === nextRes.room)!.kind).toBe("1on1");
 
-        // Sanity: reply_via "tl" still applies on the inherited room
+        // Sanity: reply_hint "tl" still applies on the inherited room
         const aSub = await session(ctx, "A");
         await aSub.request({ op: "subscribe" });
         await u.request({ op: "post", room: nextRes.room, msg: "tl on inherited" });
@@ -191,7 +190,7 @@ describe("DR-0014 1on1 room creation", () => {
           aSub,
           (m: any) => m.r === nextRes.room && m.msg === "tl on inherited",
         );
-        expect(ev.reply_via).toBe("tl");
+        expect(ev.reply_hint).toBe("tl");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -201,7 +200,7 @@ describe("DR-0014 1on1 room creation", () => {
 
   // 何を保証するか (kind の永続化): the 1on1 KindEvent lands in the jsonl and
   // is recovered by scanRooms on daemon restart — so a 1on1 room stays 1on1
-  // (reply_via = "tl" for u1 msgs keeps working) across a stop/start cycle.
+  // (reply_hint = "tl" for u1 msgs keeps working) across a stop/start cycle.
   // Mirrors the broadcast persistence test — regression guard on the same
   // KindEvent-based recovery path.
   test(
@@ -236,7 +235,7 @@ describe("DR-0014 1on1 room creation", () => {
         ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
         await waitConnectable(ctx.sock);
 
-        // After restart, rooms surfaces kind:"1on1" AND reply_via still emits
+        // After restart, rooms surfaces kind:"1on1" AND reply_hint still emits
         // "tl" for u1 posts — proves computeDerived recovered kind, not just
         // that the KindEvent is in the jsonl.
         const u2 = await user(ctx);
@@ -252,7 +251,7 @@ describe("DR-0014 1on1 room creation", () => {
           aAfter,
           (m: any) => m.r === roomId && m.msg === "after restart",
         );
-        expect(ev.reply_via).toBe("tl");
+        expect(ev.reply_hint).toBe("tl");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -261,14 +260,14 @@ describe("DR-0014 1on1 room creation", () => {
   );
 });
 
-describe("DR-0014 reply_via wire hint", () => {
-  // 何を保証するか (§2.4 pattern "r<id>"): normal room + `to`-less msg → the
-  // hint is just the room id, telling the receiver "reply broadcasts back to
-  // the room" (no priv target). Verified by having session A post a to-less
-  // msg to a room where session B is a co-member; B's msg event carries the
-  // room-only hint.
+describe("DR-0017 reply_hint wire hint", () => {
+  // 何を保証するか (DR-0017 §2.3 の rNmN 形): normal room の msg は「その
+  // msg 自身の room+mid」が hint になる — 受信者は ccmsg reply <hint> <text>
+  // と打つだけで、宛先構成 (元 from + 元 to − 自分 + u1) は daemon の reply
+  // op が行う。旧 DR-0014 の routing 記法 (r<id> 単独 / to 連結) が消えて
+  // いることの回帰 guard も兼ねる。
   test(
-    "normal room + to-less msg → reply_via = 'r<id>'",
+    "normal room + to-less msg → reply_hint = 'r<N>m<M>' (the msg itself)",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -282,9 +281,9 @@ describe("DR-0014 reply_via wire hint", () => {
         });
         const room = res.room;
 
-        await a.request({ op: "post", room, msg: "全員へ" });
+        const posted = await a.request<{ mid: number }>({ op: "post", room, msg: "全員へ" });
         const { ev } = await readMsg(bSub, (m: any) => m.r === room && m.msg === "全員へ");
-        expect(ev.reply_via).toBe(room);
+        expect(ev.reply_hint).toBe(`${room}m${posted.mid}`);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -292,13 +291,13 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 「通常 room + to あり → r<room-id> + (from + 元 to
-  // - 受信者本人)、id 順連結」): the composer reconstructs the priv circle
-  // minus the receiver. Setup: room has A (a1), B (a2), C (a3). A posts with
-  // to:[B, C]. Two subscribers B and C should each see reply_via that
-  // includes A + the OTHER peer but not themselves.
+  // 何を保証するか (DR-0017 §2.3「routing 記法の廃止」): `to` 付き msg でも
+  // hint は受信者に依らず同一の rNmN 形。旧仕様は受信者ごとに異なる連結値
+  // (r<id>a1a3 等) を配っていたが、宛先計算が reply op に移ったため hint は
+  // 「どの msg への返信か」だけを示す。B と C が同じ値を受け取ることが
+  // per-recipient 計算の消滅の直接の証拠。
   test(
-    "normal room + explicit `to` → reply_via = 'r<id>' + sender + peers - receiver",
+    "normal room + explicit `to` → reply_hint is the same 'r<N>m<M>' for every recipient",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -314,14 +313,19 @@ describe("DR-0014 reply_via wire hint", () => {
         });
         const room = res.room;
 
-        // to=[a2, a3], from=a1; receiver=a2 → [a1, a3]; receiver=a3 → [a1, a2]
-        await a.request({ op: "post", room, msg: "peer priv", to: ["a2", "a3"] });
+        const posted = await a.request<{ mid: number }>({
+          op: "post",
+          room,
+          msg: "peer priv",
+          to: ["a2", "a3"],
+        });
+        const want = `${room}m${posted.mid}`;
 
         const bMsg = await readMsg(bSub, (m: any) => m.r === room && m.msg === "peer priv");
-        expect(bMsg.ev.reply_via).toBe(`${room}a1a3`);
+        expect(bMsg.ev.reply_hint).toBe(want);
 
         const cMsg = await readMsg(cSub, (m: any) => m.r === room && m.msg === "peer priv");
-        expect(cMsg.ev.reply_via).toBe(`${room}a1a2`);
+        expect(cMsg.ev.reply_hint).toBe(want);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -329,12 +333,12 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 「broadcast room + u1 発 + to なし → r<id>u1」):
-  // u1's full-room broadcast prompts a u1-priv reply — that's exactly what
-  // §2.4 the broadcast post constraint requires anyway, so encoding it in
-  // reply_via saves each agent from pattern-matching room.kind at post time.
+  // 何を保証するか (DR-0017 §2.3 × DR-0013): broadcast room の u1 msg も
+  // 特別扱いなしの rNmN 形。reply op の構成 (元 from=u1 + u1 常含み) が
+  // broadcast の「agent post は u1 宛必須」制約 (DR-0013 §2.4) を構成上
+  // 自動で満たすため、hint 側での u1 明示 (旧 r<id>u1) は不要になった。
   test(
-    "broadcast + u1 to-less → reply_via = 'r<id>u1'",
+    "broadcast + u1 to-less → reply_hint = 'r<N>m<M>'",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -348,12 +352,16 @@ describe("DR-0014 reply_via wire hint", () => {
         });
         const room = res.room;
 
-        await u.request({ op: "post", room, msg: "全員へ broadcast" });
+        const posted = await u.request<{ mid: number }>({
+          op: "post",
+          room,
+          msg: "全員へ broadcast",
+        });
         const { ev } = await readMsg(
           aSub,
           (m: any) => m.r === room && m.msg === "全員へ broadcast",
         );
-        expect(ev.reply_via).toBe(`${room}u1`);
+        expect(ev.reply_hint).toBe(`${room}m${posted.mid}`);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -361,13 +369,12 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 「broadcast + u1 発 + 個別 session 指定 → r<id>u1 +
-  // 元 to のうち u1 と受信者を除外して id 順連結」): the composer always keeps
-  // u1 in the hint (round-trip back to kawaz) and strips the receiver itself.
-  // Setup: broadcast, active peers A/B/C. u1 posts with to:[a1, a2]. B (a2)
-  // sees "r<id>u1a1", A (a1) sees "r<id>u1a2".
+  // 何を保証するか (DR-0017 §2.3 × DR-0013、to 付き): u1 が個別 session を
+  // 選んで broadcast した場合も hint は全受信者共通の rNmN。元 to の再構成
+  // (u1 + 他 peer − 自分) は reply op が担うため、A と B が同じ hint を
+  // 受け取る (per-recipient 差分の消滅)。
   test(
-    "broadcast + u1 with explicit `to` → reply_via keeps u1 + peers - receiver",
+    "broadcast + u1 with explicit `to` → same 'r<N>m<M>' hint for every recipient",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -384,13 +391,19 @@ describe("DR-0014 reply_via wire hint", () => {
         });
         const room = res.room;
 
-        await u.request({ op: "post", room, msg: "selected peers", to: ["a1", "a2"] });
+        const posted = await u.request<{ mid: number }>({
+          op: "post",
+          room,
+          msg: "selected peers",
+          to: ["a1", "a2"],
+        });
+        const want = `${room}m${posted.mid}`;
 
         const aMsg = await readMsg(aSub, (m: any) => m.r === room && m.msg === "selected peers");
-        expect(aMsg.ev.reply_via).toBe(`${room}u1a2`);
+        expect(aMsg.ev.reply_hint).toBe(want);
 
         const bMsg = await readMsg(bSub, (m: any) => m.r === room && m.msg === "selected peers");
-        expect(bMsg.ev.reply_via).toBe(`${room}u1a1`);
+        expect(bMsg.ev.reply_hint).toBe(want);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -398,12 +411,12 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 「1on1 + u1 発 → tl」): the special-cased hint tells
-  // the receiving agent "reply on your session TL"; the webui SessionView
-  // Timeline picks up the response via its existing u1-msg transcript path
-  // (D-3, §2.7).
+  // 何を保証するか (DR-0017 §2.3 「tl」、DR-0014 §2.5 から継承): 1on1 room の
+  // u1 msg だけは rNmN でなく "tl" — 返信は room への post/reply ではなく
+  // 受信 agent 自身の transcript 出力で行い、webui SessionView Timeline が
+  // それを拾う。
   test(
-    "1on1 + u1 → reply_via = 'tl'",
+    "1on1 + u1 → reply_hint = 'tl'",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -419,7 +432,7 @@ describe("DR-0014 reply_via wire hint", () => {
 
         await u.request({ op: "post", room, msg: "priv from u1" });
         const { ev } = await readMsg(aSub, (m: any) => m.r === room && m.msg === "priv from u1");
-        expect(ev.reply_via).toBe("tl");
+        expect(ev.reply_hint).toBe("tl");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -427,12 +440,11 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 「archive 済み room からの msg → none」): once a
-  // room is archived, EVERY subsequent msg carries reply_via = "none" so agents
-  // don't reply into a room kawaz has already put down. Simplification from
-  // §2.5's open question: "archive_ts 以降だけ" ではなく "archived 状態全体一律".
+  // 何を保証するか (DR-0017 §2.3 「none」): once a room is archived, EVERY
+  // subsequent msg carries reply_hint = "none" so agents don't reply into a
+  // room kawaz has already put down (archive 済み room の惰性 msg の静穏化)。
   test(
-    "archived room → reply_via = 'none'",
+    "archived room → reply_hint = 'none'",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -456,7 +468,7 @@ describe("DR-0014 reply_via wire hint", () => {
           bSub,
           (m: any) => m.r === room && m.msg === "post into archived",
         );
-        expect(ev.reply_via).toBe("none");
+        expect(ev.reply_hint).toBe("none");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -464,14 +476,14 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 補足「reply_via は subscribe stream での配送 event に
-  // 付く post-hoc field、jsonl storage の永続 event には書かない」): the room
-  // jsonl must NOT contain reply_via anywhere on msg lines — that field is
-  // per-recipient and would either freeze one recipient's view for everyone
-  // else or bloat each line with a per-recipient map. Regression guard for
-  // accidentally teeing the delivery hint into appendEvent.
+  // 何を保証するか (DR-0017 §2.3 補足「reply_hint は配送時 field、jsonl には
+  // 書かない」): the room jsonl must NOT contain reply_hint on msg lines —
+  // the route depends on live room state (archive flips it to "none"
+  // retroactively for later replays), so a post-time snapshot would go
+  // stale. Regression guard for accidentally teeing the delivery hint into
+  // appendEvent.
   test(
-    "reply_via is delivery-only, never persisted in the room jsonl",
+    "reply_hint is delivery-only, never persisted in the room jsonl",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -492,7 +504,7 @@ describe("DR-0014 reply_via wire hint", () => {
         await readMsg(bSub, (m: any) => m.r === room && m.msg === "from a");
 
         const raw = fs.readFileSync(`${ctx.roomsDir}/${room}.jsonl`, "utf8");
-        expect(raw).not.toContain("reply_via");
+        expect(raw).not.toContain("reply_hint");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -500,19 +512,19 @@ describe("DR-0014 reply_via wire hint", () => {
     T,
   );
 
-  // 何を保証するか (reply_via の since-replay 側): backlog delivery (subscribe
-  // 経由の since replay 経路) でも reply_via が付くこと。deliver 経路と
+  // 何を保証するか (reply_hint の since-replay 側): backlog delivery (subscribe
+  // 経由の since replay 経路) でも reply_hint が付くこと。deliver 経路と
   // sendBacklog 経路の両方で writeDelivered を通るので、両輪でカバーが
   // ないと reconnect 後の agent が hint を失う。
   test(
-    "reply_via is injected in since-replay backlog too",
+    "reply_hint is injected in since-replay backlog too",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
         // A never subscribed during the u1 post; it comes back later and
         // asks for since-replay from mid 0 → should receive the priv msg with
-        // reply_via = "tl".
+        // reply_hint = "tl".
         await session(ctx, "A");
         const res = await u.request<{ room: string }>({
           op: "create_room",
@@ -529,7 +541,7 @@ describe("DR-0014 reply_via wire hint", () => {
           aSub,
           (m: any) => m.r === room && m.msg === "priv while offline",
         );
-        expect(ev.reply_via).toBe("tl");
+        expect(ev.reply_hint).toBe("tl");
       } finally {
         await stopTestDaemon(ctx);
       }

@@ -1,6 +1,8 @@
 # DR-0014: 1on1 room + msg 応答経路 hint (`reply_via`)
 
-- **Status**: Proposed
+- **Status**: Accepted (2026-07-14)。§2.4-2.5 の `reply_via` hint は
+  [DR-0017](./DR-0017-reply-command.md) で `reply_hint` (3 形) + `ccmsg reply`
+  に置換された — 1on1 room 本体 (§2.1-2.3, §2.6) は現行仕様のまま
 - **Date**: 2026-07-14
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1/aN namespace、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0013](./DR-0013-broadcast-room.md) の broadcast room を前提とする
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])

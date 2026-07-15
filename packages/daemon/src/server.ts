@@ -148,7 +148,7 @@ function sendErr(conn: Conn, code: string, msg: string): void {
 }
 
 /** id the connection acts as inside `room`, for delivery-time bookkeeping like
- * reply_via. Returns ADMIN_ID for the user role, the member id for a member
+ * reply_hint. Returns ADMIN_ID for the user role, the member id for a member
  * session, or null when the subscriber isn't a member (u1 always resolves;
  * a non-member session subscriber never reaches writeDelivered because
  * subscriberSeesRoom would have filtered them out first). */
@@ -159,67 +159,31 @@ function recipientId(conn: Conn, room: Room): string | null {
   return memberIdBySid(room).get(id.sid) ?? null;
 }
 
-/** DR-0014 §2.4-2.5 reply_via composer. Returns the wire hint string a receiver
- * should copy into any reply — encodes room + reconstructed `to` list minus the
- * receiver itself, so agents don't have to pattern-match room/kind/from
- * themselves at post time.
- *
- * Values:
+/** DR-0017 §2.3 reply_hint composer. Returns the per-recipient hint telling a
+ * receiver HOW to respond — exactly three shapes:
  * - `"none"`: archived room, silent (no response expected).
- * - `"tl"`: 1on1 room + u1-authored, agent should reply on its own session TL
- *   (webui SessionView picks it up via the existing u1-msg transcript path).
- * - `"r<id>"`: normal room + author addressed the whole room (`to` absent).
- *   Reply broadcasts back to the room.
- * - `"r<id>u1"`: broadcast room + u1-authored, no explicit `to` — agent replies
- *   with `to: ["u1"]` (priv back to kawaz, satisfying §2.4's u1-target rule).
- * - `"r<id>u1a3a5..."`: broadcast + u1-authored with explicit multi-target
- *   `to` — reply preserves the u1 hop and the other addressed peers, minus
- *   the receiver.
- * - `"r<id>u1a3..."` / `"r<id>a1a3..."` etc. (generic form): normal room with
- *   `to` present, or broadcast room's session-authored `to` (§2.4 requires u1
- *   inside it so the same generic path emits `u1`). Reply list is
- *   sender + original `to` - receiver, sorted by canonical id order.
- *
- * `receiverId` = the receiving connection's id in `room` (ADMIN_ID for u1,
- * member id for a session). The receiver never appears in the concatenated
- * tail — replying to yourself is not a hint kawaz nor any agent has ever
- * needed. */
-function computeReplyVia(room: Room, ev: MsgEvent, receiverId: string): string {
+ * - `"tl"`: 1on1 room + u1-authored, agent responds via its normal assistant
+ *   output (transcript) — the webui SessionView Timeline picks it up.
+ * - `"r<N>m<M>"` (everything else): respond with `ccmsg reply r<N>m<M> <text>`.
+ *   The daemon's reply op computes the delivery targets (§2.2), so unlike the
+ *   old DR-0014 routing notation this hint carries no `to` reconstruction —
+ *   the receiver only needs to name the msg it's answering. */
+function computeReplyHint(room: Room, ev: MsgEvent): string {
   if (room.archived) return "none";
   if (room.kind === "1on1" && ev.from === ADMIN_ID) return "tl";
-  if (room.kind === "broadcast" && ev.from === ADMIN_ID) {
-    // u1's own broadcast: agents priv back to u1 (§2.4 target rule) plus any
-    // other peers u1 explicitly addressed, minus the receiver. `to` absent =
-    // full-room broadcast, only the u1 hint survives.
-    const prefix = `${room.id}u1`;
-    if (!ev.to || ev.to.length === 0) return prefix;
-    const others = ev.to.filter((t) => t !== ADMIN_ID && t !== receiverId).sort(compareIds);
-    return prefix + others.join("");
-  }
-  // Generic path — normal + any author, broadcast + session-author (must
-  // include u1 in `to` per §2.4, so the generic set-arithmetic covers it),
-  // 1on1 + session-author (rare: agent-initiated msg in its 1on1 room; the
-  // receiver here is u1 via the webui, "r<id>a<N>" nudges the agent that its
-  // own next post goes back to the same room to be picked up by u1).
-  if (!ev.to || ev.to.length === 0) return room.id;
-  const parts = new Set<string>([ev.from, ...ev.to]);
-  parts.delete(receiverId);
-  const sorted = [...parts].sort(compareIds);
-  return room.id + sorted.join("");
+  return `${room.id}m${ev.mid}`;
 }
 
 function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
   if (ev.type === "msg") {
     const rid = recipientId(conn, room);
     if (rid !== null) {
-      // reply_via is a per-recipient wire hint (§2.4) — computed at delivery
-      // time from the receiver's viewpoint, never stored in the room's jsonl.
-      // Persisting it would either lock in one recipient's viewpoint for
-      // everybody else or bloat every msg line with a per-recipient map, both
-      // strictly worse than recomputing on the O(members × delivered_msgs)
-      // subscribe-stream path (fast in-memory joins on a Map + sort).
-      const reply_via = computeReplyVia(room, ev, rid);
-      send(conn, { ...ev, r: room.id, reply_via });
+      // reply_hint is a delivery-time wire hint (DR-0017 §2.3), never stored
+      // in the room's jsonl — the route depends on live room state (archived
+      // flips it to "none" retroactively for later replays), so persisting a
+      // snapshot at post time would go stale.
+      const reply_hint = computeReplyHint(room, ev);
+      send(conn, { ...ev, r: room.id, reply_hint });
       return;
     }
   }
@@ -914,6 +878,71 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "reply": {
+      // DR-0017 §2.2: reply to an existing msg — the daemon computes the
+      // delivery targets so the replier never assembles a `to` list itself
+      // (the misassembled-to failure mode is the whole reason this op exists).
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      const from = resolveFrom(conn, room);
+      if (from === null) {
+        sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
+        return;
+      }
+      const target = room.events.find((e): e is MsgEvent => e.type === "msg" && e.mid === req.mid);
+      if (!target) {
+        sendErr(conn, ErrorCode.msg_not_found, `no msg m${req.mid} in ${req.room}`);
+        return;
+      }
+      if (target.from === from) {
+        sendErr(
+          conn,
+          ErrorCode.self_reply,
+          `m${req.mid} is your own msg — reply targets someone else's`,
+        );
+        return;
+      }
+      // §2.5: a "tl"-routed msg (1on1, u1-authored) is answered on the
+      // replier's own transcript, not in the room. Rejecting with guidance
+      // corrects the wrong-channel choice the moment it happens, instead of
+      // silently rerouting to a room post kawaz would then read in the wrong
+      // surface.
+      if (room.kind === "1on1" && target.from === ADMIN_ID) {
+        sendErr(
+          conn,
+          ErrorCode.reply_via_tl,
+          `m${req.mid} is routed "tl": respond via your normal assistant output ` +
+            `(transcript) — do not post/reply into ${req.room}`,
+        );
+        return;
+      }
+      // Targets = original author + everyone the original msg addressed,
+      // minus the replier, plus u1 (always-delivered admin; also satisfies
+      // the broadcast room's agent-post constraint by construction). Sorted
+      // for a stable wire shape.
+      const parts = new Set<string>([target.from, ...(target.to ?? [])]);
+      parts.delete(from);
+      parts.add(ADMIN_ID);
+      const to = [...parts].sort(compareIds);
+      const mid = room.lastMid + 1;
+      const ev: MsgEvent = {
+        type: "msg",
+        mid,
+        from,
+        to,
+        ts: nowIso(),
+        msg: req.msg,
+        reply_to: `${room.id}m${req.mid}`,
+      };
+      appendEvent(room, ev);
+      deliver(daemon, room, ev, authorOf(conn));
+      send(conn, { ok: true, room: room.id, mid, to });
+      return;
+    }
+
     case "create_room": {
       const explicitMembers = Array.isArray(req.members) ? req.members : [];
       const kind: RoomKind =
@@ -1123,7 +1152,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         // DR-0013 §2.8 / DR-0014 §2 next_room inherits kind: broadcast の
         // 次スレは broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
         // 適用され、以降の hello/disconnect が新 room も拾う)、1on1 の次スレは
-        // 1on1 (reply_via = "tl" 挙動もそのまま維持)。normal はそのまま normal。
+        // 1on1 (reply_hint = "tl" 挙動もそのまま維持)。normal はそのまま normal。
         old.kind,
       );
       // KindEvent must be written BEFORE members / prev so a mid-creation crash

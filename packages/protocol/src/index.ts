@@ -105,6 +105,10 @@ export interface MsgEvent {
   msg: string;
   /** per-room sequence number (DR-0016), see file banner above. */
   seq?: number;
+  /** the msg this one replies to, as "r<N>m<M>" (DR-0017 §2.2). Recorded by
+   * the daemon's reply op (never client-supplied); absent on plain posts.
+   * Persisted in the room jsonl — future thread-display material. */
+  reply_to?: string;
 }
 
 export interface NextEvent {
@@ -178,13 +182,19 @@ export type StorageEvent =
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
- * `msg` events additionally carry `reply_via` (DR-0014 §2.4) — a per-recipient
- * hint string telling the receiving agent where its response should land
- * (r<id> / r<id>u1 / r<id>u1a32a35 / tl / none). Injected at delivery time,
- * NOT persisted in the room jsonl: the value differs by recipient (excludes
- * the receiver from the `to` reconstruction), so a per-msg common storage
- * field would be a contradiction. Only present on `type:"msg"` deliveries. */
-export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_via?: string };
+ * `msg` events additionally carry `reply_hint` (DR-0017 §2.3) — a per-recipient
+ * hint telling the receiving agent HOW to respond. Exactly three shapes:
+ * - `"r<N>m<M>"`: reply with `ccmsg reply r<N>m<M> <text>` — the daemon builds
+ *   the delivery targets (original from + original to − replier + u1, §2.2),
+ *   so the receiver never computes a `to` list itself.
+ * - `"tl"`: respond via the normal assistant output (transcript); do NOT post
+ *   back into the room (1on1 room, u1-authored — the webui SessionView
+ *   Timeline picks the response up from the transcript).
+ * - `"none"`: no response expected (archived room's inertial msg etc.).
+ * Injected at delivery time, NOT persisted in the room jsonl: the value
+ * differs by recipient, so a per-msg common storage field would be a
+ * contradiction. Only present on `type:"msg"` deliveries. */
+export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_hint?: string };
 
 /**
  * Sender of a notify, daemon-stamped from the connection identity (DR-0003 §7).
@@ -296,6 +306,19 @@ export interface PostRequest {
   /** delivery target member id(s) (see MsgEvent.to). string | string[];
    * absent = deliver to everyone. */
   to?: string | string[];
+}
+
+/** Reply to an existing msg (DR-0017 §2.2): the daemon computes the delivery
+ * targets from the referenced msg — `to` = original from + (original to −
+ * replier) + u1 — so the replier never assembles a `to` list. The appended
+ * MsgEvent records `reply_to: "r<N>m<M>"` (thread material). Errors:
+ * msg_not_found / self_reply / reply_via_tl (the msg's route is the assistant
+ * transcript, not the room). */
+export interface ReplyRequest {
+  op: "reply";
+  room: string;
+  mid: number;
+  msg: string;
 }
 
 export interface CreateRoomRequest {
@@ -487,6 +510,7 @@ export interface InviteRequest {
 export type Request =
   | HelloRequest
   | PostRequest
+  | ReplyRequest
   | CreateRoomRequest
   | NextRoomRequest
   | SetTitleRequest
@@ -815,5 +839,16 @@ export const ErrorCode = {
   // meaning is "u1 と 1 session の 2 者確定"、複数 session なら通常 room /
   // broadcast room を使う。
   one_on_one_requires_single_member: "one_on_one_requires_single_member",
+  // reply (DR-0017 §2.2): the mid the reply points at doesn't exist in the room.
+  msg_not_found: "msg_not_found",
+  // reply (DR-0017 §2.2): replying to your own msg is meaningless — the
+  // constructed target list would collapse to just u1 + yourself.
+  self_reply: "self_reply",
+  // reply (DR-0017 §2.5): the target msg's reply route is the assistant
+  // transcript ("tl"), not the room — the error message tells the agent to
+  // respond via normal assistant output instead. Rejecting (rather than
+  // silently converting to a room post) corrects the wrong-channel choice at
+  // the moment it happens.
+  reply_via_tl: "reply_via_tl",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

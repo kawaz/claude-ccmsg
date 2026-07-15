@@ -754,6 +754,102 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
   // 無駄。--all で全件のオプトイン。絞った時は archived_omitted で「見えて
   // いない room がある」ことを機械可読に示す — 「見えない = 存在しない」と
   // 誤認して重複 room を作る事故の予防。
+  // 何を保証するか (DR-0017 §2.1-2.2 e2e): reply <rNmN> <msg> が rNmN を
+  // パースして op:"reply" に写り、daemon 構成の to (元 from + u1) で届き、
+  // storage に reply_to が残る。CLI 層の positional 慣習 (post と同型) の
+  // 回帰 guard。
+  test("reply <rNmN> <msg> が daemon 構成の宛先で返信を投稿する", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as { room: string };
+      const posted = JSON.parse(
+        (await runCli(["--sid", "S1", "post", created.room, "question"], env)).out,
+      ) as { mid: number };
+
+      const replied = JSON.parse(
+        (await runCli(["--sid", "S2", "reply", `${created.room}m${posted.mid}`, "answer"], env))
+          .out,
+      ) as { ok: boolean; mid: number; to: string[] };
+      expect(replied.ok).toBe(true);
+      // to = 元 from (S1 = a1) + u1、返信者 S2 (a2) は含まれない
+      expect(replied.to).toEqual(["u1", "a1"]);
+
+      const read = JSON.parse(
+        (await runCli(["read", created.room, String(replied.mid)], env)).out,
+      ) as { msgs: { msg: string; reply_to?: string }[] };
+      expect(read.msgs[0]!.msg).toBe("answer");
+      expect(read.msgs[0]!.reply_to).toBe(`${created.room}m${posted.mid}`);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (DR-0017 §2.1 の引数検証): rNmN 形でない参照は daemon に
+  // 投げる前に usage error で弾く (typo が room_not_found のような遠い error
+  // になって原因を探させない)。
+  test("reply の rNmN パース失敗は usage error で exit 非零", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["--sid", "S1", "reply", "r7-m10", "text"], env);
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("r<N>m<M>");
+    } finally {
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (DR-0017 §2.4): subscribe の stdout で msg の jsonl 行の
+  // 直後に reply_hint 由来の平文指示行が出る (rNmN 形 → コピペ可能な
+  // 返信用コマンド)。--raw では出ない (pure JSONL 契約)。構造化 field を
+  // LLM が素通りする問題 (r17 mid=16) への対策なので、「msg 行と同じ通知に
+  // 載る位置 = 直後の行」であることまで含めて仕様。
+  test("subscribe は msg 直後に指示文行を出し --raw で抑制する", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as { room: string };
+
+      const runSub = async (extra: string[]): Promise<string[]> => {
+        const sub = Bun.spawn([process.execPath, CLI, "subscribe", ...extra], {
+          env: { ...process.env, ...env, CCMSG_SID: "S2" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        // join snapshot (backlog) に S1 の既存 post が載って指示文行が付く。
+        // 起動 → backlog 受信を待って kill、stdout を読み切る。
+        await new Promise<void>((r) => setTimeout(r, 1500));
+        sub.kill();
+        await sub.exited;
+        const out = await new Response(sub.stdout).text();
+        return out.split("\n").filter((l) => l !== "");
+      };
+
+      const posted = JSON.parse(
+        (await runCli(["--sid", "S1", "post", created.room, "need reply"], env)).out,
+      ) as { mid: number };
+
+      const lines = await runSub([]);
+      const msgIdx = lines.findIndex((l) => l.includes('"need reply"'));
+      expect(msgIdx).toBeGreaterThanOrEqual(0);
+      expect(lines[msgIdx + 1]).toBe(
+        `返信用コマンド: ccmsg reply ${created.room}m${posted.mid} '<text>'`,
+      );
+
+      const rawLines = await runSub(["--raw"]);
+      expect(rawLines.some((l) => l.includes('"need reply"'))).toBe(true);
+      expect(rawLines.some((l) => l.startsWith("返信"))).toBe(false);
+      // --raw は全行が有効な JSON (pure JSONL 契約)
+      for (const l of rawLines) JSON.parse(l);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
   test("rooms は archived を省き --all で全件 (省略数は archived_omitted で申告)", async () => {
     const { env, sock, cleanup } = (() => {
       const made = makeEnv();

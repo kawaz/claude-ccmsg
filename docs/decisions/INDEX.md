@@ -17,7 +17,7 @@
 | [DR-0011](./DR-0011-to-delivery-filter.md) | Accepted | `to` を mention から配信フィルタへ変更 + drag & drop invite |
 | [DR-0012](./DR-0012-room-archive-and-kick.md) | Accepted | room アーカイブ (表示整理フラグ) + 強制 leave (kick、admin 専用) |
 | [DR-0013](./DR-0013-broadcast-room.md) | Accepted | broadcast room (auto-populated session broadcast) |
-| [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | Proposed | 1on1 room + msg 応答経路 hint (reply_via) |
+| [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | Accepted (reply_via 部は DR-0017 で置換) | 1on1 room + msg 応答経路 hint (reply_via) |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) |
 | [DR-0016](./DR-0016-storage-event-seq.md) | Accepted | StorageEvent 横断の per-room 連番 `seq` (subscribe 再接続 cursor の全 event 型拡張) |
 | [DR-0017](./DR-0017-reply-command.md) | Accepted | `ccmsg reply` (daemon 仲介の返信) + `reply_hint` + 指示文行 (reply_via 置換) |

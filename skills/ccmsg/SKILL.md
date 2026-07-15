@@ -34,6 +34,7 @@ peer agent 相手だと LLM デフォルトの同調反射 (= 相手の発見を
 | コマンド                                                                        | 用途                                                                                                                                                               |
 | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `post <room> <msg> [--to <ids>]`                                                | room へ投稿。`--to` は配信フィルタ (カンマ区切り、`u1` = ユーザ)                                                                                                   |
+| `reply <rNmN> <msg>`                                                            | 既存 msg への返信。宛先は daemon が構成 (下記「返信は reply で」)                                                                                                  |
 | `create-room --members <sids> [--msg <text>] [--title <text>] [--exclude-self]` | room 開設。呼び出し元 session が自動で先頭 member に (`u1` は書かない、`--exclude-self` で自動 include 抑制)。member 全員に開設通知。直近 (60s) 同一構成なら reuse |
 | `next-room <room> [--msg <text>]`                                               | **次スレ**発行。member 引き継ぎ + 旧↔新に next/prev リンク + 全員に通知。長くなったスレの分割に                                                                    |
 | `subscribe [--since <json>]`                                                    | イベントを jsonl で stream (**必ず Monitor 経由**、後述)                                                                                                           |
@@ -120,22 +121,22 @@ push: ci ...
     ccmsg notify --self --text "Monitor で 'just watch' を起動して"
 ```
 
-## 応答経路 hint `reply_via` (DR-0014)
+## 返信は `reply` で (DR-0017)
 
-subscribe stream に流れる msg event には **`reply_via` 文字列** が付いている (daemon が受信者ごとに刻印)。**agent は room の種別 / from / to を pattern match で分岐せず、この文字列に従って返信する**。返信経路の判定を集約するための wire hint。
+既存メッセージへの返信は **`ccmsg reply <rNmN> <msg>`** で行う。宛先 (`to`) は daemon が元 msg から構成する (元 from + 元 to − 自分 + u1) ので、**自分で `--to` を組まない**。
 
-| 値の例        | 意味                                                                                                            |
-| ------------- | --------------------------------------------------------------------------------------------------------------- |
-| `r10`         | room r10 に返信 (`to` なし = room 全員宛)                                                                       |
-| `r10u1`       | room r10 に `--to u1` で返信 (u1 priv)                                                                          |
-| `r10u1a32a35` | room r10 に `--to u1,a32,a35` で返信 (u1 + 指定の peers)                                                        |
-| `tl`          | 自セッションの TL 側で返す (1on1 room の u1 priv、下記「1on1 room」)                                            |
-| `none`        | 応答不要 (archive 済み room の惰性 msg など、静穏化)。SKILL 内の説明では **不要** とも表現するが実装値は `none` |
+subscribe stream の msg event には **`reply_hint`** が付き (daemon が刻印)、CLI が msg 行の直後に平文の指示行を 1 行添える。**その指示行に従う**:
 
-読み方:
+| reply_hint | 指示行                                        | 取る行動                                                                             |
+| ---------- | --------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `r10m16`   | `返信用コマンド: ccmsg reply r10m16 '<text>'` | そのコマンドに本文を入れて実行 (宛先は daemon が構成)                                |
+| `tl`       | `返信: ... transcript 出力で返す`             | room に post/reply しない。通常の AI 応答をそのまま transcript に流す (webui が拾う) |
+| `none`     | `返信不要`                                    | 返信しない (archive 済み room の惰性 msg など、静穏化)                               |
 
-- prefix `r<数字>` = 対象 room の id。以降の `u<N>` / `a<N>` を id 順にそのまま連結 (セパレータ無し) して `--to` に渡す
-- `tl` / `none` は特別値。前者は「room に返さず、自セッションの transcript 経路で応答」= 通常の AI 応答をそのまま transcript に流せばよい (webui SessionView Timeline が拾う)。後者は「返信しない」
+- `tl` の msg に `reply` を打つと `reply_via_tl` error で弾かれ、正しい経路が案内される (間違った経路の即時矯正)
+- 自分の msg への reply は `self_reply`、不在 mid は `msg_not_found`
+- 指示行が不要な機械コンシューマ (jq 等) は `subscribe --raw` で pure JSONL になる
+- 個別に宛先を組みたい特殊ケース (返信でない新規発話で特定 peer だけに届けたい等) は従来通り `post --to`
 
 ## 添付ファイル (DR-0015)
 
@@ -170,7 +171,7 @@ kawaz が **特定 session に priv したい時**に使う小さな 2 者 room 
 
 ### AI (agent) 視点
 
-- 1on1 room で u1 発の msg を受け取ったら、reply_via が `"tl"` になっている → **通常の AI 応答経路 (transcript 出力) で返せばよい**。room に post し直さなくて良い (webui SessionView Timeline が transcript 経由で拾う)
+- 1on1 room で u1 発の msg を受け取ったら、reply_hint が `"tl"` になっている → **通常の AI 応答経路 (transcript 出力) で返せばよい**。room に post し直さなくて良い (webui SessionView Timeline が transcript 経由で拾う)
 - 1on1 room の title は `"<repo> 1on1 <sid8>"` のような表示用文字列 — 判別ロジックは kind フィールドで
 - CLI で 1on1 room を明示的に作る場合: `create-room --kind 1on1 --members <sid>`
 

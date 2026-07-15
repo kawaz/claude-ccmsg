@@ -15,7 +15,7 @@ import {
 
 // --- arg parsing -----------------------------------------------------------
 
-const BOOL_FLAGS = new Set(["all", "exclude-self", "self", "foreground", "help", "version"]);
+const BOOL_FLAGS = new Set(["all", "exclude-self", "raw", "self", "foreground", "help", "version"]);
 
 /** Write ops require a session identity; without one the CLI refuses to run
  * rather than silently posting as u1 (the User admin), which would forge
@@ -24,7 +24,7 @@ const BOOL_FLAGS = new Set(["all", "exclude-self", "self", "foreground", "help",
  * available identity-less because they only observe. subscribe also stays
  * available (with a stderr warning) so kawaz can observe as u1 until the
  * webui is up. */
-const WRITE_OPS = new Set(["post", "create-room", "next-room", "leave", "notify"]);
+const WRITE_OPS = new Set(["post", "reply", "create-room", "next-room", "leave", "notify"]);
 
 interface Parsed {
   positionals: string[];
@@ -263,6 +263,18 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   process.exit(output(res));
 }
 
+/** reply_hint (DR-0017 §2.3 の 3 形) → subscribe stdout に添える平文指示 1 行。
+ * rNmN 形はそのままコピペで打てるコマンドに、tl / none は取るべき行動の明文に。 */
+function replyInstructionLine(hint: string): string {
+  if (hint === "tl") {
+    return "返信: この room に post せず、通常のアシスタント応答 (transcript 出力) で返す";
+  }
+  if (hint === "none") {
+    return "返信不要";
+  }
+  return `返信用コマンド: ccmsg reply ${hint} '<text>'`;
+}
+
 async function runSubscribe(
   identity: Identity,
   opts: Record<string, string | boolean>,
@@ -271,6 +283,8 @@ async function runSubscribe(
   // (see warnSubscribingAsUser) so the branch stays out of the hot path once
   // the connection is up. stdout is pure jsonl for the downstream Monitor.
   const paths = resolvePaths();
+  // --raw: 指示文行 (下の副作用 (c)) を出さず pure JSONL を保つ。
+  const rawOutput = opts.raw === true;
   const sinceStr = str(opts, "since");
   const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
   // sinceMap は「stdout に出した event の per-room 最大 seq」(DR-0016 §2.4)。
@@ -293,7 +307,7 @@ async function runSubscribe(
     for (;;) {
       const line = await client.readLine();
       if (line === null) break; // socket closed → 再接続へ
-      // 1 行 parse して 2 つの副作用を掛ける:
+      // 1 行 parse して 3 つの副作用を掛ける:
       //   (a) `ev:"restarting"` は stdout に流さない (透過再接続が目的で、上流の
       //       Monitor へノイズ行を送らない)。この行の直後に daemon が socket を閉じる
       //       ので、次ループで readLine() が null を返し再接続経路に入る。
@@ -301,12 +315,20 @@ async function runSubscribe(
       //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
       //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
       //       ので自然に対象外。
+      //   (c) msg event の jsonl 行直後に reply_hint 由来の平文指示 1 行を足す
+      //       (DR-0017 §2.4)。構造化 field は LLM が「データ」として素通り
+      //       しがち (r17 mid=16 の実事故) — コピペ可能なコマンド文の方が
+      //       行動に直結する。生成は CLI 側 (wire は field のみ)。--raw で
+      //       抑制 (jq 等の厳密 JSONL 消費者向け)。
       let filtered = false;
+      let hintLine: string | null = null;
       try {
         const ev = JSON.parse(line) as {
           ev?: string;
+          type?: string;
           r?: string;
           seq?: number;
+          reply_hint?: string;
         };
         if (ev.ev === "restarting") {
           filtered = true;
@@ -314,10 +336,15 @@ async function runSubscribe(
           const prev = sinceMap[ev.r] ?? 0;
           if (ev.seq > prev) sinceMap[ev.r] = ev.seq;
         }
+        if (!rawOutput && ev.type === "msg" && typeof ev.reply_hint === "string") {
+          hintLine = replyInstructionLine(ev.reply_hint);
+        }
       } catch {
         // 非 JSON 行 (現契約では発生しないが、防御的に素通し)
       }
-      if (!filtered) process.stdout.write(`${line}\n`);
+      if (!filtered) {
+        process.stdout.write(hintLine !== null ? `${line}\n${hintLine}\n` : `${line}\n`);
+      }
     }
     // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
     // `ccmsg daemon stop` を subscribe が resurrection しない契約。
@@ -391,12 +418,17 @@ Usage:
 
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
+  reply <rNmN> <msg>           Reply to a msg — the daemon builds the delivery
+                               targets from it (original from + to + u1); pass
+                               the reply_hint value from the received event
   create-room                  Open a room with peers (--members, --msg, --title,
                                --exclude-self to keep the caller out of the room,
                                --kind broadcast for a session-broadcast room,
                                --kind 1on1 --members <sid> for a webui 1on1 priv room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
-  subscribe                    Stream room events as jsonl to stdout (--since)
+  subscribe                    Stream room events as jsonl to stdout (--since);
+                               each msg line is followed by a plain reply
+                               instruction line (--raw to suppress)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
@@ -427,6 +459,8 @@ Command Options:
   --title <text>               create-room / next-room: room title
   --all                        rooms: include archived rooms (default: active only)
   --since <json>               subscribe: per-room last-seen seq, e.g. '{"r7":7}'
+  --raw                        subscribe: suppress the plain reply-instruction
+                               lines (pure JSONL for jq-style consumers)
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
@@ -518,6 +552,22 @@ async function main(): Promise<void> {
       const msg = requireArg(args[1], "msg", usage);
       const to = parseIdList(str(opts, "to"));
       await runOnce(identity, { op: "post", room, msg, ...(to ? { to } : {}) });
+      return;
+    }
+    case "reply": {
+      // DR-0017 §2.1: 返信先 msg (rNmN) を指すだけで、宛先 (to) は daemon が
+      // 元 msg から構成する — 受信 event の reply_hint 値をそのまま渡す想定。
+      const usage = "ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
+      const ref = requireArg(args[0], "rNmN", usage);
+      const msg = requireArg(args[1], "msg", usage);
+      const m = ref.match(/^(r\d+)m(\d+)$/);
+      if (!m) {
+        process.stderr.write(
+          `invalid reply target "${ref}" — expected r<N>m<M> (e.g. r17m16)\nusage: ${usage}\n`,
+        );
+        process.exit(1);
+      }
+      await runOnce(identity, { op: "reply", room: m[1]!, mid: Number(m[2]), msg });
       return;
     }
     case "create-room": {
