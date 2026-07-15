@@ -74,6 +74,16 @@ body {
   color: var(--fg);
 }
 
+/* button / link のダブルタップズームを止める (kawaz r17 mid=60+68、2026-07-15):
+ * touch-action は inherit しない仕様のため、親コンテナ (#topbar / .session-tabs /
+ * .tl-toolbar) に指定しても内側の button / a 要素の tap には効かない。ここで
+ * インタラクティブ要素全般に一括で当てる (pinch-zoom は残るので画像ピンチは
+ * 通常通り)。 */
+button,
+a {
+  touch-action: manipulation;
+}
+
 #app {
   display: flex;
   flex-direction: column;
@@ -993,11 +1003,14 @@ a.composer-attachment-label {
   display: flex;
   gap: 0.25rem;
   padding: 0.4rem 0.75rem 0;
-  border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   flex-shrink: 0;
   /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
   touch-action: manipulation;
+  /* border-bottom は撤去 (kawaz r17 mid=59+68、2026-07-15): 1px border が
+   * 明色帯 (bg-alt) の中で暗い横線として「ぼっそい隙間」に見えていた。
+   * tl-toolbar 側の border-bottom + 背景色差 (下の .timeline-view) で
+   * 十分に領域を区切れる。 */
 }
 
 .session-tab {
@@ -1447,6 +1460,10 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  /* 背景色を明示 (kawaz r17 mid=59+68、2026-07-15): 未指定 = transparent で、
+   * iOS Safari 等で subpixel gap が生まれると裏 (bg) が透けて「暗い隙間」に
+   * 見えていた。session-tabs / tl-toolbar と同じ bg-alt にして揃える。 */
+  background: var(--bg-alt);
   /* 横あふれの clip はここで担う (2026-07-15 playwright-cli で切り分けた
    * バグ、kawaz r17 mid=53): 以前は子 .tl-lines に overflow-x:hidden を
    * 付けていたが、overflow-x 単独指定は overflow-y を暗黙 "auto" にキャスト
