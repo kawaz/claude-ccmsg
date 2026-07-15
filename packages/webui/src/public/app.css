@@ -97,6 +97,7 @@ body {
    * 1 行のまま ellipsis で切る (スマホ幅で topbar が縦に膨れないように)。 */
   display: flex;
   align-items: center;
+  gap: 0.3rem;
   min-width: 0;
 }
 
@@ -306,6 +307,7 @@ body {
 .session-main-link {
   display: flex;
   align-items: center;
+  gap: 0.3rem;
   flex: 1;
   min-width: 0;
   text-decoration: none;
@@ -647,6 +649,11 @@ body {
   padding: 0.15rem 0.6rem;
   font-size: 0.75rem;
   cursor: pointer;
+  /* avatar と名前の間隔 (Avatar 自身の margin は廃止 — AvatarLabel 導入に
+   * 伴い、間隔は常にコンテナの gap で管理する方針、kawaz 2026-07-15)。 */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .chip-user {
@@ -779,13 +786,14 @@ body {
   margin-bottom: 0.15rem;
 }
 
-/* U1 icon addendum (DR-0012): the from-avatar and per-target mention avatars
- * (TimelineItem.tsx's MemberAvatar) sit directly in .msg-meta's flex row —
- * Avatar/UserAvatar already carry their own margin-right inline, this just
- * cancels the extra .msg-meta gap so the icon doesn't get double-spaced
- * from the adjacent name label. */
-.msg-meta .avatar {
-  margin-right: 0 !important;
+/* アイコン + 名前ラベルの一体コンポーネント (avatar.tsx AvatarLabel、kawaz
+ * 指示 2026-07-15): 両者の間隔は外側の gap / 名前側 padding に依らず
+ * この gap だけで決まる。 */
+.avatar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
 }
 
 /* mention 先の (avatar + name) 1 ペアを inline-flex でまとめ、カンマ区切りの
@@ -1595,6 +1603,9 @@ button.session-tab {
   font-weight: 600;
   color: var(--fg-muted);
   margin-bottom: 0.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 /* --- Markdown rendering (DR-0010): assistant text segments only, walked
@@ -2119,7 +2130,8 @@ button.session-tab {
   border-radius: 0.2rem;
 }
 
-/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): avatar とテキストを
+/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): "1on1 to" テキストと
+ * AvatarLabel (アイコン + 名前の一体、gap は .avatar-label が管理) を
  * 中央揃えで横並びに。長い repo 名は ellipsis。 */
 .one-on-one-target {
   display: inline-flex;
@@ -2128,16 +2140,13 @@ button.session-tab {
   min-width: 0;
 }
 
-/* avatar 自身の inline margin-right (6px) と flex gap が二重に効いて
- * アイコンとリポ名の間が空きすぎる (kawaz r17 mid=7) — gap に一本化。 */
-.one-on-one-target .avatar {
-  margin-right: 0 !important;
-}
-
 .one-on-one-target code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* 名前側の箱 (背景 + padding) は AvatarLabel の gap の外側に足されない
+   * よう左 padding を絞る — 視覚上の間隔は .avatar-label の gap が正。 */
+  padding-left: 0.15rem;
 }
 
 .one-on-one-textarea {

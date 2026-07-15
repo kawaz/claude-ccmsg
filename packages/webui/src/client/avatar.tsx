@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
 // 決定論的アバター生成 (identicon 系)。
+import type { ComponentChildren } from "preact";
 //
 // ライブラリ選定メモ (2026-07-11):
 // minidenticons / jdenticon / boring-avatars を検討したが、いずれも
@@ -88,7 +89,7 @@ export function Avatar({ seed, size = 20 }: { seed: string; size?: number }) {
       width={size}
       height={size}
       viewBox={`0 0 ${GRID_SIZE} ${GRID_SIZE}`}
-      style={{ borderRadius: "3px", flex: "0 0 auto", verticalAlign: "middle", marginRight: "6px" }}
+      style={{ borderRadius: "3px", flex: "0 0 auto", verticalAlign: "middle" }}
       aria-hidden="true"
     >
       <rect x={0} y={0} width={GRID_SIZE} height={GRID_SIZE} fill={bg} />
@@ -106,12 +107,38 @@ export function UserAvatar({ size = 20 }: { size?: number }) {
       width={size}
       height={size}
       viewBox="0 0 20 20"
-      style={{ borderRadius: "3px", flex: "0 0 auto", verticalAlign: "middle", marginRight: "6px" }}
+      style={{ borderRadius: "3px", flex: "0 0 auto", verticalAlign: "middle" }}
       aria-hidden="true"
     >
       <rect x={0} y={0} width={20} height={20} fill="hsl(210 20% 88%)" />
       <circle cx={10} cy={7.5} r={3.5} fill="hsl(210 25% 45%)" />
       <path d="M2.5 19c0-4.5 3.4-7.5 7.5-7.5S17.5 14.5 17.5 19z" fill="hsl(210 25% 45%)" />
     </svg>
+  );
+}
+
+/** アイコン + 名前ラベルの一体コンポーネント (kawaz 指示 2026-07-15):
+ * 「avatar と名前」は 1 つの識別子なので、両者の間隔は外側レイアウトの
+ * gap や名前側の padding に左右されず常にここ (.avatar-label の gap) だけで
+ * 決まる。Avatar/UserAvatar 自身は margin を持たない (持たせると使用側の
+ * flex gap と二重加算され、打ち消しの margin-right:0 !important ハックが
+ * 増殖していく — 本コンポーネント導入前の実状)。inline-flex なので文中に
+ * 置いても行として自然に並び、途中改行で icon と名前が泣き別れしない。 */
+export function AvatarLabel({
+  seed,
+  size = 16,
+  children,
+}: {
+  /** identicon の seed (sid 等)。省略時は UserAvatar (u1 固定アイコン)。 */
+  seed?: string;
+  size?: number;
+  /** 名前ラベル (テキストや <code> 等)。 */
+  children: ComponentChildren;
+}) {
+  return (
+    <span class="avatar-label">
+      {seed !== undefined ? <Avatar seed={seed} size={size} /> : <UserAvatar size={size} />}
+      {children}
+    </span>
   );
 }

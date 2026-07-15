@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState, RoomState } from "../store.ts";
-import { Avatar } from "../avatar.tsx";
+import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
 import {
   extractPastedImages,
@@ -445,10 +445,13 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
             mid=1、2026-07-14): sid の 8 桁 hex は人間には識別子として
             機能しない。identicon (Sidebar と同じ seed=sid) + repo 名なら
             どのセッション宛か一目で分かる。repo 未 announce のセッション
-            は ws / cwd 末尾 / sid8 に fallback。 */}
+            は ws / cwd 末尾 / sid8 に fallback。アイコンと名前の間隔は
+            AvatarLabel が一体管理 (kawaz 2026-07-15)。 */}
         <span class="one-on-one-target">
-          1on1 to <Avatar seed={sid} size={16} />
-          <code>{targetLabel}</code>
+          1on1 to{" "}
+          <AvatarLabel seed={sid} size={16}>
+            <code>{targetLabel}</code>
+          </AvatarLabel>
         </span>
       </header>
       <textarea
