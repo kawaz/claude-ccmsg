@@ -15,7 +15,7 @@ import {
 
 // --- arg parsing -----------------------------------------------------------
 
-const BOOL_FLAGS = new Set(["exclude-self", "self", "foreground", "help", "version"]);
+const BOOL_FLAGS = new Set(["all", "exclude-self", "self", "foreground", "help", "version"]);
 
 /** Write ops require a session identity; without one the CLI refuses to run
  * rather than silently posting as u1 (the User admin), which would forge
@@ -399,7 +399,8 @@ Commands:
   subscribe                    Stream room events as jsonl to stdout (--since)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
   leave <room>                 Leave a room
-  rooms                        List rooms (id / title / members / last_mid)
+  rooms                        List active rooms (id / title / members / last_mid;
+                               archived rooms are omitted — use --all to include)
   peers                        List connected sessions
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   status                       Show daemon liveness / version / uptime / pid
@@ -424,6 +425,7 @@ Command Options:
                                single sid)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
+  --all                        rooms: include archived rooms (default: active only)
   --since <json>               subscribe: per-room last-seen seq, e.g. '{"r7":7}'
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
@@ -600,7 +602,37 @@ async function main(): Promise<void> {
       return;
     }
     case "rooms": {
-      await runOnce(identity, { op: "rooms" });
+      // デフォルトは active (非 archive) のみ (kawaz r17 mid=23、2026-07-15):
+      // AI セッションが rooms を叩くたびに archive 済み room 全件 (運用が
+      // 進むほど増える) が context に乗るのは無駄で、探す効率も落ちる。
+      // 全件は --all でオプトイン。絞りは CLI 側で行う — webui の op:"rooms"
+      // (全件 + 表示側で折り畳み) に影響させないため。
+      if (opts.all) {
+        await runOnce(identity, { op: "rooms" });
+        return;
+      }
+      const paths = resolvePaths();
+      const client = await ensureDaemon(paths, identity);
+      const res = await client.request<
+        { ok?: boolean; rooms?: Array<{ archived?: boolean }> } & Record<string, unknown>
+      >({ op: "rooms" });
+      client.close();
+      if (res.ok && Array.isArray(res.rooms)) {
+        const total = res.rooms.length;
+        const rooms = res.rooms.filter((r) => !r.archived);
+        // archived_omitted で「絞られている」ことを機械可読に示す (0 件なら
+        // 省略)。「見えない = 存在しない」と誤認して create-room で重複を
+        // 作る事故を防ぐ ([[interface-wording]] の空状態原則)。
+        const omitted = total - rooms.length;
+        process.exit(
+          output({
+            ...res,
+            rooms,
+            ...(omitted > 0 ? { archived_omitted: omitted, hint: "--all で全件表示" } : {}),
+          }),
+        );
+      }
+      process.exit(output(res));
       return;
     }
     case "peers": {

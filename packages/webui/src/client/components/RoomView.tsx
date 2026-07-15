@@ -46,16 +46,22 @@ export function RoomView({ state }: { state: AppState }) {
   // 「新 event を含めた後の DOM 高さ」であり、そこへ飛ばせば結果として最新
   // TimelineItem が可視領域に入る。
   //
+  // ref/onScroll は **scroll コンテナである main#room-view** に付ける
+  // (overflow-y: auto は #room-view 側、app.css)。v0.33.2 まで中身の
+  // .timeline (overflow なし) に付いていたため、scrollTop 代入は無視され
+  // scroll イベントも発火せず、追従も room 切替時の末尾ジャンプも一切効いて
+  // いなかった (kawaz r17 mid=26 の実観測の root cause)。
+  //
   // 初期値 true = 「新規 room 入り = 末尾扱い」。room を切り替えた瞬間の 1 回
   // 目の effect で末尾へ飛ばして最新から見せる意図。room.id 変更時にも true に
   // 戻す (前 room で上へ遡っていた状態を持ち越さない)。
-  const timelineRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
   useEffect(() => {
     stickToBottomRef.current = true;
   }, [room?.id]);
   useLayoutEffect(() => {
-    const el = timelineRef.current;
+    const el = scrollerRef.current;
     if (!el) return;
     if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [room?.timeline]);
@@ -63,15 +69,18 @@ export function RoomView({ state }: { state: AppState }) {
   // 上の useLayoutEffect は `room?.timeline` (配列参照) 変化に依存するが、
   // 同じ room 再訪で timeline 参照が変わらないケースや、cache の hydrate
   // タイミング次第で mount 直後の render では scrollHeight が確定して
-  // いないことがあり、「開いた瞬間だけ上から表示される」現象が観測された。
-  // setTimeout(0) で initial paint 完了を待ってから scrollTop を書く。
+  // いないことがある。0ms 1 発では画像 load / フォント適用で後から高さが
+  // 伸びるケースを取り零す (kawaz r17 mid=26) ので、少し間隔を空けて
+  // 数回書く (ユーザが先に手動スクロールして末尾から離れたら中断)。
   useEffect(() => {
     if (!room) return;
-    const id = setTimeout(() => {
-      const el = timelineRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    }, 0);
-    return () => clearTimeout(id);
+    const ids = [0, 60, 300].map((ms) =>
+      setTimeout(() => {
+        const el = scrollerRef.current;
+        if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+      }, ms),
+    );
+    return () => ids.forEach(clearTimeout);
   }, [room?.id]);
 
   // Switching rooms discards any leftover invite notice from the previous one.
@@ -141,7 +150,15 @@ export function RoomView({ state }: { state: AppState }) {
   }
 
   return (
-    <main id="room-view">
+    <main
+      id="room-view"
+      ref={scrollerRef}
+      onScroll={(e) => {
+        // 末尾判定を Ref に記録。次の timeline 更新時に useLayoutEffect が
+        // これを見て「末尾に居たなら追随、離れていたなら放置」を決める。
+        stickToBottomRef.current = isAtBottom(e.currentTarget);
+      }}
+    >
       <header class="room-header">
         <div class="room-header-top">
           <RoomTitle room={room} />
@@ -180,13 +197,7 @@ export function RoomView({ state }: { state: AppState }) {
         )}
       </header>
       <div
-        ref={timelineRef}
         class={dragOver ? "timeline timeline-drop-active" : "timeline"}
-        onScroll={(e) => {
-          // 末尾判定を Ref に記録。次の timeline 更新時に useLayoutEffect が
-          // これを見て「末尾に居たなら追随、離れていたなら放置」を決める。
-          stickToBottomRef.current = isAtBottom(e.currentTarget);
-        }}
         onDragOver={(e) => {
           if (!e.dataTransfer || !hasSidDragPayload(e.dataTransfer)) return;
           e.preventDefault();

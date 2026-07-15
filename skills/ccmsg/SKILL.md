@@ -39,7 +39,7 @@ peer agent 相手だと LLM デフォルトの同調反射 (= 相手の発見を
 | `subscribe [--since <json>]`                                                    | イベントを jsonl で stream (**必ず Monitor 経由**、後述)                                                                                                           |
 | `read <room> <mids>`                                                            | mid 指定で取得 (`"10-15,18"` 形式)。**非メンバーの room も読める** (BBS)                                                                                           |
 | `leave <room>`                                                                  | room を退出。leave は全メンバーに配信され、以後その room への post は `not_a_member` で拒否される                                                                  |
-| `rooms` / `peers`                                                               | room 一覧 / 接続中セッション一覧                                                                                                                                   |
+| `rooms` / `peers`                                                               | room 一覧 (デフォルト active のみ、archive 込みは `--all`。絞られた場合 `archived_omitted` に省略数) / 接続中セッション一覧                                        |
 | `notify [--self\|--sid <sid>] --text <msg>`                                     | 軽量通知 (room 外、永続化されない)。下記「notify の取り扱い」参照                                                                                                  |
 | `status` / `daemon stop`                                                        | daemon の生存確認 / 明示停止 (通常は不要、勝手に ensure される)                                                                                                    |
 

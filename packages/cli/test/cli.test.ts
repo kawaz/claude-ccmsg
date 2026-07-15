@@ -748,4 +748,74 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       cleanup();
     }
   });
+
+  // rooms のデフォルトは active のみ (kawaz r17 mid=23、2026-07-15): AI
+  // セッションが rooms を叩くたびに archive 済み全件が context に乗るのは
+  // 無駄。--all で全件のオプトイン。絞った時は archived_omitted で「見えて
+  // いない room がある」ことを機械可読に示す — 「見えない = 存在しない」と
+  // 誤認して重複 room を作る事故の予防。
+  test("rooms は archived を省き --all で全件 (省略数は archived_omitted で申告)", async () => {
+    const { env, sock, cleanup } = (() => {
+      const made = makeEnv();
+      return { ...made, sock: path.join(made.env.CCMSG_STATE_DIR!, "daemon.sock") };
+    })();
+    try {
+      // member set を変えて 2 room 作る (同一 set は create-room の dedup で
+      // 同じ room が返るため、S2 入りで区別する)。
+      const r1 = JSON.parse((await runCli(["--sid", "S1", "create-room"], env)).out) as {
+        room: string;
+      };
+      const r2 = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as {
+        room: string;
+      };
+      // CLI に archive コマンドは無い (webui 専用操作) ので、daemon socket に
+      // 直接 archive_room を送って r1 を archive 状態にする。
+      await new Promise<void>((resolve, reject) => {
+        const chunks: string[] = [];
+        let replies = 0;
+        void Bun.connect({
+          unix: sock,
+          socket: {
+            open(s) {
+              s.write(`${JSON.stringify({ op: "hello", role: "user" })}\n`);
+              s.write(`${JSON.stringify({ op: "archive_room", room: r1.room, archived: true })}\n`);
+            },
+            data(s, chunk) {
+              chunks.push(new TextDecoder().decode(chunk));
+              replies = chunks.join("").split("\n").filter(Boolean).length;
+              if (replies >= 2) {
+                s.end();
+                resolve();
+              }
+            },
+            error(_s, e) {
+              reject(e);
+            },
+          },
+        });
+      });
+
+      // デフォルト: active の r2 だけ + archived_omitted=1
+      const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { id: string }[];
+        archived_omitted?: number;
+      };
+      expect(dflt.rooms.map((r) => r.id)).toEqual([r2.room]);
+      expect(dflt.archived_omitted).toBe(1);
+
+      // --all: 両方見える (archived room には archived:true が付く)
+      const all = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
+        rooms: { id: string; archived?: boolean }[];
+        archived_omitted?: number;
+      };
+      expect(all.rooms.map((r) => r.id).sort()).toEqual([r1.room, r2.room].sort());
+      expect(all.rooms.find((r) => r.id === r1.room)?.archived).toBe(true);
+      expect(all.archived_omitted).toBeUndefined();
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 });

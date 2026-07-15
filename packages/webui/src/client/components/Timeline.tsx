@@ -743,6 +743,12 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
         else
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: res.error.msg });
+        // 「更新」= tail の読み直しなので、完了後は末尾へ (kawaz r17 mid=26)。
+        // replace で end が同値のままだと tail-append effect が発火しないため
+        // ここで明示的に飛ばす。isNearBottomRef も末尾扱いに戻す (更新直後に
+        // 届く live tail への追従を継続させる)。
+        isNearBottomRef.current = true;
+        scrollToBottomSettled();
       })
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
@@ -878,14 +884,23 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
   // ことがあった。setTimeout(0) で initial render 完了を待ってから scroll
   // を書く — mount 直後の scrollHeight は content flush 前で 0 相当のため。
   const prevEndRef = useRef(timeline.end);
+  // mount / sid 切替直後の末尾ジャンプは 0ms 1 発でなく間隔を空けて数回書く
+  // (kawaz r17 mid=26): fold group / 画像 / フォントで paint 後に scrollHeight
+  // が伸びるケースを 1 発では取り零す。ユーザが先に手動スクロールして末尾から
+  // 離れたら (isNearBottomRef が false になったら) 以降の書き込みは中断。
+  const scrollToBottomSettled = useCallback(() => {
+    const ids = [0, 60, 300].map((ms) =>
+      setTimeout(() => {
+        const el = scrollRef.current;
+        if (el && isNearBottomRef.current) el.scrollTop = el.scrollHeight;
+      }, ms),
+    );
+    return () => ids.forEach(clearTimeout);
+  }, []);
   useEffect(() => {
     prevEndRef.current = timeline.end;
     isNearBottomRef.current = true;
-    const id = setTimeout(() => {
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    }, 0);
-    return () => clearTimeout(id);
+    return scrollToBottomSettled();
     // 依存は [sid] のみ意図的 — timeline.end を含めると「セッション切替
     // 検知」ではなく毎回の tail 追記でもリセットされてしまい、下の
     // tail-append effect の appended 判定が常に false になってしまう。

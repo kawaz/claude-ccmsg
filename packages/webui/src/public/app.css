@@ -723,6 +723,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  /* 最下部に composer パネル高相当の空き (kawaz r17 mid=24,25、2026-07-15):
+   * floating composer がスマホで末尾メッセージを隠す問題の room 側。
+   * .tl-lines の padding-bottom と同じ意図のただの余白。 */
+  padding-bottom: 12rem;
 }
 
 .msg {
@@ -1450,6 +1454,10 @@ button.session-tab {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.5rem 0.75rem;
+  /* 最下部に composer パネル高相当の空き (kawaz r17 mid=24、2026-07-15):
+   * floating composer (1on1 FAB/panel) がスマホで末尾メッセージや fold
+   * summary を隠して押しづらい。機能は載せない、ただの余白。 */
+  padding-bottom: 12rem;
 }
 
 .tl-line {
