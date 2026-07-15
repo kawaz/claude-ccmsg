@@ -25,7 +25,7 @@ import type { AppState, RoomState } from "../store.ts";
 import { AvatarLabel } from "../avatar.tsx";
 import { lastPathSegment } from "../utils.ts";
 import {
-  extractPastedImages,
+  extractTransferFiles,
   hasPendingUpload,
   insertPlaceholder,
   maxPlaceholderNumber,
@@ -329,13 +329,28 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     setText((current) => removePlaceholder(current, n));
   }, []);
 
+  // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、
+  // drop は Finder からの drag & drop 添付 (kawaz r17 mid=51)。
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
-      const images = extractPastedImages(e.clipboardData.items);
-      if (images.length === 0) return; // 通常テキスト paste は default に任せる
+      const files = extractTransferFiles(e.clipboardData.items);
+      if (files.length === 0) return; // 通常テキスト paste は default に任せる
       e.preventDefault();
-      for (const f of images) beginUpload(f);
+      for (const f of files) beginUpload(f);
+    },
+    [beginUpload],
+  );
+  const onDragOver = useCallback((e: DragEvent) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  }, []);
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      const files = extractTransferFiles(e.dataTransfer.items);
+      if (files.length === 0) return;
+      e.preventDefault();
+      for (const f of files) beginUpload(f);
     },
     [beginUpload],
   );
@@ -470,6 +485,8 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           void handleSubmit();
         }}
         onPaste={onPaste}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
         disabled={sending}
         rows={4}
       />

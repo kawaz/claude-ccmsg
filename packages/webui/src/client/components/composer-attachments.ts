@@ -109,12 +109,15 @@ export function hasPendingUpload(attachments: ComposerAttachment[]): boolean {
 }
 
 /**
- * Extract image File objects from a paste event's clipboardData items. DR-0015
- * §2.5: `ClipboardEvent.clipboardData.items` に image/* mime があれば file
- * として抽出。Returns [] when the paste has no image (in which case the
- * caller should fall through to the browser's default text paste).
+ * Extract every File object from a paste / drop event's DataTransfer items.
+ * DR-0015 §2.5 は image mime の clipboard paste が起点だが、kawaz r17 mid=51
+ * (2026-07-15) で「Finder でコピーしたファイルの paste」「Finder からの
+ * drag & drop」にも拡張 — どちらも kind:"file" の item として届くので、
+ * mime を問わず全部拾う (添付機能自体が任意ファイル対応、DR-0015 §2.1)。
+ * Returns [] when the transfer has no file (in which case the caller should
+ * fall through to the browser's default text paste / drop behavior).
  */
-export function extractPastedImages(
+export function extractTransferFiles(
   items:
     | Iterable<{ kind: string; type: string; getAsFile(): File | null }>
     | ArrayLike<{ kind: string; type: string; getAsFile(): File | null }>,
@@ -127,7 +130,6 @@ export function extractPastedImages(
     : Array.from(items as Iterable<{ kind: string; type: string; getAsFile(): File | null }>);
   for (const item of arr) {
     if (item.kind !== "file") continue;
-    if (!item.type.startsWith("image/")) continue;
     const file = item.getAsFile();
     if (file) out.push(file);
   }

@@ -1509,6 +1509,16 @@ button.session-tab {
   padding: 0.35rem 0.5rem;
 }
 
+/* fold 展開部 (縦線ガイドの右) に入った行は .tl-line の横 padding を落とす
+ * (kawaz r17 mid=51 — devtools 実測で行あたり左右 8px が積み、ガイドの
+ * ネストと合わせて thinking が余計にインデントして見えた)。縦 padding は
+ * 行間の見やすさのため残す。 */
+.tl-guided-content > .tl-line,
+.tl-guided-content details.tl-line {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .tl-time {
   font-size: 0.7rem;
   color: var(--fg-muted);

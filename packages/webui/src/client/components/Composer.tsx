@@ -4,7 +4,7 @@ import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { memberLabel } from "../utils.ts";
 import {
-  extractPastedImages,
+  extractTransferFiles,
   hasPendingUpload,
   insertPlaceholder,
   maxPlaceholderNumber,
@@ -173,16 +173,30 @@ export function Composer({
     setText((current) => removePlaceholder(current, n));
   }
 
-  /** clipboard paste で image mime のファイルを検出し、beginUpload に流す。
-   *  DR-0015 §2.5: `ClipboardEvent.clipboardData.items` に image があれば
-   *  file 扱い。image が 1 つ以上あれば default paste (= 画像 data URI の
-   *  文字列 paste 等) を止めて添付経路に一本化する。 */
+  /** clipboard paste のファイルを beginUpload に流す (DR-0015 §2.5 +
+   *  kawaz r17 mid=51): 画像スクショに加え、Finder でコピーしたファイル
+   *  (mime 不問) も添付になる。file が 1 つ以上あれば default paste (=
+   *  画像 data URI やファイルパス文字列の paste) を止めて添付経路に一本化。 */
   function onPaste(e: ClipboardEvent): void {
     if (!e.clipboardData) return;
-    const images = extractPastedImages(e.clipboardData.items);
-    if (images.length === 0) return; // 通常テキスト paste は default に任せる
+    const files = extractTransferFiles(e.clipboardData.items);
+    if (files.length === 0) return; // 通常テキスト paste は default に任せる
     e.preventDefault();
-    for (const f of images) beginUpload(f);
+    for (const f of files) beginUpload(f);
+  }
+
+  /** Finder 等からの textarea への drag & drop 添付 (kawaz r17 mid=51)。
+   *  dragover の preventDefault が無いと drop は発火しない (HTML DnD 仕様)。
+   *  ファイルを含まない drag (テキスト選択の drop 等) は default に任せる。 */
+  function onDragOver(e: DragEvent): void {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  }
+  function onDrop(e: DragEvent): void {
+    if (!e.dataTransfer) return;
+    const files = extractTransferFiles(e.dataTransfer.items);
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const f of files) beginUpload(f);
   }
 
   function onFilesPicked(input: HTMLInputElement | null): void {
@@ -267,6 +281,8 @@ export function Composer({
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
       />
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       <div class="composer-actions">

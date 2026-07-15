@@ -6,7 +6,7 @@
 // `.ts` import 慣習を維持し、JSX runtime を巻き込まない。
 import { describe, expect, test } from "bun:test";
 import {
-  extractPastedImages,
+  extractTransferFiles,
   hasPendingUpload,
   insertPlaceholder,
   maxPlaceholderNumber,
@@ -150,39 +150,39 @@ describe("hasPendingUpload", () => {
   });
 });
 
-describe("extractPastedImages", () => {
-  // クリップボード paste で image mime を持つ file を全部拾う。DR-0015 §2.5
-  // の clipboard 経路の core spec。
+describe("extractTransferFiles", () => {
+  // paste / drop の DataTransfer items から file を全部拾う。DR-0015 §2.5 の
+  // clipboard 画像経路が起点、kawaz r17 mid=51 で「Finder コピーの paste」
+  // 「Finder からの drag & drop」に拡張 = mime 不問で kind:"file" を全部。
   function fakeItem(kind: string, type: string, file: File | null) {
     return { kind, type, getAsFile: () => file };
   }
 
-  test("extracts every image/* file item, skipping non-file / non-image entries", () => {
+  test("extracts every file item regardless of mime, skipping non-file entries", () => {
     const png = new File([new Uint8Array([1])], "clip.png", { type: "image/png" });
-    const jpg = new File([new Uint8Array([2])], "clip.jpg", { type: "image/jpeg" });
+    const pdf = new File([new Uint8Array([2])], "doc.pdf", { type: "application/pdf" });
     const items = [
       fakeItem("file", "image/png", png),
       fakeItem("string", "text/plain", null), // kind != file → skip
-      fakeItem("file", "text/html", null), // image でない → skip
-      fakeItem("file", "image/jpeg", jpg),
+      fakeItem("file", "application/pdf", pdf), // 画像以外も添付対象 (mid=51)
     ];
-    const got = extractPastedImages(items);
+    const got = extractTransferFiles(items);
     expect(got.length).toBe(2);
     expect(got[0]).toBe(png);
-    expect(got[1]).toBe(jpg);
+    expect(got[1]).toBe(pdf);
   });
 
   // getAsFile が null を返す壊れた entry を除外 (browser の実装差分への保険)。
-  test("skips items whose getAsFile returns null even when kind/type match", () => {
+  test("skips items whose getAsFile returns null even when kind matches", () => {
     const items = [fakeItem("file", "image/png", null)];
-    expect(extractPastedImages(items)).toEqual([]);
+    expect(extractTransferFiles(items)).toEqual([]);
   });
 
-  // image を含まない paste (通常のテキスト paste) は空配列 →
-  // Composer.tsx は browser default の text paste にそのまま任せる。
-  test("returns [] when the paste has no image (text paste falls through)", () => {
+  // file を含まない transfer (通常のテキスト paste / テキスト drop) は空配列 →
+  // 呼び出し側は browser default の挙動にそのまま任せる。
+  test("returns [] when the transfer has no file (text paste/drop falls through)", () => {
     const items = [fakeItem("string", "text/plain", null)];
-    expect(extractPastedImages(items)).toEqual([]);
+    expect(extractTransferFiles(items)).toEqual([]);
   });
 });
 
