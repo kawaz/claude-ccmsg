@@ -1911,9 +1911,70 @@ button.session-tab {
 
 .tl-fold-group-body {
   display: flex;
+  margin-top: 0.3rem;
+}
+
+/* 展開 fold の左端縦線ガイド (kawaz r17 mid=45、2026-07-15): クリックで
+ * その fold を閉じる — 大量 items を展開した後、summary までスクロールで
+ * 戻らずに畳めるように。ガイド (button) + 中身の 2 カラム flex。 */
+.tl-guided {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.tl-fold-guide {
+  flex: 0 0 auto;
+  width: 0.9rem;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  position: relative;
+}
+
+/* 実際の線は疑似要素で 2px に絞り、ヒット領域 (0.9rem) は広めに保つ。 */
+.tl-fold-guide::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+
+.tl-fold-guide:hover::before {
+  background: var(--accent);
+}
+
+.tl-guided-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  margin-top: 0.3rem;
+}
+
+/* thinking 間の tool 群サブ fold (kawaz r17 mid=45)。summary は fold group
+ * の等幅トーンに合わせる。 */
+.tl-items-subfold > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* fold summary の「N thinkings」部の装飾 (kawaz r17 mid=47): thinking 本文
+ * (.tl-thinking-body) と同じ紫系 + 破線トーンで、展開せずとも thinking の
+ * 在処が判る。 */
+.tl-summary-thinkings {
+  background: var(--assistant-bubble-bg);
+  border: 1px dashed var(--assistant-bubble-border);
+  border-radius: 0.4rem;
+  padding: 0 0.35rem;
 }
 
 .tl-broken {

@@ -14,6 +14,7 @@ import {
   classifyBoundaryLine,
   foldGroupLabel,
   groupTimelineLines,
+  splitFoldSubgroups,
   isUserTextTurn,
   lineByteOffsets,
   parseSystemMessageFields,
@@ -451,22 +452,120 @@ function FoldGroup({
   translatorAvailable: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  // 展開時の中身は thinking 区切りのサブグループ (kawaz r17 mid=45):
+  // thinking は直接見せ、間の tool 群は「N items」のサブ fold (既定閉) に
+  // 畳む — 従来はツール行の羅列に thinking が埋もれ、節目を目で探す必要が
+  // あった。分割は pure function (transcript-model.ts) 側で単体テスト済み。
+  const subgroups = useMemo(() => splitFoldSubgroups(entries), [entries]);
+  const thinkingCount = useMemo(
+    () => subgroups.filter((g) => g.kind === "thinking").length,
+    [subgroups],
+  );
+  const itemCount = entries.length - thinkingCount;
+  // 左端の縦線 (インデントガイド) クリックでこの fold を閉じる (mid=45):
+  // 大量 items を展開した後、summary までスクロールで戻らずに畳めるように。
+  // 閉じた際は fold の頭が画面外にあるとコンテキストを見失うので summary
+  // 位置へ scroll しておく。
+  const closeFromGuide = () => {
+    setOpen(false);
+    detailsRef.current?.scrollIntoView({ block: "nearest" });
+  };
   return (
     <details
+      ref={detailsRef}
       class="tl-line tl-fold-group"
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <summary>{foldGroupLabel(entries)}</summary>
-      <div class="tl-fold-group-body">
-        {entries.map(({ offset, line }) => (
-          <LineView
-            key={offset}
-            line={line}
-            translatorAvailable={translatorAvailable}
-            foldGroupOpen={open}
-          />
-        ))}
+      {/* summary の「N thinkings」部だけ thinking と同じ装飾 (kawaz r17
+       * mid=47): 展開せずとも thinking の在処 (紫破線トーン) が判る。文言は
+       * foldGroupLabel (単体テスト済み) と同じ構成で、装飾のために span を
+       * 分けて組み立てる。 */}
+      <summary>
+        {thinkingCount > 0 ? (
+          <>
+            <span class="tl-summary-thinkings">{thinkingCount} thinkings</span>
+            {itemCount > 0 ? ` + ${itemCount} items` : ""}
+          </>
+        ) : (
+          foldGroupLabel(entries)
+        )}
+      </summary>
+      <div class="tl-fold-group-body tl-guided">
+        <button
+          type="button"
+          class="tl-fold-guide"
+          title="この折り畳みを閉じる"
+          aria-label="この折り畳みを閉じる"
+          onClick={closeFromGuide}
+        />
+        <div class="tl-guided-content">
+          {subgroups.map((sg) =>
+            sg.kind === "thinking" ? (
+              <LineView
+                key={sg.entry.offset}
+                line={sg.entry.line}
+                translatorAvailable={translatorAvailable}
+                foldGroupOpen={open}
+              />
+            ) : (
+              <ItemsSubFold
+                key={sg.entries[0]!.offset}
+                entries={sg.entries}
+                translatorAvailable={translatorAvailable}
+                foldGroupOpen={open}
+              />
+            ),
+          )}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+/** FoldGroup 展開時の thinking 間 tool 群サブ fold (kawaz r17 mid=45)。
+ * 既定は閉。こちらにも縦線クリック閉じを付ける (ネスト側の「| |」相当)。 */
+function ItemsSubFold({
+  entries,
+  translatorAvailable,
+  foldGroupOpen,
+}: {
+  entries: TimelineEntry[];
+  translatorAvailable: boolean;
+  foldGroupOpen: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  return (
+    <details
+      ref={detailsRef}
+      class="tl-fold tl-items-subfold"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>{entries.length} items</summary>
+      <div class="tl-guided">
+        <button
+          type="button"
+          class="tl-fold-guide"
+          title="この折り畳みを閉じる"
+          aria-label="この折り畳みを閉じる"
+          onClick={() => {
+            setOpen(false);
+            detailsRef.current?.scrollIntoView({ block: "nearest" });
+          }}
+        />
+        <div class="tl-guided-content">
+          {entries.map(({ offset, line }) => (
+            <LineView
+              key={offset}
+              line={line}
+              translatorAvailable={translatorAvailable}
+              foldGroupOpen={foldGroupOpen}
+            />
+          ))}
+        </div>
       </div>
     </details>
   );

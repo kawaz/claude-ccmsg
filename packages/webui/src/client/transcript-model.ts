@@ -325,7 +325,7 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
  * `foldGroupLabel` can report "N thinkings + M items" (webui Timeline display
  * unification task, kawaz spec) instead of lumping thinking in with
  * tool_use/tool_result/meta/broken under one undifferentiated count. */
-function isThinkingOnlyEntry(entry: TimelineEntry): boolean {
+export function isThinkingOnlyEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   return (
     line.kind === "turn" &&
@@ -345,6 +345,38 @@ export function foldGroupLabel(entries: TimelineEntry[]): string {
   if (thinkingCount === 0) return `${itemCount} items`;
   if (itemCount === 0) return `${thinkingCount} thinkings`;
   return `${thinkingCount} thinkings + ${itemCount} items`;
+}
+
+/** fold group 展開時の中身の区切り (kawaz r17 mid=45、2026-07-15):
+ * thinking は「作業の節目の語り」なので開いたら直接見せ、thinking と
+ * thinking の間に挟まる tool 群 (tool_use/tool_result/meta/...) は
+ * 「N items」のサブ fold (既定閉) に畳む — 従来はツール行の羅列の中に
+ * thinking が埋もれ、展開直後に目で節目を探す必要があった。
+ * 返り値は表示順のまま: {kind:"items"} (サブ fold 化する連続 run) と
+ * {kind:"thinking"} (単独で直接表示) の交互列。 */
+export type FoldSubgroup =
+  | { kind: "items"; entries: TimelineEntry[] }
+  | { kind: "thinking"; entry: TimelineEntry };
+
+export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {
+  const out: FoldSubgroup[] = [];
+  let run: TimelineEntry[] = [];
+  const flush = () => {
+    if (run.length > 0) {
+      out.push({ kind: "items", entries: run });
+      run = [];
+    }
+  };
+  for (const e of entries) {
+    if (isThinkingOnlyEntry(e)) {
+      flush();
+      out.push({ kind: "thinking", entry: e });
+    } else {
+      run.push(e);
+    }
+  }
+  flush();
+  return out;
 }
 
 /**

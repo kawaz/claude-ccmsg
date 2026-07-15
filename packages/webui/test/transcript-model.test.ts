@@ -11,6 +11,7 @@ import {
   classifyUserMessage,
   extractCcmsgMessages,
   foldGroupLabel,
+  splitFoldSubgroups,
   groupTimelineLines,
   isUserTextTurn,
   lineByteOffsets,
@@ -1127,6 +1128,49 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
       { kind: "entry", offset: 1, line: realPrompt },
       { kind: "entry", offset: 2, line: lines[2] },
     ]);
+  });
+});
+
+// splitFoldSubgroups (kawaz r17 mid=45): fold group 展開時の中身を thinking
+// 区切りでサブグループ化する分割の輪郭。
+describe("splitFoldSubgroups", () => {
+  const thinkingEntry = (offset: number) => ({
+    offset,
+    line: {
+      kind: "turn" as const,
+      ts: null,
+      role: "assistant" as const,
+      segments: [{ kind: "thinking" as const, text: "t" }],
+    },
+  });
+  const toolEntry = (offset: number) => ({
+    offset,
+    line: {
+      kind: "turn" as const,
+      ts: null,
+      role: "assistant" as const,
+      segments: [{ kind: "tool-use" as const, name: "Bash", input: {} }],
+    },
+  });
+
+  // 何を保証するか: tool 群 → thinking → tool 群 → thinking の列が
+  // items/thinking の交互列に分割され、表示順が保たれる。thinking は
+  // 単独 entry、tool run はまとめて 1 つの items グループ。
+  test("splits runs of tools at each thinking boundary, preserving order", () => {
+    const entries = [toolEntry(1), toolEntry(2), thinkingEntry(3), toolEntry(4), thinkingEntry(5)];
+    const got = splitFoldSubgroups(entries);
+    expect(got.map((g) => g.kind)).toEqual(["items", "thinking", "items", "thinking"]);
+    expect(got[0]!.kind === "items" && got[0]!.entries.length).toBe(2);
+    expect(got[2]!.kind === "items" && got[2]!.entries.length).toBe(1);
+  });
+
+  // 何を保証するか (境界): thinking が無ければ全体が 1 つの items、
+  // thinking だけなら items グループは生まれない (空 run を flush しない)。
+  test("all-tools yields one items group; all-thinkings yields no items group", () => {
+    const tools = splitFoldSubgroups([toolEntry(1), toolEntry(2)]);
+    expect(tools.map((g) => g.kind)).toEqual(["items"]);
+    const thinkings = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
+    expect(thinkings.map((g) => g.kind)).toEqual(["thinking", "thinking"]);
   });
 });
 
