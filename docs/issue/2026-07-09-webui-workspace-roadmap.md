@@ -3,7 +3,7 @@ title: webui を workspace UI に育てる長期 roadmap
 status: wip
 category: design
 created: 2026-07-09T23:35:02+09:00
-last_read:
+last_read: 2026-07-15T15:30:15+09:00
 open_entered:
 wip_entered: 2026-07-10T22:01:21+09:00
 blocked_entered:
