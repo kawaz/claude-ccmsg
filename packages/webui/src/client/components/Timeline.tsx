@@ -45,6 +45,30 @@ const NEAR_BOTTOM_PX = 80;
 // 3 通りに割れていた (kawaz: 「時刻表示の位置や出る出ないが不規則」)。ts が
 // null の行 (Segment 自体は ts を持たないので親 TurnLine の ts を渡す) は
 // 時刻 span を省略して詰める。
+/** 展開 fold の左端縦線ガイド (kawaz r17 mid=45,49): クリックすると最も近い
+ * 祖先の <details> (= 自分が中身を描いている fold) を閉じ、summary 位置へ
+ * スクロールバックする。DOM 走査 (closest) 方式なのは、この線を fold group /
+ * items サブ fold / thinking / tool_use / tool_result / meta の全展開部で
+ * 使い回すため — 各コンポーネントの open state を prop で配るより、閉じる
+ * 対象を「線が属する details」と構造で決める方が一貫する (details の open
+ * 属性除去は onToggle 経由で各コンポーネントの state にも同期される)。 */
+function FoldGuide() {
+  return (
+    <button
+      type="button"
+      class="tl-fold-guide"
+      title="この折り畳みを閉じる"
+      aria-label="この折り畳みを閉じる"
+      onClick={(e) => {
+        const details = (e.currentTarget as HTMLElement).closest("details");
+        if (!details) return;
+        details.open = false;
+        details.scrollIntoView({ block: "nearest" });
+      }}
+    />
+  );
+}
+
 function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
   return (
     <summary>
@@ -171,13 +195,16 @@ function ThinkingSegment({
           </button>
         </div>
       )}
-      <div class="tl-thinking-body" ref={bodyRef}>
-        {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
-         * markdown レンダリング」) — original と同じ MarkdownView を再利用。 */}
-        <MarkdownView source={bodyText} />
-        {tab === "ja" && translating && jaText === null ? (
-          <p class="tl-thinking-translating">翻訳中…</p>
-        ) : null}
+      <div class="tl-guided">
+        <FoldGuide />
+        <div class="tl-thinking-body" ref={bodyRef}>
+          {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
+           * markdown レンダリング」) — original と同じ MarkdownView を再利用。 */}
+          <MarkdownView source={bodyText} />
+          {tab === "ja" && translating && jaText === null ? (
+            <p class="tl-thinking-translating">翻訳中…</p>
+          ) : null}
+        </div>
       </div>
     </details>
   );
@@ -219,21 +246,30 @@ function SegmentView({
       return (
         <details class="tl-fold">
           <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
-          <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
+          <div class="tl-guided">
+            <FoldGuide />
+            <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
+          </div>
         </details>
       );
     case "tool-result":
       return (
         <details class="tl-fold">
           <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
-          <pre class="tl-fold-body">{segment.text}</pre>
+          <div class="tl-guided">
+            <FoldGuide />
+            <pre class="tl-fold-body">{segment.text}</pre>
+          </div>
         </details>
       );
     case "unknown-segment":
       return (
         <details class="tl-fold">
           <FoldSummary ts={ts} label={segment.type} />
-          <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
+          <div class="tl-guided">
+            <FoldGuide />
+            <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
+          </div>
         </details>
       );
   }
@@ -463,14 +499,6 @@ function FoldGroup({
     [subgroups],
   );
   const itemCount = entries.length - thinkingCount;
-  // 左端の縦線 (インデントガイド) クリックでこの fold を閉じる (mid=45):
-  // 大量 items を展開した後、summary までスクロールで戻らずに畳めるように。
-  // 閉じた際は fold の頭が画面外にあるとコンテキストを見失うので summary
-  // 位置へ scroll しておく。
-  const closeFromGuide = () => {
-    setOpen(false);
-    detailsRef.current?.scrollIntoView({ block: "nearest" });
-  };
   return (
     <details
       ref={detailsRef}
@@ -493,13 +521,7 @@ function FoldGroup({
         )}
       </summary>
       <div class="tl-fold-group-body tl-guided">
-        <button
-          type="button"
-          class="tl-fold-guide"
-          title="この折り畳みを閉じる"
-          aria-label="この折り畳みを閉じる"
-          onClick={closeFromGuide}
-        />
+        <FoldGuide />
         <div class="tl-guided-content">
           {subgroups.map((sg) =>
             sg.kind === "thinking" ? (
@@ -546,16 +568,7 @@ function ItemsSubFold({
     >
       <summary>{entries.length} items</summary>
       <div class="tl-guided">
-        <button
-          type="button"
-          class="tl-fold-guide"
-          title="この折り畳みを閉じる"
-          aria-label="この折り畳みを閉じる"
-          onClick={() => {
-            setOpen(false);
-            detailsRef.current?.scrollIntoView({ block: "nearest" });
-          }}
-        />
+        <FoldGuide />
         <div class="tl-guided-content">
           {entries.map(({ offset, line }) => (
             <LineView

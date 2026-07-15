@@ -1920,13 +1920,15 @@ button.session-tab {
 .tl-guided {
   display: flex;
   align-items: stretch;
-  gap: 0.4rem;
+  /* ガイドは全展開部 (fold group / items / thinking / tool_use / ...) に
+   * 付くためネストでインデントが積む — 幅と gap は最小限 (kawaz r17 mid=49)。 */
+  gap: 0.25rem;
   min-width: 0;
 }
 
 .tl-fold-guide {
   flex: 0 0 auto;
-  width: 0.9rem;
+  width: 0.5rem;
   padding: 0;
   border: none;
   background: none;

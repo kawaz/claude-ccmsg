@@ -324,14 +324,13 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
  * exclusively thinking blocks — split out of the generic "items" count so
  * `foldGroupLabel` can report "N thinkings + M items" (webui Timeline display
  * unification task, kawaz spec) instead of lumping thinking in with
- * tool_use/tool_result/meta/broken under one undifferentiated count. */
-export function isThinkingOnlyEntry(entry: TimelineEntry): boolean {
+ * tool_use/tool_result/meta/broken under one undifferentiated count.
+ * 「thinking を含む」判定 (only ではない) なのは kawaz r17 mid=49: thinking
+ * と tool_use が同一 turn 行に混在するケースがサブ fold 側に沈み、fold group
+ * 直下に出るべき thinking が 1 段深く表示されていたため。 */
+export function isThinkingEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
-  return (
-    line.kind === "turn" &&
-    line.segments.length > 0 &&
-    line.segments.every((s) => s.kind === "thinking")
-  );
+  return line.kind === "turn" && line.segments.some((s) => s.kind === "thinking");
 }
 
 /** Folded-group summary label (kawaz spec, revised for the display
@@ -340,7 +339,7 @@ export function isThinkingOnlyEntry(entry: TimelineEntry): boolean {
  * previous "N tools"/"N items" wording is retired since thinking is now
  * counted out on its own rather than lumped into one undifferentiated noun. */
 export function foldGroupLabel(entries: TimelineEntry[]): string {
-  const thinkingCount = entries.filter(isThinkingOnlyEntry).length;
+  const thinkingCount = entries.filter(isThinkingEntry).length;
   const itemCount = entries.length - thinkingCount;
   if (thinkingCount === 0) return `${itemCount} items`;
   if (itemCount === 0) return `${thinkingCount} thinkings`;
@@ -368,7 +367,7 @@ export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {
     }
   };
   for (const e of entries) {
-    if (isThinkingOnlyEntry(e)) {
+    if (isThinkingEntry(e)) {
       flush();
       out.push({ kind: "thinking", entry: e });
     } else {

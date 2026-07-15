@@ -1164,6 +1164,26 @@ describe("splitFoldSubgroups", () => {
     expect(got[2]!.kind === "items" && got[2]!.entries.length).toBe(1);
   });
 
+  // 何を保証するか (kawaz r17 mid=49 の実観測): thinking と tool_use が
+  // 同一 turn 行に混在するケースは thinking 側 — items サブ fold に沈むと
+  // fold group 直下に出るべき thinking が 1 段深く表示される。
+  test("a mixed thinking+tool turn splits as thinking, not items", () => {
+    const mixed = {
+      offset: 10,
+      line: {
+        kind: "turn" as const,
+        ts: null,
+        role: "assistant" as const,
+        segments: [
+          { kind: "thinking" as const, text: "t" },
+          { kind: "tool-use" as const, name: "Bash", input: {} },
+        ],
+      },
+    };
+    const got = splitFoldSubgroups([toolEntry(1), mixed, toolEntry(3)]);
+    expect(got.map((g) => g.kind)).toEqual(["items", "thinking", "items"]);
+  });
+
   // 何を保証するか (境界): thinking が無ければ全体が 1 つの items、
   // thinking だけなら items グループは生まれない (空 run を flush しない)。
   test("all-tools yields one items group; all-thinkings yields no items group", () => {
