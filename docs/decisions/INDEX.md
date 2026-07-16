@@ -24,4 +24,4 @@
 | [DR-0018](./DR-0018-session-launcher.md) | Accepted | Session Launcher (webui からの新規セッション起動 UI、Phase 分割) |
 | [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) |
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | Status タブ (workflow / background / TODO の可視化、transcript fold) |
-| [DR-0021](./DR-0021-session-search.md) | Proposed | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |
+| [DR-0021](./DR-0021-session-search.md) | Accepted | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |
