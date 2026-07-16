@@ -28,7 +28,7 @@ import { Logger } from "./log.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
 import { fsList, fsRead, fsWrite, validateRepoRoot } from "./fs-access.ts";
-import { validateSessionLaunch } from "./session-launch.ts";
+import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import {
   createTranscriptTailStore,
   stopAllTailWatches,
@@ -730,7 +730,21 @@ const IDENTITY_OPS = new Set([
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
+/** Connections whose session_launch reply is still pending. The wire contract
+ * has no request ids: every client (webui ws.ts `pending.shift()`, cli
+ * client.ts, test helpers) matches replies to requests by arrival order, so a
+ * deferred reply must hold back every later reply on the same connection.
+ * While a gate is set, incoming requests re-enter handleRequest after the
+ * launch reply is written; `.then` callbacks on one promise run in
+ * registration order, so multiple queued lines stay FIFO too. */
+const launchGates = new WeakMap<Conn, Promise<void>>();
+
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
+  const gate = launchGates.get(conn);
+  if (gate) {
+    void gate.then(() => handleRequest(daemon, conn, line));
+    return;
+  }
   let req: Request;
   try {
     req = JSON.parse(line) as Request;
@@ -1409,20 +1423,29 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'session_launch' requires user role");
         return;
       }
-      // DR-0018 Phase 1 deliberately stops after validation/env/argv assembly.
-      // Process execution, timeout, signals, and output capture arrive in Phase 2.
-      const validation = validateSessionLaunch(daemon.config.session_launcher, req);
+      const launcher = daemon.config.session_launcher;
+      const validation = validateSessionLaunch(launcher, req);
       if (!validation.ok) {
         sendErr(conn, validation.code, validation.msg);
         return;
       }
-      send(conn, {
-        ok: true,
-        stdout: "",
-        stderr: "session_launch: not implemented yet (Phase 2)",
-        exit_code: null,
-        timed_out: false,
-      });
+      // The validation success branch proves launcher exists: an absent config
+      // returns launcher_not_configured before process execution is reachable.
+      // Gate this connection until the reply is written (see launchGates):
+      // clients match replies by arrival order, so no later op's reply may
+      // overtake this deferred one on the same connection.
+      const gate = executeSessionLaunch(validation, launcher!.timeout_seconds)
+        .then(
+          (result) => send(conn, result),
+          (e) => {
+            daemon.log.error(`op 'session_launch' failed: ${String(e)}`);
+            sendErr(conn, "internal", String(e));
+          },
+        )
+        .finally(() => {
+          if (launchGates.get(conn) === gate) launchGates.delete(conn);
+        });
+      launchGates.set(conn, gate);
       return;
     }
 
