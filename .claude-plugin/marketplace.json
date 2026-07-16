@@ -3,7 +3,7 @@
   "owner": { "name": "kawaz" },
   "metadata": {
     "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
-    "version": "0.42.0"
+    "version": "0.42.1"
   },
   "plugins": [
     {
