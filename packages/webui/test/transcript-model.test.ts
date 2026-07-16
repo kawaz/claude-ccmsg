@@ -238,6 +238,30 @@ describe("parseTranscriptLine / meta lines (non-turn types)", () => {
     expect(line.ts).toBe("t");
   });
 
+  // Regression fixture reduced from the reported transcript line 1065. While
+  // the main session was busy, the direct <agent-message> relay first appeared
+  // as queue-operation enqueue; it must reuse normal user-message classification
+  // instead of becoming a human user-prompt boundary and green bubble.
+  test("queue-operation enqueue with a bare agent relay -> peer-message and folded", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "enqueue",
+        timestamp: "2026-07-16T18:28:50.000Z",
+        content:
+          '<agent-message from="general-purpose">\nRead-only audit found 2 Major candidates: (1) ...\n</agent-message>',
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("peer-message");
+    expect(isUserTextTurn(line)).toBe(false);
+    expect(classifyBoundaryLine(line)).toBeNull();
+    expect(groupTimelineLines([line], [1065])).toEqual([
+      { kind: "fold", entries: [{ offset: 1065, line }] },
+    ]);
+  });
+
   // A type with a `subtype` field but no `timestamp` (file-history-snapshot,
   // observed in a real transcript): ts must gracefully fall back to null
   // rather than throwing on the missing field.
@@ -1033,6 +1057,38 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
     expect(line.userMessageKind).toBe("slash-command-invocation");
+  });
+
+  // Regression fixture reduced from the reported transcript line 1100, keeping
+  // its observed `isMeta:true`, peer banner, and origin metadata.
+  // The fixed peer banner must win over the generic isMeta fallback so
+  // the audit report is labeled peer-message and remains an intermediate fold,
+  // never a human user-prompt boundary.
+  test("isMeta:true peer-origin agent relay -> peer-message and folded", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        isMeta: true,
+        message: {
+          role: "user",
+          content:
+            'Another Claude session sent a message:\n<agent-message from="general-purpose">\nRead-only audit found 2 Major candidates: (1) ...\n</agent-message>',
+        },
+        origin: {
+          kind: "peer",
+          from: "general-purpose",
+          name: "general-purpose",
+        },
+        promptSource: "system",
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("peer-message");
+    expect(isUserTextTurn(line)).toBe(false);
+    expect(groupTimelineLines([line], [1100])).toEqual([
+      { kind: "fold", entries: [{ offset: 1100, line }] },
+    ]);
   });
 
   test("a real user turn's userMessageKind is user-prompt", () => {

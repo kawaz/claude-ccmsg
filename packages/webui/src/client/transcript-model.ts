@@ -438,13 +438,14 @@ function isTextOrImageBlock(b: unknown): boolean {
  *    real human utterance with an image/file paste (array of only text/image
  *    blocks, no tool_result — Claude Code emits this shape for a pasted
  *    image, with or without a caption)
- * 2. `isMeta === true` — Claude Code CLI/harness UI injection (slash
- *    command caveat/invocation/stdout, malformed-tool-call retry hint)
- * 3. `isMeta` not true, string `content` with a literal system-injection
- *    prefix — task-notification (Monitor/Workflow/subagent) or peer-message
- *    (ccmsg teammate relay), both delivered as ordinary prompts
- *    (`promptId`-bearing) so `isMeta` alone can't catch them
- * 4. anything else — a real human utterance
+ * 2. string `content` with a peer-relay prefix — peer-message, regardless of
+ *    whether Claude Code also sets `isMeta:true`
+ * 3. `isMeta === true` — remaining Claude Code CLI/harness UI injection
+ *    (slash command caveat/invocation/stdout, malformed-tool-call retry hint)
+ * 4. `isMeta` not true, string `content` with another literal system-
+ *    injection prefix — task-notification (Monitor/Workflow/subagent),
+ *    delivered as an ordinary prompt (`promptId`-bearing)
+ * 5. anything else — a real human utterance
  *
  * Known false-negative (documented in the research, not fixed here): a real
  * user who types text starting with one of the exact literal prefixes below
@@ -491,6 +492,13 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
 
   const text = typeof content === "string" ? content : "";
 
+  // A peer relay may carry isMeta:true while retaining the fixed peer banner.
+  // The decisive peer wrapper must run before the generic isMeta catch.
+  if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
+  if (text.startsWith("<agent-message") || text.startsWith("<teammate-message")) {
+    return "peer-message";
+  }
+
   if (isMeta) {
     if (text.startsWith("<local-command-caveat>")) return "system-caveat";
     if (text.startsWith("<command-name>")) return "slash-command-invocation";
@@ -519,16 +527,6 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   if (text.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
     return text.includes("<task-notification>") ? "task-notification" : "unknown-meta";
   }
-  if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
-  // SendMessage (agent-team 間通信) の relay は "Another Claude session..."
-  // banner なしで <agent-message ...> タグから直接始まる形もある (kawaz r17
-  // mid=38 の実観測 — user-prompt に fall through して緑のユーザ発話として
-  // 表示されていた)。teammate-message は現契約では banner 付きだが、同系の
-  // wrapper として防御的に両方拾う。
-  if (text.startsWith("<agent-message") || text.startsWith("<teammate-message")) {
-    return "peer-message";
-  }
-
   return "user-prompt";
 }
 
@@ -937,32 +935,22 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     return { kind: "turn", ts, role, segments, userMessageKind };
   }
   // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
-  // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列
-  // (kawaz r15 mid=10、2026-07-14)。content 冒頭のプレフィクスに応じて
-  // classifyUserMessage 相当の再分類を掛ける — system wrapper (task-notification /
-  // peer-message / [SYSTEM NOTIFICATION]) の場合も **常に user turn として
-  // parse する**: kawaz が作業中 busy のときは task-notification 経路 (Monitor
-  // tool_result) が届かず queue-operation enqueue のみが transcript に載る
-  // ケースがある (kawaz r15 mid=21、2026-07-14 の実観測)。両経路とも CcmsgBubble
-  // に流し、重複表示は Timeline.tsx の render 側 (r, mid) 二重登場除去で処理
-  // する (v0.32.1 で system wrapper を meta に fall through させた fix は
-  // "作業中のみ enqueue で届いた msg が tl に出ない" 副作用を招いたため撤回)。
+  // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列。
+  // 通常の type:user 行と同じ classifier を必ず通すことで、peer relay / task
+  // notification / slash command 等の prefix catalog が二重実装で drift せず、
+  // system wrapper も user-prompt と同じ turn shape のまま正しく fold される。
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     const content = o.content;
-    let kind: UserMessageKind = "user-prompt";
-    if (content.startsWith("<task-notification>")) {
-      kind = "task-notification";
-    } else if (content.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
-      kind = content.includes("<task-notification>") ? "task-notification" : "unknown-meta";
-    } else if (content.startsWith("Another Claude session sent a message:")) {
-      kind = "peer-message";
-    }
+    const userMessageKind = classifyUserMessage({
+      type: "user",
+      message: { role: "user", content },
+    });
     return {
       kind: "turn",
       ts,
       role: "user",
       segments: [{ kind: "text", role: "user", text: content }],
-      userMessageKind: kind,
+      userMessageKind,
     };
   }
   return {
