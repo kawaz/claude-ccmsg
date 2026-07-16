@@ -20,6 +20,7 @@ import type {
   ErrorResponse,
   FsListResponse,
   FsReadResponse,
+  FsWriteResponse,
   InviteResponse,
   KickResponse,
   PeersResponse,
@@ -104,6 +105,11 @@ export interface WsHandle {
   fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
   fsRead(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  /** Create a new UTF-8 text file under docs/inbox/ in a connected session's
+   * containment root (DR-0019 Phase W1 fs_write). Never overwrites — an
+   * existing path replies `file_exists`, a path outside docs/inbox/ replies
+   * `path_not_writable`. */
+  fsWrite(sid: string, path: string, content: string): Promise<FsWriteResponse | ErrorResponse>;
   /** Read a slice of a connected session's transcript jsonl (DR-0009
    * transcript_read). `before` omitted = tail of the file; pass the previous
    * reply's `start` to page older. */
@@ -358,6 +364,7 @@ export function createWsClient(
     invite: (room, sid) => send({ op: "invite", room, sid }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
+    fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     transcriptRead: (sid, opts) =>
       send({
         op: "transcript_read",

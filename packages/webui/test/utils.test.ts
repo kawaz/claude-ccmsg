@@ -13,6 +13,7 @@ import {
   favoritesStorageKey,
   formatDuration,
   groupSessionsBySection,
+  inboxAutoFilename,
   indexAgentsBySid,
   isMarkdownPath,
   isMemberConnected,
@@ -25,6 +26,7 @@ import {
   parseFavorites,
   peerSortButtonLabel,
   repoRootLabel,
+  resolveInboxFilename,
   sessionBadges,
   sessionLabel,
   sessionRowRepoWs,
@@ -1136,5 +1138,84 @@ describe("sortFavorites", () => {
     const favorites = ["b", "a"];
     sortFavorites(favorites);
     expect(favorites).toEqual(["b", "a"]);
+  });
+});
+
+describe("inboxAutoFilename", () => {
+  // DR-0019 §2.2's exact format: YYYYMMDD-HHmm.md, zero-padded, from the
+  // Date's local-time getters (not UTC — see the function's doc comment on
+  // why: inbox is "this moment", not a UTC-normalized moment).
+  test("formats as zero-padded YYYYMMDD-HHmm.md", () => {
+    expect(inboxAutoFilename(new Date(2026, 6, 16, 9, 5))).toBe("20260716-0905.md");
+  });
+
+  // Every zero-padded field independently, not just the ones that happen to
+  // need it in the fixture above (month/day/hour/minute all share the same
+  // pad2 call, but a single fixture with only one single-digit field
+  // wouldn't catch a copy-paste bug that padded the wrong field).
+  test("zero-pads month, day, hour, and minute independently", () => {
+    expect(inboxAutoFilename(new Date(2026, 0, 1, 0, 0))).toBe("20260101-0000.md");
+  });
+
+  test("does not zero-pad already-two-digit fields", () => {
+    expect(inboxAutoFilename(new Date(2026, 11, 31, 23, 59))).toBe("20261231-2359.md");
+  });
+});
+
+describe("resolveInboxFilename", () => {
+  const now = new Date(2026, 6, 16, 9, 5); // fixed instant, see inboxAutoFilename tests above
+
+  // Blank input (the placeholder's promise: "leave it empty and I'll name
+  // it for you") falls back to the auto-generated name.
+  test("blank input falls back to the auto-generated name", () => {
+    expect(resolveInboxFilename("", now)).toEqual({ name: "20260716-0905.md" });
+  });
+
+  // Whitespace-only input is "effectively blank", same fallback — a user
+  // who taps the field and hits space by accident shouldn't get a literal
+  // " .md" filename.
+  test("whitespace-only input falls back to the auto-generated name", () => {
+    expect(resolveInboxFilename("   ", now)).toEqual({ name: "20260716-0905.md" });
+  });
+
+  // DR-0019 §2.3: subdirectory carving is out of Phase W2's scope, so any
+  // "/" in the (trimmed) input is rejected client-side rather than round-
+  // tripping to the daemon only to get path_not_writable back.
+  test("rejects a name containing a slash", () => {
+    const result = resolveInboxFilename("sub/dir/note.md", now);
+    expect("error" in result).toBe(true);
+  });
+
+  test("leading/trailing whitespace around a slash-bearing name is still rejected", () => {
+    const result = resolveInboxFilename("  a/b  ", now);
+    expect("error" in result).toBe(true);
+  });
+
+  // .md extension is appended when absent...
+  test("appends .md when the name has no extension", () => {
+    expect(resolveInboxFilename("shopping-list", now)).toEqual({ name: "shopping-list.md" });
+  });
+
+  // ...but not duplicated when the user already typed it, case-insensitively
+  // (a user typing "NOTE.MD" on a phone keyboard shouldn't get "NOTE.MD.md").
+  test("does not duplicate an existing .md extension", () => {
+    expect(resolveInboxFilename("note.md", now)).toEqual({ name: "note.md" });
+  });
+
+  test("does not duplicate an existing .MD extension (case-insensitive)", () => {
+    expect(resolveInboxFilename("NOTE.MD", now)).toEqual({ name: "NOTE.MD" });
+  });
+
+  // Whitespace around an otherwise-valid name is trimmed before the
+  // extension check/append, same as the blank-input case above.
+  test("trims surrounding whitespace before resolving", () => {
+    expect(resolveInboxFilename("  todo  ", now)).toEqual({ name: "todo.md" });
+  });
+
+  // A dot elsewhere in the name (a non-.md extension, or a dotted word) is
+  // left alone apart from the .md suffix appended on top — resolveInboxFilename
+  // only special-cases the literal .md suffix, not "has some extension".
+  test("appends .md alongside an unrelated extension rather than replacing it", () => {
+    expect(resolveInboxFilename("archive.tar.gz", now)).toEqual({ name: "archive.tar.gz.md" });
   });
 });

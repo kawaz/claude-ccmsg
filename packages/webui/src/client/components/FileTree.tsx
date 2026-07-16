@@ -15,9 +15,11 @@ import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
   favoritesStorageKey,
+  inboxAutoFilename,
   ownWorkspaceSegment,
   parseFavorites,
   repoRootLabel,
+  resolveInboxFilename,
   sortFavorites,
   toggleFavorite,
   workspaceRootEntries,
@@ -362,6 +364,96 @@ function favoriteEntryKind(
   return { kind: "file", symlink: false };
 }
 
+/** Inline "+ メモ" form (DR-0019 Phase W2): filename input (blank = auto
+ * `YYYYMMDD-HHmm.md`, see utils.ts's inboxAutoFilename) + a multiline body,
+ * modeled on Composer.tsx's own textarea+submit-button shape but kept as its
+ * own component rather than reusing Composer directly — Composer's state
+ * (attachments, mention chips, room-post semantics) has nothing to do with a
+ * one-shot file write, and stripping all of that back out would cost more
+ * than the ~40 lines this form needs on its own. On success it calls
+ * `onCreated` (FileTree invalidates the docs/inbox tree cache and closes the
+ * form); on failure (`file_exists` from a name collision, `path_not_writable`
+ * if some future daemon rejects it, or a dropped socket) the daemon's/
+ * errorMessage's message renders inline and the form stays open with
+ * whatever the user typed, mirroring Composer's own "failed send leaves the
+ * draft in place" posture. */
+function InboxNewForm({
+  sid,
+  onClose,
+  onCreated,
+}: {
+  sid: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const { ws } = useApp();
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  // Frozen at mount (not recomputed every render) so the placeholder text
+  // doesn't drift out from under the user while they're typing elsewhere on
+  // the page and an unrelated re-render happens to land mid-minute.
+  const [autoName] = useState(() => inboxAutoFilename(new Date()));
+
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
+
+  async function submit(e: SubmitEvent): Promise<void> {
+    e.preventDefault();
+    if (creating) return;
+    const resolved = resolveInboxFilename(name, new Date());
+    if ("error" in resolved) {
+      setError(resolved.error);
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await ws.fsWrite(sid, `docs/inbox/${resolved.name}`, content);
+      if (res.ok) onCreated();
+      else setError(res.error.msg);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <form class="tree-inbox-form" onSubmit={(e) => void submit(e)}>
+      <input
+        ref={nameRef}
+        type="text"
+        class="tree-inbox-form-name"
+        placeholder={autoName}
+        value={name}
+        onInput={(e) => setName((e.target as HTMLInputElement).value)}
+        disabled={creating}
+      />
+      <textarea
+        class="tree-inbox-form-body"
+        placeholder="メモ本文"
+        rows={4}
+        value={content}
+        onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+        disabled={creating}
+      />
+      {error ? <p class="tree-inbox-form-error">{error}</p> : null}
+      <div class="tree-inbox-form-actions">
+        <button type="button" onClick={onClose} disabled={creating}>
+          キャンセル
+        </button>
+        <button type="submit" disabled={creating}>
+          {creating ? "作成中…" : "作成"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function FileTree({
   sid,
   tree,
@@ -406,6 +498,27 @@ export function FileTree({
     ? { favorites: new Set(favorites), onToggle: onToggleFavorite }
     : null;
   const sortedFavorites = sortFavorites(favorites);
+
+  // docs/inbox メモ作成 (DR-0019 Phase W2): open/close state for the "+ メモ"
+  // form lives here (not the reducer, DR-0005 §1) since it's pure UI/effect
+  // state scoped to one tree render, same posture as favorites above. Reset
+  // on session switch so a half-typed draft for session A never silently
+  // reappears (bound to a stale sid closure) after the user tabs to B and
+  // back — better to lose the draft than write it to the wrong session.
+  const [inboxFormOpen, setInboxFormOpen] = useState(false);
+  useEffect(() => {
+    setInboxFormOpen(false);
+  }, [sid]);
+
+  function onInboxCreated(): void {
+    setInboxFormOpen(false);
+    // Invalidate the cached docs/inbox listing so the newly-created file
+    // shows up: loadDir re-fetches and dispatches fs/dir-loaded regardless of
+    // whether docs/inbox is currently expanded — DirNode just doesn't render
+    // the fresh entries until the user (re-)expands it, same as any other
+    // first load (see loadDir's own doc comment above).
+    loadDir(store, ws, sid, "docs/inbox");
+  }
 
   // Root listing loads eagerly on mount / session switch — everything below
   // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
@@ -454,10 +567,36 @@ export function FileTree({
 
   return (
     <div class="file-tree">
-      {rootLabel ? (
-        <p class="tree-root-label" title={peer?.repo_root}>
-          {rootLabel}
-        </p>
+      {/* docs/inbox メモ作成 (DR-0019 Phase W2): 配置判断 — 「+ メモ」ボタンは
+       * tree-root-label と同じ flex 行に同居させた (別途 Files ヘッダ枠を
+       * 新設しない)。理由: repo_root セッションは既存の rootLabel 行にボタンが
+       * 並ぶだけで済み、rootLabel が無いセッション (repo_root 未設定) でも
+       * spacer で位置を揃えれば同じ行にボタン単体が出る — どちらの場合も
+       * ツリー最上部に収まり、条件分岐だけの別行を新設するより単純。
+       * 未検証事項: 実 webui (dev server) での見た目確認はこの実装時点では
+       * 行っていない — 次回 webui 起動時に配置が窮屈でないか確認が要る。 */}
+      <div class="tree-header">
+        {rootLabel ? (
+          <p class="tree-root-label" title={peer?.repo_root}>
+            {rootLabel}
+          </p>
+        ) : (
+          <span class="tree-header-spacer" />
+        )}
+        <button
+          type="button"
+          class="tree-inbox-new-btn"
+          onClick={() => setInboxFormOpen((open) => !open)}
+        >
+          {inboxFormOpen ? "キャンセル" : "+ メモ"}
+        </button>
+      </div>
+      {inboxFormOpen ? (
+        <InboxNewForm
+          sid={sid}
+          onClose={() => setInboxFormOpen(false)}
+          onCreated={onInboxCreated}
+        />
       ) : null}
       {/* Favorites section (U-fav): only shown once ≥1 path is favorited —
        * an empty section would just be two separator lines with nothing
