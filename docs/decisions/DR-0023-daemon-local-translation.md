@@ -36,8 +36,13 @@ Safari 等の非対応ブラウザではタブ自体を出していない。kawa
 - **daemon**: 新 op `translate` (text[] → text[])。helper を子プロセスで呼ぶ (常駐 or
   都度起動は latency 実測で決定)。macOS 以外 / helper 不在ではエラー (webui はタブ非表示に
   フォールバック)
-- **webui**: `hasTranslatorApi()` が false のとき daemon translate op が利用可能なら
-  タブを出す (browser API 優先、daemon はフォールバック — Chrome では従来通りゼロ RTT)
+- **webui**: 排他フォールバックではなく**翻訳比較タブ** (kawaz mid=72)。thinking の
+  タブ列を `original / ja(host) / ja(browser)` とし、利用可能な翻訳経路を全部並べる:
+  - ja(host) = daemon translate op (macOS Translation.framework、辞書的で信頼度高め)
+  - ja(browser) = Chrome built-in Translator API (AI 翻訳、勝手意訳の実績あり —
+    kawaz: 「禿げてるね → そんな、かっこいいですよ！」級のクソ翻訳が起きる)
+  - 経路が 1 つしか無い環境 (Safari = host のみ / daemon 非対応 OS + Chrome =
+    browser のみ) はその 1 タブだけ出す。両方無ければ従来通り翻訳タブ非表示
 
 ### 3.2 判断根拠
 
