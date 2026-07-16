@@ -2432,17 +2432,18 @@ button.session-tab {
   4% {
     transform: scaleX(1.18) scaleY(0.78);
   }
-  /* 跳ね上がり: 縦に伸びる */
+  /* 跳ね上がり: 縦に伸びる (kawaz r26 mid=35: 低すぎ → fab 自身の高さ
+   * 3.2rem の半分強まで上げた) */
   9% {
-    transform: translateY(-0.7rem) scaleX(0.88) scaleY(1.16);
+    transform: translateY(-1.8rem) scaleX(0.88) scaleY(1.16);
   }
   /* 着地: べちゃっと潰れる */
   14% {
     transform: scaleX(1.22) scaleY(0.74);
   }
-  /* 2 度目の小さい跳ね */
+  /* 2 度目の小さい跳ね (1 段目の 1/3 程度) */
   19% {
-    transform: translateY(-0.25rem) scaleX(0.94) scaleY(1.08);
+    transform: translateY(-0.6rem) scaleX(0.94) scaleY(1.08);
   }
   /* 小さく着地 → 余韻 */
   23% {
