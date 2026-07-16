@@ -1,6 +1,6 @@
 # DR-0019: fs_write (webui Files からの新規ファイル作成、docs/inbox 先行)
 
-Status: Proposed
+Status: Accepted (IB-Q3=a、kawaz 2026-07-16)
 Date: 2026-07-16
 Sponsor: kawaz r26 mid=1 + 続く transcript 議論
 
