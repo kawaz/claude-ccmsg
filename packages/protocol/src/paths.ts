@@ -24,6 +24,10 @@ export interface Paths {
    * survive daemon restarts — unlike CCMSG_HTTP_ALLOW_ORIGIN, which vanishes
    * whenever a client respawns the daemon without that env set. */
   allowedOrigins: string;
+  /** DR-0018 session launcher and future daemon user configuration. Lives in
+   * data/ beside allowedOrigins because user configuration must survive daemon
+   * restarts; state/ remains disposable runtime state. */
+  config: string;
 }
 
 function home(): string {
@@ -54,5 +58,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     pid: path.join(stateDir, "daemon.pid"),
     log: path.join(stateDir, "daemon.log"),
     allowedOrigins: path.join(dataDir, "allowed-origins.json"),
+    config: path.join(dataDir, "config.json"),
   };
 }

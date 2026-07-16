@@ -45,6 +45,23 @@ export const DEFAULT_HTTP_ALLOW = "127.0.0.0/8,::1";
  * silently showing a partial file. */
 export const FS_READ_MAX_BYTES = 512 * 1024;
 
+/** DR-0018 §3.1 defaults used when session launcher config omits or corrupts
+ * the corresponding positive numeric fields. */
+export const DEFAULT_DIR_TREE_DEPTH = 2;
+export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
+
+/** Parsed normal form of `<dataDir>/config.json`'s `session_launcher` key
+ * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
+ * built-in choice so launch never falls through to an implicit `sh -c`. */
+export interface SessionLauncherConfig {
+  root_dirs: string[];
+  default_prompt: string;
+  shell: "bash" | "zsh";
+  command: string;
+  timeout_seconds: number;
+  dir_tree_depth: number;
+}
+
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.
  * 2 MB ≒ 数千行相当 (kawaz r15 mid=18、2026-07-14: 「初期表示分の tl が
@@ -417,6 +434,36 @@ export interface NotifyRequest {
   text: string;
 }
 
+/** Session-launcher cwd tree (DR-0018 §3.2, user role only). Requested roots
+ * may be configured roots or any descendants: descendant roots are required
+ * for LN-Q3 lazy expansion after the initial bounded fetch. */
+export interface DirTreeRequest {
+  op: "dir_tree";
+  roots: string[];
+  /** Absent uses config dir_tree_depth; lazy expansion sends 1. */
+  depth?: number;
+  /** Root-relative path substring; matching nodes and their ancestors survive. */
+  filter?: string;
+}
+
+/** One directory-only cwd-picker entry. `children` absent means the depth
+ * boundary was reached and the UI may lazily fetch this path. */
+export interface DirTreeEntry {
+  path: string;
+  is_dir: true;
+  children?: DirTreeEntry[];
+}
+
+/** Session launch request (DR-0018 §3.2, user role only). Phase 1 validates
+ * these opaque values and builds env/argv; command execution lands in Phase 2. */
+export interface SessionLaunchRequest {
+  op: "session_launch";
+  cwd: string;
+  model: string;
+  effort: string;
+  prompt: string;
+}
+
 /**
  * Workspace file access (DR-0008): read-only browsing of a connected
  * session's project files from the webui. The browsable universe is strictly
@@ -521,6 +568,8 @@ export type Request =
   | RoomsRequest
   | PeersRequest
   | NotifyRequest
+  | DirTreeRequest
+  | SessionLaunchRequest
   | FsListRequest
   | FsReadRequest
   | TranscriptReadRequest
@@ -639,6 +688,19 @@ export interface PeersResponse {
 export interface NotifyResponse {
   ok: true;
   delivered: number;
+}
+export interface DirTreeResponse {
+  ok: true;
+  entries: DirTreeEntry[];
+}
+/** Phase 1 returns the same stable shape with an explicit mock stderr; Phase 2
+ * fills process output and uses null exit_code for signal termination. */
+export interface SessionLaunchResponse {
+  ok: true;
+  stdout: string;
+  stderr: string;
+  exit_code: number | null;
+  timed_out: boolean;
 }
 /** One directory entry from fs_list. `type:"symlink"` is reported as-is for
  * links whose target stays inside the root (out-of-root links are listed but
@@ -774,6 +836,8 @@ export type Response =
   | RoomsResponse
   | PeersResponse
   | NotifyResponse
+  | DirTreeResponse
+  | SessionLaunchResponse
   | FsListResponse
   | FsReadResponse
   | TranscriptReadResponse
@@ -831,6 +895,9 @@ export const ErrorCode = {
   session_not_found: "session_not_found",
   path_forbidden: "path_forbidden",
   not_found: "not_found",
+  // Session launcher (DR-0018): no valid session_launcher configuration means
+  // both directory browsing and launch remain closed.
+  launcher_not_configured: "launcher_not_configured",
   // Broadcast room (DR-0013 §2.4): agent post to a broadcast room must include
   // "u1" in `to`. "u1 に届かない agent 発話" を broadcast の意味論で禁じるため。
   broadcast_agent_target_required: "broadcast_agent_target_required",

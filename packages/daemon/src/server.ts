@@ -25,7 +25,10 @@ import {
   type TitleEvent,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
+import { loadConfig, type DaemonConfig } from "./config.ts";
+import { dirTree } from "./dir-tree.ts";
 import { fsList, fsRead, validateRepoRoot } from "./fs-access.ts";
+import { validateSessionLaunch } from "./session-launch.ts";
 import {
   createTranscriptTailStore,
   stopAllTailWatches,
@@ -106,6 +109,8 @@ interface Listener {
 
 export interface Daemon {
   paths: Paths;
+  /** User configuration is parsed once at daemon startup (DR-0018 LN-Q4). */
+  config: DaemonConfig;
   version: string;
   startTime: number;
   rooms: Map<string, Room>;
@@ -708,6 +713,8 @@ const IDENTITY_OPS = new Set([
   "kick",
   "subscribe",
   "notify",
+  "dir_tree",
+  "session_launch",
   "leave",
   "invite",
   "fs_list",
@@ -1381,6 +1388,42 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "dir_tree": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'dir_tree' requires user role");
+        return;
+      }
+      const result = dirTree(daemon.config.session_launcher, req.roots, req.depth, req.filter);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "session_launch": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_launch' requires user role");
+        return;
+      }
+      // DR-0018 Phase 1 deliberately stops after validation/env/argv assembly.
+      // Process execution, timeout, signals, and output capture arrive in Phase 2.
+      const validation = validateSessionLaunch(daemon.config.session_launcher, req);
+      if (!validation.ok) {
+        sendErr(conn, validation.code, validation.msg);
+        return;
+      }
+      send(conn, {
+        ok: true,
+        stdout: "",
+        stderr: "session_launch: not implemented yet (Phase 2)",
+        exit_code: null,
+        timed_out: false,
+      });
+      return;
+    }
+
     case "fs_list": {
       const result = fsList(daemon.sessions, req.sid, req.path);
       if (!result.ok) {
@@ -1682,8 +1725,10 @@ export function startDaemon(opts: StartOptions = {}): void {
     .filter((s) => s !== "");
 
   const rooms = scanRooms(paths.roomsDir, log);
+  const config = loadConfig(paths.config, log);
   const daemon: Daemon = {
     paths,
+    config,
     version: VERSION,
     startTime: Date.now(),
     rooms,

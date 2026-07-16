@@ -13,6 +13,9 @@ describe("resolvePaths (DR-0002 §1)", () => {
     expect(p.pid).toBe("/s/daemon.pid");
     expect(p.log).toBe("/s/daemon.log");
     expect(p.roomsDir).toBe("/d/rooms");
+    // User-authored daemon configuration must survive restarts beside the
+    // existing persisted allowed-origins configuration, not under state/.
+    expect(p.config).toBe("/d/config.json");
   });
 
   // Without explicit overrides, XDG base dirs are honored, appending the ccmsg namespace.
