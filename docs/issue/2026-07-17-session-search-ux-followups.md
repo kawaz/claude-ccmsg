@@ -31,6 +31,9 @@ Session Search 周りの UX 改善 3 点。
 3. pin ボタンを SessionView の Files/Timeline/Rooms/Status タブ列ヘッダー
    右に常設し、検索経由・ccmsg アクティブ状態と無関係に任意セッションを
    pin/unpin できるようにする (検索結果クリック時の自動 pin は廃止)
+4. 検索結果のマッチサマリー内テキストにも検索ハイライト (ワード別色) を
+   適用する。DR-0022 の `splitTextForHighlight` (in-view-search.ts の
+   pure 関数) を SessionSearchPanel のサマリー描画で再利用する想定
 
 ## 背景
 
@@ -54,6 +57,8 @@ sid なので、UI 上の文脈 (検索経由か通常ナビゲーションか) 
 - [ ] (3) SessionView の Files/Timeline/Rooms/Status タブ列ヘッダー右に
       pin/unpin ボタンが常設され、検索結果クリック時の自動 pin が廃止
       されている
+- [ ] (4) 検索結果のマッチサマリー内テキストにも検索ワードのハイライト
+      (ワード別色) が適用されている
 
 ## TODO
 
