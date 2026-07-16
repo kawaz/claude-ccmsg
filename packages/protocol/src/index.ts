@@ -260,13 +260,54 @@ export interface TranscriptStreamEvent {
   end: number;
   size: number;
 }
+
+/** DR-0020 Phase 1: folded current status of a session's transcript. */
+export interface SessionTodo {
+  id: string;
+  subject: string;
+  /** "pending" | "in_progress" | "completed" — open set (upstream may add values). */
+  status: string;
+  owner?: string;
+}
+export interface SessionWorkflowStatus {
+  /** task-notification correlation id (Workflow result taskId). */
+  task_id: string;
+  name: string;
+  summary?: string;
+  /** "running" | terminal task-notification values — open set. */
+  status: string;
+  started_at: string;
+  ended_at?: string;
+}
+export interface SessionBackgroundStatus {
+  /** Monitor/Bash taskId or Agent agentId. */
+  task_id: string;
+  kind: "monitor" | "bash" | "agent";
+  description: string;
+  /** "running" | terminal task-notification values — open set. */
+  status: string;
+  started_at: string;
+  ended_at?: string;
+}
+export interface SessionStatusSnapshot {
+  todos: SessionTodo[];
+  workflows: SessionWorkflowStatus[];
+  background: SessionBackgroundStatus[];
+}
+/** Full recomputed snapshot pushed after a status-changing transcript event. */
+export interface SessionStatusStreamEvent extends SessionStatusSnapshot {
+  ev: "session_status";
+  sid: string;
+}
+
 export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
   | RestartingStreamEvent
   | AgentsStreamEvent
   | PeersStreamEvent
-  | TranscriptStreamEvent;
+  | TranscriptStreamEvent
+  | SessionStatusStreamEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -542,6 +583,19 @@ export interface TranscriptUnsubscribeRequest {
   sid: string;
 }
 
+export interface SessionStatusRequest {
+  op: "session_status";
+  sid: string;
+}
+export interface SessionStatusSubscribeRequest {
+  op: "session_status_subscribe";
+  sid: string;
+}
+export interface SessionStatusUnsubscribeRequest {
+  op: "session_status_unsubscribe";
+  sid: string;
+}
+
 export interface PingRequest {
   op: "ping";
 }
@@ -592,6 +646,9 @@ export type Request =
   | AgentsRequest
   | TranscriptSubscribeRequest
   | TranscriptUnsubscribeRequest
+  | SessionStatusRequest
+  | SessionStatusSubscribeRequest
+  | SessionStatusUnsubscribeRequest
   | PingRequest
   | ShutdownRequest
   | LeaveRequest
@@ -807,6 +864,18 @@ export interface TranscriptUnsubscribeResponse {
   ok: true;
   sid: string;
 }
+export interface SessionStatusResponse extends SessionStatusSnapshot {
+  ok: true;
+  sid: string;
+}
+export interface SessionStatusSubscribeResponse extends SessionStatusSnapshot {
+  ok: true;
+  sid: string;
+}
+export interface SessionStatusUnsubscribeResponse {
+  ok: true;
+  sid: string;
+}
 export interface PingResponse {
   ok: true;
   pong: true;
@@ -867,6 +936,9 @@ export type Response =
   | AgentsResponse
   | TranscriptSubscribeResponse
   | TranscriptUnsubscribeResponse
+  | SessionStatusResponse
+  | SessionStatusSubscribeResponse
+  | SessionStatusUnsubscribeResponse
   | PingResponse
   | ShutdownResponse
   | LeaveResponse

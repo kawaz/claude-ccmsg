@@ -30,6 +30,15 @@ import { dirTree } from "./dir-tree.ts";
 import { fsList, fsRead, fsWrite, validateRepoRoot } from "./fs-access.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import {
+  createSessionStatusStore,
+  getSessionStatus,
+  sessionStatusUnsubscribeAll,
+  stopAllSessionStatus,
+  subscribeSessionStatus,
+  unsubscribeSessionStatus,
+  type SessionStatusStore,
+} from "./session-status.ts";
+import {
   createTranscriptTailStore,
   stopAllTailWatches,
   transcriptRead,
@@ -131,6 +140,8 @@ export interface Daemon {
   agentsPoller: AgentsPoller;
   /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
   transcriptTail: TranscriptTailStore;
+  /** folded transcript status subscriptions per sid (DR-0020 Phase 1). */
+  sessionStatus: SessionStatusStore;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
    * peers-live-update-protocol) — lets maybeBroadcastPeers skip a push when a
    * hello re-send (or any other registerSession/removeConn call) didn't actually
@@ -337,6 +348,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
   maybeStopAgentsPoller(daemon.agentsPoller, daemon.subscribers);
+  sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
   transcriptUnsubscribeAll(daemon.transcriptTail, conn);
   const id = conn.identity;
   if (id && id.role === "session") {
@@ -725,6 +737,9 @@ const IDENTITY_OPS = new Set([
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
+  "session_status",
+  "session_status_subscribe",
+  "session_status_unsubscribe",
 ]);
 
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
@@ -1540,6 +1555,51 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "session_status": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_status' requires user role");
+        return;
+      }
+      const result = getSessionStatus(daemon.sessionStatus, daemon.sessions, req.sid);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, sid: req.sid, ...result.data });
+      return;
+    }
+
+    case "session_status_subscribe": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_status_subscribe' requires user role");
+        return;
+      }
+      const result = subscribeSessionStatus(
+        daemon.sessionStatus,
+        daemon.transcriptTail,
+        daemon.sessions,
+        req.sid,
+        conn,
+        daemon.log,
+      );
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, sid: req.sid, ...result.data });
+      return;
+    }
+
+    case "session_status_unsubscribe": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_status_unsubscribe' requires user role");
+        return;
+      }
+      unsubscribeSessionStatus(daemon.sessionStatus, daemon.transcriptTail, req.sid, conn);
+      send(conn, { ok: true, sid: req.sid });
+      return;
+    }
+
     case "leave": {
       const room = daemon.rooms.get(req.room);
       if (!room) {
@@ -1653,6 +1713,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
   stopAgentsPoller(daemon.agentsPoller);
+  stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllTailWatches(daemon.transcriptTail);
   try {
     daemon.server?.stop();
@@ -1784,6 +1845,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
     transcriptTail: createTranscriptTailStore(),
+    sessionStatus: createSessionStatusStore(),
     peersSnapshot: "",
   };
 

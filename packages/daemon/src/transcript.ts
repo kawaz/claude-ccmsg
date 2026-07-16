@@ -51,7 +51,7 @@ export function validateTranscriptPath(sid: string, transcriptPath: unknown): st
   return transcriptPath;
 }
 
-function resolveTranscript(
+export function resolveTranscript(
   sessions: SessionLookup,
   sid: string,
 ): { ok: true; file: string } | { ok: false; code: ErrorCode; msg: string } {
@@ -306,6 +306,17 @@ const TAIL_POLL_FALLBACK_MS = 1000;
  */
 const TAIL_BACKUP_POLL_MS = 2000;
 
+/** Internal line-listener payload: same shape checkNow broadcasts to wire
+ *  subscribers. `start < previous end` never happens for growth; a reset
+ *  (truncate or file replacement) arrives as lines=[] with start===end===size,
+ *  letting a folding consumer detect it and rescan (see session-status.ts). */
+export type TranscriptLineListener = (payload: {
+  lines: string[];
+  start: number;
+  end: number;
+  size: number;
+}) => void;
+
 interface Watch {
   sid: string;
   file: string;
@@ -331,6 +342,7 @@ interface Watch {
    *  reuses the inode AND lands in the same birthtime tick. */
   sawMissing: boolean;
   subscribers: Set<TailConn>;
+  lineListeners: Set<TranscriptLineListener>;
   fsWatcher: fs.FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
 }
@@ -355,6 +367,7 @@ function broadcast(
   payload: { lines: string[]; start: number; end: number; size: number },
 ): void {
   for (const sub of watch.subscribers) sendTail(sub, { sid: watch.sid, ...payload });
+  for (const listener of watch.lineListeners) listener(payload);
 }
 
 /**
@@ -536,23 +549,12 @@ function teardownWatch(watch: Watch): void {
   stopPolling(watch);
 }
 
-/**
- * Subscribe `conn` to `sid`'s transcript tail. First subscriber for a sid
- * creates the Watch (anchored at the file's current size — only bytes
- * appended *after* this call are ever tailed, matching transcript_read's own
- * "viewer starts from the tail" model); later subscribers for the same sid
- * join the existing Watch and its already-current `lastEnd`. If the sid's
- * accepted transcript_path changed since an existing Watch was created (a
- * later hello re-validated a different file, DR-0009 addendum), the stale
- * Watch is torn down and replaced.
- */
-export function transcriptSubscribe(
+function getOrCreateWatch(
   store: TranscriptTailStore,
   sessions: SessionLookup,
   sid: string,
-  conn: TailConn,
   log: TailLog,
-): TranscriptResult<Omit<TranscriptSubscribeResponse, "ok">> {
+): TranscriptResult<Watch> {
   const resolved = resolveTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
 
@@ -577,14 +579,72 @@ export function transcriptSubscribe(
       birthtimeMs: stat.birthtimeMs,
       sawMissing: false,
       subscribers: new Set(),
+      lineListeners: new Set(),
       fsWatcher: null,
       pollTimer: null,
     };
     store.watches.set(sid, watch);
     startWatching(watch, log);
   }
+  return { ok: true, data: watch };
+}
+
+function maybeTeardownWatch(store: TranscriptTailStore, watch: Watch): void {
+  if (watch.subscribers.size !== 0 || watch.lineListeners.size !== 0) return;
+  teardownWatch(watch);
+  store.watches.delete(watch.sid);
+}
+
+/**
+ * Subscribe `conn` to `sid`'s transcript tail. First subscriber for a sid
+ * creates the Watch (anchored at the file's current size — only bytes
+ * appended *after* this call are ever tailed, matching transcript_read's own
+ * "viewer starts from the tail" model); later subscribers for the same sid
+ * join the existing Watch and its already-current `lastEnd`. If the sid's
+ * accepted transcript_path changed since an existing Watch was created (a
+ * later hello re-validated a different file, DR-0009 addendum), the stale
+ * Watch is torn down and replaced.
+ */
+export function transcriptSubscribe(
+  store: TranscriptTailStore,
+  sessions: SessionLookup,
+  sid: string,
+  conn: TailConn,
+  log: TailLog,
+): TranscriptResult<Omit<TranscriptSubscribeResponse, "ok">> {
+  const result = getOrCreateWatch(store, sessions, sid, log);
+  if (!result.ok) return result;
+  const watch = result.data;
   watch.subscribers.add(conn);
   return { ok: true, data: { sid, size: watch.lastEnd } };
+}
+
+/** Internal consumers can share the transcript Watch without opening a second
+ * fs.watch/poll loop. The returned size is the exact scan boundary: bytes after
+ * it are delivered through `listener`, while callers synchronously scan [0,size). */
+export function subscribeTranscriptLines(
+  store: TranscriptTailStore,
+  sessions: SessionLookup,
+  sid: string,
+  listener: TranscriptLineListener,
+  log: TailLog,
+): TranscriptResult<{ sid: string; file: string; size: number }> {
+  const result = getOrCreateWatch(store, sessions, sid, log);
+  if (!result.ok) return result;
+  const watch = result.data;
+  watch.lineListeners.add(listener);
+  return { ok: true, data: { sid, file: watch.file, size: watch.lastEnd } };
+}
+
+export function unsubscribeTranscriptLines(
+  store: TranscriptTailStore,
+  sid: string,
+  listener: TranscriptLineListener,
+): void {
+  const watch = store.watches.get(sid);
+  if (!watch) return;
+  watch.lineListeners.delete(listener);
+  maybeTeardownWatch(store, watch);
 }
 
 /** Unsubscribe `conn` from `sid`'s tail; tears the Watch down once its last
@@ -598,10 +658,7 @@ export function transcriptUnsubscribe(
   const watch = store.watches.get(sid);
   if (watch) {
     watch.subscribers.delete(conn);
-    if (watch.subscribers.size === 0) {
-      teardownWatch(watch);
-      store.watches.delete(sid);
-    }
+    maybeTeardownWatch(store, watch);
   }
   return { ok: true, data: { sid } };
 }
@@ -610,11 +667,8 @@ export function transcriptUnsubscribe(
  *  disconnected client's dead handle doesn't linger in a Watch's subscriber
  *  set forever. */
 export function transcriptUnsubscribeAll(store: TranscriptTailStore, conn: TailConn): void {
-  for (const [sid, watch] of store.watches) {
-    if (watch.subscribers.delete(conn) && watch.subscribers.size === 0) {
-      teardownWatch(watch);
-      store.watches.delete(sid);
-    }
+  for (const watch of store.watches.values()) {
+    if (watch.subscribers.delete(conn)) maybeTeardownWatch(store, watch);
   }
 }
 
