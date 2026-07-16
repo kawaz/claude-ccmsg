@@ -10,6 +10,7 @@ import {
   badgeLabel,
   clampPaneRatio,
   errorMessage,
+  favoritesStorageKey,
   formatDuration,
   groupSessionsBySection,
   indexAgentsBySid,
@@ -21,6 +22,7 @@ import {
   offlineAgentRows,
   ownWorkspaceSegment,
   paneRatioFromPointer,
+  parseFavorites,
   peerSortButtonLabel,
   repoRootLabel,
   sessionBadges,
@@ -30,9 +32,11 @@ import {
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
+  sortFavorites,
   sortPeers,
   splitRoomsByArchived,
   splitRoomsByKind,
+  toggleFavorite,
   toSessionRow,
   workspaceRootEntries,
   type PeerSortKey,
@@ -1035,5 +1039,102 @@ describe("toSessionRow: transcript_path passthrough (U3)", () => {
     const idx = indexAgentsBySid([]);
     const row = toSessionRow(peer({ sid: "s1", transcript_path: undefined }), idx);
     expect(row.transcript_path).toBeUndefined();
+  });
+});
+
+describe("favoritesStorageKey", () => {
+  // Guarantees favorites never leak across two different project roots
+  // (or two unrelated cwds when neither has a repo_root) sharing the same
+  // browser's localStorage — each root gets its own namespaced key.
+  test("keys are namespaced per root, distinct roots never collide", () => {
+    const a = favoritesStorageKey("/Users/kawaz/repos/proj-a");
+    const b = favoritesStorageKey("/Users/kawaz/repos/proj-b");
+    expect(a).not.toBe(b);
+    expect(a).toContain("proj-a");
+    expect(b).toContain("proj-b");
+  });
+
+  test("the same root always resolves to the same key", () => {
+    const root = "/Users/kawaz/repos/proj-a";
+    expect(favoritesStorageKey(root)).toBe(favoritesStorageKey(root));
+  });
+});
+
+describe("parseFavorites", () => {
+  // Absent key (never favorited anything yet) is the common case, not an
+  // error — resolves to an empty list, not a thrown exception.
+  test("null (key absent) resolves to an empty list", () => {
+    expect(parseFavorites(null)).toEqual([]);
+  });
+
+  test("valid JSON array of strings round-trips as-is", () => {
+    expect(parseFavorites('["docs/inbox","docs/QUESTIONS.md"]')).toEqual([
+      "docs/inbox",
+      "docs/QUESTIONS.md",
+    ]);
+  });
+
+  // Garbage matrix: non-JSON text, JSON that parses but isn't an array, and
+  // an array whose elements aren't all strings — none of these may throw or
+  // propagate a malformed value into the rendered tree.
+  test("non-JSON garbage falls back to an empty list", () => {
+    expect(parseFavorites("not json{{{")).toEqual([]);
+  });
+
+  test("valid JSON that isn't an array falls back to an empty list", () => {
+    expect(parseFavorites('{"docs/inbox":true}')).toEqual([]);
+    expect(parseFavorites("42")).toEqual([]);
+    expect(parseFavorites('"docs/inbox"')).toEqual([]);
+  });
+
+  test("non-string array elements are dropped individually, not fatal to the whole array", () => {
+    expect(parseFavorites('["docs/inbox",42,null,"docs/QUESTIONS.md"]')).toEqual([
+      "docs/inbox",
+      "docs/QUESTIONS.md",
+    ]);
+  });
+});
+
+describe("toggleFavorite", () => {
+  // Not-yet-favorited path gets appended.
+  test("adds an unregistered path", () => {
+    expect(toggleFavorite(["docs/inbox"], "docs/QUESTIONS.md")).toEqual([
+      "docs/inbox",
+      "docs/QUESTIONS.md",
+    ]);
+  });
+
+  // Already-favorited path gets removed (toggle off).
+  test("removes an already-registered path", () => {
+    expect(toggleFavorite(["docs/inbox", "docs/QUESTIONS.md"], "docs/inbox")).toEqual([
+      "docs/QUESTIONS.md",
+    ]);
+  });
+
+  test("never mutates the input array", () => {
+    const favorites = ["docs/inbox"];
+    toggleFavorite(favorites, "docs/QUESTIONS.md");
+    expect(favorites).toEqual(["docs/inbox"]);
+  });
+});
+
+describe("sortFavorites", () => {
+  // Display order is alphabetical over the full relative path, not
+  // registration order — a favorite added last can still sort first.
+  // Lowercase-only fixtures to keep the assertion independent of any
+  // locale's case-collation rules (localeCompare's case ordering isn't
+  // guaranteed ASCII-simple across environments).
+  test("orders alphabetically regardless of registration order", () => {
+    expect(sortFavorites(["docs/questions.md", "docs/inbox", "app.ts"])).toEqual([
+      "app.ts",
+      "docs/inbox",
+      "docs/questions.md",
+    ]);
+  });
+
+  test("never mutates the input array", () => {
+    const favorites = ["b", "a"];
+    sortFavorites(favorites);
+    expect(favorites).toEqual(["b", "a"]);
   });
 });

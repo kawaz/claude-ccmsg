@@ -1299,6 +1299,58 @@ button.session-tab {
   color: var(--danger);
 }
 
+/* U-fav: wraps a DirNode/FileNode's own row button/link + its ★ toggle as
+ * flex siblings (see FileTree.tsx's doc comment on why they can't nest —
+ * a <button> inside a <button>/<a> is invalid HTML). .tree-row keeps its
+ * existing block/ellipsis styling above, just now sized by flex instead of
+ * width:100% so the toggle has room beside it. */
+.tree-row-line {
+  display: flex;
+  align-items: center;
+}
+
+.tree-row-line .tree-row {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+/* Glyph stays small (kawaz: "視覚は小さく") but the clickable box is padded
+ * out to a ~32px touch target so it's reliably tappable on mobile. */
+.tree-fav-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  min-width: 32px;
+  height: 1.6rem;
+  min-height: 28px;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tree-fav-toggle:hover {
+  color: var(--accent);
+}
+
+/* U-fav: "== お気に入り ==" / "== プロジェクト ==" separators, same visual
+ * weight as .tree-root-label (DR-0008 addendum) since both are section
+ * headers within the same tree. */
+.tree-section-label {
+  margin: 0.25rem 0;
+  padding: 0.1rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+}
+
 .file-viewer {
   flex: 1 1 auto;
   min-width: 0;

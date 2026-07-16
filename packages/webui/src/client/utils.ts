@@ -628,3 +628,61 @@ export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
     rows: buckets.get(key)!, // non-null: key came from buckets.keys() just above
   }));
 }
+
+// --- FileTree favorites (U-fav) --- //
+
+/** localStorage key for a session's Files-tree favorites, namespaced per
+ * project root — FileTree.tsx passes `peer.repo_root ?? peer.cwd` as `root`
+ * so two different projects (or two unrelated cwds with no repo_root) never
+ * share a favorites list, while every session/tab open on the *same* project
+ * root does (kawaz: favorites should follow the project, not the individual
+ * session). Kept as a plain string-formatting function (not reading `peer`
+ * itself) so it stays testable without a PeerInfo fixture, mirroring
+ * `favoritesStorageKey`'s sibling helpers above (`ownWorkspaceSegment` etc.)
+ * that narrow their input to just the fields they need. */
+export function favoritesStorageKey(root: string): string {
+  return `ccmsg.favorites.${root}`;
+}
+
+/** Parses a raw `localStorage.getItem` result into a favorites path list,
+ * tolerating anything a prior schema version / manual edit / storage
+ * corruption could have left behind: absent key, non-JSON, JSON that isn't
+ * an array, or an array with non-string elements all resolve to the empty
+ * list rather than throwing — same "never let garbage persisted data crash
+ * the render" posture as `clampPaneRatio`'s NaN fallback above. Non-string
+ * elements are dropped individually (not treated as fatal for the whole
+ * array) so one bad entry can't erase every other legitimately-favorited
+ * path. */
+export function parseFavorites(raw: string | null): string[] {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((p): p is string => typeof p === "string");
+}
+
+/** Toggles one relative path in a favorites list — removes it if already
+ * present, appends it if absent. Pure (always returns a new array, never
+ * mutates `favorites`) so a caller can feed the result straight into
+ * `useState`'s setter / a localStorage-persisting effect without aliasing
+ * concerns. Append-not-prepend on add doesn't matter for *display* order
+ * (see `sortFavorites`, which re-sorts alphabetically) but keeps this
+ * function's own behavior simple to reason about independent of that. */
+export function toggleFavorite(favorites: string[], path: string): string[] {
+  return favorites.includes(path) ? favorites.filter((p) => p !== path) : [...favorites, path];
+}
+
+/** Display order for the Files-tree "お気に入り" section: alphabetical over
+ * the full relative path (`localeCompare`), not registration order — chosen
+ * over registration order so a newly-starred path lands in a predictable
+ * spot next to its neighbors instead of always at the list's end, matching
+ * kawaz's mock ("docs/QUESTIONS.md" sorting after "docs/inbox"). Never
+ * mutates its input (same posture as `sortPeers`/`sortEntries` elsewhere in
+ * this file). */
+export function sortFavorites(favorites: string[]): string[] {
+  return [...favorites].sort((a, b) => a.localeCompare(b));
+}
