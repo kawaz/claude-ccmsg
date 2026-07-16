@@ -5,6 +5,7 @@
 // what it's told (DR-0005 §1: effects in components, not the reducer).
 import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -169,7 +170,9 @@ function DirNode({
           // hint distinct from tree-selected (which tracks the open file).
           title={isOwnWs ? "このセッションのワークスペース" : undefined}
         >
-          <span class="tree-caret">{expanded ? "▾" : "▸"}</span> {name}
+          <span class="tree-caret">{expanded ? "▾" : "▸"}</span>
+          <FileTypeIcon kind={fileIconKind(name, "dir", expanded)} />
+          {name}
         </button>
         {fav ? (
           <FavoriteToggle path={path} favorited={fav.favorites.has(path)} onToggle={fav.onToggle} />
@@ -238,6 +241,11 @@ function FileNode({
           style={{ paddingLeft: `${depth}rem` }}
           href={fileHref(sid, path)}
         >
+          {/* Empty same-width spacer so file names line up with dir names,
+           * which have a real ▸/▾ caret occupying this space (kawaz ask:
+           * "caret 幅と整合させる"). */}
+          <span class="tree-caret" aria-hidden="true" />
+          <FileTypeIcon kind={fileIconKind(name, symlink ? "symlink" : "file")} />
           {name}
         </a>
         {fav ? (
@@ -467,7 +475,7 @@ export function FileTree({
        * `SessionTreeState` namespace for no real benefit. */}
       {sortedFavorites.length > 0 ? (
         <>
-          <p class="tree-section-label">== お気に入り ==</p>
+          <p class="tree-section-label">お気に入り</p>
           <ul class="tree-root tree-favorites">
             {sortedFavorites.map((path) => {
               const { kind, symlink } = favoriteEntryKind(path, tree);
@@ -497,7 +505,7 @@ export function FileTree({
               );
             })}
           </ul>
-          <p class="tree-section-label">== プロジェクト ==</p>
+          <p class="tree-section-label">プロジェクト</p>
         </>
       ) : null}
       {rootError ? (

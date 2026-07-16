@@ -1264,6 +1264,23 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
+/* Per-node type icon (dir/symlink/markdown/image/code/generic file, see
+ * FileIcon.tsx). Sits between the caret (or FileNode's caret-width spacer)
+ * and the name; inherits currentColor from the row so it follows the
+ * button/link's own color — no separate light/dark or selected-state rule
+ * needed here, that's already handled by .tree-row / .tree-file.tree-selected
+ * above. Slightly dimmed (opacity, not a fixed color) so it reads as
+ * secondary to the name text in both states. */
+.tree-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  margin-right: 0.3em;
+  vertical-align: -0.2em;
+  opacity: 0.8;
+}
+
 .tree-file.tree-selected {
   background: var(--accent);
   color: var(--accent-fg);
@@ -1339,16 +1356,30 @@ button.session-tab {
   color: var(--accent);
 }
 
-/* U-fav: "== お気に入り ==" / "== プロジェクト ==" separators, same visual
- * weight as .tree-root-label (DR-0008 addendum) since both are section
- * headers within the same tree. */
+/* U-fav: "お気に入り" / "プロジェクト" section separators. The label text is
+ * plain (kawaz r26 mid=5: the "== x ==" in the request was a UI sketch, not
+ * literal text) — the horizontal rule effect comes from ::before/::after
+ * flex lines instead. */
 .tree-section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin: 0.25rem 0;
   padding: 0.1rem 0.75rem;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--fg-muted);
+}
+.tree-section-label::before,
+.tree-section-label::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.tree-section-label::before {
+  max-width: 0.75rem;
+  flex: 0 0 auto;
 }
 
 .file-viewer {
