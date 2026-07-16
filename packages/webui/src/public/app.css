@@ -30,6 +30,19 @@
   --danger: #dc2626;
   --warn: #b45309;
 
+  /* In-view search (DR-0022) — one background/foreground pair per query
+   * word, cycled by SEARCH_PALETTE_SIZE (in-view-search.ts). Chosen for
+   * readability of black-ish text on top in light mode; the dark-mode block
+   * below swaps in higher-value/lower-saturation variants that stay legible
+   * against --bg without glowing. */
+  --search-color-1: #fde68a;
+  --search-color-2: #a7f3d0;
+  --search-color-3: #bfdbfe;
+  --search-color-4: #fbcfe8;
+  --search-color-5: #fed7aa;
+  --search-color-6: #ddd6fe;
+  --search-hl-fg: #1a1d23;
+
   /* UNIF-Q1=b (kawaz r15 mid=3、2026-07-14): floating "+" fab + popup panel
    * を SessionView 1on1 と RoomView 通常/broadcast の Composer で共通化。
    * 位置・寸法値をここで 1 箇所に集約し、両 fab class から参照する。
@@ -66,6 +79,17 @@
     --assistant-bubble-border: #6d55a3;
     --danger: #f87171;
     --warn: #fbbf24;
+
+    /* Dark-mode search highlight palette (DR-0022): muted/desaturated so
+     * <mark> spans don't glow against the dark background the way the
+     * light-mode pastels would. */
+    --search-color-1: #7a6420;
+    --search-color-2: #1f5c46;
+    --search-color-3: #274a75;
+    --search-color-4: #6b3352;
+    --search-color-5: #6b4420;
+    --search-color-6: #4a3d75;
+    --search-hl-fg: #e5e7eb;
   }
 }
 
@@ -2969,21 +2993,21 @@ button.session-tab {
 
 /* --- TL bottom mini panel (DR-0020 §2.1) --- */
 
-/* .timeline-view is itself the scroll container (overflow-y:auto, see its
- * doc comment above) — sticky bottom needs no extra wrapper. A <button>
- * (not <div>+onClick) for free keyboard/focus semantics on the "タップで
- * Status タブへ遷移" affordance. */
+/* kawaz r26 mid=68: sticky overlay は TL 表示エリアを狭めるので不可 —
+ * スクロールフロー内で .tl-lines の直後 = その padding-bottom 12rem の
+ * 余白帯の位置に負 margin で引き上げて「無駄空白の中」に置く。末尾まで
+ * スクロールしたときだけ見える。A <button> (not <div>+onClick) for free
+ * keyboard/focus semantics on the "タップで Status タブへ遷移" affordance. */
 .tl-status-mini {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
+  margin: -11rem 0.75rem 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.1rem;
-  width: 100%;
+  width: calc(100% - 1.5rem);
   padding: 0.35rem 0.75rem;
-  border-top: 1px solid var(--border);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
   background: var(--bg-alt);
   font: inherit;
   font-size: 0.75rem;
@@ -3056,4 +3080,142 @@ button.session-tab {
   font-size: 1.6rem;
   line-height: 1;
   cursor: pointer;
+}
+
+/* --- In-view search (DR-0022) — shared between Timeline's toolbar and
+ * FileViewer's header (SearchBar.tsx). Layout deliberately mirrors
+ * .tl-user-nav (flex row, gap, muted count) so the two toolbars read as one
+ * family rather than two competing styles. */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.search-bar-toggle {
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.search-bar-editor {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.search-bar-query {
+  font: inherit;
+  font-size: 0.8rem;
+  min-width: 10rem;
+  max-width: 16rem;
+  min-height: 2rem;
+  max-height: 6rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+.search-bar-toggles {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.search-bar-toggle-btn {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.search-bar-toggle-btn.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.search-bar-error {
+  font-size: 0.75rem;
+  color: var(--danger);
+  align-self: center;
+}
+
+.search-bar-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.search-bar-chip {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--chip-color, var(--bg-alt));
+  color: var(--search-hl-fg);
+  white-space: nowrap;
+}
+
+.search-bar-chip-error {
+  background: none;
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.search-bar-count {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.search-bar-chips button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.search-bar-chips button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Highlighted match span — render-time <mark> insertion (DR-0022 §3), one
+ * color per query word via --hl-color set inline per span. Clickable (see
+ * DR-0022 §2.2 "ハイライトをビューア上でクリック → index 更新") without
+ * looking like a native <button> — cursor is the only affordance, matching
+ * how the rest of this app treats inline interactive text. */
+.search-hl {
+  background: var(--hl-color, var(--search-color-1));
+  color: var(--search-hl-fg);
+  border-radius: 0.15rem;
+  cursor: pointer;
+  padding: 0 0.05rem;
+}
+
+/* Wrapper SegmentView adds only around a currently-matching in-view-search
+ * unit (Timeline.tsx, DR-0022 §3) so a DOM ref exists to scroll to —
+ * `display: contents` removes it from box/flex layout entirely so it can't
+ * perturb any of the various parents (.tl-line, .tl-bubble-body, ...) that
+ * render a segment list. */
+.tl-search-unit {
+  display: contents;
 }

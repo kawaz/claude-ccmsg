@@ -21,6 +21,7 @@ import {
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
+  segmentSearchText,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
@@ -31,6 +32,78 @@ import {
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
+import {
+  loopNextIndex,
+  loopPrevIndex,
+  parseSearchQuery,
+  splitTextForHighlight,
+  unitMatchesQuery,
+  type SearchWord,
+} from "../in-view-search.ts";
+import { SearchBar } from "./SearchBar.tsx";
+
+/**
+ * In-view search context threaded down to every SegmentView (DR-0022 §3 —
+ * "TL は text/thinking/tool セグメント"). Each Segment is one search "unit",
+ * keyed `${offset}-${segIndex}` (offset = its TurnLine's byte offset, stable
+ * across a "load older" prepend just like the 👤 nav's userTurnKeys —
+ * segIndex disambiguates multiple segments sharing one line). Bundled into a
+ * single object rather than five separate props so the FoldGroup/
+ * ItemsSubFold/LineView/*Bubble prop-drilling chain only grows by one prop
+ * per component.
+ */
+interface TLSearchCtx {
+  words: SearchWord[];
+  /** True if `key` is one of the units satisfying the query's AND filter —
+   * only matching units get highlighted/registered (DR-0022 §2.1: "全ワード
+   * にマッチがある行/セグメントの扱い" is the counted/nav'd unit; per-word
+   * highlighting within it is independent, see in-view-search.ts's doc
+   * comment on collectHighlightRanges). */
+  isMatch: (key: string) => boolean;
+  /** DOM ref registration for ↑/↓ scroll-to-match (mirrors registerUserTurnRef
+   * below) — only called for matching units. */
+  registerRef: (key: string, el: HTMLElement | null) => void;
+  /** Clicking a highlight sets the nav index to this unit's position without
+   * scrolling (DR-0022 §2.2). */
+  onUnitClick: (key: string) => void;
+}
+
+/** Renders `text` as plain (non-markdown) content, splitting it into
+ * highlighted pieces when `ctx` has an active query and this unit is a match
+ * — used for tool_use/tool_result/unknown-segment `<pre>` bodies and user
+ * (non-markdown) text segments. Assistant text/thinking go through
+ * MarkdownView's own `highlightWords` prop instead (mdast text nodes need
+ * the same splitting, but from inside the AST walk — see markdown-view.tsx). */
+function HighlightedPlainText({
+  text,
+  ctx,
+  unitKey,
+}: {
+  text: string;
+  ctx: TLSearchCtx | undefined;
+  unitKey: string;
+}) {
+  if (!ctx || ctx.words.length === 0 || !ctx.isMatch(unitKey)) return <>{text}</>;
+  const pieces = splitTextForHighlight(text, ctx.words);
+  return (
+    <>
+      {pieces.map((p, i) =>
+        p.colorIndex !== null ? (
+          <mark
+            key={i}
+            class="search-hl"
+            style={{ "--hl-color": `var(--search-color-${p.colorIndex + 1})` }}
+            onClick={() => ctx.onUnitClick(unitKey)}
+          >
+            {p.text}
+          </mark>
+        ) : (
+          p.text
+        ),
+      )}
+    </>
+  );
+}
 
 // Live tail 自動スクロール追従 (U2 kawaz spec: 「ユーザが最下部付近を見ている
 // 時だけ自動スクロール追従、上にスクロール中は追従しない」) の「最下部付近」
@@ -93,11 +166,16 @@ function ThinkingSegment({
   // 呼ばれるときは常に false で渡り、その場合は従来通り閉じたまま
   // (「fold 外に単独で出る thinking の従来デフォルト (閉) は変えない」)。
   foldGroupOpen,
+  mdSearch,
 }: {
   text: string;
   ts: string | null;
   translatorAvailable: boolean;
   foldGroupOpen: boolean;
+  // In-view search (DR-0022 §3): passed straight through to both tabs'
+  // MarkdownView (original text and its ja translation both search the same
+  // way — see SegmentView's doc comment on when this is non-undefined).
+  mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
 }) {
   const [tab, setTab] = useState<"original" | "ja">("original");
   // null = まだ翻訳していない (ja タブ初回クリック、または fold group の
@@ -209,7 +287,11 @@ function ThinkingSegment({
            * 内 div に付ける (tabs 自身の "select"/"original"/"ja" 文字を
            * selectAllBody 経由で選択したくない)。 */}
           <div ref={bodyRef}>
-            <MarkdownView source={bodyText} />
+            <MarkdownView
+              source={bodyText}
+              highlightWords={mdSearch?.words}
+              onMatchClick={mdSearch?.onMatchClick}
+            />
           </div>
           {tab === "ja" && translating && jaText === null ? (
             <p class="tl-thinking-translating">翻訳中…</p>
@@ -225,6 +307,8 @@ function SegmentView({
   translatorAvailable,
   ts,
   foldGroupOpen,
+  searchKey,
+  searchCtx,
 }: {
   segment: Segment;
   translatorAvailable: boolean;
@@ -232,57 +316,109 @@ function SegmentView({
   // 「fold 対象アイテムは全て時刻を持つ」を満たすため各 fold summary に渡す。
   ts: string | null;
   foldGroupOpen: boolean;
+  // In-view search (DR-0022 §3): this segment's own unit key + the shared
+  // search context. `searchCtx` is undefined whenever Timeline has no active
+  // query, in which case every branch below renders exactly as before this
+  // DR (MarkdownView without highlightWords, plain <pre> text).
+  searchKey: string;
+  searchCtx: TLSearchCtx | undefined;
 }) {
-  switch (segment.kind) {
-    case "text":
-      // Markdown rendering (DR-0010) is assistant-only: a user turn's text
-      // is what the human actually typed, so it's shown verbatim rather than
-      // interpreted as markdown syntax.
-      return (
-        <div class={"tl-text tl-text-" + segment.role}>
-          {segment.role === "assistant" ? <MarkdownView source={segment.text} /> : segment.text}
-        </div>
-      );
-    case "thinking":
-      return (
-        <ThinkingSegment
-          text={segment.text}
-          ts={ts}
-          translatorAvailable={translatorAvailable}
-          foldGroupOpen={foldGroupOpen}
-        />
-      );
-    case "tool-use":
-      return (
-        <details class="tl-fold">
-          <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
-          <div class="tl-guided">
-            <FoldGuide />
-            <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
+  const isMatch =
+    searchCtx !== undefined && searchCtx.words.length > 0 && searchCtx.isMatch(searchKey);
+  // markdown-view.tsx only wants a search ctx object when there's something
+  // to highlight — omitting it for a non-matching unit keeps that unit's
+  // MarkdownView memoized on `source` alone (unchanged perf from pre-DR-0022).
+  const mdSearch =
+    isMatch && searchCtx
+      ? { words: searchCtx.words, onMatchClick: () => searchCtx.onUnitClick(searchKey) }
+      : undefined;
+
+  const content = (() => {
+    switch (segment.kind) {
+      case "text":
+        // Markdown rendering (DR-0010) is assistant-only: a user turn's text
+        // is what the human actually typed, so it's shown verbatim rather than
+        // interpreted as markdown syntax.
+        return (
+          <div class={"tl-text tl-text-" + segment.role}>
+            {segment.role === "assistant" ? (
+              <MarkdownView
+                source={segment.text}
+                highlightWords={mdSearch?.words}
+                onMatchClick={mdSearch?.onMatchClick}
+              />
+            ) : (
+              <HighlightedPlainText text={segment.text} ctx={searchCtx} unitKey={searchKey} />
+            )}
           </div>
-        </details>
-      );
-    case "tool-result":
-      return (
-        <details class="tl-fold">
-          <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
-          <div class="tl-guided">
-            <FoldGuide />
-            <pre class="tl-fold-body">{segment.text}</pre>
-          </div>
-        </details>
-      );
-    case "unknown-segment":
-      return (
-        <details class="tl-fold">
-          <FoldSummary ts={ts} label={segment.type} />
-          <div class="tl-guided">
-            <FoldGuide />
-            <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
-          </div>
-        </details>
-      );
-  }
+        );
+      case "thinking":
+        return (
+          <ThinkingSegment
+            text={segment.text}
+            ts={ts}
+            translatorAvailable={translatorAvailable}
+            foldGroupOpen={foldGroupOpen}
+            mdSearch={mdSearch}
+          />
+        );
+      case "tool-use":
+        return (
+          <details class="tl-fold">
+            <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
+            <div class="tl-guided">
+              <FoldGuide />
+              <pre class="tl-fold-body">
+                <HighlightedPlainText
+                  text={JSON.stringify(segment.input, null, 2)}
+                  ctx={searchCtx}
+                  unitKey={searchKey}
+                />
+              </pre>
+            </div>
+          </details>
+        );
+      case "tool-result":
+        return (
+          <details class="tl-fold">
+            <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
+            <div class="tl-guided">
+              <FoldGuide />
+              <pre class="tl-fold-body">
+                <HighlightedPlainText text={segment.text} ctx={searchCtx} unitKey={searchKey} />
+              </pre>
+            </div>
+          </details>
+        );
+      case "unknown-segment":
+        return (
+          <details class="tl-fold">
+            <FoldSummary ts={ts} label={segment.type} />
+            <div class="tl-guided">
+              <FoldGuide />
+              <pre class="tl-fold-body">
+                <HighlightedPlainText
+                  text={JSON.stringify(segment.raw, null, 2)}
+                  ctx={searchCtx}
+                  unitKey={searchKey}
+                />
+              </pre>
+            </div>
+          </details>
+        );
+    }
+  })();
+
+  // Only matching units get a ref registered (↑/↓ nav walks exactly the "M"
+  // matches, DR-0022 §2.2) — `display: contents` (app.css) keeps this wrapper
+  // out of layout/flex flow entirely, so it can't perturb any existing
+  // `.tl-line`/bubble CSS.
+  if (!isMatch || !searchCtx) return content;
+  return (
+    <div class="tl-search-unit" ref={(el) => searchCtx.registerRef(searchKey, el)}>
+      {content}
+    </div>
+  );
 }
 
 // システム由来 user メッセージの rich 表示 (U2 kawaz spec): transcript-model.ts's
@@ -383,12 +519,19 @@ function SystemMessageBody({
             <span class="tl-empty-turn">(空)</span>
           ) : (
             line.segments.map((seg, i) => (
+              // システム由来メッセージの raw タブ / ccmsg 生テキストは in-view
+              // search のスコープ外 (DR-0022 §3 は「TL は text/thinking/tool
+              // セグメント」— 境界の 3 種チャットバブルとその fold 群を指し、
+              // 折り畳み済み system メッセージの raw fallback までは対象に
+              // 含めていない解釈)。searchCtx を渡さず不参加にする。
               <SegmentView
                 key={i}
                 segment={seg}
                 translatorAvailable={translatorAvailable}
                 ts={null}
                 foldGroupOpen={foldGroupOpen}
+                searchKey={`sysraw-${i}`}
+                searchCtx={undefined}
               />
             ))
           )}
@@ -408,12 +551,18 @@ function SystemMessageBody({
 // 絶対に来ない — classifyBoundaryLine が boundary として弾くため)。
 function LineView({
   line,
+  offset,
   translatorAvailable,
   foldGroupOpen,
+  searchCtx,
 }: {
   line: ParsedLine;
+  // このエントリの byte offset — search unit key (`${offset}-${segIndex}`)
+  // の組み立てに使う (DR-0022 §3)。
+  offset: number;
   translatorAvailable: boolean;
   foldGroupOpen: boolean;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   if (line.kind === "broken") {
     return (
@@ -471,6 +620,8 @@ function LineView({
               translatorAvailable={translatorAvailable}
               ts={line.ts}
               foldGroupOpen={foldGroupOpen}
+              searchKey={`${offset}-${i}`}
+              searchCtx={searchCtx}
             />
           ))
         )}
@@ -493,9 +644,11 @@ function LineView({
 function FoldGroup({
   entries,
   translatorAvailable,
+  searchCtx,
 }: {
   entries: TimelineEntry[];
   translatorAvailable: boolean;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
@@ -538,8 +691,10 @@ function FoldGroup({
               <LineView
                 key={sg.entry.offset}
                 line={sg.entry.line}
+                offset={sg.entry.offset}
                 translatorAvailable={translatorAvailable}
                 foldGroupOpen={open}
+                searchCtx={searchCtx}
               />
             ) : (
               <ItemsSubFold
@@ -547,6 +702,7 @@ function FoldGroup({
                 entries={sg.entries}
                 translatorAvailable={translatorAvailable}
                 foldGroupOpen={open}
+                searchCtx={searchCtx}
               />
             ),
           )}
@@ -562,10 +718,12 @@ function ItemsSubFold({
   entries,
   translatorAvailable,
   foldGroupOpen,
+  searchCtx,
 }: {
   entries: TimelineEntry[];
   translatorAvailable: boolean;
   foldGroupOpen: boolean;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
@@ -584,8 +742,10 @@ function ItemsSubFold({
             <LineView
               key={offset}
               line={line}
+              offset={offset}
               translatorAvailable={translatorAvailable}
               foldGroupOpen={foldGroupOpen}
+              searchCtx={searchCtx}
             />
           ))}
         </div>
@@ -609,6 +769,8 @@ function UserPromptBubble({
   registerUserTurnRef,
   translatorAvailable,
   now,
+  searchCtx,
+  onUserTurnClick,
 }: {
   line: TurnLine;
   offsetKey: number;
@@ -618,9 +780,17 @@ function UserPromptBubble({
   registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
   translatorAvailable: boolean;
   now: number;
+  searchCtx: TLSearchCtx | undefined;
+  // 👤 nav のクリック同期 (DR-0022 §2.2 の仕様を 👤 nav にも共通化): この吹き
+  // 出しをクリックすると、スクロールなしで currentUserIdx をその位置に合わせる。
+  onUserTurnClick: (offsetKey: number) => void;
 }) {
   return (
-    <div class="tl-bubble tl-bubble-right" ref={(el) => registerUserTurnRef(offsetKey, el)}>
+    <div
+      class="tl-bubble tl-bubble-right"
+      ref={(el) => registerUserTurnRef(offsetKey, el)}
+      onClick={() => onUserTurnClick(offsetKey)}
+    >
       <div class="tl-bubble-body tl-bubble-body-user">
         {line.segments.length === 0 ? (
           <span class="tl-empty-turn">(空)</span>
@@ -632,6 +802,8 @@ function UserPromptBubble({
               translatorAvailable={translatorAvailable}
               ts={line.ts}
               foldGroupOpen={false}
+              searchKey={`${offsetKey}-${i}`}
+              searchCtx={searchCtx}
             />
           ))
         )}
@@ -645,12 +817,16 @@ function UserPromptBubble({
 
 function AssistantBubble({
   line,
+  offset,
   translatorAvailable,
   now,
+  searchCtx,
 }: {
   line: TurnLine;
+  offset: number;
   translatorAvailable: boolean;
   now: number;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   return (
     <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
@@ -662,6 +838,8 @@ function AssistantBubble({
             translatorAvailable={translatorAvailable}
             ts={line.ts}
             foldGroupOpen={false}
+            searchKey={`${offset}-${i}`}
+            searchCtx={searchCtx}
           />
         ))}
       </div>
@@ -983,6 +1161,122 @@ export function Timeline({
     else userTurnRefs.current.delete(key);
   }, []);
 
+  // --- In-view search (DR-0022) ---
+
+  const [searchQueryText, setSearchQueryText] = useState("");
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(false);
+  const parsedSearch = useMemo(
+    () =>
+      parseSearchQuery(searchQueryText, { caseSensitive: searchCaseSensitive, regex: searchRegex }),
+    [searchQueryText, searchCaseSensitive, searchRegex],
+  );
+
+  // Flat, document-order list of every Segment "unit" currently loaded —
+  // walks both fold-group entries and boundary bubbles (DR-0022 §3: "TL は
+  // text/thinking/tool セグメント"). ccmsg/system-message raw-fallback bodies
+  // are deliberately excluded — see the SegmentView call sites that pass
+  // `searchCtx={undefined}` for why those are out of this DR's scope.
+  const searchUnits = useMemo(() => {
+    const units: { key: string; text: string }[] = [];
+    const pushLine = (offset: number, line: ParsedLine) => {
+      if (line.kind !== "turn") return;
+      line.segments.forEach((seg, i) => {
+        units.push({ key: `${offset}-${i}`, text: segmentSearchText(seg) });
+      });
+    };
+    for (const group of groups) {
+      if (group.kind === "fold") {
+        for (const entry of group.entries) pushLine(entry.offset, entry.line);
+      } else {
+        pushLine(group.offset, group.line);
+      }
+    }
+    return units;
+  }, [groups]);
+
+  // The "M" in "[N/M]" and the document-order nav ↑/↓ walks (DR-0022 §2.1/
+  // §2.2) — units are counted regardless of whether their fold is currently
+  // open (revealAndScroll below opens ancestors on nav instead), so "M"
+  // reflects everything loaded, not just what's presently visible.
+  const matchingUnitKeys = useMemo(() => {
+    if (parsedSearch.words.length === 0 || parsedSearch.hasError) return [];
+    return searchUnits
+      .filter((u) => unitMatchesQuery(u.text, parsedSearch.words))
+      .map((u) => u.key);
+  }, [searchUnits, parsedSearch]);
+  const matchingUnitKeySet = useMemo(() => new Set(matchingUnitKeys), [matchingUnitKeys]);
+
+  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
+  // A fresh search (query edit, toggle flip, or session switch) always
+  // starts back at the first match.
+  // Deps deliberately omit matchingUnitKeys: the reset key is "the query/
+  // session changed", not the array's identity (which also changes on every
+  // tail append / fold-independent reparse and would reset the index far
+  // more often than intended).
+  useEffect(() => {
+    setSearchCurrentIndex(matchingUnitKeys.length > 0 ? 1 : 0);
+  }, [searchQueryText, searchCaseSensitive, searchRegex, sid]);
+
+  const searchUnitRefs = useRef(new Map<string, HTMLElement>());
+  const registerSearchUnitRef = useCallback((key: string, el: HTMLElement | null) => {
+    if (el) searchUnitRefs.current.set(key, el);
+    else searchUnitRefs.current.delete(key);
+  }, []);
+
+  // Auto-expand every ancestor <details> (fold group / items sub-fold /
+  // system-message fold) before scrolling — Phase 2's "fold との相互作用込み"
+  // (DR-0022 §4): a match living inside a collapsed fold must actually
+  // become visible when navigated to, not silently scroll to a hidden
+  // element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
+  // used elsewhere in this file, walking outward through nested folds.
+  function revealAndScroll(el: HTMLElement) {
+    let node: HTMLElement | null = el;
+    while (node) {
+      const ancestorDetails: HTMLDetailsElement | null = node.closest("details");
+      if (!ancestorDetails) break;
+      if (!ancestorDetails.open) ancestorDetails.open = true;
+      node = ancestorDetails.parentElement;
+    }
+    el.scrollIntoView({ block: "center" });
+  }
+
+  function scrollToSearchMatch(oneBasedIdx: number) {
+    const key = matchingUnitKeys[oneBasedIdx - 1];
+    if (key === undefined) return;
+    const el = searchUnitRefs.current.get(key);
+    if (el) revealAndScroll(el);
+  }
+
+  // ↑/↓ move + scroll; a highlight click (see TLSearchCtx.onUnitClick below)
+  // only updates the index (DR-0022 §2.2). Loop wrap is the same pure helper
+  // 👤 nav uses (goPrevUserTurn/goNextUserTurn above).
+  function searchPrev() {
+    const next = loopPrevIndex(searchCurrentIndex, matchingUnitKeys.length);
+    setSearchCurrentIndex(next);
+    if (next > 0) scrollToSearchMatch(next);
+  }
+  function searchNext() {
+    const next = loopNextIndex(searchCurrentIndex, matchingUnitKeys.length);
+    setSearchCurrentIndex(next);
+    if (next > 0) scrollToSearchMatch(next);
+  }
+
+  const searchCtx: TLSearchCtx | undefined = useMemo(() => {
+    if (parsedSearch.words.length === 0) return undefined;
+    const positionByKey = new Map<string, number>();
+    matchingUnitKeys.forEach((k, i) => positionByKey.set(k, i + 1));
+    return {
+      words: parsedSearch.words,
+      isMatch: (key) => matchingUnitKeySet.has(key),
+      registerRef: registerSearchUnitRef,
+      onUnitClick: (key) => {
+        const pos = positionByKey.get(key);
+        if (pos !== undefined) setSearchCurrentIndex(pos);
+      },
+    };
+  }, [parsedSearch.words, matchingUnitKeys, matchingUnitKeySet, registerSearchUnitRef]);
+
   // "👤 N/M" nav の N (kawaz r17 mid=54, 2026-07-15): 以前はスクロール位置から
   // 推定していたが「変な挙動しかしないゴミ」と判定され仕様変更 — リロード /
   // 初回読み込み時に最大値 (M) で初期化し、以降は ↑↓ ボタンで増減してユーザ
@@ -1146,20 +1440,35 @@ export function Timeline({
 
   // kawaz r17 mid=54: state を減増してから対応要素へジャンプする単純な形
   // (以前は scroll 位置から currentUserIdx を推定していたので 1 段目の state
-  // 更新が不要だった)。境界は 1 ≤ idx ≤ M。
+  // 更新が不要だった)。境界は 1 ≤ idx ≤ M — ループ遷移そのものは DR-0022 §2.2
+  // で search nav と共通化された in-view-search.ts の loopPrevIndex/
+  // loopNextIndex に委譲 (以前はここに手書きの if ガードがあった)。
   function goPrevUserTurn() {
-    if (currentUserIdx <= 1) return;
-    const next = currentUserIdx - 1;
+    const next = loopPrevIndex(currentUserIdx, userTurnKeys.length);
+    if (next === 0) return;
     setCurrentUserIdx(next);
     scrollToUserTurn(next);
   }
 
   function goNextUserTurn() {
-    if (currentUserIdx >= userTurnKeys.length) return;
-    const next = currentUserIdx + 1;
+    const next = loopNextIndex(currentUserIdx, userTurnKeys.length);
+    if (next === 0) return;
     setCurrentUserIdx(next);
     scrollToUserTurn(next);
   }
+
+  // 👤 nav のクリック同期 (DR-0022 §2.2 を 👤 nav にも統一適用): クリックされた
+  // 吹き出しの offsetKey が userTurnKeys の何番目かを引いて、スクロールなしで
+  // currentUserIdx を合わせる。offsetKey がユーザ発話の位置と一致しない (ここ
+  // には来ないはずだが型上あり得る) 場合は何もしない。
+  const onUserTurnClick = useCallback(
+    (offsetKey: number) => {
+      const pos = userTurnKeys.indexOf(offsetKey);
+      if (pos < 0) return;
+      setCurrentUserIdx(pos + 1);
+    },
+    [userTurnKeys],
+  );
 
   // TL 下ミニパネル (DR-0020 §2.1): 走行中 workflow + in_progress TODO だけの
   // 要約。ゼロ件 (snapshot 未着含む) ならパネル自体を出さない仕様
@@ -1194,9 +1503,13 @@ export function Timeline({
           <span class="tl-user-nav-count">
             👤 {currentUserIdx}/{userTurnKeys.length}
           </span>
+          {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
+           * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
+           * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
+           * 意味がない)。 */}
           <button
             type="button"
-            disabled={currentUserIdx <= 1}
+            disabled={userTurnKeys.length === 0}
             onClick={goPrevUserTurn}
             title="前のユーザ発言へ"
           >
@@ -1204,13 +1517,27 @@ export function Timeline({
           </button>
           <button
             type="button"
-            disabled={currentUserIdx >= userTurnKeys.length}
+            disabled={userTurnKeys.length === 0}
             onClick={goNextUserTurn}
             title="次のユーザ発言へ"
           >
             ↓
           </button>
         </div>
+        <SearchBar
+          words={parsedSearch.words}
+          queryText={searchQueryText}
+          onQueryChange={setSearchQueryText}
+          caseSensitive={searchCaseSensitive}
+          onToggleCaseSensitive={() => setSearchCaseSensitive((v) => !v)}
+          regexMode={searchRegex}
+          onToggleRegex={() => setSearchRegex((v) => !v)}
+          matchCount={matchingUnitKeys.length}
+          currentIndex={searchCurrentIndex}
+          onPrev={searchPrev}
+          onNext={searchNext}
+          hasError={parsedSearch.hasError}
+        />
       </div>
       {timeline.status === "error" ? (
         <div class="tl-error">
@@ -1240,6 +1567,7 @@ export function Timeline({
                       key={group.entries[0]!.offset}
                       entries={group.entries}
                       translatorAvailable={translatorAvailable}
+                      searchCtx={searchCtx}
                     />
                   );
                 }
@@ -1264,6 +1592,8 @@ export function Timeline({
                         registerUserTurnRef={registerUserTurnRef}
                         translatorAvailable={translatorAvailable}
                         now={now}
+                        searchCtx={searchCtx}
+                        onUserTurnClick={onUserTurnClick}
                       />
                     );
                   case "assistant-response":
@@ -1271,8 +1601,10 @@ export function Timeline({
                       <AssistantBubble
                         key={offset}
                         line={line}
+                        offset={offset}
                         translatorAvailable={translatorAvailable}
                         now={now}
+                        searchCtx={searchCtx}
                       />
                     );
                   case "ccmsg": {
@@ -1302,9 +1634,13 @@ export function Timeline({
         </div>
       )}
       {miniLines.length > 0 ? (
-        // DR-0020 §2.1 TL 下ミニパネル: sticky bottom (画面下の常駐余白) —
-        // `.timeline-view` 自体がスクロールコンテナ (overflow-y:auto) なので
-        // 別ラッパーなしで sticky が効く。タップで Status タブへ遷移。
+        // DR-0020 §2.1 TL 下ミニパネル。kawaz r26 mid=68: sticky overlay は
+        // TL 表示エリアを狭めるので不可 — スクロールエリア末尾の余白帯
+        // (.tl-lines の padding-bottom 12rem、composer 高相当) の**中**に
+        // 通常フローで置く。末尾までスクロールしたときだけ余白内に見える。
+        // .tl-lines の padding-bottom 内に食い込ませるため margin-bottom は
+        // 負値にせず、単に flow 末尾 (padding の直前) に置く — 余白は
+        // パネルの下に残り続ける。タップで Status タブへ遷移。
         <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
           {miniLines.map((line) => (
             <span
