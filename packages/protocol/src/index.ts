@@ -328,9 +328,10 @@ export interface SessionIdentity {
   /** absolute path of the repository container holding ALL of this repo's
    * workspaces/worktrees (DR-0008 addendum). When announced and accepted by
    * the daemon's hello-time validation (absolute, realpath-resolvable, a
-   * strict ancestor of cwd, not "/" or $HOME itself), fs_list/fs_read/fs_write
-   * use it as the containment root instead of cwd — so sibling workspaces of the
-   * same repo become browsable. Rejected or absent = cwd root as before. */
+   * strict ancestor of cwd, not "/" or $HOME itself), it becomes the
+   * containment root and fs_list/fs_read base so sibling workspaces are
+   * browsable. fs_write remains cwd-relative inside that boundary. Rejected or
+   * absent = cwd is both the browse base and containment root. */
   repo_root?: string;
   /** current branch / bookmark name of the session's checkout (informational,
    * for the webui session list). Empty/absent when detached or unknown. */
@@ -531,14 +532,14 @@ export interface FsReadRequest {
 
 /**
  * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
- * docs/inbox/ in a connected session's containment root. The daemon applies the
- * same realpath containment checks as fs_list/fs_read, rejects every other
- * directory, and never overwrites an existing path.
+ * docs/inbox/ in a connected session's cwd. The daemon applies the same
+ * realpath containment boundary as fs_list/fs_read, rejects every other
+ * cwd-relative directory, and never overwrites an existing path.
  */
 export interface FsWriteRequest {
   op: "fs_write";
   sid: string;
-  /** file path relative to the session root */
+  /** file path relative to the session cwd */
   path: string;
   /** UTF-8 text content */
   content: string;

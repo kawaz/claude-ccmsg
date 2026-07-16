@@ -5,12 +5,12 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { errorMessage, isMarkdownPath } from "../utils.ts";
+import { errorMessage, inboxAutoFilename, isMarkdownPath, resolveInboxFilename } from "../utils.ts";
 import { loadFilesView, saveFilesView } from "../files-view-store.ts";
 import {
   detectLanguage,
@@ -30,7 +30,119 @@ function splitLines(content: string): string[] {
   return lines;
 }
 
-export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState }) {
+/** Full-pane new-memo editor. It deliberately owns only the draft and the
+ * fs_write effect; FilesPanes owns the surrounding viewer-vs-editor mode and
+ * the post-create tree/navigation transition. This matches the existing
+ * component-effect split: FileViewer performs file I/O, while FilesPanes
+ * coordinates state that changes both sibling panes. */
+function InboxNewEditor({
+  sid,
+  onCancel,
+  onCreated,
+}: {
+  sid: string;
+  onCancel: () => void;
+  onCreated: (path: string) => void | Promise<void>;
+}) {
+  const { ws } = useApp();
+  const [name, setName] = useState("");
+  const [content, setContent] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  // Freeze the suggested name for this editor instance so unrelated renders
+  // cannot change the placeholder while the user is composing.
+  const [autoName] = useState(() => inboxAutoFilename(new Date()));
+
+  useEffect(() => {
+    bodyRef.current?.focus();
+  }, []);
+
+  async function createMemo(): Promise<void> {
+    // State updates are async, so a ref is the immediate duplicate-submit gate
+    // for rapid button clicks or repeated Cmd+Enter presses in one render.
+    if (creatingRef.current) return;
+    const resolved = resolveInboxFilename(name, new Date());
+    if ("error" in resolved) {
+      setError(resolved.error);
+      return;
+    }
+    creatingRef.current = true;
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await ws.fsWrite(sid, `docs/inbox/${resolved.name}`, content);
+      if (res.ok) await onCreated(res.path);
+      else setError(res.error.msg);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
+  }
+
+  return (
+    <form
+      class="file-viewer memo-editor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void createMemo();
+      }}
+    >
+      <header class="viewer-header memo-editor-header">
+        <input
+          type="text"
+          class="memo-editor-name"
+          aria-label="メモのファイル名"
+          placeholder={`自動命名: ${autoName}`}
+          value={name}
+          onInput={(e) => setName((e.target as HTMLInputElement).value)}
+          disabled={creating}
+        />
+        <div class="memo-editor-actions">
+          <button type="button" onClick={onCancel} disabled={creating}>
+            キャンセル
+          </button>
+          <button type="submit" disabled={creating}>
+            {creating ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </header>
+      {error ? <p class="memo-editor-error">{error}</p> : null}
+      <textarea
+        ref={bodyRef}
+        class="memo-editor-body"
+        aria-label="メモ本文"
+        placeholder="メモ本文"
+        value={content}
+        onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+        onKeyDown={(e) => {
+          if (e.metaKey && e.key === "Enter") {
+            e.preventDefault();
+            void createMemo();
+          }
+        }}
+        disabled={creating}
+      />
+    </form>
+  );
+}
+
+export function FileViewer({
+  sid,
+  tree,
+  memoEditorOpen,
+  onMemoCancel,
+  onMemoCreated,
+}: {
+  sid: string;
+  tree: SessionTreeState;
+  memoEditorOpen: boolean;
+  onMemoCancel: () => void;
+  onMemoCreated: (path: string) => void | Promise<void>;
+}) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
   const path = tree.selectedPath;
@@ -146,6 +258,10 @@ export function FileViewer({ sid, tree }: { sid: string; tree: SessionTreeState 
         {"↻"}
       </button>
     ) : null;
+
+  if (memoEditorOpen) {
+    return <InboxNewEditor sid={sid} onCancel={onMemoCancel} onCreated={onMemoCreated} />;
+  }
 
   if (!path) {
     return (

@@ -13,7 +13,15 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PeerInfo } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
-import { clampPaneRatio, paneRatioFromPointer, SESSION_PANE_DEFAULT_RATIO } from "../utils.ts";
+import { useApp } from "../context.ts";
+import { fileHref } from "../locator.ts";
+import {
+  clampPaneRatio,
+  errorMessage,
+  fileAncestorDirectories,
+  paneRatioFromPointer,
+  SESSION_PANE_DEFAULT_RATIO,
+} from "../utils.ts";
 import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 
@@ -47,7 +55,15 @@ export function FilesPanes({
   tree: SessionTreeState;
   peer: PeerInfo | undefined;
 }) {
+  const { store, ws } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
+  // The memo editor is a view mode spanning both panes: FileTree launches it,
+  // FileViewer renders it, and a successful save reloads the matching tree
+  // directory before navigating to the created file. FilesPanes is therefore
+  // the narrowest owner that can coordinate the transition without putting
+  // network/navigation effects in the reducer (the same component-effect
+  // boundary used by FileTree/FileViewer for fs_list/fs_read).
+  const [memoEditorOpen, setMemoEditorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   // Ref (not state) because pointer-drag state doesn't need to trigger
   // re-renders — only the ratio it produces does. Kept in sync via the
@@ -60,6 +76,36 @@ export function FilesPanes({
   useEffect(() => {
     savePaneRatio(ratio);
   }, [ratio]);
+
+  // A draft is intentionally ephemeral: switching session or selecting a
+  // different file exits the editor without confirmation. Opening the editor
+  // itself does not change selectedPath, so this effect does not immediately
+  // undo the launch action.
+  useEffect(() => {
+    setMemoEditorOpen(false);
+  }, [sid, tree.selectedPath]);
+
+  async function onMemoCreated(createdPath: string): Promise<void> {
+    // fs_write may have created docs/ and inbox/ as well as the file. Refresh
+    // every affected listing so an already-cached empty ancestor does not hide
+    // the new path; the response path is root-relative, matching fs_list.
+    await Promise.all(
+      fileAncestorDirectories(createdPath).map(async (dirPath) => {
+        try {
+          const res = await ws.fsList(sid, dirPath);
+          if (res.ok) {
+            store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, entries: res.entries });
+          } else {
+            store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, error: res.error.msg });
+          }
+        } catch (err) {
+          store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, error: errorMessage(err) });
+        }
+      }),
+    );
+    setMemoEditorOpen(false);
+    location.assign(fileHref(sid, createdPath));
+  }
 
   const onSplitterPointerDown = (e: PointerEvent) => {
     if (!containerRef.current) return;
@@ -103,7 +149,7 @@ export function FilesPanes({
   return (
     <div class="session-panes" ref={containerRef}>
       <div class="session-pane session-pane-tree" style={treeStyle}>
-        <FileTree sid={sid} tree={tree} peer={peer} />
+        <FileTree sid={sid} tree={tree} peer={peer} onNewMemo={() => setMemoEditorOpen(true)} />
       </div>
       <div
         class="session-splitter"
@@ -115,7 +161,13 @@ export function FilesPanes({
         onPointerCancel={onSplitterPointerUp}
       />
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
-        <FileViewer sid={sid} tree={tree} />
+        <FileViewer
+          sid={sid}
+          tree={tree}
+          memoEditorOpen={memoEditorOpen}
+          onMemoCancel={() => setMemoEditorOpen(false)}
+          onMemoCreated={onMemoCreated}
+        />
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import {
   badgeLabel,
   clampPaneRatio,
   errorMessage,
+  fileAncestorDirectories,
   favoritesStorageKey,
   formatDuration,
   groupSessionsBySection,
@@ -1138,6 +1139,32 @@ describe("sortFavorites", () => {
     const favorites = ["b", "a"];
     sortFavorites(favorites);
     expect(favorites).toEqual(["b", "a"]);
+  });
+});
+
+describe("fileAncestorDirectories", () => {
+  // A created file below a repo-container workspace can introduce any missing
+  // directory in the chain. Reloading root plus every parent makes the path
+  // discoverable even when the tree cached an empty workspace before fs_write.
+  test("returns root and every parent of a nested root-relative file", () => {
+    expect(fileAncestorDirectories("main/docs/inbox/memo.md")).toEqual([
+      "",
+      "main",
+      "main/docs",
+      "main/docs/inbox",
+    ]);
+  });
+
+  // A cwd-rooted session returns docs/inbox/memo.md; root must still reload so
+  // a newly-created docs directory appears in a previously empty tree.
+  test("includes root for a cwd-rooted inbox path", () => {
+    expect(fileAncestorDirectories("docs/inbox/memo.md")).toEqual(["", "docs", "docs/inbox"]);
+  });
+
+  // Root-level files have no named parent, but the root listing is exactly the
+  // directory whose entries changed.
+  test("root-level file reloads only the root listing", () => {
+    expect(fileAncestorDirectories("memo.md")).toEqual([""]);
   });
 });
 

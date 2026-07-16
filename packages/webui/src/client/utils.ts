@@ -689,7 +689,18 @@ export function sortFavorites(favorites: string[]): string[] {
 
 // --- docs/inbox メモ作成 (DR-0019 Phase W2) --- //
 
-/** docs/inbox メモ作成フォーム (FileTree.tsx) の自動ファイル名。DR-0019 §2.2
+/** Root-relative directory listings affected when fs_write creates `filePath`.
+ * fs_write may create the whole docs/inbox chain, so refreshing only the leaf
+ * directory can leave cached ancestors unaware that their child now exists.
+ * Root is always included; then every named parent appears shallow-to-deep. */
+export function fileAncestorDirectories(filePath: string): string[] {
+  const parts = filePath.split("/");
+  const directories = [""];
+  for (let i = 1; i < parts.length; i++) directories.push(parts.slice(0, i).join("/"));
+  return directories;
+}
+
+/** docs/inbox メモ作成エディタ (FileViewer.tsx) の自動ファイル名。DR-0019 §2.2
  * が指定する `YYYYMMDD-HHmm.md` を端末のローカル時刻 (`Date` の非-UTC
  * ゲッター) から組み立てる — inbox は「今この瞬間に拾ってほしい雑メモ」を
  * 置く場所なので、UTC 表記だと作成者自身の体感時刻とずれる。分未満の衝突
@@ -706,8 +717,8 @@ export function inboxAutoFilename(now: Date): string {
   return `${y}${mo}${d}-${h}${mi}.md`;
 }
 
-/** docs/inbox メモ作成フォームのファイル名解決 (DR-0019 §2.2)。pure — フォーム
- * の submit ハンドラが結果をそのまま `fsWrite` の path (`docs/inbox/<name>`)
+/** docs/inbox メモ作成エディタのファイル名解決 (DR-0019 §2.2)。pure —
+ * submit ハンドラが結果をそのまま `fsWrite` の path (`docs/inbox/<name>`)
  * に渡す。3 通り:
  * - 空/空白のみの入力 = 省略扱い → `inboxAutoFilename` の自動命名
  * - `/` を含む入力 → エラー (DR-0019 §2.3 曰くサブディレクトリ切りは W2

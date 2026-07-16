@@ -1,12 +1,12 @@
 // Workspace file access (DR-0008 / DR-0019): containment-checked
 // fs_list / fs_read / inbox-only fs_write.
 //
-// The browsable universe for a given `sid` is exactly "the realpath of that
-// session's cwd" (the root). Every request path is resolved relative to the
-// root and must, after resolving symlinks, stay inside it. There is no way
-// for a client to name a filesystem root directly — only a connected
-// session's sid — so a client can never browse outside sessions it can
-// already see peers for.
+// fs_list/fs_read resolve paths from the browsable containment root
+// (`repo_root ?? cwd`). fs_write instead resolves its request path from the
+// session's cwd so a new inbox memo belongs to that working copy, then applies
+// the same realpath containment boundary before creating anything. There is no
+// way for a client to name either filesystem base directly — only a connected
+// session's sid.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -146,8 +146,10 @@ interface ContainedErr {
 }
 
 /**
- * Resolve `reqPath` (relative to `root`) to a realpath guaranteed to be
- * inside `root`, or a fail-closed error.
+ * Resolve `reqPath` relative to `requestBase` (the containment root by
+ * default) to a realpath guaranteed to be inside `root`, or a fail-closed
+ * error. fs_write passes the session cwd as `requestBase`; readers keep the
+ * default so their visible tree remains root-relative.
  *
  * Three checks, in order:
  *  1. Absolute rejection: the wire contract (FsListRequest/FsReadRequest)
@@ -159,7 +161,7 @@ interface ContainedErr {
  *     return `absolutePath` unchanged and could pass containment by
  *     coincidence. This check is about the *shape* of the input, not a
  *     ".."-style string blacklist.
- *  2. Lexical: `path.resolve(root, reqPath)` normalizes ".." — this alone
+ *  2. Lexical: `path.resolve(requestBase, reqPath)` normalizes ".." — this alone
  *     rejects any ".." escape that survives normalization, without
  *     touching the filesystem. (Pure optimization: step 3's realpath walk
  *     would also catch this, just after extra syscalls.)
@@ -191,12 +193,13 @@ function resolveContained(
   root: string,
   reqPath: string,
   allowMissing = false,
+  requestBase = root,
 ): ContainedOk | ContainedErr {
   if (path.isAbsolute(reqPath)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path must be relative: ${reqPath}` };
   }
   const raw = reqPath === "." ? "" : reqPath;
-  const candidate = path.resolve(root, raw);
+  const candidate = path.resolve(requestBase, raw);
   // `root + path.sep` would double up to "//" when root is itself the
   // filesystem root (e.g. a session cwd of "/"), making every direct child
   // fail the startsWith check. Only append the separator if root doesn't
@@ -408,6 +411,38 @@ export function fsWrite(
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
+  // Writes are addressed from the session's own working copy even when
+  // repo_root widens fs_list/fs_read to a container of sibling workspaces.
+  // Resolve cwd independently, then verify it still lies under the accepted
+  // containment root before using it as the request base.
+  const entry = sessions.get(sid);
+  const declaredCwd = entry?.meta.cwd;
+  if (!declaredCwd || !path.isAbsolute(declaredCwd)) {
+    return {
+      ok: false,
+      code: ErrorCode.session_not_found,
+      msg: `session has no usable cwd: ${sid}`,
+    };
+  }
+  let cwd: string;
+  try {
+    cwd = fs.realpathSync(declaredCwd);
+  } catch {
+    return {
+      ok: false,
+      code: ErrorCode.session_not_found,
+      msg: `session cwd not accessible: ${sid}`,
+    };
+  }
+  const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (cwd !== root && !cwd.startsWith(rootPrefix)) {
+    return {
+      ok: false,
+      code: ErrorCode.session_not_found,
+      msg: `session cwd is outside its containment root: ${sid}`,
+    };
+  }
+
   if (typeof reqPath !== "string" || reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write requires path" };
   }
@@ -417,18 +452,17 @@ export function fsWrite(
 
   // Permit a missing leaf only after the nearest existing ancestor has passed
   // the same lexical + realpath containment checks fs_list/fs_read use.
-  const resolved = resolveContained(root, reqPath, true);
+  const resolved = resolveContained(root, reqPath, true, cwd);
   if (!resolved.ok) return resolved;
 
-  // Policy check (DR-0019 § 3.1): judge the realpath-resolved location, not
-  // the request string — a lexical "docs/inbox/…" whose docs/inbox is really
-  // an in-root symlink (e.g. -> src/) must not smuggle a write outside the
-  // inbox. resolveContained already resolved every existing component, so
-  // this prefix comparison sees the true write destination.
-  const relPath = path.relative(root, resolved.realPath);
+  // Policy check (DR-0019 § 3.1): judge the realpath-resolved location relative
+  // to cwd, not the request string or repo_root. A lexical "docs/inbox/…"
+  // whose docs/inbox is really an in-root symlink (e.g. -> src/) must not
+  // smuggle a write outside this working copy's inbox.
+  const cwdRelPath = path.relative(cwd, resolved.realPath);
   const inbox = path.join("docs", "inbox");
   const inboxPrefix = inbox + path.sep;
-  if (!relPath.startsWith(inboxPrefix)) {
+  if (!cwdRelPath.startsWith(inboxPrefix)) {
     return {
       ok: false,
       code: ErrorCode.path_not_writable,
@@ -436,9 +470,10 @@ export function fsWrite(
     };
   }
 
+  const rootRelPath = path.relative(root, resolved.realPath);
   try {
     fs.lstatSync(resolved.realPath);
-    return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${relPath}` };
+    return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code !== "ENOENT") {
@@ -465,9 +500,9 @@ export function fsWrite(
   // policy is re-applied on the re-resolved location for the same reason —
   // both checks must hold for the path actually opened, not just the one
   // inspected before mkdir.
-  const rechecked = resolveContained(root, reqPath, true);
+  const rechecked = resolveContained(root, reqPath, true, cwd);
   if (!rechecked.ok) return rechecked;
-  if (!path.relative(root, rechecked.realPath).startsWith(inboxPrefix)) {
+  if (!path.relative(cwd, rechecked.realPath).startsWith(inboxPrefix)) {
     return {
       ok: false,
       code: ErrorCode.path_not_writable,
@@ -480,7 +515,7 @@ export function fsWrite(
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EEXIST") {
-      return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${relPath}` };
+      return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
     }
     return {
       ok: false,
@@ -489,5 +524,5 @@ export function fsWrite(
     };
   }
 
-  return { ok: true, data: { sid, path: relPath } };
+  return { ok: true, data: { sid, path: path.relative(root, rechecked.realPath) } };
 }

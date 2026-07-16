@@ -879,8 +879,48 @@ describe("fs_write (DR-0019 Phase W1)", () => {
     T,
   );
 
-  // An inbox-less repository is a supported starting state: fs_write creates
-  // docs/inbox recursively before creating the requested new memo.
+  // In a repo-container session, the request path is relative to the session's
+  // own cwd, while the response path stays relative to the browsable root so
+  // FileTree/FileViewer can immediately address the created file. This is the
+  // jj-workspace invariant: the memo must land in the working copy where
+  // `jj status` can see it, never in the container directory beside every
+  // workspace.
+  test(
+    "repo_root session: writes under cwd and returns the root-relative created path",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const cwd = path.join(root, "main");
+      const target = path.join(cwd, "docs", "inbox", "memo.md");
+      const oldContainerTarget = path.join(root, "docs", "inbox", "memo.md");
+      try {
+        fs.mkdirSync(cwd);
+        await sessionAtWithRoot(ctx, "A", cwd, root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/memo.md",
+          content: "working-copy memo",
+        });
+        expect(res).toEqual({
+          ok: true,
+          sid: "A",
+          path: path.join("main", "docs", "inbox", "memo.md"),
+        });
+        expect(fs.readFileSync(target, "utf-8")).toBe("working-copy memo");
+        expect(fs.existsSync(oldContainerTarget)).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // An inbox-less working copy is a supported starting state: fs_write creates
+  // docs/inbox recursively below cwd before creating the requested new memo.
   test(
     "parent creation: missing docs/inbox is created recursively",
     async () => {
