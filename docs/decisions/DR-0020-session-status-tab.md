@@ -1,6 +1,6 @@
 # DR-0020: Status タブ (セッションの workflow / background / TODO 可視化)
 
-Status: Proposed
+Status: Accepted (ST-Q1..2 裁定 2026-07-16)
 Date: 2026-07-16
 Sponsor: kawaz r26 mid=24+25
 
@@ -12,7 +12,7 @@ idle で何かを待っているだけなのか」が分からない (kawaz mid=
 
 必要なデータは daemon が既に配信している transcript jsonl に tool call として全部
 記録されている (Workflow / Agent / TaskCreate / TaskUpdate / Monitor / Bash background)。
-不足しているのは抽出層と表示 UI のみで、daemon / protocol の変更は不要。
+不足しているのは抽出と表示 UI のみ (抽出は daemon 側で行う、§ 3.1)。
 
 ## 2. スコープ
 
@@ -23,8 +23,8 @@ idle で何かを待っているだけなのか」が分からない (kawaz mid=
     詳細・全体一覧はこちら
   - **TL 下余白の常駐ミニパネル**: 走行中 workflow と in_progress TODO だけの要約
     1-2 行。タップで Status タブへ遷移
-- **抽出層** (webui pure 層、transcript-model.ts の隣): transcript イベント列を畳み込んで
-  現在ステータスを導出
+- **抽出** (daemon 側、§ 3.1): transcript jsonl から status 関連イベントを全量抽出し、
+  畳み込んで現在ステータスを導出
   - **TODO リスト**: TaskCreate / TaskUpdate の tool call から task id → {subject, status,
     owner} を再生。pending / in_progress / completed 別に表示 (TUI 同等)
   - **workflow**: Workflow tool call (起動) と task-notification (完了) を突合して
@@ -37,32 +37,32 @@ idle で何かを待っているだけなのか」が分からない (kawaz mid=
 
 ### 2.2 やらないこと
 
-- daemon / protocol の変更 (transcript 経路で足りる)
+
 - セッションへの操作 (task の変更・workflow の停止等)。表示のみ
 - TUI との完全一致 (transcript に現れない内部状態は追わない)
 
 ## 3. 設計判断
 
-### 3.1 データソース = transcript fold (daemon 変更なし)
+### 3.1 データソース = daemon 側抽出 (ST-Q1 裁定、kawaz r26 mid=32)
 
-`claude agents --json` は busy/idle しか持たず、TODO/workflow は載らない。transcript
-jsonl は tool call を全部含み、webui は既に Timeline 用に parse 済み — 抽出層の追加が
-最小変更。トレードオフ: transcript の読み込み範囲 (末尾ページング) 外の古い
-TaskCreate は見えない。
+webui 側の transcript fold (読み込み済み範囲だけ) 案は棄却。**daemon が transcript
+jsonl を grep 相当で絞り込み → jsonl parse → strict フィルタで status 関連イベント
+(TaskCreate / TaskUpdate / Workflow / Monitor / Agent / task-notification) だけを
+全量抽出**して返す。ファイル全走査でも対象行の抽出は一瞬で終わる想定 (kawaz)。
 
-### 3.2 読み込み範囲の妥協 (裁定待ち ST-Q1)
-
-現行 Timeline は末尾から byte offset でページングする。TODO の正確な再生には
-セッション先頭からの全量 fold が要るが、数百 MB 級 transcript では現実的でない。
-案: (a) 読み込み済み範囲だけで fold し「それ以前の状態は不明」と明示 /
-(b) Status タブ表示時に追加で older ページを自動読みして充足するまで遡る。
+- 新 op (例 `session_status`): 初回は全量スキャンして畳み込み済み or 生イベント列を返す
+- **追加分は逐次 push**: 既存の transcript_subscribe と同様の tail 追跡で、新しい
+  status イベントが現れたら subscribe 中の webui へ push (詳細設計は Phase 1)
+- これにより webui の読み込み範囲問題 (旧 ST-Q1) は消滅。畳み込み (イベント列 →
+  現在状態) を daemon / webui どちらでやるかは Phase 1 の実装時判断 (protocol を
+  薄く保つなら webui 側 fold、転送量を絞るなら daemon 側)
 
 ## 4. Phase 分割
 
 | Phase | スコープ |
 |---|---|
 | Phase 0 | 本 DR + ST-Q1 裁定 |
-| Phase 1 | 抽出層 (pure function + テスト) |
+| Phase 1 | daemon 抽出 op + 逐次 push + fold (テスト込み) |
 | Phase 2 | Status タブ UI |
 | Phase 3 | サイドバー ミニバッジ |
 
