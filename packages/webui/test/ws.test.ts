@@ -1092,3 +1092,59 @@ describe("createWsClient transcript live-tail push (U2)", () => {
       expect(action.lines).toEqual(["line-a", "line-b", "line-c"]);
   });
 });
+
+// DR-0020 Phase 2: ev:"session_status" pushes relayed as session-status/loaded
+// actions, mirroring the ev:"transcript" coverage above. The push carries the
+// snapshot fields inline (ev/sid + todos/workflows/background); the relay must
+// repackage exactly those three arrays as the action's `snapshot` — one shared
+// reducer path with the subscribe response's own initial dispatch.
+describe("createWsClient session_status push (DR-0020)", () => {
+  test("ev:'session_status' push dispatches session-status/loaded with the snapshot fields", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient(
+      (a) => actions.push(a),
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "session_status",
+        sid: "sess-1",
+        todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
+        workflows: [
+          {
+            task_id: "w1",
+            name: "release",
+            status: "running",
+            started_at: "2026-07-16T00:00:00.000Z",
+          },
+        ],
+        background: [],
+      }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "session-status/loaded",
+        sid: "sess-1",
+        snapshot: {
+          todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
+          workflows: [
+            {
+              task_id: "w1",
+              name: "release",
+              status: "running",
+              started_at: "2026-07-16T00:00:00.000Z",
+            },
+          ],
+          background: [],
+        },
+      },
+    ]);
+  });
+});

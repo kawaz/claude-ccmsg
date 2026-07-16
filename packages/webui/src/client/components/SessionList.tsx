@@ -4,6 +4,7 @@ import { sessionHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
+import { formatSidebarBadge } from "../session-status-view.ts";
 import {
   badgeLabel,
   formatDuration,
@@ -43,7 +44,18 @@ function useTick(intervalMs: number): void {
  * ファイルも見れるように") turned out to be a Files-tree concern, not a
  * SESSIONS-list concern, so it now lives as FileTree's ws-rooted top level
  * instead (see workspaceRootEntries in utils.ts). */
-function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: string | null }) {
+function SessionRowItem({
+  row,
+  currentSid,
+  statusBadge,
+}: {
+  row: SessionRow;
+  currentSid: string | null;
+  /** DR-0020 §2.1 サイドバーミニバッジ ("wf:1 bg:2 todo:3/5")。null = 出さな
+   * い (走行中データなし、または今このセッションを開いていないので
+   * subscribe していない — 下の SessionList の doc comment 参照)。 */
+  statusBadge: string | null;
+}) {
   const [cwdFull, setCwdFull] = useState(false);
   const { repo, ws: wsLabel } = sessionRowRepoWs(row);
   const badges = sessionBadges(row);
@@ -109,6 +121,7 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
       <div class="session-line2">
+        {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
         <button
           type="button"
           class="session-sid-btn"
@@ -161,7 +174,7 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents } = useStoreState(store);
+  const { agents, sessionStatuses } = useStoreState(store);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [...peers.map((p) => toSessionRow(p, agentsBySid)), ...offlineAgentRows(peers, agents)],
@@ -177,7 +190,21 @@ export function SessionList({
           </summary>
           <ul class="session-section-list">
             {section.rows.map((row) => (
-              <SessionRowItem key={row.sid} row={row} currentSid={currentSid} />
+              <SessionRowItem
+                key={row.sid}
+                row={row}
+                currentSid={currentSid}
+                // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
+                // subscribe すると常駐コストが人数分乗るため、SessionView が
+                // 実際に Status/Timeline タブを開いているセッションだけ
+                // sessionStatuses に entry を持つ (SessionView.tsx の購読
+                // effect 参照)。よってバッジが出るのは currentSid の行だけ
+                // — 他行は subscribe していないので常に null (「ゼロ件」で
+                // はなく「未購読」、意図的にバッジ非表示のまま)。
+                statusBadge={
+                  row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
+                }
+              />
             ))}
           </ul>
         </details>

@@ -16,6 +16,7 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
+  type SessionStatusSnapshot,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import type { Locator } from "./locator.ts";
@@ -139,6 +140,15 @@ export interface AppState {
   /** session selected via the `#s<sid>` locator (DR-0008), if any. */
   currentSid: string | null;
   sessionTrees: Map<string, SessionTreeState>;
+  /** Folded status snapshot (DR-0020 Phase 1/2), keyed by sid. Populated by
+   * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
+   * `ev:"session_status"` pushes, same subscribe-while-visible lifecycle as
+   * SessionTreeState.timeline. Only the sid(s) SessionView currently
+   * subscribes to (Status tab or Timeline tab open) ever have an entry here
+   * — absence means "not subscribed", not "known-empty" (Phase 3 §2.1
+   * decision (a): sidebar mini badge only shows for the session currently
+   * open, see SessionList.tsx). */
+  sessionStatuses: Map<string, SessionStatusSnapshot>;
   /** mention targets staged for the composer of the current room. */
   mentionTo: Set<string>;
   connStatus: ConnStatus;
@@ -156,6 +166,7 @@ export function initialState(): AppState {
     currentMid: null,
     currentSid: null,
     sessionTrees: new Map(),
+    sessionStatuses: new Map(),
     mentionTo: new Set(),
     connStatus: "connecting",
     sidebarOpen: false,
@@ -209,7 +220,20 @@ export type Action =
       start: number;
       end: number;
       size: number;
-    };
+    }
+  // Folded status snapshot (DR-0020 Phase 1/2): dispatched both from
+  // sessionStatusSubscribe's resolved response (initial paint) and from
+  // ws.ts's `ev:"session_status"` push handler (every later recompute) —
+  // always a full replace of the sid's entry, never a partial merge (the
+  // daemon always sends the whole recomputed snapshot, see
+  // SessionStatusStreamEvent's doc comment in protocol/src/index.ts).
+  | { type: "session-status/loaded"; sid: string; snapshot: SessionStatusSnapshot }
+  // Dispatched when SessionView's subscribe effect tears down (tab switched
+  // away from Status/Timeline, session switched, or unmount) — drops the
+  // cached snapshot so a stale (no-longer-live) badge/mini-panel/Status tab
+  // can't linger past the unsubscribe. Matches sessionStatuses' "absence =
+  // not subscribed" contract (see AppState's doc comment).
+  | { type: "session-status/cleared"; sid: string };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
  * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
@@ -583,6 +607,17 @@ export function reducer(state: AppState, action: Action): AppState {
       return applyTimelineLoaded(state, action);
     case "timeline/tail":
       return applyTimelineTail(state, action);
+    case "session-status/loaded": {
+      const sessionStatuses = new Map(state.sessionStatuses);
+      sessionStatuses.set(action.sid, action.snapshot);
+      return { ...state, sessionStatuses };
+    }
+    case "session-status/cleared": {
+      if (!state.sessionStatuses.has(action.sid)) return state;
+      const sessionStatuses = new Map(state.sessionStatuses);
+      sessionStatuses.delete(action.sid);
+      return { ...state, sessionStatuses };
+    }
     default:
       return state;
   }

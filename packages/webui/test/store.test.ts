@@ -1129,3 +1129,84 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     expect(selectedSid(state)).toBeNull();
   });
 });
+
+// DR-0020 Phase 2: sessionStatuses cache lifecycle. `loaded` is always a full
+// replace of the sid's snapshot (the daemon pushes whole recomputed snapshots,
+// never deltas) and `cleared` drops the entry entirely — absence means "not
+// subscribed", which SessionList's badge and Timeline's mini panel rely on to
+// avoid rendering stale not-live data.
+describe("reducer / session-status/loaded and session-status/cleared (DR-0020)", () => {
+  const snapshotA = {
+    todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
+    workflows: [],
+    background: [],
+  };
+  const snapshotB = {
+    todos: [],
+    workflows: [
+      { task_id: "w1", name: "release", status: "running", started_at: "2026-07-16T00:00:00.000Z" },
+    ],
+    background: [],
+  };
+
+  test("loaded stores the snapshot under its sid", () => {
+    const state = dispatch(initialState(), {
+      type: "session-status/loaded",
+      sid: "sess-1",
+      snapshot: snapshotA,
+    });
+    expect(state.sessionStatuses.get("sess-1")).toEqual(snapshotA);
+  });
+
+  test("loaded replaces (not merges) a prior snapshot for the same sid", () => {
+    const first = dispatch(initialState(), {
+      type: "session-status/loaded",
+      sid: "sess-1",
+      snapshot: snapshotA,
+    });
+    const second = dispatch(first, {
+      type: "session-status/loaded",
+      sid: "sess-1",
+      snapshot: snapshotB,
+    });
+    // Full replace: snapshotA's todo must NOT survive alongside snapshotB's
+    // workflow — the daemon's push is the complete recomputed state.
+    expect(second.sessionStatuses.get("sess-1")).toEqual(snapshotB);
+  });
+
+  test("snapshots are keyed per sid — two sessions don't bleed into each other", () => {
+    const one = dispatch(initialState(), {
+      type: "session-status/loaded",
+      sid: "sess-1",
+      snapshot: snapshotA,
+    });
+    const two = dispatch(one, {
+      type: "session-status/loaded",
+      sid: "sess-2",
+      snapshot: snapshotB,
+    });
+    expect(two.sessionStatuses.get("sess-1")).toEqual(snapshotA);
+    expect(two.sessionStatuses.get("sess-2")).toEqual(snapshotB);
+  });
+
+  test("cleared removes the sid's entry (absence = not subscribed)", () => {
+    const loaded = dispatch(initialState(), {
+      type: "session-status/loaded",
+      sid: "sess-1",
+      snapshot: snapshotA,
+    });
+    const cleared = dispatch(loaded, { type: "session-status/cleared", sid: "sess-1" });
+    expect(cleared.sessionStatuses.has("sess-1")).toBe(false);
+  });
+
+  test("cleared for an absent sid is a no-op returning the same state object", () => {
+    const state = initialState();
+    expect(dispatch(state, { type: "session-status/cleared", sid: "nope" })).toBe(state);
+  });
+
+  test("does not mutate the previous state (reducer purity)", () => {
+    const before = initialState();
+    dispatch(before, { type: "session-status/loaded", sid: "sess-1", snapshot: snapshotA });
+    expect(before.sessionStatuses.size).toBe(0);
+  });
+});

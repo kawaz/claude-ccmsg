@@ -31,6 +31,10 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SessionStatusResponse,
+  SessionStatusStreamEvent,
+  SessionStatusSubscribeResponse,
+  SessionStatusUnsubscribeResponse,
   SetTitleResponse,
   StreamEvent,
   TranscriptReadResponse,
@@ -123,6 +127,21 @@ export interface WsHandle {
    * transcriptUnsubscribe or disconnect. */
   transcriptSubscribe(sid: string): Promise<TranscriptSubscribeResponse | ErrorResponse>;
   transcriptUnsubscribe(sid: string): Promise<TranscriptUnsubscribeResponse | ErrorResponse>;
+  /** One-shot fetch of a connected session's folded status snapshot (DR-0020
+   * Phase 1 session_status) — todos/workflows/background as currently folded
+   * by the daemon from its transcript jsonl. Not called by any component
+   * today (subscribe's own response already carries the initial snapshot,
+   * see below); kept for parity with the protocol's non-live op and any
+   * future one-shot refresh need. */
+  sessionStatus(sid: string): Promise<SessionStatusResponse | ErrorResponse>;
+  /** Follow a connected session's folded status live (DR-0020 Phase 1
+   * session_status_subscribe): the response itself carries the current
+   * snapshot (unlike transcriptSubscribe, which only returns a size) —
+   * callers dispatch `session-status/loaded` from the resolved response,
+   * then again for every subsequent `ev:"session_status"` push (handled in
+   * onMessage below) until sessionStatusUnsubscribe or disconnect. */
+  sessionStatusSubscribe(sid: string): Promise<SessionStatusSubscribeResponse | ErrorResponse>;
+  sessionStatusUnsubscribe(sid: string): Promise<SessionStatusUnsubscribeResponse | ErrorResponse>;
   /** One-shot fetch of the latest `claude agents --json` poll result (U1).
    * Called once in onOpen's handshake for the initial paint; subsequent
    * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
@@ -255,6 +274,22 @@ export function createWsClient(
       });
       return;
     }
+    // Live-tail push for a session's folded status (DR-0020 Phase 1/2
+    // session_status_subscribe): folds straight into `session-status/loaded`,
+    // the same action sessionStatusSubscribe's own resolved response
+    // dispatches for the initial snapshot — the reducer has exactly one
+    // "replace this sid's snapshot" code path (same pattern as
+    // ev:"transcript" above, minus contiguity bookkeeping since this is
+    // always a full recomputed snapshot, not an append).
+    if ("ev" in streamEv && streamEv.ev === "session_status") {
+      const ev = streamEv as SessionStatusStreamEvent;
+      dispatch({
+        type: "session-status/loaded",
+        sid: ev.sid,
+        snapshot: { todos: ev.todos, workflows: ev.workflows, background: ev.background },
+      });
+      return;
+    }
     const delivered = streamEv as DeliveredEvent;
     // Cursor advances on every StorageEvent delivery that carries a seq
     // (DR-0016 §2.4: all event types, not just msg) — ephemeral stream events
@@ -374,6 +409,9 @@ export function createWsClient(
       }),
     transcriptSubscribe: (sid) => send({ op: "transcript_subscribe", sid }),
     transcriptUnsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),
+    sessionStatus: (sid) => send({ op: "session_status", sid }),
+    sessionStatusSubscribe: (sid) => send({ op: "session_status_subscribe", sid }),
+    sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
     agents: () => send({ op: "agents" }),
     ping: () => send({ op: "ping" }),
   };

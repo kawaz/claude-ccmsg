@@ -1,16 +1,27 @@
-// Top-level "session" screen (DR-0008 Files pane, DR-0009 Timeline pane).
-// Selected via the `#s<sid>[:<path>]` (Files) or `#t<sid>` (Timeline) locator
-// (App.tsx routes here instead of RoomView when state.view is "session" or
-// "timeline"). Both tabs share one sid-keyed SessionTreeState cache so
-// switching tabs never refetches what's already loaded.
+// Top-level "session" screen (DR-0008 Files pane, DR-0009 Timeline pane,
+// DR-0020 Status tab). Selected via the `#s<sid>[:<path>]` (Files) or
+// `#t<sid>` (Timeline) locator (App.tsx routes here instead of RoomView when
+// state.view is "session" or "timeline"). Files/Timeline/Rooms/Status all
+// share one sid-keyed SessionTreeState cache so switching tabs never
+// refetches what's already loaded.
 import { useEffect, useState } from "preact/hooks";
 import type { AppState, SessionTreeState } from "../store.ts";
 import { fileHref, sessionHref, timelineHref } from "../locator.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
+import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
+import { StatusPanel } from "./StatusPanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
+
+/** Local (non-locator) tab layered on top of Files/Timeline locator routing,
+ * same rationale as the pre-existing Rooms tab (see `localTab`'s doc comment
+ * in SessionView below): Status has no per-sid persisted sub-state worth
+ * round-tripping through the URL, just a live snapshot already cached in
+ * `state.sessionStatuses`. `null` = follow the locator-driven tab
+ * (Files/Timeline). */
+type LocalTab = "rooms" | "status" | null;
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -22,23 +33,90 @@ const EMPTY_TREE: SessionTreeState = {
 };
 
 export function SessionView({ state }: { state: AppState }) {
+  const { store, ws } = useApp();
   const sid = state.currentSid;
-  // Rooms is a third tab layered on top of the Files/Timeline locator routing
-  // (`#s<sid>` / `#t<sid>`, see locator.ts) rather than a locator form of its
-  // own — it has no per-sid persisted sub-state worth round-tripping through
-  // the URL (unlike Files' selectedPath or Timeline's paging position), so a
-  // local toggle is enough. Clicking Files/Timeline (both real `<a href>`
-  // locator links) clears it back to whatever state.view says.
-  const [roomsOpen, setRoomsOpen] = useState(false);
+  // Rooms/Status are tabs layered on top of the Files/Timeline locator
+  // routing (`#s<sid>` / `#t<sid>`, see locator.ts) rather than a locator
+  // form of their own — neither has per-sid persisted sub-state worth
+  // round-tripping through the URL (unlike Files' selectedPath or Timeline's
+  // paging position), so a local toggle is enough. Clicking Files/Timeline
+  // (both real `<a href>` locator links) clears it back to whatever
+  // state.view says.
+  const [localTab, setLocalTab] = useState<LocalTab>(null);
 
   // Reset back to the locator-driven tab (Files/Timeline) on a session
   // switch (adversarial review nit finding): SessionView doesn't remount
   // across a sid change (sidebar navigation just changes `state.currentSid`),
-  // so without this a Rooms tab left open before switching sessions would
-  // keep showing Rooms for the newly-selected session too, inconsistent with
-  // Files/Timeline's locator-driven behavior (every other tab always matches
-  // the URL for the session you just navigated to).
-  useEffect(() => setRoomsOpen(false), [sid]);
+  // so without this a Rooms/Status tab left open before switching sessions
+  // would keep showing that tab for the newly-selected session too,
+  // inconsistent with Files/Timeline's locator-driven behavior (every other
+  // tab always matches the URL for the session you just navigated to).
+  useEffect(() => setLocalTab(null), [sid]);
+
+  // tab の確定は sid の有無に関係なく毎 render 行う (下の early return より前
+  // — hooks は無条件に同じ順序で呼ぶ必要があるため、購読 effect もここで
+  // 確定させた tab を見て判断する)。
+  const tab = localTab ?? (state.view === "timeline" ? "timeline" : "files");
+  // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
+  // hello 時に transcript_path を申告・検証済みのセッションでしか
+  // session_status_subscribe は成立しない (daemon の resolveTranscript が
+  // error を返す)。Timeline タブが既に使っている判定と同一 (下の
+  // hasTranscript と同値だが、early return より前 = hooks 位置で必要なので
+  // ここで引く)。
+  const peer = state.peers.find((p) => p.sid === sid);
+  const hasTranscript = !!peer?.transcript_path;
+
+  // Status データ購読 (DR-0020 Phase 2/3): Status タブと Timeline タブ (下部
+  // ミニパネルが同じデータを要る) のどちらかが開いている間だけ subscribe し、
+  // それ以外のタブに切り替わる/セッションが変わる/unmount のいずれかで
+  // unsubscribe + キャッシュ破棄する。ひとつの effect が両タブの需要を兼ねる
+  // — Status 用と Timeline 用を別々の effect にすると、同じ (sid) への
+  // subscribe が daemon 側で Set 的に重複排除される一方 unsubscribe は
+  // 無条件にその sid を切るため、"片方の tab を閉じたらもう片方の生きた
+  // 購読まで道連れで消える" 事故になる。deps は tab そのものではなく
+  // 「購読が必要か」の boolean (needsStatus) — tab を直接 deps に入れると
+  // Status↔Timeline の切替のたびに unsubscribe→re-subscribe が走り、daemon
+  // 側は購読者 0 の時点で fold を破棄するため毎回 transcript 全量 rescan +
+  // UI は cleared→loaded の間「読み込み中…」に戻るちらつきになる。
+  //
+  // サイドバーのミニバッジ (SessionList.tsx) はここで作った
+  // `state.sessionStatuses` を読むだけの受動的な消費者 — つまりバッジが出る
+  // のは「今まさに Status/Timeline タブを開いているセッション」だけ
+  // (DR-0020 §2.1 (a) 案: 全 peer 常時 subscribe はコストに見合わないため、
+  // 実装コストとのトレードオフでこちらを採用。全 peer 分の完全なバッジは
+  // Phase 3 後続に持ち越す)。
+  const needsStatus = tab === "status" || tab === "timeline";
+  useEffect(() => {
+    if (!sid || !needsStatus || !hasTranscript) return;
+    if (state.connStatus !== "connected") return;
+    // Cancellation guard (same pattern as Timeline's scroll effect): without
+    // it, a tab/session switch that tears this effect down BEFORE the
+    // subscribe response resolves would dispatch `session-status/loaded`
+    // AFTER the cleanup's `session-status/cleared` — leaving a stale entry
+    // in sessionStatuses that violates its "absence = not subscribed"
+    // contract (store.ts) with no owner left to ever clear it.
+    let cancelled = false;
+    void ws
+      .sessionStatusSubscribe(sid)
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        store.dispatch({
+          type: "session-status/loaded",
+          sid,
+          snapshot: { todos: res.todos, workflows: res.workflows, background: res.background },
+        });
+      })
+      .catch(() => {
+        // send() rejects while the socket isn't open (ws.ts) — next
+        // connStatus flip to "connected" re-runs this effect, same retry
+        // policy as Timeline's own transcriptSubscribe effect.
+      });
+    return () => {
+      cancelled = true;
+      void ws.sessionStatusUnsubscribe(sid).catch(() => {});
+      store.dispatch({ type: "session-status/cleared", sid });
+    };
+  }, [sid, needsStatus, hasTranscript, state.connStatus]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -74,13 +152,7 @@ export function SessionView({ state }: { state: AppState }) {
   // The reducer always creates a tree on the locator/changed that sets
   // currentSid, so this fallback is type-safety only, never hit in practice.
   const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
-  const tab = roomsOpen ? "rooms" : state.view === "timeline" ? "timeline" : "files";
-  // Timeline requires the session to have announced+had-validated a
-  // transcript_path at hello time (DR-0009 §2); peers is the only place that
-  // fact is visible client-side (PeersResponse.transcript_path, absent when
-  // the daemon rejected or the session never sent one).
-  const peer = state.peers.find((p) => p.sid === sid);
-  const hasTranscript = !!peer?.transcript_path;
+  const sessionStatus = state.sessionStatuses.get(sid);
 
   return (
     <main id="session-view">
@@ -88,7 +160,7 @@ export function SessionView({ state }: { state: AppState }) {
         <a
           class={"session-tab" + (tab === "files" ? " active" : "")}
           href={sessionHref(sid)}
-          onClick={() => setRoomsOpen(false)}
+          onClick={() => setLocalTab(null)}
         >
           Files
         </a>
@@ -96,7 +168,7 @@ export function SessionView({ state }: { state: AppState }) {
           <a
             class={"session-tab" + (tab === "timeline" ? " active" : "")}
             href={timelineHref(sid)}
-            onClick={() => setRoomsOpen(false)}
+            onClick={() => setLocalTab(null)}
           >
             Timeline
           </a>
@@ -108,13 +180,30 @@ export function SessionView({ state }: { state: AppState }) {
         <button
           type="button"
           class={"session-tab" + (tab === "rooms" ? " active" : "")}
-          onClick={() => setRoomsOpen(true)}
+          onClick={() => setLocalTab("rooms")}
         >
           Rooms
+        </button>
+        <button
+          type="button"
+          class={"session-tab" + (tab === "status" ? " active" : "")}
+          onClick={() => setLocalTab("status")}
+        >
+          Status
         </button>
       </div>
       {tab === "rooms" ? (
         <SessionRooms sid={sid} state={state} />
+      ) : tab === "status" ? (
+        // Status data is folded from the transcript (DR-0020 §3.1), so a
+        // session that never announced one can never produce a snapshot —
+        // explain that instead of leaving StatusPanel's "読み込み中…"
+        // spinner up forever (same guard the Timeline branch below applies).
+        hasTranscript ? (
+          <StatusPanel snapshot={sessionStatus} />
+        ) : (
+          <p id="empty-state">このセッションは transcript を申告していません</p>
+        )
       ) : tab === "timeline" ? (
         // Guard against a stale/hand-typed `#t<sid>` link outliving the
         // session's transcript announcement (e.g. reconnect without hello
@@ -122,7 +211,12 @@ export function SessionView({ state }: { state: AppState }) {
         // the user why, so the pane falls back to the same explanation
         // rather than calling ws.transcriptRead for a session we know lacks one.
         hasTranscript ? (
-          <Timeline sid={sid} timeline={tree.timeline} />
+          <Timeline
+            sid={sid}
+            timeline={tree.timeline}
+            sessionStatus={sessionStatus}
+            onOpenStatus={() => setLocalTab("status")}
+          />
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )
@@ -131,11 +225,12 @@ export function SessionView({ state }: { state: AppState }) {
       )}
       {/* DR-0014 §2.6 floating 1on1 composer: only makes sense on the
        * Files/Timeline tabs (kawaz can already open a room directly from
-       * the Rooms tab, so an extra FAB there would be noise). Positioned
-       * over the tab content via position:fixed in app.css; each tab
-       * switch keeps the same instance so an in-progress compose survives
-       * a Files↔Timeline hop. */}
-      {tab !== "rooms" ? <OneOnOneComposer sid={sid} state={state} /> : null}
+       * the Rooms tab, so an extra FAB there would be noise; Status is the
+       * same kind of read-only reporting tab, DR-0020). Positioned over the
+       * tab content via position:fixed in app.css; each tab switch keeps the
+       * same instance so an in-progress compose survives a Files↔Timeline
+       * hop. */}
+      {tab === "files" || tab === "timeline" ? <OneOnOneComposer sid={sid} state={state} /> : null}
     </main>
   );
 }

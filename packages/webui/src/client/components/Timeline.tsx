@@ -3,6 +3,7 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -10,6 +11,7 @@ import { useStoreState } from "../useStore.ts";
 import { UserAvatar } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
 import { useNow } from "../useNow.ts";
+import { miniSummaryLines } from "../session-status-view.ts";
 import {
   classifyBoundaryLine,
   foldGroupLabel,
@@ -740,7 +742,25 @@ function CcmsgBubble({
   );
 }
 
-export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineState }) {
+export function Timeline({
+  sid,
+  timeline,
+  sessionStatus,
+  onOpenStatus,
+}: {
+  sid: string;
+  timeline: TimelineState;
+  /** DR-0020 §2.1 TL 下ミニパネル用の folded status snapshot — subscribe の
+   * ライフサイクル自体は SessionView が Status タブと共有して管理する
+   * (このコンポーネントは受け取って要約を出すだけ)。undefined = まだ届いて
+   * いない (subscribe 直後のごく短い間) — パネル自体を隠す (下の
+   * miniSummaryLines 呼び出し前にガード)。 */
+  sessionStatus: SessionStatusSnapshot | undefined;
+  /** ミニパネルタップで Status タブへ (DR-0020 §2.1「タップで Status タブへ
+   * 遷移」)。SessionView 側のローカルタブ state を差し替えるだけなので、
+   * ここではコールバックとして受け取る。 */
+  onOpenStatus: () => void;
+}) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
 
@@ -1141,6 +1161,11 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
     scrollToUserTurn(next);
   }
 
+  // TL 下ミニパネル (DR-0020 §2.1): 走行中 workflow + in_progress TODO だけの
+  // 要約。ゼロ件 (snapshot 未着含む) ならパネル自体を出さない仕様
+  // ("ゼロ件なら非表示")。
+  const miniLines = sessionStatus ? miniSummaryLines(sessionStatus) : [];
+
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {
     return (
       <div class="timeline-view">
@@ -1276,6 +1301,21 @@ export function Timeline({ sid, timeline }: { sid: string; timeline: TimelineSta
           )}
         </div>
       )}
+      {miniLines.length > 0 ? (
+        // DR-0020 §2.1 TL 下ミニパネル: sticky bottom (画面下の常駐余白) —
+        // `.timeline-view` 自体がスクロールコンテナ (overflow-y:auto) なので
+        // 別ラッパーなしで sticky が効く。タップで Status タブへ遷移。
+        <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
+          {miniLines.map((line) => (
+            <span
+              key={`${line.kind}-${line.text}`}
+              class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+            >
+              {line.text}
+            </span>
+          ))}
+        </button>
+      ) : null}
     </div>
   );
 }
