@@ -287,8 +287,8 @@ export interface SessionIdentity {
   /** absolute path of the repository container holding ALL of this repo's
    * workspaces/worktrees (DR-0008 addendum). When announced and accepted by
    * the daemon's hello-time validation (absolute, realpath-resolvable, a
-   * strict ancestor of cwd, not "/" or $HOME itself), fs_list/fs_read use it
-   * as the containment root instead of cwd — so sibling workspaces of the
+   * strict ancestor of cwd, not "/" or $HOME itself), fs_list/fs_read/fs_write
+   * use it as the containment root instead of cwd — so sibling workspaces of the
    * same repo become browsable. Rejected or absent = cwd root as before. */
   repo_root?: string;
   /** current branch / bookmark name of the session's checkout (informational,
@@ -489,6 +489,21 @@ export interface FsReadRequest {
 }
 
 /**
+ * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
+ * docs/inbox/ in a connected session's containment root. The daemon applies the
+ * same realpath containment checks as fs_list/fs_read, rejects every other
+ * directory, and never overwrites an existing path.
+ */
+export interface FsWriteRequest {
+  op: "fs_write";
+  sid: string;
+  /** file path relative to the session root */
+  path: string;
+  /** UTF-8 text content */
+  content: string;
+}
+
+/**
  * Session transcript access (DR-0009): read a slice of a connected session's
  * Claude Code transcript jsonl. Unlike fs_read there is NO client-supplied
  * path — the daemon only ever serves the single file the session announced
@@ -572,6 +587,7 @@ export type Request =
   | SessionLaunchRequest
   | FsListRequest
   | FsReadRequest
+  | FsWriteRequest
   | TranscriptReadRequest
   | AgentsRequest
   | TranscriptSubscribeRequest
@@ -747,6 +763,12 @@ export interface FsReadResponse {
   /** UTF-8 text content; "" when binary */
   content: string;
 }
+export interface FsWriteResponse {
+  ok: true;
+  sid: string;
+  /** normalized path relative to the session root */
+  path: string;
+}
 /** One row of `claude agents --json` output, annotated with which
  * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
  * (camelCase preserved via passthrough) — `kind`/`status`/`state` stay plain
@@ -840,6 +862,7 @@ export type Response =
   | SessionLaunchResponse
   | FsListResponse
   | FsReadResponse
+  | FsWriteResponse
   | TranscriptReadResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
@@ -895,6 +918,10 @@ export const ErrorCode = {
   session_not_found: "session_not_found",
   path_forbidden: "path_forbidden",
   not_found: "not_found",
+  // Inbox file creation (DR-0019): fs_write is restricted to new paths under
+  // docs/inbox/ and never overwrites an existing filesystem entry.
+  path_not_writable: "path_not_writable",
+  file_exists: "file_exists",
   // Session launcher (DR-0018): no valid session_launcher configuration means
   // both directory browsing and launch remain closed.
   launcher_not_configured: "launcher_not_configured",

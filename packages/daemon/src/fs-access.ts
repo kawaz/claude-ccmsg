@@ -1,4 +1,5 @@
-// Workspace file access (DR-0008): containment-checked fs_list / fs_read.
+// Workspace file access (DR-0008 / DR-0019): containment-checked
+// fs_list / fs_read / inbox-only fs_write.
 //
 // The browsable universe for a given `sid` is exactly "the realpath of that
 // session's cwd" (the root). Every request path is resolved relative to the
@@ -15,6 +16,7 @@ import {
   type FsEntry,
   type FsListResponse,
   type FsReadResponse,
+  type FsWriteResponse,
 } from "@ccmsg/protocol";
 
 /** Minimal shape fs-access needs from `Daemon.sessions` — kept structural
@@ -166,11 +168,14 @@ interface ContainedErr {
  *     from the full candidate to the nearest *existing* ancestor,
  *     realpath-resolve it, and check containment on the resolved path. This
  *     catches symlink escapes at any depth. If the full candidate existed,
- *     that realpath is the answer. If only an ancestor existed, we report
- *     not_found (but only after confirming the existing ancestor itself
- *     didn't escape root — an escaping ancestor is path_forbidden even if
- *     the leaf doesn't exist, so we never leak "does this exist" information
- *     about paths reachable only through a forbidden symlink).
+ *     that realpath is the answer. If only an ancestor existed, readers get
+ *     not_found; a create-only caller instead receives the existing
+ *     ancestor's realpath joined with the missing lexical remainder — a
+ *     realpath-normalized location, so downstream policy checks (fs_write's
+ *     docs/inbox prefix) can't be redirected by an in-root symlink sitting
+ *     between the root and the leaf. An escaping ancestor is always
+ *     path_forbidden, so we never leak "does this exist" information about
+ *     paths reachable only through a forbidden symlink.
  *
  * Known limitation (TOCTOU): the realpath walk above and the later
  * `fs.openSync`/`fs.lstatSync` on the resolved path are not atomic — a
@@ -182,7 +187,11 @@ interface ContainedErr {
  * enforce (DR-0008): it doesn't let anyone reach further than they could
  * already reach on their own.
  */
-function resolveContained(root: string, reqPath: string): ContainedOk | ContainedErr {
+function resolveContained(
+  root: string,
+  reqPath: string,
+  allowMissing = false,
+): ContainedOk | ContainedErr {
   if (path.isAbsolute(reqPath)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path must be relative: ${reqPath}` };
   }
@@ -236,7 +245,15 @@ function resolveContained(root: string, reqPath: string): ContainedOk | Containe
       };
     }
     if (cursor !== candidate) {
-      // an ancestor existed (and stayed in-root) but the full candidate didn't
+      // An ancestor existed and stayed in-root, but the full candidate didn't.
+      // Read/list callers keep the existing not_found contract. A create-only
+      // caller gets realpath(ancestor) + the missing lexical remainder — NOT
+      // the raw lexical candidate — so an in-root symlink between root and
+      // leaf (e.g. docs/inbox -> src) is already resolved in the returned
+      // path and downstream policy checks judge the true write location.
+      if (allowMissing) {
+        return { ok: true, realPath: path.join(real, path.relative(cursor, candidate)) };
+      }
       return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
     }
     return { ok: true, realPath: real };
@@ -377,4 +394,100 @@ export function fsRead(
       content: binary ? "" : content.toString("utf-8"),
     },
   };
+}
+
+// --- fs_write ----------------------------------------------------------
+
+export function fsWrite(
+  sessions: SessionLookup,
+  sid: string,
+  reqPath: string,
+  content: string,
+): FsAccessResult<Omit<FsWriteResponse, "ok">> {
+  const rootResult = resolveRoot(sessions, sid);
+  if (!rootResult.ok) return rootResult;
+  const root = rootResult.root;
+
+  if (typeof reqPath !== "string" || reqPath === "") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write requires path" };
+  }
+  if (typeof content !== "string") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_write content must be a string" };
+  }
+
+  // Permit a missing leaf only after the nearest existing ancestor has passed
+  // the same lexical + realpath containment checks fs_list/fs_read use.
+  const resolved = resolveContained(root, reqPath, true);
+  if (!resolved.ok) return resolved;
+
+  // Policy check (DR-0019 § 3.1): judge the realpath-resolved location, not
+  // the request string — a lexical "docs/inbox/…" whose docs/inbox is really
+  // an in-root symlink (e.g. -> src/) must not smuggle a write outside the
+  // inbox. resolveContained already resolved every existing component, so
+  // this prefix comparison sees the true write destination.
+  const relPath = path.relative(root, resolved.realPath);
+  const inbox = path.join("docs", "inbox");
+  const inboxPrefix = inbox + path.sep;
+  if (!relPath.startsWith(inboxPrefix)) {
+    return {
+      ok: false,
+      code: ErrorCode.path_not_writable,
+      msg: `fs_write path must be under ${inboxPrefix}`,
+    };
+  }
+
+  try {
+    fs.lstatSync(resolved.realPath);
+    return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${relPath}` };
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      return {
+        ok: false,
+        code: ErrorCode.path_forbidden,
+        msg: `cannot inspect path: ${reqPath}`,
+      };
+    }
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(resolved.realPath), { recursive: true });
+  } catch {
+    return {
+      ok: false,
+      code: ErrorCode.path_forbidden,
+      msg: `cannot create parent directory: ${reqPath}`,
+    };
+  }
+
+  // Re-check after mkdir so any symlink exposed in the newly-existing parent
+  // chain is subject to containment before the create-only open. The inbox
+  // policy is re-applied on the re-resolved location for the same reason —
+  // both checks must hold for the path actually opened, not just the one
+  // inspected before mkdir.
+  const rechecked = resolveContained(root, reqPath, true);
+  if (!rechecked.ok) return rechecked;
+  if (!path.relative(root, rechecked.realPath).startsWith(inboxPrefix)) {
+    return {
+      ok: false,
+      code: ErrorCode.path_not_writable,
+      msg: `fs_write path must be under ${inboxPrefix}`,
+    };
+  }
+
+  try {
+    fs.writeFileSync(rechecked.realPath, content, { encoding: "utf-8", flag: "wx" });
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === "EEXIST") {
+      return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${relPath}` };
+    }
+    return {
+      ok: false,
+      code: ErrorCode.path_forbidden,
+      msg: `cannot write path: ${reqPath}`,
+    };
+  }
+
+  return { ok: true, data: { sid, path: relPath } };
 }

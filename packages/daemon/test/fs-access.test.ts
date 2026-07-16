@@ -586,6 +586,358 @@ describe("fs_list / fs_read", () => {
   );
 });
 
+describe("fs_write (DR-0019 Phase W1)", () => {
+  // fs_write is a webui-only mutation surface: a session identity must be
+  // rejected before it can create anything in its own or another session's root.
+  test(
+    "role gate: session role cannot call fs_write",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const session = await sessionAt(ctx, "A", root);
+        const res = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/denied.md",
+          content: "must not be written",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("bad_request");
+        expect(fs.existsSync(path.join(root, "docs", "inbox", "denied.md"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // Absolute paths are outside the relative-path wire contract even when the
+  // caller knows a real host path; rejecting them preserves the session-root boundary.
+  test(
+    "containment: an absolute path outside the session root is path_forbidden",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const outsidePath = path.join(outside, "escaped.md");
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: outsidePath,
+          content: "must stay contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.existsSync(outsidePath)).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // A lexical docs/inbox prefix must not hide traversal that normalizes beyond
+  // the session root; containment is checked on the normalized candidate first.
+  test(
+    'containment: ".." traversal out of the session root is path_forbidden',
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/../../../escaped.md",
+          content: "must stay contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // A root-relative docs/inbox name is not sufficient when an existing symlink
+  // redirects that directory outside the root; realpath containment must win.
+  test(
+    "containment: a docs/inbox symlink escaping the root is path_forbidden",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        fs.mkdirSync(path.join(root, "docs"));
+        fs.symlinkSync(outside, path.join(root, "docs", "inbox"));
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/escaped.md",
+          content: "must stay contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.existsSync(path.join(outside, "escaped.md"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // Containment alone is not enough for the write policy: docs/inbox may be a
+  // symlink to another directory INSIDE the root (e.g. -> src/). That passes
+  // realpath containment, so the inbox prefix must be judged on the resolved
+  // realpath — a lexical "docs/inbox/…" request must not smuggle a new file
+  // into src/. Regression test for the in-root redirect found in review.
+  test(
+    "write policy: docs/inbox symlinked to another in-root dir is path_not_writable",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        fs.mkdirSync(path.join(root, "src"));
+        fs.mkdirSync(path.join(root, "docs"));
+        fs.symlinkSync(path.join(root, "src"), path.join(root, "docs", "inbox"));
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/evil.md",
+          content: "must not land in src/",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_not_writable");
+        expect(fs.existsSync(path.join(root, "src", "evil.md"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // The wire contract requires a non-empty relative path; an empty string has
+  // no leaf to create and is rejected as malformed input, not as a policy miss.
+  test(
+    "invalid_args: fs_write with an empty path string",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "",
+          content: "no destination",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // The allowed prefix is "docs/inbox/" WITH the separator: a sibling name that
+  // merely starts with the same characters (docs/inboxx/) is a different
+  // directory and must be refused — classic startsWith-without-separator trap.
+  test(
+    "write policy: sibling directory docs/inboxx is path_not_writable",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inboxx/memo.md",
+          content: "prefix trap",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_not_writable");
+        expect(fs.existsSync(path.join(root, "docs", "inboxx"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // "docs/inbox" itself (no leaf under it) is the directory, not a memo: the
+  // grant is strictly for descendants, so the bare directory path is refused.
+  test(
+    "write policy: docs/inbox itself (no filename under it) is path_not_writable",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox",
+          content: "not a memo",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_not_writable");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // Phase W1 grants exactly docs/inbox descendants, so another in-root path is
+  // refused with the write-policy error rather than the containment error.
+  test(
+    "write policy: a path outside docs/inbox is path_not_writable",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/note.md",
+          content: "wrong directory",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_not_writable");
+        expect(fs.existsSync(path.join(root, "docs", "note.md"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // Inbox writes are create-only: an existing path must be rejected and its
+  // original bytes must remain unchanged rather than being truncated or replaced.
+  test(
+    "create-only: an existing file is file_exists and remains unchanged",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const target = path.join(root, "docs", "inbox", "existing.md");
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, "original");
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/existing.md",
+          content: "replacement",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("file_exists");
+        expect(fs.readFileSync(target, "utf-8")).toBe("original");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // An inbox-less repository is a supported starting state: fs_write creates
+  // docs/inbox recursively before creating the requested new memo.
+  test(
+    "parent creation: missing docs/inbox is created recursively",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const target = path.join(root, "docs", "inbox", "created.md");
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/created.md",
+          content: "created with parents",
+        });
+        expect(res).toEqual({ ok: true, sid: "A", path: path.join("docs", "inbox", "created.md") });
+        expect(fs.readFileSync(target, "utf-8")).toBe("created with parents");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // With docs/inbox already present, a normal request writes the exact UTF-8
+  // content and returns the normalized root-relative path of the created file.
+  test(
+    "normal write: creates a new UTF-8 memo and returns sid/path",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const inbox = path.join(root, "docs", "inbox");
+      const target = path.join(inbox, "memo.md");
+      try {
+        fs.mkdirSync(inbox, { recursive: true });
+        await sessionAt(ctx, "A", root);
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_write",
+          sid: "A",
+          path: "docs/inbox/memo.md",
+          content: "日本語のメモ\n",
+        });
+        expect(res).toEqual({ ok: true, sid: "A", path: path.join("docs", "inbox", "memo.md") });
+        expect(fs.readFileSync(target, "utf-8")).toBe("日本語のメモ\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
 // repo_root containment (DR-0008 addendum): a session's self-declared
 // repo_root, once hello-time-validated (fs-access.ts's validateRepoRoot),
 // widens fs_list/fs_read's containment root from "just this session's cwd" to

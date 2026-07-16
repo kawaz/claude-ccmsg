@@ -27,7 +27,7 @@ import {
 import { Logger } from "./log.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
-import { fsList, fsRead, validateRepoRoot } from "./fs-access.ts";
+import { fsList, fsRead, fsWrite, validateRepoRoot } from "./fs-access.ts";
 import { validateSessionLaunch } from "./session-launch.ts";
 import {
   createTranscriptTailStore,
@@ -698,7 +698,8 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 
 // --- request dispatch ------------------------------------------------------
 
-// fs_list/fs_read/transcript_read require hello too (DR-0008 / DR-0009): the
+// fs_list/fs_read/fs_write/transcript_read require hello too (DR-0008 /
+// DR-0019 / DR-0009): the
 // containment/lookup check itself doesn't depend on the *caller's* identity —
 // it only cares about the target sid's registered state. Requiring hello here
 // is defense in depth: it keeps every op that touches session state on one
@@ -719,6 +720,7 @@ const IDENTITY_OPS = new Set([
   "invite",
   "fs_list",
   "fs_read",
+  "fs_write",
   "transcript_read",
   "agents",
   "transcript_subscribe",
@@ -1436,6 +1438,20 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
 
     case "fs_read": {
       const result = fsRead(daemon.sessions, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_write": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_write' requires user role");
+        return;
+      }
+      const result = fsWrite(daemon.sessions, req.sid, req.path, req.content);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
