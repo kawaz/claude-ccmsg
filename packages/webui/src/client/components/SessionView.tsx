@@ -252,8 +252,14 @@ export function SessionView({ state }: { state: AppState }) {
        * same kind of read-only reporting tab, DR-0020). Positioned over the
        * tab content via position:fixed in app.css; each tab switch keeps the
        * same instance so an in-progress compose survives a Files↔Timeline
-       * hop. */}
-      {tab === "files" || tab === "timeline" ? <OneOnOneComposer sid={sid} state={state} /> : null}
+       * hop.
+       * kawaz r26 mid=65: ccmsg 未接続セッション (pinned/仮想閲覧、agents-only
+       * 行) では 1on1 送信先が存在しないため FAB 自体を出さない — daemon 側
+       * でも配送不能なのでガード。Files 経由のコード閲覧・編集系はこの条件と
+       * 無関係に従来通り。 */}
+      {peer && (tab === "files" || tab === "timeline") ? (
+        <OneOnOneComposer sid={sid} state={state} />
+      ) : null}
     </main>
   );
 }
