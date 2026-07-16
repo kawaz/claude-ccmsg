@@ -56,3 +56,11 @@ fail するテスト名の確定と不安定さの軸の特定を進めるため
 - [ ] `bun test` 実行を `tee` でログ保存するラッパー/手順を用意する
 - [ ] フルスイートを複数回 (最低 3-5 回) 実行してログを収集する
 - [ ] 収集ログから fail テスト名と発生パターンを集計する
+
+## 追記: 2026-07-16 別ケースの flaky を観測
+
+v0.39.0 CI (run 29502365995, ubuntu-latest) で別の flaky を観測 —
+`packages/cli/test/reconnect.test.ts:170`「daemon 再起動を跨いで subscribe が生存し、
+跨ぎ前後の post が両方 stdout に出る」が 10154ms で fail (timeout 様)。
+webui のみの変更 (daemon/cli 無変更) なので変更起因ではなくフルスイート並列時の timing。
+単発 rerun --failed で追試中。既知の tailscale origin 系 (上記 (a)(b)) とは別ケースとして記録。
