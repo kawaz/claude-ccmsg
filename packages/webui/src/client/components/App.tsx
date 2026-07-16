@@ -7,6 +7,7 @@ import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
 import { SessionView } from "./SessionView.tsx";
+import { ImageLightboxHost } from "./ImageLightbox.tsx";
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
  * SESSION (repo ▸ ws) / ROOM (title) を出す (kawaz r17 mid=1、2026-07-14):
@@ -99,6 +100,7 @@ export function App() {
           </span>
         ) : null}
       </footer>
+      <ImageLightboxHost />
     </div>
   );
 }

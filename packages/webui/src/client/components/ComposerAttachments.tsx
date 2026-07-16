@@ -5,6 +5,12 @@
 // 並べ、× ボタンで onRemove を呼ぶ。upload 進行中は取り消しできる (取り消せば
 // 本文からも placeholder が消える — 実処理は Composer.tsx 側)。
 import type { ComposerAttachment } from "./composer-attachments.ts";
+import { openImageLightbox } from "./ImageLightbox.tsx";
+
+/** 画像 mime (image/*) の添付か。lightbox で開くか新タブに逃がすかの分岐。 */
+function isImageAttachment(a: ComposerAttachment): boolean {
+  return a.mime?.startsWith("image/") ?? false;
+}
 
 /** upload 済み添付のプレビュー URL (daemon の /attachment/<uuid>.<ext>
  * endpoint)。TMPDIR の生パスはブラウザから開けないので、markdown-view.tsx
@@ -40,15 +46,23 @@ export function ComposerAttachments({
         const href = previewHref(a);
         return (
           <li key={a.n} class={cls}>
-            {/* upload 済みはファイル名クリックでプレビューを新タブに開く
-             * (kawaz r17 mid=44、2026-07-15)。送信前の内容確認用 — 画像は
-             * ブラウザがインライン表示、他 mime はダウンロード等の既定挙動。 */}
+            {/* upload 済みはファイル名クリックでプレビュー (kawaz r17 mid=44)。
+             * 画像は in-app lightbox (kawaz r26 mid=49: standalone PWA で
+             * target=_blank は脱出不能)、他 mime のみ新タブの既定挙動。 */}
             {href !== null ? (
               <a
                 class="composer-attachment-label"
                 href={href}
-                target="_blank"
+                target={isImageAttachment(a) ? undefined : "_blank"}
                 rel="noopener noreferrer"
+                onClick={
+                  isImageAttachment(a)
+                    ? (e) => {
+                        e.preventDefault();
+                        openImageLightbox(href, a.name);
+                      }
+                    : undefined
+                }
               >
                 {label}
               </a>

@@ -31,6 +31,7 @@ import type {
   Text,
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
+import { openImageLightbox } from "./components/ImageLightbox.tsx";
 
 // URL scheme allowlist for link/image targets (DR-0010): http/https/mailto,
 // plus scheme-less URLs (relative paths, `#fragment`s) which CommonMark
@@ -183,13 +184,17 @@ function renderNode(node: AnyNode, key: string): VNode | string {
         // which is a single text run, but be defensive).
         const alt = link.children.map((c) => (c.type === "text" ? (c as Text).value : "")).join("");
         if (attachment.isImage) {
+          // kawaz r26 mid=49: target="_blank" は standalone PWA で脱出不能に
+          // なる (戻る UI が無い) ため in-app lightbox で開く。
           return (
             <a
               key={key}
               class="md-attachment-image-link"
               href={attachment.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                openImageLightbox(attachment.url, alt || attachment.url);
+              }}
             >
               <img class="md-attachment-image" src={attachment.url} alt={alt || attachment.url} />
             </a>

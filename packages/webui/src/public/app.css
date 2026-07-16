@@ -1437,19 +1437,28 @@ button.session-tab {
   color: var(--fg);
 }
 
-/* +メモ フォーム本体は Composer (.composer textarea) と同じ入力欄トーンに
- * 揃える。sticky にはしない (Composer と違い一覧の途中に挟まる一時的な UI)。 */
-.tree-inbox-form {
+.file-viewer {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.4rem 0.75rem 0.6rem;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 0.25rem;
+  overflow: auto;
 }
 
-.tree-inbox-form-name,
-.tree-inbox-form-body {
+/* New inbox memo uses the whole FileViewer surface: optional filename in the
+ * viewer header, a body textarea filling every remaining pixel, and actions
+ * kept visible beside the filename on desktop and mobile. */
+.memo-editor {
+  overflow: hidden;
+}
+
+.memo-editor-header {
+  position: static;
+}
+
+.memo-editor-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font: inherit;
   font-size: 0.85rem;
   padding: 0.35rem 0.5rem;
@@ -1459,24 +1468,13 @@ button.session-tab {
   color: var(--fg);
 }
 
-.tree-inbox-form-body {
-  resize: vertical;
-  min-height: 4rem;
-}
-
-.tree-inbox-form-error {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--danger);
-}
-
-.tree-inbox-form-actions {
+.memo-editor-actions {
   display: flex;
-  justify-content: flex-end;
+  flex: 0 0 auto;
   gap: 0.4rem;
 }
 
-.tree-inbox-form-actions button {
+.memo-editor-actions button {
   font: inherit;
   font-size: 0.8rem;
   padding: 0.3rem 0.75rem;
@@ -1484,30 +1482,47 @@ button.session-tab {
   cursor: pointer;
 }
 
-.tree-inbox-form-actions button[type="submit"] {
+.memo-editor-actions button[type="submit"] {
   background: var(--accent);
   color: var(--accent-fg);
-  border: none;
+  border: 1px solid var(--accent);
 }
 
-.tree-inbox-form-actions button[type="submit"]:disabled,
-.tree-inbox-form-actions button[type="button"]:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.tree-inbox-form-actions button[type="button"] {
+.memo-editor-actions button[type="button"] {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
 }
 
-.file-viewer {
+.memo-editor-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.memo-editor-error {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+.memo-editor-body {
   flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  border: 0;
+  padding: 0.75rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.memo-editor-body:focus {
+  outline: none;
 }
 
 /* Preview/Code toggle in the viewer header (FileViewer.tsx). Pushed to the
@@ -2737,4 +2752,39 @@ button.session-tab {
   font-family: ui-monospace, monospace;
   color: var(--accent);
   white-space: nowrap;
+}
+
+/* kawaz r26 mid=49: 添付画像の in-app lightbox。standalone PWA (ホーム画面
+ * 起動) では新タブに開くと戻る UI が無く脱出不能になるため、overlay 表示 +
+ * 「どこを押しても閉じる」(背景/画像タップ、× ボタン、Esc)。 */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.image-lightbox-img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: max(0.5rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: 2.6rem;
+  height: 2.6rem;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
 }
