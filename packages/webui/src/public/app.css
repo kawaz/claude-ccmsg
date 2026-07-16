@@ -2415,23 +2415,41 @@ button.session-tab {
  * 留めて鬱陶しさを抑える。 */
 .composer-fab-draft {
   background: var(--warn);
-  animation: composer-fab-bounce 3s ease-in-out infinite;
+  animation: composer-fab-bounce 3s infinite;
+  transform-origin: bottom center;
 }
 
+/* kawaz r26 mid=31: 「固い」→ スライムっぽくポヨンポヨン。squash & stretch
+ * (潰れ scaleX>1/scaleY<1 ↔ 伸び scaleX<1/scaleY>1 を交互) + 着地の余韻を
+ * 2 バウンド分。transform-origin: bottom で地面に付いたまま潰れる。 */
 @keyframes composer-fab-bounce {
   0%,
-  10%,
+  30%,
   100% {
     transform: none;
   }
-  3% {
-    transform: translateY(-0.5rem) scaleY(1.1);
+  /* 予備動作: ぐっと潰れる */
+  4% {
+    transform: scaleX(1.18) scaleY(0.78);
   }
-  6% {
-    transform: translateY(0) scaleY(0.92);
+  /* 跳ね上がり: 縦に伸びる */
+  9% {
+    transform: translateY(-0.7rem) scaleX(0.88) scaleY(1.16);
   }
-  8% {
-    transform: translateY(-0.2rem) scaleY(1.03);
+  /* 着地: べちゃっと潰れる */
+  14% {
+    transform: scaleX(1.22) scaleY(0.74);
+  }
+  /* 2 度目の小さい跳ね */
+  19% {
+    transform: translateY(-0.25rem) scaleX(0.94) scaleY(1.08);
+  }
+  /* 小さく着地 → 余韻 */
+  23% {
+    transform: scaleX(1.1) scaleY(0.9);
+  }
+  27% {
+    transform: scaleX(0.98) scaleY(1.02);
   }
 }
 
