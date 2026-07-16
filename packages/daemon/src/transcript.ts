@@ -1,8 +1,8 @@
-// Session transcript access (DR-0009): byte-offset paginated reads of a
-// connected session's single announced Claude Code transcript jsonl. Unlike
-// fs-access.ts there is no client-supplied path — the daemon only ever serves
-// the one file a session announced (and this module validated) at hello time,
-// so no traversal surface exists at all.
+// Session transcript access (DR-0009 / DR-0021): byte-offset paginated reads
+// of a connected session's hello-validated transcript, or a user-role historical
+// sid resolved below detected config dirs. There is no client-supplied path:
+// connected reads use the announced file and historical reads require a complete
+// UUID basename, so neither path exposes a traversal surface.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   type TranscriptSubscribeResponse,
   type TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
+import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -51,12 +52,25 @@ export function validateTranscriptPath(sid: string, transcriptPath: unknown): st
   return transcriptPath;
 }
 
+export interface TranscriptResolveOptions {
+  /** Historical fallback is passed only by user-role transcript_read. Live tail
+   * and session-status callers intentionally keep the connected-session contract. */
+  allowVirtual?: boolean;
+  /** Test seam; production omits this and uses daemon-detected config dirs. */
+  configDirs?: readonly string[];
+}
+
 export function resolveTranscript(
   sessions: SessionLookup,
   sid: string,
+  opts: TranscriptResolveOptions = {},
 ): { ok: true; file: string } | { ok: false; code: ErrorCode; msg: string } {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) {
+    if (opts.allowVirtual) {
+      const virtual = resolveVirtualTranscript(sid, opts.configDirs);
+      if (virtual) return { ok: true, file: virtual.file };
+    }
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
   }
   const file = entry.meta.transcript_path;
@@ -181,8 +195,9 @@ export function transcriptRead(
   sid: string,
   before: number | undefined,
   maxBytes: number | undefined,
+  opts: TranscriptResolveOptions = {},
 ): TranscriptResult<Omit<TranscriptReadResponse, "ok">> {
-  const resolved = resolveTranscript(sessions, sid);
+  const resolved = resolveTranscript(sessions, sid, opts);
   if (!resolved.ok) return resolved;
 
   if (

@@ -6,7 +6,7 @@
 // session's cwd so a new inbox memo belongs to that working copy, then applies
 // the same realpath containment boundary before creating anything. There is no
 // way for a client to name either filesystem base directly — only a connected
-// session's sid.
+// session sid, or (for user-role reads) a UUID resolved below detected projects.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,6 +18,7 @@ import {
   type FsReadResponse,
   type FsWriteResponse,
 } from "@ccmsg/protocol";
+import { resolveVirtualRoot } from "./virtual-sessions.ts";
 
 /** Minimal shape fs-access needs from `Daemon.sessions` — kept structural
  *  (rather than importing `Daemon`/`SessionEntry` from server.ts) so this
@@ -102,16 +103,27 @@ interface RootErr {
   msg: string;
 }
 
+export interface FsAccessOptions {
+  /** Historical fallback is passed only by user-role fs_list/fs_read. fs_write
+   * deliberately omits it, so an unconnected session can never be modified. */
+  allowVirtual?: boolean;
+  /** Test seam; production omits this and uses daemon-detected config dirs. */
+  configDirs?: readonly string[];
+}
+
 /** Resolve `sid` to its containment root: the session's accepted `repo_root`
  *  (DR-0008 addendum) when present — widening browsing to sibling
  *  workspaces/worktrees — else its plain `cwd`, exactly as before that
- *  addendum. Every failure mode here — unknown sid, sid with no live
- *  connection, missing/relative base, base that no longer exists on disk —
- *  collapses to `session_not_found`: from the client's point of view there
- *  is simply no browsable root for that sid. */
-function resolveRoot(sessions: SessionLookup, sid: string): RootOk | RootErr {
+ *  addendum. Historical user-role reads may fall back to the cwd-derived virtual
+ *  root; connected sessions retain the existing contract unchanged. */
+function resolveRoot(
+  sessions: SessionLookup,
+  sid: string,
+  opts: FsAccessOptions = {},
+): RootOk | RootErr {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) {
+    if (opts.allowVirtual) return resolveVirtualRoot(sid, opts.configDirs);
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
   }
   const base = entry.meta.repo_root ?? entry.meta.cwd;
@@ -287,8 +299,9 @@ export function fsList(
   sessions: SessionLookup,
   sid: string,
   reqPath: string | undefined,
+  opts: FsAccessOptions = {},
 ): FsAccessResult<Omit<FsListResponse, "ok">> {
-  const rootResult = resolveRoot(sessions, sid);
+  const rootResult = resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
@@ -337,8 +350,9 @@ export function fsRead(
   sessions: SessionLookup,
   sid: string,
   reqPath: string,
+  opts: FsAccessOptions = {},
 ): FsAccessResult<Omit<FsReadResponse, "ok">> {
-  const rootResult = resolveRoot(sessions, sid);
+  const rootResult = resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 

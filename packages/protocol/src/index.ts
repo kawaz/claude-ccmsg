@@ -71,6 +71,11 @@ export interface SessionLauncherConfig {
  * 勝つ、というのが実測ベースの判断。 */
 export const TRANSCRIPT_READ_MAX_BYTES = 2 * 1024 * 1024;
 
+/** Historical session search response caps (DR-0021 Phase 1). These are wire
+ * contract limits so every client can render truncation consistently. */
+export const SESSION_SEARCH_RESULT_MAX = 50;
+export const SESSION_SEARCH_MATCH_SUMMARY_MAX = 3;
+
 // ---------------------------------------------------------------------------
 // Storage events (room jsonl lines). File line order is the source of truth for
 // ordering; `mid` (msg only) is a per-room daemon-assigned sequence. `seq`
@@ -507,13 +512,12 @@ export interface SessionLaunchRequest {
 }
 
 /**
- * Workspace file access (DR-0008): read-only browsing of a connected
- * session's project files from the webui. The browsable universe is strictly
- * "the cwd of a currently-connected session" — the client names a session
- * (`sid`), never a filesystem root, and `path` is always relative to that
- * session's cwd. The daemon resolves and containment-checks every path
- * (realpath prefix check, so symlinks cannot escape the root) before touching
- * the filesystem.
+ * Workspace file access (DR-0008 / DR-0021): read-only browsing from a
+ * connected session or a daemon-resolved historical UUID. The client names a
+ * session (`sid`), never a filesystem root, and `path` is always relative to
+ * the derived containment root. The daemon resolves and containment-checks
+ * every path (realpath prefix check, so symlinks cannot escape the root) before
+ * touching the filesystem.
  */
 export interface FsListRequest {
   op: "fs_list";
@@ -546,13 +550,13 @@ export interface FsWriteRequest {
 }
 
 /**
- * Session transcript access (DR-0009): read a slice of a connected session's
- * Claude Code transcript jsonl. Unlike fs_read there is NO client-supplied
- * path — the daemon only ever serves the single file the session announced
- * (and it validated) at hello time, so no traversal surface exists. Paging is
- * by byte offset, aligned to line boundaries, so a multi-hundred-MB transcript
- * never needs a full scan or a line index: the viewer starts from the tail
- * (`before` absent) and pages older by passing the previous reply's `start`.
+ * Session transcript access (DR-0009 / DR-0021): read a slice of a connected
+ * session's hello-validated transcript, or a historical UUID resolved by the
+ * daemon below detected config dirs. There is NO client-supplied path, so no
+ * traversal surface exists. Paging is by byte offset, aligned to line
+ * boundaries, so a multi-hundred-MB transcript never needs a full scan or a
+ * line index: the viewer starts from the tail (`before` absent) and pages older
+ * by passing the previous reply's `start`.
  */
 export interface TranscriptReadRequest {
   op: "transcript_read";
@@ -561,6 +565,26 @@ export interface TranscriptReadRequest {
   before?: number;
   /** cap on returned line bytes; clamped to TRANSCRIPT_READ_MAX_BYTES */
   max_bytes?: number;
+}
+
+/** Search historical Claude Code session transcripts under daemon-detected
+ * config dirs (DR-0021 Phase 1, user role only). */
+export interface SessionSearchRequest {
+  op: "session_search";
+  /** space-separated, case-insensitive substring words; all must occur in one message */
+  query?: string;
+  /** default true; includes ccmsg queue deliveries authored by u1 */
+  target_user?: boolean;
+  /** default true; includes ccmsg queue deliveries authored by non-u1 members */
+  target_agent?: boolean;
+  /** space-separated, case-insensitive substring words matched against restored cwd */
+  cwd?: string;
+  /** UUID substring filter */
+  sid?: string;
+  /** intersected with daemon-detected dirs; paths outside that set are ignored */
+  config_dirs?: string[];
+  /** `<number>m`, `<number>h`, or `<number>d`; default `5d` */
+  mtime_within?: string;
 }
 
 /** One-shot fetch of the latest `claude agents --json` poll result (user role
@@ -644,6 +668,7 @@ export type Request =
   | FsReadRequest
   | FsWriteRequest
   | TranscriptReadRequest
+  | SessionSearchRequest
   | AgentsRequest
   | TranscriptSubscribeRequest
   | TranscriptUnsubscribeRequest
@@ -827,6 +852,34 @@ export interface FsWriteResponse {
   /** normalized path relative to the session root */
   path: string;
 }
+export interface SessionSearchMatch {
+  role: "user" | "agent";
+  text: string;
+  timestamp?: string;
+}
+
+export interface SessionSearchHit {
+  sid: string;
+  config_dir: string;
+  /** absolute path selected only from detected config dirs' projects trees */
+  file: string;
+  cwd: string | null;
+  /** `owner/repo` when cwd matches the known repos path convention */
+  repo: string | null;
+  /** repo-relative workspace/worktree path when present */
+  ws: string | null;
+  created_at: string;
+  updated_at: string;
+  size: number;
+  matches: SessionSearchMatch[];
+}
+
+export interface SessionSearchResponse {
+  ok: true;
+  hits: SessionSearchHit[];
+  truncated: boolean;
+}
+
 /** One row of `claude agents --json` output, annotated with which
  * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
  * (camelCase preserved via passthrough) — `kind`/`status`/`state` stay plain
@@ -934,6 +987,7 @@ export type Response =
   | FsReadResponse
   | FsWriteResponse
   | TranscriptReadResponse
+  | SessionSearchResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
   | TranscriptUnsubscribeResponse

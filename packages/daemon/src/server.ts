@@ -29,6 +29,7 @@ import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
 import { fsList, fsRead, fsWrite, validateRepoRoot } from "./fs-access.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
+import { sessionSearch } from "./session-search.ts";
 import {
   createSessionStatusStore,
   getSessionStatus,
@@ -734,6 +735,7 @@ const IDENTITY_OPS = new Set([
   "fs_read",
   "fs_write",
   "transcript_read",
+  "session_search",
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
@@ -745,17 +747,16 @@ const IDENTITY_OPS = new Set([
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
-/** Connections whose session_launch reply is still pending. The wire contract
- * has no request ids: every client (webui ws.ts `pending.shift()`, cli
- * client.ts, test helpers) matches replies to requests by arrival order, so a
- * deferred reply must hold back every later reply on the same connection.
- * While a gate is set, incoming requests re-enter handleRequest after the
- * launch reply is written; `.then` callbacks on one promise run in
- * registration order, so multiple queued lines stay FIFO too. */
-const launchGates = new WeakMap<Conn, Promise<void>>();
+/** Connections whose async reply is still pending. The wire contract has no
+ * request ids: every client matches replies by arrival order, so session_launch
+ * and session_search must hold back every later reply on the same connection.
+ * While a gate is set, incoming requests re-enter handleRequest after the reply
+ * is written; `.then` callbacks on one promise run in registration order, so
+ * multiple queued lines stay FIFO too. */
+const replyGates = new WeakMap<Conn, Promise<void>>();
 
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
-  const gate = launchGates.get(conn);
+  const gate = replyGates.get(conn);
   if (gate) {
     void gate.then(() => handleRequest(daemon, conn, line));
     return;
@@ -1446,7 +1447,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       }
       // The validation success branch proves launcher exists: an absent config
       // returns launcher_not_configured before process execution is reachable.
-      // Gate this connection until the reply is written (see launchGates):
+      // Gate this connection until the reply is written (see replyGates):
       // clients match replies by arrival order, so no later op's reply may
       // overtake this deferred one on the same connection.
       const gate = executeSessionLaunch(validation, launcher!.timeout_seconds)
@@ -1458,14 +1459,42 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           },
         )
         .finally(() => {
-          if (launchGates.get(conn) === gate) launchGates.delete(conn);
+          if (replyGates.get(conn) === gate) replyGates.delete(conn);
         });
-      launchGates.set(conn, gate);
+      replyGates.set(conn, gate);
+      return;
+    }
+
+    case "session_search": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_search' requires user role");
+        return;
+      }
+      // The bounded filesystem scan is read-only but async at the wire boundary.
+      // Install the same FIFO gate as session_launch so a later reply cannot
+      // overtake it on clients that pair requests and replies by arrival order.
+      const gate = sessionSearch(req, daemon.log)
+        .then(
+          (result) => {
+            if (!result.ok) sendErr(conn, result.code, result.msg);
+            else send(conn, result.data);
+          },
+          (e) => {
+            daemon.log.error(`op 'session_search' failed: ${String(e)}`);
+            sendErr(conn, "internal", String(e));
+          },
+        )
+        .finally(() => {
+          if (replyGates.get(conn) === gate) replyGates.delete(conn);
+        });
+      replyGates.set(conn, gate);
       return;
     }
 
     case "fs_list": {
-      const result = fsList(daemon.sessions, req.sid, req.path);
+      const result = fsList(daemon.sessions, req.sid, req.path, {
+        allowVirtual: conn.identity?.role === "user",
+      });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -1475,7 +1504,9 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "fs_read": {
-      const result = fsRead(daemon.sessions, req.sid, req.path);
+      const result = fsRead(daemon.sessions, req.sid, req.path, {
+        allowVirtual: conn.identity?.role === "user",
+      });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -1499,7 +1530,9 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "transcript_read": {
-      const result = transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes);
+      const result = transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes, {
+        allowVirtual: conn.identity?.role === "user",
+      });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
