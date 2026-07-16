@@ -194,19 +194,20 @@ export function SessionView({ state }: { state: AppState }) {
             Timeline
           </span>
         )}
-        <button
-          type="button"
-          class={"session-tab" + (tab === "rooms" ? " active" : "")}
-          onClick={() => setLocalTab("rooms")}
-        >
-          Rooms
-        </button>
+        {/* kawaz r26 mid=66: Rooms は一番右 (Files / Timeline / Status / Rooms) */}
         <button
           type="button"
           class={"session-tab" + (tab === "status" ? " active" : "")}
           onClick={() => setLocalTab("status")}
         >
           Status
+        </button>
+        <button
+          type="button"
+          class={"session-tab" + (tab === "rooms" ? " active" : "")}
+          onClick={() => setLocalTab("rooms")}
+        >
+          Rooms
         </button>
       </div>
       {tab === "rooms" ? (
