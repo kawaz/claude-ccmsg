@@ -1,6 +1,6 @@
 ---
 title: floating composer panel をデスクトップ限定でドラッグ移動可能にする
-status: open
+status: discarded
 category: request
 created: 2026-07-16T16:38:08+09:00
 last_read:
@@ -8,11 +8,11 @@ open_entered: 2026-07-16T16:38:08+09:00
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-07-16T16:41:21+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["kawaz 裁定 (r26 mid=18+19): D&D 移動は「とりあえず無しでよい」。viewer 末尾余白 (commit 1d0b9970) で対応、D&D は実装コスト大のため見送り確定。"]
 pending_reason:
-close_reason:
+close_reason: ["discarded"]
 blocked_by:
 origin: 自リポ TODO
 ---
