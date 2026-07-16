@@ -245,6 +245,28 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     setError(null);
   }, [open, sid]);
 
+  // kawaz r26 mid=20: open 時に textarea へ自動フォーカス + 前回離脱時の
+  // カーソル位置を復元 (通常 Composer と同挙動)。位置の保存は textarea の
+  // onBlur (close 前に必ず発火)。draft 復元 effect の後に走らせたいので
+  // text も deps に含め、setSelectionRange は値長で clamp する。
+  const lastCursorRef = useRef<{ start: number; end: number } | null>(null);
+  const focusedForOpenRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      focusedForOpenRef.current = false;
+      return;
+    }
+    if (focusedForOpenRef.current) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    focusedForOpenRef.current = true;
+    el.focus();
+    const pos = lastCursorRef.current;
+    const start = pos ? Math.min(pos.start, el.value.length) : el.value.length;
+    const end = pos ? Math.min(pos.end, el.value.length) : el.value.length;
+    el.setSelectionRange(start, end);
+  }, [open, text]);
+
   // Persist text + done attachments as the user types/uploads. Empty text
   // explicitly clears the entry rather than storing an empty draft — an
   // unused compose that never gets typed shouldn't count as a draft needing
@@ -482,6 +504,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         placeholder="この session に priv... (⌘+Enter で送信)"
         value={text}
         onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+        // kawaz r26 mid=20: close 前に必ず発火する blur でカーソル位置を保存
+        onBlur={(e) => {
+          const el = e.currentTarget as HTMLTextAreaElement;
+          lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
+        }}
         onKeyDown={(e) => {
           // ⌘/Ctrl+Enter 送信 (kawaz r20、2026-07-15): 通常 Composer と同じ
           // shouldSendOnKeyDown 判定 (素の Enter / IME 確定は改行のまま)。

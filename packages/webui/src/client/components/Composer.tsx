@@ -89,9 +89,20 @@ export function Composer({
   // だけ textarea にフォーカスを移す。inline mode (focusOnOpen 省略) では
   // 何もしない。値の同一比較で「一度だけ」を担保するので、popup が既に
   // 開いた状態のまま再 render しても余計な focus 移動は起きない。
+  // kawaz r26 mid=20: 再オープン時は前回離脱時のカーソル位置を復元する。
+  // 位置は selectionchange 級の頻度で追わず、blur (= panel 外クリックで
+  // 閉じる直前に必ず発火する) の瞬間に ref へ保存すれば十分。初回 open
+  // (保存なし) は末尾にカーソルを置く。
+  const lastCursorRef = useRef<{ start: number; end: number } | null>(null);
   useEffect(() => {
     if (focusOnOpen === undefined || focusOnOpen === 0) return;
-    textareaRef.current?.focus();
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    const pos = lastCursorRef.current;
+    const start = pos ? Math.min(pos.start, el.value.length) : el.value.length;
+    const end = pos ? Math.min(pos.end, el.value.length) : el.value.length;
+    el.setSelectionRange(start, end);
   }, [focusOnOpen]);
 
   // UNIF-Q1=b: sending 遷移を親に通知。popup 側が sending 中の外部タップを
@@ -292,6 +303,12 @@ export function Composer({
         rows={3}
         value={text}
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
+        // kawaz r26 mid=20: panel close (外側クリック) の直前に必ず blur が
+        // 発火するので、ここでカーソル位置を保存 → 次回 open 時に復元。
+        onBlur={(e) => {
+          const el = e.target as HTMLTextAreaElement;
+          lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
+        }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onDragOver={onDragOver}
