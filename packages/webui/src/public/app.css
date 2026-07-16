@@ -1,4 +1,9 @@
 :root {
+  /* Tell the UA which theme our custom palette is in — without this the
+   * native scrollbars / form controls render light even when the dark
+   * palette below is active (kawaz r26 mid=9: classic scrollbars showed as
+   * bright bands on the dark UI under AppleShowScrollBars=Always). */
+  color-scheme: light;
   --bg: #ffffff;
   --bg-alt: #f4f5f7;
   --fg: #1a1d23;
@@ -42,6 +47,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --bg: #16181d;
     --bg-alt: #1e2127;
     --fg: #e5e7eb;
@@ -1333,16 +1339,16 @@ button.session-tab {
 }
 
 /* Glyph stays small (kawaz: "視覚は小さく") but the clickable box is padded
- * out to a ~32px touch target so it's reliably tappable on mobile. */
+ * out to a ~32px touch target so it's reliably tappable on mobile.
+ * The 28px min-height is scoped to coarse pointers only: on desktop it
+ * inflated every tree row (~+124px scrollHeight on a typical tree, kawaz
+ * r26 mid=9 — shorter thumb made scrollbars far more prominent). */
 .tree-fav-toggle {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 2rem;
-  min-width: 32px;
-  height: 1.6rem;
-  min-height: 28px;
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -1354,6 +1360,14 @@ button.session-tab {
 
 .tree-fav-toggle:hover {
   color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .tree-fav-toggle {
+    min-width: 32px;
+    height: 1.6rem;
+    min-height: 28px;
+  }
 }
 
 /* U-fav: "お気に入り" / "プロジェクト" section separators. The label text is
