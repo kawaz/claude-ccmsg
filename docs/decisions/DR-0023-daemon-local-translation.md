@@ -53,12 +53,24 @@ Safari 等の非対応ブラウザではタブ自体を出していない。kawa
 
 | Phase | スコープ |
 |---|---|
-| Phase 0 | 本 DR + **PoC**: Swift CLI から TranslationSession が headless で動くか実機検証 |
+| Phase 0 | 本 DR + **PoC**: (a) Swift CLI から TranslationSession が headless で動くか、(b) 日英混在テキストの扱い (kawaz mid=73) — 丸ごと投げて日本語部分を保持したまま英語部分だけ翻訳されるか / 改行が保存されるか、を実機検証 |
 | Phase 1 | helper CLI 本実装 + daemon translate op |
 | Phase 2 | webui フォールバック配線 |
 
 PoC が NG (headless 不可) の場合の代替: メニューバー常駐の極小 .app として helper を
 作る (UI コンテキストを満たす)、または断念して報告。
+
+### 混在テキストの扱い (kawaz mid=73)
+
+現行 browser 翻訳は改行 (段落) 単位で「日本語を含むか」を判定して翻訳可否を分岐している
+(translate.ts) が、**改行を挟まず英→日に切り替わる段落**では前半の英語が未翻訳のまま残る
+既知問題がある。host 翻訳では:
+
+- **第一候補 = 丸ごと投げる**: TranslationSession が日本語部分を壊さず英語部分だけ訳し、
+  改行も保存するなら分岐ロジック自体が不要 (PoC (b) で判定)
+- 改行が保存されない場合のみ、改行区切り分割 → 各断片翻訳 → 改行 join に落とす。
+  その場合も断片単位の日本語判定 skip が要るかは PoC の翻訳品質 (日本語をそのまま
+  返すか) を見て決める
 
 ## 5. 関連
 
