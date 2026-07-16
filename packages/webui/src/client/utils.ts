@@ -149,18 +149,25 @@ export function sessionLabel(peer: PeerInfo): string {
  * surfaces the most recently (re)connected session first. */
 export type PeerSortKey = "name" | "idle" | "connected";
 
-const PEER_SORT_CYCLE: PeerSortKey[] = ["name", "idle", "connected"];
+// Cycle order matches the button-label progression kawaz asked for
+// (name -> created -> recent -> name), which happens to differ from the
+// PeerSortKey union's own declaration order above.
+const PEER_SORT_CYCLE: PeerSortKey[] = ["name", "connected", "idle"];
 
 /** Short label for the sort-toggle button, so its current mode is visible
- * without hovering for the title attribute. */
+ * without hovering for the title attribute. kawaz 2026-07-16: "わかりづらい。
+ * name/created/recent にして" — the prior abc/idle/new labels didn't map
+ * cleanly onto what each key actually sorts by; these names describe the
+ * *result* (a list ordered by name, by creation/connect time, or by recency
+ * of activity) rather than the internal `PeerSortKey` value. */
 export function peerSortButtonLabel(key: PeerSortKey): string {
   switch (key) {
     case "idle":
-      return "idle";
+      return "recent";
     case "connected":
-      return "new";
+      return "created";
     default:
-      return "abc";
+      return "name";
   }
 }
 
@@ -478,26 +485,38 @@ export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } 
   return { repo: "", ws: row.agent?.name || lastPathSegment(row.cwd) };
 }
 
-/** Primary busy/idle/done/offline status of a Sessions-list row — the single
- * source of truth both `sessionBadges` (U1, being retired per-row in U3 down
- * to just the `"bg"` tag) and `groupSessionsBySection` (U3) read, so the two
- * can never disagree about what one row's status is.
+/** Primary status of a Sessions-list row — the single source of truth both
+ * `sessionBadges` (U1, being retired per-row in U3 down to just the `"bg"`
+ * tag) and `groupSessionsBySection` (U3) read, so the two can never disagree
+ * about what one row's status is.
+ *
+ * Kept as a plain `string` (open set), not a fixed union: `AgentInfo.status`
+ * itself is documented as an open, upstream-controlled set ("e.g. busy",
+ * protocol/src/index.ts) — `claude agents --json` has already been observed
+ * returning values beyond the "busy"/absent pair the original U3 spec
+ * assumed (kawaz 2026-07-16: "busy と ccmsg 未起動しかない。カテゴリ作って",
+ * reporting an `"inactive"` row that this function used to silently collapse
+ * into `"idle"`). Passing an unrecognized status straight through — instead
+ * of forcing it into `"idle"` — lets `groupSessionsBySection` give it its
+ * own section rather than burying it in "nothing to report".
  * - A disconnected (agent-only, "ccmsg 未起動") row is always `"offline"`,
  *   regardless of what its matched agent's `status`/`state` say — offline
- *   rows form their own section (U3), not a busy/idle/done bucket.
- * - A *connected* row with no matched agent (older CLI, `claude agents`
- *   hasn't polled yet, or a non-Claude ccmsg client) has no distinct signal
- *   to report — before U3 this meant "no badge at all"; now that every row
- *   must land in exactly one section, it falls into `"idle"` (the "nothing
- *   to report" bucket) rather than inventing a fifth section the U3 spec
- *   (Busy / Idle / Done / ccmsg未起動) doesn't call for. */
-export type SessionStatus = "offline" | "busy" | "idle" | "done";
+ *   rows form their own section (U3), not a busy/idle/inactive/done bucket.
+ * - `state: "done"` (background-session completion) takes priority over
+ *   `status` — a finished background agent shouldn't still read as busy.
+ * - A *connected* row with no matched agent, or a matched agent with no
+ *   `status` (upstream omits the field entirely when idle), has no distinct
+ *   signal to report and falls into `"idle"` — the same "nothing to report"
+ *   bucket as before, now reached via one shared fallback instead of two
+ *   separate `!row.agent` / `status === undefined` branches collapsing to
+ *   the same string. */
+export type SessionStatus = string;
 
 export function sessionStatus(row: SessionRow): SessionStatus {
   if (!row.connected) return "offline";
   if (!row.agent) return "idle";
   if (row.agent.state === "done") return "done";
-  return row.agent.status === "busy" ? "busy" : "idle";
+  return row.agent.status || "idle";
 }
 
 /** Status/state badges for one Sessions-list row (U1), in display order.
@@ -516,34 +535,66 @@ export function sessionStatus(row: SessionRow): SessionStatus {
  * — it only renders the `"bg"` entry, if present. The function itself is
  * kept as-is (tests still pin its full return value) since `"bg"`'s presence
  * still depends on this same busy/idle/done/offline computation. */
-export function sessionBadges(row: SessionRow): Array<"offline" | "busy" | "idle" | "done" | "bg"> {
+export function sessionBadges(row: SessionRow): string[] {
   if (!row.connected) return ["offline"];
   if (!row.agent) return [];
-  const badges: Array<"offline" | "busy" | "idle" | "done" | "bg"> = [sessionStatus(row)];
+  const badges: string[] = [sessionStatus(row)];
   if (row.agent.kind === "background") badges.push("bg");
   return badges;
 }
 
 /** Display text for a badge kind (SessionList.tsx renders these verbatim). */
-export function badgeLabel(kind: "offline" | "busy" | "idle" | "done" | "bg"): string {
+export function badgeLabel(kind: string): string {
   return kind === "offline" ? "ccmsg未起動" : kind;
 }
 
 // --- Sidebar Sessions-list: status sections (U3) --- //
 
-/** Section display order + label, keyed by `sessionStatus`. Busy first
- * (kawaz's stated reason for sectioning at all: "busy 表示邪魔" — busy
- * sessions are the ones worth noticing first), offline ("ccmsg未起動") last
- * (least actionable — nothing to do from the webui for a session that
- * hasn't connected). */
-const SESSION_SECTION_ORDER: SessionStatus[] = ["busy", "idle", "done", "offline"];
+/** Fixed relative order for the `sessionStatus` values we know about. Busy
+ * first (kawaz's stated reason for sectioning at all: "busy 表示邪魔" — busy
+ * sessions are the ones worth noticing first); "inactive" added 2026-07-16
+ * (kawaz: "busy と ccmsg 未起動しかない。カテゴリ作って" — `claude agents
+ * --json` reports this status and it was previously being silently folded
+ * into "idle", see sessionStatus's doc comment). "offline" ("ccmsg未起動") is
+ * *not* listed here — it's always sorted last regardless of this array (see
+ * `orderedSectionKeys`), it's the least actionable section (nothing to do
+ * from the webui for a session that hasn't connected). */
+const SESSION_SECTION_KNOWN_ORDER: string[] = ["busy", "idle", "inactive", "done"];
 
-const SESSION_SECTION_LABELS: Record<SessionStatus, string> = {
+const SESSION_SECTION_LABELS: Record<string, string> = {
   busy: "Busy",
   idle: "Idle",
+  inactive: "Inactive",
   done: "Done",
   offline: "ccmsg未起動",
 };
+
+/** Capitalizes an unrecognized `sessionStatus` value for its section heading
+ * (e.g. a future upstream status like `"paused"` renders as `"Paused"`)
+ * rather than either falling back to a generic label or leaving it in raw
+ * lowercase — matches the capitalization style of every known label above. */
+function capitalizeStatus(status: string): string {
+  return status.length > 0 ? status[0]!.toUpperCase() + status.slice(1) : status;
+}
+
+function sectionLabel(key: string): string {
+  return SESSION_SECTION_LABELS[key] ?? capitalizeStatus(key);
+}
+
+/** Orders a set of section keys (as found in the data, any order): known
+ * statuses first in `SESSION_SECTION_KNOWN_ORDER`'s order, then any
+ * unrecognized status alphabetically, then `"offline"` always last. Keeping
+ * this separate from `groupSessionsBySection` lets each rule (fixed known
+ * order / alphabetical unknowns / offline-always-last) be tested and read on
+ * its own. */
+function orderedSectionKeys(keys: string[]): string[] {
+  const known = SESSION_SECTION_KNOWN_ORDER.filter((k) => keys.includes(k));
+  const unknown = keys
+    .filter((k) => k !== "offline" && !SESSION_SECTION_KNOWN_ORDER.includes(k))
+    .sort((a, b) => a.localeCompare(b));
+  const offline = keys.includes("offline") ? ["offline"] : [];
+  return [...known, ...unknown, ...offline];
+}
 
 export interface SessionSection {
   key: SessionStatus;
@@ -551,25 +602,29 @@ export interface SessionSection {
   rows: SessionRow[];
 }
 
-/** Groups Sessions-list rows into busy/idle/done/offline sections (U3, kawaz
- * 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション切ってフォル
- * ディングもできるように。で各アイテムの busy は取る"). Only sections that
- * actually have a row appear — an empty section would just be a heading with
- * nothing under it. Row order *within* each section is the input array's
- * order (already the Sidebar's abc/idle/new sort by the time `rows` reaches
- * here, see SessionList.tsx) — this function only partitions, it never
- * reorders. */
+/** Groups Sessions-list rows into per-status sections (U3, kawaz 2026-07-11:
+ * "busy 表示邪魔。リスト側に busy とかのやつでセクション切ってフォルディングも
+ * できるように。で各アイテムの busy は取る"). Only sections that actually have
+ * a row appear — an empty section would just be a heading with nothing under
+ * it. Row order *within* each section is the input array's order (already
+ * the Sidebar's name/created/recent sort by the time `rows` reaches here, see
+ * SessionList.tsx) — this function only partitions, it never reorders rows.
+ * Section order itself follows `orderedSectionKeys` (known statuses fixed,
+ * unknown ones alphabetical, offline last) rather than the
+ * `SESSION_SECTION_ORDER.filter(...)` a fixed-union `SessionStatus` used to
+ * allow — that pattern silently dropped any status not in the list, which is
+ * exactly the bug this grouping exists to fix (kawaz 2026-07-16). */
 export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
-  const buckets = new Map<SessionStatus, SessionRow[]>();
+  const buckets = new Map<string, SessionRow[]>();
   for (const row of rows) {
     const key = sessionStatus(row);
     const bucket = buckets.get(key);
     if (bucket) bucket.push(row);
     else buckets.set(key, [row]);
   }
-  return SESSION_SECTION_ORDER.filter((key) => buckets.has(key)).map((key) => ({
+  return orderedSectionKeys([...buckets.keys()]).map((key) => ({
     key,
-    label: SESSION_SECTION_LABELS[key],
-    rows: buckets.get(key)!, // non-null: key came from buckets.has() just above
+    label: sectionLabel(key),
+    rows: buckets.get(key)!, // non-null: key came from buckets.keys() just above
   }));
 }

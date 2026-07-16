@@ -137,8 +137,8 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
 }
 
 /** Sidebar "Sessions" section (U1, developed from the DR-0008 peers list):
- * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's abc/idle/new
- * toggle — this component never reorders those) with the daemon's
+ * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
+ * recent toggle — this component never reorders those) with the daemon's
  * `claude agents --json` poll (`state.agents`, pulled straight from the
  * store rather than threaded through as a prop, since Sidebar.tsx's own
  * props surface is out of this task's scope) so a session `claude agents`
@@ -146,10 +146,12 @@ function SessionRowItem({ row, currentSid }: { row: SessionRow; currentSid: stri
  * as its own "ccmsg 未起動" tail (see offlineAgentRows).
  *
  * U3 (kawaz 2026-07-11: "busy 表示邪魔。リスト側に busy とかのやつでセクション
- * 切ってフォルディングもできるように"): the merged rows are further split
- * into Busy/Idle/Done/ccmsg未起動 sections (groupSessionsBySection), each its
- * own `<details open>` so a section can be collapsed — sort order (abc/idle/
- * new) still applies *within* each section, unchanged from before this task. */
+ * 切ってフォルディングもできるように"; extended 2026-07-16 to cover any
+ * `claude agents` status, not just busy/idle/done — see sessionStatus's doc
+ * comment): the merged rows are further split into per-status sections
+ * (groupSessionsBySection), each its own `<details open>` so a section can be
+ * collapsed — sort order (name/created/recent) still applies *within* each
+ * section, unchanged from before this task. */
 export function SessionList({
   peers,
   currentSid,

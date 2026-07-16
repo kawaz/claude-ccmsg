@@ -45,10 +45,13 @@ function PeersRefreshButton() {
 }
 
 function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: () => void }) {
+  // Labels are name/created/recent (kawaz 2026-07-16: "わかりづらい。
+  // name/created/recent にして"); "click for X" names the *next* key in
+  // PEER_SORT_CYCLE's order (name -> connected -> idle -> name).
   const titles: Record<PeerSortKey, string> = {
-    name: "sorted by name (repo · ws · branch) — click for idle time",
-    idle: "sorted by idle time (most recently active first) — click for connect time",
-    connected: "sorted by connect time (most recently connected first) — click for name",
+    name: "sorted by name (repo · ws · branch) — click for created",
+    connected: "sorted by connect time (most recently connected first) — click for recent",
+    idle: "sorted by idle time (most recently active first) — click for name",
   };
   return (
     <button id="peers-sort" type="button" title={titles[sortKey]} onClick={onCycle}>

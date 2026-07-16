@@ -21,6 +21,7 @@ import {
   offlineAgentRows,
   ownWorkspaceSegment,
   paneRatioFromPointer,
+  peerSortButtonLabel,
   repoRootLabel,
   sessionBadges,
   sessionLabel,
@@ -365,14 +366,28 @@ describe("formatDuration", () => {
 });
 
 describe("nextPeerSortKey", () => {
-  test("cycles name -> idle -> connected -> name", () => {
+  // Cycle order matches the button-label progression kawaz asked for
+  // (2026-07-16: name/created/recent), which is name -> connected -> idle,
+  // not the PeerSortKey union's own declaration order.
+  test("cycles name -> connected -> idle -> name", () => {
     const seq: PeerSortKey[] = [];
     let k: PeerSortKey = "name";
     for (let i = 0; i < 4; i++) {
       seq.push(k);
       k = nextPeerSortKey(k);
     }
-    expect(seq).toEqual(["name", "idle", "connected", "name"]);
+    expect(seq).toEqual(["name", "connected", "idle", "name"]);
+  });
+});
+
+describe("peerSortButtonLabel", () => {
+  // kawaz 2026-07-16: "わかりづらい。name/created/recent にして" — replaces
+  // the prior abc/idle/new labels, which described the internal key rather
+  // than what the list is actually ordered by.
+  test("maps each PeerSortKey to its name/created/recent label", () => {
+    expect(peerSortButtonLabel("name")).toBe("name");
+    expect(peerSortButtonLabel("connected")).toBe("created");
+    expect(peerSortButtonLabel("idle")).toBe("recent");
   });
 });
 
@@ -872,6 +887,27 @@ describe("sessionStatus", () => {
       ),
     ).toBe("done");
   });
+
+  // Regression (kawaz 2026-07-16: "busy と ccmsg 未起動しかない。カテゴリ作っ
+  // て"): `claude agents --json` reports status:"inactive" on some rows, and
+  // the pre-fix sessionStatus silently collapsed every non-"busy" status into
+  // "idle" — this connected+inactive row must come back as "inactive", not
+  // "idle".
+  test("connected + agent status 'inactive' -> 'inactive' (not silently folded into idle)", () => {
+    expect(
+      sessionStatus(sessionRow({ connected: true, agent: agent({ status: "inactive" }) })),
+    ).toBe("inactive");
+  });
+
+  // SessionStatus is an open set (mirrors AgentInfo.status's own doc comment
+  // in protocol/src/index.ts): an upstream status this code has never seen
+  // before must still pass through verbatim, not get coerced to a known
+  // value.
+  test("unrecognized status passes through unchanged", () => {
+    expect(sessionStatus(sessionRow({ connected: true, agent: agent({ status: "paused" }) }))).toBe(
+      "paused",
+    );
+  });
 });
 
 describe("groupSessionsBySection", () => {
@@ -901,27 +937,54 @@ describe("groupSessionsBySection", () => {
     expect(groupSessionsBySection([])).toEqual([]);
   });
 
-  // Section order is fixed (busy, idle, done, offline) regardless of the
-  // input array's row order — this is a *section* ordering, independent of
-  // the abc/idle/new row-level sort the input already carries.
-  test("section order is fixed: busy, idle, done, offline", () => {
+  // Section order for the known statuses is fixed (busy, idle, inactive,
+  // done), offline always last, regardless of the input array's row order —
+  // this is a *section* ordering, independent of the name/created/recent
+  // row-level sort the input already carries.
+  test("section order is fixed: busy, idle, inactive, done, offline", () => {
     const rows = [
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
       sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "inactive", connected: true, agent: agent({ status: "inactive" }) }),
       sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
       sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
     ];
     expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual([
       "busy",
       "idle",
+      "inactive",
       "done",
       "offline",
     ]);
   });
 
+  // Regression (kawaz 2026-07-16): an unrecognized status must still get its
+  // own section — never dropped — placed after every known status and before
+  // "offline" (which is always last regardless of what unknown statuses
+  // exist).
+  test("unrecognized status gets its own section, after known statuses and before offline", () => {
+    const rows = [
+      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
+      sessionRow({ sid: "paused", connected: true, agent: agent({ status: "paused" }) }),
+      sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
+    ];
+    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["done", "paused", "offline"]);
+  });
+
+  // Multiple unrecognized statuses sort alphabetically among themselves —
+  // there's no "worth noticing more" signal available for statuses this code
+  // has never seen before, so alphabetical is the only deterministic order.
+  test("multiple unrecognized statuses sort alphabetically", () => {
+    const rows = [
+      sessionRow({ sid: "z", connected: true, agent: agent({ status: "zzz-status" }) }),
+      sessionRow({ sid: "a", connected: true, agent: agent({ status: "aaa-status" }) }),
+    ];
+    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["aaa-status", "zzz-status"]);
+  });
+
   // Row order *within* a section must be preserved from the input — the
-  // Sidebar's abc/idle/new sort already ran before rows reach this function
-  // (see SessionList.tsx), and grouping must not reshuffle it.
+  // Sidebar's name/created/recent sort already ran before rows reach this
+  // function (see SessionList.tsx), and grouping must not reshuffle it.
   test("preserves input row order within a section", () => {
     const rows = [
       sessionRow({ sid: "z", connected: true, agent: agent({ status: "busy" }) }),
@@ -933,10 +996,11 @@ describe("groupSessionsBySection", () => {
   });
 
   // Section label text, used verbatim by SessionList.tsx's <summary>.
-  test("labels: Busy / Idle / Done / ccmsg未起動", () => {
+  test("labels: Busy / Idle / Inactive / Done / ccmsg未起動", () => {
     const rows = [
       sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
       sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "inactive", connected: true, agent: agent({ status: "inactive" }) }),
       sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
     ];
@@ -944,9 +1008,19 @@ describe("groupSessionsBySection", () => {
     expect(labels).toEqual({
       busy: "Busy",
       idle: "Idle",
+      inactive: "Inactive",
       done: "Done",
       offline: "ccmsg未起動",
     });
+  });
+
+  // Unknown status labels are capitalized rather than left lowercase or
+  // rendered as a generic fallback (e.g. "Unknown") — see
+  // groupSessionsBySection's / capitalizeStatus's doc comment.
+  test("unrecognized status label is capitalized", () => {
+    const rows = [sessionRow({ sid: "p", connected: true, agent: agent({ status: "paused" }) })];
+    const sections = groupSessionsBySection(rows);
+    expect(sections[0]?.label).toBe("Paused");
   });
 });
 
