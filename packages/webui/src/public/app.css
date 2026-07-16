@@ -1606,6 +1606,10 @@ button.session-tab {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.8rem;
   overflow-x: auto;
+  /* .tl-lines と同じ意図の末尾余白 (kawaz r26 mid=16): floating composer
+   * (FAB/panel) がファイル末尾側のコードを隠し、コードを見ながらメッセージが
+   * 書けない。機能は載せない、ただの余白。 */
+  padding-bottom: 12rem;
 }
 
 .viewer-line {
