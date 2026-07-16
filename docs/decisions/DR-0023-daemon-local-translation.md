@@ -1,0 +1,61 @@
+# DR-0023: daemon 経由のローカル翻訳 (Safari 等 Translator API 非対応ブラウザ対応)
+
+Status: Proposed
+Date: 2026-07-17
+Sponsor: kawaz r26 mid=71
+
+## 1. 背景
+
+thinking の英日翻訳は現在 Chrome built-in Translator API (browser ローカル、無料) で、
+Safari 等の非対応ブラウザではタブ自体を出していない。kawaz 要件:
+
+- Safari でも翻訳したい
+- リアルマネーコストをかけない = クラウド AI 翻訳は使わない
+- daemon が動くホスト OS のローカル翻訳機能を daemon 経由で使えないか
+
+## 2. 調査結果 (実機 macOS 26.5)
+
+- **Translation.framework は存在する** (`/System/Library/Frameworks/Translation.framework`、
+  translationd 同梱)。macOS 15+ の Swift API `TranslationSession` でプログラム利用可能
+- **標準 CLI は無い** (`translate` 等は未収録)。Shortcuts の翻訳アクション経由
+  (`shortcuts run`) という迂回はあるが、事前にユーザが Shortcut を作る必要があり配布に不向き
+- 制約: TranslationSession は **UI コンテキスト前提の API** (SwiftUI の
+  `.translationTask` modifier 経由が正規)。headless CLI からは
+  非公開実装依存を避けつつ NSApplication レス動作の可否を PoC で確認する必要がある
+  (framework 直 link の CLI で動く報告はあるが要実機検証)
+- 言語モデルは初回に OS がダウンロード (設定 > 言語と地域 > 翻訳言語)。en→ja は
+  ダウンロード済みなら完全オフライン
+
+## 3. 設計案
+
+### 3.1 構成 (kawaz 案の具体化)
+
+- **translate-helper CLI (Swift、リポにバンドル)**: stdin で text (jsonl バッチ)、stdout に
+  翻訳結果。Translation.framework を直 link。ビルド済みバイナリを release に同梱するか、
+  初回に daemon が `swiftc` でビルド (Xcode CLT 必須) — 配布方式は PoC 後に決定
+- **daemon**: 新 op `translate` (text[] → text[])。helper を子プロセスで呼ぶ (常駐 or
+  都度起動は latency 実測で決定)。macOS 以外 / helper 不在ではエラー (webui はタブ非表示に
+  フォールバック)
+- **webui**: `hasTranslatorApi()` が false のとき daemon translate op が利用可能なら
+  タブを出す (browser API 優先、daemon はフォールバック — Chrome では従来通りゼロ RTT)
+
+### 3.2 判断根拠
+
+- Shortcuts 経由はセットアップ依存 + 遅い (プロセス起動 ~秒) ので不採用
+- クラウド API (DeepL free 等) は kawaz 要件 (ローカル以外不使用) で除外
+
+## 4. Phase 分割
+
+| Phase | スコープ |
+|---|---|
+| Phase 0 | 本 DR + **PoC**: Swift CLI から TranslationSession が headless で動くか実機検証 |
+| Phase 1 | helper CLI 本実装 + daemon translate op |
+| Phase 2 | webui フォールバック配線 |
+
+PoC が NG (headless 不可) の場合の代替: メニューバー常駐の極小 .app として helper を
+作る (UI コンテキストを満たす)、または断念して報告。
+
+## 5. 関連
+
+- kawaz r26 mid=71 (要件)
+- packages/webui/src/client/translate.ts — 現行 browser Translator API 実装

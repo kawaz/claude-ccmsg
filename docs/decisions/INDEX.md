@@ -26,3 +26,4 @@
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | Status タブ (workflow / background / TODO の可視化、transcript fold) |
 | [DR-0021](./DR-0021-session-search.md) | Accepted | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted | In-view キーワード検索 (TL/ビューアのハイライト + index nav) |
+| [DR-0023](./DR-0023-daemon-local-translation.md) | Proposed | daemon 経由ローカル翻訳 (macOS Translation.framework、Safari フォールバック) |
