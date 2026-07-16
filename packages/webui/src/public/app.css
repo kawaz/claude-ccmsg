@@ -4,6 +4,10 @@
    * palette below is active (kawaz r26 mid=9: classic scrollbars showed as
    * bright bands on the dark UI under AppleShowScrollBars=Always). */
   color-scheme: light;
+  /* kawaz r26 mid=21: テーマ追従 (color-scheme) だけでは classic scrollbar
+   * の太さが残って邪魔 — 全 scroll コンテナを thin + 透明トラックに。 */
+  scrollbar-width: thin;
+  scrollbar-color: var(--fg-muted) transparent;
   --bg: #ffffff;
   --bg-alt: #f4f5f7;
   --fg: #1a1d23;
