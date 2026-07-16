@@ -442,11 +442,17 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   }, [ws, state, sid, text, attachments]);
 
   if (!open) {
+    // kawaz r26 mid=15: close 中に下書きが残っていれば fab を「下書きあり」
+    // 表示 (色 + 跳ね) に。1on1 の draft は localStorage 保存 (§2.6) なので
+    // close 中の情報源は loadDraft — render 時読みで十分 (close 遷移ごとに
+    // ここを通り、draft は open 中にしか変化しないため)。
+    const draft = loadDraft(sid);
+    const hasDraft = !!draft && draft.text.trim().length > 0;
     return (
       <button
         type="button"
-        class="one-on-one-fab"
-        title="このセッションに 1on1 で priv 送信"
+        class={"one-on-one-fab" + (hasDraft ? " composer-fab-draft" : "")}
+        title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
         onClick={() => setOpen(true)}
       >
         +

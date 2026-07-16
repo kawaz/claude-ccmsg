@@ -1396,6 +1396,108 @@ button.session-tab {
   flex: 0 0 auto;
 }
 
+/* docs/inbox メモ作成 (DR-0019 Phase W2): tree-root-label 行と「+ メモ」
+ * ボタンを同居させる flex 行。rootLabel が無いセッションでも spacer
+ * (.tree-header-spacer) で右寄せ位置を揃える (FileTree.tsx の配置判断
+ * コメント参照)。 */
+.tree-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.5rem 0 0;
+}
+
+.tree-header .tree-root-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tree-header-spacer {
+  flex: 1 1 auto;
+}
+
+.tree-inbox-new-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.tree-inbox-new-btn:hover {
+  background: var(--bg-alt);
+  color: var(--fg);
+}
+
+/* +メモ フォーム本体は Composer (.composer textarea) と同じ入力欄トーンに
+ * 揃える。sticky にはしない (Composer と違い一覧の途中に挟まる一時的な UI)。 */
+.tree-inbox-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.4rem 0.75rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.25rem;
+}
+
+.tree-inbox-form-name,
+.tree-inbox-form-body {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.tree-inbox-form-body {
+  resize: vertical;
+  min-height: 4rem;
+}
+
+.tree-inbox-form-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--danger);
+}
+
+.tree-inbox-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.tree-inbox-form-actions button {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 0.35rem;
+  cursor: pointer;
+}
+
+.tree-inbox-form-actions button[type="submit"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+}
+
+.tree-inbox-form-actions button[type="submit"]:disabled,
+.tree-inbox-form-actions button[type="button"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tree-inbox-form-actions button[type="button"] {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+
 .file-viewer {
   flex: 1 1 auto;
   min-width: 0;
@@ -2297,6 +2399,38 @@ button.session-tab {
 .one-on-one-fab:hover,
 .room-composer-fab:hover {
   filter: brightness(1.05);
+}
+
+/* kawaz r26 mid=15: 書きかけの下書きが残ったまま panel を閉じている fab の
+ * 存在主張。--warn 系の色 + 時々ビヨンと跳ねるアニメーションで「下書きを
+ * 放置している」ことに気づかせる。跳ねは常時でなく周期の一部 (10% まで) に
+ * 留めて鬱陶しさを抑える。 */
+.composer-fab-draft {
+  background: var(--warn);
+  animation: composer-fab-bounce 3s ease-in-out infinite;
+}
+
+@keyframes composer-fab-bounce {
+  0%,
+  10%,
+  100% {
+    transform: none;
+  }
+  3% {
+    transform: translateY(-0.5rem) scaleY(1.1);
+  }
+  6% {
+    transform: translateY(0) scaleY(0.92);
+  }
+  8% {
+    transform: translateY(-0.2rem) scaleY(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-fab-draft {
+    animation: none;
+  }
 }
 
 .one-on-one-panel {

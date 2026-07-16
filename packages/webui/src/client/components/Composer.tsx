@@ -49,6 +49,7 @@ export function Composer({
   onSent,
   onSendingChange,
   focusOnOpen,
+  onDraftChange,
 }: {
   room: RoomState;
   mentionTo: Set<string>;
@@ -63,6 +64,10 @@ export function Composer({
    *  「未 open」sentinel でスキップする — RoomComposerFab 側で fab クリックの
    *  たびにインクリメントして渡す。 */
   focusOnOpen?: number;
+  /** kawaz r26 mid=15: 書きかけ (text or 添付あり) の有無を親に通知する。
+   *  RoomComposerFab が fab を「下書きあり」表示 (色 + 跳ね) に切り替え、
+   *  panel close 中の書きかけ放置忘れを防ぐ。省略時は inline 挙動。 */
+  onDraftChange?: (hasDraft: boolean) => void;
 }) {
   const { store, ws } = useApp();
   const [text, setText] = useState("");
@@ -94,6 +99,14 @@ export function Composer({
   useEffect(() => {
     onSendingChange?.(sending);
   }, [sending, onSendingChange]);
+
+  // kawaz r26 mid=15: 書きかけの有無 (空白のみの text は下書き扱いしない) を
+  // 親に通知。popup close 中も Composer は mount されたままなので、この通知が
+  // fab の「下書きあり」表示の唯一の情報源になる。
+  const hasDraft = text.trim().length > 0 || attachments.length > 0;
+  useEffect(() => {
+    onDraftChange?.(hasDraft);
+  }, [hasDraft, onDraftChange]);
 
   /** 添付エントリを一件追加し、XHR upload を開始する。DR-0015 §2.5 の
    *  「選択時 即 upload、直ちに送信はしない」経路。placeholder 挿入は

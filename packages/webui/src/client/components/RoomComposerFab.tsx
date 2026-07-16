@@ -36,6 +36,10 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
   // useState の初期値 0 は「まだ開かれていない」sentinel — Composer 側で
   // 0 は skip する。
   const [openTicket, setOpenTicket] = useState(0);
+  // kawaz r26 mid=15: panel close 中に書きかけ (text/添付) が残っているとき
+  // fab を「下書きあり」表示 (色 + 跳ねアニメーション) に切り替えて放置忘れを
+  // 防ぐ。Composer は常時 mount なので onDraftChange がその状態を届けてくれる。
+  const [hasDraft, setHasDraft] = useState(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   const openPanel = useCallback(() => {
@@ -81,9 +85,9 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
       {!open ? (
         <button
           type="button"
-          class="room-composer-fab"
-          title={fabTitle}
-          aria-label={fabTitle}
+          class={"room-composer-fab" + (hasDraft ? " composer-fab-draft" : "")}
+          title={hasDraft ? "書きかけの下書きがあります" : fabTitle}
+          aria-label={hasDraft ? "書きかけの下書きがあります" : fabTitle}
           onClick={openPanel}
         >
           +
@@ -102,6 +106,7 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
           focusOnOpen={openTicket}
           onSendingChange={setSending}
           onSent={closePanel}
+          onDraftChange={setHasDraft}
         />
       </div>
     </>
