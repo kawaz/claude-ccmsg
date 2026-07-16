@@ -717,6 +717,54 @@ describe("createWsClient agents/ping (U1)", () => {
     }
   });
 
+  // DR-0021 Phase 2: sessionSearch's wire shape — params (excluding op) pass
+  // through untouched, op:"session_search" is added by the wrapper (same
+  // convention as fsList/transcriptRead's own option-object callers).
+  test("sessionSearch sends {op:'session_search', ...params} and resolves hits", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionSearch({ query: "foo bar", mtime_within: "2h" });
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "session_search",
+      query: "foo bar",
+      mtime_within: "2h",
+    });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        hits: [
+          {
+            sid: "11111111-2222-3333-4444-555555555555",
+            config_dir: "/home/.claude",
+            file: "/home/.claude/projects/x/11111111-2222-3333-4444-555555555555.jsonl",
+            cwd: "/repos/claude-ccmsg/main",
+            repo: "kawaz/claude-ccmsg",
+            ws: "main",
+            created_at: "2026-07-10T00:00:00.000Z",
+            updated_at: "2026-07-15T00:00:00.000Z",
+            size: 2048,
+            matches: [{ role: "user", text: "foo bar baz" }],
+          },
+        ],
+        truncated: false,
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.hits).toHaveLength(1);
+      expect(res.truncated).toBe(false);
+    }
+  });
+
   // The onOpen handshake (hello -> rooms -> subscribe -> peers -> agents ->
   // ping) dispatches agents/loaded and daemon-info/loaded once the sockets
   // "answer" each request in order — this drives the whole handshake through

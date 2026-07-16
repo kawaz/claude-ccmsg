@@ -7,6 +7,7 @@ import { createStore } from "./useStore.ts";
 import { initialState } from "./store.ts";
 import { createWsClient } from "./ws.ts";
 import { parseHash } from "./locator.ts";
+import { parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
 
 const store = createStore(initialState());
 const ws = createWsClient(
@@ -22,6 +23,37 @@ function applyLocator(): void {
 window.addEventListener("hashchange", applyLocator);
 applyLocator();
 ws.connect();
+
+// Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a): webui-local persistence, not
+// daemon-backed — hydrate once from localStorage at startup, then keep it in
+// sync on every later add/remove. The reducer itself never touches
+// localStorage (DR-0005 §1: effects stay outside the pure state-transition
+// path), so this small store.subscribe listener is the effect layer for this
+// one slice of state, same role ws.ts's since_seq save-on-change plays for
+// the subscribe cursor. Reference-equality check (not deep-equal) is enough:
+// every `pinned/*` reducer branch either returns the SAME Map (no-op, e.g.
+// removing a sid that was never pinned) or a freshly-constructed one — see
+// store.ts's copy-on-write convention used throughout.
+try {
+  store.dispatch({
+    type: "pinned/hydrated",
+    hits: parsePinnedSessions(localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)),
+  });
+} catch {
+  // storage unavailable (private mode) — starts with zero pinned sessions.
+}
+let lastPinned = store.getState().pinnedSessions;
+store.subscribe(() => {
+  const pinned = store.getState().pinnedSessions;
+  if (pinned === lastPinned) return;
+  lastPinned = pinned;
+  try {
+    localStorage.setItem(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify([...pinned.values()]));
+  } catch {
+    // storage unavailable — pinning still works for the session, just
+    // doesn't persist across reload.
+  }
+});
 
 const root = document.getElementById("app-root");
 if (!root) throw new Error("missing #app-root mount point");

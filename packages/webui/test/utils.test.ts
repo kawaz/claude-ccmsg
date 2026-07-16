@@ -3,15 +3,18 @@
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
-import type { AgentInfo, FsEntry, MemberEvent, PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, FsEntry, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
 import { ADMIN_ID } from "../src/client/store.ts";
 import {
   badgeLabel,
+  buildSessionSearchRequest,
   clampPaneRatio,
+  DEFAULT_SESSION_SEARCH_FORM,
   errorMessage,
   fileAncestorDirectories,
   favoritesStorageKey,
+  formatBytes,
   formatDuration,
   groupSessionsBySection,
   inboxAutoFilename,
@@ -19,24 +22,28 @@ import {
   isMarkdownPath,
   isMemberConnected,
   lastPathSegment,
+  matchRoleBadge,
   memberLabel,
   nextPeerSortKey,
   offlineAgentRows,
   ownWorkspaceSegment,
   paneRatioFromPointer,
   parseFavorites,
+  parsePinnedSessions,
   peerSortButtonLabel,
   repoRootLabel,
   resolveInboxFilename,
   sessionBadges,
   sessionLabel,
   sessionRowRepoWs,
+  sessionSearchHitLabel,
   sessionStatus,
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
   sortFavorites,
   sortPeers,
+  sortPinnedSessions,
   splitRoomsByArchived,
   splitRoomsByKind,
   toggleFavorite,
@@ -44,6 +51,7 @@ import {
   workspaceRootEntries,
   type PeerSortKey,
   type SessionRow,
+  type SessionSearchForm,
 } from "../src/client/utils.ts";
 
 describe("errorMessage", () => {
@@ -1244,5 +1252,174 @@ describe("resolveInboxFilename", () => {
   // only special-cases the literal .md suffix, not "has some extension".
   test("appends .md alongside an unrelated extension rather than replacing it", () => {
     expect(resolveInboxFilename("archive.tar.gz", now)).toEqual({ name: "archive.tar.gz.md" });
+  });
+});
+
+// --- Session search (DR-0021 Phase 2) --- //
+
+describe("formatBytes", () => {
+  test("renders sub-KB sizes as whole bytes", () => {
+    expect(formatBytes(0)).toBe("0 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+  });
+
+  test("renders KB with one fractional digit", () => {
+    expect(formatBytes(1536)).toBe("1.5 KB");
+  });
+
+  test("renders MB once the KB value would itself reach 1024", () => {
+    expect(formatBytes(1024 * 1024 * 2.5)).toBe("2.5 MB");
+  });
+});
+
+describe("buildSessionSearchRequest", () => {
+  // The unmodified default form should serialize to "nothing but defaults" —
+  // every field at its DEFAULT_SESSION_SEARCH_FORM value is omitted from the
+  // wire body, matching the server's own documented defaults
+  // (SessionSearchRequest's doc comment in @ccmsg/protocol).
+  test("omits every field when the form is untouched", () => {
+    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual({});
+  });
+
+  test("trims and includes free-text fields only when non-blank", () => {
+    const form: SessionSearchForm = {
+      ...DEFAULT_SESSION_SEARCH_FORM,
+      query: "  foo bar  ",
+      cwd: "  claude-ccmsg  ",
+      sid: "  abcd1234  ",
+    };
+    expect(buildSessionSearchRequest(form)).toEqual({
+      query: "foo bar",
+      cwd: "claude-ccmsg",
+      sid: "abcd1234",
+    });
+  });
+
+  test("whitespace-only free-text fields are omitted, not sent as empty strings", () => {
+    const form: SessionSearchForm = { ...DEFAULT_SESSION_SEARCH_FORM, query: "   " };
+    expect(buildSessionSearchRequest(form)).toEqual({});
+  });
+
+  // Both toggles default true server-side, so only an OFF flip needs wire
+  // representation — an unflipped toggle (still true) stays absent.
+  test("sends target_user/target_agent only when flipped false", () => {
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, targetUser: false }),
+    ).toEqual({ target_user: false });
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, targetAgent: false }),
+    ).toEqual({ target_agent: false });
+    expect(
+      buildSessionSearchRequest({
+        ...DEFAULT_SESSION_SEARCH_FORM,
+        targetUser: true,
+        targetAgent: true,
+      }),
+    ).toEqual({});
+  });
+
+  test("includes config_dirs only when a non-empty subset is selected", () => {
+    expect(buildSessionSearchRequest(DEFAULT_SESSION_SEARCH_FORM)).toEqual({});
+    expect(
+      buildSessionSearchRequest({
+        ...DEFAULT_SESSION_SEARCH_FORM,
+        configDirs: ["/home/.claude", "/home/.claude-work"],
+      }),
+    ).toEqual({ config_dirs: ["/home/.claude", "/home/.claude-work"] });
+  });
+
+  test("sends mtime_within only when it differs from the 5d default", () => {
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "5d" }),
+    ).toEqual({});
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "  2h  " }),
+    ).toEqual({ mtime_within: "2h" });
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "  " }),
+    ).toEqual({});
+  });
+});
+
+function searchHit(overrides: Partial<SessionSearchHit>): SessionSearchHit {
+  return {
+    sid: "11111111-2222-3333-4444-555555555555",
+    config_dir: "/home/.claude",
+    file: "/home/.claude/projects/x/11111111-2222-3333-4444-555555555555.jsonl",
+    cwd: "/repos/claude-ccmsg/main",
+    repo: "kawaz/claude-ccmsg",
+    ws: "main",
+    created_at: "2026-07-10T00:00:00.000Z",
+    updated_at: "2026-07-15T00:00:00.000Z",
+    size: 2048,
+    matches: [{ role: "user", text: "hello world" }],
+    ...overrides,
+  };
+}
+
+describe("sessionSearchHitLabel", () => {
+  test("uses repo/ws when present", () => {
+    expect(sessionSearchHitLabel(searchHit({}))).toEqual({
+      repo: "kawaz/claude-ccmsg",
+      ws: "main",
+    });
+  });
+
+  test("falls back to cwd's last path segment when repo/ws are both absent", () => {
+    expect(
+      sessionSearchHitLabel(searchHit({ repo: null, ws: null, cwd: "/some/random/dir" })),
+    ).toEqual({ repo: "", ws: "dir" });
+  });
+
+  test("falls back to the short sid when even cwd is null", () => {
+    const hit = searchHit({ repo: null, ws: null, cwd: null });
+    expect(sessionSearchHitLabel(hit)).toEqual({ repo: "", ws: shortSid(hit.sid) });
+  });
+});
+
+describe("matchRoleBadge", () => {
+  test("maps user/agent roles to their one-letter markers", () => {
+    expect(matchRoleBadge("user")).toBe("U");
+    expect(matchRoleBadge("agent")).toBe("A");
+  });
+});
+
+// --- Pinned sessions (DR-0021 §2.4/§3.2) --- //
+
+describe("parsePinnedSessions", () => {
+  test("returns an empty list for a missing key", () => {
+    expect(parsePinnedSessions(null)).toEqual([]);
+  });
+
+  test("returns an empty list for malformed JSON", () => {
+    expect(parsePinnedSessions("{not json")).toEqual([]);
+  });
+
+  test("returns an empty list for JSON that isn't an array", () => {
+    expect(parsePinnedSessions(JSON.stringify({ sid: "x" }))).toEqual([]);
+  });
+
+  test("parses a valid list of hits", () => {
+    const hit = searchHit({});
+    expect(parsePinnedSessions(JSON.stringify([hit]))).toEqual([hit]);
+  });
+
+  // One malformed entry (missing required fields — a prior schema version, a
+  // hand edit, or storage corruption) is dropped individually rather than
+  // invalidating every other legitimately-pinned session in the array.
+  test("drops individually malformed entries without discarding the rest", () => {
+    const good = searchHit({});
+    const garbage = [good, { sid: "only-a-sid" }, "not even an object", 42, null];
+    expect(parsePinnedSessions(JSON.stringify(garbage))).toEqual([good]);
+  });
+});
+
+describe("sortPinnedSessions", () => {
+  test("orders most-recently-updated first, without mutating the input", () => {
+    const older = searchHit({ sid: "a", updated_at: "2026-07-01T00:00:00.000Z" });
+    const newer = searchHit({ sid: "b", updated_at: "2026-07-15T00:00:00.000Z" });
+    const input = [older, newer];
+    expect(sortPinnedSessions(input)).toEqual([newer, older]);
+    expect(input).toEqual([older, newer]); // unmutated
   });
 });

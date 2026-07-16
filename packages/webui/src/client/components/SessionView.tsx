@@ -64,7 +64,24 @@ export function SessionView({ state }: { state: AppState }) {
   // hasTranscript と同値だが、early return より前 = hooks 位置で必要なので
   // ここで引く)。
   const peer = state.peers.find((p) => p.sid === sid);
-  const hasTranscript = !!peer?.transcript_path;
+  // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1):
+  //
+  // - hasStatusFeed: the daemon's session_status_subscribe resolves the
+  //   transcript WITHOUT the allowVirtual fallback (transcript.ts's
+  //   TranscriptResolveOptions doc: "session-status callers intentionally
+  //   keep the connected-session contract") — so a live folded status feed
+  //   only exists for a connected session that announced a transcript_path.
+  //   Subscribing for a virtual sid would get session_not_found back and
+  //   leave StatusPanel's "読み込み中…" up forever.
+  // - hasTranscript: transcript_read DOES take the allowVirtual path for a
+  //   user-role conn (server.ts), and a pinned session came from
+  //   session_search, which only ever surfaces jsonl transcript files — so a
+  //   pinned sid always has a readable transcript even with no live peer
+  //   (never connected, or connected once and long since disconnected).
+  //   Without the OR, Timeline would wrongly stay disabled for every pinned
+  //   session that isn't ALSO currently connected.
+  const hasStatusFeed = !!peer?.transcript_path;
+  const hasTranscript = hasStatusFeed || (sid !== null && state.pinnedSessions.has(sid));
 
   // Status データ購読 (DR-0020 Phase 2/3): Status タブと Timeline タブ (下部
   // ミニパネルが同じデータを要る) のどちらかが開いている間だけ subscribe し、
@@ -87,7 +104,7 @@ export function SessionView({ state }: { state: AppState }) {
   // Phase 3 後続に持ち越す)。
   const needsStatus = tab === "status" || tab === "timeline";
   useEffect(() => {
-    if (!sid || !needsStatus || !hasTranscript) return;
+    if (!sid || !needsStatus || !hasStatusFeed) return;
     if (state.connStatus !== "connected") return;
     // Cancellation guard (same pattern as Timeline's scroll effect): without
     // it, a tab/session switch that tears this effect down BEFORE the
@@ -116,7 +133,7 @@ export function SessionView({ state }: { state: AppState }) {
       void ws.sessionStatusUnsubscribe(sid).catch(() => {});
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [sid, needsStatus, hasTranscript, state.connStatus]);
+  }, [sid, needsStatus, hasStatusFeed, state.connStatus]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -195,12 +212,18 @@ export function SessionView({ state }: { state: AppState }) {
       {tab === "rooms" ? (
         <SessionRooms sid={sid} state={state} />
       ) : tab === "status" ? (
-        // Status data is folded from the transcript (DR-0020 §3.1), so a
-        // session that never announced one can never produce a snapshot —
-        // explain that instead of leaving StatusPanel's "読み込み中…"
-        // spinner up forever (same guard the Timeline branch below applies).
-        hasTranscript ? (
+        // Status data is a live fold over a CONNECTED session's transcript
+        // (DR-0020 §3.1; the daemon's session_status_subscribe deliberately
+        // has no allowVirtual fallback) — so both a session that never
+        // announced a transcript and a pinned-but-disconnected (virtual,
+        // DR-0021) one can never produce a snapshot. Explain which instead
+        // of leaving StatusPanel's "読み込み中…" spinner up forever.
+        hasStatusFeed ? (
           <StatusPanel snapshot={sessionStatus} />
+        ) : hasTranscript ? (
+          <p id="empty-state">
+            Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
+          </p>
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )

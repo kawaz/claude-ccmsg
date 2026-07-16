@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -11,9 +11,11 @@ import {
   groupSessionsBySection,
   indexAgentsBySid,
   offlineAgentRows,
-  sessionBadges,
   sessionRowRepoWs,
+  sessionBadges,
+  sessionSearchHitLabel,
   shortSid,
+  sortPinnedSessions,
   toSessionRow,
   type SessionRow,
 } from "../utils.ts";
@@ -149,6 +151,105 @@ function SessionRowItem({
   );
 }
 
+/** One row of the sidebar's Pinned section (DR-0021 §2.4/§3.2). Deliberately
+ * NOT a `SessionRowItem` reuse — a pinned entry is a `SessionSearchHit`, not
+ * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
+ * forcing it through the same merge shape `toSessionRow` builds would need a
+ * lot of made-up filler fields. `connected` only decides the badge text
+ * ("仮想" = daemon resolves this sid via allowVirtual with no live peer,
+ * DR-0021 §3.1) — the link itself (Timeline) works identically either way. */
+function PinnedSessionRow({
+  hit,
+  currentSid,
+  connected,
+  onUnpin,
+}: {
+  hit: SessionSearchHit;
+  currentSid: string | null;
+  connected: boolean;
+  onUnpin: () => void;
+}) {
+  const { repo, ws: wsLabel } = sessionSearchHitLabel(hit);
+  return (
+    <li
+      class={hit.sid === currentSid ? "active session-row" : "session-row"}
+      title={hit.cwd ?? undefined}
+    >
+      <div class="session-line1">
+        <a href={timelineHref(hit.sid)} class="session-main-link">
+          <Avatar seed={hit.sid} size={16} />
+          <span class="session-repo-ws">{repo || wsLabel}</span>
+          {repo && wsLabel ? <span class="session-branch">{wsLabel}</span> : null}
+        </a>
+        {!connected ? (
+          <span
+            class="session-badge session-badge-offline"
+            title="ccmsg 未接続 (daemon の仮想 session 経由で閲覧)"
+          >
+            仮想
+          </span>
+        ) : null}
+        <button type="button" class="pinned-unpin-btn" title="ピン解除" onClick={onUnpin}>
+          ✕
+        </button>
+      </div>
+      <div class="session-line2">
+        <button
+          type="button"
+          class="session-sid-btn"
+          title={`${hit.sid}\nクリックでコピー`}
+          onClick={() => {
+            void navigator.clipboard?.writeText(hit.sid).catch(() => {});
+          }}
+        >
+          {shortSid(hit.sid)}
+        </button>
+      </div>
+      {hit.cwd ? <div class="session-line3">{hit.cwd}</div> : null}
+    </li>
+  );
+}
+
+/** Sidebar "Pinned" section (DR-0021 §2.4/§3.2): always shown when at least
+ * one session is pinned, positioned above the status-grouped sections below
+ * — pins are a deliberate user choice ("I want to keep finding this one"),
+ * so they stay visible regardless of the search panel being open/closed
+ * (see Sidebar.tsx's doc comment) or which status section a *live* copy of
+ * the same sid happens to sort into. A pinned sid can be BOTH here and in a
+ * status section below simultaneously if it's also currently connected —
+ * that's intentional (same "favorites duplicate the normal listing"
+ * convention FileTree's ★ section already uses), not deduped. */
+function PinnedSessionsSection({
+  pinnedSessions,
+  peers,
+  currentSid,
+}: {
+  pinnedSessions: Map<string, SessionSearchHit>;
+  peers: PeerInfo[];
+  currentSid: string | null;
+}) {
+  const { store } = useApp();
+  const pins = useMemo(() => sortPinnedSessions([...pinnedSessions.values()]), [pinnedSessions]);
+  if (pins.length === 0) return null;
+  const connectedSids = new Set(peers.map((p) => p.sid));
+  return (
+    <details open class="session-section pinned-section">
+      <summary class="session-section-summary">Pinned ({pins.length})</summary>
+      <ul class="session-section-list">
+        {pins.map((hit) => (
+          <PinnedSessionRow
+            key={hit.sid}
+            hit={hit}
+            currentSid={currentSid}
+            connected={connectedSids.has(hit.sid)}
+            onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
+          />
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 /** Sidebar "Sessions" section (U1, developed from the DR-0008 peers list):
  * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
  * recent toggle — this component never reorders those) with the daemon's
@@ -174,7 +275,7 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses } = useStoreState(store);
+  const { agents, sessionStatuses, pinnedSessions } = useStoreState(store);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [...peers.map((p) => toSessionRow(p, agentsBySid)), ...offlineAgentRows(peers, agents)],
@@ -183,6 +284,11 @@ export function SessionList({
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
   return (
     <div id="session-list">
+      <PinnedSessionsSection
+        pinnedSessions={pinnedSessions}
+        peers={peers}
+        currentSid={currentSid}
+      />
       {sections.map((section) => (
         <details key={section.key} open class="session-section">
           <summary class="session-section-summary">

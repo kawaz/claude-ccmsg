@@ -1,7 +1,14 @@
 // Presentation helpers shared by components. Kept out of store.ts because
 // these are display-only (locale strings, truncation) and out of the reducer
 // (which must stay a pure function of state + action).
-import type { AgentInfo, FsEntry, PeerInfo } from "@ccmsg/protocol";
+import type {
+  AgentInfo,
+  FsEntry,
+  PeerInfo,
+  SessionSearchHit,
+  SessionSearchMatch,
+  SessionSearchRequest,
+} from "@ccmsg/protocol";
 import type { RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 
@@ -737,4 +744,140 @@ export function resolveInboxFilename(
   }
   const name = /\.md$/i.test(trimmed) ? trimmed : `${trimmed}.md`;
   return { name };
+}
+
+// --- Session search (DR-0021 Phase 2) --- //
+
+/** Byte count → human string ("512 B" / "3.4 KB" / "1.2 MB"), for the search
+ * result list's size column. Same coarse-unit-then-stop style as
+ * `formatDuration` (one fractional digit past the first unit that's ≥1, no
+ * further subdivision). */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  return `${(kb / 1024).toFixed(1)} MB`;
+}
+
+/** SessionSearchPanel's controlled form state, one field per DR-0021 §2.1
+ * search parameter. `configDirs: []` means "no explicit filter" (every
+ * detected config dir) — the same "absent = server default" convention the
+ * wire request itself uses, kept here too so a fresh form and an
+ * explicitly-select-everything form serialize identically. */
+export interface SessionSearchForm {
+  query: string;
+  targetUser: boolean;
+  targetAgent: boolean;
+  cwd: string;
+  sid: string;
+  configDirs: string[];
+  mtimeWithin: string;
+}
+
+/** DR-0021 §2.1 defaults: both targets on, no cwd/sid/config_dir filter,
+ * mtime window 5d (matches the wire default `SessionSearchRequest.mtime_within`
+ * documented in @ccmsg/protocol, so an unmodified form and an omitted field
+ * mean the same thing server-side). */
+export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
+  query: "",
+  targetUser: true,
+  targetAgent: true,
+  cwd: "",
+  sid: "",
+  configDirs: [],
+  mtimeWithin: "5d",
+};
+
+/** Builds the wire `session_search` request body (op excluded — ws.ts's
+ * `sessionSearch` adds it, same option-object convention as
+ * `fsList`/`transcriptRead`) from the form state. Free-text fields are
+ * trimmed and omitted when empty; both target toggles are only sent when
+ * `false` (their server-side default is `true`, so an unflipped toggle needs
+ * no wire representation); `mtimeWithin` is omitted when it's still the form
+ * default (also the server default) or blank. Never throws on a malformed
+ * form (there's no way to construct one — this is a plain object literal,
+ * not parsed input), so it's a total function, not a Result-returning one
+ * like `resolveInboxFilename`. */
+export function buildSessionSearchRequest(
+  form: SessionSearchForm,
+): Omit<SessionSearchRequest, "op"> {
+  const req: Omit<SessionSearchRequest, "op"> = {};
+  const query = form.query.trim();
+  if (query) req.query = query;
+  if (!form.targetUser) req.target_user = false;
+  if (!form.targetAgent) req.target_agent = false;
+  const cwd = form.cwd.trim();
+  if (cwd) req.cwd = cwd;
+  const sid = form.sid.trim();
+  if (sid) req.sid = sid;
+  if (form.configDirs.length > 0) req.config_dirs = form.configDirs;
+  const mtime = form.mtimeWithin.trim();
+  if (mtime && mtime !== DEFAULT_SESSION_SEARCH_FORM.mtimeWithin) req.mtime_within = mtime;
+  return req;
+}
+
+/** repo/ws label for a search-result row or a pinned-session row (DR-0021
+ * §2.3/§2.4) — same fallback chain as `sessionRowRepoWs`/`sessionLabel`:
+ * `hit.repo`/`hit.ws` when present, else the cwd's last path segment (a
+ * session outside the known `repos/{host}/{owner}/{repo}` layout still needs
+ * a non-blank label), finally the sid's short form if even `cwd` is null
+ * (daemon couldn't restore one, SessionSearchHit.cwd doc comment). */
+export function sessionSearchHitLabel(hit: SessionSearchHit): { repo: string; ws: string } {
+  if (hit.repo || hit.ws) return { repo: hit.repo ?? "", ws: hit.ws ?? "" };
+  return { repo: "", ws: hit.cwd ? lastPathSegment(hit.cwd) : shortSid(hit.sid) };
+}
+
+/** Compact one-letter role marker for a search match line (DR-0021 §2.3:
+ * "ユーザ・エージェントメッセージの区別がつく形") — "U" user, "A" agent
+ * (covers ccmsg queue deliveries authored by a non-u1 member too, per
+ * SessionSearchRequest.target_agent's doc comment; the daemon already folds
+ * that distinction into `role` before it reaches the client). */
+export function matchRoleBadge(role: SessionSearchMatch["role"]): string {
+  return role === "user" ? "U" : "A";
+}
+
+// --- Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a: webui localStorage, no
+// daemon persistence) --- //
+
+export const PINNED_SESSIONS_STORAGE_KEY = "ccmsg.pinnedSessions";
+
+function isSessionSearchHit(value: unknown): value is SessionSearchHit {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.sid === "string" &&
+    typeof v.config_dir === "string" &&
+    typeof v.file === "string" &&
+    typeof v.created_at === "string" &&
+    typeof v.updated_at === "string" &&
+    typeof v.size === "number"
+  );
+}
+
+/** Parses a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
+ * into a pinned-hit list, same tolerant-of-garbage posture as
+ * `parseFavorites`: absent key, non-JSON, non-array JSON, or an array with
+ * malformed entries all resolve to (at worst a partial) valid list rather
+ * than throwing. A malformed individual entry is dropped, not treated as
+ * fatal for the whole array — one bad row (schema drift, manual edit)
+ * shouldn't erase every other legitimately-pinned session. */
+export function parsePinnedSessions(raw: string | null): SessionSearchHit[] {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(isSessionSearchHit);
+}
+
+/** Display order for the sidebar's Pinned section: most recently updated
+ * first — matches search results' own natural "freshest session first"
+ * expectation better than pin-registration order, since a pinned session's
+ * *content* (not the pin itself) is what a returning viewer cares about.
+ * Never mutates its input (same posture as `sortFavorites`/`sortPeers`). */
+export function sortPinnedSessions(pins: SessionSearchHit[]): SessionSearchHit[] {
+  return [...pins].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }

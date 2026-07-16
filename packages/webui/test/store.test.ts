@@ -7,6 +7,7 @@ import type {
   DeliveredEvent,
   MemberEvent,
   RoomSummary,
+  SessionSearchHit,
   TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import {
@@ -1208,5 +1209,69 @@ describe("reducer / session-status/loaded and session-status/cleared (DR-0020)",
     const before = initialState();
     dispatch(before, { type: "session-status/loaded", sid: "sess-1", snapshot: snapshotA });
     expect(before.sessionStatuses.size).toBe(0);
+  });
+});
+
+describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4/§3.2)", () => {
+  function hit(sid: string): SessionSearchHit {
+    return {
+      sid,
+      config_dir: "/home/.claude",
+      file: `/home/.claude/projects/x/${sid}.jsonl`,
+      cwd: "/repos/claude-ccmsg/main",
+      repo: "kawaz/claude-ccmsg",
+      ws: "main",
+      created_at: "2026-07-10T00:00:00.000Z",
+      updated_at: "2026-07-15T00:00:00.000Z",
+      size: 1024,
+      matches: [],
+    };
+  }
+
+  test("hydrated replaces pinnedSessions with the given hits, keyed by sid", () => {
+    const state = dispatch(initialState(), {
+      type: "pinned/hydrated",
+      hits: [hit("a"), hit("b")],
+    });
+    expect(state.pinnedSessions.size).toBe(2);
+    expect(state.pinnedSessions.get("a")).toEqual(hit("a"));
+  });
+
+  // A later hydrate is a full replace, not a merge — matches rooms/loaded's
+  // own "the daemon's/localStorage's snapshot wins" convention.
+  test("a later hydrated call fully replaces (not merges) the map", () => {
+    const first = dispatch(initialState(), { type: "pinned/hydrated", hits: [hit("a")] });
+    const second = dispatch(first, { type: "pinned/hydrated", hits: [hit("b")] });
+    expect(second.pinnedSessions.has("a")).toBe(false);
+    expect(second.pinnedSessions.has("b")).toBe(true);
+  });
+
+  test("added inserts a new pin", () => {
+    const state = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    expect(state.pinnedSessions.get("a")).toEqual(hit("a"));
+  });
+
+  test("added for an already-pinned sid replaces its cached metadata", () => {
+    const first = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const refreshed = { ...hit("a"), size: 9999 };
+    const second = dispatch(first, { type: "pinned/added", hit: refreshed });
+    expect(second.pinnedSessions.get("a")?.size).toBe(9999);
+  });
+
+  test("removed deletes the sid's pin", () => {
+    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const removed = dispatch(pinned, { type: "pinned/removed", sid: "a" });
+    expect(removed.pinnedSessions.has("a")).toBe(false);
+  });
+
+  test("removed for a sid that was never pinned is a no-op returning the same state object", () => {
+    const state = initialState();
+    expect(dispatch(state, { type: "pinned/removed", sid: "nope" })).toBe(state);
+  });
+
+  test("does not mutate the previous state (reducer purity)", () => {
+    const before = initialState();
+    dispatch(before, { type: "pinned/added", hit: hit("a") });
+    expect(before.pinnedSessions.size).toBe(0);
   });
 });

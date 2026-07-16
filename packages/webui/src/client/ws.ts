@@ -31,6 +31,8 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SessionSearchRequest,
+  SessionSearchResponse,
   SessionStatusResponse,
   SessionStatusStreamEvent,
   SessionStatusSubscribeResponse,
@@ -146,6 +148,13 @@ export interface WsHandle {
    * Called once in onOpen's handshake for the initial paint; subsequent
    * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
   agents(): Promise<AgentsResponse | ErrorResponse>;
+  /** Search historical Claude Code session transcripts under daemon-detected
+   * config dirs (DR-0021 Phase 1 op, Phase 2 client wiring; user role only).
+   * `params` excludes `op` — the wire shape is assembled here, same
+   * convention as fsList/transcriptRead's option-object callers. */
+  sessionSearch(
+    params: Omit<SessionSearchRequest, "op">,
+  ): Promise<SessionSearchResponse | ErrorResponse>;
   /** Round trip to the daemon, carrying provenance (exe/script/version, U1
    * footer) alongside the existing liveness fields. Called once in onOpen's
    * handshake, not polled — provenance only changes across a daemon restart,
@@ -413,6 +422,7 @@ export function createWsClient(
     sessionStatusSubscribe: (sid) => send({ op: "session_status_subscribe", sid }),
     sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
     agents: () => send({ op: "agents" }),
+    sessionSearch: (params) => send({ op: "session_search", ...params }),
     ping: () => send({ op: "ping" }),
   };
 }

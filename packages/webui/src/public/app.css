@@ -218,6 +218,24 @@ a {
   padding: 0.15rem 0.4rem;
 }
 
+/* DR-0021 Phase 2: Sidebar's SESSIONS-heading search toggle (Sidebar.tsx's
+ * SearchToggleButton) — same chromeless-icon-button style #peers-refresh
+ * already uses, so the three heading buttons (search/sort/refresh) read as
+ * one family. `aria-pressed` (not a class) drives the "currently open" tint
+ * since it's already the accessible signal for a toggle button. */
+#session-search-toggle {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+#session-search-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+
 #room-list,
 #session-list,
 .session-section-list {
@@ -439,6 +457,38 @@ a {
   word-break: break-all;
 }
 
+/* DR-0021 §2.4/§3.2: Pinned-section row extras (SessionList.tsx's
+ * PinnedSessionRow). ".session-badge-offline" reuses the base ".session-badge"
+ * chip shape but needs its own tone (that base rule sets no background —
+ * only ".session-badge-bg" does today) since a pinned row's "仮想" marker is a
+ * standing state, not the transient bg/busy/idle tags the same base class
+ * otherwise carries. */
+.session-badge-offline {
+  background: var(--bg);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+}
+
+.pinned-unpin-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+}
+
+.pinned-unpin-btn:hover {
+  color: var(--danger);
+}
+
+.session-row.active .pinned-unpin-btn {
+  color: var(--accent-fg);
+  opacity: 0.85;
+}
+
 .room-title {
   display: block;
   font-weight: 600;
@@ -480,6 +530,225 @@ a {
 #room-list-1on1 li.active a .room-kind-badge {
   background: var(--accent-fg);
   color: var(--accent);
+}
+
+/* DR-0021 Phase 2: SessionSearchPanel.tsx, swapped in for SessionList inside
+ * #sessions-panel while the search toggle is on (Sidebar.tsx). */
+#session-search-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.session-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-search-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.session-search-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.session-search-close:hover {
+  color: var(--fg);
+}
+
+.session-search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.session-search-form input[type="text"] {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.session-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.session-search-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.session-search-config-dirs {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.session-search-config-dirs legend {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  padding: 0 0.2rem;
+}
+
+.session-search-config-dirs .session-search-toggle {
+  word-break: break-all;
+}
+
+.session-search-mtime {
+  gap: 0.4rem;
+}
+
+.session-search-mtime input {
+  flex: 1;
+}
+
+.session-search-submit {
+  align-self: flex-start;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.session-search-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.session-search-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.session-search-empty,
+.session-search-truncated {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.session-search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* Block-style result row (DR-0021 §2.3): the whole block is one click target
+ * (SessionSearchPanel.tsx's SearchResultRow — a div[role=button], not an
+ * actual <button>, since it wraps block-level match lines). */
+.session-search-hit-main {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-alt);
+  cursor: pointer;
+}
+
+.session-search-hit-main:hover,
+.session-search-hit-main:focus-visible {
+  border-color: var(--accent);
+}
+
+.session-search-hit-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.session-search-hit-ws {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.session-search-hit-sid {
+  margin-left: auto;
+  font-size: 0.65rem;
+  font-family: ui-monospace, monospace;
+  color: var(--fg-muted);
+  opacity: 0.75;
+}
+
+.session-search-hit-pinned {
+  font-size: 0.7rem;
+}
+
+.session-search-hit-meta {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  margin-top: 0.15rem;
+}
+
+.session-search-hit-matches {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.session-search-match {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+}
+
+.session-search-match-badge {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.3;
+  width: 1.1rem;
+  text-align: center;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.session-search-match-user .session-search-match-badge {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.session-search-match-text {
+  overflow-wrap: anywhere;
+  color: var(--fg);
 }
 
 #sidebar-backdrop {

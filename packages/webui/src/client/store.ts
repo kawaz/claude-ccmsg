@@ -16,6 +16,7 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
+  type SessionSearchHit,
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
@@ -149,6 +150,16 @@ export interface AppState {
    * decision (a): sidebar mini badge only shows for the session currently
    * open, see SessionList.tsx). */
   sessionStatuses: Map<string, SessionStatusSnapshot>;
+  /** Pinned historical sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
+   * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
+   * this from `parsePinnedSessions(localStorage...)` once at startup
+   * (`pinned/hydrated`) and persists it back on every `pinned/added` /
+   * `pinned/removed` (subscribe-driven effect, mirrors ws.ts's since_seq
+   * save-on-change; the reducer itself never touches localStorage, DR-0005
+   * §1). A pinned sid is always "known to have a transcript" — session_search
+   * only ever surfaces jsonl transcript files — so SessionView widens its
+   * hasTranscript gate to include this map for a sid with no live peer. */
+  pinnedSessions: Map<string, SessionSearchHit>;
   /** mention targets staged for the composer of the current room. */
   mentionTo: Set<string>;
   connStatus: ConnStatus;
@@ -167,6 +178,7 @@ export function initialState(): AppState {
     currentSid: null,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
+    pinnedSessions: new Map(),
     mentionTo: new Set(),
     connStatus: "connecting",
     sidebarOpen: false,
@@ -233,7 +245,16 @@ export type Action =
   // cached snapshot so a stale (no-longer-live) badge/mini-panel/Status tab
   // can't linger past the unsubscribe. Matches sessionStatuses' "absence =
   // not subscribed" contract (see AppState's doc comment).
-  | { type: "session-status/cleared"; sid: string };
+  | { type: "session-status/cleared"; sid: string }
+  // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
+  // once at startup from main.tsx after reading localStorage — never
+  // dispatched again afterward (unlike rooms/loaded, which can legitimately
+  // re-fire on reconnect). "added"/"removed" are the per-session toggle,
+  // dispatched from the search results list and the sidebar's Pinned
+  // section's unpin button respectively.
+  | { type: "pinned/hydrated"; hits: SessionSearchHit[] }
+  | { type: "pinned/added"; hit: SessionSearchHit }
+  | { type: "pinned/removed"; sid: string };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
  * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
@@ -617,6 +638,21 @@ export function reducer(state: AppState, action: Action): AppState {
       const sessionStatuses = new Map(state.sessionStatuses);
       sessionStatuses.delete(action.sid);
       return { ...state, sessionStatuses };
+    }
+    case "pinned/hydrated": {
+      const pinnedSessions = new Map(action.hits.map((hit) => [hit.sid, hit] as const));
+      return { ...state, pinnedSessions };
+    }
+    case "pinned/added": {
+      const pinnedSessions = new Map(state.pinnedSessions);
+      pinnedSessions.set(action.hit.sid, action.hit);
+      return { ...state, pinnedSessions };
+    }
+    case "pinned/removed": {
+      if (!state.pinnedSessions.has(action.sid)) return state;
+      const pinnedSessions = new Map(state.pinnedSessions);
+      pinnedSessions.delete(action.sid);
+      return { ...state, pinnedSessions };
     }
     default:
       return state;

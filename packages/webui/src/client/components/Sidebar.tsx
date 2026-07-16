@@ -5,6 +5,7 @@ import { useApp } from "../context.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { RoomList } from "./RoomList.tsx";
 import { SessionList } from "./SessionList.tsx";
+import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
 
 const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
@@ -60,8 +61,35 @@ function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: 
   );
 }
 
+function SearchToggleButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      id="session-search-toggle"
+      type="button"
+      title={open ? "検索を閉じる" : "過去セッションを検索 (DR-0021)"}
+      aria-pressed={open}
+      onClick={onToggle}
+    >
+      🔍
+    </button>
+  );
+}
+
+/** Sidebar SESSIONS section (DR-0021 Phase 2 SS-Q1/Q2 doc note): search is a
+ * sidebar-internal panel toggle (local `showSearch` state below), NOT a
+ * fourth `state.view`/URL-locator form alongside room/session/timeline. The
+ * locator forms in locator.ts each name something durable and shareable —
+ * "this room", "this session's Files at this path", "this session's
+ * Timeline" — whereas a search is a disposable tool for finding and pinning
+ * a session, with no useful "resume this exact search" bookmark semantics.
+ * Toggling it swaps out `<SessionList>` for `<SessionSearchPanel>` in place;
+ * everything else (Rooms panel, the tab layout, the URL) is untouched. The
+ * Pinned section DR-0021 §2.4 asks for lives inside SessionList itself (see
+ * its doc comment) — it's a permanent part of the normal session list, not
+ * something the search toggle owns. */
 export function Sidebar({ state }: { state: AppState }) {
   const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
+  const [showSearch, setShowSearch] = useState(false);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
@@ -77,6 +105,7 @@ export function Sidebar({ state }: { state: AppState }) {
       <section id="sessions-panel">
         <h2>
           Sessions{" "}
+          <SearchToggleButton open={showSearch} onToggle={() => setShowSearch((v) => !v)} />{" "}
           <PeersSortButton
             sortKey={sortKey}
             onCycle={() => {
@@ -87,7 +116,11 @@ export function Sidebar({ state }: { state: AppState }) {
           />{" "}
           <PeersRefreshButton />
         </h2>
-        <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
+        {showSearch ? (
+          <SessionSearchPanel onClose={() => setShowSearch(false)} />
+        ) : (
+          <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
+        )}
       </section>
     </nav>
   );
