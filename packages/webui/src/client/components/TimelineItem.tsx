@@ -4,6 +4,8 @@ import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { formatMsgTime, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar } from "../avatar.tsx";
+import { MarkdownView } from "../markdown-view.tsx";
+import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 
 /** DR-0012 (U1 icon addendum): a member's avatar shown next to its label
  * in msg-meta. Used both for the message sender (`from`) and for each
@@ -66,7 +68,9 @@ export function TimelineItem({
               #{room.id}-m{event.mid}
             </a>
           </div>
-          <div class="msg-body">{event.msg}</div>
+          <div class="msg-body">
+            {shouldRenderAsMarkdown(event.from) ? <MarkdownView source={event.msg} /> : event.msg}
+          </div>
         </div>
       );
     case "member":
