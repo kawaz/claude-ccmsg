@@ -18,10 +18,11 @@ idle で何かを待っているだけなのか」が分からない (kawaz mid=
 
 ### 2.1 やること
 
-- **表示場所** (裁定待ち ST-Q2): (a) SessionView のタブ列を Files / Timeline / Rooms /
-  **Status** に増やす (kawaz mid=25) / (b) コンパクトに収まるなら Timeline 下部の
-  余白領域 (composer パネル高相当の padding 帯) に常駐ミニパネル (kawaz mid=26) /
-  (c) 両方 — TL 下は要約 1-2 行 (走行中 wf と in_progress TODO だけ)、詳細は Status タブ
+- **表示場所 (ST-Q2 裁定 = 両方、kawaz r26 mid=27)**:
+  - **Status タブ**: SessionView のタブ列を Files / Timeline / Rooms / Status に増やし、
+    詳細・全体一覧はこちら
+  - **TL 下余白の常駐ミニパネル**: 走行中 workflow と in_progress TODO だけの要約
+    1-2 行。タップで Status タブへ遷移
 - **抽出層** (webui pure 層、transcript-model.ts の隣): transcript イベント列を畳み込んで
   現在ステータスを導出
   - **TODO リスト**: TaskCreate / TaskUpdate の tool call から task id → {subject, status,
