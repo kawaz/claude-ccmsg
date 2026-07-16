@@ -23,3 +23,4 @@
 | [DR-0017](./DR-0017-reply-command.md) | Accepted | `ccmsg reply` (daemon 仲介の返信) + `reply_hint` + 指示文行 (reply_via 置換) |
 | [DR-0018](./DR-0018-session-launcher.md) | Accepted | Session Launcher (webui からの新規セッション起動 UI、Phase 分割) |
 | [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) |
+| [DR-0020](./DR-0020-session-status-tab.md) | Proposed | Status タブ (workflow / background / TODO の可視化、transcript fold) |
