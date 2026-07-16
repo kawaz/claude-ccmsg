@@ -590,6 +590,23 @@ function isCcmsgMsgEventLike(
  * that isn't a ccmsg `type:"msg"` event (kawaz spec: "壊れた JSON は空で
  * fallback", and non-msg events like `idle_notification` must NOT become a
  * bubble). */
+/** Reverses the XML entity escaping Claude Code's harness applies when it
+ * wraps Monitor stdout into a `<task-notification><event>` block (kawaz r26
+ * mid=30: a literal ">" in a room message showed as "&gt;" in Timeline).
+ * The daemon's stored jsonl carries the raw text — the escaping exists only
+ * inside the transcript copy — so unescaping here restores the original.
+ * Only the five XML predefined entities are reversed (that's the harness's
+ * escape set); &amp; last so "&amp;gt;" round-trips to "&gt;" correctly. */
+function unescapeXmlEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
+}
+
 function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMessage | null {
   let obj: unknown;
   try {
@@ -598,7 +615,7 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
     return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
   }
   if (!isCcmsgMsgEventLike(obj)) return null;
-  return { from: obj.from, to: obj.to, room: obj.r, msg: obj.msg, ts: obj.ts };
+  return { from: obj.from, to: obj.to, room: obj.r, msg: unescapeXmlEntities(obj.msg), ts: obj.ts };
 }
 
 /** Monitor 通知の <event> は長い msg を「...(truncated)」で切り詰めることが
@@ -634,7 +651,7 @@ function tryParseTruncatedCcmsgMessage(
   } catch {
     return null;
   }
-  return { from, room, msg: `${msg}…(切り詰め — 全文は room で)`, ts };
+  return { from, room, msg: `${unescapeXmlEntities(msg)}…(切り詰め — 全文は room で)`, ts };
 }
 
 /**
