@@ -1432,13 +1432,34 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       conn.subscribed = true;
       daemon.subscribers.add(conn);
       send(conn, { ok: true, subscribed: true });
-      // handler runs to completion synchronously, so no live event interleaves the snapshot
+      // handler runs to completion synchronously, so no live event interleaves the snapshot.
+      // Default (no `since`/`since_seq` entry for a room, and no `backlog: true`) is
+      // NO backlog at all — a fresh CLI sidecar connect doesn't want its context
+      // flooded with history it can't act on (issue
+      // 2026-07-17-subscribe-no-backlog-default). Rooms without a replay instead go
+      // into `cursors` below and surface as one `room_cursors` summary event, so the
+      // subscriber can `read` any room it's behind on. `backlog: true` (the webui's
+      // every subscribe call, since it paints room history from the backlog) restores
+      // the old unconditional snapshot for rooms `since`/`since_seq` doesn't cover.
+      const cursors: Array<{ room: string; last_mid: number }> = [];
       for (const room of daemon.rooms.values()) {
         if (!subscriberSeesRoom(conn, room)) continue;
         const sinceMid = req.since?.[room.id];
         const sinceSeq = req.since_seq?.[room.id];
+        // Presence, not validity, decides opt-in: a room the caller named in
+        // since/since_seq at all (even with a malformed value) means "I have a
+        // cursor concept for this room" — sendBacklog's own isValidSeqCursor
+        // check below still resolves a bad value to the full join snapshot
+        // (DR-0016 §2.5's "duplicates over silent loss"), it just doesn't fall
+        // all the way to the new no-cursor-named default.
+        const hasCursor = sinceMid !== undefined || sinceSeq !== undefined;
+        if (!hasCursor && req.backlog !== true) {
+          cursors.push({ room: room.id, last_mid: room.lastMid });
+          continue;
+        }
         sendBacklog(conn, room, sinceMid, undefined, sinceSeq);
       }
+      if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       // agents polling (DR-0009-agents addendum) only ever runs while a user-role
       // subscriber is connected — a session subscribing never starts it.
       if (conn.identity?.role === "user") {
@@ -1532,6 +1553,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         ok: true,
         root_dirs: launcher.root_dirs,
         default_prompt: launcher.default_prompt,
+        command: launcher.command,
       });
       return;
     }
@@ -1662,8 +1684,26 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
     }
 
     case "transcript_read": {
+      const wantsAgent =
+        req.agent_id !== undefined || req.run_id !== undefined || req.teammate !== undefined;
+      // DR-0025 Phase 1: agent / teammate transcripts are a webui viewer
+      // feature (drilldown UI, TL of subagents). A session (AI) does not
+      // read its own subagents' transcripts, so refuse the extended shape
+      // outside the user role — mirrors the role gate on `agents` /
+      // `transcript_subscribe`.
+      if (wantsAgent && conn.identity?.role !== "user") {
+        sendErr(
+          conn,
+          ErrorCode.bad_request,
+          "transcript_read agent_id/run_id/teammate require user role",
+        );
+        return;
+      }
       const result = transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes, {
         allowVirtual: conn.identity?.role === "user",
+        agentId: req.agent_id,
+        runId: req.run_id,
+        teammate: req.teammate,
       });
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);

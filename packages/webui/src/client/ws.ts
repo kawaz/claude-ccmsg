@@ -139,7 +139,16 @@ export interface WsHandle {
    * reply's `start` to page older. */
   transcriptRead(
     sid: string,
-    opts?: { before?: number; max_bytes?: number },
+    opts?: {
+      before?: number;
+      max_bytes?: number;
+      /** DR-0025 Phase 2: read a subagent / workflow-agent transcript. Static
+       * read only — subscribe is not offered on agent transcripts (DR-0025
+       * §2.2, no live push of agent progress). */
+      agent_id?: string;
+      run_id?: string;
+      teammate?: string;
+    },
   ): Promise<TranscriptReadResponse | ErrorResponse>;
   /** Follow a connected session's transcript live (DR-0009 live-tail
    * addendum): appended complete lines arrive as `ev:"transcript"` pushes
@@ -304,12 +313,25 @@ export function createWsClient(
     // In-page reconnects still send `since_seq` — the store retained its state
     // across the disconnect, so BBS delta replay is the correct/cheap thing
     // (packages/cli's reconnect.test.ts contract for daemon-restart transparency).
+    //
+    // `backlog: true` on both branches (issue 2026-07-17-subscribe-no-backlog-default):
+    // the daemon's subscribe default became "no replay, just a room_cursors summary"
+    // for any room without a `since_seq` cursor — a CLI-sidecar-shaped default that
+    // would leave RoomView with no history for a room this connection has no cursor
+    // for yet (a fresh reload, or a room created entirely during a dropped in-page
+    // reconnect). The webui always wants the old unconditional snapshot for those,
+    // so it opts back in explicitly; rooms already covered by `since_seq` still take
+    // the cheaper delta-replay path regardless of this flag.
     const spaHasState = getState().rooms.size > 0;
     try {
       await send({ op: "hello", role: "user" });
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
-      await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
+      await send(
+        spaHasState
+          ? { op: "subscribe", since_seq: since, backlog: true }
+          : { op: "subscribe", backlog: true },
+      );
       const peers = await send<PeersResponse>({ op: "peers" });
       if (peers.ok) dispatch({ type: "peers/loaded", peers: peers.peers });
       // U1: initial `claude agents --json` paint + daemon provenance for the
@@ -386,6 +408,11 @@ export function createWsClient(
       return;
     }
     if ("ev" in streamEv && streamEv.ev === "notify") return; // not surfaced in the UI (yet)
+    // Never actually emitted to this client — the webui always subscribes with
+    // `backlog: true` (see onOpen) so every visible room gets a real replay
+    // instead. Guarded here anyway so a protocol drift can't fall through to
+    // the DeliveredEvent cast below and get dispatched as a bogus room event.
+    if ("ev" in streamEv && streamEv.ev === "room_cursors") return;
     // U1: live push whenever the daemon's merged `claude agents --json` poll
     // result changes (only emitted while >=1 user-role subscriber is
     // connected) — folds straight into the same agents/loaded action the
@@ -575,6 +602,9 @@ export function createWsClient(
         sid,
         ...(opts?.before !== undefined ? { before: opts.before } : {}),
         ...(opts?.max_bytes !== undefined ? { max_bytes: opts.max_bytes } : {}),
+        ...(opts?.agent_id !== undefined ? { agent_id: opts.agent_id } : {}),
+        ...(opts?.run_id !== undefined ? { run_id: opts.run_id } : {}),
+        ...(opts?.teammate !== undefined ? { teammate: opts.teammate } : {}),
       }),
     transcriptSubscribe: (sid) => send({ op: "transcript_subscribe", sid }),
     transcriptUnsubscribe: (sid) => send({ op: "transcript_unsubscribe", sid }),

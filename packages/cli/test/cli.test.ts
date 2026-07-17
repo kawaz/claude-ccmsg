@@ -871,7 +871,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        // join snapshot (backlog) に S1 の既存 post が載って指示文行が付く。
+        // --since replay (呼び出し側が渡す) に S1 の既存 post が載って指示文行が付く。
         // 起動 → backlog 受信を待って kill、stdout を読み切る。
         await new Promise<void>((r) => setTimeout(r, 1500));
         sub.kill();
@@ -884,14 +884,18 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         (await runCli(["--sid", "S1", "post", created.room, "need reply"], env)).out,
       ) as { mid: number };
 
-      const lines = await runSub([]);
+      // subscribe's bare default no longer replays backlog (issue
+      // 2026-07-17-subscribe-no-backlog-default) — `--since '{"<room>":0}'` is the
+      // explicit opt-in this test needs to see S1's pre-existing post.
+      const sinceAll = JSON.stringify({ [created.room]: 0 });
+      const lines = await runSub(["--since", sinceAll]);
       const msgIdx = lines.findIndex((l) => l.includes('"need reply"'));
       expect(msgIdx).toBeGreaterThanOrEqual(0);
       expect(lines[msgIdx + 1]).toBe(
         `返信用コマンド: ccmsg reply ${created.room}m${posted.mid} '<text>'`,
       );
 
-      const rawLines = await runSub(["--raw"]);
+      const rawLines = await runSub(["--raw", "--since", sinceAll]);
       expect(rawLines.some((l) => l.includes('"need reply"'))).toBe(true);
       expect(rawLines.some((l) => l.startsWith("返信"))).toBe(false);
       // --raw は全行が有効な JSON (pure JSONL 契約)

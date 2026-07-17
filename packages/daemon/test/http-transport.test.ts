@@ -167,7 +167,14 @@ describe("HTTP/WS transport (DR-0004)", () => {
         const rooms = await ws.request<{ ok: true; rooms: { id: string }[] }>({ op: "rooms" });
         expect(rooms.rooms.some((r) => r.id === created.room)).toBe(true);
 
-        const sub = await ws.request<{ ok: true; subscribed: true }>({ op: "subscribe" });
+        // `backlog: true` mirrors the real webui client (packages/webui/src/client/ws.ts),
+        // which always opts into the join snapshot — the daemon's bare default
+        // (issue 2026-07-17-subscribe-no-backlog-default) sends only a `room_cursors`
+        // summary for a room with no since/since_seq cursor.
+        const sub = await ws.request<{ ok: true; subscribed: true }>({
+          op: "subscribe",
+          backlog: true,
+        });
         expect(sub.subscribed).toBe(true);
         // the ack is followed by the room's join-snapshot backlog (here: the one member
         // event from create_room) before any request/response can resume on this

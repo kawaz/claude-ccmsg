@@ -236,6 +236,18 @@ export interface RestartingStreamEvent {
   ev: "restarting";
   reason?: string;
 }
+/** Emitted once at `subscribe` time for every visible room that did NOT get a
+ * backlog/delta replay (no `since`/`since_seq` entry for it and the request
+ * didn't set `backlog: true` — issue 2026-07-17-subscribe-no-backlog-default).
+ * Lets a fresh CLI sidecar connect see each room's current cursor without
+ * re-flooding its history; the subscriber compares `last_mid` against what it
+ * already remembers and calls `read` to catch up only the rooms it needs.
+ * Omitted entirely when every visible room got a replay instead (empty list
+ * never sent). */
+export interface RoomCursorsStreamEvent {
+  ev: "room_cursors";
+  rooms: Array<{ room: string; last_mid: number }>;
+}
 /** Push update of the `claude agents --json` poll result (user-role subscribers
  * only). Emitted when the merged agent list changes; the daemon polls only
  * while at least one user-role subscriber is connected. */
@@ -274,6 +286,43 @@ export interface SessionTodo {
   status: string;
   owner?: string;
 }
+/** DR-0025 Phase 1: one row of a workflow's phase progress (name + done/total
+ * count). Present only when the workflow's state json (written on completion)
+ * carries a `workflowProgress` array — a still-running workflow has no such
+ * file, so `phases` is intentionally undefined for it (running-workflow
+ * agents alone are folded from the run directory's journal.jsonl). */
+export interface WorkflowPhaseStatus {
+  title: string;
+  done: number;
+  total: number;
+}
+/** DR-0025 Phase 1: one agent belonging to a workflow. `agent_id` is the
+ * `a<...>` slug that `transcript_read`'s `agent_id`/`run_id` resolver accepts
+ * (see `AgentTranscriptRequest` doc). Every rich field is optional because
+ * the underlying `workflowProgress` entries carry different shapes for
+ * `state === "done"`/`"error"`/`"progress"` (some omit `tokens`, `agent_type`,
+ * `duration_ms`, etc.) and journal-only running rows expose almost nothing
+ * beyond agentId + running flag. */
+export interface WorkflowAgentStatus {
+  agent_id: string;
+  label?: string;
+  model?: string;
+  agent_type?: string;
+  /** "done" | "error" | "progress" | "running" — open set: `done`/`error`/
+   * `progress` come from the state json's workflow_agent entries, `running`
+   * is synthesized when a journal `started` row has no matching `result`. */
+  state: string;
+  tokens?: number;
+  tool_calls?: number;
+  phase_index?: number;
+  phase_title?: string;
+  last_tool?: string;
+  result_preview?: string;
+  error?: string;
+  /** epoch ms as recorded in the state json (numbers, not ISO strings). */
+  started_at?: number;
+  duration_ms?: number;
+}
 export interface SessionWorkflowStatus {
   /** task-notification correlation id (Workflow result taskId). */
   task_id: string;
@@ -283,6 +332,17 @@ export interface SessionWorkflowStatus {
   status: string;
   started_at: string;
   ended_at?: string;
+  /** DR-0025 Phase 1: the workflow's runId (`wf_XXXXXXXX-XXX`) folded from
+   * the transcript's Workflow toolUseResult. Feeds the `run_id` argument of
+   * `transcript_read` for agents that belong to this run. */
+  run_id?: string;
+  /** DR-0025 Phase 1: undefined while the workflow is running (no state json
+   * yet); present once the completion-time state json exists. */
+  phases?: WorkflowPhaseStatus[];
+  /** DR-0025 Phase 1: workflow agents (from state json when available; from
+   * journal.jsonl fallback while still running). Undefined = fold could not
+   * find anything readable in the run directory. */
+  agents?: WorkflowAgentStatus[];
 }
 export interface SessionBackgroundStatus {
   /** Monitor/Bash taskId or Agent agentId. */
@@ -370,6 +430,7 @@ export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
   | RestartingStreamEvent
+  | RoomCursorsStreamEvent
   | AgentsStreamEvent
   | PeersStreamEvent
   | TranscriptStreamEvent
@@ -524,6 +585,14 @@ export interface SubscribeRequest {
    * covers. Do NOT derive this from a stored `since` value: seq >= mid always
    * holds, so reinterpreting a mid as a seq would skip events. */
   since_seq?: Record<string, number>;
+  /** Opt into the legacy per-room snapshot/full-replay for any visible room
+   * NOT covered by `since`/`since_seq` (issue 2026-07-17-subscribe-no-backlog-default).
+   * Without this, such a room gets no backlog at all — only a `room_cursors`
+   * summary event — so a fresh CLI sidecar connect doesn't re-flood a room's
+   * history. The webui sets this unconditionally (it paints room history from
+   * the backlog); rooms it already has a `since_seq` cursor for still take the
+   * cheaper delta-replay path regardless of this flag. */
+  backlog?: boolean;
 }
 
 export interface ReadRequest {
@@ -589,6 +658,17 @@ export interface SessionLaunchRequest {
   model: string;
   effort: string;
   prompt: string;
+  /** Optional user-supplied command template override (DR-0018 §3.2 addendum
+   * 2026-07-17). When absent, the daemon uses the administrator-configured
+   * `session_launcher.command` verbatim. When present, it must be a non-empty
+   * string; empty string is rejected as invalid_args. Rationale: user role
+   * (webui = kawaz-in-person) editing the template is equivalent to typing
+   * the command in a terminal, and the session-role launch gate is untouched
+   * (server.ts continues to reject session_launch from non-user roles before
+   * this field is even inspected). No template substitution is performed on
+   * this value either — it is passed to the same `shellArgv(shell, command)`
+   * path as the config value, with the same CWD/MODEL/EFFORT/PROMPT env. */
+  command?: string;
 }
 
 /** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
@@ -670,6 +750,22 @@ export interface TranscriptReadRequest {
   before?: number;
   /** cap on returned line bytes; clamped to TRANSCRIPT_READ_MAX_BYTES */
   max_bytes?: number;
+  /** DR-0025 Phase 1: read a subagent / workflow-agent / teammate transcript
+   * that lives under `<sid>`'s sibling directory instead of `<sid>`'s own
+   * transcript. User role only; strictly validated by the daemon-side
+   * resolver (`AGENT_ID_RE` / `RUN_ID_RE` / `TEAMMATE_NAME_RE` reject any
+   * character that could form a traversal). Mutually exclusive with
+   * `teammate`; `run_id` only makes sense with `agent_id`. */
+  agent_id?: string;
+  /** DR-0025 Phase 1: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
+   * `agent_id`. Absent = the agent is a direct child of `<sid>` (bare
+   * `subagents/agent-*.jsonl`). Ignored when `agent_id` is absent. */
+  run_id?: string;
+  /** DR-0025 Phase 1: teammate name whose transcript should be resolved via
+   * `subagents/agent-*.meta.json` scan (the transcript-side `teammate_id` is
+   * `name@team`, so it cannot be reused as a filename hash). Mutually
+   * exclusive with `agent_id`. */
+  teammate?: string;
 }
 
 /** Search historical Claude Code session transcripts under daemon-detected
@@ -950,11 +1046,18 @@ export interface RequestAcceptedResponse {
   accepted: true;
   request_id: string;
 }
-/** session_launcher_config reply — see its request doc comment above. */
+/** session_launcher_config reply — see its request doc comment above.
+ * `command` is the administrator-configured shell command template verbatim
+ * (no variable substitution — $CWD/$MODEL/$EFFORT/$PROMPT stay literal); the
+ * webui surfaces it as an editable textarea per DR-0018 §3.2 addendum
+ * 2026-07-17, and sends the edited value back via SessionLaunchRequest.command
+ * override. Same one-shot read as root_dirs/default_prompt — a re-fetch is
+ * only useful across a daemon config reload + restart. */
 export interface SessionLauncherConfigResponse {
   ok: true;
   root_dirs: string[];
   default_prompt: string;
+  command: string;
 }
 /** One directory entry from fs_list. `type:"symlink"` is reported as-is for
  * links whose target stays inside the root (out-of-root links are listed but

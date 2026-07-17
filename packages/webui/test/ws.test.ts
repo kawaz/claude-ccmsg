@@ -1155,8 +1155,10 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     // 3rd request is subscribe — must not carry `since_seq` since the store is empty.
+    // `backlog: true` opts into the full snapshot for rooms `since_seq` doesn't cover
+    // (issue 2026-07-17-subscribe-no-backlog-default's daemon-default flip).
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    expect(subscribeReq).toEqual({ op: "subscribe" });
+    expect(subscribeReq).toEqual({ op: "subscribe", backlog: true });
   });
 
   // Regression guard for the snapshot-order bug: onOpen's own `rooms` reply
@@ -1200,9 +1202,9 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    // Must be the fresh-reload shape (no `since_seq`), because the store was
-    // empty at handshake start even though rooms/loaded has since filled it.
-    expect(subscribeReq).toEqual({ op: "subscribe" });
+    // Must be the fresh-reload shape (no `since_seq`, `backlog: true`), because the
+    // store was empty at handshake start even though rooms/loaded has since filled it.
+    expect(subscribeReq).toEqual({ op: "subscribe", backlog: true });
     // Sanity: state really did get repopulated by rooms/loaded — a getState()
     // read at this point would see a non-empty map, confirming the snapshot
     // must have happened earlier.
@@ -1250,7 +1252,7 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
+    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 }, backlog: true });
   });
 
   test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {

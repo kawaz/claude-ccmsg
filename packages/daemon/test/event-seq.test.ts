@@ -64,12 +64,13 @@ describe("DR-0016 seq: assignment and delivery", () => {
         await a.request({ op: "set_title", room, title: "seq test" });
         await a.request({ op: "archive_room", room, archived: true });
 
-        // Fresh subscriber with no cursor → join snapshot backlog. Every
-        // delivered StorageEvent must carry a number seq, strictly increasing
-        // in delivery order (delivery preserves file order).
+        // Fresh subscriber with no cursor, `backlog: true` (explicit opt-in,
+        // issue 2026-07-17-subscribe-no-backlog-default) → join snapshot
+        // backlog. Every delivered StorageEvent must carry a number seq,
+        // strictly increasing in delivery order (delivery preserves file order).
         const sub = await connect(ctx.sock);
         await sub.hello({ role: "session", sid: "B" });
-        await sub.request({ op: "subscribe" });
+        await sub.request({ op: "subscribe", backlog: true });
         const backlog = await drainUntilSentinel(sub, a, room, "t1");
         const roomEvents = backlog.filter((ev) => ev.r === room && typeof ev.type === "string");
         expect(roomEvents.length).toBeGreaterThanOrEqual(4); // 2 member + msg + title + archive
@@ -122,10 +123,12 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const room = created.room;
         await a.request({ op: "archive_room", room, archived: true });
 
-        // First connect: learn the archive event's seq (the log tail).
+        // First connect: learn the archive event's seq (the log tail). `backlog: true`
+        // opts into the join snapshot (issue 2026-07-17-subscribe-no-backlog-default's
+        // new default sends only a `room_cursors` summary without it).
         const sub1 = await connect(ctx.sock);
         await sub1.hello({ role: "session", sid: "B" });
-        await sub1.request({ op: "subscribe" });
+        await sub1.request({ op: "subscribe", backlog: true });
         const { ev: archiveEv } = await sub1.readEventUntil(
           (ev) => ev.type === "archive" && ev.r === room,
         );
@@ -169,10 +172,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         });
         const room = created.room;
 
-        // Learn the msg's seq first.
+        // Learn the msg's seq first (`backlog: true` to get the join snapshot).
         const sub1 = await connect(ctx.sock);
         await sub1.hello({ role: "session", sid: "B" });
-        await sub1.request({ op: "subscribe" });
+        await sub1.request({ op: "subscribe", backlog: true });
         const { ev: msgEv } = await sub1.readEventUntil(
           (ev) => ev.type === "msg" && ev.r === room && ev.msg === "m1",
         );

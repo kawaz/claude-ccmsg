@@ -450,9 +450,13 @@ Commands:
                                --kind broadcast for a session-broadcast room,
                                --kind 1on1 --members <sid> for a webui 1on1 priv room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
-  subscribe                    Stream room events as jsonl to stdout (--since);
-                               each msg line is followed by a plain reply
-                               instruction line (--raw to suppress)
+  subscribe                    Stream room events as jsonl to stdout. Bare default:
+                               no backlog, just a room_cursors summary
+                               ({room, last_mid} per visible room) — read to
+                               catch up rooms you're behind on. --since replays
+                               history for the rooms it names (each msg line is
+                               followed by a plain reply instruction line,
+                               --raw to suppress)
   read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
@@ -481,7 +485,10 @@ Command Options:
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
   --all                        rooms: include archived rooms (default: active only)
-  --since <json>               subscribe: per-room last-seen seq, e.g. '{"r7":7}'
+  --since <json>               subscribe: per-room last-seen seq, e.g. '{"r7":7}' —
+                               naming a room here opts it into a full/delta replay;
+                               '{"r7":0}' replays r7 from the start. Un-named rooms
+                               get only the room_cursors summary (bare default)
   --raw                        subscribe: suppress the plain reply-instruction
                                lines (pure JSONL for jq-style consumers)
   --self                       notify: target own session (default when no --sid)

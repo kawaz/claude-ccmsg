@@ -250,10 +250,12 @@ describe("wire protocol integration", () => {
         await aPost.request({ op: "post", room, msg: "m1", to: ["a2"] }); // mid 1, excludes C
         await aPost.request({ op: "post", room, msg: "m2" }); // mid 2, everyone
 
-        // C subscribes with no `since` — first-time join snapshot path (sendBacklog's
-        // non-sinceMid branch), distinct from the sinceMid replay branch covered above.
+        // C subscribes with no `since`, `backlog: true` — first-time join snapshot path
+        // (sendBacklog's non-sinceMid branch, opted into explicitly per issue
+        // 2026-07-17-subscribe-no-backlog-default), distinct from the sinceMid replay
+        // branch covered above.
         const cSub = await session(ctx, "C");
-        await cSub.request({ op: "subscribe" });
+        await cSub.request({ op: "subscribe", backlog: true });
         const { seen: cSeen } = await cSub.readEventUntil(
           (ev) => ev.type === "msg" && ev.mid === 2,
         );
@@ -262,7 +264,7 @@ describe("wire protocol integration", () => {
 
         // admin User (u1) is exempt in the join snapshot too, same as live/replay.
         const uSub = await user(ctx);
-        await uSub.request({ op: "subscribe" });
+        await uSub.request({ op: "subscribe", backlog: true });
         const { seen: uSeen } = await uSub.readEventUntil(
           (ev) => ev.type === "msg" && ev.mid === 2,
         );
@@ -450,7 +452,9 @@ describe("wire protocol integration", () => {
         }
 
         const bSub = await session(ctx, "B");
-        await bSub.request({ op: "subscribe" }); // backlog: member state + last 50 msgs (mids 6..55)
+        // `backlog: true`: member state + last 50 msgs (mids 6..55) — opted in per issue
+        // 2026-07-17-subscribe-no-backlog-default (bare default sends only room_cursors).
+        await bSub.request({ op: "subscribe", backlog: true });
 
         // post one more so we have a live terminator to read up to
         await aPost.request({ op: "post", room, msg: "m56" }); // mid 56, delivered live to B
@@ -496,8 +500,10 @@ describe("wire protocol integration", () => {
 
         const bSub = await session(ctx, "B");
         const u = await user(ctx);
-        await bSub.request({ op: "subscribe" }); // session role: capped join snapshot (mids 6..55)
-        await u.request({ op: "subscribe" }); // user role (admin): uncapped join snapshot (mids 1..55)
+        // `backlog: true` on both (issue 2026-07-17-subscribe-no-backlog-default: bare
+        // default sends only room_cursors, not a join snapshot).
+        await bSub.request({ op: "subscribe", backlog: true }); // session role: capped join snapshot (mids 6..55)
+        await u.request({ op: "subscribe", backlog: true }); // user role (admin): uncapped join snapshot (mids 1..55)
 
         // post one more so both subscribers have a live terminator to read up to
         await aPost.request({ op: "post", room, msg: "m56" }); // mid 56
@@ -584,9 +590,10 @@ describe("wire protocol integration", () => {
         expect(denied.ok).toBe(false);
         expect(denied.error!.code).toBe("not_a_member");
 
-        // the User's subscribe sees every room even without membership
+        // the User's subscribe sees every room even without membership. `backlog: true`
+        // opts into the join snapshot (issue 2026-07-17-subscribe-no-backlog-default).
         const uSub = await user(ctx);
-        await uSub.request({ op: "subscribe" });
+        await uSub.request({ op: "subscribe", backlog: true });
         const seenMsg = await uSub.readEventUntil((ev) => ev.type === "msg" && ev.r === room);
         expect(seenMsg.ev.from).toBe("u1");
       } finally {

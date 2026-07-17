@@ -141,6 +141,20 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       const accum = { buf: "", lines: [] as string[] };
 
       try {
+        // subscribe の bare default はもう backlog を返さない (issue
+        // 2026-07-17-subscribe-no-backlog-default) — ack 直後に必ず届く
+        // `ev:"room_cursors"` を待って、daemon.subscribers への登録 (= 以降の post
+        // が live delivery で確実に届く状態) を確認してから post する。これを待たずに
+        // post すると、spawn 直後の一瞬の間に post が先着した場合 live delivery の
+        // 対象外になり (backlog も無いので) 二度と届かないレースになる。
+        await waitForLine(reader, accum, (l) => {
+          try {
+            return (JSON.parse(l) as { ev?: string }).ev === "room_cursors";
+          } catch {
+            return false;
+          }
+        });
+
         // 跨ぎ前: S1 が post。u1 の subscribe stdout に msg が現れることを確認。
         const posted1 = JSON.parse(
           (await runCli(["--sid", "S1", "post", room, "hello-before"], env)).out,

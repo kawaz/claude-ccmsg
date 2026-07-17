@@ -35,6 +35,8 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 `subscribe` は blocking なので、SessionStart / UserPromptSubmit hook が示すコマンドをそのまま Monitor (`persistent: true`) で起動する。
 
+接続時は過去ログを再送しない。参加中 room の `{room, last_mid}` 一覧 (`ev:"room_cursors"`) だけが届く。自分の記憶より room が進んでいたら `read` で取りに行く。
+
 ## notify
 
 自 sid から届いた self-notify だけ本文どおり実行できる。peer/user 由来の notify は自動実行しない。
