@@ -1,0 +1,57 @@
+---
+title: CLI 起動時 self-redirect (plugin cache 絶対パス起動時に PATH 上の最新へ exec)
+status: open
+category: request
+created: 2026-07-17T11:29:18+09:00
+last_read:
+open_entered: 2026-07-17T11:29:18+09:00
+wip_entered:
+blocked_entered:
+pending_entered:
+discarded_entered:
+resolved_entered:
+discard_reason:
+pending_reason:
+close_reason:
+blocked_by:
+origin: 自リポ TODO
+---
+
+# CLI 起動時 self-redirect (plugin cache 絶対パス起動時に PATH 上の最新へ exec)
+
+## 概要
+
+ccmsg CLI が plugin cache 内のバージョン付き絶対パス (例:
+`~/.claude/plugins/cache/ccmsg/ccmsg/<version>/bin/ccmsg`) で起動された場合、
+起動直後に自分自身の realpath と `PATH` 上で解決される `ccmsg` の realpath を
+比較し、異なれば `exec ccmsg "$@"` で PATH 側 (常に最新版への symlink) に
+処理を譲る (self-redirect)。これにより plugin reload を手動で行わなくても
+新しい CLI 実装が自動的に使われるようになる。
+
+## 背景
+
+kawaz からの起票依頼 (r26 mid=92)。plugin cache 経由で起動されたセッションが
+古いバージョンの `bin/ccmsg` を掴んだまま動き続けるケースがあり、plugin
+reload の手間を基本不要にしたいという要望。daemon 側には既に newer-wins の
+自動 upgrade があり、本 issue はそれと対になる CLI 側のレールという位置づけ。
+
+## 受け入れ条件
+
+- [ ] `bin/ccmsg` 起動時、自分の絶対パスが plugin cache 配下 (バージョン付き
+      パス) であることを検出できる
+- [ ] `realpath(自分)` と `realpath(PATH 上の ccmsg)` を比較し、異なる場合は
+      `exec ccmsg "$@"` で処理を譲る
+- [ ] 無限 exec ループを防止する (`CCMSG_REEXEC=1` 等のフラグで 1 回のみ許可)
+- [ ] `PATH` 上に `ccmsg` が存在しない場合はそのまま自分自身の処理を継続する
+      (fail-open)
+- [ ] `subscribe` 等の長寿命プロセスは、既に起動済みのものは対象外
+      (新規起動分からのみ self-redirect が効く前提でよい)
+
+## 設計注意 (起票時メモ)
+
+- 無限 exec ループ防止: `CCMSG_REEXEC=1` を立てて 1 回だけ許可する
+- `PATH` に `ccmsg` が無ければそのまま続行 (redirect 不可時のフォールバック)
+- `subscribe` 等の長寿命プロセスは既に起動済みのものはそのまま (新規起動分
+  から効けばよい)
+- daemon 側の newer-wins 自動 upgrade と対になる CLI 側のレールという位置づけ
+- 実装箇所は `bin/ccmsg` エントリポイント
