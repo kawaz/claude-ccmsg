@@ -1,11 +1,11 @@
 ---
 title: CLI help / SKILL ダイエットとレール設計
-status: open
+status: wip
 category: design
 created: 2026-07-17T11:07:18+09:00
 last_read:
 open_entered: 2026-07-17T11:07:18+09:00
-wip_entered:
+wip_entered: 2026-07-17T11:18:25+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -42,6 +42,15 @@ SKILL.md も同方針でダイエットし、「新規声かけは post、応答
 併せて、1on1 の `reply_hint:"tl"` ルールが効きにくい問題への対処も検討する: SKILL 記述強化に加えて subscribe イベントの指示行の文言改善。tl 指定メッセージへの post 応答を daemon 側で警告する等のレール化は過剰かもしれない — 設計判断が必要。
 
 CLI help ↔ SKILL ↔ completion の 3 者同期 (cli-design-preferences ルール) を崩さないこと。
+
+## 実害構造 (kawaz r26 mid=85-87 で確定、2026-07-17)
+
+- **(1) post が reply_hint:"tl" ガードを構造的に素通りする**: post は元メッセージと紐付かないため、reply_hint:"tl" の daemon 拒否ガードの対象にならない。1on1 room で a1 が自己判断で post すると、誰も見ない場所に報告が消える実害がある。
+  - 対処: 1on1 room では、未応答の u1 メッセージが reply_hint:"tl" のとき、a1 の post も daemon が拒否し「TL (transcript 出力) で応答せよ」エラーを返すレールを追加する。
+- **(2) reply 経路の既存 reply_hint 拒否が実装されているかの検証が必要**: kawaz は「拒否する設計のはず」との認識だが、実装が実際にそうなっているか未確認。要実装確認。
+- **(3) help/SKILL ダイエット**: 上記「背景」節に既記載の内容のまま。
+
+優先度: 最優先 (実装 workflow 起動済み)。
 
 ## 受け入れ条件
 
