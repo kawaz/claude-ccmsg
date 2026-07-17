@@ -34,9 +34,11 @@ import {
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import {
+  createHostTranslateBatcher,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
+  type HostTranslateRequest,
 } from "../translate.ts";
 import {
   loopNextIndex,
@@ -164,6 +166,11 @@ function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
 interface TranslationAvailability {
   host: boolean;
   browser: boolean;
+  // 同一 tick の複数 ThinkingSegment からの host リクエストを 1 回の daemon
+  // `translate` にまとめるバッチャ (issue 2026-07-17 #2b) — Timeline() が
+  // ws.translate をラップして 1 つだけ作り、全 ThinkingSegment で共有する
+  // (createHostTranslateBatcher 参照)。
+  hostRequest: HostTranslateRequest;
 }
 
 type ThinkingTab = "original" | "ja-host" | "ja-browser";
@@ -184,37 +191,25 @@ function ThinkingSegment({
   foldGroupOpen: boolean;
   mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
 }) {
-  const { store, ws } = useApp();
+  const { store } = useApp();
   const [tab, setTab] = useState<ThinkingTab>("original");
   const [hostText, setHostText] = useState<string | null>(null);
   const [browserText, setBrowserText] = useState<string | null>(null);
   const [hostTranslating, setHostTranslating] = useState(false);
   const [browserTranslating, setBrowserTranslating] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [bodySelected, setBodySelected] = useState(false);
   const autoOpenedRef = useRef(false);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  const clearBodySelection = useCallback(() => {
-    if (!bodySelected) return;
-    window.getSelection()?.removeAllRanges();
-    setBodySelected(false);
-  }, [bodySelected]);
-
-  const changeTab = useCallback(
-    (next: ThinkingTab) => {
-      clearBodySelection();
-      setTab(next);
-    },
-    [clearBodySelection],
-  );
+  const changeTab = useCallback((next: ThinkingTab) => {
+    setTab(next);
+  }, []);
 
   function selectHost() {
     if (!translationAvailability.host) return;
     changeTab("ja-host");
     if (hostText !== null || hostTranslating) return;
     setHostTranslating(true);
-    void translateThinkingTextOnHost(text, (texts) => ws.translate(texts))
+    void translateThinkingTextOnHost(text, translationAvailability.hostRequest)
       .then((result) => setHostText(result))
       .catch(() => {
         // A capability probe can only verify OS/helper availability. A missing
@@ -267,27 +262,6 @@ function ThinkingSegment({
         ? browserText
         : text;
 
-  const toggleBodySelection = useCallback(() => {
-    if (tab !== "original") return;
-    const el = bodyRef.current;
-    const selection = window.getSelection();
-    if (!el || !selection) return;
-
-    const fullRange = document.createRange();
-    fullRange.selectNodeContents(el);
-    const selected =
-      selection.rangeCount === 1 &&
-      selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0 &&
-      selection.getRangeAt(0).compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
-    selection.removeAllRanges();
-    if (selected) {
-      setBodySelected(false);
-      return;
-    }
-    selection.addRange(fullRange);
-    setBodySelected(true);
-  }, [tab]);
-
   const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
   const translating =
     (tab === "ja-host" && hostTranslating && hostText === null) ||
@@ -303,8 +277,8 @@ function ThinkingSegment({
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-thinking-body">
-          <div class="tl-thinking-toolbar">
-            {hasTranslationTab ? (
+          {hasTranslationTab ? (
+            <div class="tl-thinking-toolbar">
               <div class="tl-thinking-tabs">
                 <button
                   type="button"
@@ -332,26 +306,13 @@ function ThinkingSegment({
                   </button>
                 ) : null}
               </div>
-            ) : null}
-            <button
-              type="button"
-              class={
-                "tl-thinking-tab tl-thinking-select-toggle" +
-                (hasTranslationTab ? " separated" : "")
-              }
-              disabled={tab !== "original"}
-              onClick={toggleBodySelection}
-            >
-              {bodySelected ? "clear" : "select"}
-            </button>
-          </div>
-          <div ref={bodyRef}>
-            <MarkdownView
-              source={bodyText}
-              highlightWords={mdSearch?.words}
-              onMatchClick={mdSearch?.onMatchClick}
-            />
-          </div>
+            </div>
+          ) : null}
+          <MarkdownView
+            source={bodyText}
+            highlightWords={mdSearch?.words}
+            onMatchClick={mdSearch?.onMatchClick}
+          />
           {translating ? <p class="tl-thinking-translating">翻訳中…</p> : null}
         </div>
       </div>
@@ -1030,9 +991,21 @@ export function Timeline({
   // browser は mount 時の feature detect、host は WS hello 後の daemon
   // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
   const browserTranslatorAvailable = useMemo(() => hasTranslatorApi(), []);
+  // FoldGroup が開いた瞬間、中の複数 ThinkingSegment が同じ tick で host
+  // 翻訳を要求する (issue 2026-07-17 #2b) — Timeline インスタンスにつき 1 つ
+  // だけバッチャを作り、全 ThinkingSegment で共有する (ws が変わらない限り
+  // 安定させる、useMemo の dep は ws のみ)。
+  const hostTranslateRequest = useMemo<HostTranslateRequest>(
+    () => createHostTranslateBatcher((texts) => ws.translate(texts)),
+    [ws],
+  );
   const translationAvailability = useMemo<TranslationAvailability>(
-    () => ({ host: appState.hostTranslatorAvailable, browser: browserTranslatorAvailable }),
-    [appState.hostTranslatorAvailable, browserTranslatorAvailable],
+    () => ({
+      host: appState.hostTranslatorAvailable,
+      browser: browserTranslatorAvailable,
+      hostRequest: hostTranslateRequest,
+    }),
+    [appState.hostTranslatorAvailable, browserTranslatorAvailable, hostTranslateRequest],
   );
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
   // 3 分おきの再描画で十分。
@@ -1663,9 +1636,10 @@ export function Timeline({
     [userTurnKeys],
   );
 
-  // TL 下ミニパネル (DR-0020 §2.1): 走行中 workflow + in_progress TODO だけの
-  // 要約。ゼロ件 (snapshot 未着含む) ならパネル自体を出さない仕様
-  // ("ゼロ件なら非表示")。
+  // TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張): 走行中
+  // workflow + in_progress TODO の要約に加え、context 消費と活動中
+  // teammates の要約行も含む (miniSummaryLines 参照)。ゼロ件 (snapshot 未着
+  // 含む) ならパネル自体を出さない仕様 ("ゼロ件なら非表示")。
   const miniLines = sessionStatus ? miniSummaryLines(sessionStatus) : [];
 
   if (timeline.status === "idle" || (timeline.status === "loading" && parsed.length === 0)) {

@@ -153,6 +153,96 @@ describe("miniSummaryLines", () => {
     expect(lines[0]).toEqual({ kind: "workflow", text: "wf" });
     expect(lines[1]).toEqual({ kind: "more", text: "他 2 件" });
   });
+
+  // issue 2026-07-17 #1: context 消費は「今動いているタスク」の 2 行キャップ
+  // とは独立の追加行として必ず出る。
+  test("context usage is appended after the workflow/todo cap, not counted toward it", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
+      workflows: [],
+      background: [],
+      teammates: [],
+      context: { tokens: 640_000, model: "claude-fable-5", timestamp: "2026-07-17T00:00:00.000Z" },
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([
+      { kind: "todo", text: "fix bug" },
+      { kind: "context", text: "ctx 640k/1M* (64%)" },
+    ]);
+  });
+
+  test("context alone (zero workflows/todos) still surfaces a line (panel not hidden)", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [],
+      context: { tokens: 100_000, model: "m", timestamp: "t" },
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "context", text: "ctx 100k/200k* (50%)" }]);
+  });
+
+  // issue 2026-07-17 #5: 活動中 (state === "active") の teammate だけを 1 行に
+  // まとめる。spawned/idle/stopped は数えない (workflow の running 限定
+  // フィルタと同じ厳密一致方針)。
+  test("active teammates are summarized into one line, non-active states excluded", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [
+        { name: "researcher", spawned: true, state: "active" },
+        { name: "writer", spawned: true, state: "idle" },
+        { name: "reviewer", spawned: true, state: "active" },
+      ],
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([
+      { kind: "teammate", text: "researcher, reviewer" },
+    ]);
+  });
+
+  test("more than 3 active teammates collapse into a summarized count", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [
+        { name: "a", spawned: true, state: "active" },
+        { name: "b", spawned: true, state: "active" },
+        { name: "c", spawned: true, state: "active" },
+        { name: "d", spawned: true, state: "active" },
+      ],
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "teammate", text: "a, b 他 2 名" }]);
+  });
+
+  test("zero active teammates (all idle/stopped/undefined): no teammate line", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [{ name: "idle-one", spawned: true, state: "idle" }],
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([]);
+  });
+
+  test("workflow/todo cap, context, and teammates all combine in one call", () => {
+    const snapshot: SessionStatusSnapshot = {
+      todos: [
+        todo({ id: "t1", status: "in_progress", subject: "a" }),
+        todo({ id: "t2", status: "in_progress", subject: "b" }),
+      ],
+      workflows: [workflow({ task_id: "w1", status: "running", name: "wf" })],
+      background: [],
+      teammates: [{ name: "researcher", spawned: true, state: "active" }],
+      context: { tokens: 522_000, model: "m", timestamp: "t" },
+    };
+    expect(miniSummaryLines(snapshot)).toEqual([
+      { kind: "workflow", text: "wf" },
+      { kind: "more", text: "他 2 件" },
+      { kind: "context", text: "ctx 522k/1M* (52%)" },
+      { kind: "teammate", text: "researcher" },
+    ]);
+  });
 });
 
 describe("context usage display", () => {

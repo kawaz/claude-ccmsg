@@ -106,23 +106,45 @@ export function splitTeammates(teammates: SessionTeammate[]): SessionTeammate[] 
   return [...teammates].sort((a, b) => teammateActivity(b) - teammateActivity(a));
 }
 
-/** TL 下ミニパネル (DR-0020 §2.1) の 1 行分。`kind:"more"` は
- * MINI_SUMMARY_MAX_LINES を超えた残数を畳んだ表示専用で、実データを持たない。 */
-export type MiniSummaryLineKind = "workflow" | "todo" | "more";
+/** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。
+ * `kind:"more"` は MINI_SUMMARY_MAX_LINES を超えた workflow/todo の残数を
+ * 畳んだ表示専用で実データを持たない。`kind:"context"`/`"teammate"` は
+ * workflow/todo の 2 行キャップとは独立の追加行 (下記 miniSummaryLines
+ * のコメント参照)。 */
+export type MiniSummaryLineKind = "workflow" | "todo" | "more" | "context" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
 }
 
-/** ミニパネルは「要約 1-2 行」(DR-0020 §2.1) — この上限を超えた分は個別の
- * text を並べず、最終行を残数の "more" 行に差し替える。 */
+/** 走行中 workflow/in_progress todo の要約は「1-2 行」(DR-0020 §2.1) —
+ * この上限を超えた分は個別の text を並べず、最終行を残数の "more" 行に
+ * 差し替える。 */
 const MINI_SUMMARY_MAX_LINES = 2;
 
-/** 走行中 workflow 名 + in_progress TODO の subject だけを、TL 下ミニパネル
- * 向けに並べる。ゼロ件なら空配列 (呼び出し側はこれをパネル非表示の合図にす
- * る、DR-0020 §2.1 "ゼロ件なら非表示")。workflow を todo より先に並べるのは
- * 「今まさに自走している大きい単位」を目立たせるため。Context 使用率は走行
- * 中タスクではなく常時観測値なので、この特化パネルには混ぜない。 */
+/** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
+ * (workflow が status === "running" だけをカウントするのと同じ「厳密一致」
+ * 方針)。3 名を超えたら残数を畳んで 1 行に収める。 */
+function formatTeammatesLine(teammates: SessionTeammate[]): string | null {
+  const active = teammates.filter((t) => t.state === "active");
+  if (active.length === 0) return null;
+  if (active.length <= 3) return active.map((t) => t.name).join(", ");
+  return `${active
+    .slice(0, 2)
+    .map((t) => t.name)
+    .join(", ")} 他 ${active.length - 2} 名`;
+}
+
+/** 走行中 workflow 名 + in_progress TODO の subject を要約した上に、
+ * context 消費 (issue 2026-07-17 #1) と活動中 teammates (issue 2026-07-17 #5)
+ * を追加行として付与する。workflow/todo がゼロかつ context/teammates も
+ * 無ければ空配列 (呼び出し側はこれをパネル非表示の合図にする、DR-0020
+ * §2.1 "ゼロ件なら非表示")。workflow を todo より先に並べるのは「今まさに
+ * 自走している大きい単位」を目立たせるため。
+ *
+ * context/teammates は「走行中タスク」ではなく常時/継続観測値という性質が
+ * workflow/todo と異なるため、2 行キャップの対象には含めず必ず追加行として
+ * 出す (workflow/todo の "more" 集約とは独立)。 */
 export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLine[] {
   const items: MiniSummaryLine[] = [
     ...snapshot.workflows
@@ -132,9 +154,22 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
       .filter((t) => t.status === "in_progress")
       .map((t): MiniSummaryLine => ({ kind: "todo", text: t.subject })),
   ];
-  if (items.length <= MINI_SUMMARY_MAX_LINES) return items;
-  const shown = items.slice(0, MINI_SUMMARY_MAX_LINES - 1);
-  return [...shown, { kind: "more", text: `他 ${items.length - shown.length} 件` }];
+  const capped =
+    items.length <= MINI_SUMMARY_MAX_LINES
+      ? items
+      : [
+          ...items.slice(0, MINI_SUMMARY_MAX_LINES - 1),
+          { kind: "more" as const, text: `他 ${items.length - (MINI_SUMMARY_MAX_LINES - 1)} 件` },
+        ];
+
+  const extra: MiniSummaryLine[] = [];
+  if (snapshot.context) {
+    extra.push({ kind: "context", text: formatContextUsage(snapshot.context).text });
+  }
+  const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
+  if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });
+
+  return [...capped, ...extra];
 }
 
 /** サイドバー SESSIONS 行のミニバッジ文字列 (DR-0020 §2.1: "wf:1 bg:2

@@ -28,6 +28,21 @@ interface TranslatorStatic {
  * (既に日本語)」と判定する (kawaz 提供ロジック準拠)。 */
 const JAPANESE_CHAR_RE = /\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u;
 
+/** host 翻訳のリクエスト自体を skip するための「全文日本語」判定 (issue
+ * 2026-07-17 #3)。JAPANESE_CHAR_RE の「段落内に日本語を 1 文字でも含むか」は
+ * 混在段落 ("Hello 日本語") も真になってしまい、host 全文送信 (段落分割
+ * しない、DR-0023) には使えない — 混在テキストは丸ごと翻訳する必要がある
+ * ため、代わりに Latin script (翻訳対象になりうる英字) が 1 文字も無いかで
+ * 判定する。同じ \p{Script=...} 系のアプローチを流用しつつ、対象を反転
+ * (存在チェックではなく不在チェック) している。 */
+const LATIN_CHAR_RE = /\p{Script=Latin}/u;
+
+/** テキスト全体が (混在ではなく) 日本語主体かどうか。true なら
+ * translateThinkingTextOnHost はリクエストを送らず原文をそのまま返す。 */
+export function isFullyJapaneseText(text: string): boolean {
+  return !LATIN_CHAR_RE.test(text);
+}
+
 function getTranslatorStatic(): TranslatorStatic | null {
   const t = (globalThis as Record<string, unknown>).Translator;
   // 実ブラウザではコンストラクタ (function)、テストの mock では単なる
@@ -102,7 +117,7 @@ export async function translateThinkingTextInBrowser(text: string): Promise<stri
   return translated.join("\n\n");
 }
 
-type HostTranslateRequest = (texts: string[]) => Promise<TranslateResponse | ErrorResponse>;
+export type HostTranslateRequest = (texts: string[]) => Promise<TranslateResponse | ErrorResponse>;
 
 /** Host translation cache is keyed by the complete thinking text, because the
  * Translation.framework path intentionally receives mixed English/Japanese and
@@ -114,6 +129,10 @@ export function translateThinkingTextOnHost(
   text: string,
   request: HostTranslateRequest,
 ): Promise<string> {
+  // 全文日本語主体のテキストは翻訳しても意味を持たない (PoC: 日本語のみの
+  // 入力は同一文字列で返る) — daemon/helper ラウンドトリップ自体を省く
+  // (issue 2026-07-17 #3)。
+  if (isFullyJapaneseText(text)) return Promise.resolve(text);
   const cached = hostTextCache.get(text);
   if (cached) return cached;
   const promise = request([text])
@@ -130,6 +149,64 @@ export function translateThinkingTextOnHost(
     });
   hostTextCache.set(text, promise);
   return promise;
+}
+
+/** 同一 tick (microtask 前) に発行された複数の translateThinkingTextOnHost
+ * 呼び出しを 1 回の daemon `translate` リクエストへまとめる (issue
+ * 2026-07-17 #2b: 「表示中の複数 thinking をまとめて 1 リクエストに」)。
+ * FoldGroup が開いた瞬間、中の各 ThinkingSegment が同期的に
+ * selectDefaultTranslation() を呼ぶため、それらの `request([text])` 呼び出し
+ * は同じ synchronous タスク内で発生する — queueMicrotask で 1 tick 待って
+ * まとめて `texts[]` として送る (DataLoader と同じ batching パターン)。
+ * translateThinkingTextOnHost は常に単一要素の配列で呼ぶため (`request([text])`)、
+ * 複数要素で呼ばれた場合はバッチ化せずそのまま素通しする (このラッパーの
+ * 契約を HostTranslateRequest のまま保つための保険)。 */
+export function createHostTranslateBatcher(request: HostTranslateRequest): HostTranslateRequest {
+  interface QueueItem {
+    text: string;
+    resolve(response: TranslateResponse | ErrorResponse): void;
+    reject(error: unknown): void;
+  }
+  let queue: QueueItem[] = [];
+  let flushScheduled = false;
+
+  function flush(): void {
+    const batch = queue;
+    queue = [];
+    flushScheduled = false;
+    request(batch.map((item) => item.text)).then(
+      (response) => {
+        if (!response.ok) {
+          // Batch-wide failure (e.g. translate_unavailable): every queued
+          // item shares the same outcome.
+          for (const item of batch) item.resolve(response);
+          return;
+        }
+        batch.forEach((item, i) => {
+          const result = response.results[i];
+          item.resolve({
+            ok: true,
+            results: [result ?? { ok: false, error: "translation helper returned no result" }],
+          });
+        });
+      },
+      (error) => {
+        for (const item of batch) item.reject(error);
+      },
+    );
+  }
+
+  return (texts: string[]) => {
+    if (texts.length !== 1) return request(texts);
+    const text = texts[0] as string;
+    return new Promise((resolve, reject) => {
+      queue.push({ text, resolve, reject });
+      if (!flushScheduled) {
+        flushScheduled = true;
+        queueMicrotask(flush);
+      }
+    });
+  };
 }
 
 /** テスト専用: browser/host 両経路のモジュール内キャッシュをリセットする。 */

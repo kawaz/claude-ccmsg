@@ -7,7 +7,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   _resetTranslatorStateForTest,
+  createHostTranslateBatcher,
   hasTranslatorApi,
+  isFullyJapaneseText,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
 } from "../src/client/translate.ts";
@@ -254,5 +256,141 @@ describe("translateThinkingTextOnHost", () => {
     expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
     expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
     expect(calls).toBe(2);
+  });
+
+  // issue 2026-07-17 #3: 全文日本語主体のテキストはリクエスト自体を skip し
+  // 原文をそのまま返す — daemon/helper ラウンドトリップを省く。
+  test("a fully-Japanese thinking text is returned as-is without calling request()", async () => {
+    let calls = 0;
+    const result = await translateThinkingTextOnHost("これは日本語だけの文章です。", async () => {
+      calls++;
+      return { ok: true, results: [{ ok: true, text: "呼ばれてはいけない" }] };
+    });
+    expect(result).toBe("これは日本語だけの文章です。");
+    expect(calls).toBe(0);
+  });
+
+  // 混在テキスト (英語+日本語) は従来どおり丸ごと翻訳リクエストへ送る —
+  // isFullyJapaneseText は Latin script の有無だけを見るため、日本語を含んで
+  // いても英語が混ざっていれば skip しない。
+  test("mixed English/Japanese text is still sent as a translate request", async () => {
+    let calls = 0;
+    await translateThinkingTextOnHost("English text.日本語です。", async (texts) => {
+      calls++;
+      return { ok: true, results: texts.map((t) => ({ ok: true as const, text: `[ja]${t}` })) };
+    });
+    expect(calls).toBe(1);
+  });
+});
+
+describe("isFullyJapaneseText", () => {
+  test("pure Japanese (hiragana/kanji) text: fully Japanese", () => {
+    expect(isFullyJapaneseText("これは日本語です。")).toBe(true);
+  });
+
+  test("pure English text: not fully Japanese", () => {
+    expect(isFullyJapaneseText("This is English.")).toBe(false);
+  });
+
+  test("mixed English/Japanese text: not fully Japanese (Latin chars present)", () => {
+    expect(isFullyJapaneseText("Hello 日本語")).toBe(false);
+  });
+
+  test("empty string: fully Japanese (no Latin chars to translate)", () => {
+    expect(isFullyJapaneseText("")).toBe(true);
+  });
+
+  test("numbers/punctuation only: fully Japanese (no Latin chars)", () => {
+    expect(isFullyJapaneseText("123、456。")).toBe(true);
+  });
+});
+
+describe("createHostTranslateBatcher", () => {
+  // FoldGroup が開いた瞬間に複数 ThinkingSegment が同期的に発火する状況を
+  // 模す: 同じ tick 内で translateThinkingTextOnHost 経由の request([text])
+  // 呼び出しを複数回行い、1 回の daemon リクエストへまとまることを確認する。
+  test("same-tick calls with single-element texts[] are merged into one request", async () => {
+    const batches: string[][] = [];
+    const batcher = createHostTranslateBatcher(async (texts) => {
+      batches.push(texts);
+      return {
+        ok: true,
+        results: texts.map((t) => ({ ok: true as const, text: `[ja]${t}` })),
+      };
+    });
+
+    const first = batcher(["one"]);
+    const second = batcher(["two"]);
+    const third = batcher(["three"]);
+
+    expect(await first).toEqual({ ok: true, results: [{ ok: true, text: "[ja]one" }] });
+    expect(await second).toEqual({ ok: true, results: [{ ok: true, text: "[ja]two" }] });
+    expect(await third).toEqual({ ok: true, results: [{ ok: true, text: "[ja]three" }] });
+    expect(batches).toEqual([["one", "two", "three"]]);
+  });
+
+  // A batch-level failure (translate_unavailable, helper crash, ...) has no
+  // per-item breakdown — every queued caller must see the same ErrorResponse.
+  test("a batch-level failure resolves every queued caller with the same error", async () => {
+    const batcher = createHostTranslateBatcher(async () => ({
+      ok: false,
+      error: { code: "translate_unavailable", msg: "host translation is available only on macOS" },
+    }));
+
+    const first = await batcher(["a"]);
+    const second = await batcher(["b"]);
+    expect(first).toEqual({
+      ok: false,
+      error: { code: "translate_unavailable", msg: "host translation is available only on macOS" },
+    });
+    expect(second).toEqual(first);
+  });
+
+  // request() itself rejecting (e.g. socket send failure) must reject every
+  // queued caller, not silently swallow the batch.
+  test("request() rejecting rejects every queued caller", async () => {
+    const batcher = createHostTranslateBatcher(async () => {
+      throw new Error("send failed");
+    });
+    let firstErr: unknown;
+    let secondErr: unknown;
+    await batcher(["a"]).catch((e) => (firstErr = e));
+    await batcher(["b"]).catch((e) => (secondErr = e));
+    expect((firstErr as Error).message).toBe("send failed");
+    expect((secondErr as Error).message).toBe("send failed");
+  });
+
+  // Calls issued after the microtask flush belong to a new batch — batching
+  // must not accidentally coalesce unrelated ticks into one request forever.
+  test("calls in a later tick form a separate batch", async () => {
+    const batches: string[][] = [];
+    const batcher = createHostTranslateBatcher(async (texts) => {
+      batches.push(texts);
+      return { ok: true, results: texts.map((t) => ({ ok: true as const, text: t })) };
+    });
+
+    await batcher(["one"]);
+    await batcher(["two"]);
+    expect(batches).toEqual([["one"], ["two"]]);
+  });
+
+  // A multi-element texts[] call (not the translateThinkingTextOnHost usage
+  // pattern, but part of the HostTranslateRequest contract) passes through
+  // unbatched rather than being silently dropped or mis-split.
+  test("a multi-element texts[] call passes through unbatched", async () => {
+    const batches: string[][] = [];
+    const batcher = createHostTranslateBatcher(async (texts) => {
+      batches.push(texts);
+      return { ok: true, results: texts.map((t) => ({ ok: true as const, text: t })) };
+    });
+    const result = await batcher(["a", "b"]);
+    expect(batches).toEqual([["a", "b"]]);
+    expect(result).toEqual({
+      ok: true,
+      results: [
+        { ok: true, text: "a" },
+        { ok: true, text: "b" },
+      ],
+    });
   });
 });

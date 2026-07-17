@@ -12,15 +12,23 @@ export interface TranslateService {
   stop(): void;
 }
 
-interface HelperResponse {
-  id: string;
+interface HelperItemResult {
   ok: boolean;
   text?: string;
   error?: string;
 }
 
+interface HelperResponse {
+  id: string;
+  results: HelperItemResult[];
+}
+
 interface PendingRequest {
-  resolve(result: TranslateResult): void;
+  /** Number of texts sent — a response whose results.length differs is wire
+   * drift (e.g. the helper's decode-error path answers with results:[]), and
+   * silently accepting it would hand N callers a shorter array as ok:true. */
+  expected: number;
+  resolve(results: TranslateResult[]): void;
   reject(error: Error): void;
 }
 
@@ -86,16 +94,21 @@ class TranslationHelperService implements TranslateService {
       return { ok: false, code: "translate_unavailable", msg: String(error) };
     }
 
-    const requests = texts.map((text) => {
-      const id = `${process.pid}-${++this.nextId}`;
-      const promise = new Promise<TranslateResult>((resolve, reject) => {
-        this.pending.set(id, { resolve, reject });
-      });
-      return { id, text, promise };
+    // Batch API (issue 2026-07-17 #2a): one line in, one line out, containing
+    // every text in this call — the helper uses TranslationSession's
+    // `translations(from:)` batch call instead of one `translate(_:)` call
+    // per line. On a warm persistent helper the measured latency gain is a few
+    // percent (2026-07-17: 10-item batch 12.7s vs 12.9s sequential; the PoC's
+    // ~2x figure compared cold per-process launches) — the real speedup for
+    // multiple thinkings comes from the webui folding N WS round trips into
+    // one request (issue #2b), which this N-text wire shape is what enables.
+    const id = `${process.pid}-${++this.nextId}`;
+    const promise = new Promise<TranslateResult[]>((resolve, reject) => {
+      this.pending.set(id, { expected: texts.length, resolve, reject });
     });
 
     try {
-      const input = requests.map(({ id, text }) => JSON.stringify({ id, text })).join("\n") + "\n";
+      const input = JSON.stringify({ id, texts }) + "\n";
       const stdin = proc.stdin as Bun.FileSink;
       // FileSink.write/flush return a Promise under backpressure; await both so
       // a broken pipe rejects into this catch instead of floating unobserved.
@@ -103,16 +116,14 @@ class TranslationHelperService implements TranslateService {
       await stdin.flush();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
-      for (const request of requests) {
-        this.pending.delete(request.id);
-        request.promise.catch(() => {});
-      }
+      this.pending.delete(id);
+      promise.catch(() => {});
       this.failProcess(proc, failure);
       return { ok: false, code: "translate_helper_failed", msg: failure.message };
     }
 
     try {
-      return { ok: true, results: await Promise.all(requests.map((request) => request.promise)) };
+      return { ok: true, results: await promise };
     } catch (error) {
       return { ok: false, code: "translate_helper_failed", msg: String(error) };
     }
@@ -141,13 +152,43 @@ class TranslationHelperService implements TranslateService {
         msg: "host translation is available only on macOS",
       });
     }
-    if (executable(this.binaryPath)) return Promise.resolve({ ok: true, results: [] });
+    if (executable(this.binaryPath) && !this.sourceNewerThanBinary()) {
+      return Promise.resolve({ ok: true, results: [] });
+    }
     if (!this.buildPromise) {
-      this.buildPromise = this.build().finally(() => {
+      this.buildPromise = this.rebuild().finally(() => {
         this.buildPromise = null;
       });
     }
     return this.buildPromise;
+  }
+
+  /** The .build/ binary is a gitignored artifact that survives a plugin/repo
+   * update. A binary compiled from an older main.swift may speak an older wire
+   * protocol (the {id,text}→{id,texts} batch migration is exactly such a
+   * change), and using it would fail every translation with "invalid response"
+   * until someone deletes the binary by hand — so a source newer than the
+   * binary forces a rebuild. Missing source falls back to the existing binary
+   * (nothing to compare against). */
+  private sourceNewerThanBinary(): boolean {
+    try {
+      return fs.statSync(this.sourcePath).mtimeMs > fs.statSync(this.binaryPath).mtimeMs;
+    } catch {
+      return false;
+    }
+  }
+
+  /** build() plus: a helper process spawned from the pre-rebuild binary keeps
+   * speaking the old wire protocol, so it must not serve requests after the
+   * binary is replaced — kill it and let the next request spawn the fresh
+   * binary. In-flight requests on the old process reject with this reason. */
+  private async rebuild(): Promise<TranslateBatchResult> {
+    const built = await this.build();
+    const proc = this.process;
+    if (built.ok && proc) {
+      this.failProcess(proc, new Error("translation helper rebuilt; restarting"));
+    }
+    return built;
   }
 
   private async build(): Promise<TranslateBatchResult> {
@@ -260,15 +301,22 @@ class TranslationHelperService implements TranslateService {
     const pending = this.pending.get(response.id);
     if (!pending) return;
     this.pending.delete(response.id);
-    if (response.ok && typeof response.text === "string") {
-      pending.resolve({ ok: true, text: response.text });
+    if (!Array.isArray(response.results) || response.results.length !== pending.expected) {
+      pending.reject(new Error("translation helper returned an invalid response"));
       return;
     }
-    if (!response.ok && typeof response.error === "string") {
-      pending.resolve({ ok: false, error: response.error });
-      return;
+    const results: TranslateResult[] = [];
+    for (const item of response.results) {
+      if (item.ok && typeof item.text === "string") {
+        results.push({ ok: true, text: item.text });
+      } else if (!item.ok && typeof item.error === "string") {
+        results.push({ ok: false, error: item.error });
+      } else {
+        pending.reject(new Error("translation helper returned an invalid response"));
+        return;
+      }
     }
-    pending.reject(new Error("translation helper returned an invalid response"));
+    pending.resolve(results);
   }
 
   private failProcess(proc: Bun.Subprocess, error: Error): void {

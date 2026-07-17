@@ -27,11 +27,13 @@ import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
   const request = JSON.parse(line);
-  if (request.text === "__exit__") process.exit(7);
-  const response = request.text === "__error__"
-    ? { id: request.id, ok: false, error: "TranslationError.notInstalled" }
-    : { id: request.id, ok: true, text: process.pid + ":" + request.text.toUpperCase() };
-  process.stdout.write(JSON.stringify(response) + "\\n");
+  if (request.texts.includes("__exit__")) process.exit(7);
+  const results = request.texts.map((text) =>
+    text === "__error__"
+      ? { ok: false, error: "TranslationError.notInstalled" }
+      : { ok: true, text: process.pid + ":" + text.toUpperCase() },
+  );
+  process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
 }
 `,
     { mode: 0o755 },
@@ -69,6 +71,45 @@ describe("TranslationHelperService", () => {
     });
   });
 
+  // The .build/ binary is gitignored and survives a repo update; one compiled
+  // from an older main.swift may speak an older wire protocol (the
+  // {id,text}→{id,texts} migration is exactly that). A source file newer than
+  // the binary must therefore trigger a rebuild instead of trusting the stale
+  // binary forever.
+  test("a source file newer than the built binary triggers a rebuild before serving", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-stale-"));
+    tempDirs.push(dir);
+    const sourcePath = path.join(dir, "main.swift");
+    const binaryPath = path.join(dir, "translate-helper");
+    // Stale state: binary exists but the source was modified afterwards.
+    fs.writeFileSync(binaryPath, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(binaryPath, past, past);
+    fs.writeFileSync(sourcePath, "// updated source");
+    // Fake swiftc: writes a valid new-protocol helper to the -o target.
+    const fakeSwiftc = path.join(dir, "swiftc");
+    const template = mockHelper();
+    fs.writeFileSync(
+      fakeSwiftc,
+      `#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncp ${JSON.stringify(template)} "$2"\nchmod 755 "$2"\n`,
+      { mode: 0o755 },
+    );
+    const service = createTranslateService({
+      platform: "darwin",
+      sourcePath,
+      binaryPath,
+      findSwiftc: () => fakeSwiftc,
+    });
+    services.push(service);
+
+    const result = await service.translate(["fresh"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.results[0]).toMatchObject({ ok: true });
+    // The rebuild stamps a binary at least as new as the source, so the next
+    // call serves without rebuilding again (no second mtime bump needed).
+    expect(fs.statSync(binaryPath).mtimeMs).toBeGreaterThanOrEqual(fs.statSync(sourcePath).mtimeMs);
+  });
+
   test("one persistent helper process serves consecutive batches and preserves per-item errors", async () => {
     const service = createTranslateService({ platform: "darwin", binaryPath: mockHelper() });
     services.push(service);
@@ -89,6 +130,37 @@ describe("TranslationHelperService", () => {
       expect(first.results[0].text.endsWith(":ONE")).toBe(true);
       expect(second.results[0].text.endsWith(":TWO")).toBe(true);
     }
+  });
+
+  // The helper's decode-error paths answer {id, results: []} — for a real
+  // N-text request that is wire drift, not a translation outcome. Resolving it
+  // as ok would hand callers a truncated results array (batcher item i reads
+  // results[i]); the length mismatch must fail the whole call instead.
+  test("a response with fewer results than requested texts fails instead of truncating", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-short-"));
+    tempDirs.push(dir);
+    const helper = path.join(dir, "helper.ts");
+    fs.writeFileSync(
+      helper,
+      `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ id: request.id, results: [] }) + "\\n");
+}
+`,
+      { mode: 0o755 },
+    );
+    const service = createTranslateService({ platform: "darwin", binaryPath: helper });
+    services.push(service);
+
+    const result = await service.translate(["a", "b"]);
+    expect(result).toEqual({
+      ok: false,
+      code: "translate_helper_failed",
+      msg: "Error: translation helper returned an invalid response",
+    });
   });
 
   test("after the helper dies, the failed call stays failed and the next call respawns", async () => {
@@ -118,13 +190,13 @@ describe("TranslationHelperService", () => {
 // recipe exercises Translation.framework itself in the normal bun test suite.
 const helperBinary = defaultTranslateHelperPaths().binary;
 const realHelperTest = fs.existsSync(helperBinary) ? test : test.skip;
-realHelperTest("the built Swift helper translates mixed text over JSONL", async () => {
+realHelperTest("the built Swift helper translates a mixed-text batch over JSONL", async () => {
   const proc = Bun.spawn([helperBinary], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   const stdin = proc.stdin as Bun.FileSink;
   await stdin.write(
     JSON.stringify({
       id: "mixed",
-      text: "The build completed successfully.ここから日本語です。",
+      texts: ["The build completed successfully.ここから日本語です。", "これは日本語です。"],
     }) + "\n",
   );
   await stdin.end();
@@ -134,7 +206,10 @@ realHelperTest("the built Swift helper translates mixed text over JSONL", async 
   expect(stderr).toBe("");
   const response = JSON.parse(output.trim());
   expect(response.id).toBe("mixed");
-  expect(response.ok).toBe(true);
-  expect(response.text).toContain("ここから日本語です。");
-  expect(response.text).not.toContain("The build completed successfully.");
+  expect(response.results).toHaveLength(2);
+  expect(response.results[0].ok).toBe(true);
+  expect(response.results[0].text).toContain("ここから日本語です。");
+  expect(response.results[0].text).not.toContain("The build completed successfully.");
+  expect(response.results[1].ok).toBe(true);
+  expect(response.results[1].text).toBe("これは日本語です。");
 });
