@@ -1,5 +1,5 @@
 ---
-title: ja(host) 翻訳 + TL 表示のフォローアップ 4 件
+title: ja(host) 翻訳 + TL 表示のフォローアップ 5 件
 status: open
 category: task
 created: 2026-07-17T17:19:07+09:00
@@ -17,12 +17,12 @@ blocked_by:
 origin: 自リポ TODO
 ---
 
-# ja(host) 翻訳 + TL 表示のフォローアップ 4 件
+# ja(host) 翻訳 + TL 表示のフォローアップ 5 件
 
 ## 概要
 
 kawaz が r26 (mid=102) のスクショと r32 で受け取った誤送信分から拾った、ja(host)
-翻訳周りと TL 表示の小規模フォローアップ 4 件。simplify workflow (Timeline.tsx
+翻訳周りと TL 表示の小規模フォローアップ 5 件。simplify workflow (Timeline.tsx
 編集中) の完了後に、まとめて 1 workflow で実装する。
 
 1. **TL 下部ミニパネルにコンテキスト消費を表示**
@@ -44,10 +44,14 @@ kawaz が r26 (mid=102) のスクショと r32 で受け取った誤送信分か
    - 翻訳タブ群に近すぎて誤操作しやすい
    - 右端配置に変更
 
+5. **TL 下部ミニパネルに teams (チームメイト) も表示**
+   - session_status snapshot の teammates から活動中のものを要約行に追加
+   - (1) の ctx 消費表示と同じ miniSummaryLines 拡張なので同時実装
+
 ## 背景
 
 kawaz が実運用中 (r26/r32) に気づいた UX 上の粗。特に (2) は複数 thinking が
-並ぶセッションで顕著に体感遅延が出ている。
+並ぶセッションで顕著に体感遅延が出ている。(5) は r26 mid=106 で追記。
 
 ## 受け入れ条件
 
@@ -55,3 +59,4 @@ kawaz が実運用中 (r26/r32) に気づいた UX 上の粗。特に (2) は複
 - [ ] thinking 複数件の翻訳が 1 リクエストにバッチ化され、直列実行によるもたつきが解消している
 - [ ] 全文日本語テキストで翻訳リクエストが発生しないことを確認
 - [ ] thinking select トグルボタンが右端に移動している
+- [ ] miniSummaryLines に活動中の teammates 要約行が追加されている
