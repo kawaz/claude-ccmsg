@@ -35,6 +35,10 @@
       "name": "@ccmsg/protocol",
       "version": "0.0.0",
     },
+    "packages/translate-helper": {
+      "name": "@ccmsg/translate-helper",
+      "version": "0.0.0",
+    },
     "packages/webui": {
       "name": "@ccmsg/webui",
       "version": "0.0.0",
@@ -55,6 +59,8 @@
     "@ccmsg/daemon": ["@ccmsg/daemon@workspace:packages/daemon"],
 
     "@ccmsg/protocol": ["@ccmsg/protocol@workspace:packages/protocol"],
+
+    "@ccmsg/translate-helper": ["@ccmsg/translate-helper@workspace:packages/translate-helper"],
 
     "@ccmsg/webui": ["@ccmsg/webui@workspace:packages/webui"],
 
