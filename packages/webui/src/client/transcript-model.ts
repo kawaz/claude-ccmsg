@@ -690,17 +690,20 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
  * あり (harness 側の通知サイズ上限)、その行は JSON として壊れて上の parse が
  * 落ちる — 従来はそのまま null → CcmsgBubble にならず生 JSON の fold 表示に
  * なっていた (kawaz r17 mid=43 の実観測)。切れていても field 順は固定
- * (type,mid,from,ts,msg,... — daemon の JSON.stringify 順) なので、msg の
+ * (daemon の subscribe wire order:
+ * `type,mid,from,ts,to?,r,seq,reply_hint?,msg` — msg が必ず最後、
+ * docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md) なので、msg の
  * 途中までを regex で抜けば「途中まで + 切り詰め注記」の bubble にできる。
  * 読める形が生 JSON より常に良い、が判断 (全文は webui の room 表示か read
  * で見られる)。
  *
- * room (`r`) は wire 上 msg より後ろの field なので truncation でほぼ必ず
- * 失われる — 呼び出し側 (extractCcmsgMessages) が同じ <event> ブロック内の
- * parse できた行から補完した `fallbackRoom` を渡す (subscribe の 1 通知は
- * room event のバッチで、実観測の形は kind/title/member 行が同居する)。同居
- * event も無い単独 msg 通知では `?` を room 表示に使い、復元できた本文を
- * bubble として保持する。 */
+ * room (`r`) は msg より前の field なので、truncation が msg 本文側で起きる
+ * 限り通常は失われない — ただし単独 msg 通知で `r` 自体が何らかの理由で
+ * 欠けた場合の保険として、呼び出し側 (extractCcmsgMessages) が同じ <event>
+ * ブロック内の parse できた行から補完した `fallbackRoom` を渡す (subscribe
+ * の 1 通知は room event のバッチで、実観測の形は kind/title/member 行が
+ * 同居する)。それも無い単独 msg 通知では `?` を room 表示に使い、復元できた
+ * 本文を bubble として保持する。 */
 function tryParseTruncatedCcmsgMessage(
   fragment: string,
   fallbackRoom?: string,

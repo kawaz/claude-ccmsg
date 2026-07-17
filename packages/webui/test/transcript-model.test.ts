@@ -1405,6 +1405,34 @@ describe("extractCcmsgMessages", () => {
     expect(msgs[0]!.msg).toContain("切り詰め");
   });
 
+  // docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: daemon の
+  // subscribe wire order を `type,mid,from,ts,to?,r,seq,reply_hint?,msg`
+  // (msg が必ず最後) に変更したことで、`r` が msg より前に来るようになった。
+  // 同居 event の無い単独 msg 通知が切れても、fallbackRoom に頼らず断片自身の
+  // `r` から room を復元できることを固定する (旧順では `r` が msg の後ろに
+  // あり truncation でほぼ確実に失われていた — 上のテストの fallbackRoom
+  // 依存はその名残)。
+  test("new wire order: a truncated standalone msg notification recovers room from its own `r` (no fallback needed)", () => {
+    const truncated =
+      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_hint":"r30m109","msg":"a very long message body that keeps going and going...(truncated)';
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `<task-notification>\n<event>${truncated}</event>\n</task-notification>`,
+        },
+        timestamp: "2026-07-17T04:33:45.000Z",
+      }),
+    );
+    const msgs = extractCcmsgMessages(line);
+    expect(msgs.length).toBe(1);
+    expect(msgs[0]!.from).toBe("a1");
+    expect(msgs[0]!.room).toBe("r30");
+    expect(msgs[0]!.msg).toContain("a very long message body");
+    expect(msgs[0]!.msg).toContain("切り詰め");
+  });
+
   // 対極 (誤爆防止): truncated marker があっても msg event でない行や、
   // from/ts/msg のいずれかを復元できない断片は bubble にしない。
   test("a truncated non-msg or msg missing identity fields stays out of bubbles", () => {

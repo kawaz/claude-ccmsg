@@ -214,18 +214,43 @@ function computeReplyHint(room: Room, ev: MsgEvent): string {
   return `${room.id}m${ev.mid}`;
 }
 
+/** subscribe wire order for `msg` events: `msg` (the body) is placed last,
+ * after every other field (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md).
+ * The harness's task-notification truncation cuts from the block's tail, so
+ * with the old field order (msg mid-way, `seq`/`reply_hint` after it) a long
+ * `msg` silently ate the trailing fields (kawaz r26 mid=110). Putting `msg`
+ * last means truncation always lands inside the body — visibly incomplete —
+ * instead of silently dropping `reply_hint`/`seq`. `JSON.stringify` key order
+ * follows insertion order, so this rebuilds the object explicitly rather than
+ * spreading `ev`. Storage (`rooms/*.jsonl`, the `MsgEvent` type) keeps its own
+ * field order — this only reshapes the live subscribe wire frame. */
+function orderedMsgFrame(
+  ev: MsgEvent,
+  roomId: string,
+  reply_hint: string | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { type: ev.type, mid: ev.mid, from: ev.from, ts: ev.ts };
+  if (ev.to !== undefined) out.to = ev.to;
+  out.r = roomId;
+  if (ev.seq !== undefined) out.seq = ev.seq;
+  if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
+  if (reply_hint !== undefined) out.reply_hint = reply_hint;
+  out.msg = ev.msg;
+  return out;
+}
+
 function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
   if (ev.type === "msg") {
     const rid = recipientId(conn, room);
-    if (rid !== null) {
-      // reply_hint is a delivery-time wire hint (DR-0017 §2.3), never stored
-      // in the room's jsonl — the route depends on live room state (archived
-      // flips it to "none" retroactively for later replays), so persisting a
-      // snapshot at post time would go stale.
-      const reply_hint = computeReplyHint(room, ev);
-      send(conn, { ...ev, r: room.id, reply_hint });
-      return;
-    }
+    // reply_hint is a delivery-time wire hint (DR-0017 §2.3), never stored in
+    // the room's jsonl — the route depends on live room state (archived flips
+    // it to "none" retroactively for later replays), so persisting a snapshot
+    // at post time would go stale. Only computed for actual recipients (rid
+    // !== null); a non-recipient subscriber (e.g. u1 watching a room it's
+    // not a member of) still gets the msg frame, just without a hint.
+    const reply_hint = rid !== null ? computeReplyHint(room, ev) : undefined;
+    send(conn, orderedMsgFrame(ev, room.id, reply_hint));
+    return;
   }
   send(conn, { ...ev, r: room.id });
 }
