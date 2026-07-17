@@ -234,6 +234,40 @@ describe("createWsClient pending queue on close/reconnect", () => {
     if (res.ok) expect(res.content).toBe("hello");
   });
 
+  test("fsReadExternal sends the exact DR-0024 absolute allowlist path", async () => {
+    // No path rewriting or root joining occurs client-side; the daemon owns all
+    // exact-match/realpath authorization for the absolute path.
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const externalPath = "/external/shared.md";
+    const req = handle.fsReadExternal("sess-1", externalPath);
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "fs_read_external",
+      sid: "sess-1",
+      path: externalPath,
+    });
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        sid: "sess-1",
+        path: externalPath,
+        size: 5,
+        truncated: false,
+        binary: false,
+        content: "hello",
+      }),
+    );
+    const res = await req;
+    expect(res.ok).toBe(true);
+  });
+
   // DR-0009: transcript_read wire shape. `before`/`max_bytes` are only sent
   // when the caller actually passed them, mirroring fsList's "omit path when
   // absent" minimal-request convention above.
@@ -1194,6 +1228,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
             spawned_at: "2026-07-17T00:00:00.000Z",
           },
         ],
+        external_files: ["/external/shared.md"],
       }),
     );
 
@@ -1225,6 +1260,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
               spawned_at: "2026-07-17T00:00:00.000Z",
             },
           ],
+          external_files: ["/external/shared.md"],
         },
       },
     ]);

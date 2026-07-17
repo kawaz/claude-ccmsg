@@ -1,8 +1,11 @@
 // Lazy-loading directory tree for SessionView (DR-0008). Directories fetch
 // their listing (fs_list) the first time they're expanded and the result is
 // cached in state.sessionTrees[sid].dirs, so re-collapsing/re-expanding never
-// re-fetches. This file owns the fs_list round trip; the reducer only stores
-// what it's told (DR-0005 §1: effects in components, not the reducer).
+// re-fetches. DR-0024 adds transcript-observed external files using the client
+// convention `path.startsWith("/")`: existing tree keys are root-relative and
+// never start with `/`, so external favorites/selections cannot collide. This
+// file owns the fs_list round trip; the reducer only stores what it's told
+// (DR-0005 §1: effects in components, not the reducer).
 import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
@@ -18,6 +21,7 @@ import {
   ownWorkspaceSegment,
   parseFavorites,
   repoRootLabel,
+  sortExternalFiles,
   sortFavorites,
   toggleFavorite,
   workspaceRootEntries,
@@ -341,8 +345,8 @@ function Nodes({
  * 2. Else, look it up by name in its parent's cached listing — the common
  *    case, since favoriting a row happens while that row's parent is
  *    expanded (i.e. cached) at that moment.
- * 3. Otherwise unknown (e.g. right after a page reload, before the user has
- *    re-browsed to it this session) — default to "file". This mirrors
+ * 3. Otherwise unknown (including every `/`-prefixed external favorite, which
+ *    deliberately has no fs_list directory entry) — default to "file". This mirrors
  *    FileNode's existing symlink-ambiguity fallback above: a wrongly-guessed
  *    file just shows FileViewer's normal fs_read-error state instead of
  *    opening, no crash either way. */
@@ -366,10 +370,13 @@ export function FileTree({
   sid,
   tree,
   peer,
+  externalFiles,
   onNewMemo,
 }: {
   sid: string;
   tree: SessionTreeState;
+  /** DR-0024 allowlisted absolute paths from the live session_status fold. */
+  externalFiles: readonly string[];
   /** Peer record for `sid`, as seen in state.peers — carries repo_root/cwd
    * for the DR-0008-addendum root label + own-workspace auto-expand below.
    * Undefined for a sid that hasn't shown up in a peers/loaded response yet
@@ -410,6 +417,7 @@ export function FileTree({
     ? { favorites: new Set(favorites), onToggle: onToggleFavorite }
     : null;
   const sortedFavorites = sortFavorites(favorites);
+  const sortedExternalFiles = sortExternalFiles(externalFiles);
 
   // Root listing loads eagerly on mount / session switch — everything below
   // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
@@ -520,8 +528,10 @@ export function FileTree({
               );
             })}
           </ul>
-          <p class="tree-section-label">プロジェクト</p>
         </>
+      ) : null}
+      {sortedFavorites.length > 0 || sortedExternalFiles.length > 0 ? (
+        <p class="tree-section-label">プロジェクト</p>
       ) : null}
       {rootError ? (
         <p class="tree-error">{rootError}</p>
@@ -561,6 +571,30 @@ export function FileTree({
           />
         </ul>
       )}
+      {sortedExternalFiles.length > 0 ? (
+        <>
+          <p class="tree-section-label">プロジェクト外</p>
+          <ul class="tree-root tree-external">
+            {/* DR-0024: external paths render at depth 0 with the full absolute
+             * path as both label and locator key. FavoriteToggle shares the
+             * same flat string set as project rows; `/` prefix guarantees no
+             * collision, and a starred external file therefore also appears in
+             * the favorites section through favoriteEntryKind's file fallback. */}
+            {sortedExternalFiles.map((externalPath) => (
+              <FileNode
+                key={externalPath}
+                sid={sid}
+                path={externalPath}
+                name={externalPath}
+                depth={0}
+                selected={tree.selectedPath === externalPath}
+                symlink={false}
+                fav={fav}
+              />
+            ))}
+          </ul>
+        </>
+      ) : null}
     </div>
   );
 }

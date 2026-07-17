@@ -27,7 +27,7 @@ import {
 import { Logger } from "./log.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
-import { fsList, fsRead, fsWrite, validateRepoRoot } from "./fs-access.ts";
+import { fsList, fsRead, fsReadExternal, fsWrite, validateRepoRoot } from "./fs-access.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { sessionSearch } from "./session-search.ts";
 import {
@@ -720,8 +720,8 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 
 // --- request dispatch ------------------------------------------------------
 
-// fs_list/fs_read/fs_write/transcript_read require hello too (DR-0008 /
-// DR-0019 / DR-0009): the
+// fs_list/fs_read/fs_read_external/fs_write/transcript_read require hello too
+// (DR-0008 / DR-0024 / DR-0019 / DR-0009): the
 // containment/lookup check itself doesn't depend on the *caller's* identity —
 // it only cares about the target sid's registered state. Requiring hello here
 // is defense in depth: it keeps every op that touches session state on one
@@ -742,6 +742,7 @@ const IDENTITY_OPS = new Set([
   "invite",
   "fs_list",
   "fs_read",
+  "fs_read_external",
   "fs_write",
   "transcript_read",
   "session_search",
@@ -1520,6 +1521,20 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       const result = fsRead(daemon.sessions, req.sid, req.path, {
         allowVirtual: conn.identity?.role === "user",
       });
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_read_external": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_read_external' requires user role");
+        return;
+      }
+      const result = fsReadExternal(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

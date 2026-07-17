@@ -47,6 +47,48 @@ async function sessionAtWithRoot(
   return c;
 }
 
+/** Connected session with a hello-validated transcript. The transcript is a
+ * real `<sid>.jsonl` below cwd so fs_read_external can rebuild its DR-0024
+ * allowlist without any test-only store mutation. */
+async function sessionAtWithTranscript(
+  ctx: DaemonCtx,
+  sid: string,
+  cwd: string,
+  transcriptLines: string[],
+): Promise<{ session: TestClient; transcript: string }> {
+  const transcript = path.join(cwd, `${sid}.jsonl`);
+  fs.writeFileSync(transcript, transcriptLines.map((line) => `${line}\n`).join(""));
+  const session = await connect(ctx.sock);
+  await session.request({
+    op: "hello",
+    role: "session",
+    sid,
+    repo: "r",
+    ws: "w",
+    cwd,
+    transcript_path: transcript,
+  });
+  return { session, transcript };
+}
+
+function externalToolUse(id: string, name: string, filePath: string): string {
+  const key = name === "NotebookEdit" ? "notebook_path" : "file_path";
+  return JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-07-17T00:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [{ type: "tool_use", id, name, input: { [key]: filePath } }],
+    },
+  });
+}
+
+async function userAt(ctx: DaemonCtx): Promise<TestClient> {
+  const user = await connect(ctx.sock);
+  await user.hello({ role: "user" });
+  return user;
+}
+
 function mkfixture(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-fsroot-"));
 }
@@ -577,6 +619,313 @@ describe("fs_list / fs_read", () => {
         });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+describe("fs_read_external (DR-0024)", () => {
+  test(
+    "allowlist exact entry is readable and returns the requested absolute path",
+    async () => {
+      // A transcript-observed existing file is canonicalized into external_files;
+      // the new op reuses fs_read's content contract without widening its root.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const target = path.join(outside, "allowed.txt");
+        fs.writeFileSync(target, "allowed content");
+        const canonicalTarget = fs.realpathSync(target);
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", target)]);
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          path: string;
+          content: string;
+          truncated: boolean;
+          binary: boolean;
+        }>({ op: "fs_read_external", sid: "A", path: canonicalTarget });
+        expect(res.path).toBe(canonicalTarget);
+        expect(res.content).toBe("allowed content");
+        expect(res.truncated).toBe(false);
+        expect(res.binary).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: any existing absolute path outside the allowlist is path_forbidden",
+    async () => {
+      // Existence is not a grant: another real file beside the recorded one must
+      // be refused with path_forbidden rather than leaking its readable content.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const allowed = path.join(outside, "allowed.txt");
+        const secret = path.join(outside, "secret.txt");
+        fs.writeFileSync(allowed, "allowed");
+        fs.writeFileSync(secret, "secret");
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", allowed)]);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: secret,
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: traversal normalization and prefix/directory abuse do not inherit a file grant",
+    async () => {
+      // The grant is one normalized full path, never its parent or descendants;
+      // `..` spellings that normalize to a different file are checked as that
+      // different file before any realpath/open.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const allowedDir = path.join(outside, "allowed");
+        const allowed = path.join(allowedDir, "file.txt");
+        const secret = path.join(outside, "secret.txt");
+        fs.mkdirSync(allowedDir);
+        fs.writeFileSync(allowed, "allowed");
+        fs.writeFileSync(secret, "secret");
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", allowed)]);
+        const user = await userAt(ctx);
+        for (const candidate of [
+          path.join(allowed, "..", "..", "secret.txt"),
+          path.join(allowedDir, "file.txt", "..", "..", "secret.txt"),
+          allowedDir,
+        ]) {
+          const res = await user.request<{ ok: false; error: { code: string } }>({
+            op: "fs_read_external",
+            sid: "A",
+            path: candidate,
+          });
+          expect(res.error.code).toBe("path_forbidden");
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "invalid_args: relative, empty, and non-string paths are rejected",
+    async () => {
+      // fs_read_external's wire shape is absolute-only; malformed shapes fail
+      // before transcript scanning or filesystem existence checks.
+      const ctx = await startTestDaemon();
+      try {
+        const user = await userAt(ctx);
+        for (const candidate of ["relative.txt", "", 42]) {
+          const res = await user.request<{ ok: false; error: { code: string } }>({
+            op: "fs_read_external",
+            sid: "A",
+            path: candidate as string,
+          });
+          expect(res.error.code).toBe("invalid_args");
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: allowlisted path ancestor replaced by a symlink is rejected on read-time realpath",
+    async () => {
+      // Build a live fold before mutation so the test exercises the second
+      // realpath check, not a fresh transcript scan that sees only the new link.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      const replacement = mkfixture();
+      try {
+        const parent = path.join(outside, "x");
+        const target = path.join(parent, "target.txt");
+        fs.mkdirSync(parent);
+        fs.writeFileSync(target, "original");
+        const canonicalTarget = fs.realpathSync(target);
+        fs.writeFileSync(path.join(replacement, "target.txt"), "replacement");
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", target)]);
+        const user = await userAt(ctx);
+        await user.request({ op: "session_status_subscribe", sid: "A" });
+
+        fs.rmSync(parent, { recursive: true, force: true });
+        fs.symlinkSync(replacement, parent);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: canonicalTarget,
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+        fs.rmSync(replacement, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: allowlisted file itself replaced by a symlink is rejected",
+    async () => {
+      // A final-component swap is the sibling attack to the ancestor swap:
+      // normalized request still matches, but fresh realpath must not.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      const replacement = mkfixture();
+      try {
+        const target = path.join(outside, "target.txt");
+        const secret = path.join(replacement, "secret.txt");
+        fs.writeFileSync(target, "original");
+        const canonicalTarget = fs.realpathSync(target);
+        fs.writeFileSync(secret, "secret");
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", target)]);
+        const user = await userAt(ctx);
+        await user.request({ op: "session_status_subscribe", sid: "A" });
+
+        fs.unlinkSync(target);
+        fs.symlinkSync(secret, target);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: canonicalTarget,
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+        fs.rmSync(replacement, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "allowlisted missing target is not_found and allowlisted directory is invalid_args",
+    async () => {
+      // Transcript folding may retain a Write-before-create path, while file
+      // tools may also point at a directory; exact authorization succeeds in
+      // both cases, then the shared fs_read file contract distinguishes them.
+      // The request uses the allowlist's own canonical spelling (ancestor
+      // realpath + missing leaf) — exactly the string the UI displays and
+      // sends — not the tool call's lexical spelling through a symlinked
+      // tmpdir, which stays forbidden by exact-match.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const missing = path.join(outside, "future.md");
+        const missingCanonical = path.join(fs.realpathSync(outside), "future.md");
+        const dir = path.join(outside, "dir");
+        fs.mkdirSync(dir);
+        await sessionAtWithTranscript(ctx, "A", root, [
+          externalToolUse("w1", "Write", missing),
+          externalToolUse("r1", "Read", dir),
+        ]);
+        const user = await userAt(ctx);
+        const missingRes = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: missingCanonical,
+        });
+        expect(missingRes.error.code).toBe("not_found");
+        const dirRes = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: fs.realpathSync(dir),
+        });
+        expect(dirRes.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "session/transcript lookup failures preserve the existing error categories",
+    async () => {
+      // No live sid is session_not_found; a connected sid without an accepted
+      // transcript is not_found. Neither case falls back to arbitrary paths.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const user = await userAt(ctx);
+        const missingSession = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "missing",
+          path: "/absolute/file",
+        });
+        expect(missingSession.error.code).toBe("session_not_found");
+        await sessionAt(ctx, "A", root);
+        const missingTranscript = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: "/absolute/file",
+        });
+        expect(missingTranscript.error.code).toBe("not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "role gate and hello gate: only an identified user connection can call fs_read_external",
+    async () => {
+      // The op is a webui viewer surface like session_status: unauthenticated
+      // callers get hello_required and session identities get bad_request.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const anonymous = await connect(ctx.sock);
+        const noHello = await anonymous.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: "/absolute/file",
+        });
+        expect(noHello.error.code).toBe("hello_required");
+        const session = await sessionAt(ctx, "A", root);
+        const denied = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: "/absolute/file",
+        });
+        expect(denied.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });

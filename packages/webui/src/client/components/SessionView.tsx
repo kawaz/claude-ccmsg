@@ -107,14 +107,20 @@ export function SessionView({ state }: { state: AppState }) {
   //   with no live peer. Arbitrary sid pins without a transcript file do not
   //   widen this capability gate.
   const hasStatusFeed = !!peer?.transcript_path;
+  // Re-hello may keep the same sid while changing transcript/root metadata.
+  // Include the concrete fold source in the subscription effect deps so the
+  // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
+  const statusSource = hasStatusFeed
+    ? `${peer.transcript_path}\n${peer.repo_root ?? peer.cwd}`
+    : null;
   const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
   const hasTranscript = hasStatusFeed || !!storedHit?.file;
 
-  // Status データ購読 (DR-0020 Phase 2/3): Status タブと Timeline タブ (下部
-  // ミニパネルが同じデータを要る) のどちらかが開いている間だけ subscribe し、
-  // それ以外のタブに切り替わる/セッションが変わる/unmount のいずれかで
-  // unsubscribe + キャッシュ破棄する。ひとつの effect が両タブの需要を兼ねる
-  // — Status 用と Timeline 用を別々の effect にすると、同じ (sid) への
+  // Status データ購読 (DR-0020 Phase 2/3, DR-0024): Status/Timeline に加え
+  // Files タブも external_files を要るため、この 3 タブのどれかが開いている間
+  // subscribe する。Rooms に切り替わる/セッションが変わる/unmount のいずれかで
+  // unsubscribe + キャッシュ破棄する。ひとつの effect が 3 タブの需要を兼ねる
+  // — タブ別に effect を分けると、同じ (sid) への
   // subscribe が daemon 側で Set 的に重複排除される一方 unsubscribe は
   // 無条件にその sid を切るため、"片方の tab を閉じたらもう片方の生きた
   // 購読まで道連れで消える" 事故になる。deps は tab そのものではなく
@@ -125,11 +131,11 @@ export function SessionView({ state }: { state: AppState }) {
   //
   // サイドバーのミニバッジ (SessionList.tsx) はここで作った
   // `state.sessionStatuses` を読むだけの受動的な消費者 — つまりバッジが出る
-  // のは「今まさに Status/Timeline タブを開いているセッション」だけ
+  // のは「今まさに Files/Status/Timeline タブを開いているセッション」だけ
   // (DR-0020 §2.1 (a) 案: 全 peer 常時 subscribe はコストに見合わないため、
   // 実装コストとのトレードオフでこちらを採用。全 peer 分の完全なバッジは
   // Phase 3 後続に持ち越す)。
-  const needsStatus = tab === "status" || tab === "timeline";
+  const needsStatus = tab === "files" || tab === "status" || tab === "timeline";
   useEffect(() => {
     if (!sid || !needsStatus || !hasStatusFeed) return;
     if (state.connStatus !== "connected") return;
@@ -153,6 +159,7 @@ export function SessionView({ state }: { state: AppState }) {
             background: res.background,
             ...(res.context ? { context: res.context } : {}),
             teammates: res.teammates ?? [],
+            external_files: res.external_files ?? [],
           },
         });
       })
@@ -166,7 +173,7 @@ export function SessionView({ state }: { state: AppState }) {
       void ws.sessionStatusUnsubscribe(sid).catch(() => {});
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [sid, needsStatus, hasStatusFeed, state.connStatus]);
+  }, [sid, needsStatus, hasStatusFeed, statusSource, state.connStatus]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -287,7 +294,12 @@ export function SessionView({ state }: { state: AppState }) {
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )
       ) : (
-        <FilesPanes sid={sid} tree={tree} peer={peer} />
+        <FilesPanes
+          sid={sid}
+          tree={tree}
+          peer={peer}
+          externalFiles={sessionStatus?.external_files ?? []}
+        />
       )}
       {/* DR-0014 §2.6 floating 1on1 composer: only makes sense on the
        * Files/Timeline tabs (kawaz can already open a room directly from

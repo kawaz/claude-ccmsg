@@ -59,6 +59,13 @@ describe("parseHash / session form (DR-0008)", () => {
     expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
   });
 
+  test("DR-0024 absolute external path survives fileHref round-trip", () => {
+    // The whole path is percent-encoded, so a leading `/` remains data rather
+    // than becoming locator syntax and FileViewer receives the exact allowlist key.
+    const loc: Locator = { view: "session", sid: "sess-1", path: "/external/shared file.md" };
+    expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
+  });
+
   // A relpath containing characters that would otherwise collide with the
   // locator's own syntax (`:`, `#`, `/`) must still survive because fileHref
   // encodes the whole path segment, not just risky characters.

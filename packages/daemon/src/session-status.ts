@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   ErrorCode,
   type SessionBackgroundStatus,
@@ -12,7 +13,7 @@ import {
   resolveTranscript,
   subscribeTranscriptLines,
   unsubscribeTranscriptLines,
-  type SessionLookup,
+  type SessionLookup as TranscriptSessionLookup,
   type TailConn,
   type TailLog,
   type TranscriptLineListener,
@@ -23,9 +24,9 @@ import {
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
 
-/** String prefilter before JSON.parse. Context usage appears on almost every
- * assistant row, so adding it weakens the filter, but transcripts are only a
- * few thousand lines and parsing happens once plus incremental tail batches. */
+/** String prefilter before JSON.parse. Context usage and DR-0024 file path
+ * inputs appear frequently, so they weaken the filter, but transcripts are only
+ * a few thousand lines and parsing happens once plus incremental tail batches. */
 const PREFILTER = [
   '"name":"TaskCreate"',
   '"name":"TaskUpdate"',
@@ -44,6 +45,8 @@ const PREFILTER = [
   '"timeoutMs"',
   '"task_type"',
   '"teammate_spawned"',
+  '"file_path":',
+  '"notebook_path":',
   '"cache_read_input_tokens"',
   "<task-notification>",
   "<teammate-message",
@@ -59,6 +62,18 @@ interface PendingToolUse {
   timestamp: string;
 }
 
+/** session_status needs the transcript fields plus the containment root metadata
+ * used by DR-0024 external-file classification. Kept structural so server.ts's
+ * registry remains the concrete owner. */
+export interface SessionStatusLookup extends TranscriptSessionLookup {
+  get(sid: string):
+    | {
+        meta: { transcript_path?: string; cwd: string; repo_root?: string };
+        conns: { size: number };
+      }
+    | undefined;
+}
+
 type TeammateState = SessionTeammate;
 
 export interface SessionStatusState {
@@ -68,15 +83,24 @@ export interface SessionStatusState {
   context?: SessionContextUsage;
   teammates: Map<string, TeammateState>;
   pendingToolUse: Map<string, PendingToolUse>;
+  /** DR-0024 containment root, realpath-normalized. Undefined disables external
+   * file collection fail-closed when the session root cannot be resolved. */
+  externalRoot?: string;
+  /** Exact read allowlist shared with SessionStatusSnapshot.external_files and
+   * fs_read_external. Values are realpaths when the target exists, otherwise
+   * normalized absolute lexical paths for Write-before-create/deleted files. */
+  externalFiles: Set<string>;
 }
 
-export function createSessionStatusState(): SessionStatusState {
+export function createSessionStatusState(externalRoot?: string): SessionStatusState {
   return {
     todos: new Map(),
     workflows: new Map(),
     background: new Map(),
     teammates: new Map(),
     pendingToolUse: new Map(),
+    externalRoot,
+    externalFiles: new Set(),
   };
 }
 
@@ -90,6 +114,82 @@ function stringValue(value: unknown): string | undefined {
 
 function tokenValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function resolveExternalRoot(sessions: SessionStatusLookup, sid: string): string | undefined {
+  const entry = sessions.get(sid);
+  if (!entry || entry.conns.size === 0) return undefined;
+  const base = entry.meta.repo_root ?? entry.meta.cwd;
+  if (!base || !path.isAbsolute(base)) return undefined;
+  try {
+    return fs.realpathSync(base);
+  } catch {
+    return undefined;
+  }
+}
+
+function isInsideRoot(root: string, candidate: string): boolean {
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  return candidate === root || candidate.startsWith(prefix);
+}
+
+/** DR-0024 external-file fold. File tools are recorded at tool_use appearance,
+ * without waiting for tool_result: the DR defines the allowlist from call input,
+ * failed reads merely become not_found later, and routing these calls through
+ * pendingToolUse would let their volume evict the status tools protected by its
+ * MAX_PENDING_TOOL_USES bound. Write's observed extra model-generated keys are
+ * intentionally ignored; only a string path field matters. Broken
+ * __unparsedToolInput shapes, empty/non-string/relative paths are skipped.
+ * NotebookEdit/MultiEdit had no observed transcript examples when DR-0024 was
+ * accepted, so their notebook_path/file_path handling defensively follows the
+ * tool definitions. */
+function foldExternalFile(
+  state: SessionStatusState,
+  name: string,
+  input: Record<string, unknown>,
+): boolean {
+  if (!state.externalRoot) return false;
+  const rawPath =
+    name === "NotebookEdit"
+      ? input.notebook_path
+      : name === "Read" || name === "Write" || name === "Edit" || name === "MultiEdit"
+        ? input.file_path
+        : undefined;
+  if (typeof rawPath !== "string" || rawPath === "" || !path.isAbsolute(rawPath)) return false;
+
+  const normalized = path.normalize(rawPath);
+  let canonical = normalized;
+  try {
+    canonical = fs.realpathSync(normalized);
+  } catch {
+    // A Write target may not exist yet and a previously touched file may have
+    // been removed. Canonicalize through the nearest existing ancestor + the
+    // missing lexical remainder (resolveContained's flavor): a lexical path
+    // through a symlinked ancestor (macOS's /tmp, /var) would otherwise never
+    // equal the realpath the file has once created, and fs_read_external's
+    // read-time realpath check would reject the session's own Write target
+    // forever. When no ancestor resolves either, the normalized lexical path
+    // stays as the entry; fs_read_external returns not_found until it exists.
+    let cursor = path.dirname(normalized);
+    for (;;) {
+      let real: string;
+      try {
+        real = fs.realpathSync(cursor);
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        const parent = path.dirname(cursor);
+        if (err.code !== "ENOENT" || parent === cursor) break;
+        cursor = parent;
+        continue;
+      }
+      canonical = path.join(real, path.relative(cursor, normalized));
+      break;
+    }
+  }
+  if (isInsideRoot(state.externalRoot, canonical)) return false;
+  const sizeBefore = state.externalFiles.size;
+  state.externalFiles.add(canonical);
+  return state.externalFiles.size !== sizeBefore;
 }
 
 function addPendingToolUse(
@@ -146,17 +246,19 @@ function foldContextUsage(state: SessionStatusState, row: Record<string, unknown
 }
 
 function foldAssistant(state: SessionStatusState, row: Record<string, unknown>): boolean {
-  const changed = foldContextUsage(state, row);
+  let changed = foldContextUsage(state, row);
   const timestamp = stringValue(row.timestamp);
   const message = row.message;
-  if (!timestamp || !isRecord(message) || !Array.isArray(message.content)) return changed;
+  if (!isRecord(message) || !Array.isArray(message.content)) return changed;
 
   for (const block of message.content) {
     if (!isRecord(block) || block.type !== "tool_use") continue;
     const id = stringValue(block.id);
     const name = stringValue(block.name);
     const input = block.input;
-    if (!id || !name || !isRecord(input) || !isTrackedToolUse(name, input)) continue;
+    if (!name || !isRecord(input)) continue;
+    if (foldExternalFile(state, name, input)) changed = true;
+    if (!timestamp || !id || !isTrackedToolUse(name, input)) continue;
     addPendingToolUse(state, id, name, input, timestamp);
   }
   return changed;
@@ -529,6 +631,7 @@ export function snapshot(state: SessionStatusState): SessionStatusSnapshot {
     background: [...state.background.values()].map((task) => ({ ...task })),
     ...(state.context ? { context: { ...state.context } } : {}),
     teammates: [...state.teammates.values()].map((teammate) => ({ ...teammate })),
+    external_files: [...state.externalFiles].sort(),
   };
 }
 
@@ -563,10 +666,11 @@ export function scanTranscript(file: string, state: SessionStatusState, endOffse
 }
 
 interface LiveSessionStatus {
-  /** transcript path this fold was built from — compared against the sid's
-   *  currently-resolved path so a re-hello that re-validated a different file
-   *  (DR-0009 addendum) invalidates the fold instead of serving stale state. */
+  /** Transcript path and containment root this fold was built from. A re-hello
+   * that changes either invalidates the fold: the same transcript classified
+   * against a different root would otherwise retain a stale DR-0024 allowlist. */
   file: string;
+  root?: string;
   state: SessionStatusState;
   statusConns: Set<TailConn>;
   listener: TranscriptLineListener;
@@ -591,16 +695,19 @@ function pushSnapshot(sid: string, live: LiveSessionStatus): void {
 
 export function getSessionStatus(
   store: SessionStatusStore,
-  sessions: SessionLookup,
+  sessions: SessionStatusLookup,
   sid: string,
 ): TranscriptResult<SessionStatusSnapshot> {
   const resolved = resolveTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
-  // Serve the live fold only while it still describes the sid's current
-  // transcript file; after a re-hello swapped the path the cache is stale.
+  const root = resolveExternalRoot(sessions, sid);
+  // Serve the live fold only while it still describes both the current
+  // transcript and the root used to classify DR-0024 external files.
   const live = store.sessions.get(sid);
-  if (live && live.file === resolved.file) return { ok: true, data: snapshot(live.state) };
-  const state = createSessionStatusState();
+  if (live && live.file === resolved.file && live.root === root) {
+    return { ok: true, data: snapshot(live.state) };
+  }
+  const state = createSessionStatusState(root);
   try {
     scanTranscript(resolved.file, state);
   } catch {
@@ -612,15 +719,16 @@ export function getSessionStatus(
 export function subscribeSessionStatus(
   store: SessionStatusStore,
   transcriptTail: TranscriptTailStore,
-  sessions: SessionLookup,
+  sessions: SessionStatusLookup,
   sid: string,
   conn: TailConn,
   log: TailLog,
 ): TranscriptResult<SessionStatusSnapshot> {
   const resolved = resolveTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
+  const root = resolveExternalRoot(sessions, sid);
   const existing = store.sessions.get(sid);
-  if (existing && existing.file === resolved.file) {
+  if (existing && existing.file === resolved.file && existing.root === root) {
     existing.statusConns.add(conn);
     return { ok: true, data: snapshot(existing.state) };
   }
@@ -641,7 +749,8 @@ export function subscribeSessionStatus(
   // callbacks / poll timers (later ticks).
   const live: LiveSessionStatus = {
     file: "",
-    state: createSessionStatusState(),
+    root,
+    state: createSessionStatusState(root),
     statusConns: carriedConns,
     listener(payload) {
       if (payload.lines.length === 0) {
@@ -649,7 +758,7 @@ export function subscribeSessionStatus(
         // checkNow): the folded state describes bytes that no longer exist.
         // Refold the replacement file from scratch — the Watch's own lastEnd
         // is already payload.size, so subsequent growth resumes incrementally.
-        live.state = createSessionStatusState();
+        live.state = createSessionStatusState(live.root);
         try {
           scanTranscript(live.file, live.state, payload.size);
         } catch {

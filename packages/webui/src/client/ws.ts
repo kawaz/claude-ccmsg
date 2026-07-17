@@ -111,6 +111,9 @@ export interface WsHandle {
   fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
   fsRead(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  /** Read one exact absolute path from the session's transcript-derived
+   * external_files allowlist (DR-0024 fs_read_external). */
+  fsReadExternal(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
   /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
    * session's cwd (DR-0019 fs_write), while remaining inside its containment
    * root. Never overwrites — an existing path replies `file_exists`, a path
@@ -301,6 +304,7 @@ export function createWsClient(
           background: ev.background,
           ...(ev.context ? { context: ev.context } : {}),
           teammates: ev.teammates ?? [],
+          external_files: ev.external_files ?? [],
         },
       });
       return;
@@ -414,6 +418,7 @@ export function createWsClient(
     invite: (room, sid) => send({ op: "invite", room, sid }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
+    fsReadExternal: (sid, path) => send({ op: "fs_read_external", sid, path }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     transcriptRead: (sid, opts) =>
       send({

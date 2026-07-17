@@ -107,8 +107,8 @@ function taskNotification(
   });
 }
 
-function apply(lines: string[]): SessionStatusSnapshot {
-  const state = createSessionStatusState();
+function apply(lines: string[], externalRoot?: string): SessionStatusSnapshot {
+  const state = createSessionStatusState(externalRoot ? fs.realpathSync(externalRoot) : undefined);
   for (const line of lines) {
     if (isSessionStatusCandidate(line)) foldLine(state, line);
   }
@@ -152,7 +152,12 @@ function fixtureDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-session-status-"));
 }
 
-async function sessionHello(ctx: DaemonCtx, sid: string, file?: string): Promise<TestClient> {
+async function sessionHello(
+  ctx: DaemonCtx,
+  sid: string,
+  file?: string,
+  cwd = "/tmp",
+): Promise<TestClient> {
   const client = await connect(ctx.sock);
   await client.request({
     op: "hello",
@@ -160,7 +165,7 @@ async function sessionHello(ctx: DaemonCtx, sid: string, file?: string): Promise
     sid,
     repo: "r",
     ws: "w",
-    cwd: "/tmp",
+    cwd,
     ...(file ? { transcript_path: file } : {}),
   });
   return client;
@@ -630,7 +635,13 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     // 通知は「このセッション外のタスク」(例: 別経路の注入)。workflows/background の
     // どちらにも entry を作らず黙って捨てる。
     const result = apply([taskNotification("ghost-task", "completed")]);
-    expect(result).toEqual({ todos: [], workflows: [], background: [], teammates: [] });
+    expect(result).toEqual({
+      todos: [],
+      workflows: [],
+      background: [],
+      teammates: [],
+      external_files: [],
+    });
   });
 
   test("TaskUpdate は success:true の result と突合できた場合だけ反映する", () => {
@@ -813,6 +824,185 @@ describe("session status fold (DR-0020 Phase 1)", () => {
   });
 });
 
+describe("session status external file fold (DR-0024)", () => {
+  test("各 file tool の実 input 形から root 外の canonical path を抽出する", () => {
+    // file_path の存在だけを採り、Read の paging keys・Write の実在する余剰 keys・
+    // Edit の replace_all を schema 厳密一致で拒否しない。NotebookEdit/MultiEdit は
+    // 実 transcript 未観測のためツール定義どおりの path key を固定する。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const files = [
+        "read-a",
+        "read-b",
+        "write-a",
+        "write-extra",
+        "edit-a",
+        "notebook",
+        "multi",
+      ].map((name) => path.join(outside, name));
+      for (const file of files) fs.writeFileSync(file, nameOf(file));
+      const result = apply(
+        [
+          toolUse("read-a", "Read", { file_path: files[0] }),
+          toolUse("read-b", "Read", { file_path: files[1], offset: 366, limit: 10 }),
+          toolUse("write-a", "Write", { content: "x", file_path: files[2] }),
+          toolUse("write-extra", "Write", {
+            command: "ignored",
+            content: "x",
+            description: "ignored",
+            file_path: files[3],
+            new_string: "ignored",
+            old_string: "ignored",
+            replace_all: false,
+          }),
+          toolUse("edit-a", "Edit", {
+            file_path: files[4],
+            old_string: "a",
+            new_string: "b",
+            replace_all: "false",
+          }),
+          toolUse("notebook", "NotebookEdit", { notebook_path: files[5], cell_id: "c" }),
+          toolUse("multi", "MultiEdit", { file_path: files[6], edits: [] }),
+        ],
+        root,
+      );
+      expect(result.external_files).toEqual(files.map((file) => fs.realpathSync(file)).sort());
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("壊れた input・相対/空/非 string path を黙って skip する", () => {
+    // __unparsedToolInput.raw は不正 JSON の保存形なので再 parse せず、直接 string の
+    // absolute path だけを allowlist 候補にする防御境界を保証する。
+    const root = fixtureDir();
+    try {
+      const result = apply(
+        [
+          toolUse("broken", "Read", {
+            __unparsedToolInput: { raw: '{"file_path":"/tmp/x", 200}', len: 34 },
+          }),
+          toolUse("relative", "Read", { file_path: "../secret" }),
+          toolUse("empty", "Write", { file_path: "", content: "x" }),
+          toolUse("number", "Edit", { file_path: 42, old_string: "a", new_string: "b" }),
+          toolUse("wrong-key", "NotebookEdit", { file_path: "/tmp/not-a-notebook-path" }),
+        ],
+        root,
+      );
+      expect(result.external_files).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("root containment は realpath で判定し root 自身/直下/深部を除外する", () => {
+    // lexical 位置ではなく実体を判定する: root 外 link→root 内は除外し、root 内
+    // link→root 外は canonical external path として採る。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const inside = path.join(root, "inside.txt");
+      const deep = path.join(root, "deep", "inside.txt");
+      const outsideFile = path.join(outside, "outside.txt");
+      fs.mkdirSync(path.dirname(deep));
+      fs.writeFileSync(inside, "inside");
+      fs.writeFileSync(deep, "deep");
+      fs.writeFileSync(outsideFile, "outside");
+      const outsideLinkToInside = path.join(outside, "link-to-inside");
+      const insideLinkToOutside = path.join(root, "link-to-outside");
+      fs.symlinkSync(inside, outsideLinkToInside);
+      fs.symlinkSync(outsideFile, insideLinkToOutside);
+
+      const result = apply(
+        [
+          toolUse("root", "Read", { file_path: root }),
+          toolUse("inside", "Read", { file_path: inside }),
+          toolUse("deep", "Read", { file_path: deep }),
+          toolUse("link-in", "Read", { file_path: outsideLinkToInside }),
+          toolUse("link-out", "Read", { file_path: insideLinkToOutside }),
+        ],
+        root,
+      );
+      expect(result.external_files).toEqual([fs.realpathSync(outsideFile)]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("未存在 path は最近傍実在祖先の realpath + 残り lexical で canonical 化し、重複除去して sort する", () => {
+    // Write 前/削除後でも一覧から消さず、同じ target の複数 call は 1 件に畳む。
+    // 祖先を realpath してから残りを継ぐのは、symlink 経由の lexical 綴り
+    // (macOS の /tmp, /var 等) のまま保持すると、ファイル作成後の
+    // fs_read_external 読み出し時 realpath と一致せず、セッション自身の
+    // Write 対象を永遠に拒否してしまうため (resolveContained と同じ流儀)。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const realOutside = fs.realpathSync(outside);
+      const first = path.join(outside, "z", "..", "a.md");
+      const duplicate = path.join(outside, "a.md");
+      const second = path.join(outside, "b.md");
+      const result = apply(
+        [
+          toolUse("missing-a", "Write", { file_path: first, content: "a" }),
+          toolUse("missing-a-again", "Read", { file_path: duplicate }),
+          toolUse("missing-b", "Edit", {
+            file_path: second,
+            old_string: "a",
+            new_string: "b",
+          }),
+        ],
+        root,
+      );
+      expect(result.external_files).toEqual(
+        [path.join(realOutside, "a.md"), path.join(realOutside, "b.md")].sort(),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("未存在 path が symlink 祖先経由でも、作成後に fs_read_external と一致する canonical 値になる", () => {
+    // 実測 repro (live-symlink-prefix-bug): Write の tool_use は file 作成前に
+    // transcript へ載る。lexical link/report.md のまま allowlist に入ると、
+    // 作成後の読み出し realpath (real/report.md) と一致せず path_forbidden に
+    // なっていた。fold 時点で祖先 realpath を通すことで一致を保証する。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const realDir = path.join(outside, "real");
+      fs.mkdirSync(realDir);
+      const linkDir = path.join(outside, "link");
+      fs.symlinkSync(realDir, linkDir);
+      const lexicalTarget = path.join(linkDir, "report.md"); // not created yet
+      const result = apply(
+        [toolUse("w1", "Write", { file_path: lexicalTarget, content: "x" })],
+        root,
+      );
+      expect(result.external_files).toEqual([path.join(fs.realpathSync(realDir), "report.md")]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("file path fixture は scan の文字列 prefilter を通過する", () => {
+    // foldLine 直呼びだけでなく全量/逐次 scan の JSON.parse 前入口にも届くことを固定する。
+    expect(isSessionStatusCandidate(toolUse("read", "Read", { file_path: "/tmp/x" }))).toBe(true);
+    expect(
+      isSessionStatusCandidate(toolUse("notebook", "NotebookEdit", { notebook_path: "/tmp/x" })),
+    ).toBe(true);
+  });
+});
+
+function nameOf(file: string): string {
+  return path.basename(file);
+}
+
 describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   test(
     "one-shot は hello 済み transcript 全量を返し、未接続 sid は session_not_found",
@@ -891,6 +1081,84 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "外部 file tool の tail 追記を external_files full snapshot push で逐次配信する",
+    async () => {
+      // DR-0024 は既存 status Watch に相乗りするため、subscribe 後の tool_use 1 行で
+      // allowlist が増え、tool_result 無しでもその新しい集合を即 push する。
+      const ctx = await startTestDaemon();
+      const root = fixtureDir();
+      const outside = fixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(root, `${sid}.jsonl`);
+        const external = path.join(outside, "tail.md");
+        fs.writeFileSync(file, "");
+        fs.writeFileSync(external, "tail");
+        await sessionHello(ctx, sid, file, root);
+        const user = await userHello(ctx);
+        await user.request({ op: "subscribe" });
+        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        expect(initial.external_files).toEqual([]);
+
+        fs.appendFileSync(file, `${toolUse("tail-read", "Read", { file_path: external })}\n`);
+        const pushed = await user.readEventUntil<StatusEvent>(
+          (event) => event.ev === "session_status" && event.external_files?.length === 1,
+        );
+        expect(pushed.ev.external_files).toEqual([fs.realpathSync(external)]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "re-hello で containment root が変わると同じ transcript を新 root で再 fold する",
+    async () => {
+      // DR-0024 classification depends on root as well as transcript bytes. A
+      // cached live fold must be invalidated when the sid/file stay the same but
+      // cwd changes, otherwise an internal path could retain the old decision.
+      const ctx = await startTestDaemon();
+      const rootA = fixtureDir();
+      const rootB = fixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(rootA, `${sid}.jsonl`);
+        const touched = path.join(rootA, "inside-a.md");
+        fs.writeFileSync(touched, "a");
+        fs.writeFileSync(file, `${toolUse("read-a", "Read", { file_path: touched })}\n`);
+        const session = await sessionHello(ctx, sid, file, rootA);
+        const firstUser = await userHello(ctx);
+        const initial = await firstUser.request<StatusOk>({ op: "session_status_subscribe", sid });
+        expect(initial.external_files).toEqual([]);
+
+        await session.request({
+          op: "hello",
+          role: "session",
+          sid,
+          repo: "r",
+          ws: "w",
+          cwd: rootB,
+          transcript_path: file,
+        });
+        const secondUser = await userHello(ctx);
+        const rebuilt = await secondUser.request<StatusOk>({
+          op: "session_status_subscribe",
+          sid,
+        });
+        expect(rebuilt.external_files).toEqual([fs.realpathSync(touched)]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(rootA, { recursive: true, force: true });
+        fs.rmSync(rootB, { recursive: true, force: true });
       }
     },
     T,

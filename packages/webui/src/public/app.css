@@ -1587,9 +1587,17 @@ button.session-tab {
   padding: 0;
 }
 
+/* DR-0024: each top-level section owns its horizontal scroll. Nested children
+ * stay in the same scroll coordinate space, so deep indentation and full
+ * external paths remain reachable without moving the whole Files pane. */
+.tree-root {
+  overflow-x: auto;
+}
+
 .tree-row {
   display: block;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   padding: 0.2rem 0.75rem;
   border: none;
   background: none;
@@ -1598,8 +1606,8 @@ button.session-tab {
   text-decoration: none;
   font: inherit;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -1650,9 +1658,12 @@ button.session-tab {
 
 .tree-other {
   display: block;
+  width: max-content;
+  min-width: 100%;
   padding: 0.2rem 0.75rem;
   color: var(--fg-muted);
   opacity: 0.6;
+  white-space: nowrap;
 }
 
 .tree-loading,
@@ -1668,17 +1679,19 @@ button.session-tab {
 
 /* U-fav: wraps a DirNode/FileNode's own row button/link + its ★ toggle as
  * flex siblings (see FileTree.tsx's doc comment on why they can't nest —
- * a <button> inside a <button>/<a> is invalid HTML). .tree-row keeps its
- * existing block/ellipsis styling above, just now sized by flex instead of
- * width:100% so the toggle has room beside it. */
+ * a <button> inside a <button>/<a> is invalid HTML). width:max-content lets
+ * long/deep rows widen the section's .tree-root scroll area; min-width:100%
+ * still keeps the star at the pane edge for short rows. */
 .tree-row-line {
   display: flex;
   align-items: center;
+  width: max-content;
+  min-width: 100%;
 }
 
 .tree-row-line .tree-row {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 0 auto;
+  min-width: max-content;
   width: auto;
 }
 

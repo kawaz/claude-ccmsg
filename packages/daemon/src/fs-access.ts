@@ -1,12 +1,13 @@
-// Workspace file access (DR-0008 / DR-0019): containment-checked
-// fs_list / fs_read / inbox-only fs_write.
+// Workspace file access (DR-0008 / DR-0019 / DR-0024): containment-checked
+// fs_list / fs_read, transcript-allowlisted fs_read_external, inbox-only fs_write.
 //
 // fs_list/fs_read resolve paths from the browsable containment root
 // (`repo_root ?? cwd`). fs_write instead resolves its request path from the
 // session's cwd so a new inbox memo belongs to that working copy, then applies
-// the same realpath containment boundary before creating anything. There is no
-// way for a client to name either filesystem base directly — only a connected
-// session sid, or (for user-role reads) a UUID resolved below detected projects.
+// the same realpath containment boundary before creating anything. Clients
+// cannot name either filesystem base directly — only a session sid. DR-0024's
+// sole absolute-path surface accepts exact files already recorded in that sid's
+// folded transcript allowlist, never an arbitrary path or directory prefix.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,15 +19,23 @@ import {
   type FsReadResponse,
   type FsWriteResponse,
 } from "@ccmsg/protocol";
+import {
+  getSessionStatus,
+  type SessionStatusLookup,
+  type SessionStatusStore,
+} from "./session-status.ts";
 import { resolveVirtualRoot } from "./virtual-sessions.ts";
 
 /** Minimal shape fs-access needs from `Daemon.sessions` — kept structural
  *  (rather than importing `Daemon`/`SessionEntry` from server.ts) so this
  *  module has no dependency edge back to the module that imports it. */
-export interface SessionLookup {
-  get(
-    sid: string,
-  ): { meta: { cwd: string; repo_root?: string }; conns: { size: number } } | undefined;
+export interface SessionLookup extends SessionStatusLookup {
+  get(sid: string):
+    | {
+        meta: { cwd: string; repo_root?: string; transcript_path?: string };
+        conns: { size: number };
+      }
+    | undefined;
 }
 
 /**
@@ -344,30 +353,23 @@ export function fsList(
   return { ok: true, data: { sid, path: relPath, entries } };
 }
 
-// --- fs_read -----------------------------------------------------------
+// --- fs_read / fs_read_external ---------------------------------------
 
-export function fsRead(
-  sessions: SessionLookup,
+/** Shared regular-file read after each operation has completed its own
+ * authorization. DR-0024 intentionally reuses the byte cap/binary contract but
+ * not fs_read's containment grant: fs_read_external reaches this helper only
+ * after an exact transcript allowlist match and a fresh realpath check. */
+function readRegularFile(
   sid: string,
-  reqPath: string,
-  opts: FsAccessOptions = {},
+  realPath: string,
+  responsePath: string,
+  requestPath: string,
 ): FsAccessResult<Omit<FsReadResponse, "ok">> {
-  const rootResult = resolveRoot(sessions, sid, opts);
-  if (!rootResult.ok) return rootResult;
-  const root = rootResult.root;
-
-  if (typeof reqPath !== "string" || reqPath === "") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_read requires path" };
-  }
-
-  const resolved = resolveContained(root, reqPath);
-  if (!resolved.ok) return resolved;
-
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(resolved.realPath);
+    stat = fs.lstatSync(realPath);
   } catch {
-    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${requestPath}` };
   }
   if (!stat.isFile()) {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_read target is not a regular file" };
@@ -376,7 +378,7 @@ export function fsRead(
   const size = stat.size;
   const toRead = Math.min(size, FS_READ_MAX_BYTES);
   const buf = Buffer.alloc(toRead);
-  const fd = fs.openSync(resolved.realPath, "r");
+  const fd = fs.openSync(realPath, "r");
   let readTotal = 0;
   try {
     while (readTotal < toRead) {
@@ -399,18 +401,83 @@ export function fsRead(
     }
   }
 
-  const relPath = path.relative(root, resolved.realPath);
   return {
     ok: true,
     data: {
       sid,
-      path: relPath,
+      path: responsePath,
       size,
       truncated: size > FS_READ_MAX_BYTES,
       binary,
       content: binary ? "" : content.toString("utf-8"),
     },
   };
+}
+
+export function fsRead(
+  sessions: SessionLookup,
+  sid: string,
+  reqPath: string,
+  opts: FsAccessOptions = {},
+): FsAccessResult<Omit<FsReadResponse, "ok">> {
+  const rootResult = resolveRoot(sessions, sid, opts);
+  if (!rootResult.ok) return rootResult;
+  const root = rootResult.root;
+
+  if (typeof reqPath !== "string" || reqPath === "") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_read requires path" };
+  }
+
+  const resolved = resolveContained(root, reqPath);
+  if (!resolved.ok) return resolved;
+  return readRegularFile(sid, resolved.realPath, path.relative(root, resolved.realPath), reqPath);
+}
+
+/** DR-0024 external-file authorization. The request must name one absolute path
+ * whose normalized spelling is an exact external_files entry for this sid; no
+ * prefix or directory grant exists. realpath is repeated immediately before the
+ * read so a path/ancestor replaced with a symlink after transcript folding is
+ * rejected when its target no longer equals an allowlist entry. Other realpath
+ * failures fail closed without leaking filesystem structure. The remaining
+ * realpath→lstat/open TOCTOU gap has the same-UID limitation documented for
+ * resolveContained: a process able to win it can already read the target directly. */
+export function fsReadExternal(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+): FsAccessResult<Omit<FsReadResponse, "ok">> {
+  if (typeof reqPath !== "string" || reqPath === "" || !path.isAbsolute(reqPath)) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "fs_read_external requires an absolute path",
+    };
+  }
+
+  const status = getSessionStatus(statusStore, sessions, sid);
+  if (!status.ok) return status;
+  const allowlist = new Set(status.data.external_files ?? []);
+  const normalized = path.normalize(reqPath);
+  if (!allowlist.has(normalized)) {
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+  }
+
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(reqPath);
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+    }
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot resolve path: ${reqPath}` };
+  }
+  if (!allowlist.has(realPath)) {
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+  }
+
+  return readRegularFile(sid, realPath, reqPath, reqPath);
 }
 
 // --- fs_write ----------------------------------------------------------

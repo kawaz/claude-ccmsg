@@ -151,8 +151,9 @@ export interface AppState {
    * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
    * `ev:"session_status"` pushes, same subscribe-while-visible lifecycle as
    * SessionTreeState.timeline. Only the sid(s) SessionView currently
-   * subscribes to (Status tab or Timeline tab open) ever have an entry here
-   * — absence means "not subscribed", not "known-empty" (Phase 3 §2.1
+   * subscribes to (Files, Status, or Timeline tab open) ever have an entry here
+   * — Files needs DR-0024 external_files; absence means "not subscribed", not
+   * "known-empty" (Phase 3 §2.1
    * decision (a): sidebar mini badge only shows for the session currently
    * open, see SessionList.tsx). */
   sessionStatuses: Map<string, SessionStatusSnapshot>;

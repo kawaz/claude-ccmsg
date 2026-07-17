@@ -672,8 +672,10 @@ export function parseFavorites(raw: string | null): string[] {
   return parsed.filter((p): p is string => typeof p === "string");
 }
 
-/** Toggles one relative path in a favorites list — removes it if already
- * present, appends it if absent. Pure (always returns a new array, never
+/** Toggles one path in a favorites list — project-relative paths and DR-0024
+ * external absolute paths share the flat list safely because the latter always
+ * starts with `/`. Removes it if already present, appends it if absent. Pure
+ * (always returns a new array, never
  * mutates `favorites`) so a caller can feed the result straight into
  * `useState`'s setter / a localStorage-persisting effect without aliasing
  * concerns. Append-not-prepend on add doesn't matter for *display* order
@@ -684,7 +686,8 @@ export function toggleFavorite(favorites: string[], path: string): string[] {
 }
 
 /** Display order for the Files-tree "お気に入り" section: alphabetical over
- * the full relative path (`localeCompare`), not registration order — chosen
+ * the full path (`localeCompare`), not registration order. Absolute external
+ * paths coexist without collision with project-relative paths — chosen
  * over registration order so a newly-starred path lands in a predictable
  * spot next to its neighbors instead of always at the list's end, matching
  * kawaz's mock ("docs/QUESTIONS.md" sorting after "docs/inbox"). Never
@@ -692,6 +695,21 @@ export function toggleFavorite(favorites: string[], path: string): string[] {
  * this file). */
 export function sortFavorites(favorites: string[]): string[] {
   return [...favorites].sort((a, b) => a.localeCompare(b));
+}
+
+/** DR-0024 client convention: project tree paths are root-relative and never
+ * start with `/`; session_status.external_files are absolute and always do.
+ * This one discriminator selects fs_read vs fs_read_external and cannot collide
+ * with an existing project path. */
+export function isExternalFilePath(filePath: string): boolean {
+  return filePath.startsWith("/");
+}
+
+/** Stable display order for the "プロジェクト外" section. The daemon already
+ * deduplicates/sorts snapshots, but keeping the view derivation pure makes a
+ * locally constructed/older snapshot deterministic too. */
+export function sortExternalFiles(files: readonly string[]): string[] {
+  return [...new Set(files.filter(isExternalFilePath))].sort((a, b) => a.localeCompare(b));
 }
 
 // --- docs/inbox メモ作成 (DR-0019 Phase W2) --- //

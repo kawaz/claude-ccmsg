@@ -10,7 +10,13 @@ import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { errorMessage, inboxAutoFilename, isMarkdownPath, resolveInboxFilename } from "../utils.ts";
+import {
+  errorMessage,
+  inboxAutoFilename,
+  isExternalFilePath,
+  isMarkdownPath,
+  resolveInboxFilename,
+} from "../utils.ts";
 import { loadFilesView, saveFilesView } from "../files-view-store.ts";
 import {
   detectLanguage,
@@ -170,8 +176,10 @@ export function FileViewer({
     if (file && file.path === path) return;
     if (connStatus !== "connected") return;
     store.dispatch({ type: "fs/file-loading", sid, path });
-    void ws
-      .fsRead(sid, path)
+    // DR-0024 client path convention: `/`-prefixed selections are absolute
+    // external_files entries and must use the exact-allowlist op; every
+    // existing project-tree selection is relative and stays on fs_read.
+    void (isExternalFilePath(path) ? ws.fsReadExternal(sid, path) : ws.fsRead(sid, path))
       .then((res) => {
         if (res.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: res });
         else store.dispatch({ type: "fs/file-loaded", sid, path, error: res.error.msg });
@@ -314,8 +322,7 @@ export function FileViewer({
   const handleRefetch = () => {
     if (!canRefetch) return;
     store.dispatch({ type: "fs/file-loading", sid, path });
-    void ws
-      .fsRead(sid, path)
+    void (isExternalFilePath(path) ? ws.fsReadExternal(sid, path) : ws.fsRead(sid, path))
       .then((r) => {
         if (r.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: r });
         else store.dispatch({ type: "fs/file-loaded", sid, path, error: r.error.msg });

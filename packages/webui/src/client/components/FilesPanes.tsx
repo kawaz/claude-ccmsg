@@ -51,10 +51,13 @@ export function FilesPanes({
   sid,
   tree,
   peer,
+  externalFiles,
 }: {
   sid: string;
   tree: SessionTreeState;
   peer: PeerInfo | undefined;
+  /** DR-0024 transcript-derived absolute paths, already allowlisted by daemon. */
+  externalFiles: readonly string[];
 }) {
   const { store, ws } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
@@ -129,7 +132,13 @@ export function FilesPanes({
   return (
     <div class="session-panes" ref={containerRef}>
       <div class="session-pane session-pane-tree" style={treeStyle}>
-        <FileTree sid={sid} tree={tree} peer={peer} onNewMemo={() => setMemoEditorOpen(true)} />
+        <FileTree
+          sid={sid}
+          tree={tree}
+          peer={peer}
+          externalFiles={externalFiles}
+          onNewMemo={() => setMemoEditorOpen(true)}
+        />
       </div>
       <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>

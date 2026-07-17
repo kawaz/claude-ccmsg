@@ -326,6 +326,11 @@ export interface SessionStatusSnapshot {
   context?: SessionContextUsage;
   /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
   teammates?: SessionTeammate[];
+  /** DR-0024: absolute paths outside the session's containment root that its
+   * transcript records as file-tool inputs. Existing targets are realpaths;
+   * missing/deleted targets retain a normalized lexical path. This is exactly
+   * the allowlist accepted by fs_read_external. */
+  external_files?: string[];
 }
 /** Full recomputed snapshot pushed after a status-changing transcript event. */
 export interface SessionStatusStreamEvent extends SessionStatusSnapshot {
@@ -565,6 +570,16 @@ export interface FsReadRequest {
   path: string;
 }
 
+/** DR-0024 allowlist read for one transcript-observed file outside the
+ * session containment root. Unlike fs_read, this path is absolute and grants
+ * no directory/prefix access: it must exactly match external_files for sid. */
+export interface FsReadExternalRequest {
+  op: "fs_read_external";
+  sid: string;
+  /** absolute path — must exactly match the session's external_files allowlist */
+  path: string;
+}
+
 /**
  * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
  * docs/inbox/ in a connected session's cwd. The daemon applies the same
@@ -701,6 +716,7 @@ export type Request =
   | SessionLaunchRequest
   | FsListRequest
   | FsReadRequest
+  | FsReadExternalRequest
   | FsWriteRequest
   | TranscriptReadRequest
   | SessionSearchRequest

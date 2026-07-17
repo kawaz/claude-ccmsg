@@ -19,6 +19,7 @@ import {
   groupSessionsBySection,
   inboxAutoFilename,
   indexAgentsBySid,
+  isExternalFilePath,
   isMarkdownPath,
   isMemberConnected,
   lastPathSegment,
@@ -42,6 +43,7 @@ import {
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
+  sortExternalFiles,
   sortFavorites,
   sortPeers,
   sortPinnedSessions,
@@ -1086,6 +1088,15 @@ describe("parseFavorites", () => {
     ]);
   });
 
+  test("absolute external favorites coexist with relative project paths", () => {
+    // DR-0024 keeps one flat string list: `/` prefix is a disjoint namespace,
+    // so persistence needs no schema split or path rewriting.
+    expect(parseFavorites('["docs/inbox","/Users/example/shared.md"]')).toEqual([
+      "docs/inbox",
+      "/Users/example/shared.md",
+    ]);
+  });
+
   // Garbage matrix: non-JSON text, JSON that parses but isn't an array, and
   // an array whose elements aren't all strings — none of these may throw or
   // propagate a malformed value into the rendered tree.
@@ -1128,6 +1139,18 @@ describe("toggleFavorite", () => {
     toggleFavorite(favorites, "docs/QUESTIONS.md");
     expect(favorites).toEqual(["docs/inbox"]);
   });
+
+  test("external absolute and project-relative keys toggle independently", () => {
+    // Same basename cannot collide because the external key retains its leading `/`.
+    const external = "/external/docs/QUESTIONS.md";
+    expect(toggleFavorite(["docs/QUESTIONS.md"], external)).toEqual([
+      "docs/QUESTIONS.md",
+      external,
+    ]);
+    expect(toggleFavorite(["docs/QUESTIONS.md", external], external)).toEqual([
+      "docs/QUESTIONS.md",
+    ]);
+  });
 });
 
 describe("sortFavorites", () => {
@@ -1148,6 +1171,24 @@ describe("sortFavorites", () => {
     const favorites = ["b", "a"];
     sortFavorites(favorites);
     expect(favorites).toEqual(["b", "a"]);
+  });
+});
+
+describe("external file view helpers (DR-0024)", () => {
+  test("only slash-prefixed absolute paths use the external read rail", () => {
+    // Project-tree relpaths remain on fs_read; external_files use fs_read_external.
+    expect(isExternalFilePath("src/index.ts")).toBe(false);
+    expect(isExternalFilePath("/external/shared.md")).toBe(true);
+  });
+
+  test("empty external list stays empty; entries are filtered, deduplicated, and sorted", () => {
+    // FileTree hides the section for [], while locally-constructed snapshots are
+    // normalized deterministically even if they contain duplicates/relpaths.
+    expect(sortExternalFiles([])).toEqual([]);
+    expect(sortExternalFiles(["/z.md", "project.md", "/a.md", "/z.md"])).toEqual([
+      "/a.md",
+      "/z.md",
+    ]);
   });
 });
 
