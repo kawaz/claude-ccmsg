@@ -1,6 +1,6 @@
 # DR-0023: daemon 経由のローカル翻訳 (Safari 等 Translator API 非対応ブラウザ対応)
 
-Status: Proposed
+Status: Accepted (Phase 0 PoC 全項目成立 2026-07-17 — findings/2026-07-17-macos-translation-poc.md)
 Date: 2026-07-17
 Sponsor: kawaz r26 mid=71
 
@@ -33,8 +33,7 @@ Safari 等の非対応ブラウザではタブ自体を出していない。kawa
 - **translate-helper CLI (Swift、リポにバンドル)**: stdin で text (jsonl バッチ)、stdout に
   翻訳結果。Translation.framework を直 link。ビルド済みバイナリを release に同梱するか、
   初回に daemon が `swiftc` でビルド (Xcode CLT 必須) — 配布方式は PoC 後に決定
-- **daemon**: 新 op `translate` (text[] → text[])。helper を子プロセスで呼ぶ (常駐 or
-  都度起動は latency 実測で決定)。macOS 以外 / helper 不在ではエラー (webui はタブ非表示に
+- **daemon**: 新 op `translate` (text[] → text[])。helper を**常駐子プロセス** (stdin/stdout jsonl ループ) で保持 — PoC 実測でプロセス起動 + prepare が ~1.4s/件と重く、都度起動は不成立。常駐なら prepare 済みセッション再利用で操作あたり数百 ms 級を見込む (Phase 1 で実測)。macOS 以外 / helper 不在ではエラー (webui はタブ非表示に
   フォールバック)
 - **webui**: 排他フォールバックではなく**翻訳比較タブ** (kawaz mid=72)。thinking の
   タブ列を `original / ja(host) / ja(browser)` とし、利用可能な翻訳経路を全部並べる:
