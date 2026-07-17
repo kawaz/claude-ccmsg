@@ -27,17 +27,29 @@ export interface SessionCreatorForm {
   model: string;
   effort: string;
   prompt: string;
+  /** User-editable shell command template (DR-0018 §3.2 addendum 2026-07-17).
+   * Initialized to the daemon-configured template verbatim (no variable
+   * substitution — $CWD/$MODEL/$EFFORT/$PROMPT stay literal); the "default"
+   * button restores that value. Sent as SessionLaunchRequest.command only
+   * when it differs from the initial template (see buildSessionLaunchRequest),
+   * so the common no-edit case keeps the wire request identical to before. */
+  command: string;
 }
 
-/** Initial form state once `default_prompt` is known (session_launcher_config
- * response) — `cwd` starts empty; the run button stays disabled until the
- * CwdTree picker sets one (see `sessionCreatorFormValid`). */
-export function initialSessionCreatorForm(defaultPrompt: string): SessionCreatorForm {
+/** Initial form state once `default_prompt` / `command` are known
+ * (session_launcher_config response) — `cwd` starts empty; the run button
+ * stays disabled until the CwdTree picker sets one (see
+ * `sessionCreatorFormValid`). */
+export function initialSessionCreatorForm(
+  defaultPrompt: string,
+  defaultCommand: string,
+): SessionCreatorForm {
   return {
     cwd: "",
     model: DEFAULT_SESSION_CREATOR_MODEL,
     effort: DEFAULT_SESSION_CREATOR_EFFORT,
     prompt: defaultPrompt,
+    command: defaultCommand,
   };
 }
 
@@ -55,10 +67,26 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
  * request_id excluded — ws.ts's `sessionLaunch` adds both, same convention as
  * SessionSearchPanel's buildSessionSearchRequest). Returns null when the form
  * isn't launchable yet (mirrors sessionCreatorFormValid) so callers can't
- * accidentally fire a request with an empty cwd. */
+ * accidentally fire a request with an empty cwd.
+ *
+ * `defaultCommand` is the daemon-configured template. When the form's
+ * `command` matches it verbatim, the override field is omitted so the wire
+ * request stays identical to the pre-addendum shape (no-edit case). Any
+ * difference — including whitespace-only changes the user made deliberately —
+ * is sent as-is. Empty command isn't special-cased here (an empty template
+ * runs nothing meaningful): the daemon rejects it with invalid_args so the
+ * user sees the error rather than a silent fallback to the config value. */
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
+  defaultCommand: string,
 ): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
   if (!sessionCreatorFormValid(form)) return null;
-  return { cwd: form.cwd.trim(), model: form.model, effort: form.effort, prompt: form.prompt };
+  const base = {
+    cwd: form.cwd.trim(),
+    model: form.model,
+    effort: form.effort,
+    prompt: form.prompt,
+  };
+  if (form.command === defaultCommand) return base;
+  return { ...base, command: form.command };
 }

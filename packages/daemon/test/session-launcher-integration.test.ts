@@ -280,9 +280,16 @@ describe("session launcher wire ops", () => {
           ok: true;
           root_dirs: string[];
           default_prompt: string;
+          command: string;
         }>({ op: "session_launcher_config" });
         expect(response.ok).toBe(true);
-        expect(response).toMatchObject({ default_prompt: "hello default" });
+        // DR-0018 §3.2 addendum 2026-07-17: the raw command template is part
+        // of the read-only projection (webui uses it as SessionCreator's
+        // textarea initial value + "default" button target).
+        expect(response).toMatchObject({
+          default_prompt: "hello default",
+          command: "printf configured",
+        });
         if (response.ok) expect(response.root_dirs).toEqual([path.resolve(root)]);
       } finally {
         await stopTestDaemon(ctx);

@@ -31,7 +31,16 @@ type LauncherProbe =
   | { status: "loading" }
   | { status: "unconfigured" }
   | { status: "error"; message: string }
-  | { status: "ready"; rootDirs: string[]; defaultPrompt: string };
+  | {
+      status: "ready";
+      rootDirs: string[];
+      defaultPrompt: string;
+      /** Raw shell command template from session_launcher.command (verbatim,
+       * no variable substitution). Used both as the textarea's initial value
+       * and as the "default" button's restore target — DR-0018 §3.2 addendum
+       * 2026-07-17. */
+      defaultCommand: string;
+    };
 
 type LaunchState =
   | { status: "idle" }
@@ -79,8 +88,13 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
       .then((res) => {
         if (cancelled) return;
         if (res.ok) {
-          setProbe({ status: "ready", rootDirs: res.root_dirs, defaultPrompt: res.default_prompt });
-          setForm(initialSessionCreatorForm(res.default_prompt));
+          setProbe({
+            status: "ready",
+            rootDirs: res.root_dirs,
+            defaultPrompt: res.default_prompt,
+            defaultCommand: res.command,
+          });
+          setForm(initialSessionCreatorForm(res.default_prompt, res.command));
         } else if (res.error.code === "launcher_not_configured") {
           setProbe({ status: "unconfigured" });
         } else {
@@ -98,7 +112,8 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
   async function run(e: Event): Promise<void> {
     e.preventDefault();
     if (!form) return;
-    const req = buildSessionLaunchRequest(form);
+    if (probe.status !== "ready") return;
+    const req = buildSessionLaunchRequest(form, probe.defaultCommand);
     if (!req) return;
     setLaunch({ status: "running" });
     try {
@@ -188,6 +203,25 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
               class="session-creator-prompt"
               value={form.prompt}
               onInput={(e) => setForm({ ...form, prompt: (e.target as HTMLTextAreaElement).value })}
+            />
+          </label>
+          <label class="session-creator-field">
+            <div class="session-creator-prompt-head">
+              <span class="session-creator-label">command</span>
+              <button
+                type="button"
+                class="session-creator-default-btn"
+                onClick={() => setForm({ ...form, command: probe.defaultCommand })}
+              >
+                default
+              </button>
+            </div>
+            <textarea
+              class="session-creator-prompt"
+              value={form.command}
+              onInput={(e) =>
+                setForm({ ...form, command: (e.target as HTMLTextAreaElement).value })
+              }
             />
           </label>
           <button

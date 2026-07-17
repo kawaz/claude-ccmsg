@@ -120,6 +120,54 @@ describe("session launch validation", () => {
     });
   });
 
+  // DR-0018 §3.2 addendum 2026-07-17: user role may override the command
+  // template. When present and non-empty, the daemon uses it verbatim in
+  // shellArgv (still no variable substitution, still same env). The user-role
+  // gate is enforced upstream in server.ts, so validate*() itself doesn't
+  // re-check it — this test only pins the override -> shellArgv wiring.
+  test("command override replaces the config template verbatim in shellArgv", () => {
+    const override = 'echo "override $PROMPT"';
+    const result = validateSessionLaunch(config(root), { ...request(cwd), command: override });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", override]);
+  });
+
+  // Absent override falls through to the config template (previous behavior)
+  // — the addendum must not regress the no-edit path from the webui.
+  test("absent command override keeps the config template", () => {
+    const result = validateSessionLaunch(config(root), request(cwd));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", 'launch "$PROMPT"']);
+  });
+
+  // Empty string is deliberately invalid_args rather than a silent fallback to
+  // the config template: silent fallback would mask a client bug (an empty
+  // textarea sent verbatim); the webui's build helper never omits `command`
+  // when the form differs from the default, so the boundary catches it here.
+  test("empty command override is invalid_args", () => {
+    expect(validateSessionLaunch(config(root), { ...request(cwd), command: "" })).toMatchObject({
+      ok: false,
+      code: "invalid_args",
+    });
+  });
+
+  // Executing an overridden command proves end-to-end that the shell reaches
+  // the override branch (not just shellArgv construction) and that env still
+  // flows through the same way — a smoke test for the daemon-side wiring.
+  test("executes with the overridden command and same env vars", async () => {
+    const cfg = { ...config(root), command: "echo config-value" };
+    const req = { ...request(cwd, "prompt-value"), command: 'echo "override:$PROMPT"' };
+    expect(await execute(cfg, req)).toEqual({
+      ok: true,
+      stdout: "override:prompt-value\n",
+      stderr: "",
+      exit_code: 0,
+      timed_out: false,
+    });
+  });
+
   // Shell-looking prompt text is data. The daemon must preserve it literally in
   // PROMPT and never evaluate or interpolate it during validation.
   test("shell syntax in prompt remains uninterpreted environment data", () => {

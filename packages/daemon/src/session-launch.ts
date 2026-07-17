@@ -96,6 +96,23 @@ export function validateSessionLaunch(
       msg: "session_launch prompt must be a string",
     };
   }
+  // DR-0018 §3.2 addendum (2026-07-17): user role may override the shell
+  // command template. Absent = use config's command verbatim (previous
+  // behavior). Present but empty = invalid_args (an empty template runs
+  // nothing meaningful and would mask a client bug). Present and non-empty =
+  // use it as-is; still no variable substitution, same env vars are exposed.
+  // The user-role gate is enforced upstream in server.ts's session_launch
+  // handler — session role never reaches this override at all.
+  if (req.command !== undefined) {
+    if (typeof req.command !== "string" || req.command === "") {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: "session_launch command override must be a non-empty string",
+      };
+    }
+  }
+  const command = req.command ?? cfg.command;
 
   // Model and effort intentionally remain opaque strings: the UI may offer a
   // curated dropdown, but daemon enums would couple every new launcher choice
@@ -107,7 +124,7 @@ export function validateSessionLaunch(
     EFFORT: req.effort,
     PROMPT: req.prompt,
   };
-  return { ok: true, env, shellArgv: shellArgv(cfg.shell, cfg.command) };
+  return { ok: true, env, shellArgv: shellArgv(cfg.shell, command) };
 }
 
 /** Execute one validated launch and wait only for this child result. No pid is

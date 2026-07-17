@@ -102,7 +102,9 @@ session_launcher:
   - response: `{ok: boolean, stdout: string, stderr: string, exit_code: number | null, timed_out: boolean}`
   - `null` exit_code は SIGTERM/SIGKILL で終了させた場合
 
-**セキュリティ**: `dir_tree` は root_dirs 配下に限定、`session_launch` は command_template の 4 変数以外の任意コマンド実行を許さない (config で固定された template のみが起動する経路)。
+**セキュリティ**: `dir_tree` は root_dirs 配下に限定、`session_launch` は config で固定された template のみが起動する経路。
+
+**Addendum 2026-07-17 (kawaz 裁定)**: 上の「config で固定された template のみ」の記述は **user role からの override を許容する形に緩和**する。`SessionLaunchRequest` に optional `command` を追加し、user role (= webui は本人 kawaz のみ) は request 単位で shell command template を上書きできる (空文字は `invalid_args`)。理由: user role の webui 操作は kawaz 本人がターミナルで `claude` を打つのと権限的に等価であり、コマンドテンプレの override は本人が別のコマンドを叩くのと同じ表現力しか与えない。**session role からの `session_launch` 呼び出しは従来通り `bad_request` で拒否** — user role gate は `server.ts` で `command` フィールドを見る前に確定するため、override が session role に露出することはない。SessionLauncherConfigResponse に `command` (生 template) を追加し、SessionCreator の textarea 初期表示に使う (詳細は `docs/issue/2026-07-17-session-creator-command-preview.md`)。
 
 ### 3.3 daemon 実装
 
