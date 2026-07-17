@@ -93,10 +93,16 @@ export interface WsHandle {
    * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
    * this response. */
   kick(room: string, id: string): Promise<KickResponse | ErrorResponse>;
-  /** Create a room whose sole initial member (besides the always-implicit
-   * User/u1) is `memberSid` (U3: SessionView's "+ 新規 Room"). `title`
+  /** Create a room whose initial members (besides the always-implicit
+   * User/u1) are `members` (U3: SessionView's "+ 新規 Room" passes a single
+   * sid; the sidebar ROOMS "+ 新規" (RoomCreator.tsx) passes an explicit
+   * multi-select since it has no session context to imply one from). `title`
    * omitted lets the daemon default it, same as any other create_room call. */
-  createRoom(memberSid: string, title?: string): Promise<CreateRoomResponse | ErrorResponse>;
+  createRoom(
+    members: string[],
+    title?: string,
+    kind?: "broadcast",
+  ): Promise<CreateRoomResponse | ErrorResponse>;
   /** Create a `kind:"1on1"` priv room for `memberSid` (DR-0014 §2.2 auto-
    * create, called by SessionView's floating composer when no existing 1on1
    * exists for this session). The daemon enforces exactly one member (empty
@@ -542,8 +548,13 @@ export function createWsClient(
     setTitle: (room, title) => send({ op: "set_title", room, title }),
     archiveRoom: (room, archived) => send({ op: "archive_room", room, archived }),
     kick: (room, id) => send({ op: "kick", room, id }),
-    createRoom: (memberSid, title) =>
-      send({ op: "create_room", members: [memberSid], ...(title ? { title } : {}) }),
+    createRoom: (members, title, kind) =>
+      send({
+        op: "create_room",
+        members,
+        ...(title ? { title } : {}),
+        ...(kind ? { kind } : {}),
+      }),
     createOneOnOneRoom: (memberSid, title) =>
       send({
         op: "create_room",

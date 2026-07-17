@@ -4,6 +4,7 @@ import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
 import { readStorage, writeStorage } from "../storage.ts";
+import { RoomCreator } from "./RoomCreator.tsx";
 import { RoomList } from "./RoomList.tsx";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
@@ -90,28 +91,59 @@ function CreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () =
   );
 }
 
+/** Which sidebar-internal panel (if any) is currently swapped in, across
+ * *both* the ROOMS and SESSIONS sections — see the doc comment on `Sidebar`
+ * below for why this one union replaces three independent booleans. */
+type SidebarPanel = "room-creator" | "session-creator" | "session-search";
+
+/** ROOMS section "+ 新規" affordance (issue 2026-07-17-rooms-sidebar-new-
+ * button.md), the room-creation counterpart to CreatorToggleButton above —
+ * same chromeless toggle-button family, symmetric with SESSIONS's "+ 新規"
+ * per the issue's stated goal. Always rendered (no session-launcher-style
+ * probe gate — create_room has no server-side "unconfigured" state). */
+function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      id="room-creator-toggle"
+      type="button"
+      title={open ? "新規 Room を閉じる" : "新規 Room を作成"}
+      aria-pressed={open}
+      onClick={onToggle}
+    >
+      + 新規
+    </button>
+  );
+}
+
 /** Sidebar SESSIONS section (DR-0021 Phase 2 SS-Q1/Q2 doc note): search is a
- * sidebar-internal panel toggle (local `showSearch` state below), NOT a
- * fourth `state.view`/URL-locator form alongside room/session/timeline. The
- * locator forms in locator.ts each name something durable and shareable —
- * "this room", "this session's Files at this path", "this session's
- * Timeline" — whereas a search is a disposable tool for finding and pinning
- * a session, with no useful "resume this exact search" bookmark semantics.
- * Toggling it swaps out `<SessionList>` for `<SessionSearchPanel>` in place;
- * everything else (Rooms panel, the tab layout, the URL) is untouched. The
- * Pinned section DR-0021 §2.4 asks for lives inside SessionList itself (see
- * its doc comment) — it's a permanent part of the normal session list, not
- * something the search toggle owns.
+ * sidebar-internal panel toggle (`activePanel` state below), NOT a fourth
+ * `state.view`/URL-locator form alongside room/session/timeline. The locator
+ * forms in locator.ts each name something durable and shareable — "this
+ * room", "this session's Files at this path", "this session's Timeline" —
+ * whereas a search is a disposable tool for finding and pinning a session,
+ * with no useful "resume this exact search" bookmark semantics. Toggling it
+ * swaps out `<SessionList>` for `<SessionSearchPanel>` in place; everything
+ * else (Rooms panel, the tab layout, the URL) is untouched. The Pinned
+ * section DR-0021 §2.4 asks for lives inside SessionList itself (see its doc
+ * comment) — it's a permanent part of the normal session list, not something
+ * the search toggle owns.
  *
- * DR-0018's "+ 新規" (SessionCreator) reuses this exact pattern (own
- * `showCreator` local state below, same panel-swap-in-place shape) rather
- * than adding a third parallel toggle track — opening one closes the other
- * so only one of SessionList/SessionSearchPanel/SessionCreator ever occupies
- * this section at a time. */
+ * DR-0018's "+ 新規" (SessionCreator) and the ROOMS section's "+ 新規"
+ * (RoomCreator, same affordance for rooms) reuse this exact
+ * panel-swap-in-place pattern rather than adding parallel toggle tracks —
+ * `activePanel` holds at most one of the three at a time (`null` = none),
+ * so opening any one of RoomList/SessionList's "+ 新規"/🔍 toggles closes
+ * whichever of the other two was open, regardless of which section it lived
+ * in (issue 2026-07-17-rooms-sidebar-new-button.md's "creator/search パネル
+ * と同じ排他開閉に統合" — a single shared union is what makes that
+ * cross-section exclusivity trivial instead of needing each boolean setter
+ * to know about the other two). */
 export function Sidebar({ state }: { state: AppState }) {
   const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
-  const [showSearch, setShowSearch] = useState(false);
-  const [showCreator, setShowCreator] = useState(false);
+  const [activePanel, setActivePanel] = useState<SidebarPanel | null>(null);
+  const togglePanel = (panel: SidebarPanel) =>
+    setActivePanel((cur) => (cur === panel ? null : panel));
+  const closePanel = () => setActivePanel(null);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
@@ -121,29 +153,29 @@ export function Sidebar({ state }: { state: AppState }) {
   return (
     <nav id="sidebar" class={state.sidebarOpen ? "open" : undefined}>
       <section id="rooms-panel">
-        <h2>Rooms</h2>
-        <RoomList state={state} />
+        <h2>
+          Rooms{" "}
+          <RoomCreatorToggleButton
+            open={activePanel === "room-creator"}
+            onToggle={() => togglePanel("room-creator")}
+          />
+        </h2>
+        {activePanel === "room-creator" ? (
+          <RoomCreator peers={sortedPeers} onClose={closePanel} />
+        ) : (
+          <RoomList state={state} />
+        )}
       </section>
       <section id="sessions-panel">
         <h2>
           Sessions{" "}
           <CreatorToggleButton
-            open={showCreator}
-            onToggle={() =>
-              setShowCreator((v) => {
-                if (!v) setShowSearch(false);
-                return !v;
-              })
-            }
+            open={activePanel === "session-creator"}
+            onToggle={() => togglePanel("session-creator")}
           />{" "}
           <SearchToggleButton
-            open={showSearch}
-            onToggle={() =>
-              setShowSearch((v) => {
-                if (!v) setShowCreator(false);
-                return !v;
-              })
-            }
+            open={activePanel === "session-search"}
+            onToggle={() => togglePanel("session-search")}
           />{" "}
           <PeersSortButton
             sortKey={sortKey}
@@ -155,10 +187,10 @@ export function Sidebar({ state }: { state: AppState }) {
           />{" "}
           <PeersRefreshButton />
         </h2>
-        {showCreator ? (
-          <SessionCreator onClose={() => setShowCreator(false)} />
-        ) : showSearch ? (
-          <SessionSearchPanel onClose={() => setShowSearch(false)} />
+        {activePanel === "session-creator" ? (
+          <SessionCreator onClose={closePanel} />
+        ) : activePanel === "session-search" ? (
+          <SessionSearchPanel onClose={closePanel} />
         ) : (
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
         )}

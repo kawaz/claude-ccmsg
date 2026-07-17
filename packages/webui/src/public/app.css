@@ -986,6 +986,152 @@ a {
   color: var(--accent);
 }
 
+/* issue 2026-07-17-rooms-sidebar-new-button.md: Sidebar's ROOMS "+ 新規"
+ * toggle — same chromeless-icon-button family as #session-creator-toggle
+ * above. */
+#room-creator-toggle {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+#room-creator-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+/* issue 2026-07-17-rooms-sidebar-new-button.md: RoomCreator.tsx, swapped in
+ * for RoomList inside #rooms-panel while the "+ 新規" toggle is on
+ * (Sidebar.tsx) — same panel shape/chrome conventions as
+ * #session-creator-panel above. */
+#room-creator-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.room-creator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.room-creator-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.room-creator-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.room-creator-close:hover {
+  color: var(--fg);
+}
+
+.room-creator-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.room-creator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.room-creator-label {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.room-creator-field input[type="text"] {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.room-creator-members {
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  margin: 0;
+}
+
+.room-creator-member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.room-creator-member {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.room-creator-member-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-creator-member-sid {
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+}
+
+.room-creator-empty {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.room-creator-submit {
+  align-self: flex-start;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.room-creator-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.room-creator-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
 /* DR-0018 §2.2: CwdTree.tsx, embedded inside .session-creator-field's cwd
  * row. Reuses FileTree's .tree-row/.tree-caret/.tree-loading/.tree-error
  * geometry (same indentation/caret/row look) under its own cwd-tree-prefixed
@@ -3626,4 +3772,12 @@ button.session-tab {
  * render a segment list. */
 .tl-search-unit {
   display: contents;
+}
+
+.room-creator-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-right: 0.75rem;
+  font-size: 0.85rem;
 }

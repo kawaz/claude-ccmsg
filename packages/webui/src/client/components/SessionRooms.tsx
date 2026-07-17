@@ -95,7 +95,7 @@ function NewRoomForm({ sid }: { sid: string }) {
     setError(null);
     try {
       const title = draft.trim();
-      const res = await ws.createRoom(sid, title ? title : undefined);
+      const res = await ws.createRoom([sid], title ? title : undefined);
       if (!res.ok) {
         setError(res.error.msg);
         return;
