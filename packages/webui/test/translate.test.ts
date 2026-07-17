@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   _resetTranslatorStateForTest,
   hasTranslatorApi,
-  translateThinkingText,
+  translateThinkingTextInBrowser,
+  translateThinkingTextOnHost,
 } from "../src/client/translate.ts";
 
 const originalGlobals: Record<string, unknown> = {};
@@ -70,10 +71,10 @@ describe("hasTranslatorApi", () => {
   });
 });
 
-describe("translateThinkingText", () => {
+describe("translateThinkingTextInBrowser", () => {
   test("a single English paragraph is sent to the Translator API and replaced with the result", async () => {
     installMockTranslator();
-    const result = await translateThinkingText("Let me check the file.");
+    const result = await translateThinkingTextInBrowser("Let me check the file.");
     expect(result).toBe("[ja]Let me check the file.");
   });
 
@@ -82,7 +83,7 @@ describe("translateThinkingText", () => {
   // ない。
   test("splits on \\n\\n, translates each paragraph independently, rejoins with \\n\\n", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText("First paragraph.\n\nSecond paragraph.");
+    const result = await translateThinkingTextInBrowser("First paragraph.\n\nSecond paragraph.");
     expect(result).toBe("[ja]First paragraph.\n\n[ja]Second paragraph.");
     expect(calls.sort()).toEqual(["First paragraph.", "Second paragraph."]);
   });
@@ -92,21 +93,21 @@ describe("translateThinkingText", () => {
   // 翻訳にしない。
   test("a paragraph containing hiragana is skipped (kept as-is), not sent to the API", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText("これはひらがなを含む段落です。");
+    const result = await translateThinkingTextInBrowser("これはひらがなを含む段落です。");
     expect(result).toBe("これはひらがなを含む段落です。");
     expect(calls).toEqual([]);
   });
 
   test("a paragraph containing katakana only is skipped", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText("コレハカタカナ");
+    const result = await translateThinkingTextInBrowser("コレハカタカナ");
     expect(result).toBe("コレハカタカナ");
     expect(calls).toEqual([]);
   });
 
   test("a paragraph containing kanji (Han script) only is skipped", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText("漢字");
+    const result = await translateThinkingTextInBrowser("漢字");
     expect(result).toBe("漢字");
     expect(calls).toEqual([]);
   });
@@ -115,7 +116,7 @@ describe("translateThinkingText", () => {
   // don't — each paragraph is judged independently.
   test("mixed English/Japanese paragraphs: only the English ones go through translation", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText(
+    const result = await translateThinkingTextInBrowser(
       "English text.\n\n日本語のテキスト。\n\nMore English.",
     );
     expect(result).toBe("[ja]English text.\n\n日本語のテキスト。\n\n[ja]More English.");
@@ -131,16 +132,16 @@ describe("translateThinkingText", () => {
         return `[ja]${text}`;
       },
     });
-    const result = await translateThinkingText("ok text.\n\nboom");
+    const result = await translateThinkingTextInBrowser("ok text.\n\nboom");
     expect(result).toBe("[ja]ok text.\n\nboom");
   });
 
   // create() itself failing (e.g. model download not ready) must also fall
   // back to the original text for every paragraph, not throw out of
-  // translateThinkingText.
+  // translateThinkingTextInBrowser.
   test("Translator.create() failing falls back to the original text for all paragraphs", async () => {
     installMockTranslator({ createShouldFail: true });
-    const result = await translateThinkingText("First.\n\nSecond.");
+    const result = await translateThinkingTextInBrowser("First.\n\nSecond.");
     expect(result).toBe("First.\n\nSecond.");
   });
 
@@ -164,11 +165,11 @@ describe("translateThinkingText", () => {
       },
     };
 
-    const first = await translateThinkingText("First.");
+    const first = await translateThinkingTextInBrowser("First.");
     expect(first).toBe("First."); // create() failed -> fallback to original
     expect(createCalls).toBe(1);
 
-    const second = await translateThinkingText("Second.");
+    const second = await translateThinkingTextInBrowser("Second.");
     expect(second).toBe("[ja]Second."); // retried create() succeeded this time
     expect(createCalls).toBe(2);
   });
@@ -177,8 +178,8 @@ describe("translateThinkingText", () => {
   // 2 回訳しても API へは 1 回しか呼ばれない。
   test("caches per-paragraph results: the same paragraph is translated only once across calls", async () => {
     const { calls } = installMockTranslator();
-    const first = await translateThinkingText("Repeated paragraph.");
-    const second = await translateThinkingText("Repeated paragraph.");
+    const first = await translateThinkingTextInBrowser("Repeated paragraph.");
+    const second = await translateThinkingTextInBrowser("Repeated paragraph.");
     expect(first).toBe(second);
     expect(calls).toEqual(["Repeated paragraph."]);
   });
@@ -187,7 +188,7 @@ describe("translateThinkingText", () => {
   // be sent to the API — nothing meaningful to translate.
   test("an empty paragraph is left empty, not sent to the API", async () => {
     const { calls } = installMockTranslator();
-    const result = await translateThinkingText("Text.\n\n\n\nMore.");
+    const result = await translateThinkingTextInBrowser("Text.\n\n\n\nMore.");
     expect(result).toBe("[ja]Text.\n\n\n\n[ja]More.");
     expect(calls.sort()).toEqual(["More.", "Text."]);
   });
@@ -196,9 +197,62 @@ describe("translateThinkingText", () => {
   // (the caller — Timeline.tsx — is expected to gate this via
   // hasTranslatorApi() and not even offer the "ja" tab, but the function
   // itself must still degrade gracefully rather than throw).
-  test("no Translator API present -> translateThinkingText falls back to the original text", async () => {
+  test("no Translator API present -> translateThinkingTextInBrowser falls back to the original text", async () => {
     delete (globalThis as any).Translator;
-    const result = await translateThinkingText("Some English text.");
+    const result = await translateThinkingTextInBrowser("Some English text.");
     expect(result).toBe("Some English text.");
+  });
+});
+
+describe("translateThinkingTextOnHost", () => {
+  test("sends mixed text and its newlines as one complete daemon request", async () => {
+    const input = "The first paragraph is English.ここは日本語です。\n\nFinal paragraph.";
+    const batches: string[][] = [];
+    const result = await translateThinkingTextOnHost(input, async (texts) => {
+      batches.push(texts);
+      return { ok: true, results: [{ ok: true, text: "全文の翻訳" }] };
+    });
+
+    expect(batches).toEqual([[input]]);
+    expect(result).toBe("全文の翻訳");
+  });
+
+  test("preserves a helper item error instead of falling back through browser paragraph logic", async () => {
+    let caught: unknown;
+    try {
+      await translateThinkingTextOnHost("English.日本語。", async () => ({
+        ok: true,
+        results: [{ ok: false, error: "TranslationError.notInstalled" }],
+      }));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("TranslationError.notInstalled");
+  });
+
+  test("caches a successful complete-text result but retries after a failure", async () => {
+    let calls = 0;
+    const request = async () => {
+      calls++;
+      if (calls === 1) {
+        return {
+          ok: false as const,
+          error: { code: "translate_helper_failed", msg: "helper exited" },
+        };
+      }
+      return { ok: true as const, results: [{ ok: true as const, text: "成功" }] };
+    };
+
+    let caught: unknown;
+    try {
+      await translateThinkingTextOnHost("same", request);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as Error).message).toBe("helper exited");
+    expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
+    expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
+    expect(calls).toBe(2);
   });
 });

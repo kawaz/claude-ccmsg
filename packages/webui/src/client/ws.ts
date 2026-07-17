@@ -39,6 +39,7 @@ import type {
   SessionStatusUnsubscribeResponse,
   SetTitleResponse,
   StreamEvent,
+  TranslateResponse,
   TranscriptReadResponse,
   TranscriptSubscribeResponse,
   TranscriptUnsubscribeResponse,
@@ -163,6 +164,9 @@ export interface WsHandle {
    * handshake, not polled — provenance only changes across a daemon restart,
    * which already re-runs the whole handshake. */
   ping(): Promise<PingResponse | ErrorResponse>;
+  /** Translate complete texts through the daemon host. Unlike browser
+   * translation, callers must not split or skip Japanese-containing segments. */
+  translate(texts: string[]): Promise<TranslateResponse | ErrorResponse>;
 }
 
 export function createWsClient(
@@ -190,6 +194,10 @@ export function createWsClient(
   async function onOpen(): Promise<void> {
     reconnectAttempt = 0;
     dispatch({ type: "conn/status", status: "connected" });
+    // Capability belongs to the current daemon process. Clear a previous
+    // connection's answer before probing this hello so stale host tabs cannot
+    // survive a reconnect to a different/non-macOS daemon.
+    dispatch({ type: "translator/availability", host: false });
     // Snapshot store emptiness BEFORE the handshake runs — the `op:"rooms"`
     // reply below dispatches rooms/loaded, which repopulates state.rooms from
     // whatever the daemon knows, and any getState() read after that point
@@ -228,6 +236,11 @@ export function createWsClient(
           exe: ping.exe,
           script: ping.script,
         });
+      // DR-0023 host capability probe. An empty batch verifies the daemon can
+      // find/build its helper without starting TranslationSession or translating
+      // dummy content; a later per-item model error hides the tab at first use.
+      const translate = await send<TranslateResponse>({ op: "translate", texts: [] });
+      dispatch({ type: "translator/availability", host: translate.ok });
     } catch {
       // socket dropped mid-handshake; onClose already schedules the reconnect.
     }
@@ -435,5 +448,6 @@ export function createWsClient(
     agents: () => send({ op: "agents" }),
     sessionSearch: (params) => send({ op: "session_search", ...params }),
     ping: () => send({ op: "ping" }),
+    translate: (texts) => send({ op: "translate", texts }),
   };
 }

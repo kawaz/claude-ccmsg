@@ -1,3 +1,5 @@
+import type { ErrorResponse, TranslateResponse } from "@ccmsg/protocol";
+
 // thinking ブロックの原文 -> 日本語訳を提供する薄いレイヤ (U2: Timeline
 // thinking 翻訳タブ)。Chrome built-in Translator API
 // (https://developer.chrome.com/docs/ai/translator-api) をグローバル
@@ -94,16 +96,45 @@ async function translateParagraph(paragraph: string): Promise<string> {
  * 段落ごとに translateParagraph を呼び、`\n\n` で再結合する (kawaz spec:
  * 「段落 (\n\n) 分割」) — 段落境界を保つことで markdown 構造 (箇条書き等)
  * を崩さない。 */
-export async function translateThinkingText(text: string): Promise<string> {
+export async function translateThinkingTextInBrowser(text: string): Promise<string> {
   const paragraphs = text.split("\n\n");
   const translated = await Promise.all(paragraphs.map(translateParagraph));
   return translated.join("\n\n");
 }
 
-/** テスト専用: モジュール内キャッシュ (段落キャッシュ + Translator
- * インスタンス) をリセットする。globalThis.Translator を差し替えるテストが
- * 前のテストの結果を引き継がないようにするためのフック。 */
+type HostTranslateRequest = (texts: string[]) => Promise<TranslateResponse | ErrorResponse>;
+
+/** Host translation cache is keyed by the complete thinking text, because the
+ * Translation.framework path intentionally receives mixed English/Japanese and
+ * newlines as one request (DR-0023 + PoC). Rejections are removed so installing
+ * the language model or respawning the helper can recover without a page reload. */
+const hostTextCache = new Map<string, Promise<string>>();
+
+export function translateThinkingTextOnHost(
+  text: string,
+  request: HostTranslateRequest,
+): Promise<string> {
+  const cached = hostTextCache.get(text);
+  if (cached) return cached;
+  const promise = request([text])
+    .then((response) => {
+      if (!response.ok) throw new Error(response.error.msg);
+      const result = response.results[0];
+      if (!result) throw new Error("translation helper returned no result");
+      if (!result.ok) throw new Error(result.error);
+      return result.text;
+    })
+    .catch((error) => {
+      if (hostTextCache.get(text) === promise) hostTextCache.delete(text);
+      throw error;
+    });
+  hostTextCache.set(text, promise);
+  return promise;
+}
+
+/** テスト専用: browser/host 両経路のモジュール内キャッシュをリセットする。 */
 export function _resetTranslatorStateForTest(): void {
   translatorPromise = null;
   paragraphCache.clear();
+  hostTextCache.clear();
 }

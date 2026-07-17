@@ -751,6 +751,41 @@ describe("createWsClient agents/ping (U1)", () => {
     }
   });
 
+  test("translate sends the complete texts batch and preserves ordered item results", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.translate(["English.日本語。", "Second."]);
+    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+      op: "translate",
+      texts: ["English.日本語。", "Second."],
+    });
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        results: [
+          { ok: true, text: "英語。日本語。" },
+          { ok: false, error: "TranslationError.notInstalled" },
+        ],
+      }),
+    );
+
+    const response = await req;
+    expect(response).toEqual({
+      ok: true,
+      results: [
+        { ok: true, text: "英語。日本語。" },
+        { ok: false, error: "TranslationError.notInstalled" },
+      ],
+    });
+  });
+
   // DR-0021 Phase 2: sessionSearch's wire shape — params (excluding op) pass
   // through untouched, op:"session_search" is added by the wrapper (same
   // convention as fsList/transcriptRead's own option-object callers).
@@ -807,12 +842,12 @@ describe("createWsClient agents/ping (U1)", () => {
   });
 
   // The onOpen handshake (hello -> rooms -> subscribe -> peers -> agents ->
-  // ping) dispatches agents/loaded and daemon-info/loaded once the sockets
-  // "answer" each request in order — this drives the whole handshake through
+  // ping -> translate capability) dispatches the initial daemon-backed state
+  // once the socket answers each request in order — this drives the whole handshake through
   // a live-ish mock instead of calling the two ops directly, to guard the
   // wiring in onOpen itself (a regression there wouldn't show up in the two
   // unit tests above, which call agents()/ping() standalone).
-  test("onOpen handshake dispatches agents/loaded and daemon-info/loaded after peers", async () => {
+  test("onOpen handshake dispatches daemon state and host translation availability", async () => {
     const actions: Action[] = [];
     const handle = createWsClient(
       (a) => actions.push(a),
@@ -883,11 +918,19 @@ describe("createWsClient agents/ping (U1)", () => {
       }),
     );
     await tick();
+    // empty-batch host translation capability probe
+    expect(JSON.parse(ws1.sent[6] ?? "{}")).toEqual({ op: "translate", texts: [] });
+    ws1.triggerMessage(JSON.stringify({ ok: true, results: [] }));
+    await tick();
 
     const agentsAction = actions.find((a) => a.type === "agents/loaded");
     const daemonAction = actions.find((a) => a.type === "daemon-info/loaded");
+    const translatorAction = actions.find(
+      (a) => a.type === "translator/availability" && a.host === true,
+    );
     expect(agentsAction).toBeDefined();
     expect(daemonAction).toBeDefined();
+    expect(translatorAction).toBeDefined();
     if (agentsAction?.type === "agents/loaded") expect(agentsAction.agents).toHaveLength(1);
     if (daemonAction?.type === "daemon-info/loaded") expect(daemonAction.script).toBe("entry.ts");
   });

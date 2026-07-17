@@ -54,6 +54,12 @@ ci: lint typecheck test validate
 
 # ---------- dev recipes (push/ci の依存、利用者が直接叩くこともある) ----------
 
+# macOS Translation.framework helper を単発ビルド (DR-0023)。CI 依存には
+# しないため、Translation.framework の無い Linux でも通常の ci は通る。
+build-translate-helper:
+    mkdir -p packages/translate-helper/.build
+    swiftc -parse-as-library -framework Translation packages/translate-helper/main.swift -o packages/translate-helper/.build/translate-helper
+
 # lint (justfile フォーマット確認 + oxlint (type-aware) + oxfmt の整形確認。TS の型チェックは typecheck recipe で行う)
 lint:
     just --fmt --check --unstable

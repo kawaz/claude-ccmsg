@@ -6,6 +6,7 @@ bun.lockb.tmp
 # Build artifacts
 dist/
 build/
+packages/translate-helper/.build/
 *.tsbuildinfo
 
 # OS

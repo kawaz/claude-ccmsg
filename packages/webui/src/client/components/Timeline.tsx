@@ -33,7 +33,11 @@ import {
   type UserMessageKind,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
-import { hasTranslatorApi, translateThinkingText } from "../translate.ts";
+import {
+  hasTranslatorApi,
+  translateThinkingTextInBrowser,
+  translateThinkingTextOnHost,
+} from "../translate.ts";
 import {
   loopNextIndex,
   loopPrevIndex,
@@ -154,96 +158,140 @@ function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
   );
 }
 
-// thinking 翻訳タブ (U2 kawaz spec): Chrome built-in Translator API が使える
-//環境でのみ original|ja タブを描画する (feature-detect は hasTranslatorApi
-// 呼び出し側で行う。タブ自体を出さない = レイアウト変化なし、という spec の
-// 要件を満たすためモジュールレベルで一度だけ判定してコンポーネントに渡す)。
+// thinking 翻訳比較タブ (DR-0023): original は常に基準面、host/browser
+// は各経路が利用可能な時だけ追加する。host は Translation.framework へ全文を
+// そのまま送り、browser は既存の段落分割・日本語判定ロジックを維持する。
+interface TranslationAvailability {
+  host: boolean;
+  browser: boolean;
+}
+
+type ThinkingTab = "original" | "ja-host" | "ja-browser";
+
 function ThinkingSegment({
   text,
   ts,
-  translatorAvailable,
+  translationAvailability,
   // fold グループ (FoldGroup の <details>) が開いているか — 表示形式統一
   // タスクの kawaz spec: 「fold を開いた時、中の thinking は details open +
-  // ja タブ選択がデフォルト」。fold 外 (境界行に混在する thinking 等) から
-  // 呼ばれるときは常に false で渡り、その場合は従来通り閉じたまま
-  // (「fold 外に単独で出る thinking の従来デフォルト (閉) は変えない」)。
+  // 利用可能な ja タブ選択がデフォルト」。fold 外からは false で渡る。
   foldGroupOpen,
   mdSearch,
 }: {
   text: string;
   ts: string | null;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
-  // In-view search (DR-0022 §3): passed straight through to both tabs'
-  // MarkdownView (original text and its ja translation both search the same
-  // way — see SegmentView's doc comment on when this is non-undefined).
   mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
 }) {
-  const [tab, setTab] = useState<"original" | "ja">("original");
-  // null = まだ翻訳していない (ja タブ初回クリック、または fold group の
-  // 初回オープンで遅延実行、kawaz spec)。翻訳結果自体は translate.ts 側で
-  // 段落単位にメモリキャッシュされるので、fold 開閉やタブ往復で再翻訳は
-  // 起きない。
-  const [jaText, setJaText] = useState<string | null>(null);
-  const [translating, setTranslating] = useState(false);
-  // <details open> を FoldGroup 開閉に連動させる側 (uncontrolled 初期値 +
-  // onToggle 同期) — open={foldGroupOpen} と直に結ぶと、ユーザーが手動で
-  // この thinking だけ閉じた後にも再レンダーで強制的に開き直されてしまう
-  // (Preact は同じ prop 値なら DOM に書き戻さないが、親の再レンダーで一度
-  // false→true を経由すると上書きされる)。ここでは自前 state に落として
-  // onToggle で追従させることでユーザーの手動 close を尊重する。
+  const { store, ws } = useApp();
+  const [tab, setTab] = useState<ThinkingTab>("original");
+  const [hostText, setHostText] = useState<string | null>(null);
+  const [browserText, setBrowserText] = useState<string | null>(null);
+  const [hostTranslating, setHostTranslating] = useState(false);
+  const [browserTranslating, setBrowserTranslating] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  // fold group が最初に開かれた瞬間だけ自動オープン+ja選択を発火させる
-  // ためのワンショットフラグ。2 回目以降の開閉では発火しない (ユーザーが
-  // その後 original タブへ戻したり details を閉じたりしても、再度の
-  // fold 開閉で勝手に上書きされない)。
+  const [bodySelected, setBodySelected] = useState(false);
   const autoOpenedRef = useRef(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  function selectJa() {
-    setTab("ja");
-    if (jaText === null && !translating) {
-      setTranslating(true);
-      void translateThinkingText(text).then((result) => {
-        setJaText(result);
-        setTranslating(false);
-      });
-    }
+  const clearBodySelection = useCallback(() => {
+    if (!bodySelected) return;
+    window.getSelection()?.removeAllRanges();
+    setBodySelected(false);
+  }, [bodySelected]);
+
+  const changeTab = useCallback(
+    (next: ThinkingTab) => {
+      clearBodySelection();
+      setTab(next);
+    },
+    [clearBodySelection],
+  );
+
+  function selectHost() {
+    if (!translationAvailability.host) return;
+    changeTab("ja-host");
+    if (hostText !== null || hostTranslating) return;
+    setHostTranslating(true);
+    void translateThinkingTextOnHost(text, (texts) => ws.translate(texts))
+      .then((result) => setHostText(result))
+      .catch(() => {
+        // A capability probe can only verify OS/helper availability. A missing
+        // en→ja model surfaces on the first real item; hide the host route from
+        // every thinking block after that failure (DR-0023 Phase 2 option).
+        store.dispatch({ type: "translator/availability", host: false });
+        setTab("original");
+      })
+      .finally(() => setHostTranslating(false));
   }
 
-  // selectJa は毎レンダー新しい参照になるが、上の autoOpenedRef ガードで
-  // 実行は fold group の初回オープン 1 回だけに絞られるため、依存配列に
-  // 含めなくても安全 (毎回作り直される関数を追いかける必要がない)。
-  //
-  // details open と ja タブ選択は別ゲート (kawaz spec: 「fold を開いた時、
-  // 中の thinking は details open + ja タブ選択がデフォルト」— ja 選択が
-  // Translator 前提なのは当然だが、details open まで Translator の有無に
-  // 依存する理由はない)。両方を translatorAvailable で一括ゲートすると、
-  // Chrome built-in Translator API が無い環境 (Safari/Firefox 等) では
-  // fold を開いても thinking が閉じたままになり、spec の "details open"
-  // 部分が非対応ブラウザで丸ごと落ちてしまう。
+  function selectBrowser() {
+    if (!translationAvailability.browser) return;
+    changeTab("ja-browser");
+    if (browserText !== null || browserTranslating) return;
+    setBrowserTranslating(true);
+    void translateThinkingTextInBrowser(text).then((result) => {
+      setBrowserText(result);
+      setBrowserTranslating(false);
+    });
+  }
+
+  // The host route is the default comparison result when both are present: it
+  // is the dictionary-like path this feature adds, while browser remains an
+  // independently selectable comparison surface.
+  function selectDefaultTranslation() {
+    if (translationAvailability.host) selectHost();
+    else if (translationAvailability.browser) selectBrowser();
+  }
+
   useEffect(() => {
     if (foldGroupOpen && !autoOpenedRef.current) {
       autoOpenedRef.current = true;
       setDetailsOpen(true);
-      if (translatorAvailable) selectJa();
+      selectDefaultTranslation();
     }
-  }, [foldGroupOpen, translatorAvailable]);
+  }, [foldGroupOpen, translationAvailability.host, translationAvailability.browser]);
 
-  const bodyText = tab === "ja" && jaText !== null ? jaText : text;
+  // Reconnect can replace a macOS daemon with a non-capable daemon. The WS
+  // handshake clears host availability before probing the new process, so an
+  // already-selected host tab must return to original rather than show stale text.
+  useEffect(() => {
+    if (tab === "ja-host" && !translationAvailability.host) setTab("original");
+  }, [tab, translationAvailability.host]);
 
-  // Translator API の無い環境 (Safari 等) 向けの全選択ボタン (kawaz r17
-  // mid=39): thinking は英語が多く、iOS では選択範囲のタップメニューから
-  // OS の翻訳がすぐ呼べる — 本文を 1 タップで全選択できれば十分機能する。
-  const bodyRef = useRef<HTMLDivElement | null>(null);
-  const selectAllBody = useCallback(() => {
+  const bodyText =
+    tab === "ja-host" && hostText !== null
+      ? hostText
+      : tab === "ja-browser" && browserText !== null
+        ? browserText
+        : text;
+
+  const toggleBodySelection = useCallback(() => {
+    if (tab !== "original") return;
     const el = bodyRef.current;
-    if (!el) return;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-  }, []);
+    const selection = window.getSelection();
+    if (!el || !selection) return;
+
+    const fullRange = document.createRange();
+    fullRange.selectNodeContents(el);
+    const selected =
+      selection.rangeCount === 1 &&
+      selection.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, fullRange) <= 0 &&
+      selection.getRangeAt(0).compareBoundaryPoints(Range.END_TO_END, fullRange) >= 0;
+    selection.removeAllRanges();
+    if (selected) {
+      setBodySelected(false);
+      return;
+    }
+    selection.addRange(fullRange);
+    setBodySelected(true);
+  }, [tab]);
+
+  const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
+  const translating =
+    (tab === "ja-host" && hostTranslating && hostText === null) ||
+    (tab === "ja-browser" && browserTranslating && browserText === null);
 
   return (
     <details
@@ -255,39 +303,48 @@ function ThinkingSegment({
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-thinking-body">
-          {/* tabs (translator あり = original/ja、なし = select) は枠内の
-           * 上部にトゥールバーとして置く (kawaz r17 mid=64、2026-07-15)。
-           * 枠外に出すと属す thinking が視覚的に切れ、fold ガイドの縦線に
-           * ボタンが乗ってしまう。 */}
-          {translatorAvailable ? (
-            <div class="tl-thinking-tabs">
-              <button
-                type="button"
-                class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
-                onClick={() => setTab("original")}
-              >
-                original
-              </button>
-              <button
-                type="button"
-                class={"tl-thinking-tab" + (tab === "ja" ? " active" : "")}
-                onClick={selectJa}
-              >
-                ja
-              </button>
-            </div>
-          ) : (
-            <div class="tl-thinking-tabs">
-              <button type="button" class="tl-thinking-tab" onClick={selectAllBody}>
-                select
-              </button>
-            </div>
-          )}
-          {/* ja タブの翻訳結果も markdown レンダリング (kawaz spec: 「ja 表示も
-           * markdown レンダリング」) — original と同じ MarkdownView を再利用。
-           * bodyRef は「本文だけ」を選択対象にするため MarkdownView を包む
-           * 内 div に付ける (tabs 自身の "select"/"original"/"ja" 文字を
-           * selectAllBody 経由で選択したくない)。 */}
+          <div class="tl-thinking-toolbar">
+            {hasTranslationTab ? (
+              <div class="tl-thinking-tabs">
+                <button
+                  type="button"
+                  class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
+                  onClick={() => changeTab("original")}
+                >
+                  original
+                </button>
+                {translationAvailability.host ? (
+                  <button
+                    type="button"
+                    class={"tl-thinking-tab" + (tab === "ja-host" ? " active" : "")}
+                    onClick={selectHost}
+                  >
+                    ja(host)
+                  </button>
+                ) : null}
+                {translationAvailability.browser ? (
+                  <button
+                    type="button"
+                    class={"tl-thinking-tab" + (tab === "ja-browser" ? " active" : "")}
+                    onClick={selectBrowser}
+                  >
+                    ja(browser)
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              class={
+                "tl-thinking-tab tl-thinking-select-toggle" +
+                (hasTranslationTab ? " separated" : "")
+              }
+              disabled={tab !== "original"}
+              onClick={toggleBodySelection}
+            >
+              {bodySelected ? "clear" : "select"}
+            </button>
+          </div>
           <div ref={bodyRef}>
             <MarkdownView
               source={bodyText}
@@ -295,9 +352,7 @@ function ThinkingSegment({
               onMatchClick={mdSearch?.onMatchClick}
             />
           </div>
-          {tab === "ja" && translating && jaText === null ? (
-            <p class="tl-thinking-translating">翻訳中…</p>
-          ) : null}
+          {translating ? <p class="tl-thinking-translating">翻訳中…</p> : null}
         </div>
       </div>
     </details>
@@ -306,14 +361,14 @@ function ThinkingSegment({
 
 function SegmentView({
   segment,
-  translatorAvailable,
+  translationAvailability,
   ts,
   foldGroupOpen,
   searchKey,
   searchCtx,
 }: {
   segment: Segment;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   // 親 TurnLine の ts (Segment 自体は持たない) — 表示形式統一タスクの
   // 「fold 対象アイテムは全て時刻を持つ」を満たすため各 fold summary に渡す。
   ts: string | null;
@@ -359,7 +414,7 @@ function SegmentView({
           <ThinkingSegment
             text={segment.text}
             ts={ts}
-            translatorAvailable={translatorAvailable}
+            translationAvailability={translationAvailability}
             foldGroupOpen={foldGroupOpen}
             mdSearch={mdSearch}
           />
@@ -471,12 +526,12 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
 function SystemMessageBody({
   kind,
   line,
-  translatorAvailable,
+  translationAvailability,
   foldGroupOpen,
 }: {
   kind: UserMessageKind;
   line: TurnLine;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
 }) {
   const [tab, setTab] = useState<"rich" | "raw">("rich");
@@ -529,7 +584,7 @@ function SystemMessageBody({
               <SegmentView
                 key={i}
                 segment={seg}
-                translatorAvailable={translatorAvailable}
+                translationAvailability={translationAvailability}
                 ts={null}
                 foldGroupOpen={foldGroupOpen}
                 searchKey={`sysraw-${i}`}
@@ -554,7 +609,7 @@ function SystemMessageBody({
 function LineView({
   line,
   offset,
-  translatorAvailable,
+  translationAvailability,
   foldGroupOpen,
   searchCtx,
 }: {
@@ -562,7 +617,7 @@ function LineView({
   // このエントリの byte offset — search unit key (`${offset}-${segIndex}`)
   // の組み立てに使う (DR-0022 §3)。
   offset: number;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
   searchCtx: TLSearchCtx | undefined;
 }) {
@@ -599,7 +654,7 @@ function LineView({
         <SystemMessageBody
           kind={sysKind}
           line={line}
-          translatorAvailable={translatorAvailable}
+          translationAvailability={translationAvailability}
           foldGroupOpen={foldGroupOpen}
         />
       </details>
@@ -619,7 +674,7 @@ function LineView({
             <SegmentView
               key={i}
               segment={seg}
-              translatorAvailable={translatorAvailable}
+              translationAvailability={translationAvailability}
               ts={line.ts}
               foldGroupOpen={foldGroupOpen}
               searchKey={`${offset}-${i}`}
@@ -645,11 +700,11 @@ function LineView({
 // デフォルト" behavior (kawaz spec).
 function FoldGroup({
   entries,
-  translatorAvailable,
+  translationAvailability,
   searchCtx,
 }: {
   entries: TimelineEntry[];
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   searchCtx: TLSearchCtx | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -694,7 +749,7 @@ function FoldGroup({
                 key={sg.entry.offset}
                 line={sg.entry.line}
                 offset={sg.entry.offset}
-                translatorAvailable={translatorAvailable}
+                translationAvailability={translationAvailability}
                 foldGroupOpen={open}
                 searchCtx={searchCtx}
               />
@@ -702,7 +757,7 @@ function FoldGroup({
               <ItemsSubFold
                 key={sg.entries[0]!.offset}
                 entries={sg.entries}
-                translatorAvailable={translatorAvailable}
+                translationAvailability={translationAvailability}
                 foldGroupOpen={open}
                 searchCtx={searchCtx}
               />
@@ -718,12 +773,12 @@ function FoldGroup({
  * 既定は閉。こちらにも縦線クリック閉じを付ける (ネスト側の「| |」相当)。 */
 function ItemsSubFold({
   entries,
-  translatorAvailable,
+  translationAvailability,
   foldGroupOpen,
   searchCtx,
 }: {
   entries: TimelineEntry[];
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
   searchCtx: TLSearchCtx | undefined;
 }) {
@@ -745,7 +800,7 @@ function ItemsSubFold({
               key={offset}
               line={line}
               offset={offset}
-              translatorAvailable={translatorAvailable}
+              translationAvailability={translationAvailability}
               foldGroupOpen={foldGroupOpen}
               searchCtx={searchCtx}
             />
@@ -769,7 +824,7 @@ function UserPromptBubble({
   line,
   offsetKey,
   registerUserTurnRef,
-  translatorAvailable,
+  translationAvailability,
   now,
   searchCtx,
   onUserTurnClick,
@@ -780,7 +835,7 @@ function UserPromptBubble({
   // (isUserTextTurn) はこの吹き出し以外の経路には現れないので、fold-inner
   // 側 (LineView) はこの登録を一切行わない。
   registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
   // 👤 nav のクリック同期 (DR-0022 §2.2 の仕様を 👤 nav にも共通化): この吹き
@@ -801,7 +856,7 @@ function UserPromptBubble({
             <SegmentView
               key={i}
               segment={seg}
-              translatorAvailable={translatorAvailable}
+              translationAvailability={translationAvailability}
               ts={line.ts}
               foldGroupOpen={false}
               searchKey={`${offsetKey}-${i}`}
@@ -820,13 +875,13 @@ function UserPromptBubble({
 function AssistantBubble({
   line,
   offset,
-  translatorAvailable,
+  translationAvailability,
   now,
   searchCtx,
 }: {
   line: TurnLine;
   offset: number;
-  translatorAvailable: boolean;
+  translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
 }) {
@@ -837,7 +892,7 @@ function AssistantBubble({
           <SegmentView
             key={i}
             segment={seg}
-            translatorAvailable={translatorAvailable}
+            translationAvailability={translationAvailability}
             ts={line.ts}
             foldGroupOpen={false}
             searchKey={`${offset}-${i}`}
@@ -969,11 +1024,16 @@ export function Timeline({
   onOpenStatus: () => void;
 }) {
   const { store, ws } = useApp();
-  const connStatus = useStoreState(store).connStatus;
+  const appState = useStoreState(store);
+  const connStatus = appState.connStatus;
 
-  // Chrome built-in Translator API の feature-detect (U2 kawaz spec): 環境が
-  // 変わらない限り再評価不要なので mount 時に一度だけ判定する。
-  const translatorAvailable = useMemo(() => hasTranslatorApi(), []);
+  // browser は mount 時の feature detect、host は WS hello 後の daemon
+  // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
+  const browserTranslatorAvailable = useMemo(() => hasTranslatorApi(), []);
+  const translationAvailability = useMemo<TranslationAvailability>(
+    () => ({ host: appState.hostTranslatorAvailable, browser: browserTranslatorAvailable }),
+    [appState.hostTranslatorAvailable, browserTranslatorAvailable],
+  );
   // msg 時刻の相対時間表示 ("3h10m") 用の雑更新 tick (kawaz r17 mid=30):
   // 3 分おきの再描画で十分。
   const now = useNow();
@@ -1707,7 +1767,7 @@ export function Timeline({
                     <FoldGroup
                       key={group.entries[0]!.offset}
                       entries={group.entries}
-                      translatorAvailable={translatorAvailable}
+                      translationAvailability={translationAvailability}
                       searchCtx={searchCtx}
                     />
                   );
@@ -1731,7 +1791,7 @@ export function Timeline({
                         line={line}
                         offsetKey={offset}
                         registerUserTurnRef={registerUserTurnRef}
-                        translatorAvailable={translatorAvailable}
+                        translationAvailability={translationAvailability}
                         now={now}
                         searchCtx={searchCtx}
                         onUserTurnClick={onUserTurnClick}
@@ -1743,7 +1803,7 @@ export function Timeline({
                         key={offset}
                         line={line}
                         offset={offset}
-                        translatorAvailable={translatorAvailable}
+                        translationAvailability={translationAvailability}
                         now={now}
                         searchCtx={searchCtx}
                       />

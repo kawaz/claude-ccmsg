@@ -675,6 +675,14 @@ export interface PingRequest {
   op: "ping";
 }
 
+/** Local en→ja translation through the daemon host (DR-0023, user role only).
+ * An empty batch is a capability probe: it verifies the helper can be found or
+ * built without starting a TranslationSession. */
+export interface TranslateRequest {
+  op: "translate";
+  texts: string[];
+}
+
 export interface ShutdownRequest {
   op: "shutdown";
   reason?: string;
@@ -727,6 +735,7 @@ export type Request =
   | SessionStatusSubscribeRequest
   | SessionStatusUnsubscribeRequest
   | PingRequest
+  | TranslateRequest
   | ShutdownRequest
   | LeaveRequest
   | InviteRequest;
@@ -981,6 +990,14 @@ export interface SessionStatusUnsubscribeResponse {
   ok: true;
   sid: string;
 }
+export type TranslateResult = { ok: true; text: string } | { ok: false; error: string };
+export interface TranslateResponse {
+  ok: true;
+  /** One result per request text, preserving input order. Per-item failures keep
+   * the helper's Translation.framework error text (including notInstalled). */
+  results: TranslateResult[];
+}
+
 export interface PingResponse {
   ok: true;
   pong: true;
@@ -1046,6 +1063,7 @@ export type Response =
   | SessionStatusSubscribeResponse
   | SessionStatusUnsubscribeResponse
   | PingResponse
+  | TranslateResponse
   | ShutdownResponse
   | LeaveResponse
   | InviteResponse;
@@ -1120,5 +1138,9 @@ export const ErrorCode = {
   // transcript ("tl"), not the room. Both reply to a u1 msg and any plain post
   // from the member session are rejected with guidance at the wire boundary.
   reply_via_tl: "reply_via_tl",
+  // DR-0023 host translation: the daemon is not running on macOS, the helper
+  // cannot be built/found, or its persistent process failed.
+  translate_unavailable: "translate_unavailable",
+  translate_helper_failed: "translate_helper_failed",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -61,6 +61,7 @@ import { startHttpListener, type HttpFallback, type HttpListener } from "./http.
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
 import { createOriginsFile } from "./origins-file.ts";
 import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
+import { createTranslateService, type TranslateService } from "./translate-helper.ts";
 import {
   appendEvent,
   closeRoom,
@@ -143,6 +144,8 @@ export interface Daemon {
   transcriptTail: TranscriptTailStore;
   /** folded transcript status subscriptions per sid (DR-0020 Phase 1). */
   sessionStatus: SessionStatusStore;
+  /** Persistent macOS Translation.framework helper (DR-0023). */
+  translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
    * peers-live-update-protocol) — lets maybeBroadcastPeers skip a push when a
    * hello re-send (or any other registerSession/removeConn call) didn't actually
@@ -752,6 +755,7 @@ const IDENTITY_OPS = new Set([
   "session_status",
   "session_status_subscribe",
   "session_status_unsubscribe",
+  "translate",
 ]);
 
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
@@ -1584,6 +1588,37 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    case "translate": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'translate' requires user role");
+        return;
+      }
+      if (!Array.isArray(req.texts) || req.texts.some((text) => typeof text !== "string")) {
+        sendErr(conn, ErrorCode.invalid_args, "translate requires a string[] texts");
+        return;
+      }
+      // Translation.framework and helper process I/O are async. Keep this
+      // connection FIFO-gated so a later response cannot overtake this one on
+      // clients that pair requests and replies by arrival order.
+      const gate = daemon.translator
+        .translate(req.texts)
+        .then(
+          (result) => {
+            if (result.ok) send(conn, { ok: true, results: result.results });
+            else sendErr(conn, result.code, result.msg);
+          },
+          (error) => {
+            daemon.log.error(`op 'translate' failed: ${String(error)}`);
+            sendErr(conn, ErrorCode.translate_helper_failed, String(error));
+          },
+        )
+        .finally(() => {
+          if (replyGates.get(conn) === gate) replyGates.delete(conn);
+        });
+      replyGates.set(conn, gate);
+      return;
+    }
+
     // user role only, same rationale as "agents": live-tailing a transcript is a
     // webui viewer feature, not something a session needs from the wire protocol.
     case "transcript_subscribe": {
@@ -1774,6 +1809,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
   stopAgentsPoller(daemon.agentsPoller);
+  daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllTailWatches(daemon.transcriptTail);
   try {
@@ -1907,6 +1943,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     agentsPoller: createAgentsPoller(),
     transcriptTail: createTranscriptTailStore(),
     sessionStatus: createSessionStatusStore(),
+    translator: createTranslateService(),
     peersSnapshot: "",
   };
 

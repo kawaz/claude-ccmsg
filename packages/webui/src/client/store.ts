@@ -139,6 +139,8 @@ export interface AppState {
    * `ev:"agents"` push — no manual refresh needed. */
   agents: AgentInfo[];
   daemonInfo: DaemonInfo | null;
+  /** DR-0023 host translation capability, probed once after each hello. */
+  hostTranslatorAvailable: boolean;
   /** which top-level screen the locator currently selects. */
   view: View;
   currentRoomId: string | null;
@@ -179,6 +181,7 @@ export function initialState(): AppState {
     peers: [],
     agents: [],
     daemonInfo: null,
+    hostTranslatorAvailable: false,
     view: "room",
     currentRoomId: null,
     currentMid: null,
@@ -201,6 +204,7 @@ export type Action =
   // reducer just replaces the list either way, same as peers/loaded.
   | { type: "agents/loaded"; agents: AgentInfo[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
+  | { type: "translator/availability"; host: boolean }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "mention/toggle"; id: string }
@@ -583,6 +587,8 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         daemonInfo: { version: action.version, exe: action.exe, script: action.script },
       };
+    case "translator/availability":
+      return { ...state, hostTranslatorAvailable: action.host };
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":

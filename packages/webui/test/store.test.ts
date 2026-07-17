@@ -304,6 +304,15 @@ describe("reducer / conn/status", () => {
   });
 });
 
+describe("reducer / translator availability (DR-0023)", () => {
+  test("replaces the host capability with the latest daemon probe result", () => {
+    const available = dispatch(initialState(), { type: "translator/availability", host: true });
+    expect(available.hostTranslatorAvailable).toBe(true);
+    const unavailable = dispatch(available, { type: "translator/availability", host: false });
+    expect(unavailable.hostTranslatorAvailable).toBe(false);
+  });
+});
+
 describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
   test("sets currentRoomId + currentMid and resets mentionTo + closes mobile sidebar", () => {
     const withMention = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
