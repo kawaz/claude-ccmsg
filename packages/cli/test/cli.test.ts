@@ -47,6 +47,7 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
 const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
+  read <room> <mN[,mN...]>                  メッセージ全文取得 (truncated時に)
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
