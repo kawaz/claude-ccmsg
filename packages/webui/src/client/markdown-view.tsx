@@ -32,6 +32,7 @@ import type {
 } from "mdast";
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
+import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 
 // URL scheme allowlist for link/image targets (DR-0010): http/https/mailto,
 // plus scheme-less URLs (relative paths, `#fragment`s) which CommonMark
@@ -113,9 +114,32 @@ export function isSafeUrl(url: string): boolean {
 
 type AnyNode = RootContent | PhrasingContent;
 
-function renderChildren(nodes: AnyNode[] | undefined, keyPrefix: string): (VNode | string)[] {
+/** In-view search context threaded through the mdast walk (DR-0022 §3: TL
+ * highlighting must reach into markdown-rendered assistant text, not just
+ * plain segments) — `undefined` (the common case, no active search) skips
+ * every extra allocation below and reproduces the pre-DR-0022 output
+ * byte-for-byte. Only `text` nodes consult it; `code`/`inlineCode` are
+ * deliberately left out of scope (they render through CodeBlock's own Shiki
+ * pipeline, which would need the same "bypass tokens while searching"
+ * treatment FileViewer.tsx applies to its own Shiki spans — a follow-up, not
+ * this pass). */
+interface MarkdownSearchCtx {
+  words: readonly SearchWord[];
+  /** Called when any highlighted span in this markdown tree is clicked —
+   * the caller (Timeline.tsx) already knows which "unit" (segment) this
+   * whole render belongs to, so a single no-arg callback per MarkdownView
+   * instance is enough (DR-0022 §2.2: click only updates the index, all
+   * hits within one unit resolve to that unit's position). */
+  onMatchClick: () => void;
+}
+
+function renderChildren(
+  nodes: AnyNode[] | undefined,
+  keyPrefix: string,
+  search: MarkdownSearchCtx | undefined,
+): (VNode | string)[] {
   if (!nodes) return [];
-  return nodes.map((n, i) => renderNode(n, `${keyPrefix}.${i}`));
+  return nodes.map((n, i) => renderNode(n, `${keyPrefix}.${i}`, search));
 }
 
 // Every mdast node type this renderer has an opinion on is listed in
@@ -127,13 +151,42 @@ function renderChildren(nodes: AnyNode[] | undefined, keyPrefix: string): (VNode
 // and this app never passes it) — falls through to the `default` case below,
 // which recurses into `children` if present so text content isn't silently
 // dropped, or renders nothing if the node has none.
-function renderNode(node: AnyNode, key: string): VNode | string {
+function renderNode(
+  node: AnyNode,
+  key: string,
+  search: MarkdownSearchCtx | undefined,
+): VNode | string {
   switch (node.type) {
-    case "text":
-      return (node as Text).value;
+    case "text": {
+      const value = (node as Text).value;
+      if (!search || search.words.length === 0) return value;
+      const pieces = splitTextForHighlight(value, search.words);
+      if (pieces.length === 1 && pieces[0]!.colorIndex === null) return value;
+      // Wrapped in a <span> only on this (active-search) path — the common
+      // no-search path above still returns the bare string Preact expects,
+      // unchanged from pre-DR-0022 behavior.
+      return (
+        <span key={key}>
+          {pieces.map((p, i) =>
+            p.colorIndex !== null ? (
+              <mark
+                key={`${key}.${i}`}
+                class="search-hl"
+                style={{ "--hl-color": `var(--search-color-${p.colorIndex + 1})` }}
+                onClick={search.onMatchClick}
+              >
+                {p.text}
+              </mark>
+            ) : (
+              p.text
+            ),
+          )}
+        </span>
+      );
+    }
 
     case "paragraph":
-      return <p key={key}>{renderChildren((node as Paragraph).children, key)}</p>;
+      return <p key={key}>{renderChildren((node as Paragraph).children, key, search)}</p>;
 
     case "heading": {
       const heading = node as Heading;
@@ -144,17 +197,17 @@ function renderNode(node: AnyNode, key: string): VNode | string {
         | "h4"
         | "h5"
         | "h6";
-      return h(tag, { key }, renderChildren(heading.children, key)) as VNode;
+      return h(tag, { key }, renderChildren(heading.children, key, search)) as VNode;
     }
 
     case "strong":
-      return <strong key={key}>{renderChildren((node as Strong).children, key)}</strong>;
+      return <strong key={key}>{renderChildren((node as Strong).children, key, search)}</strong>;
 
     case "emphasis":
-      return <em key={key}>{renderChildren((node as Emphasis).children, key)}</em>;
+      return <em key={key}>{renderChildren((node as Emphasis).children, key, search)}</em>;
 
     case "delete":
-      return <del key={key}>{renderChildren((node as Delete).children, key)}</del>;
+      return <del key={key}>{renderChildren((node as Delete).children, key, search)}</del>;
 
     case "inlineCode":
       return (
@@ -178,7 +231,7 @@ function renderNode(node: AnyNode, key: string): VNode | string {
       // by this same origin.
       const attachment = attachmentUrlFromPath(link.url);
       if (attachment) {
-        const label = renderChildren(link.children, key);
+        const label = renderChildren(link.children, key, search);
         // Extract text-only alt for the <img>; falls back to link text as-is
         // when children include non-text (rare for `[FILE1:name](path)` shape
         // which is a single text run, but be defensive).
@@ -216,7 +269,7 @@ function renderNode(node: AnyNode, key: string): VNode | string {
         // Disarmed: render the link's own text with no <a>/href at all so a
         // hostile URL scheme can never reach the DOM, while the human-visible
         // content (the link text) is still shown rather than dropped.
-        return <span key={key}>{renderChildren(link.children, key)}</span>;
+        return <span key={key}>{renderChildren(link.children, key, search)}</span>;
       }
       return (
         <a
@@ -226,7 +279,7 @@ function renderNode(node: AnyNode, key: string): VNode | string {
           target="_blank"
           rel="noopener noreferrer"
         >
-          {renderChildren(link.children, key)}
+          {renderChildren(link.children, key, search)}
         </a>
       );
     }
@@ -261,16 +314,18 @@ function renderNode(node: AnyNode, key: string): VNode | string {
       return h(
         tag,
         { key, start: list.start ?? undefined },
-        renderChildren(list.children, key),
+        renderChildren(list.children, key, search),
       ) as VNode;
     }
 
     case "listItem":
-      return <li key={key}>{renderChildren((node as ListItem).children, key)}</li>;
+      return <li key={key}>{renderChildren((node as ListItem).children, key, search)}</li>;
 
     case "blockquote":
       return (
-        <blockquote key={key}>{renderChildren((node as Blockquote).children, key)}</blockquote>
+        <blockquote key={key}>
+          {renderChildren((node as Blockquote).children, key, search)}
+        </blockquote>
       );
 
     case "thematicBreak":
@@ -306,7 +361,7 @@ function renderNode(node: AnyNode, key: string): VNode | string {
                       key: `${key}.${ri}.${ci}`,
                       style: cellAlign ? { textAlign: cellAlign } : undefined,
                     },
-                    renderChildren(cell.children, `${key}.${ri}.${ci}`),
+                    renderChildren(cell.children, `${key}.${ri}.${ci}`, search),
                   ) as VNode;
                 })}
               </tr>
@@ -322,7 +377,9 @@ function renderNode(node: AnyNode, key: string): VNode | string {
       // comment) so text content still surfaces, otherwise render nothing.
       const maybeParent = node as unknown as { children?: unknown };
       if (Array.isArray(maybeParent.children)) {
-        return <span key={key}>{renderChildren(maybeParent.children as AnyNode[], key)}</span>;
+        return (
+          <span key={key}>{renderChildren(maybeParent.children as AnyNode[], key, search)}</span>
+        );
       }
       return "";
     }
@@ -332,8 +389,8 @@ function renderNode(node: AnyNode, key: string): VNode | string {
 /** Pure mdast-AST -> VNode transform, split out from `MarkdownView` so tests
  * can hand-construct mdast fragments (DR-0010) without going through
  * `parse()`. */
-export function renderMarkdownAst(root: Root): VNode {
-  return <div class="md">{renderChildren(root.children, "md")}</div>;
+export function renderMarkdownAst(root: Root, search?: MarkdownSearchCtx): VNode {
+  return <div class="md">{renderChildren(root.children, "md", search)}</div>;
 }
 
 // `useMemo` keyed on `source`: parse+render は Timeline のような親が高頻度
@@ -341,6 +398,26 @@ export function renderMarkdownAst(root: Root): VNode {
 // いなければ再パースしない。`<details>` (thinking の折り畳み等) は collapsed
 // でも Preact が中身を描画し続けるので、折り畳み自体はコスト削減にならない
 // — この memo がそれを補う。
-export function MarkdownView({ source }: { source: string }) {
-  return useMemo(() => renderMarkdownAst(parse(source)), [source]);
+//
+// `highlightWords`/`onMatchClick` (DR-0022 §3) additionally key the memo: a
+// new words array (query edited, or a color-order shuffle — neither actually
+// happens today, but identity is the correctness-relevant signal) forces a
+// re-render with fresh <mark> spans. When omitted (no active search, the
+// common case) the memo key is unchanged from before this DR and the cached
+// render is reused exactly as previously.
+export function MarkdownView({
+  source,
+  highlightWords,
+  onMatchClick,
+}: {
+  source: string;
+  highlightWords?: readonly SearchWord[];
+  onMatchClick?: () => void;
+}) {
+  const search =
+    highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
+  return useMemo(
+    () => renderMarkdownAst(parse(source), search),
+    [source, highlightWords, onMatchClick],
+  );
 }

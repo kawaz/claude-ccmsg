@@ -1181,6 +1181,20 @@ export function Timeline({
     const units: { key: string; text: string }[] = [];
     const pushLine = (offset: number, line: ParsedLine) => {
       if (line.kind !== "turn") return;
+      // System-origin user messages (LineView's `sysKind` — tool-result echo,
+      // task-notification, peer-message, ...) render through
+      // SystemMessageBody's rich|raw tabs, where SegmentView gets
+      // `searchCtx={undefined}` (out of this DR's scope — see that call
+      // site's comment). Counting their segments here anyway would inflate
+      // the "[N/M]" M with ghost matches that have no highlight and no DOM
+      // ref to scroll to (↑/↓ would advance the number and visibly do
+      // nothing) — so the count side excludes exactly what the render side
+      // excludes, with the same condition LineView's `sysKind` uses. This
+      // also covers ccmsg boundary lines (CcmsgBubble, also searchCtx-free):
+      // every line extractCcmsgMessages hits is classified peer-message/
+      // task-notification, never "user-prompt".
+      if (line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt")
+        return;
       line.segments.forEach((seg, i) => {
         units.push({ key: `${offset}-${i}`, text: segmentSearchText(seg) });
       });
@@ -1230,15 +1244,63 @@ export function Timeline({
   // become visible when navigated to, not silently scroll to a hidden
   // element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
   // used elsewhere in this file, walking outward through nested folds.
+  // Opens a closed <details> in a way that survives the imminent re-render.
+  // FoldGroup/ItemsSubFold/ThinkingSegment all render a *controlled*
+  // `<details open={state}>` synced via onToggle. The browser fires `toggle`
+  // asynchronously (as a task), but the setSearchCurrentIndex re-render from
+  // searchNext/Prev lands first and writes the still-false state's `open`
+  // back to the DOM, silently re-closing the fold (observed 2026-07-17: nav
+  // into a closed fold moved scroll but the fold stayed shut). Dispatching
+  // the toggle synchronously runs the component's onToggle → setState now,
+  // so that re-render sees open=true and keeps it. (FoldGuide's close path
+  // doesn't need this: nothing re-renders between its DOM write and the
+  // browser's own toggle task.)
+  function forceOpenDetails(d: HTMLDetailsElement) {
+    if (d.open) return;
+    d.open = true;
+    d.dispatchEvent(new Event("toggle"));
+  }
+
   function revealAndScroll(el: HTMLElement) {
+    // The match text usually lives *inside* the unit's own fold — a tool_use/
+    // tool_result/unknown-segment/thinking segment IS a <details class=
+    // "tl-fold">, whose summary shows only the label (never the matched
+    // text). The ancestor walk below starts *outside* the unit (closest()
+    // from the display:contents wrapper resolves to the wrapper's enclosing
+    // details, not the unit's own), so without this the nav would center a
+    // collapsed summary with the highlight still hidden (observed
+    // 2026-07-17). Text-segment units have no descendant details — querySelectorAll
+    // finds nothing and this is a no-op for them.
+    for (const d of el.querySelectorAll("details")) forceOpenDetails(d);
     let node: HTMLElement | null = el;
     while (node) {
       const ancestorDetails: HTMLDetailsElement | null = node.closest("details");
       if (!ancestorDetails) break;
-      if (!ancestorDetails.open) ancestorDetails.open = true;
+      forceOpenDetails(ancestorDetails);
       node = ancestorDetails.parentElement;
     }
-    el.scrollIntoView({ block: "center" });
+    // `el` is the `display: contents` .tl-search-unit wrapper — its own box
+    // is 0x0 (that's the point of `contents`, it doesn't participate in
+    // layout), and Chromium treats scrollIntoView on a boxless element as a
+    // no-op (observed 2026-07-17: scrollTop unchanged). Scroll the first
+    // rendered child instead; the ancestor-<details> walk above still works
+    // from the wrapper since `contents` only removes the box, not the DOM
+    // position.
+    const target = (el.firstElementChild as HTMLElement | null) ?? el;
+    // Multi-shot scroll (same settled pattern as scrollToBottomSettled
+    // below): opening the ancestor folds just above triggers Preact
+    // re-renders that keep shifting layout after this synchronous call —
+    // a fold group's first open auto-expands every thinking inside it and
+    // kicks off ja translation (ThinkingSegment's foldGroupOpen effect),
+    // each of which grows content above/around the match and strands a
+    // single immediate scrollIntoView at a stale position (observed
+    // 2026-07-17: match ends up outside the viewport on first nav into a
+    // closed fold). Re-scrolling at 60/300ms tracks those reflows;
+    // scrollIntoView on an already-visible target is a no-op so the extra
+    // shots don't cause visible jitter.
+    for (const ms of [0, 60, 300]) {
+      setTimeout(() => target.scrollIntoView({ block: "center" }), ms);
+    }
   }
 
   function scrollToSearchMatch(oneBasedIdx: number) {

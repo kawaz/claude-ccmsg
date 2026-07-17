@@ -5,7 +5,7 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -19,6 +19,14 @@ import {
   type HighlightSpan,
 } from "../highlight.ts";
 import { MarkdownView } from "../markdown-view.tsx";
+import {
+  loopNextIndex,
+  loopPrevIndex,
+  parseSearchQuery,
+  splitTextForHighlight,
+  unitMatchesQuery,
+} from "../in-view-search.ts";
+import { SearchBar } from "./SearchBar.tsx";
 
 function splitLines(content: string): string[] {
   const lines = content === "" ? [] : content.split("\n");
@@ -225,6 +233,76 @@ export function FileViewer({
     };
   }, [highlightEligible, res?.content, lang, path]);
 
+  // In-view search (DR-0022 Phase 1): plain content lines (not highlighted
+  // spans — see the "showPreview"/render block below for why search
+  // deliberately bypasses Shiki tokens while a query is active) computed
+  // early so this and the hooks below can run unconditionally before the
+  // early-return guards further down (rules-of-hooks).
+  const searchLines = useMemo(
+    () => (res && !res.binary ? splitLines(res.content) : []),
+    [res?.content, res?.binary],
+  );
+  const [searchQueryText, setSearchQueryText] = useState("");
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchRegex, setSearchRegex] = useState(false);
+  const parsedSearch = useMemo(
+    () =>
+      parseSearchQuery(searchQueryText, { caseSensitive: searchCaseSensitive, regex: searchRegex }),
+    [searchQueryText, searchCaseSensitive, searchRegex],
+  );
+  // Which line indices (0-based, into searchLines) satisfy the query's AND
+  // filter, in document order — this is the "M" in "[N/M]" and the order
+  // ↑/↓ nav walks (DR-0022 §2.2).
+  const matchingLineIndices = useMemo(() => {
+    if (parsedSearch.words.length === 0 || parsedSearch.hasError) return [];
+    const out: number[] = [];
+    searchLines.forEach((line, i) => {
+      if (unitMatchesQuery(line, parsedSearch.words)) out.push(i);
+    });
+    return out;
+  }, [searchLines, parsedSearch]);
+  const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
+  // A fresh search (new query text, toggle flip, or file switch) always
+  // starts back at the first match — there is no meaningful "keep the old
+  // position" once the match set itself has changed.
+  // Deps deliberately omit matchingLineIndices: the reset key is "the query
+  // changed", not the array's identity.
+  useEffect(() => {
+    setSearchCurrentIndex(matchingLineIndices.length > 0 ? 1 : 0);
+  }, [searchQueryText, searchCaseSensitive, searchRegex, path]);
+  const searchLineRefs = useRef(new Map<number, HTMLDivElement>());
+  const registerSearchLineRef = useCallback((i: number, el: HTMLDivElement | null) => {
+    if (el) searchLineRefs.current.set(i, el);
+    else searchLineRefs.current.delete(i);
+  }, []);
+  // line index -> 1-based nav position, for the click-to-select handler
+  // below (DR-0022 §2.2: clicking a highlight sets the index to *that*
+  // element's position without scrolling).
+  const searchMatchPositionByLine = useMemo(() => {
+    const m = new Map<number, number>();
+    matchingLineIndices.forEach((lineIdx, pos) => m.set(lineIdx, pos + 1));
+    return m;
+  }, [matchingLineIndices]);
+  function scrollToMatch(oneBasedIdx: number) {
+    const lineIdx = matchingLineIndices[oneBasedIdx - 1];
+    if (lineIdx === undefined) return;
+    searchLineRefs.current.get(lineIdx)?.scrollIntoView({ block: "center" });
+  }
+  // ↑/↓ move + scroll (DR-0022 §2.2: "スクロール動作は既存のユーザメッセージ
+  // 移動と同様"); clicking a highlight only updates the index (see the
+  // <mark onClick> below) — the loop wrap itself is the shared pure helper
+  // also used by Timeline's 👤 nav.
+  function searchPrev() {
+    const next = loopPrevIndex(searchCurrentIndex, matchingLineIndices.length);
+    setSearchCurrentIndex(next);
+    scrollToMatch(next);
+  }
+  function searchNext() {
+    const next = loopNextIndex(searchCurrentIndex, matchingLineIndices.length);
+    setSearchCurrentIndex(next);
+    scrollToMatch(next);
+  }
+
   // 開いているファイルを強制再取得する (kawaz 2026-07-14、task #23)。fs_read は
   // 別プロセスによる更新を picking しないため (現在の DR-0008 は push notify を
   // 持たない)、viewer が古い内容を掴んだままになりうる。↻ ボタンで明示的に
@@ -305,9 +383,17 @@ export function FileViewer({
     );
   }
 
-  const lines = splitLines(res.content);
+  const lines = searchLines;
   const highlightedLines = highlighted && highlighted.path === path ? highlighted.lines : null;
   const showPreview = markdownEligible && viewMode === "preview";
+  // While a search query is active, Shiki's span tokens are bypassed in
+  // favor of the plain line + <mark> splitting (in-view-search.ts) — the two
+  // can't be composed without intersecting two independent sets of text
+  // ranges (token boundaries vs match boundaries), so this pragmatically
+  // prioritizes "see the search hits" over "keep syntax colors" for the
+  // duration of the search (DR-0022 doesn't specify precedence between the
+  // two; search is the more actively-requested one at that moment).
+  const searchActive = parsedSearch.words.length > 0 && !parsedSearch.hasError;
 
   return (
     <div class="file-viewer">
@@ -349,6 +435,20 @@ export function FileViewer({
             </button>
           </div>
         ) : null}
+        <SearchBar
+          words={parsedSearch.words}
+          queryText={searchQueryText}
+          onQueryChange={setSearchQueryText}
+          caseSensitive={searchCaseSensitive}
+          onToggleCaseSensitive={() => setSearchCaseSensitive((v) => !v)}
+          regexMode={searchRegex}
+          onToggleRegex={() => setSearchRegex((v) => !v)}
+          matchCount={matchingLineIndices.length}
+          currentIndex={searchCurrentIndex}
+          onPrev={searchPrev}
+          onNext={searchNext}
+          hasError={parsedSearch.hasError}
+        />
       </header>
       {showPreview ? (
         // Feed the full loaded content to MarkdownView (which parses and
@@ -368,21 +468,37 @@ export function FileViewer({
         <pre class="viewer-body">
           {lines.map((line, i) => {
             const spans = highlightedLines?.[i];
+            const searchPos = searchMatchPositionByLine.get(i);
             return (
-              <div class="viewer-line" key={i}>
+              <div class="viewer-line" key={i} ref={(el) => registerSearchLineRef(i, el)}>
                 <span class="viewer-lineno">{i + 1}</span>
                 <span class="viewer-text">
-                  {spans
-                    ? spans.map((span, j) =>
-                        span.style ? (
-                          <span class="shiki-tok" style={span.style} key={j}>
-                            {span.text}
-                          </span>
+                  {searchActive && searchPos !== undefined
+                    ? splitTextForHighlight(line, parsedSearch.words).map((piece, j) =>
+                        piece.colorIndex !== null ? (
+                          <mark
+                            key={j}
+                            class="search-hl"
+                            style={{ "--hl-color": `var(--search-color-${piece.colorIndex + 1})` }}
+                            onClick={() => setSearchCurrentIndex(searchPos)}
+                          >
+                            {piece.text}
+                          </mark>
                         ) : (
-                          span.text
+                          piece.text
                         ),
                       )
-                    : line}
+                    : spans
+                      ? spans.map((span, j) =>
+                          span.style ? (
+                            <span class="shiki-tok" style={span.style} key={j}>
+                              {span.text}
+                            </span>
+                          ) : (
+                            span.text
+                          ),
+                        )
+                      : line}
                 </span>
               </div>
             );

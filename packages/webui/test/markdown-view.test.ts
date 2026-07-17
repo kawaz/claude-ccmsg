@@ -21,6 +21,7 @@ import {
   renderMarkdownAst,
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
+import { parseSearchQuery, type SearchWord } from "../src/client/in-view-search.ts";
 
 function isVNode(x: unknown): x is VNode {
   return x != null && typeof x === "object" && "type" in x && "props" in x;
@@ -573,5 +574,68 @@ describe("renderMarkdownAst: attachment links (DR-0015 §2.6)", () => {
     const links = collect(vnode, (n) => n.type === "a");
     expect(links).toHaveLength(1);
     expect((links[0]!.props as { href?: string }).href).toBe("https://example.com/");
+  });
+});
+
+// In-view search highlighting (DR-0022 §3): renderMarkdownAst's optional
+// `search` context must reach into `text` nodes and wrap matches in
+// <mark class="search-hl">, without touching output at all when omitted
+// (the common no-active-search render path).
+describe("renderMarkdownAst / DR-0022 search highlighting", () => {
+  function textRoot(value: string): Root {
+    return {
+      type: "root",
+      children: [{ type: "paragraph", children: [{ type: "text", value }] }],
+    };
+  }
+
+  // Baseline: no `search` arg at all -> plain string text node, exactly the
+  // pre-DR-0022 shape (no wrapping <span>, no <mark>).
+  test("omitting search leaves text nodes as plain strings", () => {
+    const vnode = renderMarkdownAst(textRoot("hello world"));
+    expect(collect(vnode, (n) => n.type === "mark")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("hello world");
+  });
+
+  test("a matching word is wrapped in <mark class=search-hl> with its colorIndex as --hl-color", () => {
+    const words: SearchWord[] = parseSearchQuery("world", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
+    const marks = collect(vnode, (n) => n.type === "mark");
+    expect(marks).toHaveLength(1);
+    expect((marks[0]!.props as { class?: string }).class).toBe("search-hl");
+    expect((marks[0]!.props as { style?: Record<string, string> }).style).toEqual({
+      "--hl-color": "var(--search-color-1)",
+    });
+    expect(flattenText(vnode)).toBe("hello world"); // content itself is unchanged, only wrapped
+  });
+
+  test("clicking a highlighted span invokes the passed onMatchClick", () => {
+    const words: SearchWord[] = parseSearchQuery("world", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    let clicked = 0;
+    const vnode = renderMarkdownAst(textRoot("hello world"), {
+      words,
+      onMatchClick: () => {
+        clicked += 1;
+      },
+    });
+    const mark = collect(vnode, (n) => n.type === "mark")[0]!;
+    (mark.props as unknown as { onClick: () => void }).onClick();
+    expect(clicked).toBe(1);
+  });
+
+  test("no match -> text node stays a plain string even with a non-empty query", () => {
+    const words: SearchWord[] = parseSearchQuery("zzz", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
+    expect(collect(vnode, (n) => n.type === "mark")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("hello world");
   });
 });

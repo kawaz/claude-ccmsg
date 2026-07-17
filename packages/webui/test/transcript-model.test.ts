@@ -18,6 +18,7 @@ import {
   parseSystemMessageFields,
   parseTranscriptLine,
   scrollPositionToUserTurnIndex,
+  segmentSearchText,
   stripAnsiEscapes,
   type ParsedLine,
   type Segment,
@@ -374,6 +375,34 @@ describe("parseTranscriptLine / turn with empty content array", () => {
 // "system-origin user messages fold (U2)" describe block below for the
 // classification-driven cases (teammate-message etc.); this block covers the
 // pre-existing segment-shape cases.
+// segmentSearchText (DR-0022 §3): the plain-text projection Timeline's search
+// matches/highlights against — must line up with what SegmentView actually
+// renders (JSON.stringify(..., null, 2) for the two JSON-shaped variants) so
+// a search hit corresponds to visible text once its fold is expanded.
+describe("segmentSearchText", () => {
+  test("text/thinking/tool-result segments return their text verbatim", () => {
+    expect(segmentSearchText({ kind: "text", role: "user", text: "hello" })).toBe("hello");
+    expect(segmentSearchText({ kind: "thinking", text: "pondering" })).toBe("pondering");
+    expect(
+      segmentSearchText({
+        kind: "tool-result",
+        toolUseId: "tu_1",
+        isError: false,
+        text: "42 files",
+      }),
+    ).toBe("42 files");
+  });
+
+  test("tool-use/unknown-segment stringify their JSON payload (matches SegmentView's pretty-print)", () => {
+    expect(segmentSearchText({ kind: "tool-use", name: "Read", input: { path: "a.ts" } })).toBe(
+      JSON.stringify({ path: "a.ts" }, null, 2),
+    );
+    expect(segmentSearchText({ kind: "unknown-segment", type: "number", raw: 42 })).toBe(
+      JSON.stringify(42, null, 2),
+    );
+  });
+});
+
 describe("isUserTextTurn", () => {
   test("user turn with a text segment -> true", () => {
     const line = parseTranscriptLine(

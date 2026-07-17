@@ -202,6 +202,27 @@ export function isUserTextTurn(line: ParsedLine): boolean {
 }
 
 /**
+ * Plain-text projection of a Segment for in-view search (DR-0022 §3: "TL は
+ * text/thinking/tool セグメント" — every Segment variant, not just text/
+ * thinking). tool-use/unknown-segment have no natural "text" field, so this
+ * mirrors what SegmentView actually renders for them (`JSON.stringify(...,
+ * null, 2)`) so a search hit corresponds to something visibly on screen once
+ * the fold is expanded, rather than searching raw unrendered JSON shape.
+ */
+export function segmentSearchText(segment: Segment): string {
+  switch (segment.kind) {
+    case "text":
+    case "thinking":
+    case "tool-result":
+      return segment.text;
+    case "tool-use":
+      return JSON.stringify(segment.input, null, 2);
+    case "unknown-segment":
+      return JSON.stringify(segment.raw, null, 2);
+  }
+}
+
+/**
  * Given the vertical pixel offsets (ascending, top-to-bottom) of every
  * currently-loaded user-text turn inside the Timeline's scroll container, and
  * the container's current `scrollTop`, returns how many of those turns sit at
