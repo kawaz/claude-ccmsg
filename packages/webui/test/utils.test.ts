@@ -36,6 +36,7 @@ import {
   sessionBadges,
   sessionLabel,
   sessionRowRepoWs,
+  sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   sessionStatus,
   SESSION_PANE_MAX_RATIO,
@@ -1302,6 +1303,17 @@ describe("buildSessionSearchRequest", () => {
 
   // Both toggles default true server-side, so only an OFF flip needs wire
   // representation — an unflipped toggle (still true) stays absent.
+  // Aa and .* default off on both client and daemon, so only active toggles
+  // need explicit wire fields.
+  test("sends case_sensitive/regex only when enabled", () => {
+    expect(
+      buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, caseSensitive: true }),
+    ).toEqual({ case_sensitive: true });
+    expect(buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, regex: true })).toEqual({
+      regex: true,
+    });
+  });
+
   test("sends target_user/target_agent only when flipped false", () => {
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, targetUser: false }),
@@ -1338,6 +1350,22 @@ describe("buildSessionSearchRequest", () => {
     expect(
       buildSessionSearchRequest({ ...DEFAULT_SESSION_SEARCH_FORM, mtimeWithin: "  " }),
     ).toEqual({});
+  });
+});
+
+describe("sessionSearchFormToTimelineSearch", () => {
+  // The result navigation handoff preserves the exact submitted Aa/.* modes
+  // and trims only the outer query whitespace; internal newlines remain the
+  // Timeline parser's AND separators.
+  test("converts submitted search controls into Timeline search state", () => {
+    expect(
+      sessionSearchFormToTimelineSearch({
+        ...DEFAULT_SESSION_SEARCH_FORM,
+        query: "  alpha\nbeta  ",
+        caseSensitive: true,
+        regex: true,
+      }),
+    ).toEqual({ queryText: "alpha\nbeta", caseSensitive: true, regex: true });
   });
 });
 

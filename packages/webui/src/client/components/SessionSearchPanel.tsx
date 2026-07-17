@@ -3,11 +3,12 @@
 // while open (see Sidebar.tsx's doc comment for why a sidebar-internal panel
 // was chosen over a locator-driven `state.view` — search is a tool to find
 // and pin a session, not itself a durable/bookmarkable screen the way a room
-// or a session's Files/Timeline is). Clicking a result pins it (localStorage,
-// SS-Q2=a, see store.ts's pinnedSessions) and navigates to its Timeline —
-// the daemon's `allowVirtual` transcript_read/fs_list/fs_read resolution
-// (DR-0021 §3.1, server.ts) makes a pinned-but-disconnected sid's Timeline
-// work with no live peer required.
+// or a session's Files/Timeline is). Clicking a result caches its historical
+// metadata and submitted query options, then navigates to its Timeline without
+// implicitly pinning or closing this panel. The daemon's `allowVirtual`
+// transcript_read/fs_list/fs_read resolution
+// (DR-0021 §3.1, server.ts) makes a historical sid's Timeline work with no
+// live peer required.
 import { useMemo, useState } from "preact/hooks";
 import {
   SESSION_SEARCH_RESULT_MAX,
@@ -24,10 +25,13 @@ import {
   formatBytes,
   matchRoleBadge,
   relTime,
+  sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   shortSid,
   type SessionSearchForm,
 } from "../utils.ts";
+import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
+import { SearchModeToggles } from "./SearchBar.tsx";
 
 /** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
  * size/match-summary, clickable as a whole). A `<div role="button">` rather
@@ -39,10 +43,12 @@ import {
 function SearchResultRow({
   hit,
   pinned,
+  words,
   onSelect,
 }: {
   hit: SessionSearchHit;
   pinned: boolean;
+  words: SearchWord[];
   onSelect: () => void;
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
@@ -78,7 +84,23 @@ function SearchResultRow({
             {hit.matches.map((m, i) => (
               <div key={i} class={`session-search-match session-search-match-${m.role}`}>
                 <span class="session-search-match-badge">{matchRoleBadge(m.role)}</span>
-                <span class="session-search-match-text">{m.text}</span>
+                <span class="session-search-match-text">
+                  {splitTextForHighlight(m.text, words).map((piece, pieceIndex) =>
+                    piece.colorIndex === null ? (
+                      piece.text
+                    ) : (
+                      <mark
+                        key={pieceIndex}
+                        class="search-hl session-search-hl"
+                        style={{
+                          "--hl-color": `var(--search-color-${piece.colorIndex + 1})`,
+                        }}
+                      >
+                        {piece.text}
+                      </mark>
+                    ),
+                  )}
+                </span>
               </div>
             ))}
           </div>
@@ -95,6 +117,17 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SessionSearchResponse | null>(null);
+  const [resultForm, setResultForm] = useState<SessionSearchForm | null>(null);
+  const resultWords = useMemo(
+    () =>
+      resultForm
+        ? parseSearchQuery(resultForm.query, {
+            caseSensitive: resultForm.caseSensitive,
+            regex: resultForm.regex,
+          }).words
+        : [],
+    [resultForm],
+  );
 
   // config_dir トグルの候補 (DR-0021 §2.1: 複数検出時のみ表示) — daemon の
   // agents 応答 (state.agents、claude agents --json ポーリング由来) が検出済
@@ -134,6 +167,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
       const res = await ws.sessionSearch(buildSessionSearchRequest(form));
       if (res.ok) {
         setResult(res);
+        setResultForm({ ...form, configDirs: [...form.configDirs] });
       } else {
         setError(res.error.msg);
       }
@@ -144,10 +178,13 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function pinAndOpen(hit: SessionSearchHit): void {
-    store.dispatch({ type: "pinned/added", hit });
+  function openResult(hit: SessionSearchHit): void {
+    store.dispatch({
+      type: "session-search/opened",
+      hit,
+      search: sessionSearchFormToTimelineSearch(resultForm ?? form),
+    });
     location.assign(timelineHref(hit.sid));
-    onClose();
   }
 
   return (
@@ -164,13 +201,21 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <form class="session-search-form" onSubmit={(e) => void runSearch(e)}>
-        <input
-          type="text"
-          class="session-search-query"
-          placeholder="query words..."
-          value={form.query}
-          onInput={(e) => setForm({ ...form, query: (e.target as HTMLInputElement).value })}
-        />
+        <div class="session-search-query-row">
+          <textarea
+            class="session-search-query"
+            aria-label="検索パターン (改行区切りで AND)"
+            placeholder={"query pattern\n改行区切りで AND"}
+            value={form.query}
+            onInput={(e) => setForm({ ...form, query: (e.target as HTMLTextAreaElement).value })}
+          />
+          <SearchModeToggles
+            caseSensitive={form.caseSensitive}
+            onToggleCaseSensitive={() => setForm({ ...form, caseSensitive: !form.caseSensitive })}
+            regexMode={form.regex}
+            onToggleRegex={() => setForm({ ...form, regex: !form.regex })}
+          />
+        </div>
         <div class="session-search-row">
           <label class="session-search-toggle">
             <input
@@ -242,16 +287,15 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
                 key={hit.sid}
                 hit={hit}
                 pinned={state.pinnedSessions.has(hit.sid)}
-                onSelect={() => pinAndOpen(hit)}
+                words={resultWords}
+                onSelect={() => openResult(hit)}
               />
             ))}
           </ul>
           {result.hits.length === 0 ? <p class="session-search-empty">該当なし</p> : null}
           {result.truncated ? (
-            // The daemon flags `truncated` for ANY partial scan — the
-            // SESSION_SEARCH_RESULT_MAX hit cap, but also per-file prefilter
-            // line caps and the request-wide scan byte budget
-            // (session-search.ts) — so this can appear with far fewer than
+            // The daemon flags `truncated` for either the result cap or the
+            // request-wide scan byte budget, so this can appear with fewer than
             // MAX hits shown. Phrase it as "incomplete", not "over the cap".
             <p class="session-search-truncated">
               検索が途中で打ち切られました (結果上限 {SESSION_SEARCH_RESULT_MAX} 件 /

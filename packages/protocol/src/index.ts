@@ -571,8 +571,12 @@ export interface TranscriptReadRequest {
  * config dirs (DR-0021 Phase 1, user role only). */
 export interface SessionSearchRequest {
   op: "session_search";
-  /** space-separated, case-insensitive substring words; all must occur in one message */
+  /** newline-separated patterns; blank lines are ignored and all must match one message */
   query?: string;
+  /** default false; preserves pattern/text case when matching */
+  case_sensitive?: boolean;
+  /** default false; treats each non-blank query line as a RegExp pattern */
+  regex?: boolean;
   /** default true; includes ccmsg queue deliveries authored by u1 */
   target_user?: boolean;
   /** default true; includes ccmsg queue deliveries authored by non-u1 members */

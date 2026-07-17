@@ -1269,6 +1269,58 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     expect(dispatch(state, { type: "pinned/removed", sid: "nope" })).toBe(state);
   });
 
+  // The SessionView header button is one sid-keyed action: absent -> present,
+  // then present -> absent, without requiring UI code to choose two reducers.
+  test("toggled pins and then unpins the same sid", () => {
+    const pinned = dispatch(initialState(), { type: "pinned/toggled", hit: hit("a") });
+    expect(pinned.pinnedSessions.has("a")).toBe(true);
+    const unpinned = dispatch(pinned, { type: "pinned/toggled", hit: hit("a") });
+    expect(unpinned.pinnedSessions.has("a")).toBe(false);
+  });
+
+  // Timeline's SearchBar edits persist per sid: editing one session's in-view
+  // query must create/update only that sid's tree and never leak into another
+  // session's search state.
+  test("timeline/search-changed stores per-sid search state", () => {
+    const first = dispatch(initialState(), {
+      type: "timeline/search-changed",
+      sid: "a",
+      search: { queryText: "foo", caseSensitive: true, regex: false },
+    });
+    const second = dispatch(first, {
+      type: "timeline/search-changed",
+      sid: "b",
+      search: { queryText: "bar", caseSensitive: false, regex: true },
+    });
+    expect(second.sessionTrees.get("a")?.timelineSearch).toEqual({
+      queryText: "foo",
+      caseSensitive: true,
+      regex: false,
+    });
+    expect(second.sessionTrees.get("b")?.timelineSearch).toEqual({
+      queryText: "bar",
+      caseSensitive: false,
+      regex: true,
+    });
+  });
+
+  // Opening a search result is deliberately not a pin operation: it caches the
+  // historical hit and query handoff in the sid's session tree only.
+  test("session-search/opened caches hit and Timeline search without pinning", () => {
+    const state = dispatch(initialState(), {
+      type: "session-search/opened",
+      hit: hit("a"),
+      search: { queryText: "foo\nbar", caseSensitive: true, regex: true },
+    });
+    expect(state.pinnedSessions.has("a")).toBe(false);
+    expect(state.sessionTrees.get("a")?.searchHit).toEqual(hit("a"));
+    expect(state.sessionTrees.get("a")?.timelineSearch).toEqual({
+      queryText: "foo\nbar",
+      caseSensitive: true,
+      regex: true,
+    });
+  });
+
   test("does not mutate the previous state (reducer purity)", () => {
     const before = initialState();
     dispatch(before, { type: "pinned/added", hit: hit("a") });

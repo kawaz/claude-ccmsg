@@ -5,6 +5,7 @@
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
 import { useEffect, useState } from "preact/hooks";
+import type { SessionSearchHit } from "@ccmsg/protocol";
 import type { AppState, SessionTreeState } from "../store.ts";
 import { fileHref, sessionHref, timelineHref } from "../locator.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
@@ -30,11 +31,38 @@ const EMPTY_TREE: SessionTreeState = {
   selectedPath: null,
   file: null,
   timeline: { status: "idle", lines: [], start: 0, end: 0, size: 0, atStart: false },
+  timelineSearch: { queryText: "", caseSensitive: false, regex: false },
 };
+
+function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): SessionSearchHit {
+  const stored = state.pinnedSessions.get(sid) ?? tree.searchHit;
+  if (stored) return stored;
+  const peer = state.peers.find((item) => item.sid === sid);
+  const agent = state.agents.find((item) => item.sessionId === sid);
+  const cwd = peer?.cwd ?? agent?.cwd ?? null;
+  const agentCreatedAt =
+    agent && Number.isFinite(agent.startedAt) && Math.abs(agent.startedAt) <= 8.64e15
+      ? new Date(agent.startedAt).toISOString()
+      : "1970-01-01T00:00:00.000Z";
+  const createdAt = peer?.connected_at ?? agentCreatedAt;
+  return {
+    sid,
+    config_dir: agent?.config_dir ?? "",
+    file: peer?.transcript_path ?? "",
+    cwd,
+    repo: peer?.repo ?? null,
+    ws: peer?.ws ?? null,
+    created_at: createdAt,
+    updated_at: peer?.last_activity_at ?? createdAt,
+    size: 0,
+    matches: [],
+  };
+}
 
 export function SessionView({ state }: { state: AppState }) {
   const { store, ws } = useApp();
   const sid = state.currentSid;
+  const tree = sid ? (state.sessionTrees.get(sid) ?? EMPTY_TREE) : EMPTY_TREE;
   // Rooms/Status are tabs layered on top of the Files/Timeline locator
   // routing (`#s<sid>` / `#t<sid>`, see locator.ts) rather than a locator
   // form of their own — neither has per-sid persisted sub-state worth
@@ -74,14 +102,13 @@ export function SessionView({ state }: { state: AppState }) {
   //   Subscribing for a virtual sid would get session_not_found back and
   //   leave StatusPanel's "読み込み中…" up forever.
   // - hasTranscript: transcript_read DOES take the allowVirtual path for a
-  //   user-role conn (server.ts), and a pinned session came from
-  //   session_search, which only ever surfaces jsonl transcript files — so a
-  //   pinned sid always has a readable transcript even with no live peer
-  //   (never connected, or connected once and long since disconnected).
-  //   Without the OR, Timeline would wrongly stay disabled for every pinned
-  //   session that isn't ALSO currently connected.
+  //   user-role conn (server.ts). A selected historical search hit (or a pin
+  //   created from one) carries its resolved jsonl file, so it remains readable
+  //   with no live peer. Arbitrary sid pins without a transcript file do not
+  //   widen this capability gate.
   const hasStatusFeed = !!peer?.transcript_path;
-  const hasTranscript = hasStatusFeed || (sid !== null && state.pinnedSessions.has(sid));
+  const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
+  const hasTranscript = hasStatusFeed || !!storedHit?.file;
 
   // Status データ購読 (DR-0020 Phase 2/3): Status タブと Timeline タブ (下部
   // ミニパネルが同じデータを要る) のどちらかが開いている間だけ subscribe し、
@@ -166,9 +193,6 @@ export function SessionView({ state }: { state: AppState }) {
     );
   }
 
-  // The reducer always creates a tree on the locator/changed that sets
-  // currentSid, so this fallback is type-safety only, never hit in practice.
-  const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
   const sessionStatus = state.sessionStatuses.get(sid);
 
   return (
@@ -209,6 +233,17 @@ export function SessionView({ state }: { state: AppState }) {
         >
           Rooms
         </button>
+        <button
+          type="button"
+          class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
+          aria-pressed={state.pinnedSessions.has(sid)}
+          title={state.pinnedSessions.has(sid) ? "ピン解除" : "ピン留め"}
+          onClick={() =>
+            store.dispatch({ type: "pinned/toggled", hit: pinCandidate(state, sid, tree) })
+          }
+        >
+          {state.pinnedSessions.has(sid) ? "Unpin" : "Pin"}
+        </button>
       </div>
       {tab === "rooms" ? (
         <SessionRooms sid={sid} state={state} />
@@ -238,6 +273,7 @@ export function SessionView({ state }: { state: AppState }) {
           <Timeline
             sid={sid}
             timeline={tree.timeline}
+            search={tree.timelineSearch}
             sessionStatus={sessionStatus}
             onOpenStatus={() => setLocalTab("status")}
           />

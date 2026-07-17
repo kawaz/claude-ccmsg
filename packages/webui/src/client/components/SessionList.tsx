@@ -157,7 +157,8 @@ function SessionRowItem({
  * forcing it through the same merge shape `toSessionRow` builds would need a
  * lot of made-up filler fields. `connected` only decides the badge text
  * ("仮想" = daemon resolves this sid via allowVirtual with no live peer,
- * DR-0021 §3.1) — the link itself (Timeline) works identically either way. */
+ * DR-0021 §3.1). Search-origin pins link to Timeline; arbitrary pins without a
+ * transcript file link to Files instead. */
 function PinnedSessionRow({
   hit,
   currentSid,
@@ -176,7 +177,7 @@ function PinnedSessionRow({
       title={hit.cwd ?? undefined}
     >
       <div class="session-line1">
-        <a href={timelineHref(hit.sid)} class="session-main-link">
+        <a href={hit.file ? timelineHref(hit.sid) : sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
           <span class="session-repo-ws">{repo || wsLabel}</span>
           {repo && wsLabel ? <span class="session-branch">{wsLabel}</span> : null}

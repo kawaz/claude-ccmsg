@@ -15,7 +15,6 @@ import { detectConfigDirs } from "./agents.ts";
 import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
-const PREFILTER_LINE_MAX = 200;
 const REQUEST_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
 
@@ -51,9 +50,139 @@ function words(value: string | undefined): string[] {
   return value?.trim().split(/\s+/).filter(Boolean) ?? [];
 }
 
+function queryPatterns(value: string | undefined): string[] {
+  return (
+    value
+      ?.split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean) ?? []
+  );
+}
+
 function lowerIncludesAll(text: string, needles: readonly string[]): boolean {
   const lower = text.toLowerCase();
   return needles.every((needle) => lower.includes(needle));
+}
+
+interface CompiledQueryPattern {
+  matcher: RegExp | null;
+  /** Non-null only in literal mode; strict matching uses indexOf/toLowerCase so
+   * its case-folding semantics exactly match the serialized-line prefilter. */
+  literalMatch: string | null;
+  caseSensitive: boolean;
+  /** Serialized-line substring that every strict match must contain. null means
+   * this pattern cannot safely participate in the JSONL prefilter. */
+  prefilter: string | null;
+}
+
+/** Returns a conservative top-level ASCII-alphanumeric run that every match of
+ * `pattern` must contain. Runs inside groups/classes and patterns with a
+ * top-level alternation are ignored; a quantified final atom is removed from
+ * its run. Returning null only costs performance — strict decoded matching is
+ * still authoritative. */
+function regexRequiredLiteral(pattern: string): string | null {
+  let depth = 0;
+  let inClass = false;
+  const runs: string[] = [];
+
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!;
+    if (ch === "\\") {
+      const escapeKind = pattern[i + 1];
+      if (escapeKind === "x") i += 3;
+      else if (escapeKind === "u" && pattern[i + 2] === "{") {
+        const end = pattern.indexOf("}", i + 3);
+        i = end >= 0 ? end : pattern.length;
+      } else if (escapeKind === "u") i += 5;
+      else if ((escapeKind === "p" || escapeKind === "P") && pattern[i + 2] === "{") {
+        const end = pattern.indexOf("}", i + 3);
+        i = end >= 0 ? end : pattern.length;
+      } else if (escapeKind === "k" && pattern[i + 2] === "<") {
+        const end = pattern.indexOf(">", i + 3);
+        i = end >= 0 ? end : pattern.length;
+      } else if (escapeKind === "c") i += 2;
+      else if (escapeKind && /[0-9]/.test(escapeKind)) {
+        while (i + 1 < pattern.length && /[0-9]/.test(pattern[i + 1]!)) i += 1;
+      } else i += 1;
+      continue;
+    }
+    if (inClass) {
+      if (ch === "]") inClass = false;
+      continue;
+    }
+    if (ch === "[") {
+      inClass = true;
+      continue;
+    }
+    if (ch === "{") {
+      const end = pattern.indexOf("}", i + 1);
+      i = end >= 0 ? end : pattern.length;
+      continue;
+    }
+    if (ch === "(") {
+      depth += 1;
+      continue;
+    }
+    if (ch === ")") {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0 && ch === "|") return null;
+    if (depth !== 0 || !/[A-Za-z0-9]/.test(ch)) continue;
+
+    const start = i;
+    while (i + 1 < pattern.length && /[A-Za-z0-9]/.test(pattern[i + 1]!)) i += 1;
+    let run = pattern.slice(start, i + 1);
+    const next = pattern[i + 1];
+    if (next === "?" || next === "*" || next === "+" || next === "{") {
+      run = run.slice(0, -1);
+    }
+    if (run.length > 0) runs.push(run);
+  }
+
+  return runs.sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
+function compileQueryPatterns(
+  patterns: readonly string[],
+  caseSensitive: boolean,
+  regex: boolean,
+): { ok: true; patterns: CompiledQueryPattern[] } | { ok: false; msg: string } {
+  const flags = caseSensitive ? "u" : "iu";
+  const compiled: CompiledQueryPattern[] = [];
+  for (const text of patterns) {
+    let matcher: RegExp | null = null;
+    if (regex) {
+      try {
+        matcher = new RegExp(text, flags);
+      } catch (error) {
+        return {
+          ok: false,
+          msg: `session_search query contains an invalid regular expression: ${String(error)}`,
+        };
+      }
+    }
+    const literal = regex ? regexRequiredLiteral(text) : JSON.stringify(text).slice(1, -1);
+    compiled.push({
+      matcher,
+      literalMatch: regex ? null : caseSensitive ? text : text.toLowerCase(),
+      caseSensitive,
+      prefilter: literal === null ? null : caseSensitive ? literal : literal.toLowerCase(),
+    });
+  }
+  return { ok: true, patterns: compiled };
+}
+
+function patternIndex(text: string, pattern: CompiledQueryPattern): number {
+  if (pattern.literalMatch !== null) {
+    const haystack = pattern.caseSensitive ? text : text.toLowerCase();
+    return haystack.indexOf(pattern.literalMatch);
+  }
+  return pattern.matcher?.exec(text)?.index ?? -1;
+}
+
+function matchesAll(text: string, patterns: readonly CompiledQueryPattern[]): boolean {
+  return patterns.every((pattern) => patternIndex(text, pattern) >= 0);
 }
 
 function roughPathToken(value: string): string {
@@ -117,42 +246,69 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
 }
 
 interface ScanResult {
-  lines: string[];
+  matches: SessionSearchMatch[];
   cwd: string | null;
   firstTimestamp: string | null;
   bytesRead: number;
   truncated: boolean;
 }
 
-function prefilterNeedles(queryWords: readonly string[]): string[] {
-  // JSON strings escape quotes/backslashes. Searching the serialized spelling
-  // avoids false negatives in the grep stage; strictMatch still decides against
-  // the decoded target text and removes structural-field false positives.
-  return queryWords.map((word) => JSON.stringify(word).slice(1, -1).toLowerCase());
+function linePassesPrefilter(
+  line: string,
+  patterns: readonly CompiledQueryPattern[],
+  caseSensitive: boolean,
+  regex: boolean,
+): boolean {
+  // Case-insensitive regex prefilter fragments are ASCII-alphanumeric-only
+  // (regexRequiredLiteral), so the haystack must fold every character that
+  // RegExp "iu" simple-case-folds onto ASCII: toLowerCase covers KELVIN SIGN
+  // (U+212A → k), and LATIN SMALL LETTER LONG S (U+017F, unchanged by
+  // toLowerCase, folds to "s") is replaced explicitly. Unicode normalization
+  // (NFKC/NFKD) must NOT be applied here: composing an NFD sequence
+  // (U+0065 U+0301) into U+00E9 removes the raw "e" that a /cafe/iu strict match
+  // depends on, creating a prefilter false negative.
+  const haystack = caseSensitive
+    ? line
+    : regex
+      ? line.toLowerCase().replaceAll("ſ", "s")
+      : line.toLowerCase();
+  return patterns.every(
+    (pattern) => pattern.prefilter === null || haystack.includes(pattern.prefilter),
+  );
 }
 
 function scanCandidateFile(
   file: string,
-  queryWords: readonly string[],
+  patterns: readonly CompiledQueryPattern[],
+  targetUser: boolean,
+  targetAgent: boolean,
+  caseSensitive: boolean,
+  regex: boolean,
   maxBytes: number,
 ): ScanResult {
   const size = fs.statSync(file).size;
   const limit = Math.min(size, Math.max(0, maxBytes));
-  const needles = prefilterNeedles(queryWords);
-  const lines: string[] = [];
+  const matches: SessionSearchMatch[] = [];
+  const seen = new Set<string>();
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   let offset = 0;
   let carry = Buffer.alloc(0);
-  let candidateOverflow = false;
   const fd = fs.openSync(file, "r");
 
   const inspect = (line: string): void => {
-    if (needles.length > 0) {
-      const lower = line.toLowerCase();
-      if (needles.every((needle) => lower.includes(needle))) {
-        if (lines.length < PREFILTER_LINE_MAX) lines.push(line);
-        else candidateOverflow = true;
+    if (
+      patterns.length > 0 &&
+      matches.length < SESSION_SEARCH_MATCH_SUMMARY_MAX &&
+      linePassesPrefilter(line, patterns, caseSensitive, regex)
+    ) {
+      const match = strictMatchCompiled(line, { patterns, targetUser, targetAgent });
+      if (match) {
+        const key = `${match.role}\0${match.timestamp ?? ""}\0${match.text}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          matches.push(match);
+        }
       }
     }
     if (cwd !== null && firstTimestamp !== null) return;
@@ -189,38 +345,37 @@ function scanCandidateFile(
         start = newline + 1;
       }
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
-      if (lines.length >= PREFILTER_LINE_MAX && cwd !== null && firstTimestamp !== null) {
+      if (
+        cwd !== null &&
+        firstTimestamp !== null &&
+        (patterns.length === 0 || matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX)
+      ) {
         break;
       }
-      if (queryWords.length === 0 && cwd !== null && firstTimestamp !== null) break;
     }
     if (carry.length > 0 && offset === size) inspect(carry.toString("utf-8"));
   } finally {
     fs.closeSync(fd);
   }
   return {
-    lines,
+    matches,
     cwd,
     firstTimestamp,
     bytesRead: offset,
-    truncated:
-      (offset >= limit && limit < size) ||
-      candidateOverflow ||
-      (lines.length >= PREFILTER_LINE_MAX && offset < size),
+    truncated: offset >= limit && limit < size,
   };
-}
-
-/** Grep-stage helper: case-insensitive, all words must occur on one JSONL line. */
-export function prefilterLines(file: string, queryWords: readonly string[]): string[] {
-  return scanCandidateFile(
-    file,
-    queryWords.map((word) => word.toLowerCase()),
-    REQUEST_SCAN_MAX_BYTES,
-  ).lines;
 }
 
 export interface StrictMatchParams {
   queryWords: readonly string[];
+  targetUser: boolean;
+  targetAgent: boolean;
+  caseSensitive?: boolean;
+  regex?: boolean;
+}
+
+interface CompiledStrictMatchParams {
+  patterns: readonly CompiledQueryPattern[];
   targetUser: boolean;
   targetAgent: boolean;
 }
@@ -234,18 +389,17 @@ function tagBody(content: string, tag: string): string | undefined {
   return content.slice(start + open.length, end);
 }
 
-function snippet(text: string, queryWords: readonly string[]): string {
-  const compact = text.replace(/\s+/g, " ").trim();
-  const lower = compact.toLowerCase();
+function snippet(text: string, patterns: readonly CompiledQueryPattern[]): string {
+  const source = text.trim();
   let index = -1;
-  for (const word of queryWords) {
-    const found = lower.indexOf(word);
+  for (const pattern of patterns) {
+    const found = patternIndex(source, pattern);
     if (found >= 0 && (index < 0 || found < index)) index = found;
   }
-  if (index < 0) return compact.slice(0, SNIPPET_CONTEXT_CHARS * 2);
+  if (index < 0) return source.slice(0, SNIPPET_CONTEXT_CHARS * 2);
   const start = Math.max(0, index - SNIPPET_CONTEXT_CHARS);
-  const end = Math.min(compact.length, index + SNIPPET_CONTEXT_CHARS);
-  return `${start > 0 ? "…" : ""}${compact.slice(start, end)}${end < compact.length ? "…" : ""}`;
+  const end = Math.min(source.length, index + SNIPPET_CONTEXT_CHARS);
+  return `${start > 0 ? "…" : ""}${source.slice(start, end)}${end < source.length ? "…" : ""}`;
 }
 
 /** Extract the human-authored text of a user row. Claude Code writes plain
@@ -275,7 +429,7 @@ function userText(row: Record<string, unknown>): string | undefined {
  * query. */
 function ccmsgEventMatch(
   content: string,
-  params: StrictMatchParams,
+  params: CompiledStrictMatchParams,
 ): SessionSearchMatch | undefined {
   const eventBody = tagBody(content, "event");
   if (!eventBody) return undefined;
@@ -289,10 +443,10 @@ function ccmsgEventMatch(
     if (!isRecord(event) || event.type !== "msg" || typeof event.msg !== "string") continue;
     const role = event.from === ADMIN_ID ? "user" : "agent";
     if (role === "user" ? !params.targetUser : !params.targetAgent) continue;
-    if (!lowerIncludesAll(event.msg, params.queryWords)) continue;
+    if (!matchesAll(event.msg, params.patterns)) continue;
     return {
       role,
-      text: snippet(event.msg, params.queryWords),
+      text: snippet(event.msg, params.patterns),
       ...(typeof event.ts === "string" ? { timestamp: event.ts } : {}),
     };
   }
@@ -306,9 +460,9 @@ function ccmsgEventMatch(
  * user message would misclassify agent-authored ccmsg posts. dequeue/remove
  * queue rows are intentionally ignored (the enqueue row already carries the
  * same payload). */
-export function strictMatch(
+function strictMatchCompiled(
   line: string,
-  params: StrictMatchParams,
+  params: CompiledStrictMatchParams,
 ): SessionSearchMatch | undefined {
   let row: unknown;
   try {
@@ -348,12 +502,29 @@ export function strictMatch(
   }
 
   if (role === "user" ? !params.targetUser : !params.targetAgent) return undefined;
-  if (!lowerIncludesAll(text, params.queryWords)) return undefined;
+  if (!matchesAll(text, params.patterns)) return undefined;
   return {
     role,
-    text: snippet(text, params.queryWords),
+    text: snippet(text, params.patterns),
     ...(timestamp ? { timestamp } : {}),
   };
+}
+
+export function strictMatch(
+  line: string,
+  params: StrictMatchParams,
+): SessionSearchMatch | undefined {
+  const compiled = compileQueryPatterns(
+    params.queryWords,
+    params.caseSensitive ?? false,
+    params.regex ?? false,
+  );
+  if (!compiled.ok) return undefined;
+  return strictMatchCompiled(line, {
+    patterns: compiled.patterns,
+    targetUser: params.targetUser,
+    targetAgent: params.targetAgent,
+  });
 }
 
 function parseMtimeWithin(raw: unknown): number | undefined {
@@ -369,10 +540,12 @@ function parseMtimeWithin(raw: unknown): number | undefined {
 function validateRequest(req: SessionSearchRequest):
   | {
       ok: true;
-      queryWords: string[];
+      patterns: CompiledQueryPattern[];
       cwdWords: string[];
       targetUser: boolean;
       targetAgent: boolean;
+      caseSensitive: boolean;
+      regex: boolean;
       mtimeMs: number;
     }
   | { ok: false; msg: string } {
@@ -384,6 +557,12 @@ function validateRequest(req: SessionSearchRequest):
   }
   if (req.sid !== undefined && typeof req.sid !== "string") {
     return { ok: false, msg: "session_search sid must be a string" };
+  }
+  if (req.case_sensitive !== undefined && typeof req.case_sensitive !== "boolean") {
+    return { ok: false, msg: "session_search case_sensitive must be a boolean" };
+  }
+  if (req.regex !== undefined && typeof req.regex !== "boolean") {
+    return { ok: false, msg: "session_search regex must be a boolean" };
   }
   if (req.target_user !== undefined && typeof req.target_user !== "boolean") {
     return { ok: false, msg: "session_search target_user must be a boolean" };
@@ -401,12 +580,18 @@ function validateRequest(req: SessionSearchRequest):
   if (mtimeMs === undefined) {
     return { ok: false, msg: "session_search mtime_within must match <number>[mhd]" };
   }
+  const caseSensitive = req.case_sensitive ?? false;
+  const regex = req.regex ?? false;
+  const compiled = compileQueryPatterns(queryPatterns(req.query), caseSensitive, regex);
+  if (!compiled.ok) return compiled;
   return {
     ok: true,
-    queryWords: words(req.query).map((word) => word.toLowerCase()),
+    patterns: compiled.patterns,
     cwdWords: words(req.cwd).map((word) => word.toLowerCase()),
     targetUser: req.target_user ?? true,
     targetAgent: req.target_agent ?? true,
+    caseSensitive,
+    regex,
     mtimeMs,
   };
 }
@@ -445,17 +630,22 @@ export async function sessionSearch(
     }
     let scan: ScanResult;
     try {
-      scan = scanCandidateFile(candidate.file, validated.queryWords, remaining);
+      scan = scanCandidateFile(
+        candidate.file,
+        validated.patterns,
+        validated.targetUser,
+        validated.targetAgent,
+        validated.caseSensitive,
+        validated.regex,
+        remaining,
+      );
     } catch (error) {
       log.error(`session_search: failed reading ${candidate.file}: ${String(error)}`);
       continue;
     }
     scannedBytes += scan.bytesRead;
-    // Per-file truncation (a noisy transcript overflowing the per-file grep
-    // candidate cap, or a file cut by the remaining budget) marks the response
-    // incomplete but must NOT abort the remaining candidates — one noisy file
-    // would otherwise hide every older session. Only the global scan budget
-    // (checked at the top of the loop) and the result cap stop the walk.
+    // A file cut by the remaining request-wide byte budget marks the response
+    // incomplete but does not erase hits already found in that prefix.
     if (scan.truncated) truncated = true;
     if (validated.cwdWords.length > 0) {
       if (scan.cwd === null || !lowerIncludesAll(scan.cwd, validated.cwdWords)) {
@@ -463,30 +653,8 @@ export async function sessionSearch(
       }
     }
 
-    const matches: SessionSearchMatch[] = [];
-    // The same ccmsg delivery appears twice in a transcript (the
-    // queue-operation enqueue row, then the consumed task-notification user
-    // row), so identical summaries are collapsed to keep the small summary
-    // budget for distinct messages.
-    const seen = new Set<string>();
-    if (validated.queryWords.length > 0) {
-      for (const line of scan.lines) {
-        const match = strictMatch(line, {
-          queryWords: validated.queryWords,
-          targetUser: validated.targetUser,
-          targetAgent: validated.targetAgent,
-        });
-        if (!match) continue;
-        const key = `${match.role} ${match.timestamp ?? ""} ${match.text}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        matches.push(match);
-        if (matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX) break;
-      }
-      if (matches.length === 0) {
-        continue;
-      }
-    }
+    const matches = scan.matches;
+    if (validated.patterns.length > 0 && matches.length === 0) continue;
 
     const location = scan.cwd ? deriveRepoLocation(scan.cwd) : null;
     hits.push({

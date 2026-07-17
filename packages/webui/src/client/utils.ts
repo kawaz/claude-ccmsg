@@ -766,6 +766,8 @@ export function formatBytes(bytes: number): string {
  * explicitly-select-everything form serialize identically. */
 export interface SessionSearchForm {
   query: string;
+  caseSensitive: boolean;
+  regex: boolean;
   targetUser: boolean;
   targetAgent: boolean;
   cwd: string;
@@ -780,6 +782,8 @@ export interface SessionSearchForm {
  * mean the same thing server-side). */
 export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
   query: "",
+  caseSensitive: false,
+  regex: false,
   targetUser: true,
   targetAgent: true,
   cwd: "",
@@ -804,6 +808,8 @@ export function buildSessionSearchRequest(
   const req: Omit<SessionSearchRequest, "op"> = {};
   const query = form.query.trim();
   if (query) req.query = query;
+  if (form.caseSensitive) req.case_sensitive = true;
+  if (form.regex) req.regex = true;
   if (!form.targetUser) req.target_user = false;
   if (!form.targetAgent) req.target_agent = false;
   const cwd = form.cwd.trim();
@@ -814,6 +820,17 @@ export function buildSessionSearchRequest(
   const mtime = form.mtimeWithin.trim();
   if (mtime && mtime !== DEFAULT_SESSION_SEARCH_FORM.mtimeWithin) req.mtime_within = mtime;
   return req;
+}
+
+/** Converts the submitted Session Search query controls into Timeline's
+ * per-session in-view search state. Keeping this pure makes the cross-view
+ * handoff independently testable instead of coupling it to navigation. */
+export function sessionSearchFormToTimelineSearch(form: SessionSearchForm) {
+  return {
+    queryText: form.query.trim(),
+    caseSensitive: form.caseSensitive,
+    regex: form.regex,
+  };
 }
 
 /** repo/ws label for a search-result row or a pinned-session row (DR-0021

@@ -730,10 +730,17 @@ describe("createWsClient agents/ping (U1)", () => {
     const ws1 = instances[0];
     ws1.readyState = MockWebSocket.OPEN;
 
-    const req = handle.sessionSearch({ query: "foo bar", mtime_within: "2h" });
+    const req = handle.sessionSearch({
+      query: "foo\nbar",
+      case_sensitive: true,
+      regex: true,
+      mtime_within: "2h",
+    });
     expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
       op: "session_search",
-      query: "foo bar",
+      query: "foo\nbar",
+      case_sensitive: true,
+      regex: true,
       mtime_within: "2h",
     });
 

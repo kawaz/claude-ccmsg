@@ -606,7 +606,8 @@ a {
   gap: 0.4rem;
 }
 
-.session-search-form input[type="text"] {
+.session-search-form input[type="text"],
+.session-search-query {
   width: 100%;
   font: inherit;
   font-size: 0.8rem;
@@ -615,6 +616,21 @@ a {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
+}
+
+.session-search-query-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.session-search-query {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+
+.session-search-query-row .search-bar-toggles {
+  flex-direction: column;
 }
 
 .session-search-row {
@@ -1359,6 +1375,25 @@ button.session-tab {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
+}
+
+.session-pin-toggle {
+  margin-left: auto;
+  align-self: center;
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.session-pin-toggle.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
 }
 
 #session-rooms {
@@ -3227,6 +3262,10 @@ button.session-tab {
   border-radius: 0.15rem;
   cursor: pointer;
   padding: 0 0.05rem;
+}
+
+.session-search-hl {
+  cursor: inherit;
 }
 
 /* Wrapper SegmentView adds only around a currently-matching in-view-search

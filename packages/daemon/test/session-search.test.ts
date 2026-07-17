@@ -80,16 +80,178 @@ afterEach(() => {
 });
 
 describe("session_search three-stage filtering", () => {
-  // Guarantees the public query meaning: all words must occur in one human
-  // message; distributing the words across separate lines is not an AND hit.
-  test("query words use message-local AND semantics", async () => {
+  // Each non-blank query line is one AND clause. All clauses must match the
+  // same decoded message; distributing them across transcript rows is not a hit.
+  test("multiline query patterns use message-local AND semantics", async () => {
     const config = configDir();
     writeSession(config, sid(1), [user("alpha only"), user("alpha and beta together")]);
     writeSession(config, sid(2), [user("alpha only"), user("beta only")]);
 
-    const result = await search(config, { query: "alpha beta" });
+    const result = await search(config, { query: "alpha\n\n beta" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
     expect(result.hits[0]!.matches).toHaveLength(1);
+  });
+
+  // Spaces inside one query line are literal content, not an implicit pattern
+  // separator; only newlines create additional AND clauses.
+  test("one query line remains one literal phrase", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("alpha beta")]);
+    writeSession(config, sid(2), [user("alpha and beta")]);
+
+    const result = await search(config, { query: "alpha beta" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // case_sensitive defaults false for compatibility, while true applies to
+  // both the serialized-line prefilter and decoded strict match.
+  test("case_sensitive controls literal matching", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("MixedCase needle")]);
+
+    expect((await search(config, { query: "mixedcase" })).hits).toHaveLength(1);
+    expect((await search(config, { query: "mixedcase", case_sensitive: true })).hits).toHaveLength(
+      0,
+    );
+    expect((await search(config, { query: "MixedCase", case_sensitive: true })).hits).toHaveLength(
+      1,
+    );
+  });
+
+  // A regex with required top-level ASCII literals may use them to prune raw
+  // JSONL lines, but strict RegExp.test on decoded message text remains the
+  // authority and enforces multiline AND across patterns.
+  test("regex mode matches decoded text with AND semantics", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("alpha middle omega and count 1234")]);
+    writeSession(config, sid(2), [user("alpha omega without digits")]);
+
+    const result = await search(config, { query: "alpha.*omega\n\\d{4}", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // The returned summary preserves matched whitespace so the webui can apply
+  // the same regex to it and highlight an explicit newline match.
+  test("regex summaries preserve whitespace used by the strict match", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("before foo\nbar after")]);
+
+    const result = await search(config, { query: "foo\\nbar", regex: true });
+    expect(result.hits[0]!.matches[0]!.text).toContain("foo\nbar");
+  });
+
+  // case_sensitive applies to RegExp flags too, not only literal indexOf mode.
+  test("case_sensitive controls regex matching", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("MixedCase")]);
+
+    expect((await search(config, { query: "mixedcase", regex: true })).hits).toHaveLength(1);
+    expect(
+      (await search(config, { query: "mixedcase", regex: true, case_sensitive: true })).hits,
+    ).toHaveLength(0);
+  });
+
+  // Top-level alternatives do not share either branch's literals. The
+  // approximation must skip them so the second branch remains searchable.
+  test("regex alternation does not create a false-negative prefilter", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("omega")]);
+
+    const result = await search(config, { query: "alpha|omega", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // Patterns made entirely from escape syntax have no safe raw-JSON literal
+  // fragment. The daemon must skip that clause's prefilter and decode every
+  // line, including a real hit after 250 non-matching rows.
+  test("regex without a safe literal fragment falls back to strict scanning of all lines", async () => {
+    const config = configDir();
+    const rows = Array.from({ length: 250 }, (_, index) => user(`ordinary ${index}`));
+    writeSession(config, sid(1), [...rows, user("value 1234 at the end")]);
+
+    const result = await search(config, { query: "\\d{4}", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.truncated).toBe(false);
+  });
+
+  // Hex escapes are deliberately not treated as literal prefilter text: the
+  // raw pattern spelling "\\x66" is absent from decoded "foo", yet strict
+  // matching must still find it (no prefilter false negative).
+  test("regex escape spelling never becomes a false-negative prefilter", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("foo")]);
+
+    const result = await search(config, { query: "\\x66", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // A named backreference's identifier is regex syntax, not message text.
+  // The prefilter must not require the group name to appear in the decoded hit.
+  test("regex named-backreference syntax is not treated as literal text", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("foofoo")]);
+
+    const result = await search(config, {
+      query: "(?<word>foo)\\k<word>",
+      regex: true,
+    });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // Quantifier digits describe repetition and are not required message text.
+  // Treating the "2" in .{2} as a literal prefilter would drop every valid hit.
+  test("regex quantifier syntax is never mistaken for required literal text", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("ab")]);
+
+    const result = await search(config, { query: ".{2}", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  // Unicode-aware case-insensitive RegExp matching treats long-s as ASCII s.
+  // The raw-line approximation must apply the same ASCII-target fold (long-s
+  // is unchanged by toLowerCase) or it would reject a strict match before
+  // decoding. KELVIN SIGN is the other ASCII-target simple fold; toLowerCase
+  // already maps it to "k".
+  test("case-insensitive regex prefilter preserves Unicode fold matches", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("ſoo")]);
+    writeSession(config, sid(2), [user("Kelvin scale")]);
+
+    expect((await search(config, { query: "soo", regex: true })).hits.map((h) => h.sid)).toEqual([
+      sid(1),
+    ]);
+    expect((await search(config, { query: "kelvin", regex: true })).hits.map((h) => h.sid)).toEqual(
+      [sid(2)],
+    );
+  });
+
+  // Unicode normalization must NOT be part of the prefilter haystack: NFD
+  // text ("e" + combining acute) keeps a raw "cafe" run that /cafe/iu strict-
+  // matches, but NFC/NFKC composition would erase it and reject the line
+  // before decoding (prefilter false negative).
+  test("regex prefilter does not normalize away NFD combining sequences", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("see cafe\u0301 here")]);
+
+    expect((await search(config, { query: "cafe", regex: true })).hits.map((h) => h.sid)).toEqual([
+      sid(1),
+    ]);
+    expect(
+      (await search(config, { query: "cafe", regex: true, case_sensitive: true })).hits.map(
+        (h) => h.sid,
+      ),
+    ).toEqual([sid(1)]);
+  });
+
+  // Invalid regex is a request error rather than an empty successful result,
+  // so callers can distinguish bad input from a valid no-hit search.
+  test("invalid regex returns invalid_args", async () => {
+    const config = configDir();
+    const result = await sessionSearch({ op: "session_search", query: "(", regex: true }, log, [
+      config,
+    ]);
+    expect(result).toMatchObject({ ok: false, code: "invalid_args" });
   });
 
   // Guarantees both independent role toggles. The same query text is present on
@@ -334,9 +496,10 @@ describe("session_search result metadata and limits", () => {
     expect(result.hits[0]!.matches).toHaveLength(SESSION_SEARCH_MATCH_SUMMARY_MAX);
   });
 
-  // Guarantees the per-file grep candidate cap never masquerades as a complete
-  // negative result: excess structural hits mark the overall response truncated.
-  test("prefilter candidate overflow is reported as truncated", async () => {
+  // Structural prefilter false positives are decoded and discarded without a
+  // fixed candidate-count cutoff, so a real message after 200 such rows is not
+  // hidden and the complete scan is not reported as truncated.
+  test("many prefilter false positives do not hide a later strict match", async () => {
     const config = configDir();
     const structural = Array.from({ length: 201 }, (_, index) =>
       user(`ordinary ${index}`, "/workspace/prefilter-overflow"),
@@ -344,14 +507,13 @@ describe("session_search result metadata and limits", () => {
     writeSession(config, sid(1), [...structural, user("prefilter-overflow actual message")]);
 
     const result = await search(config, { query: "prefilter-overflow" });
-    expect(result.hits).toEqual([]);
-    expect(result.truncated).toBe(true);
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.truncated).toBe(false);
   });
 
-  // Guarantees one noisy transcript is not a wall: a file that overflows its
-  // per-file grep candidate cap marks the response truncated but scanning
-  // continues, so a genuine match in an older file is still returned.
-  test("per-file overflow does not abort scanning later candidates", async () => {
+  // A noisy transcript with only structural prefilter hits is not a wall: the
+  // scanner finishes it and continues to an older candidate with a real match.
+  test("prefilter false positives do not abort scanning later candidates", async () => {
     const config = configDir();
     const structural = Array.from({ length: 201 }, (_, index) =>
       user(`ordinary ${index}`, "/workspace/wall-needle"),
@@ -364,7 +526,7 @@ describe("session_search result metadata and limits", () => {
 
     const result = await search(config, { query: "wall-needle" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(2)]);
-    expect(result.truncated).toBe(true);
+    expect(result.truncated).toBe(false);
   });
 
   // Guarantees metadata lines with null/no timestamp do not become creation

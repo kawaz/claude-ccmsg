@@ -111,6 +111,12 @@ export interface SessionTreeState {
   selectedPath: string | null;
   file: FileViewState | null;
   timeline: TimelineState;
+  /** Timeline's in-view search controls, cached per sid so Session Search can
+   * hand off a query before navigating and later visits preserve edits. */
+  timelineSearch: { queryText: string; caseSensitive: boolean; regex: boolean };
+  /** Ephemeral metadata for a historical result that was opened without being
+   * pinned. Persisted pins keep their own copy in AppState.pinnedSessions. */
+  searchHit?: SessionSearchHit;
 }
 
 /** Provenance of the running daemon (U1 footer), from a `ping` reply's
@@ -150,15 +156,15 @@ export interface AppState {
    * decision (a): sidebar mini badge only shows for the session currently
    * open, see SessionList.tsx). */
   sessionStatuses: Map<string, SessionStatusSnapshot>;
-  /** Pinned historical sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
+  /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
-   * (`pinned/hydrated`) and persists it back on every `pinned/added` /
-   * `pinned/removed` (subscribe-driven effect, mirrors ws.ts's since_seq
+   * (`pinned/hydrated`) and persists it whenever a pin action replaces the Map
+   * (subscribe-driven effect, mirrors ws.ts's since_seq
    * save-on-change; the reducer itself never touches localStorage, DR-0005
-   * §1). A pinned sid is always "known to have a transcript" — session_search
-   * only ever surfaces jsonl transcript files — so SessionView widens its
-   * hasTranscript gate to include this map for a sid with no live peer. */
+   * §1). Search-origin pins carry their jsonl `file`; arbitrary SessionView
+   * pins may not have a transcript, so SessionView uses the stored file only
+   * as transcript capability evidence rather than treating every pin as one. */
   pinnedSessions: Map<string, SessionSearchHit>;
   /** mention targets staged for the composer of the current room. */
   mentionTo: Set<string>;
@@ -211,6 +217,16 @@ export type Action =
       error?: string;
     }
   | { type: "timeline/loading"; sid: string }
+  | {
+      type: "timeline/search-changed";
+      sid: string;
+      search: { queryText: string; caseSensitive: boolean; regex: boolean };
+    }
+  | {
+      type: "session-search/opened";
+      hit: SessionSearchHit;
+      search: { queryText: string; caseSensitive: boolean; regex: boolean };
+    }
   // "replace" (initial load / refresh, before omitted) discards the cache and
   // takes the response as-is; "prepend" (older-page load) splices the older
   // lines in front of what's cached — see applyTimelineLoaded for the offset
@@ -249,12 +265,12 @@ export type Action =
   // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
   // once at startup from main.tsx after reading localStorage — never
   // dispatched again afterward (unlike rooms/loaded, which can legitimately
-  // re-fire on reconnect). "added"/"removed" are the per-session toggle,
-  // dispatched from the search results list and the sidebar's Pinned
-  // section's unpin button respectively.
+  // re-fire on reconnect). "toggled" is SessionView's sid-keyed header action;
+  // "removed" also supports the sidebar Pinned section's explicit unpin.
   | { type: "pinned/hydrated"; hits: SessionSearchHit[] }
   | { type: "pinned/added"; hit: SessionSearchHit }
-  | { type: "pinned/removed"; sid: string };
+  | { type: "pinned/removed"; sid: string }
+  | { type: "pinned/toggled"; hit: SessionSearchHit };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
  * 2026-07-12: ROOM を選択した後も SESSIONS 側のハイライトが残ったままで、
@@ -322,6 +338,7 @@ function newSessionTree(): SessionTreeState {
     selectedPath: null,
     file: null,
     timeline: newTimelineState(),
+    timelineSearch: { queryText: "", caseSensitive: false, regex: false },
   };
 }
 
@@ -616,6 +633,20 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "sidebar/set":
       return { ...state, sidebarOpen: action.open };
+    case "timeline/search-changed": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      sessionTrees.set(action.sid, { ...tree, timelineSearch: action.search });
+      return { ...state, sessionTrees };
+    }
+    case "session-search/opened": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.hit.sid);
+      sessionTrees.set(action.hit.sid, {
+        ...tree,
+        searchHit: action.hit,
+        timelineSearch: action.search,
+      });
+      return { ...state, sessionTrees };
+    }
     case "timeline/loading": {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       sessionTrees.set(action.sid, {
@@ -652,6 +683,12 @@ export function reducer(state: AppState, action: Action): AppState {
       if (!state.pinnedSessions.has(action.sid)) return state;
       const pinnedSessions = new Map(state.pinnedSessions);
       pinnedSessions.delete(action.sid);
+      return { ...state, pinnedSessions };
+    }
+    case "pinned/toggled": {
+      const pinnedSessions = new Map(state.pinnedSessions);
+      if (pinnedSessions.has(action.hit.sid)) pinnedSessions.delete(action.hit.sid);
+      else pinnedSessions.set(action.hit.sid, action.hit);
       return { ...state, pinnedSessions };
     }
     default:

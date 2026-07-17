@@ -8,6 +8,41 @@ import { useRef, useState } from "preact/hooks";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import type { SearchWord } from "../in-view-search.ts";
 
+export function SearchModeToggles({
+  caseSensitive,
+  onToggleCaseSensitive,
+  regexMode,
+  onToggleRegex,
+}: {
+  caseSensitive: boolean;
+  onToggleCaseSensitive: () => void;
+  regexMode: boolean;
+  onToggleRegex: () => void;
+}) {
+  return (
+    <div class="search-bar-toggles">
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (caseSensitive ? " active" : "")}
+        title="Case sensitive"
+        aria-pressed={caseSensitive}
+        onClick={onToggleCaseSensitive}
+      >
+        Aa
+      </button>
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (regexMode ? " active" : "")}
+        title="正規表現"
+        aria-pressed={regexMode}
+        onClick={onToggleRegex}
+      >
+        .*
+      </button>
+    </div>
+  );
+}
+
 export function SearchBar({
   words,
   queryText,
@@ -66,26 +101,12 @@ export function SearchBar({
             value={queryText}
             onInput={(e) => onQueryChange((e.target as HTMLTextAreaElement).value)}
           />
-          <div class="search-bar-toggles">
-            <button
-              type="button"
-              class={"search-bar-toggle-btn" + (caseSensitive ? " active" : "")}
-              title="Case sensitive"
-              aria-pressed={caseSensitive}
-              onClick={onToggleCaseSensitive}
-            >
-              Aa
-            </button>
-            <button
-              type="button"
-              class={"search-bar-toggle-btn" + (regexMode ? " active" : "")}
-              title="正規表現"
-              aria-pressed={regexMode}
-              onClick={onToggleRegex}
-            >
-              .*
-            </button>
-          </div>
+          <SearchModeToggles
+            caseSensitive={caseSensitive}
+            onToggleCaseSensitive={onToggleCaseSensitive}
+            regexMode={regexMode}
+            onToggleRegex={onToggleRegex}
+          />
           {hasError ? <span class="search-bar-error">正規表現エラー</span> : null}
         </div>
       ) : hasQuery ? (

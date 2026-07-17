@@ -923,11 +923,13 @@ function CcmsgBubble({
 export function Timeline({
   sid,
   timeline,
+  search,
   sessionStatus,
   onOpenStatus,
 }: {
   sid: string;
   timeline: TimelineState;
+  search: { queryText: string; caseSensitive: boolean; regex: boolean };
   /** DR-0020 §2.1 TL 下ミニパネル用の folded status snapshot — subscribe の
    * ライフサイクル自体は SessionView が Status タブと共有して管理する
    * (このコンポーネントは受け取って要約を出すだけ)。undefined = まだ届いて
@@ -1163,13 +1165,19 @@ export function Timeline({
 
   // --- In-view search (DR-0022) ---
 
-  const [searchQueryText, setSearchQueryText] = useState("");
-  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
-  const [searchRegex, setSearchRegex] = useState(false);
+  const searchQueryText = search.queryText;
+  const searchCaseSensitive = search.caseSensitive;
+  const searchRegex = search.regex;
   const parsedSearch = useMemo(
     () =>
       parseSearchQuery(searchQueryText, { caseSensitive: searchCaseSensitive, regex: searchRegex }),
     [searchQueryText, searchCaseSensitive, searchRegex],
+  );
+  const changeSearch = useCallback(
+    (next: Partial<typeof search>) => {
+      store.dispatch({ type: "timeline/search-changed", sid, search: { ...search, ...next } });
+    },
+    [store, sid, search],
   );
 
   // Flat, document-order list of every Segment "unit" currently loaded —
@@ -1231,6 +1239,17 @@ export function Timeline({
   useEffect(() => {
     setSearchCurrentIndex(matchingUnitKeys.length > 0 ? 1 : 0);
   }, [searchQueryText, searchCaseSensitive, searchRegex, sid]);
+  // A handed-off query can exist before the initial transcript page arrives.
+  // In that order the query-reset effect above sees zero matches; initialize
+  // the counter when loaded content first creates a non-empty match set without
+  // resetting an already-selected index on later tail updates.
+  useEffect(() => {
+    setSearchCurrentIndex((current) => {
+      if (matchingUnitKeys.length === 0) return 0;
+      if (current <= 0) return 1;
+      return Math.min(current, matchingUnitKeys.length);
+    });
+  }, [matchingUnitKeys.length]);
 
   const searchUnitRefs = useRef(new Map<string, HTMLElement>());
   const registerSearchUnitRef = useCallback((key: string, el: HTMLElement | null) => {
@@ -1589,11 +1608,11 @@ export function Timeline({
         <SearchBar
           words={parsedSearch.words}
           queryText={searchQueryText}
-          onQueryChange={setSearchQueryText}
+          onQueryChange={(queryText) => changeSearch({ queryText })}
           caseSensitive={searchCaseSensitive}
-          onToggleCaseSensitive={() => setSearchCaseSensitive((v) => !v)}
+          onToggleCaseSensitive={() => changeSearch({ caseSensitive: !searchCaseSensitive })}
           regexMode={searchRegex}
-          onToggleRegex={() => setSearchRegex((v) => !v)}
+          onToggleRegex={() => changeSearch({ regex: !searchRegex })}
           matchCount={matchingUnitKeys.length}
           currentIndex={searchCurrentIndex}
           onPrev={searchPrev}
