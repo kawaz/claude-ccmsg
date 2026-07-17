@@ -55,3 +55,8 @@ reload の手間を基本不要にしたいという要望。daemon 側には既
   から効けばよい)
 - daemon 側の newer-wins 自動 upgrade と対になる CLI 側のレールという位置づけ
 - 実装箇所は `bin/ccmsg` エントリポイント
+- self-redirect を無効化する試験用環境変数 (例 `CCMSG_NO_SELF_EXEC=1`) を設け、
+  リポ内テスト (working copy の bin を直接叩く CLI テスト・integration
+  テスト) では常にこれを付けて回避する。付けないと開発中の working copy 版が
+  PATH 上の installed 版に exec で乗っ取られ、テスト対象が変わってしまう。
+  テストハーネス側 (test ファイルの spawn env) にも一括で仕込むこと
