@@ -5,7 +5,9 @@
 // in isolation by session-status-view.test.ts — no store/DOM dependency.
 import type {
   SessionBackgroundStatus,
+  SessionContextUsage,
   SessionStatusSnapshot,
+  SessionTeammate,
   SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
@@ -71,6 +73,39 @@ export function buildStatusSections(snapshot: SessionStatusSnapshot): StatusSect
   };
 }
 
+/** Transcript model values omit launch-only [1m] suffixes, so the 200k/1M
+ * denominator cannot be recovered directly. Exceeding 200k is positive
+ * evidence for a 1M session; values at or below it remain a 200k estimate. */
+export function estimateContextLimit(tokens: number): 200_000 | 1_000_000 {
+  return tokens > 200_000 ? 1_000_000 : 200_000;
+}
+
+export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {
+  const limit = estimateContextLimit(ctx.tokens);
+  const limitLabel = limit === 1_000_000 ? "1M" : "200k";
+  const percentage = Math.round((ctx.tokens / limit) * 100);
+  return {
+    text: `ctx ${Math.round(ctx.tokens / 1000)}k/${limitLabel}* (${percentage}%)`,
+    title:
+      `${ctx.tokens.toLocaleString("en-US")} tokens / model ${ctx.model} / ` +
+      `context limit ${limit.toLocaleString("en-US")} is estimated; transcript cannot observe environment overrides`,
+  };
+}
+
+function teammateActivity(teammate: SessionTeammate): number {
+  return Math.max(
+    Date.parse(teammate.spawned_at ?? "") || 0,
+    Date.parse(teammate.last_sent_at ?? "") || 0,
+    Date.parse(teammate.last_received_at ?? "") || 0,
+  );
+}
+
+/** Teammates are shown by their latest transcript-observed activity. A copied
+ * array keeps protocol snapshot order immutable for other consumers. */
+export function splitTeammates(teammates: SessionTeammate[]): SessionTeammate[] {
+  return [...teammates].sort((a, b) => teammateActivity(b) - teammateActivity(a));
+}
+
 /** TL 下ミニパネル (DR-0020 §2.1) の 1 行分。`kind:"more"` は
  * MINI_SUMMARY_MAX_LINES を超えた残数を畳んだ表示専用で、実データを持たない。 */
 export type MiniSummaryLineKind = "workflow" | "todo" | "more";
@@ -86,7 +121,8 @@ const MINI_SUMMARY_MAX_LINES = 2;
 /** 走行中 workflow 名 + in_progress TODO の subject だけを、TL 下ミニパネル
  * 向けに並べる。ゼロ件なら空配列 (呼び出し側はこれをパネル非表示の合図にす
  * る、DR-0020 §2.1 "ゼロ件なら非表示")。workflow を todo より先に並べるのは
- * 「今まさに自走している大きい単位」を目立たせるため。 */
+ * 「今まさに自走している大きい単位」を目立たせるため。Context 使用率は走行
+ * 中タスクではなく常時観測値なので、この特化パネルには混ぜない。 */
 export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLine[] {
   const items: MiniSummaryLine[] = [
     ...snapshot.workflows
@@ -108,7 +144,8 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
  * todo の分母は「まだ完了していない件数」(pending+in_progress) — 完了済みは
  * 母数からも外す。badge は「今動いている/残っている量」の要約であって進捗率
  * 表示ではないため、"3/5" は「5 件残っていて 3 件が今 in_progress」の意味に
- * なる (completed を含めた総数ではない)。 */
+ * なる (completed を含めた総数ではない)。Context 使用率は既存 3 軸に足すと
+ * 高密度になり、走行中タスクの視認性を損なうため Status タブだけに表示する。 */
 export function formatSidebarBadge(snapshot: SessionStatusSnapshot | undefined): string | null {
   if (!snapshot) return null;
   const parts: string[] = [];

@@ -51,6 +51,45 @@ function toolResult(
   });
 }
 
+function assistantUsage(
+  tokens: {
+    input: number;
+    cacheRead: number;
+    cacheCreation: number;
+  },
+  opts: { model?: string; timestamp?: string; isSidechain?: boolean; usage?: unknown } = {},
+): string {
+  return JSON.stringify({
+    type: "assistant",
+    isSidechain: opts.isSidechain ?? false,
+    timestamp: opts.timestamp ?? START,
+    message: {
+      model: opts.model ?? "claude-fable-5",
+      usage: opts.usage ?? {
+        input_tokens: tokens.input,
+        cache_read_input_tokens: tokens.cacheRead,
+        cache_creation_input_tokens: tokens.cacheCreation,
+      },
+      content: [{ type: "text", text: "observed assistant output" }],
+    },
+  });
+}
+
+function teammateRelay(content: string, timestamp = END): string {
+  return JSON.stringify({
+    type: "user",
+    isSidechain: false,
+    timestamp,
+    message: {
+      role: "user",
+      content:
+        "Another Claude session sent a message:\n" +
+        content +
+        "\n\nThis came from another Claude session — reply through SendMessage.",
+    },
+  });
+}
+
 function taskNotification(
   taskId: string,
   status?: string,
@@ -149,6 +188,334 @@ interface ErrorLite {
 }
 
 describe("session status fold (DR-0020 Phase 1)", () => {
+  test("直近 assistant usage の 3 入力トークン値を合算し model/timestamp と保存する", () => {
+    // 実 transcript の usage shape を最小化した fixture で、出力 token を含めず main context だけを測る。
+    const result = apply([assistantUsage({ input: 2, cacheRead: 617_281, cacheCreation: 2_588 })]);
+    expect(result.context).toEqual({
+      tokens: 619_871,
+      model: "claude-fable-5",
+      timestamp: START,
+    });
+  });
+
+  test("compaction 後に usage 合算が減っても直近値へ上書き追従する", () => {
+    // context は累積最大値ではなく現在値なので、832384 から 147736 への減少を保持する。
+    const result = apply([
+      assistantUsage({ input: 4, cacheRead: 830_000, cacheCreation: 2_380 }),
+      assistantUsage({ input: 2, cacheRead: 145_000, cacheCreation: 2_734 }, { timestamp: END }),
+    ]);
+    expect(result.context?.tokens).toBe(147_736);
+    expect(result.context?.timestamp).toBe(END);
+  });
+
+  test("synthetic assistant 行は直前の context 観測値を上書きしない", () => {
+    // <synthetic> は usage 全ゼロの harness 行であり、メインモデルの context として採用しない。
+    const result = apply([
+      assistantUsage({ input: 1, cacheRead: 99_999, cacheCreation: 0 }),
+      assistantUsage(
+        { input: 0, cacheRead: 0, cacheCreation: 0 },
+        { model: "<synthetic>", timestamp: END },
+      ),
+    ]);
+    expect(result.context?.tokens).toBe(100_000);
+    expect(result.context?.model).toBe("claude-fable-5");
+  });
+
+  test("usage 無しまたは record でない assistant 行を例外なく無視する", () => {
+    // status fold は通常テキスト行や壊れた usage shape が混じっても直前値を保持する。
+    const state = createSessionStatusState();
+    const accepted = assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 1 });
+    expect(foldLine(state, accepted)).toBe(true);
+    for (const line of [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: END,
+        message: { model: "claude-fable-5", content: [] },
+      }),
+      assistantUsage(
+        { input: 0, cacheRead: 0, cacheCreation: 0 },
+        { timestamp: END, usage: "not-record" },
+      ),
+    ]) {
+      expect(foldLine(state, line)).toBe(false);
+    }
+    expect(snapshot(state).context?.tokens).toBe(3);
+  });
+
+  test("isSidechain:true の assistant usage はメイン context に採用しない", () => {
+    // サブエージェントの大きい usage が main session の使用率へ混入しない境界を保証する。
+    const result = apply([
+      assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
+      assistantUsage(
+        { input: 2, cacheRead: 500_000, cacheCreation: 0 },
+        { isSidechain: true, timestamp: END },
+      ),
+    ]);
+    expect(result.context?.tokens).toBe(100);
+  });
+
+  test("同じ tokens/model の assistant 行は status 変化なしとして push を抑止する", () => {
+    // timestamp だけ違う再記録は表示値を変えないため foldLine=false とし、不要な snapshot push を出さない。
+    const state = createSessionStatusState();
+    expect(foldLine(state, assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }))).toBe(
+      true,
+    );
+    expect(
+      foldLine(
+        state,
+        assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { timestamp: END }),
+      ),
+    ).toBe(false);
+  });
+
+  test("name 付き Agent spawn の teammate_spawned result を teammate として記録する", () => {
+    // foreground Agent でも input.name + teammate_spawned result の組が teams spawn である実契約を固定する。
+    const result = apply([
+      toolUse("team-spawn", "Agent", {
+        subagent_type: "codex-sol-worker",
+        name: "m2-fixer",
+        description: "fix",
+        prompt: "inspect",
+      }),
+      toolResult("team-spawn", {
+        status: "teammate_spawned",
+        teammate_id: "m2-fixer@session-a8aebf86",
+        agent_id: "m2-fixer@session-a8aebf86",
+        agent_type: "codex-sol-worker",
+        model: "gpt-5.6-sol",
+        name: "m2-fixer",
+        color: "cyan",
+      }),
+    ]);
+    expect(result.teammates).toEqual([
+      {
+        name: "m2-fixer",
+        spawned: true,
+        agent_type: "codex-sol-worker",
+        color: "cyan",
+        spawned_at: END,
+        state: "spawned",
+      },
+    ]);
+  });
+
+  test("background Agent result は従来の background に入り teammates へ混入しない", () => {
+    // run_in_background + agentId は agent-teams ではないため、既存 background correlation を保つ。
+    const result = apply([
+      toolUse("background-agent", "Agent", {
+        description: "research",
+        prompt: "inspect",
+        run_in_background: true,
+        subagent_type: "Explore",
+      }),
+      toolResult("background-agent", {
+        agentId: "agent-bg",
+        status: "async_launched",
+        isAsync: true,
+      }),
+    ]);
+    expect(result.background.map((task) => task.task_id)).toEqual(["agent-bg"]);
+    expect(result.teammates).toEqual([]);
+  });
+
+  test("SendMessage 成功 result は宛先 teammate の最終送信時刻を更新する", () => {
+    // spawn を観測していない宛先も名前で突合し、送信成功が確定した result 時刻だけを記録する。
+    const result = apply([
+      toolUse("send", "SendMessage", {
+        to: "kuu-cli-q8",
+        summary: "done",
+        message: "result",
+      }),
+      toolResult("send", {
+        success: true,
+        message: "Message sent to kuu-cli-q8's inbox",
+        msg_id: "msg-1",
+        routing: { sender: "team-lead", target: "@kuu-cli-q8", targetColor: "cyan" },
+      }),
+    ]);
+    expect(result.teammates).toEqual([
+      {
+        name: "kuu-cli-q8",
+        spawned: false,
+        state: "active",
+        last_sent_at: END,
+      },
+    ]);
+  });
+
+  test("SendMessage 失敗 result は teammate 状態を更新しない", () => {
+    // tool_result error または success!==true は送信成功の証拠にならないため両方とも捨てる。
+    const result = apply([
+      toolUse("send-error", "SendMessage", { to: "worker-a", message: "x" }),
+      toolResult("send-error", { success: true }, END, { is_error: true }),
+      toolUse("send-false", "SendMessage", { to: "worker-b", message: "x" }),
+      toolResult("send-false", { success: false }),
+    ]);
+    expect(result.teammates).toEqual([]);
+  });
+
+  test("単一 teammate-message relay を spawn 無し teammate の active 受信として記録する", () => {
+    // summary 属性が無い実形でも teammate_id と本文を抽出し、relay 時刻を最終受信にする。
+    const result = apply([
+      teammateRelay(
+        '<teammate-message teammate_id="kuu-cli-q8" color="cyan">実装完了</teammate-message>',
+      ),
+    ]);
+    expect(result.teammates).toEqual([
+      {
+        name: "kuu-cli-q8",
+        spawned: false,
+        color: "cyan",
+        state: "active",
+        last_received_at: END,
+      },
+    ]);
+  });
+
+  test("1 user 行に連結された複数 teammate-message relay を全件抽出する", () => {
+    // relay は 1 行 1 件とは限らない実観測に合わせ、global regex で両 teammate を更新する。
+    const result = apply([
+      teammateRelay(
+        '<teammate-message teammate_id="a" color="cyan">A</teammate-message>\n' +
+          '<teammate-message teammate_id="b" color="green">B</teammate-message>',
+      ),
+    ]);
+    expect(result.teammates!.map((teammate) => teammate.name)).toEqual(["a", "b"]);
+  });
+
+  test("idle_notification relay は teammate の推定状態を idle にする", () => {
+    // idle は TUI 内部状態ではなく teammate 自身から届いた JSON 通知の最後の観測として表示する。
+    const result = apply([
+      teammateRelay(
+        '<teammate-message teammate_id="worker" color="cyan">' +
+          '{"type":"idle_notification","from":"worker","timestamp":"2026-07-17T00:00:00Z","idleReason":"available"}' +
+          "</teammate-message>",
+      ),
+    ]);
+    expect(result.teammates?.[0]?.state).toBe("idle");
+  });
+
+  test("同名 teammate の re-spawn は 1 entry の metadata を後勝ち更新し送受信時刻を保持する", () => {
+    // Agent tool の name は latest-wins で再利用されるため、Map key は name とし活動履歴を連続扱いする。
+    const result = apply([
+      toolUse("spawn-1", "Agent", {
+        name: "worker",
+        subagent_type: "first-worker",
+        description: "first",
+        prompt: "first",
+      }),
+      toolResult("spawn-1", {
+        status: "teammate_spawned",
+        name: "worker",
+        agent_type: "first-worker",
+        color: "cyan",
+      }),
+      toolUse("send-worker", "SendMessage", { to: "worker", message: "ping" }),
+      toolResult("send-worker", { success: true, msg_id: "msg-worker" }),
+      toolUse(
+        "spawn-2",
+        "Agent",
+        {
+          name: "worker",
+          subagent_type: "second-worker",
+          description: "second",
+          prompt: "second",
+        },
+        "2026-07-17T00:02:00.000Z",
+      ),
+      toolResult(
+        "spawn-2",
+        {
+          status: "teammate_spawned",
+          name: "worker",
+          agent_type: "second-worker",
+          color: "magenta",
+        },
+        "2026-07-17T00:03:00.000Z",
+      ),
+    ]);
+    expect(result.teammates).toHaveLength(1);
+    expect(result.teammates?.[0]).toMatchObject({
+      name: "worker",
+      agent_type: "second-worker",
+      color: "magenta",
+      last_sent_at: END,
+      spawned_at: "2026-07-17T00:03:00.000Z",
+      state: "spawned",
+    });
+  });
+
+  test("teammate_id=system の lifecycle relay を teammate として列挙しない", () => {
+    // 実観測: teammate_terminated 等は <teammate-message teammate_id="system"> で届く。
+    // system は teammate 名ではなくライフサイクル通知の送り主ラベルなので一覧から除外する。
+    const result = apply([
+      teammateRelay(
+        '<teammate-message teammate_id="system">' +
+          '{"type":"teammate_terminated","message":"worker has shut down."}' +
+          "</teammate-message>",
+      ),
+    ]);
+    expect(result.teammates).toEqual([]);
+  });
+
+  test("TaskStop の in_process_teammate result は該当 teammate を stopped に遷移させる", () => {
+    // 実観測 (kuu 2026-07-17): TaskStop input.task_id は teammate 名、result は
+    // {task_type:"in_process_teammate", task_id:"<内部id>"}。停止後に idle/active の
+    // 推定が残り続けると「最後に観測した活動」表示として誤導するため stopped を立てる。
+    const result = apply([
+      toolUse("spawn", "Agent", { name: "worker", subagent_type: "x", prompt: "p" }),
+      toolResult("spawn", { status: "teammate_spawned", name: "worker", agent_type: "x" }),
+      toolUse("stop", "TaskStop", { task_id: "worker" }),
+      toolResult("stop", {
+        message: "Successfully stopped task: t123 (p...)",
+        task_id: "t123",
+        task_type: "in_process_teammate",
+        command: "p...",
+      }),
+    ]);
+    expect(result.teammates?.[0]?.state).toBe("stopped");
+    // teammate 名の TaskStop は background/workflow へ entry を作らない。
+    expect(result.background).toEqual([]);
+    expect(result.workflows).toEqual([]);
+  });
+
+  test("未観測 teammate への TaskStop は stopped-only entry を作らない", () => {
+    // spawn が transcript 外 (rotate 等) の場合、存在の証拠が無い名前を一覧へ足さない。
+    const result = apply([
+      toolUse("stop", "TaskStop", { task_id: "ghost" }),
+      toolResult("stop", { task_id: "t9", task_type: "in_process_teammate", message: "ok" }),
+    ]);
+    expect(result.teammates).toEqual([]);
+  });
+
+  test("ccmsg peer 用 agent-message tag は teams relay として扱わない", () => {
+    // <agent-message> は別プロトコルなので teammate-message と誤突合しないスコープ境界を固定する。
+    const result = apply([
+      JSON.stringify({
+        type: "user",
+        timestamp: END,
+        message: {
+          content:
+            'Another Claude session sent a message:\n<agent-message from="peer">x</agent-message>',
+        },
+      }),
+    ]);
+    expect(result.teammates).toEqual([]);
+  });
+
+  test("context と teams の実 fixture は全て文字列 prefilter を通過する", () => {
+    // parse 前 grep 相当で落ちると fold テストが直接呼べても実 scan では届かないため、入口を別途保証する。
+    const fixtures = [
+      assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
+      toolUse("spawn", "Agent", { name: "worker", subagent_type: "x" }),
+      toolResult("spawn", { status: "teammate_spawned", name: "worker" }),
+      toolUse("send", "SendMessage", { to: "worker", message: "x" }),
+      toolResult("send", { success: true, msg_id: "msg-prefilter" }),
+      teammateRelay('<teammate-message teammate_id="worker">x</teammate-message>'),
+    ];
+    for (const fixture of fixtures) expect(isSessionStatusCandidate(fixture)).toBe(true);
+  });
+
   test("TaskCreate の result id を採用し、TaskUpdate の状態遷移を最終状態まで再生する", () => {
     // TaskCreate input に id が無い実 transcript 契約を凍結し、result 側 id で TODO を同定する。
     const result = apply([
@@ -263,7 +630,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     // 通知は「このセッション外のタスク」(例: 別経路の注入)。workflows/background の
     // どちらにも entry を作らず黙って捨てる。
     const result = apply([taskNotification("ghost-task", "completed")]);
-    expect(result).toEqual({ todos: [], workflows: [], background: [] });
+    expect(result).toEqual({ todos: [], workflows: [], background: [], teammates: [] });
   });
 
   test("TaskUpdate は success:true の result と突合できた場合だけ反映する", () => {
@@ -521,6 +888,66 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           (event) => event.type === "msg" && event.msg === "marker",
         );
         expect(seen.some((event: any) => event.ev === "session_status")).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "context usage と teammate relay の追記を full snapshot push で逐次配信する",
+    async () => {
+      // foldLine の変化判定だけでなく、実 Watch→listener→session_status push 経路で新フィールドが届くことを保証する。
+      const ctx = await startTestDaemon();
+      const dir = fixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        fs.writeFileSync(
+          file,
+          `${assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 })}\n`,
+        );
+        await sessionHello(ctx, sid, file);
+        const user = await userHello(ctx);
+        await user.request({ op: "subscribe" });
+        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        expect(initial.context?.tokens).toBe(100);
+        expect(initial.teammates).toEqual([]);
+
+        fs.appendFileSync(
+          file,
+          `${assistantUsage(
+            { input: 2, cacheRead: 517_000, cacheCreation: 2_998 },
+            { timestamp: END },
+          )}\n`,
+        );
+        const contextPush = await user.readEventUntil<StatusEvent>(
+          (event) => event.ev === "session_status" && event.context?.tokens === 520_000,
+        );
+        expect(contextPush.ev.context).toEqual({
+          tokens: 520_000,
+          model: "claude-fable-5",
+          timestamp: END,
+        });
+
+        fs.appendFileSync(
+          file,
+          `${teammateRelay(
+            '<teammate-message teammate_id="worker" color="cyan">ready</teammate-message>',
+            "2026-07-17T00:05:00.000Z",
+          )}\n`,
+        );
+        const teammatePush = await user.readEventUntil<StatusEvent>(
+          (event) => event.ev === "session_status" && event.teammates?.[0]?.name === "worker",
+        );
+        expect(teammatePush.ev.context?.tokens).toBe(520_000);
+        expect(teammatePush.ev.teammates?.[0]).toMatchObject({
+          name: "worker",
+          state: "active",
+          last_received_at: "2026-07-17T00:05:00.000Z",
+        });
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

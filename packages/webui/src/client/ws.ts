@@ -295,7 +295,13 @@ export function createWsClient(
       dispatch({
         type: "session-status/loaded",
         sid: ev.sid,
-        snapshot: { todos: ev.todos, workflows: ev.workflows, background: ev.background },
+        snapshot: {
+          todos: ev.todos,
+          workflows: ev.workflows,
+          background: ev.background,
+          ...(ev.context ? { context: ev.context } : {}),
+          teammates: ev.teammates ?? [],
+        },
       });
       return;
     }

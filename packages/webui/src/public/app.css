@@ -2967,6 +2967,25 @@ button.session-tab {
   font-size: 0.85rem;
 }
 
+.status-context {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+
+.status-context-note {
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 0.7rem;
+}
+
+.status-estimate-note {
+  margin: -0.15rem 0 0.4rem;
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+}
+
 .status-section-title {
   margin: 0 0 0.4rem;
   font-size: 0.75rem;
@@ -2999,9 +3018,18 @@ button.session-tab {
  * 「走行中強調、完了は畳む」) — accent の左ボーダー + わずかな背景差で、一覧
  * を流し読みしても「今動いているもの」が即座に判別できるようにする。 */
 .status-row-active,
-.status-todo-active {
+.status-todo-active,
+.status-teammate-active {
   border-left: 3px solid var(--accent);
   background: var(--bg-alt);
+}
+
+.status-teammate-idle {
+  opacity: 0.75;
+}
+
+.status-teammate-stopped {
+  opacity: 0.5;
 }
 
 .status-row-name,

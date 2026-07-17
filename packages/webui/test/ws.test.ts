@@ -1150,11 +1150,12 @@ describe("createWsClient transcript live-tail push (U2)", () => {
 
 // DR-0020 Phase 2: ev:"session_status" pushes relayed as session-status/loaded
 // actions, mirroring the ev:"transcript" coverage above. The push carries the
-// snapshot fields inline (ev/sid + todos/workflows/background); the relay must
-// repackage exactly those three arrays as the action's `snapshot` — one shared
-// reducer path with the subscribe response's own initial dispatch.
+// snapshot fields inline (ev/sid + status snapshot); the relay must preserve
+// context/teammates alongside the original three arrays — one shared reducer
+// path with the subscribe response's own initial dispatch.
 describe("createWsClient session_status push (DR-0020)", () => {
   test("ev:'session_status' push dispatches session-status/loaded with the snapshot fields", () => {
+    // Full snapshot relay must not drop newly-added optional fields at the WebSocket boundary.
     const actions: Action[] = [];
     const handle = createWsClient(
       (a) => actions.push(a),
@@ -1180,6 +1181,19 @@ describe("createWsClient session_status push (DR-0020)", () => {
           },
         ],
         background: [],
+        context: {
+          tokens: 522_000,
+          model: "claude-fable-5",
+          timestamp: "2026-07-17T00:00:00.000Z",
+        },
+        teammates: [
+          {
+            name: "worker-a",
+            spawned: true,
+            state: "idle",
+            spawned_at: "2026-07-17T00:00:00.000Z",
+          },
+        ],
       }),
     );
 
@@ -1198,6 +1212,19 @@ describe("createWsClient session_status push (DR-0020)", () => {
             },
           ],
           background: [],
+          context: {
+            tokens: 522_000,
+            model: "claude-fable-5",
+            timestamp: "2026-07-17T00:00:00.000Z",
+          },
+          teammates: [
+            {
+              name: "worker-a",
+              spawned: true,
+              state: "idle",
+              spawned_at: "2026-07-17T00:00:00.000Z",
+            },
+          ],
         },
       },
     ]);

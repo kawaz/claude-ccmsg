@@ -8,10 +8,11 @@ import type { JSX } from "preact";
 import type {
   SessionBackgroundStatus,
   SessionStatusSnapshot,
+  SessionTeammate,
   SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
-import { buildStatusSections } from "../session-status-view.ts";
+import { buildStatusSections, formatContextUsage, splitTeammates } from "../session-status-view.ts";
 import { formatClockTime } from "../utils.ts";
 
 function TodoRow({ todo }: { todo: SessionTodo }) {
@@ -44,6 +45,21 @@ function BackgroundRow({ bg, running }: { bg: SessionBackgroundStatus; running: 
       <span class="status-row-time">
         {formatClockTime(bg.started_at)}
         {bg.ended_at ? ` – ${formatClockTime(bg.ended_at)}` : ""}
+      </span>
+    </li>
+  );
+}
+
+function TeammateRow({ teammate }: { teammate: SessionTeammate }) {
+  return (
+    <li class={"status-row status-teammate status-teammate-" + teammate.state}>
+      <span class="status-row-name">{teammate.name}</span>
+      {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
+      <span class="status-row-summary">{teammate.state}</span>
+      <span class="status-row-time">
+        {teammate.last_sent_at ? `送 ${formatClockTime(teammate.last_sent_at)}` : ""}
+        {teammate.last_sent_at && teammate.last_received_at ? " · " : ""}
+        {teammate.last_received_at ? `受 ${formatClockTime(teammate.last_received_at)}` : ""}
       </span>
     </li>
   );
@@ -86,6 +102,21 @@ function Section<T>({
   );
 }
 
+function TeamsSection({ teammates }: { teammates: SessionTeammate[] }) {
+  if (teammates.length === 0) return null;
+  return (
+    <section class="status-section">
+      <h3 class="status-section-title">Teams</h3>
+      <p class="status-estimate-note">transcript 観測ベースの推定 (TUI 内部状態は非観測)</p>
+      <ul class="status-list">
+        {splitTeammates(teammates).map((teammate) => (
+          <TeammateRow key={teammate.name} teammate={teammate} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | undefined }) {
   if (!snapshot) {
     return (
@@ -95,6 +126,9 @@ export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | un
     );
   }
   const sections = buildStatusSections(snapshot);
+  const context = snapshot.context ? formatContextUsage(snapshot.context) : null;
+  // Context is nearly always present and Teams is an independent observation.
+  // Keep the empty-state predicate scoped to DR-0020's three operational axes.
   const nothingAtAll =
     sections.todos.pending.length === 0 &&
     sections.todos.inProgress.length === 0 &&
@@ -103,61 +137,72 @@ export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | un
     sections.workflows.done.length === 0 &&
     sections.background.running.length === 0 &&
     sections.background.done.length === 0;
-  if (nothingAtAll) {
-    return (
-      <div class="status-view">
-        <p class="status-empty">このセッションの workflow / background / TODO はまだありません</p>
-      </div>
-    );
-  }
   return (
     <div class="status-view">
-      <Section
-        title="Workflows"
-        running={sections.workflows.running}
-        done={sections.workflows.done}
-        renderRow={(wf, running) => <WorkflowRow key={wf.task_id} wf={wf} running={running} />}
-        emptyRunningText="走行中の workflow なし"
-      />
-      <Section
-        title="Background"
-        running={sections.background.running}
-        done={sections.background.done}
-        renderRow={(bg, running) => <BackgroundRow key={bg.task_id} bg={bg} running={running} />}
-        emptyRunningText="走行中の background タスクなし"
-      />
-      <section class="status-section">
-        <h3 class="status-section-title">TODO</h3>
-        {sections.todos.inProgress.length > 0 ? (
-          <ul class="status-list">
-            {sections.todos.inProgress.map((t) => (
-              <TodoRow key={t.id} todo={t} />
-            ))}
-          </ul>
-        ) : (
-          <p class="status-empty">in_progress の TODO なし</p>
-        )}
-        {sections.todos.pending.length > 0 ? (
-          <details class="status-done" open>
-            <summary>pending ({sections.todos.pending.length})</summary>
-            <ul class="status-list">
-              {sections.todos.pending.map((t) => (
-                <TodoRow key={t.id} todo={t} />
-              ))}
-            </ul>
-          </details>
-        ) : null}
-        {sections.todos.completed.length > 0 ? (
-          <details class="status-done">
-            <summary>completed ({sections.todos.completed.length})</summary>
-            <ul class="status-list">
-              {sections.todos.completed.map((t) => (
-                <TodoRow key={t.id} todo={t} />
-              ))}
-            </ul>
-          </details>
-        ) : null}
-      </section>
+      {context ? (
+        // The "*" alone doesn't explain itself and the title attribute is
+        // hover-only (invisible on touch), so the estimation caveat gets a
+        // visible inline note — the issue's acceptance criterion is that the
+        // estimated nature is stated on the UI itself.
+        <p class="status-context" title={context.title}>
+          {context.text} <span class="status-context-note">上限は推定</span>
+        </p>
+      ) : null}
+      {nothingAtAll ? (
+        <p class="status-empty">このセッションの workflow / background / TODO はまだありません</p>
+      ) : (
+        <>
+          <Section
+            title="Workflows"
+            running={sections.workflows.running}
+            done={sections.workflows.done}
+            renderRow={(wf, running) => <WorkflowRow key={wf.task_id} wf={wf} running={running} />}
+            emptyRunningText="走行中の workflow なし"
+          />
+          <Section
+            title="Background"
+            running={sections.background.running}
+            done={sections.background.done}
+            renderRow={(bg, running) => (
+              <BackgroundRow key={bg.task_id} bg={bg} running={running} />
+            )}
+            emptyRunningText="走行中の background タスクなし"
+          />
+          <section class="status-section">
+            <h3 class="status-section-title">TODO</h3>
+            {sections.todos.inProgress.length > 0 ? (
+              <ul class="status-list">
+                {sections.todos.inProgress.map((t) => (
+                  <TodoRow key={t.id} todo={t} />
+                ))}
+              </ul>
+            ) : (
+              <p class="status-empty">in_progress の TODO なし</p>
+            )}
+            {sections.todos.pending.length > 0 ? (
+              <details class="status-done" open>
+                <summary>pending ({sections.todos.pending.length})</summary>
+                <ul class="status-list">
+                  {sections.todos.pending.map((t) => (
+                    <TodoRow key={t.id} todo={t} />
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+            {sections.todos.completed.length > 0 ? (
+              <details class="status-done">
+                <summary>completed ({sections.todos.completed.length})</summary>
+                <ul class="status-list">
+                  {sections.todos.completed.map((t) => (
+                    <TodoRow key={t.id} todo={t} />
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </section>
+        </>
+      )}
+      <TeamsSection teammates={snapshot.teammates ?? []} />
     </div>
   );
 }

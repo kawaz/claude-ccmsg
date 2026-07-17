@@ -1141,6 +1141,12 @@ describe("reducer / session-status/loaded and session-status/cleared (DR-0020)",
     todos: [{ id: "t1", subject: "fix bug", status: "in_progress" }],
     workflows: [],
     background: [],
+    context: {
+      tokens: 522_000,
+      model: "claude-fable-5",
+      timestamp: "2026-07-17T00:00:00.000Z",
+    },
+    teammates: [{ name: "worker-a", spawned: true, state: "active" }],
   };
   const snapshotB = {
     todos: [],
@@ -1148,6 +1154,7 @@ describe("reducer / session-status/loaded and session-status/cleared (DR-0020)",
       { task_id: "w1", name: "release", status: "running", started_at: "2026-07-16T00:00:00.000Z" },
     ],
     background: [],
+    teammates: [],
   };
 
   test("loaded stores the snapshot under its sid", () => {

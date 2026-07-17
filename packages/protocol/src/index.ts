@@ -294,10 +294,38 @@ export interface SessionBackgroundStatus {
   started_at: string;
   ended_at?: string;
 }
+/** Main-context observation from the latest non-sidechain, non-synthetic
+ * assistant row. Environment overrides are not recorded in transcripts, so
+ * the daemon transports raw values and leaves limit estimation to clients. */
+export interface SessionContextUsage {
+  /** input_tokens + cache_read_input_tokens + cache_creation_input_tokens. */
+  tokens: number;
+  /** Raw message.model value; launch-only suffixes such as [1m] are absent. */
+  model: string;
+  /** Timestamp of the assistant row carrying this observation. */
+  timestamp: string;
+}
+/** Last transcript-observed activity for one agent-teams teammate. The TUI's
+ * internal liveness state is unavailable, so `state` is an open-set estimate. */
+export interface SessionTeammate {
+  name: string;
+  /** Whether a successful Agent result with status:"teammate_spawned" was observed. */
+  spawned: boolean;
+  agent_type?: string;
+  color?: string;
+  spawned_at?: string;
+  last_sent_at?: string;
+  last_received_at?: string;
+  /** "spawned" | "active" | "idle" | "stopped" — open set, based on the latest observed event. */
+  state: string;
+}
 export interface SessionStatusSnapshot {
   todos: SessionTodo[];
   workflows: SessionWorkflowStatus[];
   background: SessionBackgroundStatus[];
+  context?: SessionContextUsage;
+  /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
+  teammates?: SessionTeammate[];
 }
 /** Full recomputed snapshot pushed after a status-changing transcript event. */
 export interface SessionStatusStreamEvent extends SessionStatusSnapshot {

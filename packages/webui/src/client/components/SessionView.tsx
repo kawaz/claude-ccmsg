@@ -147,7 +147,13 @@ export function SessionView({ state }: { state: AppState }) {
         store.dispatch({
           type: "session-status/loaded",
           sid,
-          snapshot: { todos: res.todos, workflows: res.workflows, background: res.background },
+          snapshot: {
+            todos: res.todos,
+            workflows: res.workflows,
+            background: res.background,
+            ...(res.context ? { context: res.context } : {}),
+            teammates: res.teammates ?? [],
+          },
         });
       })
       .catch(() => {

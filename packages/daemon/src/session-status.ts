@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import {
   ErrorCode,
   type SessionBackgroundStatus,
+  type SessionContextUsage,
   type SessionStatusSnapshot,
+  type SessionTeammate,
   type SessionTodo,
   type SessionWorkflowStatus,
 } from "@ccmsg/protocol";
@@ -21,6 +23,9 @@ import {
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
 
+/** String prefilter before JSON.parse. Context usage appears on almost every
+ * assistant row, so adding it weakens the filter, but transcripts are only a
+ * few thousand lines and parsing happens once plus incremental tail batches. */
 const PREFILTER = [
   '"name":"TaskCreate"',
   '"name":"TaskUpdate"',
@@ -28,6 +33,8 @@ const PREFILTER = [
   '"name":"Workflow"',
   '"name":"Monitor"',
   '"name":"Agent"',
+  '"name":"SendMessage"',
+  '"msg_id"',
   '"run_in_background":true',
   '"task":{"id"',
   '"workflowName"',
@@ -36,7 +43,10 @@ const PREFILTER = [
   '"updatedFields"',
   '"timeoutMs"',
   '"task_type"',
+  '"teammate_spawned"',
+  '"cache_read_input_tokens"',
   "<task-notification>",
+  "<teammate-message",
 ] as const;
 
 export function isSessionStatusCandidate(line: string): boolean {
@@ -49,10 +59,14 @@ interface PendingToolUse {
   timestamp: string;
 }
 
+type TeammateState = SessionTeammate;
+
 export interface SessionStatusState {
   todos: Map<string, SessionTodo>;
   workflows: Map<string, SessionWorkflowStatus>;
   background: Map<string, SessionBackgroundStatus>;
+  context?: SessionContextUsage;
+  teammates: Map<string, TeammateState>;
   pendingToolUse: Map<string, PendingToolUse>;
 }
 
@@ -61,6 +75,7 @@ export function createSessionStatusState(): SessionStatusState {
     todos: new Map(),
     workflows: new Map(),
     background: new Map(),
+    teammates: new Map(),
     pendingToolUse: new Map(),
   };
 }
@@ -71,6 +86,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function tokenValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 function addPendingToolUse(
@@ -89,20 +108,48 @@ function addPendingToolUse(
 }
 
 function isTrackedToolUse(name: string, input: Record<string, unknown>): boolean {
-  if (name === "Agent" || name === "Bash") return input.run_in_background === true;
+  if (name === "Agent") {
+    return input.run_in_background === true || typeof input.name === "string";
+  }
+  if (name === "Bash") return input.run_in_background === true;
   return (
     name === "TaskCreate" ||
     name === "TaskUpdate" ||
     name === "TaskStop" ||
     name === "Workflow" ||
-    name === "Monitor"
+    name === "Monitor" ||
+    name === "SendMessage"
   );
 }
 
-function foldAssistant(state: SessionStatusState, row: Record<string, unknown>): false {
+/** The latest accepted assistant usage row replaces the prior observation even
+ * when the total decreases after compaction. Tail batches produce at most one
+ * push after all lines are folded, so changing context on normal assistant
+ * turns does not create one write per line. */
+function foldContextUsage(state: SessionStatusState, row: Record<string, unknown>): boolean {
+  if (row.isSidechain === true) return false;
   const timestamp = stringValue(row.timestamp);
   const message = row.message;
-  if (!timestamp || !isRecord(message) || !Array.isArray(message.content)) return false;
+  if (!timestamp || !isRecord(message)) return false;
+  const model = stringValue(message.model);
+  const usage = message.usage;
+  if (!model || model === "<synthetic>" || !isRecord(usage)) return false;
+  const tokens =
+    tokenValue(usage.input_tokens) +
+    tokenValue(usage.cache_read_input_tokens) +
+    tokenValue(usage.cache_creation_input_tokens);
+  if (tokens === 0) return false;
+  const current = state.context;
+  if (current && current.tokens === tokens && current.model === model) return false;
+  state.context = { tokens, model, timestamp };
+  return true;
+}
+
+function foldAssistant(state: SessionStatusState, row: Record<string, unknown>): boolean {
+  const changed = foldContextUsage(state, row);
+  const timestamp = stringValue(row.timestamp);
+  const message = row.message;
+  if (!timestamp || !isRecord(message) || !Array.isArray(message.content)) return changed;
 
   for (const block of message.content) {
     if (!isRecord(block) || block.type !== "tool_use") continue;
@@ -112,7 +159,7 @@ function foldAssistant(state: SessionStatusState, row: Record<string, unknown>):
     if (!id || !name || !isRecord(input) || !isTrackedToolUse(name, input)) continue;
     addPendingToolUse(state, id, name, input, timestamp);
   }
-  return false;
+  return changed;
 }
 
 function applyTodoUpdate(
@@ -156,10 +203,23 @@ function applyTodoUpdate(
 function applyTaskStop(
   state: SessionStatusState,
   input: Record<string, unknown>,
+  result: Record<string, unknown>,
   timestamp: string | undefined,
 ): boolean {
   const taskId = stringValue(input.task_id);
   if (!taskId) return false;
+  // Agent-teams teammates are stoppable via TaskStop by name: the observed
+  // result carries task_type:"in_process_teammate" with input.task_id being
+  // the teammate name (result.task_id is the internal task id). Without this
+  // branch a stopped teammate keeps its last idle/active estimate forever.
+  // A teammate unknown to the fold (e.g. spawn predates the transcript) is
+  // not resurrected as a stopped-only entry.
+  if (result.task_type === "in_process_teammate") {
+    const teammate = state.teammates.get(taskId);
+    if (!teammate || teammate.state === "stopped") return false;
+    state.teammates.set(taskId, { ...teammate, state: "stopped" });
+    return true;
+  }
   const workflow = state.workflows.get(taskId);
   if (workflow) {
     if (workflow.status === "stopped" && workflow.ended_at === timestamp) return false;
@@ -181,6 +241,51 @@ function applyTaskStop(
   return true;
 }
 
+function foldTeammateSpawn(
+  state: SessionStatusState,
+  pending: PendingToolUse,
+  result: Record<string, unknown>,
+  timestamp: string | undefined,
+): boolean {
+  if (result.status !== "teammate_spawned") return false;
+  const name = stringValue(result.name) ?? stringValue(pending.input.name);
+  if (!name) return false;
+  const current = state.teammates.get(name);
+  const next: TeammateState = {
+    ...(current ?? { name, spawned: false, state: "spawned" }),
+    name,
+    spawned: true,
+    state: "spawned",
+    ...(stringValue(result.agent_type)
+      ? { agent_type: stringValue(result.agent_type)! }
+      : { agent_type: undefined }),
+    ...(stringValue(result.color) ? { color: stringValue(result.color)! } : { color: undefined }),
+    ...(timestamp ? { spawned_at: timestamp } : {}),
+  };
+  state.teammates.set(name, next);
+  return true;
+}
+
+function foldSendMessage(
+  state: SessionStatusState,
+  pending: PendingToolUse,
+  result: Record<string, unknown>,
+  timestamp: string | undefined,
+): boolean {
+  if (result.success !== true || !timestamp) return false;
+  const name = stringValue(pending.input.to);
+  if (!name) return false;
+  const current = state.teammates.get(name);
+  if (current?.last_sent_at === timestamp) return false;
+  // Sending does not prove the recipient is active. A first-seen recipient
+  // still needs a representable initial state; later sends preserve idle/spawned.
+  state.teammates.set(name, {
+    ...(current ?? { name, spawned: false, state: "active" }),
+    last_sent_at: timestamp,
+  });
+  return true;
+}
+
 function applyToolResult(
   state: SessionStatusState,
   pending: PendingToolUse,
@@ -190,6 +295,11 @@ function applyToolResult(
 ): boolean {
   if (isError) return false;
   const { name, input } = pending;
+
+  if (name === "Agent" && result.status === "teammate_spawned") {
+    return foldTeammateSpawn(state, pending, result, timestamp);
+  }
+  if (name === "SendMessage") return foldSendMessage(state, pending, result, timestamp);
 
   if (name === "TaskCreate") {
     const task = result.task;
@@ -268,15 +378,65 @@ function applyToolResult(
     return true;
   }
 
-  if (name === "TaskStop") return applyTaskStop(state, input, timestamp);
+  if (name === "TaskStop") return applyTaskStop(state, input, result, timestamp);
   return false;
+}
+
+function relayState(body: string): "active" | "idle" {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith('{"type":"idle_notification"')) return "active";
+  try {
+    const value: unknown = JSON.parse(trimmed);
+    return isRecord(value) && value.type === "idle_notification" ? "idle" : "active";
+  } catch {
+    return "active";
+  }
+}
+
+function foldTeammateRelay(state: SessionStatusState, row: Record<string, unknown>): boolean {
+  const timestamp = stringValue(row.timestamp);
+  const message = row.message;
+  if (!timestamp || !isRecord(message) || typeof message.content !== "string") return false;
+  if (!message.content.startsWith("Another Claude session sent a message:")) return false;
+
+  const pattern =
+    /<teammate-message\s+teammate_id="([^"]+)"([^>]*)>([\s\S]*?)<\/teammate-message>/g;
+  let changed = false;
+  for (const match of message.content.matchAll(pattern)) {
+    const name = match[1];
+    if (!name) continue;
+    // teammate_id="system" carries lifecycle notices (teammate_terminated),
+    // not a teammate's own message — never list "system" as a teammate.
+    if (name === "system") continue;
+    const attributes = match[2] ?? "";
+    const body = match[3] ?? "";
+    const color = /\bcolor="([^"]+)"/.exec(attributes)?.[1];
+    const stateValue = relayState(body);
+    const current = state.teammates.get(name);
+    if (
+      current?.last_received_at === timestamp &&
+      current.state === stateValue &&
+      (color === undefined || current.color === color)
+    ) {
+      continue;
+    }
+    state.teammates.set(name, {
+      ...(current ?? { name, spawned: false, state: stateValue }),
+      state: stateValue,
+      last_received_at: timestamp,
+      ...(color ? { color } : {}),
+    });
+    changed = true;
+  }
+  return changed;
 }
 
 function foldUser(state: SessionStatusState, row: Record<string, unknown>): boolean {
   const message = row.message;
-  if (!isRecord(message) || !Array.isArray(message.content)) return false;
+  if (!isRecord(message)) return false;
+  let changed = foldTeammateRelay(state, row);
+  if (!Array.isArray(message.content)) return changed;
   const result = row.toolUseResult;
-  let changed = false;
 
   for (const block of message.content) {
     if (!isRecord(block) || block.type !== "tool_result") continue;
@@ -367,6 +527,8 @@ export function snapshot(state: SessionStatusState): SessionStatusSnapshot {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
     workflows: [...state.workflows.values()].map((workflow) => ({ ...workflow })),
     background: [...state.background.values()].map((task) => ({ ...task })),
+    ...(state.context ? { context: { ...state.context } } : {}),
+    teammates: [...state.teammates.values()].map((teammate) => ({ ...teammate })),
   };
 }
 
