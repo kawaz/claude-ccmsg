@@ -38,6 +38,8 @@ export function spawnDaemonProc(
       ...process.env,
       CCMSG_STATE_DIR: stateDir,
       CCMSG_DATA_DIR: dataDir,
+      // Pin integration subprocesses to this working copy rather than PATH's install.
+      CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",
       ...extraEnv,
     },
@@ -71,6 +73,7 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
   const env: Record<string, string> = {
     CCMSG_STATE_DIR: stateDir,
     CCMSG_DATA_DIR: dataDir,
+    CCMSG_NO_SELF_EXEC: "1",
     CCMSG_HTTP_BIND: "off",
     ...extraEnv,
   };

@@ -34,7 +34,12 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
   return {
-    env: { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir },
+    env: {
+      CCMSG_STATE_DIR: stateDir,
+      CCMSG_DATA_DIR: dataDir,
+      // Pin every spawned CLI to this working copy even if PATH has a newer install.
+      CCMSG_NO_SELF_EXEC: "1",
+    },
     cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
   };
 }

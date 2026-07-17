@@ -7,11 +7,18 @@
 # Alias it from your shell (e.g. `alias ccmsg=/path/to/bin/ccmsg`) to use it
 # without polluting PATH.
 #
-# Self-update (DR-0007 §2): when run from a versioned plugin cache path
-# (.../ccmsg/<version>/bin/ccmsg) and PATH has a `ccmsg` symlink pointing into
-# the same kind of versioned cache, re-point that symlink to this launcher if
-# this launcher's version is strictly newer. All of this is best-effort and
-# silent — a failure here must never affect the real command below.
+# Startup convergence has two monotonic rails, both best-effort and silent:
+#
+# - Self-update (DR-0007 §2): a newer versioned-cache launcher advances PATH's
+#   versioned `ccmsg` symlink to itself.
+# - Self-exec: an older versioned-cache launcher hands off to PATH's `ccmsg`
+#   only when PATH resolves to a strictly newer version. Version retrieval uses
+#   the resolved plugin-cache paths instead of package.json I/O or `--version`
+#   subprocesses because every hook invocation pays this startup cost and the
+#   cache path already carries the release version.
+#
+# CCMSG_NO_SELF_EXEC=1 disables only the exec rail for tests that must pin the
+# working-copy launcher. Failures in either rail never affect the real command.
 #
 # Functions are defined unconditionally so this file can be `source`d for
 # testing; the launch logic itself only runs when executed directly (the
@@ -26,10 +33,10 @@ __ccmsg_resolve_symlink() {
     __link="$(readlink "$__p")"
     case "$__link" in
       /*) __p="$__link" ;;
-      *)  __p="$(cd "$(dirname "$__p")" && pwd)/$__link" ;;
+      *)  __p="$(cd "$(dirname "$__p")" && pwd -P)/$__link" ;;
     esac
   done
-  printf '%s' "$(cd "$(dirname "$__p")" && pwd)/$(basename "$__p")"
+  printf '%s' "$(cd "$(dirname "$__p")" && pwd -P)/$(basename "$__p")"
 }
 
 # Extracts the version segment from a plugin-cache-shaped path, i.e. the first
@@ -88,6 +95,39 @@ __ccmsg_version_compare() {
   echo 0
 }
 
+# Pure redirect decision over already-resolved real paths. Path identity wins
+# first; otherwise only a strictly newer PATH-side cache version may redirect.
+__ccmsg_should_self_exec() {
+  local __self_real="$1" __path_real="$2"
+  [ "$__self_real" != "$__path_real" ] || return 1
+
+  local __self_version __path_version
+  __self_version="$(__ccmsg_extract_version "$__self_real")"
+  __path_version="$(__ccmsg_extract_version "$__path_real")"
+  [ -n "$__self_version" ] || return 1
+  [ -n "$__path_version" ] || return 1
+
+  [ "$(__ccmsg_version_compare "$__path_version" "$__self_version")" = "1" ]
+}
+
+# Best-effort self-exec. `exec ccmsg` deliberately reuses PATH lookup after the
+# resolved-path/version decision. Strictly increasing versions make a loop
+# structurally impossible: the target sees itself at the same realpath.
+__ccmsg_self_exec_newer() {
+  local __self_real="$1"
+  shift
+  [ "${CCMSG_NO_SELF_EXEC:-}" != "1" ] || return 0
+
+  local __path_ccmsg __path_real
+  __path_ccmsg="$(command -v ccmsg 2>/dev/null)"
+  [ -n "$__path_ccmsg" ] || return 0
+  __path_real="$(__ccmsg_resolve_symlink "$__path_ccmsg" 2>/dev/null)"
+  [ -n "$__path_real" ] || return 0
+  __ccmsg_should_self_exec "$__self_real" "$__path_real" || return 0
+
+  exec ccmsg "$@"
+}
+
 # Best-effort self-update: re-points PATH's `ccmsg` symlink at $1 (this
 # launcher's resolved real path) iff all DR-0007 §2 conditions hold. Always
 # returns 0 — never propagates a failure to the caller.
@@ -108,7 +148,7 @@ __ccmsg_self_update() {
   [ -z "$__link_target" ] && return 0
   case "$__link_target" in
     /*) : ;;
-    *) __link_target="$(cd "$(dirname "$__path_ccmsg")" 2>/dev/null && pwd)/$__link_target" ;;
+    *) __link_target="$(cd "$(dirname "$__path_ccmsg")" 2>/dev/null && pwd -P)/$__link_target" ;;
   esac
   [ -z "$__link_target" ] && return 0
 
@@ -130,6 +170,9 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   __cli="${__here}/../packages/cli/src/index.ts"
 
   __ccmsg_self_update "$__self" 2>/dev/null || true
+  # Startup-only: already-running `subscribe` and daemon processes keep their
+  # current code; only a newly launched CLI can converge to the PATH version.
+  __ccmsg_self_exec_newer "$__self" "$@" || true
 
   if command -v bun >/dev/null 2>&1; then
     exec bun run "$__cli" "$@"

@@ -49,7 +49,7 @@ kawaz が人間として `ccmsg` を叩くには PATH に居てほしいが、pl
 
 ### 4. AI は引き続き `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg` を使う (不変)
 
-- SKILL.md の「PATH の ccmsg を使わない」規約は不変。PATH symlink は**人間 (kawaz) 用**であり、AI の version 固定の要請とは別物
+- SKILL.md の「PATH の ccmsg を使わない」規約は不変。PATH symlink は**人間 (kawaz) 用**であり、AI の version 固定の要請とは別物 *(2026-07-17 supersede: kawaz r26 mid=92 裁定で launcher 自身が semver 比較の self-redirect を持つように変更 — AI は引き続き絶対パスで起動してよいが、launcher が PATH 上の新しい版へ自動 exec する。issue cli-self-exec-latest 参照)*
 
 ## Alternatives considered
 
