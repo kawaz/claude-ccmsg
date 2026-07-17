@@ -64,3 +64,13 @@ CLI help ↔ SKILL ↔ completion の 3 者同期 (cli-design-preferences ルー
 ## TODO
 
 <!-- wip 時のみ -->
+
+## kawaz 追加補足 (r26 mid=91、2026-07-17)
+
+help の post `--to <aN[,aN...]>` 表記は意図的に **uN を含めない**:
+
+- u1 は全 room で常時配信の暗黙メンバーなので to 指定は無意味
+- AI が to=u1 を書きたがる「余計な考え」を封じる狙い (priv 用途は reply に一本化済みの名残)
+- help / --help-full / SKILL のどこにも「to に u1 を含める」例・記述を書かない
+- 走行中 workflow (wf_6d2dc216) には伝達不能だったため、完了後のメイン検収でこの点を確認し、
+  違反があればメイン直で修正する
