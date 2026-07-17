@@ -1,6 +1,6 @@
 ---
 title: thinking タブの「前選択」ボタンをトグル化 + 翻訳比較タブと配置分離
-status: open
+status: discarded
 category: design
 created: 2026-07-17T09:12:12+09:00
 last_read:
@@ -8,11 +8,11 @@ open_entered: 2026-07-17T09:12:12+09:00
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-07-17T18:04:13+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["host-translation-followups 項目4で select 機能を完全削除する裁定に置き換え (kawaz r26 mid=107)"]
 pending_reason:
-close_reason:
+close_reason: ["discarded"]
 blocked_by:
 origin: 自リポ TODO
 ---
