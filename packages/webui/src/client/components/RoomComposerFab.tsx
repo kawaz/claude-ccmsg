@@ -23,56 +23,26 @@
 // 外部タップ判定 (mousedown + touchstart、panelRef.contains) は
 // OneOnOneComposer と同じ pattern。× ボタンは持たない (フォーム外タップで
 // 閉じる UX に統一)。
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type { RoomState } from "../store.ts";
 import { Composer } from "./Composer.tsx";
+import { useFabPopup } from "../useFabPopup.ts";
 
 export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionTo: Set<string> }) {
-  const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  // openTicket = fab クリックのたびにインクリメントされるカウンタ。
-  // Composer にそのまま焼き付けて focusOnOpen として渡す。値が変わった時だけ
-  // textarea.focus() が走る (Composer 側 useEffect の deps 判定)。
-  // useState の初期値 0 は「まだ開かれていない」sentinel — Composer 側で
-  // 0 は skip する。
-  const [openTicket, setOpenTicket] = useState(0);
   // kawaz r26 mid=15: panel close 中に書きかけ (text/添付) が残っているとき
   // fab を「下書きあり」表示 (色 + 跳ねアニメーション) に切り替えて放置忘れを
   // 防ぐ。Composer は常時 mount なので onDraftChange がその状態を届けてくれる。
   const [hasDraft, setHasDraft] = useState(false);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-
-  const openPanel = useCallback(() => {
-    setOpen(true);
-    setOpenTicket((n) => n + 1);
-  }, []);
-
-  const closePanel = useCallback(() => {
-    setOpen(false);
-  }, []);
-
+  // openTicket = fab クリックのたびにインクリメントされるカウンタ。Composer
+  // にそのまま焼き付けて focusOnOpen として渡す。値が変わった時だけ
+  // textarea.focus() が走る (Composer 側 useEffect の deps 判定)。
+  //
   // フォーム外の **click** で閉じる (OneOnOneComposer と同じ pattern、
-  // kawaz r17 mid=8,10,11)。mousedown/touchstart 判定はスクロール目的の
-  // タッチ (指を置いた瞬間) でも閉じてしまい不便なので不可 — click は
-  // tap 完了 (押して離す) でだけ発火し、スクロール gesture では発火しない。
-  // - **sending 中は listener を張らない** = 外部クリック無視。post の中断
-  //   リスクを avoid。sending が false に戻れば再び listener が張られる。
-  // - `open === false` の間 (fab 表示中) も張らない — fab クリック自体を
-  //   閉じ扱いする事故を防ぐ (open にした click は listener 登録 (re-render
-  //   後) より前のイベントなので二重発火もしない)。
-  useEffect(() => {
-    if (!open) return;
-    if (sending) return;
-    const onClick = (e: MouseEvent) => {
-      const panel = panelRef.current;
-      if (!panel || !(e.target instanceof Node)) return;
-      if (!panel.contains(e.target)) closePanel();
-    };
-    document.addEventListener("click", onClick);
-    return () => {
-      document.removeEventListener("click", onClick);
-    };
-  }, [open, sending, closePanel]);
+  // kawaz r17 mid=8,10,11) — 配管は useFabPopup 共有。`blocked: sending` で
+  // post 送信中は外部クリック無視 (中断リスク回避、sending が false に戻れば
+  // 再び listener が張られる)。
+  const { open, openTicket, openPanel, closePanel, panelRef } = useFabPopup(sending);
 
   const fabTitle = room.kind === "broadcast" ? "broadcast メッセージを送信" : "メッセージを送信";
 

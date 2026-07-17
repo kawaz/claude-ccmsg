@@ -8,6 +8,7 @@ import { initialState } from "./store.ts";
 import { createWsClient } from "./ws.ts";
 import { parseHash } from "./locator.ts";
 import { parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
+import { readStorage, writeStorage } from "./storage.ts";
 
 const store = createStore(initialState());
 const ws = createWsClient(
@@ -34,25 +35,18 @@ ws.connect();
 // every `pinned/*` reducer branch either returns the SAME Map (no-op, e.g.
 // removing a sid that was never pinned) or a freshly-constructed one — see
 // store.ts's copy-on-write convention used throughout.
-try {
-  store.dispatch({
-    type: "pinned/hydrated",
-    hits: parsePinnedSessions(localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)),
-  });
-} catch {
-  // storage unavailable (private mode) — starts with zero pinned sessions.
-}
+store.dispatch({
+  type: "pinned/hydrated",
+  hits: parsePinnedSessions(readStorage(PINNED_SESSIONS_STORAGE_KEY)),
+});
 let lastPinned = store.getState().pinnedSessions;
 store.subscribe(() => {
   const pinned = store.getState().pinnedSessions;
   if (pinned === lastPinned) return;
   lastPinned = pinned;
-  try {
-    localStorage.setItem(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify([...pinned.values()]));
-  } catch {
-    // storage unavailable — pinning still works for the session, just
-    // doesn't persist across reload.
-  }
+  // storage unavailable — pinning still works for the session, just doesn't
+  // persist across reload.
+  writeStorage(PINNED_SESSIONS_STORAGE_KEY, JSON.stringify([...pinned.values()]));
 });
 
 const root = document.getElementById("app-root");

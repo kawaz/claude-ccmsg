@@ -3,6 +3,7 @@ import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
+import { readStorage, writeStorage } from "../storage.ts";
 import { RoomList } from "./RoomList.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
@@ -10,21 +11,13 @@ import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
 const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
 function loadSortKey(): PeerSortKey {
-  try {
-    const raw = localStorage.getItem(SORT_KEY_STORAGE);
-    if (raw === "name" || raw === "idle" || raw === "connected") return raw;
-  } catch {
-    // storage unavailable (private mode) — fall through to default
-  }
+  const raw = readStorage(SORT_KEY_STORAGE);
+  if (raw === "name" || raw === "idle" || raw === "connected") return raw;
   return "name";
 }
 
 function saveSortKey(key: PeerSortKey): void {
-  try {
-    localStorage.setItem(SORT_KEY_STORAGE, key);
-  } catch {
-    // storage unavailable — the button still works, just doesn't persist
-  }
+  writeStorage(SORT_KEY_STORAGE, key);
 }
 
 function PeersRefreshButton() {

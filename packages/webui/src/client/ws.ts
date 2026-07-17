@@ -45,26 +45,25 @@ import type {
   TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
+import { readStorage, writeStorage } from "./storage.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
 
 function loadSince(): Record<string, number> {
+  const raw = readStorage(SINCE_KEY);
+  if (!raw) return {};
   try {
-    const raw = localStorage.getItem(SINCE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    return JSON.parse(raw);
   } catch {
     return {};
   }
 }
 
 function saveSince(since: Record<string, number>): void {
-  try {
-    localStorage.setItem(SINCE_KEY, JSON.stringify(since));
-  } catch {
-    // storage unavailable (private mode, quota) — since-tracking degrades to
-    // full resync on reconnect, which is still correct, just more backlog.
-  }
+  // storage unavailable (private mode, quota) — since-tracking degrades to
+  // full resync on reconnect, which is still correct, just more backlog.
+  writeStorage(SINCE_KEY, JSON.stringify(since));
 }
 
 export interface WsHandle {

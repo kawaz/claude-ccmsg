@@ -10,6 +10,7 @@ import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { useEffect, useState } from "preact/hooks";
+import { readStorage, writeStorage } from "../storage.ts";
 
 const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
 const SIDEBAR_MIN_PX = 200;
@@ -21,11 +22,7 @@ function clampSidebarWidth(w: number): number {
 }
 
 function loadSidebarWidth(): number {
-  try {
-    return clampSidebarWidth(Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || 280);
-  } catch {
-    return 280;
-  }
+  return clampSidebarWidth(Number(readStorage(SIDEBAR_WIDTH_KEY)) || 280);
 }
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
@@ -69,11 +66,7 @@ export function App() {
   const state = useStoreState(store);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
   useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
-    } catch {
-      // storage unavailable — width still works for the session
-    }
+    writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
 
   return (

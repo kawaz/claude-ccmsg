@@ -17,34 +17,26 @@ import { useApp } from "../context.ts";
 import { fileHref } from "../locator.ts";
 import {
   clampPaneRatio,
-  errorMessage,
   fileAncestorDirectories,
   paneRatioFromPointer,
   SESSION_PANE_DEFAULT_RATIO,
 } from "../utils.ts";
-import { FileTree } from "./FileTree.tsx";
+import { FileTree, loadDir } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { readStorage, writeStorage } from "../storage.ts";
 
 // Persisted alongside Sidebar's ccmsg.peerSortKey (see Sidebar.tsx).
 const PANE_RATIO_STORAGE = "ccmsg.sessionPaneRatio";
 
 function loadPaneRatio(): number {
-  try {
-    const raw = localStorage.getItem(PANE_RATIO_STORAGE);
-    if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
-  } catch {
-    // storage unavailable (private mode) — fall through to default
-  }
+  const raw = readStorage(PANE_RATIO_STORAGE);
+  if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
   return SESSION_PANE_DEFAULT_RATIO;
 }
 
 function savePaneRatio(ratio: number): void {
-  try {
-    localStorage.setItem(PANE_RATIO_STORAGE, String(ratio));
-  } catch {
-    // storage unavailable — splitter still works, just doesn't persist
-  }
+  writeStorage(PANE_RATIO_STORAGE, String(ratio));
 }
 
 export function FilesPanes({
@@ -90,18 +82,7 @@ export function FilesPanes({
     // every affected listing so an already-cached empty ancestor does not hide
     // the new path; the response path is root-relative, matching fs_list.
     await Promise.all(
-      fileAncestorDirectories(createdPath).map(async (dirPath) => {
-        try {
-          const res = await ws.fsList(sid, dirPath);
-          if (res.ok) {
-            store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, entries: res.entries });
-          } else {
-            store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, error: res.error.msg });
-          }
-        } catch (err) {
-          store.dispatch({ type: "fs/dir-loaded", sid, path: dirPath, error: errorMessage(err) });
-        }
-      }),
+      fileAncestorDirectories(createdPath).map((dirPath) => loadDir(store, ws, sid, dirPath)),
     );
     setMemoEditorOpen(false);
     location.assign(fileHref(sid, createdPath));

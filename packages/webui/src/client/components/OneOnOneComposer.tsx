@@ -37,6 +37,8 @@ import {
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
+import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
+import { useFabPopup } from "../useFabPopup.ts";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -63,66 +65,59 @@ export function keyFor(sid: string): string {
 }
 
 export function loadDraft(sid: string): StoredDraft | null {
+  const raw = readStorage(keyFor(sid));
+  if (!raw) return null;
+  let parsed: unknown;
   try {
-    const raw = localStorage.getItem(keyFor(sid));
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as StoredDraft).text === "string" &&
-      typeof (parsed as StoredDraft).updatedAt === "string"
-    ) {
-      // attachments は shape が崩れていたら黙って落とす (text だけの復元に
-      // degrade) — 壊れた添付メタで送信経路を詰まらせない。
-      const att = (parsed as StoredDraft).attachments;
-      if (att !== undefined) {
-        const valid =
-          Array.isArray(att) &&
-          att.every(
-            (a) =>
-              a &&
-              typeof a === "object" &&
-              typeof a.n === "number" &&
-              a.status === "done" &&
-              typeof a.path === "string",
-          );
-        if (!valid) {
-          const { attachments: _drop, ...rest } = parsed as StoredDraft;
-          return rest;
-        }
-      }
-      return parsed as StoredDraft;
-    }
-    return null;
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    typeof (parsed as StoredDraft).text === "string" &&
+    typeof (parsed as StoredDraft).updatedAt === "string"
+  ) {
+    // attachments は shape が崩れていたら黙って落とす (text だけの復元に
+    // degrade) — 壊れた添付メタで送信経路を詰まらせない。
+    const att = (parsed as StoredDraft).attachments;
+    if (att !== undefined) {
+      const valid =
+        Array.isArray(att) &&
+        att.every(
+          (a) =>
+            a &&
+            typeof a === "object" &&
+            typeof a.n === "number" &&
+            a.status === "done" &&
+            typeof a.path === "string",
+        );
+      if (!valid) {
+        const { attachments: _drop, ...rest } = parsed as StoredDraft;
+        return rest;
+      }
+    }
+    return parsed as StoredDraft;
+  }
+  return null;
 }
 
 export function saveDraft(sid: string, text: string, attachments?: ComposerAttachment[]): void {
-  try {
-    // 添付は done (upload 完了、path 確定) だけ保存 — uploading の XHR や
-    // error 表示は復元不能な transient state。
-    const done = (attachments ?? []).filter((a) => a.status === "done");
-    const payload: StoredDraft = {
-      text,
-      ...(done.length > 0 ? { attachments: done } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-    localStorage.setItem(keyFor(sid), JSON.stringify(payload));
-  } catch {
-    // storage unavailable (private mode / quota): drop silently — the next
-    // reopen simply starts with an empty textarea instead of restoring.
-  }
+  // 添付は done (upload 完了、path 確定) だけ保存 — uploading の XHR や
+  // error 表示は復元不能な transient state。storage unavailable (private
+  // mode / quota) 時は drop silently — 次回 reopen が空 textarea に戻る。
+  const done = (attachments ?? []).filter((a) => a.status === "done");
+  const payload: StoredDraft = {
+    text,
+    ...(done.length > 0 ? { attachments: done } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+  writeStorage(keyFor(sid), JSON.stringify(payload));
 }
 
 export function clearDraft(sid: string): void {
-  try {
-    localStorage.removeItem(keyFor(sid));
-  } catch {
-    // ignore
-  }
+  removeStorage(keyFor(sid));
 }
 
 /** DR-0014 §2.6 mount-time sweep. Two purge rules:
@@ -137,50 +132,13 @@ export function clearDraft(sid: string): void {
  * check upstream — a mount that fires before peers arrives skips the sweep
  * (no reference to compare against) and re-runs on the next visit. */
 export function cleanupStaleDrafts(state: AppState, now: number = Date.now()): void {
-  const keys: string[] = [];
-  try {
-    const n = localStorage.length;
-    for (let i = 0; i < n; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(LOCAL_STORAGE_PREFIX)) keys.push(k);
-    }
-  } catch {
-    return;
-  }
-  const activePeerSids = new Set(state.peers.map((p) => p.sid));
-  for (const key of keys) {
-    const sid = key.slice(LOCAL_STORAGE_PREFIX.length);
-    if (!activePeerSids.has(sid)) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // ignore
-      }
-      continue;
-    }
-    const draft = loadDraft(sid);
-    const peer = state.peers.find((p) => p.sid === sid);
-    const peerActivityMs = peer?.last_activity_at ? Date.parse(peer.last_activity_at) : NaN;
-    const draftMs = draft ? Date.parse(draft.updatedAt) : NaN;
-    // Prefer the peer's own activity stamp — that's the direct signal of
-    // "was this session touched recently". Fall back to the draft stamp if
-    // the peer entry doesn't carry one (older daemons pre-issue-2026-07-12,
-    // or a fresh session that hasn't sent a request yet). Missing both leaves
-    // referenceMs as NaN, which fails the comparison below → the entry stays
-    // (safe default; a subsequent visit with better data will retry).
-    const referenceMs = Number.isFinite(peerActivityMs)
-      ? peerActivityMs
-      : Number.isFinite(draftMs)
-        ? draftMs
-        : NaN;
-    if (Number.isFinite(referenceMs) && now - referenceMs > CLEANUP_STALE_MS) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // ignore
-      }
-    }
-  }
+  sweepStaleBySid(
+    LOCAL_STORAGE_PREFIX,
+    state,
+    CLEANUP_STALE_MS,
+    (sid) => loadDraft(sid)?.updatedAt,
+    now,
+  );
 }
 
 /** Find an existing `kind:"1on1"` room whose single non-u1 member sid matches
@@ -202,10 +160,14 @@ export function findExistingOneOnOne(state: AppState, sid: string): RoomState | 
 
 export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState }) {
   const { ws } = useApp();
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // フォーム外の click で閉じる配管 (RoomComposerFab と同じ pattern) は
+  // useFabPopup 共有。OneOnOneComposer は元々 sending ガードを持たなかった
+  // ので `blocked: false` 固定 (挙動不変)。onClose で従来の handleClose が
+  // 兼ねていた `setError(null)` を維持する。
+  const { open, openPanel, closePanel, panelRef } = useFabPopup(false, () => setError(null));
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
@@ -386,32 +348,6 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     [beginUpload],
   );
 
-  const handleClose = useCallback(() => {
-    setOpen(false);
-    setError(null);
-  }, []);
-
-  // フォーム外の **click** で閉じる (kawaz r17 mid=8,10,11、2026-07-14)。
-  // × ボタンは廃止して、パネル外クリックで close する UX (r15 mid=2)。
-  // mousedown/touchstart 判定はスクロール目的のタッチ (指を置いた瞬間) でも
-  // 閉じてしまい不便なので不可 — click は tap 完了 (押して離す) でだけ発火し、
-  // スクロール gesture では発火しない。kawaz 明言「フォーム関連要素以外の
-  // click イベントで閉じて」。open 中だけ listener を張る (閉じてる間は
-  // 無駄 listener を避ける)。
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      const panel = panelRef.current;
-      if (!panel || !(e.target instanceof Node)) return;
-      if (!panel.contains(e.target)) handleClose();
-    };
-    document.addEventListener("click", onClick);
-    return () => {
-      document.removeEventListener("click", onClick);
-    };
-  }, [open, handleClose]);
-
   const handleSubmit = useCallback(async () => {
     const body = text.trim();
     if (body === "") return;
@@ -456,12 +392,12 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       setText("");
       setAttachments([]);
       setSending(false);
-      setOpen(false);
+      closePanel();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSending(false);
     }
-  }, [ws, state, sid, text, attachments]);
+  }, [ws, state, sid, text, attachments, closePanel]);
 
   if (!open) {
     // kawaz r26 mid=15: close 中に下書きが残っていれば fab を「下書きあり」
@@ -475,7 +411,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         type="button"
         class={"one-on-one-fab" + (hasDraft ? " composer-fab-draft" : "")}
         title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
-        onClick={() => setOpen(true)}
+        onClick={openPanel}
       >
         +
       </button>

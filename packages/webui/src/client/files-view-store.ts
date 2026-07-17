@@ -7,6 +7,7 @@
 //  - mount-time sweep で (a) peers に居ない sid、(b) 10 日超非アクティブ
 //    (peers.last_activity_at、無ければ record 自身の updatedAt) を削除
 import type { AppState } from "./store.ts";
+import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 
 export const FILES_VIEW_PREFIX = "ccmsg.filesView.";
 // 1on1 draft (OneOnOneComposer.CLEANUP_STALE_MS) と同じ 10 日。値を import
@@ -29,34 +30,32 @@ export function filesViewKey(sid: string): string {
 }
 
 export function loadFilesView(sid: string): FilesViewState | null {
+  const raw = readStorage(filesViewKey(sid));
+  if (!raw) return null;
+  let parsed: unknown;
   try {
-    const raw = localStorage.getItem(filesViewKey(sid));
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as FilesViewState).path === "string" &&
-      ((parsed as FilesViewState).viewMode === "code" ||
-        (parsed as FilesViewState).viewMode === "preview") &&
-      typeof (parsed as FilesViewState).updatedAt === "string"
-    ) {
-      return parsed as FilesViewState;
-    }
-    return null;
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    typeof (parsed as FilesViewState).path === "string" &&
+    ((parsed as FilesViewState).viewMode === "code" ||
+      (parsed as FilesViewState).viewMode === "preview") &&
+    typeof (parsed as FilesViewState).updatedAt === "string"
+  ) {
+    return parsed as FilesViewState;
+  }
+  return null;
 }
 
 export function saveFilesView(sid: string, state: Omit<FilesViewState, "updatedAt">): void {
-  try {
-    const payload: FilesViewState = { ...state, updatedAt: new Date().toISOString() };
-    localStorage.setItem(filesViewKey(sid), JSON.stringify(payload));
-  } catch {
-    // storage unavailable (private mode / quota) — 選択自体は locator が
-    // 持っているので、復元だけが効かなくなる (無害に degrade)。
-  }
+  // storage unavailable (private mode / quota) — 選択自体は locator が
+  // 持っているので、復元だけが効かなくなる (無害に degrade)。
+  const payload: FilesViewState = { ...state, updatedAt: new Date().toISOString() };
+  writeStorage(filesViewKey(sid), JSON.stringify(payload));
 }
 
 /** OneOnOneComposer.cleanupStaleDrafts と同じ 2 規則の mount-time sweep:
@@ -66,44 +65,11 @@ export function saveFilesView(sid: string, state: Omit<FilesViewState, "updatedA
  * peers が未 hydrate (空) の間は呼び出し側が gate する (比較対象が無い
  * 状態で全消しする事故の防止)。 */
 export function cleanupStaleFilesViews(state: AppState, now: number = Date.now()): void {
-  const keys: string[] = [];
-  try {
-    const n = localStorage.length;
-    for (let i = 0; i < n; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith(FILES_VIEW_PREFIX)) keys.push(k);
-    }
-  } catch {
-    return;
-  }
-  for (const key of keys) {
-    const sid = key.slice(FILES_VIEW_PREFIX.length);
-    const peer = state.peers.find((p) => p.sid === sid);
-    if (!peer) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // ignore
-      }
-      continue;
-    }
-    const record = loadFilesView(sid);
-    const peerActivityMs = peer.last_activity_at ? Date.parse(peer.last_activity_at) : NaN;
-    const recordMs = record ? Date.parse(record.updatedAt) : NaN;
-    // peer の activity stamp を優先 (セッションが最近使われたかの直接 signal)、
-    // 無ければ record の updatedAt。両方 NaN なら比較不成立で残す (安全側 —
-    // 次回 mount でより良いデータと共に再判定される)。
-    const referenceMs = Number.isFinite(peerActivityMs)
-      ? peerActivityMs
-      : Number.isFinite(recordMs)
-        ? recordMs
-        : NaN;
-    if (Number.isFinite(referenceMs) && now - referenceMs > FILES_VIEW_STALE_MS) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        // ignore
-      }
-    }
-  }
+  sweepStaleBySid(
+    FILES_VIEW_PREFIX,
+    state,
+    FILES_VIEW_STALE_MS,
+    (sid) => loadFilesView(sid)?.updatedAt,
+    now,
+  );
 }

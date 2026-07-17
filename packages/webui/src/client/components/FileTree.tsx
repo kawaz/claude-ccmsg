@@ -26,6 +26,7 @@ import {
   toggleFavorite,
   workspaceRootEntries,
 } from "../utils.ts";
+import { readStorage, writeStorage } from "../storage.ts";
 
 function joinPath(parent: string, name: string): string {
   return parent ? `${parent}/${name}` : name;
@@ -38,21 +39,11 @@ function joinPath(parent: string, name: string): string {
  * localStorage access is an effect, not something a pure function should do,
  * per DR-0005 §1. */
 function loadFavorites(root: string): string[] {
-  try {
-    return parseFavorites(localStorage.getItem(favoritesStorageKey(root)));
-  } catch {
-    // storage unavailable (private mode) — behave as if nothing's favorited
-    return [];
-  }
+  return parseFavorites(readStorage(favoritesStorageKey(root)));
 }
 
 function saveFavorites(root: string, favorites: string[]): void {
-  try {
-    localStorage.setItem(favoritesStorageKey(root), JSON.stringify(favorites));
-  } catch {
-    // storage unavailable — favoriting still works for the session, just
-    // doesn't persist across reload
-  }
+  writeStorage(favoritesStorageKey(root), JSON.stringify(favorites));
 }
 
 /** Star toggle button shared by DirNode/FileNode rows and the favorites
@@ -102,23 +93,29 @@ interface FavContext {
   onToggle: (path: string) => void;
 }
 
-/** fs_list round trip for one directory, shared by DirNode's click-to-expand
- * and FileTree's auto-expand-own-workspace effect below — both just need
- * "dispatch the loaded entries or error", differing only in when they call
- * it. Kept out of the reducer per DR-0005 §1 (effects live in components). */
-function loadDir(store: Store, ws: WsHandle, sid: string, path: string): void {
-  void ws
-    .fsList(sid, path)
-    .then((res) => {
-      if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
-      else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
-    })
-    // A rejection here (e.g. the socket dropped/hasn't opened yet, see
-    // ws.ts send()) must still resolve the "loading…" placeholder above
-    // into something the user can act on, same as an ok:false reply.
-    .catch((err) => {
-      store.dispatch({ type: "fs/dir-loaded", sid, path, error: errorMessage(err) });
-    });
+/** fs_list round trip for one directory, shared by DirNode's click-to-expand,
+ * FileTree's own root/auto-expand effects, and FilesPanes' post-memo-create
+ * ancestor reload (webui simplify componentization, issue 2026-07-17) — all
+ * just need "dispatch the loaded entries or error", differing only in when
+ * they call it and whether they await the round trip. Kept out of the
+ * reducer per DR-0005 §1 (effects live in components); FileTree stays the
+ * owner of the fs_list round trip, other callers import this rather than
+ * re-implement it. */
+export function loadDir(store: Store, ws: WsHandle, sid: string, path: string): Promise<void> {
+  return (
+    ws
+      .fsList(sid, path)
+      .then((res) => {
+        if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
+        else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
+      })
+      // A rejection here (e.g. the socket dropped/hasn't opened yet, see
+      // ws.ts send()) must still resolve the "loading…" placeholder above
+      // into something the user can act on, same as an ok:false reply.
+      .catch((err) => {
+        store.dispatch({ type: "fs/dir-loaded", sid, path, error: errorMessage(err) });
+      })
+  );
 }
 
 // Directories first, then everything else, alphabetical within each group —
@@ -158,7 +155,7 @@ function DirNode({
 
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
-    if (!expanded && entries === undefined) loadDir(store, ws, sid, path);
+    if (!expanded && entries === undefined) void loadDir(store, ws, sid, path);
   }
 
   return (
@@ -430,15 +427,7 @@ export function FileTree({
   useEffect(() => {
     if (rootEntries !== undefined || rootError !== undefined) return;
     if (connStatus !== "connected") return;
-    void ws
-      .fsList(sid)
-      .then((res) => {
-        if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path: "", entries: res.entries });
-        else store.dispatch({ type: "fs/dir-loaded", sid, path: "", error: res.error.msg });
-      })
-      .catch((err) => {
-        store.dispatch({ type: "fs/dir-loaded", sid, path: "", error: errorMessage(err) });
-      });
+    void loadDir(store, ws, sid, "");
   }, [sid, rootEntries, rootError, connStatus]);
 
   // DR-0008 addendum: once the (now possibly repo-container-wide) root is
@@ -461,7 +450,7 @@ export function FileTree({
     autoExpandedForSid.current = sid;
     if (!tree.expanded.has(ownWsPath))
       store.dispatch({ type: "fs/dir-toggled", sid, path: ownWsPath });
-    if (tree.dirs.get(ownWsPath) === undefined) loadDir(store, ws, sid, ownWsPath);
+    if (tree.dirs.get(ownWsPath) === undefined) void loadDir(store, ws, sid, ownWsPath);
   }, [sid, ownWsPath, rootEntries]);
 
   return (
