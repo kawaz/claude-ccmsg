@@ -13,9 +13,11 @@ import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
+  ccmsgDedupKey,
   classifyBoundaryLine,
   foldGroupLabel,
   groupTimelineLines,
+  isSearchableSegment,
   splitFoldSubgroups,
   isUserTextTurn,
   lineByteOffsets,
@@ -863,14 +865,29 @@ function CcmsgBubble({
   message,
   rawText,
   now,
+  searchKey,
+  searchCtx,
 }: {
   message: CcmsgMessage;
   rawText: string;
   now: number;
+  // In-view search (DR-0022 §3, extended by kawaz r26 mid=97's 💬 target
+  // toggle): undefined whenever the ccmsg target toggle is off, mirroring
+  // SegmentView's searchCtx={undefined} convention for out-of-scope units —
+  // only message.msg (the "msg" tab) is searchable, the raw fallback tab
+  // stays unhighlighted like every other raw fallback in this file.
+  searchKey: string;
+  searchCtx: TLSearchCtx | undefined;
 }) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
   const isUser = message.from === ADMIN_ID;
-  return (
+  const isMatch =
+    searchCtx !== undefined && searchCtx.words.length > 0 && searchCtx.isMatch(searchKey);
+  const mdSearch =
+    isMatch && searchCtx
+      ? { words: searchCtx.words, onMatchClick: () => searchCtx.onUnitClick(searchKey) }
+      : undefined;
+  const bubble = (
     <div
       class={
         isUser
@@ -909,13 +926,23 @@ function CcmsgBubble({
           // 空白に潰れる。文書様式が前提の assistant markdown には波及させない
           // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
           <div class="tl-ccmsg-msg">
-            <MarkdownView source={message.msg} />
+            <MarkdownView
+              source={message.msg}
+              highlightWords={mdSearch?.words}
+              onMatchClick={mdSearch?.onMatchClick}
+            />
           </div>
         ) : (
           <pre class="tl-fold-body">{rawText}</pre>
         )}
       </div>
       <span class="tl-bubble-time">{formatMsgTime(message.ts, now)}</span>
+    </div>
+  );
+  if (!isMatch || !searchCtx) return bubble;
+  return (
+    <div class="tl-search-unit" ref={(el) => searchCtx.registerRef(searchKey, el)}>
+      {bubble}
     </div>
   );
 }
@@ -1180,30 +1207,37 @@ export function Timeline({
     [store, sid, search],
   );
 
-  // Flat, document-order list of every Segment "unit" currently loaded —
-  // walks both fold-group entries and boundary bubbles (DR-0022 §3: "TL は
-  // text/thinking/tool セグメント"). ccmsg/system-message raw-fallback bodies
-  // are deliberately excluded — see the SegmentView call sites that pass
-  // `searchCtx={undefined}` for why those are out of this DR's scope.
+  // Search target toggles (kawaz r26 mid=97 spec: "検索対象のチェックボックス:
+  // ユーザメッセージ / AI 応答 / ccmsg 経由のメッセージ", 👤/🤖/💬 in SearchBar).
+  // Default all-on. Kept as TL-local state (not in TimelineState / not
+  // persisted with the query) — the task's spec explicitly scopes Session
+  // Search's query-continuation (DR-0021, v0.44.0) to queryText/caseSensitive/
+  // regex only, not these toggles.
+  const [targetUser, setTargetUser] = useState(true);
+  const [targetAI, setTargetAI] = useState(true);
+  const [targetCcmsg, setTargetCcmsg] = useState(true);
+
+  // Flat, document-order list of every search "unit" currently loaded — a
+  // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
+  // narrowed by kawaz r26 mid=97: tool-use/tool-result/unknown-segment are
+  // never units regardless of toggles), plus one unit per deduped ccmsg
+  // message when the 💬 toggle is on. System-origin non-ccmsg user messages
+  // (LineView's `sysKind` — tool-result echo, task-notification, ...) stay
+  // excluded entirely: they render through SystemMessageBody's rich|raw tabs
+  // where SegmentView gets `searchCtx={undefined}`, so counting their
+  // segments here would inflate the "[N/M]" M with ghost matches that have no
+  // highlight and no DOM ref to scroll to (↑/↓ would advance the number and
+  // visibly do nothing) — the count side excludes exactly what the render
+  // side excludes.
   const searchUnits = useMemo(() => {
     const units: { key: string; text: string }[] = [];
+    const targets = { user: targetUser, ai: targetAI, ccmsg: targetCcmsg };
     const pushLine = (offset: number, line: ParsedLine) => {
       if (line.kind !== "turn") return;
-      // System-origin user messages (LineView's `sysKind` — tool-result echo,
-      // task-notification, peer-message, ...) render through
-      // SystemMessageBody's rich|raw tabs, where SegmentView gets
-      // `searchCtx={undefined}` (out of this DR's scope — see that call
-      // site's comment). Counting their segments here anyway would inflate
-      // the "[N/M]" M with ghost matches that have no highlight and no DOM
-      // ref to scroll to (↑/↓ would advance the number and visibly do
-      // nothing) — so the count side excludes exactly what the render side
-      // excludes, with the same condition LineView's `sysKind` uses. This
-      // also covers ccmsg boundary lines (CcmsgBubble, also searchCtx-free):
-      // every line extractCcmsgMessages hits is classified peer-message/
-      // task-notification, never "user-prompt".
       if (line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt")
         return;
       line.segments.forEach((seg, i) => {
+        if (!isSearchableSegment(seg, targets)) return;
         units.push({ key: `${offset}-${i}`, text: segmentSearchText(seg) });
       });
     };
@@ -1214,8 +1248,26 @@ export function Timeline({
         pushLine(group.offset, group.line);
       }
     }
+    // ccmsg messages (💬 toggle): boundary "entry" groups classified "ccmsg"
+    // by classifyBoundaryLine, walked with the same dedup key + order the
+    // render side (groups.map's seenCcmsg Set below) uses — see
+    // ccmsgDedupKey's doc comment for why sharing the key matters.
+    if (targetCcmsg) {
+      const seenCcmsg = new Set<string>();
+      groups.forEach((group, i) => {
+        if (group.kind !== "entry") return;
+        const boundary = boundaries[i];
+        if (!boundary || boundary.kind !== "ccmsg") return;
+        boundary.messages.forEach((m, j) => {
+          const dedupKey = ccmsgDedupKey(m);
+          if (seenCcmsg.has(dedupKey)) return;
+          seenCcmsg.add(dedupKey);
+          units.push({ key: `${group.offset}-ccmsg-${j}`, text: m.msg });
+        });
+      });
+    }
     return units;
-  }, [groups]);
+  }, [groups, boundaries, targetUser, targetAI, targetCcmsg]);
 
   // The "M" in "[N/M]" and the document-order nav ↑/↓ walks (DR-0022 §2.1/
   // §2.2) — units are counted regardless of whether their fold is currently
@@ -1618,6 +1670,14 @@ export function Timeline({
           onPrev={searchPrev}
           onNext={searchNext}
           hasError={parsedSearch.hasError}
+          targets={{
+            user: targetUser,
+            onToggleUser: () => setTargetUser((v) => !v),
+            ai: targetAI,
+            onToggleAI: () => setTargetAI((v) => !v),
+            ccmsg: targetCcmsg,
+            onToggleCcmsg: () => setTargetCcmsg((v) => !v),
+          }}
         />
       </div>
       {timeline.status === "error" ? (
@@ -1695,7 +1755,7 @@ export function Timeline({
                       .join("\n");
                     return boundary.messages
                       .map((m, j) => {
-                        const dedupKey = `${m.room}|${m.ts}|${m.from}|${m.msg}`;
+                        const dedupKey = ccmsgDedupKey(m);
                         if (seenCcmsg.has(dedupKey)) return null;
                         seenCcmsg.add(dedupKey);
                         return (
@@ -1704,6 +1764,8 @@ export function Timeline({
                             message={m}
                             rawText={rawText}
                             now={now}
+                            searchKey={`${offset}-ccmsg-${j}`}
+                            searchCtx={searchCtx}
                           />
                         );
                       })

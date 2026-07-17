@@ -43,6 +43,68 @@ export function SearchModeToggles({
   );
 }
 
+/** TL's search-target checkboxes (kawaz r26 mid=97 spec: "検索対象のチェック
+ * ボックス: ユーザメッセージ / AI 応答 / ccmsg 経由のメッセージ") — FileViewer
+ * has no notion of these (a file has no "who wrote this" axis), so this is a
+ * separate optional group SearchBar only renders when the host passes it,
+ * rather than baked into the always-present SearchModeToggles above. */
+export function SearchTargetToggles({
+  user,
+  onToggleUser,
+  ai,
+  onToggleAI,
+  ccmsg,
+  onToggleCcmsg,
+}: {
+  user: boolean;
+  onToggleUser: () => void;
+  ai: boolean;
+  onToggleAI: () => void;
+  ccmsg: boolean;
+  onToggleCcmsg: () => void;
+}) {
+  return (
+    <div class="search-bar-toggles">
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (user ? " active" : "")}
+        title="ユーザメッセージを検索対象に含める"
+        aria-pressed={user}
+        onClick={onToggleUser}
+      >
+        👤
+      </button>
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (ai ? " active" : "")}
+        title="AI 応答を検索対象に含める"
+        aria-pressed={ai}
+        onClick={onToggleAI}
+      >
+        🤖
+      </button>
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (ccmsg ? " active" : "")}
+        title="ccmsg 経由のメッセージを検索対象に含める"
+        aria-pressed={ccmsg}
+        onClick={onToggleCcmsg}
+      >
+        💬
+      </button>
+    </div>
+  );
+}
+
+export interface SearchBarTargets {
+  user: boolean;
+  onToggleUser: () => void;
+  ai: boolean;
+  onToggleAI: () => void;
+  ccmsg: boolean;
+  onToggleCcmsg: () => void;
+}
+
 export function SearchBar({
   words,
   queryText,
@@ -56,6 +118,7 @@ export function SearchBar({
   onPrev,
   onNext,
   hasError,
+  targets,
 }: {
   words: SearchWord[];
   queryText: string;
@@ -70,6 +133,8 @@ export function SearchBar({
   onPrev: () => void;
   onNext: () => void;
   hasError: boolean;
+  /** TL-only target toggles (👤/🤖/💬) — omitted by FileViewer. */
+  targets?: SearchBarTargets;
 }) {
   // Closed by default: DR-0022 §2.1 "入力欄外クリックで入力欄を閉じ、各ワード
   // を別チップで一列表示" — the multiline textarea is only shown while
@@ -107,6 +172,16 @@ export function SearchBar({
             regexMode={regexMode}
             onToggleRegex={onToggleRegex}
           />
+          {targets ? (
+            <SearchTargetToggles
+              user={targets.user}
+              onToggleUser={targets.onToggleUser}
+              ai={targets.ai}
+              onToggleAI={targets.onToggleAI}
+              ccmsg={targets.ccmsg}
+              onToggleCcmsg={targets.onToggleCcmsg}
+            />
+          ) : null}
           {hasError ? <span class="search-bar-error">正規表現エラー</span> : null}
         </div>
       ) : hasQuery ? (

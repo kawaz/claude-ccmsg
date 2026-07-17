@@ -7,12 +7,14 @@
 // coverage.
 import { describe, expect, test } from "bun:test";
 import {
+  ccmsgDedupKey,
   classifyBoundaryLine,
   classifyUserMessage,
   extractCcmsgMessages,
   foldGroupLabel,
   splitFoldSubgroups,
   groupTimelineLines,
+  isSearchableSegment,
   isUserTextTurn,
   lineByteOffsets,
   parseSystemMessageFields,
@@ -20,6 +22,7 @@ import {
   scrollPositionToUserTurnIndex,
   segmentSearchText,
   stripAnsiEscapes,
+  type CcmsgMessage,
   type ParsedLine,
   type Segment,
   type TimelineEntry,
@@ -400,6 +403,68 @@ describe("segmentSearchText", () => {
     expect(segmentSearchText({ kind: "unknown-segment", type: "number", raw: 42 })).toBe(
       JSON.stringify(42, null, 2),
     );
+  });
+});
+
+// isSearchableSegment (kawaz r26 mid=97 spec): the TL search-target
+// checkboxes (👤/🤖/💬) must never let a tool_use/tool_result/unknown-segment
+// through regardless of toggle state — the bug report was TL search matching
+// a Bash tool_use's raw command JSON.
+describe("isSearchableSegment", () => {
+  const ALL_ON = { user: true, ai: true, ccmsg: true };
+  const ALL_OFF = { user: false, ai: false, ccmsg: false };
+
+  test("tool-use/tool-result/unknown-segment are excluded even with every toggle on", () => {
+    expect(
+      isSearchableSegment({ kind: "tool-use", name: "Bash", input: { command: "ls" } }, ALL_ON),
+    ).toBe(false);
+    expect(
+      isSearchableSegment(
+        { kind: "tool-result", toolUseId: "tu_1", isError: false, text: "ok" },
+        ALL_ON,
+      ),
+    ).toBe(false);
+    expect(isSearchableSegment({ kind: "unknown-segment", type: "number", raw: 1 }, ALL_ON)).toBe(
+      false,
+    );
+  });
+
+  test("a user text segment follows the user toggle only", () => {
+    const seg: Segment = { kind: "text", role: "user", text: "hi" };
+    expect(isSearchableSegment(seg, { ...ALL_OFF, user: true })).toBe(true);
+    expect(isSearchableSegment(seg, { ...ALL_ON, user: false })).toBe(false);
+  });
+
+  test("an assistant text segment follows the ai toggle only", () => {
+    const seg: Segment = { kind: "text", role: "assistant", text: "hi" };
+    expect(isSearchableSegment(seg, { ...ALL_OFF, ai: true })).toBe(true);
+    expect(isSearchableSegment(seg, { ...ALL_ON, ai: false })).toBe(false);
+  });
+
+  test("a thinking segment follows the ai toggle only (no role field, always assistant)", () => {
+    const seg: Segment = { kind: "thinking", text: "pondering" };
+    expect(isSearchableSegment(seg, { ...ALL_OFF, ai: true })).toBe(true);
+    expect(isSearchableSegment(seg, { ...ALL_ON, ai: false })).toBe(false);
+  });
+});
+
+// ccmsgDedupKey (kawaz r15 mid=21 dedup, extended by r26 mid=97 search unit
+// list): must be shared verbatim between render-side dedup and search-side
+// dedup so the two never disagree about which ccmsg messages exist.
+describe("ccmsgDedupKey", () => {
+  test("built from room|ts|from|msg", () => {
+    const m: CcmsgMessage = {
+      from: "u1",
+      room: "general",
+      msg: "hello",
+      ts: "2026-07-17T00:00:00Z",
+    };
+    expect(ccmsgDedupKey(m)).toBe("general|2026-07-17T00:00:00Z|u1|hello");
+  });
+
+  test("two messages differing only in msg get distinct keys", () => {
+    const base = { from: "u1", room: "general", ts: "2026-07-17T00:00:00Z" };
+    expect(ccmsgDedupKey({ ...base, msg: "a" })).not.toBe(ccmsgDedupKey({ ...base, msg: "b" }));
   });
 });
 

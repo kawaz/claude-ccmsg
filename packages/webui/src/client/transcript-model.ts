@@ -222,6 +222,44 @@ export function segmentSearchText(segment: Segment): string {
   }
 }
 
+/** The three checkboxes SearchBar's TL-only target toggles expose (kawaz r26
+ * mid=97 spec): whether a real human utterance, an assistant text/thinking
+ * response, and a ccmsg room message respectively count as in-view search
+ * units. */
+export interface SearchTargets {
+  user: boolean;
+  ai: boolean;
+  ccmsg: boolean;
+}
+
+/**
+ * Whether a Segment belonging to a user-prompt or assistant `TurnLine` (never
+ * a system-origin line — those are excluded by Timeline.tsx's `sysKind` check
+ * before this is ever consulted, same guard `segmentSearchText`'s callers
+ * apply) counts as an in-view search unit given TL's target toggles.
+ *
+ * `tool-use`/`tool-result`/`unknown-segment` are excluded unconditionally,
+ * regardless of `targets` — kawaz r26 mid=97 bug report: TL search was
+ * matching a `Bash` tool_use's raw command JSON, which the spec says must
+ * never be a search target (only 👤 human text / 🤖 assistant text+thinking /
+ * 💬 ccmsg messages are). `thinking` has no `role` field (it's always an
+ * assistant artifact) so it follows `targets.ai` alone; `text` splits on its
+ * own `role` since a user-prompt turn's text segment and an assistant turn's
+ * text segment share the same Segment variant.
+ */
+export function isSearchableSegment(segment: Segment, targets: SearchTargets): boolean {
+  switch (segment.kind) {
+    case "text":
+      return segment.role === "user" ? targets.user : targets.ai;
+    case "thinking":
+      return targets.ai;
+    case "tool-use":
+    case "tool-result":
+    case "unknown-segment":
+      return false;
+  }
+}
+
 /**
  * Given the vertical pixel offsets (ascending, top-to-bottom) of every
  * currently-loaded user-text turn inside the Timeline's scroll container, and
@@ -563,6 +601,17 @@ export interface CcmsgMessage {
   room: string;
   msg: string;
   ts: string;
+}
+
+/** Dedup key for a `CcmsgMessage` (kawaz r15 mid=21: the same room event can
+ * be extracted twice from one transcript — a `queue-operation` enqueue line
+ * and its `task-notification` Monitor tool_result echo both carry it). Shared
+ * by Timeline.tsx's bubble-list render and its in-view search unit list so
+ * the two dedup identically — a message the render side drops as a duplicate
+ * must never still count toward the search "[N/M]" total (a ghost match with
+ * no bubble to highlight/scroll to). */
+export function ccmsgDedupKey(m: CcmsgMessage): string {
+  return `${m.room}|${m.ts}|${m.from}|${m.msg}`;
 }
 
 /** Matches Claude Code's Task-tool teammate relay wrapper (see
