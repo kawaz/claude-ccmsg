@@ -40,9 +40,8 @@ kawaz が r26 (mid=102) のスクショと r32 で受け取った誤送信分か
    - 混在テキスト (日本語+他言語) は従来どおり丸ごと翻訳
    - 全文日本語かどうかの判定は既存 `translate.ts` の日本語判定ロジックを流用
 
-4. **thinking の select トグルボタンの配置変更**
-   - 翻訳タブ群に近すぎて誤操作しやすい
-   - 右端配置に変更
+4. **thinking の select 機能を完全削除**
+   - Timeline.tsx の select/clear トグルボタンとその関連ロジック・CSS・テストを撤去する
 
 5. **TL 下部ミニパネルに teams (チームメイト) も表示**
    - session_status snapshot の teammates から活動中のものを要約行に追加
@@ -58,5 +57,5 @@ kawaz が実運用中 (r26/r32) に気づいた UX 上の粗。特に (2) は複
 - [ ] miniSummaryLines に ctx 消費表示が追加されている
 - [ ] thinking 複数件の翻訳が 1 リクエストにバッチ化され、直列実行によるもたつきが解消している
 - [ ] 全文日本語テキストで翻訳リクエストが発生しないことを確認
-- [ ] thinking select トグルボタンが右端に移動している
+- [ ] thinking の select 機能 (select/clear トグルボタン・関連ロジック・CSS・テスト) が削除されている
 - [ ] miniSummaryLines に活動中の teammates 要約行が追加されている
