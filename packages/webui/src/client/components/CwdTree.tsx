@@ -5,6 +5,13 @@
 // but simpler — no favorites, no file leaves, and selection is a distinct
 // action from expand/collapse (a directory the user is only browsing through
 // on the way to a deeper one must stay expandable without becoming `cwd`).
+//
+// issue 2026-07-17-session-creator-cwd-picker-unify: the filter input used to
+// live inside this component (a second text box next to SessionCreator's own
+// cwd field). It's now unified into a single input owned by SessionCreator —
+// `filterInput` arrives as a prop instead of local state, and this component
+// no longer renders its own `<input>`. The debounce stays here since it's
+// this component's dir_tree request that the debounce protects.
 import { useEffect, useState } from "preact/hooks";
 import type { DirTreeEntry } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
@@ -102,6 +109,7 @@ function Node({
 export function CwdTree({
   roots,
   selected,
+  filterInput,
   onSelect,
 }: {
   /** session_launcher_config's root_dirs — the daemon containment-checks
@@ -109,6 +117,10 @@ export function CwdTree({
   roots: string[];
   /** the form's current cwd value, so the matching row shows "✓ 選択中". */
   selected: string;
+  /** Raw (undebounced) filter text — SessionCreator's unified cwd input,
+   * owned by the parent so the same value can also drive direct-entry commit
+   * (issue 2026-07-17-session-creator-cwd-picker-unify). */
+  filterInput: string;
   onSelect: (path: string) => void;
 }) {
   const { ws } = useApp();
@@ -118,7 +130,6 @@ export function CwdTree({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [expandingPaths, setExpandingPaths] = useState<Set<string>>(new Set());
   const [lazyErrors, setLazyErrors] = useState<Map<string, string>>(new Map());
-  const [filterInput, setFilterInput] = useState("");
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
@@ -208,13 +219,6 @@ export function CwdTree({
 
   return (
     <div class="cwd-tree">
-      <input
-        type="text"
-        class="cwd-tree-filter"
-        placeholder="検索 (パス部分一致)"
-        value={filterInput}
-        onInput={(e) => setFilterInput((e.target as HTMLInputElement).value)}
-      />
       {error ? (
         <p class="cwd-tree-error">{error}</p>
       ) : loading && entries === null ? (

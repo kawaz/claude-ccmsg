@@ -884,6 +884,40 @@ a {
   resize: vertical;
 }
 
+/* issue 2026-07-17-session-creator-cwd-picker-unify: the "confirmed" mode of
+ * CwdPicker (SessionCreator.tsx) — picked cwd rendered as text with an edit
+ * (✎) button, replacing the input+CwdTree pair that "editing" mode shows. */
+.session-creator-cwd-confirmed {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.session-creator-cwd-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-creator-cwd-edit {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.2rem 0.4rem;
+}
+
+.session-creator-cwd-edit:hover {
+  color: var(--fg);
+}
+
 .session-creator-prompt-head {
   display: flex;
   align-items: center;
@@ -1148,17 +1182,6 @@ a {
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   padding: 0.3rem;
-}
-
-.cwd-tree-filter {
-  width: 100%;
-  font: inherit;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.4rem;
-  border-radius: 0.35rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
 }
 
 .cwd-tree-root,

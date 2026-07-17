@@ -3,8 +3,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildSessionLaunchRequest,
+  commitCwdInput,
   DEFAULT_SESSION_CREATOR_EFFORT,
   DEFAULT_SESSION_CREATOR_MODEL,
+  initialCwdPickerMode,
   initialSessionCreatorForm,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
@@ -89,6 +91,39 @@ describe("sessionCreatorFormValid", () => {
   // launchable `claude` invocation (see the doc comment in session-creator.ts).
   test("valid with an empty prompt, as long as cwd is set", () => {
     expect(sessionCreatorFormValid(form({ cwd: "/repo", prompt: "" }))).toBe(true);
+  });
+});
+
+// issue 2026-07-17-session-creator-cwd-picker-unify: pure mode-transition
+// helpers for CwdPicker's editing/confirmed toggle.
+describe("initialCwdPickerMode", () => {
+  test("editing when cwd is empty (initialSessionCreatorForm's default)", () => {
+    expect(initialCwdPickerMode("")).toBe("editing");
+  });
+
+  test("editing when cwd is whitespace-only", () => {
+    expect(initialCwdPickerMode("   ")).toBe("editing");
+  });
+
+  test("confirmed when a cwd is already set (future default-cwd source)", () => {
+    expect(initialCwdPickerMode("/repo")).toBe("confirmed");
+  });
+});
+
+describe("commitCwdInput", () => {
+  test("null on an empty value — an empty Enter press is a no-op", () => {
+    expect(commitCwdInput("")).toBeNull();
+  });
+
+  test("null on a whitespace-only value", () => {
+    expect(commitCwdInput("   ")).toBeNull();
+  });
+
+  test("trims and confirms a directly-typed path", () => {
+    expect(commitCwdInput("  /repo/deep/path  ")).toEqual({
+      cwd: "/repo/deep/path",
+      mode: "confirmed",
+    });
   });
 });
 

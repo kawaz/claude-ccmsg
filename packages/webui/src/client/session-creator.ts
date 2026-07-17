@@ -53,6 +53,34 @@ export function initialSessionCreatorForm(
   };
 }
 
+/** issue 2026-07-17-session-creator-cwd-picker-unify: the cwd picker has two
+ * display modes — "editing" shows the unified search/direct-entry input plus
+ * CwdTree, "confirmed" shows the picked path as text with an edit (✎) button.
+ * Kept as a form-adjacent enum (not part of SessionCreatorForm itself — mode
+ * is presentation state, not part of the wire request) so SessionCreator.tsx
+ * can hold it in its own useState alongside `form`. */
+export type CwdPickerMode = "editing" | "confirmed";
+
+/** Initial mode once the form is constructed: "confirmed" only when a cwd is
+ * already set. `initialSessionCreatorForm`'s cwd always starts `""` today (no
+ * default-cwd source exists yet), so this resolves to "editing" in practice —
+ * kept as a pure function anyway so a future default-cwd source lands in
+ * "confirmed" mode for free, and so the branch is unit-testable. */
+export function initialCwdPickerMode(cwd: string): CwdPickerMode {
+  return cwd.trim() === "" ? "editing" : "confirmed";
+}
+
+/** Direct-entry commit for the unified cwd input (issue requirement 5): the
+ * same input that filters CwdTree also accepts a full path typed by hand and
+ * confirmed (Enter). Trims and only transitions to "confirmed" on a non-blank
+ * value — an empty Enter press is a no-op rather than an accidental
+ * confirm-with-blank-cwd, mirroring `sessionCreatorFormValid`'s blank check. */
+export function commitCwdInput(value: string): { cwd: string; mode: CwdPickerMode } | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  return { cwd: trimmed, mode: "confirmed" };
+}
+
 /** Run button gate: `session_launch` requires a real `cwd` (dir_tree picks
  * only ever produce non-empty absolute paths, but the field is free-typeable
  * too — DR-0018 doesn't forbid typing a path directly, it just describes the

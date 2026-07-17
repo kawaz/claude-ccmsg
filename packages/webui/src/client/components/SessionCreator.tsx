@@ -19,10 +19,13 @@ import { useApp } from "../context.ts";
 import { errorMessage } from "../utils.ts";
 import {
   buildSessionLaunchRequest,
+  commitCwdInput,
+  initialCwdPickerMode,
   initialSessionCreatorForm,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
+  type CwdPickerMode,
   type SessionCreatorForm,
 } from "../session-creator.ts";
 import { CwdTree } from "./CwdTree.tsx";
@@ -47,6 +50,88 @@ type LaunchState =
   | { status: "running" }
   | { status: "error"; message: string }
   | { status: "done"; result: SessionLaunchResponse };
+
+/** issue 2026-07-17-session-creator-cwd-picker-unify: the cwd field's two
+ * display modes. "confirmed" shows the picked path as text plus an edit (✎)
+ * button; "editing" shows a single input that both filters CwdTree (via
+ * debounced substring match, DR-0018 §2.2) and accepts a full path typed by
+ * hand (Enter commits it directly — requirement 5, for paths deeper than the
+ * tree surfaces). Selecting a row in the tree commits the same way a
+ * direct-entry Enter does: cwd is set and the picker collapses to
+ * "confirmed". `filterInput` is local to this component (not part of
+ * SessionCreatorForm) — it's transient UI text, not part of the wire
+ * request, and resets each time editing mode is (re-)entered so the edit
+ * button doesn't reopen with stale search text. */
+function CwdPicker({
+  cwd,
+  mode,
+  setMode,
+  rootDirs,
+  onCwdChange,
+}: {
+  cwd: string;
+  mode: CwdPickerMode;
+  setMode: (mode: CwdPickerMode) => void;
+  rootDirs: string[];
+  onCwdChange: (cwd: string) => void;
+}) {
+  const [filterInput, setFilterInput] = useState("");
+
+  function commit(): void {
+    const result = commitCwdInput(filterInput);
+    if (!result) return;
+    onCwdChange(result.cwd);
+    setMode(result.mode);
+  }
+
+  if (mode === "confirmed") {
+    return (
+      <div class="session-creator-cwd-confirmed">
+        <span class="session-creator-cwd-value" title={cwd}>
+          {cwd}
+        </span>
+        <button
+          type="button"
+          class="session-creator-cwd-edit"
+          onClick={() => {
+            setFilterInput("");
+            setMode("editing");
+          }}
+          aria-label="cwd を編集"
+          title="cwd を編集"
+        >
+          ✎
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <input
+        type="text"
+        class="session-creator-cwd-input"
+        placeholder="検索 (パス部分一致)、またはパスを直接入力して Enter"
+        value={filterInput}
+        onInput={(e) => setFilterInput((e.target as HTMLInputElement).value)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          commit();
+        }}
+      />
+      <CwdTree
+        roots={rootDirs}
+        selected={cwd}
+        filterInput={filterInput}
+        onSelect={(path) => {
+          onCwdChange(path);
+          setMode("confirmed");
+        }}
+      />
+    </>
+  );
+}
 
 function LaunchResultPanel({ state }: { state: LaunchState }) {
   if (state.status === "idle") return null;
@@ -79,6 +164,7 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
   const [form, setForm] = useState<SessionCreatorForm | null>(null);
+  const [cwdPickerMode, setCwdPickerMode] = useState<CwdPickerMode>("editing");
   const [launch, setLaunch] = useState<LaunchState>({ status: "idle" });
 
   useEffect(() => {
@@ -94,7 +180,9 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
             defaultPrompt: res.default_prompt,
             defaultCommand: res.command,
           });
-          setForm(initialSessionCreatorForm(res.default_prompt, res.command));
+          const initialForm = initialSessionCreatorForm(res.default_prompt, res.command);
+          setForm(initialForm);
+          setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
         } else if (res.error.code === "launcher_not_configured") {
           setProbe({ status: "unconfigured" });
         } else {
@@ -149,17 +237,12 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
         <form class="session-creator-form" onSubmit={(e) => void run(e)}>
           <div class="session-creator-field">
             <span class="session-creator-label">cwd</span>
-            <input
-              type="text"
-              class="session-creator-cwd-input"
-              placeholder="下のツリーから選択、または直接入力"
-              value={form.cwd}
-              onInput={(e) => setForm({ ...form, cwd: (e.target as HTMLInputElement).value })}
-            />
-            <CwdTree
-              roots={probe.rootDirs}
-              selected={form.cwd}
-              onSelect={(cwd) => setForm({ ...form, cwd })}
+            <CwdPicker
+              cwd={form.cwd}
+              mode={cwdPickerMode}
+              setMode={setCwdPickerMode}
+              rootDirs={probe.rootDirs}
+              onCwdChange={(cwd) => setForm({ ...form, cwd })}
             />
           </div>
           <label class="session-creator-field">
