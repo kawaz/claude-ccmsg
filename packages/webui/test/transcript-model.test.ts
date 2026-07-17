@@ -1353,6 +1353,32 @@ describe("splitFoldSubgroups", () => {
 // through parseSegments/classifyUserMessage the same way a live transcript
 // line would.
 describe("extractCcmsgMessages", () => {
+  // 何を保証するか (実データ回帰): Claude Code が mid=99 の Monitor event を
+  // `"seq":102...(truncated)` で切り、その後に返信指示行を続けた実 transcript
+  // でも、復元可能な u1 本文を room 不明の ccmsg bubble として残す。fixture の
+  // message.content は報告対象 jsonl 行からそのまま採取した。
+  test("the actual mid=99 truncated task-notification yields a u1 ccmsg bubble", () => {
+    const actualMid99TranscriptLine = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          '<task-notification>\n<task-id>baxep3rq2</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ監視"</summary>\n<event>{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。\\n自由にプロジェクト外のパスをブラウズしたいわけではない。\\nRead/Write/Editツールで触ったファイルリストからcwd内のものを除外したフルパスリストを表示するセクションがFileツリーに欲しいということです。\\n\\n現在、おきにいり、プロジェクトという2つのセクションがあるが、ここにプロジェクト外というセクションを設けて、セッションが触ったプロジェクト外ファイルのフルパスリストを表示して選択できるようにしたい。\\n当然横幅が足りなくなると思うが、横スクロールバーを付けてくれたら良い。そもそも現在も深いディレクトリや長いファイル名の際に右側が隠れる問題は存在する。スプリッタを右にずらせば広くはできるが限界はあるのでシンプルにセクション内のリストごとに横スクロールができればよいと思う。\\nお気に入り追加も可能となるようにしたい。","seq":102...(truncated)\n返信: この room に post せず、通常のアシスタント応答 (transcript 出力) で返す</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn\'t need one.\n</task-notification>',
+      },
+      timestamp: "2026-07-17T04:33:45.105Z",
+      origin: { kind: "task-notification" },
+    });
+
+    const msgs = extractCcmsgMessages(parseTranscriptLine(actualMid99TranscriptLine));
+    expect(msgs.length).toBe(1);
+    expect(msgs[0]!.from).toBe("u1");
+    expect(msgs[0]!.room).toBe("?");
+    expect(msgs[0]!.msg).toContain(
+      "あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。",
+    );
+    expect(msgs[0]!.msg).toContain("切り詰め");
+  });
+
   // Monitor 通知の <event> は長い msg を「...(truncated)」で切ることがあり、
   // その行は JSON として壊れる (kawaz r17 mid=43 の実観測 — bubble にならず
   // 生 JSON の fold 表示になっていた)。field 順は daemon の stringify 順で
@@ -1379,16 +1405,16 @@ describe("extractCcmsgMessages", () => {
     expect(msgs[0]!.msg).toContain("切り詰め");
   });
 
-  // 対極 (誤爆防止): truncated marker があっても msg event でない行 (kind 等)
-  // や、必須 field (r) が切り落とされた断片は bubble にしない。
-  test("a truncated non-msg or r-less fragment stays out of bubbles", () => {
+  // 対極 (誤爆防止): truncated marker があっても msg event でない行や、
+  // from/ts/msg のいずれかを復元できない断片は bubble にしない。
+  test("a truncated non-msg or msg missing identity fields stays out of bubbles", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",
         message: {
           role: "user",
           content:
-            '<task-notification>\n<event>{"type":"member","id":"a1","sid":"x...(truncated)</event>\n</task-notification>',
+            '<task-notification>\n<event>{"type":"member","id":"a1","sid":"x...(truncated)\n{"type":"msg","from":"u1","msg":"no timestamp...(truncated)</event>\n</task-notification>',
         },
         timestamp: "2026-07-15T04:02:44.000Z",
       }),

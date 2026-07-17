@@ -698,8 +698,9 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
  * room (`r`) は wire 上 msg より後ろの field なので truncation でほぼ必ず
  * 失われる — 呼び出し側 (extractCcmsgMessages) が同じ <event> ブロック内の
  * parse できた行から補完した `fallbackRoom` を渡す (subscribe の 1 通知は
- * room event のバッチで、実観測の形は kind/title/member 行が同居する)。
- * 補完も無ければ bubble は諦める (dedup key とアンカーに room が必須)。 */
+ * room event のバッチで、実観測の形は kind/title/member 行が同居する)。同居
+ * event も無い単独 msg 通知では `?` を room 表示に使い、復元できた本文を
+ * bubble として保持する。 */
 function tryParseTruncatedCcmsgMessage(
   fragment: string,
   fallbackRoom?: string,
@@ -708,9 +709,9 @@ function tryParseTruncatedCcmsgMessage(
   if (!fragment.startsWith('{"type":"msg"')) return null;
   const from = fragment.match(/"from":"((?:[^"\\]|\\.)*)"/)?.[1];
   const ts = fragment.match(/"ts":"((?:[^"\\]|\\.)*)"/)?.[1];
-  const room = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom;
+  const room = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom ?? "?";
   const msgMatch = fragment.match(/"msg":"((?:[^"\\]|\\.)*)/)?.[1];
-  if (!from || !ts || !room || msgMatch === undefined) return null;
+  if (!from || !ts || msgMatch === undefined) return null;
   let msg: string;
   try {
     // 抜き出した半端な JSON string 断片を JSON.parse でデコード (escape 解決)。
