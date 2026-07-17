@@ -965,4 +965,146 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       cleanup();
     }
   }, 30000);
+
+  // 何を保証するか (RL-Q2 kawaz r26 mid=104、裁定=a): minimal help の
+  //   `create-room --members <sid[,sid...]> <title>`
+  // に合わせ、positional <title> を room title として受理する。現状 args[0]
+  // は silent drop だったため、CLI 呼び出し実態 (help に沿って書いた kawaz が
+  // title を渡したつもりで無視される) と help 文面が齟齬していたのを合わせる。
+  test("create-room の positional <title> が room title として反映される", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2", "positional-title"], env))
+          .out,
+      ) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { id: string; title?: string }[];
+      };
+      const r = rooms.rooms.find((x) => x.id === created.room)!;
+      expect(r.title).toBe("positional-title");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (RL-Q2 の precedence 側): positional <title> と --title の
+  // 両方が渡された場合、明示 flag (= --title) が勝つ。positional は help 由来の
+  // shorthand で明示指定を上書きしないことを固定する。
+  test("create-room で --title と positional 両方指定時は --title 優先", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const created = JSON.parse(
+        (
+          await runCli(
+            [
+              "--sid",
+              "S1",
+              "create-room",
+              "--members",
+              "S2",
+              "positional-title",
+              "--title",
+              "explicit-title",
+            ],
+            env,
+          )
+        ).out,
+      ) as { ok: boolean; room: string };
+      expect(created.ok).toBe(true);
+      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+        rooms: { id: string; title?: string }[];
+      };
+      const r = rooms.rooms.find((x) => x.id === created.room)!;
+      expect(r.title).toBe("explicit-title");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (RL-Q2 kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]`
+  // に合わせ、positional 引数を cwd 部分一致 filter として実装する。無指定時は
+  // 全 peer が返ることを別 case で確認 (現状の非回帰)。フィルタの絞りは CLI 側
+  // 完結 (webui の op:"peers" を汚さない、rooms と同型の方針)。
+  test("peers の positional 引数が cwd 部分一致で絞る", async () => {
+    const { env, cleanup } = makeEnv();
+    // peers を叩く side は user role で走らせる。親環境の CLAUDE_CODE_SESSION_ID
+    // が漏れて session hello されると自分自身が peer 一覧に紛れて test の
+    // 3 peer 期待が壊れる — write op ではないので identity なしで OK。
+    const readEnv: Record<string, string> = {
+      ...env,
+      CCMSG_SID: "",
+      CLAUDE_CODE_SESSION_ID: "",
+      CLAUDE_SESSION_ID: "",
+    };
+    try {
+      // 3 session を立ててそれぞれ異なる cwd で subscribe を張っておく (peers は
+      // 接続中 session を返すので、常駐 subscribe を noise なく差し込む)。
+      // CLI は hello の cwd に process.cwd() を送るため、Bun.spawn の cwd で
+      // 実 dir を渡す (作成しないと spawn が失敗する)。base dir 配下に mkdir。
+      const peerBase = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-peers-"));
+      const alphaOne = path.join(peerBase, "alpha", "one");
+      const alphaTwo = path.join(peerBase, "alpha", "two");
+      const betaThree = path.join(peerBase, "beta", "three");
+      fs.mkdirSync(alphaOne, { recursive: true });
+      fs.mkdirSync(alphaTwo, { recursive: true });
+      fs.mkdirSync(betaThree, { recursive: true });
+      const spawnPeer = (sid: string, cwd: string) =>
+        Bun.spawn([process.execPath, CLI, "--sid", sid, "subscribe"], {
+          cwd,
+          env: { ...process.env, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      const p1 = spawnPeer("PA", alphaOne);
+      const p2 = spawnPeer("PB", alphaTwo);
+      const p3 = spawnPeer("PC", betaThree);
+      try {
+        // subscribe が daemon に hello するまでの猶予: peers を polling で待つ。
+        const waitPeers = async (): Promise<{ peers: { sid: string; cwd?: string }[] }> => {
+          for (let i = 0; i < 40; i++) {
+            const res = JSON.parse((await runCli(["peers"], readEnv)).out) as {
+              peers?: { sid: string; cwd?: string }[];
+            };
+            if (Array.isArray(res.peers) && res.peers.length >= 3) {
+              return res as { peers: { sid: string; cwd?: string }[] };
+            }
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          throw new Error("timed out waiting for 3 peers");
+        };
+        const all = await waitPeers();
+        expect(all.peers.map((p) => p.sid).sort()).toEqual(["PA", "PB", "PC"]);
+
+        // "/alpha/" 部分一致 → PA + PB のみ (peerBase 名衝突を避けるため /alpha/)
+        const alpha = JSON.parse((await runCli(["peers", "/alpha/"], readEnv)).out) as {
+          peers: { sid: string; cwd?: string }[];
+        };
+        expect(alpha.peers.map((p) => p.sid).sort()).toEqual(["PA", "PB"]);
+
+        // "/beta/" 部分一致 → PC のみ
+        const beta = JSON.parse((await runCli(["peers", "/beta/"], readEnv)).out) as {
+          peers: { sid: string; cwd?: string }[];
+        };
+        expect(beta.peers.map((p) => p.sid)).toEqual(["PC"]);
+
+        // マッチしない substring → 0 件
+        const none = JSON.parse((await runCli(["peers", "no-such-cwd"], readEnv)).out) as {
+          peers: { sid: string }[];
+        };
+        expect(none.peers).toEqual([]);
+      } finally {
+        p1.kill();
+        p2.kill();
+        p3.kill();
+        fs.rmSync(peerBase, { recursive: true, force: true });
+      }
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
 });

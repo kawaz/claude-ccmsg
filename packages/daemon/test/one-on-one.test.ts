@@ -256,6 +256,214 @@ describe("DR-0014 1on1 room creation", () => {
     T,
   );
 
+  // 何を保証するか (RL-Q1、kawaz r26 mid=103、「混ぜない」裁定): session 発の
+  // create_room --kind 1on1 に初期 --msg が付いていたら post ガード (§2.5) と
+  // 同じ理由で reply_via_tl エラーで拒否する。1on1 の返信レールは TL であって
+  // room msg 経路ではないため、session 発の初期声かけは transcript に出す。
+  // room 作成自体を潰すので、roomsDir に副作用が残らないことも同時に確認する。
+  test(
+    "session-authored create_room --kind 1on1 with --msg is refused",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const a = await session(ctx, "A");
+        const before = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
+        const res = await a.request<{
+          ok: false;
+          error: { code: string; msg: string };
+        }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+          msg: "session initial",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error).toEqual({
+          code: "reply_via_tl",
+          msg:
+            `this 1on1 room is routed "tl": respond via your normal assistant output ` +
+            `(transcript) — do not attach --msg on a session-initiated 1on1 create_room/next_room`,
+        });
+        // 副作用ゼロ: roomsDir に新規 jsonl が積まれていないこと。
+        const after = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
+        expect(after).toBe(before);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の裏側): session 発でも --msg なしの create_room
+  // --kind 1on1 は正当な操作 (2 者 room を張るだけ)。room 作成そのものを
+  // 潰していないことを固定する。
+  test(
+    "session-authored create_room --kind 1on1 without --msg is allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const a = await session(ctx, "A");
+        const res = await a.request<{ ok: true; room: string; reused: boolean }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.reused).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の webui 経路の非対象化): 同じ 1on1 でも u1
+  // (webui) 発の初期 --msg は「session に呼びかけを届ける」正当な用途。
+  // role 判定を落として一律拒否すると webui の主経路を壊すため、その境界を
+  // 明示的に固定する (post ガードの u1 許可と同型)。
+  test(
+    "user-authored create_room --kind 1on1 with --msg remains allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        await session(ctx, "A");
+        const res = await u.request<{ ok: true; room: string; mid?: number }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+          msg: "u1 opens the priv thread",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の broadcast 例外の非回帰、DR-0013 §2.10): 1on1 と
+  // 同じ「session 発の初期 --msg」でも、broadcast は §2.10 で明示的に許可されて
+  // いる (u1 集約通信の opener を許す)。1on1 側の拒否を broadcast に波及させて
+  // いないことを固定する。
+  test(
+    "session-authored create_room --kind broadcast with --msg is still allowed (§2.10)",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const a = await session(ctx, "A");
+        const res = await a.request<{ ok: true; room: string; mid?: number }>({
+          op: "create_room",
+          members: [],
+          kind: "broadcast",
+          msg: "broadcast opener",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の next_room 側): 1on1 の次スレも 1on1 kind を継承
+  // する (§2 kind inheritance) ので、session 発の next_room に --msg が
+  // 付いていたら create_room 側と同じく拒否する。既存 old room が指定される
+  // ため、エラー文言側は room id 付き (post ガード同型) になる。
+  test(
+    "session-authored next_room from a 1on1 with --msg is refused",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        const a = await session(ctx, "A");
+        const parent = await u.request<{ room: string }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+        });
+        const res = await a.request<{
+          ok: false;
+          error: { code: string; msg: string };
+        }>({
+          op: "next_room",
+          room: parent.room,
+          msg: "session initial on next",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error).toEqual({
+          code: "reply_via_tl",
+          msg:
+            `this 1on1 room is routed "tl": respond via your normal assistant output ` +
+            `(transcript) — do not post/reply into ${parent.room}`,
+        });
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の裏側 next_room): 1on1 の次スレを立てる操作自体は
+  // 正当。--msg を付けなければ session 発でも通す (既存の kind inheritance
+  // テストは u1 経路寄りなので、session 発が --msg なしで通ることを別枠で
+  // 固定する)。
+  test(
+    "session-authored next_room from a 1on1 without --msg is allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        const a = await session(ctx, "A");
+        const parent = await u.request<{ room: string }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+        });
+        const res = await a.request<{ ok: true; room: string; mid?: number }>({
+          op: "next_room",
+          room: parent.room,
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBeUndefined();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (RL-Q1 の webui 経路の非対象化 next_room): u1 発の
+  // next_room + --msg は webui の主経路 (「今の priv を畳んで次を始める」の
+  // opener) — 1on1 next_room の拒否対象が role で分離されていることを固定。
+  test(
+    "user-authored next_room from a 1on1 with --msg remains allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        await session(ctx, "A");
+        const parent = await u.request<{ room: string }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
+        });
+        const res = await u.request<{ ok: true; room: string; mid?: number }>({
+          op: "next_room",
+          room: parent.room,
+          msg: "u1 opens the next priv thread",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
   // 何を保証するか (kind の永続化): the 1on1 KindEvent lands in the jsonl and
   // is recovered by scanRooms on daemon restart — so a 1on1 room stays 1on1
   // (reply_hint = "tl" for u1 msgs keeps working) across a stop/start cycle.

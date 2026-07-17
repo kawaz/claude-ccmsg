@@ -443,7 +443,8 @@ Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
   reply <rNmN> <msg>           Reply using the reply_hint value from the received
                                event; the daemon builds the delivery targets
-  create-room                  Open a room with peers (--members, --msg, --title,
+  create-room [<title>]        Open a room with peers (--members, --msg, --title
+                               or positional <title>; --title wins when both given,
                                --exclude-self to keep the caller out of the room,
                                --kind broadcast for a session-broadcast room,
                                --kind 1on1 --members <sid> for a webui 1on1 priv room)
@@ -455,7 +456,8 @@ Commands:
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
-  peers                        List connected sessions
+  peers [<cwd>]                List connected sessions; positional <cwd> filters
+                               by substring match on each session's cwd
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   status                       Show daemon liveness / version / uptime / pid
   origins [list]               List persisted extra allowed Origins (webui reverse proxy)
@@ -642,12 +644,25 @@ async function main(): Promise<void> {
           : kindRaw === "1on1"
             ? { kind: "1on1" as const }
             : {};
+      // RL-Q2 (kawaz r26 mid=104、裁定=a): 最小 help の
+      //   `create-room --members <sid[,sid...]> <title>`
+      // に合わせ、positional <title> を受理する。--title 併用時は明示 flag が
+      // 勝つ (positional は help 由来の shorthand 扱い、明示指定を優先)。
+      // 現状 args[0] は silent drop されていたが、それを合法化する変更。
+      const explicitTitle = str(opts, "title");
+      const positionalTitle = args[0];
+      const finalTitle =
+        explicitTitle !== undefined
+          ? explicitTitle
+          : typeof positionalTitle === "string" && positionalTitle !== ""
+            ? positionalTitle
+            : undefined;
       await runOnce(identity, {
         op: "create_room",
         members,
         ...(excludeSelf ? { include_self: false } : {}),
         ...(str(opts, "msg") ? { msg: str(opts, "msg") } : {}),
-        ...(str(opts, "title") ? { title: str(opts, "title") } : {}),
+        ...(finalTitle !== undefined ? { title: finalTitle } : {}),
         ...kindPayload,
       });
       return;
@@ -711,7 +726,28 @@ async function main(): Promise<void> {
       return;
     }
     case "peers": {
-      await runOnce(identity, { op: "peers" });
+      // RL-Q2 (kawaz r26 mid=104、裁定=a): help `peers [cwd(partial)]` に合わせ
+      // positional 引数を cwd 部分一致 filter として実装する。現状 args[0] は
+      // silent drop されていたのを合法化。絞りは CLI 側で行う (rooms と同じく
+      // webui の op:"peers" を汚さない方針、interface-wording rule 準拠)。
+      const cwdFilter = args[0];
+      if (typeof cwdFilter !== "string" || cwdFilter === "") {
+        await runOnce(identity, { op: "peers" });
+        return;
+      }
+      const paths = resolvePaths();
+      const client = await ensureDaemon(paths, identity);
+      const res = await client.request<
+        { ok?: boolean; peers?: Array<{ cwd?: string }> } & Record<string, unknown>
+      >({ op: "peers" });
+      client.close();
+      if (res.ok && Array.isArray(res.peers)) {
+        const peers = res.peers.filter(
+          (p) => typeof p.cwd === "string" && p.cwd.includes(cwdFilter),
+        );
+        process.exit(output({ ...res, peers }));
+      }
+      process.exit(output(res));
       return;
     }
     case "notify": {

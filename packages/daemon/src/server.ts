@@ -167,12 +167,19 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
-function sendReplyViaTlError(conn: Conn, room: Room): void {
+function sendReplyViaTlError(conn: Conn, room: Room | null): void {
+  // `room=null` は create_room/next_room の pre-check 経路 (RL-Q1、kawaz r26
+  // mid=103) — 対象 room がまだ存在しないので room id を含めず「session 発の
+  // 初期 --msg 自体を諦めろ」と誘導する。room 指定時は既存 post/reply ガードの
+  // 文言 (room id 込み) を維持する。
+  const suffix = room
+    ? `do not post/reply into ${room.id}`
+    : `do not attach --msg on a session-initiated 1on1 create_room/next_room`;
   sendErr(
     conn,
     ErrorCode.reply_via_tl,
     `this 1on1 room is routed "tl": respond via your normal assistant output ` +
-      `(transcript) — do not post/reply into ${room.id}`,
+      `(transcript) — ${suffix}`,
   );
 }
 
@@ -1023,6 +1030,15 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           return;
         }
         const targetSid = targetSids[0]!;
+        // RL-Q1 (kawaz r26 mid=103, 「混ぜない」裁定): session 発の初期 --msg は
+        // 1on1 room に対して post ガード (§2.5 reply_via_tl) と同じ理由で拒否
+        // する — 1on1 の返信レールは TL (transcript) で、room msg 経路ではない。
+        // 副作用 (KindEvent/member 書き込み) を残さないため、room 作成前に落とす。
+        // broadcast の初期 msg 例外 (§2.10) は unchanged: 1on1 のみに適用。
+        if (req.msg !== undefined && conn.identity?.role === "session") {
+          sendReplyViaTlError(conn, null);
+          return;
+        }
         // include_self is deliberately NOT honored for 1on1 (§2.1: session-role
         // caller does NOT auto-prepend). If a session creates a 1on1 with its
         // OWN sid, the resulting room has member.sid == self.sid, member.id = a1,
@@ -1199,6 +1215,14 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       }
       if (resolveFrom(conn, old) === null) {
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
+        return;
+      }
+      // RL-Q1 (kawaz r26 mid=103): 1on1 の次スレも 1on1 (§2 kind inheritance)
+      // なので、create_room 側と同じく session 発の初期 --msg は "tl" 経路に
+      // 誘導する (post ガード §2.5 と同じ理由)。next_room 自体 (msg なし) は
+      // 正当な操作なので通す。broadcast の初期 msg 例外 (§2.10) は unchanged。
+      if (req.msg !== undefined && old.kind === "1on1" && conn.identity?.role === "session") {
+        sendReplyViaTlError(conn, old);
         return;
       }
       const inherited = presentMembers(old);
