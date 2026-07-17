@@ -31,7 +31,15 @@ import {
 import { Logger } from "./log.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
-import { fsList, fsRead, fsReadExternal, fsWrite, validateRepoRoot } from "./fs-access.ts";
+import {
+  fsList,
+  fsListWorkspace,
+  fsRead,
+  fsReadExternal,
+  fsReadWorkspace,
+  fsWrite,
+  validateRepoRoot,
+} from "./fs-access.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { sessionSearch } from "./session-search.ts";
 import {
@@ -783,6 +791,8 @@ const IDENTITY_OPS = new Set([
   "fs_list",
   "fs_read",
   "fs_read_external",
+  "fs_list_workspace",
+  "fs_read_workspace",
   "fs_write",
   "transcript_read",
   "session_search",
@@ -1661,6 +1671,38 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const result = fsReadExternal(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_list_workspace": {
+      // DR-0026: workspace-folder browsing is a viewer feature (kawaz opens
+      // sibling repos from the ワークスペース section). A session AI has no
+      // reason to reach outside its containment root through this op, so it's
+      // user-role only — same posture as fs_read_external.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_list_workspace' requires user role");
+        return;
+      }
+      const result = fsListWorkspace(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_read_workspace": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_read_workspace' requires user role");
+        return;
+      }
+      const result = fsReadWorkspace(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

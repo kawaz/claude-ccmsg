@@ -935,6 +935,370 @@ describe("fs_read_external (DR-0024)", () => {
   );
 });
 
+describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
+  /** Session helper that plants a `.code-workspace` file at cwd's top level
+   * before saying hello, so the first session_status snapshot the daemon
+   * computes already carries workspace_folders — the two ops read that
+   * snapshot for their allowlist and would otherwise reject every path. */
+  async function sessionWithWorkspace(
+    ctx: DaemonCtx,
+    sid: string,
+    cwd: string,
+    workspaceContents: string,
+  ): Promise<TestClient> {
+    fs.writeFileSync(path.join(cwd, "test.code-workspace"), workspaceContents);
+    // A transcript is required for session_status to fold (getSessionStatus
+    // resolves the transcript first); an empty one is enough here since we
+    // don't need any external_files.
+    const transcript = path.join(cwd, `${sid}.jsonl`);
+    fs.writeFileSync(transcript, "");
+    const session = await connect(ctx.sock);
+    await session.request({
+      op: "hello",
+      role: "session",
+      sid,
+      repo: "r",
+      ws: "w",
+      cwd,
+      transcript_path: transcript,
+    });
+    return session;
+  }
+
+  test(
+    "session_status snapshot exposes discovered workspace_folders",
+    async () => {
+      // Round-trip check that the daemon publishes what workspace-folders.ts
+      // discovered — this is the wire the two ops read their allowlist from.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const sibling = path.join(parent, "sibling");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(sibling);
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({
+            folders: [
+              { name: "self", path: "." },
+              { name: "sib", path: "../sibling" },
+            ],
+          }),
+        );
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          workspace_folders?: { name: string; path: string }[];
+        }>({ op: "session_status", sid: "A" });
+        expect(res.workspace_folders).toEqual([
+          { name: "self", path: cwd },
+          { name: "sib", path: sibling },
+        ]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "fs_list_workspace returns entries for a folder root and descendants",
+    async () => {
+      // Verifies the happy path: an absolute path exactly matching a
+      // workspace_folders entry lists, and a descendant of that entry also
+      // lists (directory-prefix grant, unlike fs_read_external's exact grant).
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const sibling = path.join(parent, "sibling");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(sibling);
+      fs.mkdirSync(path.join(sibling, "sub"));
+      fs.writeFileSync(path.join(sibling, "root.txt"), "at root");
+      fs.writeFileSync(path.join(sibling, "sub", "child.txt"), "nested");
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../sibling" }] }),
+        );
+        const user = await userAt(ctx);
+
+        // (a) list the folder root itself
+        const rootRes = await user.request<{
+          ok: true;
+          path: string;
+          entries: { name: string; type: string }[];
+        }>({ op: "fs_list_workspace", sid: "A", path: sibling });
+        expect(rootRes.path).toBe(sibling);
+        expect(rootRes.entries.map((e) => [e.name, e.type])).toEqual([
+          ["sub", "dir"],
+          ["root.txt", "file"],
+        ]);
+
+        // (b) list a descendant of the folder root
+        const subRes = await user.request<{
+          ok: true;
+          path: string;
+          entries: { name: string; type: string }[];
+        }>({ op: "fs_list_workspace", sid: "A", path: path.join(sibling, "sub") });
+        expect(subRes.entries.map((e) => e.name)).toEqual(["child.txt"]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "fs_read_workspace returns content for a file under a folder root",
+    async () => {
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const sibling = path.join(parent, "sibling");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(sibling);
+      const target = path.join(sibling, "note.txt");
+      fs.writeFileSync(target, "workspace content");
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../sibling" }] }),
+        );
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          content: string;
+          binary: boolean;
+        }>({ op: "fs_read_workspace", sid: "A", path: target });
+        expect(res.content).toBe("workspace content");
+        expect(res.binary).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: an absolute path outside every workspace folder is path_forbidden",
+    async () => {
+      // The allowlist is prefix-scoped; a sibling directory not listed in the
+      // workspace file must be refused, not silently accepted because it
+      // happens to sit next to a listed folder.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const listed = path.join(parent, "listed");
+      const secret = path.join(parent, "secret");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(listed);
+      fs.mkdirSync(secret);
+      fs.writeFileSync(path.join(secret, "s.txt"), "secret");
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../listed" }] }),
+        );
+        const user = await userAt(ctx);
+        for (const bad of [secret, path.join(secret, "s.txt")]) {
+          const listRes = await user.request<{ ok: false; error: { code: string } }>({
+            op: "fs_list_workspace",
+            sid: "A",
+            path: bad,
+          });
+          expect(listRes.error.code).toBe("path_forbidden");
+        }
+        const readRes = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_workspace",
+          sid: "A",
+          path: path.join(secret, "s.txt"),
+        });
+        expect(readRes.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: `..` traversal out of a folder root normalizes and is refused",
+    async () => {
+      // The daemon normalizes the request path before realpath, so a `..`
+      // spelling that would break out of the folder root gets caught before
+      // any filesystem access — same posture as fs_read_external.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const listed = path.join(parent, "listed");
+      const secret = path.join(parent, "secret.txt");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(listed);
+      fs.writeFileSync(secret, "secret");
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../listed" }] }),
+        );
+        const user = await userAt(ctx);
+        const traversal = path.join(listed, "..", "secret.txt");
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_workspace",
+          sid: "A",
+          path: traversal,
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: symlink escape from within a folder root is rejected by realpath",
+    async () => {
+      // A symlink placed inside the listed folder that points outside it
+      // must not become a browsable escape. The daemon realpaths the request
+      // before checking the allowlist prefix; the resolved target lands
+      // outside every folder root and comes back path_forbidden.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const listed = path.join(parent, "listed");
+      const outsideTree = path.join(parent, "outside");
+      const escape = path.join(listed, "escape-link");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(listed);
+      fs.mkdirSync(outsideTree);
+      fs.writeFileSync(path.join(outsideTree, "target.txt"), "outside");
+      fs.symlinkSync(outsideTree, escape);
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../listed" }] }),
+        );
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_read_workspace",
+          sid: "A",
+          path: path.join(escape, "target.txt"),
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "invalid_args: relative or empty paths are rejected before any filesystem access",
+    async () => {
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      const cwd = path.join(parent, "cwd");
+      const sibling = path.join(parent, "sibling");
+      fs.mkdirSync(cwd);
+      fs.mkdirSync(sibling);
+      try {
+        await sessionWithWorkspace(
+          ctx,
+          "A",
+          cwd,
+          JSON.stringify({ folders: [{ path: "../sibling" }] }),
+        );
+        const user = await userAt(ctx);
+        for (const bad of ["relative/path", ""]) {
+          const res = await user.request<{ ok: false; error: { code: string } }>({
+            op: "fs_list_workspace",
+            sid: "A",
+            path: bad,
+          });
+          expect(res.error.code).toBe("invalid_args");
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "empty allowlist (no workspace file) refuses every absolute path",
+    async () => {
+      // A session with no `.code-workspace` file must not accidentally grant
+      // fs_list_workspace access to anything — empty workspace_folders means
+      // the whole op surface is unusable.
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      const outside = mkfixture();
+      try {
+        // sessionAtWithTranscript avoids creating a workspace file
+        await sessionAtWithTranscript(ctx, "A", cwd, []);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_list_workspace",
+          sid: "A",
+          path: outside,
+        });
+        expect(res.error.code).toBe("path_forbidden");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "role gate: session role cannot call fs_list_workspace / fs_read_workspace",
+    async () => {
+      // Same posture as fs_read_external — the workspace ops are a webui
+      // viewer feature, not something an AI session should reach through.
+      const ctx = await startTestDaemon();
+      const cwd = mkfixture();
+      try {
+        const session = await sessionAt(ctx, "A", cwd);
+        for (const op of ["fs_list_workspace", "fs_read_workspace"]) {
+          const res = await session.request<{ ok: false; error: { code: string } }>({
+            op,
+            sid: "A",
+            path: "/tmp",
+          });
+          expect(res.error.code).toBe("bad_request");
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
 describe("fs_write (DR-0019 Phase W1)", () => {
   // fs_write is a webui-only mutation surface: a session identity must be
   // rejected before it can create anything in its own or another session's root.

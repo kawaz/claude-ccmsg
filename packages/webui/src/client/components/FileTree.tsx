@@ -6,7 +6,7 @@
 // never start with `/`, so external favorites/selections cannot collide. This
 // file owns the fs_list round trip; the reducer only stores what it's told
 // (DR-0005 §1: effects in components, not the reducer).
-import type { FsEntry, PeerInfo } from "@ccmsg/protocol";
+import type { FsEntry, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import type { Store } from "../useStore.ts";
@@ -18,6 +18,7 @@ import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
   favoritesStorageKey,
+  isWorkspaceFilePath,
   ownWorkspaceSegment,
   parseFavorites,
   repoRootLabel,
@@ -100,11 +101,25 @@ interface FavContext {
  * they call it and whether they await the round trip. Kept out of the
  * reducer per DR-0005 §1 (effects live in components); FileTree stays the
  * owner of the fs_list round trip, other callers import this rather than
- * re-implement it. */
-export function loadDir(store: Store, ws: WsHandle, sid: string, path: string): Promise<void> {
+ * re-implement it.
+ *
+ * DR-0026: when `path` is an absolute path under one of the session's
+ * workspace_folders, use fs_list_workspace instead of fs_list — the daemon's
+ * relative-only fs_list wire contract would reject the absolute path outright.
+ * Callers that don't have workspace_folders yet (initial root load before
+ * session_status arrives) pass `[]` and get the pre-DR-0026 fs_list behavior. */
+export function loadDir(
+  store: Store,
+  ws: WsHandle,
+  sid: string,
+  path: string,
+  workspaceFolders: readonly WorkspaceFolder[] = [],
+): Promise<void> {
+  const call = isWorkspaceFilePath(path, workspaceFolders)
+    ? ws.fsListWorkspace(sid, path)
+    : ws.fsList(sid, path);
   return (
-    ws
-      .fsList(sid, path)
+    call
       .then((res) => {
         if (res.ok) store.dispatch({ type: "fs/dir-loaded", sid, path, entries: res.entries });
         else store.dispatch({ type: "fs/dir-loaded", sid, path, error: res.error.msg });
@@ -136,6 +151,7 @@ function DirNode({
   tree,
   selectedPath,
   ownWsPath,
+  workspaceFolders,
   fav,
 }: {
   sid: string;
@@ -145,6 +161,7 @@ function DirNode({
   tree: SessionTreeState;
   selectedPath: string | null;
   ownWsPath: string | null;
+  workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
 }) {
   const { store, ws } = useApp();
@@ -155,7 +172,7 @@ function DirNode({
 
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
-    if (!expanded && entries === undefined) void loadDir(store, ws, sid, path);
+    if (!expanded && entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
   }
 
   return (
@@ -198,6 +215,7 @@ function DirNode({
               tree={tree}
               selectedPath={selectedPath}
               ownWsPath={ownWsPath}
+              workspaceFolders={workspaceFolders}
               fav={fav}
             />
           )}
@@ -265,6 +283,7 @@ function Nodes({
   tree,
   selectedPath,
   ownWsPath,
+  workspaceFolders,
   fav,
   sorted = false,
 }: {
@@ -275,6 +294,7 @@ function Nodes({
   tree: SessionTreeState;
   selectedPath: string | null;
   ownWsPath: string | null;
+  workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   /** Skips the directories-first/alphabetical sortEntries pass — set by
    * FileTree's repo-container-root ws list, which has already ordered
@@ -301,6 +321,7 @@ function Nodes({
               tree={tree}
               selectedPath={selectedPath}
               ownWsPath={ownWsPath}
+              workspaceFolders={workspaceFolders}
               fav={fav}
             />
           );
@@ -368,12 +389,19 @@ export function FileTree({
   tree,
   peer,
   externalFiles,
+  workspaceFolders,
   onNewMemo,
 }: {
   sid: string;
   tree: SessionTreeState;
   /** DR-0024 allowlisted absolute paths from the live session_status fold. */
   externalFiles: readonly string[];
+  /** DR-0026 allowlisted absolute folder roots from the live session_status
+   * fold. Each becomes a root-level DirNode in the ワークスペース section
+   * (rendered between お気に入り and プロジェクト). Empty array = the
+   * session's cwd carries no `.code-workspace` file, and the section is
+   * suppressed. */
+  workspaceFolders: readonly WorkspaceFolder[];
   /** Peer record for `sid`, as seen in state.peers — carries repo_root/cwd
    * for the DR-0008-addendum root label + own-workspace auto-expand below.
    * Undefined for a sid that hasn't shown up in a peers/loaded response yet
@@ -427,6 +455,9 @@ export function FileTree({
   useEffect(() => {
     if (rootEntries !== undefined || rootError !== undefined) return;
     if (connStatus !== "connected") return;
+    // Root of the containment tree is always fs_list (relative "" root), so no
+    // workspaceFolders arg is needed here — the DR-0026 branch only fires for
+    // absolute workspace-folder paths, not for the session's own root.
     void loadDir(store, ws, sid, "");
   }, [sid, rootEntries, rootError, connStatus]);
 
@@ -501,6 +532,7 @@ export function FileTree({
                   tree={tree}
                   selectedPath={tree.selectedPath}
                   ownWsPath={ownWsPath}
+                  workspaceFolders={workspaceFolders}
                   fav={fav}
                 />
               ) : (
@@ -519,7 +551,38 @@ export function FileTree({
           </ul>
         </>
       ) : null}
-      {sortedFavorites.length > 0 || sortedExternalFiles.length > 0 ? (
+      {/* Workspace section (DR-0026): folders discovered in the session's
+       * cwd `.code-workspace` file(s). Each folder renders as a root-level
+       * DirNode with its absolute realpath as both key and display name —
+       * expand/lazy-load/★ reuse the same components as お気に入り, and
+       * fs_list_workspace routing keys off the same path via loadDir's
+       * DR-0026 branch. Suppressed when no workspace folders were published
+       * (either no .code-workspace file, or the session hasn't subscribed
+       * to session_status yet — same posture as sortedExternalFiles). */}
+      {workspaceFolders.length > 0 ? (
+        <>
+          <p class="tree-section-label">ワークスペース</p>
+          <ul class="tree-root tree-workspace">
+            {workspaceFolders.map((folder) => (
+              <DirNode
+                key={folder.path}
+                sid={sid}
+                path={folder.path}
+                name={folder.name}
+                depth={0}
+                tree={tree}
+                selectedPath={tree.selectedPath}
+                ownWsPath={ownWsPath}
+                workspaceFolders={workspaceFolders}
+                fav={fav}
+              />
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {sortedFavorites.length > 0 ||
+      workspaceFolders.length > 0 ||
+      sortedExternalFiles.length > 0 ? (
         <p class="tree-section-label">プロジェクト</p>
       ) : null}
       {rootError ? (
@@ -555,6 +618,7 @@ export function FileTree({
             tree={tree}
             selectedPath={tree.selectedPath}
             ownWsPath={ownWsPath}
+            workspaceFolders={workspaceFolders}
             fav={fav}
             sorted={rootLabel !== null}
           />

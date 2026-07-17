@@ -169,6 +169,7 @@ export function SessionView({ state }: { state: AppState }) {
             ...(res.context ? { context: res.context } : {}),
             teammates: res.teammates ?? [],
             external_files: res.external_files ?? [],
+            ...(res.workspace_folders ? { workspace_folders: res.workspace_folders } : {}),
           },
         });
       })
@@ -309,6 +310,7 @@ export function SessionView({ state }: { state: AppState }) {
           tree={tree}
           peer={peer}
           externalFiles={sessionStatus?.external_files ?? []}
+          workspaceFolders={sessionStatus?.workspace_folders ?? []}
         />
       )}
       {/* DR-0014 §2.6 floating 1on1 composer: only makes sense on the

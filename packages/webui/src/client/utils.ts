@@ -705,6 +705,31 @@ export function isExternalFilePath(filePath: string): boolean {
   return filePath.startsWith("/");
 }
 
+/** DR-0026 client-side dispatcher: an absolute path whose realpath already
+ * matches one of the session's workspace_folders roots (or a descendant) uses
+ * fs_list_workspace / fs_read_workspace instead of the DR-0024 exact-file
+ * fs_read_external. Kept as a pure helper so FileTree (loadDir) and
+ * FileViewer (fs_read) share one classification rule.
+ *
+ * The client works from the folders' `path` values verbatim as the daemon
+ * publishes them (realpaths); we don't re-resolve locally. A path is
+ * considered a workspace path when it equals a folder root or lies under
+ * `folder + "/"` — same containment test the daemon does. Prefix collisions
+ * between two folders (`/a` vs `/ab`) are avoided by the trailing-slash
+ * check, matching the daemon's `insideAny` logic. */
+export function isWorkspaceFilePath(
+  filePath: string,
+  workspaceFolders: readonly { path: string }[],
+): boolean {
+  if (!filePath.startsWith("/")) return false;
+  for (const folder of workspaceFolders) {
+    if (filePath === folder.path) return true;
+    const prefix = folder.path.endsWith("/") ? folder.path : `${folder.path}/`;
+    if (filePath.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /** Stable display order for the "プロジェクト外" section. The daemon already
  * deduplicates/sorts snapshots, but keeping the view derivation pure makes a
  * locally constructed/older snapshot deterministic too. */

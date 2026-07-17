@@ -129,6 +129,13 @@ export interface WsHandle {
   /** Read one exact absolute path from the session's transcript-derived
    * external_files allowlist (DR-0024 fs_read_external). */
   fsReadExternal(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  /** DR-0026: list a directory under one of the session's workspace_folders
+   * (from session_status). Path is absolute; the daemon requires realpath to
+   * be inside an allowlisted folder root or a descendant. */
+  fsListWorkspace(sid: string, path: string): Promise<FsListResponse | ErrorResponse>;
+  /** DR-0026: read a file under one of the session's workspace_folders. Same
+   * directory-prefix allowlist as fsListWorkspace. */
+  fsReadWorkspace(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
   /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
    * session's cwd (DR-0019 fs_write), while remaining inside its containment
    * root. Never overwrites — an existing path replies `file_exists`, a path
@@ -467,6 +474,7 @@ export function createWsClient(
           ...(ev.context ? { context: ev.context } : {}),
           teammates: ev.teammates ?? [],
           external_files: ev.external_files ?? [],
+          ...(ev.workspace_folders ? { workspace_folders: ev.workspace_folders } : {}),
         },
       });
       return;
@@ -595,6 +603,8 @@ export function createWsClient(
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),
     fsReadExternal: (sid, path) => send({ op: "fs_read_external", sid, path }),
+    fsListWorkspace: (sid, path) => send({ op: "fs_list_workspace", sid, path }),
+    fsReadWorkspace: (sid, path) => send({ op: "fs_read_workspace", sid, path }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     transcriptRead: (sid, opts) =>
       send({

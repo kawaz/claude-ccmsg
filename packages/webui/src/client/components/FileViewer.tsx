@@ -6,7 +6,7 @@
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
+import { FS_READ_MAX_BYTES, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -15,6 +15,7 @@ import {
   inboxAutoFilename,
   isExternalFilePath,
   isMarkdownPath,
+  isWorkspaceFilePath,
   resolveInboxFilename,
 } from "../utils.ts";
 import {
@@ -152,12 +153,16 @@ function InboxNewEditor({
 export function FileViewer({
   sid,
   tree,
+  workspaceFolders,
   memoEditorOpen,
   onMemoCancel,
   onMemoCreated,
 }: {
   sid: string;
   tree: SessionTreeState;
+  /** DR-0026 allowlist used to pick fs_read_workspace over fs_read_external
+   * for absolute paths reachable through a `.code-workspace` folder. */
+  workspaceFolders: readonly WorkspaceFolder[];
   memoEditorOpen: boolean;
   onMemoCancel: () => void;
   onMemoCreated: (path: string) => void | Promise<void>;
@@ -181,10 +186,24 @@ export function FileViewer({
     if (file && file.path === path) return;
     if (connStatus !== "connected") return;
     store.dispatch({ type: "fs/file-loading", sid, path });
-    // DR-0024 client path convention: `/`-prefixed selections are absolute
-    // external_files entries and must use the exact-allowlist op; every
-    // existing project-tree selection is relative and stays on fs_read.
-    void (isExternalFilePath(path) ? ws.fsReadExternal(sid, path) : ws.fsRead(sid, path))
+    // Three-way op selection for the currently-selected path:
+    // - relative → fs_read (DR-0008 containment root)
+    // - absolute, under a workspace folder → fs_read_workspace (DR-0026
+    //   directory-prefix allowlist)
+    // - absolute, not under a workspace folder → fs_read_external (DR-0024
+    //   exact-file allowlist)
+    // Workspace check happens first because a workspace folder root can sit
+    // anywhere on the filesystem and a transcript may also have Read'd a file
+    // under that same root; in that case the workspace op is the correct
+    // affordance (directory browsing works, external_files stays as the
+    // per-file safety net when the folder isn't listed as a workspace).
+    void (
+      isWorkspaceFilePath(path, workspaceFolders)
+        ? ws.fsReadWorkspace(sid, path)
+        : isExternalFilePath(path)
+          ? ws.fsReadExternal(sid, path)
+          : ws.fsRead(sid, path)
+    )
       .then((res) => {
         if (res.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: res });
         else store.dispatch({ type: "fs/file-loaded", sid, path, error: res.error.msg });
@@ -192,7 +211,7 @@ export function FileViewer({
       .catch((err) => {
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
       });
-  }, [sid, path, file?.path, connStatus]);
+  }, [sid, path, file?.path, connStatus, workspaceFolders]);
 
   // Highlighting is a separate, best-effort layer on top of the plain lines
   // rendered below: `tokenize()` is async, so this starts as `null` (plain
@@ -335,7 +354,13 @@ export function FileViewer({
   const handleRefetch = () => {
     if (!canRefetch) return;
     store.dispatch({ type: "fs/file-loading", sid, path });
-    void (isExternalFilePath(path) ? ws.fsReadExternal(sid, path) : ws.fsRead(sid, path))
+    void (
+      isWorkspaceFilePath(path, workspaceFolders)
+        ? ws.fsReadWorkspace(sid, path)
+        : isExternalFilePath(path)
+          ? ws.fsReadExternal(sid, path)
+          : ws.fsRead(sid, path)
+    )
       .then((r) => {
         if (r.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: r });
         else store.dispatch({ type: "fs/file-loaded", sid, path, error: r.error.msg });

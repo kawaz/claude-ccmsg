@@ -480,6 +480,165 @@ export function fsReadExternal(
   return readRegularFile(sid, realPath, reqPath, reqPath);
 }
 
+// --- fs_list_workspace / fs_read_workspace (DR-0026) ------------------
+
+/** Resolve `reqPath` against the session's workspace_folders allowlist:
+ * accept any absolute path whose realpath is either exactly one of the
+ * folder roots or lies inside one (directory-prefix grant). Returns the
+ * realpath on success and the matched folder root (used by fs_list_workspace
+ * to compute a relative response path when useful). The client may name the
+ * folder root itself; walking `..` out of the folder is rejected because the
+ * realpath is checked, not the input string.
+ *
+ * Failure modes:
+ *  - malformed input (non-string / empty / relative) → invalid_args
+ *  - path exists but its realpath is outside every allowed folder → path_forbidden
+ *  - path does not exist → not_found (fresh realpath failure with ENOENT
+ *    doesn't tell us whether the ancestor is in the allowlist either, so we
+ *    walk up to the nearest existing ancestor and check *its* realpath —
+ *    only if that ancestor is allowlisted do we return not_found for the
+ *    leaf; otherwise it's still path_forbidden, so a nonexistent leaf under
+ *    a forbidden directory can't be probed via "does this exist" oracles).
+ *  - other realpath errors (EACCES, ENOTDIR mid-chain) → path_forbidden */
+function resolveWorkspaceContained(
+  allowlist: readonly string[],
+  reqPath: unknown,
+): ContainedOk | ContainedErr {
+  if (typeof reqPath !== "string" || reqPath === "") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "workspace path must be a string" };
+  }
+  if (!path.isAbsolute(reqPath)) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "workspace path must be absolute" };
+  }
+  if (allowlist.length === 0) {
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+  }
+
+  const insideAny = (candidate: string): boolean => {
+    for (const folder of allowlist) {
+      if (candidate === folder) return true;
+      const prefix = folder.endsWith(path.sep) ? folder : folder + path.sep;
+      if (candidate.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+
+  // Walk up from the requested path to the nearest existing ancestor, then
+  // realpath that ancestor and check containment. Mirrors resolveContained
+  // (fs_list/fs_read) but the containment set is now the allowlist instead
+  // of a single root.
+  let cursor = path.normalize(reqPath);
+  for (;;) {
+    let real: string;
+    try {
+      real = fs.realpathSync(cursor);
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        return {
+          ok: false,
+          code: ErrorCode.path_forbidden,
+          msg: `cannot resolve path: ${reqPath}`,
+        };
+      }
+      const parent = path.dirname(cursor);
+      if (parent === cursor) {
+        return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+      }
+      cursor = parent;
+      continue;
+    }
+    if (!insideAny(real)) {
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+    }
+    if (cursor !== path.normalize(reqPath)) {
+      // The full path did not exist; the nearest existing ancestor is
+      // allowlisted, so treat the leaf as a genuine not_found rather than
+      // leaking existence info via path_forbidden — this matches
+      // fs_list/fs_read's not_found for missing paths inside their root.
+      return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+    }
+    return { ok: true, realPath: real };
+  }
+}
+
+/** Pull the workspace_folders allowlist for a session from the folded status
+ * snapshot. Called by both fs_list_workspace and fs_read_workspace so the two
+ * ops share a single source of truth — the snapshot is what the client also
+ * received to render the workspace section, so denies here can never surprise
+ * a client that used a UI-visible folder. */
+function getWorkspaceAllowlist(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+): { ok: true; folders: string[] } | { ok: false; code: ErrorCode; msg: string } {
+  const status = getSessionStatus(statusStore, sessions, sid);
+  if (!status.ok) return status;
+  const folders = (status.data.workspace_folders ?? []).map((f) => f.path);
+  return { ok: true, folders };
+}
+
+export function fsListWorkspace(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+): FsAccessResult<Omit<FsListResponse, "ok">> {
+  const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+  if (!allow.ok) return allow;
+  const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+  if (!resolved.ok) return resolved;
+
+  let dirStat: fs.Stats;
+  try {
+    dirStat = fs.lstatSync(resolved.realPath);
+  } catch {
+    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+  }
+  if (!dirStat.isDirectory()) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "fs_list_workspace target is not a directory",
+    };
+  }
+
+  const names = fs.readdirSync(resolved.realPath);
+  const entries: FsEntry[] = names.map((name) => {
+    const full = path.join(resolved.realPath, name);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(full);
+    } catch {
+      return { name, type: "other" as const };
+    }
+    const type = lstatType(stat);
+    const entry: FsEntry = { name, type, mtime: stat.mtime.toISOString() };
+    if (type === "file") entry.size = stat.size;
+    return entry;
+  });
+  entries.sort(compareEntries);
+
+  // Response `path` is the absolute realpath — the client keyed the request
+  // by absolute path (there's no single root to subtract) and needs the
+  // canonicalized spelling back for its cache keys, mirroring how
+  // fs_read_external / fs_read_workspace echo the absolute path.
+  return { ok: true, data: { sid, path: resolved.realPath, entries } };
+}
+
+export function fsReadWorkspace(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+): FsAccessResult<Omit<FsReadResponse, "ok">> {
+  const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+  if (!allow.ok) return allow;
+  const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+  if (!resolved.ok) return resolved;
+  return readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
+}
+
 // --- fs_write ----------------------------------------------------------
 
 export function fsWrite(

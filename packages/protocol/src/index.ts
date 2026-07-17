@@ -391,6 +391,28 @@ export interface SessionStatusSnapshot {
    * missing/deleted targets retain a normalized lexical path. This is exactly
    * the allowlist accepted by fs_read_external. */
   external_files?: string[];
+  /** DR-0026: VS Code `.code-workspace` folders discovered directly under the
+   * session's cwd. Each `path` is a realpath-resolved absolute directory —
+   * the same absolute prefix accepted by fs_list_workspace / fs_read_workspace
+   * as an allowlist for directory-scoped reads outside the containment root.
+   * `name` mirrors the workspace file entry (falls back to basename when
+   * `folders[].name` is absent). Deduplicated by realpath — the same folder
+   * referenced twice (or via two different workspace files) appears once. */
+  workspace_folders?: WorkspaceFolder[];
+}
+
+/** DR-0026 workspace folder descriptor: one entry from the `folders[]` array
+ * of a `*.code-workspace` file discovered under the session cwd, resolved to
+ * a realpath. `path` is the allowlist key fs_list_workspace / fs_read_workspace
+ * check against; `name` is display-only. */
+export interface WorkspaceFolder {
+  /** display name — `folders[].name` from the workspace file, or the folder's
+   * basename when `name` is absent. Never empty. */
+  name: string;
+  /** absolute realpath of the folder — allowlist prefix for fs_list_workspace
+   * / fs_read_workspace. Never a trailing separator (except at filesystem
+   * root itself). */
+  path: string;
 }
 /** Full recomputed snapshot pushed after a status-changing transcript event. */
 export interface SessionStatusStreamEvent extends SessionStatusSnapshot {
@@ -720,6 +742,33 @@ export interface FsReadExternalRequest {
 }
 
 /**
+ * DR-0026 workspace-folder allowlist list/read for `.code-workspace` folders
+ * discovered under the session cwd. Unlike fs_list/fs_read (relative to the
+ * containment root) and fs_read_external (single exact-file grant), these ops
+ * take an absolute path and grant *directory-prefix* access: any realpath
+ * inside one of the session's workspace_folders[].path is browseable. Both
+ * ops are user-role only — the browsable folder set comes from the cwd's
+ * workspace file, which is a first-class artifact the user themselves
+ * maintains, but reading them is a viewer feature, not something the AI
+ * session itself needs. Symlink escapes are rejected by realpath.
+ */
+export interface FsListWorkspaceRequest {
+  op: "fs_list_workspace";
+  sid: string;
+  /** absolute directory path — must be a workspace_folders entry itself,
+   * or a descendant of one (realpath-checked). */
+  path: string;
+}
+
+export interface FsReadWorkspaceRequest {
+  op: "fs_read_workspace";
+  sid: string;
+  /** absolute file path — must be a descendant of some workspace_folders
+   * entry (realpath-checked); a bare folder root refuses as "not a file". */
+  path: string;
+}
+
+/**
  * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
  * docs/inbox/ in a connected session's cwd. The daemon applies the same
  * realpath containment boundary as fs_list/fs_read, rejects every other
@@ -897,6 +946,8 @@ export type Request =
   | FsListRequest
   | FsReadRequest
   | FsReadExternalRequest
+  | FsListWorkspaceRequest
+  | FsReadWorkspaceRequest
   | FsWriteRequest
   | TranscriptReadRequest
   | SessionSearchRequest

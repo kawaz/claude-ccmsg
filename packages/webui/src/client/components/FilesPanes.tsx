@@ -11,7 +11,7 @@
 // per kawaz (no demand for hiding the viewer; the twin ◀/▶ affordance
 // read as noise).
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { fileHref } from "../locator.ts";
@@ -44,12 +44,18 @@ export function FilesPanes({
   tree,
   peer,
   externalFiles,
+  workspaceFolders,
 }: {
   sid: string;
   tree: SessionTreeState;
   peer: PeerInfo | undefined;
   /** DR-0024 transcript-derived absolute paths, already allowlisted by daemon. */
   externalFiles: readonly string[];
+  /** DR-0026 `.code-workspace` folders published on session_status; drives
+   * both the FileTree "ワークスペース" section and FileViewer's fs_read_workspace
+   * routing (an absolute path inside any allowlisted folder uses workspace ops
+   * rather than fs_read_external). */
+  workspaceFolders: readonly WorkspaceFolder[];
 }) {
   const { store, ws } = useApp();
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
@@ -118,6 +124,7 @@ export function FilesPanes({
           tree={tree}
           peer={peer}
           externalFiles={externalFiles}
+          workspaceFolders={workspaceFolders}
           onNewMemo={() => setMemoEditorOpen(true)}
         />
       </div>
@@ -126,6 +133,7 @@ export function FilesPanes({
         <FileViewer
           sid={sid}
           tree={tree}
+          workspaceFolders={workspaceFolders}
           memoEditorOpen={memoEditorOpen}
           onMemoCancel={() => setMemoEditorOpen(false)}
           onMemoCreated={onMemoCreated}

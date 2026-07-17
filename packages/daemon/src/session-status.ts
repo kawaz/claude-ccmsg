@@ -22,6 +22,7 @@ import {
 } from "./transcript.ts";
 import { RUN_ID_RE } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
+import { discoverWorkspaceFolders } from "./workspace-folders.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
@@ -125,6 +126,23 @@ function resolveExternalRoot(sessions: SessionStatusLookup, sid: string): string
   if (!base || !path.isAbsolute(base)) return undefined;
   try {
     return fs.realpathSync(base);
+  } catch {
+    return undefined;
+  }
+}
+
+/** DR-0026 workspace detection anchor. Deliberately the session's own cwd
+ * (its working copy), not the possibly-widened repo_root — a
+ * `.code-workspace` sits in a specific worktree's checkout, and its siblings
+ * should not inherit its allowlist. Returns undefined the same way
+ * resolveExternalRoot does when the session lacks a usable cwd. */
+function resolveWorkspaceAnchor(sessions: SessionStatusLookup, sid: string): string | undefined {
+  const entry = sessions.get(sid);
+  if (!entry || entry.conns.size === 0) return undefined;
+  const cwd = entry.meta.cwd;
+  if (!cwd || !path.isAbsolute(cwd)) return undefined;
+  try {
+    return fs.realpathSync(cwd);
   } catch {
     return undefined;
   }
@@ -646,7 +664,15 @@ export function foldLine(state: SessionStatusState, line: string): boolean {
  * bounded (workflow count × O(small json + short journal)) and only pays
  * on push, which the DR calls out as "sufficient granularity".
  */
-export function snapshot(state: SessionStatusState, sidDir?: string): SessionStatusSnapshot {
+export function snapshot(
+  state: SessionStatusState,
+  sidDir?: string,
+  /** DR-0026: absolute realpath of the session cwd used to detect
+   * `*.code-workspace` files at snapshot time. Omitted (test helpers,
+   * unresolvable cwd) suppresses the workspace_folders field entirely rather
+   * than publishing a spurious empty allowlist. */
+  cwd?: string,
+): SessionStatusSnapshot {
   return {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
     workflows: [...state.workflows.values()].map((workflow) => {
@@ -664,6 +690,17 @@ export function snapshot(state: SessionStatusState, sidDir?: string): SessionSta
     ...(state.context ? { context: { ...state.context } } : {}),
     teammates: [...state.teammates.values()].map((teammate) => ({ ...teammate })),
     external_files: [...state.externalFiles].sort(),
+    // DR-0026: discovered inline at snapshot time — the workspace file is
+    // hand-edited out of band and there is no transcript event to fold on.
+    // Read cost is bounded (cwd top level only). Omit entirely when nothing
+    // is found so older clients (no workspace_folders field) render exactly
+    // the same shape as before this DR.
+    ...(cwd
+      ? (() => {
+          const folders = discoverWorkspaceFolders(cwd);
+          return folders.length > 0 ? { workspace_folders: folders } : {};
+        })()
+      : {}),
   };
 }
 
@@ -710,6 +747,13 @@ interface LiveSessionStatus {
   /** DR-0025 Phase 1: sibling directory (`file` minus `.jsonl`) used to load
    * per-workflow phase / agent drilldown at snapshot time. */
   sidDir?: string;
+  /** DR-0026 workspace anchor: session cwd realpath used to discover
+   * `*.code-workspace` folders at snapshot time. Unlike `file`/`root` it is
+   * NOT part of the fold-invalidation key — the fold has no cwd-derived state
+   * (workspace discovery re-reads disk each snapshot) — so a cwd-only
+   * re-hello just refreshes this field in place (getSessionStatus /
+   * subscribeSessionStatus) instead of forcing a refold. */
+  cwd?: string;
   state: SessionStatusState;
   statusConns: Set<TailConn>;
   listener: TranscriptLineListener;
@@ -724,7 +768,7 @@ export function createSessionStatusStore(): SessionStatusStore {
 }
 
 function statusEventLine(sid: string, live: LiveSessionStatus): string {
-  return `${JSON.stringify({ ev: "session_status", sid, ...snapshot(live.state, live.sidDir) })}\n`;
+  return `${JSON.stringify({ ev: "session_status", sid, ...snapshot(live.state, live.sidDir, live.cwd) })}\n`;
 }
 
 function pushSnapshot(sid: string, live: LiveSessionStatus): void {
@@ -740,11 +784,18 @@ export function getSessionStatus(
   const resolved = resolveTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
   const root = resolveExternalRoot(sessions, sid);
+  const cwd = resolveWorkspaceAnchor(sessions, sid);
   // Serve the live fold only while it still describes both the current
   // transcript and the root used to classify DR-0024 external files.
   const live = store.sessions.get(sid);
   if (live && live.file === resolved.file && live.root === root) {
-    return { ok: true, data: snapshot(live.state, live.sidDir) };
+    // The fold itself is cwd-independent (workspace discovery re-reads disk
+    // at snapshot time), so a re-hello that moved the cwd while keeping the
+    // same transcript+root doesn't need a refold — just refresh the anchor
+    // so this snapshot and later stream pushes probe the new cwd. Keep the
+    // old anchor when the fresh resolve fails (session momentarily connless).
+    live.cwd = cwd ?? live.cwd;
+    return { ok: true, data: snapshot(live.state, live.sidDir, live.cwd) };
   }
   const state = createSessionStatusState(root);
   try {
@@ -752,7 +803,7 @@ export function getSessionStatus(
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }
-  return { ok: true, data: snapshot(state, deriveSidDir(resolved.file)) };
+  return { ok: true, data: snapshot(state, deriveSidDir(resolved.file), cwd) };
 }
 
 export function subscribeSessionStatus(
@@ -766,10 +817,14 @@ export function subscribeSessionStatus(
   const resolved = resolveTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
   const root = resolveExternalRoot(sessions, sid);
+  const cwd = resolveWorkspaceAnchor(sessions, sid);
   const existing = store.sessions.get(sid);
   if (existing && existing.file === resolved.file && existing.root === root) {
     existing.statusConns.add(conn);
-    return { ok: true, data: snapshot(existing.state, existing.sidDir) };
+    // Same cwd-refresh rationale as getSessionStatus: the fold survives a
+    // cwd-only re-hello, but the workspace anchor must track the new cwd.
+    existing.cwd = cwd ?? existing.cwd;
+    return { ok: true, data: snapshot(existing.state, existing.sidDir, existing.cwd) };
   }
   const carriedConns = new Set<TailConn>([conn]);
   if (existing) {
@@ -790,6 +845,7 @@ export function subscribeSessionStatus(
     file: "",
     root,
     sidDir: undefined,
+    cwd,
     state: createSessionStatusState(root),
     statusConns: carriedConns,
     listener(payload) {
@@ -834,7 +890,7 @@ export function subscribeSessionStatus(
     const line = statusEventLine(sid, live);
     for (const c of existing.statusConns) c.write(line);
   }
-  return { ok: true, data: snapshot(live.state, live.sidDir) };
+  return { ok: true, data: snapshot(live.state, live.sidDir, live.cwd) };
 }
 
 export function unsubscribeSessionStatus(

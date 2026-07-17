@@ -20,6 +20,7 @@ import {
   inboxAutoFilename,
   indexAgentsBySid,
   isExternalFilePath,
+  isWorkspaceFilePath,
   isMarkdownPath,
   isMemberConnected,
   lastPathSegment,
@@ -1189,6 +1190,51 @@ describe("external file view helpers (DR-0024)", () => {
       "/a.md",
       "/z.md",
     ]);
+  });
+});
+
+describe("workspace file view helpers (DR-0026)", () => {
+  // A `.code-workspace` folder root gates fs_list_workspace / fs_read_workspace.
+  // The client-side helper mirrors the daemon's insideAny check: exact equality
+  // or startsWith(folder + "/"), so `/a` never matches `/ab...`.
+  test("relative paths are never workspace paths", () => {
+    // Relative project-tree paths route through fs_read as before — the DR
+    // client convention keeps absolute paths as the sole workspace/external
+    // rail.
+    expect(isWorkspaceFilePath("src/index.ts", [{ path: "/repo/src" }])).toBe(false);
+  });
+
+  test("absolute path equal to a folder root matches", () => {
+    // Clicking the folder-root DirNode itself must succeed (fs_list_workspace
+    // needs to serve the root listing).
+    expect(isWorkspaceFilePath("/repo/sibling", [{ path: "/repo/sibling" }])).toBe(true);
+  });
+
+  test("descendant of a folder root matches", () => {
+    expect(isWorkspaceFilePath("/repo/sibling/sub/file.txt", [{ path: "/repo/sibling" }])).toBe(
+      true,
+    );
+  });
+
+  test("prefix collision (folder /a vs path /ab...) is rejected", () => {
+    // Without the trailing-slash suffix check, `/abc` would spuriously match
+    // `/a` — that would let the client route a truly external absolute path
+    // through fs_list_workspace and hit the daemon's stricter allowlist.
+    expect(isWorkspaceFilePath("/abc", [{ path: "/a" }])).toBe(false);
+    expect(isWorkspaceFilePath("/abc/file.txt", [{ path: "/a" }])).toBe(false);
+  });
+
+  test("empty workspace_folders lets no path through", () => {
+    expect(isWorkspaceFilePath("/anywhere", [])).toBe(false);
+  });
+
+  test("multi-folder allowlist: match any", () => {
+    // A workspace with multiple folder entries: a path matching either root
+    // should pass, non-matching should fail — order-independent.
+    const folders = [{ path: "/repo/one" }, { path: "/repo/two" }];
+    expect(isWorkspaceFilePath("/repo/one/x", folders)).toBe(true);
+    expect(isWorkspaceFilePath("/repo/two/y", folders)).toBe(true);
+    expect(isWorkspaceFilePath("/repo/three", folders)).toBe(false);
   });
 });
 
