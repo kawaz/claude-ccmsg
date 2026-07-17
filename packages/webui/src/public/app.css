@@ -803,6 +803,293 @@ a {
   color: var(--fg);
 }
 
+/* DR-0018 §2.1/§3.4: SessionCreator.tsx, swapped in for SessionList inside
+ * #sessions-panel while the "+ 新規" toggle is on (Sidebar.tsx) — same panel
+ * shape as #session-search-panel above, and most of its chrome (header/close,
+ * form spacing, submit/error styling) intentionally reuses the identical
+ * rules via shared .session-search-* class names below rather than
+ * duplicating them under a session-creator-prefixed twin. */
+#session-creator-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.session-creator-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-creator-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.session-creator-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.session-creator-close:hover {
+  color: var(--fg);
+}
+
+.session-creator-guidance {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.session-creator-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.session-creator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.session-creator-label {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.session-creator-field input[type="text"],
+.session-creator-field select,
+.session-creator-prompt {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.session-creator-prompt {
+  min-height: 4.5rem;
+  resize: vertical;
+}
+
+.session-creator-prompt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.session-creator-default-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+}
+
+.session-creator-default-btn:hover {
+  color: var(--fg);
+}
+
+.session-creator-submit {
+  align-self: flex-start;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.session-creator-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.session-creator-status {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin: 0;
+}
+
+.session-creator-error {
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+/* DR-0018 §2.1: the result panel is deliberately the whole post-launch UI
+ * (§2.3 "プロセス管理はしない") — stdout/stderr/exit_code render once and
+ * nothing here refreshes or polls. */
+.session-creator-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.5rem;
+}
+
+.session-creator-result-summary {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.session-creator-result-label {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.session-creator-result-body {
+  margin: 0;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-secondary, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+/* DR-0018 §2.1: Sidebar's "+ 新規" toggle — same chromeless-icon-button
+ * family as #session-search-toggle (Sidebar.tsx's doc comment). */
+#session-creator-toggle {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+#session-creator-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+/* DR-0018 §2.2: CwdTree.tsx, embedded inside .session-creator-field's cwd
+ * row. Reuses FileTree's .tree-row/.tree-caret/.tree-loading/.tree-error
+ * geometry (same indentation/caret/row look) under its own cwd-tree-prefixed
+ * classes — sharing the .tree-* names directly would coincidentally also
+ * work today, but CwdTree's rows always carry the extra .cwd-tree-select
+ * button FileTree rows don't have, so a distinct namespace avoids fragile
+ * coupling between two independently-evolving trees. */
+.cwd-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  padding: 0.3rem;
+}
+
+.cwd-tree-filter {
+  width: 100%;
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.cwd-tree-root,
+.cwd-tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cwd-tree-row-line {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.cwd-tree-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  padding: 0.15rem 0.3rem;
+  border-radius: 0.3rem;
+  overflow-wrap: anywhere;
+}
+
+.cwd-tree-row:hover {
+  background: var(--hover-bg, var(--border));
+}
+
+.cwd-tree-caret {
+  color: var(--fg-muted);
+  width: 1em;
+  display: inline-block;
+  text-align: center;
+}
+
+.cwd-tree-select {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.65rem;
+  line-height: 1;
+  padding: 0.15rem 0.4rem;
+}
+
+.cwd-tree-select:hover {
+  color: var(--fg);
+}
+
+.cwd-tree-selected {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.cwd-tree-loading,
+.cwd-tree-error,
+.cwd-tree-empty {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  padding: 0.1rem 0.3rem;
+}
+
+.cwd-tree-error {
+  color: var(--danger);
+}
+
 #sidebar-backdrop {
   display: none;
 }

@@ -17,6 +17,7 @@ import type {
   ArchiveRoomResponse,
   CreateRoomResponse,
   DeliveredEvent,
+  DirTreeResponse,
   ErrorResponse,
   FsListResponse,
   FsReadResponse,
@@ -31,6 +32,9 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SessionLaunchRequest,
+  SessionLaunchResponse,
+  SessionLauncherConfigResponse,
   SessionSearchRequest,
   SessionSearchResponse,
   SessionStatusResponse,
@@ -166,6 +170,27 @@ export interface WsHandle {
   /** Translate complete texts through the daemon host. Unlike browser
    * translation, callers must not split or skip Japanese-containing segments. */
   translate(texts: string[]): Promise<TranslateResponse | ErrorResponse>;
+  /** Session-launcher directory-only cwd tree (DR-0018 §3.2, user role only).
+   * `depth` omitted uses the daemon's configured `dir_tree_depth`; CwdTree's
+   * lazy-expansion re-fetch of a boundary node passes 1. */
+  dirTree(
+    roots: string[],
+    opts?: { depth?: number; filter?: string },
+  ): Promise<DirTreeResponse | ErrorResponse>;
+  /** Launch a new session via the configured command template (DR-0018 §3.2,
+   * user role only). The daemon awaits the whole run (bounded by
+   * `timeout_seconds` + kill x2, §3.3) before replying, so this call is
+   * naturally slow — SessionCreator shows its own loading state while it's
+   * in flight rather than relying on a generic pending indicator. */
+  sessionLaunch(
+    req: Omit<SessionLaunchRequest, "op">,
+  ): Promise<SessionLaunchResponse | ErrorResponse>;
+  /** Session-launcher config projection (DR-0018 §3.4 addendum, user role
+   * only): `root_dirs` (CwdTree's initial fetch roots) and `default_prompt`
+   * (SessionCreator's "default" button). `error.code === "launcher_not_configured"`
+   * is the signal SessionCreator uses to show setup guidance instead of the
+   * form (§2.1 "launcher 未設定時"). */
+  sessionLauncherConfig(): Promise<SessionLauncherConfigResponse | ErrorResponse>;
 }
 
 export function createWsClient(
@@ -448,5 +473,14 @@ export function createWsClient(
     sessionSearch: (params) => send({ op: "session_search", ...params }),
     ping: () => send({ op: "ping" }),
     translate: (texts) => send({ op: "translate", texts }),
+    dirTree: (roots, opts) =>
+      send({
+        op: "dir_tree",
+        roots,
+        ...(opts?.depth !== undefined ? { depth: opts.depth } : {}),
+        ...(opts?.filter !== undefined ? { filter: opts.filter } : {}),
+      }),
+    sessionLaunch: (req) => send({ op: "session_launch", ...req }),
+    sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
   };
 }

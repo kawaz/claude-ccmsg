@@ -547,6 +547,21 @@ export interface SessionLaunchRequest {
   prompt: string;
 }
 
+/** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
+ * only). Neither `dir_tree` (roots required, containment-checked against
+ * root_dirs) nor `session_launch` (opaque cwd/model/effort/prompt, no
+ * config echo) gives the webui a way to learn `root_dirs` (needed for the
+ * CwdTree's initial fetch) or `default_prompt` (needed for SessionCreator's
+ * "default" button) before the user has already picked something — this op
+ * fills that one gap with a read-only projection of the two config fields
+ * the form needs. Same `launcher_not_configured` error as the other two ops
+ * when session_launcher is absent, so the webui can reuse one error-handling
+ * path to decide whether to show the launcher UI at all (DR-0018 §2.1
+ * "launcher 未設定時" case). */
+export interface SessionLauncherConfigRequest {
+  op: "session_launcher_config";
+}
+
 /**
  * Workspace file access (DR-0008 / DR-0021): read-only browsing from a
  * connected session or a daemon-resolved historical UUID. The client names a
@@ -722,6 +737,7 @@ export type Request =
   | NotifyRequest
   | DirTreeRequest
   | SessionLaunchRequest
+  | SessionLauncherConfigRequest
   | FsListRequest
   | FsReadRequest
   | FsReadExternalRequest
@@ -860,6 +876,12 @@ export interface SessionLaunchResponse {
   stderr: string;
   exit_code: number | null;
   timed_out: boolean;
+}
+/** session_launcher_config reply — see its request doc comment above. */
+export interface SessionLauncherConfigResponse {
+  ok: true;
+  root_dirs: string[];
+  default_prompt: string;
 }
 /** One directory entry from fs_list. `type:"symlink"` is reported as-is for
  * links whose target stays inside the root (out-of-root links are listed but
@@ -1051,6 +1073,7 @@ export type Response =
   | NotifyResponse
   | DirTreeResponse
   | SessionLaunchResponse
+  | SessionLauncherConfigResponse
   | FsListResponse
   | FsReadResponse
   | FsWriteResponse

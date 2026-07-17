@@ -748,6 +748,7 @@ const IDENTITY_OPS = new Set([
   "notify",
   "dir_tree",
   "session_launch",
+  "session_launcher_config",
   "leave",
   "invite",
   "fs_list",
@@ -1459,6 +1460,24 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         }
       }
       send(conn, { ok: true, delivered });
+      return;
+    }
+
+    case "session_launcher_config": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_launcher_config' requires user role");
+        return;
+      }
+      const launcher = daemon.config.session_launcher;
+      if (!launcher) {
+        sendErr(conn, ErrorCode.launcher_not_configured, "session launcher is not configured");
+        return;
+      }
+      send(conn, {
+        ok: true,
+        root_dirs: launcher.root_dirs,
+        default_prompt: launcher.default_prompt,
+      });
       return;
     }
 

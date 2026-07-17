@@ -7,6 +7,7 @@ import * as path from "node:path";
 import {
   connect,
   spawnDaemonProc,
+  startTestDaemon,
   stopTestDaemon,
   waitConnectable,
   type DaemonCtx,
@@ -45,10 +46,12 @@ async function startConfiguredDaemon(
 }
 
 describe("session launcher wire ops", () => {
-  // Both launcher ops expose host filesystem/command-launching surfaces intended
-  // only for the human webui identity, so a session identity is rejected equally.
+  // All three launcher ops expose host filesystem/command-launching surfaces
+  // (or, for session_launcher_config, the config values that feed those
+  // surfaces) intended only for the human webui identity, so a session
+  // identity is rejected equally.
   test(
-    "session role cannot call dir_tree or session_launch",
+    "session role cannot call dir_tree, session_launch, or session_launcher_config",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       const ctx = await startConfiguredDaemon(root);
@@ -59,6 +62,7 @@ describe("session launcher wire ops", () => {
         for (const req of [
           { op: "dir_tree", roots: [root] },
           { op: "session_launch", cwd: root, model: "m", effort: "e", prompt: "p" },
+          { op: "session_launcher_config" },
         ]) {
           const response = await client.request<{ ok: false; error: { code: string } }>(req);
           expect(response.ok).toBe(false);
@@ -191,6 +195,82 @@ describe("session launcher wire ops", () => {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });
         fs.rmSync(replacement, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // The webui's SessionCreator/CwdTree need root_dirs (initial dir_tree fetch)
+  // and default_prompt (the "default" button) before the user has picked
+  // anything — session_launcher_config is the read-only projection that fills
+  // that gap (see its protocol doc comment).
+  test(
+    "user role receives root_dirs and default_prompt",
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-integration-"));
+      const stateDir = path.join(base, "s");
+      const dataDir = path.join(base, "d");
+      fs.mkdirSync(stateDir);
+      fs.mkdirSync(dataDir);
+      fs.writeFileSync(
+        path.join(dataDir, "config.json"),
+        JSON.stringify({
+          session_launcher: {
+            root_dirs: [root],
+            default_prompt: "hello default",
+            shell: "bash",
+            command: "printf configured",
+          },
+        }),
+      );
+      const proc = spawnDaemonProc(stateDir, dataDir);
+      const sock = path.join(stateDir, "daemon.sock");
+      await waitConnectable(sock);
+      const ctx: DaemonCtx = {
+        base,
+        stateDir,
+        dataDir,
+        roomsDir: path.join(dataDir, "rooms"),
+        sock,
+        proc,
+        env: { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, CCMSG_HTTP_BIND: "off" },
+      };
+      try {
+        const client = await connect(ctx.sock);
+        await client.hello({ role: "user" });
+        const response = await client.request<{
+          ok: true;
+          root_dirs: string[];
+          default_prompt: string;
+        }>({ op: "session_launcher_config" });
+        expect(response.ok).toBe(true);
+        expect(response).toMatchObject({ default_prompt: "hello default" });
+        if (response.ok) expect(response.root_dirs).toEqual([path.resolve(root)]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "an unconfigured launcher returns launcher_not_configured for session_launcher_config",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const client = await connect(ctx.sock);
+        await client.hello({ role: "user" });
+        const response = await client.request<{ ok: false; error: { code: string; msg: string } }>({
+          op: "session_launcher_config",
+        });
+        expect(response).toEqual({
+          ok: false,
+          error: { code: "launcher_not_configured", msg: "session launcher is not configured" },
+        });
+      } finally {
+        await stopTestDaemon(ctx);
       }
     },
     T,
