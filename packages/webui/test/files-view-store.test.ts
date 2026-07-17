@@ -10,6 +10,8 @@ import {
   FILES_VIEW_STALE_MS,
   filesViewKey,
   loadFilesView,
+  resolveMarkdownViewMode,
+  resolveMarkdownViewModePersist,
   saveFilesView,
 } from "../src/client/files-view-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
@@ -83,6 +85,100 @@ describe("filesView save/load round-trip", () => {
     expect(loadFilesView("sid-c")).toBeNull();
     localStorage.setItem(filesViewKey("sid-d"), JSON.stringify({ viewMode: "code" }));
     expect(loadFilesView("sid-d")).toBeNull();
+  });
+});
+
+describe("resolveMarkdownViewMode / …Persist (r26 mid=112 の A→B→A 復元)", () => {
+  // 何を保証するか (真因の再発防止): 初版は「saved.path === 現 path 一致時
+  // のみ preview 復元」だったため、markdown A(preview) → 別ファイル B → A
+  // で戻ると B 選択時に record が {B, code} で上書きされ A では復元できない。
+  // r26 mid=112 以降は saved.viewMode を per-sid の markdown モードとして扱い、
+  // markdown ファイルを開くたびに saved.viewMode を復元する。
+  test("markdown file restores saved viewMode regardless of path mismatch", () => {
+    const saved = { path: "docs/OTHER.md", viewMode: "preview" as const, updatedAt: "t" };
+    expect(resolveMarkdownViewMode(saved, "docs/QUESTIONS.md")).toBe("preview");
+    expect(resolveMarkdownViewMode(saved, "docs/QUESTIONS.markdown")).toBe("preview");
+  });
+
+  // 何を保証するか (対極): saved が null (初回) や viewMode が "code" の
+  // 記憶なら markdown を開いても "code" 復元 — 「勝手に preview になる」
+  // 事故を起こさない。
+  test("markdown file falls back to code when there is no preview memory", () => {
+    expect(resolveMarkdownViewMode(null, "docs/README.md")).toBe("code");
+    expect(
+      resolveMarkdownViewMode(
+        { path: "docs/README.md", viewMode: "code", updatedAt: "t" },
+        "docs/README.md",
+      ),
+    ).toBe("code");
+  });
+
+  // 何を保証するか (非 markdown): 非 markdown path では viewer 表示は常に
+  // code (toggle 自体が render されない) — 復元値も無条件 "code"。
+  test("non-markdown file always resolves to code", () => {
+    const saved = { path: "src/foo.ts", viewMode: "preview" as const, updatedAt: "t" };
+    expect(resolveMarkdownViewMode(saved, "src/foo.ts")).toBe("code");
+    expect(resolveMarkdownViewMode(saved, "package.json")).toBe("code");
+  });
+
+  // 何を保証するか (継承の要): 非 markdown ファイルを選んだときの record
+  // 上書きで saved.viewMode ("preview" 等) を "code" に落とすと A→B(非md)→A
+  // の遷移で markdown モードが失われる。resolveMarkdownViewModePersist は
+  // 非 markdown 選択時に saved.viewMode をそのまま継承する。
+  test("persist inherits saved markdown mode when selecting a non-markdown path", () => {
+    const saved = { path: "docs/QUESTIONS.md", viewMode: "preview" as const, updatedAt: "t" };
+    // .ts を選んでも markdown モード ("preview") の記憶を維持
+    expect(resolveMarkdownViewModePersist(saved, "src/foo.ts", "code")).toBe("preview");
+    // saved が無い / "code" 記憶の場合は "code" のまま (中立初期状態)
+    expect(resolveMarkdownViewModePersist(null, "src/foo.ts", "code")).toBe("code");
+  });
+
+  // 何を保証するか (markdown 側): markdown を開いたときは restored 値を
+  // そのまま record.viewMode に反映 (= その値がその後の per-sid markdown
+  // モードの last choice になる)。
+  test("persist writes restored value verbatim for markdown paths", () => {
+    expect(resolveMarkdownViewModePersist(null, "docs/README.md", "preview")).toBe("preview");
+    expect(
+      resolveMarkdownViewModePersist(
+        { path: "docs/OTHER.md", viewMode: "code", updatedAt: "t" },
+        "docs/README.md",
+        "code",
+      ),
+    ).toBe("code");
+  });
+
+  // 何を保証するか (A→B→A シナリオの integration): saveFilesView / loadFilesView
+  // と組み合わせて FileViewer restore effect と同じ順序で状態遷移させ、A に
+  // 戻ったときに preview が復活することを固定する。
+  test("integration: A(preview) → B(non-md) → A restores preview", () => {
+    const sid = "sid-abcs";
+    const A = "docs/QUESTIONS.md";
+    const B = "src/foo.ts";
+
+    // A(preview) 選択 + 手動 preview 切替
+    saveFilesView(sid, { path: A, viewMode: "preview" });
+
+    // B 選択の path 遷移 effect と同じ手順 (restored + persist)
+    let saved = loadFilesView(sid);
+    const restoredB = resolveMarkdownViewMode(saved, B);
+    saveFilesView(sid, {
+      path: B,
+      viewMode: resolveMarkdownViewModePersist(saved, B, restoredB),
+    });
+    // record は path=B に更新されるが viewMode は "preview" のまま継承
+    expect(loadFilesView(sid)?.path).toBe(B);
+    expect(loadFilesView(sid)?.viewMode).toBe("preview");
+
+    // A に戻る path 遷移 effect
+    saved = loadFilesView(sid);
+    const restoredA = resolveMarkdownViewMode(saved, A);
+    expect(restoredA).toBe("preview");
+    saveFilesView(sid, {
+      path: A,
+      viewMode: resolveMarkdownViewModePersist(saved, A, restoredA),
+    });
+    expect(loadFilesView(sid)?.path).toBe(A);
+    expect(loadFilesView(sid)?.viewMode).toBe("preview");
   });
 });
 

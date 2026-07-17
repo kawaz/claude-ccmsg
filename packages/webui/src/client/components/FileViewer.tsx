@@ -17,7 +17,12 @@ import {
   isMarkdownPath,
   resolveInboxFilename,
 } from "../utils.ts";
-import { loadFilesView, saveFilesView } from "../files-view-store.ts";
+import {
+  loadFilesView,
+  resolveMarkdownViewMode,
+  resolveMarkdownViewModePersist,
+  saveFilesView,
+} from "../files-view-store.ts";
 import {
   detectLanguage,
   isHighlightEligible,
@@ -202,30 +207,38 @@ export function FileViewer({
 
   // Markdown preview toggle (kawaz spec): only offered for .md / .markdown
   // paths (isMarkdownPath), default is "code" so a new file always opens
-  // in the same line-numbered viewer users expect. Reset to "code" on
-  // every path change — leaving "preview" sticky would render the next
-  // file (which might not even be markdown) as an empty/garbled preview
-  // for one frame before the toggle re-hid itself, which is worse than a
-  // small extra click when navigating md→md. HTML preview is deliberately
-  // not implemented (see comment on the toggle-button block below).
+  // in the same line-numbered viewer users expect. HTML preview is
+  // deliberately not implemented (see comment on the toggle-button block
+  // below).
   //
-  // 例外 (kawaz r17 mid=5): localStorage に保存された per-sid record
-  // (files-view-store.ts) の path が現 path と一致するなら viewMode を復元
-  // する — タブ切替やリロードで「さっき preview で見ていた md」に戻った時
-  // だけ preview が復活し、別ファイルへの遷移は従来通り "code" に戻る。
-  // 同じ effect 内で record も更新する (復元値を含めた確定値を書くので、
-  // 初期値 "code" が保存済み preview を先に上書きする race がない)。
+  // 復元規則 (kawaz r17 mid=5 初版 → r26 mid=112 で意味論拡張):
+  // 「saved.path === 現 path 一致時のみ preview を復活」だと、A(preview)
+  // → B → A で戻ったとき B 選択時に record が {B, code} で上書きされて A
+  // に戻ったときは saved.path !== A で復元経路を外れていた (kawaz が「タブ
+  // 切り替えのたびにコードビューへ戻る」と感じていた真因)。r26 mid=112 以降
+  // は record.viewMode を **per-sid の markdown モードの last choice** として
+  // 扱い、markdown を開くたびに saved.viewMode を復元する (resolveMarkdownViewMode)。
+  // 非 markdown ファイル選択時は record.viewMode を "code" で上書きせず
+  // 継承 (resolveMarkdownViewModePersist) — 途中で .ts を挟んでも記憶を
+  // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
+  // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
   const markdownEligible = path != null && isMarkdownPath(path);
   useEffect(() => {
     if (path === null) return;
     const saved = loadFilesView(sid);
-    const restored = saved && saved.path === path && isMarkdownPath(path) ? saved.viewMode : "code";
+    const restored = resolveMarkdownViewMode(saved, path);
     setViewMode(restored);
-    saveFilesView(sid, { path, viewMode: restored });
+    saveFilesView(sid, {
+      path,
+      viewMode: resolveMarkdownViewModePersist(saved, path, restored),
+    });
   }, [sid, path]);
   // viewMode のユーザ操作は state 更新と同時に record へ書く (effect 監視
   // でなく操作起点 — 復元由来の setViewMode と書き込みが交錯しないように)。
+  // toggle は markdown ファイルでしか render されない (markdownEligible 判定、
+  // FileViewer 本体) ので、ここで書く viewMode は必ず「markdown モードの
+  // last choice」の意味論を満たす。
   const selectViewMode = (mode: "code" | "preview") => {
     setViewMode(mode);
     if (path !== null) saveFilesView(sid, { path, viewMode: mode });
