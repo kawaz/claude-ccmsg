@@ -28,3 +28,4 @@
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted | In-view キーワード検索 (TL/ビューアのハイライト + index nav) |
 | [DR-0023](./DR-0023-daemon-local-translation.md) | Accepted | daemon 経由ローカル翻訳 (macOS Translation.framework、Safari フォールバック) |
 | [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | プロジェクト外セクション (セッションが触った cwd 外ファイルの表示 + allowlist 読み出し) |
+| [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
