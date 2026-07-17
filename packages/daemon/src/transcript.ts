@@ -13,6 +13,7 @@ import {
   type TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
+import { resolveAgentTranscript } from "./agent-transcripts.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -190,15 +191,44 @@ function readSoftCapLine(
  * `readSoftCapLine`) and returns the whole oversized line as one soft-cap
  * line, uncapped by `max_bytes`.
  */
+export interface TranscriptReadAgentOptions {
+  /** DR-0025 Phase 1: subagent / workflow-agent id (`a<...>`). See
+   * agent-transcripts.ts `AGENT_ID_RE` for the accepted shape. Mutually
+   * exclusive with `teammate`. */
+  agentId?: string;
+  /** DR-0025 Phase 1: workflow run id (`wf_XXXXXXXX-XXX`) that owns the
+   * `agentId`. Absent = direct subagent under `<sid>/subagents/`. */
+  runId?: string;
+  /** DR-0025 Phase 1: teammate name (resolved via `agent-*.meta.json`
+   * scan). Mutually exclusive with `agentId`. */
+  teammate?: string;
+}
+
 export function transcriptRead(
   sessions: SessionLookup,
   sid: string,
   before: number | undefined,
   maxBytes: number | undefined,
-  opts: TranscriptResolveOptions = {},
+  opts: TranscriptResolveOptions & TranscriptReadAgentOptions = {},
 ): TranscriptResult<Omit<TranscriptReadResponse, "ok">> {
   const resolved = resolveTranscript(sessions, sid, opts);
   if (!resolved.ok) return resolved;
+  // DR-0025 Phase 1: if the caller asked for an agent/teammate transcript,
+  // swap the session's own file for the resolved sibling before the byte-
+  // paging read. The regex-validated ids never enter path.join without
+  // clearing AGENT_ID_RE / RUN_ID_RE / TEAMMATE_NAME_RE first.
+  const wantsAgent =
+    opts.agentId !== undefined || opts.runId !== undefined || opts.teammate !== undefined;
+  let readFile = resolved.file;
+  if (wantsAgent) {
+    const agent = resolveAgentTranscript(resolved.file, {
+      agentId: opts.agentId,
+      runId: opts.runId,
+      teammate: opts.teammate,
+    });
+    if (!agent.ok) return agent;
+    readFile = agent.file;
+  }
 
   if (
     before !== undefined &&
@@ -223,7 +253,7 @@ export function transcriptRead(
 
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(resolved.file);
+    stat = fs.statSync(readFile);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }
@@ -238,7 +268,7 @@ export function transcriptRead(
     return { ok: true, data: { sid, lines: [], start: targetEnd, end: targetEnd, size } };
   }
 
-  const fd = fs.openSync(resolved.file, "r");
+  const fd = fs.openSync(readFile, "r");
   try {
     const raw = readWindow(fd, rawStart, targetEnd);
 

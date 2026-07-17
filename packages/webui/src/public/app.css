@@ -3527,6 +3527,112 @@ button.session-tab {
   margin-top: 0.3rem;
 }
 
+/* DR-0025 Phase 2: agent-timeline header */
+.tl-agent-header {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--bg-alt, #eef);
+  border-bottom: 1px solid var(--border, #ccd);
+  font-size: 0.8rem;
+  align-items: baseline;
+}
+.tl-agent-header-back {
+  margin-left: auto;
+}
+
+/* DR-0025 Phase 2: workflow drilldown */
+.status-wf-drill {
+  display: block;
+}
+.status-wf-drill > details > summary {
+  cursor: pointer;
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  list-style: revert;
+}
+.status-row-drill {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+.status-wf-phases {
+  list-style: none;
+  padding: 0.25rem 0 0.25rem 1rem;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.status-wf-phase {
+  display: flex;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+}
+.status-wf-phase-count {
+  color: var(--fg-muted);
+}
+.status-wf-agents {
+  list-style: none;
+  padding: 0.25rem 0 0 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.status-wf-agent-summary,
+.status-wf-agent-details > summary {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.8rem;
+  cursor: pointer;
+  list-style: revert;
+}
+.status-wf-agent-icon {
+  flex-shrink: 0;
+  width: 1em;
+  text-align: center;
+}
+.status-wf-agent-icon-done {
+  color: var(--ok, #4a8);
+}
+.status-wf-agent-icon-error {
+  color: var(--err, #c55);
+}
+.status-wf-agent-icon-running {
+  color: var(--warn, #ba5);
+}
+.status-wf-agent-icon-pending {
+  color: var(--fg-muted);
+}
+.status-wf-agent-label {
+  flex-shrink: 0;
+}
+.status-wf-agent-model,
+.status-wf-agent-tokens {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+.status-wf-agent-tl {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  margin-left: auto;
+}
+.status-wf-agent-error,
+.status-wf-agent-tool,
+.status-wf-agent-preview {
+  margin: 0.15rem 0 0 1.5rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+.status-wf-agent-error {
+  color: var(--err, #c55);
+}
+
 /* --- TL bottom mini panel (DR-0020 §2.1) --- */
 
 /* kawaz r26 mid=68: sticky overlay は TL 表示エリアを狭めるので不可 —

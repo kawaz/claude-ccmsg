@@ -12,7 +12,14 @@ import type {
   SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
-import { buildStatusSections, formatContextUsage, splitTeammates } from "../session-status-view.ts";
+import {
+  buildStatusSections,
+  buildWorkflowDrilldown,
+  formatContextUsage,
+  splitTeammates,
+  type WorkflowDrilldownAgentView,
+} from "../session-status-view.ts";
+import { agentTimelineHref } from "../locator.ts";
 import { formatClockTime } from "../utils.ts";
 
 function TodoRow({ todo }: { todo: SessionTodo }) {
@@ -24,15 +31,127 @@ function TodoRow({ todo }: { todo: SessionTodo }) {
   );
 }
 
-function WorkflowRow({ wf, running }: { wf: SessionWorkflowStatus; running: boolean }) {
-  return (
-    <li class={"status-row" + (running ? " status-row-active" : "")}>
+const ICON_GLYPH: Record<WorkflowDrilldownAgentView["icon"], string> = {
+  done: "✓",
+  running: "⟳",
+  error: "✗",
+  pending: "·",
+};
+
+function formatTokens(tokens: number | undefined): string | null {
+  if (tokens === undefined) return null;
+  if (tokens < 1000) return `${tokens}`;
+  return `${Math.round(tokens / 1000)}k`;
+}
+
+function WorkflowRow({
+  wf,
+  running,
+  sid,
+}: {
+  wf: SessionWorkflowStatus;
+  running: boolean;
+  sid: string;
+}) {
+  const drilldown = buildWorkflowDrilldown(wf);
+  const phasesLabel = drilldown
+    ? drilldown.phases.length > 0
+      ? `Phases ${drilldown.phases.filter((p) => p.total > 0 && p.done === p.total).length}/${drilldown.phases.length}`
+      : `Agents ${drilldown.agents.length}`
+    : null;
+  const header = (
+    <>
       <span class="status-row-name">{wf.name}</span>
       {wf.summary ? <span class="status-row-summary">{wf.summary}</span> : null}
+      {phasesLabel ? <span class="status-row-drill">{phasesLabel}</span> : null}
       <span class="status-row-time">
         {formatClockTime(wf.started_at)}
         {wf.ended_at ? ` – ${formatClockTime(wf.ended_at)}` : ""}
       </span>
+    </>
+  );
+  if (!drilldown) {
+    return <li class={"status-row" + (running ? " status-row-active" : "")}>{header}</li>;
+  }
+  return (
+    <li class={"status-row status-wf-drill" + (running ? " status-row-active" : "")}>
+      <details>
+        <summary>{header}</summary>
+        {drilldown.phases.length > 0 ? (
+          <ul class="status-wf-phases">
+            {drilldown.phases.map((p) => (
+              <li key={p.title} class="status-wf-phase">
+                <span class="status-wf-phase-title">{p.title}</span>
+                <span class="status-wf-phase-count">
+                  {p.done}/{p.total}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {drilldown.agents.length > 0 ? (
+          <ul class="status-wf-agents">
+            {drilldown.agents.map((agent) => (
+              <WorkflowAgentLink key={agent.agentId} agent={agent} sid={sid} runId={wf.run_id} />
+            ))}
+          </ul>
+        ) : null}
+      </details>
+    </li>
+  );
+}
+
+/** Bridges `AgentDrillRow` (which has no runId in scope) to `WorkflowRow`
+ * (which knows the runId of the whole workflow). Kept as a thin wrapper so
+ * the row renderer stays a pure presentation function against
+ * `WorkflowDrilldownAgentView` — the TL link is the only place that needs
+ * the runId, and forwarding it through props keeps the shape uniform. */
+function WorkflowAgentLink({
+  agent,
+  sid,
+  runId,
+}: {
+  agent: WorkflowDrilldownAgentView;
+  sid: string;
+  runId?: string;
+}) {
+  const href = agentTimelineHref(sid, {
+    agentId: agent.agentId,
+    ...(runId ? { runId } : {}),
+  });
+  const tokensLabel = formatTokens(agent.tokens);
+  const iconClass = `status-wf-agent-icon status-wf-agent-icon-${agent.icon}`;
+  const hasDetails = !!(agent.resultPreview || agent.lastTool || agent.error);
+  return (
+    <li class="status-wf-agent">
+      {hasDetails ? (
+        <details class="status-wf-agent-details">
+          <summary>
+            <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
+            <span class="status-wf-agent-label">{agent.label}</span>
+            {agent.model ? <span class="status-wf-agent-model">{agent.model}</span> : null}
+            {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
+            <a class="status-wf-agent-tl" href={href}>
+              TL
+            </a>
+          </summary>
+          {agent.error ? <p class="status-wf-agent-error">{agent.error}</p> : null}
+          {agent.lastTool ? <p class="status-wf-agent-tool">{agent.lastTool}</p> : null}
+          {agent.resultPreview ? (
+            <p class="status-wf-agent-preview">{agent.resultPreview}</p>
+          ) : null}
+        </details>
+      ) : (
+        <div class="status-wf-agent-summary">
+          <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
+          <span class="status-wf-agent-label">{agent.label}</span>
+          {agent.model ? <span class="status-wf-agent-model">{agent.model}</span> : null}
+          {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
+          <a class="status-wf-agent-tl" href={href}>
+            TL
+          </a>
+        </div>
+      )}
     </li>
   );
 }
@@ -50,12 +169,16 @@ function BackgroundRow({ bg, running }: { bg: SessionBackgroundStatus; running: 
   );
 }
 
-function TeammateRow({ teammate }: { teammate: SessionTeammate }) {
+function TeammateRow({ teammate, sid }: { teammate: SessionTeammate; sid: string }) {
+  const href = agentTimelineHref(sid, { teammate: teammate.name });
   return (
     <li class={"status-row status-teammate status-teammate-" + teammate.state}>
       <span class="status-row-name">{teammate.name}</span>
       {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
       <span class="status-row-summary">{teammate.state}</span>
+      <a class="status-wf-agent-tl" href={href}>
+        TL
+      </a>
       <span class="status-row-time">
         {teammate.last_sent_at ? `送 ${formatClockTime(teammate.last_sent_at)}` : ""}
         {teammate.last_sent_at && teammate.last_received_at ? " · " : ""}
@@ -102,7 +225,7 @@ function Section<T>({
   );
 }
 
-function TeamsSection({ teammates }: { teammates: SessionTeammate[] }) {
+function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: string }) {
   if (teammates.length === 0) return null;
   return (
     <section class="status-section">
@@ -110,14 +233,20 @@ function TeamsSection({ teammates }: { teammates: SessionTeammate[] }) {
       <p class="status-estimate-note">transcript 観測ベースの推定 (TUI 内部状態は非観測)</p>
       <ul class="status-list">
         {splitTeammates(teammates).map((teammate) => (
-          <TeammateRow key={teammate.name} teammate={teammate} />
+          <TeammateRow key={teammate.name} teammate={teammate} sid={sid} />
         ))}
       </ul>
     </section>
   );
 }
 
-export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | undefined }) {
+export function StatusPanel({
+  snapshot,
+  sid,
+}: {
+  snapshot: SessionStatusSnapshot | undefined;
+  sid: string;
+}) {
   if (!snapshot) {
     return (
       <div class="status-view">
@@ -156,7 +285,9 @@ export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | un
             title="Workflows"
             running={sections.workflows.running}
             done={sections.workflows.done}
-            renderRow={(wf, running) => <WorkflowRow key={wf.task_id} wf={wf} running={running} />}
+            renderRow={(wf, running) => (
+              <WorkflowRow key={wf.task_id} wf={wf} running={running} sid={sid} />
+            )}
             emptyRunningText="走行中の workflow なし"
           />
           <Section
@@ -202,7 +333,7 @@ export function StatusPanel({ snapshot }: { snapshot: SessionStatusSnapshot | un
           </section>
         </>
       )}
-      <TeamsSection teammates={snapshot.teammates ?? []} />
+      <TeamsSection teammates={snapshot.teammates ?? []} sid={sid} />
     </div>
   );
 }

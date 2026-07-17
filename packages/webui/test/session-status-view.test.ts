@@ -12,6 +12,7 @@ import type {
 } from "@ccmsg/protocol";
 import {
   buildStatusSections,
+  buildWorkflowDrilldown,
   estimateContextLimit,
   formatContextUsage,
   formatSidebarBadge,
@@ -363,5 +364,54 @@ describe("formatSidebarBadge", () => {
       teammates: [],
     };
     expect(formatSidebarBadge(snapshot)).toBe("wf:1 bg:1 todo:0/1");
+  });
+});
+
+describe("buildWorkflowDrilldown (DR-0025)", () => {
+  test("phases/agents 双方 undefined なら null", () => {
+    expect(buildWorkflowDrilldown(workflow({ task_id: "w1", status: "running" }))).toBeNull();
+  });
+
+  test("phases/agents 写像 + icon 分岐 + label fallback", () => {
+    const wf: SessionWorkflowStatus = {
+      ...workflow({ task_id: "w1", status: "completed" }),
+      run_id: "wf_01234567-abc",
+      phases: [
+        { title: "Plan", done: 1, total: 1 },
+        { title: "Verify", done: 0, total: 1 },
+      ],
+      agents: [
+        {
+          agent_id: "a1",
+          label: "plan",
+          model: "claude-fable-5[1m]",
+          state: "done",
+          tokens: 149564,
+          phase_title: "Plan",
+        },
+        {
+          agent_id: "a2",
+          agent_type: "sonnet5",
+          state: "running",
+        },
+        { agent_id: "a3", state: "error", error: "boom" },
+        { agent_id: "a4", state: "progress" },
+        { agent_id: "a5", state: "queued" },
+      ],
+    };
+    const view = buildWorkflowDrilldown(wf);
+    expect(view).not.toBeNull();
+    expect(view?.phases).toEqual([
+      { title: "Plan", done: 1, total: 1 },
+      { title: "Verify", done: 0, total: 1 },
+    ]);
+    const icons = view?.agents.map((a) => `${a.agentId}:${a.icon}`);
+    expect(icons).toEqual(["a1:done", "a2:running", "a3:error", "a4:running", "a5:pending"]);
+    // label fallback: agent_type when label absent, agent_id when both absent
+    expect(view?.agents[1]?.label).toBe("sonnet5");
+    expect(view?.agents[2]?.label).toBe("a3");
+    expect(view?.agents[0]?.tokens).toBe(149564);
+    expect(view?.agents[0]?.phaseTitle).toBe("Plan");
+    expect(view?.agents[2]?.error).toBe("boom");
   });
 });

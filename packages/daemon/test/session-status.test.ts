@@ -665,6 +665,8 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         taskId: "w1",
         taskType: "local_workflow",
         workflowName: "build-flow",
+        // DR-0025 Phase 1: only the wf_XXXXXXXX-XXX shape is folded into run_id.
+        // "wf_run" is intentionally malformed so this asserts the drop path.
         runId: "wf_run",
         summary: "Build workflow",
         transcriptDir: "/redacted",
@@ -682,6 +684,38 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         ended_at: END,
       },
     ]);
+  });
+
+  test("Workflow の runId は wf_XXXXXXXX-XXX 形式のみ run_id に採用する (DR-0025)", () => {
+    const good = apply([
+      toolUse("wf-tool", "Workflow", { script: "" }),
+      toolResult("wf-tool", {
+        status: "async_launched",
+        taskId: "w-good",
+        workflowName: "phase-flow",
+        runId: "wf_abcdef01-234",
+      }),
+    ]);
+    expect(good.workflows[0]?.run_id).toBe("wf_abcdef01-234");
+
+    for (const badRunId of [
+      "wf_ABCDEF01-234",
+      "wf_abcdef01-2345",
+      "wf_abcdef01_234",
+      "../etc/passwd",
+      "",
+    ]) {
+      const bad = apply([
+        toolUse("wf-tool", "Workflow", { script: "" }),
+        toolResult("wf-tool", {
+          status: "async_launched",
+          taskId: "w-bad",
+          workflowName: "phase-flow",
+          runId: badRunId,
+        }),
+      ]);
+      expect(bad.workflows[0]?.run_id).toBeUndefined();
+    }
   });
 
   test("queue-operation は enqueue の外側 status だけを terminal として扱う", () => {

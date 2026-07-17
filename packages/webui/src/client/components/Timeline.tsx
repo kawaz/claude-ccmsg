@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
+import type { AgentRef } from "../locator.ts";
+import { timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { UserAvatar } from "../avatar.tsx";
@@ -969,10 +971,19 @@ export function Timeline({
   search,
   sessionStatus,
   onOpenStatus,
+  agent,
 }: {
   sid: string;
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
+  /** DR-0025 Phase 2: when present, the pane targets the named subagent /
+   * workflow-agent / teammate transcript under `sid` instead of `sid`'s own.
+   * All transcriptRead calls forward the agent params; transcript_subscribe
+   * is skipped (agent transcripts have no live push, DR-0025 §2.2). Store's
+   * `applyLocatorChanged` clears the sid's TimelineState whenever the agent
+   * ref changes, so the initial-load effect refetches without needing an
+   * agent-keyed cache. */
+  agent?: AgentRef | null;
   /** DR-0020 §2.1 TL 下ミニパネル用の folded status snapshot — subscribe の
    * ライフサイクル自体は SessionView が Status タブと共有して管理する
    * (このコンポーネントは受け取って要約を出すだけ)。undefined = まだ届いて
@@ -1022,13 +1033,30 @@ export function Timeline({
   // onOpen 側で改めて subscribe できる余地を持たせるため、ここではエラー
   // 表示もリトライも行わない (次の connStatus 変化でこの effect が再実行
   // される)。
+  // DR-0025 Phase 2: agent transcripts have no live tail (§2.2 "リアルタイム
+  // 完全進捗はスコープ外" — the daemon only offers subscribe on the session
+  // itself, not on its subagents). Skip the subscribe when an agent ref is
+  // active so we don't tail the wrong file (which would race back stale
+  // lines and confuse the byte-cache).
+  const agentActive = !!(agent && (agent.agentId || agent.teammate));
   useEffect(() => {
+    if (agentActive) return;
     if (connStatus !== "connected") return;
     void ws.transcriptSubscribe(sid).catch(() => {});
     return () => {
       void ws.transcriptUnsubscribe(sid).catch(() => {});
     };
-  }, [sid, connStatus]);
+  }, [sid, connStatus, agentActive]);
+
+  // Build the transcriptRead opts once so every call site below stays in sync.
+  const agentOpts = useMemo(() => {
+    if (!agent) return undefined;
+    return {
+      ...(agent.agentId ? { agent_id: agent.agentId } : {}),
+      ...(agent.runId ? { run_id: agent.runId } : {}),
+      ...(agent.teammate ? { teammate: agent.teammate } : {}),
+    };
+  }, [agent?.agentId, agent?.runId, agent?.teammate]);
 
   // Tail-load on first visit only — re-visiting a session whose Timeline is
   // already "loaded"/"error" must not refetch (mirrors FileViewer's
@@ -1042,7 +1070,7 @@ export function Timeline({
     if (connStatus !== "connected") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
-      .transcriptRead(sid)
+      .transcriptRead(sid, agentOpts)
       .then((res) => {
         if (res.ok)
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
@@ -1073,7 +1101,7 @@ export function Timeline({
     if (!timeline.needsResync) return;
     if (connStatus !== "connected") return;
     void ws
-      .transcriptRead(sid)
+      .transcriptRead(sid, agentOpts)
       .then((res) => {
         if (res.ok)
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
@@ -1114,7 +1142,7 @@ export function Timeline({
     if (timeline.status !== "loaded" && timeline.status !== "error") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
-      .transcriptRead(sid)
+      .transcriptRead(sid, agentOpts)
       .then((res) => {
         if (res.ok)
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
@@ -1131,7 +1159,7 @@ export function Timeline({
     if (timeline.status === "loading" || timeline.atStart) return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
-      .transcriptRead(sid, { before: timeline.start })
+      .transcriptRead(sid, { ...agentOpts, before: timeline.start })
       .then((res) => {
         if (res.ok)
           store.dispatch({ type: "timeline/loaded", sid, mode: "prepend", response: res });
@@ -1153,7 +1181,7 @@ export function Timeline({
     if (timeline.status === "loading") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
-      .transcriptRead(sid)
+      .transcriptRead(sid, agentOpts)
       .then((res) => {
         if (res.ok)
           store.dispatch({ type: "timeline/loaded", sid, mode: "replace", response: res });
@@ -1650,8 +1678,23 @@ export function Timeline({
     );
   }
 
+  const agentLabel = agent
+    ? agent.teammate
+      ? `teammate ${agent.teammate}`
+      : agent.runId
+        ? `${agent.runId}/${agent.agentId}`
+        : `${agent.agentId}`
+    : null;
   return (
     <div class="timeline-view" ref={scrollRef}>
+      {agentLabel ? (
+        <div class="tl-agent-header">
+          <span class="tl-agent-header-label">agent: {agentLabel}</span>
+          <a class="tl-agent-header-back" href={timelineHref(sid)}>
+            親セッションへ戻る
+          </a>
+        </div>
+      ) : null}
       <div class="tl-toolbar">
         <button
           type="button"

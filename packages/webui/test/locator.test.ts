@@ -4,6 +4,7 @@
 // produce, and the two forms never get confused for one another.
 import { describe, expect, test } from "bun:test";
 import {
+  agentTimelineHref,
   fileHref,
   messageHref,
   parseHash,
@@ -127,6 +128,56 @@ describe("parseHash / timeline form (DR-0009)", () => {
   test("malformed percent-encoding in the sid segment falls back to the raw sid, not a thrown error", () => {
     expect(() => parseHash("#t%zz")).not.toThrow();
     expect(parseHash("#t%zz")).toEqual({ view: "timeline", sid: "%zz" });
+  });
+});
+
+describe("parseHash / timeline agent form (DR-0025)", () => {
+  test("#t<sid>:a... -> direct subagent under sid", () => {
+    const loc = parseHash("#tabc:a1234567890abcdef");
+    expect(loc).toEqual({
+      view: "timeline",
+      sid: "abc",
+      agent: { agentId: "a1234567890abcdef" },
+    });
+  });
+
+  test("#t<sid>:<runId>/<agentId> -> workflow-owned agent", () => {
+    const loc = parseHash("#tabc:wf_01234567-abc/a1111111111111111");
+    expect(loc).toEqual({
+      view: "timeline",
+      sid: "abc",
+      agent: { runId: "wf_01234567-abc", agentId: "a1111111111111111" },
+    });
+  });
+
+  test("#t<sid>:tm/<name> -> teammate", () => {
+    const loc = parseHash("#tabc:tm/my-mate");
+    expect(loc).toEqual({
+      view: "timeline",
+      sid: "abc",
+      agent: { teammate: "my-mate" },
+    });
+  });
+
+  test("agentTimelineHref round-trips through parseHash", () => {
+    for (const ref of [
+      { agentId: "a1234567890abcdef" },
+      { runId: "wf_01234567-abc", agentId: "a2222222222222222" },
+      { teammate: "some/mate" }, // encoded through
+    ]) {
+      const href = agentTimelineHref("sess-1", ref);
+      const parsed = parseHash(href);
+      expect(parsed.view).toBe("timeline");
+      if (parsed.view === "timeline") {
+        expect(parsed.sid).toBe("sess-1");
+        expect(parsed.agent).toEqual(ref);
+      }
+    }
+  });
+
+  test("existing plain #t<sid> stays agentless", () => {
+    const loc = parseHash("#tabc123");
+    expect(loc).toEqual({ view: "timeline", sid: "abc123" });
   });
 });
 

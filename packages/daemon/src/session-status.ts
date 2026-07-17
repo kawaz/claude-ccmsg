@@ -20,6 +20,8 @@ import {
   type TranscriptResult,
   type TranscriptTailStore,
 } from "./transcript.ts";
+import { RUN_ID_RE } from "./agent-transcripts.ts";
+import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
@@ -430,12 +432,21 @@ function applyToolResult(
     const workflowName = stringValue(result.workflowName);
     if (!taskId || !workflowName) return false;
     const rawStatus = stringValue(result.status);
+    const rawRunId = stringValue(result.runId);
+    // DR-0025 Phase 1: `runId` is intentionally re-validated on the fold side
+    // (transcript rows are AI-controlled input) — only `wf_XXXXXXXX-XXX` is
+    // accepted, everything else is silently dropped and the workflow simply
+    // has no `run_id` (drilldown disabled). See RUN_ID_RE for the exact
+    // shape; the value is written back into `path.join` by
+    // workflow-drilldown.ts, so no unvetted value ever reaches the fs.
+    const runId = rawRunId && RUN_ID_RE.test(rawRunId) ? rawRunId : undefined;
     const workflow: SessionWorkflowStatus = {
       task_id: taskId,
       name: workflowName,
       ...(stringValue(result.summary) ? { summary: stringValue(result.summary)! } : {}),
       status: rawStatus === "async_launched" || rawStatus === undefined ? "running" : rawStatus,
       started_at: pending.timestamp,
+      ...(runId ? { run_id: runId } : {}),
     };
     state.workflows.set(taskId, workflow);
     return true;
@@ -624,15 +635,40 @@ export function foldLine(state: SessionStatusState, line: string): boolean {
   return false;
 }
 
-export function snapshot(state: SessionStatusState): SessionStatusSnapshot {
+/**
+ * `sidDir` is the transcript path minus `.jsonl` — the sibling directory
+ * where per-agent transcripts and workflow run artifacts live. Passing it
+ * enables DR-0025 workflow drilldown; omitting it (older callers, tests
+ * without an on-disk root) keeps the fold behaviour unchanged. Per-workflow
+ * FS reads happen at snapshot time (not per line) because a workflow's
+ * agent list can change even without a new transcript line — the state
+ * json is written by the workflow harness independently. The FS cost is
+ * bounded (workflow count × O(small json + short journal)) and only pays
+ * on push, which the DR calls out as "sufficient granularity".
+ */
+export function snapshot(state: SessionStatusState, sidDir?: string): SessionStatusSnapshot {
   return {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
-    workflows: [...state.workflows.values()].map((workflow) => ({ ...workflow })),
+    workflows: [...state.workflows.values()].map((workflow) => {
+      const copy: SessionWorkflowStatus = { ...workflow };
+      if (sidDir && copy.run_id && RUN_ID_RE.test(copy.run_id)) {
+        const drilldown = readWorkflowDrilldown(sidDir, copy.run_id);
+        if (drilldown) {
+          if (drilldown.phases) copy.phases = drilldown.phases;
+          if (drilldown.agents) copy.agents = drilldown.agents;
+        }
+      }
+      return copy;
+    }),
     background: [...state.background.values()].map((task) => ({ ...task })),
     ...(state.context ? { context: { ...state.context } } : {}),
     teammates: [...state.teammates.values()].map((teammate) => ({ ...teammate })),
     external_files: [...state.externalFiles].sort(),
   };
+}
+
+function deriveSidDir(file: string): string | undefined {
+  return file.endsWith(".jsonl") ? file.slice(0, -".jsonl".length) : undefined;
 }
 
 /** Scan complete lines from the start of a transcript without loading the file whole. */
@@ -671,6 +707,9 @@ interface LiveSessionStatus {
    * against a different root would otherwise retain a stale DR-0024 allowlist. */
   file: string;
   root?: string;
+  /** DR-0025 Phase 1: sibling directory (`file` minus `.jsonl`) used to load
+   * per-workflow phase / agent drilldown at snapshot time. */
+  sidDir?: string;
   state: SessionStatusState;
   statusConns: Set<TailConn>;
   listener: TranscriptLineListener;
@@ -685,7 +724,7 @@ export function createSessionStatusStore(): SessionStatusStore {
 }
 
 function statusEventLine(sid: string, live: LiveSessionStatus): string {
-  return `${JSON.stringify({ ev: "session_status", sid, ...snapshot(live.state) })}\n`;
+  return `${JSON.stringify({ ev: "session_status", sid, ...snapshot(live.state, live.sidDir) })}\n`;
 }
 
 function pushSnapshot(sid: string, live: LiveSessionStatus): void {
@@ -705,7 +744,7 @@ export function getSessionStatus(
   // transcript and the root used to classify DR-0024 external files.
   const live = store.sessions.get(sid);
   if (live && live.file === resolved.file && live.root === root) {
-    return { ok: true, data: snapshot(live.state) };
+    return { ok: true, data: snapshot(live.state, live.sidDir) };
   }
   const state = createSessionStatusState(root);
   try {
@@ -713,7 +752,7 @@ export function getSessionStatus(
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }
-  return { ok: true, data: snapshot(state) };
+  return { ok: true, data: snapshot(state, deriveSidDir(resolved.file)) };
 }
 
 export function subscribeSessionStatus(
@@ -730,7 +769,7 @@ export function subscribeSessionStatus(
   const existing = store.sessions.get(sid);
   if (existing && existing.file === resolved.file && existing.root === root) {
     existing.statusConns.add(conn);
-    return { ok: true, data: snapshot(existing.state) };
+    return { ok: true, data: snapshot(existing.state, existing.sidDir) };
   }
   const carriedConns = new Set<TailConn>([conn]);
   if (existing) {
@@ -750,6 +789,7 @@ export function subscribeSessionStatus(
   const live: LiveSessionStatus = {
     file: "",
     root,
+    sidDir: undefined,
     state: createSessionStatusState(root),
     statusConns: carriedConns,
     listener(payload) {
@@ -778,6 +818,7 @@ export function subscribeSessionStatus(
   const subscribed = subscribeTranscriptLines(transcriptTail, sessions, sid, live.listener, log);
   if (!subscribed.ok) return subscribed;
   live.file = subscribed.data.file;
+  live.sidDir = deriveSidDir(subscribed.data.file);
   try {
     scanTranscript(live.file, live.state, subscribed.data.size);
   } catch {
@@ -793,7 +834,7 @@ export function subscribeSessionStatus(
     const line = statusEventLine(sid, live);
     for (const c of existing.statusConns) c.write(line);
   }
-  return { ok: true, data: snapshot(live.state) };
+  return { ok: true, data: snapshot(live.state, live.sidDir) };
 }
 
 export function unsubscribeSessionStatus(

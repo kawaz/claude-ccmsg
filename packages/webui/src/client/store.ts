@@ -20,7 +20,7 @@ import {
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
-import type { Locator } from "./locator.ts";
+import type { AgentRef, Locator } from "./locator.ts";
 
 export { ADMIN_ID };
 
@@ -148,6 +148,11 @@ export interface AppState {
   currentMid: number | null;
   /** session selected via the `#s<sid>` locator (DR-0008), if any. */
   currentSid: string | null;
+  /** DR-0025 Phase 2: agent-transcript sub-selection under `currentSid`,
+   * populated from the timeline locator's optional `agent` field. Present
+   * only while the URL is `#t<sid>:<ref>`; a plain `#t<sid>` or any
+   * non-timeline view leaves this null. */
+  currentAgent: AgentRef | null;
   sessionTrees: Map<string, SessionTreeState>;
   /** Folded status snapshot (DR-0020 Phase 1/2), keyed by sid. Populated by
    * ws.ts's `sessionStatusSubscribe` response (initial) and kept live via
@@ -186,6 +191,7 @@ export function initialState(): AppState {
     currentRoomId: null,
     currentMid: null,
     currentSid: null,
+    currentAgent: null,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
     pinnedSessions: new Map(),
@@ -451,6 +457,11 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
  * fs_list/fs_read/transcript_read round trips their own useEffects trigger
  * off `currentSid`/`selectedPath`/`timeline.status` (DR-0005 §1: reducer
  * stays pure, effects live in components/ws.ts). */
+function agentRefKey(agent: AgentRef | null | undefined): string {
+  if (!agent) return "";
+  return `${agent.runId ?? ""}|${agent.agentId ?? ""}|${agent.teammate ?? ""}`;
+}
+
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "room") {
     return {
@@ -458,6 +469,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       view: "room",
       currentRoomId: locator.room,
       currentMid: locator.mid,
+      currentAgent: null,
       mentionTo: new Set(),
       sidebarOpen: false,
     };
@@ -466,11 +478,33 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     // Ensures a tree (and its nested idle TimelineState) exists so Timeline's
     // effect has something to read on first visit — same reasoning as the
     // session/path branch below, just without a selectedPath to set.
-    const [, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
+    let [, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
+    const nextAgent = locator.agent ?? null;
+    // DR-0025 Phase 2: agent ref switch invalidates the timeline byte-cache
+    // (different underlying jsonl file). Reset the sid's TimelineState so
+    // Timeline's initial-load effect refetches with the new agent params.
+    if (agentRefKey(state.currentAgent) !== agentRefKey(nextAgent)) {
+      const tree = sessionTrees.get(locator.sid);
+      if (tree) {
+        sessionTrees = new Map(sessionTrees);
+        sessionTrees.set(locator.sid, {
+          ...tree,
+          timeline: {
+            status: "idle",
+            lines: [],
+            start: 0,
+            end: 0,
+            size: 0,
+            atStart: false,
+          },
+        });
+      }
+    }
     return {
       ...state,
       view: "timeline",
       currentSid: locator.sid,
+      currentAgent: nextAgent,
       sessionTrees,
       mentionTo: new Set(),
       sidebarOpen: false,
@@ -486,6 +520,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     ...state,
     view: "session",
     currentSid: locator.sid,
+    currentAgent: null,
     sessionTrees,
     mentionTo: new Set(),
     sidebarOpen: false,

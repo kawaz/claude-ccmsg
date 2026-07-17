@@ -84,7 +84,16 @@ export function SessionView({ state }: { state: AppState }) {
   // tab の確定は sid の有無に関係なく毎 render 行う (下の early return より前
   // — hooks は無条件に同じ順序で呼ぶ必要があるため、購読 effect もここで
   // 確定させた tab を見て判断する)。
-  const tab = localTab ?? (state.view === "timeline" ? "timeline" : "files");
+  // DR-0025 Phase 2: `state.currentAgent` が付いた `#t<sid>:...` locator は
+  // 「Status パネルの TL リンクからエージェント TL に遷移した」状態 — この
+  // 経路では `localTab` が "status" のまま残っている (Status ボタンの
+  // `setLocalTab("status")` が最後の toggle だったため) ので普通に読むと
+  // Status タブに戻ってしまい、agent TL が見えず要件 (DR-0025 §2.1 「TL を
+  // 見る」→ Timeline ビュー) を満たさない。agent ref が locator に載って
+  // いる間は localTab を無視して timeline を強制する。
+  const tab = state.currentAgent
+    ? "timeline"
+    : (localTab ?? (state.view === "timeline" ? "timeline" : "files"));
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // hello 時に transcript_path を申告・検証済みのセッションでしか
   // session_status_subscribe は成立しない (daemon の resolveTranscript が
@@ -268,7 +277,7 @@ export function SessionView({ state }: { state: AppState }) {
         // DR-0021) one can never produce a snapshot. Explain which instead
         // of leaving StatusPanel's "読み込み中…" spinner up forever.
         hasStatusFeed ? (
-          <StatusPanel snapshot={sessionStatus} />
+          <StatusPanel snapshot={sessionStatus} sid={sid} />
         ) : hasTranscript ? (
           <p id="empty-state">
             Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
@@ -289,6 +298,7 @@ export function SessionView({ state }: { state: AppState }) {
             search={tree.timelineSearch}
             sessionStatus={sessionStatus}
             onOpenStatus={() => setLocalTab("status")}
+            agent={state.currentAgent}
           />
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>

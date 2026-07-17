@@ -25,10 +25,22 @@
 // `encodeURIComponent`-ed so `/` in a relpath — or `:` in a raw sid — survives
 // the fragment round-trip unambiguously.
 
+/** DR-0025 Phase 2: agent-transcript sub-selection inside a timeline
+ * locator. Encoded as `#t<sid>:<segment>` where segment is one of:
+ *   - `wf_XXX/a...` (workflow-owned agent — runId + `/` + agentId, both encoded)
+ *   - `a...`       (direct subagent under `<sid>/subagents/`)
+ *   - `tm/<name>`  (teammate resolved via `agent-*.meta.json` scan)
+ * All fields are absent when the locator selects the session's own transcript. */
+export interface AgentRef {
+  agentId?: string;
+  runId?: string;
+  teammate?: string;
+}
+
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
   | { view: "session"; sid: string; path: string | null }
-  | { view: "timeline"; sid: string };
+  | { view: "timeline"; sid: string; agent?: AgentRef };
 
 /** `decodeURIComponent` throws on malformed percent-encoding (e.g. a lone
  *  `%zz`) instead of returning some best-effort value. A hand-edited or
@@ -48,11 +60,16 @@ export function parseHash(hash: string): Locator {
   const raw = hash.replace(/^#/, "");
   if (!raw) return { view: "room", room: null, mid: null };
   if (raw.startsWith("t")) {
-    const sidRaw = raw.slice(1);
+    const rest = raw.slice(1);
+    const colon = rest.indexOf(":");
+    const sidRaw = colon === -1 ? rest : rest.slice(0, colon);
     // fall back to the raw (still-encoded) sid rather than losing it entirely,
     // same policy as the session form below.
     const sid = tryDecode(sidRaw, sidRaw);
-    return { view: "timeline", sid };
+    if (colon === -1) return { view: "timeline", sid };
+    const segment = rest.slice(colon + 1);
+    const agent = parseAgentSegment(segment);
+    return agent ? { view: "timeline", sid, agent } : { view: "timeline", sid };
   }
   if (raw.startsWith("s")) {
     const rest = raw.slice(1);
@@ -99,4 +116,44 @@ export function fileHref(sid: string, path: string): string {
 
 export function timelineHref(sid: string): string {
   return `#t${encodeURIComponent(sid)}`;
+}
+
+/** DR-0025 Phase 2: link to an agent / teammate timeline inside `sid`. The
+ * three shapes below are decoded by `parseAgentSegment` on the receiving
+ * side. Nothing is trusted to be regex-clean here — the daemon-side resolver
+ * (`AGENT_ID_RE` / `RUN_ID_RE` / `TEAMMATE_NAME_RE`) is the security boundary
+ * and will refuse anything shaped wrong even if a hand-edited URL sneaks a
+ * pathological value through. */
+export function agentTimelineHref(sid: string, ref: AgentRef): string {
+  const sidEnc = encodeURIComponent(sid);
+  if (ref.teammate !== undefined) {
+    return `#t${sidEnc}:tm/${encodeURIComponent(ref.teammate)}`;
+  }
+  if (ref.agentId !== undefined) {
+    const agentEnc = encodeURIComponent(ref.agentId);
+    if (ref.runId !== undefined) {
+      return `#t${sidEnc}:${encodeURIComponent(ref.runId)}/${agentEnc}`;
+    }
+    return `#t${sidEnc}:${agentEnc}`;
+  }
+  return `#t${sidEnc}`;
+}
+
+function parseAgentSegment(segment: string): AgentRef | undefined {
+  if (segment.length === 0) return undefined;
+  const slash = segment.indexOf("/");
+  if (slash === -1) {
+    const agentId = tryDecode(segment, "");
+    return agentId ? { agentId } : undefined;
+  }
+  const left = segment.slice(0, slash);
+  const right = segment.slice(slash + 1);
+  if (left === "tm") {
+    const teammate = tryDecode(right, "");
+    return teammate ? { teammate } : undefined;
+  }
+  const runId = tryDecode(left, "");
+  const agentId = tryDecode(right, "");
+  if (!runId || !agentId) return undefined;
+  return { runId, agentId };
 }

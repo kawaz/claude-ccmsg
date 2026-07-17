@@ -172,6 +172,60 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
   return [...capped, ...extra];
 }
 
+/** DR-0025 Phase 2: `StatusPanel` の workflow 行展開に使うプレゼンテーション形。
+ * `SessionWorkflowStatus` の phases / agents は daemon が集計した後の生値
+ * (エージェント数は 100+ もありうる)、UI 側は「アイコン」「ラベル/model/tokens」
+ * のような表示形に射影する。null を返す = 展開すべきデータが無い
+ * (走行中で state json 未生成 かつ journal も空、または旧型で run_id が無い)。 */
+export interface WorkflowDrilldownAgentView {
+  agentId: string;
+  label: string;
+  model?: string;
+  agentType?: string;
+  state: string;
+  tokens?: number;
+  phaseTitle?: string;
+  lastTool?: string;
+  resultPreview?: string;
+  error?: string;
+  icon: "done" | "running" | "error" | "pending";
+}
+
+export interface WorkflowDrilldownView {
+  phases: { title: string; done: number; total: number }[];
+  agents: WorkflowDrilldownAgentView[];
+}
+
+function agentIcon(state: string): WorkflowDrilldownAgentView["icon"] {
+  if (state === "done") return "done";
+  if (state === "error") return "error";
+  if (state === "running" || state === "progress") return "running";
+  return "pending";
+}
+
+export function buildWorkflowDrilldown(wf: SessionWorkflowStatus): WorkflowDrilldownView | null {
+  if (!wf.phases && !wf.agents) return null;
+  return {
+    phases: (wf.phases ?? []).map((p) => ({ title: p.title, done: p.done, total: p.total })),
+    agents: (wf.agents ?? []).map((a): WorkflowDrilldownAgentView => {
+      const label = a.label ?? a.agent_type ?? a.agent_id;
+      return {
+        agentId: a.agent_id,
+        label,
+        state: a.state,
+        icon: agentIcon(a.state),
+        ...(a.model !== undefined ? { model: a.model } : {}),
+        ...(a.agent_type !== undefined ? { agentType: a.agent_type } : {}),
+        ...(a.tokens !== undefined ? { tokens: a.tokens } : {}),
+        ...(a.phase_title !== undefined ? { phaseTitle: a.phase_title } : {}),
+        ...(a.last_tool !== undefined ? { lastTool: a.last_tool } : {}),
+        ...(a.result_preview !== undefined ? { resultPreview: a.result_preview } : {}),
+        ...(a.error !== undefined ? { error: a.error } : {}),
+      };
+    }),
+  };
+}
+
 /** サイドバー SESSIONS 行のミニバッジ文字列 (DR-0020 §2.1: "wf:1 bg:2
  * todo:3/5" 形式、走行中のみカウント、ゼロは省略)。`snapshot` 不在 (= まだ
  * subscribe していない/データ未着) は null (バッジなし)。
