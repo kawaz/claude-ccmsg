@@ -24,6 +24,7 @@ import {
 } from "../utils.ts";
 import { FileTree } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
+import { PaneSplitter } from "./PaneSplitter.tsx";
 
 // Persisted alongside Sidebar's ccmsg.peerSortKey (see Sidebar.tsx).
 const PANE_RATIO_STORAGE = "ccmsg.sessionPaneRatio";
@@ -65,10 +66,6 @@ export function FilesPanes({
   // boundary used by FileTree/FileViewer for fs_list/fs_read).
   const [memoEditorOpen, setMemoEditorOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  // Ref (not state) because pointer-drag state doesn't need to trigger
-  // re-renders — only the ratio it produces does. Kept in sync via the
-  // pointerdown/up handlers rather than a useState pair.
-  const draggingRef = useRef(false);
 
   // Persist on change (drag settles). Effect over "save inside the
   // handler" so the save reflects the state React actually committed,
@@ -107,39 +104,22 @@ export function FilesPanes({
     location.assign(fileHref(sid, createdPath));
   }
 
-  const onSplitterPointerDown = (e: PointerEvent) => {
-    if (!containerRef.current) return;
-    draggingRef.current = true;
-    // Pointer capture keeps pointermove/pointerup coming even after the
-    // pointer leaves the splitter's own hitbox — otherwise a fast drag
-    // out into the FileTree would strand the splitter mid-move. Handles
-    // mouse and touch through the same pointer-events pipeline.
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    e.preventDefault();
-  };
-
-  const onSplitterPointerMove = (e: PointerEvent) => {
-    if (!draggingRef.current) return;
+  // Drag plumbing lives in the shared PaneSplitter (kawaz r26 mid=76) — this
+  // callback only owns the layout interpretation. Which axis to measure comes
+  // from the container's own computed flex-direction — desktop row layout
+  // uses clientX / rect.left / .width, mobile column layout uses clientY /
+  // rect.top / .height. Reading getComputedStyle lets the CSS @media query in
+  // app.css stay the source of truth for the breakpoint (no duplicate
+  // window.matchMedia check here).
+  const onSplitterDrag = (e: PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
-    // Which axis to measure comes from the container's own computed
-    // flex-direction — desktop row layout uses clientX / rect.left /
-    // .width, mobile column layout uses clientY / rect.top / .height.
-    // Reading getComputedStyle lets the CSS @media query in app.css
-    // stay the source of truth for the breakpoint (no duplicate
-    // window.matchMedia check here).
     const isVertical = getComputedStyle(container).flexDirection === "column";
     const rect = container.getBoundingClientRect();
     const next = isVertical
       ? paneRatioFromPointer(e.clientY, rect.top, rect.height)
       : paneRatioFromPointer(e.clientX, rect.left, rect.width);
     setRatio(next);
-  };
-
-  const onSplitterPointerUp = (e: PointerEvent) => {
-    if (!draggingRef.current) return;
-    draggingRef.current = false;
-    (e.currentTarget as Element).releasePointerCapture(e.pointerId);
   };
 
   // Style: tree pane gets a flex-basis derived from the ratio, viewer
@@ -151,15 +131,7 @@ export function FilesPanes({
       <div class="session-pane session-pane-tree" style={treeStyle}>
         <FileTree sid={sid} tree={tree} peer={peer} onNewMemo={() => setMemoEditorOpen(true)} />
       </div>
-      <div
-        class="session-splitter"
-        role="separator"
-        aria-orientation="vertical"
-        onPointerDown={onSplitterPointerDown}
-        onPointerMove={onSplitterPointerMove}
-        onPointerUp={onSplitterPointerUp}
-        onPointerCancel={onSplitterPointerUp}
-      />
+      <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <FileViewer
           sid={sid}
