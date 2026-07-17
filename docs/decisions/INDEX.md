@@ -27,3 +27,4 @@
 | [DR-0021](./DR-0021-session-search.md) | Accepted | Session Search (ccmsg 未起動の過去セッションの検索・pinned 閲覧) |
 | [DR-0022](./DR-0022-in-view-search.md) | Accepted | In-view キーワード検索 (TL/ビューアのハイライト + index nav) |
 | [DR-0023](./DR-0023-daemon-local-translation.md) | Proposed | daemon 経由ローカル翻訳 (macOS Translation.framework、Safari フォールバック) |
+| [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | プロジェクト外セクション (セッションが触った cwd 外ファイルの表示 + allowlist 読み出し) |
