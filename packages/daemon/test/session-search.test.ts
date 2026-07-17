@@ -80,16 +80,54 @@ afterEach(() => {
 });
 
 describe("session_search three-stage filtering", () => {
-  // Each non-blank query line is one AND clause. All clauses must match the
-  // same decoded message; distributing them across transcript rows is not a hit.
-  test("multiline query patterns use message-local AND semantics", async () => {
+  // Each non-blank query line is one session-wide AND clause. Separate
+  // messages may satisfy separate clauses, while a session missing any clause
+  // must not hit. Match summaries retain the contributing message rows.
+  test("multiline query patterns use session-wide AND semantics", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("alpha only"), user("alpha and beta together")]);
-    writeSession(config, sid(2), [user("alpha only"), user("beta only")]);
+    writeSession(config, sid(1), [
+      user("alpha first"),
+      user("alpha second"),
+      user("alpha third"),
+      user("alpha fourth"),
+      user("beta only"),
+    ]);
+    writeSession(config, sid(2), [user("alpha only")]);
+    writeSession(config, sid(3), [user("alpha and beta together")]);
 
     const result = await search(config, { query: "alpha\n\n beta" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual(expect.arrayContaining([sid(1), sid(3)]));
+    expect(result.hits).toHaveLength(2);
+    expect(
+      result.hits.find((hit) => hit.sid === sid(1))!.matches.map((match) => match.text),
+    ).toEqual(["alpha first", "beta only"]);
+    expect(result.hits.find((hit) => hit.sid === sid(3))!.matches).toHaveLength(1);
+  });
+
+  // A query word only counts when it appears in an enabled role. The agent row
+  // cannot complete the session-wide AND while target_agent is disabled.
+  test("session-wide AND respects role toggles per matching message", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("alpha from user"), agent("beta from agent")]);
+
+    const result = await search(config, {
+      query: "alpha\nbeta",
+      target_user: true,
+      target_agent: false,
+    });
+    expect(result.hits).toHaveLength(0);
+  });
+
+  // A one-clause query keeps its existing behavior: one enabled message match
+  // admits the session and produces that message as the summary.
+  test("single query pattern behavior is unchanged", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("ordinary"), user("single needle")]);
+    writeSession(config, sid(2), [user("ordinary only")]);
+
+    const result = await search(config, { query: "single" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.hits[0]!.matches).toHaveLength(1);
+    expect(result.hits[0]!.matches.map((match) => match.text)).toEqual(["single needle"]);
   });
 
   // Spaces inside one query line are literal content, not an implicit pattern
@@ -119,15 +157,16 @@ describe("session_search three-stage filtering", () => {
   });
 
   // A regex with required top-level ASCII literals may use them to prune raw
-  // JSONL lines, but strict RegExp.test on decoded message text remains the
-  // authority and enforces multiline AND across patterns.
-  test("regex mode matches decoded text with AND semantics", async () => {
+  // JSONL lines, but decoded RegExp matching remains authoritative. Separate
+  // messages may satisfy separate regex clauses within the same session.
+  test("regex mode applies AND semantics across the session", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("alpha middle omega and count 1234")]);
+    writeSession(config, sid(1), [user("alpha middle omega"), user("count 1234")]);
     writeSession(config, sid(2), [user("alpha omega without digits")]);
 
     const result = await search(config, { query: "alpha.*omega\n\\d{4}", regex: true });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.hits[0]!.matches).toHaveLength(2);
   });
 
   // The returned summary preserves matched whitespace so the webui can apply

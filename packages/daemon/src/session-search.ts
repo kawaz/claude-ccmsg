@@ -247,6 +247,7 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
 
 interface ScanResult {
   matches: SessionSearchMatch[];
+  matchedPatternCount: number;
   cwd: string | null;
   firstTimestamp: string | null;
   bytesRead: number;
@@ -272,7 +273,10 @@ function linePassesPrefilter(
     : regex
       ? line.toLowerCase().replaceAll("ſ", "s")
       : line.toLowerCase();
-  return patterns.every(
+  // Session-wide AND permits different patterns to match different rows, so a
+  // row survives when any clause may match it. A clause without a safe literal
+  // cannot be pruned and therefore admits every row to the strict stage.
+  return patterns.some(
     (pattern) => pattern.prefilter === null || haystack.includes(pattern.prefilter),
   );
 }
@@ -290,6 +294,7 @@ function scanCandidateFile(
   const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
+  const matchedPatternIndexes = new Set<number>();
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   let offset = 0;
@@ -297,19 +302,36 @@ function scanCandidateFile(
   const fd = fs.openSync(file, "r");
 
   const inspect = (line: string): void => {
-    if (
-      patterns.length > 0 &&
-      matches.length < SESSION_SEARCH_MATCH_SUMMARY_MAX &&
-      linePassesPrefilter(line, patterns, caseSensitive, regex)
-    ) {
-      const match = strictMatchCompiled(line, { patterns, targetUser, targetAgent });
-      if (match) {
+    if (patterns.length > 0 && linePassesPrefilter(line, patterns, caseSensitive, regex)) {
+      forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
+        const matchingPatterns: CompiledQueryPattern[] = [];
+        let newlyMatchedPattern = false;
+        for (let index = 0; index < patterns.length; index++) {
+          const pattern = patterns[index]!;
+          if (patternIndex(text, pattern) < 0) continue;
+          if (!matchedPatternIndexes.has(index)) newlyMatchedPattern = true;
+          matchedPatternIndexes.add(index);
+          matchingPatterns.push(pattern);
+        }
+        const allPatternsMatched = matchedPatternIndexes.size === patterns.length;
+        if (
+          matchingPatterns.length === 0 ||
+          matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX ||
+          (!newlyMatchedPattern && !allPatternsMatched)
+        ) {
+          return;
+        }
+        const match: SessionSearchMatch = {
+          role,
+          text: snippet(text, matchingPatterns),
+          ...(timestamp ? { timestamp } : {}),
+        };
         const key = `${match.role}\0${match.timestamp ?? ""}\0${match.text}`;
         if (!seen.has(key)) {
           seen.add(key);
           matches.push(match);
         }
-      }
+      });
     }
     if (cwd !== null && firstTimestamp !== null) return;
     let row: unknown;
@@ -345,10 +367,17 @@ function scanCandidateFile(
         start = newline + 1;
       }
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
+      // Once metadata is known, an empty query needs no more rows. A non-empty
+      // query may stop only after every session-wide AND clause has matched and
+      // the summary cap is full: after that neither hit eligibility nor the
+      // bounded response can change. If either condition is incomplete, keep
+      // scanning to avoid dropping a later clause or summary row.
       if (
         cwd !== null &&
         firstTimestamp !== null &&
-        (patterns.length === 0 || matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX)
+        (patterns.length === 0 ||
+          (matchedPatternIndexes.size === patterns.length &&
+            matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX))
       ) {
         break;
       }
@@ -359,6 +388,7 @@ function scanCandidateFile(
   }
   return {
     matches,
+    matchedPatternCount: matchedPatternIndexes.size,
     cwd,
     firstTimestamp,
     bytesRead: offset,
@@ -421,18 +451,18 @@ function userText(row: Record<string, unknown>): string | undefined {
   return texts.length > 0 ? texts.join("\n") : undefined;
 }
 
-/** Match ccmsg deliveries inside a task-notification body. The observed
- * <event> body is a small JSONL batch (kind/title/member/msg stream lines plus
- * non-JSON reply-hint trailer text), not always a single JSON object — parse
- * per line and return the first `type:"msg"` event that passes the role toggle
- * (`from:"u1"` normalizes to user, every other member id to agent) and the
- * query. */
-function ccmsgEventMatch(
+/** Visit searchable ccmsg deliveries inside a task-notification body. The
+ * observed <event> body is a small JSONL batch (kind/title/member/msg stream
+ * lines plus non-JSON reply-hint trailer text), not always a single JSON
+ * object. `from:"u1"` normalizes to user and every other member id to agent. */
+function forEachCcmsgMessage(
   content: string,
-  params: CompiledStrictMatchParams,
-): SessionSearchMatch | undefined {
+  targetUser: boolean,
+  targetAgent: boolean,
+  visit: (role: "user" | "agent", text: string, timestamp: string | undefined) => void,
+): void {
   const eventBody = tagBody(content, "event");
-  if (!eventBody) return undefined;
+  if (!eventBody) return;
   for (const eventLine of eventBody.split("\n")) {
     let event: unknown;
     try {
@@ -442,72 +472,75 @@ function ccmsgEventMatch(
     }
     if (!isRecord(event) || event.type !== "msg" || typeof event.msg !== "string") continue;
     const role = event.from === ADMIN_ID ? "user" : "agent";
-    if (role === "user" ? !params.targetUser : !params.targetAgent) continue;
-    if (!matchesAll(event.msg, params.patterns)) continue;
-    return {
-      role,
-      text: snippet(event.msg, params.patterns),
-      ...(typeof event.ts === "string" ? { timestamp: event.ts } : {}),
-    };
+    if (role === "user" ? !targetUser : !targetAgent) continue;
+    visit(role, event.msg, typeof event.ts === "string" ? event.ts : undefined);
   }
-  return undefined;
 }
 
 /** Strict-stage field extraction. queue-operation events and user rows that
  * carry a consumed task-notification both route their ccmsg payload through
- * ccmsgEventMatch — a task-notification landing in a user row is a harness
+ * forEachCcmsgMessage — a task-notification landing in a user row is a harness
  * delivery, not something the user typed, so treating its whole body as a
  * user message would misclassify agent-authored ccmsg posts. dequeue/remove
  * queue rows are intentionally ignored (the enqueue row already carries the
  * same payload). */
-function strictMatchCompiled(
+function forEachSearchableMessage(
   line: string,
-  params: CompiledStrictMatchParams,
-): SessionSearchMatch | undefined {
+  targetUser: boolean,
+  targetAgent: boolean,
+  visit: (role: "user" | "agent", text: string, timestamp: string | undefined) => void,
+): void {
   let row: unknown;
   try {
     row = JSON.parse(line);
   } catch {
-    return undefined;
+    return;
   }
-  if (!isRecord(row)) return undefined;
+  if (!isRecord(row)) return;
 
-  let role: "user" | "agent";
-  let text: string;
-  let timestamp = typeof row.timestamp === "string" ? row.timestamp : undefined;
-
+  const timestamp = typeof row.timestamp === "string" ? row.timestamp : undefined;
   if (row.type === "user") {
-    const extracted = userText(row);
-    if (extracted === undefined) return undefined;
-    if (extracted.startsWith("<task-notification>")) {
-      return ccmsgEventMatch(extracted, params);
+    const text = userText(row);
+    if (text === undefined) return;
+    if (text.startsWith("<task-notification>")) {
+      forEachCcmsgMessage(text, targetUser, targetAgent, visit);
+    } else if (targetUser) {
+      visit("user", text, timestamp);
     }
-    role = "user";
-    text = extracted;
-  } else if (row.type === "assistant") {
+    return;
+  }
+  if (row.type === "assistant") {
+    if (!targetAgent) return;
     const message = row.message;
-    if (!isRecord(message) || !Array.isArray(message.content)) return undefined;
+    if (!isRecord(message) || !Array.isArray(message.content)) return;
     const texts = message.content
       .filter((block): block is Record<string, unknown> => isRecord(block) && block.type === "text")
       .map((block) => block.text)
       .filter((value): value is string => typeof value === "string");
-    if (texts.length === 0) return undefined;
-    role = "agent";
-    text = texts.join("\n");
-  } else if (row.type === "queue-operation") {
-    if (row.operation !== "enqueue" || typeof row.content !== "string") return undefined;
-    return ccmsgEventMatch(row.content, params);
-  } else {
-    return undefined;
+    if (texts.length > 0) visit("agent", texts.join("\n"), timestamp);
+    return;
   }
+  if (row.type === "queue-operation" && row.operation === "enqueue") {
+    if (typeof row.content === "string") {
+      forEachCcmsgMessage(row.content, targetUser, targetAgent, visit);
+    }
+  }
+}
 
-  if (role === "user" ? !params.targetUser : !params.targetAgent) return undefined;
-  if (!matchesAll(text, params.patterns)) return undefined;
-  return {
-    role,
-    text: snippet(text, params.patterns),
-    ...(timestamp ? { timestamp } : {}),
-  };
+function strictMatchCompiled(
+  line: string,
+  params: CompiledStrictMatchParams,
+): SessionSearchMatch | undefined {
+  let result: SessionSearchMatch | undefined;
+  forEachSearchableMessage(line, params.targetUser, params.targetAgent, (role, text, timestamp) => {
+    if (result !== undefined || !matchesAll(text, params.patterns)) return;
+    result = {
+      role,
+      text: snippet(text, params.patterns),
+      ...(timestamp ? { timestamp } : {}),
+    };
+  });
+  return result;
 }
 
 export function strictMatch(
@@ -654,7 +687,9 @@ export async function sessionSearch(
     }
 
     const matches = scan.matches;
-    if (validated.patterns.length > 0 && matches.length === 0) continue;
+    if (validated.patterns.length > 0 && scan.matchedPatternCount < validated.patterns.length) {
+      continue;
+    }
 
     const location = scan.cwd ? deriveRepoLocation(scan.cwd) : null;
     hits.push({
