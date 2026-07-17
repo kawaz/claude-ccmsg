@@ -10,6 +10,7 @@ import {
   VERSION,
   resolvePaths,
   type ArchiveEvent,
+  type ErrorResponse,
   type Identity,
   type KindEvent,
   type LeaveEvent,
@@ -21,8 +22,11 @@ import {
   type Request,
   type RoomKind,
   type SessionIdentity,
+  type SessionLaunchResponse,
+  type SessionSearchResponse,
   type StorageEvent,
   type TitleEvent,
+  type TranslateResponse,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
@@ -769,20 +773,46 @@ const IDENTITY_OPS = new Set([
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
-/** Connections whose async reply is still pending. The wire contract has no
- * request ids: every client matches replies by arrival order, so session_launch
- * and session_search must hold back every later reply on the same connection.
- * While a gate is set, incoming requests re-enter handleRequest after the reply
- * is written; `.then` callbacks on one promise run in registration order, so
- * multiple queued lines stay FIFO too. */
-const replyGates = new WeakMap<Conn, Promise<void>>();
+/** Slow ops (translate / session_launch / session_search) use a 2-phase reply
+ * (see RequestAcceptedResponse in the protocol): the direct reply is an
+ * immediate ack on the arrival-order contract, and the outcome is pushed later
+ * as an `ev:"*_result"` stream event correlated by the client's request_id.
+ * This helper validates the id, sends the ack, and returns a completion
+ * callback that pushes the result event — or silently drops it when the
+ * connection is already gone (the daemon keeps no per-request state, so a
+ * disconnect leaves nothing to clean up beyond the op's own promise chain,
+ * which settles into this no-op). Events are pushed only to the requesting
+ * conn, not to subscribers. */
+/** Final outcome payload of a 2-phase op — exactly what the matching
+ * `ev:"*_result"` event carries beside its ev/request_id envelope. */
+type TwoPhaseResult =
+  | SessionLaunchResponse
+  | SessionSearchResponse
+  | TranslateResponse
+  | ErrorResponse;
+
+function acceptTwoPhase(
+  daemon: Daemon,
+  conn: Conn,
+  op: string,
+  ev: string,
+  requestId: unknown,
+): ((result: TwoPhaseResult) => void) | null {
+  if (typeof requestId !== "string" || requestId === "") {
+    sendErr(conn, ErrorCode.invalid_args, `${op} requires a non-empty string request_id`);
+    return null;
+  }
+  send(conn, { ok: true, accepted: true, request_id: requestId });
+  return (result) => {
+    // A conn that disconnected while the op ran is no longer in
+    // daemon.connections; its transport write would be a silent no-op anyway
+    // (see send()), but skipping explicitly documents the discard contract.
+    if (!daemon.connections.has(conn)) return;
+    send(conn, { ev, request_id: requestId, ...result });
+  };
+}
 
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
-  const gate = replyGates.get(conn);
-  if (gate) {
-    void gate.then(() => handleRequest(daemon, conn, line));
-    return;
-  }
   let req: Request;
   try {
     req = JSON.parse(line) as Request;
@@ -1506,23 +1536,23 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, validation.code, validation.msg);
         return;
       }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_launch",
+        "session_launch_result",
+        req.request_id,
+      );
+      if (!complete) return;
       // The validation success branch proves launcher exists: an absent config
       // returns launcher_not_configured before process execution is reachable.
-      // Gate this connection until the reply is written (see replyGates):
-      // clients match replies by arrival order, so no later op's reply may
-      // overtake this deferred one on the same connection.
-      const gate = executeSessionLaunch(validation, launcher!.timeout_seconds)
-        .then(
-          (result) => send(conn, result),
-          (e) => {
-            daemon.log.error(`op 'session_launch' failed: ${String(e)}`);
-            sendErr(conn, "internal", String(e));
-          },
-        )
-        .finally(() => {
-          if (replyGates.get(conn) === gate) replyGates.delete(conn);
-        });
-      replyGates.set(conn, gate);
+      void executeSessionLaunch(validation, launcher!.timeout_seconds).then(
+        (result) => complete(result),
+        (e) => {
+          daemon.log.error(`op 'session_launch' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
       return;
     }
 
@@ -1531,24 +1561,26 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'session_search' requires user role");
         return;
       }
-      // The bounded filesystem scan is read-only but async at the wire boundary.
-      // Install the same FIFO gate as session_launch so a later reply cannot
-      // overtake it on clients that pair requests and replies by arrival order.
-      const gate = sessionSearch(req, daemon.log)
-        .then(
-          (result) => {
-            if (!result.ok) sendErr(conn, result.code, result.msg);
-            else send(conn, result.data);
-          },
-          (e) => {
-            daemon.log.error(`op 'session_search' failed: ${String(e)}`);
-            sendErr(conn, "internal", String(e));
-          },
-        )
-        .finally(() => {
-          if (replyGates.get(conn) === gate) replyGates.delete(conn);
-        });
-      replyGates.set(conn, gate);
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_search",
+        "session_search_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      // The bounded filesystem scan is read-only but slow enough that its
+      // outcome travels on the result event rather than a deferred reply.
+      void sessionSearch(req, daemon.log).then(
+        (result) => {
+          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
+          else complete(result.data);
+        },
+        (e) => {
+          daemon.log.error(`op 'session_search' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
       return;
     }
 
@@ -1640,25 +1672,30 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.invalid_args, "translate requires a string[] texts");
         return;
       }
-      // Translation.framework and helper process I/O are async. Keep this
-      // connection FIFO-gated so a later response cannot overtake this one on
-      // clients that pair requests and replies by arrival order.
-      const gate = daemon.translator
-        .translate(req.texts)
-        .then(
-          (result) => {
-            if (result.ok) send(conn, { ok: true, results: result.results });
-            else sendErr(conn, result.code, result.msg);
-          },
-          (error) => {
-            daemon.log.error(`op 'translate' failed: ${String(error)}`);
-            sendErr(conn, ErrorCode.translate_helper_failed, String(error));
-          },
-        )
-        .finally(() => {
-          if (replyGates.get(conn) === gate) replyGates.delete(conn);
-        });
-      replyGates.set(conn, gate);
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "translate",
+        "translate_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      // Translation.framework and helper process I/O are async; the outcome
+      // (including capability failures like translate_unavailable) travels on
+      // the result event rather than a deferred reply.
+      void daemon.translator.translate(req.texts).then(
+        (result) => {
+          if (result.ok) complete({ ok: true, results: result.results });
+          else complete({ ok: false, error: { code: result.code, msg: result.msg } });
+        },
+        (error) => {
+          daemon.log.error(`op 'translate' failed: ${String(error)}`);
+          complete({
+            ok: false,
+            error: { code: ErrorCode.translate_helper_failed, msg: String(error) },
+          });
+        },
+      );
       return;
     }
 

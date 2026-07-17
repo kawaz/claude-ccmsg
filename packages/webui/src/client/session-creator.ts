@@ -51,14 +51,14 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
   return form.cwd.trim() !== "";
 }
 
-/** Builds the wire `session_launch` request body (op excluded — ws.ts's
- * `sessionLaunch` adds it, same convention as SessionSearchPanel's
- * buildSessionSearchRequest). Returns null when the form isn't launchable yet
- * (mirrors sessionCreatorFormValid) so callers can't accidentally fire a
- * request with an empty cwd. */
+/** Builds the wire `session_launch` request body (op and the 2-phase
+ * request_id excluded — ws.ts's `sessionLaunch` adds both, same convention as
+ * SessionSearchPanel's buildSessionSearchRequest). Returns null when the form
+ * isn't launchable yet (mirrors sessionCreatorFormValid) so callers can't
+ * accidentally fire a request with an empty cwd. */
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
-): Omit<SessionLaunchRequest, "op"> | null {
+): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
   if (!sessionCreatorFormValid(form)) return null;
   return { cwd: form.cwd.trim(), model: form.model, effort: form.effort, prompt: form.prompt };
 }

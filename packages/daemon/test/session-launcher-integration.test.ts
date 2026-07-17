@@ -76,10 +76,12 @@ describe("session launcher wire ops", () => {
     T,
   );
 
-  // The wire op awaits the configured command and returns its real streams and
-  // non-zero exit status as one session_launch response.
+  // 2-phase reply contract: the direct reply is an immediate ack echoing the
+  // client's request_id, and the executed command's real streams / non-zero
+  // exit status arrive later as an ev:"session_launch_result" event carrying
+  // the same request_id — never as a positional reply.
   test(
-    "user role receives the executed session_launch result",
+    "user role receives an immediate ack, then the executed result event",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       const ctx = await startConfiguredDaemon(
@@ -90,21 +92,20 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const response = await client.request<{
-          ok: true;
-          stdout: string;
-          stderr: string;
-          exit_code: number | null;
-          timed_out: boolean;
-        }>({
+        const ack = await client.request<{ ok: true; accepted: true; request_id: string }>({
           op: "session_launch",
+          request_id: "launch-1",
           cwd: root,
           model: "wire-model",
           effort: "wire-effort",
           prompt: "wire-prompt",
         });
+        expect(ack).toEqual({ ok: true, accepted: true, request_id: "launch-1" });
 
-        expect(response).toEqual({
+        const event = await client.readEvent<Record<string, unknown>>();
+        expect(event).toEqual({
+          ev: "session_launch_result",
+          request_id: "launch-1",
           ok: true,
           stdout: "model=wire-model;effort=wire-effort;prompt=wire-prompt",
           stderr: `cwd=${fs.realpathSync(root)}`,
@@ -119,25 +120,53 @@ describe("session launcher wire ops", () => {
     T,
   );
 
-  // The wire protocol has no request ids: every client (webui ws.ts, cli
-  // client.ts, TestClient here) pairs replies to requests by arrival order.
-  // session_launch is the only deferred reply in the daemon, so while one is
-  // in flight the SAME connection's later requests must not have their replies
-  // overtake it — otherwise the client would hand the ping reply to the
-  // session_launch caller and vice versa. Send launch + ping back-to-back and
-  // assert the replies come back in request order.
+  // A missing/empty request_id is a synchronous validation error: 2-phase
+  // correlation is impossible without it, so the op is refused up front and
+  // no command is executed (no result event will ever arrive).
   test(
-    "a reply to a later op never overtakes an in-flight session_launch reply",
+    "session_launch without a request_id is rejected with invalid_args",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
-      // The command is slow enough (200ms) that the ping would easily win a
-      // race if the daemon didn't gate the connection.
+      const ctx = await startConfiguredDaemon(root);
+      try {
+        const client = await connect(ctx.sock);
+        await client.hello({ role: "user" });
+        const response = await client.request<{ ok: false; error: { code: string } }>({
+          op: "session_launch",
+          cwd: root,
+          model: "m",
+          effort: "e",
+          prompt: "p",
+        });
+        expect(response.ok).toBe(false);
+        expect(response.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  // THE regression this 2-phase design exists for (kawaz r26 mid=108): a slow
+  // launch used to defer its positional reply and hold back every later reply
+  // on the same connection (the webui's single WS connection stalled all
+  // panes). Now the connection's positional stream must carry the launch ack
+  // and then the ping reply IMMEDIATELY — i.e. before the slow command
+  // finishes — and the launch outcome arrives last as the correlated event.
+  test(
+    "a later op's reply arrives before a slow session_launch's result event",
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
+      // The command is slow enough (200ms) that the ping reply arriving before
+      // the result event proves the connection was not gated on the launch.
       const ctx = await startConfiguredDaemon(root, "sleep 0.2; printf slow-done");
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
         client.write({
           op: "session_launch",
+          request_id: "slow-launch",
           cwd: root,
           model: "m",
           effort: "e",
@@ -147,8 +176,16 @@ describe("session launcher wire ops", () => {
 
         const first = JSON.parse((await client.readLine())!) as Record<string, unknown>;
         const second = JSON.parse((await client.readLine())!) as Record<string, unknown>;
-        expect(first).toMatchObject({ ok: true, stdout: "slow-done", exit_code: 0 });
+        const third = JSON.parse((await client.readLine())!) as Record<string, unknown>;
+        expect(first).toEqual({ ok: true, accepted: true, request_id: "slow-launch" });
         expect(second).toMatchObject({ ok: true, pong: true });
+        expect(third).toMatchObject({
+          ev: "session_launch_result",
+          request_id: "slow-launch",
+          ok: true,
+          stdout: "slow-done",
+          exit_code: 0,
+        });
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });

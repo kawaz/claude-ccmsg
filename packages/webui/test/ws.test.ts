@@ -751,7 +751,10 @@ describe("createWsClient agents/ping (U1)", () => {
     }
   });
 
-  test("translate sends the complete texts batch and preserves ordered item results", async () => {
+  // 2-phase op: the wire request carries a client-generated request_id, the
+  // positional reply is only the ack, and the Promise settles from the
+  // correlated ev:"translate_result" push — order/per-item failures preserved.
+  test("translate sends the texts batch with a request_id and resolves from the result event", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -762,12 +765,20 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["English.日本語。", "Second."]);
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    expect(sent).toEqual({
       op: "translate",
+      request_id: sent.request_id,
       texts: ["English.日本語。", "Second."],
     });
+    expect(sent.request_id).not.toBe("");
+    // ack (positional reply) — must NOT settle the Promise yet.
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
+    // correlated result event settles it.
     ws1.triggerMessage(
       JSON.stringify({
+        ev: "translate_result",
+        request_id: sent.request_id,
         ok: true,
         results: [
           { ok: true, text: "英語。日本語。" },
@@ -786,10 +797,170 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // DR-0021 Phase 2: sessionSearch's wire shape — params (excluding op) pass
-  // through untouched, op:"session_search" is added by the wrapper (same
-  // convention as fsList/transcriptRead's own option-object callers).
-  test("sessionSearch sends {op:'session_search', ...params} and resolves hits", async () => {
+  // THE regression the 2-phase design fixes (kawaz r26 mid=108): while a slow
+  // translate is in flight, a later op's positional reply must pair with that
+  // later op — the translate ack already consumed translate's positional slot,
+  // so nothing is held back and nothing is mis-paired.
+  test("a later op's reply resolves while a translate result is still outstanding", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const slow = handle.translate(["slow text"]);
+    const quick = handle.ping();
+    const sentTranslate = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    // ack for translate, then ping's real reply — the daemon is no longer
+    // gating the connection on the running translation.
+    ws1.triggerMessage(
+      JSON.stringify({ ok: true, accepted: true, request_id: sentTranslate.request_id }),
+    );
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        pong: true,
+        version: "0",
+        uptime: 0,
+        pid: 1,
+        rooms: 0,
+        clients: 1,
+        exe: "",
+        script: "",
+        http: [],
+        httpAllow: [],
+      }),
+    );
+
+    const pingRes = await quick;
+    expect(pingRes).toMatchObject({ ok: true, pong: true });
+
+    // translate's Promise is still unsettled; the late result event resolves it.
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "translate_result",
+        request_id: sentTranslate.request_id,
+        ok: true,
+        results: [{ ok: true, text: "遅い" }],
+      }),
+    );
+    const slowRes = await slow;
+    expect(slowRes).toEqual({ ok: true, results: [{ ok: true, text: "遅い" }] });
+  });
+
+  // Two concurrent translates: result events may arrive in ANY order (the
+  // daemon pushes each as its helper batch finishes) and must pair strictly by
+  // request_id, not arrival order.
+  test("concurrent translates pair result events by request_id, not arrival order", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const first = handle.translate(["first"]);
+    const second = handle.translate(["second"]);
+    const rid1 = (JSON.parse(ws1.sent[0] ?? "") as { request_id: string }).request_id;
+    const rid2 = (JSON.parse(ws1.sent[1] ?? "") as { request_id: string }).request_id;
+    expect(rid1).not.toBe(rid2);
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid1 }));
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid2 }));
+    // second finishes first — cross order on purpose.
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "translate_result",
+        request_id: rid2,
+        ok: true,
+        results: [{ ok: true, text: "二番" }],
+      }),
+    );
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "translate_result",
+        request_id: rid1,
+        ok: true,
+        results: [{ ok: true, text: "一番" }],
+      }),
+    );
+
+    expect(await first).toEqual({ ok: true, results: [{ ok: true, text: "一番" }] });
+    expect(await second).toEqual({ ok: true, results: [{ ok: true, text: "二番" }] });
+  });
+
+  // Disconnect while a result event is outstanding: the ack already consumed
+  // the positional slot, so only the `inflight` registry knows about the op —
+  // flushPending must settle it with connection_closed instead of leaving the
+  // Promise (and a Map entry) behind forever.
+  test("close settles an acked-but-unresolved translate with connection_closed", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.translate(["never finishes"]);
+    const rid = (JSON.parse(ws1.sent[0] ?? "") as { request_id: string }).request_id;
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid }));
+    ws1.triggerClose();
+
+    const res = await req;
+    expect(res).toEqual({
+      ok: false,
+      error: { code: "connection_closed", msg: "ws connection closed" },
+    });
+  });
+
+  // Synchronous validation failure (e.g. invalid_args): the positional reply
+  // IS the error, no result event will ever come — the Promise must settle
+  // from that reply and the inflight entry must not linger.
+  test("a validation-error positional reply settles a 2-phase op directly", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.translate(["bad"]);
+    ws1.triggerMessage(JSON.stringify({ ok: false, error: { code: "invalid_args", msg: "nope" } }));
+    expect(await req).toEqual({ ok: false, error: { code: "invalid_args", msg: "nope" } });
+
+    // The lane is clean afterwards: a following ordinary op pairs correctly.
+    const ping = handle.ping();
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        pong: true,
+        version: "0",
+        uptime: 0,
+        pid: 1,
+        rooms: 0,
+        clients: 1,
+        exe: "",
+        script: "",
+        http: [],
+        httpAllow: [],
+      }),
+    );
+    expect(await ping).toMatchObject({ ok: true, pong: true });
+  });
+
+  // DR-0021 Phase 2: sessionSearch's wire shape — params (excluding op and
+  // the 2-phase request_id, both added by the wrapper) pass through
+  // untouched (same convention as fsList/transcriptRead's option-object
+  // callers), and the Promise resolves from the correlated result event.
+  test("sessionSearch sends {op:'session_search', ...params} and resolves hits from the result event", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -805,16 +976,21 @@ describe("createWsClient agents/ping (U1)", () => {
       regex: true,
       mtime_within: "2h",
     });
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    expect(sent).toEqual({
       op: "session_search",
+      request_id: sent.request_id,
       query: "foo\nbar",
       case_sensitive: true,
       regex: true,
       mtime_within: "2h",
     });
 
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
     ws1.triggerMessage(
       JSON.stringify({
+        ev: "session_search_result",
+        request_id: sent.request_id,
         ok: true,
         hits: [
           {
@@ -918,9 +1094,22 @@ describe("createWsClient agents/ping (U1)", () => {
       }),
     );
     await tick();
-    // empty-batch host translation capability probe
-    expect(JSON.parse(ws1.sent[6] ?? "{}")).toEqual({ op: "translate", texts: [] });
-    ws1.triggerMessage(JSON.stringify({ ok: true, results: [] }));
+    // empty-batch host translation capability probe — 2-phase like every
+    // translate: ack on the positional lane, outcome on the result event.
+    const probe = JSON.parse(ws1.sent[6] ?? "{}") as Record<string, unknown> & {
+      request_id: string;
+    };
+    expect(probe).toEqual({ op: "translate", request_id: probe.request_id, texts: [] });
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: probe.request_id }));
+    await tick();
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "translate_result",
+        request_id: probe.request_id,
+        ok: true,
+        results: [],
+      }),
+    );
     await tick();
 
     const agentsAction = actions.find((a) => a.type === "agents/loaded");

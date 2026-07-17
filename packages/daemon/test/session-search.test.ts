@@ -69,8 +69,14 @@ function ccmsg(from: string, msg: string, operation = "enqueue") {
   };
 }
 
+// request_id is the 2-phase wire correlation id; sessionSearch (the scan under
+// test) never reads it — only server.ts's ack/result-event envelope does.
 async function search(config: string, req: Partial<SessionSearchRequest>) {
-  const result = await sessionSearch({ op: "session_search", ...req }, log, [config]);
+  const result = await sessionSearch(
+    { op: "session_search", request_id: "test-request", ...req },
+    log,
+    [config],
+  );
   if (!result.ok) throw new Error(`${result.code}: ${result.msg}`);
   return result.data;
 }
@@ -287,9 +293,11 @@ describe("session_search three-stage filtering", () => {
   // so callers can distinguish bad input from a valid no-hit search.
   test("invalid regex returns invalid_args", async () => {
     const config = configDir();
-    const result = await sessionSearch({ op: "session_search", query: "(", regex: true }, log, [
-      config,
-    ]);
+    const result = await sessionSearch(
+      { op: "session_search", request_id: "test-request", query: "(", regex: true },
+      log,
+      [config],
+    );
     expect(result).toMatchObject({ ok: false, code: "invalid_args" });
   });
 
@@ -613,9 +621,11 @@ describe("session_search result metadata and limits", () => {
     writeSession(detected, sid(1), [user("inside")]);
     writeSession(outside, sid(2), [user("outside")]);
 
-    const result = await sessionSearch({ op: "session_search", config_dirs: [outside] }, log, [
-      detected,
-    ]);
+    const result = await sessionSearch(
+      { op: "session_search", request_id: "test-request", config_dirs: [outside] },
+      log,
+      [detected],
+    );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.hits).toEqual([]);
   });

@@ -21,6 +21,9 @@ function config(root: string, shell: "bash" | "zsh" = "bash"): SessionLauncherCo
 function request(cwd: string, prompt = "do the work"): SessionLaunchRequest {
   return {
     op: "session_launch",
+    // Correlation id for the 2-phase wire exchange; validate/execute (the
+    // units under test here) never read it, only server.ts's ack/event do.
+    request_id: "test-request",
     cwd,
     model: "opaque-model",
     effort: "opaque-effort",

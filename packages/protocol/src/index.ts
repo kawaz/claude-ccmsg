@@ -338,6 +338,34 @@ export interface SessionStatusStreamEvent extends SessionStatusSnapshot {
   sid: string;
 }
 
+/** Completion of a 2-phase `translate` request (see TranslateRequest's doc
+ * comment for why the reply is split). Pushed to the requesting connection
+ * only, correlated by the client-generated `request_id` from the request.
+ * Carries the same success/error payload a deferred reply would have carried —
+ * including per-op failures like translate_unavailable, which after the
+ * immediate ack can only travel on this event. NOTE for client authors:
+ * result events carry `ok`, so a frame must be classified as push-vs-reply by
+ * the presence of `ev`, never by `ok` alone. */
+export type TranslateResultEvent = {
+  ev: "translate_result";
+  request_id: string;
+} & (TranslateResponse | ErrorResponse);
+
+/** Completion of a 2-phase `session_launch` request (see SessionLaunchRequest's
+ * doc comment). Same correlation/classification rules as TranslateResultEvent. */
+export type SessionLaunchResultEvent = {
+  ev: "session_launch_result";
+  request_id: string;
+} & (SessionLaunchResponse | ErrorResponse);
+
+/** Completion of a 2-phase `session_search` request (see SessionSearchRequest's
+ * request_id doc comment). Same correlation/classification rules as
+ * TranslateResultEvent. */
+export type SessionSearchResultEvent = {
+  ev: "session_search_result";
+  request_id: string;
+} & (SessionSearchResponse | ErrorResponse);
+
 export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
@@ -345,7 +373,10 @@ export type StreamEvent =
   | AgentsStreamEvent
   | PeersStreamEvent
   | TranscriptStreamEvent
-  | SessionStatusStreamEvent;
+  | SessionStatusStreamEvent
+  | TranslateResultEvent
+  | SessionLaunchResultEvent
+  | SessionSearchResultEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -537,10 +568,23 @@ export interface DirTreeEntry {
   children?: DirTreeEntry[];
 }
 
-/** Session launch request (DR-0018 §3.2, user role only). Phase 1 validates
- * these opaque values and builds env/argv; command execution lands in Phase 2. */
+/** Session launch request (DR-0018 §3.2, user role only). The daemon validates
+ * the opaque values, builds env/argv, and executes the configured command.
+ *
+ * 2-phase reply: launching awaits the whole run (up to timeout_seconds + kill
+ * escalation, potentially ~10s), and the wire protocol has no request ids for
+ * ordinary ops — clients pair replies by arrival order, so a deferred reply
+ * used to hold back every later reply on the same connection (the webui's
+ * single WS connection stalled all panes behind one slow op). Instead the
+ * daemon acks immediately with RequestAcceptedResponse (on the arrival-order
+ * contract) and pushes the outcome as an ev:"session_launch_result" event
+ * correlated by `request_id` (events live outside the arrival-order contract,
+ * like transcript/session_status pushes). */
 export interface SessionLaunchRequest {
   op: "session_launch";
+  /** Client-generated correlation id echoed in the ack and the result event.
+   * Uniqueness only needs to hold among this connection's in-flight requests. */
+  request_id: string;
   cwd: string;
   model: string;
   effort: string;
@@ -632,6 +676,11 @@ export interface TranscriptReadRequest {
  * config dirs (DR-0021 Phase 1, user role only). */
 export interface SessionSearchRequest {
   op: "session_search";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (2-phase reply, same rationale as TranslateRequest: the bounded
+   * filesystem scan takes long enough that a deferred arrival-order reply
+   * would stall every later reply on the same connection). */
+  request_id: string;
   /** newline-separated patterns; blank lines are ignored and all must match one message */
   query?: string;
   /** default false; preserves pattern/text case when matching */
@@ -692,9 +741,20 @@ export interface PingRequest {
 
 /** Local en→ja translation through the daemon host (DR-0023, user role only).
  * An empty batch is a capability probe: it verifies the helper can be found or
- * built without starting a TranslationSession. */
+ * built without starting a TranslationSession.
+ *
+ * 2-phase reply (same rationale as SessionLaunchRequest): translation takes
+ * hundreds of ms to seconds per batch, and a deferred arrival-order reply
+ * would hold back every later reply on the same connection — with the webui's
+ * single WS connection, opening several thinking tabs stalled every other
+ * pane behind the running translations. The daemon acks immediately with
+ * RequestAcceptedResponse and pushes the outcome as an ev:"translate_result"
+ * event correlated by `request_id`. */
 export interface TranslateRequest {
   op: "translate";
+  /** Client-generated correlation id echoed in the ack and the result event.
+   * Uniqueness only needs to hold among this connection's in-flight requests. */
+  request_id: string;
   texts: string[];
 }
 
@@ -868,14 +928,27 @@ export interface DirTreeResponse {
   ok: true;
   entries: DirTreeEntry[];
 }
-/** Phase 1 returns the same stable shape with an explicit mock stderr; Phase 2
- * fills process output and uses null exit_code for signal termination. */
+/** Payload of a completed session launch, delivered inside
+ * SessionLaunchResultEvent (2-phase reply — the direct reply to the request
+ * is RequestAcceptedResponse). Signal termination uses null exit_code. */
 export interface SessionLaunchResponse {
   ok: true;
   stdout: string;
   stderr: string;
   exit_code: number | null;
   timed_out: boolean;
+}
+/** Immediate ack for 2-phase ops (translate / session_launch): the request
+ * passed synchronous validation and its outcome will arrive as the matching
+ * `*_result` stream event carrying the echoed `request_id`. This ack is the
+ * op's reply on the arrival-order contract, so later replies on the same
+ * connection are never held back by the op's slow work. Synchronous
+ * validation failures (role, invalid_args, launcher_not_configured, cwd
+ * containment) still reply ErrorResponse directly instead of this ack. */
+export interface RequestAcceptedResponse {
+  ok: true;
+  accepted: true;
+  request_id: string;
 }
 /** session_launcher_config reply — see its request doc comment above. */
 export interface SessionLauncherConfigResponse {
@@ -1072,13 +1145,12 @@ export type Response =
   | PeersResponse
   | NotifyResponse
   | DirTreeResponse
-  | SessionLaunchResponse
+  | RequestAcceptedResponse
   | SessionLauncherConfigResponse
   | FsListResponse
   | FsReadResponse
   | FsWriteResponse
   | TranscriptReadResponse
-  | SessionSearchResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
   | TranscriptUnsubscribeResponse
@@ -1086,7 +1158,6 @@ export type Response =
   | SessionStatusSubscribeResponse
   | SessionStatusUnsubscribeResponse
   | PingResponse
-  | TranslateResponse
   | ShutdownResponse
   | LeaveResponse
   | InviteResponse;

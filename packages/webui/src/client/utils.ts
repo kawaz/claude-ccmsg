@@ -822,8 +822,8 @@ export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
  * like `resolveInboxFilename`. */
 export function buildSessionSearchRequest(
   form: SessionSearchForm,
-): Omit<SessionSearchRequest, "op"> {
-  const req: Omit<SessionSearchRequest, "op"> = {};
+): Omit<SessionSearchRequest, "op" | "request_id"> {
+  const req: Omit<SessionSearchRequest, "op" | "request_id"> = {};
   const query = form.query.trim();
   if (query) req.query = query;
   if (form.caseSensitive) req.case_sensitive = true;

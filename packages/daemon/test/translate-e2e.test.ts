@@ -16,19 +16,28 @@ afterEach(async () => {
 // persistent Swift child process, JSONL correlation, and mixed-text translation.
 const helperExists = fs.existsSync(defaultTranslateHelperPaths().binary);
 const e2eTest = helperExists ? test : test.skip;
-e2eTest("daemon translate returns a real en→ja mixed-text result", async () => {
-  daemon = await startTestDaemon();
-  const client = await connect(daemon.sock);
-  try {
-    expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
-    const input = "The build completed successfully.ここから日本語です。";
-    const response = await client.request({ op: "translate", texts: [input] });
-    expect(response.ok).toBe(true);
-    expect(response.results).toHaveLength(1);
-    expect(response.results[0].ok).toBe(true);
-    expect(response.results[0].text).toContain("ここから日本語です。");
-    expect(response.results[0].text).not.toContain("The build completed successfully.");
-  } finally {
-    client.close();
-  }
-});
+e2eTest(
+  "daemon translate acks, then the result event carries a real en→ja mixed-text result",
+  async () => {
+    daemon = await startTestDaemon();
+    const client = await connect(daemon.sock);
+    try {
+      expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
+      const input = "The build completed successfully.ここから日本語です。";
+      // 2-phase: positional reply is the ack, the translation itself arrives on
+      // the correlated ev:"translate_result" event.
+      const ack = await client.request({ op: "translate", request_id: "e2e-1", texts: [input] });
+      expect(ack).toEqual({ ok: true, accepted: true, request_id: "e2e-1" });
+      const event = await client.readEvent();
+      expect(event.ev).toBe("translate_result");
+      expect(event.request_id).toBe("e2e-1");
+      expect(event.ok).toBe(true);
+      expect(event.results).toHaveLength(1);
+      expect(event.results[0].ok).toBe(true);
+      expect(event.results[0].text).toContain("ここから日本語です。");
+      expect(event.results[0].text).not.toContain("The build completed successfully.");
+    } finally {
+      client.close();
+    }
+  },
+);
