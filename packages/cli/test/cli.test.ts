@@ -39,6 +39,18 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   };
 }
 
+const MINIMAL_HELP = `Commands:
+  reply <rNmN> <msg>                        返信用
+  post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
+  peers [cwd(partial)]                      セッション一覧取得
+  create-room --members <sid[,sid...]> <title>  ルーム作成
+  subscribe                                 Monitor常駐用
+  notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+
+Options:
+  --help-full
+`;
+
 describe("ccmsg CLI end-to-end", () => {
   test("auto-spawns the daemon, does a round trip, and stops it", async () => {
     const { env, cleanup } = makeEnv();
@@ -93,14 +105,48 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
-  // help は独立させる (write ops の identity 必須化で --as-user が消えたため
-  // 旧テストが「no args + --as-user」の 2 検証を束ねていたのを分割)。
-  test("no args prints help", async () => {
+  // 何を保証するか (default help のレール): 引数なしと通常の --help は
+  // 指定された 6 コマンド + --help-full だけを byte-for-byte 表示する。隠した
+  // コマンド・オプション・環境変数が混ざれば完全一致で検出する。
+  test("default help shows only the minimal command rail", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const help = await runCli([], env);
+      const noArgs = await runCli([], env);
+      const help = await runCli(["--help"], env);
+      const commandHelp = await runCli(["post", "--help"], env);
+      expect(noArgs.out).toBe(MINIMAL_HELP);
+      expect(help.out).toBe(MINIMAL_HELP);
+      expect(commandHelp.out).toBe(MINIMAL_HELP);
+      expect(noArgs.err).toBe("");
+      expect(noArgs.code).toBe(0);
+    } finally {
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (--help-full の退避先): default help から隠した全コマンド、
+  // command/global options、環境変数は full help で引き続き発見できる。機能を
+  // 消さず視界だけを絞る契約を固定する。
+  test("--help-full retains the complete reference", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const help = await runCli(["--help-full"], env);
+      expect(help.code).toBe(0);
+      expect(help.err).toBe("");
       expect(help.out).toContain("Usage:");
+      expect(help.out).toContain("read <room> <mids>");
+      expect(help.out).toContain("next-room <room>");
+      expect(help.out).toContain("daemon run [--foreground]");
+      expect(help.out).toContain("Command Options:");
+      expect(help.out).toContain("Global Options:");
       expect(help.out).toContain("Environment Variables:");
+      expect(help.out).toContain("CCMSG_STATE_DIR");
+      // u1 is implicitly delivered; advertising it as a --to value invites a
+      // redundant rail departure, so even the full reference must not teach it.
+      expect(help.out).not.toContain("u1,a2");
+      expect(help.out).not.toContain("--to u1");
+      expect(help.out).not.toContain("must include u1");
+      expect(help.out).not.toContain("from + to + u1");
     } finally {
       cleanup();
     }

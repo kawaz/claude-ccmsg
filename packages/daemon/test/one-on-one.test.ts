@@ -6,6 +6,7 @@
 //   DR-0017 §2.3 reply_hint composer: exactly 3 shapes (r<N>m<M> / tl / none)
 //   DR-0017 §2.3 storage: reply_hint is a delivery-time field, NEVER persisted
 //        in the room jsonl (archive で後から none に変わる live 状態依存の値)
+//   1on1 response rail: session post rejected, u1 post allowed, normal room unaffected
 //   DR-0014 §2 next_room kind inheritance for 1on1 (broadcast test already covers its side)
 //   DR-0014 §2 kind persistence across daemon restart (KindEvent recovered as 1on1)
 //
@@ -116,40 +117,97 @@ describe("DR-0014 1on1 room creation", () => {
     T,
   );
 
-  // 何を保証するか (§2.1「agent post 制約なし」): 1on1 does NOT inherit
-  // broadcast's u1-in-to rule — a session posting to its own 1on1 room can
-  // omit `to` and also address only itself/u1 freely, since the 2 者確定
-  // structure makes any post reach both parties.
+  // 何を保証するか (1on1 の返信レール): session が自分の 1on1 room へ
+  // post する経路は常に拒否する。元 msg との対応や未応答状態は追跡せず、TL
+  // (通常の assistant transcript 出力) へ誘導することで post による返信逸脱を
+  // room kind だけで封じる。
   test(
-    "1on1 room has NO broadcast-style agent post constraint",
+    "agent post to its 1on1 room is rejected with transcript guidance",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
         const a = await session(ctx, "A");
-        const res = await u.request<{ room: string }>({
+        const created = await u.request<{ room: string }>({
           op: "create_room",
           members: ["A"],
           kind: "1on1",
         });
-        const room = res.room;
 
-        // Agent post with NO `to` succeeds (would be rejected in a broadcast room)
-        const noTo = await a.request<{ ok: true; mid: number }>({
+        const res = await a.request<{
+          ok: false;
+          error: { code: string; msg: string };
+        }>({
           op: "post",
-          room,
-          msg: "hi",
+          room: created.room,
+          msg: "this belongs in TL",
         });
-        expect(noTo.ok).toBe(true);
+        expect(res.ok).toBe(false);
+        expect(res.error).toEqual({
+          code: "reply_via_tl",
+          msg:
+            `this 1on1 room is routed "tl": respond via your normal assistant output ` +
+            `(transcript) — do not post/reply into ${created.room}`,
+        });
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 
-        // Agent post with `to: ["u1"]` also succeeds
-        const withU1 = await a.request<{ ok: true; mid: number }>({
-          op: "post",
-          room,
-          msg: "hi u1",
-          to: ["u1"],
+  // 何を保証するか (webui 経路の非対象化): 同じ 1on1 room でも u1 の post は
+  // session への新規メッセージなので許可する。role 判定を落として room kind
+  // だけで拒否すると webui の主経路を壊すため、その境界を固定する。
+  test(
+    "user post to a 1on1 room remains allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        await session(ctx, "A");
+        const created = await u.request<{ room: string }>({
+          op: "create_room",
+          members: ["A"],
+          kind: "1on1",
         });
-        expect(withU1.ok).toBe(true);
+
+        const res = await u.request<{ ok: true; mid: number }>({
+          op: "post",
+          room: created.room,
+          msg: "question from webui",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (通常 room の非回帰): session の post 自体は新規の声かけに
+  // 必要な正当経路であり、拒否対象は kind="1on1" だけ。normal room まで拒否
+  // しないことを wire 経路で固定する。
+  test(
+    "agent post to a normal room remains allowed",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await user(ctx);
+        const a = await session(ctx, "A");
+        const created = await u.request<{ room: string }>({
+          op: "create_room",
+          members: ["A"],
+        });
+
+        const res = await a.request<{ ok: true; mid: number }>({
+          op: "post",
+          room: created.room,
+          msg: "new message",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.mid).toBe(1);
       } finally {
         await stopTestDaemon(ctx);
       }

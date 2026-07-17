@@ -164,6 +164,15 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
+function sendReplyViaTlError(conn: Conn, room: Room): void {
+  sendErr(
+    conn,
+    ErrorCode.reply_via_tl,
+    `this 1on1 room is routed "tl": respond via your normal assistant output ` +
+      `(transcript) — do not post/reply into ${room.id}`,
+  );
+}
+
 /** id the connection acts as inside `room`, for delivery-time bookkeeping like
  * reply_hint. Returns ADMIN_ID for the user role, the member id for a member
  * session, or null when the subscriber isn't a member (u1 always resolves;
@@ -870,6 +879,15 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
+      // A session's response to u1 in a 1on1 room belongs in its normal
+      // assistant transcript, which the webui SessionView already follows.
+      // Reject every session-authored 1on1 post at the room boundary rather
+      // than trying to infer which prior msg it answers or track pending state.
+      // u1/webui posts remain the legitimate incoming-message path.
+      if (room.kind === "1on1" && conn.identity?.role === "session") {
+        sendReplyViaTlError(conn, room);
+        return;
+      }
       const to = normalizeTo(req.to);
       // DR-0013 §2.4: broadcast room では role:"session" (agent) からの post は
       // `to` に "u1" (ADMIN_ID) を含めることが必須。「u1 に届かない agent の
@@ -950,12 +968,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       // silently rerouting to a room post kawaz would then read in the wrong
       // surface.
       if (room.kind === "1on1" && target.from === ADMIN_ID) {
-        sendErr(
-          conn,
-          ErrorCode.reply_via_tl,
-          `m${req.mid} is routed "tl": respond via your normal assistant output ` +
-            `(transcript) — do not post/reply into ${req.room}`,
-        );
+        sendReplyViaTlError(conn, room);
         return;
       }
       // Targets = original author + everyone the original msg addressed,

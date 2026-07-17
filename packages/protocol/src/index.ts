@@ -199,8 +199,8 @@ export type StorageEvent =
  *   the subscribe stream.
  * - `"1on1"` = a fixed 2-party room (u1 + a single session), created by the
  *   webui's SessionView floating composer for kawaz→session priv. No
- *   auto-populate, no agent post restriction (2 参加者確定なので配信対象は
- *   必然的に絞られる), reply_via = "tl" for u1 posts (§2.5). */
+ *   auto-populate. u1 posts are delivered with reply_hint = "tl"; session posts
+ *   are rejected so responses stay on the assistant transcript (§2.5). */
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
@@ -363,6 +363,9 @@ export interface HelloRequest {
   branch?: string;
 }
 
+/** Post a new message. Session-authored posts to a 1on1 room are rejected
+ * with `reply_via_tl`; that room's response path is the assistant transcript.
+ * User-authored webui posts remain allowed. */
 export interface PostRequest {
   op: "post";
   room: string;
@@ -1069,11 +1072,9 @@ export const ErrorCode = {
   // reply (DR-0017 §2.2): replying to your own msg is meaningless — the
   // constructed target list would collapse to just u1 + yourself.
   self_reply: "self_reply",
-  // reply (DR-0017 §2.5): the target msg's reply route is the assistant
-  // transcript ("tl"), not the room — the error message tells the agent to
-  // respond via normal assistant output instead. Rejecting (rather than
-  // silently converting to a room post) corrects the wrong-channel choice at
-  // the moment it happens.
+  // 1on1 response rail (DR-0017 §2.5): the response route is the assistant
+  // transcript ("tl"), not the room. Both reply to a u1 msg and any plain post
+  // from the member session are rejected with guidance at the wire boundary.
   reply_via_tl: "reply_via_tl",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

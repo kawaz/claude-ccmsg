@@ -15,7 +15,16 @@ import {
 
 // --- arg parsing -----------------------------------------------------------
 
-const BOOL_FLAGS = new Set(["all", "exclude-self", "raw", "self", "foreground", "help", "version"]);
+const BOOL_FLAGS = new Set([
+  "all",
+  "exclude-self",
+  "raw",
+  "self",
+  "foreground",
+  "help",
+  "help-full",
+  "version",
+]);
 
 /** Write ops require a session identity; without one the CLI refuses to run
  * rather than silently posting as u1 (the User admin), which would forge
@@ -411,6 +420,20 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
 // --- help ------------------------------------------------------------------
 
 function printHelp(): void {
+  process.stdout.write(`Commands:
+  reply <rNmN> <msg>                        返信用
+  post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
+  peers [cwd(partial)]                      セッション一覧取得
+  create-room --members <sid[,sid...]> <title>  ルーム作成
+  subscribe                                 Monitor常駐用
+  notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+
+Options:
+  --help-full
+`);
+}
+
+function printFullHelp(): void {
   process.stdout.write(`ccmsg v${VERSION} — central-daemon messenger for Claude Code sessions
 
 Usage:
@@ -418,9 +441,8 @@ Usage:
 
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
-  reply <rNmN> <msg>           Reply to a msg — the daemon builds the delivery
-                               targets from it (original from + to + u1); pass
-                               the reply_hint value from the received event
+  reply <rNmN> <msg>           Reply using the reply_hint value from the received
+                               event; the daemon builds the delivery targets
   create-room                  Open a room with peers (--members, --msg, --title,
                                --exclude-self to keep the caller out of the room,
                                --kind broadcast for a session-broadcast room,
@@ -444,17 +466,15 @@ Commands:
   daemon stop                  Gracefully stop the running daemon
 
 Command Options:
-  --to <ids>                   post: deliver only to these member id(s) + sender + u1,
-                               comma-separated (e.g. u1,a2); others can still read it
+  --to <ids>                   post: deliver only to these agent member id(s) + sender,
+                               comma-separated (e.g. a2,a3); User delivery stays implicit
   --members <sids>             create-room: participant sids, comma-separated
                                (do NOT pass 'u1' — the User admin is always implicit)
   --exclude-self               create-room: don't auto-add the caller session as a
                                member (observer/setup use case; default is include)
   --kind <kind>                create-room: 'normal' (default), 'broadcast', or '1on1'
-                               (DR-0013 broadcast: auto-populated session broadcast;
-                               --members ignored, agent posts must include u1 in --to.
-                               DR-0014 1on1: u1 + one session; --members must be a
-                               single sid)
+                               (broadcast: auto-populated session room, --members ignored;
+                               1on1: User + one session, --members must be a single sid)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
   --all                        rooms: include archived rooms (default: active only)
@@ -470,7 +490,8 @@ Global Options:
   --sid <sid>                  Act as this session id (for 'notify', --sid is the
                                target instead; use --as-session to set identity there)
   --as-session <sid>           Act as this session id (works for every command)
-  -h, --help                   Show this help
+  -h, --help                   Show the minimal command rail
+  --help-full                  Show this complete reference
   --version                    Print the ccmsg version and exit
 
 Notes:
@@ -520,6 +541,10 @@ async function main(): Promise<void> {
   // Parse the whole argv so options may appear before or after the command (kawaz
   // CLI convention: option position is not fixed). The first positional is the command.
   const { positionals, opts } = parseArgs(argv);
+  if (opts["help-full"] === true) {
+    printFullHelp();
+    return;
+  }
   if (opts.version === true || positionals[0] === "version") {
     process.stdout.write(`${VERSION}\n`);
     return;

@@ -38,7 +38,7 @@ kawaz が新機能を発案 (r12 mid=10 + mid=27、verbatim §7):
 - **member 制約**: `kind: "1on1"` は「u1 + 単一 session」の 2 者 room。u1 は暗黙参加、session member は 1 名だけを許容する
   - `create_room --kind 1on1 --members <sid>` で作成、members が空 or 複数だと error
   - auto-populate は行わない (broadcast と違って動的加入なし)
-- **agent post 制約はなし**: 1on1 は元々「u1 と特定 session の 2 人」なので配信対象は必然的に絞られる。to は省略でも `["u1"]` でも自由 (どちらも実質同じ配信結果)
+- **agent post 制約はなし** *(2026-07-17 supersede: kawaz r26 mid=85-90 裁定で session 発の 1on1 post は常に reply_via_tl 拒否に変更 — 1on1 の応答は TL が正経路で、room post はユーザから不可視のため。詳細は issue cli-help-diet-and-reply-rails)*: 1on1 は元々「u1 と特定 session の 2 人」なので配信対象は必然的に絞られる
 
 ### 2.2 1on1 room の auto-create (webui 側)
 
@@ -144,7 +144,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 
 - `create-room --kind 1on1 --members <sid>` サブフラグ (broadcast の `--kind broadcast` と同じ扱い)
 - `rooms` 出力で kind を表示 (1on1 は "[1on1]" バッジ等)
-- agent 側は既存の `post <room> <msg>` で足りる (1on1 に post 制約なし)
+- agent 側は既存の `post <room> <msg>` で足りる *(2026-07-17 supersede: session 発 1on1 post は reply_via_tl 拒否)*
 
 ### 4.4 webui (`packages/webui/src/client`)
 
@@ -163,7 +163,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 - **1on1 room** 節を新設:
   - 用途 (kawaz が特定 session に priv したい時、webui の SessionView 右下 ＋ ボタンから)
   - agent 側は「1on1 room で u1 から msg が来たら reply_via = "tl" に従う」= 通常の AI 応答経路で返せば webui SessionView TL に表示される
-  - post 制約なし (1on1 は 2 者確定)
+  - post 制約なし *(2026-07-17 supersede: session 発は拒否)*
 
 ## 5. Open questions
 

@@ -171,8 +171,12 @@ describe("DR-0017 reply op", () => {
           msg: "should be tl",
         });
         expect(res.ok).toBe(false);
-        expect(res.error.code).toBe("reply_via_tl");
-        expect(res.error.msg).toContain("transcript");
+        expect(res.error).toEqual({
+          code: "reply_via_tl",
+          msg:
+            `this 1on1 room is routed "tl": respond via your normal assistant output ` +
+            `(transcript) — do not post/reply into ${created.room}`,
+        });
       } finally {
         await stopTestDaemon(ctx);
       }
