@@ -3052,7 +3052,11 @@ button.session-tab {
  * スクロールしたときだけ見える。A <button> (not <div>+onClick) for free
  * keyboard/focus semantics on the "タップで Status タブへ遷移" affordance. */
 .tl-status-mini {
-  margin: -11rem 0.75rem 0;
+  /* kawaz r26 mid=96: 余白帯の上端 (-11rem) だと TL 直下に接して「TL の
+   * 続きの何か」に見えて紛らわしい — 帯の**一番下**に置く。.tl-lines の
+   * padding-bottom 12rem の後 (帯の下端直後) が flow 上の自然位置なので
+   * 負 margin は最小限 (-1rem) にして下端付近へ。 */
+  margin: -1rem 0.75rem 1rem;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
