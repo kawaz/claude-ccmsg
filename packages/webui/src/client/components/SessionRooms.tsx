@@ -132,7 +132,7 @@ function NewRoomForm({ sid }: { sid: string }) {
   if (!open) {
     return (
       <button type="button" class="new-room-btn" onClick={start}>
-        + 新規 Room
+        + new Room
       </button>
     );
   }
