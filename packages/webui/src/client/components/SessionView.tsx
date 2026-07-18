@@ -278,7 +278,7 @@ export function SessionView({ state }: { state: AppState }) {
         // DR-0021) one can never produce a snapshot. Explain which instead
         // of leaving StatusPanel's "読み込み中…" spinner up forever.
         hasStatusFeed ? (
-          <StatusPanel snapshot={sessionStatus} sid={sid} />
+          <StatusPanel snapshot={sessionStatus} sid={sid} onKill={() => ws.sessionKill(sid)} />
         ) : hasTranscript ? (
           <p id="empty-state">
             Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)

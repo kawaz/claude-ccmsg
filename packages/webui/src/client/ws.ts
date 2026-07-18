@@ -37,6 +37,7 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SessionKillResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
   SessionLauncherConfigResponse,
@@ -224,6 +225,13 @@ export interface WsHandle {
    * is the signal SessionCreator uses to show setup guidance instead of the
    * form (§2.1 "launcher 未設定時"). */
   sessionLauncherConfig(): Promise<SessionLauncherConfigResponse | ErrorResponse>;
+  /** Terminate the OS process behind a session (DR-0028, user role only —
+   * StatusPanel's danger-zone button). The daemon resolves the pid fresh and
+   * runs the two-shot SIGTERM sequence, so this is naturally slow (up to
+   * ~4s); 2-phase on the wire (ack + ev:"session_kill_result") like
+   * sessionLaunch, hidden behind one Promise. `terminated: false` in a
+   * successful response means "signals sent, termination unconfirmed". */
+  sessionKill(sessionId: string): Promise<SessionKillResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -231,6 +239,7 @@ export interface WsHandle {
  * error / connection_closed flush). */
 type TwoPhaseOutcome =
   | TranslateResponse
+  | SessionKillResponse
   | SessionLaunchResponse
   | SessionSearchResponse
   | ErrorResponse;
@@ -388,6 +397,7 @@ export function createWsClient(
         "ev" in streamEv &&
         (streamEv.ev === "translate_result" ||
           streamEv.ev === "session_launch_result" ||
+          streamEv.ev === "session_kill_result" ||
           streamEv.ev === "session_search_result")
       ) {
         const settle = inflight.get(streamEv.request_id);
@@ -637,5 +647,11 @@ export function createWsClient(
     sessionLaunch: (req) =>
       sendTwoPhase({ op: "session_launch", request_id: `q${++nextRequestId}`, ...req }),
     sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
+    sessionKill: (sessionId) =>
+      sendTwoPhase({
+        op: "session_kill",
+        request_id: `q${++nextRequestId}`,
+        session_id: sessionId,
+      }),
   };
 }

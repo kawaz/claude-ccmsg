@@ -5,8 +5,11 @@
 // needs the same live data) — this component is presentation-only, same
 // division of labor as SessionRooms being fed pre-fetched `state.rooms`.
 import type { JSX } from "preact";
+import { useState } from "preact/hooks";
 import type {
+  ErrorResponse,
   SessionBackgroundStatus,
+  SessionKillResponse,
   SessionStatusSnapshot,
   SessionTeammate,
   SessionTodo,
@@ -240,12 +243,64 @@ function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: s
   );
 }
 
+/** DR-0028 danger zone: terminate the OS process behind this session.
+ * Deliberately at the very bottom of the Status tab (kawaz: "普段触らない
+ * 場所" — a prominent placement like the Sidebar would be a mis-click
+ * hazard) and guarded by window.confirm, the same confirm convention as
+ * MemberChip's kick. The ws send itself is injected via `onKill` so this
+ * component stays presentation-only (StatusPanel's existing division of
+ * labor with SessionView). `terminated: false` on a successful reply is not
+ * an error — the daemon sent both SIGTERMs but couldn't observe the process
+ * disappear within its grace (protocol doc). */
+function KillZone({
+  sid,
+  onKill,
+}: {
+  sid: string;
+  onKill: () => Promise<SessionKillResponse | ErrorResponse>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  function handleKill(): void {
+    if (!window.confirm(`セッション ${sid} のプロセスを終了しますか?`)) return;
+    setBusy(true);
+    setResult(null);
+    void onKill()
+      .then((res) => {
+        if (res.ok) {
+          setResult(
+            res.terminated ? "プロセスの終了を確認しました" : "シグナル送信済み (終了は未確認)",
+          );
+        } else if (res.error.code === "not_found") {
+          setResult("プロセスが見つかりません (既に終了済みの可能性)");
+        } else {
+          setResult(`エラー: ${res.error.msg}`);
+        }
+      })
+      .catch((e: unknown) => setResult(`エラー: ${String(e)}`))
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <section class="status-section status-kill-zone">
+      <h3 class="status-section-title">危険ゾーン</h3>
+      <button type="button" class="status-kill-button" disabled={busy} onClick={handleKill}>
+        {busy ? "終了処理中…" : "セッションを終了"}
+      </button>
+      {result ? <p class="status-kill-result">{result}</p> : null}
+    </section>
+  );
+}
+
 export function StatusPanel({
   snapshot,
   sid,
+  onKill,
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
+  onKill: () => Promise<SessionKillResponse | ErrorResponse>;
 }) {
   if (!snapshot) {
     return (
@@ -334,6 +389,7 @@ export function StatusPanel({
         </>
       )}
       <TeamsSection teammates={snapshot.teammates ?? []} sid={sid} />
+      <KillZone key={sid} sid={sid} onKill={onKill} />
     </div>
   );
 }

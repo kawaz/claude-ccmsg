@@ -3656,6 +3656,41 @@ button.session-tab {
   color: var(--err, #c55);
 }
 
+/* --- Status tab danger zone (DR-0028 session_kill) --- */
+
+/* Visually quarantined at the very bottom of the Status tab: a --danger
+ * separator + extra top gap so it never reads as part of the operational
+ * sections above. Button follows the .chip-kick tone (danger fg, restrained
+ * chrome) but stays always-visible — hover-reveal would hide the one control
+ * this zone exists for. */
+.status-kill-zone {
+  margin-top: 2rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--danger);
+}
+
+.status-kill-button {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--danger);
+  background: none;
+  border: 1px solid var(--danger);
+  border-radius: 0.3rem;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+}
+
+.status-kill-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status-kill-result {
+  margin: 0.4rem 0 0;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
 /* --- TL bottom mini panel (DR-0020 §2.1) --- */
 
 /* kawaz r26 mid=68: sticky overlay は TL 表示エリアを狭めるので不可 —

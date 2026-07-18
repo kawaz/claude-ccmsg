@@ -461,6 +461,13 @@ export type SessionLaunchResultEvent = {
   request_id: string;
 } & (SessionLaunchResponse | ErrorResponse);
 
+/** Completion of a 2-phase `session_kill` request (see SessionKillRequest's
+ * doc comment). Same correlation/classification rules as TranslateResultEvent. */
+export type SessionKillResultEvent = {
+  ev: "session_kill_result";
+  request_id: string;
+} & (SessionKillResponse | ErrorResponse);
+
 /** Completion of a 2-phase `session_search` request (see SessionSearchRequest's
  * request_id doc comment). Same correlation/classification rules as
  * TranslateResultEvent. */
@@ -480,6 +487,7 @@ export type StreamEvent =
   | SessionStatusStreamEvent
   | TranslateResultEvent
   | SessionLaunchResultEvent
+  | SessionKillResultEvent
   | SessionSearchResultEvent;
 
 // ---------------------------------------------------------------------------
@@ -712,6 +720,34 @@ export interface SessionLaunchRequest {
    * this value either — it is passed to the same `shellArgv(shell, command)`
    * path as the config value, with the same CWD/MODEL/EFFORT/PROMPT env. */
   command?: string;
+}
+
+/** Terminate the OS process behind a Claude Code session (DR-0028, user role
+ * only — session-role agents must never be able to kill each other). The
+ * daemon resolves sid→pid FRESH at request time via `claude agents --json
+ * --all` across every detected config dir (never the agents poller cache,
+ * which can be up to 5s stale — a stale pid is a mis-kill), then verifies the
+ * pid's command line still looks like a claude process (`ps -p <pid> -o
+ * command=`, pid-reuse guard) before signalling. Kill sequence: SIGTERM →
+ * ~1s wait → SIGTERM again if still alive (the claude TUI's first SIGTERM
+ * only arms its quit-confirmation guard; the second confirms) → observe up
+ * to ~3s total. Never escalates to SIGKILL (graceful shutdown / transcript
+ * flush must not be broken by the daemon's own judgement).
+ *
+ * 2-phase reply (same arrival-order rationale as SessionLaunchRequest: the
+ * resolve + kill sequence takes up to ~4s, and a deferred positional reply
+ * would desynchronize every later reply on the connection): the direct reply
+ * is RequestAcceptedResponse and the outcome arrives as
+ * `ev:"session_kill_result"` correlated by `request_id`. */
+export interface SessionKillRequest {
+  op: "session_kill";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionLaunchRequest.request_id). */
+  request_id: string;
+  /** The Claude Code session UUID whose process to terminate. The request
+   * intentionally carries NO pid — a client-asserted pid would be a weaker
+   * basis for killing than the daemon's own fresh resolution (DR-0028). */
+  session_id: string;
 }
 
 /** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
@@ -963,6 +999,7 @@ export type Request =
   | NotifyRequest
   | DirTreeRequest
   | SessionLaunchRequest
+  | SessionKillRequest
   | SessionLauncherConfigRequest
   | FsListRequest
   | FsReadRequest
@@ -1105,6 +1142,16 @@ export interface SessionLaunchResponse {
   stderr: string;
   exit_code: number | null;
   timed_out: boolean;
+}
+/** Payload of a completed session_kill (DR-0028), delivered inside
+ * SessionKillResultEvent. `terminated: true` = the process was observed gone
+ * within the ~3s grace. `terminated: false` is NOT a failure: both SIGTERM
+ * sends succeeded but the process was still alive when the grace expired —
+ * the UI presents this as "signal sent, termination unconfirmed" and a human
+ * decides whether to kill harder (the daemon never SIGKILLs). */
+export interface SessionKillResponse {
+  ok: true;
+  terminated: boolean;
 }
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
  * passed synchronous validation and its outcome will arrive as the matching

@@ -22,6 +22,7 @@ import {
   type Request,
   type RoomKind,
   type SessionIdentity,
+  type SessionKillResponse,
   type SessionLaunchResponse,
   type SessionSearchResponse,
   type StorageEvent,
@@ -41,6 +42,7 @@ import {
   validateRepoRoot,
 } from "./fs-access.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
+import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { sessionSearch } from "./session-search.ts";
 import {
   createSessionStatusStore,
@@ -785,6 +787,7 @@ const IDENTITY_OPS = new Set([
   "notify",
   "dir_tree",
   "session_launch",
+  "session_kill",
   "session_launcher_config",
   "leave",
   "invite",
@@ -821,6 +824,7 @@ const SET_TITLE_MAX_LEN = 200;
 /** Final outcome payload of a 2-phase op — exactly what the matching
  * `ev:"*_result"` event carries beside its ev/request_id envelope. */
 type TwoPhaseResult =
+  | SessionKillResponse
   | SessionLaunchResponse
   | SessionSearchResponse
   | TranslateResponse
@@ -1607,6 +1611,52 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         (result) => complete(result),
         (e) => {
           daemon.log.error(`op 'session_launch' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
+    case "session_kill": {
+      // DR-0028: user role only — session-role agents must never be able to
+      // kill each other. Same gate wording/pattern as session_launch.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_kill' requires user role");
+        return;
+      }
+      if (typeof req.session_id !== "string" || req.session_id === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_kill requires a non-empty session_id");
+        return;
+      }
+      // 2-phase like session_launch, and for a stronger reason than latency:
+      // handleRequest is synchronous and ordinary replies pair by arrival
+      // order, so an async op (fresh `claude agents` run + up to 3s kill
+      // grace) has no way to reply "immediately" without desynchronizing
+      // every later reply on this connection (DR-0028 addendum).
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_kill",
+        "session_kill_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      void sessionKill(req.session_id, productionKillDeps).then(
+        (result) => {
+          if (!result.found) {
+            // Unresolvable sid and a pid that failed the ps verification are
+            // the same outcome for the caller: the session's process is not
+            // there (anymore) — DR-0028 maps both to not_found.
+            complete({
+              ok: false,
+              error: { code: ErrorCode.not_found, msg: `no process for session ${req.session_id}` },
+            });
+            return;
+          }
+          complete({ ok: true, terminated: result.terminated });
+        },
+        (e) => {
+          daemon.log.error(`op 'session_kill' failed: ${String(e)}`);
           complete({ ok: false, error: { code: "internal", msg: String(e) } });
         },
       );

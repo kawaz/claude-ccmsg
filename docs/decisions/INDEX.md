@@ -31,3 +31,4 @@
 | [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
 | [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) | Accepted | TL の ccmsg を daemon 一次情報で完全復元 + AI 発 post/reply の TL 表示 |
+| [DR-0028](./DR-0028-session-kill.md) | Proposed | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) |
