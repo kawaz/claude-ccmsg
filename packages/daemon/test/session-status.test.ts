@@ -7,6 +7,7 @@ import {
   createSessionStatusState,
   foldLine,
   isSessionStatusCandidate,
+  readTeammateModels,
   scanTranscript,
   snapshot,
 } from "../src/session-status.ts";
@@ -57,12 +58,20 @@ function assistantUsage(
     cacheRead: number;
     cacheCreation: number;
   },
-  opts: { model?: string; timestamp?: string; isSidechain?: boolean; usage?: unknown } = {},
+  opts: {
+    model?: string;
+    timestamp?: string;
+    isSidechain?: boolean;
+    usage?: unknown;
+    effort?: string;
+  } = {},
 ): string {
   return JSON.stringify({
     type: "assistant",
     isSidechain: opts.isSidechain ?? false,
     timestamp: opts.timestamp ?? START,
+    // effort は top-level (message 配下ではない) — CC 2.1.212+ の実 transcript 形。
+    ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
     message: {
       model: opts.model ?? "claude-fable-5",
       usage: opts.usage ?? {
@@ -269,6 +278,98 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       foldLine(
         state,
         assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { timestamp: END }),
+      ),
+    ).toBe(false);
+  });
+
+  test("top-level effort 付き assistant 行の effort を context に透過する", () => {
+    // effort は assistant 行の top-level フィールド (message 配下ではない) を
+    // そのまま context へ載せる、という透過契約を保証する (DR-0020 addendum 2026-07-18)。
+    const result = apply([
+      assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "low" }),
+    ]);
+    expect(result.context).toEqual({
+      tokens: 100,
+      model: "claude-fable-5",
+      effort: "low",
+      timestamp: START,
+    });
+  });
+
+  test("effort 無し assistant 行 (旧 CC) では context.effort を absent にする", () => {
+    // CC ≤2.1.211 実測で effort フィールドは存在しない。旧 transcript との互換
+    // 境界として、欠落時は undefined を捏造せずフィールド自体を出さない。
+    const result = apply([assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 })]);
+    expect(result.context).toEqual({
+      tokens: 100,
+      model: "claude-fable-5",
+      timestamp: START,
+    });
+    expect("effort" in (result.context ?? {})).toBe(false);
+  });
+
+  test("effort だけが変わった後続行も変更として検知し値を更新する", () => {
+    // tokens/model が同一でも effort 切替 (low→high) は表示に効くため、
+    // foldLine=true で push を発火させ最新値へ追従する。
+    const state = createSessionStatusState();
+    expect(
+      foldLine(
+        state,
+        assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "low" }),
+      ),
+    ).toBe(true);
+    expect(
+      foldLine(
+        state,
+        assistantUsage(
+          { input: 2, cacheRead: 98, cacheCreation: 0 },
+          { effort: "high", timestamp: END },
+        ),
+      ),
+    ).toBe(true);
+    expect(snapshot(state).context?.effort).toBe("high");
+  });
+
+  test("tokens 同一でも model 切替は変更として検知し最新 model が勝つ", () => {
+    // /model 切替直後は usage 合算が同値のまま model だけ変わり得る。切替を
+    // push し、context.model は常に「最後に観測した assistant 行」の値になる。
+    const state = createSessionStatusState();
+    expect(
+      foldLine(
+        state,
+        assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { model: "claude-fable-5" }),
+      ),
+    ).toBe(true);
+    expect(
+      foldLine(
+        state,
+        assistantUsage(
+          { input: 2, cacheRead: 98, cacheCreation: 0 },
+          { model: "claude-opus-4-7", timestamp: END },
+        ),
+      ),
+    ).toBe(true);
+    expect(snapshot(state).context?.model).toBe("claude-opus-4-7");
+  });
+
+  test('effort:"" は absent へ正規化し、同一行の再出現で push を再発火しない', () => {
+    // 空文字 effort を生のまま比較すると「保存形 = absent vs 比較値 = ""」が
+    // 毎行不一致になり push が無限再発火する。"" は absent と同義に潰す。
+    const state = createSessionStatusState();
+    expect(
+      foldLine(
+        state,
+        assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "" }),
+      ),
+    ).toBe(true);
+    expect("effort" in (snapshot(state).context ?? {})).toBe(false);
+    expect(
+      foldLine(
+        state,
+        assistantUsage(
+          { input: 2, cacheRead: 98, cacheCreation: 0 },
+          { effort: "", timestamp: END },
+        ),
       ),
     ).toBe(false);
   });
@@ -852,6 +953,104 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       const state = createSessionStatusState();
       scanTranscript(file, state);
       expect(snapshot(state).todos[0]?.status).toBe("completed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
+  function writeMeta(sidDir: string, file: string, value: unknown, mtimeMs?: number): void {
+    const subagentsDir = path.join(sidDir, "subagents");
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    const p = path.join(subagentsDir, file);
+    fs.writeFileSync(p, typeof value === "string" ? value : JSON.stringify(value));
+    if (mtimeMs !== undefined) fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+  }
+
+  test("readTeammateModels は in_process_teammate の name→model を引き、対象外を無視する", () => {
+    // 走査の受理・拒否輪郭: taskKind 一致 + name/model 揃いだけを採用し、
+    // taskKind 不一致 (通常 subagent) と壊れ JSON は例外なくスキップする。
+    const dir = fixtureDir();
+    try {
+      writeMeta(dir, "agent-a1-worker.meta.json", {
+        taskKind: "in_process_teammate",
+        name: "worker",
+        model: "claude-fable-5[1m]",
+      });
+      writeMeta(dir, "agent-a2-other.meta.json", {
+        taskKind: "subagent",
+        name: "not-a-teammate",
+        model: "claude-sonnet-5",
+      });
+      writeMeta(dir, "agent-a3-broken.meta.json", "{not json");
+      const models = readTeammateModels(dir);
+      expect(models.get("worker")).toBe("claude-fable-5[1m]");
+      expect(models.size).toBe(1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("同名 teammate の複数 meta は mtime 最新の model を採用する", () => {
+    // Agent tool の name は latest-wins で再利用されるため、resolveTeammate と
+    // 同じ「mtime 最新優先」で現在の spawn に対応する model を返す。
+    const dir = fixtureDir();
+    try {
+      writeMeta(
+        dir,
+        "agent-old-worker.meta.json",
+        { taskKind: "in_process_teammate", name: "worker", model: "claude-sonnet-5" },
+        1_000_000,
+      );
+      writeMeta(
+        dir,
+        "agent-new-worker.meta.json",
+        { taskKind: "in_process_teammate", name: "worker", model: "claude-fable-5" },
+        2_000_000,
+      );
+      expect(readTeammateModels(dir).get("worker")).toBe("claude-fable-5");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("subagents ディレクトリ不在では空 map を返す", () => {
+    // spawn 前 / teammate 無しセッションの snapshot でも fs エラーで落ちない境界。
+    const dir = fixtureDir();
+    try {
+      expect(readTeammateModels(dir).size).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("snapshot は meta.json のある teammate に model を付与し、無い teammate は absent のまま", () => {
+    // fold 状態には model を持たず snapshot 時 FS read で補完する方針の保証:
+    // meta が見つかった teammate だけ model が付き、見つからない teammate は
+    // フィールド自体が出ない (undefined を捏造しない)。
+    const dir = fixtureDir();
+    try {
+      writeMeta(dir, "agent-a1-worker.meta.json", {
+        taskKind: "in_process_teammate",
+        name: "worker",
+        model: "claude-fable-5[1m]",
+      });
+      const state = createSessionStatusState();
+      for (const line of [
+        toolUse("s1", "Agent", { name: "worker", subagent_type: "x", prompt: "p" }),
+        toolResult("s1", { status: "teammate_spawned", name: "worker" }),
+        toolUse("s2", "Agent", { name: "ghost", subagent_type: "x", prompt: "p" }),
+        toolResult("s2", { status: "teammate_spawned", name: "ghost" }),
+      ]) {
+        foldLine(state, line);
+      }
+      const result = snapshot(state, dir);
+      const worker = result.teammates?.find((t) => t.name === "worker");
+      const ghost = result.teammates?.find((t) => t.name === "ghost");
+      expect(worker?.model).toBe("claude-fable-5[1m]");
+      expect(ghost).toBeDefined();
+      expect("model" in (ghost ?? {})).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

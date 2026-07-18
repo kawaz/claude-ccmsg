@@ -383,6 +383,10 @@ export interface SessionContextUsage {
   tokens: number;
   /** Raw message.model value; launch-only suffixes such as [1m] are absent. */
   model: string;
+  /** Top-level `effort` of the transcript assistant row. Rows from older CC
+   * versions (observed absent at ≤2.1.211) do not carry it, so it stays
+   * optional. Latest observed value, taken from the same row as `model`. */
+  effort?: string;
   /** Timestamp of the assistant row carrying this observation. */
   timestamp: string;
 }
@@ -399,6 +403,9 @@ export interface SessionTeammate {
   last_received_at?: string;
   /** "spawned" | "active" | "idle" | "stopped" — open set, based on the latest observed event. */
   state: string;
+  /** Model from `subagents/agent-*.meta.json` (fixed at spawn, raw value
+   * including any `[1m]` suffix). Absent when no meta.json was found. */
+  model?: string;
 }
 export interface SessionStatusSnapshot {
   todos: SessionTodo[];

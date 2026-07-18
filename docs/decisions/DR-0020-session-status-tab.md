@@ -71,3 +71,18 @@ jsonl を grep 相当で絞り込み → jsonl parse → strict フィルタで 
 - kawaz r26 mid=24 (要件) / mid=25 (タブ配置の裁定)
 - DR-0009 (transcript access) — データ経路の正本
 - DR-0010 (timeline markdown) — transcript parse 層の前例
+
+## Addendum 2026-07-18: model / effort 表示 (kawaz r34 mid=8)
+
+セッション自身とチームメイトの現在 model・effort を Status タブ + TL ミニパネルに
+表示する (DR-0020 の延長、独立 DR は立てない)。
+
+- データ源: transcript jsonl の assistant 行 — `message.model` (foldContextUsage が
+  既に採用) と top-level `effort` (実測: assistant 行のみに付く。CC バージョンに
+  よっては欠落 = optional)。チームメイトは `<sidDir>/subagents/agent-*.meta.json` の
+  `model` (spawn 時固定、`[1m]` 付きの生値) を snapshot 時に読む。teammate 側の
+  effort は meta.json に無く transcript を開くコストが割に合わないため対象外。
+- 表示は「transcript 上の最新観測値」でありリアルタイム保証はない (context 表示と
+  同じ位置づけ)。
+- 転送形: `SessionContextUsage.effort?` を追加、`SessionTeammate.model?` を追加。
+  いずれも optional なので旧クライアント互換。

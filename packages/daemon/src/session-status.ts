@@ -259,9 +259,22 @@ function foldContextUsage(state: SessionStatusState, row: Record<string, unknown
     tokenValue(usage.cache_read_input_tokens) +
     tokenValue(usage.cache_creation_input_tokens);
   if (tokens === 0) return false;
+  // effort is a TOP-LEVEL row field (not under message). Older CC versions
+  // (≤2.1.211 observed) do not write it, so absence keeps context.effort
+  // undefined rather than failing the fold. "" normalizes to absent so the
+  // change check and the stored shape agree (a raw "" would compare unequal
+  // to the stored-as-absent value and re-trigger a push on every row).
+  const effort = stringValue(row.effort) || undefined;
   const current = state.context;
-  if (current && current.tokens === tokens && current.model === model) return false;
-  state.context = { tokens, model, timestamp };
+  if (
+    current &&
+    current.tokens === tokens &&
+    current.model === model &&
+    current.effort === effort
+  ) {
+    return false;
+  }
+  state.context = { tokens, model, ...(effort ? { effort } : {}), timestamp };
   return true;
 }
 
@@ -688,7 +701,17 @@ export function snapshot(
     }),
     background: [...state.background.values()].map((task) => ({ ...task })),
     ...(state.context ? { context: { ...state.context } } : {}),
-    teammates: [...state.teammates.values()].map((teammate) => ({ ...teammate })),
+    // Teammate model comes from meta.json at snapshot time (see
+    // readTeammateModels). The scan only runs when there is at least one
+    // teammate to annotate — an fs readdir per push would otherwise be paid
+    // by every teamless session.
+    teammates: (() => {
+      const models = sidDir && state.teammates.size > 0 ? readTeammateModels(sidDir) : undefined;
+      return [...state.teammates.values()].map((teammate) => {
+        const model = models?.get(teammate.name);
+        return { ...teammate, ...(model ? { model } : {}) };
+      });
+    })(),
     external_files: [...state.externalFiles].sort(),
     // DR-0026: discovered inline at snapshot time — the workspace file is
     // hand-edited out of band and there is no transcript event to fold on.
@@ -702,6 +725,49 @@ export function snapshot(
         })()
       : {}),
   };
+}
+
+/** DR-0020 addendum 2026-07-18: teammate model lookup. Scans
+ * `<sidDir>/subagents/agent-*.meta.json` for `taskKind:"in_process_teammate"`
+ * entries and returns name → model (raw spawn-time value, `[1m]` suffix kept).
+ * Read at snapshot time (not folded) for the same reason as workflow
+ * drilldown / workspace_folders: meta.json is written by the harness
+ * independently of transcript lines, so a fold would miss late-appearing
+ * files. Same-name duplicates resolve to the meta.json with the newest
+ * mtime (matching agent-transcripts.ts resolveTeammate). All fs/JSON errors
+ * degrade to an absent entry. */
+export function readTeammateModels(sidDir: string): Map<string, string> {
+  const models = new Map<string, string>();
+  const mtimes = new Map<string, number>();
+  const subagentsDir = path.join(sidDir, "subagents");
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
+  } catch {
+    return models;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.startsWith("agent-") || !entry.name.endsWith(".meta.json")) continue;
+    const metaPath = path.join(subagentsDir, entry.name);
+    let value: unknown;
+    let mtimeMs: number;
+    try {
+      value = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      mtimeMs = fs.statSync(metaPath).mtimeMs;
+    } catch {
+      continue;
+    }
+    if (!isRecord(value) || value.taskKind !== "in_process_teammate") continue;
+    const name = stringValue(value.name);
+    const model = stringValue(value.model);
+    if (!name || !model) continue;
+    const prev = mtimes.get(name);
+    if (prev !== undefined && prev >= mtimeMs) continue;
+    mtimes.set(name, mtimeMs);
+    models.set(name, model);
+  }
+  return models;
 }
 
 function deriveSidDir(file: string): string | undefined {

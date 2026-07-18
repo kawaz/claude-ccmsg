@@ -80,15 +80,29 @@ export function estimateContextLimit(tokens: number): 200_000 | 1_000_000 {
   return tokens > 200_000 ? 1_000_000 : 200_000;
 }
 
+/** Display shortening for model names: drops the redundant `claude-` prefix
+ * ("claude-fable-5" → "fable-5"). Values without the prefix pass through
+ * unchanged, and a `[1m]` suffix is kept — it carries real information
+ * (launch-time 1M context pin). */
+export function shortModel(model: string): string {
+  return model.startsWith("claude-") ? model.slice("claude-".length) : model;
+}
+
 export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {
   const limit = estimateContextLimit(ctx.tokens);
   const limitLabel = limit === 1_000_000 ? "1M" : "200k";
   const percentage = Math.round((ctx.tokens / limit) * 100);
+  // model is always appended (DR-0020 addendum 2026-07-18); effort only when
+  // the transcript row carried one (older CC rows lack the field).
+  const effortSuffix = ctx.effort ? ` · ${ctx.effort}` : "";
   return {
-    text: `ctx ${Math.round(ctx.tokens / 1000)}k/${limitLabel}* (${percentage}%)`,
+    text:
+      `ctx ${Math.round(ctx.tokens / 1000)}k/${limitLabel}* (${percentage}%)` +
+      ` · ${shortModel(ctx.model)}${effortSuffix}`,
     title:
-      `${ctx.tokens.toLocaleString("en-US")} tokens / model ${ctx.model} / ` +
-      `context limit ${limit.toLocaleString("en-US")} is estimated; transcript cannot observe environment overrides`,
+      `${ctx.tokens.toLocaleString("en-US")} tokens / model ${ctx.model}` +
+      (ctx.effort ? ` / effort ${ctx.effort}` : "") +
+      ` / context limit ${limit.toLocaleString("en-US")} is estimated; transcript cannot observe environment overrides`,
   };
 }
 

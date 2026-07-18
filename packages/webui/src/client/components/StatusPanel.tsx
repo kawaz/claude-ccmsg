@@ -19,6 +19,7 @@ import {
   buildStatusSections,
   buildWorkflowDrilldown,
   formatContextUsage,
+  shortModel,
   splitTeammates,
   type WorkflowDrilldownAgentView,
 } from "../session-status-view.ts";
@@ -178,6 +179,7 @@ function TeammateRow({ teammate, sid }: { teammate: SessionTeammate; sid: string
     <li class={"status-row status-teammate status-teammate-" + teammate.state}>
       <span class="status-row-name">{teammate.name}</span>
       {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
+      {teammate.model ? <span class="status-row-kind">{shortModel(teammate.model)}</span> : null}
       <span class="status-row-summary">{teammate.state}</span>
       <a class="status-wf-agent-tl" href={href}>
         TL

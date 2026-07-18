@@ -15,6 +15,7 @@ import {
   buildWorkflowDrilldown,
   estimateContextLimit,
   formatContextUsage,
+  shortModel,
   formatSidebarBadge,
   miniSummaryLines,
   splitBackground,
@@ -167,7 +168,7 @@ describe("miniSummaryLines", () => {
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "todo", text: "fix bug" },
-      { kind: "context", text: "ctx 640k/1M* (64%)" },
+      { kind: "context", text: "ctx 640k/1M* (64%) · fable-5" },
     ]);
   });
 
@@ -179,7 +180,9 @@ describe("miniSummaryLines", () => {
       teammates: [],
       context: { tokens: 100_000, model: "m", timestamp: "t" },
     };
-    expect(miniSummaryLines(snapshot)).toEqual([{ kind: "context", text: "ctx 100k/200k* (50%)" }]);
+    expect(miniSummaryLines(snapshot)).toEqual([
+      { kind: "context", text: "ctx 100k/200k* (50%) · m" },
+    ]);
   });
 
   // issue 2026-07-17 #5: 活動中 (state === "active") の teammate だけを 1 行に
@@ -240,7 +243,7 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "wf" },
       { kind: "more", text: "他 2 件" },
-      { kind: "context", text: "ctx 522k/1M* (52%)" },
+      { kind: "context", text: "ctx 522k/1M* (52%) · m" },
       { kind: "teammate", text: "researcher" },
     ]);
   });
@@ -254,7 +257,7 @@ describe("context usage display", () => {
       model: "claude-haiku-4-5-20251001",
       timestamp: "2026-07-17T00:00:00.000Z",
     });
-    expect(formatted.text).toBe("ctx 100k/200k* (50%)");
+    expect(formatted.text).toBe("ctx 100k/200k* (50%) · haiku-4-5-20251001");
     expect(formatted.title).toContain("100,000 tokens");
     expect(formatted.title).toContain("estimated");
   });
@@ -267,7 +270,7 @@ describe("context usage display", () => {
         model: "claude-fable-5",
         timestamp: "2026-07-17T00:00:00.000Z",
       }).text,
-    ).toBe("ctx 522k/1M* (52%)");
+    ).toBe("ctx 522k/1M* (52%) · fable-5");
   });
 
   test("200k 境界は超過した場合だけ 1M 推定へ切り替える", () => {
@@ -275,15 +278,47 @@ describe("context usage display", () => {
     expect(estimateContextLimit(200_000)).toBe(200_000);
     expect(estimateContextLimit(200_001)).toBe(1_000_000);
     expect(formatContextUsage({ tokens: 200_000, model: "m", timestamp: "t" }).text).toBe(
-      "ctx 200k/200k* (100%)",
+      "ctx 200k/200k* (100%) · m",
     );
   });
 
   test("100% 超を丸め込まず推定外れの手掛かりとして表示する", () => {
     // 推定分母より大きい観測値を clamp すると診断情報を失うため、1.1M は 110% のまま出す。
     expect(formatContextUsage({ tokens: 1_100_000, model: "m", timestamp: "t" }).text).toBe(
-      "ctx 1100k/1M* (110%)",
+      "ctx 1100k/1M* (110%) · m",
     );
+  });
+
+  test("shortModel は claude- prefix だけを剥がし [1m] suffix と非 claude 名を保持する", () => {
+    // 表示短縮の仕様: prefix は冗長情報なので削るが、[1m] は 1M context pin の
+    // 実情報なので残す。prefix 無し (codex 系等) はそのまま通す。
+    expect(shortModel("claude-fable-5")).toBe("fable-5");
+    expect(shortModel("claude-fable-5[1m]")).toBe("fable-5[1m]");
+    expect(shortModel("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+  });
+
+  test("effort ありの context は「· model · effort」の順で text に付く", () => {
+    // DR-0020 addendum 2026-07-18 の表示形を仕様として厳密固定する。
+    const formatted = formatContextUsage({
+      tokens: 331_000,
+      model: "claude-fable-5",
+      effort: "low",
+      timestamp: "t",
+    });
+    expect(formatted.text).toBe("ctx 331k/1M* (33%) · fable-5 · low");
+    expect(formatted.title).toContain("effort low");
+  });
+
+  test("effort なし (旧 CC transcript) の context は effort 節を出さない", () => {
+    // effort は CC ≤2.1.211 の行に無い optional。欠落時に「· undefined」等を
+    // 出さない境界を固定する。
+    const formatted = formatContextUsage({
+      tokens: 100_000,
+      model: "claude-fable-5",
+      timestamp: "t",
+    });
+    expect(formatted.text).toBe("ctx 100k/200k* (50%) · fable-5");
+    expect(formatted.title).not.toContain("effort");
   });
 });
 
