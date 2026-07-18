@@ -386,6 +386,82 @@ function renderNode(
   }
 }
 
+// CommonMark 0.31.2 defines whitespace as Unicode Zs plus tab/LF/FF/CR,
+// and punctuation as Unicode P or S. An underscore run surrounded by
+// characters in neither class is intraword and cannot open or close `_`/`__`
+// emphasis. @mizchi/markdown does not implement that restriction.
+const COMMONMARK_WHITESPACE_RE = /^(?:\p{Zs}|[\t\n\f\r])$/u;
+const COMMONMARK_PUNCTUATION_RE = /^[\p{P}\p{S}]$/u;
+
+function isCommonMarkWordContent(char: string | undefined): boolean {
+  return (
+    char !== undefined &&
+    !COMMONMARK_WHITESPACE_RE.test(char) &&
+    !COMMONMARK_PUNCTUATION_RE.test(char)
+  );
+}
+
+function unusedPrivateUseMarker(source: string): string {
+  const used = new Set(source);
+  const ranges: readonly [number, number][] = [
+    [0xe000, 0xf8ff],
+    [0xf0000, 0xffffd],
+    [0x100000, 0x10fffd],
+  ];
+  for (const [start, end] of ranges) {
+    for (let codePoint = start; codePoint <= end; codePoint += 1) {
+      const candidate = String.fromCodePoint(codePoint);
+      if (!used.has(candidate)) return candidate;
+    }
+  }
+  let fallback = "\uE000\uE000";
+  while (source.includes(fallback)) fallback += "\uE000";
+  return fallback;
+}
+
+function protectIntrawordUnderscores(source: string): { source: string; marker?: string } {
+  if (!source.includes("_")) return { source };
+  const chars = Array.from(source);
+  let marker: string | undefined;
+  for (let start = 0; start < chars.length; start += 1) {
+    if (chars[start] !== "_") continue;
+    let end = start + 1;
+    while (chars[end] === "_") end += 1;
+    if (isCommonMarkWordContent(chars[start - 1]) && isCommonMarkWordContent(chars[end])) {
+      marker ??= unusedPrivateUseMarker(source);
+      chars.fill(marker, start, end);
+    }
+    start = end - 1;
+  }
+  return marker ? { source: chars.join(""), marker } : { source };
+}
+
+function restoreProtectedUnderscores(value: unknown, marker: string): void {
+  if (Array.isArray(value)) {
+    for (const item of value) restoreProtectedUnderscores(item, marker);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value)) {
+    if (typeof child === "string") {
+      if (child.includes(marker)) {
+        (value as Record<string, unknown>)[key] = child.replaceAll(marker, "_");
+      }
+    } else {
+      restoreProtectedUnderscores(child, marker);
+    }
+  }
+}
+
+/** Parse the markdown source used by MarkdownView. Kept as a pure seam so
+ * parser-level compatibility fixes are exercised without a DOM. */
+export function parseMarkdownSource(source: string): Root {
+  const protectedSource = protectIntrawordUnderscores(source);
+  const root = parse(protectedSource.source);
+  if (protectedSource.marker) restoreProtectedUnderscores(root, protectedSource.marker);
+  return root;
+}
+
 /** Pure mdast-AST -> VNode transform, split out from `MarkdownView` so tests
  * can hand-construct mdast fragments (DR-0010) without going through
  * `parse()`. */
@@ -417,7 +493,7 @@ export function MarkdownView({
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
   return useMemo(
-    () => renderMarkdownAst(parse(source), search),
+    () => renderMarkdownAst(parseMarkdownSource(source), search),
     [source, highlightWords, onMatchClick],
   );
 }

@@ -18,6 +18,7 @@ import { parse } from "@mizchi/markdown";
 import {
   attachmentUrlFromPath,
   isSafeUrl,
+  parseMarkdownSource,
   renderMarkdownAst,
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
@@ -214,6 +215,82 @@ describe("renderMarkdownAst / XSS defenses", () => {
     expect(link?.type).toBe("link");
     if (link?.type !== "link") return;
     expect(link.url).toBe("javascript:alert(1)");
+  });
+});
+
+describe("parseMarkdownSource / CommonMark intraword underscores", () => {
+  function renderSource(source: string): VNode {
+    return renderMarkdownAst(parseMarkdownSource(source));
+  }
+
+  // The reported message fragment has one intraword underscore. It must remain
+  // literal on its own and must not become an opener when a later snake_case
+  // token supplies another underscore for the dependency parser to pair with.
+  test("reported Room message keeps intraword underscores literal across the full sentence", () => {
+    const sources = [
+      "type:help_catepory を作るか",
+      "type:help_catepory を作るか?内部的には string_value で...",
+    ];
+    for (const source of sources) {
+      const vnode = renderSource(source);
+      expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  // CommonMark forbids underscore emphasis inside words. Single and double
+  // runs in identifiers are literal, so no middle segment may become styled.
+  test("snake_case and snake__case identifiers render literally", () => {
+    for (const source of ["snake_case_name", "snake__case__name"]) {
+      const vnode = renderSource(source);
+      expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
+      expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  // CommonMark character classes are Unicode-aware: Japanese letters around
+  // an underscore are word content, not punctuation or whitespace.
+  test("Japanese intraword underscores are literal", () => {
+    const source = "日本語_項目_日本語";
+    const vnode = renderSource(source);
+    expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(source);
+  });
+
+  // The parser workaround also sees source inside code spans and link targets.
+  // Its private marker must be restored in every mdast string field, not leak
+  // into displayed code or an href.
+  test("protected underscores are restored in inline code and link URLs", () => {
+    const vnode = renderSource("`snake_case` [link](https://example.com/a_b)");
+    expect(flattenText(collect(vnode, (n) => n.type === "code")[0])).toBe("snake_case");
+    const link = collect(vnode, (n) => n.type === "a")[0]!;
+    expect((link.props as { href?: string }).href).toBe("https://example.com/a_b");
+  });
+
+  // Boundary-delimited underscore emphasis remains valid; only intraword runs
+  // are protected from the dependency parser's non-CommonMark behavior.
+  test("boundary-delimited _italic_ still renders as emphasis", () => {
+    const vnode = renderSource("_italic_");
+    expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
+    expect(flattenText(vnode)).toBe("italic");
+  });
+
+  // Internal underscores stay literal even inside valid outer emphasis. This
+  // pins the distinction between delimiter underscores and identifier text.
+  test("outer underscore emphasis may contain a literal snake_case identifier", () => {
+    const vnode = renderSource("_foo_bar_baz_");
+    expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
+    expect(flattenText(vnode)).toBe("foo_bar_baz");
+  });
+
+  // Asterisk emphasis is intentionally allowed intraword by CommonMark and is
+  // outside this workaround, so both single and double asterisk forms persist.
+  test("asterisk emphasis and strong emphasis are unchanged", () => {
+    const vnode = renderSource("x*italic*y and **bold**");
+    expect(collect(vnode, (n) => n.type === "em")).toHaveLength(1);
+    expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(1);
+    expect(flattenText(vnode)).toBe("xitalicy and bold");
   });
 });
 
