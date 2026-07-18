@@ -28,19 +28,8 @@ interface TranslatorStatic {
  * (既に日本語)」と判定する (kawaz 提供ロジック準拠)。 */
 const JAPANESE_CHAR_RE = /\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u;
 
-/** host 翻訳のリクエスト自体を skip するための「全文日本語」判定 (issue
- * 2026-07-17 #3)。JAPANESE_CHAR_RE の「段落内に日本語を 1 文字でも含むか」は
- * 混在段落 ("Hello 日本語") も真になってしまい、host 全文送信 (段落分割
- * しない、DR-0023) には使えない — 混在テキストは丸ごと翻訳する必要がある
- * ため、代わりに Latin script (翻訳対象になりうる英字) が 1 文字も無いかで
- * 判定する。同じ \p{Script=...} 系のアプローチを流用しつつ、対象を反転
- * (存在チェックではなく不在チェック) している。 */
-const LATIN_CHAR_RE = /\p{Script=Latin}/u;
-
-/** テキスト全体が (混在ではなく) 日本語主体かどうか。true なら
- * translateThinkingTextOnHost はリクエストを送らず原文をそのまま返す。 */
-export function isFullyJapaneseText(text: string): boolean {
-  return !LATIN_CHAR_RE.test(text);
+function shouldSkipParagraph(paragraph: string): boolean {
+  return paragraph.trim() === "" || JAPANESE_CHAR_RE.test(paragraph);
 }
 
 function getTranslatorStatic(): TranslatorStatic | null {
@@ -94,7 +83,7 @@ const paragraphCache = new Map<string, string>();
  * が失敗した段落も原文へ fallback する (kawaz spec: 「失敗段落は原文
  * fallback」) — 一部失敗が全体の結果を壊さない。 */
 async function translateParagraph(paragraph: string): Promise<string> {
-  if (paragraph.trim() === "" || JAPANESE_CHAR_RE.test(paragraph)) return paragraph;
+  if (shouldSkipParagraph(paragraph)) return paragraph;
   const cached = paragraphCache.get(paragraph);
   if (cached !== undefined) return cached;
   try {
@@ -119,23 +108,30 @@ export async function translateThinkingTextInBrowser(text: string): Promise<stri
 
 export type HostTranslateRequest = (texts: string[]) => Promise<TranslateResponse | ErrorResponse>;
 
-/** Host translation cache is keyed by the complete thinking text, because the
- * Translation.framework path intentionally receives mixed English/Japanese and
- * newlines as one request (DR-0023 + PoC). Rejections are removed so installing
- * the language model or respawning the helper can recover without a page reload. */
+/** host 翻訳も browser 翻訳と同じ段落単位で成功結果を共有する。同じ段落は
+ * thinking text をまたいで再利用し、失敗時は削除して helper 復帰後の再試行を
+ * 許す。Promise を保持するため、同じ段落の並行要求も 1 op に集約される。 */
 const hostTextCache = new Map<string, Promise<string>>();
 
-export function translateThinkingTextOnHost(
-  text: string,
+/** host で 1 段落を翻訳する。日本語を含む段落・空段落は daemon へ送らず、
+ * request/daemon/helper のどの失敗もその段落の原文へ fallback する。 */
+function translateParagraphOnHost(
+  paragraph: string,
   request: HostTranslateRequest,
 ): Promise<string> {
-  // 全文日本語主体のテキストは翻訳しても意味を持たない (PoC: 日本語のみの
-  // 入力は同一文字列で返る) — daemon/helper ラウンドトリップ自体を省く
-  // (issue 2026-07-17 #3)。
-  if (isFullyJapaneseText(text)) return Promise.resolve(text);
-  const cached = hostTextCache.get(text);
+  if (shouldSkipParagraph(paragraph)) {
+    return Promise.resolve(paragraph);
+  }
+  const cached = hostTextCache.get(paragraph);
   if (cached) return cached;
-  const promise = request([text])
+
+  let responsePromise: ReturnType<HostTranslateRequest>;
+  try {
+    responsePromise = request([paragraph]);
+  } catch {
+    return Promise.resolve(paragraph);
+  }
+  const promise = responsePromise
     .then((response) => {
       if (!response.ok) throw new Error(response.error.msg);
       const result = response.results[0];
@@ -143,70 +139,25 @@ export function translateThinkingTextOnHost(
       if (!result.ok) throw new Error(result.error);
       return result.text;
     })
-    .catch((error) => {
-      if (hostTextCache.get(text) === promise) hostTextCache.delete(text);
-      throw error;
+    .catch(() => {
+      if (hostTextCache.get(paragraph) === promise) hostTextCache.delete(paragraph);
+      return paragraph;
     });
-  hostTextCache.set(text, promise);
+  hostTextCache.set(paragraph, promise);
   return promise;
 }
 
-/** 同一 tick (microtask 前) に発行された複数の translateThinkingTextOnHost
- * 呼び出しを 1 回の daemon `translate` リクエストへまとめる (issue
- * 2026-07-17 #2b: 「表示中の複数 thinking をまとめて 1 リクエストに」)。
- * FoldGroup が開いた瞬間、中の各 ThinkingSegment が同期的に
- * selectDefaultTranslation() を呼ぶため、それらの `request([text])` 呼び出し
- * は同じ synchronous タスク内で発生する — queueMicrotask で 1 tick 待って
- * まとめて `texts[]` として送る (DataLoader と同じ batching パターン)。
- * translateThinkingTextOnHost は常に単一要素の配列で呼ぶため (`request([text])`)、
- * 複数要素で呼ばれた場合はバッチ化せずそのまま素通しする (このラッパーの
- * 契約を HostTranslateRequest のまま保つための保険)。 */
-export function createHostTranslateBatcher(request: HostTranslateRequest): HostTranslateRequest {
-  interface QueueItem {
-    text: string;
-    resolve(response: TranslateResponse | ErrorResponse): void;
-    reject(error: unknown): void;
-  }
-  let queue: QueueItem[] = [];
-  let flushScheduled = false;
-
-  function flush(): void {
-    const batch = queue;
-    queue = [];
-    flushScheduled = false;
-    request(batch.map((item) => item.text)).then(
-      (response) => {
-        if (!response.ok) {
-          // Batch-wide failure (e.g. translate_unavailable): every queued
-          // item shares the same outcome.
-          for (const item of batch) item.resolve(response);
-          return;
-        }
-        batch.forEach((item, i) => {
-          const result = response.results[i];
-          item.resolve({
-            ok: true,
-            results: [result ?? { ok: false, error: "translation helper returned no result" }],
-          });
-        });
-      },
-      (error) => {
-        for (const item of batch) item.reject(error);
-      },
-    );
-  }
-
-  return (texts: string[]) => {
-    if (texts.length !== 1) return request(texts);
-    const text = texts[0] as string;
-    return new Promise((resolve, reject) => {
-      queue.push({ text, resolve, reject });
-      if (!flushScheduled) {
-        flushScheduled = true;
-        queueMicrotask(flush);
-      }
-    });
-  };
+/** thinking ブロックを `\n\n` で分割し、翻訳対象の各段落を独立した host op
+ * として並列送信する。結果は入力順に `\n\n` で再結合する。 */
+export async function translateThinkingTextOnHost(
+  text: string,
+  request: HostTranslateRequest,
+): Promise<string> {
+  const paragraphs = text.split("\n\n");
+  const translated = await Promise.all(
+    paragraphs.map((paragraph) => translateParagraphOnHost(paragraph, request)),
+  );
+  return translated.join("\n\n");
 }
 
 /** テスト専用: browser/host 両経路のモジュール内キャッシュをリセットする。 */

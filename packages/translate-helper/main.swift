@@ -37,6 +37,15 @@ struct TranslationHelper {
         )
         var prepared = false
 
+        // The readLine loop processes requests serially — one `await
+        // session.translations(from:)` completes before the next line is read.
+        // This is intentional: measured 2026-07-19
+        // (docs/findings/2026-07-19-translate-helper-parallelism.md) that a
+        // Task-parallel dispatch (either on one session or a session pool of
+        // 2/4/8) leaves the N=16 total unchanged (~11.2s in every strategy)
+        // and pushes first-response latency from 302ms up to 726ms — because
+        // Translation.framework serializes at the process/device level. Adding
+        // a TaskGroup/Actor here would only add complexity and hurt UX.
         while let line = readLine() {
             guard let data = line.data(using: .utf8) else {
                 write(TranslationBatchResponse(id: "", results: []))

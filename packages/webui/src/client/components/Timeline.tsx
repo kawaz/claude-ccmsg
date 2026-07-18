@@ -36,7 +36,6 @@ import {
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import {
-  createHostTranslateBatcher,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
@@ -163,15 +162,14 @@ function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
 }
 
 // thinking 翻訳比較タブ (DR-0023): original は常に基準面、host/browser
-// は各経路が利用可能な時だけ追加する。host は Translation.framework へ全文を
-// そのまま送り、browser は既存の段落分割・日本語判定ロジックを維持する。
+// は各経路が利用可能な時だけ追加する。両翻訳経路とも `\n\n` 単位で段落分割し、
+// 日本語を含む段落を保持して英語段落だけを翻訳する。
 interface TranslationAvailability {
   host: boolean;
   browser: boolean;
-  // 同一 tick の複数 ThinkingSegment からの host リクエストを 1 回の daemon
-  // `translate` にまとめるバッチャ (issue 2026-07-17 #2b) — Timeline() が
-  // ws.translate をラップして 1 つだけ作り、全 ThinkingSegment で共有する
-  // (createHostTranslateBatcher 参照)。
+  // translateThinkingTextOnHost が英語段落ごとに 1 op を送るための
+  // ws.translate ラッパ。複数 thinking・複数段落をまとめず、各 op を独立して
+  // 並列実行する (kawaz 裁定 r34 mid=11,13-14、DR-0023 addendum)。
   hostRequest: HostTranslateRequest;
 }
 
@@ -193,7 +191,6 @@ function ThinkingSegment({
   foldGroupOpen: boolean;
   mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
 }) {
-  const { store } = useApp();
   const [tab, setTab] = useState<ThinkingTab>("original");
   const [hostText, setHostText] = useState<string | null>(null);
   const [browserText, setBrowserText] = useState<string | null>(null);
@@ -213,13 +210,7 @@ function ThinkingSegment({
     setHostTranslating(true);
     void translateThinkingTextOnHost(text, translationAvailability.hostRequest)
       .then((result) => setHostText(result))
-      .catch(() => {
-        // A capability probe can only verify OS/helper availability. A missing
-        // en→ja model surfaces on the first real item; hide the host route from
-        // every thinking block after that failure (DR-0023 Phase 2 option).
-        store.dispatch({ type: "translator/availability", host: false });
-        setTab("original");
-      })
+      .catch(() => setHostText(text))
       .finally(() => setHostTranslating(false));
   }
 
@@ -1119,12 +1110,11 @@ export function Timeline({
   // browser は mount 時の feature detect、host は WS hello 後の daemon
   // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
   const browserTranslatorAvailable = useMemo(() => hasTranslatorApi(), []);
-  // FoldGroup が開いた瞬間、中の複数 ThinkingSegment が同じ tick で host
-  // 翻訳を要求する (issue 2026-07-17 #2b) — Timeline インスタンスにつき 1 つ
-  // だけバッチャを作り、全 ThinkingSegment で共有する (ws が変わらない限り
-  // 安定させる、useMemo の dep は ws のみ)。
+  // 1 op = 1 英語段落: 各 ThinkingSegment の host 翻訳が独立に
+  // ws.translate([paragraph]) を送り、segment ごとに完了した順で反映される
+  // (kawaz 裁定 r34 mid=11,13-14、DR-0023 addendum)。
   const hostTranslateRequest = useMemo<HostTranslateRequest>(
-    () => createHostTranslateBatcher((texts) => ws.translate(texts)),
+    () => (texts) => ws.translate(texts),
     [ws],
   );
   const translationAvailability = useMemo<TranslationAvailability>(

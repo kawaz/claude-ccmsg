@@ -38,6 +38,27 @@ export interface TranslateServiceOptions {
   binaryPath?: string;
   findSwiftc?: () => string | null;
   spawn?: typeof Bun.spawn;
+  /** Per-request watchdog deadline in ms, given the total input length.
+   * Defaults to translateWatchdogTimeoutMs; tests inject a tiny value so the
+   * timeout path runs in milliseconds instead of tens of seconds. */
+  watchdogTimeoutMs?: (totalChars: number) => number;
+}
+
+/** Watchdog budget: Translation.framework answers a short text in ~2s but its
+ * latency grows with input size (measured 2026-07-18: 1 sentence 1.8s, 10k
+ * chars 89s, 14.7k chars never returned), so the deadline scales with input
+ * length. A request that outlives its deadline is assumed wedged — the helper
+ * process gives no partial progress signal, so killing it is the only way to
+ * unblock the queue (the next request respawns a fresh helper). */
+export const WATCHDOG_BASE_MS = 10_000;
+export const WATCHDOG_PER_100_CHARS_MS = 1_000;
+export const WATCHDOG_MAX_MS = 120_000;
+
+export function translateWatchdogTimeoutMs(totalChars: number): number {
+  return Math.min(
+    WATCHDOG_MAX_MS,
+    WATCHDOG_BASE_MS + Math.ceil(totalChars / 100) * WATCHDOG_PER_100_CHARS_MS,
+  );
 }
 
 const DEFAULT_SOURCE_PATH = fileURLToPath(
@@ -62,12 +83,24 @@ class TranslationHelperService implements TranslateService {
   private readonly binaryPath: string;
   private readonly findSwiftc: () => string | null;
   private readonly spawn: typeof Bun.spawn;
+  private readonly watchdogTimeoutMs: (totalChars: number) => number;
   private buildPromise: Promise<TranslateBatchResult> | null = null;
   private startPromise: Promise<Bun.Subprocess> | null = null;
   private process: Bun.Subprocess | null = null;
   private pending = new Map<string, PendingRequest>();
   private nextId = 0;
   private stopped = false;
+  /** Serializes helper I/O: the Swift helper's readLine loop answers one
+   * request at a time (measured — see main.swift's comment), so a request
+   * written while another is in flight only sits in the stdin buffer. The
+   * per-request watchdog must clock actual helper processing, not queue
+   * position: without this chain, N parallel paragraph ops (webui fold open,
+   * 1 op = 1 paragraph) would start every deadline at write time and the
+   * tail of the queue would "time out" before the helper even reads it,
+   * killing the helper for everyone. Each link ignores the previous link's
+   * outcome — a watchdog-killed request must not fail the queued ones, they
+   * respawn via ensureProcess and continue. */
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(opts: TranslateServiceOptions) {
     this.platform = opts.platform ?? process.platform;
@@ -75,6 +108,7 @@ class TranslationHelperService implements TranslateService {
     this.binaryPath = opts.binaryPath ?? DEFAULT_BINARY_PATH;
     this.findSwiftc = opts.findSwiftc ?? (() => Bun.which("swiftc"));
     this.spawn = opts.spawn ?? Bun.spawn;
+    this.watchdogTimeoutMs = opts.watchdogTimeoutMs ?? translateWatchdogTimeoutMs;
   }
 
   async translate(texts: string[]): Promise<TranslateBatchResult> {
@@ -87,6 +121,29 @@ class TranslationHelperService implements TranslateService {
     // verifies the OS/build prerequisite without paying the session startup cost.
     if (texts.length === 0) return { ok: true, results: [] };
 
+    // Queue behind the in-flight request (see sendChain's docstring): the
+    // helper answers serially, so writing early gains nothing and would start
+    // the watchdog clock while the request is still queued, not processing.
+    // performRequest resolves (never rejects) with a TranslateBatchResult, so
+    // the rejection arm below is just belt-and-braces chain hygiene.
+    const run = this.sendChain.then(
+      () => this.performRequest(texts),
+      () => this.performRequest(texts),
+    );
+    this.sendChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async performRequest(texts: string[]): Promise<TranslateBatchResult> {
+    // Re-check under the chain: stop() may have run while queued, and the
+    // helper an earlier link used may have been watchdog-killed — ensureProcess
+    // below respawns in that case.
+    if (this.stopped) {
+      return { ok: false, code: "translate_unavailable", msg: "translation helper is stopped" };
+    }
     let proc: Bun.Subprocess;
     try {
       proc = await this.ensureProcess();
@@ -94,18 +151,41 @@ class TranslationHelperService implements TranslateService {
       return { ok: false, code: "translate_unavailable", msg: String(error) };
     }
 
-    // Batch API (issue 2026-07-17 #2a): one line in, one line out, containing
-    // every text in this call — the helper uses TranslationSession's
-    // `translations(from:)` batch call instead of one `translate(_:)` call
-    // per line. On a warm persistent helper the measured latency gain is a few
-    // percent (2026-07-17: 10-item batch 12.7s vs 12.9s sequential; the PoC's
-    // ~2x figure compared cold per-process launches) — the real speedup for
-    // multiple thinkings comes from the webui folding N WS round trips into
-    // one request (issue #2b), which this N-text wire shape is what enables.
+    // Wire shape: one JSONL line in, one line out, carrying every text in
+    // this call. The webui sends one text per call (1 op = 1 thinking, kawaz
+    // r34 mid=11 — batching many thinkings into one request wedged
+    // Translation.framework on large inputs), but the N-text shape stays for
+    // the capability probe (texts:[]) and any future multi-text caller.
     const id = `${process.pid}-${++this.nextId}`;
+    // Per-request watchdog (DR-0023 addendum): a request that outlives its
+    // input-length-scaled deadline means the helper is wedged inside
+    // Translation.framework (observed with a 14.7k-char batch that never
+    // returned). Kill the process — failProcess rejects every in-flight
+    // pending with this reason, and the next translate() call respawns a
+    // fresh helper, so one wedged request cannot freeze translation until a
+    // daemon restart.
+    const deadline = this.watchdogTimeoutMs(texts.reduce((n, t) => n + t.length, 0));
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
     const promise = new Promise<TranslateResult[]>((resolve, reject) => {
-      this.pending.set(id, { expected: texts.length, resolve, reject });
+      this.pending.set(id, {
+        expected: texts.length,
+        resolve: (results) => {
+          if (watchdog !== null) clearTimeout(watchdog);
+          resolve(results);
+        },
+        reject: (error) => {
+          if (watchdog !== null) clearTimeout(watchdog);
+          reject(error);
+        },
+      });
     });
+    watchdog = setTimeout(() => {
+      if (!this.pending.has(id)) return;
+      this.failProcess(
+        proc,
+        new Error(`translation helper timed out after ${deadline}ms; helper killed`),
+      );
+    }, deadline);
 
     try {
       const input = JSON.stringify({ id, texts }) + "\n";
@@ -116,6 +196,7 @@ class TranslationHelperService implements TranslateService {
       await stdin.flush();
     } catch (error) {
       const failure = error instanceof Error ? error : new Error(String(error));
+      if (watchdog !== null) clearTimeout(watchdog);
       this.pending.delete(id);
       promise.catch(() => {});
       this.failProcess(proc, failure);

@@ -5,6 +5,10 @@ import * as path from "node:path";
 import {
   createTranslateService,
   defaultTranslateHelperPaths,
+  translateWatchdogTimeoutMs,
+  WATCHDOG_BASE_MS,
+  WATCHDOG_MAX_MS,
+  WATCHDOG_PER_100_CHARS_MS,
   type TranslateService,
 } from "../src/translate-helper.ts";
 
@@ -182,6 +186,174 @@ for await (const line of lines) {
       expect(after.results[0].text.split(":", 1)[0]).not.toBe(oldPid);
       expect(after.results[0].text.endsWith(":AFTER")).toBe(true);
     }
+  });
+
+  // Watchdog (DR-0023 addendum): Translation.framework was observed to never
+  // return on a large input (14.7k chars), and without a per-request deadline
+  // the pending promise wedged every later translation until a daemon
+  // restart. The deadline must fail the wedged request, kill the helper, and
+  // let the next request respawn a fresh process.
+  describe("per-request watchdog", () => {
+    /** A helper that answers normally unless the text contains "__hang__",
+     * in which case it never writes a response for that request (mimicking
+     * Translation.framework wedging inside translations(from:)). */
+    function hangingHelper(): string {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-hang-"));
+      tempDirs.push(dir);
+      const helper = path.join(dir, "helper.ts");
+      fs.writeFileSync(
+        helper,
+        `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  if (request.texts.some((t) => t.includes("__hang__"))) continue; // never answer
+  const results = request.texts.map((text) => ({ ok: true, text: process.pid + ":" + text.toUpperCase() }));
+  process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
+}
+`,
+        { mode: 0o755 },
+      );
+      return helper;
+    }
+
+    test("a request that outlives its deadline fails with a timeout error and kills the helper", async () => {
+      const service = createTranslateService({
+        platform: "darwin",
+        binaryPath: hangingHelper(),
+        watchdogTimeoutMs: () => 50,
+      });
+      services.push(service);
+
+      const result = await service.translate(["__hang__"]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe("translate_helper_failed");
+        expect(result.msg).toContain("timed out after 50ms");
+      }
+    });
+
+    test("after a watchdog kill, the next request respawns a fresh helper and succeeds", async () => {
+      const service = createTranslateService({
+        platform: "darwin",
+        binaryPath: hangingHelper(),
+        // The injected deadline sees only the total char count, so the test
+        // discriminates by length: "__hang__" (8 chars) gets the tight 50ms
+        // deadline while the normal texts ("before"/"after", <8 chars) get a
+        // generous one — a cold bun-script helper takes longer than 50ms to
+        // spawn and answer, which must not count as a wedge here.
+        watchdogTimeoutMs: (chars) => (chars >= 8 ? 50 : 5_000),
+      });
+      services.push(service);
+
+      const before = await service.translate(["before"]);
+      expect(before.ok).toBe(true);
+      if (!before.ok || !before.results[0]?.ok) return;
+      const oldPid = before.results[0].text.split(":", 1)[0];
+
+      const hung = await service.translate(["__hang__"]);
+      expect(hung.ok).toBe(false);
+
+      // The killed process is gone; the next call must respawn (new pid) and
+      // serve normally — one wedged request must not freeze translation until
+      // a daemon restart.
+      const after = await service.translate(["after"]);
+      expect(after.ok).toBe(true);
+      if (after.ok && after.results[0]?.ok) {
+        expect(after.results[0].text.split(":", 1)[0]).not.toBe(oldPid);
+        expect(after.results[0].text.endsWith(":AFTER")).toBe(true);
+      }
+    });
+
+    test("a request answered within its deadline is unaffected by the watchdog", async () => {
+      const service = createTranslateService({
+        platform: "darwin",
+        binaryPath: mockHelper(),
+        // Generous deadline: the mock answers immediately, so this passes
+        // without ever firing — and the timer must be cleared so the helper
+        // is not killed after the fact.
+        watchdogTimeoutMs: () => 5_000,
+      });
+      services.push(service);
+
+      const first = await service.translate(["quick"]);
+      expect(first.ok).toBe(true);
+      // Wait past nothing in particular — the follow-up call proves the
+      // helper is still alive (same pid) after the first request completed.
+      const second = await service.translate(["again"]);
+      expect(second.ok).toBe(true);
+      if (first.ok && second.ok && first.results[0]?.ok && second.results[0]?.ok) {
+        expect(second.results[0].text.split(":", 1)[0]).toBe(
+          first.results[0].text.split(":", 1)[0],
+        );
+      }
+    });
+
+    // 段落分割 (DR-0023 addendum 2026-07-19) では fold open が数十の
+    // 単段落 op を一斉に発行する。Swift helper は readLine で 1 件ずつ直列
+    // 処理するため、キュー後方の op は「処理待ち」で deadline を跨ぎうる —
+    // watchdog は待ち行列の位置ではなく実処理時間を測らなければならない
+    // (sendChain)。deadline < キュー総所要 の設定で全件成功することを確認。
+    test("parallel single-paragraph requests queue without tripping each other's watchdog", async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-slow-"));
+      tempDirs.push(dir);
+      const helper = path.join(dir, "helper.ts");
+      fs.writeFileSync(
+        helper,
+        `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const request = JSON.parse(line);
+  await new Promise((r) => setTimeout(r, 100)); // serial per-request work, like translations(from:)
+  const results = request.texts.map((text) => ({ ok: true, text: "[ja]" + text }));
+  process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
+}
+`,
+        { mode: 0o755 },
+      );
+      const service = createTranslateService({
+        platform: "darwin",
+        binaryPath: helper,
+        // 8 requests x 100ms serial = ~800ms total queue time, far past a
+        // 500ms deadline — yet no request may time out, because each one's
+        // clock starts when it reaches the helper, not when it was issued.
+        watchdogTimeoutMs: () => 500,
+      });
+      services.push(service);
+
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, i) => service.translate([`paragraph ${i}`])),
+      );
+      for (const [i, result] of results.entries()) {
+        expect(result.ok).toBe(true);
+        if (result.ok && result.results[0]?.ok) {
+          expect(result.results[0].text).toBe(`[ja]paragraph ${i}`);
+        }
+      }
+    }, 15_000);
+  });
+});
+
+describe("translateWatchdogTimeoutMs", () => {
+  // Deadline scales with input length: 10s base + 1s per 100 chars, capped at
+  // 120s (measured basis: 1 sentence 1.8s, 10k chars 89s — the curve leaves
+  // real requests comfortable margin while bounding a wedge to 2 minutes).
+  test("empty input gets the base deadline", () => {
+    expect(translateWatchdogTimeoutMs(0)).toBe(WATCHDOG_BASE_MS);
+  });
+
+  test("length adds 1s per started 100 chars (partial block rounds up)", () => {
+    expect(translateWatchdogTimeoutMs(100)).toBe(WATCHDOG_BASE_MS + WATCHDOG_PER_100_CHARS_MS);
+    expect(translateWatchdogTimeoutMs(101)).toBe(WATCHDOG_BASE_MS + 2 * WATCHDOG_PER_100_CHARS_MS);
+  });
+
+  test("very large input is capped at the maximum deadline", () => {
+    // 14.7k chars (the real wedge case) maps under the cap boundary formula:
+    // 10s + 147s would exceed 120s, so the cap applies.
+    expect(translateWatchdogTimeoutMs(14_700)).toBe(WATCHDOG_MAX_MS);
+    expect(translateWatchdogTimeoutMs(1_000_000)).toBe(WATCHDOG_MAX_MS);
   });
 });
 
