@@ -71,6 +71,16 @@ export interface SessionLauncherConfig {
    * The launcher's own CWD/MODEL/EFFORT/PROMPT are layered on AFTER cleaning,
    * so they can never be removed by a pattern. */
   clean_env?: string[];
+  /** DR-0018 §3.1 addendum 2026-07-18 (2nd): wildcard patterns naming
+   * environment variables to KEEP even when a `clean_env` pattern matches
+   * them — keep_env takes precedence over clean_env. Same pattern grammar as
+   * clean_env (`*` = any substring, otherwise literal, case-sensitive,
+   * anchored whole-key match). Motivation: a broad clean pattern like
+   * `CLAUDE*` also removes CLAUDE_CONFIG_DIR, which the launched session
+   * needs for config-plane isolation; the allowlist carves such exceptions
+   * out of the broad removal. A key matching only keep_env (and no
+   * clean_env pattern) is a no-op — it would have survived anyway. */
+  keep_env?: string[];
 }
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines

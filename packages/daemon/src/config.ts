@@ -48,6 +48,31 @@ function positiveNumber(
   return fallback;
 }
 
+/** Parse one env-pattern list field (clean_env / keep_env — same grammar,
+ * same degrade rules): undefined → [], non-array → warn + [], non-string or
+ * empty entries → warn + skip while good patterns survive. */
+function parseEnvPatternList(
+  raw: unknown,
+  field: "clean_env" | "keep_env",
+  file: string,
+  log: Log,
+): string[] {
+  const patterns: string[] = [];
+  if (raw === undefined) return patterns;
+  if (!Array.isArray(raw)) {
+    warn(log, file, `session_launcher.${field} must be a string array; ignoring`);
+    return patterns;
+  }
+  for (const pattern of raw) {
+    if (typeof pattern !== "string" || pattern === "") {
+      warn(log, file, `session_launcher.${field} entries must be non-empty strings; entry ignored`);
+      continue;
+    }
+    patterns.push(pattern);
+  }
+  return patterns;
+}
+
 function parseSessionLauncher(
   raw: unknown,
   file: string,
@@ -111,32 +136,19 @@ function parseSessionLauncher(
     else warn(log, file, "session_launcher.default_prompt must be a string; using empty string");
   }
 
-  // clean_env (DR-0018 §3.1 addendum 2026-07-18): wildcard patterns of env
-  // keys to strip before launch. Malformed shapes degrade to "no cleaning"
-  // (the pre-addendum behavior) rather than disabling the launcher — a bad
-  // pattern list is repairable while sessions keep launching.
-  const cleanEnv: string[] = [];
-  if (raw.clean_env !== undefined) {
-    if (!Array.isArray(raw.clean_env)) {
-      warn(log, file, "session_launcher.clean_env must be a string array; ignoring");
-    } else {
-      for (const pattern of raw.clean_env) {
-        if (typeof pattern !== "string" || pattern === "") {
-          warn(
-            log,
-            file,
-            "session_launcher.clean_env entries must be non-empty strings; entry ignored",
-          );
-          continue;
-        }
-        cleanEnv.push(pattern);
-      }
-    }
-  }
+  // clean_env / keep_env (DR-0018 §3.1 addendum 2026-07-18): wildcard
+  // patterns of env keys to strip before launch, and the allowlist that
+  // overrides the stripping (keep wins over clean). Malformed shapes degrade
+  // to an empty list — for clean_env that means "no cleaning", for keep_env
+  // "no exceptions" — rather than disabling the launcher; a bad pattern list
+  // is repairable while sessions keep launching.
+  const cleanEnv = parseEnvPatternList(raw.clean_env, "clean_env", file, log);
+  const keepEnv = parseEnvPatternList(raw.keep_env, "keep_env", file, log);
 
   return {
     root_dirs: rootDirs,
     clean_env: cleanEnv,
+    keep_env: keepEnv,
     default_prompt: defaultPrompt,
     shell,
     command: raw.command,

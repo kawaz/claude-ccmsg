@@ -64,6 +64,7 @@ describe("loadConfig", () => {
           timeout_seconds: 25,
           dir_tree_depth: 3,
           clean_env: ["CLAUDE_*", "AI_AGENT"],
+          keep_env: ["CLAUDE_CONFIG_DIR"],
         },
       }),
     );
@@ -77,6 +78,7 @@ describe("loadConfig", () => {
         timeout_seconds: 25,
         dir_tree_depth: 3,
         clean_env: ["CLAUDE_*", "AI_AGENT"],
+        keep_env: ["CLAUDE_CONFIG_DIR"],
       },
     });
     expect(warnings).toEqual([]);
@@ -232,6 +234,55 @@ describe("loadConfig", () => {
       }),
     );
     expect(loadConfig(file, log).session_launcher?.clean_env).toEqual(["CLAUDE_*", "AI_AGENT"]);
+    expect(warnings).toHaveLength(2);
+  });
+
+  // keep_env absent means "no exceptions" (clean_env removes its matches
+  // unimpeded): existing configs written before the allowlist keep their
+  // exact behavior, expressed as an empty list.
+  test("absent keep_env parses to an empty list without warning", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ session_launcher: { root_dirs: [dir], command: "run" } }),
+    );
+    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  // Same degrade policy as clean_env (shared parser): a wrong-typed keep_env
+  // is a repairable pattern list — one warning, empty list, launcher stays
+  // available. Note the failure direction differs from clean_env: degrading
+  // keep_env to [] means MORE keys get cleaned, which is the safe direction
+  // for the cleaning contract (an unparseable allowlist must not silently
+  // disable cleaning).
+  test("non-array keep_env warns and degrades to no exceptions", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: { root_dirs: [dir], command: "run", keep_env: "CLAUDE_CONFIG_DIR" },
+      }),
+    );
+    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
+    expect(warnings).toHaveLength(1);
+  });
+
+  // Element-level skipping mirrors clean_env: a malformed entry is dropped
+  // with a warning, and independent good keep patterns beside it survive.
+  test("empty or non-string keep_env entries are skipped while good patterns survive", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          command: "run",
+          keep_env: ["CLAUDE_CONFIG_DIR", "", 42, "CLAUDE_CODE_ENTRYPOINT"],
+        },
+      }),
+    );
+    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([
+      "CLAUDE_CONFIG_DIR",
+      "CLAUDE_CODE_ENTRYPOINT",
+    ]);
     expect(warnings).toHaveLength(2);
   });
 });

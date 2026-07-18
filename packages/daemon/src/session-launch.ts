@@ -10,7 +10,13 @@ import {
 import { containedInRoots } from "./launcher-paths.ts";
 
 export type SessionLaunchValidation =
-  | { ok: true; env: Record<string, string>; shellArgv: string[]; cleanEnv: string[] }
+  | {
+      ok: true;
+      env: Record<string, string>;
+      shellArgv: string[];
+      cleanEnv: string[];
+      keepEnv: string[];
+    }
   | { ok: false; code: ErrorCode; msg: string };
 
 type ValidatedSessionLaunch = Extract<SessionLaunchValidation, { ok: true }>;
@@ -129,6 +135,7 @@ export function validateSessionLaunch(
     env,
     shellArgv: shellArgv(cfg.shell, command),
     cleanEnv: cfg.clean_env ?? [],
+    keepEnv: cfg.keep_env ?? [],
   };
 }
 
@@ -145,18 +152,22 @@ function cleanEnvPatternToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
 }
 
-/** Build the child environment: daemon env minus clean_env matches, with the
- * launch's own CWD/MODEL/EFFORT/PROMPT layered on top afterwards — so those
- * four always win even if a pattern names them. Exported for tests. */
+/** Build the child environment: daemon env minus clean_env matches (except
+ * keys a keep_env pattern also matches — keep wins over clean, DR-0018 §3.1
+ * addendum: a broad `CLAUDE*` clean must not remove CLAUDE_CONFIG_DIR), with
+ * the launch's own CWD/MODEL/EFFORT/PROMPT layered on top afterwards — so
+ * those four always win even if a pattern names them. Exported for tests. */
 export function buildLaunchEnv(
   baseEnv: Record<string, string | undefined>,
   cleanEnv: string[],
   launchEnv: Record<string, string>,
+  keepEnv: string[] = [],
 ): Record<string, string | undefined> {
-  const regexps = cleanEnv.map(cleanEnvPatternToRegExp);
+  const cleanRes = cleanEnv.map(cleanEnvPatternToRegExp);
+  const keepRes = keepEnv.map(cleanEnvPatternToRegExp);
   const env: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (regexps.some((re) => re.test(key))) continue;
+    if (!keepRes.some((re) => re.test(key)) && cleanRes.some((re) => re.test(key))) continue;
     env[key] = value;
   }
   return { ...env, ...launchEnv };
@@ -170,7 +181,7 @@ export async function executeSessionLaunch(
 ): Promise<SessionLaunchResponse> {
   const proc = Bun.spawn(launch.shellArgv, {
     cwd: launch.env.CWD,
-    env: buildLaunchEnv(process.env, launch.cleanEnv, launch.env),
+    env: buildLaunchEnv(process.env, launch.cleanEnv, launch.env, launch.keepEnv),
     stdout: "pipe",
     stderr: "pipe",
   });

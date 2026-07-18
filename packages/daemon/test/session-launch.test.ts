@@ -417,6 +417,86 @@ describe("clean_env pattern matching", () => {
   });
 });
 
+// keep_env (DR-0018 §3.1 addendum 2026-07-18, 2nd): allowlist carving
+// exceptions out of a broad clean pattern. Real-world motivation: the admin
+// wants `CLAUDE*` cleaned wholesale, but CLAUDE_CONFIG_DIR is required for the
+// launched session's config-plane isolation — removing it broke session
+// launch entirely. Precedence contract: keep wins over clean.
+describe("keep_env allowlist", () => {
+  const launch = { CWD: "/w", MODEL: "m", EFFORT: "e", PROMPT: "p" };
+
+  // The core precedence rule and the motivating incident in one case: a key
+  // matched by BOTH a clean pattern and a keep pattern survives
+  // (CLAUDE_CONFIG_DIR), while sibling keys matched only by clean are still
+  // removed (CLAUDE_CODE_SESSION_ID) — keep is an exception list, not a
+  // clean-list disabler.
+  test("keep_env wins over clean_env for the matched key only", () => {
+    const base = { CLAUDE_CONFIG_DIR: "/c", CLAUDE_CODE_SESSION_ID: "old", PATH: "/bin" };
+    const env = buildLaunchEnv(base, ["CLAUDE*"], launch, ["CLAUDE_CONFIG_DIR"]);
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+  });
+
+  // keep_env uses the same pattern grammar as clean_env, including `*` as
+  // "any substring": one wildcard keep pattern can protect a family of keys
+  // while the rest of the clean match is still removed.
+  test("keep_env patterns support wildcards", () => {
+    const base = {
+      CLAUDE_CONFIG_DIR: "/c",
+      CLAUDE_CONFIG_EXTRA: "x",
+      CLAUDE_CODE_SESSION_ID: "old",
+    };
+    const env = buildLaunchEnv(base, ["CLAUDE*"], launch, ["CLAUDE_CONFIG*"]);
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
+    expect(env.CLAUDE_CONFIG_EXTRA).toBe("x");
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+  });
+
+  // A keep pattern matching a key that no clean pattern removes is a no-op:
+  // the key would have survived anyway, and unrelated keys are untouched.
+  // Pins that keep_env can never REMOVE anything (it only protects).
+  test("keep_env matching an un-cleaned key changes nothing", () => {
+    const base = { PATH: "/bin", HOME: "/home" };
+    const env = buildLaunchEnv(base, ["CLAUDE*"], launch, ["PATH"]);
+    expect(env.PATH).toBe("/bin");
+    expect(env.HOME).toBe("/home");
+  });
+
+  // The other quadrant of "keep only protects": with NO clean patterns at
+  // all, a keep list (even a wildcard one matching every key in base) is
+  // pure dead weight — nothing was going to be removed, so nothing changes.
+  // Distinct from the case above, where clean_env was non-empty but merely
+  // unmatched: here the removal machinery is entirely absent, pinning that
+  // keep_env has no effect of its own on any code path.
+  test("keep_env alone with empty clean_env removes and changes nothing", () => {
+    const base = { CLAUDE_CONFIG_DIR: "/c", PATH: "/bin" };
+    const env = buildLaunchEnv(base, [], launch, ["CLAUDE*", "PATH"]);
+    expect(env.CLAUDE_CONFIG_DIR).toBe("/c");
+    expect(env.PATH).toBe("/bin");
+  });
+
+  // Empty keep list = the pre-keep_env contract exactly: clean_env removes
+  // its matches unimpeded. (The omitted-argument default is also pinned by
+  // every case in the clean_env describe above, which calls the 3-arg form.)
+  test("empty keep_env leaves clean_env behavior unchanged", () => {
+    const base = { CLAUDE_CONFIG_DIR: "/c", PATH: "/bin" };
+    const env = buildLaunchEnv(base, ["CLAUDE*"], launch, []);
+    expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+  });
+
+  // keep_env protects only against cleaning, not against the launch overlay:
+  // CWD/MODEL/EFFORT/PROMPT are layered on AFTER the keep/clean decision, so
+  // even a kept stale CWD from the daemon env is overwritten by the launch's
+  // CWD — the launched command's four-variable contract stays absolute.
+  test("launch env still wins over a kept key", () => {
+    const base = { CWD: "/stale-from-daemon" };
+    const env = buildLaunchEnv(base, ["CWD"], launch, ["CWD"]);
+    expect(env.CWD).toBe("/w");
+  });
+});
+
 describe("clean_env end-to-end launch", () => {
   let base: string;
   let root: string;
@@ -454,6 +534,33 @@ describe("clean_env end-to-end launch", () => {
     } finally {
       delete process.env.CCMSG_TEST_CLEAN_ME;
       delete process.env.CCMSG_TEST_KEEP_ME;
+    }
+  });
+
+  // Proves the keep_env wiring from config through validateSessionLaunch to
+  // the spawned child (the CLAUDE_CONFIG_DIR incident shape): both variables
+  // match the broad clean pattern, but the keep-listed one reaches the child
+  // while its sibling is removed.
+  test("spawned child sees keep_env-protected variable despite a matching clean pattern", async () => {
+    process.env.CCMSG_TEST_KE_CONFIG = "protected";
+    process.env.CCMSG_TEST_KE_SESSION = "leaked";
+    try {
+      const cfg: SessionLauncherConfig = {
+        root_dirs: [root],
+        default_prompt: "",
+        shell: "bash",
+        command:
+          'printf "cfg=%s sess=%s" "${CCMSG_TEST_KE_CONFIG:-absent}" "${CCMSG_TEST_KE_SESSION:-absent}"',
+        timeout_seconds: 10,
+        dir_tree_depth: 2,
+        clean_env: ["CCMSG_TEST_KE_*"],
+        keep_env: ["CCMSG_TEST_KE_CONFIG"],
+      };
+      const result = await execute(cfg, request(cwd));
+      expect(result).toMatchObject({ ok: true, exit_code: 0, stdout: "cfg=protected sess=absent" });
+    } finally {
+      delete process.env.CCMSG_TEST_KE_CONFIG;
+      delete process.env.CCMSG_TEST_KE_SESSION;
     }
   });
 });

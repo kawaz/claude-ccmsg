@@ -99,6 +99,20 @@ spawn 前に daemon env からマッチするキーを除去し、その上に l
 launch env が勝つ)。既定 = 未指定なら空配列で従来同様クリーニングなし。不正型は
 警告して no-cleaning に degrade (launcher 自体は使用可能なまま)。
 
+**Addendum 2026-07-18 (2nd): `keep_env` (クリーニング除外 allowlist)**: §3.1 の
+config に optional `keep_env: string[]` を追加。動機: 実運用の
+`clean_env: ["CLAUDE*", ...]` が **CLAUDE_CONFIG_DIR まで除去してしまい、面分離
+(config-plane isolation) に必須のこの変数を失った新セッションが起動できなかった**。
+broad な clean パターンは必要 (元セッション変数の列挙は漏れる) なので、除去の側を
+狭めるのではなく例外 allowlist を重ねる。パターン文法は clean_env と完全に同一
+(`*` = キー名内の任意文字列、それ以外リテラル・大文字小文字区別・アンカー付き完全
+一致)。**優先関係: keep_env が clean_env に勝つ** — 両方にマッチするキーは残す。
+keep_env のみにマッチするキーは元々除去されないので no-op (keep_env は保護のみで
+除去はしない)。launch の `CWD`/`MODEL`/`EFFORT`/`PROMPT` overlay は keep/clean の
+判定後に重ねるため従来どおり常に勝つ。既定 = 未指定なら空配列 (例外なし)。不正型は
+警告して空配列に degrade — clean_env と逆で「より多く消える」方向であり、壊れた
+allowlist がクリーニング自体を黙って無効化しない安全側。
+
 ### 3.2 protocol (新 op)
 
 新 request/response 型を `packages/protocol/src/index.ts` に追加:
