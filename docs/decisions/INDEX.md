@@ -30,3 +30,4 @@
 | [DR-0024](./DR-0024-out-of-project-files.md) | Accepted | プロジェクト外セクション (セッションが触った cwd 外ファイルの表示 + allowlist 読み出し) |
 | [DR-0025](./DR-0025-workflow-drilldown.md) | Proposed | workflow/teammate 掘り下げ UI (Phases/エージェント一覧 → 各 TL 閲覧) |
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
+| [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) | Accepted | TL の ccmsg を daemon 一次情報で完全復元 + AI 発 post/reply の TL 表示 |
