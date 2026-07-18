@@ -10,7 +10,7 @@ import {
 import { containedInRoots } from "./launcher-paths.ts";
 
 export type SessionLaunchValidation =
-  | { ok: true; env: Record<string, string>; shellArgv: string[] }
+  | { ok: true; env: Record<string, string>; shellArgv: string[]; cleanEnv: string[] }
   | { ok: false; code: ErrorCode; msg: string };
 
 type ValidatedSessionLaunch = Extract<SessionLaunchValidation, { ok: true }>;
@@ -124,7 +124,42 @@ export function validateSessionLaunch(
     EFFORT: req.effort,
     PROMPT: req.prompt,
   };
-  return { ok: true, env, shellArgv: shellArgv(cfg.shell, command) };
+  return {
+    ok: true,
+    env,
+    shellArgv: shellArgv(cfg.shell, command),
+    cleanEnv: cfg.clean_env ?? [],
+  };
+}
+
+/** Compile one clean_env wildcard pattern (DR-0018 §3.1 addendum 2026-07-18)
+ * into an anchored RegExp: every regex metacharacter is escaped first so only
+ * `*` carries meaning (any substring of the key name), then anchored so a
+ * pattern without `*` is an exact, case-sensitive key match. The `\*` → `.*`
+ * rewrite cannot collide with an escaped literal backslash: escaping maps a
+ * source `\` to `\\` and a source `*` to `\*`, so every `\*` digram in the
+ * escaped text (scanning left-to-right in non-overlapping steps, exactly how
+ * replaceAll matches) comes from a source `*`. */
+function cleanEnvPatternToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
+}
+
+/** Build the child environment: daemon env minus clean_env matches, with the
+ * launch's own CWD/MODEL/EFFORT/PROMPT layered on top afterwards — so those
+ * four always win even if a pattern names them. Exported for tests. */
+export function buildLaunchEnv(
+  baseEnv: Record<string, string | undefined>,
+  cleanEnv: string[],
+  launchEnv: Record<string, string>,
+): Record<string, string | undefined> {
+  const regexps = cleanEnv.map(cleanEnvPatternToRegExp);
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (regexps.some((re) => re.test(key))) continue;
+    env[key] = value;
+  }
+  return { ...env, ...launchEnv };
 }
 
 /** Execute one validated launch and wait only for this child result. No pid is
@@ -135,7 +170,7 @@ export async function executeSessionLaunch(
 ): Promise<SessionLaunchResponse> {
   const proc = Bun.spawn(launch.shellArgv, {
     cwd: launch.env.CWD,
-    env: { ...process.env, ...launch.env },
+    env: buildLaunchEnv(process.env, launch.cleanEnv, launch.env),
     stdout: "pipe",
     stderr: "pipe",
   });

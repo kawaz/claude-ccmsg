@@ -86,6 +86,19 @@ session_launcher:
   相当、zsh は等価のエラー厳格オプションで起動 (bash/zsh は好みが分かれるため両対応)
 - **timeout_seconds**: 実行の grace period。以降は SIGTERM → 少し待って SIGKILL
 
+**Addendum 2026-07-18: `clean_env` (環境変数クリーニング)**: §3.1 の config に
+optional `clean_env: string[]` を追加。動機: daemon はある Claude セッション内の
+shell から起動されるため、daemon プロセスが元セッション由来の環境変数
+(`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, `ANTHROPIC_*` 等) を保持
+しており、`session_launch` の spawn 時に `process.env` 経由で新セッションへ流れて
+動作を変えてしまう (旧 SESSION_ID の引き継ぎ、CHILD_SESSION=1 の誤設定 等)。
+要素はワイルドカードパターン: `*` はキー名内の任意文字列 (区切り概念なし)、それ以外は
+リテラル・大文字小文字区別・アンカー付き完全一致 (正規表現メタ文字は literal 扱い)。
+spawn 前に daemon env からマッチするキーを除去し、その上に launcher の
+`CWD`/`MODEL`/`EFFORT`/`PROMPT` を重ねる (= パターンがこの 4 変数を名指ししても
+launch env が勝つ)。既定 = 未指定なら空配列で従来同様クリーニングなし。不正型は
+警告して no-cleaning に degrade (launcher 自体は使用可能なまま)。
+
 ### 3.2 protocol (新 op)
 
 新 request/response 型を `packages/protocol/src/index.ts` に追加:

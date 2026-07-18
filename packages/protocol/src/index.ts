@@ -60,6 +60,17 @@ export interface SessionLauncherConfig {
   command: string;
   timeout_seconds: number;
   dir_tree_depth: number;
+  /** DR-0018 §3.1 addendum 2026-07-18: wildcard patterns naming environment
+   * variables to REMOVE from the daemon's own environment before a launched
+   * child inherits it. The daemon itself is typically started from inside a
+   * Claude session's shell, so its process.env carries that origin session's
+   * variables (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ANTHROPIC_*
+   * …) which would silently reconfigure every launched session. `*` matches
+   * any substring of a key name (no separator semantics); everything else is
+   * literal, case-sensitive. Absent/empty = no cleaning (previous behavior).
+   * The launcher's own CWD/MODEL/EFFORT/PROMPT are layered on AFTER cleaning,
+   * so they can never be removed by a pattern. */
+  clean_env?: string[];
 }
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines

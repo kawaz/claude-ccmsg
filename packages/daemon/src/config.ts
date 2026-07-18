@@ -111,8 +111,32 @@ function parseSessionLauncher(
     else warn(log, file, "session_launcher.default_prompt must be a string; using empty string");
   }
 
+  // clean_env (DR-0018 §3.1 addendum 2026-07-18): wildcard patterns of env
+  // keys to strip before launch. Malformed shapes degrade to "no cleaning"
+  // (the pre-addendum behavior) rather than disabling the launcher — a bad
+  // pattern list is repairable while sessions keep launching.
+  const cleanEnv: string[] = [];
+  if (raw.clean_env !== undefined) {
+    if (!Array.isArray(raw.clean_env)) {
+      warn(log, file, "session_launcher.clean_env must be a string array; ignoring");
+    } else {
+      for (const pattern of raw.clean_env) {
+        if (typeof pattern !== "string" || pattern === "") {
+          warn(
+            log,
+            file,
+            "session_launcher.clean_env entries must be non-empty strings; entry ignored",
+          );
+          continue;
+        }
+        cleanEnv.push(pattern);
+      }
+    }
+  }
+
   return {
     root_dirs: rootDirs,
+    clean_env: cleanEnv,
     default_prompt: defaultPrompt,
     shell,
     command: raw.command,

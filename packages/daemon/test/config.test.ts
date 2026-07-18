@@ -63,6 +63,7 @@ describe("loadConfig", () => {
           command: 'claude --model "$MODEL" "$PROMPT"',
           timeout_seconds: 25,
           dir_tree_depth: 3,
+          clean_env: ["CLAUDE_*", "AI_AGENT"],
         },
       }),
     );
@@ -75,6 +76,7 @@ describe("loadConfig", () => {
         command: 'claude --model "$MODEL" "$PROMPT"',
         timeout_seconds: 25,
         dir_tree_depth: 3,
+        clean_env: ["CLAUDE_*", "AI_AGENT"],
       },
     });
     expect(warnings).toEqual([]);
@@ -187,5 +189,49 @@ describe("loadConfig", () => {
 
     expect(loadConfig(file, log).session_launcher?.root_dirs).toEqual([path.resolve(dir)]);
     expect(warnings).toHaveLength(1);
+  });
+
+  // clean_env absent means "no cleaning" (the pre-addendum contract): the
+  // parsed config carries an empty list, so the launcher passes the daemon
+  // env through untouched — existing configs keep their exact behavior.
+  test("absent clean_env parses to an empty list without warning", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ session_launcher: { root_dirs: [dir], command: "run" } }),
+    );
+    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  // A wrong-typed clean_env is a repairable pattern list, not a security
+  // boundary like root_dirs: it degrades to "no cleaning" with one warning
+  // while the launcher itself stays available.
+  test("non-array clean_env warns and degrades to no cleaning", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: { root_dirs: [dir], command: "run", clean_env: "CLAUDE_*" },
+      }),
+    );
+    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
+    expect(warnings).toHaveLength(1);
+  });
+
+  // Bad elements are skipped individually (same policy as root_dirs entries):
+  // an empty string or non-string entry cannot express a key pattern, but it
+  // must not erase the independent good patterns beside it.
+  test("empty or non-string clean_env entries are skipped while good patterns survive", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          command: "run",
+          clean_env: ["CLAUDE_*", "", 42, "AI_AGENT"],
+        },
+      }),
+    );
+    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual(["CLAUDE_*", "AI_AGENT"]);
+    expect(warnings).toHaveLength(2);
   });
 });
