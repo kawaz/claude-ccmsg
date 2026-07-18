@@ -601,16 +601,39 @@ export interface CcmsgMessage {
   room: string;
   msg: string;
   ts: string;
+  /** DR-0027 §2: canonical (room, mid) pair to look the daemon-stored full
+   * message up with (webui's `ws.read(room, [mid])` — CcmsgBubble does this
+   * lazily on mount). Present for every wire-format ccmsg extraction the
+   * daemon actually emitted a mid for (subscribe teammate-message relay,
+   * task-notification `<event>` body, tool_result `{ok:true,room,mid}` post/
+   * reply response — even the truncated-fragment recovery when the fragment
+   * still carries `"mid":N` before the truncation point). Absent only when
+   * the fragment lost the mid to truncation before we could parse it — those
+   * still render with the recovered body (救済 parse), just without the
+   * canonical read-fallback path. */
+  mid?: number;
 }
 
 /** Dedup key for a `CcmsgMessage` (kawaz r15 mid=21: the same room event can
  * be extracted twice from one transcript — a `queue-operation` enqueue line
- * and its `task-notification` Monitor tool_result echo both carry it). Shared
- * by Timeline.tsx's bubble-list render and its in-view search unit list so
- * the two dedup identically — a message the render side drops as a duplicate
- * must never still count toward the search "[N/M]" total (a ghost match with
- * no bubble to highlight/scroll to). */
+ * and its `task-notification` Monitor tool_result echo both carry it,
+ * DR-0027 §2.2 extends this to also cover the sender-side echo: an AI post/
+ * reply's tool_result `{ok:true,room,mid}` response, and the same message
+ * arriving back through the subscribe teammate-message relay, are the same
+ * canonical `(room, mid)`). Shared by Timeline.tsx's bubble-list render and
+ * its in-view search unit list so the two dedup identically — a message the
+ * render side drops as a duplicate must never still count toward the search
+ * "[N/M]" total (a ghost match with no bubble to highlight/scroll to).
+ *
+ * When `mid` is present the key is `${room}|m${mid}` — canonical per daemon
+ * (rooms/*.jsonl mid is unique per room), so two extractions of the same
+ * message from different transcript wrappers collapse regardless of whether
+ * their transcript body copies still match verbatim (truncation, XML entity
+ * escaping differences, DR-0027 §2 lazy-read replacement). Falls back to the
+ * old `${room}|${ts}|${from}|${msg}` form for pre-DR-0027 extractions and
+ * for fragments that lost their mid to truncation. */
 export function ccmsgDedupKey(m: CcmsgMessage): string {
+  if (m.mid !== undefined) return `${m.room}|m${m.mid}`;
   return `${m.room}|${m.ts}|${m.from}|${m.msg}`;
 }
 
@@ -637,9 +660,15 @@ const EVENT_TAG_RE = /<event>([\s\S]*?)<\/event>/g;
  * title/... — anything whose `type`/`ev` isn't exactly `"msg"`), which is the
  * whole point: only a real room message becomes a chat bubble, everything
  * else stays inside the fold. */
-function isCcmsgMsgEventLike(
-  obj: unknown,
-): obj is { type: "msg"; from: string; to?: string[]; r: string; msg: string; ts: string } {
+function isCcmsgMsgEventLike(obj: unknown): obj is {
+  type: "msg";
+  mid?: number;
+  from: string;
+  to?: string[];
+  r: string;
+  msg: string;
+  ts: string;
+} {
   if (!obj || typeof obj !== "object") return false;
   const o = obj as Record<string, unknown>;
   return (
@@ -648,7 +677,11 @@ function isCcmsgMsgEventLike(
     typeof o.r === "string" &&
     typeof o.msg === "string" &&
     typeof o.ts === "string" &&
-    (o.to === undefined || (Array.isArray(o.to) && o.to.every((t) => typeof t === "string")))
+    (o.to === undefined || (Array.isArray(o.to) && o.to.every((t) => typeof t === "string"))) &&
+    // `mid` is now surfaced (DR-0027 §2 lazy-read key), still not required for
+    // shape validity — pre-DR-0027 fixtures without mid must keep flowing
+    // through (they degrade to no read-fallback, see CcmsgMessage.mid doc).
+    (o.mid === undefined || typeof o.mid === "number")
   );
 }
 
@@ -683,7 +716,14 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
     return tryParseTruncatedCcmsgMessage(fragment.trim(), fallbackRoom);
   }
   if (!isCcmsgMsgEventLike(obj)) return null;
-  return { from: obj.from, to: obj.to, room: obj.r, msg: unescapeXmlEntities(obj.msg), ts: obj.ts };
+  return {
+    from: obj.from,
+    to: obj.to,
+    room: obj.r,
+    msg: unescapeXmlEntities(obj.msg),
+    ts: obj.ts,
+    ...(obj.mid !== undefined ? { mid: obj.mid } : {}),
+  };
 }
 
 /** Monitor 通知の <event> は長い msg を「...(truncated)」で切り詰めることが
@@ -712,7 +752,18 @@ function tryParseTruncatedCcmsgMessage(
   if (!fragment.startsWith('{"type":"msg"')) return null;
   const from = fragment.match(/"from":"((?:[^"\\]|\\.)*)"/)?.[1];
   const ts = fragment.match(/"ts":"((?:[^"\\]|\\.)*)"/)?.[1];
-  const room = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom ?? "?";
+  const knownRoom = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom;
+  const room = knownRoom ?? "?";
+  // mid は subscribe wire order (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md
+  // 済) では msg より前 (`type,mid,from,ts,to?,r,seq,reply_hint?,msg`) なので
+  // truncation 前に必ず来る — 拾えれば DR-0027 §2 の read-fallback パスに乗る。
+  // ただし canonical lookup key は (r, mid) の**組**: room が復元できなかった
+  // fragment (`room === "?"`) に mid だけ付けると、`ws.read("?", [mid])` の
+  // 無意味な発火と、別 room の同 mid truncated fragment との dedup 偽衝突
+  // (`?|m99` が room を跨いで同キー化) を起こす。room 不明時は mid を捨てて
+  // 救済 parse 本文だけの最終フォールバックに落とす (DR-0027 §2.1)。
+  const midMatch = knownRoom !== undefined ? fragment.match(/"mid":(\d+)/)?.[1] : undefined;
+  const mid = midMatch !== undefined ? Number(midMatch) : undefined;
   const msgMatch = fragment.match(/"msg":"((?:[^"\\]|\\.)*)/)?.[1];
   if (!from || !ts || msgMatch === undefined) return null;
   let msg: string;
@@ -723,7 +774,70 @@ function tryParseTruncatedCcmsgMessage(
   } catch {
     return null;
   }
-  return { from, room, msg: `${unescapeXmlEntities(msg)}…(切り詰め — 全文は room で)`, ts };
+  return {
+    from,
+    room,
+    msg: `${unescapeXmlEntities(msg)}…(切り詰め — 全文は room で)`,
+    ts,
+    ...(mid !== undefined ? { mid } : {}),
+  };
+}
+
+/** DR-0027 §2.2: matches a ccmsg CLI `post`/`reply` success response as it
+ * appears in a Bash tool_result content. The daemon returns
+ * `{"ok":true,"room":"rN","mid":M}\n` for `post` and
+ * `{"ok":true,"room":"rN","mid":M,"to":["a1","u1"]}\n` for `reply`
+ * (server.ts's reply handler appends the computed delivery list — observed
+ * shapes: post at bbc718cd line 184, reply per PostResponse/reply send in
+ * packages/daemon/src/server.ts), and Claude Code's Bash tool wraps the
+ * stdout verbatim as the tool_result's content. The optional `to` group
+ * accepts exactly a JSON string array (quoted ids, no escapes — daemon ids
+ * are `aN`/`uN` shaped) so the reply shape is captured without loosening
+ * the tail anchor. Anchored with `\s*$` so a trailing newline is fine but
+ * longer noise (a `2>&1`-piped error banner mixed with the JSON, help text
+ * on argv misuse) doesn't false-match. Any other extra JSON key is rejected
+ * (`\}\s*$`), so an unrelated daemon op that carries `ok:true,room,mid` but
+ * adds different fields fails the match (design-priority: reject unknown
+ * keys rather than assume they don't come). */
+const CCMSG_POST_RESPONSE_RE =
+  /^\s*\{"ok":true,"room":"([^"\\]+)","mid":(\d+)(?:,"to":\["[^"\\]*"(?:,"[^"\\]*")*\])?\}\s*$/;
+
+/** DR-0027 §2.2 送信側: scans this user turn's `tool-result` segments for a
+ * ccmsg `post`/`reply` success response, and returns one placeholder
+ * `CcmsgMessage` per match with just `(room, mid)` populated (from/to/msg
+ * empty, ts filled from the line — CcmsgBubble does a lazy `ws.read(room,
+ * [mid])` and replaces the placeholder body with the daemon-canonical
+ * message on resolve, DR-0027 §2). A tool_result whose content isn't
+ * exactly the response JSON — anything with pre/postfix noise from `2>&1`,
+ * a `{"ok":false,...}` error response, or an unrelated Bash output — falls
+ * through unmatched and stays in the normal fold path. Non-turn / non-user
+ * lines and turns with no tool_result segments return `[]`.
+ *
+ * The line's `ts` (transcript timestamp, when the tool_result was written)
+ * is used as the placeholder ts so the bubble sorts / date-groups correctly
+ * before the read resolves — the real send ts (daemon's authoritative one)
+ * overwrites it once the lazy read comes back. Absent line.ts (test
+ * fixtures with `ts: null`) degrades to an empty string, same convention
+ * as the wrapper-parse path (`tryParseCcmsgMessage` requires `ts`, but the
+ * tool_result path can't require one — the daemon knows, we don't yet).
+ */
+export function extractCcmsgToolResultRefs(line: ParsedLine): CcmsgMessage[] {
+  if (line.kind !== "turn" || line.role !== "user") return [];
+  const out: CcmsgMessage[] = [];
+  for (const seg of line.segments) {
+    if (seg.kind !== "tool-result") continue;
+    if (seg.isError) continue;
+    const m = seg.text.match(CCMSG_POST_RESPONSE_RE);
+    if (!m) continue;
+    out.push({
+      from: "",
+      room: m[1]!,
+      msg: "",
+      ts: line.ts ?? "",
+      mid: Number(m[2]!),
+    });
+  }
+  return out;
 }
 
 /**
@@ -760,18 +874,25 @@ function tryParseTruncatedCcmsgMessage(
  */
 export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   if (line.kind !== "turn" || line.role !== "user") return [];
+  // DR-0027 §2.2 送信側: assistant が Bash 経由で叩いた `ccmsg post` /
+  // `ccmsg reply` の response (tool_result の content が `{"ok":true,"room":
+  // "rN","mid":M}` の JSON) を検出して placeholder CcmsgMessage にする。
+  // 実本文は CcmsgBubble が (room, mid) で lazy read するので from/to/msg は
+  // 空のまま (ts は line.ts で補完)。tool_result は同 turn 内に複数並ぶことが
+  // あり (Anthropic API のバッチ)、非 ccmsg のものは pattern に合致せずスキップ。
+  const fromToolResults = extractCcmsgToolResultRefs(line);
   const text = line.segments
     .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
     .map((s) => s.text)
     .join("\n");
-  if (!text) return [];
+  if (!text) return fromToolResults;
   // 早期 return: どちらのタグも含まない (大半の user 行、システム注入行は
   // 本文が巨大になりがち) なら matchAll を 2 本走らせるまでもない — join
   // コスト自体は避けられないが、この関数は classifyBoundaryLine 経由で
   // groups が変わるたび (load older / tail 追記 / refresh, Timeline.tsx)
   // に呼ばれるので、軽いほど再分類コストが下がる。
-  if (!text.includes("<teammate-message") && !text.includes("<event>")) return [];
-  const results: CcmsgMessage[] = [];
+  if (!text.includes("<teammate-message") && !text.includes("<event>")) return fromToolResults;
+  const results: CcmsgMessage[] = [...fromToolResults];
   for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
     const parsed = tryParseCcmsgMessage(m[1]!);
     if (parsed) results.push(parsed);

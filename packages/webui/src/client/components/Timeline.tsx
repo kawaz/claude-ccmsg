@@ -868,6 +868,106 @@ function AssistantBubble({
   );
 }
 
+// DR-0027 §2 (Phase 1 lazy read cache): the daemon holds the canonical full
+// message body in rooms/*.jsonl — transcript-model.ts's extraction only
+// promises (room, mid, from, ts) + a best-effort recovered body (a truncated
+// fragment's partial text, or the full text if it fit under the harness's
+// notification size cap). CcmsgBubble looks the canonical body up with
+// `ws.read(room, [mid])` on mount and swaps it in, so a "…(切り詰め)"
+// fallback gets replaced by the real full text and a tool_result-detected
+// send (Phase 2, from/msg initially empty) fills in from what the daemon
+// actually stored.
+//
+// Cache lives at module scope, not store, per DR-0027's "実物の流儀で判断"
+// bracket: this is a read-through of a daemon-owned canonical, not app
+// state — reducers have nothing to touch. Values transition
+// Promise<CcmsgReadBody | null> → CcmsgReadBody (success) or "failed" (room
+// gone / daemon error / msg not found). A "failed" entry is retried on the
+// next mount of a bubble for that key (the daemon might have come back) but
+// still renders as a distinct failure state in between — a tool_result
+// placeholder has no recovered body to fall back on, so the bubble must be
+// able to say "couldn't fetch" instead of rendering blank. Keyed
+// `${room}|m${mid}` (same shape as ccmsgDedupKey's canonical form) so the
+// same key space is used for dedup and for look-up.
+interface CcmsgReadBody {
+  from: string;
+  to?: string[];
+  msg: string;
+  ts: string;
+}
+type CcmsgBodyCacheEntry = CcmsgReadBody | Promise<CcmsgReadBody | null> | "failed";
+const CCMSG_BODY_CACHE = new Map<string, CcmsgBodyCacheEntry>();
+
+function ccmsgBodyCacheKey(room: string, mid: number): string {
+  return `${room}|m${mid}`;
+}
+
+/** Kicks off a `ws.read(room, [mid])` on first mount for this (room, mid)
+ * and returns the resolved body once available; `"failed"` once a read
+ * settled without a body (room gone, daemon error, msg not stored) so
+ * CcmsgBubble can render an explicit couldn't-fetch note for a tool_result
+ * placeholder that has no recovered body of its own; undefined while
+ * nothing has settled yet. A `"failed"` entry is retried on the next mount
+ * (tab switch back, page section re-open — the daemon might have come
+ * back) but not within the current one, so a dead room costs one read per
+ * mount, not a render-loop of them. CcmsgBubble treats undefined as "use
+ * the placeholder / recovered body from the extraction" so the bubble is
+ * never blank — the swap is strictly an upgrade, never a downgrade. */
+function useCcmsgBody(room: string, mid: number | undefined): CcmsgReadBody | "failed" | undefined {
+  const { ws } = useApp();
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (mid === undefined) return;
+    const key = ccmsgBodyCacheKey(room, mid);
+    const cached = CCMSG_BODY_CACHE.get(key);
+    // A resolved body never changes (daemon msgs are append-only), so it
+    // needs no re-fetch. "failed" falls through to retry on this fresh mount.
+    if (cached !== undefined && cached !== "failed" && !(cached instanceof Promise)) return;
+    // If a Promise is already in flight for this key, subscribe to it —
+    // multiple bubbles for the same (room, mid) (e.g. a tool_result send
+    // + its subscribe teammate-message echo before dedup) share one read.
+    let cancelled = false;
+    const onSettle = () => {
+      if (!cancelled) force((n) => n + 1);
+    };
+    if (cached instanceof Promise) {
+      void cached.then(onSettle);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const p = ws
+      .read(room, [mid])
+      .then((resp) => {
+        if (!resp.ok || resp.msgs.length === 0) {
+          CCMSG_BODY_CACHE.set(key, "failed");
+          return null;
+        }
+        const m = resp.msgs[0]!;
+        const body: CcmsgReadBody = {
+          from: m.from,
+          ...(m.to ? { to: m.to } : {}),
+          msg: m.msg,
+          ts: m.ts,
+        };
+        CCMSG_BODY_CACHE.set(key, body);
+        return body;
+      })
+      .catch(() => {
+        CCMSG_BODY_CACHE.set(key, "failed");
+        return null;
+      });
+    CCMSG_BODY_CACHE.set(key, p);
+    void p.then(onSettle);
+    return () => {
+      cancelled = true;
+    };
+  }, [room, mid, ws]);
+  if (mid === undefined) return undefined;
+  const c = CCMSG_BODY_CACHE.get(ccmsgBodyCacheKey(room, mid));
+  return c !== undefined && !(c instanceof Promise) ? c : undefined;
+}
+
 // ccmsg メッセージ吹き出し (kawaz spec): msg/raw 切替は thinking の
 // original|ja タブと同じ UI 流儀 (下タブボタン列)。raw は抽出元行の生
 // テキスト全文 (extractCcmsgMessages が読んだのと同じ text segment 結合、
@@ -898,7 +998,24 @@ function CcmsgBubble({
   searchCtx: TLSearchCtx | undefined;
 }) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
-  const isUser = message.from === ADMIN_ID;
+  // DR-0027 §2 Phase 1 lazy read: daemon-canonical body if known, otherwise
+  // the placeholder / recovered body from the extraction. Fields fall back
+  // individually (not all-or-nothing) so a tool_result-detected send (from
+  // empty, ts = transcript ts) still shows the correct from as soon as read
+  // resolves without waiting for msg. A settled-but-failed read (room gone /
+  // msg not stored) keeps every recovered field and only replaces a body we
+  // have nothing for with an explicit couldn't-fetch note — a bubble must
+  // never render blank (DR-0027 §2.1's フォールバック requirement).
+  const lookup = useCcmsgBody(message.room, message.mid);
+  const body = lookup === "failed" ? undefined : lookup;
+  const from = body?.from || message.from;
+  const to = body?.to ?? message.to;
+  const msgBody =
+    body?.msg ||
+    message.msg ||
+    (lookup === "failed" ? `(本文を取得できません — #${message.room} は消えた可能性)` : "");
+  const ts = body?.ts || message.ts;
+  const isUser = from === ADMIN_ID;
   const isMatch =
     searchCtx !== undefined && searchCtx.words.length > 0 && searchCtx.isMatch(searchKey);
   const mdSearch =
@@ -916,8 +1033,8 @@ function CcmsgBubble({
       <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
         <div class="tl-bubble-from">
           {isUser ? <UserAvatar size={16} /> : null}
-          {message.from}
-          {message.to?.length ? ` → ${message.to.join(", ")}` : ""}
+          {from || "…"}
+          {to?.length ? ` → ${to.join(", ")}` : ""}
           {" · #"}
           {message.room}
         </div>
@@ -945,7 +1062,7 @@ function CcmsgBubble({
           // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
           <div class="tl-ccmsg-msg">
             <MarkdownView
-              source={message.msg}
+              source={msgBody}
               highlightWords={mdSearch?.words}
               onMatchClick={mdSearch?.onMatchClick}
             />
@@ -954,7 +1071,7 @@ function CcmsgBubble({
           <pre class="tl-fold-body">{rawText}</pre>
         )}
       </div>
-      <span class="tl-bubble-time">{formatMsgTime(message.ts, now)}</span>
+      <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span>
     </div>
   );
   if (!isMatch || !searchCtx) return bubble;
@@ -1826,8 +1943,16 @@ export function Timeline({
                       />
                     );
                   case "ccmsg": {
+                    // raw タブ用の「この行に何が書いてあったか」: subscribe/
+                    // teammate-message wrapper は text segment に、DR-0027 §2.2
+                    // の tool_result 検出行 ({ok:true,room,mid} response) は
+                    // tool-result segment にしか原文が無い — text だけ結合すると
+                    // tool_result 由来バブルの raw タブが空になるので両方拾う。
                     const rawText = line.segments
-                      .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+                      .filter(
+                        (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
+                          s.kind === "text" || s.kind === "tool-result",
+                      )
                       .map((s) => s.text)
                       .join("\n");
                     return boundary.messages

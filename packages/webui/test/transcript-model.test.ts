@@ -11,6 +11,7 @@ import {
   classifyBoundaryLine,
   classifyUserMessage,
   extractCcmsgMessages,
+  extractCcmsgToolResultRefs,
   foldGroupLabel,
   splitFoldSubgroups,
   groupTimelineLines,
@@ -1475,6 +1476,7 @@ describe("extractCcmsgMessages", () => {
         room: "r7",
         msg: "レビュー終わりました",
         ts: "2026-07-12T01:00:00.000Z",
+        mid: 12,
       },
     ]);
   });
@@ -1508,7 +1510,14 @@ describe("extractCcmsgMessages", () => {
       `<task-notification>\n<task-id>x</task-id>\n<summary>Monitor event</summary>\n<event>${JSON.stringify(msgEvent)}</event>\nIf this event is something the user would act on now...\n</task-notification>`,
     );
     expect(extractCcmsgMessages(line)).toEqual([
-      { from: "u1", to: ["a1"], room: "r2", msg: "確認して", ts: "2026-07-12T02:00:00.000Z" },
+      {
+        from: "u1",
+        to: ["a1"],
+        room: "r2",
+        msg: "確認して",
+        ts: "2026-07-12T02:00:00.000Z",
+        mid: 3,
+      },
     ]);
   });
 
@@ -1521,8 +1530,8 @@ describe("extractCcmsgMessages", () => {
       `<task-notification>\n<event>${JSON.stringify(e1)}\n${JSON.stringify(e2)}</event>\n</task-notification>`,
     );
     expect(extractCcmsgMessages(line)).toEqual([
-      { from: "a1", to: undefined, room: "r1", msg: "one", ts: "t1" },
-      { from: "a2", to: undefined, room: "r1", msg: "two", ts: "t2" },
+      { from: "a1", to: undefined, room: "r1", msg: "one", ts: "t1", mid: 1 },
+      { from: "a2", to: undefined, room: "r1", msg: "two", ts: "t2", mid: 2 },
     ]);
   });
 
@@ -1588,6 +1597,247 @@ describe("extractCcmsgMessages", () => {
   test("broken line -> empty", () => {
     expect(extractCcmsgMessages(parseTranscriptLine("{not json"))).toEqual([]);
   });
+
+  // DR-0027 §2: 抽出は (r, mid, from, ts) の同定に軽量化されたので、subscribe/
+  // teammate-message wrappers 由来の CcmsgMessage は mid を含む (isCcmsgMsgEventLike
+  // で拾えている限り)。Timeline.tsx が (room, mid) で ws.read → 完全版を lazy
+  // 取得する経路のキーになる — 抽出段で mid を落とすと read-fallback が動かない。
+  test("DR-0027: wrapper-parsed CcmsgMessage carries `mid` from the source event", () => {
+    const msgEvent = {
+      type: "msg",
+      mid: 77,
+      from: "a1",
+      r: "r10",
+      ts: "2026-07-18T00:00:00Z",
+      msg: "carry mid",
+    };
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `<task-notification>\n<event>${JSON.stringify(msgEvent)}</event>\n</task-notification>`,
+        },
+      }),
+    );
+    const msgs = extractCcmsgMessages(line);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.mid).toBe(77);
+  });
+
+  // DR-0027 §2 (truncated fragment 経路): 現行の wire order (msg が最後) では
+  // mid は truncation の手前に必ずあるので、切れた fragment からでも拾えて
+  // 完全版 read の canonical key を確保できる — 切り詰め本文の bubble も後で
+  // daemon 一次情報で置き換わる。
+  test("DR-0027: truncated fragment recovers `mid` before the truncation point", () => {
+    const truncated =
+      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_hint":"r30m109","msg":"a long body...(truncated)';
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `<task-notification>\n<event>${truncated}</event>\n</task-notification>`,
+        },
+      }),
+    );
+    const msgs = extractCcmsgMessages(line);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.mid).toBe(110);
+  });
+
+  // 対極 (DR-0027 §2.1): canonical lookup key は (r, mid) の組。旧 wire order
+  // (`type,mid,from,ts,msg,...` — msg が中程で r が末尾側) の truncated
+  // fragment では r が truncation で失われ room="?" になる。この場合 mid を
+  // 付けると (a) ws.read("?", [mid]) の無意味な発火 (実 daemon 実測で確認)、
+  // (b) dedup key "?|mN" が room を跨いで同 mid の別メッセージと偽衝突する。
+  // room 不明の fragment は mid なし = 救済 parse 本文だけの最終フォールバック。
+  test("DR-0027: room-less truncated fragment (old wire order) drops `mid` — no canonical key without a room", () => {
+    const truncated =
+      '{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"a long body cut before the r field...(truncated)';
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `<task-notification>\n<event>${truncated}</event>\n</task-notification>`,
+        },
+      }),
+    );
+    const msgs = extractCcmsgMessages(line);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]!.room).toBe("?");
+    expect(msgs[0]!.mid).toBeUndefined();
+    // 本文の救済 parse は従来通り生きている (最終フォールバック)。
+    expect(msgs[0]!.msg).toContain("a long body cut before the r field");
+  });
+});
+
+// DR-0027 §2.2 (送信側 tool_result 検出): AI が Bash 経由で叩いた `ccmsg
+// post`/`ccmsg reply` の response (`{"ok":true,"room":"rN","mid":M}`) を
+// tool_result content から拾って placeholder CcmsgMessage にする — from/msg
+// は空、実本文は CcmsgBubble が (room, mid) で lazy read する。実 tool_result
+// 形状は 2026-07-16 の bbc718cd セッション transcript で観測 (line 184、
+// {"ok":true,"room":"r25","mid":2})。
+describe("extractCcmsgToolResultRefs", () => {
+  function userToolResultLine(text: string, isError = false, ts: string | null = null): ParsedLine {
+    return {
+      kind: "turn",
+      ts,
+      role: "user",
+      segments: [{ kind: "tool-result", toolUseId: "toolu_x", isError, text }],
+    };
+  }
+
+  test("plain ccmsg post response -> one ref with (room, mid), from/msg empty, ts from line", () => {
+    const line = userToolResultLine(
+      '{"ok":true,"room":"r25","mid":2}',
+      false,
+      "2026-07-18T01:00:00Z",
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([
+      { from: "", room: "r25", msg: "", ts: "2026-07-18T01:00:00Z", mid: 2 },
+    ]);
+  });
+
+  // 実 transcript では stdout 末尾に \n が乗る (toolUseResult.stdout に改行が
+  // 保持される)。regex は `\s*$` で許容してあるべき。
+  test("response with a trailing newline still matches", () => {
+    const line = userToolResultLine('{"ok":true,"room":"r17","mid":68}\n');
+    expect(extractCcmsgToolResultRefs(line)).toHaveLength(1);
+    expect(extractCcmsgToolResultRefs(line)[0]!.mid).toBe(68);
+  });
+
+  // `ccmsg reply` の応答は post と違い daemon が配信先を `to` に付けて返す
+  // ({"ok":true,"room":rN,"mid":M,"to":["a1","u1"]} — server.ts の reply
+  // handler)。DR-0027 §2.2 は post/reply 両方を TL バブル化の対象とするので
+  // この形も (room, mid) ref として拾う。to の中身自体は使わない (lazy read
+  // が daemon canonical の to を取ってくる)。
+  test("reply response with `to` array also matches (DR-0027 §2.2 covers post AND reply)", () => {
+    const line = userToolResultLine(
+      '{"ok":true,"room":"r26","mid":84,"to":["a1","u1"]}\n',
+      false,
+      "2026-07-18T02:00:00Z",
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([
+      { from: "", room: "r26", msg: "", ts: "2026-07-18T02:00:00Z", mid: 84 },
+    ]);
+  });
+
+  // 単一要素の to (1on1 の reply 等) も同様。
+  test("reply response with a single-element `to` matches", () => {
+    const line = userToolResultLine('{"ok":true,"room":"r5","mid":3,"to":["u1"]}');
+    expect(extractCcmsgToolResultRefs(line)).toHaveLength(1);
+  });
+
+  // 対極: to 以外の追加キーを持つ {ok,room,mid,...} 形 (無関係な daemon op の
+  // 応答等) は reject — 未知キーを許すと誤爆面が広がる。
+  test("response with an unknown extra key -> empty (strict shape)", () => {
+    const line = userToolResultLine('{"ok":true,"room":"r5","mid":3,"seq":9}');
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  // 対極 (誤爆防止): エラー response `{"ok":false,...}` は拾わない。
+  test("failure response {ok:false,error:...} -> empty (not matched)", () => {
+    const line = userToolResultLine(
+      '{"ok":false,"error":{"code":"not_a_member","msg":"not a member of r17"}}',
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  // 対極: is_error:true な tool_result は content が response 形でも拾わない
+  // (Bash が exit non-zero を返した状況、副作用としての post 成功でも扱わない)。
+  test("is_error=true tool_result -> empty even if content matches the shape", () => {
+    const line = userToolResultLine('{"ok":true,"room":"r25","mid":2}', true);
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  // 対極: `2>&1` などで前後にノイズが混ざったら strict 検出は空 (誤爆回避)。
+  test("noisy content (mixed with other output) -> empty", () => {
+    const line = userToolResultLine(
+      'Exit code 1\n{"ok":true,"room":"r25","mid":2}\nsome trailing help',
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  // 対極: text segment のみの user turn (通常のプロンプト等) は空。
+  test("user turn with only text segments -> empty", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  test("assistant turn -> empty", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+      }),
+    );
+    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
+  });
+
+  // 複数 tool_result が同じ turn にバッチされている場合 (Anthropic API 慣習)、
+  // ccmsg post response と非関連 tool_result が並ぶ — ccmsg のものだけ拾う。
+  test("mixed batch: only ccmsg-shaped tool_results become refs", () => {
+    const line: ParsedLine = {
+      kind: "turn",
+      ts: "2026-07-18T00:00:00Z",
+      role: "user",
+      segments: [
+        { kind: "tool-result", toolUseId: "t1", isError: false, text: "unrelated ls output" },
+        {
+          kind: "tool-result",
+          toolUseId: "t2",
+          isError: false,
+          text: '{"ok":true,"room":"r5","mid":9}',
+        },
+        {
+          kind: "tool-result",
+          toolUseId: "t3",
+          isError: false,
+          text: '{"ok":true,"room":"r6","mid":10}',
+        },
+      ],
+    };
+    const refs = extractCcmsgToolResultRefs(line);
+    expect(refs).toHaveLength(2);
+    expect(refs.map((r) => [r.room, r.mid])).toEqual([
+      ["r5", 9],
+      ["r6", 10],
+    ]);
+  });
+});
+
+// DR-0027 §2.2 統合: extractCcmsgMessages は tool_result 検出結果と wrapper
+// 抽出結果の両方を返し、Timeline.tsx が同一 boundary の bubble 列として描画
+// できる。ccmsgDedupKey が (room, mid) canonical キーを返すので、tool_result
+// 由来の placeholder と subscribe teammate-message 由来の完全 event が同じ
+// (room, mid) を持つ場合は 1 件に collapse される (kawaz r15 mid=21 dedup の
+// 拡張、DR-0027 §2.2)。
+describe("DR-0027 dedup: (room, mid) canonical key collapses send-side + receive-side echoes", () => {
+  test("ccmsgDedupKey uses `${room}|m${mid}` when mid is present", () => {
+    const m: CcmsgMessage = { from: "a1", room: "r5", msg: "", ts: "", mid: 42 };
+    expect(ccmsgDedupKey(m)).toBe("r5|m42");
+  });
+
+  test("ccmsgDedupKey falls back to the ts|from|msg form when mid is absent (pre-DR-0027 shape)", () => {
+    const m: CcmsgMessage = { from: "u1", room: "r5", msg: "hi", ts: "t" };
+    expect(ccmsgDedupKey(m)).toBe("r5|t|u1|hi");
+  });
+
+  test("tool_result placeholder and wrapper-parsed message with same (room, mid) collapse", () => {
+    const placeholder: CcmsgMessage = { from: "", room: "r5", msg: "", ts: "ts1", mid: 42 };
+    const wrapperParsed: CcmsgMessage = {
+      from: "a1",
+      room: "r5",
+      msg: "hello",
+      ts: "ts2",
+      mid: 42,
+    };
+    expect(ccmsgDedupKey(placeholder)).toBe(ccmsgDedupKey(wrapperParsed));
+  });
 });
 
 // classifyBoundaryLine (webui Timeline chat-bubble task, kawaz spec): the
@@ -1610,7 +1860,7 @@ describe("classifyBoundaryLine", () => {
     );
     expect(classifyBoundaryLine(line)).toEqual({
       kind: "ccmsg",
-      messages: [{ from: "a1", to: undefined, room: "r1", msg: "hi", ts: "t1" }],
+      messages: [{ from: "a1", to: undefined, room: "r1", msg: "hi", ts: "t1", mid: 1 }],
     });
   });
 
