@@ -86,7 +86,7 @@ function CreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () =
       aria-pressed={open}
       onClick={onToggle}
     >
-      + new
+      {"+⁠New"}
     </button>
   );
 }
@@ -110,7 +110,7 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
       aria-pressed={open}
       onClick={onToggle}
     >
-      + new
+      {"+⁠New"}
     </button>
   );
 }
