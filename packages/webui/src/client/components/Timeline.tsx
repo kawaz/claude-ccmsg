@@ -51,6 +51,7 @@ import {
   unitMatchesQuery,
   type SearchWord,
 } from "../in-view-search.ts";
+import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { SearchBar } from "./SearchBar.tsx";
 
 /**
@@ -154,11 +155,35 @@ function FoldGuide() {
   );
 }
 
-function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
+function FoldSummary({
+  ts,
+  label,
+  open = false,
+  decoration,
+}: {
+  ts: string | null;
+  label: string;
+  open?: boolean;
+  decoration?: FoldSummaryDecoration;
+}) {
+  const view = foldSummaryView(label, open, decoration);
   return (
-    <summary>
+    <summary
+      class={
+        view.decoration ? `tl-decorated-summary tl-${view.decoration.kind}-summary` : undefined
+      }
+    >
       {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
-      <span class="tl-fold-label">{label}</span>
+      {view.decoration?.kind === "thinking" ? (
+        <span class="tl-fold-label tl-summary-decoration">thinking</span>
+      ) : view.decoration?.kind === "agent" ? (
+        <span class="tl-fold-label tl-summary-decoration">
+          <span>{view.decoration.prefix}</span>
+          <AgentIdentity name={view.decoration.name} />
+        </span>
+      ) : (
+        <span class="tl-fold-label">{view.label}</span>
+      )}
     </summary>
   );
 }
@@ -194,6 +219,41 @@ function AgentCard({
       {title ? <div class="tl-agent-title">{title}</div> : null}
       {body ? <div class="tl-agent-body">{body}</div> : null}
     </div>
+  );
+}
+
+function AgentSendFold({
+  segment,
+  ts,
+}: {
+  segment: Extract<Segment, { kind: "agent-send" }>;
+  ts: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = `SendMessage → ${segment.to}`;
+  return (
+    <details
+      class="tl-fold tl-agent-fold"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <FoldSummary
+        ts={ts}
+        label={label}
+        open={open}
+        decoration={{ kind: "agent", prefix: "SendMessage →", name: segment.to }}
+      />
+      <div class="tl-guided">
+        <FoldGuide />
+        <AgentCard
+          name={segment.to}
+          direction="outbound"
+          badge={segment.messageType === "message" ? "送信" : segment.messageType}
+          title={segment.summary}
+          body={segment.message}
+        />
+      </div>
+    </details>
   );
 }
 
@@ -302,7 +362,7 @@ function ThinkingSegment({
       open={detailsOpen}
       onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <FoldSummary ts={ts} label="thinking" />
+      <FoldSummary ts={ts} label="thinking" open={detailsOpen} decoration={{ kind: "thinking" }} />
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-thinking-body">
@@ -426,21 +486,7 @@ function SegmentView({
           </details>
         );
       case "agent-send":
-        return (
-          <details class="tl-fold tl-agent-fold">
-            <FoldSummary ts={ts} label={`SendMessage → ${segment.to}`} />
-            <div class="tl-guided">
-              <FoldGuide />
-              <AgentCard
-                name={segment.to}
-                direction="outbound"
-                badge={segment.messageType === "message" ? "送信" : segment.messageType}
-                title={segment.summary}
-                body={segment.message}
-              />
-            </div>
-          </details>
-        );
+        return <AgentSendFold segment={segment} ts={ts} />;
       case "agent-spawn":
         return (
           <details class="tl-fold tl-agent-fold">
@@ -565,6 +611,13 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
 // メッセージの details 本文) から呼ばれる。raw タブは変更前と全く同じ描画
 // (segments.map + SegmentView) を保つことで、rich 側のパースが空振りしても
 // 元の情報は raw タブから必ず参照できる ("壊れた入力は raw fallback" 要件)。
+function systemMessageRawText(line: TurnLine): string {
+  return line.segments
+    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+    .map((s) => s.text)
+    .join("\n");
+}
+
 function SystemMessageBody({
   kind,
   line,
@@ -582,14 +635,7 @@ function SystemMessageBody({
   // userMessageKind "tool-result") では空文字列になり、rich タブは text
   // フォールバックで空表示になるが、raw タブ側は元通り全 segment を描画する
   // ので情報は失われない。
-  const rawText = useMemo(
-    () =>
-      line.segments
-        .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
-        .map((s) => s.text)
-        .join("\n"),
-    [line.segments],
-  );
+  const rawText = useMemo(() => systemMessageRawText(line), [line.segments]);
   const rich = useMemo(() => parseSystemMessageFields(kind, rawText), [kind, rawText]);
 
   return (
@@ -637,6 +683,46 @@ function SystemMessageBody({
         </div>
       )}
     </div>
+  );
+}
+
+function SystemMessageFold({
+  kind,
+  line,
+  translationAvailability,
+  foldGroupOpen,
+}: {
+  kind: UserMessageKind;
+  line: TurnLine;
+  translationAvailability: TranslationAvailability;
+  foldGroupOpen: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rich = useMemo(
+    () => parseSystemMessageFields(kind, systemMessageRawText(line)),
+    [kind, line.segments],
+  );
+  const peer = rich.display === "peer" ? rich : null;
+  const label = peer ? `${kind} ← ${peer.from}` : kind;
+  return (
+    <details
+      class={peer ? "tl-line tl-fold tl-agent-fold" : "tl-line tl-fold"}
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <FoldSummary
+        ts={line.ts}
+        label={label}
+        open={open}
+        decoration={peer ? { kind: "agent", prefix: `${kind} ←`, name: peer.from } : undefined}
+      />
+      <SystemMessageBody
+        kind={kind}
+        line={line}
+        translationAvailability={translationAvailability}
+        foldGroupOpen={foldGroupOpen}
+      />
+    </details>
   );
 }
 
@@ -691,15 +777,12 @@ function LineView({
       : null;
   if (sysKind) {
     return (
-      <details class="tl-line tl-fold">
-        <FoldSummary ts={line.ts} label={sysKind} />
-        <SystemMessageBody
-          kind={sysKind}
-          line={line}
-          translationAvailability={translationAvailability}
-          foldGroupOpen={foldGroupOpen}
-        />
-      </details>
+      <SystemMessageFold
+        kind={sysKind}
+        line={line}
+        translationAvailability={translationAvailability}
+        foldGroupOpen={foldGroupOpen}
+      />
     );
   }
   // 残り: thinking/tool_use-only の assistant turn、tool-result-only の

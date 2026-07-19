@@ -2863,6 +2863,32 @@ button.session-tab {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.tl-decorated-summary .tl-summary-decoration {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 0.4rem;
+  padding: 0 0.35rem;
+}
+
+.tl-thinking:not([open]) > .tl-thinking-summary .tl-summary-decoration {
+  background: var(--assistant-bubble-bg);
+  border: 1px dashed var(--assistant-bubble-border);
+}
+
+.tl-agent-fold:not([open]) > .tl-agent-summary .tl-summary-decoration {
+  background: var(--agent-comm-bg);
+  border: 1px dashed var(--agent-comm-border);
+}
+
+.tl-decorated-summary .tl-agent-identity {
+  gap: 0.2rem;
+}
+
+.tl-decorated-summary .tl-agent-identity strong {
+  font-weight: 600;
+}
+
 .tl-fold-body {
   margin: 0.25rem 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

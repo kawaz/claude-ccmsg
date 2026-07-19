@@ -1,0 +1,29 @@
+import { describe, expect, test } from "bun:test";
+import { foldSummaryView } from "../src/client/timeline-summary.ts";
+
+describe("foldSummaryView", () => {
+  test("keeps thinking decoration while closed", () => {
+    expect(foldSummaryView("thinking", false, { kind: "thinking" })).toEqual({
+      label: "thinking",
+      decoration: { kind: "thinking" },
+    });
+  });
+
+  test("keeps agent identity decoration while closed", () => {
+    const decoration = { kind: "agent", prefix: "SendMessage →", name: "team-lead" } as const;
+    expect(foldSummaryView("SendMessage → team-lead", false, decoration)).toEqual({
+      label: "SendMessage → team-lead",
+      decoration,
+    });
+  });
+
+  test("removes decoration while open", () => {
+    expect(
+      foldSummaryView("peer-message ← teammate", true, {
+        kind: "agent",
+        prefix: "peer-message ←",
+        name: "teammate",
+      }),
+    ).toEqual({ label: "peer-message ← teammate" });
+  });
+});
