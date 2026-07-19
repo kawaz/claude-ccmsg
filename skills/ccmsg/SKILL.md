@@ -41,7 +41,11 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 ## dump
 
-コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>]` を使う。stdout は 1 メッセージ 1 行の JSONL で、`ts`, `session`, `kind`, `from`, `to`, `text`, `meta` を持つ。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
+コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>] [--format <jsonl|text>]` を使う。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
+
+デフォルトの JSONL は、1 行目が `session`, `since`, `until`, `generated`, `format` を持つヘッダ。以降は `t` (ヘッダの `since` からの経過 ms), `kind`, `from`, `to`, `text`, `meta` を持つ。`--since` 省略時は最初の entry 時刻が基準になる。自セッションを指す `from` / `to` / `meta` の値は `self` になる。
+
+AI が直接読む用途では `--format text` を使える。人間可読ヘッダと `[+<経過ms>ms <kind> <from>→<to>]`、本文を空行区切りで出し、`meta` は省略する。
 
 `kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`, `thinking`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
 

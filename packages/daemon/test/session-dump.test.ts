@@ -77,7 +77,7 @@ describe("dumpSession", () => {
       row("2026-07-20T00:00:20Z", "assistant", [
         {
           type: "tool_use",
-          id: "agent1",
+          id: SID,
           name: "Agent",
           input: {
             name: "worker",
@@ -136,7 +136,14 @@ describe("dumpSession", () => {
     ];
     fs.writeFileSync(transcript, lines.join("\n") + "\n");
 
-    const entries = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const { entries } = dump;
+    expect(dump.header).toMatchObject({
+      session: SID,
+      since: "2026-07-20T00:00:00.000Z",
+      until: null,
+      format: "ccmsg-session-dump-v1",
+    });
     expect(entries.map((entry) => entry.kind)).toEqual([
       "user",
       "assistant",
@@ -151,7 +158,7 @@ describe("dumpSession", () => {
       meta: { room: "r9", mid: 1 },
     });
     expect(entries.find((entry) => entry.kind === "ccmsg-sent")).toMatchObject({
-      ts: "2026-07-20T00:02:00Z",
+      t: 120000,
       text: "canonical sent",
       meta: { room: "r9", mid: 2, reply_to: "r9m1", op: "reply", tool_use_id: "bash1" },
     });
@@ -159,13 +166,20 @@ describe("dumpSession", () => {
     expect(entries.find((entry) => entry.kind === "agent-spawn")).toMatchObject({
       to: "worker",
       text: "inspect it",
-      meta: { subagent_type: "claude", run_in_background: true },
+      meta: { tool_use_id: "self", subagent_type: "claude", run_in_background: true },
     });
     expect(entries.find((entry) => entry.kind === "agent-send")).toMatchObject({
+      from: "self",
       to: "worker",
       text: "start now",
       meta: { summary: "send task" },
     });
+    expect(entries.find((entry) => entry.kind === "user")).toMatchObject({
+      t: 0,
+      from: "user",
+      to: "self",
+    });
+    expect(entries.every((entry) => !("ts" in entry) && !("session" in entry))).toBe(true);
   });
 
   test("applies inclusive timezone-aware since and until bounds", () => {
@@ -179,13 +193,20 @@ describe("dumpSession", () => {
         row("2026-07-19T18:47:54Z", "assistant", [{ type: "text", text: "after" }]),
       ].join("\n") + "\n",
     );
-    const entries = dumpSession(SID, {
+    const dump = dumpSession(SID, {
       dataDir,
       configDirs: [configDir],
       since: "2026-07-20T03:47:52+09:00",
       until: "2026-07-20T03:47:53+09:00",
     });
-    expect(entries.map((entry) => entry.text)).toEqual(["lower", "upper"]);
+    expect(dump.header).toMatchObject({
+      since: "2026-07-19T18:47:52.000Z",
+      until: "2026-07-19T18:47:53.000Z",
+    });
+    expect(dump.entries.map((entry) => ({ t: entry.t, text: entry.text }))).toEqual([
+      { t: 0, text: "lower" },
+      { t: 1000, text: "upper" },
+    ]);
   });
 
   test("rejects timezone-less timestamps and reversed ranges", () => {
@@ -215,7 +236,7 @@ describe("dumpSession", () => {
         ]),
       ].join("\n") + "\n",
     );
-    const entries = dumpSession(SID, { configDirs: [configDir], dataDir });
+    const { entries } = dumpSession(SID, { configDirs: [configDir], dataDir });
     expect(entries.map((e) => e.kind)).toEqual(["thinking", "assistant"]);
     const thinking = entries[0]!;
     expect(thinking.text).toBe("internal reasoning");

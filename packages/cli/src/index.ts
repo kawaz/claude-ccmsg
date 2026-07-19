@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
-import { dumpSession } from "@ccmsg/daemon/session-dump";
+import { dumpSession, type SessionDump, type SessionDumpEntry } from "@ccmsg/daemon/session-dump";
 import {
   Client,
   connectIfRunning,
@@ -257,6 +257,31 @@ function warnSubscribingAsUser(): void {
 
 // --- output ----------------------------------------------------------------
 
+function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]): string {
+  if (value === null) return "-";
+  return Array.isArray(value) ? value.join(",") : value;
+}
+
+function formatTextDump(dump: SessionDump): string {
+  const { header, entries } = dump;
+  const lines = [
+    `Session: ${header.session}`,
+    `Since: ${header.since}`,
+    `Until: ${header.until ?? "(end)"}`,
+    `Generated: ${header.generated}`,
+    `Format: ${header.format} text`,
+    "",
+  ];
+  for (const entry of entries) {
+    lines.push(
+      `[+${entry.t}ms ${entry.kind} ${dumpEndpoint(entry.from)}→${dumpEndpoint(entry.to)}]`,
+      entry.text,
+      "",
+    );
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 function output(res: { ok?: boolean } & Record<string, unknown>): number {
   const line = `${JSON.stringify(res)}\n`;
   if (res && res.ok === false) {
@@ -410,7 +435,7 @@ function printHelp(): void {
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
-  dump <session-id> [--since <ts>]          セッション会話を統一 JSONL で回収
+  dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
@@ -445,8 +470,9 @@ Commands:
                                its reply_via instruction
   read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
-  dump <session-id>            Export conversation entries as normalized jsonl
-                               (--since/--until accept timezone-qualified ISO 8601)
+  dump <session-id>            Export conversation entries as compact jsonl (default)
+                               or readable text (--format text). --since/--until
+                               accept timezone-qualified ISO 8601
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -477,6 +503,7 @@ Command Options:
   --since <value>              subscribe: per-room last-seen seq JSON, e.g. '{"r7":7}';
                                dump: inclusive ISO 8601 lower bound with timezone
   --until <timestamp>          dump: inclusive ISO 8601 upper bound with timezone
+  --format <format>            dump: 'jsonl' (default) or 'text'
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
@@ -680,16 +707,26 @@ async function main(): Promise<void> {
       return;
     }
     case "dump": {
-      const usage = "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>]";
+      const usage =
+        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>]";
       const sid = requireArg(args[0], "session-id", usage);
       if (args[1] !== undefined)
         throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
-      const entries = dumpSession(sid, {
+      const format = str(opts, "format") ?? "jsonl";
+      if (format !== "jsonl" && format !== "text") {
+        throw new Error(`--format must be 'jsonl' or 'text' (got '${format}')\n  usage: ${usage}`);
+      }
+      const dump = dumpSession(sid, {
         dataDir: resolvePaths().dataDir,
         ...(str(opts, "since") ? { since: str(opts, "since") } : {}),
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
       });
-      for (const entry of entries) process.stdout.write(`${JSON.stringify(entry)}\n`);
+      if (format === "text") {
+        process.stdout.write(formatTextDump(dump));
+      } else {
+        process.stdout.write(`${JSON.stringify(dump.header)}\n`);
+        for (const entry of dump.entries) process.stdout.write(`${JSON.stringify(entry)}\n`);
+      }
       return;
     }
     case "leave": {

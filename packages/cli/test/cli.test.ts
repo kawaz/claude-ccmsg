@@ -48,7 +48,7 @@ const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
-  dump <session-id> [--since <ts>]          セッション会話を統一 JSONL で回収
+  dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
@@ -156,6 +156,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("read <room> <mids>");
       expect(help.out).toContain("dump <session-id>");
       expect(help.out).toContain("--until <timestamp>");
+      expect(help.out).toContain("--format <format>");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("Command Options:");
@@ -168,6 +169,66 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).not.toContain("--to u1");
       expect(help.out).not.toContain("must include u1");
       expect(help.out).not.toContain("from + to + u1");
+    } finally {
+      cleanup();
+    }
+  }, 30000);
+
+  test("dump emits compact jsonl by default and readable text on request", async () => {
+    const { env, cleanup } = makeEnv();
+    const sid = "11111111-2222-4333-8444-555555555555";
+    try {
+      const home = path.dirname(env.CCMSG_STATE_DIR!);
+      env.HOME = home;
+      const projectDir = path.join(home, ".claude-test", "projects", "-repo");
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(projectDir, `${sid}.jsonl`),
+        [
+          JSON.stringify({
+            timestamp: "2026-07-20T00:00:00Z",
+            type: "user",
+            message: { role: "user", content: "hello" },
+          }),
+          JSON.stringify({
+            timestamp: "2026-07-20T00:00:01Z",
+            type: "assistant",
+            message: { role: "assistant", content: [{ type: "text", text: "line 1\nline 2" }] },
+          }),
+        ].join("\n") + "\n",
+      );
+
+      const jsonl = await runCli(["dump", sid], env);
+      expect(jsonl.code).toBe(0);
+      const jsonLines = jsonl.out
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(jsonLines[0]).toMatchObject({
+        session: sid,
+        since: "2026-07-20T00:00:00.000Z",
+        until: null,
+        format: "ccmsg-session-dump-v1",
+      });
+      expect(jsonLines.slice(1)).toMatchObject([
+        { t: 0, kind: "user", from: "user", to: "self", text: "hello" },
+        { t: 1000, kind: "assistant", from: "self", to: "user", text: "line 1\nline 2" },
+      ]);
+      expect(jsonLines.slice(1).every((entry) => "meta" in entry)).toBe(true);
+      expect(jsonLines.slice(1).every((entry) => !("ts" in entry) && !("session" in entry))).toBe(
+        true,
+      );
+
+      const text = await runCli(["dump", sid, "--format", "text"], env);
+      expect(text.code).toBe(0);
+      expect(text.out).toContain(`Session: ${sid}`);
+      expect(text.out).toContain("[+0ms user user→self]\nhello");
+      expect(text.out).toContain("[+1000ms assistant self→user]\nline 1\nline 2");
+      expect(text.out).not.toContain("transcript_line");
+
+      const invalid = await runCli(["dump", sid, "--format", "yaml"], env);
+      expect(invalid.code).toBe(1);
+      expect(invalid.err).toContain("--format must be 'jsonl' or 'text'");
     } finally {
       cleanup();
     }

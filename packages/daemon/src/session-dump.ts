@@ -13,7 +13,7 @@ export type SessionDumpKind =
   | "assistant"
   | "thinking";
 
-export interface SessionDumpEntry {
+interface RawSessionDumpEntry {
   ts: string;
   session: string;
   kind: SessionDumpKind;
@@ -21,6 +21,28 @@ export interface SessionDumpEntry {
   to: string | string[] | null;
   text: string;
   meta: Record<string, unknown>;
+}
+
+export interface SessionDumpHeader {
+  session: string;
+  since: string;
+  until: string | null;
+  generated: string;
+  format: "ccmsg-session-dump-v1";
+}
+
+export interface SessionDumpEntry {
+  t: number;
+  kind: SessionDumpKind;
+  from: string | null;
+  to: string | string[] | null;
+  text: string;
+  meta: Record<string, unknown>;
+}
+
+export interface SessionDump {
+  header: SessionDumpHeader;
+  entries: SessionDumpEntry[];
 }
 
 export interface SessionDumpOptions {
@@ -174,7 +196,7 @@ function canonicalEntry(
   fallbackTs: string,
   message: CanonicalMessage,
   meta: Record<string, unknown>,
-): SessionDumpEntry {
+): RawSessionDumpEntry {
   return {
     ts: message.ts || fallbackTs,
     session,
@@ -215,8 +237,8 @@ function peerEntries(
   canonical: Map<string, CanonicalMessage>,
   sentRefs: ReadonlySet<string>,
   sourceIndex: number,
-): SessionDumpEntry[] {
-  const out: SessionDumpEntry[] = [];
+): RawSessionDumpEntry[] {
+  const out: RawSessionDumpEntry[] = [];
   const consumed = new Set<string>();
   for (const match of text.matchAll(TEAMMATE_MESSAGE_RE)) {
     const fragment = match[3]!.trim();
@@ -281,7 +303,17 @@ function isHumanPrompt(row: Record<string, unknown>, text: string): boolean {
   return text !== "";
 }
 
-export function dumpSession(session: string, options: SessionDumpOptions): SessionDumpEntry[] {
+function normalizeSessionReference(value: unknown, session: string): unknown {
+  if (value === session) return "self";
+  if (Array.isArray(value)) return value.map((item) => normalizeSessionReference(item, session));
+  const obj = record(value);
+  if (!obj) return value;
+  return Object.fromEntries(
+    Object.entries(obj).map(([key, item]) => [key, normalizeSessionReference(item, session)]),
+  );
+}
+
+export function dumpSession(session: string, options: SessionDumpOptions): SessionDump {
   const since = parseBound(options.since, "since");
   const until = parseBound(options.until, "until");
   if (since !== undefined && until !== undefined && since > until) {
@@ -292,7 +324,7 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
   const rows = parseTranscript(resolved.file);
   const canonical = loadCanonicalMessages(options.dataDir);
   const toolUses = new Map<string, ToolUse>();
-  const sentEntries: SessionDumpEntry[] = [];
+  const sentEntries: RawSessionDumpEntry[] = [];
   const sentRefs = new Set<string>();
 
   for (const item of rows) {
@@ -342,7 +374,7 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
     }
   }
 
-  const entries: Array<SessionDumpEntry & { _index: number }> = sentEntries.map((entry) => ({
+  const entries: Array<RawSessionDumpEntry & { _index: number }> = sentEntries.map((entry) => ({
     ...entry,
     _index:
       typeof entry.meta.transcript_line === "number"
@@ -455,7 +487,7 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
   }
 
   const dedup = new Set<string>();
-  return entries
+  const filtered = entries
     .filter((entry) => {
       const time = Date.parse(entry.ts);
       return (
@@ -477,6 +509,22 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
       if (dedup.has(key)) return false;
       dedup.add(key);
       return true;
-    })
-    .map(({ _index: _discard, ...entry }) => entry);
+    });
+  const base = since ?? (filtered[0] ? Date.parse(filtered[0].ts) : Date.now());
+  return {
+    header: {
+      session,
+      since: new Date(base).toISOString(),
+      until: until === undefined ? null : new Date(until).toISOString(),
+      generated: new Date().toISOString(),
+      format: "ccmsg-session-dump-v1",
+    },
+    entries: filtered.map(({ _index: _discard, ts, session: _session, ...entry }) => ({
+      ...entry,
+      t: Date.parse(ts) - base,
+      from: normalizeSessionReference(entry.from, session) as string | null,
+      to: normalizeSessionReference(entry.to, session) as string | string[] | null,
+      meta: normalizeSessionReference(entry.meta, session) as Record<string, unknown>,
+    })),
+  };
 }
