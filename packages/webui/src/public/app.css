@@ -27,6 +27,8 @@
    * はっきりした枠線で「この画面の主役の発話」と分かる色に。 */
   --assistant-bubble-bg: #f3eefc;
   --assistant-bubble-border: #b79ae8;
+  --agent-comm-bg: #f7f7fa;
+  --agent-comm-border: #a8acb8;
   --danger: #dc2626;
   --warn: #b45309;
 
@@ -77,6 +79,8 @@
     --peer-bubble-bg: #1e3a5f;
     --assistant-bubble-bg: #2a2438;
     --assistant-bubble-border: #6d55a3;
+    --agent-comm-bg: #202329;
+    --agent-comm-border: #626875;
     --danger: #f87171;
     --warn: #fbbf24;
 
@@ -2929,6 +2933,68 @@ button.session-tab {
   margin: 0.25rem 0 0;
   font-size: 0.7rem;
   color: var(--fg-muted);
+}
+
+.tl-agent-card {
+  margin-top: 0.25rem;
+  width: min(85%, 48rem);
+  padding: 0.4rem 0.55rem;
+  border: 1px dashed var(--agent-comm-border);
+  border-radius: 0.55rem;
+  background: var(--agent-comm-bg);
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+
+.tl-agent-outbound {
+  margin-left: auto;
+}
+
+.tl-agent-inbound {
+  margin-right: auto;
+}
+
+.tl-agent-card-head,
+.tl-agent-identity {
+  display: flex;
+  align-items: center;
+}
+
+.tl-agent-card-head {
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.tl-agent-identity {
+  min-width: 0;
+  gap: 0.3rem;
+  color: var(--fg);
+}
+
+.tl-agent-badge {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--agent-comm-border);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tl-agent-title {
+  margin-top: 0.3rem;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.tl-agent-body {
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tl-agent-fold > .tl-guided > .tl-agent-card {
+  flex: 1;
+  min-width: 0;
 }
 
 /* システムメッセージ rich|raw タブ (U2 kawaz spec: 「分類済みシステムメッ

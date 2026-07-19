@@ -23,6 +23,21 @@ export type Segment =
   | { kind: "text"; role: "user" | "assistant"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool-use"; name: string; input: unknown }
+  | {
+      kind: "agent-send";
+      to: string;
+      summary: string | null;
+      message: string;
+      messageType: string;
+    }
+  | {
+      kind: "agent-spawn";
+      name: string;
+      agentType: string;
+      description: string;
+      prompt: string;
+      background: boolean;
+    }
   | { kind: "tool-result"; toolUseId: string; isError: boolean; text: string }
   | { kind: "unknown-segment"; type: string; raw: unknown };
 
@@ -87,6 +102,39 @@ function contentToText(content: unknown): string {
   return JSON.stringify(content);
 }
 
+function stringField(obj: Record<string, unknown>, ...names: string[]): string {
+  for (const name of names) {
+    if (typeof obj[name] === "string") return obj[name];
+  }
+  return "";
+}
+
+function parseAgentTool(name: string, input: unknown): Segment | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const obj = input as Record<string, unknown>;
+  if (name === "SendMessage") {
+    return {
+      kind: "agent-send",
+      to: stringField(obj, "to", "recipient") || "?",
+      summary: stringField(obj, "summary") || null,
+      message: stringField(obj, "message", "content", "prompt"),
+      messageType: stringField(obj, "type") || "message",
+    };
+  }
+  if (name === "Agent") {
+    const description = stringField(obj, "description");
+    return {
+      kind: "agent-spawn",
+      name: stringField(obj, "name") || description || "agent",
+      agentType: stringField(obj, "subagent_type", "model") || "agent",
+      description,
+      prompt: stringField(obj, "prompt"),
+      background: obj.run_in_background === true,
+    };
+  }
+  return null;
+}
+
 function parseSegments(content: unknown, role: "user" | "assistant"): Segment[] {
   if (typeof content === "string") {
     return content ? [{ kind: "text", role, text: content }] : [];
@@ -106,12 +154,10 @@ function parseSegments(content: unknown, role: "user" | "assistant"): Segment[] 
         return { kind: "text", role, text: typeof b.text === "string" ? b.text : "" };
       case "thinking":
         return { kind: "thinking", text: typeof b.thinking === "string" ? b.thinking : "" };
-      case "tool_use":
-        return {
-          kind: "tool-use",
-          name: typeof b.name === "string" ? b.name : "?",
-          input: b.input,
-        };
+      case "tool_use": {
+        const name = typeof b.name === "string" ? b.name : "?";
+        return parseAgentTool(name, b.input) ?? { kind: "tool-use", name, input: b.input };
+      }
       case "tool_result":
         return {
           kind: "tool-result",
@@ -217,6 +263,12 @@ export function segmentSearchText(segment: Segment): string {
       return segment.text;
     case "tool-use":
       return JSON.stringify(segment.input, null, 2);
+    case "agent-send":
+      return [segment.to, segment.summary, segment.message].filter(Boolean).join("\n");
+    case "agent-spawn":
+      return [segment.name, segment.agentType, segment.description, segment.prompt]
+        .filter(Boolean)
+        .join("\n");
     case "unknown-segment":
       return JSON.stringify(segment.raw, null, 2);
   }
@@ -254,6 +306,8 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
     case "thinking":
       return targets.ai;
     case "tool-use":
+    case "agent-send":
+    case "agent-spawn":
     case "tool-result":
     case "unknown-segment":
       return false;
@@ -945,9 +999,18 @@ export interface SystemMessageField {
  * skill-invocation-preamble, tool-result, and any unmatched/malformed input)
  * — kawaz spec bullet 5: 「定型文はそのまま <pre> (rich と raw が同じでも
  * タブは出して構造統一)」. */
+export type PeerMessageCategory = "message" | "idle" | "task-assignment" | "lifecycle" | "unknown";
+
 export type SystemMessageRich =
   | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
   | { display: "chip"; label: string; detail: string | null }
+  | {
+      display: "peer";
+      from: string;
+      summary: string | null;
+      category: PeerMessageCategory;
+      body: string;
+    }
   | { display: "text"; text: string };
 
 /** Matches a top-level (non-nested) `<tag>...</tag>` pair — the backreference
@@ -988,14 +1051,10 @@ function unwrapOuterTag(text: string, tagName: string): string | null {
   return m ? m[1]! : null;
 }
 
-/** Matches Claude Code's `<teammate-message teammate_id="..." color="...">`
- * wrapper (see `TEAMMATE_MESSAGE_RE` above) but — unlike that regex — also
- * captures the opening tag's attribute string (group 1) alongside the body
- * (group 2), since the rich "peer-message" display needs both. Not `g`: only
- * the first relay in a line is shown in rich mode (a line carrying several
- * relays is a rare "idle twice in a row" case per `TEAMMATE_MESSAGE_RE`'s doc
- * comment, and the raw tab still shows the full text for that case). */
-const TEAMMATE_MESSAGE_ATTRS_RE = /<teammate-message([^>]*)>([\s\S]*?)<\/teammate-message>/;
+/** Matches the first `<teammate-message>` or `<agent-message>` relay and captures
+ * its tag name, opening-tag attributes, and body. A line can contain several
+ * relays; rich mode shows the first while the raw tab preserves the full line. */
+const PEER_MESSAGE_ATTRS_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)<\/\1>/;
 
 const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 
@@ -1025,16 +1084,56 @@ export function stripAnsiEscapes(text: string): string {
   return text.replace(ANSI_CSI_RE, "");
 }
 
-/** JSON.parse + pretty-print `text` if it parses, otherwise returns `text`
- * unchanged (never throws) — shared by any rich-display case whose body may
- * or may not be JSON (currently just peer-message's body, kawaz spec: 「ボディ
- * が JSON なら pretty-print」). */
-function prettyJsonOrRaw(text: string): string {
+function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
+  const match = rawText.match(PEER_MESSAGE_ATTRS_RE);
+  if (!match) return null;
+  const attrs = Object.fromEntries(
+    parseXmlAttrs(match[2]!).map((field) => [field.name, field.value]),
+  );
+  const from = attrs.from || attrs.teammate_id || "agent";
+  const summary = attrs.summary || null;
+  const rawBody = match[3]!.trim();
+  let category: PeerMessageCategory = "message";
+  let body = rawBody;
   try {
-    return JSON.stringify(JSON.parse(text), null, 2);
+    const value = JSON.parse(rawBody) as unknown;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const obj = value as Record<string, unknown>;
+      const type = typeof obj.type === "string" ? obj.type : "";
+      if (type === "idle_notification") {
+        category = "idle";
+        const reason = typeof obj.idleReason === "string" ? obj.idleReason : "idle";
+        body = `待機通知 · ${reason}`;
+      } else if (type === "task_assignment") {
+        category = "task-assignment";
+        const subject = typeof obj.subject === "string" ? obj.subject : "タスク割り当て";
+        const description = typeof obj.description === "string" ? obj.description : "";
+        body = description ? `${subject}\n${description}` : subject;
+      } else if (
+        type === "shutdown_request" ||
+        type === "shutdown_approved" ||
+        type === "teammate_terminated"
+      ) {
+        category = "lifecycle";
+        body = [
+          type,
+          typeof obj.reason === "string" ? obj.reason : "",
+          typeof obj.message === "string" ? obj.message : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      } else {
+        category = "unknown";
+        body = JSON.stringify(value, null, 2);
+      }
+    } else {
+      category = "unknown";
+      body = JSON.stringify(value, null, 2);
+    }
   } catch {
-    return text;
+    // Plain relayed reports and instructions are already readable as-is.
   }
+  return { display: "peer", from, summary, category, body };
 }
 
 /**
@@ -1077,17 +1176,8 @@ export function parseSystemMessageFields(
         fields: fields.filter((f) => f.name !== "summary"),
       };
     }
-    case "peer-message": {
-      const m = rawText.match(TEAMMATE_MESSAGE_ATTRS_RE);
-      if (!m) return { display: "text", text: rawText };
-      const attrs = parseXmlAttrs(m[1]!);
-      const body = prettyJsonOrRaw(m[2]!.trim());
-      return {
-        display: "fields",
-        heading: null,
-        fields: [...attrs, { name: "body", value: body }],
-      };
-    }
+    case "peer-message":
+      return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
     case "slash-command-invocation": {
       const fields = extractXmlFields(rawText);
       const command = fields.find((f) => f.name === "command-name")?.value ?? null;

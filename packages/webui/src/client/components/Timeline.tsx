@@ -10,7 +10,7 @@ import type { AgentRef } from "../locator.ts";
 import { timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { UserAvatar } from "../avatar.tsx";
+import { Avatar, UserAvatar } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
@@ -158,6 +158,40 @@ function FoldSummary({ ts, label }: { ts: string | null; label: string }) {
       {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
       <span class="tl-fold-label">{label}</span>
     </summary>
+  );
+}
+
+function AgentIdentity({ name }: { name: string }) {
+  return (
+    <span class="tl-agent-identity">
+      <Avatar seed={`agent:${name}`} size={18} />
+      <strong>{name}</strong>
+    </span>
+  );
+}
+
+function AgentCard({
+  name,
+  direction,
+  badge,
+  title,
+  body,
+}: {
+  name: string;
+  direction: "inbound" | "outbound";
+  badge: string;
+  title?: string | null;
+  body: string;
+}) {
+  return (
+    <div class={`tl-agent-card tl-agent-${direction}`}>
+      <div class="tl-agent-card-head">
+        <AgentIdentity name={name} />
+        <span class="tl-agent-badge">{badge}</span>
+      </div>
+      {title ? <div class="tl-agent-title">{title}</div> : null}
+      {body ? <div class="tl-agent-body">{body}</div> : null}
+    </div>
   );
 }
 
@@ -389,6 +423,38 @@ function SegmentView({
             </div>
           </details>
         );
+      case "agent-send":
+        return (
+          <details class="tl-fold tl-agent-fold">
+            <FoldSummary ts={ts} label={`SendMessage → ${segment.to}`} />
+            <div class="tl-guided">
+              <FoldGuide />
+              <AgentCard
+                name={segment.to}
+                direction="outbound"
+                badge={segment.messageType === "message" ? "送信" : segment.messageType}
+                title={segment.summary}
+                body={segment.message}
+              />
+            </div>
+          </details>
+        );
+      case "agent-spawn":
+        return (
+          <details class="tl-fold tl-agent-fold">
+            <FoldSummary ts={ts} label={`Agent: ${segment.name}`} />
+            <div class="tl-guided">
+              <FoldGuide />
+              <AgentCard
+                name={segment.name}
+                direction="outbound"
+                badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
+                title={segment.description || null}
+                body={segment.prompt}
+              />
+            </div>
+          </details>
+        );
       case "tool-result":
         return (
           <details class="tl-fold">
@@ -466,6 +532,26 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
           <span class="tl-sysmsg-chip">{rich.label}</span>
           {rich.detail ? <span class="tl-sysmsg-chip-detail">{rich.detail}</span> : null}
         </div>
+      );
+    case "peer":
+      return (
+        <AgentCard
+          name={rich.from}
+          direction="inbound"
+          badge={
+            rich.category === "idle"
+              ? "待機通知"
+              : rich.category === "task-assignment"
+                ? "タスク指示"
+                : rich.category === "lifecycle"
+                  ? "状態変更"
+                  : rich.category === "unknown"
+                    ? "未知"
+                    : "受信"
+          }
+          title={rich.summary}
+          body={rich.body}
+        />
       );
     case "text":
       return <pre class="tl-fold-body">{rich.text}</pre>;

@@ -203,6 +203,83 @@ describe("parseTranscriptLine / user turns", () => {
 describe("parseTranscriptLine / assistant turns", () => {
   // The three content-block kinds Claude Code emits in an assistant turn
   // (text/thinking/tool_use), together, in the order the API returns them.
+  test("SendMessage tool_use normalizes current and legacy field names", () => {
+    const current = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "SendMessage",
+              input: { to: "reviewer", summary: "確認依頼", message: "見てください" },
+            },
+          ],
+        },
+      }),
+    );
+    expect(current.kind === "turn" ? current.segments[0] : null).toEqual({
+      kind: "agent-send",
+      to: "reviewer",
+      summary: "確認依頼",
+      message: "見てください",
+      messageType: "message",
+    });
+
+    const legacy = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "SendMessage",
+              input: { recipient: "worker", content: "進めて", type: "message" },
+            },
+          ],
+        },
+      }),
+    );
+    expect(legacy.kind === "turn" ? legacy.segments[0] : null).toEqual({
+      kind: "agent-send",
+      to: "worker",
+      summary: null,
+      message: "進めて",
+      messageType: "message",
+    });
+  });
+
+  test("Agent tool_use extracts identity, type, prompt, and background state", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "Agent",
+              input: {
+                name: "audit",
+                subagent_type: "Explore",
+                description: "構造調査",
+                prompt: "対象を読んで報告",
+                run_in_background: true,
+              },
+            },
+          ],
+        },
+      }),
+    );
+    expect(line.kind === "turn" ? line.segments[0] : null).toEqual({
+      kind: "agent-spawn",
+      name: "audit",
+      agentType: "Explore",
+      description: "構造調査",
+      prompt: "対象を読んで報告",
+      background: true,
+    });
+  });
+
   test("text + thinking + tool_use blocks fold to matching segments in order", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
@@ -2016,47 +2093,76 @@ describe("parseSystemMessageFields", () => {
     });
   });
 
-  // peer-message (デリゲーション spec の "teammate-message" — 上のファイル
-  // コメント参照): <teammate-message teammate_id=... color=...> ラッパーの
-  // 属性 + ボディを整形。
+  // peer-message: teammate-message / agent-message を共通の受信表示へ正規化し、
+  // 実観測した JSON 制御メッセージは用途別に要約する。
   describe("peer-message", () => {
-    test("representative fixture -> attrs + plain-text body as fields", () => {
+    test("teammate-message text -> peer display with sender and summary", () => {
       const raw =
-        'Another Claude session sent a message:\n<teammate-message teammate_id="poc5" color="blue">\n本文\n</teammate-message>\n\nThis came from another Claude session...';
+        'Another Claude session sent a message:\n<teammate-message teammate_id="poc5" color="blue" summary="調査完了">\n本文\n</teammate-message>\n\nThis came from another Claude session...';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
-        display: "fields",
-        heading: null,
-        fields: [
-          { name: "teammate_id", value: "poc5" },
-          { name: "color", value: "blue" },
-          { name: "body", value: "本文" },
-        ],
+        display: "peer",
+        from: "poc5",
+        summary: "調査完了",
+        category: "message",
+        body: "本文",
       });
     });
 
-    // ボディが JSON (例: idle_notification イベント) なら pretty-print される
-    // (kawaz spec: 「ボディが JSON なら pretty-print」)。type:"msg" イベント
-    // は classifyBoundaryLine が先に ccmsg 境界として吹き出し化するのでここ
-    // には来ない (transcript-model.ts のドキュメントコメント参照) —
-    // idle_notification のような non-msg イベントが代表例。
-    test("JSON body (e.g. idle_notification) is pretty-printed, not left as one line", () => {
+    test("idle_notification JSON -> compact idle category", () => {
       const idleEvent = { type: "idle_notification", from: "a3", idleReason: "available" };
-      const raw = `Another Claude session sent a message:\n<teammate-message teammate_id="a3" color="blue">\n${JSON.stringify(idleEvent)}\n</teammate-message>\n\nThis came from another Claude session...`;
-      const result = parseSystemMessageFields("peer-message", raw);
-      expect(result.display).toBe("fields");
-      if (result.display !== "fields") return;
-      const bodyField = result.fields.find((f) => f.name === "body");
-      expect(bodyField?.value).toBe(JSON.stringify(idleEvent, null, 2));
+      const raw = `<teammate-message teammate_id="a3">${JSON.stringify(idleEvent)}</teammate-message>`;
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        from: "a3",
+        summary: null,
+        category: "idle",
+        body: "待機通知 · available",
+      });
     });
 
-    // フィールド欠落: 属性なし (teammate_id/color 無し) でもボディだけの
-    // fields で描画できる。
-    test("no attributes on the opening tag -> only a body field", () => {
+    test("task_assignment JSON -> task title and description", () => {
+      const raw =
+        '<teammate-message teammate_id="worker">{"type":"task_assignment","subject":"実装","description":"テストも追加"}</teammate-message>';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        from: "worker",
+        summary: null,
+        category: "task-assignment",
+        body: "実装\nテストも追加",
+      });
+    });
+
+    test("agent-message from attribute -> same peer display", () => {
+      const raw = '<agent-message from="reviewer">確認結果です</agent-message>';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        from: "reviewer",
+        summary: null,
+        category: "message",
+        body: "確認結果です",
+      });
+    });
+
+    test("unrecognized JSON event -> unknown category with pretty-printed body", () => {
+      const event = { type: "future_event", detail: "保持する" };
+      const raw = `<agent-message from="future">${JSON.stringify(event)}</agent-message>`;
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        from: "future",
+        summary: null,
+        category: "unknown",
+        body: JSON.stringify(event, null, 2),
+      });
+    });
+
+    test("no attributes on the opening tag -> fallback agent identity", () => {
       const raw = "<teammate-message>\nhi\n</teammate-message>";
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
-        display: "fields",
-        heading: null,
-        fields: [{ name: "body", value: "hi" }],
+        display: "peer",
+        from: "agent",
+        summary: null,
+        category: "message",
+        body: "hi",
       });
     });
 
