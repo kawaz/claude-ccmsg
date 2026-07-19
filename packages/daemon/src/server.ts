@@ -270,19 +270,26 @@ function orderedMsgFrame(
   replyVia: string | undefined,
   redirectOversize: boolean,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { type: ev.type, mid: ev.mid, from: ev.from, ts: ev.ts };
-  if (ev.to !== undefined) out.to = ev.to;
-  out.r = roomId;
+  // Field order is scope/importance order (kawaz r38 mid=23):
+  // type,r,seq,mid,from[,to,reply_to],msg|msg_via,reply_via,ts. `msg`/`msg_via`
+  // sits before the fixed-size tail (reply_via, ts) so an inline body is as
+  // late as possible while the trailing fields stay in a predictable place.
+  const out: Record<string, unknown> = { type: ev.type, r: roomId, mid: ev.mid, from: ev.from };
   if (ev.seq !== undefined) out.seq = ev.seq;
+  if (ev.to !== undefined) out.to = ev.to;
   if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
-  if (replyVia !== undefined) out.reply_via = replyVia;
   out.msg = ev.msg;
-  // Predict truncation from the natural frame, then remove the body entirely.
-  // `msg_via` is inserted after deleting `msg`, so the fetch instruction is
-  // the last key on the wire just as `msg` is for an inline body.
+  if (replyVia !== undefined) out.reply_via = replyVia;
+  out.ts = ev.ts;
+  // Predict truncation from the natural frame, then replace the body entirely
+  // with the fetch instruction in the same slot.
   if (redirectOversize && JSON.stringify(out).length > WIRE_MSG_SAFE_BYTES) {
-    delete out.msg;
-    out.msg_via = `Use \`ccmsg read ${roomId}m${ev.mid}\``;
+    const rebuilt: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(out)) {
+      if (k === "msg") rebuilt.msg_via = `Use \`ccmsg read ${roomId}m${ev.mid}\``;
+      else rebuilt[k] = v;
+    }
+    return rebuilt;
   }
   return out;
 }

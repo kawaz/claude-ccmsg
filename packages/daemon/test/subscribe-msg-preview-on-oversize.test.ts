@@ -100,12 +100,14 @@ describe("subscribe: predicted-truncation msg_via guidance", () => {
         expect(frame.msg_via).toBe(`Use \`ccmsg read ${room}m${posted.mid}\``);
         expect(line).not.toContain("TAILMARKER");
 
-        // msg_via replaces msg as the last wire key (issue 2026-07-17).
+        // msg_via replaces msg in the same slot; ts stays the final key
+        // (scope/importance order, kawaz r38 mid=23).
         const keyRe = /"([^"\\]+)":/g;
         const keys: string[] = [];
         let m: RegExpExecArray | null;
         while ((m = keyRe.exec(line)) !== null) keys.push(m[1]);
-        expect(keys[keys.length - 1]).toBe("msg_via");
+        expect(keys[keys.length - 1]).toBe("ts");
+        expect(keys).toContain("msg_via");
         expect(keys).not.toContain("msg");
         expect(keys).not.toContain("truncated");
       } finally {

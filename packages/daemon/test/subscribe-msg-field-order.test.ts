@@ -66,7 +66,7 @@ function topLevelKeyOrder(line: string): string[] {
 
 describe("subscribe wire order: msg events place `msg` last", () => {
   test(
-    "plain post (no to, no reply_via recipient quirks): type,mid,from,ts,r,seq,reply_via,msg",
+    "plain post: scope/importance order type,r,mid,from,seq,msg,reply_via,ts",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -92,9 +92,9 @@ describe("subscribe wire order: msg events place `msg` last", () => {
           if (parsed.type === "msg" && parsed.msg === "hello there") break;
         }
         const keys = topLevelKeyOrder(line);
-        // msg must be the LAST key, full stop — this is the receipt-side
-        // contract the issue asks for.
-        expect(keys[keys.length - 1]).toBe("msg");
+        // Scope/importance order (kawaz r38 mid=23): msg sits before the
+        // fixed tail (reply_via, ts) so ts is always last.
+        expect(keys[keys.length - 1]).toBe("ts");
         // And the leading keys are in the documented order (to/seq/reply_via
         // are optional — this recipient does get a reply_via since it's a
         // real member of a non-1on1... actually 2-member create_room is a
@@ -102,7 +102,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         // Assert prefix
         // order strictly, tolerating to?/reply_via presence.
         const withoutOptional = keys.filter((k) => !["to", "reply_via"].includes(k));
-        expect(withoutOptional).toEqual(["type", "mid", "from", "ts", "r", "seq", "msg"]);
+        expect(withoutOptional).toEqual(["type", "r", "mid", "from", "seq", "msg", "ts"]);
         // r must come before seq and reply_via (structural fix for the
         // webui truncated-parse room recovery — DR issue §"webui 側の
         // truncated 救済 parse").
@@ -141,10 +141,9 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         if (parsed.type === "msg" && parsed.msg === "targeted") break;
       }
       const keys = topLevelKeyOrder(line);
-      expect(keys[keys.length - 1]).toBe("msg");
+      expect(keys[keys.length - 1]).toBe("ts");
       expect(keys).toContain("to");
       expect(keys.indexOf("to")).toBeLessThan(keys.indexOf("msg"));
-      expect(keys.indexOf("to")).toBeGreaterThan(keys.indexOf("ts"));
     } finally {
       await stopTestDaemon(ctx);
     }
@@ -177,7 +176,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         if (parsed.type === "msg" && parsed.msg === "answer") break;
       }
       const keys = topLevelKeyOrder(line);
-      expect(keys[keys.length - 1]).toBe("msg");
+      expect(keys[keys.length - 1]).toBe("ts");
       expect(keys).toContain("reply_to");
       expect(keys.indexOf("reply_to")).toBeLessThan(keys.indexOf("msg"));
     } finally {
