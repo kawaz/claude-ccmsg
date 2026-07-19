@@ -5,9 +5,9 @@
 //
 // daemon の subscribe 出力段 (orderedMsgFrame) は、自然に組んだ frame の
 // serialized length が閾値 (WIRE_MSG_SAFE_BYTES、デフォルト 400 bytes、
-// env override 可) を超えたら msg 本文をプレビュー + 案内文に差し替え、
-// `truncated:true` を付ける。storage (`rooms/*.jsonl`) は全文のまま保持
-// する (= wire frame の reshape のみ、orderedMsgFrame と同層)。
+// env override 可) を超えたら msg 本文を送らず、全文取得コマンドを
+// `msg_via` に置く。storage (`rooms/*.jsonl`) は全文のまま保持する
+// (= wire frame の reshape のみ、orderedMsgFrame と同層)。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -29,10 +29,10 @@ async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
 
 interface MsgFrame {
   type: string;
-  msg: string;
+  msg?: string;
+  msg_via?: string;
   mid: number;
   r: string;
-  truncated?: boolean;
   reply_hint?: string;
 }
 
@@ -45,9 +45,9 @@ async function readNextMsg(sub: TestClient): Promise<{ line: string; frame: MsgF
   }
 }
 
-describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => {
+describe("subscribe: predicted-truncation msg_via guidance", () => {
   test(
-    "short msg passes through unchanged (below safe threshold, no truncated flag)",
+    "short msg passes through unchanged (below safe threshold, no msg_via)",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -67,7 +67,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
 
         const { frame } = await readNextMsg(sub);
         expect(frame.msg).toBe(body);
-        expect(frame.truncated).toBeUndefined();
+        expect(frame.msg_via).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -76,7 +76,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
   );
 
   test(
-    "oversize msg becomes preview + `ccmsg read <room> <mid>` guidance and truncated:true",
+    "oversize msg is omitted and msg_via gives the exact `ccmsg read` command",
     async () => {
       const ctx = await startTestDaemon({ CCMSG_WIRE_MSG_SAFE_BYTES: "300" });
       try {
@@ -96,26 +96,18 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
         const posted = await a.request<{ mid: number }>({ op: "post", room, msg: body });
 
         const { line, frame } = await readNextMsg(sub);
-        expect(frame.truncated).toBe(true);
-        // Guidance points at the exact ccmsg read command for this msg.
-        expect(frame.msg).toContain(`ccmsg read ${room} ${posted.mid}`);
-        // Preview retains a leading chunk of the original body.
-        expect(frame.msg.startsWith("a")).toBe(true);
-        // Tail marker beyond the preview budget must NOT appear in the
-        // frame — that's the whole point (receiver has to read to see it).
-        expect(frame.msg).not.toContain("TAILMARKER");
-        // msg is still the last key on the wire (issue 2026-07-17).
-        // The last `":"` key in the raw line must be `"msg"`.
+        expect(frame.msg).toBeUndefined();
+        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room} ${posted.mid}\``);
+        expect(line).not.toContain("TAILMARKER");
+
+        // msg_via replaces msg as the last wire key (issue 2026-07-17).
         const keyRe = /"([^"\\]+)":/g;
         const keys: string[] = [];
         let m: RegExpExecArray | null;
-        // Only depth-1 keys — msg is a plain string (no nested braces of its
-        // own), so simple regex is enough for this preview form.
         while ((m = keyRe.exec(line)) !== null) keys.push(m[1]);
-        expect(keys[keys.length - 1]).toBe("msg");
-        // `truncated` must sit immediately before msg (added right before
-        // the msg re-assignment in orderedMsgFrame).
-        expect(keys[keys.length - 2]).toBe("truncated");
+        expect(keys[keys.length - 1]).toBe("msg_via");
+        expect(keys).not.toContain("msg");
+        expect(keys).not.toContain("truncated");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -124,7 +116,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
   );
 
   test(
-    "user-role subscriber (webui) always receives the full body — no preview",
+    "user-role subscriber (webui) always receives the full body — no msg_via",
     async () => {
       // 予測遮断の対象は Monitor → task-notification 経由で truncate される
       // session role のみ。webui (user role) は frame を直接描画するため、
@@ -147,7 +139,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
 
         const { frame } = await readNextMsg(webui);
         expect(frame.msg).toBe(body);
-        expect(frame.truncated).toBeUndefined();
+        expect(frame.msg_via).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -156,7 +148,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
   );
 
   test(
-    "storage retains the full msg body regardless of wire-side preview",
+    "storage retains the full msg body regardless of wire-side msg_via",
     async () => {
       const ctx = await startTestDaemon({ CCMSG_WIRE_MSG_SAFE_BYTES: "300" });
       try {
@@ -182,11 +174,10 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
           return parsed.type === "msg" && parsed.mid === posted.mid;
         });
         if (!storedLine) throw new Error("stored msg line not found");
-        const stored = JSON.parse(storedLine) as { msg: string; truncated?: boolean };
+        const stored = JSON.parse(storedLine) as { msg: string; msg_via?: string };
         expect(stored.msg).toBe(body);
-        // storage は truncated flag を持たない (wire 専用の delivery-time
-        // hint、reply_hint と同じ扱い)。
-        expect(stored.truncated).toBeUndefined();
+        // msg_via は wire 専用の delivery-time hint。
+        expect(stored.msg_via).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -195,7 +186,7 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
   );
 
   test(
-    "default cap (~400) triggers preview for realistically long msg (kawaz r34 mid=18 shape)",
+    "default cap (~400) redirects a realistically long msg through msg_via",
     async () => {
       // env override 無しでデフォルト 400 byte cap を効かせる。実測で
       // 500-char event body 相当で harness が切るので、それ以下でも
@@ -219,8 +210,8 @@ describe("subscribe: predicted-truncation preview + ccmsg read guidance", () => 
         const posted = await a.request<{ mid: number }>({ op: "post", room, msg: body });
 
         const { frame } = await readNextMsg(sub);
-        expect(frame.truncated).toBe(true);
-        expect(frame.msg).toContain(`ccmsg read ${room} ${posted.mid}`);
+        expect(frame.msg).toBeUndefined();
+        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room} ${posted.mid}\``);
       } finally {
         await stopTestDaemon(ctx);
       }

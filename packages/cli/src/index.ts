@@ -423,7 +423,7 @@ function printHelp(): void {
   process.stdout.write(`Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
-  read <room> <mN[,mN...]>                  メッセージ全文取得 (truncated時に)
+  read <room> <mN[,mN...]>                  メッセージ全文取得 (msg_via 指示時など)
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
