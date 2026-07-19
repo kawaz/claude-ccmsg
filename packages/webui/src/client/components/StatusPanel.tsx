@@ -26,7 +26,8 @@ import {
   type WorkflowDrilldownGroupView,
 } from "../session-status-view.ts";
 import { agentTimelineHref } from "../locator.ts";
-import { formatClockTime } from "../utils.ts";
+import { formatClockTime, formatRelativeAge } from "../utils.ts";
+import { useNow } from "../useNow.ts";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。workflow drilldown の agent icon 語彙
  * (✓/⟳/·) と揃えることで Status タブ内の視覚言語を一貫させる。open set の status
@@ -250,26 +251,38 @@ const TEAMMATE_STATE_LABEL: Record<string, string> = {
   stopped: "停止",
 };
 
-function TeammateRow({ teammate, sid }: { teammate: SessionTeammate; sid: string }) {
+function TeammateRow({
+  teammate,
+  sid,
+  now,
+}: {
+  teammate: SessionTeammate;
+  sid: string;
+  now: number;
+}) {
   const href = agentTimelineHref(sid, { teammate: teammate.name });
   const label = TEAMMATE_STATE_LABEL[teammate.state] ?? teammate.state;
   const dotClass = "status-teammate-dot status-teammate-dot-" + teammate.state;
+  const sentAge = formatRelativeAge(teammate.last_sent_at ?? null, now);
+  const receivedAge = formatRelativeAge(teammate.last_received_at ?? null, now);
   return (
     <li class={"status-row status-teammate status-teammate-" + teammate.state}>
       <span class={dotClass} aria-hidden="true">
         ●
       </span>
+      <a class="status-wf-agent-tl status-teammate-tl" href={href}>
+        TL
+      </a>
       <span class="status-row-name">{teammate.name}</span>
       {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
       {teammate.model ? <span class="status-row-kind">{shortModel(teammate.model)}</span> : null}
       <span class="status-row-summary status-teammate-state-label">{label}</span>
-      <a class="status-wf-agent-tl" href={href}>
-        TL
-      </a>
-      <span class="status-row-time">
-        {teammate.last_sent_at ? `送 ${formatClockTime(teammate.last_sent_at)}` : ""}
-        {teammate.last_sent_at && teammate.last_received_at ? " · " : ""}
-        {teammate.last_received_at ? `受 ${formatClockTime(teammate.last_received_at)}` : ""}
+      <span class="status-row-time status-teammate-time">
+        <span title={teammate.last_sent_at ?? undefined}>{sentAge ? `送 ${sentAge}` : ""}</span>
+        <span aria-hidden="true">{sentAge && receivedAge ? "·" : ""}</span>
+        <span title={teammate.last_received_at ?? undefined}>
+          {receivedAge ? `受 ${receivedAge}` : ""}
+        </span>
       </span>
     </li>
   );
@@ -313,6 +326,7 @@ function Section<T>({
 }
 
 function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: string }) {
+  const now = useNow();
   if (teammates.length === 0) return null;
   return (
     <section class="status-section">
@@ -320,7 +334,7 @@ function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: s
       <p class="status-estimate-note">transcript 観測ベースの推定 (TUI 内部状態は非観測)</p>
       <ul class="status-list">
         {splitTeammates(teammates).map((teammate) => (
-          <TeammateRow key={teammate.name} teammate={teammate} sid={sid} />
+          <TeammateRow key={teammate.name} teammate={teammate} sid={sid} now={now} />
         ))}
       </ul>
     </section>

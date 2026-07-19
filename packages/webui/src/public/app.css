@@ -3568,6 +3568,9 @@ button.session-tab {
   background: var(--bg-alt);
 }
 
+.status-teammate {
+  border-left-width: 3px;
+}
 .status-teammate-idle {
   opacity: 0.75;
 }
@@ -3605,6 +3608,19 @@ button.session-tab {
   color: var(--fg-muted);
   flex: 0 1 auto;
   min-width: 0;
+}
+.status-teammate-tl {
+  margin-left: 0;
+}
+.status-teammate-time {
+  display: grid;
+  grid-template-columns: 9ch 2ch 9ch;
+  width: 20ch;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.status-teammate-time > :nth-child(2) {
+  text-align: center;
 }
 @media (prefers-reduced-motion: reduce) {
   .status-teammate-dot-active {
