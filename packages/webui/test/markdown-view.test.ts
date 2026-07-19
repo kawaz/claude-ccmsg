@@ -294,6 +294,55 @@ describe("parseMarkdownSource / CommonMark intraword underscores", () => {
   });
 });
 
+describe("parseMarkdownSource / angle-bracket tag-like text", () => {
+  function renderSource(source: string): VNode {
+    return renderMarkdownAst(parseMarkdownSource(source));
+  }
+
+  // Angle-bracket tokens used as placeholders or tag examples are prose, not
+  // links. The parser must preserve both brackets and must not invent hrefs.
+  test("placeholder and HTML tag-like tokens remain literal text", () => {
+    for (const source of ["before <FILE> after", "before <div> after", "before <script> after"]) {
+      const vnode = renderSource(source);
+      expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  // Opening/closing tags and attributes belong to the same literal-text input
+  // class; preserving only bare <NAME> would leave realistic examples broken.
+  test("paired tags and attributes remain literal text", () => {
+    const source = '<div class="example"><FILE></div>';
+    const vnode = renderSource(source);
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(source);
+  });
+
+  // Explicit Markdown code syntax already owns its contents. Angle-bracket
+  // protection must restore the exact code value rather than leaking markers.
+  test("inline and fenced code preserve tag-like text as code", () => {
+    const inline = renderSource("`<FILE>`");
+    expect(flattenText(collect(inline, (n) => n.type === "code")[0])).toBe("<FILE>");
+
+    const fenced = renderSource("```txt\n<script>\n```");
+    const blocks = collect(fenced, (n) => n.type === CodeBlock);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.props).toMatchObject({ lang: "txt", code: "<script>\n" });
+  });
+
+  // CommonMark URL/email autolinks are not tag-like prose and remain links;
+  // disabling all angle-bracket parsing would regress these valid constructs.
+  test("URL and email autolinks remain links", () => {
+    const vnode = renderSource("<https://example.com> <user@example.com>");
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(2);
+    expect(links.map((link) => (link.props as { href?: string }).href)).toEqual([
+      "https://example.com",
+      "mailto:user@example.com",
+    ]);
+  });
+});
+
 describe("renderMarkdownAst / structural coverage", () => {
   // Required-coverage item: "コードフェンスが lang 付きで CodeBlock に渡る".
   test("code node is delegated to CodeBlock with its lang and value", () => {

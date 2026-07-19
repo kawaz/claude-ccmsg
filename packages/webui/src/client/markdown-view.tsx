@@ -436,19 +436,41 @@ function protectIntrawordUnderscores(source: string): { source: string; marker?:
   return marker ? { source: chars.join(""), marker } : { source };
 }
 
-function restoreProtectedUnderscores(value: unknown, marker: string): void {
+// @mizchi/markdown treats bare `<NAME>` as an autolink and drops its brackets.
+// Protect HTML-name-shaped tokens only; `<https://…>` and `<user@example.com>`
+// remain available to the parser as valid CommonMark autolinks.
+function protectTagLikeAngleBrackets(source: string): {
+  source: string;
+  openMarker?: string;
+  closeMarker?: string;
+} {
+  const tagLike = /<(\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>\n]*?)?\/?)>/g;
+  if (!tagLike.test(source)) return { source };
+  tagLike.lastIndex = 0;
+  const openMarker = unusedPrivateUseMarker(source);
+  const closeMarker = unusedPrivateUseMarker(source + openMarker);
+  return {
+    source: source.replace(tagLike, (_match, content: string) => {
+      return `${openMarker}${content}${closeMarker}`;
+    }),
+    openMarker,
+    closeMarker,
+  };
+}
+
+function restoreProtectedText(value: unknown, marker: string, replacement: string): void {
   if (Array.isArray(value)) {
-    for (const item of value) restoreProtectedUnderscores(item, marker);
+    for (const item of value) restoreProtectedText(item, marker, replacement);
     return;
   }
   if (value === null || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
     if (typeof child === "string") {
       if (child.includes(marker)) {
-        (value as Record<string, unknown>)[key] = child.replaceAll(marker, "_");
+        (value as Record<string, unknown>)[key] = child.replaceAll(marker, replacement);
       }
     } else {
-      restoreProtectedUnderscores(child, marker);
+      restoreProtectedText(child, marker, replacement);
     }
   }
 }
@@ -456,9 +478,12 @@ function restoreProtectedUnderscores(value: unknown, marker: string): void {
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
  * parser-level compatibility fixes are exercised without a DOM. */
 export function parseMarkdownSource(source: string): Root {
-  const protectedSource = protectIntrawordUnderscores(source);
-  const root = parse(protectedSource.source);
-  if (protectedSource.marker) restoreProtectedUnderscores(root, protectedSource.marker);
+  const protectedUnderscores = protectIntrawordUnderscores(source);
+  const protectedAngles = protectTagLikeAngleBrackets(protectedUnderscores.source);
+  const root = parse(protectedAngles.source);
+  if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
+  if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
+  if (protectedUnderscores.marker) restoreProtectedText(root, protectedUnderscores.marker, "_");
   return root;
 }
 

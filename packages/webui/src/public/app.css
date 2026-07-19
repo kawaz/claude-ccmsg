@@ -2735,22 +2735,98 @@ button.session-tab {
 .md h5,
 .md h6 {
   margin: 0.4rem 0 0.2rem;
-  font-weight: 600;
+  color: var(--accent);
   line-height: 1.3;
 }
 .md h1 {
-  font-size: 1.15rem;
+  font-size: 1.2rem;
+  font-weight: 750;
 }
 .md h2 {
-  font-size: 1.08rem;
+  font-size: 1.12rem;
+  font-weight: 700;
 }
 .md h3 {
-  font-size: 1.02rem;
+  font-size: 1.05rem;
+  font-weight: 650;
 }
-.md h4,
-.md h5,
-.md h6 {
+.md h4 {
+  font-size: 1rem;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
+}
+.md h5 {
   font-size: 0.95rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 70%, var(--fg));
+}
+.md h6 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--accent) 55%, var(--fg));
+}
+
+.viewer-preview .md {
+  counter-reset: md-h1 md-h2 md-h3 md-h4 md-h5 md-h6;
+}
+.viewer-preview .md h1,
+.viewer-preview .md h2 {
+  padding-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.viewer-preview .md h1 {
+  counter-increment: md-h1;
+  counter-reset: md-h2 md-h3 md-h4 md-h5 md-h6;
+}
+.viewer-preview .md h2 {
+  counter-increment: md-h2;
+  counter-reset: md-h3 md-h4 md-h5 md-h6;
+}
+.viewer-preview .md h3 {
+  counter-increment: md-h3;
+  counter-reset: md-h4 md-h5 md-h6;
+}
+.viewer-preview .md h4 {
+  counter-increment: md-h4;
+  counter-reset: md-h5 md-h6;
+}
+.viewer-preview .md h5 {
+  counter-increment: md-h5;
+  counter-reset: md-h6;
+}
+.viewer-preview .md h6 {
+  counter-increment: md-h6;
+}
+.viewer-preview .md h1::before {
+  content: counter(md-h1) " ";
+}
+.viewer-preview .md h2::before {
+  content: counter(md-h1) "." counter(md-h2) " ";
+}
+.viewer-preview .md h3::before {
+  content: counter(md-h1) "." counter(md-h2) "." counter(md-h3) " ";
+}
+.viewer-preview .md h4::before {
+  content: counter(md-h1) "." counter(md-h2) "." counter(md-h3) "." counter(md-h4) " ";
+}
+.viewer-preview .md h5::before {
+  content: counter(md-h1) "." counter(md-h2) "." counter(md-h3) "." counter(md-h4) "."
+    counter(md-h5) " ";
+}
+.viewer-preview .md h6::before {
+  content: counter(md-h1) "." counter(md-h2) "." counter(md-h3) "." counter(md-h4) "."
+    counter(md-h5) "." counter(md-h6) " ";
+}
+.viewer-preview .md h1::before,
+.viewer-preview .md h2::before,
+.viewer-preview .md h3::before,
+.viewer-preview .md h4::before,
+.viewer-preview .md h5::before,
+.viewer-preview .md h6::before {
+  color: var(--fg-muted);
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
 }
 
 .md ul,
