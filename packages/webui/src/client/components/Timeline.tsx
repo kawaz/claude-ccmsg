@@ -812,11 +812,20 @@ function FoldGroup({
        * mid=47): 展開せずとも thinking の在処 (紫破線トーン) が判る。文言は
        * foldGroupLabel (単体テスト済み) と同じ順序で、装飾のために span を
        * 分けて組み立てる。 */}
+      {/* 「N agent messages」部も同様に agent カードと同じ破線トーンで囲う
+       * (kawaz r38 mid=21)。 */}
       <summary>
-        {thinkingCount > 0 ? (
+        {thinkingCount > 0 || agentMessageCount > 0 ? (
           <>
-            <span class="tl-summary-thinkings">{thinkingCount} thinking</span>
-            {agentMessageCount > 0 ? ` + ${agentMessageCount} agent messages` : ""}
+            {thinkingCount > 0 ? (
+              <span class="tl-summary-thinkings">{thinkingCount} thinking</span>
+            ) : null}
+            {agentMessageCount > 0 ? (
+              <>
+                {thinkingCount > 0 ? " + " : ""}
+                <span class="tl-summary-agent-messages">{agentMessageCount} agent messages</span>
+              </>
+            ) : null}
             {itemCount > 0 ? ` + ${itemCount} items` : ""}
           </>
         ) : (

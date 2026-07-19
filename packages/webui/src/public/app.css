@@ -3150,6 +3150,14 @@ button.session-tab {
   padding: 0 0.35rem;
 }
 
+/* 「N agent messages」部の装飾 (kawaz r38 mid=21): agent 通信カード
+ * (.tl-agent-card) と同じ破線トーンで、展開せずとも agent 通信の在処が判る。 */
+.tl-summary-agent-messages {
+  border: 1px dashed var(--agent-comm-border);
+  border-radius: 0.4rem;
+  padding: 0 0.35rem;
+}
+
 .tl-broken {
   border: 1px solid var(--danger);
 }
