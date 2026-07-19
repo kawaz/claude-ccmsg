@@ -3073,8 +3073,15 @@ button.session-tab {
   color: var(--fg);
 }
 
+.tl-agent-card-tl {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .tl-agent-badge {
   flex: 0 0 auto;
+  margin-left: auto;
   padding: 0.05rem 0.35rem;
   border: 1px solid var(--agent-comm-border);
   border-radius: 999px;
@@ -4232,11 +4239,7 @@ button.session-tab {
   cursor: default;
 }
 
-/* Highlighted match span — render-time <mark> insertion (DR-0022 §3), one
- * color per query word via --hl-color set inline per span. Clickable (see
- * DR-0022 §2.2 "ハイライトをビューア上でクリック → index 更新") without
- * looking like a native <button> — cursor is the only affordance, matching
- * how the rest of this app treats inline interactive text. */
+/* Render-time <mark> styling used by Session Search and MarkdownView callers. */
 .search-hl {
   background: var(--hl-color, var(--search-color-1));
   color: var(--search-hl-fg);
@@ -4247,6 +4250,43 @@ button.session-tab {
 
 .session-search-hl {
   cursor: inherit;
+}
+
+/* In-view search uses CSS Custom Highlights so inline markup and Preact's DOM
+ * ownership remain untouched. One registry name maps to each query color. */
+::highlight(ccmsg-search-1) {
+  background: var(--search-color-1);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-2) {
+  background: var(--search-color-2);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-3) {
+  background: var(--search-color-3);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-4) {
+  background: var(--search-color-4);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-5) {
+  background: var(--search-color-5);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-6) {
+  background: var(--search-color-6);
+  color: var(--search-hl-fg);
+}
+
+::highlight(ccmsg-search-current) {
+  background: var(--accent);
+  color: var(--bg);
 }
 
 /* Wrapper SegmentView adds only around a currently-matching in-view-search

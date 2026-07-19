@@ -32,12 +32,11 @@ import {
 } from "../highlight.ts";
 import { MarkdownView } from "../markdown-view.tsx";
 import {
-  loopNextIndex,
-  loopPrevIndex,
-  parseSearchQuery,
-  splitTextForHighlight,
-  unitMatchesQuery,
-} from "../in-view-search.ts";
+  highlightRenderedText,
+  removeRenderedTextHighlights,
+  setRenderedTextCurrent,
+} from "../rendered-text-search.ts";
+import { loopNextIndex, loopPrevIndex, parseSearchQuery } from "../in-view-search.ts";
 import { SearchBar } from "./SearchBar.tsx";
 
 function splitLines(content: string): string[] {
@@ -293,14 +292,7 @@ export function FileViewer({
   // Which line indices (0-based, into searchLines) satisfy the query's AND
   // filter, in document order — this is the "M" in "[N/M]" and the order
   // ↑/↓ nav walks (DR-0022 §2.2).
-  const matchingLineIndices = useMemo(() => {
-    if (parsedSearch.words.length === 0 || parsedSearch.hasError) return [];
-    const out: number[] = [];
-    searchLines.forEach((line, i) => {
-      if (unitMatchesQuery(line, parsedSearch.words)) out.push(i);
-    });
-    return out;
-  }, [searchLines, parsedSearch]);
+  const [matchingLineIndices, setMatchingLineIndices] = useState<number[]>([]);
   const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
   // A fresh search (new query text, toggle flip, or file switch) always
   // starts back at the first match — there is no meaningful "keep the old
@@ -315,14 +307,45 @@ export function FileViewer({
     if (el) searchLineRefs.current.set(i, el);
     else searchLineRefs.current.delete(i);
   }, []);
-  // line index -> 1-based nav position, for the click-to-select handler
-  // below (DR-0022 §2.2: clicking a highlight sets the index to *that*
-  // element's position without scrolling).
-  const searchMatchPositionByLine = useMemo(() => {
-    const m = new Map<number, number>();
-    matchingLineIndices.forEach((lineIdx, pos) => m.set(lineIdx, pos + 1));
-    return m;
-  }, [matchingLineIndices]);
+  useEffect(() => {
+    const matched: number[] = [];
+    for (let i = 0; i < searchLines.length; i += 1) {
+      const container = searchLineRefs.current.get(i);
+      const line = container?.matches(".viewer-preview")
+        ? container
+        : container?.querySelector<HTMLElement>(".viewer-text");
+      if (!line) continue;
+      if (parsedSearch.words.length === 0 || parsedSearch.hasError) {
+        removeRenderedTextHighlights(line);
+        continue;
+      }
+      const isMatch = highlightRenderedText(line, parsedSearch.words, () => {
+        const position = matched.indexOf(i);
+        if (position >= 0) setSearchCurrentIndex(position + 1);
+      });
+      if (isMatch) matched.push(i);
+    }
+    const currentLine = searchCurrentIndex > 0 ? matched[searchCurrentIndex - 1] : undefined;
+    for (const [i, container] of searchLineRefs.current) {
+      const text = container.matches(".viewer-preview")
+        ? container
+        : container.querySelector<HTMLElement>(".viewer-text");
+      if (text) setRenderedTextCurrent(text, i === currentLine);
+    }
+    setMatchingLineIndices((current) =>
+      current.length === matched.length && current.every((line, i) => line === matched[i])
+        ? current
+        : matched,
+    );
+    return () => {
+      for (const line of searchLineRefs.current.values()) {
+        const text = line.matches(".viewer-preview")
+          ? line
+          : line.querySelector<HTMLElement>(".viewer-text");
+        if (text) removeRenderedTextHighlights(text);
+      }
+    };
+  }, [searchLines, parsedSearch, matchingLineIndices, highlighted, searchCurrentIndex]);
   function scrollToMatch(oneBasedIdx: number) {
     const lineIdx = matchingLineIndices[oneBasedIdx - 1];
     if (lineIdx === undefined) return;
@@ -431,15 +454,6 @@ export function FileViewer({
   const lines = searchLines;
   const highlightedLines = highlighted && highlighted.path === path ? highlighted.lines : null;
   const showPreview = markdownEligible && viewMode === "preview";
-  // While a search query is active, Shiki's span tokens are bypassed in
-  // favor of the plain line + <mark> splitting (in-view-search.ts) — the two
-  // can't be composed without intersecting two independent sets of text
-  // ranges (token boundaries vs match boundaries), so this pragmatically
-  // prioritizes "see the search hits" over "keep syntax colors" for the
-  // duration of the search (DR-0022 doesn't specify precedence between the
-  // two; search is the more actively-requested one at that moment).
-  const searchActive = parsedSearch.words.length > 0 && !parsedSearch.hasError;
-
   return (
     <div class="file-viewer">
       <header class="viewer-header">
@@ -504,7 +518,7 @@ export function FileViewer({
         // The trailing chunk may parse as an unclosed fence or half a
         // paragraph; that's a visible cue matching the banner, not a
         // silent truncation.
-        <div class="viewer-preview">
+        <div class="viewer-preview" ref={(el) => registerSearchLineRef(0, el)}>
           <MarkdownView source={res.content} />
         </div>
       ) : lines.length === 0 ? (
@@ -513,37 +527,21 @@ export function FileViewer({
         <pre class="viewer-body">
           {lines.map((line, i) => {
             const spans = highlightedLines?.[i];
-            const searchPos = searchMatchPositionByLine.get(i);
             return (
               <div class="viewer-line" key={i} ref={(el) => registerSearchLineRef(i, el)}>
                 <span class="viewer-lineno">{i + 1}</span>
                 <span class="viewer-text">
-                  {searchActive && searchPos !== undefined
-                    ? splitTextForHighlight(line, parsedSearch.words).map((piece, j) =>
-                        piece.colorIndex !== null ? (
-                          <mark
-                            key={j}
-                            class="search-hl"
-                            style={{ "--hl-color": `var(--search-color-${piece.colorIndex + 1})` }}
-                            onClick={() => setSearchCurrentIndex(searchPos)}
-                          >
-                            {piece.text}
-                          </mark>
+                  {spans
+                    ? spans.map((span, j) =>
+                        span.style ? (
+                          <span class="shiki-tok" style={span.style} key={j}>
+                            {span.text}
+                          </span>
                         ) : (
-                          piece.text
+                          span.text
                         ),
                       )
-                    : spans
-                      ? spans.map((span, j) =>
-                          span.style ? (
-                            <span class="shiki-tok" style={span.style} key={j}>
-                              {span.text}
-                            </span>
-                          ) : (
-                            span.text
-                          ),
-                        )
-                      : line}
+                    : line}
                 </span>
               </div>
             );

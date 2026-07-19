@@ -723,6 +723,18 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     expect(flattenText(vnode)).toBe("hello world");
   });
 
+  test("tag-like rendered text matches the visible FILE text", () => {
+    const words = parseSearchQuery("FILE", { caseSensitive: false, regex: false }).words;
+    const vnode = renderMarkdownAst(parseMarkdownSource("before <FILE> after"), {
+      words,
+      onMatchClick: () => {},
+    });
+    const marks = collect(vnode, (n) => n.type === "mark");
+    expect(marks).toHaveLength(1);
+    expect(flattenText(marks[0])).toBe("FILE");
+    expect(flattenText(vnode)).toBe("before <FILE> after");
+  });
+
   test("a matching word is wrapped in <mark class=search-hl> with its colorIndex as --hl-color", () => {
     const words: SearchWord[] = parseSearchQuery("world", {
       caseSensitive: false,
