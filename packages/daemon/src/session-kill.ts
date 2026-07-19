@@ -38,8 +38,11 @@ export interface SessionKillDeps {
   /** Run `ps -p <pid> -o command=` and return stdout. Must reject when ps
    * fails (which includes "no such pid"). */
   runPs(pid: number): Promise<string>;
-  /** process.kill(pid, sig) — throws when the pid is gone. */
-  sendSignal(pid: number, sig: "SIGTERM"): void;
+  /** process.kill(pid, sig) — throws when the pid is gone. SIGKILL is only
+   * dispatched from the force path (DR-0028 addendum r38 mid=6); the default
+   * two-shot sequence remains SIGTERM-only so the "never irreversibly kill
+   * without opt-in" invariant lives at the type level. */
+  sendSignal(pid: number, sig: "SIGTERM" | "SIGKILL"): void;
   /** `process.kill(pid, 0)` liveness probe. */
   isAlive(pid: number): boolean;
   sleep(ms: number): Promise<void>;
@@ -174,17 +177,49 @@ export async function killSession(
   return { terminated: !deps.isAlive(pid) };
 }
 
+/** DR-0028 addendum (r38 mid=6): opt-in SIGKILL escalation. Runs the same
+ * sid→pid resolution and ps verification as the SIGTERM path (pid-reuse
+ * guard must never be bypassed), sends exactly one SIGKILL, then polls for
+ * the process to disappear within the same grace window as the two-shot
+ * path. `terminated: false` here would mean "SIGKILL delivered but pid still
+ * observable" which in practice only happens for uninterruptible-sleep
+ * zombies — surface it truthfully instead of pretending success. */
+export async function killSessionForce(
+  pid: number,
+  deps: SessionKillDeps,
+): Promise<{ terminated: boolean }> {
+  const { pollIntervalMs, totalGraceMs } = deps.timing;
+  try {
+    deps.sendSignal(pid, "SIGKILL");
+  } catch (e) {
+    if (isGone(e)) return { terminated: true };
+    throw e;
+  }
+  let elapsed = 0;
+  while (elapsed < totalGraceMs) {
+    await deps.sleep(pollIntervalMs);
+    elapsed += pollIntervalMs;
+    if (!deps.isAlive(pid)) return { terminated: true };
+  }
+  return { terminated: !deps.isAlive(pid) };
+}
+
 /** Full request flow used by server.ts's dispatch: resolve → verify → kill.
  * `found: false` covers both "no agents row for this sid" and "pid failed the
- * ps verification" — DR-0028 treats the latter as "already gone". */
+ * ps verification" — DR-0028 treats the latter as "already gone". `force`
+ * routes to SIGKILL (DR-0028 addendum r38 mid=6) while keeping the same
+ * verification prelude — force never bypasses the pid-reuse guard. */
 export async function sessionKill(
   sessionId: string,
   deps: SessionKillDeps,
+  opts: { force?: boolean } = {},
 ): Promise<{ found: true; terminated: boolean } | { found: false }> {
   const pid = await resolvePid(sessionId, deps);
   if (pid === null) return { found: false };
   if (!(await verifyPid(pid, deps))) return { found: false };
-  const { terminated } = await killSession(pid, deps);
+  const { terminated } = opts.force
+    ? await killSessionForce(pid, deps)
+    : await killSession(pid, deps);
   return { found: true, terminated };
 }
 

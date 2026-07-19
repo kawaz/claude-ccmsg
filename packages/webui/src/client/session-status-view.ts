@@ -210,6 +210,64 @@ export interface WorkflowDrilldownView {
   agents: WorkflowDrilldownAgentView[];
 }
 
+/** DR-0025 Phase 2 (r38 mid=3): Phase 単位に agents を束ねた表示形。TUI の
+ * workflow 表示 (Phase 見出しの下にその phase のサブセッションが並ぶ) を webui でも
+ * 再現するための fold。`complete` は total > 0 かつ done === total で立ち、
+ * UI 側で見出しに ✓ を付ける合図に使う。
+ *
+ * 対応関係:
+ * - 宣言済み phase (drilldown.phases に載っている title) に属する agent は
+ *   その phase の group へ。done/total は daemon 側で集計済みの値をそのまま採用
+ *   (agent 側の phase_index/phase_title は raw、group 全体の集計値は daemon が
+ *   source of truth)
+ * - 宣言 phase に紐づかない agent (phase_title 未設定 / 宣言 phase と title 不一致)
+ *   は末尾の "(no phase)" group に集約。宣言 phase が 1 つも無いワークフロー
+ *   (旧型 / 走行中で state json 未生成) では全 agent がこの group に入る
+ * - 該当 agent が無い宣言 phase は group ごと出す (kawaz: Phase 見出しは残す。
+ *   0/0 phase も設計上意味を持つため隠さない)
+ */
+export interface WorkflowDrilldownGroupView {
+  title: string;
+  done: number;
+  total: number;
+  complete: boolean;
+  agents: WorkflowDrilldownAgentView[];
+  /** "(no phase)" 用の合成 group を区別するフラグ。UI 側で見た目を弱める
+   * (宣言外の残余であり Phase 見出しと同格ではないため) 用途。 */
+  synthetic?: boolean;
+}
+
+const NO_PHASE_TITLE = "(no phase)";
+
+export function groupAgentsByPhase(view: WorkflowDrilldownView): WorkflowDrilldownGroupView[] {
+  const groups: WorkflowDrilldownGroupView[] = [];
+  const declared = new Set(view.phases.map((p) => p.title));
+  for (const phase of view.phases) {
+    const agents = view.agents.filter((a) => a.phaseTitle === phase.title);
+    groups.push({
+      title: phase.title,
+      done: phase.done,
+      total: phase.total,
+      complete: phase.total > 0 && phase.done === phase.total,
+      agents,
+    });
+  }
+  const leftover = view.agents.filter((a) => !a.phaseTitle || !declared.has(a.phaseTitle));
+  if (leftover.length > 0) {
+    const done = leftover.filter((a) => a.icon === "done").length;
+    const total = leftover.length;
+    groups.push({
+      title: NO_PHASE_TITLE,
+      done,
+      total,
+      complete: total > 0 && done === total,
+      agents: leftover,
+      synthetic: true,
+    });
+  }
+  return groups;
+}
+
 function agentIcon(state: string): WorkflowDrilldownAgentView["icon"] {
   if (state === "done") return "done";
   if (state === "error") return "error";

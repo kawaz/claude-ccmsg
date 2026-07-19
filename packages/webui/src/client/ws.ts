@@ -231,7 +231,10 @@ export interface WsHandle {
    * ~4s); 2-phase on the wire (ack + ev:"session_kill_result") like
    * sessionLaunch, hidden behind one Promise. `terminated: false` in a
    * successful response means "signals sent, termination unconfirmed". */
-  sessionKill(sessionId: string): Promise<SessionKillResponse | ErrorResponse>;
+  sessionKill(
+    sessionId: string,
+    opts?: { force?: boolean },
+  ): Promise<SessionKillResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -647,11 +650,12 @@ export function createWsClient(
     sessionLaunch: (req) =>
       sendTwoPhase({ op: "session_launch", request_id: `q${++nextRequestId}`, ...req }),
     sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
-    sessionKill: (sessionId) =>
+    sessionKill: (sessionId, opts) =>
       sendTwoPhase({
         op: "session_kill",
         request_id: `q${++nextRequestId}`,
         session_id: sessionId,
+        ...(opts?.force ? { force: true } : {}),
       }),
   };
 }

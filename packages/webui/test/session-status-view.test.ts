@@ -15,6 +15,7 @@ import {
   buildWorkflowDrilldown,
   estimateContextLimit,
   formatContextUsage,
+  groupAgentsByPhase,
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
@@ -448,5 +449,81 @@ describe("buildWorkflowDrilldown (DR-0025)", () => {
     expect(view?.agents[0]?.tokens).toBe(149564);
     expect(view?.agents[0]?.phaseTitle).toBe("Plan");
     expect(view?.agents[2]?.error).toBe("boom");
+  });
+});
+
+describe("groupAgentsByPhase (r38 mid=3)", () => {
+  test("宣言 phase 順で group を並べ、宣言 phase の done/total は daemon 集計値を採用", () => {
+    // Phase 見出しの done/total は daemon 側 (workflow-drilldown.ts) が唯一の source of truth。
+    // agent 側の phase_title で group 分けだけ行い、集計値は再計算しない。
+    const groups = groupAgentsByPhase({
+      phases: [
+        { title: "Plan", done: 1, total: 1 },
+        { title: "Verify", done: 0, total: 2 },
+      ],
+      agents: [
+        { agentId: "a1", label: "plan", state: "done", icon: "done", phaseTitle: "Plan" },
+        { agentId: "a2", label: "v1", state: "running", icon: "running", phaseTitle: "Verify" },
+        { agentId: "a3", label: "v2", state: "pending", icon: "pending", phaseTitle: "Verify" },
+      ],
+    });
+    expect(groups.map((g) => g.title)).toEqual(["Plan", "Verify"]);
+    expect(groups[0]).toMatchObject({ done: 1, total: 1, complete: true });
+    expect(groups[0]?.agents.map((a) => a.agentId)).toEqual(["a1"]);
+    expect(groups[1]).toMatchObject({ done: 0, total: 2, complete: false });
+    expect(groups[1]?.agents.map((a) => a.agentId)).toEqual(["a2", "a3"]);
+    expect(groups[1]?.synthetic).toBeUndefined();
+  });
+
+  test("宣言 phase に紐づかない agent は末尾の (no phase) group に集約 (synthetic フラグ付き)", () => {
+    // phase_title 未設定と、宣言に無い title を持つ agent の両方が対象。合成 group の done/total は
+    // 残余 agent 集計から出す (宣言 phase の集計と混ざらない)。
+    const groups = groupAgentsByPhase({
+      phases: [{ title: "Plan", done: 1, total: 1 }],
+      agents: [
+        { agentId: "a1", label: "plan", state: "done", icon: "done", phaseTitle: "Plan" },
+        { agentId: "a2", label: "orphan1", state: "done", icon: "done" }, // phase_title 未設定
+        { agentId: "a3", label: "orphan2", state: "running", icon: "running", phaseTitle: "Ghost" }, // 未宣言 phase
+      ],
+    });
+    expect(groups.map((g) => g.title)).toEqual(["Plan", "(no phase)"]);
+    const noPhase = groups[1]!;
+    expect(noPhase.agents.map((a) => a.agentId)).toEqual(["a2", "a3"]);
+    expect(noPhase).toMatchObject({ done: 1, total: 2, complete: false, synthetic: true });
+  });
+
+  test("宣言 phase が空 (旧型 / 走行中 state json 未生成) の場合、全 agent が (no phase) に集まる", () => {
+    // drilldown.phases が空でも agents だけで表示できるパスを維持する (WorkflowRow の
+    // `Agents N` label 経路と対応)。
+    const groups = groupAgentsByPhase({
+      phases: [],
+      agents: [
+        { agentId: "a1", label: "x", state: "done", icon: "done" },
+        { agentId: "a2", label: "y", state: "running", icon: "running" },
+      ],
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ title: "(no phase)", done: 1, total: 2, synthetic: true });
+  });
+
+  test("該当 agent が無い宣言 phase も group ごと表示 (0/0 は complete=false)", () => {
+    // 設計上 phase が宣言されているのに 0/0 のまま (まだ agent 未起動) の状態を隠さない。
+    // total===0 では complete フラグを立てない (0/0 に ✓ を付けない、TUI と同じ)。
+    const groups = groupAgentsByPhase({
+      phases: [{ title: "Empty", done: 0, total: 0 }],
+      agents: [],
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      title: "Empty",
+      done: 0,
+      total: 0,
+      complete: false,
+      agents: [],
+    });
+  });
+
+  test("phases も agents も空なら groups も空", () => {
+    expect(groupAgentsByPhase({ phases: [], agents: [] })).toEqual([]);
   });
 });

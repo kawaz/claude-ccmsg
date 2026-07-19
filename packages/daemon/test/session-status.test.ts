@@ -632,10 +632,11 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos).toEqual([{ id: "1", subject: "First task", status: "completed" }]);
   });
 
-  test("TaskUpdate は owner/subject を反映し、表示対象外 metadata だけの update は状態を変えない", () => {
-    // owner/subject は Status 表示対象だが addBlockedBy/description は対象外、という境界を保証する。
-    const state = createSessionStatusState();
-    for (const line of [
+  test("TaskUpdate は owner/subject を反映し、description だけの update は状態を変えない", () => {
+    // owner/subject は Status 表示対象だが description は表示対象外という境界を保証する。
+    // addBlockedBy は r38 mid=4 で表示対象になったため、この test の対象外へ移した (下の
+    // 「addBlockedBy / addBlocks を fold する」test が正本)。
+    const result = apply([
       ...todoCreate(),
       ...todoUpdate("tu1", "1", { status: "in_progress", owner: "worker-a" }),
       ...todoUpdate(
@@ -648,26 +649,67 @@ describe("session status fold (DR-0020 Phase 1)", () => {
           updatedFields: ["subject", "description"],
         },
       ),
+    ]);
+    expect(result.todos).toEqual([
+      { id: "1", subject: "Renamed", status: "in_progress", owner: "worker-a" },
+    ]);
+  });
+
+  test("TaskUpdate は addBlockedBy / addBlocks を merge + dedup + 数値順で fold する (r38 mid=4)", () => {
+    // 実 TaskUpdate input は既存 list に足す形 (`addBlockedBy: ["3","6","5"]`)。fold は
+    // 既存 set に merge、重複は無視、表示側の視認性のため数値 ID を数値順に並べる。
+    // 空配列 / 重複だけの追加は状態変化なし (= push を発生させない)。
+    const state = createSessionStatusState();
+    for (const line of [
+      ...todoCreate(),
+      ...todoUpdate(
+        "tu1",
+        "1",
+        { addBlockedBy: ["3", "6", "5"] },
+        { success: true, taskId: "1", updatedFields: ["addBlockedBy"] },
+      ),
     ]) {
       if (isSessionStatusCandidate(line)) foldLine(state, line);
     }
-    const before = snapshot(state);
+    expect(snapshot(state).todos).toEqual([
+      { id: "1", subject: "First task", status: "pending", blocked_by: ["3", "5", "6"] },
+    ]);
+    // 既に含まれる ID を追加しても change なし。
     for (const line of todoUpdate(
-      "tu3",
+      "tu2",
       "1",
-      { addBlockedBy: ["2"] },
-      {
-        success: true,
-        taskId: "1",
-        updatedFields: ["addBlockedBy"],
-      },
+      { addBlockedBy: ["3"] },
+      { success: true, taskId: "1", updatedFields: ["addBlockedBy"] },
     )) {
       if (isSessionStatusCandidate(line)) expect(foldLine(state, line)).toBe(false);
     }
-    expect(snapshot(state)).toEqual(before);
-    expect(before.todos).toEqual([
-      { id: "1", subject: "Renamed", status: "in_progress", owner: "worker-a" },
+    // addBlocks も対称に fold。
+    for (const line of todoUpdate(
+      "tu3",
+      "1",
+      { addBlocks: ["9"] },
+      { success: true, taskId: "1", updatedFields: ["addBlocks"] },
+    )) {
+      if (isSessionStatusCandidate(line)) foldLine(state, line);
+    }
+    expect(snapshot(state).todos).toEqual([
+      {
+        id: "1",
+        subject: "First task",
+        status: "pending",
+        blocked_by: ["3", "5", "6"],
+        blocks: ["9"],
+      },
     ]);
+    // 空配列 add は状態変化なし。
+    for (const line of todoUpdate(
+      "tu4",
+      "1",
+      { addBlockedBy: [] },
+      { success: true, taskId: "1", updatedFields: ["addBlockedBy"] },
+    )) {
+      if (isSessionStatusCandidate(line)) expect(foldLine(state, line)).toBe(false);
+    }
   });
 
   test("TaskUpdate status:deleted は TODO をリストから取り除く", () => {

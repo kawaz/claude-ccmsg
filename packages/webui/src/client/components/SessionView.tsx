@@ -242,13 +242,21 @@ export function SessionView({ state }: { state: AppState }) {
           </span>
         )}
         {/* kawaz r26 mid=66: Rooms は一番右 (Files / Timeline / Status / Rooms) */}
-        <button
-          type="button"
+        {/* kawaz r38 mid=7: Status タブはサブエージェント TL 閲覧中 (= state.
+         * currentAgent が付いた状態) でも押せるようにする。押した時は親セッション
+         * (= sid) の Status タブへ遷移するため、locator を `sessionHref(sid)` に
+         * 動かして currentAgent を null に落とし、同時に localTab を "status"
+         * に切り替える。<button> のままだと locator が動かず、currentAgent が
+         * 残っている限り上の tab 判定 (`state.currentAgent ? "timeline" : ...`)
+         * が "timeline" を強制するため Status に切り替わらない。Files/Timeline
+         * の <a> と同じ導線に揃えて accessibility も統一する。 */}
+        <a
           class={"session-tab" + (tab === "status" ? " active" : "")}
+          href={sessionHref(sid)}
           onClick={() => setLocalTab("status")}
         >
           Status
-        </button>
+        </a>
         <button
           type="button"
           class={"session-tab" + (tab === "rooms" ? " active" : "")}
@@ -278,7 +286,11 @@ export function SessionView({ state }: { state: AppState }) {
         // DR-0021) one can never produce a snapshot. Explain which instead
         // of leaving StatusPanel's "読み込み中…" spinner up forever.
         hasStatusFeed ? (
-          <StatusPanel snapshot={sessionStatus} sid={sid} onKill={() => ws.sessionKill(sid)} />
+          <StatusPanel
+            snapshot={sessionStatus}
+            sid={sid}
+            onKill={(opts) => ws.sessionKill(sid, opts)}
+          />
         ) : hasTranscript ? (
           <p id="empty-state">
             Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)

@@ -306,6 +306,15 @@ export interface SessionTodo {
   /** "pending" | "in_progress" | "completed" — open set (upstream may add values). */
   status: string;
   owner?: string;
+  /** DR-0020 addendum (r38 mid=4): task ID list this task is blocked by, folded
+   * from TaskUpdate's `addBlockedBy` input (or task_reminder attachment when
+   * present). Sorted numerically-first (id は文字列だが実データは "1", "2" 形式
+   * が主なので数値順に見せた方が読み手が直感的)。Empty array is omitted
+   * (undefined) — the UI treats no field / empty the same way. */
+  blocked_by?: string[];
+  /** Same shape as `blocked_by` but for tasks this task blocks (TaskUpdate の
+   * `addBlocks`)。UI では現状表示していないが、fold は対称に保つ。 */
+  blocks?: string[];
 }
 /** DR-0025 Phase 1: one row of a workflow's phase progress (name + done/total
  * count). Present only when the workflow's state json (written on completion)
@@ -755,6 +764,15 @@ export interface SessionKillRequest {
    * intentionally carries NO pid — a client-asserted pid would be a weaker
    * basis for killing than the daemon's own fresh resolution (DR-0028). */
   session_id: string;
+  /** DR-0028 addendum (r38 mid=6): escalate to SIGKILL when true. Absent /
+   * false runs the normal two-shot SIGTERM sequence (DR-0028 original).
+   * SIGKILL is irreversible and can break transcript flush, so the daemon
+   * never chooses it on its own — the caller must explicitly opt in after
+   * observing that a graceful attempt failed (webui: 「終了確認」で `terminated:
+   * false` を観測してから「強制終了 (-KILL)」に切り替わったボタンをもう一度
+   * 押す 2 段動線)。sid→pid 解決と ps 検証は force 時も同じで、pid-reuse ガード
+   * だけは絶対に外さない。 */
+  force?: boolean;
 }
 
 /** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role

@@ -297,6 +297,46 @@ function foldAssistant(state: SessionStatusState, row: Record<string, unknown>):
   return changed;
 }
 
+/** DR-0020 addendum (r38 mid=4): TaskUpdate の `addBlockedBy` / `addBlocks` は
+ * 「入力に含まれた ID を既存集合に足す」形。fold 側は現在の list に merge して
+ * dedup + 数値順で並べ替える。string ID の numeric-first sort は数字だけの ID
+ * (実データの主形) を人間直感順に並べつつ、非数値の ID も lexicographic で安定
+ * させる (Array.prototype.sort の同値要素の順序保証を利用する必要はない、id は
+ * ユニークだから)。空配列は undefined に落として snapshot の subject/status と
+ * 同じく「無い時は field 自体を出さない」不変条件を維持する。 */
+function mergeTaskIdList(
+  current: string[] | undefined,
+  add: unknown,
+): { list: string[] | undefined; changed: boolean } {
+  if (!Array.isArray(add)) return { list: current, changed: false };
+  const additions = add.filter((v): v is string => typeof v === "string" && v.length > 0);
+  if (additions.length === 0) return { list: current, changed: false };
+  const set = new Set(current ?? []);
+  let changed = false;
+  for (const id of additions) {
+    if (!set.has(id)) {
+      set.add(id);
+      changed = true;
+    }
+  }
+  if (!changed) return { list: current, changed: false };
+  const merged = [...set].sort((a, b) => {
+    const na = Number(a);
+    const nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return { list: merged, changed: true };
+}
+
+function taskIdListEquals(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return (a?.length ?? 0) === 0 && (b?.length ?? 0) === 0;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function applyTodoUpdate(
   state: SessionStatusState,
   input: Record<string, unknown>,
@@ -309,7 +349,10 @@ function applyTodoUpdate(
   const status = stringValue(input.status);
   const owner = stringValue(input.owner);
   const subject = stringValue(input.subject);
-  if (status === undefined && owner === undefined && subject === undefined) return false;
+  const hasBlocking = "addBlockedBy" in input || "addBlocks" in input;
+  if (status === undefined && owner === undefined && subject === undefined && !hasBlocking) {
+    return false;
+  }
 
   // status:"deleted" removes the task from the TUI's todo list, so the folded
   // current state drops it too (DR-0020 § 2.1 "TUI 同等") instead of keeping a
@@ -323,11 +366,23 @@ function applyTodoUpdate(
   if (status !== undefined) next.status = status;
   if (owner !== undefined) next.owner = owner;
   if (subject !== undefined) next.subject = subject;
+  const mergedBlockedBy = mergeTaskIdList(next.blocked_by, input.addBlockedBy);
+  if (mergedBlockedBy.list !== undefined) {
+    if (mergedBlockedBy.list.length > 0) next.blocked_by = mergedBlockedBy.list;
+    else delete next.blocked_by;
+  }
+  const mergedBlocks = mergeTaskIdList(next.blocks, input.addBlocks);
+  if (mergedBlocks.list !== undefined) {
+    if (mergedBlocks.list.length > 0) next.blocks = mergedBlocks.list;
+    else delete next.blocks;
+  }
   if (
     current &&
     current.status === next.status &&
     current.subject === next.subject &&
-    current.owner === next.owner
+    current.owner === next.owner &&
+    taskIdListEquals(current.blocked_by, next.blocked_by) &&
+    taskIdListEquals(current.blocks, next.blocks)
   ) {
     return false;
   }

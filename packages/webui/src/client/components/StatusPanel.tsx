@@ -19,18 +19,38 @@ import {
   buildStatusSections,
   buildWorkflowDrilldown,
   formatContextUsage,
+  groupAgentsByPhase,
   shortModel,
   splitTeammates,
   type WorkflowDrilldownAgentView,
+  type WorkflowDrilldownGroupView,
 } from "../session-status-view.ts";
 import { agentTimelineHref } from "../locator.ts";
 import { formatClockTime } from "../utils.ts";
 
+/** r38 mid=4: TODO 行の頭状態マーカー。workflow drilldown の agent icon 語彙
+ * (✓/⟳/·) と揃えることで Status タブ内の視覚言語を一貫させる。open set の status
+ * (upstream が値を追加しうる) は default で pending と同じ空マーカー扱い、独自
+ * 分岐は生やさない (未知値に色や記号を勝手に当てないポリシー)。 */
+function todoIconGlyph(status: string): string {
+  if (status === "completed") return "✓";
+  if (status === "in_progress") return "⟳";
+  return "·";
+}
+
 function TodoRow({ todo }: { todo: SessionTodo }) {
+  const iconClass = "status-todo-icon status-todo-icon-" + todo.status;
   return (
     <li class={"status-todo" + (todo.status === "in_progress" ? " status-todo-active" : "")}>
+      <span class={iconClass}>{todoIconGlyph(todo.status)}</span>
+      <span class="status-todo-id">#{todo.id}</span>
       <span class="status-todo-subject">{todo.subject}</span>
       {todo.owner ? <span class="status-owner">{todo.owner}</span> : null}
+      {todo.blocked_by && todo.blocked_by.length > 0 ? (
+        <span class="status-todo-blocked">
+          blocked by {todo.blocked_by.map((id) => `#${id}`).join(",")}
+        </span>
+      ) : null}
     </li>
   );
 }
@@ -58,6 +78,10 @@ function WorkflowRow({
   sid: string;
 }) {
   const drilldown = buildWorkflowDrilldown(wf);
+  const groups = drilldown ? groupAgentsByPhase(drilldown) : [];
+  // Header の右肩要約: 宣言 phase がある時は「Phases 完了数/総数」、agents だけの
+  // 旧型 / 走行中 (state json 未生成) は「Agents N」。r38 mid=3 で Phase 単位の
+  // グループ化は展開後の一覧側に持たせるため、header 側は畳んだ時の要約だけを担う。
   const phasesLabel = drilldown
     ? drilldown.phases.length > 0
       ? `Phases ${drilldown.phases.filter((p) => p.total > 0 && p.done === p.total).length}/${drilldown.phases.length}`
@@ -77,30 +101,59 @@ function WorkflowRow({
   if (!drilldown) {
     return <li class={"status-row" + (running ? " status-row-active" : "")}>{header}</li>;
   }
+  // r38 mid=3: 走行中 workflow は Status タブを開いた瞬間に Phase / agent が
+  // 見える方が「今何が動いているか」の視認性が高い (kawaz)。完了 workflow は
+  // 「完了 (N)」の中に既に 1 段畳まれているため、そこから開いた時点で意図があり
+  // 更に 1 段畳んだままにする合理性が薄いので同じく open にする。
   return (
     <li class={"status-row status-wf-drill" + (running ? " status-row-active" : "")}>
-      <details>
+      <details open>
         <summary>{header}</summary>
-        {drilldown.phases.length > 0 ? (
-          <ul class="status-wf-phases">
-            {drilldown.phases.map((p) => (
-              <li key={p.title} class="status-wf-phase">
-                <span class="status-wf-phase-title">{p.title}</span>
-                <span class="status-wf-phase-count">
-                  {p.done}/{p.total}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {drilldown.agents.length > 0 ? (
-          <ul class="status-wf-agents">
-            {drilldown.agents.map((agent) => (
-              <WorkflowAgentLink key={agent.agentId} agent={agent} sid={sid} runId={wf.run_id} />
+        {groups.length > 0 ? (
+          <ul class="status-wf-groups">
+            {groups.map((group) => (
+              <WorkflowPhaseGroup key={group.title} group={group} sid={sid} runId={wf.run_id} />
             ))}
           </ul>
         ) : null}
       </details>
+    </li>
+  );
+}
+
+/** Phase 見出し + その配下の agent list。TUI で workflow 展開時に見える
+ * 「Phase タイトル (done/total ✓) — 下にサブセッション」の構造を webui でも
+ * 再現するグループ描画 (r38 mid=3)。合成 group ("(no phase)") は synthetic
+ * class で見た目を弱め、宣言 phase 見出しと同格に見えないようにする。 */
+function WorkflowPhaseGroup({
+  group,
+  sid,
+  runId,
+}: {
+  group: WorkflowDrilldownGroupView;
+  sid: string;
+  runId?: string;
+}) {
+  const cls =
+    "status-wf-group" +
+    (group.complete ? " status-wf-group-complete" : "") +
+    (group.synthetic ? " status-wf-group-synthetic" : "");
+  return (
+    <li class={cls}>
+      <div class="status-wf-group-header">
+        <span class="status-wf-group-title">{group.title}</span>
+        <span class="status-wf-group-count">
+          {group.done}/{group.total}
+        </span>
+        {group.complete ? <span class="status-wf-group-check">✓</span> : null}
+      </div>
+      {group.agents.length > 0 ? (
+        <ul class="status-wf-agents">
+          {group.agents.map((agent) => (
+            <WorkflowAgentLink key={agent.agentId} agent={agent} sid={sid} runId={runId} />
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }
@@ -173,14 +226,43 @@ function BackgroundRow({ bg, running }: { bg: SessionBackgroundStatus; running: 
   );
 }
 
+/** r38 mid=5: teammate state を日本語ラベル + カラードットで視覚化する。
+ *
+ * daemon 側 (`session-status.ts`) が state を transcript 観測から推定済み:
+ *
+ * - `active`: teammate からの relay body が `idle_notification` 以外の
+ *   通常メッセージだった時、または (spawn 直後で) 自分が SendMessage で
+ *   先に話しかけた時。「今しゃべっている / 応答待ち中」
+ * - `idle`: relay body が `{"type":"idle_notification"...}` (subagent が idle
+ *   に落ちた自己申告) だった時。「一区切りついて next input 待ち」
+ * - `spawned`: Agent tool の `teammate_spawned` result が観測されたが、以降
+ *   send/receive が無い状態。「起動直後、まだ何もやり取りしていない」
+ * - `stopped`: TaskStop で明示的に殺した teammate。「終了済み、以後の観測なし」
+ *
+ * 判定根拠を daemon 側の transcript 実観測に置いているため、ここでは UI の
+ * 語彙揃えだけを担う (mtime ベースの staleness 判定を UI で足すと『新規
+ * setInterval 追加禁止』要件と衝突する。時系列的な rawer 情報が要る場面は
+ * 既存の send/受信 timestamp が担っている)。 */
+const TEAMMATE_STATE_LABEL: Record<string, string> = {
+  active: "活動中",
+  idle: "idle 中",
+  spawned: "起動済み",
+  stopped: "停止",
+};
+
 function TeammateRow({ teammate, sid }: { teammate: SessionTeammate; sid: string }) {
   const href = agentTimelineHref(sid, { teammate: teammate.name });
+  const label = TEAMMATE_STATE_LABEL[teammate.state] ?? teammate.state;
+  const dotClass = "status-teammate-dot status-teammate-dot-" + teammate.state;
   return (
     <li class={"status-row status-teammate status-teammate-" + teammate.state}>
+      <span class={dotClass} aria-hidden="true">
+        ●
+      </span>
       <span class="status-row-name">{teammate.name}</span>
       {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
       {teammate.model ? <span class="status-row-kind">{shortModel(teammate.model)}</span> : null}
-      <span class="status-row-summary">{teammate.state}</span>
+      <span class="status-row-summary status-teammate-state-label">{label}</span>
       <a class="status-wf-agent-tl" href={href}>
         TL
       </a>
@@ -254,41 +336,85 @@ function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: s
  * labor with SessionView). `terminated: false` on a successful reply is not
  * an error — the daemon sent both SIGTERMs but couldn't observe the process
  * disappear within its grace (protocol doc). */
+/** r38 mid=6: SIGTERM で落ちなかった時に SIGKILL へ 2 段エスカレーションする
+ * ボタン。DR-0028 の「daemon は勝手に SIGKILL しない」原則を維持しつつ、
+ * ユーザーが SIGTERM の未確認を目視して opt-in できる動線を UI 側で提供する:
+ *
+ *   1. 初回押下: SIGTERM 2 連発 (DR-0028 通常経路)
+ *   2. 応答が `terminated: false` (シグナル送信済み、終了未確認) だったら
+ *      ボタン表示を「強制終了 (-KILL)」に切り替え、押すと `force: true` で
+ *      SIGKILL を送る
+ *   3. `terminated: true` / `not_found` / エラー、あるいは sid が変わった場合は
+ *      通常状態にリセット
+ *
+ * confirm は force 時も必ず出し、文言に SIGKILL である旨と不可逆性を明記する
+ * (kawaz の「-KILL モードに変化させて欲しい」= 表示だけでなく操作にも一段
+ * 追加のガードを掛ける意)。 */
 function KillZone({
   sid,
   onKill,
 }: {
   sid: string;
-  onKill: () => Promise<SessionKillResponse | ErrorResponse>;
+  onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
 }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [forceMode, setForceMode] = useState(false);
 
   function handleKill(): void {
-    if (!window.confirm(`セッション ${sid} のプロセスを終了しますか?`)) return;
+    const force = forceMode;
+    const confirmMsg = force
+      ? `セッション ${sid} に SIGKILL を送ります。プロセスは即時に強制終了され、transcript の flush が途中で切れる可能性があります。実行しますか?`
+      : `セッション ${sid} のプロセスを終了しますか?`;
+    if (!window.confirm(confirmMsg)) return;
     setBusy(true);
     setResult(null);
-    void onKill()
+    void onKill(force ? { force: true } : undefined)
       .then((res) => {
         if (res.ok) {
-          setResult(
-            res.terminated ? "プロセスの終了を確認しました" : "シグナル送信済み (終了は未確認)",
-          );
+          if (res.terminated) {
+            setResult(
+              force ? "SIGKILL でプロセスの終了を確認しました" : "プロセスの終了を確認しました",
+            );
+            setForceMode(false);
+          } else {
+            // DR-0028: `terminated: false` = signals delivered but the pid
+            // was still observable when the grace expired. force 経路でここに
+            // 到達したら zombie 等の稀ケース (これ以上打つ手がなく、ボタンは
+            // 押しっぱなしにできても意味がないので force モードを維持しつつ
+            // 事実だけ通知する)。
+            setResult(
+              force
+                ? "SIGKILL 送信済みですが、まだ pid が観測されています (zombie の可能性)"
+                : "シグナル送信済み (終了は未確認)。強制終了に切り替えました",
+            );
+            setForceMode(true);
+          }
         } else if (res.error.code === "not_found") {
           setResult("プロセスが見つかりません (既に終了済みの可能性)");
+          setForceMode(false);
         } else {
           setResult(`エラー: ${res.error.msg}`);
+          // エラー時は force モードを維持 (直前の状態がユーザーの意図)
         }
       })
       .catch((e: unknown) => setResult(`エラー: ${String(e)}`))
       .finally(() => setBusy(false));
   }
 
+  const buttonLabel = busy
+    ? forceMode
+      ? "強制終了中…"
+      : "終了処理中…"
+    : forceMode
+      ? "強制終了 (-KILL)"
+      : "セッションを終了";
+  const buttonCls = "status-kill-button" + (forceMode ? " status-kill-button-force" : "");
   return (
     <section class="status-section status-kill-zone">
       <h3 class="status-section-title">危険ゾーン</h3>
-      <button type="button" class="status-kill-button" disabled={busy} onClick={handleKill}>
-        {busy ? "終了処理中…" : "セッションを終了"}
+      <button type="button" class={buttonCls} disabled={busy} onClick={handleKill}>
+        {buttonLabel}
       </button>
       {result ? <p class="status-kill-result">{result}</p> : null}
     </section>
@@ -302,7 +428,7 @@ export function StatusPanel({
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
-  onKill: () => Promise<SessionKillResponse | ErrorResponse>;
+  onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
 }) {
   if (!snapshot) {
     return (

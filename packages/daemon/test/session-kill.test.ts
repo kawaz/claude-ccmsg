@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   killSession,
+  killSessionForce,
   resolvePid,
   sessionKill,
   verifyPid,
@@ -239,6 +240,80 @@ describe("killSession sequence (fake deps)", () => {
       thrown = e;
     }
     expect(String(thrown)).toContain("EPERM");
+  });
+});
+
+describe("killSessionForce (DR-0028 addendum r38 mid=6, opt-in SIGKILL)", () => {
+  // Force 経路の最小契約: SIGTERM でなく SIGKILL を 1 発、以降は通常経路と同じ
+  // liveness poll。落ちたら terminated:true。SIGTERM の 2 連発 / 1s 待機は
+  // 意味を成さないので排除する (SIGKILL は guard を持たない、即殺すのが仕事)。
+  test("SIGKILL を 1 発だけ送り、死亡を観測すれば terminated:true", async () => {
+    const signals: string[] = [];
+    // 初回 isAlive で true、poll 後に false になる ping-pong (プロセスが SIGKILL
+    // を受けてから 1 poll 分で消える現実的な流れ)。
+    let alive = true;
+    const deps = fakeDeps({
+      sendSignal: (_pid, sig) => {
+        signals.push(sig);
+        alive = false;
+      },
+      isAlive: () => alive,
+    });
+    expect(await killSessionForce(42, deps)).toEqual({ terminated: true });
+    expect(signals).toEqual(["SIGKILL"]);
+  });
+
+  // 死んでいない observable な zombie (uninterruptible sleep 等) は嘘をつかず
+  // terminated:false を返す (SIGKILL を送ったのに pid が観測される、= UI 側で
+  // 「SIGKILL 送信済みだがまだ pid が観測される」と正直に表示する契約)。
+  test("SIGKILL 後も pid が観測され続けたら terminated:false", async () => {
+    const signals: string[] = [];
+    const deps = fakeDeps({
+      sendSignal: (_pid, sig) => signals.push(sig),
+      isAlive: () => true,
+    });
+    expect(await killSessionForce(42, deps)).toEqual({ terminated: false });
+    expect(signals).toEqual(["SIGKILL"]);
+  });
+
+  // TOCTOU: SIGKILL 送信前にプロセスが消えていたら (ESRCH) 通常経路と同じく
+  // terminated:true 扱い (「消えていることを望んだ結果と一致」)。
+  test("SIGKILL 送信時に ESRCH なら terminated:true (既に消えていた)", async () => {
+    const deps = fakeDeps({
+      sendSignal: () => {
+        throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      },
+    });
+    expect(await killSessionForce(42, deps)).toEqual({ terminated: true });
+  });
+
+  // sessionKill(sid, deps, {force: true}) は resolvePid + verifyPid を通した
+  // 後で force 経路に入る (pid-reuse guard は force でも絶対に外れない契約)。
+  test("sessionKill({force:true}) は verify を経てから SIGKILL 経路に入る", async () => {
+    const signals: string[] = [];
+    const deps = fakeDeps({
+      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
+      runPs: () => Promise.resolve("claude\n"),
+      sendSignal: (_pid, sig) => signals.push(sig),
+      isAlive: () => false,
+    });
+    expect(await sessionKill("sid-x", deps, { force: true })).toEqual({
+      found: true,
+      terminated: true,
+    });
+    expect(signals).toEqual(["SIGKILL"]);
+  });
+
+  // ps 検証 (pid-reuse guard) が落ちたら force でも kill しない。
+  test("sessionKill({force:true}) は verify 失敗時に SIGKILL を送らない", async () => {
+    const signals: string[] = [];
+    const deps = fakeDeps({
+      runAgents: () => Promise.resolve(AGENTS_ROW("sid-x", 4242)),
+      runPs: () => Promise.resolve("zsh\n"), // claude 以外 → verify fail
+      sendSignal: (_pid, sig) => signals.push(sig),
+    });
+    expect(await sessionKill("sid-x", deps, { force: true })).toEqual({ found: false });
+    expect(signals).toEqual([]);
   });
 });
 

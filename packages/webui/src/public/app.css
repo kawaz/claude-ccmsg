@@ -3510,6 +3510,51 @@ button.session-tab {
   opacity: 0.5;
 }
 
+/* r38 mid=5: teammate state のカラードット + ラベル。色語彙は Status タブ内で
+ * 統一 (active=--ok / idle=--warn / spawned=--accent / stopped=muted)。active
+ * は subtle な pulse animation で「今動いている」を強調するが、animation を
+ * disable するユーザ環境 (prefers-reduced-motion) では静止色のみ。 */
+.status-teammate-dot {
+  flex-shrink: 0;
+  width: 0.7em;
+  text-align: center;
+  font-size: 0.7em;
+  line-height: 1;
+}
+.status-teammate-dot-active {
+  color: var(--ok, #4a8);
+  animation: status-teammate-pulse 1.6s ease-in-out infinite;
+}
+.status-teammate-dot-idle {
+  color: var(--warn, #ba5);
+}
+.status-teammate-dot-spawned {
+  color: var(--accent, #48a);
+}
+.status-teammate-dot-stopped {
+  color: var(--fg-muted);
+}
+.status-teammate-state-label {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-teammate-dot-active {
+    animation: none;
+  }
+}
+@keyframes status-teammate-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .status-row-name,
 .status-row-kind {
   font-weight: 600;
@@ -3535,6 +3580,35 @@ button.session-tab {
   flex-shrink: 0;
   font-size: 0.7rem;
   color: var(--fg-muted);
+}
+
+/* r38 mid=4: TODO 行の頭マーカー + タスク ID + 依存関係表示。icon の色は
+ * workflow drilldown の同 status と揃える (completed=--ok / in_progress=--warn /
+ * それ以外=muted) — Status タブ全体で status の色語彙を一つに保つため。 */
+.status-todo-icon {
+  flex-shrink: 0;
+  width: 1em;
+  text-align: center;
+}
+.status-todo-icon-completed {
+  color: var(--ok, #4a8);
+}
+.status-todo-icon-in_progress {
+  color: var(--warn, #ba5);
+}
+.status-todo-icon-pending {
+  color: var(--fg-muted);
+}
+.status-todo-id {
+  flex-shrink: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+.status-todo-blocked {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--warn, #ba5);
 }
 
 .status-done {
@@ -3595,6 +3669,50 @@ button.session-tab {
 }
 .status-wf-phase-count {
   color: var(--fg-muted);
+}
+
+/* r38 mid=3: Phase 単位の group 表示 (TUI 相当)。宣言 phase の見出しの下に
+ * その phase 所属の agent が並ぶ入れ子構造。完了 phase は "✓" を付けて視認性
+ * を上げる。合成 group ("(no phase)") は phase 見出しと同格に見えないよう
+ * 見た目を弱める。 */
+.status-wf-groups {
+  list-style: none;
+  padding: 0.25rem 0 0 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.status-wf-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.status-wf-group-header {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+}
+.status-wf-group-title {
+  flex-shrink: 0;
+}
+.status-wf-group-count {
+  color: var(--fg-muted);
+  font-size: 0.72rem;
+}
+.status-wf-group-check {
+  color: var(--ok, #4a8);
+}
+.status-wf-group-complete .status-wf-group-title {
+  color: var(--ok, #4a8);
+}
+.status-wf-group-synthetic .status-wf-group-title {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+.status-wf-group .status-wf-agents {
+  padding-left: 1rem;
 }
 .status-wf-agents {
   list-style: none;
@@ -3683,6 +3801,16 @@ button.session-tab {
 .status-kill-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* r38 mid=6: SIGKILL エスカレーションモードのボタン。SIGTERM を試した後に
+ * 表示されるため、通常より一段強い視覚 (danger 色を背景に反転 + 太字) にして
+ * 「もう 1 回押したら不可逆」を明示する。 */
+.status-kill-button-force {
+  color: var(--bg, #fff);
+  background: var(--danger);
+  border-color: var(--danger);
+  font-weight: 700;
 }
 
 .status-kill-result {

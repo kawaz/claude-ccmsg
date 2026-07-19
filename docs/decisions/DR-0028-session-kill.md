@@ -110,3 +110,34 @@ cwd, kind, ... }` を webui に配信している。
 - [DR-0018](./DR-0018-session-launcher.md) — session_launch (user 限定 op の先行例)
 - [DR-0009](./DR-0009-session-transcript-access.md) — agents poll の出自
 - [DR-0012](./DR-0012-room-archive-and-kick.md) — kick (確認 confirm の既存 UI 慣習)
+
+## Addendum: opt-in SIGKILL エスカレーション (kawaz r38 mid=6, 2026-07-19)
+
+現行の SIGTERM 2 連発では TUI が確認 guard から動かないケースが実運用で
+発生する ("セッション終了が効かないことが結構ある" — kawaz)。当初却下した
+`SIGKILL` 経路を、**daemon が自動で選ばず、ユーザーが opt-in する形**で解禁する。
+
+### 追加分の契約
+
+- `SessionKillRequest.force?: boolean` を追加。true の時のみ SIGKILL 経路。
+  fresh sid→pid 解決と ps コマンドライン検証 (pid-reuse guard) は force でも
+  そのまま通す — 検証を短絡すると誤殺リスクが上がるだけで得るものが無い
+- 経路: `killSessionForce(pid, deps)` — SIGKILL を 1 発、以降は通常経路と
+  同じ liveness poll。落ちたら `terminated: true`、SIGKILL 後も観測される
+  (uninterruptible sleep 等の zombie) 場合は `terminated: false` を正直に返す
+- webui: 「セッションを終了」で `terminated: false` を観測したら、ボタンが
+  「強制終了 (-KILL)」に変化 (背景色 danger 反転 + 太字)。再度押すと SIGKILL、
+  confirm 文言に「不可逆 / transcript flush が途中で切れる可能性」を明記して
+  もう 1 段のガードを掛ける
+
+### 却下した代替案 (再検討)
+
+- **原案通り SIGKILL を認めない**: 実運用で 2 発 SIGTERM に耐える TUI 挙動が
+  観測されており、UI が「シグナル送信済み・未確認」を表示するだけでユーザー
+  は次の手を打てない (daemon 側に手段が無いため kill -9 を shell で打つ必要
+  がある)。opt-in 明示 + 2 段確認 (通常押下 → force ボタン化 → confirm) で、
+  「daemon が自動で不可逆側に倒す」原則は保ちつつ、ユーザーの明示的意思で
+  最終手段が届く形に緩和する
+- **daemon 側で自動エスカレーション** (SIGTERM 失敗後に SIGKILL): 原案の
+  却下理由がそのまま生きる (transcript/state flush を破壊するのは自動化して
+  よい判断ではない)。継続不採用
