@@ -397,6 +397,42 @@ function AgentSendFold({
   );
 }
 
+/* agent-spawn の fold: AgentSendFold と同じ閉時装飾 (identicon + 破線枠) を
+ * summary に出す (kawaz r38 mid=35 — Agent カードだけ装飾が無かった)。 */
+function AgentSpawnFold({
+  segment,
+  ts,
+}: {
+  segment: Extract<Segment, { kind: "agent-spawn" }>;
+  ts: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      class="tl-fold tl-agent-fold"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <FoldSummary
+        ts={ts}
+        label={`Agent: ${segment.name}`}
+        open={open}
+        decoration={{ kind: "agent", prefix: "Agent:", name: segment.name }}
+      />
+      <div class="tl-guided">
+        <FoldGuide />
+        <AgentCard
+          name={segment.name}
+          direction="outbound"
+          badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
+          title={segment.description || null}
+          body={segment.prompt}
+        />
+      </div>
+    </details>
+  );
+}
+
 // thinking 翻訳比較タブ (DR-0023): original は常に基準面、host/browser
 // は各経路が利用可能な時だけ追加する。両翻訳経路とも `\n\n` 単位で段落分割し、
 // 日本語を含む段落を保持して英語段落だけを翻訳する。
@@ -627,21 +663,7 @@ function SegmentView({
       case "agent-send":
         return <AgentSendFold segment={segment} ts={ts} />;
       case "agent-spawn":
-        return (
-          <details class="tl-fold tl-agent-fold">
-            <FoldSummary ts={ts} label={`Agent: ${segment.name}`} />
-            <div class="tl-guided">
-              <FoldGuide />
-              <AgentCard
-                name={segment.name}
-                direction="outbound"
-                badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
-                title={segment.description || null}
-                body={segment.prompt}
-              />
-            </div>
-          </details>
-        );
+        return <AgentSpawnFold segment={segment} ts={ts} />;
       case "tool-result":
         return (
           <details class="tl-fold">
