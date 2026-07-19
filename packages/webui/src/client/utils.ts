@@ -9,7 +9,7 @@ import type {
   SessionSearchMatch,
   SessionSearchRequest,
 } from "@ccmsg/protocol";
-import type { RoomState } from "./store.ts";
+import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
@@ -487,6 +487,43 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
  * only path that ever exercises the fallback in practice, but a peers row
  * with an empty repo/ws (session announced neither) takes the same
  * fallback rather than rendering a blank first line. */
+/** Resolve `{repo, ws, cwd}` for the topbar title of a session sid (kawaz
+ * r38 mid=9). Three sources, first non-empty wins — same fallback chain
+ * `sessionRowRepoWs` uses for the sidebar, so the topbar can't disagree with
+ * SessionList about what one session's repo/ws pair is:
+ *
+ * 1. A live peer's hello metadata (the session announced its own
+ *    `SessionIdentity.ws` — the strongest signal we ever get).
+ * 2. A pinned/virtual session's `SessionSearchHit.repo/ws` — DR-0021 lets a
+ *    disconnected session stay selected, and dropping to `sid.slice(0,8)`
+ *    lost the whole worktree name for those rows.
+ * 3. An agent-only row (`claude agents --json`, no ccmsg connection): the
+ *    upstream carries no VCS metadata, so `agent.name` stands in for ws
+ *    (same substitution `sessionRowRepoWs` makes for the sidebar first line).
+ *
+ * `cwd` comes from whichever source produced repo/ws (with a further peer /
+ * pinned / agent fallback for the "all three empty" case) so the caller can
+ * do a `lastPathSegment(cwd)` last-resort label. */
+export function resolveSessionTopbar(
+  state: AppState,
+  sid: string,
+): { repo: string; ws: string; cwd: string | null } {
+  const peer = state.peers.find((p) => p.sid === sid);
+  if (peer && (peer.repo || peer.ws)) {
+    return { repo: peer.repo, ws: peer.ws, cwd: peer.cwd };
+  }
+  const pinned = state.pinnedSessions.get(sid);
+  if (pinned && (pinned.repo || pinned.ws)) {
+    return { repo: pinned.repo ?? "", ws: pinned.ws ?? "", cwd: pinned.cwd };
+  }
+  const agent = state.agents.find((a) => a.sessionId === sid);
+  return {
+    repo: "",
+    ws: agent?.name ?? "",
+    cwd: peer?.cwd ?? pinned?.cwd ?? agent?.cwd ?? null,
+  };
+}
+
 export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } {
   if (row.repo || row.ws) return { repo: row.repo, ws: row.ws };
   return { repo: "", ws: row.agent?.name || lastPathSegment(row.cwd) };

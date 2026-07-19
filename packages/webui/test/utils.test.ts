@@ -5,7 +5,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentInfo, FsEntry, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
-import { ADMIN_ID } from "../src/client/store.ts";
+import type { AppState } from "../src/client/store.ts";
+import { ADMIN_ID, initialState } from "../src/client/store.ts";
 import {
   badgeLabel,
   buildSessionSearchRequest,
@@ -35,6 +36,7 @@ import {
   peerSortButtonLabel,
   repoRootLabel,
   resolveInboxFilename,
+  resolveSessionTopbar,
   sessionBadges,
   sessionLabel,
   sessionRowRepoWs,
@@ -716,6 +718,82 @@ function sessionRow(overrides: Partial<SessionRow>): SessionRow {
     ...overrides,
   };
 }
+
+describe("resolveSessionTopbar", () => {
+  // Live peer path: the session announced repo/ws via hello and it comes
+  // straight through — the sidebar's SessionList row for the same sid uses
+  // the same PeerInfo, so the topbar can't disagree with it.
+  test("uses the live peer's repo/ws/cwd when a peer exists for the sid", () => {
+    const state: AppState = {
+      ...initialState(),
+      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/main" })],
+    };
+    expect(resolveSessionTopbar(state, "s1")).toEqual({
+      repo: "kawaz/claude-ccmsg",
+      ws: "main",
+      cwd: "/repos/main",
+    });
+  });
+
+  // DR-0021 pinned/virtual: a session with no live peer still keeps its
+  // SessionSearchHit in state.pinnedSessions — before this helper the topbar
+  // fell straight through to `sid.slice(0,8)` and lost the worktree name for
+  // pinned rows entirely (kawaz r38 mid=9).
+  test("falls back to a pinned session's SessionSearchHit when no peer is connected", () => {
+    const state: AppState = {
+      ...initialState(),
+      pinnedSessions: new Map<string, SessionSearchHit>([
+        [
+          "s1",
+          {
+            sid: "s1",
+            config_dir: "/home/kawaz/.claude",
+            file: "/transcripts/s1.jsonl",
+            cwd: "/repos/pinned/main",
+            repo: "kawaz/pinned",
+            ws: "main",
+            created_at: "2026-07-19T00:00:00Z",
+            updated_at: "2026-07-19T00:00:00Z",
+            size: 0,
+            matches: [],
+          },
+        ],
+      ]),
+    };
+    expect(resolveSessionTopbar(state, "s1")).toEqual({
+      repo: "kawaz/pinned",
+      ws: "main",
+      cwd: "/repos/pinned/main",
+    });
+  });
+
+  // Agent-only row (`claude agents --json` matched, no ccmsg hello): no VCS
+  // metadata to surface, so agent.name stands in for ws — matches the
+  // fallback sessionRowRepoWs already uses on the sidebar's first line.
+  test("falls back to agent.name as ws when only an agent row matches the sid", () => {
+    const state: AppState = {
+      ...initialState(),
+      agents: [agent({ sessionId: "s1", name: "my-agent", cwd: "/repos/x/y" })],
+    };
+    expect(resolveSessionTopbar(state, "s1")).toEqual({
+      repo: "",
+      ws: "my-agent",
+      cwd: "/repos/x/y",
+    });
+  });
+
+  // Truly unknown sid: nothing in peers / pinnedSessions / agents. The caller
+  // (TopbarTitle) will lastPathSegment(null) → "" and drop to sid.slice(0,8),
+  // which is the existing behavior. This test locks in that resolve returns
+  // cwd:null instead of throwing or fabricating a path.
+  test("returns empty repo/ws and cwd:null when the sid is unknown", () => {
+    expect(resolveSessionTopbar(initialState(), "unknown")).toEqual({
+      repo: "",
+      ws: "",
+      cwd: null,
+    });
+  });
+});
 
 describe("sessionRowRepoWs", () => {
   test("uses repo/ws as-is when the row has either", () => {

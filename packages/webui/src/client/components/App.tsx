@@ -2,7 +2,7 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { lastPathSegment } from "../utils.ts";
+import { lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
@@ -34,15 +34,16 @@ function TopbarTitle({ state }: { state: AppState }) {
   if (state.view === "session" || state.view === "timeline") {
     const sid = state.currentSid;
     if (sid !== null) {
-      const peer = state.peers.find((p) => p.sid === sid);
       // repo ▸ ws の 2 段構成 (kawaz r17 mid=29): repo だけだと同一リポの
-      // 複数 worktree セッションが区別できない。
-      const repo = peer?.repo || "";
-      const ws = peer?.ws || "";
+      // 複数 worktree セッションが区別できない。kawaz r38 mid=9: 生きた peer が
+      // 無い pinned/agent-only 経路でも ws を復元できるよう resolveSessionTopbar
+      // を経由 (それまでは peer.ws=="" になった瞬間 sid short まで落ちて
+      // worktree 名が完全に消えていた)。
+      const { repo, ws, cwd } = resolveSessionTopbar(state, sid);
       const label =
         repo && ws
           ? `${repo} ▸ ${ws}`
-          : repo || ws || lastPathSegment(peer?.cwd ?? "") || sid.slice(0, 8);
+          : repo || ws || lastPathSegment(cwd ?? "") || sid.slice(0, 8);
       return (
         <h1 class="topbar-title">
           <Avatar seed={sid} size={18} />

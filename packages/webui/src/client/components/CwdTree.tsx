@@ -16,7 +16,11 @@ import { useEffect, useState } from "preact/hooks";
 import type { DirTreeEntry } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { errorMessage, lastPathSegment } from "../utils.ts";
-import { attachDirTreeChildren, isDirTreeBoundary } from "../cwd-tree.ts";
+import {
+  attachDirTreeChildren,
+  collectPathsWithPreloadedChildren,
+  isDirTreeBoundary,
+} from "../cwd-tree.ts";
 
 /** Debounce for the filter input (DR-0018 §2.2's search box): each keystroke
  * would otherwise fire a full server-side re-walk (dir-tree.ts's synchronous
@@ -154,7 +158,16 @@ export function CwdTree({
         setLoading(false);
         if (res.ok) {
           setEntries(res.entries);
-          setExpanded(new Set());
+          // Auto-expand every node whose children came pre-loaded in this
+          // initial bounded fetch (kawaz r38 m8): configured
+          // `dir_tree_depth: 2` over a root like
+          // `~/.local/share/repos/github.com/<owner>/` returns
+          // repo → wt/ws in one round trip, so seeding `expanded` with those
+          // paths surfaces the wt/ws layer without a per-repo click. Boundary
+          // entries are excluded (see collectPathsWithPreloadedChildren) so
+          // this doesn't fan out into lazy-fetch requests behind the user's
+          // back.
+          setExpanded(collectPathsWithPreloadedChildren(res.entries));
           setExpandingPaths(new Set());
           setLazyErrors(new Map());
         } else {

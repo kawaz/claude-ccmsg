@@ -3,7 +3,11 @@
 // hand-built `dir_tree`-shaped responses (no daemon/ws round trip).
 import { describe, expect, test } from "bun:test";
 import type { DirTreeEntry } from "@ccmsg/protocol";
-import { attachDirTreeChildren, isDirTreeBoundary } from "../src/client/cwd-tree.ts";
+import {
+  attachDirTreeChildren,
+  collectPathsWithPreloadedChildren,
+  isDirTreeBoundary,
+} from "../src/client/cwd-tree.ts";
 
 describe("isDirTreeBoundary", () => {
   test("true when children is absent (depth-boundary marker)", () => {
@@ -22,6 +26,59 @@ describe("isDirTreeBoundary", () => {
         children: [{ path: "/a/b", is_dir: true }],
       }),
     ).toBe(false);
+  });
+});
+
+describe("collectPathsWithPreloadedChildren", () => {
+  test("includes every node that has a non-empty children array (recursive)", () => {
+    // Shape mirrors kawaz's layout under `~/.local/share/repos/github.com/<owner>/`
+    // after a depth=2 fetch: owner → repo → (wt|ws). The wt/ws layer is leaf,
+    // so only the repo layer has preloaded children to auto-expand.
+    const entries: DirTreeEntry[] = [
+      {
+        path: "/root/repo-a",
+        is_dir: true,
+        children: [
+          { path: "/root/repo-a/main", is_dir: true },
+          { path: "/root/repo-a/wip-x", is_dir: true },
+        ],
+      },
+      {
+        path: "/root/repo-b",
+        is_dir: true,
+        children: [{ path: "/root/repo-b/main", is_dir: true }],
+      },
+    ];
+    expect(collectPathsWithPreloadedChildren(entries)).toEqual(
+      new Set(["/root/repo-a", "/root/repo-b"]),
+    );
+  });
+
+  test("excludes boundary entries (children undefined) — auto-expanding those would fire lazy fetches behind the user's back", () => {
+    const entries: DirTreeEntry[] = [{ path: "/root/repo-a", is_dir: true }];
+    expect(collectPathsWithPreloadedChildren(entries)).toEqual(new Set());
+  });
+
+  test("excludes real empty directories (children: []) — nothing to reveal", () => {
+    const entries: DirTreeEntry[] = [{ path: "/root/repo-a", is_dir: true, children: [] }];
+    expect(collectPathsWithPreloadedChildren(entries)).toEqual(new Set());
+  });
+
+  test("walks arbitrarily deep so a lazy re-fetch that pulls a bigger subtree also unfolds", () => {
+    const entries: DirTreeEntry[] = [
+      {
+        path: "/a",
+        is_dir: true,
+        children: [
+          {
+            path: "/a/b",
+            is_dir: true,
+            children: [{ path: "/a/b/c", is_dir: true }],
+          },
+        ],
+      },
+    ];
+    expect(collectPathsWithPreloadedChildren(entries)).toEqual(new Set(["/a", "/a/b"]));
   });
 });
 

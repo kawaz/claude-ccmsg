@@ -10,6 +10,27 @@
 // `children`, everywhere in the tree it occurs.
 import type { DirTreeEntry } from "@ccmsg/protocol";
 
+/** Collect every path in the pre-loaded tree that has a non-empty `children`
+ * array. CwdTree seeds its `expanded` state with this set on each fresh fetch
+ * so the depth-2 walk the daemon already paid for (repo → wt/ws layer for
+ * kawaz's layout) is visible without a per-repo expand click. Boundary
+ * entries (`children === undefined`) are not included — expanding them would
+ * trigger a lazy fetch, which is fine on user click but not as a bulk default.
+ * Real empty directories (`children: []`) are also excluded since there's
+ * nothing to show. */
+export function collectPathsWithPreloadedChildren(entries: DirTreeEntry[]): Set<string> {
+  const paths = new Set<string>();
+  const walk = (list: DirTreeEntry[]): void => {
+    for (const entry of list) {
+      if (entry.children === undefined || entry.children.length === 0) continue;
+      paths.add(entry.path);
+      walk(entry.children);
+    }
+  };
+  walk(entries);
+  return paths;
+}
+
 /** True when `entry` is a lazy-fetch boundary (LN-Q3): the initial bounded
  * fetch stopped here, and expanding it in the UI should trigger a depth-1
  * `dir_tree` request for `entry.path`. An entry with `children: []` (a real,
