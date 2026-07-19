@@ -169,8 +169,18 @@ export function FileViewer({
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
   const path = tree.selectedPath;
+  const selectedLineRange = tree.selectedLineRange;
+  const selectedLineRef = useRef<HTMLDivElement | null>(null);
   const file = tree.file;
   const res = file?.response;
+
+  useEffect(() => {
+    if (!selectedLineRange || !res || res.binary) return;
+    const frame = requestAnimationFrame(() =>
+      selectedLineRef.current?.scrollIntoView({ block: "center" }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [path, selectedLineRange?.start, selectedLineRange?.end, res?.content, res?.binary]);
 
   // Fetch whenever the locator points at a path this session hasn't already
   // loaded/attempted. Keyed by `file?.path` (not just presence of `file`) so
@@ -527,9 +537,21 @@ export function FileViewer({
         <pre class="viewer-body">
           {lines.map((line, i) => {
             const spans = highlightedLines?.[i];
+            const lineNumber = i + 1;
+            const selected =
+              selectedLineRange !== null &&
+              lineNumber >= selectedLineRange.start &&
+              lineNumber <= selectedLineRange.end;
             return (
-              <div class="viewer-line" key={i} ref={(el) => registerSearchLineRef(i, el)}>
-                <span class="viewer-lineno">{i + 1}</span>
+              <div
+                class={"viewer-line" + (selected ? " viewer-line-selected" : "")}
+                key={i}
+                ref={(el) => {
+                  registerSearchLineRef(i, el);
+                  if (lineNumber === selectedLineRange?.start) selectedLineRef.current = el;
+                }}
+              >
+                <span class="viewer-lineno">{lineNumber}</span>
                 <span class="viewer-text">
                   {spans
                     ? spans.map((span, j) =>

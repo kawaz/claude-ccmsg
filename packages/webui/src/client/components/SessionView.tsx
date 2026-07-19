@@ -29,6 +29,7 @@ const EMPTY_TREE: SessionTreeState = {
   dirErrors: new Map(),
   expanded: new Set(),
   selectedPath: null,
+  selectedLineRange: null,
   file: null,
   timeline: { status: "idle", lines: [], start: 0, end: 0, size: 0, atStart: false },
   timelineSearch: { queryText: "", caseSensitive: false, regex: false },

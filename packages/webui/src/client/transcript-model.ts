@@ -24,6 +24,34 @@ export type Segment =
   | { kind: "thinking"; text: string }
   | { kind: "tool-use"; name: string; input: unknown }
   | {
+      kind: "file-read";
+      toolUseId: string;
+      path: string;
+      offset: number | null;
+      limit: number | null;
+      content: string | null;
+    }
+  | { kind: "file-write"; path: string; content: string }
+  | { kind: "file-edit"; path: string; oldString: string; newString: string }
+  | { kind: "file-tool-result"; toolUseId: string; content: string }
+  | {
+      kind: "bash-use";
+      toolUseId: string;
+      command: string;
+      description: string;
+      background: boolean;
+      result: { text: string; isError: boolean } | null;
+      hasResult: boolean;
+    }
+  | {
+      kind: "bash-result";
+      toolUseId: string;
+      text: string;
+      isError: boolean;
+      background: boolean;
+      hasCommand: boolean;
+    }
+  | {
       kind: "agent-send";
       to: string;
       summary: string | null;
@@ -109,9 +137,42 @@ function stringField(obj: Record<string, unknown>, ...names: string[]): string {
   return "";
 }
 
-function parseAgentTool(name: string, input: unknown): Segment | null {
+function parseSpecialTool(name: string, toolUseId: string, input: unknown): Segment | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const obj = input as Record<string, unknown>;
+  const path = stringField(obj, "file_path", "path");
+  if (name === "Bash") {
+    return {
+      kind: "bash-use",
+      toolUseId,
+      command: stringField(obj, "command"),
+      description: stringField(obj, "description"),
+      background: obj.run_in_background === true,
+      result: null,
+      hasResult: false,
+    };
+  }
+  if (name === "Read" && path) {
+    return {
+      kind: "file-read",
+      toolUseId,
+      path,
+      offset: typeof obj.offset === "number" ? obj.offset : null,
+      limit: typeof obj.limit === "number" ? obj.limit : null,
+      content: null,
+    };
+  }
+  if (name === "Write" && path) {
+    return { kind: "file-write", path, content: stringField(obj, "content") };
+  }
+  if (name === "Edit" && path) {
+    return {
+      kind: "file-edit",
+      path,
+      oldString: stringField(obj, "old_string"),
+      newString: stringField(obj, "new_string"),
+    };
+  }
   if (name === "SendMessage") {
     return {
       kind: "agent-send",
@@ -135,7 +196,11 @@ function parseAgentTool(name: string, input: unknown): Segment | null {
   return null;
 }
 
-function parseSegments(content: unknown, role: "user" | "assistant"): Segment[] {
+function parseSegments(
+  content: unknown,
+  role: "user" | "assistant",
+  toolUseResult?: unknown,
+): Segment[] {
   if (typeof content === "string") {
     return content ? [{ kind: "text", role, text: content }] : [];
   }
@@ -156,15 +221,31 @@ function parseSegments(content: unknown, role: "user" | "assistant"): Segment[] 
         return { kind: "thinking", text: typeof b.thinking === "string" ? b.thinking : "" };
       case "tool_use": {
         const name = typeof b.name === "string" ? b.name : "?";
-        return parseAgentTool(name, b.input) ?? { kind: "tool-use", name, input: b.input };
+        const toolUseId = typeof b.id === "string" ? b.id : "";
+        return (
+          parseSpecialTool(name, toolUseId, b.input) ?? { kind: "tool-use", name, input: b.input }
+        );
       }
-      case "tool_result":
+      case "tool_result": {
+        const toolUseId = typeof b.tool_use_id === "string" ? b.tool_use_id : "";
+        const result =
+          toolUseResult && typeof toolUseResult === "object" && !Array.isArray(toolUseResult)
+            ? (toolUseResult as Record<string, unknown>)
+            : null;
+        const file =
+          result?.file && typeof result.file === "object" && !Array.isArray(result.file)
+            ? (result.file as Record<string, unknown>)
+            : null;
+        if (typeof file?.content === "string") {
+          return { kind: "file-tool-result", toolUseId, content: file.content };
+        }
         return {
           kind: "tool-result",
-          toolUseId: typeof b.tool_use_id === "string" ? b.tool_use_id : "",
+          toolUseId,
           isError: Boolean(b.is_error),
           text: contentToText(b.content),
         };
+      }
       default:
         return {
           kind: "unknown-segment",
@@ -180,6 +261,75 @@ function summarizeMeta(obj: Record<string, unknown>): string {
   if (typeof obj.subtype === "string") parts.push(obj.subtype);
   if (typeof obj.operation === "string") parts.push(obj.operation);
   return parts.join(": ");
+}
+
+/** Joins tool_use segments with matching tool_result segments by id. Result
+ * lines remain in the array so transcript byte offsets stay aligned; foreground
+ * Read/Bash results are omitted by groupTimelineLines after their content has
+ * been attached to the command card. Background Bash results stay visible and
+ * link back to their command card. */
+export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
+  const fileContents = new Map<string, string>();
+  const genericResults = new Map<string, { text: string; isError: boolean }>();
+  const bashUses = new Map<string, { background: boolean }>();
+  for (const line of lines) {
+    if (line.kind !== "turn") continue;
+    for (const segment of line.segments) {
+      if (segment.kind === "file-tool-result") {
+        fileContents.set(segment.toolUseId, segment.content);
+      } else if (segment.kind === "tool-result") {
+        genericResults.set(segment.toolUseId, { text: segment.text, isError: segment.isError });
+      } else if (segment.kind === "bash-use") {
+        bashUses.set(segment.toolUseId, { background: segment.background });
+      }
+    }
+  }
+  return lines.map((line) => {
+    if (line.kind !== "turn") return line;
+    let changed = false;
+    const segments = line.segments.map((segment): Segment => {
+      if (segment.kind === "file-read") {
+        const content = fileContents.get(segment.toolUseId);
+        if (content === undefined) return segment;
+        changed = true;
+        return { ...segment, content };
+      }
+      if (segment.kind === "bash-use") {
+        const result = genericResults.get(segment.toolUseId) ?? null;
+        if (result !== null) changed = true;
+        return { ...segment, result, hasResult: result !== null };
+      }
+      if (segment.kind === "tool-result") {
+        const use = bashUses.get(segment.toolUseId);
+        if (!use) return segment;
+        changed = true;
+        return {
+          kind: "bash-result",
+          toolUseId: segment.toolUseId,
+          text: segment.text,
+          isError: segment.isError,
+          background: use.background,
+          hasCommand: true,
+        };
+      }
+      return segment;
+    });
+    return changed ? { ...line, segments } : line;
+  });
+}
+
+export const resolveFileToolResults = resolveToolResults;
+
+function isConsumedToolResult(line: ParsedLine): boolean {
+  return (
+    line.kind === "turn" &&
+    line.segments.length > 0 &&
+    line.segments.every(
+      (segment) =>
+        segment.kind === "file-tool-result" ||
+        (segment.kind === "bash-result" && !segment.background && segment.hasCommand),
+    )
+  );
 }
 
 /**
@@ -263,6 +413,20 @@ export function segmentSearchText(segment: Segment): string {
       return segment.text;
     case "tool-use":
       return JSON.stringify(segment.input, null, 2);
+    case "file-read":
+      return [segment.path, segment.content].filter(Boolean).join("\n");
+    case "file-write":
+      return `${segment.path}\n${segment.content}`;
+    case "file-edit":
+      return `${segment.path}\n${segment.oldString}\n${segment.newString}`;
+    case "file-tool-result":
+      return segment.content;
+    case "bash-use":
+      return [segment.description, segment.command, segment.result?.text]
+        .filter(Boolean)
+        .join("\n");
+    case "bash-result":
+      return segment.text;
     case "agent-send":
       return [segment.to, segment.summary, segment.message].filter(Boolean).join("\n");
     case "agent-spawn":
@@ -306,6 +470,12 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
     case "thinking":
       return targets.ai;
     case "tool-use":
+    case "file-read":
+    case "file-write":
+    case "file-edit":
+    case "file-tool-result":
+    case "bash-use":
+    case "bash-result":
     case "agent-send":
     case "agent-spawn":
     case "tool-result":
@@ -421,6 +591,7 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
     }
   };
   lines.forEach((line, i) => {
+    if (isConsumedToolResult(line)) return;
     const offset = offsets[i]!;
     if (isBoundaryLine(line)) {
       flushPending();
@@ -1262,7 +1433,7 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   if (o.type === "user" || o.type === "assistant") {
     const role = o.type;
     const message = o.message as Record<string, unknown> | undefined;
-    const segments = message ? parseSegments(message.content, role) : [];
+    const segments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
     return { kind: "turn", ts, role, segments, userMessageKind };
   }

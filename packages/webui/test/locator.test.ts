@@ -60,6 +60,15 @@ describe("parseHash / session form (DR-0008)", () => {
     expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
   });
 
+  test("fileHref preserves an optional selected line range", () => {
+    expect(parseHash(fileHref("sess-1", "src/a.ts", { start: 10, end: 14 }))).toEqual({
+      view: "session",
+      sid: "sess-1",
+      path: "src/a.ts",
+      lineRange: { start: 10, end: 14 },
+    });
+  });
+
   test("DR-0024 absolute external path survives fileHref round-trip", () => {
     // The whole path is percent-encoded, so a leading `/` remains data rather
     // than becoming locator syntax and FileViewer receives the exact allowlist key.

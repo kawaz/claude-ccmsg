@@ -109,6 +109,8 @@ export interface SessionTreeState {
   expanded: Set<string>;
   /** relpath selected via the `#s<sid>:<relpath>` locator, if any */
   selectedPath: string | null;
+  /** Optional one-based line range selected by a Timeline Read link. */
+  selectedLineRange: { start: number; end: number } | null;
   file: FileViewState | null;
   timeline: TimelineState;
   /** Timeline's in-view search controls, cached per sid so Session Search can
@@ -347,6 +349,7 @@ function newSessionTree(): SessionTreeState {
     dirErrors: new Map(),
     expanded: new Set(),
     selectedPath: null,
+    selectedLineRange: null,
     file: null,
     timeline: newTimelineState(),
     timelineSearch: { queryText: "", caseSensitive: false, regex: false },
@@ -511,8 +514,13 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     };
   }
   let [tree, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
-  if (tree.selectedPath !== locator.path) {
-    tree = { ...tree, selectedPath: locator.path };
+  const selectedLineRange = locator.lineRange ?? null;
+  if (
+    tree.selectedPath !== locator.path ||
+    tree.selectedLineRange?.start !== selectedLineRange?.start ||
+    tree.selectedLineRange?.end !== selectedLineRange?.end
+  ) {
+    tree = { ...tree, selectedPath: locator.path, selectedLineRange };
     sessionTrees = new Map(sessionTrees);
     sessionTrees.set(locator.sid, tree);
   }

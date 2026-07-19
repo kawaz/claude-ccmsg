@@ -2453,6 +2453,10 @@ button.session-tab {
   background: var(--bg-alt);
 }
 
+.viewer-line-selected {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .viewer-lineno {
   flex-shrink: 0;
   width: 3.5em;
@@ -2972,6 +2976,134 @@ button.session-tab {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
+}
+
+.tl-file-tool-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  overflow: hidden;
+}
+
+.tl-file-tool-path {
+  display: block;
+  padding: 0.45rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.tl-inline-file-viewer > .viewer-mode-toggle {
+  justify-content: flex-end;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tl-inline-file-body {
+  max-height: 28rem;
+  padding-bottom: 0;
+  overflow: auto;
+}
+
+.tl-inline-preview {
+  margin: 0;
+  padding: 0.75rem;
+  max-height: 28rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.tl-file-tool-unavailable {
+  margin: 0;
+  padding: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.tl-diff-body {
+  margin: 0;
+  max-height: 28rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.tl-diff-line {
+  display: flex;
+  min-height: 1.35em;
+  white-space: pre-wrap;
+}
+
+.tl-diff-marker {
+  width: 2em;
+  flex: 0 0 2em;
+  text-align: center;
+  user-select: none;
+}
+
+.tl-diff-delete {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.tl-diff-add {
+  background: color-mix(in srgb, #2da44e 18%, transparent);
+}
+
+.tl-diff-raw {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.tl-diff-raw section + section {
+  border-left: 1px solid var(--border);
+}
+
+.tl-diff-raw h4 {
+  margin: 0;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+.tl-bash-description,
+.tl-bash-result-status,
+.tl-bash-output-label {
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+
+.tl-bash-command,
+.tl-bash-output pre {
+  margin: 0;
+  padding: 0.65rem 0.7rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.tl-bash-output,
+.tl-bash-result-status {
+  border-top: 1px solid var(--border);
+}
+
+.tl-bash-output.is-error {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.tl-bash-output.is-error .tl-bash-output-label {
+  color: var(--danger);
+}
+
+.tl-bash-link {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* thinking の markdown 本文 (tl-fold-body の等幅 JSON 表示は流用しない) —

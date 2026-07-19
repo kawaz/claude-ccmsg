@@ -23,6 +23,7 @@ import {
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
+  resolveFileToolResults,
   scrollPositionToUserTurnIndex,
   segmentSearchText,
   stripAnsiEscapes,
@@ -252,6 +253,193 @@ describe("parseTranscriptLine / assistant turns", () => {
     });
   });
 
+  test("Read/Write/Edit tool_use blocks normalize to dedicated file segments", () => {
+    const parse = (name: string, input: Record<string, unknown>, id = "tu_file") =>
+      parseTranscriptLine(
+        JSON.stringify({
+          type: "assistant",
+          message: { content: [{ type: "tool_use", id, name, input }] },
+        }),
+      );
+    const read = parse("Read", { file_path: "/x/a.ts", offset: 9, limit: 3 });
+    expect(read.kind === "turn" ? read.segments[0] : null).toEqual({
+      kind: "file-read",
+      toolUseId: "tu_file",
+      path: "/x/a.ts",
+      offset: 9,
+      limit: 3,
+      content: null,
+    });
+    const write = parse("Write", { file_path: "/x/a.ts", content: "new\n" });
+    expect(write.kind === "turn" ? write.segments[0] : null).toEqual({
+      kind: "file-write",
+      path: "/x/a.ts",
+      content: "new\n",
+    });
+    const edit = parse("Edit", {
+      file_path: "/x/a.ts",
+      old_string: "old",
+      new_string: "new",
+    });
+    expect(edit.kind === "turn" ? edit.segments[0] : null).toEqual({
+      kind: "file-edit",
+      path: "/x/a.ts",
+      oldString: "old",
+      newString: "new",
+    });
+  });
+
+  test("Read tool_result snapshot joins its tool_use and is omitted from groups", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu_read", name: "Read", input: { file_path: "a.ts" } },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "tu_read", content: "1\\talpha" }],
+        },
+        toolUseResult: { type: "text", file: { filePath: "a.ts", content: "alpha\n" } },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null).toEqual({
+      kind: "file-read",
+      toolUseId: "tu_read",
+      path: "a.ts",
+      offset: null,
+      limit: null,
+      content: "alpha\n",
+    });
+    expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
+    ]);
+  });
+
+  test("foreground Bash joins command and result into one rendered entry", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_bash",
+              name: "Bash",
+              input: { command: "printf ok", description: "Print result" },
+            },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "tu_bash", content: "ok" }],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null).toEqual({
+      kind: "bash-use",
+      toolUseId: "tu_bash",
+      command: "printf ok",
+      description: "Print result",
+      background: false,
+      result: { text: "ok", isError: false },
+      hasResult: true,
+    });
+    expect(resolved[1]?.kind === "turn" ? resolved[1].segments[0] : null).toEqual({
+      kind: "bash-result",
+      toolUseId: "tu_bash",
+      text: "ok",
+      isError: false,
+      background: false,
+      hasCommand: true,
+    });
+    expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
+    ]);
+  });
+
+  test("background Bash keeps result visible and links both sides by tool id", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "tu_bg",
+              name: "Bash",
+              input: { command: "long-job", run_in_background: true },
+            },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            { type: "tool_result", tool_use_id: "tu_bg", is_error: true, content: "failed" },
+          ],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null).toMatchObject({
+      kind: "bash-use",
+      background: true,
+      hasResult: true,
+    });
+    expect(resolved[1]?.kind === "turn" ? resolved[1].segments[0] : null).toEqual({
+      kind: "bash-result",
+      toolUseId: "tu_bg",
+      text: "failed",
+      isError: true,
+      background: true,
+      hasCommand: true,
+    });
+    expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      {
+        kind: "fold",
+        entries: [
+          { offset: 10, line: resolved[0] },
+          { offset: 20, line: resolved[1] },
+        ],
+      },
+    ]);
+  });
+
+  test("Bash without a loaded result remains a command card with no result", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu_pending", name: "Bash", input: { command: "job" } },
+          ],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null).toMatchObject({
+      kind: "bash-use",
+      result: null,
+      hasResult: false,
+    });
+  });
+
   test("Agent tool_use extracts identity, type, prompt, and background state", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
@@ -303,7 +491,15 @@ describe("parseTranscriptLine / assistant turns", () => {
     expect(line.role).toBe("assistant");
     expect(line.segments).toEqual([
       { kind: "thinking", text: "let me check" },
-      { kind: "tool-use", name: "Bash", input: { command: "ls" } },
+      {
+        kind: "bash-use",
+        toolUseId: "tu_1",
+        command: "ls",
+        description: "",
+        background: false,
+        result: null,
+        hasResult: false,
+      },
       { kind: "text", role: "assistant", text: "done" },
     ]);
   });

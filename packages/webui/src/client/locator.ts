@@ -39,7 +39,12 @@ export interface AgentRef {
 
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
-  | { view: "session"; sid: string; path: string | null }
+  | {
+      view: "session";
+      sid: string;
+      path: string | null;
+      lineRange?: { start: number; end: number };
+    }
   | { view: "timeline"; sid: string; agent?: AgentRef };
 
 /** `decodeURIComponent` throws on malformed percent-encoding (e.g. a lone
@@ -80,14 +85,19 @@ export function parseHash(hash: string): Locator {
     if (colon === -1) return { view: "session", sid, path: null };
     // an undecodable path segment means "no file selected" rather than a
     // garbled/mojibake path — same session, empty FileViewer.
-    const pathRaw = rest.slice(colon + 1);
+    const pathAndRange = rest.slice(colon + 1);
+    const rangeMatch = pathAndRange.match(/:L(\d+)-(\d+)$/);
+    const pathRaw = rangeMatch ? pathAndRange.slice(0, rangeMatch.index) : pathAndRange;
     let path: string | null;
     try {
       path = decodeURIComponent(pathRaw);
     } catch {
       path = null;
     }
-    return { view: "session", sid, path };
+    const start = rangeMatch ? Number(rangeMatch[1]) : 0;
+    const end = rangeMatch ? Number(rangeMatch[2]) : 0;
+    const lineRange = start > 0 && end >= start ? { start, end } : undefined;
+    return { view: "session", sid, path, ...(lineRange ? { lineRange } : {}) };
   }
   const m = raw.match(/^(.+)-m(\d+)$/);
   if (m) return { view: "room", room: m[1] ?? null, mid: Number(m[2]) };
@@ -110,8 +120,13 @@ export function sessionHref(sid: string): string {
   return `#s${encodeURIComponent(sid)}`;
 }
 
-export function fileHref(sid: string, path: string): string {
-  return `#s${encodeURIComponent(sid)}:${encodeURIComponent(path)}`;
+export function fileHref(
+  sid: string,
+  path: string,
+  lineRange?: { start: number; end: number },
+): string {
+  const range = lineRange ? `:L${lineRange.start}-${lineRange.end}` : "";
+  return `#s${encodeURIComponent(sid)}:${encodeURIComponent(path)}${range}`;
 }
 
 export function timelineHref(sid: string): string {
