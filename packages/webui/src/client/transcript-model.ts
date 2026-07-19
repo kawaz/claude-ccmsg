@@ -441,44 +441,63 @@ export function isThinkingEntry(entry: TimelineEntry): boolean {
   return line.kind === "turn" && line.segments.some((s) => s.kind === "thinking");
 }
 
-/** Agent cards are conversational context and therefore start expanded when
- * rendered directly at the fold group's shallower level. */
+/** Outgoing agent communication segments: SendMessage and Agent calls. */
 export function isAgentCommunicationSegment(segment: Segment): boolean {
   return segment.kind === "agent-send" || segment.kind === "agent-spawn";
 }
 
-/** Incoming peer relays use a user-role transcript line rather than a Segment,
- * but share the same direct, initially-expanded presentation as agent cards. */
+/** Incoming peer relays use a user-role transcript line rather than a Segment. */
 export function isPeerMessageLine(line: ParsedLine): boolean {
   return line.kind === "turn" && line.userMessageKind === "peer-message";
 }
 
+/** True for a peer relay whose body is an idle_notification. Idle state is
+ * operational noise rather than agent conversation, so it stays in items. */
+function isIdlePeerMessageEntry(entry: TimelineEntry): boolean {
+  const { line } = entry;
+  if (!isPeerMessageLine(line) || line.kind !== "turn") return false;
+  const rawText = line.segments
+    .filter((segment): segment is Extract<Segment, { kind: "text" }> => segment.kind === "text")
+    .map((segment) => segment.text)
+    .join("\n");
+  const rich = parseSystemMessageFields("peer-message", rawText);
+  return rich.display === "peer" && rich.category === "idle";
+}
+
+/** Number of agent communication messages represented by one entry. Outgoing
+ * calls are counted per segment; a non-idle incoming peer relay is one message. */
+export function agentCommunicationCount(entry: TimelineEntry): number {
+  const { line } = entry;
+  if (line.kind !== "turn") return 0;
+  if (isPeerMessageLine(line)) return isIdlePeerMessageEntry(entry) ? 0 : 1;
+  return line.segments.filter(isAgentCommunicationSegment).length;
+}
+
 /** Entries rendered directly between items runs instead of being counted and
- * hidden inside an items sub-fold. Agent communication is conversational
- * context like thinking: outgoing SendMessage/Agent cards and incoming peer
- * relays remain visible at the fold group's shallower level. */
+ * hidden inside an items sub-fold. Thinking and agent communication stay at
+ * the same level inside the outer fold and split adjacent items runs. */
 export function isDirectFoldEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   if (line.kind !== "turn") return false;
-  return (
-    isPeerMessageLine(line) ||
-    line.segments.some(
-      (segment) => segment.kind === "thinking" || isAgentCommunicationSegment(segment),
-    )
-  );
+  return isThinkingEntry(entry) || agentCommunicationCount(entry) > 0;
 }
 
-/** Folded-group summary label (kawaz spec, revised for the display
- * unification task): "N thinkings + M items" when the group mixes both,
- * "N thinkings" when every entry is thinking-only, otherwise "M items" — the
- * previous "N tools"/"N items" wording is retired since thinking is now
- * counted out on its own rather than lumped into one undifferentiated noun. */
+/** Folded-group summary label: each present category is listed in the fixed
+ * order "N thinking + N agent messages + N items". */
 export function foldGroupLabel(entries: TimelineEntry[]): string {
   const thinkingCount = entries.filter(isThinkingEntry).length;
+  const agentMessageCount = entries.reduce(
+    (count, entry) => count + agentCommunicationCount(entry),
+    0,
+  );
   const itemCount = entries.filter((entry) => !isDirectFoldEntry(entry)).length;
-  if (thinkingCount === 0) return `${itemCount} items`;
-  if (itemCount === 0) return `${thinkingCount} thinkings`;
-  return `${thinkingCount} thinkings + ${itemCount} items`;
+  return [
+    thinkingCount > 0 ? `${thinkingCount} thinking` : null,
+    agentMessageCount > 0 ? `${agentMessageCount} agent messages` : null,
+    itemCount > 0 ? `${itemCount} items` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" + ");
 }
 
 /** fold group 展開時の中身の区切り。thinking と agent 通信は直接見せ、
@@ -490,11 +509,11 @@ export type FoldSubgroup =
   | { kind: "direct"; entry: TimelineEntry };
 
 /** Whether a fold group needs its outer, turn-level fold in addition to items
- * sub-folds. The outer level is meaningful only when thinking entries act as
- * visible separators; an all-items run would otherwise render the same count
- * twice as a single-child fold (`N items` containing only `N items`). */
+ * sub-folds. Thinking and agent communication are direct children of this
+ * closed-by-default fold; an all-items run remains flat to avoid a redundant
+ * `N items` outer fold containing only an `N items` sub-fold. */
 export function foldGroupNeedsOuterFold(entries: TimelineEntry[]): boolean {
-  return entries.some(isThinkingEntry);
+  return entries.some(isDirectFoldEntry);
 }
 
 export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {

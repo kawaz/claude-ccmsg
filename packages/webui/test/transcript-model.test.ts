@@ -802,13 +802,10 @@ describe("groupTimelineLines", () => {
   });
 });
 
-// foldGroupLabel (webui Timeline display-unification task, kawaz spec,
-// 2026-07-12 revision): "N thinkings + M items" wording — thinking-only
-// entries are counted out on their own noun ("thinkings"), every other
-// folded entry kind (tool_use/tool_result/meta/broken) is lumped into the
-// generic "items" count. Supersedes the previous "N tools"/"N items" split
-// (tool_use/tool_result no longer get their own noun — kawaz: 「▶ 3
-// thinkings + 10 items」).
+// foldGroupLabel: each present category is listed in fixed order as
+// "N thinking + N agent messages + N items". Agent communication is counted
+// separately from generic items because it remains directly visible beside
+// thinking when the outer fold is opened.
 describe("foldGroupLabel", () => {
   function entry(offset: number, line: ParsedLine): TimelineEntry {
     return { offset, line };
@@ -825,16 +822,16 @@ describe("foldGroupLabel", () => {
     expect(foldGroupLabel(entries)).toBe("3 items");
   });
 
-  // Every entry is thinking-only -> "N thinkings", no "+ 0 items" suffix.
-  test("every entry is thinking-only -> 'N thinkings' (no '+ 0 items')", () => {
+  // Every entry is thinking-only -> "N thinking", no "+ 0 items" suffix.
+  test("every entry is thinking-only -> 'N thinking' (no '+ 0 items')", () => {
     const entries = [entry(0, assistantThinking("a")), entry(1, assistantThinking("b"))];
-    expect(foldGroupLabel(entries)).toBe("2 thinkings");
+    expect(foldGroupLabel(entries)).toBe("2 thinking");
   });
 
-  // Mixed: one thinking + one non-thinking -> "1 thinkings + 1 items".
-  test("thinking mixed with a non-thinking entry -> 'N thinkings + M items'", () => {
+  // Mixed: one thinking + one non-thinking -> "1 thinking + 1 items".
+  test("thinking mixed with a non-thinking entry -> 'N thinking + M items'", () => {
     const entries = [entry(0, assistantThinking("hmm")), entry(1, assistantToolUse("Bash"))];
-    expect(foldGroupLabel(entries)).toBe("1 thinkings + 1 items");
+    expect(foldGroupLabel(entries)).toBe("1 thinking + 1 items");
   });
 
   // A meta line mixed in (no thinking present) -> plain "items" count.
@@ -849,15 +846,41 @@ describe("foldGroupLabel", () => {
     expect(foldGroupLabel([entry(0, assistantToolUse("Bash"))])).toBe("1 items");
   });
 
-  // Multiple thinkings + multiple items together -> both counts shown.
-  test("multiple thinkings + multiple items -> both counts", () => {
+  // Multiple thinking + multiple items together -> both counts shown.
+  test("multiple thinking + multiple items -> both counts", () => {
     const entries = [
       entry(0, assistantThinking("a")),
       entry(1, assistantThinking("b")),
       entry(2, assistantToolUse("Bash")),
       entry(3, metaLine("mode-change")),
     ];
-    expect(foldGroupLabel(entries)).toBe("2 thinkings + 2 items");
+    expect(foldGroupLabel(entries)).toBe("2 thinking + 2 items");
+  });
+
+  test("thinking, agent messages, and items are listed in the fixed three-part order", () => {
+    const send = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "SendMessage", input: { to: "worker", message: "go" } },
+          ],
+        },
+      }),
+    );
+    const peer = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: { content: '<agent-message from="worker">done</agent-message>' },
+      }),
+    );
+    const entries = [
+      entry(0, assistantThinking("inspect")),
+      entry(1, send),
+      entry(2, peer),
+      entry(3, assistantToolUse("Bash")),
+    ];
+    expect(foldGroupLabel(entries)).toBe("1 thinking + 2 agent messages + 1 items");
   });
 });
 
@@ -1417,11 +1440,11 @@ describe("splitFoldSubgroups", () => {
 
   // 何を保証するか (境界): thinking が無ければ全体が 1 つの items、
   // thinking だけなら items グループは生まれない (空 run を flush しない)。
-  test("all-tools yields one items group; all-thinkings yields no items group", () => {
+  test("all-tools yields one items group; all-thinking yields no items group", () => {
     const tools = splitFoldSubgroups([toolEntry(1), toolEntry(2)]);
     expect(tools.map((g) => g.kind)).toEqual(["items"]);
-    const thinkings = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
-    expect(thinkings.map((g) => g.kind)).toEqual(["direct", "direct"]);
+    const thinking = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
+    expect(thinking.map((g) => g.kind)).toEqual(["direct", "direct"]);
   });
 
   test("agent send, spawn, and peer messages split items runs and stay out of item counts", () => {
@@ -1456,8 +1479,8 @@ describe("splitFoldSubgroups", () => {
     });
     const entries = [toolEntry(1), send, toolEntry(3), spawn, toolEntry(5), peer, toolEntry(7)];
 
-    // 直接 subgroup に出した通信内容は、利用者がもう一段開かなくても読める
-    // 初期展開対象。通常 tool segment と他の system message は対象外のまま。
+    // Agent 通信は items run を分割する direct subgroup だが、外側 fold と
+    // 各通信 details は既定閉。通常 tool segment と他の system message は対象外。
     expect(send.line.kind === "turn" && isAgentCommunicationSegment(send.line.segments[0]!)).toBe(
       true,
     );
@@ -1480,7 +1503,29 @@ describe("splitFoldSubgroups", () => {
       "direct",
       "items",
     ]);
-    expect(foldGroupLabel(entries)).toBe("4 items");
+    expect(foldGroupLabel(entries)).toBe("3 agent messages + 4 items");
+    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
+  });
+
+  test("idle_notification peer messages stay in the items run", () => {
+    const idle: TimelineEntry = {
+      offset: 2,
+      line: parseTranscriptLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              '<teammate-message teammate_id="worker">{"type":"idle_notification","from":"worker","idleReason":"available"}</teammate-message>',
+          },
+        }),
+      ),
+    };
+    const entries = [toolEntry(1), idle, toolEntry(3)];
+
+    expect(isPeerMessageLine(idle.line)).toBe(true);
+    expect(splitFoldSubgroups(entries)).toEqual([{ kind: "items", entries }]);
+    expect(foldGroupLabel(entries)).toBe("3 items");
     expect(foldGroupNeedsOuterFold(entries)).toBe(false);
   });
 });

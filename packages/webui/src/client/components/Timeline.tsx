@@ -15,13 +15,12 @@ import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
+  agentCommunicationCount,
   ccmsgDedupKey,
   classifyBoundaryLine,
   foldGroupLabel,
   foldGroupNeedsOuterFold,
   groupTimelineLines,
-  isAgentCommunicationSegment,
-  isPeerMessageLine,
   isSearchableSegment,
   splitFoldSubgroups,
   isUserTextTurn,
@@ -428,7 +427,7 @@ function SegmentView({
         );
       case "agent-send":
         return (
-          <details class="tl-fold tl-agent-fold" open={isAgentCommunicationSegment(segment)}>
+          <details class="tl-fold tl-agent-fold">
             <FoldSummary ts={ts} label={`SendMessage → ${segment.to}`} />
             <div class="tl-guided">
               <FoldGuide />
@@ -444,7 +443,7 @@ function SegmentView({
         );
       case "agent-spawn":
         return (
-          <details class="tl-fold tl-agent-fold" open={isAgentCommunicationSegment(segment)}>
+          <details class="tl-fold tl-agent-fold">
             <FoldSummary ts={ts} label={`Agent: ${segment.name}`} />
             <div class="tl-guided">
               <FoldGuide />
@@ -692,7 +691,7 @@ function LineView({
       : null;
   if (sysKind) {
     return (
-      <details class="tl-line tl-fold" open={isPeerMessageLine(line)}>
+      <details class="tl-line tl-fold">
         <FoldSummary ts={line.ts} label={sysKind} />
         <SystemMessageBody
           kind={sysKind}
@@ -752,10 +751,9 @@ function FoldGroup({
 }) {
   const [open, setOpen] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
-  // 展開時の中身は thinking 区切りのサブグループ (kawaz r17 mid=45):
-  // thinking は直接見せ、間の tool 群は「N items」のサブ fold (既定閉) に
-  // 畳む — 従来はツール行の羅列に thinking が埋もれ、節目を目で探す必要が
-  // あった。分割は pure function (transcript-model.ts) 側で単体テスト済み。
+  // 展開時の中身は thinking / agent 通信で tool run を区切る。thinking と
+  // agent 通信は外側 fold の直下、間の tool 群は「N items」のサブ fold に
+  // 畳む。分割は pure function (transcript-model.ts) 側で単体テスト済み。
   const subgroups = useMemo(() => splitFoldSubgroups(entries), [entries]);
   const thinkingCount = useMemo(
     () =>
@@ -763,6 +761,10 @@ function FoldGroup({
         ({ line }) =>
           line.kind === "turn" && line.segments.some((segment) => segment.kind === "thinking"),
       ).length,
+    [entries],
+  );
+  const agentMessageCount = useMemo(
+    () => entries.reduce((count, entry) => count + agentCommunicationCount(entry), 0),
     [entries],
   );
   const itemCount = useMemo(
@@ -806,14 +808,15 @@ function FoldGroup({
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      {/* summary の「N thinkings」部だけ thinking と同じ装飾 (kawaz r17
+      {/* summary の「N thinking」部だけ thinking と同じ装飾 (kawaz r17
        * mid=47): 展開せずとも thinking の在処 (紫破線トーン) が判る。文言は
-       * foldGroupLabel (単体テスト済み) と同じ構成で、装飾のために span を
+       * foldGroupLabel (単体テスト済み) と同じ順序で、装飾のために span を
        * 分けて組み立てる。 */}
       <summary>
         {thinkingCount > 0 ? (
           <>
-            <span class="tl-summary-thinkings">{thinkingCount} thinkings</span>
+            <span class="tl-summary-thinkings">{thinkingCount} thinking</span>
+            {agentMessageCount > 0 ? ` + ${agentMessageCount} agent messages` : ""}
             {itemCount > 0 ? ` + ${itemCount} items` : ""}
           </>
         ) : (
