@@ -1,6 +1,7 @@
 export type FoldSummaryDecoration =
   | { kind: "thinking" }
-  | { kind: "agent"; prefix: string; name: string };
+  | { kind: "agent"; prefix: string; name: string }
+  | { kind: "bash" };
 
 export function foldSummaryView(
   label: string,

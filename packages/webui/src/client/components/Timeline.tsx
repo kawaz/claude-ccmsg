@@ -57,6 +57,7 @@ import {
 } from "../in-view-search.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { SearchBar } from "./SearchBar.tsx";
+import { CodeBlock } from "./CodeBlock.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "./InlineFileViewer.tsx";
 
 /**
@@ -159,6 +160,8 @@ function FoldSummary({
           <span>{view.decoration.prefix}</span>
           <AgentIdentity name={view.decoration.name} />
         </span>
+      ) : view.decoration?.kind === "bash" ? (
+        <span class="tl-fold-label tl-summary-decoration">{view.label}</span>
       ) : (
         <span class="tl-fold-label">{view.label}</span>
       )}
@@ -266,14 +269,19 @@ function BashUseFold({
       open={open}
       onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
     >
-      <FoldSummary ts={ts} label={`Bash ${commandLabel}`} open={open} />
+      <FoldSummary
+        ts={ts}
+        label={`Bash ${commandLabel}`}
+        open={open}
+        decoration={{ kind: "bash" }}
+      />
       <div class="tl-guided">
         <FoldGuide />
         <div class="tl-file-tool-card tl-bash-card">
-          {segment.description ? (
-            <div class="tl-bash-description">{segment.description}</div>
-          ) : null}
-          <pre class="tl-bash-command">{segment.command || "(空のコマンド)"}</pre>
+          <div class="tl-bash-description">command</div>
+          <div class="tl-bash-command">
+            <CodeBlock code={segment.command || "(空のコマンド)"} lang="bash" />
+          </div>
           {segment.background ? (
             <div class="tl-bash-result-status">
               {segment.hasResult ? (

@@ -2961,6 +2961,11 @@ button.session-tab {
   border: 1px dashed var(--agent-comm-border);
 }
 
+.tl-file-tool-fold:not([open]) > .tl-bash-summary .tl-summary-decoration {
+  background: var(--bg-alt);
+  border: 1px dashed var(--border);
+}
+
 .tl-decorated-summary .tl-agent-identity {
   gap: 0.2rem;
 }
@@ -3077,13 +3082,24 @@ button.session-tab {
   font-size: 0.78rem;
 }
 
-.tl-bash-command,
-.tl-bash-output pre {
+.tl-bash-command {
+  min-width: 0;
+}
+
+.tl-bash-command .md-code {
   margin: 0;
   padding: 0.65rem 0.7rem;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  border-radius: 0;
+}
+
+.tl-bash-output pre {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.65rem 0.7rem;
+  overflow-x: auto;
+  white-space: pre;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.8rem;
 }

@@ -17,6 +17,13 @@ describe("foldSummaryView", () => {
     });
   });
 
+  test("keeps Bash decoration while closed", () => {
+    expect(foldSummaryView("Bash List files", false, { kind: "bash" })).toEqual({
+      label: "Bash List files",
+      decoration: { kind: "bash" },
+    });
+  });
+
   test("removes decoration while open", () => {
     expect(
       foldSummaryView("peer-message ← teammate", true, {
@@ -25,5 +32,8 @@ describe("foldSummaryView", () => {
         name: "teammate",
       }),
     ).toEqual({ label: "peer-message ← teammate" });
+    expect(foldSummaryView("Bash List files", true, { kind: "bash" })).toEqual({
+      label: "Bash List files",
+    });
   });
 });
