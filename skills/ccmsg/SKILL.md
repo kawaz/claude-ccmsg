@@ -12,7 +12,7 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 受信メッセージには daemon が英語の実行指示 `reply_via` を付ける。必ずその指示どおりに応答する。
 
 - `Use \`ccmsg reply r<N>m<M> <msg>\``: 指定されたメッセージへ reply する
-- `Reply in your normal assistant response (the user reads your transcript)`: room に post/reply せず通常応答で返す
+- `Reply in your normal assistant response`: room に post/reply せず通常応答で返す
 - `No reply needed`: 返信しない
 
 既存メッセージへの応答に `post` を使わない。`reply` は宛先を daemon が構成する。通常応答を指示されたメッセージへの reply と、session から 1on1 room への post は `reply_via_tl` で拒否される。

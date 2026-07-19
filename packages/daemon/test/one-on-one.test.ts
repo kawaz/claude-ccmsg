@@ -248,9 +248,7 @@ describe("DR-0014 1on1 room creation", () => {
           aSub,
           (m: any) => m.r === nextRes.room && m.msg === "tl on inherited",
         );
-        expect(ev.reply_via).toBe(
-          "Reply in your normal assistant response (the user reads your transcript)",
-        );
+        expect(ev.reply_via).toBe("Reply in your normal assistant response");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -519,9 +517,7 @@ describe("DR-0014 1on1 room creation", () => {
           aAfter,
           (m: any) => m.r === roomId && m.msg === "after restart",
         );
-        expect(ev.reply_via).toBe(
-          "Reply in your normal assistant response (the user reads your transcript)",
-        );
+        expect(ev.reply_via).toBe("Reply in your normal assistant response");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -702,9 +698,7 @@ describe("DR-0017 reply_via wire instruction", () => {
 
         await u.request({ op: "post", room, msg: "priv from u1" });
         const { ev } = await readMsg(aSub, (m: any) => m.r === room && m.msg === "priv from u1");
-        expect(ev.reply_via).toBe(
-          "Reply in your normal assistant response (the user reads your transcript)",
-        );
+        expect(ev.reply_via).toBe("Reply in your normal assistant response");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -813,9 +807,7 @@ describe("DR-0017 reply_via wire instruction", () => {
           aSub,
           (m: any) => m.r === room && m.msg === "priv while offline",
         );
-        expect(ev.reply_via).toBe(
-          "Reply in your normal assistant response (the user reads your transcript)",
-        );
+        expect(ev.reply_via).toBe("Reply in your normal assistant response");
       } finally {
         await stopTestDaemon(ctx);
       }

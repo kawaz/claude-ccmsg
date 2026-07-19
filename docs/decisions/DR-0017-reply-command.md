@@ -113,7 +113,7 @@ daemon が宛先を構成する。subscribe が届ける msg には jsonl 行 + 
 §2.4 の CLI 後付け平文行を次の単一フィールドに置換する。
 
 - 通常の返信: `reply_via: "Use \`ccmsg reply rNmN <msg>\`"`
-- transcript 応答: `reply_via: "Reply in your normal assistant response (the user reads your transcript)"`
+- transcript 応答: `reply_via: "Reply in your normal assistant response"`
 - 返信不要: `reply_via: "No reply needed"`
 
 `reply_via` は従来と同じく配信時に受信者ごとに注入し、room jsonl には保存しない。

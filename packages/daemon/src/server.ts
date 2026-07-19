@@ -215,7 +215,7 @@ function recipientId(conn: Conn, room: Room): string | null {
 function computeReplyVia(room: Room, ev: MsgEvent): string {
   if (room.archived) return "No reply needed";
   if (room.kind === "1on1" && ev.from === ADMIN_ID) {
-    return "Reply in your normal assistant response (the user reads your transcript)";
+    return "Reply in your normal assistant response";
   }
   return `Use \`ccmsg reply ${room.id}m${ev.mid} <msg>\``;
 }

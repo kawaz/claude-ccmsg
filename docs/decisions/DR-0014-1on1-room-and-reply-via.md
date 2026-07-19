@@ -84,7 +84,7 @@ daemon は post を受け取った時、room state と参加者情報から `rep
 - **通常 room + to あり** → `reply_via = "r<room-id>u<...>a<...>"` (from + 元 to - 受信者本人、u1/a{N} を id 順に連結)
 - **broadcast room + u1 発 + to なし (全員宛)** → `reply_via = "r<room-id>u1"` (u1 宛 priv 返信)
 - **broadcast room + u1 発 + to に個別 session** → `reply_via = "r<room-id>u1a<N>a<M>..."` (元 to の member 全員 + u1)
-- **1on1 room + u1 発** → `reply_via = "Reply in your normal assistant response (the user reads your transcript)"`
+- **1on1 room + u1 発** → `reply_via = "Reply in your normal assistant response"`
 - **archive 済み room からの msg** → `reply_via = "No reply needed"`
 
 補足:
