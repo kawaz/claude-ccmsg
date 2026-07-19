@@ -316,15 +316,18 @@ for await (const line of lines) {
       const service = createTranslateService({
         platform: "darwin",
         binaryPath: helper,
-        // 8 requests x 100ms serial = ~800ms total queue time, far past a
-        // 500ms deadline — yet no request may time out, because each one's
+        // 12 requests x 100ms serial = ~1200ms total queue time, far past the
+        // 800ms deadline — yet no request may time out, because each one's
         // clock starts when it reaches the helper, not when it was issued.
-        watchdogTimeoutMs: () => 500,
+        // The 700ms slack between per-request work and deadline absorbs
+        // scheduler jitter under a fully-parallel suite run (a 500ms deadline
+        // was observed flaky there).
+        watchdogTimeoutMs: () => 800,
       });
       services.push(service);
 
       const results = await Promise.all(
-        Array.from({ length: 8 }, (_, i) => service.translate([`paragraph ${i}`])),
+        Array.from({ length: 12 }, (_, i) => service.translate([`paragraph ${i}`])),
       );
       for (const [i, result] of results.entries()) {
         expect(result.ok).toBe(true);

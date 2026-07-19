@@ -20,6 +20,8 @@ import {
   foldGroupLabel,
   foldGroupNeedsOuterFold,
   groupTimelineLines,
+  isAgentCommunicationSegment,
+  isPeerMessageLine,
   isSearchableSegment,
   splitFoldSubgroups,
   isUserTextTurn,
@@ -426,7 +428,7 @@ function SegmentView({
         );
       case "agent-send":
         return (
-          <details class="tl-fold tl-agent-fold">
+          <details class="tl-fold tl-agent-fold" open={isAgentCommunicationSegment(segment)}>
             <FoldSummary ts={ts} label={`SendMessage → ${segment.to}`} />
             <div class="tl-guided">
               <FoldGuide />
@@ -442,7 +444,7 @@ function SegmentView({
         );
       case "agent-spawn":
         return (
-          <details class="tl-fold tl-agent-fold">
+          <details class="tl-fold tl-agent-fold" open={isAgentCommunicationSegment(segment)}>
             <FoldSummary ts={ts} label={`Agent: ${segment.name}`} />
             <div class="tl-guided">
               <FoldGuide />
@@ -690,7 +692,7 @@ function LineView({
       : null;
   if (sysKind) {
     return (
-      <details class="tl-line tl-fold">
+      <details class="tl-line tl-fold" open={isPeerMessageLine(line)}>
         <FoldSummary ts={line.ts} label={sysKind} />
         <SystemMessageBody
           kind={sysKind}
@@ -756,18 +758,45 @@ function FoldGroup({
   // あった。分割は pure function (transcript-model.ts) 側で単体テスト済み。
   const subgroups = useMemo(() => splitFoldSubgroups(entries), [entries]);
   const thinkingCount = useMemo(
-    () => subgroups.filter((g) => g.kind === "thinking").length,
+    () =>
+      entries.filter(
+        ({ line }) =>
+          line.kind === "turn" && line.segments.some((segment) => segment.kind === "thinking"),
+      ).length,
+    [entries],
+  );
+  const itemCount = useMemo(
+    () =>
+      subgroups.reduce(
+        (count, subgroup) => count + (subgroup.kind === "items" ? subgroup.entries.length : 0),
+        0,
+      ),
     [subgroups],
   );
-  const itemCount = entries.length - thinkingCount;
   if (!foldGroupNeedsOuterFold(entries)) {
     return (
-      <ItemsSubFold
-        entries={entries}
-        translationAvailability={translationAvailability}
-        foldGroupOpen={false}
-        searchCtx={searchCtx}
-      />
+      <div class="tl-guided-content">
+        {subgroups.map((subgroup) =>
+          subgroup.kind === "direct" ? (
+            <LineView
+              key={subgroup.entry.offset}
+              line={subgroup.entry.line}
+              offset={subgroup.entry.offset}
+              translationAvailability={translationAvailability}
+              foldGroupOpen={true}
+              searchCtx={searchCtx}
+            />
+          ) : (
+            <ItemsSubFold
+              key={subgroup.entries[0]!.offset}
+              entries={subgroup.entries}
+              translationAvailability={translationAvailability}
+              foldGroupOpen={false}
+              searchCtx={searchCtx}
+            />
+          ),
+        )}
+      </div>
     );
   }
   return (
@@ -795,7 +824,7 @@ function FoldGroup({
         <FoldGuide />
         <div class="tl-guided-content">
           {subgroups.map((sg) =>
-            sg.kind === "thinking" ? (
+            sg.kind === "direct" ? (
               <LineView
                 key={sg.entry.offset}
                 line={sg.entry.line}

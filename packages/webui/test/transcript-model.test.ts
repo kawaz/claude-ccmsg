@@ -16,6 +16,8 @@ import {
   foldGroupNeedsOuterFold,
   splitFoldSubgroups,
   groupTimelineLines,
+  isAgentCommunicationSegment,
+  isPeerMessageLine,
   isSearchableSegment,
   isUserTextTurn,
   lineByteOffsets,
@@ -1388,7 +1390,7 @@ describe("splitFoldSubgroups", () => {
   test("splits runs of tools at each thinking boundary, preserving order", () => {
     const entries = [toolEntry(1), toolEntry(2), thinkingEntry(3), toolEntry(4), thinkingEntry(5)];
     const got = splitFoldSubgroups(entries);
-    expect(got.map((g) => g.kind)).toEqual(["items", "thinking", "items", "thinking"]);
+    expect(got.map((g) => g.kind)).toEqual(["items", "direct", "items", "direct"]);
     expect(got[0]!.kind === "items" && got[0]!.entries.length).toBe(2);
     expect(got[2]!.kind === "items" && got[2]!.entries.length).toBe(1);
   });
@@ -1410,7 +1412,7 @@ describe("splitFoldSubgroups", () => {
       },
     };
     const got = splitFoldSubgroups([toolEntry(1), mixed, toolEntry(3)]);
-    expect(got.map((g) => g.kind)).toEqual(["items", "thinking", "items"]);
+    expect(got.map((g) => g.kind)).toEqual(["items", "direct", "items"]);
   });
 
   // 何を保証するか (境界): thinking が無ければ全体が 1 つの items、
@@ -1419,7 +1421,67 @@ describe("splitFoldSubgroups", () => {
     const tools = splitFoldSubgroups([toolEntry(1), toolEntry(2)]);
     expect(tools.map((g) => g.kind)).toEqual(["items"]);
     const thinkings = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
-    expect(thinkings.map((g) => g.kind)).toEqual(["thinking", "thinking"]);
+    expect(thinkings.map((g) => g.kind)).toEqual(["direct", "direct"]);
+  });
+
+  test("agent send, spawn, and peer messages split items runs and stay out of item counts", () => {
+    const parsedEntry = (offset: number, raw: Record<string, unknown>): TimelineEntry => ({
+      offset,
+      line: parseTranscriptLine(JSON.stringify(raw)),
+    });
+    const send = parsedEntry(2, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "SendMessage", input: { to: "worker", message: "go" } },
+        ],
+      },
+    });
+    const spawn = parsedEntry(4, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "Agent", input: { name: "reviewer", prompt: "review" } },
+        ],
+      },
+    });
+    const peer = parsedEntry(6, {
+      type: "user",
+      message: {
+        role: "user",
+        content: '<agent-message agent_id="worker">done</agent-message>',
+      },
+    });
+    const entries = [toolEntry(1), send, toolEntry(3), spawn, toolEntry(5), peer, toolEntry(7)];
+
+    // 直接 subgroup に出した通信内容は、利用者がもう一段開かなくても読める
+    // 初期展開対象。通常 tool segment と他の system message は対象外のまま。
+    expect(send.line.kind === "turn" && isAgentCommunicationSegment(send.line.segments[0]!)).toBe(
+      true,
+    );
+    expect(spawn.line.kind === "turn" && isAgentCommunicationSegment(spawn.line.segments[0]!)).toBe(
+      true,
+    );
+    expect(isPeerMessageLine(peer.line)).toBe(true);
+    const bashLine = assistantToolUse("Bash");
+    expect(bashLine.kind === "turn" && isAgentCommunicationSegment(bashLine.segments[0]!)).toBe(
+      false,
+    );
+    expect(isPeerMessageLine(userToolResult("tu_1"))).toBe(false);
+
+    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
+      "items",
+      "direct",
+      "items",
+      "direct",
+      "items",
+      "direct",
+      "items",
+    ]);
+    expect(foldGroupLabel(entries)).toBe("4 items");
+    expect(foldGroupNeedsOuterFold(entries)).toBe(false);
   });
 });
 
@@ -1476,7 +1538,7 @@ describe("foldGroupNeedsOuterFold", () => {
     ];
     expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
       "items",
-      "thinking",
+      "direct",
       "items",
     ]);
     expect(foldGroupNeedsOuterFold(entries)).toBe(true);

@@ -433,17 +433,39 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
   return groups;
 }
 
-/** True if every entry in a fold group is a turn line whose segments are
- * exclusively thinking blocks — split out of the generic "items" count so
- * `foldGroupLabel` can report "N thinkings + M items" (webui Timeline display
- * unification task, kawaz spec) instead of lumping thinking in with
- * tool_use/tool_result/meta/broken under one undifferentiated count.
- * 「thinking を含む」判定 (only ではない) なのは kawaz r17 mid=49: thinking
- * と tool_use が同一 turn 行に混在するケースがサブ fold 側に沈み、fold group
- * 直下に出るべき thinking が 1 段深く表示されていたため。 */
+/** True when an entry contains a thinking segment. A mixed thinking+tool
+ * turn is intentionally classified as thinking so its narrative marker does
+ * not sink into an items sub-fold. */
 export function isThinkingEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   return line.kind === "turn" && line.segments.some((s) => s.kind === "thinking");
+}
+
+/** Agent cards are conversational context and therefore start expanded when
+ * rendered directly at the fold group's shallower level. */
+export function isAgentCommunicationSegment(segment: Segment): boolean {
+  return segment.kind === "agent-send" || segment.kind === "agent-spawn";
+}
+
+/** Incoming peer relays use a user-role transcript line rather than a Segment,
+ * but share the same direct, initially-expanded presentation as agent cards. */
+export function isPeerMessageLine(line: ParsedLine): boolean {
+  return line.kind === "turn" && line.userMessageKind === "peer-message";
+}
+
+/** Entries rendered directly between items runs instead of being counted and
+ * hidden inside an items sub-fold. Agent communication is conversational
+ * context like thinking: outgoing SendMessage/Agent cards and incoming peer
+ * relays remain visible at the fold group's shallower level. */
+export function isDirectFoldEntry(entry: TimelineEntry): boolean {
+  const { line } = entry;
+  if (line.kind !== "turn") return false;
+  return (
+    isPeerMessageLine(line) ||
+    line.segments.some(
+      (segment) => segment.kind === "thinking" || isAgentCommunicationSegment(segment),
+    )
+  );
 }
 
 /** Folded-group summary label (kawaz spec, revised for the display
@@ -453,22 +475,19 @@ export function isThinkingEntry(entry: TimelineEntry): boolean {
  * counted out on its own rather than lumped into one undifferentiated noun. */
 export function foldGroupLabel(entries: TimelineEntry[]): string {
   const thinkingCount = entries.filter(isThinkingEntry).length;
-  const itemCount = entries.length - thinkingCount;
+  const itemCount = entries.filter((entry) => !isDirectFoldEntry(entry)).length;
   if (thinkingCount === 0) return `${itemCount} items`;
   if (itemCount === 0) return `${thinkingCount} thinkings`;
   return `${thinkingCount} thinkings + ${itemCount} items`;
 }
 
-/** fold group 展開時の中身の区切り (kawaz r17 mid=45、2026-07-15):
- * thinking は「作業の節目の語り」なので開いたら直接見せ、thinking と
- * thinking の間に挟まる tool 群 (tool_use/tool_result/meta/...) は
- * 「N items」のサブ fold (既定閉) に畳む — 従来はツール行の羅列の中に
- * thinking が埋もれ、展開直後に目で節目を探す必要があった。
- * 返り値は表示順のまま: {kind:"items"} (サブ fold 化する連続 run) と
- * {kind:"thinking"} (単独で直接表示) の交互列。 */
+/** fold group 展開時の中身の区切り。thinking と agent 通信は直接見せ、
+ * その間に挟まる tool 群 (tool_use/tool_result/meta/...) は「N items」の
+ * サブ fold (既定閉) に畳む。返り値は表示順のまま: {kind:"items"}
+ * (サブ fold 化する連続 run) と {kind:"direct"} (単独で直接表示) の列。 */
 export type FoldSubgroup =
   | { kind: "items"; entries: TimelineEntry[] }
-  | { kind: "thinking"; entry: TimelineEntry };
+  | { kind: "direct"; entry: TimelineEntry };
 
 /** Whether a fold group needs its outer, turn-level fold in addition to items
  * sub-folds. The outer level is meaningful only when thinking entries act as
@@ -488,9 +507,9 @@ export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {
     }
   };
   for (const e of entries) {
-    if (isThinkingEntry(e)) {
+    if (isDirectFoldEntry(e)) {
       flush();
-      out.push({ kind: "thinking", entry: e });
+      out.push({ kind: "direct", entry: e });
     } else {
       run.push(e);
     }
