@@ -73,6 +73,9 @@ export function Composer({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  /** 同一 tick 内の連続添付で共有する挿入位置 (直前 placeholder の直後)。
+   * microtask で null に戻る — 単発添付は常に textarea caret を使う。 */
+  const pendingCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -130,7 +133,12 @@ export function Composer({
     //    (global regex) が古い placeholder まで新 upload の path に置換して
     //    「複数ファイルが全部同じリンク」になる。
     const el = textareaRef.current;
-    const caret = el ? el.selectionStart : text.length;
+    // 複数ファイル同時添付 (for ループで beginUpload 連打) では全呼び出しが
+    // 同一 tick で走り、el.selectionStart は最初の挿入を反映しない。そのまま
+    // 使うと後発の placeholder が同じ caret 位置へ挿入され、本文上の並びが
+    // 逆順になる (kawaz r38 mid=37)。挿入位置は setText の関数形式内で
+    // current text に対して都度クランプし、挿入後 caret を進めて共有する。
+    const caret = pendingCaretRef.current ?? (el ? el.selectionStart : text.length);
     const textFloor = maxPlaceholderNumber(text);
     let assignedN = 0;
     setAttachments((prev) => {
@@ -146,7 +154,14 @@ export function Composer({
       // assignedN が確定していない (setAttachments が非同期) 場合の safety。
       // 実際は Preact の setState は同一 tick 内で解決するので普通は number。
       const n = assignedN || nextAttachmentNumber(attachments) || 1;
-      return insertPlaceholder(current, caret, n);
+      const at = Math.min(caret, current.length);
+      const inserted = insertPlaceholder(current, at, n);
+      // 次の同 tick 添付は今回の placeholder の直後に挿入する (順序保存)。
+      pendingCaretRef.current = at + (inserted.length - current.length);
+      queueMicrotask(() => {
+        pendingCaretRef.current = null;
+      });
+      return inserted;
     });
     // 3. upload 開始 (async)、progress は state に反映
     const n = assignedN;

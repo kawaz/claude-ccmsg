@@ -174,6 +174,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // すると本文の [FILE<N>] プレースホルダは復元されるが attachments 一覧は
   // 空 (未解決の [FILE<N>] は送信時 substitute でリテラル残る)。
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const pendingCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル (kawaz r17 mid=1): repo → ws → cwd 末尾 → sid8。
@@ -249,7 +250,10 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const beginUpload = useCallback(
     (file: File) => {
       const el = textareaRef.current;
-      const caret = el ? el.selectionStart : text.length;
+      // 複数ファイル同時添付では同一 tick の連続呼び出しが同じ caret を掴み、
+      // 後発 placeholder が前に割り込んで逆順になる (kawaz r38 mid=37)。直前
+      // 挿入の直後位置を microtask 寿命の ref で共有する (Composer と同型)。
+      const caret = pendingCaretRef.current ?? (el ? el.selectionStart : text.length);
       // 本文中の [FILE<N>] の max も跨いで採番 (kawaz r17 mid=33): 1on1 は
       // draft 復元 (text は [FILE<N>] 入りで戻るが attachments は空リセット、
       // §2.6) があるため、attachments 配列だけ見た採番は番号を再利用して
@@ -263,7 +267,13 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       });
       setText((current) => {
         const n = assignedN || nextAttachmentNumber(attachments) || 1;
-        return insertPlaceholder(current, caret, n);
+        const at = Math.min(caret, current.length);
+        const inserted = insertPlaceholder(current, at, n);
+        pendingCaretRef.current = at + (inserted.length - current.length);
+        queueMicrotask(() => {
+          pendingCaretRef.current = null;
+        });
+        return inserted;
       });
       const n = assignedN;
       void (async () => {
