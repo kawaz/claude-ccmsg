@@ -470,6 +470,14 @@ export type FoldSubgroup =
   | { kind: "items"; entries: TimelineEntry[] }
   | { kind: "thinking"; entry: TimelineEntry };
 
+/** Whether a fold group needs its outer, turn-level fold in addition to items
+ * sub-folds. The outer level is meaningful only when thinking entries act as
+ * visible separators; an all-items run would otherwise render the same count
+ * twice as a single-child fold (`N items` containing only `N items`). */
+export function foldGroupNeedsOuterFold(entries: TimelineEntry[]): boolean {
+  return entries.some(isThinkingEntry);
+}
+
 export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {
   const out: FoldSubgroup[] = [];
   let run: TimelineEntry[] = [];

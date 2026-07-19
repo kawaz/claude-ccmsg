@@ -18,6 +18,7 @@ import {
   ccmsgDedupKey,
   classifyBoundaryLine,
   foldGroupLabel,
+  foldGroupNeedsOuterFold,
   groupTimelineLines,
   isSearchableSegment,
   splitFoldSubgroups,
@@ -759,6 +760,16 @@ function FoldGroup({
     [subgroups],
   );
   const itemCount = entries.length - thinkingCount;
+  if (!foldGroupNeedsOuterFold(entries)) {
+    return (
+      <ItemsSubFold
+        entries={entries}
+        translationAvailability={translationAvailability}
+        foldGroupOpen={false}
+        searchCtx={searchCtx}
+      />
+    );
+  }
   return (
     <details
       ref={detailsRef}

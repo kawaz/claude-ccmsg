@@ -13,6 +13,7 @@ import {
   extractCcmsgMessages,
   extractCcmsgToolResultRefs,
   foldGroupLabel,
+  foldGroupNeedsOuterFold,
   splitFoldSubgroups,
   groupTimelineLines,
   isSearchableSegment,
@@ -1419,6 +1420,66 @@ describe("splitFoldSubgroups", () => {
     expect(tools.map((g) => g.kind)).toEqual(["items"]);
     const thinkings = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
     expect(thinkings.map((g) => g.kind)).toEqual(["thinking", "thinking"]);
+  });
+});
+
+describe("foldGroupNeedsOuterFold", () => {
+  function parsedEntry(offset: number, raw: Record<string, unknown>): TimelineEntry {
+    return { offset, line: parseTranscriptLine(JSON.stringify(raw)) };
+  }
+
+  // 実 transcript と同じ assistant tool_use / user tool_result の交互列には
+  // thinking の節目がない。外側も内側も同じ 2 items を表すため、外側 fold は
+  // 表示せず items fold 1 段だけにする。
+  test("tool-only transcript run is rendered as one flat items fold", () => {
+    const entries = [
+      parsedEntry(10, {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "pwd" } }],
+        },
+      }),
+      parsedEntry(20, {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }],
+        },
+      }),
+    ];
+
+    expect(foldGroupLabel(entries)).toBe("2 items");
+    expect(splitFoldSubgroups(entries)).toEqual([{ kind: "items", entries }]);
+    expect(foldGroupNeedsOuterFold(entries)).toBe(false);
+  });
+
+  // thinking が混在する run では外側 fold が作業全体、items sub-fold が
+  // thinking 間の tool 群を表すため階層に意味がある。この場合は二段を保つ。
+  test("thinking-separated tool runs keep the meaningful outer fold", () => {
+    const entries = [
+      parsedEntry(1, {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: {} }] },
+      }),
+      parsedEntry(2, {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "inspect" }] },
+      }),
+      parsedEntry(3, {
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }],
+        },
+      }),
+    ];
+    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
+      "items",
+      "thinking",
+      "items",
+    ]);
+    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 });
 
