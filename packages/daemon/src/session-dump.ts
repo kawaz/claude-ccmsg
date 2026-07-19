@@ -10,7 +10,8 @@ export type SessionDumpKind =
   | "agent-send"
   | "peer-message"
   | "user"
-  | "assistant";
+  | "assistant"
+  | "thinking";
 
 export interface SessionDumpEntry {
   ts: string;
@@ -357,6 +358,23 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
         if (!value) continue;
         if (value.type === "text" && typeof value.text === "string" && value.text !== "") {
           texts.push(value.text);
+          continue;
+        }
+        if (
+          value.type === "thinking" &&
+          typeof value.thinking === "string" &&
+          value.thinking !== ""
+        ) {
+          entries.push({
+            ts: item.ts,
+            session,
+            kind: "thinking",
+            from: session,
+            to: null,
+            text: value.thinking,
+            meta: { transcript_line: item.index + 1 },
+            _index: item.index,
+          });
           continue;
         }
         if (value.type !== "tool_use" || typeof value.name !== "string") continue;

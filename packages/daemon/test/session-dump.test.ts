@@ -203,4 +203,22 @@ describe("dumpSession", () => {
       }),
     ).toThrow("must not be later");
   });
+
+  test("emits thinking blocks as their own kind (kawaz r38 mid=40)", () => {
+    const { configDir, dataDir, transcript } = fixture();
+    fs.writeFileSync(
+      transcript,
+      [
+        row("2026-07-20T00:00:00Z", "assistant", [
+          { type: "thinking", thinking: "internal reasoning" },
+          { type: "text", text: "visible answer" },
+        ]),
+      ].join("\n") + "\n",
+    );
+    const entries = dumpSession(SID, { configDirs: [configDir], dataDir });
+    expect(entries.map((e) => e.kind)).toEqual(["thinking", "assistant"]);
+    const thinking = entries[0]!;
+    expect(thinking.text).toBe("internal reasoning");
+    expect(thinking.to).toBeNull();
+  });
 });

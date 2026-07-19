@@ -43,7 +43,7 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>]` を使う。stdout は 1 メッセージ 1 行の JSONL で、`ts`, `session`, `kind`, `from`, `to`, `text`, `meta` を持つ。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
 
-`kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
+`kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`, `thinking`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
 
 ## notify
 
