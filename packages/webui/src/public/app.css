@@ -1733,8 +1733,11 @@ a {
 .composer-attachment {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  /* × ボタンは右端 (送信ボタン近傍) ではなくファイル名の直隣に置く —
+   * space-between で右端に寄せると削除のつもりで送信を誤爆しやすい
+   * (kawaz r38 mid=38)。 */
+  justify-content: flex-start;
+  gap: 0.35rem;
 }
 
 .composer-attachment-error {
