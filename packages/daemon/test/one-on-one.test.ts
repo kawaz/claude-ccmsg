@@ -1,10 +1,10 @@
-// DR-0014 1on1 room + DR-0017 reply_hint integration.
+// DR-0014 1on1 room + DR-0017 reply_via integration.
 //
 // Coverage layout (each `test` documents "何を保証するか" per §):
 //   DR-0014 §2.1 create_room --kind 1on1 member-count validation, session role,
 //        rooms-response kind badge
-//   DR-0017 §2.3 reply_hint composer: exactly 3 shapes (r<N>m<M> / tl / none)
-//   DR-0017 §2.3 storage: reply_hint is a delivery-time field, NEVER persisted
+//   DR-0017 addendum reply_via composer: exactly 3 actionable instructions
+//   DR-0017 §2.3 storage: reply_via is a delivery-time field, NEVER persisted
 //        in the room jsonl (archive で後から none に変わる live 状態依存の値)
 //   1on1 response rail: session post rejected, u1 post allowed, normal room unaffected
 //   DR-0014 §2 next_room kind inheritance for 1on1 (broadcast test already covers its side)
@@ -13,7 +13,7 @@
 // Each test spawns a real daemon (helpers.startTestDaemon) and drives it via
 // UDS, matching the broadcast integration test's harness — the wire contract
 // is what actually ships, so mocking around storage/dispatch would let a
-// delivery-path reply_hint bug hide behind a "unit works" green.
+// delivery-path reply_via bug hide behind a "unit works" green.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import {
@@ -216,9 +216,9 @@ describe("DR-0014 1on1 room creation", () => {
   );
 
   // 何を保証するか (§2 next_room kind inheritance): 1on1 の次スレも 1on1 の
-  // ままにする (broadcast の同じ挙動 §2.8 を 1on1 に一般化)。reply_hint の
+  // ままにする (broadcast の同じ挙動 §2.8 を 1on1 に一般化)。reply_via の
   // "tl" 分岐 (DR-0017 §2.3) もそのまま新 room に適用されることを、u1 発の
-  // msg → recipient の reply_hint 値で確認する。
+  // msg → recipient の reply_via 値で確認する。
   test(
     "next_room from a 1on1 produces another 1on1 (kind inherited)",
     async () => {
@@ -240,7 +240,7 @@ describe("DR-0014 1on1 room creation", () => {
         }>({ op: "rooms" });
         expect(rooms.rooms.find((r) => r.id === nextRes.room)!.kind).toBe("1on1");
 
-        // Sanity: reply_hint "tl" still applies on the inherited room
+        // Sanity: the assistant-response reply_via instruction still applies on the inherited room
         const aSub = await session(ctx, "A");
         await aSub.request({ op: "subscribe" });
         await u.request({ op: "post", room: nextRes.room, msg: "tl on inherited" });
@@ -248,7 +248,9 @@ describe("DR-0014 1on1 room creation", () => {
           aSub,
           (m: any) => m.r === nextRes.room && m.msg === "tl on inherited",
         );
-        expect(ev.reply_hint).toBe("tl");
+        expect(ev.reply_via).toBe(
+          "Reply in your normal assistant response (the user reads your transcript)",
+        );
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -466,7 +468,7 @@ describe("DR-0014 1on1 room creation", () => {
 
   // 何を保証するか (kind の永続化): the 1on1 KindEvent lands in the jsonl and
   // is recovered by scanRooms on daemon restart — so a 1on1 room stays 1on1
-  // (reply_hint = "tl" for u1 msgs keeps working) across a stop/start cycle.
+  // (reply_via directs the normal assistant response for u1 msgs keeps working) across a stop/start cycle.
   // Mirrors the broadcast persistence test — regression guard on the same
   // KindEvent-based recovery path.
   test(
@@ -501,7 +503,7 @@ describe("DR-0014 1on1 room creation", () => {
         ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
         await waitConnectable(ctx.sock);
 
-        // After restart, rooms surfaces kind:"1on1" AND reply_hint still emits
+        // After restart, rooms surfaces kind:"1on1" AND reply_via still emits
         // "tl" for u1 posts — proves computeDerived recovered kind, not just
         // that the KindEvent is in the jsonl.
         const u2 = await user(ctx);
@@ -517,7 +519,9 @@ describe("DR-0014 1on1 room creation", () => {
           aAfter,
           (m: any) => m.r === roomId && m.msg === "after restart",
         );
-        expect(ev.reply_hint).toBe("tl");
+        expect(ev.reply_via).toBe(
+          "Reply in your normal assistant response (the user reads your transcript)",
+        );
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -526,14 +530,14 @@ describe("DR-0014 1on1 room creation", () => {
   );
 });
 
-describe("DR-0017 reply_hint wire hint", () => {
+describe("DR-0017 reply_via wire instruction", () => {
   // 何を保証するか (DR-0017 §2.3 の rNmN 形): normal room の msg は「その
   // msg 自身の room+mid」が hint になる — 受信者は ccmsg reply <hint> <text>
   // と打つだけで、宛先構成 (元 from + 元 to − 自分 + u1) は daemon の reply
   // op が行う。旧 DR-0014 の routing 記法 (r<id> 単独 / to 連結) が消えて
   // いることの回帰 guard も兼ねる。
   test(
-    "normal room + to-less msg → reply_hint = 'r<N>m<M>' (the msg itself)",
+    "normal room + to-less msg → reply_via names the exact ccmsg reply command",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -549,7 +553,7 @@ describe("DR-0017 reply_hint wire hint", () => {
 
         const posted = await a.request<{ mid: number }>({ op: "post", room, msg: "全員へ" });
         const { ev } = await readMsg(bSub, (m: any) => m.r === room && m.msg === "全員へ");
-        expect(ev.reply_hint).toBe(`${room}m${posted.mid}`);
+        expect(ev.reply_via).toBe(`Use \`ccmsg reply ${room}m${posted.mid} <msg>\``);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -563,7 +567,7 @@ describe("DR-0017 reply_hint wire hint", () => {
   // 「どの msg への返信か」だけを示す。B と C が同じ値を受け取ることが
   // per-recipient 計算の消滅の直接の証拠。
   test(
-    "normal room + explicit `to` → reply_hint is the same 'r<N>m<M>' for every recipient",
+    "normal room + explicit `to` → reply_via is the same command for every recipient",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -585,13 +589,13 @@ describe("DR-0017 reply_hint wire hint", () => {
           msg: "peer priv",
           to: ["a2", "a3"],
         });
-        const want = `${room}m${posted.mid}`;
+        const want = `Use \`ccmsg reply ${room}m${posted.mid} <msg>\``;
 
         const bMsg = await readMsg(bSub, (m: any) => m.r === room && m.msg === "peer priv");
-        expect(bMsg.ev.reply_hint).toBe(want);
+        expect(bMsg.ev.reply_via).toBe(want);
 
         const cMsg = await readMsg(cSub, (m: any) => m.r === room && m.msg === "peer priv");
-        expect(cMsg.ev.reply_hint).toBe(want);
+        expect(cMsg.ev.reply_via).toBe(want);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -604,7 +608,7 @@ describe("DR-0017 reply_hint wire hint", () => {
   // broadcast の「agent post は u1 宛必須」制約 (DR-0013 §2.4) を構成上
   // 自動で満たすため、hint 側での u1 明示 (旧 r<id>u1) は不要になった。
   test(
-    "broadcast + u1 to-less → reply_hint = 'r<N>m<M>'",
+    "broadcast + u1 to-less → reply_via names the exact ccmsg reply command",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -627,7 +631,7 @@ describe("DR-0017 reply_hint wire hint", () => {
           aSub,
           (m: any) => m.r === room && m.msg === "全員へ broadcast",
         );
-        expect(ev.reply_hint).toBe(`${room}m${posted.mid}`);
+        expect(ev.reply_via).toBe(`Use \`ccmsg reply ${room}m${posted.mid} <msg>\``);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -640,7 +644,7 @@ describe("DR-0017 reply_hint wire hint", () => {
   // (u1 + 他 peer − 自分) は reply op が担うため、A と B が同じ hint を
   // 受け取る (per-recipient 差分の消滅)。
   test(
-    "broadcast + u1 with explicit `to` → same 'r<N>m<M>' hint for every recipient",
+    "broadcast + u1 with explicit `to` → same reply command for every recipient",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -663,13 +667,13 @@ describe("DR-0017 reply_hint wire hint", () => {
           msg: "selected peers",
           to: ["a1", "a2"],
         });
-        const want = `${room}m${posted.mid}`;
+        const want = `Use \`ccmsg reply ${room}m${posted.mid} <msg>\``;
 
         const aMsg = await readMsg(aSub, (m: any) => m.r === room && m.msg === "selected peers");
-        expect(aMsg.ev.reply_hint).toBe(want);
+        expect(aMsg.ev.reply_via).toBe(want);
 
         const bMsg = await readMsg(bSub, (m: any) => m.r === room && m.msg === "selected peers");
-        expect(bMsg.ev.reply_hint).toBe(want);
+        expect(bMsg.ev.reply_via).toBe(want);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -682,7 +686,7 @@ describe("DR-0017 reply_hint wire hint", () => {
   // 受信 agent 自身の transcript 出力で行い、webui SessionView Timeline が
   // それを拾う。
   test(
-    "1on1 + u1 → reply_hint = 'tl'",
+    "1on1 + u1 → reply_via directs the normal assistant response",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -698,7 +702,9 @@ describe("DR-0017 reply_hint wire hint", () => {
 
         await u.request({ op: "post", room, msg: "priv from u1" });
         const { ev } = await readMsg(aSub, (m: any) => m.r === room && m.msg === "priv from u1");
-        expect(ev.reply_hint).toBe("tl");
+        expect(ev.reply_via).toBe(
+          "Reply in your normal assistant response (the user reads your transcript)",
+        );
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -707,10 +713,10 @@ describe("DR-0017 reply_hint wire hint", () => {
   );
 
   // 何を保証するか (DR-0017 §2.3 「none」): once a room is archived, EVERY
-  // subsequent msg carries reply_hint = "none" so agents don't reply into a
+  // subsequent msg carries the no-reply instruction so agents don't reply into a
   // room kawaz has already put down (archive 済み room の惰性 msg の静穏化)。
   test(
-    "archived room → reply_hint = 'none'",
+    "archived room → reply_via says no reply is needed",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -734,7 +740,7 @@ describe("DR-0017 reply_hint wire hint", () => {
           bSub,
           (m: any) => m.r === room && m.msg === "post into archived",
         );
-        expect(ev.reply_hint).toBe("none");
+        expect(ev.reply_via).toBe("No reply needed");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -742,14 +748,14 @@ describe("DR-0017 reply_hint wire hint", () => {
     T,
   );
 
-  // 何を保証するか (DR-0017 §2.3 補足「reply_hint は配送時 field、jsonl には
-  // 書かない」): the room jsonl must NOT contain reply_hint on msg lines —
+  // 何を保証するか (DR-0017 §2.3 補足「reply_via は配送時 field、jsonl には
+  // 書かない」): the room jsonl must NOT contain reply_via on msg lines —
   // the route depends on live room state (archive flips it to "none"
   // retroactively for later replays), so a post-time snapshot would go
   // stale. Regression guard for accidentally teeing the delivery hint into
   // appendEvent.
   test(
-    "reply_hint is delivery-only, never persisted in the room jsonl",
+    "reply_via is delivery-only, never persisted in the room jsonl",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -770,7 +776,7 @@ describe("DR-0017 reply_hint wire hint", () => {
         await readMsg(bSub, (m: any) => m.r === room && m.msg === "from a");
 
         const raw = fs.readFileSync(`${ctx.roomsDir}/${room}.jsonl`, "utf8");
-        expect(raw).not.toContain("reply_hint");
+        expect(raw).not.toContain("reply_via");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -778,19 +784,19 @@ describe("DR-0017 reply_hint wire hint", () => {
     T,
   );
 
-  // 何を保証するか (reply_hint の since-replay 側): backlog delivery (subscribe
-  // 経由の since replay 経路) でも reply_hint が付くこと。deliver 経路と
+  // 何を保証するか (reply_via の since-replay 側): backlog delivery (subscribe
+  // 経由の since replay 経路) でも reply_via が付くこと。deliver 経路と
   // sendBacklog 経路の両方で writeDelivered を通るので、両輪でカバーが
   // ないと reconnect 後の agent が hint を失う。
   test(
-    "reply_hint is injected in since-replay backlog too",
+    "reply_via is injected in since-replay backlog too",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
         // A never subscribed during the u1 post; it comes back later and
         // asks for since-replay from mid 0 → should receive the priv msg with
-        // reply_hint = "tl".
+        // reply_via directs the normal assistant response.
         await session(ctx, "A");
         const res = await u.request<{ room: string }>({
           op: "create_room",
@@ -807,7 +813,9 @@ describe("DR-0017 reply_hint wire hint", () => {
           aSub,
           (m: any) => m.r === room && m.msg === "priv while offline",
         );
-        expect(ev.reply_hint).toBe("tl");
+        expect(ev.reply_via).toBe(
+          "Reply in your normal assistant response (the user reads your transcript)",
+        );
       } finally {
         await stopTestDaemon(ctx);
       }

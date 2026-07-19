@@ -733,10 +733,10 @@ const TEAMMATE_MESSAGE_RE = /<teammate-message[^>]*>([\s\S]*?)<\/teammate-messag
 const EVENT_TAG_RE = /<event>([\s\S]*?)<\/event>/g;
 
 /** Duck-types `obj` as a ccmsg `MsgEvent` delivered over `subscribe` (wire
- * shape: `{type:"msg", mid, from, to?, ts, msg, r}` — `r` is the room id
- * DeliveredEvent flattening adds, `@ccmsg/protocol`). Every field this module
- * renders is checked; `mid` isn't (not used downstream) so its absence alone
- * doesn't reject an otherwise-valid message. False for any other event shape
+ * shape: `{type:"msg", mid, from, to?, ts, msg|msg_via, r}` — `r` is the room
+ * id DeliveredEvent flattening adds. `msg_via` is accepted only with a numeric
+ * mid, producing a placeholder that the existing daemon read path hydrates.
+ * False for any other event shape
  * this line might carry (`idle_notification`, `ev:"notify"`, member/leave/
  * title/... — anything whose `type`/`ev` isn't exactly `"msg"`), which is the
  * whole point: only a real room message becomes a chat bubble, everything
@@ -747,7 +747,8 @@ function isCcmsgMsgEventLike(obj: unknown): obj is {
   from: string;
   to?: string[];
   r: string;
-  msg: string;
+  msg?: string;
+  msg_via?: string;
   ts: string;
 } {
   if (!obj || typeof obj !== "object") return false;
@@ -756,7 +757,7 @@ function isCcmsgMsgEventLike(obj: unknown): obj is {
     o.type === "msg" &&
     typeof o.from === "string" &&
     typeof o.r === "string" &&
-    typeof o.msg === "string" &&
+    (typeof o.msg === "string" || (typeof o.msg_via === "string" && typeof o.mid === "number")) &&
     typeof o.ts === "string" &&
     (o.to === undefined || (Array.isArray(o.to) && o.to.every((t) => typeof t === "string"))) &&
     // `mid` is now surfaced (DR-0027 §2 lazy-read key), still not required for
@@ -801,7 +802,7 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
     from: obj.from,
     to: obj.to,
     room: obj.r,
-    msg: unescapeXmlEntities(obj.msg),
+    msg: obj.msg !== undefined ? unescapeXmlEntities(obj.msg) : "",
     ts: obj.ts,
     ...(obj.mid !== undefined ? { mid: obj.mid } : {}),
   };
@@ -812,7 +813,7 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
  * 落ちる — 従来はそのまま null → CcmsgBubble にならず生 JSON の fold 表示に
  * なっていた (kawaz r17 mid=43 の実観測)。切れていても field 順は固定
  * (daemon の subscribe wire order:
- * `type,mid,from,ts,to?,r,seq,reply_hint?,msg` — msg が必ず最後、
+ * `type,mid,from,ts,to?,r,seq,reply_via?,msg` — msg が必ず最後、
  * docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md) なので、msg の
  * 途中までを regex で抜けば「途中まで + 切り詰め注記」の bubble にできる。
  * 読める形が生 JSON より常に良い、が判断 (全文は webui の room 表示か read
@@ -836,7 +837,7 @@ function tryParseTruncatedCcmsgMessage(
   const knownRoom = fragment.match(/"r":"((?:[^"\\]|\\.)*)"/)?.[1] ?? fallbackRoom;
   const room = knownRoom ?? "?";
   // mid は subscribe wire order (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md
-  // 済) では msg より前 (`type,mid,from,ts,to?,r,seq,reply_hint?,msg`) なので
+  // 済) では msg より前 (`type,mid,from,ts,to?,r,seq,reply_via?,msg`) なので
   // truncation 前に必ず来る — 拾えれば DR-0027 §2 の read-fallback パスに乗る。
   // ただし canonical lookup key は (r, mid) の**組**: room が復元できなかった
   // fragment (`room === "?"`) に mid だけ付けると、`ws.read("?", [mid])` の

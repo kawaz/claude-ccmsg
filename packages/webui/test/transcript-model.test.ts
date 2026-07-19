@@ -1564,7 +1564,7 @@ describe("extractCcmsgMessages", () => {
       message: {
         role: "user",
         content:
-          '<task-notification>\n<task-id>baxep3rq2</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ監視"</summary>\n<event>{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。\\n自由にプロジェクト外のパスをブラウズしたいわけではない。\\nRead/Write/Editツールで触ったファイルリストからcwd内のものを除外したフルパスリストを表示するセクションがFileツリーに欲しいということです。\\n\\n現在、おきにいり、プロジェクトという2つのセクションがあるが、ここにプロジェクト外というセクションを設けて、セッションが触ったプロジェクト外ファイルのフルパスリストを表示して選択できるようにしたい。\\n当然横幅が足りなくなると思うが、横スクロールバーを付けてくれたら良い。そもそも現在も深いディレクトリや長いファイル名の際に右側が隠れる問題は存在する。スプリッタを右にずらせば広くはできるが限界はあるのでシンプルにセクション内のリストごとに横スクロールができればよいと思う。\\nお気に入り追加も可能となるようにしたい。","seq":102...(truncated)\n返信: この room に post せず、通常のアシスタント応答 (transcript 出力) で返す</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn\'t need one.\n</task-notification>',
+          '<task-notification>\n<task-id>baxep3rq2</task-id>\n<summary>Monitor event: "ccmsg 新着メッセージ監視"</summary>\n<event>{"type":"msg","mid":99,"from":"u1","ts":"2026-07-17T04:33:44.888Z","msg":"あるセッションが、Read/Write/Editしたcwd外のファイルを見たい。\\n自由にプロジェクト外のパスをブラウズしたいわけではない。\\nRead/Write/Editツールで触ったファイルリストからcwd内のものを除外したフルパスリストを表示するセクションがFileツリーに欲しいということです。\\n\\n現在、おきにいり、プロジェクトという2つのセクションがあるが、ここにプロジェクト外というセクションを設けて、セッションが触ったプロジェクト外ファイルのフルパスリストを表示して選択できるようにしたい。\\n当然横幅が足りなくなると思うが、横スクロールバーを付けてくれたら良い。そもそも現在も深いディレクトリや長いファイル名の際に右側が隠れる問題は存在する。スプリッタを右にずらせば広くはできるが限界はあるのでシンプルにセクション内のリストごとに横スクロールができればよいと思う。\\nお気に入り追加も可能となるようにしたい。","seq":102...(truncated)</event>\nIf this event is something the user would act on now, send a PushNotification. Routine or benign output doesn\'t need one.\n</task-notification>',
       },
       timestamp: "2026-07-17T04:33:45.105Z",
       origin: { kind: "task-notification" },
@@ -1607,7 +1607,7 @@ describe("extractCcmsgMessages", () => {
   });
 
   // docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: daemon の
-  // subscribe wire order を `type,mid,from,ts,to?,r,seq,reply_hint?,msg`
+  // subscribe wire order を `type,mid,from,ts,to?,r,seq,reply_via?,msg`
   // (msg が必ず最後) に変更したことで、`r` が msg より前に来るようになった。
   // 同居 event の無い単独 msg 通知が切れても、fallbackRoom に頼らず断片自身の
   // `r` から room を復元できることを固定する (旧順では `r` が msg の後ろに
@@ -1615,7 +1615,7 @@ describe("extractCcmsgMessages", () => {
   // 依存はその名残)。
   test("new wire order: a truncated standalone msg notification recovers room from its own `r` (no fallback needed)", () => {
     const truncated =
-      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_hint":"r30m109","msg":"a very long message body that keeps going and going...(truncated)';
+      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_via":"Use `ccmsg reply r30m109 <msg>`","msg":"a very long message body that keeps going and going...(truncated)';
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -1656,6 +1656,31 @@ describe("extractCcmsgMessages", () => {
       JSON.stringify({ type: "user", message: { role: "user", content } }),
     );
   }
+
+  test("msg_via frame becomes a lazy-read placeholder keyed by room and mid", () => {
+    const msgEvent = {
+      type: "msg",
+      mid: 38,
+      from: "a3",
+      r: "r35",
+      ts: "2026-07-19T01:00:00.000Z",
+      reply_via: "Use `ccmsg reply r35m38 <msg>`",
+      msg_via: "Use `ccmsg read r35m38`",
+    };
+    const line = userLine(
+      `<task-notification>\n<event>${JSON.stringify(msgEvent)}</event>\n</task-notification>`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      {
+        from: "a3",
+        to: undefined,
+        room: "r35",
+        msg: "",
+        ts: "2026-07-19T01:00:00.000Z",
+        mid: 38,
+      },
+    ]);
+  });
 
   test("teammate-message body is a ccmsg type:msg event -> one CcmsgMessage", () => {
     const msgEvent = {
@@ -1831,7 +1856,7 @@ describe("extractCcmsgMessages", () => {
   // daemon 一次情報で置き換わる。
   test("DR-0027: truncated fragment recovers `mid` before the truncation point", () => {
     const truncated =
-      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_hint":"r30m109","msg":"a long body...(truncated)';
+      '{"type":"msg","mid":110,"from":"a1","ts":"2026-07-17T04:33:44.888Z","r":"r30","seq":42,"reply_via":"Use `ccmsg reply r30m109 <msg>`","msg":"a long body...(truncated)';
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",

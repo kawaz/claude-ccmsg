@@ -198,7 +198,7 @@ function sendReplyViaTlError(conn: Conn, room: Room | null): void {
 }
 
 /** id the connection acts as inside `room`, for delivery-time bookkeeping like
- * reply_hint. Returns ADMIN_ID for the user role, the member id for a member
+ * reply_via. Returns ADMIN_ID for the user role, the member id for a member
  * session, or null when the subscriber isn't a member (u1 always resolves;
  * a non-member session subscriber never reaches writeDelivered because
  * subscriberSeesRoom would have filtered them out first). */
@@ -209,19 +209,15 @@ function recipientId(conn: Conn, room: Room): string | null {
   return memberIdBySid(room).get(id.sid) ?? null;
 }
 
-/** DR-0017 §2.3 reply_hint composer. Returns the per-recipient hint telling a
- * receiver HOW to respond — exactly three shapes:
- * - `"none"`: archived room, silent (no response expected).
- * - `"tl"`: 1on1 room + u1-authored, agent responds via its normal assistant
- *   output (transcript) — the webui SessionView Timeline picks it up.
- * - `"r<N>m<M>"` (everything else): respond with `ccmsg reply r<N>m<M> <text>`.
- *   The daemon's reply op computes the delivery targets (§2.2), so unlike the
- *   old DR-0014 routing notation this hint carries no `to` reconstruction —
- *   the receiver only needs to name the msg it's answering. */
-function computeReplyHint(room: Room, ev: MsgEvent): string {
-  if (room.archived) return "none";
-  if (room.kind === "1on1" && ev.from === ADMIN_ID) return "tl";
-  return `${room.id}m${ev.mid}`;
+/** DR-0017 addendum: per-recipient instruction telling the receiver exactly
+ * how to respond. The daemon computes it at delivery time because archive and
+ * 1on1 routing are room-state dependent. */
+function computeReplyVia(room: Room, ev: MsgEvent): string {
+  if (room.archived) return "No reply needed";
+  if (room.kind === "1on1" && ev.from === ADMIN_ID) {
+    return "Reply in your normal assistant response (the user reads your transcript)";
+  }
+  return `Use \`ccmsg reply ${room.id}m${ev.mid} <msg>\``;
 }
 
 /** Empirical harness truncation cap on Monitor stdout lines wrapped into a
@@ -250,10 +246,10 @@ const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
 /** subscribe wire order for `msg` events: `msg` (the body) is placed last,
  * after every other field (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md).
  * The harness's task-notification truncation cuts from the block's tail, so
- * with the old field order (msg mid-way, `seq`/`reply_hint` after it) a long
- * `msg` silently ate the trailing fields (kawaz r26 mid=110). Putting `msg`
- * last means truncation always lands inside the body — visibly incomplete —
- * instead of silently dropping `reply_hint`/`seq`. `JSON.stringify` key order
+ * with the old field order (msg mid-way, `seq`/response metadata after it) a
+ * long `msg` silently ate the trailing fields (kawaz r26 mid=110). Putting
+ * `msg` last means truncation always lands inside the body — visibly incomplete —
+ * instead of silently dropping `reply_via`/`seq`. `JSON.stringify` key order
  * follows insertion order, so this rebuilds the object explicitly rather than
  * spreading `ev`. Storage (`rooms/*.jsonl`, the `MsgEvent` type) keeps its own
  * field order — this only reshapes the live subscribe wire frame.
@@ -263,7 +259,7 @@ const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
  * and the naturally-built frame's serialized length would exceed
  * `WIRE_MSG_SAFE_BYTES` (empirical safe-fraction of the harness's
  * `task-notification` truncation cap, see the const's docstring), omit `msg`
- * and place `msg_via: "Use `ccmsg read <room> <mid>`"` last. The instruction
+ * and place `msg_via: "Use `ccmsg read r<N>m<M>`"` last. The instruction
  * is directly executable and its presence is the oversize signal; no preview
  * or separate truncated flag is needed. The stored event and `ccmsg read`
  * result still carry the full body — only the subscribe wire frame is
@@ -271,7 +267,7 @@ const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
 function orderedMsgFrame(
   ev: MsgEvent,
   roomId: string,
-  reply_hint: string | undefined,
+  replyVia: string | undefined,
   redirectOversize: boolean,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { type: ev.type, mid: ev.mid, from: ev.from, ts: ev.ts };
@@ -279,14 +275,14 @@ function orderedMsgFrame(
   out.r = roomId;
   if (ev.seq !== undefined) out.seq = ev.seq;
   if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
-  if (reply_hint !== undefined) out.reply_hint = reply_hint;
+  if (replyVia !== undefined) out.reply_via = replyVia;
   out.msg = ev.msg;
   // Predict truncation from the natural frame, then remove the body entirely.
   // `msg_via` is inserted after deleting `msg`, so the fetch instruction is
   // the last key on the wire just as `msg` is for an inline body.
   if (redirectOversize && JSON.stringify(out).length > WIRE_MSG_SAFE_BYTES) {
     delete out.msg;
-    out.msg_via = `Use \`ccmsg read ${roomId} ${ev.mid}\``;
+    out.msg_via = `Use \`ccmsg read ${roomId}m${ev.mid}\``;
   }
   return out;
 }
@@ -294,19 +290,17 @@ function orderedMsgFrame(
 function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
   if (ev.type === "msg") {
     const rid = recipientId(conn, room);
-    // reply_hint is a delivery-time wire hint (DR-0017 §2.3), never stored in
-    // the room's jsonl — the route depends on live room state (archived flips
-    // it to "none" retroactively for later replays), so persisting a snapshot
-    // at post time would go stale. Only computed for actual recipients (rid
-    // !== null); a non-recipient subscriber (e.g. u1 watching a room it's
-    // not a member of) still gets the msg frame, just without a hint.
-    const reply_hint = rid !== null ? computeReplyHint(room, ev) : undefined;
+    // reply_via is a delivery-time wire instruction, never stored in the room's
+    // jsonl — the route depends on live room state (archived changes it for later
+    // replays), so persisting a snapshot at post time would go stale. Only
+    // computed for actual recipients; non-recipient subscribers get no instruction.
+    const replyVia = rid !== null ? computeReplyVia(room, ev) : undefined;
     // Oversize redirection targets the harness truncation between a `ccmsg
     // subscribe` Monitor and its session AI — a session-role subscriber. The
     // webui (user role) renders frames directly with no Monitor in between,
     // so it always gets the full body.
     const redirectOversize = conn.identity?.role === "session";
-    send(conn, orderedMsgFrame(ev, room.id, reply_hint, redirectOversize));
+    send(conn, orderedMsgFrame(ev, room.id, replyVia, redirectOversize));
     return;
   }
   send(conn, { ...ev, r: room.id });
@@ -1350,7 +1344,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         // DR-0013 §2.8 / DR-0014 §2 next_room inherits kind: broadcast の
         // 次スレは broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
         // 適用され、以降の hello/disconnect が新 room も拾う)、1on1 の次スレは
-        // 1on1 (reply_hint = "tl" 挙動もそのまま維持)。normal はそのまま normal。
+        // 1on1 の assistant-response routing も維持。normal はそのまま normal。
         old.kind,
       );
       // KindEvent must be written BEFORE members / prev so a mid-creation crash

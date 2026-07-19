@@ -392,8 +392,7 @@ describe("session_search three-stage filtering", () => {
   });
 
   // Guarantees the real Monitor-delivery shape: the <event> body is a JSONL
-  // batch (kind/title/member lines before the msg, non-JSON reply-hint text
-  // after) rather than a single JSON object, and role toggles select which msg
+  // batch rather than a single JSON object, and role toggles select which msg
   // line inside one batch is reported.
   test("ccmsg multi-line event bodies match their msg line", () => {
     const body = [
@@ -413,7 +412,6 @@ describe("session_search three-stage filtering", () => {
         ts: "2026-07-16T02:00:01.000Z",
         msg: "batch needle from agent",
       }),
-      "返信: この room に post せず、通常のアシスタント応答で返す",
     ].join("\n");
     const line = JSON.stringify({
       type: "queue-operation",

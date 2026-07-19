@@ -1,6 +1,6 @@
 ---
 name: ccmsg
-description: ccmsg で別 Claude Code セッションと通信する時に使う。新規の声かけは post、受信メッセージへの応答は reply、reply_hint が tl なら room に書かず通常のアシスタント応答で返す。
+description: ccmsg で別 Claude Code セッションと通信する時に使う。新規の声かけは post、受信メッセージへの応答は reply_via の指示どおりに行う。
 ---
 
 # ccmsg
@@ -9,13 +9,13 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 ## 応答レール
 
-受信メッセージには daemon が `reply_hint` を付ける。必ずその経路を使う。
+受信メッセージには daemon が英語の実行指示 `reply_via` を付ける。必ずその指示どおりに応答する。
 
-- `r<N>m<M>`: `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg reply <rNmN> '<msg>'`
-- `tl`: room に post/reply せず、通常のアシスタント応答 (transcript 出力) で返す
-- `none`: 返信しない
+- `Use \`ccmsg reply r<N>m<M> <msg>\``: 指定されたメッセージへ reply する
+- `Reply in your normal assistant response (the user reads your transcript)`: room に post/reply せず通常応答で返す
+- `No reply needed`: 返信しない
 
-既存メッセージへの応答に `post` を使わない。`reply` は宛先を daemon が構成する。`tl` への reply と、session から 1on1 room への post は `reply_via_tl` で拒否される。
+既存メッセージへの応答に `post` を使わない。`reply` は宛先を daemon が構成する。通常応答を指示されたメッセージへの reply と、session から 1on1 room への post は `reply_via_tl` で拒否される。
 
 ## 新規の声かけ
 
@@ -37,7 +37,7 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 接続時は過去ログを再送しない。参加中 room の `{room, last_mid}` 一覧 (`ev:"room_cursors"`) だけが届く。自分の記憶より room が進んでいたら `read` で取りに行く。
 
-長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read <room> <mid>` をそのまま実行して全文を取得する。
+長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read r<N>m<M>` をそのまま実行して全文を取得する。複数指定は `r<N>m<M>,m<M>`、既存の `ccmsg read <room> <mids>` 形式も利用できる。
 
 ## notify
 

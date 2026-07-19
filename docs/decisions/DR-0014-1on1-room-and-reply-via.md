@@ -1,7 +1,7 @@
 # DR-0014: 1on1 room + msg 応答経路 hint (`reply_via`)
 
-- **Status**: Accepted (2026-07-14)。§2.4-2.5 の `reply_via` hint は
-  [DR-0017](./DR-0017-reply-command.md) で `reply_hint` (3 形) + `ccmsg reply`
+- **Status**: Accepted (2026-07-14)。§2.4-2.5 の routing hint は
+  [DR-0017](./DR-0017-reply-command.md) で `reply_via` 実行指示 + `ccmsg reply`
   に置換された — 1on1 room 本体 (§2.1-2.3, §2.6) は現行仕様のまま
 - **Date**: 2026-07-14
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1/aN namespace、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0013](./DR-0013-broadcast-room.md) の broadcast room を前提とする
@@ -84,8 +84,8 @@ daemon は post を受け取った時、room state と参加者情報から `rep
 - **通常 room + to あり** → `reply_via = "r<room-id>u<...>a<...>"` (from + 元 to - 受信者本人、u1/a{N} を id 順に連結)
 - **broadcast room + u1 発 + to なし (全員宛)** → `reply_via = "r<room-id>u1"` (u1 宛 priv 返信)
 - **broadcast room + u1 発 + to に個別 session** → `reply_via = "r<room-id>u1a<N>a<M>..."` (元 to の member 全員 + u1)
-- **1on1 room + u1 発** → `reply_via = "tl"` (自セッション TL に応答表示、webui 側の UI で表示される)
-- **archive 済み room からの msg** → `reply_via = "none"` (応答不要)
+- **1on1 room + u1 発** → `reply_via = "Reply in your normal assistant response (the user reads your transcript)"`
+- **archive 済み room からの msg** → `reply_via = "No reply needed"`
 
 補足:
 
@@ -138,7 +138,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
 - `create_room --kind 1on1`: members が空 or 複数なら error、正常時は kind:"1on1" で room 開設
 - broadcast の auto-populate 対象から 1on1 を除外 (通常 room と同じ扱いにする)
 - subscribe stream への配送時に §2.5 の分岐で `reply_via` を計算して msg event に注入
-- archive 済み room からの msg には `reply_via = "none"`
+- archive 済み room からの msg には `reply_via = "No reply needed"`
 
 ### 4.3 CLI (`packages/cli/src/index.ts`)
 
@@ -162,7 +162,7 @@ kawaz r12 mid=25 「既存で既に ccmsg の u1 メッセージ通知は tl に
   - `none` は応答不要 (静穏化)、無理に返信を返さない
 - **1on1 room** 節を新設:
   - 用途 (kawaz が特定 session に priv したい時、webui の SessionView 右下 ＋ ボタンから)
-  - agent 側は「1on1 room で u1 から msg が来たら reply_via = "tl" に従う」= 通常の AI 応答経路で返せば webui SessionView TL に表示される
+  - agent 側は 1on1 room の `reply_via` が通常の assistant response を指示したら、その経路で返す
   - post 制約なし *(2026-07-17 supersede: session 発は拒否)*
 
 ## 5. Open questions

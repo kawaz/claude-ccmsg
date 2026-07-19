@@ -220,24 +220,17 @@ export type StorageEvent =
  *   the subscribe stream.
  * - `"1on1"` = a fixed 2-party room (u1 + a single session), created by the
  *   webui's SessionView floating composer for kawaz→session priv. No
- *   auto-populate. u1 posts are delivered with reply_hint = "tl"; session posts
- *   are rejected so responses stay on the assistant transcript (§2.5). */
+ *   auto-populate. u1 posts carry a reply_via instruction directing the agent
+ *   to its assistant response; session posts are rejected (§2.5). */
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
- * `msg` events additionally carry `reply_hint` (DR-0017 §2.3) — a per-recipient
- * hint telling the receiving agent HOW to respond. Exactly three shapes:
- * - `"r<N>m<M>"`: reply with `ccmsg reply r<N>m<M> <text>` — the daemon builds
- *   the delivery targets (original from + original to − replier + u1, §2.2),
- *   so the receiver never computes a `to` list itself.
- * - `"tl"`: respond via the normal assistant output (transcript); do NOT post
- *   back into the room (1on1 room, u1-authored — the webui SessionView
- *   Timeline picks the response up from the transcript).
- * - `"none"`: no response expected (archived room's inertial msg etc.).
- * Injected at delivery time, NOT persisted in the room jsonl: the value
- * differs by recipient, so a per-msg common storage field would be a
- * contradiction. Only present on `type:"msg"` deliveries. */
-export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_hint?: string };
+ * `msg` events additionally carry `reply_via` (DR-0017 addendum) — a concise,
+ * directly actionable English instruction for the receiving agent. The three
+ * forms direct it to `ccmsg reply`, its normal assistant response, or no reply.
+ * Injected at delivery time, NOT persisted in the room jsonl: room state and
+ * recipient determine the instruction. Only present on `type:"msg"` deliveries. */
+export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_via?: string };
 
 /**
  * Sender of a notify, daemon-stamped from the connection identity (DR-0003 §7).

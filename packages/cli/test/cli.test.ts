@@ -47,7 +47,7 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
 const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
-  read <room> <mN[,mN...]>                  メッセージ全文取得 (msg_via 指示時など)
+  read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
@@ -85,10 +85,21 @@ describe("ccmsg CLI end-to-end", () => {
         (await runCli(["--sid", "S1", "post", room, "hello"], env)).out,
       ) as { mid: number };
       expect(posted.mid).toBe(1);
-      const read = JSON.parse((await runCli(["read", room, "1"], env)).out) as {
+      const read = JSON.parse((await runCli(["read", `${room}m1`], env)).out) as {
         msgs: { msg: string }[];
       };
       expect(read.msgs[0]!.msg).toBe("hello");
+      const readLegacy = JSON.parse((await runCli(["read", room, "1"], env)).out) as {
+        msgs: { msg: string }[];
+      };
+      expect(readLegacy.msgs[0]!.msg).toBe("hello");
+      const posted2 = JSON.parse(
+        (await runCli(["--sid", "S1", "post", room, "world"], env)).out,
+      ) as { mid: number };
+      const readMany = JSON.parse(
+        (await runCli(["read", `${room}m${posted.mid},m${posted2.mid}`], env)).out,
+      ) as { msgs: { msg: string }[] };
+      expect(readMany.msgs.map((m) => m.msg)).toEqual(["hello", "world"]);
 
       // status now reports the live daemon at our version
       const s1 = JSON.parse((await runCli(["status"], env)).out) as {
@@ -140,6 +151,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.code).toBe(0);
       expect(help.err).toBe("");
       expect(help.out).toContain("Usage:");
+      expect(help.out).toContain("read <rNmN[,mN...]");
       expect(help.out).toContain("read <room> <mids>");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
@@ -853,12 +865,9 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     }
   }, 30000);
 
-  // 何を保証するか (DR-0017 §2.4): subscribe の stdout で msg の jsonl 行の
-  // 直後に reply_hint 由来の平文指示行が出る (rNmN 形 → コピペ可能な
-  // 返信用コマンド)。--raw では出ない (pure JSONL 契約)。構造化 field を
-  // LLM が素通りする問題 (r17 mid=16) への対策なので、「msg 行と同じ通知に
-  // 載る位置 = 直後の行」であることまで含めて仕様。
-  test("subscribe は msg 直後に指示文行を出し --raw で抑制する", async () => {
+  // reply_via is the single response instruction channel. subscribe emits the
+  // daemon's JSONL frame unchanged and never appends an extra prose line.
+  test("subscribe emits reply_via in pure JSONL without an extra instruction line", async () => {
     const { env, cleanup } = makeEnv();
     try {
       const created = JSON.parse(
@@ -889,17 +898,12 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       // explicit opt-in this test needs to see S1's pre-existing post.
       const sinceAll = JSON.stringify({ [created.room]: 0 });
       const lines = await runSub(["--since", sinceAll]);
-      const msgIdx = lines.findIndex((l) => l.includes('"need reply"'));
-      expect(msgIdx).toBeGreaterThanOrEqual(0);
-      expect(lines[msgIdx + 1]).toBe(
-        `返信用コマンド: ccmsg reply ${created.room}m${posted.mid} '<text>'`,
-      );
-
-      const rawLines = await runSub(["--raw", "--since", sinceAll]);
-      expect(rawLines.some((l) => l.includes('"need reply"'))).toBe(true);
-      expect(rawLines.some((l) => l.startsWith("返信"))).toBe(false);
-      // --raw は全行が有効な JSON (pure JSONL 契約)
-      for (const l of rawLines) JSON.parse(l);
+      const msgLine = lines.find((l) => l.includes('"need reply"'));
+      expect(msgLine).toBeDefined();
+      expect(JSON.parse(msgLine!) as Record<string, unknown>).toMatchObject({
+        reply_via: `Use \`ccmsg reply ${created.room}m${posted.mid} <msg>\``,
+      });
+      for (const line of lines) JSON.parse(line);
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();

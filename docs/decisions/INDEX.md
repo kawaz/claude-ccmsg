@@ -20,7 +20,7 @@
 | [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | Accepted (reply_via 部は DR-0017 で置換) | 1on1 room + msg 応答経路 hint (reply_via) |
 | [DR-0015](./DR-0015-composer-attachments.md) | Proposed | Composer 添付ファイル機能 (画像/任意ファイル + clipboard paste) |
 | [DR-0016](./DR-0016-storage-event-seq.md) | Accepted | StorageEvent 横断の per-room 連番 `seq` (subscribe 再接続 cursor の全 event 型拡張) |
-| [DR-0017](./DR-0017-reply-command.md) | Accepted | `ccmsg reply` (daemon 仲介の返信) + `reply_hint` + 指示文行 (reply_via 置換) |
+| [DR-0017](./DR-0017-reply-command.md) | Accepted | `ccmsg reply` (daemon 仲介の返信) + `reply_via` 実行指示 |
 | [DR-0018](./DR-0018-session-launcher.md) | Accepted | Session Launcher (webui からの新規セッション起動 UI、Phase 分割) |
 | [DR-0019](./DR-0019-fs-write-inbox.md) | Accepted | fs_write (webui Files からの新規ファイル作成、docs/inbox 先行) |
 | [DR-0020](./DR-0020-session-status-tab.md) | Accepted | Status タブ (workflow / background / TODO の可視化、transcript fold) |

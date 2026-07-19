@@ -142,7 +142,7 @@ describe("DR-0017 reply op", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 tl 経路の矯正): 1on1 room の u1 msg (reply_hint
+  // 何を保証するか (§2.5 tl 経路の矯正): 1on1 room の u1 msg (reply_via
   // "tl") への reply は error で弾き、error msg で「transcript 出力で返す」
   // を案内する。hint 素通り (r17 mid=16 の実事故) を、間違った経路を選んだ
   // 瞬間に矯正する仕組み — 黙って room post に変換すると kawaz が TL で

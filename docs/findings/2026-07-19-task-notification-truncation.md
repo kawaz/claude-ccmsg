@@ -65,14 +65,14 @@ chars、3019-body cluster で ~3326 chars。`<task-notification>` の tag +
   Claude Code version) も 500-body 帯で切られている
 - **80% を safe budget として `WIRE_MSG_SAFE_BYTES=400` をデフォルトに**:
   serialized JSON frame (`{"type":"msg","mid":N,"from":"aN","ts":"...",
-  "r":"rN","seq":M,"reply_hint":"rNmM","msg":"..."}`) の長さが 400 byte を
+  "r":"rN","seq":M,"reply_via":"Use `ccmsg reply rNmM <msg>`","msg":"..."}`) の長さが 400 byte を
   超えたら msg 本文を preview + `ccmsg read` 案内に差し替える (実装:
   packages/daemon/src/server.ts の `orderedMsgFrame`)
 - **env override**: 環境差 (Claude Code version 上げで cap 変動) を
   `CCMSG_WIRE_MSG_SAFE_BYTES` で調整できるようにする。将来 harness cap を
   実測しなおして緩められたらデフォルト自体を上げる
 - **preview には room / mid を必ず含める**: 受信 AI が自動で
-  `ccmsg read <room> <mid>` を叩ける形式にする。これが本タスクの主目的
+  `ccmsg read rNmN` を叩ける形式にする。これが本タスクの主目的
   (往復削減)
 
 ## 検証の詳細

@@ -1,4 +1,4 @@
-# DR-0017: `ccmsg reply` (daemon 仲介の返信) + `reply_to` hint + 指示文行
+# DR-0017: `ccmsg reply` (daemon 仲介の返信) + 応答経路指示
 
 - **Status**: Accepted (2026-07-15、REPLY-Q1=a / Q3=a / Q4=a 裁定)
 - **Date**: 2026-07-15
@@ -106,3 +106,22 @@ daemon が宛先を構成する。subscribe が届ける msg には jsonl 行 + 
       抑制、msg 以外の event に付かない
 - [ ] webui CcmsgBubble / transcript-model が reply_hint 追従 (reply_via
       参照の残置なし)
+
+## 5. Addendum: 実行指示 `reply_via` への統一 (2026-07-19)
+
+受信 agent が値の意味を解釈せず、そのまま行動できるよう、§2.3 の三値 hint と
+§2.4 の CLI 後付け平文行を次の単一フィールドに置換する。
+
+- 通常の返信: `reply_via: "Use \`ccmsg reply rNmN <msg>\`"`
+- transcript 応答: `reply_via: "Reply in your normal assistant response (the user reads your transcript)"`
+- 返信不要: `reply_via: "No reply needed"`
+
+`reply_via` は従来と同じく配信時に受信者ごとに注入し、room jsonl には保存しない。
+CLI `subscribe` は daemon の JSONL をそのまま出力し、日本語の返信案内行を追加しない。
+平文行の抑制専用だった `--raw` も削除する。これにより JSONL と agent 向け指示が
+同じ frame 内で完結する。
+
+長文本文の取得指示も同じ参照表記に揃え、`msg_via` は
+`Use \`ccmsg read rNmN\`` とする。CLI `read` は `rNmN` と `rNmN,mN` を受理し、
+既存の `<room> <mids>` 形式も維持する。webui は `msg_via` frame の `(r, mid)` を
+DR-0027 の daemon read 復元経路へ渡し、保存済み本文を表示する。

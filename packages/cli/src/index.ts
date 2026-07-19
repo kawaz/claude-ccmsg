@@ -18,7 +18,6 @@ import {
 const BOOL_FLAGS = new Set([
   "all",
   "exclude-self",
-  "raw",
   "self",
   "foreground",
   "help",
@@ -93,6 +92,19 @@ function parseIdList(s: string | undefined): string[] | undefined {
 function requireArg(v: string | undefined, name: string, usage: string): string {
   if (v === undefined || v === "") throw new Error(`missing <${name}>\n  usage: ${usage}`);
   return v;
+}
+
+function parseReadArgs(args: string[], usage: string): { room: string; mids: string } {
+  const compact = args[0]?.match(/^(r\d+)m(\d+(?:,m\d+)*)$/);
+  if (compact) {
+    if (args[1] !== undefined)
+      throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
+    return { room: compact[1]!, mids: compact[2]!.replaceAll(",m", ",") };
+  }
+  return {
+    room: requireArg(args[0], "room", usage),
+    mids: requireArg(args[1], "mids", usage),
+  };
 }
 
 // --- identity --------------------------------------------------------------
@@ -272,18 +284,6 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   process.exit(output(res));
 }
 
-/** reply_hint (DR-0017 §2.3 の 3 形) → subscribe stdout に添える平文指示 1 行。
- * rNmN 形はそのままコピペで打てるコマンドに、tl / none は取るべき行動の明文に。 */
-function replyInstructionLine(hint: string): string {
-  if (hint === "tl") {
-    return "返信: この room に post せず、通常のアシスタント応答 (transcript 出力) で返す";
-  }
-  if (hint === "none") {
-    return "返信不要";
-  }
-  return `返信用コマンド: ccmsg reply ${hint} '<text>'`;
-}
-
 async function runSubscribe(
   identity: Identity,
   opts: Record<string, string | boolean>,
@@ -292,8 +292,6 @@ async function runSubscribe(
   // (see warnSubscribingAsUser) so the branch stays out of the hot path once
   // the connection is up. stdout is pure jsonl for the downstream Monitor.
   const paths = resolvePaths();
-  // --raw: 指示文行 (下の副作用 (c)) を出さず pure JSONL を保つ。
-  const rawOutput = opts.raw === true;
   const sinceStr = str(opts, "since");
   const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
   // sinceMap は「stdout に出した event の per-room 最大 seq」(DR-0016 §2.4)。
@@ -316,7 +314,7 @@ async function runSubscribe(
     for (;;) {
       const line = await client.readLine();
       if (line === null) break; // socket closed → 再接続へ
-      // 1 行 parse して 3 つの副作用を掛ける:
+      // 1 行 parse して 2 つの副作用を掛ける:
       //   (a) `ev:"restarting"` は stdout に流さない (透過再接続が目的で、上流の
       //       Monitor へノイズ行を送らない)。この行の直後に daemon が socket を閉じる
       //       ので、次ループで readLine() が null を返し再接続経路に入る。
@@ -324,20 +322,12 @@ async function runSubscribe(
       //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
       //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
       //       ので自然に対象外。
-      //   (c) msg event の jsonl 行直後に reply_hint 由来の平文指示 1 行を足す
-      //       (DR-0017 §2.4)。構造化 field は LLM が「データ」として素通り
-      //       しがち (r17 mid=16 の実事故) — コピペ可能なコマンド文の方が
-      //       行動に直結する。生成は CLI 側 (wire は field のみ)。--raw で
-      //       抑制 (jq 等の厳密 JSONL 消費者向け)。
       let filtered = false;
-      let hintLine: string | null = null;
       try {
         const ev = JSON.parse(line) as {
           ev?: string;
-          type?: string;
           r?: string;
           seq?: number;
-          reply_hint?: string;
         };
         if (ev.ev === "restarting") {
           filtered = true;
@@ -345,15 +335,10 @@ async function runSubscribe(
           const prev = sinceMap[ev.r] ?? 0;
           if (ev.seq > prev) sinceMap[ev.r] = ev.seq;
         }
-        if (!rawOutput && ev.type === "msg" && typeof ev.reply_hint === "string") {
-          hintLine = replyInstructionLine(ev.reply_hint);
-        }
       } catch {
         // 非 JSON 行 (現契約では発生しないが、防御的に素通し)
       }
-      if (!filtered) {
-        process.stdout.write(hintLine !== null ? `${line}\n${hintLine}\n` : `${line}\n`);
-      }
+      if (!filtered) process.stdout.write(`${line}\n`);
     }
     // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
     // `ccmsg daemon stop` を subscribe が resurrection しない契約。
@@ -423,7 +408,7 @@ function printHelp(): void {
   process.stdout.write(`Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
-  read <room> <mN[,mN...]>                  メッセージ全文取得 (msg_via 指示時など)
+  read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
@@ -442,8 +427,8 @@ Usage:
 
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
-  reply <rNmN> <msg>           Reply using the reply_hint value from the received
-                               event; the daemon builds the delivery targets
+  reply <rNmN> <msg>           Reply using the target named by the received
+                               reply_via instruction; the daemon builds targets
   create-room [<title>]        Open a room with peers (--members, --msg, --title
                                or positional <title>; --title wins when both given,
                                --exclude-self to keep the caller out of the room,
@@ -454,10 +439,10 @@ Commands:
                                no backlog, just a room_cursors summary
                                ({room, last_mid} per visible room) — read to
                                catch up rooms you're behind on. --since replays
-                               history for the rooms it names (each msg line is
-                               followed by a plain reply instruction line,
-                               --raw to suppress)
-  read <room> <mids>           Fetch messages by mid ("10-15,18" or "10,11")
+                               history for the rooms it names; each msg carries
+                               its reply_via instruction
+  read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
+  read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -489,8 +474,6 @@ Command Options:
                                naming a room here opts it into a full/delta replay;
                                '{"r7":0}' replays r7 from the start. Un-named rooms
                                get only the room_cursors summary (bare default)
-  --raw                        subscribe: suppress the plain reply-instruction
-                               lines (pure JSONL for jq-style consumers)
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
@@ -591,7 +574,7 @@ async function main(): Promise<void> {
     }
     case "reply": {
       // DR-0017 §2.1: 返信先 msg (rNmN) を指すだけで、宛先 (to) は daemon が
-      // 元 msg から構成する — 受信 event の reply_hint 値をそのまま渡す想定。
+      // 元 msg から構成する — 受信 event の reply_via が指す target を渡す。
       const usage = "ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
       const ref = requireArg(args[0], "rNmN", usage);
       const msg = requireArg(args[1], "msg", usage);
@@ -687,9 +670,9 @@ async function main(): Promise<void> {
       return;
     }
     case "read": {
-      const usage = 'ccmsg read <room> <mids>   (e.g. ccmsg read r7 "10-15,18")';
-      const room = requireArg(args[0], "room", usage);
-      const mids = requireArg(args[1], "mids", usage);
+      const usage =
+        "ccmsg read <rNmN[,mN...]> | ccmsg read <room> <mids>   (e.g. ccmsg read r7m10,m11)";
+      const { room, mids } = parseReadArgs(args, usage);
       await runOnce(identity, { op: "read", room, mids });
       return;
     }

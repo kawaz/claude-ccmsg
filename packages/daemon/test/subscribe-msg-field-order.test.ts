@@ -1,8 +1,8 @@
 // docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: the harness's
 // task-notification truncation cuts from the block's tail. With the old wire
-// order (`msg` mid-way through the object, `seq`/`reply_hint` after it), a
+// order (`msg` mid-way through the object, `seq`/`reply_via` after it), a
 // long `msg` silently ate the trailing fields (kawaz r26 mid=110 — an agent
-// never noticed `reply_hint` had gone missing). Pinning `msg` as the LAST key
+// never noticed `reply_via` had gone missing). Pinning `msg` as the LAST key
 // on the subscribe wire means truncation always lands inside the body itself
 // — visibly incomplete — instead of silently dropping other fields.
 //
@@ -66,7 +66,7 @@ function topLevelKeyOrder(line: string): string[] {
 
 describe("subscribe wire order: msg events place `msg` last", () => {
   test(
-    "plain post (no to, no reply_hint recipient quirks): type,mid,from,ts,r,seq,reply_hint,msg",
+    "plain post (no to, no reply_via recipient quirks): type,mid,from,ts,r,seq,reply_via,msg",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -95,15 +95,15 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         // msg must be the LAST key, full stop — this is the receipt-side
         // contract the issue asks for.
         expect(keys[keys.length - 1]).toBe("msg");
-        // And the leading keys are in the documented order (to/seq/reply_hint
-        // are optional — this recipient does get a reply_hint since it's a
+        // And the leading keys are in the documented order (to/seq/reply_via
+        // are optional — this recipient does get a reply_via since it's a
         // real member of a non-1on1... actually 2-member create_room is a
-        // 1on1, so reply_hint will be "tl" only if from is ADMIN_ID; here
-        // from is a session, so reply_hint is "r<N>m<M>"). Assert prefix
-        // order strictly, tolerating to?/reply_hint presence.
-        const withoutOptional = keys.filter((k) => !["to", "reply_hint"].includes(k));
+        // 1on1, but from is a session, so reply_via directs `ccmsg reply`.
+        // Assert prefix
+        // order strictly, tolerating to?/reply_via presence.
+        const withoutOptional = keys.filter((k) => !["to", "reply_via"].includes(k));
         expect(withoutOptional).toEqual(["type", "mid", "from", "ts", "r", "seq", "msg"]);
-        // r must come before seq and reply_hint (structural fix for the
+        // r must come before seq and reply_via (structural fix for the
         // webui truncated-parse room recovery — DR issue §"webui 側の
         // truncated 救済 parse").
         expect(keys.indexOf("r")).toBeLessThan(keys.indexOf("msg"));

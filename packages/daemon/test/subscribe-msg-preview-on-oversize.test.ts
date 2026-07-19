@@ -33,7 +33,7 @@ interface MsgFrame {
   msg_via?: string;
   mid: number;
   r: string;
-  reply_hint?: string;
+  reply_via?: string;
 }
 
 async function readNextMsg(sub: TestClient): Promise<{ line: string; frame: MsgFrame }> {
@@ -97,7 +97,7 @@ describe("subscribe: predicted-truncation msg_via guidance", () => {
 
         const { line, frame } = await readNextMsg(sub);
         expect(frame.msg).toBeUndefined();
-        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room} ${posted.mid}\``);
+        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room}m${posted.mid}\``);
         expect(line).not.toContain("TAILMARKER");
 
         // msg_via replaces msg as the last wire key (issue 2026-07-17).
@@ -211,7 +211,7 @@ describe("subscribe: predicted-truncation msg_via guidance", () => {
 
         const { frame } = await readNextMsg(sub);
         expect(frame.msg).toBeUndefined();
-        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room} ${posted.mid}\``);
+        expect(frame.msg_via).toBe(`Use \`ccmsg read ${room}m${posted.mid}\``);
       } finally {
         await stopTestDaemon(ctx);
       }
