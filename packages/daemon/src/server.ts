@@ -224,6 +224,62 @@ function computeReplyHint(room: Room, ev: MsgEvent): string {
   return `${room.id}m${ev.mid}`;
 }
 
+/** Empirical harness truncation cap on Monitor stdout lines wrapped into a
+ * `<task-notification>` block: measured across ~140 real truncation samples
+ * from `~/.claude-personal/projects/**` (docs/findings/2026-07-19-task-
+ * notification-truncation.md). Two clusters appeared, ~500 chars of `<event>`
+ * body and ~3000 chars. We conservatively assume the smaller cap since kawaz
+ * r34 mid=18 is a recent hit; going below it guarantees no wire truncation
+ * regardless of which mode the harness is in.
+ *
+ * `WIRE_MSG_SAFE_BYTES` is the max serialized-JSON length we will emit for a
+ * `msg` frame on the subscribe wire. When the naturally-built frame exceeds
+ * it, we shorten `msg` in-place (preserving the wire order contract — msg
+ * still last, other fields intact) to a preview + fetch instruction. Storage
+ * (`rooms/*.jsonl`) always keeps the full body. Override via env for tuning:
+ * `CCMSG_WIRE_MSG_SAFE_BYTES=<positive integer>`. Default = 400 bytes ≈ 80%
+ * of the 500-char empirical cap (kawaz spec: 8-9 割で予測遮断). */
+function readWireMsgSafeBytesEnv(): number {
+  const raw = process.env.CCMSG_WIRE_MSG_SAFE_BYTES;
+  if (raw === undefined || raw === "") return 400;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return 400;
+  return n;
+}
+const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
+
+/** Fraction of the safe budget spent on the preview body itself — the rest
+ * is left for the fixed guidance suffix ("… ccmsg read rN <mid> で全文取得").
+ * Keep this a rough approximation, not a precise budget: guidance text length
+ * changes with room/mid width and we still want *some* preview even for tiny
+ * budgets. 120 chars is a full sentence or two of hint context; enough for
+ * the receiver AI to know if the reply is worth fetching without dominating
+ * the frame. */
+const WIRE_MSG_PREVIEW_CHARS = 120;
+
+/** UTF-8-safe truncate: cut at a JS char boundary (String slice is code-unit
+ * based, so a surrogate pair could split — round down when the boundary
+ * lands mid-pair). Preserves emoji / non-BMP chars intact. */
+function safeTruncate(s: string, maxChars: number): string {
+  if (s.length <= maxChars) return s;
+  let cut = maxChars;
+  const code = s.charCodeAt(cut - 1);
+  // If the char at cut-1 is a high surrogate, back off one more to keep the
+  // pair together (avoid emitting an unpaired surrogate).
+  if (code >= 0xd800 && code <= 0xdbff) cut -= 1;
+  return s.slice(0, cut);
+}
+
+/** Compose the "truncated preview" msg body: a short excerpt + a fetch
+ * instruction pointing the receiver at `ccmsg read <room> <mid>`. Kept in
+ * Japanese since ccmsg's primary audience is Japanese AI sessions and the
+ * message reaches an LLM that will follow the instruction. */
+function buildTruncatedPreview(msg: string, roomId: string, mid: number): string {
+  const preview = safeTruncate(msg, WIRE_MSG_PREVIEW_CHARS);
+  const ellipsis = preview.length < msg.length ? "…" : "";
+  return `${preview}${ellipsis} [長文のため wire で省略。全文取得: ccmsg read ${roomId} ${mid}]`;
+}
+
 /** subscribe wire order for `msg` events: `msg` (the body) is placed last,
  * after every other field (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md).
  * The harness's task-notification truncation cuts from the block's tail, so
@@ -233,11 +289,25 @@ function computeReplyHint(room: Room, ev: MsgEvent): string {
  * instead of silently dropping `reply_hint`/`seq`. `JSON.stringify` key order
  * follows insertion order, so this rebuilds the object explicitly rather than
  * spreading `ev`. Storage (`rooms/*.jsonl`, the `MsgEvent` type) keeps its own
- * field order — this only reshapes the live subscribe wire frame. */
+ * field order — this only reshapes the live subscribe wire frame.
+ *
+ * Additionally, when `previewOversize` is set (session-role subscribers —
+ * the ones whose frames pass through a Monitor's task-notification wrapper)
+ * and the naturally-built frame's serialized length would exceed
+ * `WIRE_MSG_SAFE_BYTES` (empirical safe-fraction of the harness's
+ * `task-notification` truncation cap, see the const's docstring), replace
+ * `msg` with a preview + `ccmsg read <room> <mid>` instruction and add
+ * `truncated: true` right before `msg` on the wire. The stored event and the
+ * receiver's own `ccmsg read` result still carry the full body — only the
+ * subscribe wire frame is reshaped, matching the existing orderedMsgFrame
+ * contract (kawaz r34 mid=18: full-text truncated in Monitor and the
+ * receiving AI had to re-fetch by hand; predicting the truncation ahead of
+ * time turns the round trip into a single self-descriptive frame). */
 function orderedMsgFrame(
   ev: MsgEvent,
   roomId: string,
   reply_hint: string | undefined,
+  previewOversize: boolean,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { type: ev.type, mid: ev.mid, from: ev.from, ts: ev.ts };
   if (ev.to !== undefined) out.to = ev.to;
@@ -246,6 +316,14 @@ function orderedMsgFrame(
   if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
   if (reply_hint !== undefined) out.reply_hint = reply_hint;
   out.msg = ev.msg;
+  // Predict-truncation: if serializing the natural frame exceeds the safe
+  // budget, swap in a preview msg + truncated flag. `truncated` is inserted
+  // before `msg` so msg remains the last key on the wire (issue 2026-07-17).
+  if (previewOversize && JSON.stringify(out).length > WIRE_MSG_SAFE_BYTES) {
+    delete out.msg;
+    out.truncated = true;
+    out.msg = buildTruncatedPreview(ev.msg, roomId, ev.mid);
+  }
   return out;
 }
 
@@ -259,7 +337,13 @@ function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
     // !== null); a non-recipient subscriber (e.g. u1 watching a room it's
     // not a member of) still gets the msg frame, just without a hint.
     const reply_hint = rid !== null ? computeReplyHint(room, ev) : undefined;
-    send(conn, orderedMsgFrame(ev, room.id, reply_hint));
+    // Preview-on-oversize targets the harness truncation between a `ccmsg
+    // subscribe` Monitor and its session AI — a session-role subscriber. The
+    // webui (user role) renders frames directly with no Monitor in between,
+    // so it always gets the full body (and its RoomView would otherwise show
+    // the preview text to a human who can scroll just fine).
+    const previewOversize = conn.identity?.role === "session";
+    send(conn, orderedMsgFrame(ev, room.id, reply_hint, previewOversize));
     return;
   }
   send(conn, { ...ev, r: room.id });
@@ -1641,7 +1725,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         req.request_id,
       );
       if (!complete) return;
-      void sessionKill(req.session_id, productionKillDeps).then(
+      // DR-0028 addendum (r38 mid=6): forward force through to session-kill.ts
+      // for the SIGKILL escalation path. Everything else in this dispatch
+      // stays the same (2-phase ack, error mapping, request_id echo).
+      void sessionKill(req.session_id, productionKillDeps, {
+        force: req.force === true,
+      }).then(
         (result) => {
           if (!result.found) {
             // Unresolvable sid and a pid that failed the ps verification are
