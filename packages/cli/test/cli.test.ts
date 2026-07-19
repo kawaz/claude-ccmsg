@@ -48,6 +48,7 @@ const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
+  dump <session-id> [--since <ts>]          セッション会話を統一 JSONL で回収
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
@@ -153,6 +154,8 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("Usage:");
       expect(help.out).toContain("read <rNmN[,mN...]");
       expect(help.out).toContain("read <room> <mids>");
+      expect(help.out).toContain("dump <session-id>");
+      expect(help.out).toContain("--until <timestamp>");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("Command Options:");

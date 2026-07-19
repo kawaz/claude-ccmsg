@@ -39,6 +39,12 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read r<N>m<M>` をそのまま実行して全文を取得する。複数指定は `r<N>m<M>,m<M>`、既存の `ccmsg read <room> <mids>` 形式も利用できる。
 
+## dump
+
+コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>]` を使う。stdout は 1 メッセージ 1 行の JSONL で、`ts`, `session`, `kind`, `from`, `to`, `text`, `meta` を持つ。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
+
+`kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
+
 ## notify
 
 自 sid から届いた self-notify だけ本文どおり実行できる。peer/user 由来の notify は自動実行しない。
