@@ -3864,17 +3864,59 @@ button.session-tab {
   font-size: 0.85rem;
 }
 
-.status-context {
+.status-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.35rem 0.75rem;
+  font-size: 1rem;
+}
+
+.status-meta dt {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.status-meta dd {
+  min-width: 0;
   margin: 0;
   font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.status-meta-value {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.status-meta-value > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.status-meta-copy {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.4rem;
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.status-meta-copy:hover,
+.status-meta-copy.copied {
   color: var(--accent);
+  border-color: var(--accent);
 }
 
 .status-context-note {
   color: var(--fg-muted);
   font-family: inherit;
-  font-size: 0.7rem;
+  font-size: 0.85em;
 }
 
 .status-estimate-note {

@@ -2,10 +2,10 @@
 // running workflows / background tasks / TODOs, folded from the daemon's
 // session_status_subscribe snapshot. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
-// needs the same live data) — this component is presentation-only, same
-// division of labor as SessionRooms being fed pre-fetched `state.rooms`.
+// needs the same live data); session identity metadata is resolved here from
+// the shared store so Status uses the same peer/pin/agent fallback as the topbar.
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ErrorResponse,
   SessionBackgroundStatus,
@@ -26,7 +26,9 @@ import {
   type WorkflowDrilldownGroupView,
 } from "../session-status-view.ts";
 import { agentTimelineHref } from "../locator.ts";
-import { formatClockTime, formatRelativeAge } from "../utils.ts";
+import { formatClockTime, formatRelativeAge, resolveSessionTopbar } from "../utils.ts";
+import { useApp } from "../context.ts";
+import { useStoreState } from "../useStore.ts";
 import { useNow } from "../useNow.ts";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。workflow drilldown の agent icon 語彙
@@ -37,6 +39,35 @@ function todoIconGlyph(status: string): string {
   if (status === "completed") return "✓";
   if (status === "in_progress") return "⟳";
   return "·";
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+
+  async function copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      class={"status-meta-copy" + (copied ? " copied" : "")}
+      title={`${label} をコピー`}
+      aria-label={`${label} をコピー`}
+      onClick={() => void copy()}
+    >
+      {copied ? "✓" : "コピー"}
+    </button>
+  );
 }
 
 function TodoRow({ todo }: { todo: SessionTodo }) {
@@ -444,6 +475,9 @@ export function StatusPanel({
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
 }) {
+  const { store } = useApp();
+  const state = useStoreState(store);
+  const cwd = resolveSessionTopbar(state, sid).cwd;
   if (!snapshot) {
     return (
       <div class="status-view">
@@ -465,15 +499,28 @@ export function StatusPanel({
     sections.background.done.length === 0;
   return (
     <div class="status-view">
-      {context ? (
-        // The "*" alone doesn't explain itself and the title attribute is
-        // hover-only (invisible on touch), so the estimation caveat gets a
-        // visible inline note — the issue's acceptance criterion is that the
-        // estimated nature is stated on the UI itself.
-        <p class="status-context" title={context.title}>
-          {context.text} <span class="status-context-note">上限は推定</span>
-        </p>
-      ) : null}
+      <dl class="status-meta">
+        <dt>CWD</dt>
+        <dd class="status-meta-value" title={cwd ?? undefined}>
+          <span>{cwd ?? "—"}</span>
+          {cwd ? <CopyButton value={cwd} label="CWD" /> : null}
+        </dd>
+        <dt>SESSION_ID</dt>
+        <dd class="status-meta-value">
+          <span>{sid}</span>
+          <CopyButton value={sid} label="SESSION_ID" />
+        </dd>
+        <dt>CTX</dt>
+        <dd title={context?.title}>
+          {context ? (
+            <>
+              {context.text} <span class="status-context-note">上限は推定</span>
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
+      </dl>
       {nothingAtAll ? (
         <p class="status-empty">このセッションの workflow / background / TODO はまだありません</p>
       ) : (

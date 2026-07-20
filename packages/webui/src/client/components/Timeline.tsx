@@ -1490,6 +1490,7 @@ function CcmsgBubble({
           {to?.length ? ` → ${to.join(", ")}` : ""}
           {" · #"}
           {message.room}
+          {message.mid === undefined ? null : `m${message.mid}`}
         </div>
         <div class="tl-thinking-tabs">
           <button
