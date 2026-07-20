@@ -146,6 +146,12 @@ describe("deriveRepoRoot", () => {
 // で検証する。
 describe("getRepoWsFromVcs", () => {
   let dir: string;
+  // 保険値: getRepoWsFromVcs は最大 5 回 `sh` を直列 spawn する共通デッドライン
+  // 方式。500ms だと 8 並列テスト実行時に sh の spawn だけで超過し、AbortSignal
+  // 由来ではなく本コード内の deadline で空フォールバックに落ちる flaky が出た
+  // (実測 503-506ms、tailscale-origin flaky と同型)。timeout 機構の検証は下の
+  // 専用 test が担うため、他 test は負荷耐性のある大きめ値を渡す。
+  const NORMAL_TIMEOUT_MS = 10_000;
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-vcsws-"));
@@ -166,7 +172,7 @@ describe("getRepoWsFromVcs", () => {
   test("バイナリが存在しなければ空フォールバックになる", async () => {
     const got = await getRepoWsFromVcs(dir, {
       bin: "/nonexistent/path/definitely-not-bump-semver",
-      timeoutMs: 500,
+      timeoutMs: NORMAL_TIMEOUT_MS,
     });
     expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
   });
@@ -174,7 +180,7 @@ describe("getRepoWsFromVcs", () => {
   // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
   test("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
   });
 
@@ -200,7 +206,7 @@ esac
     // cwd (第 1 引数) は spawn の作業ディレクトリとして実在する必要がある —
     // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
     // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got).toEqual({
       repo: "kawaz/claude-ccmsg",
       ws: "main",
@@ -223,7 +229,7 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got).toEqual({
       repo: "kawaz/ansible-role-postfix-relay",
       ws: "default",
@@ -247,7 +253,7 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got.repo).toBe("kawaz/mermaid-aa");
     expect(got.ws).toBe("mermaid-aa-pr1");
   });
@@ -266,7 +272,7 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 500 });
+    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got).toEqual({
       repo: "",
       ws: "main",
