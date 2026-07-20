@@ -33,17 +33,15 @@
   --warn: #b45309;
 
   /* In-view search (DR-0022) — one background/foreground pair per query
-   * word, cycled by SEARCH_PALETTE_SIZE (in-view-search.ts). Chosen for
-   * readability of black-ish text on top in light mode; the dark-mode block
-   * below swaps in higher-value/lower-saturation variants that stay legible
-   * against --bg without glowing. */
-  --search-color-1: #fde68a;
-  --search-color-2: #a7f3d0;
-  --search-color-3: #bfdbfe;
-  --search-color-4: #fbcfe8;
-  --search-color-5: #fed7aa;
-  --search-color-6: #ddd6fe;
-  --search-hl-fg: #1a1d23;
+   * word, cycled by SEARCH_PALETTE_SIZE (in-view-search.ts). */
+  --search-color-1: #ffea00;
+  --search-color-2: #57f287;
+  --search-color-3: #00e5ff;
+  --search-color-4: #ff5fd2;
+  --search-color-5: #ff9f1c;
+  --search-color-6: #b97aff;
+  --search-hl-fg: #000000;
+  --search-current-color: #111827;
 
   /* UNIF-Q1=b (kawaz r15 mid=3、2026-07-14): floating "+" fab + popup panel
    * を SessionView 1on1 と RoomView 通常/broadcast の Composer で共通化。
@@ -84,16 +82,15 @@
     --danger: #f87171;
     --warn: #fbbf24;
 
-    /* Dark-mode search highlight palette (DR-0022): muted/desaturated so
-     * <mark> spans don't glow against the dark background the way the
-     * light-mode pastels would. */
-    --search-color-1: #7a6420;
-    --search-color-2: #1f5c46;
-    --search-color-3: #274a75;
-    --search-color-4: #6b3352;
-    --search-color-5: #6b4420;
-    --search-color-6: #4a3d75;
-    --search-hl-fg: #e5e7eb;
+    /* High-chroma search colors must read as highlights against the dark UI. */
+    --search-color-1: #fff200;
+    --search-color-2: #39ff14;
+    --search-color-3: #00e5ff;
+    --search-color-4: #ff4fd8;
+    --search-color-5: #ff9f1c;
+    --search-color-6: #c77dff;
+    --search-hl-fg: #000000;
+    --search-current-color: #ffffff;
   }
 }
 
@@ -4435,8 +4432,8 @@ button.session-tab {
 }
 
 ::highlight(ccmsg-search-current) {
-  background: var(--accent);
-  color: var(--bg);
+  text-decoration: underline solid var(--search-current-color) 0.16em;
+  text-underline-offset: 0.12em;
 }
 
 /* Wrapper SegmentView adds only around a currently-matching in-view-search
