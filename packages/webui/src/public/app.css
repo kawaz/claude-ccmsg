@@ -4905,12 +4905,11 @@ button.session-tab {
   cursor: default;
 }
 
+/* kawaz r46 mid=18: 折り返し (ellipsis 切り詰め含む) はせず、パネル側の
+ * 横スクロール (.timeline-pane-tree overflow-x) で全文を見せる。 */
 .agent-tree-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   color: inherit;
   text-decoration: none;
 }
@@ -5001,6 +5000,8 @@ button.session-tab {
  * 内側パディングをここで担う (.file-tree の同種のルールと同じ役割)。 */
 .timeline-pane-tree {
   overflow-y: auto;
+  /* kawaz r46 mid=18: ノード名は折り返さず右スクロールで見せる */
+  overflow-x: auto;
   border-right: 1px solid var(--border);
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
