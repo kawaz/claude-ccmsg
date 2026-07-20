@@ -4176,7 +4176,6 @@ button.session-tab {
   right: 0;
   z-index: var(--z-composer);
   display: flex;
-  flex-direction: row-reverse;
   align-items: stretch;
   max-width: 100vw;
   transform: translate(calc(100% - 44px), -50%);
@@ -4185,10 +4184,6 @@ button.session-tab {
 
 .tl-auto-open-float-open {
   transform: translate(0, -50%);
-}
-
-.tl-auto-open-float-open .tl-auto-open-handle {
-  border-radius: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
