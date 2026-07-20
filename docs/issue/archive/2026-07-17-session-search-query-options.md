@@ -1,6 +1,6 @@
 ---
 title: Session Search クエリに case-sensitive / regex トグルと複数 AND を導入
-status: open
+status: resolved
 category: design
 created: 2026-07-17T07:36:16+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T03:43:34+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: SessionSearchRequest に case_sensitive/regex フラグ追加","done: 複数行AND は共通 parseSearchQuery で実装","done: regex プリフィルタは literal 断片抽出 + 抽出不能時の全行decode+RegExp.testフォールバックの2段構成","done: webui は SearchModeToggles で in-view検索とUX統一","done: session-search.test.ts でテスト済み、棚卸しで確認 (2026-07-21)"]
 blocked_by:
 origin: kawaz r26 mid=60
 ---
