@@ -176,6 +176,7 @@ function FoldSummary({
             </span>
           ) : null}
           <AgentIdentity name={view.decoration.name} />
+          <AgentTlLink name={view.decoration.name} />
         </span>
       ) : view.decoration?.kind === "bash" || view.decoration?.kind === "task-notification" ? (
         <span class="tl-fold-label tl-summary-decoration">{view.label}</span>
@@ -192,6 +193,18 @@ function AgentIdentity({ name }: { name: string }) {
       <Avatar seed={`agent:${name}`} size={18} />
       <strong>{name}</strong>
     </span>
+  );
+}
+
+// FoldSummary の内側で使う TL リンク (fold の details toggle を発火させない
+// ように click を止める)。href 未解決時は null を返す (呼び出し側で条件分岐)。
+function AgentTlLink({ name }: { name: string }) {
+  const tlHref = useContext(AgentTimelineHrefsContext).get(name);
+  if (!tlHref) return null;
+  return (
+    <a class="tl-agent-card-tl" href={tlHref} onClick={(event) => event.stopPropagation()}>
+      TL
+    </a>
   );
 }
 
@@ -386,17 +399,12 @@ function AgentCard({
   title?: string | null;
   body: string;
 }) {
-  const tlHref = useContext(AgentTimelineHrefsContext).get(name);
   return (
     <div class={`tl-agent-card tl-agent-${direction}`}>
       <div class="tl-agent-card-head">
         <span>{agentDirectionMarker(direction)}</span>
         <AgentIdentity name={name} />
-        {tlHref ? (
-          <a class="tl-agent-card-tl" href={tlHref}>
-            TL
-          </a>
-        ) : null}
+        <AgentTlLink name={name} />
         <span class="tl-agent-badge">{badge}</span>
       </div>
       {title ? <div class="tl-agent-title">{title}</div> : null}
