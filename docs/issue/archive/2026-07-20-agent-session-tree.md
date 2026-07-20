@@ -1,6 +1,6 @@
 ---
 title: サブエージェントのセッションツリー表示
-status: wip
+status: resolved
 category: design
 created: 2026-07-20T22:35:52+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-20T23:53:09+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T02:11:07+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: m7 完了 (v0.68.0)。agent_tree を SessionStatusSnapshot に追加 (subagents/ meta.json の toolUseId+spawnDepth で親子リンク、depth cap 5、orphan/teammate は root 直下)、AgentTreePanel を Timeline 隣 2 カラムで新設 (live dot + TL リンク + agent_type バッジ + details 折りたたみ)。実機確認 green (verify worker、孫 2 段 + teammate + orphan + mtime 両状態)。既知の限界: depth>=1 の live 判定は transcript mtime 2 分閾値の近似 (long-running tool call 中に false stopped になり得る、Design rationale はコード内)。パネル全体トグルと PaneSplitter 動的リサイズは MVP で未実装 (要望が出たら追加)"]
 blocked_by:
 origin: 自リポ TODO
 ---
