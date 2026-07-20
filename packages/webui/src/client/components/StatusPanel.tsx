@@ -513,6 +513,28 @@ export function StatusPanel({
           <span>{sid}</span>
           <CopyButton value={sid} label="SESSION_ID" />
         </dd>
+        <dt>PID</dt>
+        <dd class="status-meta-value">
+          {agent ? (
+            <>
+              <span>{agent.pid}</span>
+              <CopyButton value={String(agent.pid)} label="PID" />
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
+        <dt>HYOUI_SESSION_ID</dt>
+        <dd class="status-meta-value">
+          {agent?.hyoui_session_id ? (
+            <>
+              <span>{agent.hyoui_session_id}</span>
+              <CopyButton value={agent.hyoui_session_id} label="HYOUI_SESSION_ID" />
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
         <dt>LIVE</dt>
         <dd>{liveState ?? "—"}</dd>
         <dt>KIND</dt>

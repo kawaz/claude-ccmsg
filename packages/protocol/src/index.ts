@@ -1299,6 +1299,14 @@ export interface AgentInfo {
   id?: string;
   /** the CLAUDE_CONFIG_DIR this row was polled from (auto-detected ~/.claude* dirs) */
   config_dir: string;
+  /** Value of the `HYOUI_SESSION_ID` environment variable on the underlying
+   *  process (looked up per-poll via `ps eww` on the pid, cached per pid).
+   *  Absent when the process doesn't set the var or when the env couldn't
+   *  be read (permission denied on other users' processes, pid gone). The
+   *  daemon deliberately reads this from the *current* process — resuming
+   *  the same claude sessionId in a new process yields a new pid and thus
+   *  the current env, not a stale start-time snapshot. */
+  hyoui_session_id?: string;
 }
 export interface AgentsResponse {
   ok: true;
