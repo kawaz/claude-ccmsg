@@ -536,7 +536,7 @@ export function FileViewer({
         // paragraph; that's a visible cue matching the banner, not a
         // silent truncation.
         <div class="viewer-preview" ref={(el) => registerSearchLineRef(0, el)}>
-          <MarkdownView source={res.content} />
+          <MarkdownView source={res.content} tableOfContents />
         </div>
       ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>

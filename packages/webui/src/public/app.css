@@ -2373,8 +2373,90 @@ button.session-tab {
 .viewer-preview {
   padding: 0.75rem 1rem;
   overflow: auto;
+  scroll-behavior: smooth;
   font-size: 0.9rem;
   line-height: 1.5;
+}
+
+.md-toc {
+  margin: 0 0 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--bg-alt);
+  color: var(--fg);
+}
+
+.md-toc summary {
+  min-height: 2.25rem;
+  box-sizing: border-box;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+  font-weight: 650;
+  color: var(--accent);
+  touch-action: manipulation;
+}
+
+.md-toc nav {
+  max-height: min(18rem, 45vh);
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
+.md-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.5rem 0.45rem;
+}
+
+.md-toc li {
+  margin: 0;
+  padding-left: min(calc(var(--md-toc-depth) * 1rem), 4rem);
+}
+
+.md-toc a {
+  display: flex;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.2rem 0.25rem;
+  border-radius: 0.25rem;
+  color: var(--fg);
+  text-decoration: none;
+  line-height: 1.35;
+}
+
+.md-toc a:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+}
+
+.md-toc-number {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-preview .md h1,
+.viewer-preview .md h2,
+.viewer-preview .md h3,
+.viewer-preview .md h4,
+.viewer-preview .md h5,
+.viewer-preview .md h6 {
+  scroll-margin-top: 3.25rem;
+}
+
+@media (max-width: 720px) {
+  .viewer-preview {
+    padding-inline: 0.65rem;
+  }
+
+  .md-toc li {
+    padding-left: min(calc(var(--md-toc-depth) * 0.65rem), 2.6rem);
+  }
+
+  .md-toc a {
+    padding-block: 0.3rem;
+  }
 }
 
 .viewer-header {

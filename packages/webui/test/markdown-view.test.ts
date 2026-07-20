@@ -17,6 +17,7 @@ import type { Root } from "mdast";
 import { parse } from "@mizchi/markdown";
 import {
   attachmentUrlFromPath,
+  extractMarkdownHeadings,
   isSafeUrl,
   parseMarkdownSource,
   renderMarkdownAst,
@@ -339,6 +340,55 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     expect(links.map((link) => (link.props as { href?: string }).href)).toEqual([
       "https://example.com",
       "mailto:user@example.com",
+    ]);
+  });
+});
+
+describe("extractMarkdownHeadings", () => {
+  test("extracts h1-h6 in document order with visible inline text", () => {
+    const root = parseMarkdownSource(
+      ["# Overview *now*", "", "> ## Quoted `code`", "", "###### Final"].join("\n"),
+    );
+
+    expect(extractMarkdownHeadings(root)).toEqual([
+      { depth: 1, text: "Overview now", number: "1", id: "md-section-1" },
+      { depth: 2, text: "Quoted code", number: "1.1", id: "md-section-1-1" },
+      { depth: 6, text: "Final", number: "1.1.0.0.0.1", id: "md-section-1-1-0-0-0-1" },
+    ]);
+  });
+
+  test("matches CSS-counter resets, including skipped levels", () => {
+    const root = parseMarkdownSource(["# A", "## B", "## C", "### D", "# E", "### F"].join("\n"));
+
+    expect(extractMarkdownHeadings(root).map((heading) => heading.number)).toEqual([
+      "1",
+      "1.1",
+      "1.2",
+      "1.2.1",
+      "2",
+      "2.0.1",
+    ]);
+  });
+
+  test("assigns unique anchors to duplicate and empty heading labels", () => {
+    const root = parseMarkdownSource(["# Same", "## Same", "###"].join("\n"));
+
+    expect(extractMarkdownHeadings(root).map(({ text, id }) => ({ text, id }))).toEqual([
+      { text: "Same", id: "md-section-1" },
+      { text: "Same", id: "md-section-1-1" },
+      { text: "（無題）", id: "md-section-1-1-1" },
+    ]);
+  });
+
+  test("renderMarkdownAst applies extracted anchors to the matching headings", () => {
+    const root = parseMarkdownSource("# First\n\n## Second");
+    const headings = extractMarkdownHeadings(root);
+    const vnode = renderMarkdownAst(root, undefined, headings);
+    const renderedHeadings = collect(vnode, (node) => /^h[1-6]$/.test(String(node.type)));
+
+    expect(renderedHeadings.map((node) => (node.props as { id?: string }).id)).toEqual([
+      "md-section-1",
+      "md-section-1-1",
     ]);
   });
 });

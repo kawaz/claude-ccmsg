@@ -114,6 +114,65 @@ export function isSafeUrl(url: string): boolean {
 
 type AnyNode = RootContent | PhrasingContent;
 
+export interface MarkdownHeading {
+  depth: Heading["depth"];
+  id: string;
+  number: string;
+  text: string;
+}
+
+function headingPlainText(node: PhrasingContent): string {
+  switch (node.type) {
+    case "text":
+    case "inlineCode":
+    case "html":
+      return node.value;
+    case "image":
+      return node.alt ?? "";
+    case "break":
+      return " ";
+    default: {
+      const parent = node as PhrasingContent & { children?: PhrasingContent[] };
+      return parent.children?.map(headingPlainText).join("") ?? "";
+    }
+  }
+}
+
+/** Extract the numbered document outline used by both heading anchors and the
+ * file preview's TOC. The counter transition mirrors app.css exactly: entering
+ * depth N increments that level and resets every deeper level. */
+export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
+  const counters = [0, 0, 0, 0, 0, 0];
+  const headings: MarkdownHeading[] = [];
+
+  function visit(nodes: AnyNode[] | undefined): void {
+    if (!nodes) return;
+    for (const node of nodes) {
+      if (node.type === "heading") {
+        const heading = node as Heading;
+        const index = heading.depth - 1;
+        counters[index] += 1;
+        counters.fill(0, index + 1);
+        const number = counters.slice(0, heading.depth).join(".");
+        headings.push({
+          depth: heading.depth,
+          id: `md-section-${number.replaceAll(".", "-")}`,
+          number,
+          text:
+            heading.children.map(headingPlainText).join("").replace(/\s+/g, " ").trim() ||
+            "（無題）",
+        });
+        continue;
+      }
+      const parent = node as AnyNode & { children?: AnyNode[] };
+      visit(parent.children);
+    }
+  }
+
+  visit(root.children);
+  return headings;
+}
+
 /** In-view search context threaded through the mdast walk (DR-0022 §3: TL
  * highlighting must reach into markdown-rendered assistant text, not just
  * plain segments) — `undefined` (the common case, no active search) skips
@@ -133,13 +192,19 @@ interface MarkdownSearchCtx {
   onMatchClick: () => void;
 }
 
+interface MarkdownRenderCtx {
+  search?: MarkdownSearchCtx;
+  headings?: readonly MarkdownHeading[];
+  headingIndex: number;
+}
+
 function renderChildren(
   nodes: AnyNode[] | undefined,
   keyPrefix: string,
-  search: MarkdownSearchCtx | undefined,
+  ctx: MarkdownRenderCtx,
 ): (VNode | string)[] {
   if (!nodes) return [];
-  return nodes.map((n, i) => renderNode(n, `${keyPrefix}.${i}`, search));
+  return nodes.map((n, i) => renderNode(n, `${keyPrefix}.${i}`, ctx));
 }
 
 // Every mdast node type this renderer has an opinion on is listed in
@@ -151,11 +216,8 @@ function renderChildren(
 // and this app never passes it) — falls through to the `default` case below,
 // which recurses into `children` if present so text content isn't silently
 // dropped, or renders nothing if the node has none.
-function renderNode(
-  node: AnyNode,
-  key: string,
-  search: MarkdownSearchCtx | undefined,
-): VNode | string {
+function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode | string {
+  const search = ctx.search;
   switch (node.type) {
     case "text": {
       const value = (node as Text).value;
@@ -186,7 +248,7 @@ function renderNode(
     }
 
     case "paragraph":
-      return <p key={key}>{renderChildren((node as Paragraph).children, key, search)}</p>;
+      return <p key={key}>{renderChildren((node as Paragraph).children, key, ctx)}</p>;
 
     case "heading": {
       const heading = node as Heading;
@@ -197,17 +259,23 @@ function renderNode(
         | "h4"
         | "h5"
         | "h6";
-      return h(tag, { key }, renderChildren(heading.children, key, search)) as VNode;
+      const outlineHeading = ctx.headings?.[ctx.headingIndex];
+      ctx.headingIndex += 1;
+      return h(
+        tag,
+        { key, id: outlineHeading?.id },
+        renderChildren(heading.children, key, ctx),
+      ) as VNode;
     }
 
     case "strong":
-      return <strong key={key}>{renderChildren((node as Strong).children, key, search)}</strong>;
+      return <strong key={key}>{renderChildren((node as Strong).children, key, ctx)}</strong>;
 
     case "emphasis":
-      return <em key={key}>{renderChildren((node as Emphasis).children, key, search)}</em>;
+      return <em key={key}>{renderChildren((node as Emphasis).children, key, ctx)}</em>;
 
     case "delete":
-      return <del key={key}>{renderChildren((node as Delete).children, key, search)}</del>;
+      return <del key={key}>{renderChildren((node as Delete).children, key, ctx)}</del>;
 
     case "inlineCode":
       return (
@@ -231,7 +299,7 @@ function renderNode(
       // by this same origin.
       const attachment = attachmentUrlFromPath(link.url);
       if (attachment) {
-        const label = renderChildren(link.children, key, search);
+        const label = renderChildren(link.children, key, ctx);
         // Extract text-only alt for the <img>; falls back to link text as-is
         // when children include non-text (rare for `[FILE1:name](path)` shape
         // which is a single text run, but be defensive).
@@ -269,7 +337,7 @@ function renderNode(
         // Disarmed: render the link's own text with no <a>/href at all so a
         // hostile URL scheme can never reach the DOM, while the human-visible
         // content (the link text) is still shown rather than dropped.
-        return <span key={key}>{renderChildren(link.children, key, search)}</span>;
+        return <span key={key}>{renderChildren(link.children, key, ctx)}</span>;
       }
       return (
         <a
@@ -279,7 +347,7 @@ function renderNode(
           target="_blank"
           rel="noopener noreferrer"
         >
-          {renderChildren(link.children, key, search)}
+          {renderChildren(link.children, key, ctx)}
         </a>
       );
     }
@@ -314,18 +382,16 @@ function renderNode(
       return h(
         tag,
         { key, start: list.start ?? undefined },
-        renderChildren(list.children, key, search),
+        renderChildren(list.children, key, ctx),
       ) as VNode;
     }
 
     case "listItem":
-      return <li key={key}>{renderChildren((node as ListItem).children, key, search)}</li>;
+      return <li key={key}>{renderChildren((node as ListItem).children, key, ctx)}</li>;
 
     case "blockquote":
       return (
-        <blockquote key={key}>
-          {renderChildren((node as Blockquote).children, key, search)}
-        </blockquote>
+        <blockquote key={key}>{renderChildren((node as Blockquote).children, key, ctx)}</blockquote>
       );
 
     case "thematicBreak":
@@ -361,7 +427,7 @@ function renderNode(
                       key: `${key}.${ri}.${ci}`,
                       style: cellAlign ? { textAlign: cellAlign } : undefined,
                     },
-                    renderChildren(cell.children, `${key}.${ri}.${ci}`, search),
+                    renderChildren(cell.children, `${key}.${ri}.${ci}`, ctx),
                   ) as VNode;
                 })}
               </tr>
@@ -377,9 +443,7 @@ function renderNode(
       // comment) so text content still surfaces, otherwise render nothing.
       const maybeParent = node as unknown as { children?: unknown };
       if (Array.isArray(maybeParent.children)) {
-        return (
-          <span key={key}>{renderChildren(maybeParent.children as AnyNode[], key, search)}</span>
-        );
+        return <span key={key}>{renderChildren(maybeParent.children as AnyNode[], key, ctx)}</span>;
       }
       return "";
     }
@@ -490,8 +554,13 @@ export function parseMarkdownSource(source: string): Root {
 /** Pure mdast-AST -> VNode transform, split out from `MarkdownView` so tests
  * can hand-construct mdast fragments (DR-0010) without going through
  * `parse()`. */
-export function renderMarkdownAst(root: Root, search?: MarkdownSearchCtx): VNode {
-  return <div class="md">{renderChildren(root.children, "md", search)}</div>;
+export function renderMarkdownAst(
+  root: Root,
+  search?: MarkdownSearchCtx,
+  headings?: readonly MarkdownHeading[],
+): VNode {
+  const ctx: MarkdownRenderCtx = { search, headings, headingIndex: 0 };
+  return <div class="md">{renderChildren(root.children, "md", ctx)}</div>;
 }
 
 // `useMemo` keyed on `source`: parse+render は Timeline のような親が高頻度
@@ -510,15 +579,54 @@ export function MarkdownView({
   source,
   highlightWords,
   onMatchClick,
+  tableOfContents = false,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
   onMatchClick?: () => void;
+  tableOfContents?: boolean;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
-  return useMemo(
-    () => renderMarkdownAst(parseMarkdownSource(source), search),
-    [source, highlightWords, onMatchClick],
-  );
+  return useMemo(() => {
+    const root = parseMarkdownSource(source);
+    const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
+    const markdown = renderMarkdownAst(root, search, tableOfContents ? headings : undefined);
+    if (headings.length <= 1) return markdown;
+
+    return (
+      <div class="md-document">
+        <details class="md-toc" open={headings.length <= 6}>
+          <summary>目次</summary>
+          <nav aria-label="目次">
+            <ol>
+              {headings.map((heading) => (
+                <li
+                  key={heading.id}
+                  class={`md-toc-depth-${heading.depth}`}
+                  style={{ "--md-toc-depth": heading.depth - 1 }}
+                >
+                  <a
+                    href={`#${heading.id}`}
+                    onClick={(event) => {
+                      // The app hash owns session/file routing, so keep the anchor
+                      // URL for semantics but scroll without replacing that hash.
+                      event.preventDefault();
+                      document
+                        .getElementById(heading.id)
+                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                  >
+                    <span class="md-toc-number">{heading.number}</span>
+                    <span>{heading.text}</span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </nav>
+        </details>
+        {markdown}
+      </div>
+    );
+  }, [source, highlightWords, onMatchClick, tableOfContents]);
 }
