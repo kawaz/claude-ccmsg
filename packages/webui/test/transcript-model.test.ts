@@ -466,6 +466,7 @@ describe("parseTranscriptLine / assistant turns", () => {
       kind: "agent-spawn",
       name: "audit",
       agentType: "Explore",
+      model: "",
       description: "構造調査",
       prompt: "対象を読んで報告",
       background: true,

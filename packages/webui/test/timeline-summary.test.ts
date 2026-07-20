@@ -34,7 +34,14 @@ describe("foldSummaryView", () => {
       decoration: peer,
     });
 
-    const spawn = { kind: "agent", prefix: "Agent:", name: "worker" } as const;
+    // Agent spawn は SendMessage と別種 decoration。方向 badge (→/←) ではなく
+    // "new" chip + agentType/model の常時表示を伴う (kawaz r44 mid=5)。
+    const spawn = {
+      kind: "agent-spawn",
+      name: "worker",
+      agentType: "Explore",
+      model: "sonnet",
+    } as const;
     expect(foldSummaryView("Agent: worker", false, spawn)).toEqual({
       label: "Agent: worker",
       decoration: spawn,

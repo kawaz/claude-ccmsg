@@ -178,6 +178,19 @@ function FoldSummary({
           <AgentIdentity name={view.decoration.name} />
           <AgentTlLink name={view.decoration.name} />
         </span>
+      ) : view.decoration?.kind === "agent-spawn" ? (
+        <span class="tl-fold-label tl-summary-decoration">
+          <span>Agent</span>
+          <span class="tl-direction-badge tl-direction-spawn">new</span>
+          <AgentIdentity name={view.decoration.name} />
+          <AgentTlLink name={view.decoration.name} />
+          {view.decoration.agentType ? (
+            <span class="tl-agent-meta">{view.decoration.agentType}</span>
+          ) : null}
+          {view.decoration.model ? (
+            <span class="tl-agent-meta tl-agent-model">{view.decoration.model}</span>
+          ) : null}
+        </span>
       ) : view.decoration?.kind === "bash" || view.decoration?.kind === "task-notification" ? (
         <span class="tl-fold-label tl-summary-decoration">{view.label}</span>
       ) : (
@@ -392,20 +405,29 @@ function AgentCard({
   badge,
   title,
   body,
+  variant = "send",
+  model,
 }: {
   name: string;
   direction: "inbound" | "outbound";
   badge: string;
   title?: string | null;
   body: string;
+  // "send" = SendMessage の送受信 (🤖→ / 🤖←、方向 badge)、
+  // "spawn" = Agent tool 起動 (🤖✚、"new" badge、model を常時表示)。
+  variant?: "send" | "spawn";
+  model?: string;
 }) {
+  // spawn は送受信ではないので、方向を示す 🤖→ ではなく起動を示す 🤖✚ を使う。
+  const marker = variant === "spawn" ? "🤖✚" : agentDirectionMarker(direction);
   return (
-    <div class={`tl-agent-card tl-agent-${direction}`}>
+    <div class={`tl-agent-card tl-agent-${direction} tl-agent-${variant}`}>
       <div class="tl-agent-card-head">
-        <span>{agentDirectionMarker(direction)}</span>
+        <span>{marker}</span>
         <AgentIdentity name={name} />
         <AgentTlLink name={name} />
         <span class="tl-agent-badge">{badge}</span>
+        {model ? <span class="tl-agent-model-badge">{model}</span> : null}
       </div>
       {title ? <div class="tl-agent-title">{title}</div> : null}
       {body ? <div class="tl-agent-body">{body}</div> : null}
@@ -474,10 +496,10 @@ function AgentSpawnFold({
         label={`Agent: ${segment.name}`}
         open={open}
         decoration={{
-          kind: "agent",
-          prefix: "Agent:",
+          kind: "agent-spawn",
           name: segment.name,
-          direction: "outbound",
+          agentType: segment.agentType,
+          model: segment.model,
         }}
       />
       <div class="tl-guided">
@@ -485,7 +507,9 @@ function AgentSpawnFold({
         <AgentCard
           name={segment.name}
           direction="outbound"
-          badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
+          variant="spawn"
+          badge={`${segment.agentType || "agent"}${segment.background ? " · background" : ""}`}
+          model={segment.model || undefined}
           title={segment.description || null}
           body={segment.prompt}
         />

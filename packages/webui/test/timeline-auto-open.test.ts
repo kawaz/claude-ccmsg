@@ -60,6 +60,7 @@ describe("segmentAutoOpenCategory", () => {
         kind: "agent-spawn",
         name: "worker",
         agentType: "Explore",
+        model: "",
         description: "調査",
         prompt: "inspect",
         background: true,

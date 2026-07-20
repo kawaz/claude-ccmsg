@@ -3141,7 +3141,8 @@ button.session-tab {
   border: 1px dashed var(--assistant-bubble-border);
 }
 
-.tl-agent-fold:not([open]) > .tl-agent-summary .tl-summary-decoration {
+.tl-agent-fold:not([open]) > .tl-agent-summary .tl-summary-decoration,
+.tl-agent-fold:not([open]) > .tl-agent-spawn-summary .tl-summary-decoration {
   background: var(--agent-comm-bg);
   border: 1px dashed var(--agent-comm-border);
 }
@@ -3175,6 +3176,34 @@ button.session-tab {
   color: color-mix(in srgb, var(--assistant-bubble-border) 75%, var(--fg));
   background: color-mix(in srgb, var(--assistant-bubble-border) 18%, transparent);
   border-color: color-mix(in srgb, var(--assistant-bubble-border) 70%, transparent);
+}
+
+/* Agent spawn 用の badge。→ / ← と同じシェイプで "new" テキストを見せる
+ * (送受信ではなく起動イベントであることを表す)。 */
+.tl-direction-spawn {
+  padding: 0 0.35rem;
+  min-width: 0;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* summary 内で agentType / model を控えめに常時表示するためのメタ chip */
+.tl-agent-meta {
+  padding: 0 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-muted);
+}
+
+.tl-agent-meta.tl-agent-model {
+  border-style: dashed;
 }
 
 .tl-decorated-summary .tl-agent-identity {
@@ -3451,6 +3480,18 @@ button.session-tab {
   border-radius: 999px;
   font-size: 0.66rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* spawn カード head の model chip (agent-badge の直後、常時表示)。
+ * agent-badge の margin-left:auto を無効化してすぐ隣に並べる。 */
+.tl-agent-model-badge {
+  flex: 0 0 auto;
+  padding: 0.05rem 0.35rem;
+  border: 1px dashed var(--agent-comm-border);
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-muted);
 }
 
 .tl-agent-title {

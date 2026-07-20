@@ -62,6 +62,7 @@ export type Segment =
       kind: "agent-spawn";
       name: string;
       agentType: string;
+      model: string;
       description: string;
       prompt: string;
       background: boolean;
@@ -183,12 +184,20 @@ function parseSpecialTool(name: string, toolUseId: string, input: unknown): Segm
     };
   }
   if (name === "Agent") {
-    const description = stringField(obj, "description");
+    // Agent tool の identity は explicit な `name` を最優先。
+    // 無ければ `subagent_type` (worker preset 名) にフォールバックする。
+    // `description` は「起動理由」であって identity ではないため、
+    // 名前欄には流し込まない (kawaz r44 mid=5: 🤖→ の後ろには
+    // spawn 先の名前を出すのが自然、description は従属表示)。
+    const explicitName = stringField(obj, "name");
+    const agentType = stringField(obj, "subagent_type");
+    const model = stringField(obj, "model");
     return {
       kind: "agent-spawn",
-      name: stringField(obj, "name") || description || "agent",
-      agentType: stringField(obj, "subagent_type", "model") || "agent",
-      description,
+      name: explicitName || agentType || "agent",
+      agentType,
+      model,
+      description: stringField(obj, "description"),
       prompt: stringField(obj, "prompt"),
       background: obj.run_in_background === true,
     };
