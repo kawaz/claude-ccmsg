@@ -14,7 +14,6 @@ import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
-import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 
@@ -326,35 +325,16 @@ export function SessionView({ state }: { state: AppState }) {
         // the user why, so the pane falls back to the same explanation
         // rather than calling ws.transcriptRead for a session we know lacks one.
         hasTranscript ? (
-          // r44 m7: agent_tree が居るセッションでは TL の右隣にセッション
-          // ツリーパネルを表示する (subagent/teammate を辿るナビ)。無い
-          // セッションでは Timeline を単独で描き、余計な空パネルは出さない。
-          sessionStatus?.agent_tree && sessionStatus.agent_tree.length > 0 ? (
-            <div class="session-panes timeline-panes">
-              <div class="session-pane session-pane-timeline" style={{ flex: "1 1 auto" }}>
-                <Timeline
-                  sid={sid}
-                  timeline={tree.timeline}
-                  search={tree.timelineSearch}
-                  sessionStatus={sessionStatus}
-                  onOpenStatus={() => setLocalTab("status")}
-                  agent={state.currentAgent}
-                />
-              </div>
-              <div class="session-pane agent-tree-pane" style={{ flex: "0 0 22rem" }}>
-                <AgentTreePanel sid={sid} tree={sessionStatus.agent_tree} />
-              </div>
-            </div>
-          ) : (
-            <Timeline
-              sid={sid}
-              timeline={tree.timeline}
-              search={tree.timelineSearch}
-              sessionStatus={sessionStatus}
-              onOpenStatus={() => setLocalTab("status")}
-              agent={state.currentAgent}
-            />
-          )
+          // r46 m3: セッションツリーパネルは Sidebar 側へ移動 (kawaz r46m3)。
+          // Timeline は従来通りフル幅で単独描画。
+          <Timeline
+            sid={sid}
+            timeline={tree.timeline}
+            search={tree.timelineSearch}
+            sessionStatus={sessionStatus}
+            onOpenStatus={() => setLocalTab("status")}
+            agent={state.currentAgent}
+          />
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )

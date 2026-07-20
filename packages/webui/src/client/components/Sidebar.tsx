@@ -9,6 +9,7 @@ import { RoomList } from "./RoomList.tsx";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
+import { AgentTreePanel } from "./AgentTreePanel.tsx";
 
 const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
@@ -149,6 +150,15 @@ export function Sidebar({ state }: { state: AppState }) {
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
   // sortPeers's doc comment in utils.ts and SessionList.tsx's tick).
   const sortedPeers = useMemo(() => sortPeers(state.peers, sortKey), [state.peers, sortKey]);
+  // r46 m3: セッションツリーは Timeline 右カラムから Sidebar 下段の section
+  // へ移動 (kawaz r46m3)。sessionStatuses は Files/Status/Timeline タブ購読中
+  // だけ埋まる (SessionView.tsx の needsStatus effect) ため、選択セッションの
+  // agent_tree が居る時だけ section を出す (空 section で場所を取らない)。
+  const selectedSidValue = selectedSid(state);
+  const agentTree = selectedSidValue
+    ? (state.sessionStatuses.get(selectedSidValue)?.agent_tree ?? [])
+    : [];
+  const showAgentTree = selectedSidValue !== null && agentTree.length > 0;
 
   return (
     <nav id="sidebar" class={state.sidebarOpen ? "open" : undefined}>
@@ -195,6 +205,12 @@ export function Sidebar({ state }: { state: AppState }) {
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
         )}
       </section>
+      {showAgentTree && selectedSidValue ? (
+        <section id="agent-tree-panel-section">
+          <h2>Session Tree</h2>
+          <AgentTreePanel sid={selectedSidValue} tree={agentTree} />
+        </section>
+      ) : null}
     </nav>
   );
 }
