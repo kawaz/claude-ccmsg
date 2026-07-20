@@ -57,6 +57,7 @@ import {
   type SearchWord,
 } from "../in-view-search.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
+import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
 import {
   defaultTimelineAutoOpen,
@@ -403,7 +404,8 @@ function AgentSendFold({
   ts: string | null;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
-  const label = `SendMessage → ${segment.to}`;
+  const marker = agentDirectionMarker("outbound");
+  const label = `${marker} ${segment.to}`;
   return (
     <details
       class="tl-fold tl-agent-fold"
@@ -414,14 +416,14 @@ function AgentSendFold({
         ts={ts}
         label={label}
         open={open}
-        decoration={{ kind: "agent", prefix: "SendMessage →", name: segment.to }}
+        decoration={{ kind: "agent", prefix: marker, name: segment.to }}
       />
       <div class="tl-guided">
         <FoldGuide />
         <AgentCard
           name={segment.to}
           direction="outbound"
-          badge={segment.messageType === "message" ? "送信" : segment.messageType}
+          badge={segment.messageType === "message" ? marker : `${marker} ${segment.messageType}`}
           title={segment.summary}
           body={segment.message}
         />
@@ -440,6 +442,7 @@ function AgentSpawnFold({
   ts: string | null;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
+  const marker = agentDirectionMarker("outbound");
   return (
     <details
       class="tl-fold tl-agent-fold"
@@ -448,16 +451,16 @@ function AgentSpawnFold({
     >
       <FoldSummary
         ts={ts}
-        label={`Agent: ${segment.name}`}
+        label={`${marker} ${segment.name}`}
         open={open}
-        decoration={{ kind: "agent", prefix: "Agent:", name: segment.name }}
+        decoration={{ kind: "agent", prefix: marker, name: segment.name }}
       />
       <div class="tl-guided">
         <FoldGuide />
         <AgentCard
           name={segment.name}
           direction="outbound"
-          badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
+          badge={`${marker} ${segment.agentType}${segment.background ? " · background" : ""}`}
           title={segment.description || null}
           body={segment.prompt}
         />
@@ -753,6 +756,19 @@ function SegmentView({
 // 「event 本文は monospace で」) — task-notification 以外の kind がたまたま
 // 同名フィールドを持つことは想定していないが、フィールド名一致だけで判定する
 // のでどの kind から来ても等幅になる (副作用として無害)。
+type PeerMessageRich = Extract<SystemMessageRich, { display: "peer" }>;
+
+function IdlePeerRow({ peer, ts }: { peer: PeerMessageRich; ts: string | null }) {
+  const presentation = peerMessagePresentation(peer);
+  if (presentation.kind !== "idle") return null;
+  return (
+    <div class="tl-line tl-agent-idle">
+      {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
+      <span class="tl-fold-label">peer-message ← [idle通知] {peer.from}</span>
+    </div>
+  );
+}
+
 function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
   switch (rich.display) {
     case "fields":
@@ -785,26 +801,19 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
           {rich.detail ? <span class="tl-sysmsg-chip-detail">{rich.detail}</span> : null}
         </div>
       );
-    case "peer":
+    case "peer": {
+      const presentation = peerMessagePresentation(rich);
+      if (presentation.kind === "idle") return <IdlePeerRow peer={rich} ts={null} />;
       return (
         <AgentCard
           name={rich.from}
           direction="inbound"
-          badge={
-            rich.category === "idle"
-              ? "待機通知"
-              : rich.category === "task-assignment"
-                ? "タスク指示"
-                : rich.category === "lifecycle"
-                  ? "状態変更"
-                  : rich.category === "unknown"
-                    ? "未知"
-                    : "受信"
-          }
+          badge={presentation.badge}
           title={rich.summary}
           body={rich.body}
         />
       );
+    }
     case "text":
       return <pre class="tl-fold-body">{rich.text}</pre>;
   }
@@ -908,17 +917,20 @@ function SystemMessageFold({
     [kind, line.segments],
   );
   const peer = rich.display === "peer" ? rich : null;
+  const idlePeer = peer?.category === "idle" ? peer : null;
+  if (idlePeer) return <IdlePeerRow peer={idlePeer} ts={line.ts} />;
   const open = peer ? agentOpen : manualOpen;
   const setOpen = peer ? setAgentOpen : setManualOpen;
   const taskSummary =
     kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
+  const inboundMarker = agentDirectionMarker("inbound");
   const label = peer
-    ? `${kind} ← ${peer.from}`
+    ? `${inboundMarker} ${peer.from}`
     : taskSummary && !open
       ? `${kind} ${taskSummary}`
       : kind;
   const decoration: FoldSummaryDecoration | undefined = peer
-    ? { kind: "agent", prefix: `${kind} ←`, name: peer.from }
+    ? { kind: "agent", prefix: inboundMarker, name: peer.from }
     : taskSummary
       ? { kind: "task-notification" }
       : undefined;
@@ -929,12 +941,26 @@ function SystemMessageFold({
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
       <FoldSummary ts={line.ts} label={label} open={open} decoration={decoration} />
-      <SystemMessageBody
-        kind={kind}
-        line={line}
-        translationAvailability={translationAvailability}
-        foldGroupOpen={foldGroupOpen}
-      />
+      {peer ? (
+        <div class="tl-guided">
+          <FoldGuide />
+          <div class="tl-guided-content">
+            <SystemMessageBody
+              kind={kind}
+              line={line}
+              translationAvailability={translationAvailability}
+              foldGroupOpen={foldGroupOpen}
+            />
+          </div>
+        </div>
+      ) : (
+        <SystemMessageBody
+          kind={kind}
+          line={line}
+          translationAvailability={translationAvailability}
+          foldGroupOpen={foldGroupOpen}
+        />
+      )}
     </details>
   );
 }

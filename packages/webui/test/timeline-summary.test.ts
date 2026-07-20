@@ -9,11 +9,17 @@ describe("foldSummaryView", () => {
     });
   });
 
-  test("keeps agent identity decoration while closed", () => {
-    const decoration = { kind: "agent", prefix: "SendMessage →", name: "team-lead" } as const;
-    expect(foldSummaryView("SendMessage → team-lead", false, decoration)).toEqual({
-      label: "SendMessage → team-lead",
-      decoration,
+  test("keeps directional agent identity decoration while closed", () => {
+    const outbound = { kind: "agent", prefix: "🤖→", name: "team-lead" } as const;
+    expect(foldSummaryView("🤖→ team-lead", false, outbound)).toEqual({
+      label: "🤖→ team-lead",
+      decoration: outbound,
+    });
+
+    const inbound = { kind: "agent", prefix: "🤖←", name: "worker" } as const;
+    expect(foldSummaryView("🤖← worker", false, inbound)).toEqual({
+      label: "🤖← worker",
+      decoration: inbound,
     });
   });
 
@@ -35,12 +41,12 @@ describe("foldSummaryView", () => {
 
   test("removes decoration while open", () => {
     expect(
-      foldSummaryView("peer-message ← teammate", true, {
+      foldSummaryView("🤖← teammate", true, {
         kind: "agent",
-        prefix: "peer-message ←",
+        prefix: "🤖←",
         name: "teammate",
       }),
-    ).toEqual({ label: "peer-message ← teammate" });
+    ).toEqual({ label: "🤖← teammate" });
     expect(foldSummaryView("Bash List files", true, { kind: "bash" })).toEqual({
       label: "Bash List files",
     });
