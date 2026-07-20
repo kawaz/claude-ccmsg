@@ -465,7 +465,12 @@ function AgentSpawnFold({
         ts={ts}
         label={`Agent: ${segment.name}`}
         open={open}
-        decoration={{ kind: "agent", prefix: "Agent:", name: segment.name }}
+        decoration={{
+          kind: "agent",
+          prefix: "Agent:",
+          name: segment.name,
+          direction: "outbound",
+        }}
       />
       <div class="tl-guided">
         <FoldGuide />
