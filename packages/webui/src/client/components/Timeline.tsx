@@ -1597,6 +1597,7 @@ export function Timeline({
     defaultTimelineAutoOpen(agentActive),
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
+  const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
   useEffect(() => {
     setAutoOpenSettings(defaultTimelineAutoOpen(agentActive));
     setAutoOpenRevision((revision) => revision + 1);
@@ -2495,7 +2496,16 @@ export function Timeline({
                 )}
               </div>
             )}
-            <div class="tl-bottom-controls">
+            <div class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}>
+              <button
+                type="button"
+                class="tl-auto-open-handle"
+                aria-label={autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"}
+                aria-expanded={autoOpenPanelOpen}
+                onClick={() => setAutoOpenPanelOpen((open) => !open)}
+              >
+                {autoOpenPanelOpen ? "›" : "‹"}
+              </button>
               <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
                 <legend>auto open</legend>
                 {(["U", "R", "T", "A"] as const).map((category) => {
@@ -2530,6 +2540,8 @@ export function Timeline({
                   N items
                 </label>
               </fieldset>
+            </div>
+            <div class="tl-bottom-controls">
               {miniLines.length > 0 ? (
                 <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
                   {miniLines.map((line) => (

@@ -4165,18 +4165,54 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
-/* --- TL bottom mini panel (DR-0020 §2.1) --- */
+/* --- TL floating controls / bottom mini panel (DR-0020 §2.1) --- */
 
-/* kawaz r26 mid=68: sticky overlay は TL 表示エリアを狭めるので不可 —
- * スクロールフロー内で .tl-lines の直後 = その padding-bottom 12rem の
- * 余白帯の位置に負 margin で引き上げて「無駄空白の中」に置く。末尾まで
- * スクロールしたときだけ見える。A <button> (not <div>+onClick) for free
- * keyboard/focus semantics on the "タップで Status タブへ遷移" affordance. */
-.tl-bottom-controls {
-  margin: -1rem 0.75rem 1rem;
+/* 右端中央のつまみを常設し、パネルだけを画面外へ収納する。fixed のため
+ * Timeline の scrollHeight / 現在位置に影響せず、右下の composer FAB とも
+ * 離れる。閉状態でも 44px のつまみ全体が操作面として残る。 */
+.tl-auto-open-float {
+  position: fixed;
+  top: 50%;
+  right: 0;
+  z-index: var(--z-composer);
   display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  flex-direction: row-reverse;
+  align-items: stretch;
+  max-width: 100vw;
+  transform: translate(calc(100% - 44px), -50%);
+  transition: transform 180ms ease-out;
+}
+
+.tl-auto-open-float-open {
+  transform: translate(0, -50%);
+}
+
+.tl-auto-open-float-open .tl-auto-open-handle {
+  border-radius: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-auto-open-float {
+    transition: none;
+  }
+}
+
+.tl-auto-open-handle {
+  flex: 0 0 44px;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-right: 0;
+  border-radius: 0.5rem 0 0 0.5rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .tl-auto-open {
@@ -4187,10 +4223,22 @@ button.session-tab {
   margin: 0;
   padding: 0.25rem 0.55rem 0.3rem;
   border: 1px solid var(--border);
-  border-radius: 0.4rem;
+  border-radius: 0.5rem 0 0 0.5rem;
   background: var(--bg-alt);
   color: var(--fg-muted);
   font-size: 0.72rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* kawaz r26 mid=68: Status mini panel はスクロールフロー内で .tl-lines の直後 =
+ * その padding-bottom 12rem の余白帯の位置に負 margin で引き上げる。末尾まで
+ * スクロールしたときだけ見える。 */
+.tl-bottom-controls {
+  margin: -1rem 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 
 .tl-auto-open legend {
