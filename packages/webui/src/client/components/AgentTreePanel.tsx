@@ -1,15 +1,18 @@
-// r46 m8 / m12: セッションツリーの左ペイン (TimelinePanes 内)。
+// r46 m8 / m12 / m17: セッションツリーの左ペイン (TimelinePanes 内)。
 // daemon 側で 3 グループ (Teammates / Agents / Workflows) に分けた
 // AgentTreeGroups を受け取り、以下のルールで描画する:
 //
 // - グループヘッダは "Teammates (N live / M)" 形式。空グループはヘッダごと非表示。
-// - Teammates / Agents グループ内は、live 状態 (active/idle/spawned/running) と
-//   完了 (completed/stopped/done/killed/failed) を 2 分し、完了は
-//   「完了 (N)」の折りたたみ (default 閉) に格納する。
+// - Teammates / Agents グループ内は、ノードを state 単位のサブグループに
+//   分け、それぞれ折りたたみ可能に。default 開閉は「動いている系
+//   (active/running/progress/spawned) = 開、idle = 閉、完了系 (stopped/
+//   completed/done/killed/failed/unknown) = 閉」。数十体ぶら下がって縦に
+//   伸びるのを畳むための r46 m17 対応。
 // - Workflows は run 単位でネスト。run ヘッダに done/total、run の下に
 //   フェーズ (title + done/total)、フェーズの下に member agent を並べる。
 //   フェーズ情報が取れない (run 中で state.json 未 landing) 場合は unassigned
-//   バケットに直接 member を並べる。
+//   バケットに直接 member を並べる。Workflows は既にフェーズ構造で
+//   ネストされているため state 別サブグループ化はしない。
 //
 // ノード 1 行は [caret? live-dot label] の 3 要素 (r46 m3 の設計を継承)。
 // 種別バッジ・description 併記は廃止。
@@ -31,6 +34,26 @@ const LIVE_STATES = new Set(["active", "idle", "spawned", "running", "progress"]
 function isLive(state: string): boolean {
   return LIVE_STATES.has(state);
 }
+
+// state サブグループの表示順。動いている系 → idle → 完了系 → その他 (未知)。
+// 明示列挙外の state は末尾に出て、初回登場順を保つ。
+const STATE_ORDER = [
+  "active",
+  "running",
+  "progress",
+  "spawned",
+  "idle",
+  "stopped",
+  "completed",
+  "done",
+  "killed",
+  "failed",
+  "unknown",
+];
+
+// default 展開する state (動いている系のみ)。kawaz r46 m17 の指示に基づき、
+// idle と 完了系はデフォルト畳む。
+const DEFAULT_OPEN_STATES = new Set(["active", "running", "progress", "spawned"]);
 
 function displayLabel(node: AgentTreeNode): string {
   return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;
@@ -89,6 +112,65 @@ function AgentTreeNodeRow({
   );
 }
 
+/** state ごとにグループ化。STATE_ORDER に載っている state を先頭順で、
+ * 載っていない state は初回登場順で末尾に並べる。 */
+function groupByState(nodes: AgentTreeNode[]): Array<[string, AgentTreeNode[]]> {
+  const buckets = new Map<string, AgentTreeNode[]>();
+  for (const n of nodes) {
+    const key = n.state || "unknown";
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = [];
+      buckets.set(key, bucket);
+    }
+    bucket.push(n);
+  }
+  const ordered: Array<[string, AgentTreeNode[]]> = [];
+  for (const s of STATE_ORDER) {
+    const b = buckets.get(s);
+    if (b) {
+      ordered.push([s, b]);
+      buckets.delete(s);
+    }
+  }
+  // STATE_ORDER 外の未知 state は初回登場順で末尾へ。
+  for (const [s, b] of buckets) ordered.push([s, b]);
+  return ordered;
+}
+
+function StateSubgroup({
+  sid,
+  state,
+  nodes,
+  isCompleted,
+}: {
+  sid: string;
+  state: string;
+  nodes: AgentTreeNode[];
+  isCompleted: boolean;
+}) {
+  const [open, setOpen] = useState(DEFAULT_OPEN_STATES.has(state));
+  return (
+    <div class={isCompleted ? "agent-tree-completed" : "agent-tree-state-group"}>
+      <button
+        type="button"
+        class="agent-tree-completed-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "▽" : "▶"} {state} ({nodes.length})
+      </button>
+      {open ? (
+        <ul class={isCompleted ? "agent-tree-root agent-tree-completed-list" : "agent-tree-root"}>
+          {nodes.map((n) => (
+            <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function StandardGroup({
   sid,
   label,
@@ -98,46 +180,27 @@ function StandardGroup({
   label: string;
   nodes: AgentTreeNode[];
 }) {
-  const [showCompleted, setShowCompleted] = useState(false);
   if (nodes.length === 0) return null;
-  const live: AgentTreeNode[] = [];
-  const completed: AgentTreeNode[] = [];
-  for (const n of nodes) (isLive(n.state) ? live : completed).push(n);
+  const liveCount = nodes.reduce((acc, n) => acc + (isLive(n.state) ? 1 : 0), 0);
+  const groups = groupByState(nodes);
   return (
     <section class="agent-tree-group">
       <h3 class="agent-tree-group-header">
         {label}
         <span class="agent-tree-group-count">
           {" "}
-          ({live.length} live / {nodes.length})
+          ({liveCount} live / {nodes.length})
         </span>
       </h3>
-      {live.length > 0 ? (
-        <ul class="agent-tree-root">
-          {live.map((n) => (
-            <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
-          ))}
-        </ul>
-      ) : null}
-      {completed.length > 0 ? (
-        <div class="agent-tree-completed">
-          <button
-            type="button"
-            class="agent-tree-completed-toggle"
-            aria-expanded={showCompleted}
-            onClick={() => setShowCompleted((v) => !v)}
-          >
-            {showCompleted ? "▽" : "▶"} 完了 ({completed.length})
-          </button>
-          {showCompleted ? (
-            <ul class="agent-tree-root agent-tree-completed-list">
-              {completed.map((n) => (
-                <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
+      {groups.map(([state, ns]) => (
+        <StateSubgroup
+          key={state}
+          sid={sid}
+          state={state}
+          nodes={ns}
+          isCompleted={!isLive(state)}
+        />
+      ))}
     </section>
   );
 }
