@@ -3,7 +3,7 @@ title: ROOMS サイドバー見出しに「+ 新規」ボタンを追加
 status: open
 category: request
 created: 2026-07-17T21:32:40+09:00
-last_read:
+last_read: 2026-07-21T03:20:22+09:00
 open_entered: 2026-07-17T21:32:40+09:00
 wip_entered:
 blocked_entered:
