@@ -1290,6 +1290,36 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(teammateEntry)).toBe("peer-message");
     });
 
+    // TUI で workflow を pause → resume した時にハーネスが注入する定型メッセージ
+    // (kawaz r46 mid=14、本セッションの transcript ff82a8e6-... で 2 件実観測)。
+    // 実データでは promptSource:"typed" / origin.kind:"human" / isMeta なしで
+    // 通常のタイプ入力と wire レベルで区別できないため、文字列 prefix 判定に頼る。
+    test("'Resume the paused workflow by calling: Workflow({' prefix -> workflow-resume", () => {
+      const entry = {
+        type: "user",
+        promptSource: "typed",
+        origin: { kind: "human" },
+        message: {
+          role: "user",
+          content:
+            "Resume the paused workflow by calling: Workflow({scriptPath: '/Users/kawaz/.claude-personal/projects/-Users-kawaz--local-share-repos-github-com-kawaz-claude-ccmsg-main/ff82a8e6-6598-49c2-ae8c-3a1fd55cc887/workflows/scripts/screenshot-longrun-fixture2-wf_666fea3f-0be.js', resumeFromRunId: 'wf_666fea3f-0be'}) — completed agents return cached results.",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("workflow-resume");
+    });
+
+    // 誤爆判定: prefix と少しでも違えば user-prompt に落ちる (人間の発話が
+    // "Resume the paused workflow by calling: Workflow" で始まる可能性は残す)。
+    test("'Resume the paused workflow' but missing '({' suffix -> user-prompt", () => {
+      const entry = {
+        message: {
+          role: "user",
+          content: "Resume the paused workflow when you have time.",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
     test("'Another Claude session sent a message:' prefix -> peer-message", () => {
       const entry = {
         message: {

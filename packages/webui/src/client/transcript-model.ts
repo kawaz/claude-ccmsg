@@ -786,6 +786,7 @@ export type UserMessageKind =
   | "slash-command-stdout"
   | "tool-retry-hint"
   | "task-notification"
+  | "workflow-resume"
   | "peer-message"
   | "unknown-meta"
   | "unknown-array";
@@ -923,6 +924,17 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   // folding (observed on this very session's transcript, 2026-07-12).
   if (text.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
     return text.includes("<task-notification>") ? "task-notification" : "unknown-meta";
+  }
+  // TUI で workflow を pause → resume した際にハーネスが注入する定型再開命令。
+  // 実 transcript では `promptSource:"typed"` / `origin:{kind:"human"}` / `isMeta`
+  // なし、で通常のタイプ入力と wire 上区別できず、文字列 prefix で判定するしかない
+  // (kawaz r46 mid=14、本セッションの transcript で 2 件実観測)。
+  // 誤爆リスク: 人間が手打ちで `Resume the paused workflow by calling: Workflow({`
+  // で始まる文章を送ると誤分類されるが、`{`まで含んだこの厳密 prefix を能動的に
+  // 打つケースは実用上ゼロ (=`<task-notification>` prefix 判定と同種の accepted
+  // false-negative)。
+  if (text.startsWith("Resume the paused workflow by calling: Workflow({")) {
+    return "workflow-resume";
   }
   return "user-prompt";
 }
