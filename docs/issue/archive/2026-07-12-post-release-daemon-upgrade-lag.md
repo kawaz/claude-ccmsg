@@ -1,6 +1,6 @@
 ---
 title: リリース後 daemon が旧バージョンのまま配信され続けるギャップの改善
-status: open
+status: resolved
 category: design
 created: 2026-07-12T01:22:01+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T03:37:14+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:3案から案(a)を採用して実装済み。justfileのpushフローから daemon にread-only接触してnewer-wins upgradeを即時発動 (justfile:119-137)。案(b)/(c)は本文に理由記録済み"]
 blocked_by:
 origin: 自リポ TODO
 ---
