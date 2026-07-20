@@ -1,6 +1,6 @@
 ---
 title: state.peers に live 更新経路が無く接続/切断がリアルタイム反映されない
-status: open
+status: resolved
 category: design
 created: 2026-07-12T03:41:25+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T03:36:02+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done"]
 blocked_by:
 origin: 自リポ TODO
 ---
