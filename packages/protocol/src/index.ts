@@ -1289,8 +1289,10 @@ export interface AgentInfo {
   startedAt: number;
   sessionId: string;
   name?: string;
-  /** e.g. "busy"; absent = idle (upstream omits it) */
+  /** e.g. "waiting" / "running"; upstream-controlled open set */
   status?: string;
+  /** Human-readable detail for the current status, e.g. "dialog open". */
+  waitingFor?: string;
   /** background sessions only, e.g. "done" */
   state?: string;
   /** background sessions only: short id */

@@ -132,7 +132,15 @@ function callCount(callLog: string): number {
 
 interface AgentsOk {
   ok: true;
-  agents: Array<{ pid: number; sessionId: string; config_dir: string }>;
+  agents: Array<{
+    pid: number;
+    sessionId: string;
+    config_dir: string;
+    kind?: string;
+    startedAt?: number;
+    status?: string;
+    waitingFor?: string;
+  }>;
   polled_at: string | null;
 }
 interface ErrLite {
@@ -158,7 +166,17 @@ describe("agents polling: config dir detection", () => {
         fs.mkdirSync(path.join(home, "not-claude-dir"));
 
         writeMockClaude(binDir, callLog, {
-          [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
+          [dirA]: [
+            {
+              pid: 1,
+              cwd: "/a",
+              kind: "interactive",
+              startedAt: 1,
+              sessionId: "sA",
+              status: "waiting",
+              waitingFor: "dialog open",
+            },
+          ],
           [dirB]: [{ pid: 2, cwd: "/b", kind: "interactive", startedAt: 2, sessionId: "sB" }],
         });
 
@@ -174,6 +192,12 @@ describe("agents polling: config dir detection", () => {
           expect(sids).toEqual(["sA", "sB"]);
           const dirs = agents.map((a) => a.config_dir).sort();
           expect(dirs).toEqual([dirA, dirB].sort());
+          expect(agents.find((a) => a.sessionId === "sA")).toMatchObject({
+            kind: "interactive",
+            startedAt: 1,
+            status: "waiting",
+            waitingFor: "dialog open",
+          });
         } finally {
           await stopAgentsTestDaemon(ctx);
         }

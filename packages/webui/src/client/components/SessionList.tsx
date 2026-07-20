@@ -4,7 +4,7 @@ import { sessionHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
-import { formatSidebarBadge } from "../session-status-view.ts";
+import { formatAgentLiveState, formatSidebarBadge } from "../session-status-view.ts";
 import {
   badgeLabel,
   formatDuration,
@@ -61,6 +61,7 @@ function SessionRowItem({
   const [cwdFull, setCwdFull] = useState(false);
   const { repo, ws: wsLabel } = sessionRowRepoWs(row);
   const badges = sessionBadges(row);
+  const liveState = formatAgentLiveState(row.agent);
   const idleMs = row.last_activity_at
     ? Date.now() - new Date(row.last_activity_at).getTime()
     : null;
@@ -68,6 +69,11 @@ function SessionRowItem({
   const titleParts = [row.cwd];
   if (row.connected_at) titleParts.push(`connected: ${row.connected_at}`);
   if (row.last_activity_at) titleParts.push(`last activity: ${row.last_activity_at}`);
+  if (liveState) titleParts.push(`status: ${liveState}`);
+  if (row.agent) {
+    titleParts.push(`kind: ${row.agent.kind}`);
+    titleParts.push(`started: ${new Date(row.agent.startedAt).toISOString()}`);
+  }
   if (!row.connected) titleParts.push("ccmsg 未起動 (claude agents のみで検出)");
 
   return (
@@ -109,6 +115,17 @@ function SessionRowItem({
             <span class="session-branch">{row.branch}</span>
           ) : null}
         </a>
+        {liveState ? (
+          <span
+            class={
+              "session-live-dot" +
+              (row.agent?.status === "running" ? " session-live-dot-running" : "") +
+              (row.agent?.status === "waiting" ? " session-live-dot-waiting" : "")
+            }
+            title={liveState}
+            aria-label={liveState}
+          />
+        ) : null}
         {/* U3: busy/idle/done/offline no longer render per-row (kawaz: "busy
          * 表示邪魔") — that status now only shows via the row's section
          * heading (see SessionList's <details>). "bg" is a separate axis

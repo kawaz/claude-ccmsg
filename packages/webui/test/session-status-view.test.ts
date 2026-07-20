@@ -4,6 +4,7 @@
 // SessionStatusSnapshot.
 import { describe, expect, test } from "bun:test";
 import type {
+  AgentInfo,
   SessionBackgroundStatus,
   SessionStatusSnapshot,
   SessionTeammate,
@@ -14,6 +15,7 @@ import {
   buildStatusSections,
   buildWorkflowDrilldown,
   estimateContextLimit,
+  formatAgentLiveState,
   formatContextUsage,
   groupAgentsByPhase,
   shortModel,
@@ -247,6 +249,31 @@ describe("miniSummaryLines", () => {
       { kind: "context", text: "ctx 522k/1M* (52%) · m" },
       { kind: "teammate", text: "researcher" },
     ]);
+  });
+});
+
+describe("agent live state display", () => {
+  const agent: AgentInfo = {
+    pid: 63828,
+    cwd: "/repo",
+    kind: "interactive",
+    startedAt: 1784456050131,
+    sessionId: "s1",
+    config_dir: "/home/.claude-personal",
+  };
+
+  test("status と waitingFor を upstream 語彙のまま結合する", () => {
+    expect(formatAgentLiveState({ ...agent, status: "waiting", waitingFor: "dialog open" })).toBe(
+      "waiting (dialog open)",
+    );
+  });
+
+  test("waitingFor 無しは status のみ、未知 status もそのまま表示する", () => {
+    expect(formatAgentLiveState({ ...agent, status: "rescheduling" })).toBe("rescheduling");
+  });
+
+  test("status 未観測なら表示しない", () => {
+    expect(formatAgentLiveState(agent)).toBeNull();
   });
 });
 

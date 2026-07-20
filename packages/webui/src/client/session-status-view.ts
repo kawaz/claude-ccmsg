@@ -4,6 +4,7 @@
 // SessionStatusSnapshot into section/summary/badge shapes and are exercised
 // in isolation by session-status-view.test.ts — no store/DOM dependency.
 import type {
+  AgentInfo,
   SessionBackgroundStatus,
   SessionContextUsage,
   SessionStatusSnapshot,
@@ -86,6 +87,14 @@ export function estimateContextLimit(tokens: number): 200_000 | 1_000_000 {
  * (launch-time 1M context pin). */
 export function shortModel(model: string): string {
   return model.startsWith("claude-") ? model.slice("claude-".length) : model;
+}
+
+/** Live state text from `claude agents --json`. Values are intentionally
+ * rendered verbatim: both status and waitingFor are upstream-controlled open
+ * sets, so a newer Claude CLI value must remain visible without a webui update. */
+export function formatAgentLiveState(agent: AgentInfo | undefined): string | null {
+  if (!agent?.status) return null;
+  return agent.waitingFor ? `${agent.status} (${agent.waitingFor})` : agent.status;
 }
 
 export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {

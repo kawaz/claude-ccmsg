@@ -436,6 +436,29 @@ a {
   border: 1px solid var(--border);
 }
 
+.session-live-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.75;
+}
+
+.session-live-dot-running {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.session-live-dot-waiting {
+  background: #d29922;
+  opacity: 1;
+}
+
+.session-row.active .session-live-dot {
+  outline: 1px solid var(--accent-fg);
+}
+
 .session-idle {
   flex-shrink: 0;
   font-size: 0.65rem;
@@ -1796,12 +1819,25 @@ a.composer-attachment-label {
   padding: 0.4rem 0.75rem 0;
   background: var(--bg-alt);
   flex-shrink: 0;
+  position: relative;
+  z-index: 2;
   /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
   touch-action: manipulation;
   /* border-bottom は撤去 (kawaz r17 mid=59+68、2026-07-15): 1px border が
    * 明色帯 (bg-alt) の中で暗い横線として「ぼっそい隙間」に見えていた。
    * tl-toolbar 側の border-bottom + 背景色差 (下の .timeline-view) で
    * 十分に領域を区切れる。 */
+}
+
+.session-tabs::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: var(--bg-alt);
+  pointer-events: none;
 }
 
 .session-tab {

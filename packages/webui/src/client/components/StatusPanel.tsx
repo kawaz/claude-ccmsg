@@ -18,6 +18,7 @@ import type {
 import {
   buildStatusSections,
   buildWorkflowDrilldown,
+  formatAgentLiveState,
   formatContextUsage,
   groupAgentsByPhase,
   shortModel,
@@ -478,6 +479,8 @@ export function StatusPanel({
   const { store } = useApp();
   const state = useStoreState(store);
   const cwd = resolveSessionTopbar(state, sid).cwd;
+  const agent = state.agents.find((candidate) => candidate.sessionId === sid);
+  const liveState = formatAgentLiveState(agent);
   if (!snapshot) {
     return (
       <div class="status-view">
@@ -509,6 +512,14 @@ export function StatusPanel({
         <dd class="status-meta-value">
           <span>{sid}</span>
           <CopyButton value={sid} label="SESSION_ID" />
+        </dd>
+        <dt>LIVE</dt>
+        <dd>{liveState ?? "—"}</dd>
+        <dt>KIND</dt>
+        <dd>{agent?.kind ?? "—"}</dd>
+        <dt>STARTED</dt>
+        <dd title={agent ? new Date(agent.startedAt).toISOString() : undefined}>
+          {agent ? new Date(agent.startedAt).toLocaleString() : "—"}
         </dd>
         <dt>CTX</dt>
         <dd title={context?.title}>
