@@ -14,6 +14,7 @@ import * as path from "node:path";
 import {
   ErrorCode,
   FS_READ_MAX_BYTES,
+  type FsEditResponse,
   type FsEntry,
   type FsListResponse,
   type FsReadResponse,
@@ -410,6 +411,9 @@ function readRegularFile(
       truncated: size > FS_READ_MAX_BYTES,
       binary,
       content: binary ? "" : content.toString("utf-8"),
+      // Optimistic-lock token echoed to the viewer; a subsequent fs_edit
+      // compares this against the current on-disk mtime before overwriting.
+      mtime: stat.mtime.toISOString(),
     },
   };
 }
@@ -841,4 +845,136 @@ export function fsWrite(
   }
 
   return { ok: true, data: { sid, path: path.relative(root, rechecked.realPath) } };
+}
+
+// --- fs_edit (in-place overwrite of an existing text file) -------------
+
+/**
+ * Overwrite an existing text file, gated by:
+ *   1. the same containment / allowlist that authorized the corresponding read
+ *      (via `fsResolveForServe`, kind ∈ {contained, external, workspace}),
+ *   2. an optimistic-lock check on (mtime, size) so a concurrent writer isn't
+ *      silently clobbered,
+ *   3. a binary sniff of the CURRENT on-disk head — a file the viewer would
+ *      not have shown as text cannot be turned into UTF-8 through this op,
+ *   4. content ≤ FS_READ_MAX_BYTES so the same cap that fs_read applied when
+ *      the viewer populated its textarea also bounds what can be written back
+ *      (a truncated-view edit is refused; the viewer additionally hides the
+ *      edit button on truncated files).
+ *
+ * The op is deliberately narrow: it never creates, deletes, or renames, and
+ * refuses non-regular files (symlinks/dirs/sockets) — the file must already
+ * exist as a regular file. Writes use `flag: "w"` for a straightforward
+ * overwrite; the same-UID TOCTOU limitation documented for `resolveContained`
+ * applies here too.
+ */
+export function fsEdit(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+  kind: "contained" | "external" | "workspace",
+  content: string,
+  expectedMtime: string,
+  expectedSize: number,
+): FsAccessResult<Omit<FsEditResponse, "ok">> {
+  if (typeof content !== "string") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit content must be a string" };
+  }
+  if (typeof expectedMtime !== "string" || expectedMtime === "") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit requires expected_mtime" };
+  }
+  if (typeof expectedSize !== "number" || !Number.isFinite(expectedSize) || expectedSize < 0) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit requires expected_size (>=0)" };
+  }
+  // Reject content that would have been unrepresentable in the viewer's read
+  // (fs_read caps at FS_READ_MAX_BYTES; editing beyond that means the viewer
+  // was working from a truncated head and cannot faithfully write the tail).
+  const contentBytes = Buffer.byteLength(content, "utf-8");
+  if (contentBytes > FS_READ_MAX_BYTES) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `fs_edit content exceeds FS_READ_MAX_BYTES (${contentBytes} > ${FS_READ_MAX_BYTES})`,
+    };
+  }
+
+  // Delegate authorization to the read-side resolver so every containment /
+  // allowlist rule fs_read already enforces applies identically here.
+  const resolved = fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
+  if (!resolved.ok) return resolved;
+  const { realPath } = resolved.data;
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(realPath);
+  } catch {
+    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+  }
+  if (!stat.isFile()) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit target is not a regular file" };
+  }
+
+  const currentMtime = stat.mtime.toISOString();
+  if (currentMtime !== expectedMtime || stat.size !== expectedSize) {
+    return {
+      ok: false,
+      code: ErrorCode.file_conflict,
+      msg: `file changed since read (mtime ${currentMtime}, size ${stat.size})`,
+    };
+  }
+
+  // Binary sniff on the current on-disk head — the viewer's read side already
+  // did this at read time, but we re-check against the current bytes so a file
+  // that turned binary between read and edit is refused rather than blindly
+  // overwritten. Also handles the (rare) case where the viewer's read
+  // reported binary=false but the file grew NUL bytes in-place at matching
+  // (mtime, size) — extremely unlikely but the check is nearly free.
+  const sniff = Buffer.alloc(Math.min(stat.size, 8192));
+  if (sniff.length > 0) {
+    const fd = fs.openSync(realPath, "r");
+    try {
+      fs.readSync(fd, sniff, 0, sniff.length, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    for (let i = 0; i < sniff.length; i++) {
+      if (sniff[i] === 0) {
+        return {
+          ok: false,
+          code: ErrorCode.not_a_text_file,
+          msg: `fs_edit refuses binary content on disk: ${reqPath}`,
+        };
+      }
+    }
+  }
+
+  try {
+    fs.writeFileSync(realPath, content, { encoding: "utf-8", flag: "w" });
+  } catch {
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot write path: ${reqPath}` };
+  }
+
+  let after: fs.Stats;
+  try {
+    after = fs.lstatSync(realPath);
+  } catch {
+    // The write succeeded but we can't stat the result — treat as write failure
+    // rather than lie about the new mtime.
+    return {
+      ok: false,
+      code: ErrorCode.path_forbidden,
+      msg: `cannot stat after write: ${reqPath}`,
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      sid,
+      path: reqPath,
+      size: after.size,
+      mtime: after.mtime.toISOString(),
+    },
+  };
 }

@@ -150,6 +150,113 @@ function InboxNewEditor({
   );
 }
 
+/** In-place text-file editor. Uses fs_edit's optimistic-lock contract:
+ * `expectedMtime`/`expectedSize` come straight from the FsReadResponse that
+ * populated `initialContent`, so if something else touched the file between
+ * read and save, the daemon replies `file_conflict` and this component
+ * surfaces it as a distinct actionable error (reload the viewer, not just
+ * "try again"). The parent owns the read cache — on save success we bubble
+ * `onSaved()` so it can trigger the existing refetch path (RefetchButton's
+ * `handleRefetch`), which is also what a manual ↻ press does; there's no
+ * need for a second store action just for the post-edit case. */
+function TextFileEditor({
+  sid,
+  path,
+  kind,
+  initialContent,
+  expectedMtime,
+  expectedSize,
+  onCancel,
+  onSaved,
+}: {
+  sid: string;
+  path: string;
+  kind: "contained" | "external" | "workspace";
+  initialContent: string;
+  expectedMtime: string;
+  expectedSize: number;
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const { ws } = useApp();
+  const [content, setContent] = useState(initialContent);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    bodyRef.current?.focus();
+  }, []);
+
+  async function save(): Promise<void> {
+    // Ref guards a rapid double-submit (Cmd+Enter twice / button double click)
+    // in a single render — state updates are async so `saving` alone isn't
+    // enough. Same pattern as InboxNewEditor above.
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await ws.fsEdit(sid, path, kind, content, expectedMtime, expectedSize);
+      if (res.ok) {
+        onSaved();
+      } else if (res.error.code === "file_conflict") {
+        setError(
+          "他のプロセスがこのファイルを変更しました。↻ で再読み込みしてからやり直してください。",
+        );
+      } else {
+        setError(res.error.msg);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form
+      class="file-viewer memo-editor"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <header class="viewer-header memo-editor-header">
+        <span class="viewer-path">{path}</span>
+        <div class="memo-editor-actions">
+          <button type="button" onClick={onCancel} disabled={saving}>
+            キャンセル
+          </button>
+          <button type="submit" disabled={saving}>
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </header>
+      {error ? <p class="memo-editor-error">{error}</p> : null}
+      <textarea
+        ref={bodyRef}
+        class="memo-editor-body"
+        aria-label="ファイル本文"
+        value={content}
+        onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+        onKeyDown={(e) => {
+          if (e.metaKey && e.key === "Enter") {
+            e.preventDefault();
+            void save();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        disabled={saving}
+      />
+    </form>
+  );
+}
+
 export function FileViewer({
   sid,
   tree,
@@ -252,6 +359,13 @@ export function FileViewer({
   // 失わない。同じ effect 内で record も更新する (復元値を含めた確定値を
   // 書くので、初期値 "code" が保存済み preview を先に上書きする race がない)。
   const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  // Edit mode swaps the read-only line list for a textarea populated by the
+  // current fs_read content. Reset whenever the selected path changes so
+  // navigating to a different file doesn't carry a stale edit session.
+  const [editMode, setEditMode] = useState(false);
+  useEffect(() => {
+    setEditMode(false);
+  }, [path]);
   const markdownEligible = path != null && isMarkdownPath(path);
   useEffect(() => {
     if (path === null) return;
@@ -506,6 +620,30 @@ export function FileViewer({
     );
   }
 
+  if (editMode) {
+    return (
+      <TextFileEditor
+        sid={sid}
+        path={path}
+        kind={
+          isWorkspaceFilePath(path, workspaceFolders)
+            ? "workspace"
+            : isExternalFilePath(path)
+              ? "external"
+              : "contained"
+        }
+        initialContent={res.content}
+        expectedMtime={res.mtime}
+        expectedSize={res.size}
+        onCancel={() => setEditMode(false)}
+        onSaved={() => {
+          setEditMode(false);
+          handleRefetch();
+        }}
+      />
+    );
+  }
+
   const lines = searchLines;
   const highlightedLines = highlighted && highlighted.path === path ? highlighted.lines : null;
   const showPreview = markdownEligible && viewMode === "preview";
@@ -561,6 +699,21 @@ export function FileViewer({
               プレビュー
             </button>
           </div>
+        ) : null}
+        {/* 「編集」: 現在のテキスト内容を textarea で開いて fs_edit で上書きする。
+         * truncated (先頭 512KB のみ取得済) の時はテールが手元にないので隠す
+         * — うっかり保存でファイルが縮む事故を防ぐ。preview モード中も隠す
+         * (レンダ結果ではなく原文を編集させたい)。 */}
+        {!res.truncated && !showPreview ? (
+          <button
+            type="button"
+            class="viewer-edit-btn"
+            aria-label="ファイルを編集"
+            title="ファイルを編集"
+            onClick={() => setEditMode(true)}
+          >
+            編集
+          </button>
         ) : null}
         <RefetchButton />
       </header>

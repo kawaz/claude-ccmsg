@@ -1691,6 +1691,210 @@ describe("fs_write (DR-0019 Phase W1)", () => {
   );
 });
 
+// fs_edit (in-place overwrite of an existing text file). Reuses the same
+// containment / allowlist checks fs_read enforces (via fsResolveForServe),
+// so the containment corner cases are covered by the fs_read/fs_write
+// suites; this describe focuses on the edit-specific behavior: role gate,
+// optimistic-lock conflict, binary refusal, and the happy-path overwrite.
+describe("fs_edit (viewer text edit)", () => {
+  test(
+    "role gate: session role cannot call fs_edit",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "hello.txt");
+        fs.writeFileSync(target, "before\n");
+        const stat = fs.lstatSync(target);
+        const session = await sessionAt(ctx, "A", root);
+        const res = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_edit",
+          sid: "A",
+          path: "hello.txt",
+          kind: "contained",
+          content: "after\n",
+          expected_mtime: stat.mtime.toISOString(),
+          expected_size: stat.size,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("bad_request");
+        expect(fs.readFileSync(target, "utf-8")).toBe("before\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "happy path: overwrites an existing text file and reports post-write mtime/size",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "note.md");
+        fs.writeFileSync(target, "old content\n");
+        const before = fs.lstatSync(target);
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          sid: string;
+          path: string;
+          size: number;
+          mtime: string;
+        }>({
+          op: "fs_edit",
+          sid: "A",
+          path: "note.md",
+          kind: "contained",
+          content: "new content 日本語\n",
+          expected_mtime: before.mtime.toISOString(),
+          expected_size: before.size,
+        });
+        expect(res.ok).toBe(true);
+        expect(res.path).toBe("note.md");
+        expect(fs.readFileSync(target, "utf-8")).toBe("new content 日本語\n");
+        expect(res.size).toBe(Buffer.byteLength("new content 日本語\n", "utf-8"));
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "conflict: mtime/size mismatch is file_conflict and does not overwrite",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "note.md");
+        fs.writeFileSync(target, "original\n");
+        const stale = fs.lstatSync(target);
+        // Simulate a concurrent external edit between the viewer's read and
+        // the fs_edit call: bump the file's mtime by rewriting it.
+        await new Promise((r) => setTimeout(r, 15));
+        fs.writeFileSync(target, "external edit\n");
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_edit",
+          sid: "A",
+          path: "note.md",
+          kind: "contained",
+          content: "clobber attempt\n",
+          expected_mtime: stale.mtime.toISOString(),
+          expected_size: stale.size,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("file_conflict");
+        expect(fs.readFileSync(target, "utf-8")).toBe("external edit\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "binary refusal: on-disk NUL byte in the head is not_a_text_file",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "blob.bin");
+        // Deliberate NUL in the first 8 KiB — matches the daemon's binary sniff.
+        fs.writeFileSync(target, Buffer.from([0x68, 0x00, 0x69]));
+        const stat = fs.lstatSync(target);
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_edit",
+          sid: "A",
+          path: "blob.bin",
+          kind: "contained",
+          content: "text",
+          expected_mtime: stat.mtime.toISOString(),
+          expected_size: stat.size,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("not_a_text_file");
+        // Original binary bytes untouched.
+        expect(fs.readFileSync(target)).toEqual(Buffer.from([0x68, 0x00, 0x69]));
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "containment: an absolute path outside the session root is path_forbidden",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const escaped = path.join(outside, "escape.txt");
+        fs.writeFileSync(escaped, "outside\n");
+        const stat = fs.lstatSync(escaped);
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_edit",
+          sid: "A",
+          path: escaped,
+          kind: "contained",
+          content: "should not land",
+          expected_mtime: stat.mtime.toISOString(),
+          expected_size: stat.size,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.readFileSync(escaped, "utf-8")).toBe("outside\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "not_found: target does not exist replies not_found (fs_edit never creates)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_edit",
+          sid: "A",
+          path: "missing.txt",
+          kind: "contained",
+          content: "no create\n",
+          expected_mtime: "2026-01-01T00:00:00.000Z",
+          expected_size: 0,
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("not_found");
+        expect(fs.existsSync(path.join(root, "missing.txt"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
 // repo_root containment (DR-0008 addendum): a session's self-declared
 // repo_root, once hello-time-validated (fs-access.ts's validateRepoRoot),
 // widens fs_list/fs_read's containment root from "just this session's cwd" to

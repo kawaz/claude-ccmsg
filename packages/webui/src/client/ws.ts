@@ -25,6 +25,7 @@ import type {
   DirTreeResponse,
   ErrorResponse,
   FsListResponse,
+  FsEditResponse,
   FsReadResponse,
   FsWriteResponse,
   InviteResponse,
@@ -142,6 +143,19 @@ export interface WsHandle {
    * root. Never overwrites — an existing path replies `file_exists`, a path
    * outside cwd/docs/inbox/ replies `path_not_writable`. */
   fsWrite(sid: string, path: string, content: string): Promise<FsWriteResponse | ErrorResponse>;
+  /** Overwrite an existing text file (viewer edit action). `kind` picks the
+   * authorization surface — the same three the read ops use. `expectedMtime`
+   * and `expectedSize` come from the FsReadResponse the viewer opened with;
+   * a mismatch replies `file_conflict` so a concurrent external edit isn't
+   * silently clobbered. */
+  fsEdit(
+    sid: string,
+    path: string,
+    kind: "contained" | "external" | "workspace",
+    content: string,
+    expectedMtime: string,
+    expectedSize: number,
+  ): Promise<FsEditResponse | ErrorResponse>;
   /** Read a slice of a connected session's transcript jsonl (DR-0009
    * transcript_read). `before` omitted = tail of the file; pass the previous
    * reply's `start` to page older. */
@@ -619,6 +633,8 @@ export function createWsClient(
     fsListWorkspace: (sid, path) => send({ op: "fs_list_workspace", sid, path }),
     fsReadWorkspace: (sid, path) => send({ op: "fs_read_workspace", sid, path }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
+    fsEdit: (sid, path, kind, content, expected_mtime, expected_size) =>
+      send({ op: "fs_edit", sid, path, kind, content, expected_mtime, expected_size }),
     transcriptRead: (sid, opts) =>
       send({
         op: "transcript_read",

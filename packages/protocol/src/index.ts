@@ -860,6 +860,37 @@ export interface FsWriteRequest {
 }
 
 /**
+ * Overwrite an existing text file in place (webui file viewer's edit action).
+ * Unlike fs_write (inbox-only create) this op EXCLUSIVELY overwrites an
+ * existing regular file — it does not create, delete, or rename. `kind` picks
+ * the same three authorization surfaces the read ops use (fs_read /
+ * fs_read_external / fs_read_workspace); the daemon reuses their containment /
+ * allowlist checks so no new trust surface is introduced. `expected_mtime` and
+ * `expected_size` come straight from the FsReadResponse the viewer used to
+ * populate its textarea — if the file changed on disk between read and edit,
+ * the write is refused with `file_conflict` rather than clobbering the newer
+ * copy. Binary files (NUL byte in current on-disk head) are refused with
+ * `not_a_text_file` so this op can never turn a binary into a UTF-8 blob.
+ */
+export interface FsEditRequest {
+  op: "fs_edit";
+  sid: string;
+  /** relative when kind="contained", absolute when kind="external"/"workspace" —
+   * mirrors the corresponding read op's path contract exactly. */
+  path: string;
+  kind: "contained" | "external" | "workspace";
+  /** UTF-8 text content, capped at FS_READ_MAX_BYTES (same cap fs_read enforces
+   * on the read side so the viewer never edits a truncated view). */
+  content: string;
+  /** Optimistic-lock: the mtime the viewer originally read; a mismatch means
+   * something else touched the file between the read and this edit. */
+  expected_mtime: string;
+  /** Optimistic-lock companion: guards against a mutation that happens to
+   * preserve the mtime (mtime resolution differs by filesystem). */
+  expected_size: number;
+}
+
+/**
  * Session transcript access (DR-0009 / DR-0021): read a slice of a connected
  * session's hello-validated transcript, or a historical UUID resolved by the
  * daemon below detected config dirs. There is NO client-supplied path, so no
@@ -1026,6 +1057,7 @@ export type Request =
   | FsListWorkspaceRequest
   | FsReadWorkspaceRequest
   | FsWriteRequest
+  | FsEditRequest
   | TranscriptReadRequest
   | SessionSearchRequest
   | AgentsRequest
@@ -1241,12 +1273,27 @@ export interface FsReadResponse {
   binary: boolean;
   /** UTF-8 text content; "" when binary */
   content: string;
+  /** ISO 8601 mtime — used by fs_edit as an optimistic-lock token so a
+   * concurrent external edit between read and write is detected as
+   * `file_conflict` instead of silently clobbered. */
+  mtime: string;
 }
 export interface FsWriteResponse {
   ok: true;
   sid: string;
   /** normalized path relative to the session root */
   path: string;
+}
+export interface FsEditResponse {
+  ok: true;
+  sid: string;
+  /** echoed request path (relative for contained, absolute for external/workspace) */
+  path: string;
+  /** post-write size on disk */
+  size: number;
+  /** post-write mtime — the client uses this as the new optimistic-lock token
+   * so a subsequent edit in the same viewer session doesn't need a full refetch. */
+  mtime: string;
 }
 export interface SessionSearchMatch {
   role: "user" | "agent";
@@ -1401,6 +1448,7 @@ export type Response =
   | FsListResponse
   | FsReadResponse
   | FsWriteResponse
+  | FsEditResponse
   | TranscriptReadResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
@@ -1463,6 +1511,11 @@ export const ErrorCode = {
   // docs/inbox/ and never overwrites an existing filesystem entry.
   path_not_writable: "path_not_writable",
   file_exists: "file_exists",
+  // fs_edit (in-place text edit): file was modified between read and write.
+  file_conflict: "file_conflict",
+  // fs_edit: on-disk content sniffed as binary (NUL byte in head) — refusing
+  // ensures this op can only mutate what the viewer could faithfully display.
+  not_a_text_file: "not_a_text_file",
   // Session launcher (DR-0018): no valid session_launcher configuration means
   // both directory browsing and launch remain closed.
   launcher_not_configured: "launcher_not_configured",

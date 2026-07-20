@@ -466,6 +466,7 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
         truncated: false,
         binary: false,
         content: "hello",
+        mtime: "2026-07-20T00:00:00.000Z",
       },
     });
     const file = state.sessionTrees.get("sess-1")?.file;

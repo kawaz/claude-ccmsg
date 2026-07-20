@@ -35,6 +35,7 @@ import { dirTree } from "./dir-tree.ts";
 import {
   fsList,
   fsListWorkspace,
+  fsEdit,
   fsRead,
   fsReadExternal,
   fsReadWorkspace,
@@ -845,6 +846,7 @@ const IDENTITY_OPS = new Set([
   "fs_list_workspace",
   "fs_read_workspace",
   "fs_write",
+  "fs_edit",
   "transcript_read",
   "session_search",
   "agents",
@@ -1826,6 +1828,34 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const result = fsWrite(daemon.sessions, req.sid, req.path, req.content);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_edit": {
+      // user-role only: fs_edit is a viewer feature that overwrites arbitrary
+      // text files under the same authorization surfaces the read ops use.
+      // A session-role connection has no reason to overwrite files this way
+      // (fs_write's inbox-only create is its mutation channel), so the role
+      // gate is identical to fs_read_external / fs_read_workspace / fs_write.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_edit' requires user role");
+        return;
+      }
+      const result = fsEdit(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+        req.kind,
+        req.content,
+        req.expected_mtime,
+        req.expected_size,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
