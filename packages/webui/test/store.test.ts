@@ -1295,6 +1295,21 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     expect(unpinned.pinnedSessions.has("a")).toBe(false);
   });
 
+  // A fresh page load has no SessionTreeState yet. The first TL locator creates
+  // one with the QUESTIONS.md label regexp ready to use, while keeping matching
+  // case-insensitive because only regexp mode is part of the requested default.
+  test("a newly opened Timeline starts with the label-search default", () => {
+    const state = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "a" },
+    });
+    expect(state.sessionTrees.get("a")?.timelineSearch).toEqual({
+      queryText: "👺\\s*[A-Za-z0-9α-ωΑ-Ω\\-]{2,}",
+      caseSensitive: false,
+      regex: true,
+    });
+  });
+
   // Timeline's SearchBar edits persist per sid: editing one session's in-view
   // query must create/update only that sid's tree and never leak into another
   // session's search state.

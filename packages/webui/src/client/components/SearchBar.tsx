@@ -204,7 +204,13 @@ export function SearchBar({
               style={
                 w.error ? undefined : { "--chip-color": `var(--search-color-${w.colorIndex + 1})` }
               }
-              title={w.error ?? undefined}
+              title={w.error ?? "検索条件を編集"}
+              role="button"
+              tabIndex={0}
+              onClick={() => setEditing(true)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") setEditing(true);
+              }}
             >
               {w.text}
             </span>

@@ -100,6 +100,12 @@ export interface TimelineState {
  * switching between sessions preserves each one's expanded dirs / loaded
  * listings / open file instead of refetching on every visit. Also holds the
  * session's Timeline cache (DR-0009) — same per-sid keying, same rationale. */
+export const DEFAULT_TIMELINE_SEARCH = {
+  queryText: "👺\\s*[A-Za-z0-9α-ωΑ-Ω\\-]{2,}",
+  caseSensitive: false,
+  regex: true,
+} as const;
+
 export interface SessionTreeState {
   /** loaded directory listings, keyed by relpath ("" = session root) */
   dirs: Map<string, FsEntry[]>;
@@ -352,7 +358,7 @@ function newSessionTree(): SessionTreeState {
     selectedLineRange: null,
     file: null,
     timeline: newTimelineState(),
-    timelineSearch: { queryText: "", caseSensitive: false, regex: false },
+    timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
   };
 }
 

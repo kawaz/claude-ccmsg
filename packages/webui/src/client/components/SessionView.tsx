@@ -6,7 +6,7 @@
 // refetches what's already loaded.
 import { useEffect, useState } from "preact/hooks";
 import type { SessionSearchHit } from "@ccmsg/protocol";
-import type { AppState, SessionTreeState } from "../store.ts";
+import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import { fileHref, sessionHref, timelineHref } from "../locator.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
@@ -32,7 +32,7 @@ const EMPTY_TREE: SessionTreeState = {
   selectedLineRange: null,
   file: null,
   timeline: { status: "idle", lines: [], start: 0, end: 0, size: 0, atStart: false },
-  timelineSearch: { queryText: "", caseSensitive: false, regex: false },
+  timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
 };
 
 function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): SessionSearchHit {
