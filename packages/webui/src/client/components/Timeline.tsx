@@ -44,6 +44,7 @@ import {
   setRenderedTextCurrent,
 } from "../rendered-text-search.ts";
 import {
+  isTranslationSkippedText,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
@@ -509,6 +510,10 @@ function ThinkingSegment({
   // is the dictionary-like path this feature adds, while browser remains an
   // independently selectable comparison surface.
   function selectDefaultTranslation() {
+    // 全段落が日本語等で翻訳 skip されるテキストは original のまま (kawaz
+    // r38 mid=54) — 訳タブを選んでも内容が原文と同一で、確認クリックの
+    // 無駄を生むだけ。
+    if (isTranslationSkippedText(text)) return;
     if (translationAvailability.host) selectHost();
     else if (translationAvailability.browser) selectBrowser();
   }

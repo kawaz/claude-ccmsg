@@ -32,6 +32,13 @@ function shouldSkipParagraph(paragraph: string): boolean {
   return paragraph.trim() === "" || JAPANESE_CHAR_RE.test(paragraph);
 }
 
+/** テキスト全体が翻訳不要 (全段落が skip 対象) か。true なら翻訳タブの
+ * デフォルト選択を original に留める (kawaz r38 mid=54: 翻訳が走らないのに
+ * 訳タブが選ばれていると「原文と同一か」の確認クリックが無駄に発生する)。 */
+export function isTranslationSkippedText(text: string): boolean {
+  return text.split("\n\n").every(shouldSkipParagraph);
+}
+
 function getTranslatorStatic(): TranslatorStatic | null {
   const t = (globalThis as Record<string, unknown>).Translator;
   // 実ブラウザではコンストラクタ (function)、テストの mock では単なる
