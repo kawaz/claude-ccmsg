@@ -4,6 +4,7 @@ export type AgentCommunicationDirection = "outbound" | "inbound";
 
 export function agentDirectionMarker(direction: "outbound"): "🤖→";
 export function agentDirectionMarker(direction: "inbound"): "🤖←";
+export function agentDirectionMarker(direction: AgentCommunicationDirection): "🤖→" | "🤖←";
 export function agentDirectionMarker(direction: AgentCommunicationDirection): "🤖→" | "🤖←" {
   return direction === "outbound" ? "🤖→" : "🤖←";
 }
@@ -20,12 +21,12 @@ export function peerMessagePresentation(peer: PeerMessage): PeerMessagePresentat
     case "idle":
       return { kind: "idle", marker, text: peer.body };
     case "task-assignment":
-      return { kind: "card", marker, badge: `${marker} タスク指示` };
+      return { kind: "card", marker, badge: "タスク指示" };
     case "lifecycle":
-      return { kind: "card", marker, badge: `${marker} 状態変更` };
+      return { kind: "card", marker, badge: "状態変更" };
     case "unknown":
-      return { kind: "card", marker, badge: `${marker} 未知` };
+      return { kind: "card", marker, badge: "未知" };
     case "message":
-      return { kind: "card", marker, badge: marker };
+      return { kind: "card", marker, badge: "受信" };
   }
 }

@@ -14,9 +14,9 @@ describe("agentDirectionMarker", () => {
 });
 
 describe("peerMessagePresentation", () => {
-  // 通常 peer は inbound card を保ち、badge 自体にも方向を含める。summary だけで
-  // なく展開後も受信だと判別できることを固定する。
-  test("normal peer message is an inbound card", () => {
+  // 通常 peer は inbound card を保つ。方向はカードヘッダに独立表示し、右上 badge は
+  // 通信の分類を示す従来の役割から変えない。
+  test("normal peer message keeps its semantic badge", () => {
     expect(
       peerMessagePresentation({
         display: "peer",
@@ -25,11 +25,11 @@ describe("peerMessagePresentation", () => {
         category: "message",
         body: "done",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "🤖←" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "受信" });
   });
 
-  // 制御系 peer も受信方向を失わず、既存の用途ラベルを後置する。
-  test("task and lifecycle peers keep their semantic badge after the inbound marker", () => {
+  // 制御系 peer の右上 badge も用途ラベルだけを表示し、方向 marker と混ぜない。
+  test("task and lifecycle peers keep their semantic badges", () => {
     expect(
       peerMessagePresentation({
         display: "peer",
@@ -38,7 +38,7 @@ describe("peerMessagePresentation", () => {
         category: "task-assignment",
         body: "task",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "🤖← タスク指示" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "タスク指示" });
     expect(
       peerMessagePresentation({
         display: "peer",
@@ -47,7 +47,7 @@ describe("peerMessagePresentation", () => {
         category: "lifecycle",
         body: "shutdown",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "🤖← 状態変更" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "状態変更" });
   });
 
   // idle は会話カードではなく operational noise。identicon・bold・tabs を持つ card

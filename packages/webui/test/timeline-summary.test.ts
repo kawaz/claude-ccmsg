@@ -9,17 +9,25 @@ describe("foldSummaryView", () => {
     });
   });
 
-  test("keeps directional agent identity decoration while closed", () => {
-    const outbound = { kind: "agent", prefix: "🤖→", name: "team-lead" } as const;
-    expect(foldSummaryView("🤖→ team-lead", false, outbound)).toEqual({
-      label: "🤖→ team-lead",
-      decoration: outbound,
+  // 閉時 summary は通信方向だけでなく、どのツール/メッセージ種別かも保持する。
+  // decoration は identicon と破線枠を加えるが、label の語彙を置き換えない。
+  test("keeps agent tool identity decoration while closed", () => {
+    const send = { kind: "agent", prefix: "SendMessage →", name: "team-lead" } as const;
+    expect(foldSummaryView("SendMessage → team-lead", false, send)).toEqual({
+      label: "SendMessage → team-lead",
+      decoration: send,
     });
 
-    const inbound = { kind: "agent", prefix: "🤖←", name: "worker" } as const;
-    expect(foldSummaryView("🤖← worker", false, inbound)).toEqual({
-      label: "🤖← worker",
-      decoration: inbound,
+    const peer = { kind: "agent", prefix: "peer-message ←", name: "worker" } as const;
+    expect(foldSummaryView("peer-message ← worker", false, peer)).toEqual({
+      label: "peer-message ← worker",
+      decoration: peer,
+    });
+
+    const spawn = { kind: "agent", prefix: "Agent:", name: "worker" } as const;
+    expect(foldSummaryView("Agent: worker", false, spawn)).toEqual({
+      label: "Agent: worker",
+      decoration: spawn,
     });
   });
 
@@ -41,12 +49,12 @@ describe("foldSummaryView", () => {
 
   test("removes decoration while open", () => {
     expect(
-      foldSummaryView("🤖← teammate", true, {
+      foldSummaryView("peer-message ← teammate", true, {
         kind: "agent",
-        prefix: "🤖←",
+        prefix: "peer-message ←",
         name: "teammate",
       }),
-    ).toEqual({ label: "🤖← teammate" });
+    ).toEqual({ label: "peer-message ← teammate" });
     expect(foldSummaryView("Bash List files", true, { kind: "bash" })).toEqual({
       label: "Bash List files",
     });

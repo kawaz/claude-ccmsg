@@ -383,6 +383,7 @@ function AgentCard({
   return (
     <div class={`tl-agent-card tl-agent-${direction}`}>
       <div class="tl-agent-card-head">
+        <span>{agentDirectionMarker(direction)}</span>
         <AgentIdentity name={name} />
         {tlHref ? (
           <a class="tl-agent-card-tl" href={tlHref}>
@@ -405,8 +406,7 @@ function AgentSendFold({
   ts: string | null;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
-  const marker = agentDirectionMarker("outbound");
-  const label = `${marker} ${segment.to}`;
+  const label = `SendMessage → ${segment.to}`;
   return (
     <details
       class="tl-fold tl-agent-fold"
@@ -417,14 +417,14 @@ function AgentSendFold({
         ts={ts}
         label={label}
         open={open}
-        decoration={{ kind: "agent", prefix: marker, name: segment.to }}
+        decoration={{ kind: "agent", prefix: "SendMessage →", name: segment.to }}
       />
       <div class="tl-guided">
         <FoldGuide />
         <AgentCard
           name={segment.to}
           direction="outbound"
-          badge={segment.messageType === "message" ? marker : `${marker} ${segment.messageType}`}
+          badge={segment.messageType === "message" ? "送信" : segment.messageType}
           title={segment.summary}
           body={segment.message}
         />
@@ -443,7 +443,6 @@ function AgentSpawnFold({
   ts: string | null;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
-  const marker = agentDirectionMarker("outbound");
   return (
     <details
       class="tl-fold tl-agent-fold"
@@ -452,16 +451,16 @@ function AgentSpawnFold({
     >
       <FoldSummary
         ts={ts}
-        label={`${marker} ${segment.name}`}
+        label={`Agent: ${segment.name}`}
         open={open}
-        decoration={{ kind: "agent", prefix: marker, name: segment.name }}
+        decoration={{ kind: "agent", prefix: "Agent:", name: segment.name }}
       />
       <div class="tl-guided">
         <FoldGuide />
         <AgentCard
           name={segment.name}
           direction="outbound"
-          badge={`${marker} ${segment.agentType}${segment.background ? " · background" : ""}`}
+          badge={`${segment.agentType}${segment.background ? " · background" : ""}`}
           title={segment.description || null}
           body={segment.prompt}
         />
@@ -1000,14 +999,13 @@ function SystemMessageFold({
   const setOpen = peer ? setAgentOpen : setManualOpen;
   const taskSummary =
     kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
-  const inboundMarker = agentDirectionMarker("inbound");
   const label = peer
-    ? `${inboundMarker} ${peer.from}`
+    ? `${kind} ← ${peer.from}`
     : taskSummary && !open
       ? `${kind} ${taskSummary}`
       : kind;
   const decoration: FoldSummaryDecoration | undefined = peer
-    ? { kind: "agent", prefix: inboundMarker, name: peer.from }
+    ? { kind: "agent", prefix: `${kind} ←`, name: peer.from }
     : taskSummary
       ? { kind: "task-notification" }
       : undefined;
