@@ -28,6 +28,11 @@ kawaz が TUI (`/workflows`) の実スクショ 13 枚を提供 (r46m16、2026-0
 3. 未開始フェーズは番号 + 名前の淡色表示 (「3 Finalize」— 宣言済みだが空のフェーズが見える)
 4. ノード選択でドリルダウン (Prompt / Activity = 実行中ツールコール / Outcome = 返り値。データ源は TUI と同じ workflow-drilldown 経路 + agent transcript)
 
+kawaz 提供の Status タブ実スクショ (2026-07-21 06:35) で判明した既存 workflow 表示の不具合 2 点もスコープに含める:
+
+5. 同一 workflow run (`wf_666fea3f-0be`、pause→resume を経たもの) が WORKFLOWS セクションに複数回重複表示される。resume は同じ runId を引き継ぐため runId で dedup すべき。表示層だけでなく state.json / 購読経路の記録重複の可能性もあるので daemon 側も確認する
+6. モデル名の表記ゆれ。同じ run 内で「haiku」(prep 行) と「claude-haiku-4-5-20251001」(work/finalize 行) が混在。生モデル ID → 表示名 (Haiku 4.5 等) の正規化を一元化する
+
 ## 背景
 
 参照スクショは r46m16 の添付 13 枚。前提: v0.69.0 の AgentTreeGroups 構造の上に載せる。
@@ -40,6 +45,8 @@ kawaz 方針 (2026-07-21): Status タブの現在の workflow 表示は「まぁ
 - [ ] running / idle Nm Ns / stopped の状態注記が表示される (pause 中は stopped)
 - [ ] 未開始フェーズが番号 + 名前で淡色表示される
 - [ ] ノード選択で Prompt / Activity / Outcome のドリルダウンが表示される
+- [ ] 同一 workflow run の pause→resume が WORKFLOWS セクションに重複表示されない (runId dedup)
+- [ ] モデル名表示が生モデル ID でなく正規化された表示名 (Haiku 4.5 等) に統一される
 
 ## TODO
 
