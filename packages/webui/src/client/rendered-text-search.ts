@@ -14,11 +14,14 @@ interface RootHighlights {
   byColor: Range[][];
   all: Range[];
   current: boolean;
+  words: readonly SearchWord[];
   clickListener: (event: MouseEvent) => void;
 }
 
 const rootsByDocument = new Map<Document, Map<HTMLElement, RootHighlights>>();
+const toggleListenersByDocument = new Map<Document, EventListener>();
 const scheduledDocuments = new Set<Document>();
+const scheduledRefreshDocuments = new Set<Document>();
 const HIGHLIGHT_PREFIX = "ccmsg-search-";
 const CURRENT_HIGHLIGHT = `${HIGHLIGHT_PREFIX}current`;
 
@@ -54,20 +57,40 @@ export interface RenderedHighlightSpan extends TextNodeSpan {
   colorIndex: number;
 }
 
-export function collectRenderedTextSpans(
+interface RenderedHighlightRange {
+  colorIndex: number;
+  spans: TextNodeSpan[];
+}
+
+function collectRenderedTextRangeSpans(
   nodeTexts: readonly string[],
   words: readonly SearchWord[],
-): { matched: boolean; spans: RenderedHighlightSpan[] } {
+  nodeVisible: readonly boolean[],
+): { matched: boolean; ranges: RenderedHighlightRange[] } {
   const text = nodeTexts.join("");
-  if (!unitMatchesQuery(text, words)) return { matched: false, spans: [] };
+  if (!unitMatchesQuery(text, words)) return { matched: false, ranges: [] };
   const lengths = nodeTexts.map((node) => node.length);
   return {
     matched: true,
-    spans: collectHighlightRanges(text, words).flatMap((range) =>
-      projectRangeToTextNodes(lengths, range.start, range.end).map((span) => ({
-        ...span,
-        colorIndex: range.colorIndex,
-      })),
+    ranges: collectHighlightRanges(text, words).flatMap((range) => {
+      const spans = projectRangeToTextNodes(lengths, range.start, range.end);
+      return spans.length === 0 || spans.some((span) => !nodeVisible[span.nodeIndex])
+        ? []
+        : [{ colorIndex: range.colorIndex, spans }];
+    }),
+  };
+}
+
+export function collectRenderedTextSpans(
+  nodeTexts: readonly string[],
+  words: readonly SearchWord[],
+  nodeVisible: readonly boolean[] = nodeTexts.map(() => true),
+): { matched: boolean; spans: RenderedHighlightSpan[] } {
+  const result = collectRenderedTextRangeSpans(nodeTexts, words, nodeVisible);
+  return {
+    matched: result.matched,
+    spans: result.ranges.flatMap((range) =>
+      range.spans.map((span) => ({ ...span, colorIndex: range.colorIndex })),
     ),
   };
 }
@@ -129,6 +152,75 @@ function pointFallsInRange(point: Range, range: Range): boolean {
   }
 }
 
+function isTextNodeVisible(node: Text): boolean {
+  let element = node.parentElement;
+  while (element) {
+    if (element.tagName === "DETAILS" && !(element as HTMLDetailsElement).open) {
+      const summary = Array.from(element.children).find((child) => child.tagName === "SUMMARY");
+      if (!summary?.contains(node)) return false;
+    }
+    element = element.parentElement;
+  }
+  return true;
+}
+
+function collectRootRanges(
+  root: HTMLElement,
+  words: readonly SearchWord[],
+): { matched: boolean; byColor: Range[][]; all: Range[] } {
+  const doc = root.ownerDocument;
+  const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const walker = doc.createTreeWalker(root, showText);
+  const nodes: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text);
+
+  const result = collectRenderedTextRangeSpans(
+    nodes.map((node) => node.data),
+    words,
+    nodes.map((node) => isTextNodeVisible(node)),
+  );
+  const byColor = Array.from({ length: 6 }, () => [] as Range[]);
+  const all: Range[] = [];
+  for (const match of result.ranges) {
+    if (match.spans.length === 0) continue;
+    const first = match.spans[0]!;
+    const last = match.spans[match.spans.length - 1]!;
+    const range = doc.createRange();
+    range.setStart(nodes[first.nodeIndex]!, first.start);
+    range.setEnd(nodes[last.nodeIndex]!, last.end);
+    byColor[match.colorIndex]!.push(range);
+    all.push(range);
+  }
+  return { matched: result.matched, byColor, all };
+}
+
+function scheduleRootRefresh(doc: Document): void {
+  if (scheduledRefreshDocuments.has(doc)) return;
+  scheduledRefreshDocuments.add(doc);
+  queueMicrotask(() => {
+    scheduledRefreshDocuments.delete(doc);
+    const roots = rootsByDocument.get(doc);
+    if (!roots) return;
+    for (const [root, entry] of roots) {
+      const ranges = collectRootRanges(root, entry.words);
+      entry.byColor = ranges.byColor;
+      entry.all = ranges.all;
+    }
+    scheduleHighlightSync(doc);
+  });
+}
+
+function ensureToggleListener(doc: Document): void {
+  if (toggleListenersByDocument.has(doc)) return;
+  const listener = (event: Event) => {
+    const DetailsCtor = doc.defaultView?.HTMLDetailsElement;
+    if (!DetailsCtor || !(event.target instanceof DetailsCtor)) return;
+    scheduleRootRefresh(doc);
+  };
+  doc.addEventListener("toggle", listener, true);
+  toggleListenersByDocument.set(doc, listener);
+}
+
 /**
  * Searches the rendered text below `root` and registers non-destructive CSS
  * Custom Highlight ranges. Matches may cross any number of inline elements.
@@ -142,46 +234,28 @@ export function highlightRenderedText(
   if (words.length === 0) return false;
 
   const doc = root.ownerDocument;
-  const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
-  const walker = doc.createTreeWalker(root, showText);
-  const nodes: Text[] = [];
-  let text = "";
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const textNode = node as Text;
-    nodes.push(textNode);
-    text += textNode.data;
-  }
-  if (!unitMatchesQuery(text, words)) return false;
+  const ranges = collectRootRanges(root, words);
+  if (!ranges.matched) return false;
 
-  const byColor = Array.from({ length: 6 }, () => [] as Range[]);
-  const all: Range[] = [];
-  for (const match of collectHighlightRanges(text, words)) {
-    const spans = projectRangeToTextNodes(
-      nodes.map((node) => node.data.length),
-      match.start,
-      match.end,
-    );
-    if (spans.length === 0) continue;
-    const first = spans[0]!;
-    const last = spans[spans.length - 1]!;
-    const range = doc.createRange();
-    range.setStart(nodes[first.nodeIndex]!, first.start);
-    range.setEnd(nodes[last.nodeIndex]!, last.end);
-    byColor[match.colorIndex]!.push(range);
-    all.push(range);
-  }
-
-  const clickListener = (event: MouseEvent) => {
-    const point = rangeAtPoint(doc, event);
-    if (point && all.some((range) => pointFallsInRange(point, range))) onMatchClick();
+  const entry: RootHighlights = {
+    byColor: ranges.byColor,
+    all: ranges.all,
+    current: false,
+    words,
+    clickListener: () => undefined,
   };
-  root.addEventListener("click", clickListener);
+  entry.clickListener = (event: MouseEvent) => {
+    const point = rangeAtPoint(doc, event);
+    if (point && entry.all.some((range) => pointFallsInRange(point, range))) onMatchClick();
+  };
+  root.addEventListener("click", entry.clickListener);
   let roots = rootsByDocument.get(doc);
   if (!roots) {
     roots = new Map();
     rootsByDocument.set(doc, roots);
+    ensureToggleListener(doc);
   }
-  roots.set(root, { byColor, all, current: false, clickListener });
+  roots.set(root, entry);
   scheduleHighlightSync(doc);
   return true;
 }
@@ -199,6 +273,14 @@ export function removeRenderedTextHighlights(root: HTMLElement): void {
   if (!entry) return;
   root.removeEventListener("click", entry.clickListener);
   roots!.delete(root);
-  if (roots!.size === 0) rootsByDocument.delete(root.ownerDocument);
+  if (roots!.size === 0) {
+    const doc = root.ownerDocument;
+    rootsByDocument.delete(doc);
+    const toggleListener = toggleListenersByDocument.get(doc);
+    if (toggleListener) {
+      doc.removeEventListener("toggle", toggleListener, true);
+      toggleListenersByDocument.delete(doc);
+    }
+  }
   scheduleHighlightSync(root.ownerDocument);
 }
