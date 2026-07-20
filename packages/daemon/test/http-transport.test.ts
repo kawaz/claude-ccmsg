@@ -626,6 +626,10 @@ describe("tailscale serve origin auto-allow (docs/issue/2026-07-11)", () => {
         const ctx = await startTestDaemon({
           CCMSG_HTTP_BIND: `127.0.0.1:${port}`,
           CCMSG_TAILSCALE_BIN: bin,
+          // fake-tailscale gates on a file write from this test; under a loaded CI
+          // runner the default 1000ms subprocess timeout can fire before the gate
+          // opens, killing the subprocess and leaving origins empty (flaky).
+          CCMSG_TAILSCALE_STATUS_TIMEOUT_MS: "10000",
         });
         try {
           const origin = `https://${hostname}`;

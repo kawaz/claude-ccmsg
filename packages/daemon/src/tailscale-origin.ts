@@ -87,6 +87,19 @@ export interface FetchServeOriginsOptions {
   log?: Logger;
 }
 
+/** `CCMSG_TAILSCALE_STATUS_TIMEOUT_MS` (mirrors resolveDedupWindow's
+ *  parse-or-fall-back-to-default shape in server.ts): missing, empty, or non-finite/negative
+ *  values all fall through to the caller-supplied default rather than throwing. Test-only
+ *  knob to widen the timeout on loaded CI runners; production leaves it unset. */
+export function resolveStatusTimeoutMs(defaultMs: number): number {
+  const raw = process.env.CCMSG_TAILSCALE_STATUS_TIMEOUT_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return defaultMs;
+}
+
 /** Best-effort: runs `tailscale serve status --json`, parses it, and returns the origins
  *  it proxies to `boundPorts`. Never throws and never blocks longer than `timeoutMs` —
  *  binary absent (ENOENT), non-zero exit, malformed JSON, and timeout all collapse to an
@@ -97,7 +110,10 @@ export async function fetchTailscaleServeOrigins(
   opts: FetchServeOriginsOptions = {},
 ): Promise<Set<string>> {
   const bin = opts.bin ?? "tailscale";
-  const timeoutMs = opts.timeoutMs ?? 1000;
+  // Design rationale: production default stays 1000ms (DR-0004 best-effort contract —
+  // never delay daemon startup waiting on tailscale). CCMSG_TAILSCALE_STATUS_TIMEOUT_MS
+  // exists only so tests can widen the timeout past scheduler jitter on loaded runners.
+  const timeoutMs = opts.timeoutMs ?? resolveStatusTimeoutMs(1000);
   try {
     const proc = Bun.spawn([bin, "serve", "status", "--json"], {
       stdin: "ignore",
