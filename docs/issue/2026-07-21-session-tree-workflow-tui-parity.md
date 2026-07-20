@@ -32,6 +32,8 @@ kawaz が TUI (`/workflows`) の実スクショ 13 枚を提供 (r46m16、2026-0
 
 参照スクショは r46m16 の添付 13 枚。前提: v0.69.0 の AgentTreeGroups 構造の上に載せる。
 
+kawaz 方針 (2026-07-21): Status タブの現在の workflow 表示は「まぁまぁ良い」ので、似た感じでセッションツリーに載せる = ゼロから TUI を模写するのでなく、Status タブの既存 workflow 表示コンポーネント/整形ロジック (StatusPanel の workflow セクション) を AgentTreePanel の workflow ノードに再利用する方向。データ経路は v0.69.0 時点で既に両者とも workflow-drilldown で共通なので、表示層の流用が主作業。着手は v0.69.0 の実機確認後。
+
 ## 受け入れ条件
 
 - [ ] agent 行にモデル名 + トークン数が表示される
