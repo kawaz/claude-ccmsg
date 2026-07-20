@@ -120,6 +120,14 @@ export type HostTranslateRequest = (texts: string[]) => Promise<TranslateRespons
  * 許す。Promise を保持するため、同じ段落の並行要求も 1 op に集約される。 */
 const hostTextCache = new Map<string, Promise<string>>();
 
+/** thinking 全体の翻訳対象段落が host cache に揃っているかを返す。可視範囲外でも
+ * キャッシュ済み結果は daemon request を増やさず即表示できる。 */
+export function hasCachedHostThinkingText(text: string): boolean {
+  return text
+    .split("\n\n")
+    .every((paragraph) => shouldSkipParagraph(paragraph) || hostTextCache.has(paragraph));
+}
+
 /** host で 1 段落を翻訳する。日本語を含む段落・空段落は daemon へ送らず、
  * request/daemon/helper のどの失敗もその段落の原文へ fallback する。 */
 function translateParagraphOnHost(

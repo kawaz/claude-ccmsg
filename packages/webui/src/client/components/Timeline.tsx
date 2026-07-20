@@ -45,6 +45,7 @@ import {
 } from "../rendered-text-search.ts";
 import {
   isTranslationSkippedText,
+  hasCachedHostThinkingText,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
@@ -483,6 +484,36 @@ interface TranslationAvailability {
 
 type ThinkingTab = "original" | "ja-host" | "ja-browser";
 
+const pendingViewportTranslations = new Map<Element, () => void>();
+let viewportTranslationFrame: number | null = null;
+
+function distanceFromViewport(element: Element): number {
+  const root = element.closest(".timeline-view");
+  const rootRect = root?.getBoundingClientRect() ?? {
+    top: 0,
+    bottom: globalThis.innerHeight,
+  };
+  const rect = element.getBoundingClientRect();
+  if (rect.bottom < rootRect.top) return rootRect.top - rect.bottom;
+  if (rect.top > rootRect.bottom) return rect.top - rootRect.bottom;
+  return 0;
+}
+
+function enqueueViewportTranslation(element: Element, start: () => void): () => void {
+  pendingViewportTranslations.set(element, start);
+  if (viewportTranslationFrame === null) {
+    viewportTranslationFrame = requestAnimationFrame(() => {
+      viewportTranslationFrame = null;
+      const pending = [...pendingViewportTranslations.entries()];
+      pendingViewportTranslations.clear();
+      pending
+        .sort(([a], [b]) => distanceFromViewport(a) - distanceFromViewport(b))
+        .forEach(([, run]) => run());
+    });
+  }
+  return () => pendingViewportTranslations.delete(element);
+}
+
 function ThinkingSegment({
   text,
   ts,
@@ -505,6 +536,7 @@ function ThinkingSegment({
   const [hostTranslating, setHostTranslating] = useState(false);
   const [browserTranslating, setBrowserTranslating] = useState(false);
   const [detailsOpen, setDetailsOpen] = useCategoryOpen("thinking");
+  const detailsRef = useRef<HTMLDetailsElement>(null);
   const translationStartedRef = useRef(false);
 
   const changeTab = useCallback((next: ThinkingTab) => {
@@ -546,11 +578,55 @@ function ThinkingSegment({
   }
 
   useEffect(() => {
-    if (foldGroupOpen && detailsOpen && !translationStartedRef.current) {
+    if (!foldGroupOpen || !detailsOpen || translationStartedRef.current) return;
+
+    const startTranslation = () => {
+      if (translationStartedRef.current) return;
       translationStartedRef.current = true;
       selectDefaultTranslation();
+    };
+
+    // Cache hits do not add daemon work, so retain the immediate display behavior
+    // even when this thinking is outside the prefetch range.
+    if (translationAvailability.host && hasCachedHostThinkingText(text)) {
+      startTranslation();
+      return;
     }
-  }, [foldGroupOpen, detailsOpen, translationAvailability.host, translationAvailability.browser]);
+
+    const element = detailsRef.current;
+    if (element === null || typeof IntersectionObserver === "undefined") {
+      startTranslation();
+      return;
+    }
+
+    const root = element.closest(".timeline-view");
+    let cancelPending: (() => void) | undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          cancelPending = enqueueViewportTranslation(element, startTranslation);
+          observer.disconnect();
+        }
+      },
+      {
+        root,
+        // Keep the active window bounded to the viewport plus roughly two
+        // scroll-area heights before and after it.
+        rootMargin: "200% 0px",
+      },
+    );
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      cancelPending?.();
+    };
+  }, [
+    foldGroupOpen,
+    detailsOpen,
+    text,
+    translationAvailability.host,
+    translationAvailability.browser,
+  ]);
 
   // Reconnect can replace a macOS daemon with a non-capable daemon. The WS
   // handshake clears host availability before probing the new process, so an
@@ -573,6 +649,7 @@ function ThinkingSegment({
 
   return (
     <details
+      ref={detailsRef}
       class="tl-fold tl-thinking"
       open={detailsOpen}
       onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}

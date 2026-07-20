@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   _resetTranslatorStateForTest,
+  hasCachedHostThinkingText,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
@@ -205,6 +206,20 @@ describe("translateThinkingTextInBrowser", () => {
 });
 
 describe("translateThinkingTextOnHost", () => {
+  test("reports a whole thinking as cached only after every English paragraph is cached", async () => {
+    const request = async (texts: string[]) => ({
+      ok: true as const,
+      results: [{ ok: true as const, text: `[ja]${texts[0]}` }],
+    });
+    const text = "First.\n\n日本語。\n\nSecond.";
+
+    expect(hasCachedHostThinkingText(text)).toBe(false);
+    await translateThinkingTextOnHost("First.\n\n日本語。", request);
+    expect(hasCachedHostThinkingText(text)).toBe(false);
+    await translateThinkingTextOnHost("Second.", request);
+    expect(hasCachedHostThinkingText(text)).toBe(true);
+  });
+
   // host 経路も browser 経路と同じ `\n\n` 段落契約を持つ。日本語を含む段落と
   // split が作る空段落は原文のまま保持し、英語段落だけを 1 op = 1 段落で
   // daemon に送り、元の段落順・境界で再結合する。
