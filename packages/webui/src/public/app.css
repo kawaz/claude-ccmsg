@@ -4917,14 +4917,24 @@ button.session-tab {
   text-decoration: underline;
 }
 
-#agent-tree-panel-section {
-  border-top: 1px solid var(--border);
+/* r46 m5: AgentTreePanel は Timeline タブ内左ペイン (TimelinePanes) に置く。
+ * .session-pane (overflow:hidden + flex column) の中で自前スクロールと
+ * 内側パディングをここで担う (.file-tree の同種のルールと同じ役割)。 */
+.timeline-pane-tree {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
   padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  background: var(--bg-alt);
 }
 
-#agent-tree-panel-section h2 {
-  margin: 0 0 0.35rem;
-  font-size: 0.85rem;
+/* mobile (≤720px) では .session-panes が column に倒れるため、境界も
+ * bottom border に付け替える (FilesPanes の .file-tree と同じパターン)。 */
+@media (max-width: 720px) {
+  .timeline-pane-tree {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
 }
 
 /* mtime 推定など未確定状態の dot 色。既存の status-teammate-dot-* に「unknown」

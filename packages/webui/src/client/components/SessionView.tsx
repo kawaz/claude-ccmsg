@@ -12,6 +12,7 @@ import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
+import { TimelinePanes } from "./TimelinePanes.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
@@ -325,16 +326,31 @@ export function SessionView({ state }: { state: AppState }) {
         // the user why, so the pane falls back to the same explanation
         // rather than calling ws.transcriptRead for a session we know lacks one.
         hasTranscript ? (
-          // r46 m3: セッションツリーパネルは Sidebar 側へ移動 (kawaz r46m3)。
-          // Timeline は従来通りフル幅で単独描画。
-          <Timeline
-            sid={sid}
-            timeline={tree.timeline}
-            search={tree.timelineSearch}
-            sessionStatus={sessionStatus}
-            onOpenStatus={() => setLocalTab("status")}
-            agent={state.currentAgent}
-          />
+          // r46 m5: セッションツリーは Timeline タブ内の左ペインに置く
+          // (kawaz 指摘「Files を参考に」= FilesPanes と同じく本セッション
+          // スコープで左ツリー + 右コンテンツ)。agent_tree が空/undefined の
+          // ときは左ペインを出さず Timeline 単独描画に倒す (無駄な空カラムを
+          // 出さない)。
+          (sessionStatus?.agent_tree?.length ?? 0) > 0 ? (
+            <TimelinePanes
+              sid={sid}
+              agentTree={sessionStatus?.agent_tree ?? []}
+              timeline={tree.timeline}
+              search={tree.timelineSearch}
+              sessionStatus={sessionStatus}
+              onOpenStatus={() => setLocalTab("status")}
+              agent={state.currentAgent}
+            />
+          ) : (
+            <Timeline
+              sid={sid}
+              timeline={tree.timeline}
+              search={tree.timelineSearch}
+              sessionStatus={sessionStatus}
+              onOpenStatus={() => setLocalTab("status")}
+              agent={state.currentAgent}
+            />
+          )
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )

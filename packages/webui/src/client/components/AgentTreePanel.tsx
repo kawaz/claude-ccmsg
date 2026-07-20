@@ -1,5 +1,7 @@
-// r46 m3: Sidebar のセッション/ルーム section と縦積みで並ぶセッションツリー
-// パネル (kawaz r46m3 の 3 点フィードバックに対応)。
+// r46 m5: Timeline タブ内左ペイン (TimelinePanes) の中身として置くセッション
+// ツリー。Files タブが FilesPanes (左ツリー + 右ビューア) でそのセッション
+// スコープを表現しているのに合わせ (kawaz「Files を参考に」)、セッションツリー
+// も同一セッションのスコープを担う左カラムとして配置する。
 //
 // 表示要素は 1 ノード = 1 ラベル に統一 (teammate は teammate_name、subagent は
 // name があれば name、無ければ agent_id をそのまま出す)。description /
@@ -74,8 +76,8 @@ export function AgentTreePanel({
   tree,
 }: {
   sid: string;
-  /** SessionStatusSnapshot.agent_tree — 空の場合は Sidebar 側で section 自体を
-   * 描画しない想定 (無駄な空パネルを出さない)。 */
+  /** SessionStatusSnapshot.agent_tree — 空の場合は呼び出し側 (SessionView) で
+   * TimelinePanes 自体を描画せず Timeline 単独に倒す (無駄な空カラムを出さない)。 */
   tree: AgentTreeNode[];
 }) {
   return (
