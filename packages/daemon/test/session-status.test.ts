@@ -7,6 +7,7 @@ import {
   createSessionStatusState,
   foldLine,
   isSessionStatusCandidate,
+  readAgentTree,
   readTeammateModels,
   scanTranscript,
   snapshot,
@@ -1112,6 +1113,170 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
       expect(worker?.model).toBe("claude-fable-5[1m]");
       expect(ghost).toBeDefined();
       expect("model" in (ghost ?? {})).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("agent tree from meta.json (r44 m7)", () => {
+  function writeMeta(sidDir: string, agentId: string, value: Record<string, unknown>): void {
+    const subagentsDir = path.join(sidDir, "subagents");
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    fs.writeFileSync(path.join(subagentsDir, `agent-${agentId}.meta.json`), JSON.stringify(value));
+  }
+  function writeTranscript(sidDir: string, agentId: string, lines: string[]): void {
+    const subagentsDir = path.join(sidDir, "subagents");
+    fs.mkdirSync(subagentsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(subagentsDir, `agent-${agentId}.jsonl`),
+      lines.map((l) => `${l}\n`).join(""),
+    );
+  }
+  function agentUse(id: string): string {
+    return JSON.stringify({
+      type: "assistant",
+      timestamp: START,
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id, name: "Agent", input: { prompt: "x" } }],
+      },
+    });
+  }
+
+  test("depth 0 teammate + depth 0/1/2 subagent の親子関係を toolUseId で解決する", () => {
+    // meta.json 3 世代 (root → depth0 subagent → depth1 grandchild) を並べて、
+    // toolUseId 逆引きで親子関係が組み上がることを確認する。teammate は
+    // toolUseId 無しで root 直下に付く。
+    const dir = fixtureDir();
+    try {
+      // teammate (root's direct child, no toolUseId)
+      writeMeta(dir, "atm-worker", {
+        agentType: "worker",
+        name: "worker",
+        spawnDepth: 0,
+        taskKind: "in_process_teammate",
+        model: "claude-fable-5",
+      });
+      // depth 0 subagent (parent = root)
+      writeMeta(dir, "as1", {
+        agentType: "general-purpose",
+        description: "d0",
+        toolUseId: "toolu_d0",
+        spawnDepth: 0,
+      });
+      writeTranscript(dir, "as1", [agentUse("toolu_d1")]);
+      // depth 1 subagent (parent = as1)
+      writeMeta(dir, "as2", {
+        agentType: "Explore",
+        description: "d1",
+        toolUseId: "toolu_d1",
+        spawnDepth: 1,
+      });
+      writeTranscript(dir, "as2", [agentUse("toolu_d2")]);
+      // depth 2 subagent (parent = as2)
+      writeMeta(dir, "as3", {
+        agentType: "Explore",
+        description: "d2",
+        toolUseId: "toolu_d2",
+        spawnDepth: 2,
+      });
+
+      // root transcript emits toolu_d0
+      const rootFile = path.join(dir, "root.jsonl");
+      const sidDir = rootFile.slice(0, -".jsonl".length);
+      // rename: our helpers wrote into `${dir}/subagents/` so sidDir must be dir
+      // itself. adjust: use dir as sidDir and dir + ".jsonl" as rootFile.
+      const actualRoot = `${dir}.jsonl`;
+      fs.writeFileSync(actualRoot, `${agentUse("toolu_d0")}\n`);
+
+      const state = createSessionStatusState();
+      const tree = readAgentTree(dir, actualRoot, state);
+      expect(tree).toBeDefined();
+      // top-level: teammate + as1
+      const topIds = (tree ?? []).map((n) => n.agent_id).sort();
+      expect(topIds).toEqual(["as1", "atm-worker"]);
+      const as1 = tree?.find((n) => n.agent_id === "as1");
+      expect(as1?.children.map((c) => c.agent_id)).toEqual(["as2"]);
+      const as2 = as1?.children[0];
+      expect(as2?.children.map((c) => c.agent_id)).toEqual(["as3"]);
+      const teammate = tree?.find((n) => n.agent_id === "atm-worker");
+      expect(teammate?.kind).toBe("teammate");
+      expect(teammate?.teammate_name).toBe("worker");
+      expect(teammate?.model).toBe("claude-fable-5");
+      // 未使用の変数の意図をコンパイラに教える
+      void rootFile;
+      void sidDir;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("depth cap は MAX_AGENT_TREE_DEPTH (5) を超える子孫を切り捨てる", () => {
+    // depth 0..6 の直列に並べて、depth ≤ 5 だけが tree に残ることを確認する。
+    const dir = fixtureDir();
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("t0")}\n`);
+      // depth 0
+      writeMeta(dir, "a0", {
+        agentType: "general-purpose",
+        toolUseId: "t0",
+        spawnDepth: 0,
+      });
+      // depth 1..6 chain
+      for (let i = 1; i <= 6; i++) {
+        writeTranscript(dir, `a${i - 1}`, [agentUse(`t${i}`)]);
+        writeMeta(dir, `a${i}`, {
+          agentType: "general-purpose",
+          toolUseId: `t${i}`,
+          spawnDepth: i,
+        });
+      }
+      const state = createSessionStatusState();
+      const tree = readAgentTree(dir, rootFile, state) ?? [];
+      // walk deepest chain
+      let node = tree.find((n) => n.agent_id === "a0");
+      let depth = 0;
+      while (node?.children[0]) {
+        node = node.children[0];
+        depth++;
+      }
+      // a0(depth0) → a1..a5 = 5 hops (total tree depth 5)
+      expect(depth).toBe(5);
+      expect(node?.agent_id).toBe("a5");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("親 transcript から toolUseId が見つからない孤児は root 直下に fallback する", () => {
+    // 想定外に親が消えた/転記されていない場合でも UI から辿れるように、
+    // orphan は root 直下 (depth 0 相当) として surface する。
+    const dir = fixtureDir();
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, ""); // no Agent tool_use
+      writeMeta(dir, "orphan", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_unknown",
+        spawnDepth: 1,
+      });
+      const tree = readAgentTree(dir, rootFile, createSessionStatusState()) ?? [];
+      expect(tree.map((n) => n.agent_id)).toEqual(["orphan"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("subagents ディレクトリ不在では undefined を返す", () => {
+    // spawn 前 / 個人セッションで snapshot に agent_tree フィールドを載せない条件。
+    const dir = fixtureDir();
+    try {
+      expect(readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState())).toBeUndefined();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

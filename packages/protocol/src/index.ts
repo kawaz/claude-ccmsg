@@ -414,6 +414,54 @@ export interface SessionTeammate {
    * including any `[1m]` suffix). Absent when no meta.json was found. */
   model?: string;
 }
+/** r44 m7: recursive agent tree rooted at the session, one node per
+ * `subagents/agent-<agentId>.meta.json`. Direct children of the root session
+ * appear at the top level of `SessionStatusSnapshot.agent_tree`; deeper
+ * subagents nest under `children`. Depth is capped at 5 (root's direct
+ * children = depth 0), matching CC's own spawnDepth ceiling; nodes with
+ * `spawn_depth > 5` are dropped. Nodes whose `meta.toolUseId` cannot be
+ * located in any candidate parent transcript (orphan — parent already
+ * rotated / never observed) are surfaced at the top level so they remain
+ * navigable rather than silently disappearing. */
+export interface AgentTreeNode {
+  /** stable id from the meta.json filename (`agent-<agentId>.meta.json`).
+   * Used as the react key and as the `agentId` argument to
+   * `agentTimelineHref`. */
+  agent_id: string;
+  /** teammate name (agent-teams `name` from meta.json) — present only for
+   * teammate nodes. When set, the TL link uses the teammate ref instead of
+   * the agentId ref (they resolve the same transcript but the teammate
+   * locator is the observable identity for agent-teams). */
+  teammate_name?: string;
+  /** meta.json `agentType` — CC-side agent role (`Explore`, `general-purpose`,
+   * a custom agent name, or the teammate role slug). Absent only when the
+   * meta.json is malformed. */
+  agent_type?: string;
+  /** meta.json `description` — the spawn call's description, verbatim. */
+  description?: string;
+  /** teammate-only fields (mirror SessionTeammate). */
+  color?: string;
+  model?: string;
+  team_name?: string;
+  /** meta.json `spawnDepth` (0-based; root's direct child = 0). */
+  spawn_depth: number;
+  /** "teammate" (long-lived agent-teams member) vs "subagent" (one-shot
+   * Agent tool invocation, sync or async). The distinguishing field in
+   * meta.json is `taskKind === "in_process_teammate"`. */
+  kind: "teammate" | "subagent";
+  /** Estimated liveness state, open-set: "active" | "idle" | "spawned" |
+   * "stopped" | "completed" | "unknown". Depth-0 nodes reuse the fold's
+   * background/teammate state (transcript-observed); deeper nodes fall back
+   * to a transcript-mtime heuristic — see readAgentTree's Design rationale
+   * for the limitation. */
+  state: string;
+  /** transcript file mtime (ms since epoch), used both by the UI to show
+   * relative age and by depth≥1's live heuristic. */
+  last_activity_ms?: number;
+  /** child nodes, already depth-capped and dedup-guarded by transcript path. */
+  children: AgentTreeNode[];
+}
+
 export interface SessionStatusSnapshot {
   todos: SessionTodo[];
   workflows: SessionWorkflowStatus[];
@@ -421,6 +469,10 @@ export interface SessionStatusSnapshot {
   context?: SessionContextUsage;
   /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
   teammates?: SessionTeammate[];
+  /** r44 m7: agent tree rooted at the session. Absent when the session has
+   * no subagents/ dir (never spawned an Agent). See AgentTreeNode for the
+   * per-node shape and depth cap. */
+  agent_tree?: AgentTreeNode[];
   /** DR-0024: absolute paths outside the session's containment root that its
    * transcript records as file-tool inputs. Existing targets are realpaths;
    * missing/deleted targets retain a normalized lexical path. This is exactly

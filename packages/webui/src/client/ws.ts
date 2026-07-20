@@ -502,6 +502,7 @@ export function createWsClient(
           teammates: ev.teammates ?? [],
           external_files: ev.external_files ?? [],
           ...(ev.workspace_folders ? { workspace_folders: ev.workspace_folders } : {}),
+          ...(ev.agent_tree ? { agent_tree: ev.agent_tree } : {}),
         },
       });
       return;

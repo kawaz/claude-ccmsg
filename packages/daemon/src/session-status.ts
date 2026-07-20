@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   ErrorCode,
+  type AgentTreeNode,
   type SessionBackgroundStatus,
   type SessionContextUsage,
   type SessionStatusSnapshot,
@@ -760,6 +761,12 @@ export function snapshot(
    * than publishing a spurious empty allowlist. */
   cwd?: string,
 ): SessionStatusSnapshot {
+  // r44 m7: agent_tree lookup shares the same "read at snapshot time" fold
+  // pattern as readTeammateModels — meta.json / subagent transcripts are
+  // written by the harness outside the transcript stream we fold, so a
+  // per-line fold would miss late-appearing files. Skip entirely when we
+  // don't know sidDir (constructed snapshots in tests).
+  const agentTree = sidDir ? readAgentTree(sidDir, `${sidDir}.jsonl`, state) : undefined;
   return {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
     workflows: [...state.workflows.values()].map((workflow) => {
@@ -787,6 +794,7 @@ export function snapshot(
       });
     })(),
     external_files: [...state.externalFiles].sort(),
+    ...(agentTree && agentTree.length > 0 ? { agent_tree: agentTree } : {}),
     // DR-0026: discovered inline at snapshot time — the workspace file is
     // hand-edited out of band and there is no transcript event to fold on.
     // Read cost is bounded (cwd top level only). Omit entirely when nothing
@@ -842,6 +850,294 @@ export function readTeammateModels(sidDir: string): Map<string, string> {
     models.set(name, model);
   }
   return models;
+}
+
+/** r44 m7: max depth (inclusive) surfaced by readAgentTree. Root's direct
+ * children are depth 0, so a value of 5 admits depth 0..5 — matching the
+ * `spawnDepth` ceiling CC itself enforces (observed via test fixture
+ * `Recursive depth-5 agent spawn`). Nodes with `spawn_depth > MAX_AGENT_TREE_DEPTH`
+ * are dropped along with their descendants. */
+const MAX_AGENT_TREE_DEPTH = 5;
+
+/** r44 m7: liveness heuristic threshold. A transcript file whose mtime is
+ * newer than `Date.now() - AGENT_LIVE_MTIME_WINDOW_MS` is considered still
+ * writing (= "active"). This is a fallback for depth≥1 subagents whose
+ * lifecycle the root fold cannot observe (they emit tool-use rows in their
+ * own transcript, not the root's). 2 min is generous enough to survive
+ * ordinary long-running tool calls (Bash / Read) without flapping to
+ * "stopped" mid-turn. See Design rationale in readAgentTree. */
+const AGENT_LIVE_MTIME_WINDOW_MS = 2 * 60 * 1000;
+
+interface AgentMetaFile {
+  /** agentId derived from filename: `agent-<agentId>.meta.json`. */
+  agentId: string;
+  /** absolute path to the .meta.json file. */
+  metaPath: string;
+  /** absolute path to the paired .jsonl transcript (may or may not exist). */
+  transcriptPath: string;
+  /** transcript file mtime (ms) when known, else meta.json mtime. */
+  mtimeMs: number;
+  /** parsed meta.json record (schema-loose; consumer picks fields). */
+  meta: Record<string, unknown>;
+}
+
+/** Filename → agentId. The convention is `agent-<agentId>.meta.json`; the
+ * agentId is whatever follows the `agent-` prefix and is used verbatim in
+ * `agentTimelineHref` and as the parent lookup key. Returns `undefined` for
+ * a filename that doesn't fit the shape (defensive against hand-edited /
+ * unrelated files inside `subagents/`). */
+function parseAgentIdFromFilename(filename: string): string | undefined {
+  if (!filename.startsWith("agent-") || !filename.endsWith(".meta.json")) return undefined;
+  const agentId = filename.slice("agent-".length, -".meta.json".length);
+  return agentId.length > 0 ? agentId : undefined;
+}
+
+/** Extract every `id` from `tool_use` blocks whose `name` is `"Agent"` in a
+ * .jsonl transcript, returning them as a Set. Used to reverse-map a child
+ * meta's `toolUseId` back to its parent transcript (= the file where the
+ * Agent tool_use was emitted). Read is bounded by MAX_TRANSCRIPT_SCAN_BYTES
+ * to keep snapshot cost predictable when a session accumulates huge
+ * transcripts; empirically an Agent tool_use is roughly the first thing a
+ * subagent-spawning session writes so the truncation rarely matters, but
+ * the bound is documented rather than silent. */
+function readAgentToolUseIds(file: string, out: Set<string>): void {
+  let content: string;
+  try {
+    content = fs.readFileSync(file, "utf-8");
+  } catch {
+    return;
+  }
+  // Cheap prefilter: only lines that mention both a tool_use id and the
+  // literal `"name":"Agent"` need JSON parsing.
+  const lines = content.split("\n");
+  for (const line of lines) {
+    if (!line.includes('"name":"Agent"')) continue;
+    if (!line.includes('"type":"tool_use"')) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(row)) continue;
+    const message = row.message;
+    if (!isRecord(message) || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (!isRecord(block) || block.type !== "tool_use") continue;
+      if (block.name !== "Agent") continue;
+      const id = stringValue(block.id);
+      if (id) out.add(id);
+    }
+  }
+}
+
+/** r44 m7: build a `SessionStatusSnapshot.agent_tree` from `<sidDir>/subagents/`.
+ *
+ * Approach:
+ *
+ * 1. Enumerate `agent-*.meta.json` under `subagents/`.
+ * 2. For each meta with `toolUseId`, locate its parent transcript by
+ *    scanning the root `<rootSid>.jsonl` and each subagent `.jsonl` for a
+ *    matching `Agent` tool_use id. Meta files without a `toolUseId` (agent-
+ *    teams teammates) attach directly under the root session.
+ * 3. Assemble the tree, drop nodes exceeding `MAX_AGENT_TREE_DEPTH`, and
+ *    orphan-fallback (attach to root) for nodes whose parent transcript
+ *    couldn't be located — parent likely rotated or was never captured.
+ *
+ * Liveness (`state` field):
+ *
+ * - Depth 0 with a matching `state.background` / `state.teammates` entry
+ *   reuses that fold-observed value (accurate — same source that powers the
+ *   existing Status tab).
+ * - Depth ≥ 1 falls back to `AGENT_LIVE_MTIME_WINDOW_MS` on the transcript
+ *   file (see Design rationale below).
+ *
+ * Design rationale (deep-node liveness): the root fold only observes
+ * tool_use / tool_result events written to the root transcript, so a
+ * grandchild's active/idle transitions are invisible to it. The three
+ * candidates considered were:
+ *
+ *   (a) read each subagent's transcript end and look for a completion
+ *       marker — but subagents don't emit a well-defined "done" line
+ *       (they exit when the parent's Agent tool_result folds in), so this
+ *       yields false negatives.
+ *   (b) parse `<task-notification>` fanned out through queue-operation
+ *       rows — same information the root fold already uses, but only
+ *       covers direct children of root.
+ *   (c) transcript-file mtime relative to now — coarse but robust: a
+ *       still-active agent is writing tool-use rows, so its mtime tracks
+ *       roughly with the current wall clock; a finished agent's file
+ *       stops moving.
+ *
+ * (c) is the pragmatic choice for depth ≥ 1. Limitation: a subagent stuck
+ * on a long-running tool call with no intervening output will look
+ * "stopped" once its mtime falls outside the window. The UI shows this as
+ * an educated guess, not authoritative status.
+ */
+export function readAgentTree(
+  sidDir: string,
+  rootTranscriptPath: string,
+  state: SessionStatusState,
+  nowMs: number = Date.now(),
+): AgentTreeNode[] | undefined {
+  const subagentsDir = path.join(sidDir, "subagents");
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+
+  const metas: AgentMetaFile[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const agentId = parseAgentIdFromFilename(entry.name);
+    if (!agentId) continue;
+    const metaPath = path.join(subagentsDir, entry.name);
+    const transcriptPath = path.join(subagentsDir, `agent-${agentId}.jsonl`);
+    let meta: unknown;
+    let transcriptMtimeMs = 0;
+    try {
+      meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+    } catch {
+      continue;
+    }
+    if (!isRecord(meta)) continue;
+    try {
+      transcriptMtimeMs = fs.statSync(transcriptPath).mtimeMs;
+    } catch {
+      // No transcript yet (extremely early after spawn) — fall back to
+      // meta.json mtime so age display still has a value.
+      try {
+        transcriptMtimeMs = fs.statSync(metaPath).mtimeMs;
+      } catch {
+        transcriptMtimeMs = 0;
+      }
+    }
+    metas.push({ agentId, metaPath, transcriptPath, mtimeMs: transcriptMtimeMs, meta });
+  }
+  if (metas.length === 0) return [];
+
+  // Reverse map: toolUseId → parent agentId (or null for root). Only
+  // populated for meta entries that carry a toolUseId (the sync/async
+  // subagent case). agent-teams teammates carry no toolUseId and attach
+  // directly to root via the else-branch below.
+  const rootAgentIds = new Set<string>();
+  readAgentToolUseIds(rootTranscriptPath, rootAgentIds);
+  const subagentIdMaps = new Map<string, Set<string>>();
+  for (const m of metas) {
+    const ids = new Set<string>();
+    readAgentToolUseIds(m.transcriptPath, ids);
+    subagentIdMaps.set(m.agentId, ids);
+  }
+
+  function findParent(toolUseId: string): string | null | undefined {
+    if (rootAgentIds.has(toolUseId)) return null; // root is parent
+    for (const [parentAgentId, ids] of subagentIdMaps) {
+      if (ids.has(toolUseId)) return parentAgentId;
+    }
+    return undefined; // orphan
+  }
+
+  interface WorkingNode {
+    node: AgentTreeNode;
+    parent: string | null; // null = root; string = parent agentId
+  }
+  const working = new Map<string, WorkingNode>();
+  for (const m of metas) {
+    const toolUseId = stringValue(m.meta.toolUseId);
+    const taskKind = stringValue(m.meta.taskKind);
+    const isTeammate = taskKind === "in_process_teammate";
+    const name = stringValue(m.meta.name);
+    const spawnDepth = typeof m.meta.spawnDepth === "number" ? m.meta.spawnDepth : 0;
+
+    let parentAgentId: string | null;
+    if (isTeammate || !toolUseId) {
+      // Teammates and any meta lacking toolUseId attach directly to root —
+      // they're spawned by the root session and don't carry a parent-side
+      // toolUseId in meta.
+      parentAgentId = null;
+    } else {
+      const found = findParent(toolUseId);
+      // undefined = orphan; fall back to root so the node stays visible.
+      parentAgentId = found === undefined ? null : found;
+    }
+
+    // depth-0 live comes from the fold; depth≥1 uses mtime.
+    let liveState: string;
+    if (isTeammate && name) {
+      const teammate = state.teammates.get(name);
+      liveState = teammate?.state ?? "unknown";
+    } else if (parentAgentId === null) {
+      // depth-0 subagent: match against state.background by agentId.
+      const bg = state.background.get(m.agentId);
+      liveState = bg
+        ? bg.status === "running"
+          ? "active"
+          : bg.status
+        : m.mtimeMs > 0 && nowMs - m.mtimeMs < AGENT_LIVE_MTIME_WINDOW_MS
+          ? "active"
+          : "unknown";
+    } else {
+      liveState =
+        m.mtimeMs > 0 && nowMs - m.mtimeMs < AGENT_LIVE_MTIME_WINDOW_MS ? "active" : "stopped";
+    }
+
+    const label =
+      stringValue(m.meta.description) ?? name ?? stringValue(m.meta.agentType) ?? m.agentId;
+    const node: AgentTreeNode = {
+      agent_id: m.agentId,
+      spawn_depth: spawnDepth,
+      kind: isTeammate ? "teammate" : "subagent",
+      state: liveState,
+      children: [],
+      ...(isTeammate && name ? { teammate_name: name } : {}),
+      ...(stringValue(m.meta.agentType) ? { agent_type: stringValue(m.meta.agentType)! } : {}),
+      ...(stringValue(m.meta.description) ? { description: stringValue(m.meta.description)! } : {}),
+      ...(stringValue(m.meta.color) ? { color: stringValue(m.meta.color)! } : {}),
+      ...(stringValue(m.meta.model) ? { model: stringValue(m.meta.model)! } : {}),
+      ...(stringValue(m.meta.teamName) ? { team_name: stringValue(m.meta.teamName)! } : {}),
+      ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
+    };
+    // label は現状 UI 側の派生に委ねる (agent_type/description/name の chain)。
+    // node に label は載せずに済むが、意図の可視化として local 変数だけ残す。
+    void label;
+    working.set(m.agentId, { node, parent: parentAgentId });
+  }
+
+  // Wire children under parents; unknown-parent nodes stay at root as
+  // orphan fallback (already resolved to `null` above).
+  const roots: AgentTreeNode[] = [];
+  for (const w of working.values()) {
+    if (w.parent === null) {
+      roots.push(w.node);
+    } else {
+      const parent = working.get(w.parent);
+      if (!parent) {
+        // parent's meta.json disappeared while we were reading — treat as root.
+        roots.push(w.node);
+      } else {
+        parent.node.children.push(w.node);
+      }
+    }
+  }
+
+  // Depth cap via BFS: root direct children are depth 0, matching
+  // `spawnDepth` in the meta.json. Nodes exceeding MAX_AGENT_TREE_DEPTH are
+  // dropped in place (their subtree goes with them). A depth counted here
+  // uses the tree position, not the meta's `spawnDepth` — a re-parented
+  // orphan is measured from where it ended up. Sort each level by
+  // `last_activity_ms` desc so the freshest agent bubbles to the top.
+  function capAndSort(nodes: AgentTreeNode[], depth: number): AgentTreeNode[] {
+    if (depth > MAX_AGENT_TREE_DEPTH) return [];
+    const capped = nodes.map((n) => ({
+      ...n,
+      children: capAndSort(n.children, depth + 1),
+    }));
+    capped.sort((a, b) => (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0));
+    return capped;
+  }
+  return capAndSort(roots, 0);
 }
 
 function deriveSidDir(file: string): string | undefined {
