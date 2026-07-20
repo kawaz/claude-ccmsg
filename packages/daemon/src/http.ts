@@ -3,6 +3,7 @@
 // The daemon's dispatch/delivery code (server.ts) never touches this file — it only
 // sees `Conn.write`, so UDS and HTTP/WS are interchangeable to it.
 import { handleAttachmentServe, handleAttachmentUpload } from "./attachment.ts";
+import { handleFsServe } from "./fs-serve.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
@@ -198,6 +199,12 @@ export function startHttpListener(
       }
       if (url.pathname.startsWith("/attachment/") && req.method === "GET") {
         return handleAttachmentServe(url.pathname.slice("/attachment/".length));
+      }
+      // Image serve for the FileViewer (see fs-serve.ts). Same trust boundary
+      // (source-IP + Origin already checked above); per-request authorization
+      // reuses fs_read / fs_read_external / fs_read_workspace containment.
+      if (url.pathname === "/fs-serve" && req.method === "GET") {
+        return handleFsServe(daemon.sessions, daemon.sessionStatus, url);
       }
       if (fallback) return fallback(req);
       return new Response("Not Found", { status: 404 });

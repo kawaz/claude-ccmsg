@@ -2582,6 +2582,35 @@ button.session-tab {
   padding: 1rem;
 }
 
+/* Image preview for FileViewer (png/jpeg/gif/webp/svg/avif/…). The wrapper
+ * scrolls horizontally on narrow panes; the img itself is capped so a huge
+ * screenshot fits without stretching the pane, and centered so portrait /
+ * square shots don't hug one edge. */
+.viewer-image-wrap {
+  padding: 1rem;
+  overflow: auto;
+  text-align: center;
+}
+
+.viewer-image {
+  max-width: 100%;
+  height: auto;
+  /* Checker background so PNG/SVG transparency is visible instead of
+   * blending into the viewer's own background — same convention as
+   * standalone image viewers. */
+  background-image:
+    linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+
 .viewer-body {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -14,6 +14,7 @@ import {
   errorMessage,
   inboxAutoFilename,
   isExternalFilePath,
+  isImagePath,
   isMarkdownPath,
   isWorkspaceFilePath,
   resolveInboxFilename,
@@ -455,6 +456,43 @@ export function FileViewer({
   }
 
   if (!res) return null; // unreachable: status "loaded" always carries a response (store.ts invariant)
+
+  // Image extensions get inline <img> preview regardless of the daemon's
+  // binary-sniff verdict: PNG/JPEG/… trip the NUL-byte sniff (res.binary=true,
+  // content dropped) while SVG is UTF-8 text (res.binary=false). Serving via
+  // the /fs-serve HTTP endpoint sidesteps both the 512 KiB fs_read cap and
+  // the base64 blow-up a data: URL would need. SVG is deliberately rendered
+  // through <img src> (not inline in the DOM) so SVG-embedded <script> stays
+  // inert (browsers do not execute scripts inside SVG loaded as an image).
+  const imageMode = isImagePath(path);
+  if (imageMode) {
+    const kind = isWorkspaceFilePath(path, workspaceFolders)
+      ? "workspace"
+      : isExternalFilePath(path)
+        ? "external"
+        : "contained";
+    const src = `/fs-serve?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(path)}&kind=${kind}`;
+    return (
+      <div class="file-viewer">
+        <header class="viewer-header">
+          <span class="viewer-path">{path}</span>
+          <span class="viewer-banner">画像 ({res.size.toLocaleString()} bytes)</span>
+          <RefetchButton />
+        </header>
+        <div class="viewer-image-wrap">
+          <img
+            class="viewer-image"
+            src={src}
+            alt={path}
+            // Force reload on ↻ refetch: the loaded response's size/path
+            // signature keys the URL fragment so <img> re-fetches after an
+            // fs_read refetch reports a new size.
+            key={`${path}:${res.size}`}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (res.binary) {
     return (

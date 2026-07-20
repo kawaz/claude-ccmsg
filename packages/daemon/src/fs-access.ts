@@ -639,6 +639,82 @@ export function fsReadWorkspace(
   return readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
 }
 
+// --- fs_serve (binary HTTP serve, image viewer) ------------------------
+
+/** Authorize a read-only serve of `reqPath` for `sid` under `kind` and return
+ *  the realpath + size. Reuses the same containment / allowlist checks
+ *  fs_read / fs_read_external / fs_read_workspace use — the only differences
+ *  are that this helper stops at "authorized realpath" (the HTTP serve layer
+ *  streams bytes itself with a proper Content-Type) and imposes no
+ *  FS_READ_MAX_BYTES cap so a screenshot larger than 512 KiB still renders. */
+export function fsResolveForServe(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+  kind: "contained" | "external" | "workspace",
+): FsAccessResult<{ realPath: string; size: number }> {
+  let realPath: string;
+  if (kind === "contained") {
+    const rootResult = resolveRoot(sessions, sid);
+    if (!rootResult.ok) return rootResult;
+    if (typeof reqPath !== "string" || reqPath === "") {
+      return { ok: false, code: ErrorCode.invalid_args, msg: "fs_serve requires path" };
+    }
+    const resolved = resolveContained(rootResult.root, reqPath);
+    if (!resolved.ok) return resolved;
+    realPath = resolved.realPath;
+  } else if (kind === "external") {
+    if (typeof reqPath !== "string" || reqPath === "" || !path.isAbsolute(reqPath)) {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: "fs_serve external requires an absolute path",
+      };
+    }
+    const status = getSessionStatus(statusStore, sessions, sid);
+    if (!status.ok) return status;
+    const allowlist = new Set(status.data.external_files ?? []);
+    const normalized = path.normalize(reqPath);
+    if (!allowlist.has(normalized)) {
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+    }
+    try {
+      realPath = fs.realpathSync(reqPath);
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err.code === "ENOENT") {
+        return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+      }
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot resolve path: ${reqPath}` };
+    }
+    if (!allowlist.has(realPath)) {
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+    }
+  } else {
+    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    if (!allow.ok) return allow;
+    const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+    if (!resolved.ok) return resolved;
+    realPath = resolved.realPath;
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(realPath);
+  } catch {
+    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+  }
+  if (!stat.isFile()) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "fs_serve target is not a regular file",
+    };
+  }
+  return { ok: true, data: { realPath, size: stat.size } };
+}
+
 // --- fs_write ----------------------------------------------------------
 
 export function fsWrite(

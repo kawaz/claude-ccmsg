@@ -783,6 +783,28 @@ export function isWorkspaceFilePath(
   return false;
 }
 
+/** Extensions the daemon's /fs-serve endpoint renders as inline images. Keep
+ * in sync with SERVE_MIME_BY_EXT in daemon/src/fs-serve.ts — the daemon rejects
+ * anything not in that table, so a mismatch would surface immediately as a
+ * broken <img>. */
+const VIEWER_IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".avif",
+  ".bmp",
+  ".ico",
+]);
+
+export function isImagePath(filePath: string): boolean {
+  const dot = filePath.lastIndexOf(".");
+  if (dot < 0) return false;
+  return VIEWER_IMAGE_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
+
 /** Stable display order for the "プロジェクト外" section. The daemon already
  * deduplicates/sorts snapshots, but keeping the view derivation pure makes a
  * locally constructed/older snapshot deterministic too. */
