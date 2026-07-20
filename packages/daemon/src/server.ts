@@ -1496,11 +1496,11 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       send(conn, { ok: true, subscribed: true });
       // handler runs to completion synchronously, so no live event interleaves the snapshot.
       // Default (no `since`/`since_seq` entry for a room, and no `backlog: true`) is
-      // NO backlog at all — a fresh CLI sidecar connect doesn't want its context
-      // flooded with history it can't act on (issue
-      // 2026-07-17-subscribe-no-backlog-default). Rooms without a replay instead go
-      // into `cursors` below and surface as one `room_cursors` summary event, so the
-      // subscriber can `read` any room it's behind on. `backlog: true` (the webui's
+      // NO backlog at all — a fresh sidecar connect doesn't want its context flooded
+      // with history it can't act on (issue 2026-07-17-subscribe-no-backlog-default).
+      // Rooms without a replay instead go into `cursors` below and surface on the wire
+      // as one `room_cursors` summary event. The CLI drops that connection snapshot
+      // from stdout; other protocol consumers may use it. `backlog: true` (the webui's
       // every subscribe call, since it paints room history from the backlog) restores
       // the old unconditional snapshot for rooms `since`/`since_seq` doesn't cover.
       const cursors: Array<{ room: string; last_mid: number }> = [];

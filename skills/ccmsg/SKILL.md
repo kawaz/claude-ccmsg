@@ -35,7 +35,7 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 `subscribe` は blocking なので、SessionStart / UserPromptSubmit hook が示すコマンドをそのまま Monitor (`persistent: true`) で起動する。
 
-接続時は過去ログを再送しない。参加中 room の `{room, last_mid}` 一覧 (`ev:"room_cursors"`) だけが届く。自分の記憶より room が進んでいたら `read` で取りに行く。
+接続・再接続時は stdout に何も出さず、過去ログも再送しない。未読が必要なときは `read` で取りに行く。
 
 長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read r<N>m<M>` をそのまま実行して全文を取得する。複数指定は `r<N>m<M>,m<M>`、既存の `ccmsg read <room> <mids>` 形式も利用できる。
 

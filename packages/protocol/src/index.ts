@@ -253,11 +253,11 @@ export interface RestartingStreamEvent {
 /** Emitted once at `subscribe` time for every visible room that did NOT get a
  * backlog/delta replay (no `since`/`since_seq` entry for it and the request
  * didn't set `backlog: true` — issue 2026-07-17-subscribe-no-backlog-default).
- * Lets a fresh CLI sidecar connect see each room's current cursor without
- * re-flooding its history; the subscriber compares `last_mid` against what it
- * already remembers and calls `read` to catch up only the rooms it needs.
- * Omitted entirely when every visible room got a replay instead (empty list
- * never sent). */
+ * Lets protocol consumers inspect each room's current cursor without re-flooding
+ * its history. The CLI subscribe stream intentionally drops this connection
+ * snapshot from stdout; other consumers may use it for their own catch-up policy.
+ * Omitted entirely when every visible room got a replay instead (empty list never
+ * sent). */
 export interface RoomCursorsStreamEvent {
   ev: "room_cursors";
   rooms: Array<{ room: string; last_mid: number }>;

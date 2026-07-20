@@ -5,8 +5,8 @@
 //   1. daemon が再起動しても subscribe プロセスが exit せず、跨ぎ前後で
 //      post された msg が **漏れなく重複なく** stdout に現れる (= since 状態を
 //      維持した再 subscribe で BBS delta が成立する)。
-//   2. `restarting` event は stdout に流れない (= 上流 Monitor に「張り直せ」
-//      ノイズを見せないのが本改修の目的)。
+//   2. `restarting` / `room_cursors` は stdout に流れない (= 上流 Monitor に
+//      接続制御ノイズを見せない)。
 //   3. daemon stop 後の subscribe は daemon を **spawn しない** (= 意図的な
 //      停止を長寿命 subscribe が resurrection しない no-spawn 契約)。
 //
@@ -104,17 +104,17 @@ async function waitForLine(
 }
 
 describe("ccmsg subscribe daemon restart transparency", () => {
-  test("daemon 再起動を跨いで subscribe が生存し、跨ぎ前後の post が両方 stdout に出る (restarting は出ない)", async () => {
+  test("daemon 再起動を跨いで subscribe が生存し、post だけが stdout に出る", async () => {
     const { env, sock, cleanup } = makeEnv();
     try {
-      // Setup: 別 session CREATOR が --exclude-self で S1 のみ member の room を
+      // Setup: 別 session CREATOR が --exclude-self で S1 と SUB が member の room を
       // 作成する (CLI の write ops は identity 必須になったので、u1 として
       // create-room する経路は廃止。u1 は暗黙参加のため subscribe には引き続き
       // 届く)。改修前は --as-user create-room で同型の room を作っていた。
       const created = JSON.parse(
         (
           await runCli(
-            ["--sid", "CREATOR", "create-room", "--members", "S1", "--exclude-self"],
+            ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
             env,
           )
         ).out,
@@ -122,15 +122,13 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       expect(created.ok).toBe(true);
       const room = created.room;
 
-      // subscribe を長寿命 subprocess として起動 (実 CLI 経路)。sid 環境変数を
-      // 一切 export しないので CLI は u1 として hello し、u1 は全 room に暗黙参加
-      // (DR-0003 §5) なので room 開設・S1 の post が subscribe に届く。stderr に
-      // 「subscribing as u1」警告が出るが stdout は pure jsonl。
+      // subscribe を長寿命 subprocess として起動 (実 CLI 経路)。session role にして
+      // peers から hello 完了を観測できるようにし、member room の live event を受ける。
       const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
         env: {
           ...process.env,
           ...env,
-          CCMSG_SID: "",
+          CCMSG_SID: "SUB",
           CLAUDE_CODE_SESSION_ID: "",
           CLAUDE_SESSION_ID: "",
         },
@@ -141,21 +139,22 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       const accum = { buf: "", lines: [] as string[] };
 
       try {
-        // subscribe の bare default はもう backlog を返さない (issue
-        // 2026-07-17-subscribe-no-backlog-default) — ack 直後に必ず届く
-        // `ev:"room_cursors"` を待って、daemon.subscribers への登録 (= 以降の post
-        // が live delivery で確実に届く状態) を確認してから post する。これを待たずに
-        // post すると、spawn 直後の一瞬の間に post が先着した場合 live delivery の
-        // 対象外になり (backlog も無いので) 二度と届かないレースになる。
-        await waitForLine(reader, accum, (l) => {
-          try {
-            return (JSON.parse(l) as { ev?: string }).ev === "room_cursors";
-          } catch {
-            return false;
-          }
-        });
+        // peers に SUB が現れれば hello は完了済み。別 CLI request が往復する間に
+        // 同じ socket の subscribe request も処理されるため、以降の post は live
+        // delivery 対象になる。room_cursors 自体は stdout readiness signal に使わない。
+        for (let i = 0; i < 100; i++) {
+          const peers = JSON.parse((await runCli(["peers"], env)).out) as {
+            peers: { sid: string }[];
+          };
+          if (peers.peers.some((p) => p.sid === "SUB")) break;
+          await sleep(25);
+        }
+        const peers = JSON.parse((await runCli(["peers"], env)).out) as {
+          peers: { sid: string }[];
+        };
+        expect(peers.peers.some((p) => p.sid === "SUB")).toBe(true);
 
-        // 跨ぎ前: S1 が post。u1 の subscribe stdout に msg が現れることを確認。
+        // 跨ぎ前: S1 が post。SUB の subscribe stdout に msg が現れることを確認。
         const posted1 = JSON.parse(
           (await runCli(["--sid", "S1", "post", room, "hello-before"], env)).out,
         ) as { ok: boolean; mid: number };
@@ -223,17 +222,17 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         }).length;
         expect(msg1Count).toBe(1);
 
-        // 契約 (c): `restarting` event が stdout に流れていない。
-        // 上流 Monitor に「張り直せ」ノイズを見せないための不変条件。
-        const restartingCount = accum.lines.filter((l) => {
+        // 契約 (c): 接続制御イベントが stdout に流れていない。
+        // restarting と接続 snapshot の room_cursors はどちらも Monitor 通知ではない。
+        const controlEventCount = accum.lines.filter((l) => {
           try {
             const ev = JSON.parse(l) as { ev?: string };
-            return ev.ev === "restarting";
+            return ev.ev === "restarting" || ev.ev === "room_cursors";
           } catch {
             return false;
           }
         }).length;
-        expect(restartingCount).toBe(0);
+        expect(controlEventCount).toBe(0);
       } finally {
         reader.releaseLock();
         try {

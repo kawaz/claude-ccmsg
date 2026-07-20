@@ -341,9 +341,9 @@ async function runSubscribe(
       const line = await client.readLine();
       if (line === null) break; // socket closed → 再接続へ
       // 1 行 parse して 2 つの副作用を掛ける:
-      //   (a) `ev:"restarting"` は stdout に流さない (透過再接続が目的で、上流の
-      //       Monitor へノイズ行を送らない)。この行の直後に daemon が socket を閉じる
-      //       ので、次ループで readLine() が null を返し再接続経路に入る。
+      //   (a) 接続制御イベント (`restarting` / `room_cursors`) は stdout に流さない。
+      //       前者は透過再接続の内部信号、後者は接続ごとの初期 snapshot であり、
+      //       Monitor へ通知して AI の応答を発生させる対象ではない。
       //   (b) r + seq を持つ全 StorageEvent 配信で sinceMap を更新し、再接続
       //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
       //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
@@ -355,7 +355,7 @@ async function runSubscribe(
           r?: string;
           seq?: number;
         };
-        if (ev.ev === "restarting") {
+        if (ev.ev === "restarting" || ev.ev === "room_cursors") {
           filtered = true;
         } else if (typeof ev.r === "string" && typeof ev.seq === "number") {
           const prev = sinceMap[ev.r] ?? 0;
@@ -462,12 +462,11 @@ Commands:
                                --kind broadcast for a session-broadcast room,
                                --kind 1on1 --members <sid> for a webui 1on1 priv room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
-  subscribe                    Stream room events as jsonl to stdout. Bare default:
-                               no backlog, just a room_cursors summary
-                               ({room, last_mid} per visible room) — read to
-                               catch up rooms you're behind on. --since replays
-                               history for the rooms it names; each msg carries
-                               its reply_via instruction
+  subscribe                    Stream live room events as jsonl to stdout. Startup
+                               and reconnect are silent; the bare default replays
+                               no backlog. Use read to catch up when needed, or
+                               --since to replay history for named rooms; each msg
+                               carries its reply_via instruction
   read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
   dump <session-id>            Export conversation entries as compact jsonl (default)
