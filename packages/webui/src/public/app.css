@@ -4193,21 +4193,23 @@ button.session-tab {
 }
 
 .tl-auto-open-handle {
-  flex: 0 0 44px;
-  width: 44px;
-  min-height: 44px;
+  /* 細身のグレーつまみ (kawaz r38 mid=63: 44px + accent 色はデカすぎて邪魔)。
+   * タップ領域は縦長で確保し、横幅は最小限。 */
+  flex: 0 0 18px;
+  width: 18px;
+  min-height: 56px;
   padding: 0;
   border: 1px solid var(--border);
   border-right: 0;
-  border-radius: 0.5rem 0 0 0.5rem;
-  background: var(--accent);
-  color: var(--accent-fg);
+  border-radius: 0.4rem 0 0 0.4rem;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
   font: inherit;
-  font-size: 1.5rem;
+  font-size: 0.85rem;
   line-height: 1;
   cursor: pointer;
   touch-action: manipulation;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
 .tl-auto-open {
