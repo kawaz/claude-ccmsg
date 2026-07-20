@@ -193,9 +193,9 @@ export function SearchBar({
           {hasError ? <span class="search-bar-error">正規表現エラー</span> : null}
         </div>
       ) : hasQuery ? (
-        // "🔍 foo bar [1/20]↑↓" (DR-0022 §2.1 表示イメージ) — chips carry the
-        // same per-AND-line color the highlights use, via --chip-color, so
-        // chips from one OR group point at the same color.
+        // "🔍 foo bar [1/20]↑↓" (DR-0022 §2.1 表示イメージ) — chips derive a
+        // subdued tint from each per-AND-line highlight via --chip-color, so
+        // chips from one OR group remain visually associated.
         <div class="search-bar-chips">
           {words.map((w, i) => (
             <span

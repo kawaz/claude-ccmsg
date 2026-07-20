@@ -4580,11 +4580,16 @@ button.session-tab {
 }
 
 .search-bar-chip {
+  display: inline-block;
+  max-width: 14ch;
+  overflow: hidden;
   font-size: 0.75rem;
   padding: 0.1rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--chip-color, var(--border)) 45%, var(--border));
   border-radius: 999px;
-  background: var(--chip-color, var(--bg-alt));
-  color: var(--search-hl-fg);
+  background: color-mix(in srgb, var(--chip-color, var(--bg-alt)) 25%, var(--bg-alt));
+  color: var(--fg);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
