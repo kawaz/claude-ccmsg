@@ -46,7 +46,7 @@ kawaz 方針 (2026-07-21): Status タブの現在の workflow 表示は「まぁ
 - [ ] 未開始フェーズが番号 + 名前で淡色表示される
 - [ ] ノード選択で Prompt / Activity / Outcome のドリルダウンが表示される
 - [ ] 同一 workflow run の pause→resume が WORKFLOWS セクションに重複表示されない (runId dedup)
-- [ ] モデル名表示が生モデル ID でなく正規化された表示名 (Haiku 4.5 等) に統一される
+- [ ] モデル名表示を生モデル ID に統一する (kawaz 裁定 2026-07-21: 表示名 (Haiku 4.5 等) への正規化はしない — 情報が減る。「haiku」とフル ID の混在だけ解消し、フル ID 側に揃える)
 
 ## TODO
 
