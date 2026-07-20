@@ -1,11 +1,11 @@
 ---
 title: bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡
-status: open
+status: wip
 category: bug
 created: 2026-07-12T17:40:21+09:00
 last_read: 2026-07-21T02:56:29+09:00
 open_entered: 2026-07-12T17:40:21+09:00
-wip_entered:
+wip_entered: 2026-07-21T03:05:15+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -64,3 +64,19 @@ v0.39.0 CI (run 29502365995, ubuntu-latest) で別の flaky を観測 —
 跨ぎ前後の post が両方 stdout に出る」が 10154ms で fail (timeout 様)。
 webui のみの変更 (daemon/cli 無変更) なので変更起因ではなくフルスイート並列時の timing。
 単発 rerun --failed で追試中。既知の tailscale origin 系 (上記 (a)(b)) とは別ケースとして記録。
+
+## 追記: 2026-07-21 tailscale origin auto-allow の真因を実機確定 (opus47-high 調査)
+
+最頻 fail である tailscale origin auto-allow について真因を実機で確定した。
+
+- `tailscale-origin.ts` の subprocess timeout 1000ms (`AbortSignal.timeout`) が、高負荷時に
+  fake-tailscale を gate 到達前に SIGKILL してしまう
+- 結果として空の Set が返り、`waitForOriginAllowed` が 4000ms で fail する
+- 8 並列実行で 5/8 fail を再現。timeout を 30s に伸ばすと 8/8 pass する反証実験で機序を確認済み
+
+修正方針: `CCMSG_TAILSCALE_STATUS_TIMEOUT_MS` env の読み口を追加し、テスト側は `extraEnv` で
+10000ms に設定する。production のデフォルトは 1000ms のまま据え置き (DR-0004 の判断を維持)。
+現在実装中。
+
+注: issue に記載した他のテストの散発 fail (hooks / reconnect 等) が同一機序かどうかは
+未調査のため、この issue はまだ close しない。
