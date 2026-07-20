@@ -229,7 +229,12 @@ function addPendingToolUse(
 
 function isTrackedToolUse(name: string, input: Record<string, unknown>): boolean {
   if (name === "Agent") {
-    return input.run_in_background === true || typeof input.name === "string";
+    // r44 m6: 同期 Agent (subagent) も Status に載せるため、run_in_background /
+    // name の有無に関わらず全 Agent tool_use を追跡する。teammate 判定は
+    // applyToolResult 側 (foldTeammateSpawn) が result.status で行うため、
+    // ここは分岐せず「Agent の tool_use は全部 pending に積む」で済ませる。
+    void input;
+    return true;
   }
   if (name === "Bash") return input.run_in_background === true;
   return (
@@ -567,12 +572,26 @@ function applyToolResult(
   if (name === "Agent") {
     const taskId = stringValue(result.agentId);
     if (!taskId) return false;
+    // r44 m6: agent_type = subagent_type of the spawn call (`general-purpose`,
+    // `Explore`, custom agent name...). Absent when Claude Code omits it from
+    // the input row — keep the field optional rather than fabricate a value.
+    const agentType = stringValue(input.subagent_type);
+    // Sync Agent completes inline (result carries the final status, no async
+    // task-notification will follow). Async spawn returns `status:
+    // "async_launched"` (or `isAsync: true`) with completion coming later via
+    // foldNotification. Distinguish so sync subagents show as finished the
+    // moment their tool_result lands, matching the observation the fold has.
+    const rawStatus = stringValue(result.status);
+    const isAsync = result.isAsync === true || rawStatus === "async_launched";
+    const status = isAsync ? "running" : (rawStatus ?? "completed");
     state.background.set(taskId, {
       task_id: taskId,
       kind: "agent",
       description: stringValue(input.description) ?? "",
-      status: "running",
+      status,
       started_at: pending.timestamp,
+      ...(agentType ? { agent_type: agentType } : {}),
+      ...(!isAsync && timestamp ? { ended_at: timestamp } : {}),
     });
     return true;
   }

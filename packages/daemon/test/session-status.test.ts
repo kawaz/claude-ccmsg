@@ -421,6 +421,12 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       }),
     ]);
     expect(result.background.map((task) => task.task_id)).toEqual(["agent-bg"]);
+    expect(result.background[0]).toMatchObject({
+      kind: "agent",
+      status: "running",
+      agent_type: "Explore",
+    });
+    expect(result.background[0]?.ended_at).toBeUndefined();
     expect(result.teammates).toEqual([]);
   });
 
@@ -893,8 +899,11 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(apply(base).background[0]?.status).toBe("running");
   });
 
-  test("Monitor/Bash/Agent background は実 result id で起動し、同期 Agent は除外する", () => {
-    // 3 種の background correlation id が通知 task-id と一致し、run_in_background 無し Agent は出ない。
+  test("Monitor/Bash/Agent background は実 result id で起動し、同期 Agent は完了扱いで含める", () => {
+    // r44 m6: 3 種の background correlation id が通知 task-id と一致する。
+    // 同期 Agent (run_in_background なし) も subagent 可視化のため background に
+    // 載せ、tool_result が返った時点で status=completed / ended_at=END を確定する
+    // (async のように後続 task-notification は来ないため fold 側で決める)。
     const result = apply([
       ...monitorStart("b-monitor", "mon"),
       toolUse("bash", "Bash", {
@@ -949,6 +958,16 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         status: "killed",
         started_at: START,
         ended_at: END,
+        agent_type: "Explore",
+      },
+      {
+        task_id: "a-sync",
+        kind: "agent",
+        description: "sync",
+        status: "completed",
+        started_at: START,
+        ended_at: END,
+        agent_type: "Explore",
       },
     ]);
   });

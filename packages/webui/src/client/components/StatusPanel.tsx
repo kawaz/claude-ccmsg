@@ -246,10 +246,41 @@ function WorkflowAgentLink({
   );
 }
 
-function BackgroundRow({ bg, running }: { bg: SessionBackgroundStatus; running: boolean }) {
+function BackgroundRow({
+  bg,
+  running,
+  sid,
+}: {
+  bg: SessionBackgroundStatus;
+  running: boolean;
+  sid: string;
+}) {
+  // r44 m6: kind=="agent" は subagent の TL を持つので TL リンク + agent_type
+  // バッジを添える。live dot は teammate と同じ流儀 (running=active、
+  // 終端=stopped) で色味を寄せ、Status タブ内の視覚言語を一貫させる。
+  // 判定は `running` prop (buildStatusSections が status 値から算出) を利用
+  // するため、"completed"/"failed"/"killed" 等の open-set terminal 値を
+  // ここで列挙する必要はない。
+  const isAgent = bg.kind === "agent";
+  const agentHref = isAgent ? agentTimelineHref(sid, { agentId: bg.task_id }) : null;
+  const dotClass = "status-teammate-dot status-teammate-dot-" + (running ? "active" : "stopped");
   return (
     <li class={"status-row" + (running ? " status-row-active" : "")}>
-      <span class="status-row-kind">{bg.kind}</span>
+      {isAgent ? (
+        <>
+          <span class={dotClass} aria-hidden="true">
+            ●
+          </span>
+          {agentHref ? (
+            <a class="status-wf-agent-tl status-teammate-tl" href={agentHref}>
+              TL
+            </a>
+          ) : null}
+          <span class="status-row-kind">{bg.agent_type ?? bg.kind}</span>
+        </>
+      ) : (
+        <span class="status-row-kind">{bg.kind}</span>
+      )}
       <span class="status-row-summary">{bg.description}</span>
       <span class="status-row-time">
         {formatClockTime(bg.started_at)}
@@ -572,7 +603,7 @@ export function StatusPanel({
             running={sections.background.running}
             done={sections.background.done}
             renderRow={(bg, running) => (
-              <BackgroundRow key={bg.task_id} bg={bg} running={running} />
+              <BackgroundRow key={bg.task_id} bg={bg} running={running} sid={sid} />
             )}
             emptyRunningText="走行中の background タスクなし"
           />

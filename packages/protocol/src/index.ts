@@ -377,6 +377,10 @@ export interface SessionBackgroundStatus {
   status: string;
   started_at: string;
   ended_at?: string;
+  /** r44 m6: for kind=="agent", the spawn's `subagent_type` (`general-purpose`,
+   * `Explore`, custom agent name...). Absent when the input row omitted it,
+   * or when kind is not "agent". Not present for monitor/bash entries. */
+  agent_type?: string;
 }
 /** Main-context observation from the latest non-sidechain, non-synthetic
  * assistant row. Environment overrides are not recorded in transcripts, so
