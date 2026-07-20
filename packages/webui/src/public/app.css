@@ -2394,6 +2394,11 @@ button.session-tab {
   resize: none;
   border: 0;
   padding: 0.75rem;
+  /* .viewer-body / .tl-lines と同じ意図の末尾余白: floating composer
+   * (FAB/panel) がファイル末尾側の入力中コードを隠し、下を見ながら書けない。
+   * textarea のスクロール領域は padding を含むため、末尾までスクロールすれば
+   * この分だけ持ち上げられる。機能は載せない、ただの余白。 */
+  padding-bottom: 12rem;
   background: var(--bg);
   color: var(--fg);
   font: inherit;
