@@ -1,6 +1,6 @@
 ---
 title: Files ツリーに「ワークスペース」セクションを追加
-status: open
+status: resolved
 category: design
 created: 2026-07-17T21:08:34+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T03:39:13+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0026","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
