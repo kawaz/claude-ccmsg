@@ -24,7 +24,7 @@ import {
   groupTimelineLines,
   isSearchableSegment,
   splitFoldSubgroups,
-  isUserTextTurn,
+  isUserNavTurn,
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
@@ -1757,7 +1757,7 @@ export function Timeline({
   const userTurnKeys = useMemo(
     () =>
       parsed
-        .map((line, i) => (isUserTextTurn(line) ? offsets[i] : null))
+        .map((line, i) => (isUserNavTurn(line) ? offsets[i] : null))
         .filter((k): k is number => k !== null),
     [parsed, offsets],
   );

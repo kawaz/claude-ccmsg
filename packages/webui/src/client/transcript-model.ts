@@ -390,6 +390,15 @@ export function lineByteOffsets(start: number, lines: string[]): number[] {
  * nav counter — kawaz: "システムメッセージも tool や thinking と同じで
  * folding しといて").
  */
+/** 👤 nav (n/N ジャンプ) の対象: 人間のユーザプロンプトに加えて、ccmsg 経由の
+ * kawaz 発メッセージ (from:"u1") も「ユーザメッセージ」として数える
+ * (kawaz r38 mid=51 — 1on1 運用では指示が ccmsg で届くため、prompt だけの
+ * カウントでは実質のユーザ発話を辿れない)。 */
+export function isUserNavTurn(line: ParsedLine): boolean {
+  if (isUserTextTurn(line)) return true;
+  return extractCcmsgMessages(line).some((m) => m.from === "u1");
+}
+
 export function isUserTextTurn(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "user") return false;
   if (line.userMessageKind !== undefined && line.userMessageKind !== "user-prompt") return false;
