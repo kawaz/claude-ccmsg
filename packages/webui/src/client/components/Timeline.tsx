@@ -44,9 +44,11 @@ import {
   setRenderedTextCurrent,
 } from "../rendered-text-search.ts";
 import {
+  getPendingHostTranslationCount,
   isTranslationSkippedText,
   hasCachedHostThinkingText,
   hasTranslatorApi,
+  subscribePendingHostTranslation,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
   type HostTranslateRequest,
@@ -656,6 +658,43 @@ function ThinkingSegment({
     (tab === "ja-host" && hostTranslating && hostText === null) ||
     (tab === "ja-browser" && browserTranslating && browserText === null);
 
+  // 翻訳中の進捗表示 (kawaz r38 m94,95): 「翻訳中… 3s (待ち 5)」の形で、
+  // リクエストを投げてからの経過秒と host 経路の未完了段落数を出す。固まっ
+  // ているのか妥当な待ちなのかの判断材料。
+  const [translationStartedAt, setTranslationStartedAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [pendingHostQueue, setPendingHostQueue] = useState(() => getPendingHostTranslationCount());
+  useEffect(() => {
+    if (!translating) {
+      setTranslationStartedAt(null);
+      return;
+    }
+    setTranslationStartedAt(Date.now());
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [translating]);
+  // pending counter は host 段落 request の増減で発火する。translating 中だけ
+  // 購読する (それ以外は表示に使わない) — dormant segment の常時購読で無駄な
+  // re-render を積まないため。
+  useEffect(() => {
+    if (!translating) return;
+    setPendingHostQueue(getPendingHostTranslationCount());
+    return subscribePendingHostTranslation(() =>
+      setPendingHostQueue(getPendingHostTranslationCount()),
+    );
+  }, [translating]);
+  const translatingLabel = (() => {
+    if (!translating) return null;
+    const parts = ["翻訳中…"];
+    if (translationStartedAt !== null) {
+      parts.push(`${Math.max(0, Math.floor((nowMs - translationStartedAt) / 1000))}s`);
+    }
+    // 待ちキューは host 経路のみ意味を持つ (browser は local API、直列でない)。
+    if (tab === "ja-host" && pendingHostQueue > 0) parts.push(`(待ち ${pendingHostQueue})`);
+    return parts.join(" ");
+  })();
+
   return (
     <details
       ref={detailsRef}
@@ -703,7 +742,7 @@ function ThinkingSegment({
             highlightWords={mdSearch?.words}
             onMatchClick={mdSearch?.onMatchClick}
           />
-          {translating ? <p class="tl-thinking-translating">翻訳中…</p> : null}
+          {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
         </div>
       </div>
     </details>

@@ -120,6 +120,26 @@ export type HostTranslateRequest = (texts: string[]) => Promise<TranslateRespons
  * 許す。Promise を保持するため、同じ段落の並行要求も 1 op に集約される。 */
 const hostTextCache = new Map<string, Promise<string>>();
 
+// 未完了の host 段落リクエスト数。daemon は helper を直列で回すため、この
+// カウンタは 「投げてまだ結果が返っていない段落」 = 待ちキュー長の近似として
+// UI に露出する (kawaz r38 m94,95: 翻訳中表示が固まっているのか妥当な待ちか
+// の判断材料)。段落キャッシュヒットは request しないので counter を増やさない。
+let pendingHostCount = 0;
+const pendingListeners = new Set<() => void>();
+function notifyPendingChange(): void {
+  for (const listener of pendingListeners) listener();
+}
+export function getPendingHostTranslationCount(): number {
+  return pendingHostCount;
+}
+/** pending counter の変化を購読する。返り値で unsubscribe。 */
+export function subscribePendingHostTranslation(listener: () => void): () => void {
+  pendingListeners.add(listener);
+  return () => {
+    pendingListeners.delete(listener);
+  };
+}
+
 /** thinking 全体の翻訳対象段落が host cache に揃っているかを返す。可視範囲外でも
  * キャッシュ済み結果は daemon request を増やさず即表示できる。 */
 export function hasCachedHostThinkingText(text: string): boolean {
@@ -146,6 +166,8 @@ function translateParagraphOnHost(
   } catch {
     return Promise.resolve(paragraph);
   }
+  pendingHostCount++;
+  notifyPendingChange();
   const promise = responsePromise
     .then((response) => {
       if (!response.ok) throw new Error(response.error.msg);
@@ -157,6 +179,10 @@ function translateParagraphOnHost(
     .catch(() => {
       if (hostTextCache.get(paragraph) === promise) hostTextCache.delete(paragraph);
       return paragraph;
+    })
+    .finally(() => {
+      pendingHostCount--;
+      notifyPendingChange();
     });
   hostTextCache.set(paragraph, promise);
   return promise;
@@ -180,4 +206,6 @@ export function _resetTranslatorStateForTest(): void {
   translatorPromise = null;
   paragraphCache.clear();
   hostTextCache.clear();
+  pendingHostCount = 0;
+  pendingListeners.clear();
 }
