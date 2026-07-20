@@ -15,16 +15,14 @@ export interface SearchQueryOptions {
   regex: boolean;
 }
 
-/** One AND-clause word from the query (DR-0022 §2.1: "改行区切り・空行無視で
- * 複数ワード AND"). `source`/`flags` are the RegExp constructor args this
- * word matches with — in plain (non-regex) mode `source` is the word with
- * regex metacharacters escaped, so the same match/highlight machinery works
- * for both modes without a separate code path. */
+/** One OR alternative within an AND line. `source`/`flags` are the RegExp
+ * constructor args used by both matching and highlighting. */
 export interface SearchWord {
-  /** The line as typed (each line trimmed, blank lines dropped before this
-   * point — see parseSearchQuery). */
+  /** Normalized word text shown in the collapsed query chip. */
   readonly text: string;
-  /** Cycles 0..SEARCH_PALETTE_SIZE-1 across the query's words, in order. */
+  /** Zero-based AND-line index. Words from the same line share a clause. */
+  readonly clauseIndex: number;
+  /** Cycles 0..SEARCH_PALETTE_SIZE-1 across AND lines, in order. */
   readonly colorIndex: number;
   /** Regex mode only: the compile error message when `text` isn't a valid
    * pattern. A word with an error never contributes matches (treated as
@@ -41,55 +39,54 @@ export interface ParsedSearchQuery {
   readonly hasError: boolean;
 }
 
-// Escapes regex metacharacters so a plain-mode word is matched literally.
+// Equivalent to RegExp.escape for the literal tokens this parser produces.
+// The web UI still runs in browsers where RegExp.escape may be unavailable.
 function escapeForLiteralMatch(word: string): string {
   return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Parses a (possibly multiline) query into an AND-list of words (DR-0022
- * §2.1). Each non-blank line becomes one word; blank lines are dropped
- * entirely (not just trimmed to empty and kept as a no-op word) — the DR's
- * "空行無視" reads as "blank lines carry no meaning", not "an empty AND
- * clause that matches everything", so this parse never emits a word with
- * `text === ""`.
- *
- * Regex mode compiles each line individually so one malformed line doesn't
- * block the rest of the query (DR-0022 §3: "不正 regex はその行をエラー扱い
- * で返す") — a word's `error` is set instead, and it's excluded from actual
- * matching (see unitMatchesQuery) while still being shown as a chip so the
- * user can see and fix it.
- */
-export function parseSearchQuery(text: string, opts: SearchQueryOptions): ParsedSearchQuery {
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  // "u" (unicode) always on so surrogate-pair-unsafe patterns (e.g. a lone
-  // `.` matching half an emoji) don't silently misbehave; "g" so the same
-  // RegExp source can be reused for both a single-shot `test()` (AND check)
-  // and a `matchAll`-style enumeration (highlighting) — see wordRegExp.
-  const flags = opts.caseSensitive ? "gu" : "giu";
-  const words: SearchWord[] = lines.map((line, i) => {
-    const colorIndex = i % SEARCH_PALETTE_SIZE;
-    if (!opts.regex) {
-      return { text: line, colorIndex, error: null, source: escapeForLiteralMatch(line), flags };
-    }
-    try {
-      // Compile-only validation — the constructed RegExp itself is unused,
-      // only whether it throws matters.
-      new RegExp(line, flags);
-      return { text: line, colorIndex, error: null, source: line, flags };
-    } catch (err) {
-      return {
-        text: line,
-        colorIndex,
-        error: err instanceof Error ? err.message : String(err),
-        source: line,
-        flags,
-      };
-    }
+function plainLineWords(line: string): Array<{ text: string; source: string }> {
+  return [...line.matchAll(/"[^"]*"|\S+/gu)].flatMap((match) => {
+    const raw = match[0]!;
+    const quoted = raw.startsWith('"') && raw.endsWith('"');
+    const value = quoted ? raw.slice(1, -1) : raw;
+    const parts = value.split(/\s+/u).filter(Boolean);
+    if (parts.length === 0) return [];
+    return [
+      {
+        text: parts.join(" "),
+        source: parts.map(escapeForLiteralMatch).join("\\s+"),
+      },
+    ];
   });
+}
+
+/** Parses a query as newline-separated AND clauses. In plain mode, each line
+ * is split into whitespace-separated OR alternatives; double quotes keep a
+ * phrase in one alternative and normalize its internal whitespace to `\s+`.
+ * Regex mode keeps each non-empty line unchanged as one pattern. */
+export function parseSearchQuery(text: string, opts: SearchQueryOptions): ParsedSearchQuery {
+  const flags = opts.caseSensitive ? "gu" : "giu";
+  const words: SearchWord[] = [];
+  for (const line of text.split(/[\r\n]/u)) {
+    const alternatives = opts.regex
+      ? line.length > 0
+        ? [{ text: line, source: line }]
+        : []
+      : plainLineWords(line);
+    if (alternatives.length === 0) continue;
+    const clauseIndex = words.length === 0 ? 0 : words[words.length - 1]!.clauseIndex + 1;
+    const colorIndex = clauseIndex % SEARCH_PALETTE_SIZE;
+    for (const alternative of alternatives) {
+      let error: string | null = null;
+      try {
+        new RegExp(alternative.source, flags);
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+      words.push({ ...alternative, clauseIndex, colorIndex, error, flags });
+    }
+  }
   return { words, hasError: words.some((w) => w.error !== null) };
 }
 
@@ -100,19 +97,21 @@ function wordRegExp(word: SearchWord, global: boolean): RegExp {
   return new RegExp(word.source, global ? word.flags : word.flags.replace("g", ""));
 }
 
-/**
- * AND-filter over a text unit (a Timeline Segment's text, or a file line):
- * true only if every non-errored word has at least one match in `text`
- * (DR-0022 §2.1 "複数ワード AND"). Errored words are excluded from the check
- * — a query that's *entirely* invalid words is not a "matches nothing"
- * assertion about content, so callers should gate on `!hasError` before
- * relying on this for nav counts (an in-progress invalid regex shouldn't
- * silently report "0/0 matches" as if the content had none).
- */
+/** Matches when every non-errored AND clause has at least one matching OR
+ * alternative. Callers gate on `!hasError` while the user is editing an
+ * invalid regular expression. */
 export function unitMatchesQuery(text: string, words: readonly SearchWord[]): boolean {
-  const active = words.filter((w) => w.error === null);
-  if (active.length === 0) return false;
-  return active.every((w) => wordRegExp(w, false).test(text));
+  const clauses = new Map<number, SearchWord[]>();
+  for (const word of words) {
+    if (word.error !== null) continue;
+    const clause = clauses.get(word.clauseIndex);
+    if (clause) clause.push(word);
+    else clauses.set(word.clauseIndex, [word]);
+  }
+  if (clauses.size === 0) return false;
+  return [...clauses.values()].every((clause) =>
+    clause.some((word) => wordRegExp(word, false).test(text)),
+  );
 }
 
 export interface HighlightRange {
@@ -123,11 +122,9 @@ export interface HighlightRange {
 
 /**
  * Enumerates every word's matches in `text` and resolves overlaps into a
- * single non-overlapping, sorted list (DR-0022 §2.1 "ワード毎に別色で
- * ハイライト" — highlighting is per-word independent of the AND filter above:
- * a unit that fails the AND check is simply never passed to this function by
- * the caller, but within a unit that does, every word's own matches are shown
- * regardless of which word "caused" the unit to qualify).
+ * single non-overlapping, sorted list. Highlight colors are assigned per AND
+ * line, so all OR alternatives from the same line share a color. A qualifying
+ * unit shows every alternative that appears in its text.
  *
  * Overlap resolution (DR text doesn't specify — the two toggles are
  * documented as independent AND-clauses, not "must not overlap", so two

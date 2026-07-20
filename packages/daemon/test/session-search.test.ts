@@ -136,14 +136,32 @@ describe("session_search three-stage filtering", () => {
     expect(result.hits[0]!.matches.map((match) => match.text)).toEqual(["single needle"]);
   });
 
-  // Spaces inside one query line are literal content, not an implicit pattern
-  // separator; only newlines create additional AND clauses.
-  test("one query line remains one literal phrase", async () => {
+  test("plain query uses whitespace OR within a line and newline AND between lines", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("alpha beta")]);
-    writeSession(config, sid(2), [user("alpha and beta")]);
+    writeSession(config, sid(1), [user("foo only"), user("buz elsewhere")]);
+    writeSession(config, sid(2), [user("bar and buz together")]);
+    writeSession(config, sid(3), [user("foo without the second clause")]);
 
-    const result = await search(config, { query: "alpha beta" });
+    const result = await search(config, { query: "foo bar\nbuz" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual(expect.arrayContaining([sid(1), sid(2)]));
+    expect(result.hits).toHaveLength(2);
+  });
+
+  test("quoted phrases stay one alternative and normalize internal whitespace", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("foo\t  bar and buz")]);
+    writeSession(config, sid(2), [user("foo between bar and buz")]);
+
+    const result = await search(config, { query: '"foo   bar "\nbuz' });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
+  test("repeated whitespace only separates and trims plain alternatives", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("bar and buz")]);
+    writeSession(config, sid(2), [user("foo only")]);
+
+    const result = await search(config, { query: "foo   bar \n  buz" });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
   });
 
@@ -165,14 +183,23 @@ describe("session_search three-stage filtering", () => {
   // A regex with required top-level ASCII literals may use them to prune raw
   // JSONL lines, but decoded RegExp matching remains authoritative. Separate
   // messages may satisfy separate regex clauses within the same session.
-  test("regex mode applies AND semantics across the session", async () => {
+  test("regex mode applies one pattern per line with session-wide AND semantics", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("alpha middle omega"), user("count 1234")]);
-    writeSession(config, sid(2), [user("alpha omega without digits")]);
+    writeSession(config, sid(1), [user("foo bar"), user("buz elsewhere")]);
+    writeSession(config, sid(2), [user("foo or bar"), user("buz elsewhere")]);
 
-    const result = await search(config, { query: "alpha.*omega\n\\d{4}", regex: true });
+    const result = await search(config, { query: "foo bar\nbuz", regex: true });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
     expect(result.hits[0]!.matches).toHaveLength(2);
+  });
+
+  test("regex mode does not trim spaces from a line", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("x foo y")]);
+    writeSession(config, sid(2), [user("foo")]);
+
+    const result = await search(config, { query: " foo ", regex: true });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
   });
 
   // The returned summary preserves matched whitespace so the webui can apply

@@ -204,8 +204,16 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
         <div class="session-search-query-row">
           <textarea
             class="session-search-query"
-            aria-label="検索パターン (改行区切りで AND)"
-            placeholder={"query pattern\n改行区切りで AND"}
+            aria-label={
+              form.regex
+                ? "検索正規表現 (1 行 1 パターン、改行区切り AND)"
+                : "検索パターン (空白区切り OR、改行区切り AND)"
+            }
+            placeholder={
+              form.regex
+                ? "regular expression\n1 行 1 パターン・改行で AND"
+                : 'query words\n空白で OR・改行で AND・"引用句"'
+            }
             value={form.query}
             onInput={(e) => setForm({ ...form, query: (e.target as HTMLTextAreaElement).value })}
           />

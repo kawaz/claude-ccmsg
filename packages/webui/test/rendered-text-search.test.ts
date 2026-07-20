@@ -9,7 +9,7 @@ describe("projectRangeToTextNodes", () => {
   test("matches and highlights text across adjacent rendered elements", () => {
     // Rendered DOM shape: text("m25: <") + code(text("FILE>"));
     // query "m25: <FI" spans both text nodes without changing either element.
-    const words = parseSearchQuery("m25: <FI", { caseSensitive: false, regex: false }).words;
+    const words = parseSearchQuery('"m25: <FI"', { caseSensitive: false, regex: false }).words;
     expect(collectRenderedTextSpans(["m25: <", "FILE>"], words)).toEqual({
       matched: true,
       spans: [

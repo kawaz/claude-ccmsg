@@ -50,13 +50,29 @@ function words(value: string | undefined): string[] {
   return value?.trim().split(/\s+/).filter(Boolean) ?? [];
 }
 
-function queryPatterns(value: string | undefined): string[] {
-  return (
-    value
-      ?.split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean) ?? []
-  );
+interface QueryPatternInput {
+  text: string;
+  flexibleWhitespace: boolean;
+}
+
+function queryPatternGroups(value: string | undefined, regex: boolean): QueryPatternInput[][] {
+  if (value === undefined) return [];
+  const groups: QueryPatternInput[][] = [];
+  for (const line of value.split(/[\r\n]/u)) {
+    if (regex) {
+      if (line.length > 0) groups.push([{ text: line, flexibleWhitespace: false }]);
+      continue;
+    }
+    const alternatives = [...line.matchAll(/"[^"]*"|\S+/gu)].flatMap((match) => {
+      const raw = match[0]!;
+      const quoted = raw.startsWith('"') && raw.endsWith('"');
+      const text = quoted ? raw.slice(1, -1) : raw;
+      const parts = text.split(/\s+/u).filter(Boolean);
+      return parts.length > 0 ? [{ text: parts.join(" "), flexibleWhitespace: quoted }] : [];
+    });
+    if (alternatives.length > 0) groups.push(alternatives);
+  }
+  return groups;
 }
 
 function lowerIncludesAll(text: string, needles: readonly string[]): boolean {
@@ -143,18 +159,24 @@ function regexRequiredLiteral(pattern: string): string | null {
   return runs.sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
+function escapeForLiteralMatch(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function compileQueryPatterns(
-  patterns: readonly string[],
+  patterns: readonly QueryPatternInput[],
   caseSensitive: boolean,
   regex: boolean,
 ): { ok: true; patterns: CompiledQueryPattern[] } | { ok: false; msg: string } {
   const flags = caseSensitive ? "u" : "iu";
   const compiled: CompiledQueryPattern[] = [];
-  for (const text of patterns) {
+  for (const pattern of patterns) {
+    const { text, flexibleWhitespace } = pattern;
     let matcher: RegExp | null = null;
-    if (regex) {
+    if (regex || flexibleWhitespace) {
+      const source = regex ? text : text.split(/\s+/u).map(escapeForLiteralMatch).join("\\s+");
       try {
-        matcher = new RegExp(text, flags);
+        matcher = new RegExp(source, flags);
       } catch (error) {
         return {
           ok: false,
@@ -162,15 +184,36 @@ function compileQueryPatterns(
         };
       }
     }
-    const literal = regex ? regexRequiredLiteral(text) : JSON.stringify(text).slice(1, -1);
+    const literal = regex
+      ? regexRequiredLiteral(text)
+      : flexibleWhitespace
+        ? JSON.stringify(text.split(/\s+/u).sort((a, b) => b.length - a.length)[0] ?? "").slice(
+            1,
+            -1,
+          )
+        : JSON.stringify(text).slice(1, -1);
     compiled.push({
       matcher,
-      literalMatch: regex ? null : caseSensitive ? text : text.toLowerCase(),
+      literalMatch: regex || flexibleWhitespace ? null : caseSensitive ? text : text.toLowerCase(),
       caseSensitive,
       prefilter: literal === null ? null : caseSensitive ? literal : literal.toLowerCase(),
     });
   }
   return { ok: true, patterns: compiled };
+}
+
+function compileQueryGroups(
+  groups: readonly (readonly QueryPatternInput[])[],
+  caseSensitive: boolean,
+  regex: boolean,
+): { ok: true; groups: CompiledQueryPattern[][] } | { ok: false; msg: string } {
+  const compiledGroups: CompiledQueryPattern[][] = [];
+  for (const group of groups) {
+    const compiled = compileQueryPatterns(group, caseSensitive, regex);
+    if (!compiled.ok) return compiled;
+    compiledGroups.push(compiled.patterns);
+  }
+  return { ok: true, groups: compiledGroups };
 }
 
 function patternIndex(text: string, pattern: CompiledQueryPattern): number {
@@ -179,10 +222,6 @@ function patternIndex(text: string, pattern: CompiledQueryPattern): number {
     return haystack.indexOf(pattern.literalMatch);
   }
   return pattern.matcher?.exec(text)?.index ?? -1;
-}
-
-function matchesAll(text: string, patterns: readonly CompiledQueryPattern[]): boolean {
-  return patterns.every((pattern) => patternIndex(text, pattern) >= 0);
 }
 
 function roughPathToken(value: string): string {
@@ -247,7 +286,7 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
 
 interface ScanResult {
   matches: SessionSearchMatch[];
-  matchedPatternCount: number;
+  matchedGroupCount: number;
   cwd: string | null;
   firstTimestamp: string | null;
   bytesRead: number;
@@ -256,7 +295,7 @@ interface ScanResult {
 
 function linePassesPrefilter(
   line: string,
-  patterns: readonly CompiledQueryPattern[],
+  groups: readonly (readonly CompiledQueryPattern[])[],
   caseSensitive: boolean,
   regex: boolean,
 ): boolean {
@@ -273,17 +312,17 @@ function linePassesPrefilter(
     : regex
       ? line.toLowerCase().replaceAll("ſ", "s")
       : line.toLowerCase();
-  // Session-wide AND permits different patterns to match different rows, so a
-  // row survives when any clause may match it. A clause without a safe literal
-  // cannot be pruned and therefore admits every row to the strict stage.
-  return patterns.some(
-    (pattern) => pattern.prefilter === null || haystack.includes(pattern.prefilter),
+  // Session-wide AND permits different groups to match different rows, so a
+  // row survives when any OR alternative in any group may match it. A pattern
+  // without a safe literal admits every row to the strict stage.
+  return groups.some((group) =>
+    group.some((pattern) => pattern.prefilter === null || haystack.includes(pattern.prefilter)),
   );
 }
 
 function scanCandidateFile(
   file: string,
-  patterns: readonly CompiledQueryPattern[],
+  groups: readonly (readonly CompiledQueryPattern[])[],
   targetUser: boolean,
   targetAgent: boolean,
   caseSensitive: boolean,
@@ -294,7 +333,7 @@ function scanCandidateFile(
   const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
-  const matchedPatternIndexes = new Set<number>();
+  const matchedGroupIndexes = new Set<number>();
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   let offset = 0;
@@ -302,22 +341,24 @@ function scanCandidateFile(
   const fd = fs.openSync(file, "r");
 
   const inspect = (line: string): void => {
-    if (patterns.length > 0 && linePassesPrefilter(line, patterns, caseSensitive, regex)) {
+    if (groups.length > 0 && linePassesPrefilter(line, groups, caseSensitive, regex)) {
       forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
         const matchingPatterns: CompiledQueryPattern[] = [];
-        let newlyMatchedPattern = false;
-        for (let index = 0; index < patterns.length; index++) {
-          const pattern = patterns[index]!;
-          if (patternIndex(text, pattern) < 0) continue;
-          if (!matchedPatternIndexes.has(index)) newlyMatchedPattern = true;
-          matchedPatternIndexes.add(index);
-          matchingPatterns.push(pattern);
+        let newlyMatchedGroup = false;
+        for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+          const matchingPattern = groups[groupIndex]!.find(
+            (pattern) => patternIndex(text, pattern) >= 0,
+          );
+          if (matchingPattern === undefined) continue;
+          if (!matchedGroupIndexes.has(groupIndex)) newlyMatchedGroup = true;
+          matchedGroupIndexes.add(groupIndex);
+          matchingPatterns.push(matchingPattern);
         }
-        const allPatternsMatched = matchedPatternIndexes.size === patterns.length;
+        const allGroupsMatched = matchedGroupIndexes.size === groups.length;
         if (
           matchingPatterns.length === 0 ||
           matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX ||
-          (!newlyMatchedPattern && !allPatternsMatched)
+          (!newlyMatchedGroup && !allGroupsMatched)
         ) {
           return;
         }
@@ -375,8 +416,8 @@ function scanCandidateFile(
       if (
         cwd !== null &&
         firstTimestamp !== null &&
-        (patterns.length === 0 ||
-          (matchedPatternIndexes.size === patterns.length &&
+        (groups.length === 0 ||
+          (matchedGroupIndexes.size === groups.length &&
             matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX))
       ) {
         break;
@@ -388,7 +429,7 @@ function scanCandidateFile(
   }
   return {
     matches,
-    matchedPatternCount: matchedPatternIndexes.size,
+    matchedGroupCount: matchedGroupIndexes.size,
     cwd,
     firstTimestamp,
     bytesRead: offset,
@@ -405,7 +446,7 @@ export interface StrictMatchParams {
 }
 
 interface CompiledStrictMatchParams {
-  patterns: readonly CompiledQueryPattern[];
+  groups: readonly (readonly CompiledQueryPattern[])[];
   targetUser: boolean;
   targetAgent: boolean;
 }
@@ -533,10 +574,15 @@ function strictMatchCompiled(
 ): SessionSearchMatch | undefined {
   let result: SessionSearchMatch | undefined;
   forEachSearchableMessage(line, params.targetUser, params.targetAgent, (role, text, timestamp) => {
-    if (result !== undefined || !matchesAll(text, params.patterns)) return;
+    if (
+      result !== undefined ||
+      !params.groups.every((group) => group.some((pattern) => patternIndex(text, pattern) >= 0))
+    ) {
+      return;
+    }
     result = {
       role,
-      text: snippet(text, params.patterns),
+      text: snippet(text, params.groups.flat()),
       ...(timestamp ? { timestamp } : {}),
     };
   });
@@ -548,13 +594,13 @@ export function strictMatch(
   params: StrictMatchParams,
 ): SessionSearchMatch | undefined {
   const compiled = compileQueryPatterns(
-    params.queryWords,
+    params.queryWords.map((text) => ({ text, flexibleWhitespace: false })),
     params.caseSensitive ?? false,
     params.regex ?? false,
   );
   if (!compiled.ok) return undefined;
   return strictMatchCompiled(line, {
-    patterns: compiled.patterns,
+    groups: compiled.patterns.map((pattern) => [pattern]),
     targetUser: params.targetUser,
     targetAgent: params.targetAgent,
   });
@@ -573,7 +619,7 @@ function parseMtimeWithin(raw: unknown): number | undefined {
 function validateRequest(req: SessionSearchRequest):
   | {
       ok: true;
-      patterns: CompiledQueryPattern[];
+      groups: CompiledQueryPattern[][];
       cwdWords: string[];
       targetUser: boolean;
       targetAgent: boolean;
@@ -615,11 +661,11 @@ function validateRequest(req: SessionSearchRequest):
   }
   const caseSensitive = req.case_sensitive ?? false;
   const regex = req.regex ?? false;
-  const compiled = compileQueryPatterns(queryPatterns(req.query), caseSensitive, regex);
+  const compiled = compileQueryGroups(queryPatternGroups(req.query, regex), caseSensitive, regex);
   if (!compiled.ok) return compiled;
   return {
     ok: true,
-    patterns: compiled.patterns,
+    groups: compiled.groups,
     cwdWords: words(req.cwd).map((word) => word.toLowerCase()),
     targetUser: req.target_user ?? true,
     targetAgent: req.target_agent ?? true,
@@ -665,7 +711,7 @@ export async function sessionSearch(
     try {
       scan = scanCandidateFile(
         candidate.file,
-        validated.patterns,
+        validated.groups,
         validated.targetUser,
         validated.targetAgent,
         validated.caseSensitive,
@@ -687,7 +733,7 @@ export async function sessionSearch(
     }
 
     const matches = scan.matches;
-    if (validated.patterns.length > 0 && scan.matchedPatternCount < validated.patterns.length) {
+    if (validated.groups.length > 0 && scan.matchedGroupCount < validated.groups.length) {
       continue;
     }
 

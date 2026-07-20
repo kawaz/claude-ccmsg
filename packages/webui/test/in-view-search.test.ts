@@ -21,6 +21,53 @@ describe("parseSearchQuery", () => {
     expect(q.hasError).toBe(false);
   });
 
+  test("plain mode uses whitespace OR within a line and newline AND between lines", () => {
+    const oneLine = parseSearchQuery("foo bar", { caseSensitive: false, regex: false });
+    expect(oneLine.words.map((word) => [word.text, word.clauseIndex])).toEqual([
+      ["foo", 0],
+      ["bar", 0],
+    ]);
+    expect(unitMatchesQuery("foo only", oneLine.words)).toBe(true);
+    expect(unitMatchesQuery("bar only", oneLine.words)).toBe(true);
+    expect(unitMatchesQuery("neither", oneLine.words)).toBe(false);
+
+    const multiline = parseSearchQuery("foo bar\nbuz", { caseSensitive: false, regex: false });
+    expect(unitMatchesQuery("foo and buz", multiline.words)).toBe(true);
+    expect(unitMatchesQuery("bar and buz", multiline.words)).toBe(true);
+    expect(unitMatchesQuery("foo only", multiline.words)).toBe(false);
+  });
+
+  test("double quotes keep a phrase together and normalize internal whitespace", () => {
+    const q = parseSearchQuery('"foo   bar "\nbuz', { caseSensitive: false, regex: false });
+    expect(q.words.map((word) => word.text)).toEqual(["foo bar", "buz"]);
+    expect(unitMatchesQuery("foo\t \nbar and buz", q.words)).toBe(true);
+    expect(unitMatchesQuery("foo between bar and buz", q.words)).toBe(false);
+  });
+
+  test("plain mode trims repeated whitespace between alternatives", () => {
+    const q = parseSearchQuery("foo   bar \n  buz", { caseSensitive: false, regex: false });
+    expect(q.words.map((word) => [word.text, word.clauseIndex])).toEqual([
+      ["foo", 0],
+      ["bar", 0],
+      ["buz", 1],
+    ]);
+  });
+
+  test("regex mode keeps each line as one pattern without trimming spaces", () => {
+    const q = parseSearchQuery("foo bar\nbuz", { caseSensitive: false, regex: true });
+    expect(q.words.map((word) => [word.text, word.clauseIndex])).toEqual([
+      ["foo bar", 0],
+      ["buz", 1],
+    ]);
+    expect(unitMatchesQuery("foo bar and buz", q.words)).toBe(true);
+    expect(unitMatchesQuery("foo or bar and buz", q.words)).toBe(false);
+
+    const spaced = parseSearchQuery(" foo ", { caseSensitive: false, regex: true });
+    expect(spaced.words[0]!.text).toBe(" foo ");
+    expect(unitMatchesQuery("x foo y", spaced.words)).toBe(true);
+    expect(unitMatchesQuery("foo", spaced.words)).toBe(false);
+  });
+
   // "空行無視" (DR-0022 §2.1): blank lines contribute no AND clause at all,
   // not an empty-string word (which would otherwise match everything and
   // silently defeat the AND filter — see the module doc comment on why this
@@ -109,13 +156,17 @@ describe("unitMatchesQuery (AND semantics, DR-0022 §2.1)", () => {
 });
 
 describe("collectHighlightRanges / splitTextForHighlight", () => {
-  test("enumerates every word's matches with its own colorIndex", () => {
-    const words = parseSearchQuery("foo\nbar", { caseSensitive: false, regex: false }).words;
-    const ranges = collectHighlightRanges("foo xxx bar foo", words);
+  test("enumerates matches with one color per AND line", () => {
+    const words = parseSearchQuery("foo fizz\nbar", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    const ranges = collectHighlightRanges("foo fizz bar foo", words);
     expect(ranges).toEqual([
-      { start: 0, end: 3, colorIndex: 0 }, // "foo"
-      { start: 8, end: 11, colorIndex: 1 }, // "bar"
-      { start: 12, end: 15, colorIndex: 0 }, // "foo" (2nd occurrence)
+      { start: 0, end: 3, colorIndex: 0 },
+      { start: 4, end: 8, colorIndex: 0 },
+      { start: 9, end: 12, colorIndex: 1 },
+      { start: 13, end: 16, colorIndex: 0 },
     ]);
   });
 

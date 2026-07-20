@@ -161,8 +161,16 @@ export function SearchBar({
         <div class="search-bar-editor">
           <textarea
             class="search-bar-query"
-            aria-label="検索ワード (改行区切りで複数ワード AND)"
-            placeholder={"検索ワード\n改行区切りで AND"}
+            aria-label={
+              regexMode
+                ? "検索正規表現 (1 行 1 パターン、改行区切り AND)"
+                : "検索ワード (空白区切り OR、改行区切り AND)"
+            }
+            placeholder={
+              regexMode
+                ? "正規表現\n1 行 1 パターン・改行で AND"
+                : '検索ワード\n空白で OR・改行で AND・"引用句"'
+            }
             value={queryText}
             onInput={(e) => onQueryChange((e.target as HTMLTextAreaElement).value)}
           />
@@ -186,8 +194,8 @@ export function SearchBar({
         </div>
       ) : hasQuery ? (
         // "🔍 foo bar [1/20]↑↓" (DR-0022 §2.1 表示イメージ) — chips carry the
-        // same per-word color the highlight <mark>s use, via --chip-color,
-        // so a chip visually points at "which color to look for".
+        // same per-AND-line color the highlights use, via --chip-color, so
+        // chips from one OR group point at the same color.
         <div class="search-bar-chips">
           {words.map((w, i) => (
             <span
