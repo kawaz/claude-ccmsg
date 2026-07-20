@@ -1,11 +1,11 @@
 ---
 title: サブエージェントのセッションツリー表示
-status: open
+status: wip
 category: design
 created: 2026-07-20T22:35:52+09:00
 last_read:
 open_entered: 2026-07-20T22:35:52+09:00
-wip_entered:
+wip_entered: 2026-07-20T23:53:09+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -34,6 +34,12 @@ m6 分 (Status タブへの同期サブエージェント表示) は commit 3a00
 補足: サブエージェントの meta.json に `model` フィールドは存在しない (teammate のみ持つ) ため model 表示は不可、`agent_type` で代替するのが確定情報。
 
 残スコープは m7 分のみ (孫エージェントの再帰収集と専用パネル UI)。
+
+### m7 偵察結果 (実装着手時点)
+
+`subagents/` は root 配下 flat 構造。`meta.json` の `toolUseId` + `spawnDepth` で親子リンクが可能と判明。
+方針: `SessionStatusSnapshot` に `agent_tree` を追加し、`SessionView` を Timeline+Tree の 2 カラム化 (既存 `PaneSplitter` を再利用)。
+深い孫の live 判定は実装時に実機検証で確定する (未検証事項として残る)。
 
 ## 受け入れ条件
 
