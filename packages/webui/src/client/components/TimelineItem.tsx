@@ -3,7 +3,7 @@ import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { formatMsgTime, memberLabel } from "../utils.ts";
-import { Avatar, UserAvatar } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { MarkdownView } from "../markdown-view.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 
@@ -36,11 +36,21 @@ export function TimelineItem({
   now: number;
 }) {
   switch (event.type) {
-    case "msg":
+    case "msg": {
+      // 送信者ごとにメッセージカードを identicon 基調色で薄く色付けする
+      // (kawaz 2026-07-20: 「エージェント同士のメッセージボックスみんな
+      // 同じ色だと分かりにくい」)。u1 (msg-user) は緑系 --user-bubble-bg
+      // で既に区別されているので対象外。sid が membersById に無い場合は
+      // from id そのものを seed にフォールバック (Avatar が描かれない
+      // ケースでも背景色は付く)。
+      const isUser = event.from === ADMIN_ID;
+      const seed = room.membersById.get(event.from)?.sid ?? event.from;
+      const hue = isUser ? undefined : hueForSeed(seed);
       return (
         <div
-          class={"msg" + (event.from === ADMIN_ID ? " msg-user" : "")}
+          class={"msg" + (isUser ? " msg-user" : "")}
           id={anchorId(room.id, event.mid)}
+          style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
         >
           <div class="msg-meta">
             <MemberAvatar id={event.from} room={room} />
@@ -81,6 +91,7 @@ export function TimelineItem({
           </div>
         </div>
       );
+    }
     case "member":
       return <div class="event event-member">+ {memberLabel(event.id, room)} が参加</div>;
     case "leave":

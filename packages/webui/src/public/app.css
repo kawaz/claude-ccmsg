@@ -1596,6 +1596,24 @@ a {
   max-width: 90%;
 }
 
+/* agent 同士の発言カードを送信者ごとに identicon 基調色で色付け
+ * (kawaz 2026-07-20: 「みんな同じ色だと分かりにくい」)。TimelineItem が
+ * inline style で --member-hue に 0..359 の値を渡す。彩度は低く抑え
+ * (背景 30% / 明度 95%)、テキストコントラストを損なわない薄いトーンに
+ * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
+ * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
+ * (既存の --user-bubble-bg を維持)。 */
+.msg[style*="--member-hue"] {
+  background: hsl(var(--member-hue) 45% 94%);
+  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+}
+@media (prefers-color-scheme: dark) {
+  .msg[style*="--member-hue"] {
+    background: hsl(var(--member-hue) 22% 18%);
+    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+  }
+}
+
 /* u1 (User) 発言は自分の発言として右寄せ + LINE/iMessage 風の緑系背景で他の
  * ROOM 参加者からの発言と一目で区別する (kawaz 2026-07-13)。緑系
  * (--user-bubble-bg) は既に Timeline (transcript) 側の tl-bubble-right で

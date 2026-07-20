@@ -43,6 +43,15 @@ interface IdenticonSpec {
   cells: boolean[][];
 }
 
+/** seed 文字列から identicon の基調色相 (0-359) を導出する。
+ * buildSpec と同じ導出式 (mulberry32 の第 1 出力) を使うので、Avatar の
+ * 前景/背景色と一致する。TimelineItem がメッセージカードを送信者ごとに
+ * 色分けする用途 (kawaz 2026-07-20: 「アイコンカラーをベースに彩度とか
+ * 調整して色付けして下さい」) に export している。 */
+export function hueForSeed(seed: string): number {
+  return Math.floor(mulberry32(fnv1a(seed))() * 360);
+}
+
 function buildSpec(seed: string): IdenticonSpec {
   const rand = mulberry32(fnv1a(seed));
   const hue = Math.floor(rand() * 360);
