@@ -1234,6 +1234,7 @@ function UserPromptBubble({
   now,
   searchCtx,
   onUserTurnClick,
+  selected,
 }: {
   line: TurnLine;
   offsetKey: number;
@@ -1248,10 +1249,11 @@ function UserPromptBubble({
   // 👤 nav のクリック同期 (DR-0022 §2.2 の仕様を 👤 nav にも共通化): この吹き
   // 出しをクリックすると、スクロールなしで currentUserIdx をその位置に合わせる。
   onUserTurnClick: (navKey: string) => void;
+  selected: boolean;
 }) {
   return (
     <div
-      class="tl-bubble tl-bubble-right"
+      class={`tl-bubble tl-bubble-right${selected ? " tl-bubble-user-nav-selected" : ""}`}
       ref={(el) => registerUserTurnRef(navKey, el)}
       onClick={() => onUserTurnClick(navKey)}
     >
@@ -1432,6 +1434,7 @@ function CcmsgBubble({
   navKey,
   registerUserTurnRef,
   onUserTurnClick,
+  selected,
 }: {
   message: CcmsgMessage;
   rawText: string;
@@ -1439,6 +1442,7 @@ function CcmsgBubble({
   navKey?: string;
   registerUserTurnRef: (key: string, el: HTMLDivElement | null) => void;
   onUserTurnClick: (navKey: string) => void;
+  selected: boolean;
   // In-view search (DR-0022 §3, extended by kawaz r26 mid=97's 💬 target
   // toggle): undefined whenever the ccmsg target toggle is off, mirroring
   // SegmentView's searchCtx={undefined} convention for out-of-scope units —
@@ -1469,11 +1473,11 @@ function CcmsgBubble({
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   const bubble = (
     <div
-      class={
+      class={`${
         isUser
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
           : "tl-bubble tl-bubble-left tl-bubble-peer"
-      }
+      }${selected ? " tl-bubble-user-nav-selected" : ""}`}
       ref={(el) => {
         if (navKey !== undefined) registerUserTurnRef(navKey, el);
       }}
@@ -2083,6 +2087,7 @@ export function Timeline({
   // 初回読み込み時に最大値 (M) で初期化し、以降は ↑↓ ボタンで増減してユーザ
   // が明示的にジャンプした値だけを保持する (スクロール位置とは独立)。
   const [currentUserIdx, setCurrentUserIdx] = useState(0);
+  const [userNavActivated, setUserNavActivated] = useState(false);
   const previousUserTurnKeysRef = useRef(userTurnKeys);
   useEffect(() => {
     const previousKeys = previousUserTurnKeysRef.current;
@@ -2092,6 +2097,10 @@ export function Timeline({
       return reindexed ?? current;
     });
   }, [userTurnKeys]);
+  useEffect(() => {
+    setUserNavActivated(false);
+  }, [sid, agent?.agentId, agent?.runId, agent?.teammate]);
+  const selectedUserTurnKey = userNavActivated ? userTurnKeys[currentUserIdx - 1] : undefined;
 
   useEffect(
     () => () => {
@@ -2254,18 +2263,15 @@ export function Timeline({
     const target = userTurnRefs.current.get(key);
     const container = scrollRef.current;
     if (!target || !container) return;
+    setUserNavActivated(true);
     // sticky な tl-toolbar の実高さ分だけ下げた位置へスクロールする
     // (kawaz r35 mid=51: 固定の scroll-margin-top 4rem ではモバイル幅で
     // toolbar が 2 行以上に wrap した時に不足し、対象がヘッダ裏に隠れた)。
     // toolbar は container 内 sticky なので offsetHeight が常に実高さ。
     const toolbar = container.querySelector<HTMLElement>(".tl-toolbar");
-    const headerH = toolbar ? toolbar.offsetHeight : 0;
-    const top =
-      target.getBoundingClientRect().top -
-      container.getBoundingClientRect().top +
-      container.scrollTop -
-      headerH -
-      8;
+    const toolbarBottom =
+      toolbar?.getBoundingClientRect().bottom ?? container.getBoundingClientRect().top;
+    const top = target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
 
     if (userNavScrollAnimationRef.current !== null) {
       cancelAnimationFrame(userNavScrollAnimationRef.current);
@@ -2321,6 +2327,7 @@ export function Timeline({
     (navKey: string) => {
       const pos = userTurnKeys.indexOf(navKey);
       if (pos < 0) return;
+      setUserNavActivated(true);
       setCurrentUserIdx(pos + 1);
     },
     [userTurnKeys],
@@ -2398,14 +2405,30 @@ export function Timeline({
                 disabled={timeline.atStart || timeline.status === "loading"}
                 onClick={loadOlder}
               >
-                {timeline.atStart ? "先頭まで読み込み済み" : "older を読み込む"}
+                {timeline.atStart ? "先頭まで" : "older"}
               </button>
-              <button type="button" onClick={scrollToTop} title="最上部へ">
-                ⤒
-              </button>
-              <button type="button" onClick={scrollToBottom} title="最下部へ">
-                ⤓
-              </button>
+              <SearchBar
+                words={parsedSearch.words}
+                queryText={searchQueryText}
+                onQueryChange={(queryText) => changeSearch({ queryText })}
+                caseSensitive={searchCaseSensitive}
+                onToggleCaseSensitive={() => changeSearch({ caseSensitive: !searchCaseSensitive })}
+                regexMode={searchRegex}
+                onToggleRegex={() => changeSearch({ regex: !searchRegex })}
+                matchCount={matchingUnitKeys.length}
+                currentIndex={searchCurrentIndex}
+                onPrev={searchPrev}
+                onNext={searchNext}
+                hasError={parsedSearch.hasError}
+                targets={{
+                  user: targetUser,
+                  onToggleUser: () => setTargetUser((v) => !v),
+                  ai: targetAI,
+                  onToggleAI: () => setTargetAI((v) => !v),
+                  ccmsg: targetCcmsg,
+                  onToggleCcmsg: () => setTargetCcmsg((v) => !v),
+                }}
+              />
               <div class="tl-user-nav">
                 <button
                   type="button"
@@ -2437,28 +2460,12 @@ export function Timeline({
                   ↓
                 </button>
               </div>
-              <SearchBar
-                words={parsedSearch.words}
-                queryText={searchQueryText}
-                onQueryChange={(queryText) => changeSearch({ queryText })}
-                caseSensitive={searchCaseSensitive}
-                onToggleCaseSensitive={() => changeSearch({ caseSensitive: !searchCaseSensitive })}
-                regexMode={searchRegex}
-                onToggleRegex={() => changeSearch({ regex: !searchRegex })}
-                matchCount={matchingUnitKeys.length}
-                currentIndex={searchCurrentIndex}
-                onPrev={searchPrev}
-                onNext={searchNext}
-                hasError={parsedSearch.hasError}
-                targets={{
-                  user: targetUser,
-                  onToggleUser: () => setTargetUser((v) => !v),
-                  ai: targetAI,
-                  onToggleAI: () => setTargetAI((v) => !v),
-                  ccmsg: targetCcmsg,
-                  onToggleCcmsg: () => setTargetCcmsg((v) => !v),
-                }}
-              />
+              <button type="button" onClick={scrollToTop} title="最上部へ">
+                ⤒
+              </button>
+              <button type="button" onClick={scrollToBottom} title="最下部へ">
+                ⤓
+              </button>
             </div>
             {timeline.status === "error" ? (
               <div class="tl-error">
@@ -2516,6 +2523,7 @@ export function Timeline({
                               now={now}
                               searchCtx={searchCtx}
                               onUserTurnClick={onUserTurnClick}
+                              selected={selectedUserTurnKey === `user:${offset}`}
                             />
                           );
                         case "assistant-response":
@@ -2559,6 +2567,7 @@ export function Timeline({
                                   navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
                                   registerUserTurnRef={registerUserTurnRef}
                                   onUserTurnClick={onUserTurnClick}
+                                  selected={selectedUserTurnKey === navKey}
                                 />
                               );
                             })

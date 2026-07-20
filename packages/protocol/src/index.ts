@@ -13,6 +13,7 @@
 export { VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
+export * from "./search-query.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
 export const ADMIN_ID = "u1";

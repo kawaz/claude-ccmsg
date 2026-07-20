@@ -4,97 +4,45 @@
 // rendering). Timeline.tsx and FileViewer.tsx both consume this module: the
 // former maps it over Segment text, the latter over file lines.
 
-/** Number of distinct highlight colors in the palette (app.css defines
- * `--search-color-1` .. `--search-color-N`, one pair per theme). Word N (0-
- * indexed) gets `colorIndex = N % SEARCH_PALETTE_SIZE`, so a query longer than
- * the palette cycles colors rather than running out. */
+import {
+  parseSearchQueryPatterns,
+  type SearchQueryOptions,
+  type SearchQueryPattern,
+} from "@ccmsg/protocol";
+
+/** Number of distinct highlight colors in the palette. */
 export const SEARCH_PALETTE_SIZE = 6;
 
-export interface SearchQueryOptions {
-  caseSensitive: boolean;
-  regex: boolean;
-}
-
-/** One OR alternative within an AND line. `source`/`flags` are the RegExp
- * constructor args used by both matching and highlighting. */
-export interface SearchWord {
-  /** Normalized word text shown in the collapsed query chip. */
-  readonly text: string;
-  /** Zero-based AND-line index. Words from the same line share a clause. */
+export interface SearchWord extends SearchQueryPattern {
   readonly clauseIndex: number;
-  /** Cycles 0..SEARCH_PALETTE_SIZE-1 across AND lines, in order. */
   readonly colorIndex: number;
-  /** Regex mode only: the compile error message when `text` isn't a valid
-   * pattern. A word with an error never contributes matches (treated as
-   * "matches nothing") — see unitMatchesQuery/collectHighlightRanges. */
-  readonly error: string | null;
-  readonly source: string;
-  readonly flags: string;
 }
 
 export interface ParsedSearchQuery {
   readonly words: SearchWord[];
-  /** True if any word failed to compile (regex mode only) — callers surface
-   * this as an inline error rather than silently dropping the bad line. */
   readonly hasError: boolean;
 }
 
-// Equivalent to RegExp.escape for the literal tokens this parser produces.
-// The web UI still runs in browsers where RegExp.escape may be unavailable.
-function escapeForLiteralMatch(word: string): string {
-  return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function plainLineWords(line: string): Array<{ text: string; source: string }> {
-  return [...line.matchAll(/"[^"]*"|\S+/gu)].flatMap((match) => {
-    const raw = match[0]!;
-    const quoted = raw.startsWith('"') && raw.endsWith('"');
-    const value = quoted ? raw.slice(1, -1) : raw;
-    const parts = value.split(/\s+/u).filter(Boolean);
-    if (parts.length === 0) return [];
-    return [
-      {
-        text: parts.join(" "),
-        source: parts.map(escapeForLiteralMatch).join("\\s+"),
-      },
-    ];
-  });
-}
-
-/** Parses a query as newline-separated AND clauses. In plain mode, each line
- * is split into whitespace-separated OR alternatives; double quotes keep a
- * phrase in one alternative and normalize its internal whitespace to `\s+`.
- * Regex mode keeps each non-empty line unchanged as one pattern. */
+/** Adds UI-only clause and palette metadata to the shared parsed structure. */
 export function parseSearchQuery(text: string, opts: SearchQueryOptions): ParsedSearchQuery {
-  const flags = opts.caseSensitive ? "gu" : "giu";
-  const words: SearchWord[] = [];
-  for (const line of text.split(/[\r\n]/u)) {
-    const alternatives = opts.regex
-      ? line.length > 0
-        ? [{ text: line, source: line }]
-        : []
-      : plainLineWords(line);
-    if (alternatives.length === 0) continue;
-    const clauseIndex = words.length === 0 ? 0 : words[words.length - 1]!.clauseIndex + 1;
-    const colorIndex = clauseIndex % SEARCH_PALETTE_SIZE;
-    for (const alternative of alternatives) {
-      let error: string | null = null;
-      try {
-        new RegExp(alternative.source, flags);
-      } catch (err) {
-        error = err instanceof Error ? err.message : String(err);
-      }
-      words.push({ ...alternative, clauseIndex, colorIndex, error, flags });
-    }
-  }
-  return { words, hasError: words.some((w) => w.error !== null) };
+  const parsed = parseSearchQueryPatterns(text, opts);
+  return {
+    words: parsed.groups.flatMap((group, clauseIndex) =>
+      group.map((pattern) => ({
+        ...pattern,
+        clauseIndex,
+        colorIndex: clauseIndex % SEARCH_PALETTE_SIZE,
+      })),
+    ),
+    hasError: parsed.hasError,
+  };
 }
 
 // A fresh RegExp per call (never reused/mutated) so lastIndex state from one
 // caller's matchAll-style loop can never bleed into another's `test()` — see
 // the DR-0022 §3 "regex 安全 compile" note; this is the safety half of it.
 function wordRegExp(word: SearchWord, global: boolean): RegExp {
-  return new RegExp(word.source, global ? word.flags : word.flags.replace("g", ""));
+  return new RegExp(word.source, global ? `${word.flags}g` : word.flags);
 }
 
 /** Matches when every non-errored AND clause has at least one matching OR

@@ -5,7 +5,9 @@ import {
   ErrorCode,
   SESSION_SEARCH_MATCH_SUMMARY_MAX,
   SESSION_SEARCH_RESULT_MAX,
+  parseSearchQueryPatterns,
   type ErrorCode as ErrorCodeType,
+  type SearchQueryPattern,
   type SessionSearchHit,
   type SessionSearchMatch,
   type SessionSearchRequest,
@@ -50,42 +52,13 @@ function words(value: string | undefined): string[] {
   return value?.trim().split(/\s+/).filter(Boolean) ?? [];
 }
 
-interface QueryPatternInput {
-  text: string;
-  flexibleWhitespace: boolean;
-}
-
-function queryPatternGroups(value: string | undefined, regex: boolean): QueryPatternInput[][] {
-  if (value === undefined) return [];
-  const groups: QueryPatternInput[][] = [];
-  for (const line of value.split(/[\r\n]/u)) {
-    if (regex) {
-      if (line.length > 0) groups.push([{ text: line, flexibleWhitespace: false }]);
-      continue;
-    }
-    const alternatives = [...line.matchAll(/"[^"]*"|\S+/gu)].flatMap((match) => {
-      const raw = match[0]!;
-      const quoted = raw.startsWith('"') && raw.endsWith('"');
-      const text = quoted ? raw.slice(1, -1) : raw;
-      const parts = text.split(/\s+/u).filter(Boolean);
-      return parts.length > 0 ? [{ text: parts.join(" "), flexibleWhitespace: quoted }] : [];
-    });
-    if (alternatives.length > 0) groups.push(alternatives);
-  }
-  return groups;
-}
-
 function lowerIncludesAll(text: string, needles: readonly string[]): boolean {
   const lower = text.toLowerCase();
   return needles.every((needle) => lower.includes(needle));
 }
 
 interface CompiledQueryPattern {
-  matcher: RegExp | null;
-  /** Non-null only in literal mode; strict matching uses indexOf/toLowerCase so
-   * its case-folding semantics exactly match the serialized-line prefilter. */
-  literalMatch: string | null;
-  caseSensitive: boolean;
+  matcher: RegExp;
   /** Serialized-line substring that every strict match must contain. null means
    * this pattern cannot safely participate in the JSONL prefilter. */
   prefilter: string | null;
@@ -159,69 +132,38 @@ function regexRequiredLiteral(pattern: string): string | null {
   return runs.sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
-function escapeForLiteralMatch(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function compileQueryPatterns(
-  patterns: readonly QueryPatternInput[],
-  caseSensitive: boolean,
-  regex: boolean,
-): { ok: true; patterns: CompiledQueryPattern[] } | { ok: false; msg: string } {
-  const flags = caseSensitive ? "u" : "iu";
-  const compiled: CompiledQueryPattern[] = [];
-  for (const pattern of patterns) {
-    const { text, flexibleWhitespace } = pattern;
-    let matcher: RegExp | null = null;
-    if (regex || flexibleWhitespace) {
-      const source = regex ? text : text.split(/\s+/u).map(escapeForLiteralMatch).join("\\s+");
-      try {
-        matcher = new RegExp(source, flags);
-      } catch (error) {
-        return {
-          ok: false,
-          msg: `session_search query contains an invalid regular expression: ${String(error)}`,
-        };
-      }
-    }
-    const literal = regex
-      ? regexRequiredLiteral(text)
-      : flexibleWhitespace
-        ? JSON.stringify(text.split(/\s+/u).sort((a, b) => b.length - a.length)[0] ?? "").slice(
-            1,
-            -1,
-          )
-        : JSON.stringify(text).slice(1, -1);
-    compiled.push({
-      matcher,
-      literalMatch: regex || flexibleWhitespace ? null : caseSensitive ? text : text.toLowerCase(),
-      caseSensitive,
-      prefilter: literal === null ? null : caseSensitive ? literal : literal.toLowerCase(),
-    });
-  }
-  return { ok: true, patterns: compiled };
-}
-
 function compileQueryGroups(
-  groups: readonly (readonly QueryPatternInput[])[],
+  groups: readonly (readonly SearchQueryPattern[])[],
   caseSensitive: boolean,
   regex: boolean,
 ): { ok: true; groups: CompiledQueryPattern[][] } | { ok: false; msg: string } {
   const compiledGroups: CompiledQueryPattern[][] = [];
   for (const group of groups) {
-    const compiled = compileQueryPatterns(group, caseSensitive, regex);
-    if (!compiled.ok) return compiled;
-    compiledGroups.push(compiled.patterns);
+    const compiled: CompiledQueryPattern[] = [];
+    for (const pattern of group) {
+      if (pattern.error !== null) {
+        return {
+          ok: false,
+          msg: `session_search query contains an invalid regular expression: ${pattern.error}`,
+        };
+      }
+      const literal = regex
+        ? regexRequiredLiteral(pattern.source)
+        : JSON.stringify(
+            pattern.text.split(/\s+/v).sort((a, b) => b.length - a.length)[0] ?? "",
+          ).slice(1, -1);
+      compiled.push({
+        matcher: new RegExp(pattern.source, pattern.flags),
+        prefilter: literal === null ? null : caseSensitive ? literal : literal.toLowerCase(),
+      });
+    }
+    compiledGroups.push(compiled);
   }
   return { ok: true, groups: compiledGroups };
 }
 
 function patternIndex(text: string, pattern: CompiledQueryPattern): number {
-  if (pattern.literalMatch !== null) {
-    const haystack = pattern.caseSensitive ? text : text.toLowerCase();
-    return haystack.indexOf(pattern.literalMatch);
-  }
-  return pattern.matcher?.exec(text)?.index ?? -1;
+  return pattern.matcher.exec(text)?.index ?? -1;
 }
 
 function roughPathToken(value: string): string {
@@ -297,7 +239,6 @@ function linePassesPrefilter(
   line: string,
   groups: readonly (readonly CompiledQueryPattern[])[],
   caseSensitive: boolean,
-  regex: boolean,
 ): boolean {
   // Case-insensitive regex prefilter fragments are ASCII-alphanumeric-only
   // (regexRequiredLiteral), so the haystack must fold every character that
@@ -307,11 +248,7 @@ function linePassesPrefilter(
   // (NFKC/NFKD) must NOT be applied here: composing an NFD sequence
   // (U+0065 U+0301) into U+00E9 removes the raw "e" that a /cafe/iu strict match
   // depends on, creating a prefilter false negative.
-  const haystack = caseSensitive
-    ? line
-    : regex
-      ? line.toLowerCase().replaceAll("ſ", "s")
-      : line.toLowerCase();
+  const haystack = caseSensitive ? line : line.toLowerCase().replaceAll("ſ", "s");
   // Session-wide AND permits different groups to match different rows, so a
   // row survives when any OR alternative in any group may match it. A pattern
   // without a safe literal admits every row to the strict stage.
@@ -326,7 +263,6 @@ function scanCandidateFile(
   targetUser: boolean,
   targetAgent: boolean,
   caseSensitive: boolean,
-  regex: boolean,
   maxBytes: number,
 ): ScanResult {
   const size = fs.statSync(file).size;
@@ -341,7 +277,7 @@ function scanCandidateFile(
   const fd = fs.openSync(file, "r");
 
   const inspect = (line: string): void => {
-    if (groups.length > 0 && linePassesPrefilter(line, groups, caseSensitive, regex)) {
+    if (groups.length > 0 && linePassesPrefilter(line, groups, caseSensitive)) {
       forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
         const matchingPatterns: CompiledQueryPattern[] = [];
         let newlyMatchedGroup = false;
@@ -593,14 +529,16 @@ export function strictMatch(
   line: string,
   params: StrictMatchParams,
 ): SessionSearchMatch | undefined {
-  const compiled = compileQueryPatterns(
-    params.queryWords.map((text) => ({ text, flexibleWhitespace: false })),
-    params.caseSensitive ?? false,
-    params.regex ?? false,
-  );
+  const caseSensitive = params.caseSensitive ?? false;
+  const regex = params.regex ?? false;
+  const parsed = parseSearchQueryPatterns(params.queryWords.join("\n"), {
+    caseSensitive,
+    regex,
+  });
+  const compiled = compileQueryGroups(parsed.groups, caseSensitive, regex);
   if (!compiled.ok) return undefined;
   return strictMatchCompiled(line, {
-    groups: compiled.patterns.map((pattern) => [pattern]),
+    groups: compiled.groups,
     targetUser: params.targetUser,
     targetAgent: params.targetAgent,
   });
@@ -624,7 +562,6 @@ function validateRequest(req: SessionSearchRequest):
       targetUser: boolean;
       targetAgent: boolean;
       caseSensitive: boolean;
-      regex: boolean;
       mtimeMs: number;
     }
   | { ok: false; msg: string } {
@@ -661,7 +598,8 @@ function validateRequest(req: SessionSearchRequest):
   }
   const caseSensitive = req.case_sensitive ?? false;
   const regex = req.regex ?? false;
-  const compiled = compileQueryGroups(queryPatternGroups(req.query, regex), caseSensitive, regex);
+  const parsed = parseSearchQueryPatterns(req.query ?? "", { caseSensitive, regex });
+  const compiled = compileQueryGroups(parsed.groups, caseSensitive, regex);
   if (!compiled.ok) return compiled;
   return {
     ok: true,
@@ -670,7 +608,6 @@ function validateRequest(req: SessionSearchRequest):
     targetUser: req.target_user ?? true,
     targetAgent: req.target_agent ?? true,
     caseSensitive,
-    regex,
     mtimeMs,
   };
 }
@@ -715,7 +652,6 @@ export async function sessionSearch(
         validated.targetUser,
         validated.targetAgent,
         validated.caseSensitive,
-        validated.regex,
         remaining,
       );
     } catch (error) {

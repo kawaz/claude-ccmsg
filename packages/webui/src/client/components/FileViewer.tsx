@@ -475,13 +475,26 @@ export function FileViewer({
     <div class="file-viewer">
       <header class="viewer-header">
         <span class="viewer-path">{path}</span>
-        <RefetchButton />
         {res.truncated ? (
           <span class="viewer-banner">
             先頭 {Math.floor(FS_READ_MAX_BYTES / 1024)}KB のみ表示 (全 {res.size.toLocaleString()}{" "}
             bytes)
           </span>
         ) : null}
+        <SearchBar
+          words={parsedSearch.words}
+          queryText={searchQueryText}
+          onQueryChange={setSearchQueryText}
+          caseSensitive={searchCaseSensitive}
+          onToggleCaseSensitive={() => setSearchCaseSensitive((v) => !v)}
+          regexMode={searchRegex}
+          onToggleRegex={() => setSearchRegex((v) => !v)}
+          matchCount={matchingLineIndices.length}
+          currentIndex={searchCurrentIndex}
+          onPrev={searchPrev}
+          onNext={searchNext}
+          hasError={parsedSearch.hasError}
+        />
         {/* Preview/Code toggle: rendered only for markdown-eligible paths
          * (isMarkdownPath) so non-markdown files don't get a dead button.
          * Deliberately not offered for .html (kawaz decision, security
@@ -511,20 +524,7 @@ export function FileViewer({
             </button>
           </div>
         ) : null}
-        <SearchBar
-          words={parsedSearch.words}
-          queryText={searchQueryText}
-          onQueryChange={setSearchQueryText}
-          caseSensitive={searchCaseSensitive}
-          onToggleCaseSensitive={() => setSearchCaseSensitive((v) => !v)}
-          regexMode={searchRegex}
-          onToggleRegex={() => setSearchRegex((v) => !v)}
-          matchCount={matchingLineIndices.length}
-          currentIndex={searchCurrentIndex}
-          onPrev={searchPrev}
-          onNext={searchNext}
-          hasError={parsedSearch.hasError}
-        />
+        <RefetchButton />
       </header>
       {showPreview ? (
         // Feed the full loaded content to MarkdownView (which parses and

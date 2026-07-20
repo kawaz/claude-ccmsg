@@ -2772,6 +2772,13 @@ button.session-tab {
   background: var(--user-bubble-bg);
 }
 
+/* 👤 nav を操作した後、現在の index が指す user bubble を示す。outline は
+ * layout を動かさず、緑系の bubble 色にも埋もれない accent 色を控えめに重ねる。 */
+.tl-bubble-user-nav-selected .tl-bubble-body {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
 .tl-bubble-peer .tl-bubble-body {
   background: var(--peer-bubble-bg);
 }
