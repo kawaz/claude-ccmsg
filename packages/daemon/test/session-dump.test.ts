@@ -182,6 +182,37 @@ describe("dumpSession", () => {
     expect(entries.every((entry) => !("ts" in entry) && !("session" in entry))).toBe(true);
   });
 
+  // Claude Code records some task lifecycle notices as type:user with plain
+  // text. promptSource:"system" is authoritative even when no body wrapper is
+  // available, while the adjacent typed/human row remains a real user entry.
+  test("excludes plain-text system promptSource rows from user entries", () => {
+    const { configDir, dataDir, transcript } = fixture();
+    fs.writeFileSync(
+      transcript,
+      [
+        row(
+          "2026-07-20T00:00:00Z",
+          "user",
+          '6 background agents were stopped by the user: "worker-a", "worker-b".',
+          {
+            origin: { kind: "task-notification" },
+            promptSource: "system",
+            queuePriority: "later",
+          },
+        ),
+        row("2026-07-20T00:00:01Z", "user", "human prompt", {
+          origin: { kind: "human" },
+          promptSource: "typed",
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    expect(dump.entries.filter((entry) => entry.kind === "user")).toEqual([
+      expect.objectContaining({ text: "human prompt" }),
+    ]);
+  });
+
   test("applies inclusive timezone-aware since and until bounds", () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(

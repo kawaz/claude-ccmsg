@@ -1168,6 +1168,35 @@ describe("classifyUserMessage", () => {
   // 化けた」インジェクション。content の先頭リテラルでしか区別できない、
   // というレポートの核心的な発見に対応する。
   describe("isMeta not true, prompt-shaped system injections (report category B)", () => {
+    // Claude Code can emit a task lifecycle notice as plain text with no wrapper.
+    // `promptSource:"system"` is the decisive origin marker, and the known
+    // `origin.kind` preserves the specific task-notification rendering kind.
+    test("system promptSource + task-notification origin classifies plain text as task-notification", () => {
+      const entry = {
+        type: "user",
+        message: {
+          role: "user",
+          content: '6 background agents were stopped by the user: "worker-a", "worker-b".',
+        },
+        origin: { kind: "task-notification" },
+        promptSource: "system",
+        queuePriority: "later",
+      };
+      expect(classifyUserMessage(entry)).toBe("task-notification");
+    });
+
+    // A future system-origin shape must stay out of the human-prompt path even
+    // when its origin kind is not yet part of UserMessageKind.
+    test("system promptSource + unknown origin classifies plain text as unknown-meta", () => {
+      const entry = {
+        type: "user",
+        message: { role: "user", content: "some future system injection" },
+        origin: { kind: "future-system-origin" },
+        promptSource: "system",
+      };
+      expect(classifyUserMessage(entry)).toBe("unknown-meta");
+    });
+
     test("<task-notification> prefix (isMeta absent) -> task-notification", () => {
       const entry = {
         message: {
@@ -1411,6 +1440,17 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
+    // Observed human-input metadata must remain a human prompt; origin.kind is
+    // not independently a system marker because human/channel are valid kinds.
+    test("typed promptSource + human origin -> user-prompt", () => {
+      const entry = {
+        message: { role: "user", content: "続けて" },
+        origin: { kind: "human" },
+        promptSource: "typed",
+      };
+      expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
     // isMeta が立っていなければ、文中に <foo> のようなタグ風の文字列を含んで
     // いても user-prompt のまま — <task-notification>/'Another Claude
     // session sent a message:' の完全一致プレフィックスでない限り誤爆しない
@@ -1482,6 +1522,31 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
     expect(isUserTextTurn(line)).toBe(false);
     expect(groupTimelineLines([line], [1100])).toEqual([
       { kind: "fold", entries: [{ offset: 1100, line }] },
+    ]);
+  });
+
+  // Regression fixture reduced from the reported plain-text task lifecycle
+  // notice: metadata, not a body prefix, must keep it out of the green human
+  // bubble and fold it with other system-origin entries.
+  test("plain-text task notification metadata -> task-notification and folded", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: '6 background agents were stopped by the user: "worker-a", "worker-b".',
+        },
+        origin: { kind: "task-notification" },
+        promptSource: "system",
+        queuePriority: "later",
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("task-notification");
+    expect(isUserTextTurn(line)).toBe(false);
+    expect(groupTimelineLines([line], [571])).toEqual([
+      { kind: "fold", entries: [{ offset: 571, line }] },
     ]);
   });
 

@@ -763,19 +763,22 @@ function isTextOrImageBlock(b: unknown): boolean {
  * `UserMessageKind`. Judged in this order, matching the research's
  * discriminating axes:
  *
- * 1. array `content` — tool_result echo, `[Request interrupted...]`
+ * 1. `promptSource === "system"` — authoritative system-origin metadata;
+ *    known `origin.kind` values preserve task-notification/peer-message, and
+ *    unknown kinds safely degrade to unknown-meta
+ * 2. array `content` — tool_result echo, `[Request interrupted...]`
  *    marker, Skill-tool invocation preamble (isMeta + specific prefix), or a
  *    real human utterance with an image/file paste (array of only text/image
  *    blocks, no tool_result — Claude Code emits this shape for a pasted
  *    image, with or without a caption)
- * 2. string `content` with a peer-relay prefix — peer-message, regardless of
+ * 3. string `content` with a peer-relay prefix — peer-message, regardless of
  *    whether Claude Code also sets `isMeta:true`
- * 3. `isMeta === true` — remaining Claude Code CLI/harness UI injection
+ * 4. `isMeta === true` — remaining Claude Code CLI/harness UI injection
  *    (slash command caveat/invocation/stdout, malformed-tool-call retry hint)
- * 4. `isMeta` not true, string `content` with another literal system-
+ * 5. `isMeta` not true, string `content` with another literal system-
  *    injection prefix — task-notification (Monitor/Workflow/subagent),
  *    delivered as an ordinary prompt (`promptId`-bearing)
- * 5. anything else — a real human utterance
+ * 6. anything else — a real human utterance
  *
  * Known false-negative (documented in the research, not fixed here): a real
  * user who types text starting with one of the exact literal prefixes below
@@ -788,6 +791,16 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   const message = entry.message as Record<string, unknown> | undefined;
   const content = message?.content;
   const isMeta = entry.isMeta === true;
+
+  if (entry.promptSource === "system") {
+    const origin =
+      entry.origin !== null && typeof entry.origin === "object" && !Array.isArray(entry.origin)
+        ? (entry.origin as Record<string, unknown>)
+        : null;
+    if (origin?.kind === "task-notification") return "task-notification";
+    if (origin?.kind === "peer") return "peer-message";
+    return "unknown-meta";
+  }
 
   if (Array.isArray(content)) {
     if (hasToolResultBlock(content)) return "tool-result";

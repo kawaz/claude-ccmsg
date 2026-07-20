@@ -296,6 +296,7 @@ function peerEntries(
 }
 
 function isHumanPrompt(row: Record<string, unknown>, text: string): boolean {
+  if (row.promptSource === "system") return false;
   if (row.isMeta === true) return false;
   if (text.startsWith("<") || text.startsWith("[SYSTEM NOTIFICATION - NOT USER INPUT]"))
     return false;
