@@ -2162,10 +2162,22 @@ export function Timeline({
   function scrollToUserTurn(oneBasedIdx: number) {
     const key = userTurnKeys[oneBasedIdx - 1];
     if (key === undefined) return;
-    // block:"start" + scroll-margin-top (.tl-line 側の CSS) で sticky な
-    // tl-toolbar の下 = TL 上部の可視領域に置く (kawaz r17 mid=54)。
-    // behavior 指定なし = 即座 (smooth エフェクト廃止)。
-    userTurnRefs.current.get(key)?.scrollIntoView({ block: "start" });
+    const target = userTurnRefs.current.get(key);
+    const container = scrollRef.current;
+    if (!target || !container) return;
+    // sticky な tl-toolbar の実高さ分だけ下げた位置へスクロールする
+    // (kawaz r35 mid=51: 固定の scroll-margin-top 4rem ではモバイル幅で
+    // toolbar が 2 行以上に wrap した時に不足し、対象がヘッダ裏に隠れた)。
+    // toolbar は container 内 sticky なので offsetHeight が常に実高さ。
+    const toolbar = container.querySelector<HTMLElement>(".tl-toolbar");
+    const headerH = toolbar ? toolbar.offsetHeight : 0;
+    const top =
+      target.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop -
+      headerH -
+      8;
+    container.scrollTo({ top });
   }
 
   // kawaz r17 mid=54: state を減増してから対応要素へジャンプする単純な形
