@@ -4239,10 +4239,14 @@ button.session-tab {
 }
 
 .tl-auto-open legend {
-  padding: 0 0.25rem;
+  /* fieldset 標準の legend は枠線上に半分はみ出し、背後のテキストと重なると
+   * 読めない (kawaz r38 mid=64) — float で通常フローに落として枠内配置に。 */
+  float: left;
+  padding: 0 0.25rem 0 0;
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  align-self: center;
 }
 
 .tl-auto-open label {
