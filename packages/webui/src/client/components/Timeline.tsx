@@ -1130,6 +1130,20 @@ function ItemsSubFold({
 }) {
   const [open, setOpen] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  // 「1 items」だけの subfold は開く手間が無駄 (kawaz r38 mid=44) — fold 層を
+  // 作らず中身 (それ自体が tool カード等の fold を持つ) を直接引き上げる。
+  if (entries.length === 1) {
+    const { offset, line } = entries[0]!;
+    return (
+      <LineView
+        line={line}
+        offset={offset}
+        translationAvailability={translationAvailability}
+        foldGroupOpen={foldGroupOpen}
+        searchCtx={searchCtx}
+      />
+    );
+  }
   return (
     <details
       ref={detailsRef}
