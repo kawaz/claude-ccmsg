@@ -24,6 +24,15 @@ describe("foldSummaryView", () => {
     });
   });
 
+  test("keeps task-notification decoration while closed", () => {
+    expect(
+      foldSummaryView("task-notification Monitor event", false, { kind: "task-notification" }),
+    ).toEqual({
+      label: "task-notification Monitor event",
+      decoration: { kind: "task-notification" },
+    });
+  });
+
   test("removes decoration while open", () => {
     expect(
       foldSummaryView("peer-message ← teammate", true, {
@@ -34,6 +43,9 @@ describe("foldSummaryView", () => {
     ).toEqual({ label: "peer-message ← teammate" });
     expect(foldSummaryView("Bash List files", true, { kind: "bash" })).toEqual({
       label: "Bash List files",
+    });
+    expect(foldSummaryView("task-notification", true, { kind: "task-notification" })).toEqual({
+      label: "task-notification",
     });
   });
 });

@@ -2964,7 +2964,8 @@ button.session-tab {
   border: 1px dashed var(--agent-comm-border);
 }
 
-.tl-file-tool-fold:not([open]) > .tl-bash-summary .tl-summary-decoration {
+.tl-file-tool-fold:not([open]) > .tl-bash-summary .tl-summary-decoration,
+.tl-fold:not([open]) > .tl-task-notification-summary .tl-summary-decoration {
   background: var(--bg-alt);
   border: 1px dashed var(--border);
 }
@@ -3266,13 +3267,8 @@ button.session-tab {
   margin-top: 0.3rem;
 }
 
-.tl-sysmsg-heading {
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-/* task-notification の各フィールド (task-id/summary除外後/event/output-file
- * 等) を定義リストで並べる — フィールド名の集合が未知の入力にも耐えるよう
+/* task-notification の各フィールド (summary/task-id/event/output-file 等) を
+ * 定義リストで並べる — フィールド名の集合が未知の入力にも耐えるよう
  * transcript-model.ts 側は固定タグ名をハードコードしない設計 (module doc
  * comment) なので、ここも「何個来ても縦に並ぶ」grid で対応する。*/
 .tl-sysmsg-dl {

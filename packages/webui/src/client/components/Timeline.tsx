@@ -160,7 +160,7 @@ function FoldSummary({
           <span>{view.decoration.prefix}</span>
           <AgentIdentity name={view.decoration.name} />
         </span>
-      ) : view.decoration?.kind === "bash" ? (
+      ) : view.decoration?.kind === "bash" || view.decoration?.kind === "task-notification" ? (
         <span class="tl-fold-label tl-summary-decoration">{view.label}</span>
       ) : (
         <span class="tl-fold-label">{view.label}</span>
@@ -730,11 +730,16 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
     case "fields":
       return (
         <div class="tl-sysmsg-fields">
-          {rich.heading ? <div class="tl-sysmsg-heading">{rich.heading}</div> : null}
-          {rich.fields.length === 0 ? (
+          {rich.heading === null && rich.fields.length === 0 ? (
             <span class="tl-empty-turn">(フィールドなし)</span>
           ) : (
             <dl class="tl-sysmsg-dl">
+              {rich.heading ? (
+                <div class="tl-sysmsg-field">
+                  <dt>summary</dt>
+                  <dd>{rich.heading}</dd>
+                </div>
+              ) : null}
               {rich.fields.map((f, i) => (
                 <div class="tl-sysmsg-field" key={i}>
                   <dt>{f.name}</dt>
@@ -874,19 +879,25 @@ function SystemMessageFold({
     [kind, line.segments],
   );
   const peer = rich.display === "peer" ? rich : null;
-  const label = peer ? `${kind} ← ${peer.from}` : kind;
+  const taskSummary =
+    kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
+  const label = peer
+    ? `${kind} ← ${peer.from}`
+    : taskSummary && !open
+      ? `${kind} ${taskSummary}`
+      : kind;
+  const decoration: FoldSummaryDecoration | undefined = peer
+    ? { kind: "agent", prefix: `${kind} ←`, name: peer.from }
+    : taskSummary
+      ? { kind: "task-notification" }
+      : undefined;
   return (
     <details
       class={peer ? "tl-line tl-fold tl-agent-fold" : "tl-line tl-fold"}
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
     >
-      <FoldSummary
-        ts={line.ts}
-        label={label}
-        open={open}
-        decoration={peer ? { kind: "agent", prefix: `${kind} ←`, name: peer.from } : undefined}
-      />
+      <FoldSummary ts={line.ts} label={label} open={open} decoration={decoration} />
       <SystemMessageBody
         kind={kind}
         line={line}

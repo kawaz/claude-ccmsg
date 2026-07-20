@@ -1,7 +1,8 @@
 export type FoldSummaryDecoration =
   | { kind: "thinking" }
   | { kind: "agent"; prefix: string; name: string }
-  | { kind: "bash" };
+  | { kind: "bash" }
+  | { kind: "task-notification" };
 
 export function foldSummaryView(
   label: string,
