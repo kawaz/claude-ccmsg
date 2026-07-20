@@ -2603,14 +2603,11 @@ button.session-tab {
    * 折り返して縦長に潰れるのを防ぐ — kawaz r17 mid=1、2026-07-14)。 */
   flex-wrap: wrap;
   gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0 0.75rem 0.5rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   position: sticky;
   top: 0;
-  /* sticky の描画面と親の小数座標境界にできる raster seam を、配置を
-   * ずらさず背景色で覆う。 */
-  box-shadow: 0 -2px 0 var(--bg-alt);
   /* sticky ヘッダが後続の tl-line 系要素 (details / img / fold group) より
    * z 軸で下に潜ると背面に隠れて操作できない (kawaz r17 mid=53 続報、
    * 2026-07-15)。同一 stacking context 内の後続要素より確実に上に置く。 */
