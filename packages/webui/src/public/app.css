@@ -3092,6 +3092,31 @@ button.session-tab {
   border: 1px dashed var(--border);
 }
 
+.tl-direction-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35rem;
+  height: 1.05rem;
+  border: 1px solid;
+  border-radius: 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.tl-direction-outbound {
+  color: color-mix(in srgb, var(--accent) 80%, var(--fg));
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.tl-direction-inbound {
+  color: color-mix(in srgb, var(--assistant-bubble-border) 75%, var(--fg));
+  background: color-mix(in srgb, var(--assistant-bubble-border) 18%, transparent);
+  border-color: color-mix(in srgb, var(--assistant-bubble-border) 70%, transparent);
+}
+
 .tl-decorated-summary .tl-agent-identity {
   gap: 0.2rem;
 }
@@ -3345,6 +3370,11 @@ button.session-tab {
   min-width: 0;
   gap: 0.3rem;
   color: var(--fg);
+}
+
+.tl-agent-identity > .avatar {
+  width: 1.15em;
+  height: 1.15em;
 }
 
 .tl-agent-card-tl {

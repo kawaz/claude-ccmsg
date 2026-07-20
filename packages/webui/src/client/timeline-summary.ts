@@ -1,6 +1,11 @@
 export type FoldSummaryDecoration =
   | { kind: "thinking" }
-  | { kind: "agent"; prefix: string; name: string }
+  | {
+      kind: "agent";
+      prefix: string;
+      name: string;
+      direction?: "outbound" | "inbound";
+    }
   | { kind: "bash" }
   | { kind: "task-notification" };
 

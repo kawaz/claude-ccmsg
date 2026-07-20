@@ -168,6 +168,11 @@ function FoldSummary({
       ) : view.decoration?.kind === "agent" ? (
         <span class="tl-fold-label tl-summary-decoration">
           <span>{view.decoration.prefix}</span>
+          {view.decoration.direction ? (
+            <span class={`tl-direction-badge tl-direction-${view.decoration.direction}`}>
+              {view.decoration.direction === "outbound" ? "→" : "←"}
+            </span>
+          ) : null}
           <AgentIdentity name={view.decoration.name} />
         </span>
       ) : view.decoration?.kind === "bash" || view.decoration?.kind === "task-notification" ? (
@@ -417,7 +422,12 @@ function AgentSendFold({
         ts={ts}
         label={label}
         open={open}
-        decoration={{ kind: "agent", prefix: "SendMessage →", name: segment.to }}
+        decoration={{
+          kind: "agent",
+          prefix: "SendMessage",
+          name: segment.to,
+          direction: "outbound",
+        }}
       />
       <div class="tl-guided">
         <FoldGuide />
@@ -1005,7 +1015,7 @@ function SystemMessageFold({
       ? `${kind} ${taskSummary}`
       : kind;
   const decoration: FoldSummaryDecoration | undefined = peer
-    ? { kind: "agent", prefix: `${kind} ←`, name: peer.from }
+    ? { kind: "agent", prefix: kind, name: peer.from, direction: "inbound" }
     : taskSummary
       ? { kind: "task-notification" }
       : undefined;
