@@ -120,9 +120,9 @@ describe("foldGroupShouldAutoOpen", () => {
     },
   });
 
-  // 外側 fold は items 軸が ON かつ、現在 ON の T/A のどちらかを含む時だけ開く。
-  // inner category と outer items は直交しており、category ON だけでは外側を開かない。
-  test("outer items axis gates matching T/A categories independently", () => {
+  // N items は T/A を包む外側 FoldGroup だけを開くためのゲート。内側の
+  // ItemsSubFold を一斉展開する設定ではなく、T/A が一致しなければ外側も開かない。
+  test("N items gates only an outer FoldGroup containing enabled T/A", () => {
     expect(
       foldGroupShouldAutoOpen([thinking], { thinking: true, agent: false, items: false }),
     ).toBe(false);
@@ -135,5 +135,12 @@ describe("foldGroupShouldAutoOpen", () => {
     expect(foldGroupShouldAutoOpen([thinking], { thinking: false, agent: true, items: true })).toBe(
       false,
     );
+    expect(
+      foldGroupShouldAutoOpen([thinking, agent], {
+        thinking: false,
+        agent: false,
+        items: true,
+      }),
+    ).toBe(false);
   });
 });

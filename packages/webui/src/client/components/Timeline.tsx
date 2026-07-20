@@ -1172,9 +1172,7 @@ function ItemsSubFold({
   foldGroupOpen: boolean;
   searchCtx: TLSearchCtx | undefined;
 }) {
-  const autoOpen = useContext(TimelineAutoOpenContext);
-  const [open, setOpen] = useState(autoOpen.settings.items);
-  useEffect(() => setOpen(autoOpen.settings.items), [autoOpen.revision]);
+  const [open, setOpen] = useState(false);
   const detailsRef = useRef<HTMLDetailsElement | null>(null);
   // 「1 items」だけの subfold は開く手間が無駄 (kawaz r38 mid=44) — fold 層を
   // 作らず中身 (それ自体が tool カード等の fold を持つ) を直接引き上げる。
@@ -2531,7 +2529,7 @@ export function Timeline({
                   );
                 })}
                 <span class="tl-auto-open-separator" aria-hidden="true" />
-                <label title="T/A を含む外側と内側の N items fold を一斉に開閉">
+                <label title="T/A を含む外側の fold を自動オープン">
                   <input
                     type="checkbox"
                     checked={autoOpenSettings.items}
