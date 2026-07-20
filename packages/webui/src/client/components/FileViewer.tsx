@@ -312,6 +312,13 @@ export function FileViewer({
   useEffect(() => {
     setSearchCurrentIndex(matchingLineIndices.length > 0 ? 1 : 0);
   }, [searchQueryText, searchCaseSensitive, searchRegex, path]);
+  useEffect(() => {
+    setSearchCurrentIndex((current) => {
+      if (matchingLineIndices.length === 0) return 0;
+      if (current <= 0) return 1;
+      return Math.min(current, matchingLineIndices.length);
+    });
+  }, [matchingLineIndices.length]);
   const searchLineRefs = useRef(new Map<number, HTMLDivElement>());
   const registerSearchLineRef = useCallback((i: number, el: HTMLDivElement | null) => {
     if (el) searchLineRefs.current.set(i, el);
