@@ -2528,7 +2528,10 @@ button.session-tab {
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   position: sticky;
-  top: 0;
+  /* top:0 ちょうどだと sticky 要素の上辺に subpixel gap が生まれ、裏を
+   * 流れる TL が 1px 程度チラ見えする (kawaz r38 mid=49,50 実機観測)。
+   * 1px 食い込ませて隙間を塞ぐ。 */
+  top: -1px;
   /* sticky ヘッダが後続の tl-line 系要素 (details / img / fold group) より
    * z 軸で下に潜ると背面に隠れて操作できない (kawaz r17 mid=53 続報、
    * 2026-07-15)。同一 stacking context 内の後続要素より確実に上に置く。 */
