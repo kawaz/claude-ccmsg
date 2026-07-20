@@ -34,16 +34,18 @@ describe("foldSummaryView", () => {
       decoration: peer,
     });
 
-    // Agent spawn は SendMessage と別種 decoration。方向 badge (→/←) ではなく
-    // "new" chip + agentType/model の常時表示を伴う (kawaz r44 mid=5)。
+    // Agent spawn は SendMessage / peer-message と同型の agent decoration
+    // (prefix "Agent" + direction "outbound") を持つ (kawaz r46m15: 「送信で
+    // SendMessage と同じ → を使うべき」)。TL リンクや model chip は閉サマリ
+    // に出さず、カード側に寄せる。
     const spawn = {
-      kind: "agent-spawn",
+      kind: "agent",
+      prefix: "Agent",
       name: "worker",
-      agentType: "Explore",
-      model: "sonnet",
+      direction: "outbound",
     } as const;
-    expect(foldSummaryView("Agent: worker", false, spawn)).toEqual({
-      label: "Agent: worker",
+    expect(foldSummaryView("Agent → worker", false, spawn)).toEqual({
+      label: "Agent → worker",
       decoration: spawn,
     });
   });

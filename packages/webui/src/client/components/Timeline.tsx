@@ -168,6 +168,9 @@ function FoldSummary({
       {view.decoration?.kind === "thinking" ? (
         <span class="tl-fold-label tl-summary-decoration">thinking</span>
       ) : view.decoration?.kind === "agent" ? (
+        // agent-communication 3 タイプ (SendMessage / peer-message / Agent
+        // spawn) は同型の閉サマリを持つ (kawaz r46m15): 「prefix + 方向 badge
+        // + identicon + 名前」。TL リンクや model chip は閉サマリには出さない。
         <span class="tl-fold-label tl-summary-decoration">
           <span>{view.decoration.prefix}</span>
           {view.decoration.direction ? (
@@ -176,20 +179,6 @@ function FoldSummary({
             </span>
           ) : null}
           <AgentIdentity name={view.decoration.name} />
-          <AgentTlLink name={view.decoration.name} />
-        </span>
-      ) : view.decoration?.kind === "agent-spawn" ? (
-        <span class="tl-fold-label tl-summary-decoration">
-          <span>Agent</span>
-          <span class="tl-direction-badge tl-direction-spawn">new</span>
-          <AgentIdentity name={view.decoration.name} />
-          <AgentTlLink name={view.decoration.name} />
-          {view.decoration.agentType ? (
-            <span class="tl-agent-meta">{view.decoration.agentType}</span>
-          ) : null}
-          {view.decoration.model ? (
-            <span class="tl-agent-meta tl-agent-model">{view.decoration.model}</span>
-          ) : null}
         </span>
       ) : view.decoration?.kind === "bash" || view.decoration?.kind === "task-notification" ? (
         <span class="tl-fold-label tl-summary-decoration">{view.label}</span>
@@ -200,24 +189,26 @@ function FoldSummary({
   );
 }
 
-function AgentIdentity({ name }: { name: string }) {
+// エージェント識別子 (avatar + 名前)。href 解決時は名前クリックで TL 遷移
+// (kawaz r46m15: 「名前クリックで良いんじゃないの?隣のセッションツリーは
+// そうなんだし」)。fold の details toggle と両立させるため click は
+// stopPropagation する。model があれば名前のすぐ右に淡色で並べる (Agent
+// spawn 用。SendMessage / peer-message は model 情報を持たないので undefined
+// で無表示)。
+function AgentIdentity({ name, model }: { name: string; model?: string }) {
+  const tlHref = useContext(AgentTimelineHrefsContext).get(name);
   return (
     <span class="tl-agent-identity">
       <Avatar seed={`agent:${name}`} size={18} />
-      <strong>{name}</strong>
+      {tlHref ? (
+        <a class="tl-agent-name-link" href={tlHref} onClick={(event) => event.stopPropagation()}>
+          <strong>{name}</strong>
+        </a>
+      ) : (
+        <strong>{name}</strong>
+      )}
+      {model ? <span class="tl-agent-model-inline">{model}</span> : null}
     </span>
-  );
-}
-
-// FoldSummary の内側で使う TL リンク (fold の details toggle を発火させない
-// ように click を止める)。href 未解決時は null を返す (呼び出し側で条件分岐)。
-function AgentTlLink({ name }: { name: string }) {
-  const tlHref = useContext(AgentTimelineHrefsContext).get(name);
-  if (!tlHref) return null;
-  return (
-    <a class="tl-agent-card-tl" href={tlHref} onClick={(event) => event.stopPropagation()}>
-      TL
-    </a>
   );
 }
 
@@ -405,29 +396,29 @@ function AgentCard({
   badge,
   title,
   body,
-  variant = "send",
   model,
 }: {
   name: string;
   direction: "inbound" | "outbound";
+  // "送信" / "受信" (SendMessage / peer-message) の位置。Agent spawn は同じ
+  // 位置に "new" を置くことで「送受信ではなく新規起動」を表す (kawaz r46m15:
+  // 「送信 とか 受信 でしょ、ならそこに置くべきは Agent なら new でしょ」)。
   badge: string;
   title?: string | null;
   body: string;
-  // "send" = SendMessage の送受信 (🤖→ / 🤖←、方向 badge)、
-  // "spawn" = Agent tool 起動 (🤖✚、"new" badge、model を常時表示)。
-  variant?: "send" | "spawn";
+  // Agent spawn 用: モデル名は名前のすぐ右に淡色で並べる (kawaz r46m15:
+  // 「モデル名は名前のすぐ右に置くとかで良いんじゃない?他の 2 エージェント
+  // メッセージタイプのやつも」)。SendMessage / peer-message はモデル情報を
+  // 持たないので undefined。
   model?: string;
 }) {
-  // spawn は送受信ではないので、方向を示す 🤖→ ではなく起動を示す 🤖✚ を使う。
-  const marker = variant === "spawn" ? "🤖✚" : agentDirectionMarker(direction);
+  const marker = agentDirectionMarker(direction);
   return (
-    <div class={`tl-agent-card tl-agent-${direction} tl-agent-${variant}`}>
+    <div class={`tl-agent-card tl-agent-${direction}`}>
       <div class="tl-agent-card-head">
         <span>{marker}</span>
-        <AgentIdentity name={name} />
-        <AgentTlLink name={name} />
+        <AgentIdentity name={name} model={model} />
         <span class="tl-agent-badge">{badge}</span>
-        {model ? <span class="tl-agent-model-badge">{model}</span> : null}
       </div>
       {title ? <div class="tl-agent-title">{title}</div> : null}
       {body ? <div class="tl-agent-body">{body}</div> : null}
@@ -475,8 +466,12 @@ function AgentSendFold({
   );
 }
 
-/* agent-spawn の fold: AgentSendFold と同じ閉時装飾 (identicon + 破線枠) を
- * summary に出す (kawaz r38 mid=35 — Agent カードだけ装飾が無かった)。 */
+/* Agent tool 起動 (spawn) は SendMessage / peer-message と同型 fold として
+ * 描画する (kawaz r46m15): 閉サマリは「Agent → name」(SendMessage 同形式)、
+ * カード内は → マーカー + 名前クリックで TL 遷移 + 名前右にモデル。
+ * 「送信 / 受信」バッジ位置には spawn を示す "new" を置く。
+ * agentType / background は既存の badge 文字列に含まれる情報だが、new に
+ * 譲るため title 直前のメタ行に降ろす (description が本文の主タイトル)。 */
 function AgentSpawnFold({
   segment,
   ts,
@@ -485,6 +480,8 @@ function AgentSpawnFold({
   ts: string | null;
 }) {
   const [open, setOpen] = useCategoryOpen("agent");
+  const typeMeta = `${segment.agentType || "agent"}${segment.background ? " · background" : ""}`;
+  const combinedTitle = segment.description ? `${typeMeta} — ${segment.description}` : typeMeta;
   return (
     <details
       class="tl-fold tl-agent-fold"
@@ -493,13 +490,13 @@ function AgentSpawnFold({
     >
       <FoldSummary
         ts={ts}
-        label={`Agent: ${segment.name}`}
+        label={`Agent → ${segment.name}`}
         open={open}
         decoration={{
-          kind: "agent-spawn",
+          kind: "agent",
+          prefix: "Agent",
           name: segment.name,
-          agentType: segment.agentType,
-          model: segment.model,
+          direction: "outbound",
         }}
       />
       <div class="tl-guided">
@@ -507,10 +504,9 @@ function AgentSpawnFold({
         <AgentCard
           name={segment.name}
           direction="outbound"
-          variant="spawn"
-          badge={`${segment.agentType || "agent"}${segment.background ? " · background" : ""}`}
+          badge="new"
           model={segment.model || undefined}
-          title={segment.description || null}
+          title={combinedTitle}
           body={segment.prompt}
         />
       </div>

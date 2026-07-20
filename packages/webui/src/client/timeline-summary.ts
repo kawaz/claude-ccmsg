@@ -1,19 +1,16 @@
 export type FoldSummaryDecoration =
   | { kind: "thinking" }
+  // agent-communication 系 3 タイプ (SendMessage / peer-message / Agent spawn)
+  // 共通の閉サマリ decoration。prefix (e.g. "SendMessage" / "peer-message" /
+  // "Agent") と direction (Agent spawn は送信方向として "outbound") で
+  // 「prefix → name / prefix ← name」の 1 行を identicon + 名前で表す。
+  // TL リンクや model / agentType 等の付帯 chip は閉サマリには出さず (kawaz
+  // r46m15: 「fold 時点で TL やモデルが出てるのはおかしい」)、カード側に寄せる。
   | {
       kind: "agent";
       prefix: string;
       name: string;
       direction?: "outbound" | "inbound";
-    }
-  // Agent tool の起動 (spawn) は SendMessage の送受信と別種のイベント。
-  // "→" / "←" の方向 badge は SendMessage 用に温存し、spawn は "new" chip
-  // で表す (kawaz r44 mid=5)。model は常時視認できるよう summary にも出す。
-  | {
-      kind: "agent-spawn";
-      name: string;
-      agentType: string;
-      model: string;
     }
   | { kind: "bash" }
   | { kind: "task-notification" };
