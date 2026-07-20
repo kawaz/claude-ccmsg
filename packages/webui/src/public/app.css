@@ -4852,3 +4852,141 @@ button.session-tab {
   margin-right: 0.75rem;
   font-size: 0.85rem;
 }
+
+/* r44 m7: セッションツリーパネル (Timeline の隣に置くサブエージェント navigator)。
+ * StatusPanel の Teams 行と語彙を揃えるため、live dot / TL リンクは
+ * status-teammate-dot-* / status-wf-agent-tl を流用する (このファイル内で
+ * 既に定義済みの class をそのまま使う)。パネル自身は 22rem 固定幅の側パネル、
+ * 内部は overflow で自スクロールする。 */
+.timeline-panes {
+  flex-direction: row;
+}
+
+.agent-tree-pane {
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+}
+
+.agent-tree-panel {
+  font-size: 0.85rem;
+}
+
+.agent-tree-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.agent-tree-note {
+  margin: 0 0 0.5rem;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.agent-tree-root,
+.agent-tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 0.75rem;
+}
+
+.agent-tree-root {
+  padding-left: 0;
+}
+
+.agent-tree-node > details > summary,
+.agent-tree-leaf {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
+  cursor: default;
+}
+
+.agent-tree-node > details > summary {
+  cursor: pointer;
+}
+
+.agent-tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agent-tree-self {
+  font-weight: 600;
+}
+
+.agent-tree-tl {
+  flex: 0 0 auto;
+}
+
+/* mtime 推定など未確定状態の dot 色。既存の status-teammate-dot-* に「unknown」
+ * は無いためここで補う (StatusPanel 側は open-set を許容する語彙のため、
+ * CSS 側も同じ open-set 前提)。 */
+.status-teammate-dot-unknown {
+  color: var(--fg-muted);
+}
+
+/* Terminal タブ (issue 2026-07-21-webui-terminal-tab-embed) の iframe パネル。
+ * #session-view は column flex、.session-tabs が flex-shrink:0 のため、
+ * .terminal-pane が flex:1 で残余高さを取り iframe を 100% で埋める。
+ * iPad standalone (PWA) 前提で、ヘッダ無し embed ページがビューポート全体
+ * にフィットするようにする。 */
+.terminal-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.terminal-gateway-reset {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  opacity: 0.4;
+  cursor: pointer;
+}
+.terminal-gateway-reset:hover {
+  opacity: 1;
+}
+
+.terminal-pane-config {
+  padding: 1rem;
+  overflow: auto;
+}
+.terminal-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+.terminal-config-form input {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  font: inherit;
+  box-sizing: border-box;
+}
+.terminal-config-error {
+  color: var(--fg-error, #c33);
+  margin: 0;
+  font-size: 0.85rem;
+}

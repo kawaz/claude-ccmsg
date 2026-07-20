@@ -14,7 +14,9 @@ import { FilesPanes } from "./FilesPanes.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
+import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
+import { TerminalPanel } from "./TerminalPanel.tsx";
 
 /** Local (non-locator) tab layered on top of Files/Timeline locator routing,
  * same rationale as the pre-existing Rooms tab (see `localTab`'s doc comment
@@ -22,7 +24,7 @@ import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
  * round-tripping through the URL, just a live snapshot already cached in
  * `state.sessionStatuses`. `null` = follow the locator-driven tab
  * (Files/Timeline). */
-type LocalTab = "rooms" | "status" | null;
+type LocalTab = "rooms" | "status" | "terminal" | null;
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -102,6 +104,12 @@ export function SessionView({ state }: { state: AppState }) {
   // hasTranscript と同値だが、early return より前 = hooks 位置で必要なので
   // ここで引く)。
   const peer = state.peers.find((p) => p.sid === sid);
+  // Terminal タブは agent の hyoui_session_id が解決済みのセッションでのみ
+  // 表示する (issue 2026-07-21)。未解決のセッションでは Terminal タブ自体を
+  // 出さない (iframe の src が組めないため)。
+  const agentForSid = sid ? state.agents.find((a) => a.sessionId === sid) : undefined;
+  const hyouiSessionId = agentForSid?.hyoui_session_id;
+  const hasTerminal = !!hyouiSessionId;
   // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1):
   //
   // - hasStatusFeed: the daemon's session_status_subscribe resolves the
@@ -171,6 +179,7 @@ export function SessionView({ state }: { state: AppState }) {
             teammates: res.teammates ?? [],
             external_files: res.external_files ?? [],
             ...(res.workspace_folders ? { workspace_folders: res.workspace_folders } : {}),
+            ...(res.agent_tree ? { agent_tree: res.agent_tree } : {}),
           },
         });
       })
@@ -265,6 +274,15 @@ export function SessionView({ state }: { state: AppState }) {
         >
           Rooms
         </button>
+        {hasTerminal ? (
+          <button
+            type="button"
+            class={"session-tab" + (tab === "terminal" ? " active" : "")}
+            onClick={() => setLocalTab("terminal")}
+          >
+            Terminal
+          </button>
+        ) : null}
         <button
           type="button"
           class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
@@ -277,7 +295,9 @@ export function SessionView({ state }: { state: AppState }) {
           {state.pinnedSessions.has(sid) ? "Unpin" : "Pin"}
         </button>
       </div>
-      {tab === "rooms" ? (
+      {tab === "terminal" && hyouiSessionId ? (
+        <TerminalPanel hyouiSessionId={hyouiSessionId} />
+      ) : tab === "rooms" ? (
         <SessionRooms sid={sid} state={state} />
       ) : tab === "status" ? (
         // Status data is a live fold over a CONNECTED session's transcript
@@ -306,14 +326,35 @@ export function SessionView({ state }: { state: AppState }) {
         // the user why, so the pane falls back to the same explanation
         // rather than calling ws.transcriptRead for a session we know lacks one.
         hasTranscript ? (
-          <Timeline
-            sid={sid}
-            timeline={tree.timeline}
-            search={tree.timelineSearch}
-            sessionStatus={sessionStatus}
-            onOpenStatus={() => setLocalTab("status")}
-            agent={state.currentAgent}
-          />
+          // r44 m7: agent_tree が居るセッションでは TL の右隣にセッション
+          // ツリーパネルを表示する (subagent/teammate を辿るナビ)。無い
+          // セッションでは Timeline を単独で描き、余計な空パネルは出さない。
+          sessionStatus?.agent_tree && sessionStatus.agent_tree.length > 0 ? (
+            <div class="session-panes timeline-panes">
+              <div class="session-pane session-pane-timeline" style={{ flex: "1 1 auto" }}>
+                <Timeline
+                  sid={sid}
+                  timeline={tree.timeline}
+                  search={tree.timelineSearch}
+                  sessionStatus={sessionStatus}
+                  onOpenStatus={() => setLocalTab("status")}
+                  agent={state.currentAgent}
+                />
+              </div>
+              <div class="session-pane agent-tree-pane" style={{ flex: "0 0 22rem" }}>
+                <AgentTreePanel sid={sid} tree={sessionStatus.agent_tree} />
+              </div>
+            </div>
+          ) : (
+            <Timeline
+              sid={sid}
+              timeline={tree.timeline}
+              search={tree.timelineSearch}
+              sessionStatus={sessionStatus}
+              onOpenStatus={() => setLocalTab("status")}
+              agent={state.currentAgent}
+            />
+          )
         ) : (
           <p id="empty-state">このセッションは transcript を申告していません</p>
         )
