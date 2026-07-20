@@ -1193,17 +1193,19 @@ describe("agent tree from meta.json (r44 m7)", () => {
       const state = createSessionStatusState();
       const tree = readAgentTree(dir, actualRoot, state);
       expect(tree).toBeDefined();
-      // top-level: teammate + as1
-      const topIds = (tree ?? []).map((n) => n.agent_id).sort();
-      expect(topIds).toEqual(["as1", "atm-worker"]);
-      const as1 = tree?.find((n) => n.agent_id === "as1");
+      // teammate は teammates グループ、subagent tree は agents グループへ
+      // 分離される (r46 m8)。
+      expect(tree?.teammates.map((n) => n.agent_id)).toEqual(["atm-worker"]);
+      expect(tree?.agents.map((n) => n.agent_id)).toEqual(["as1"]);
+      const as1 = tree?.agents.find((n) => n.agent_id === "as1");
       expect(as1?.children.map((c) => c.agent_id)).toEqual(["as2"]);
       const as2 = as1?.children[0];
       expect(as2?.children.map((c) => c.agent_id)).toEqual(["as3"]);
-      const teammate = tree?.find((n) => n.agent_id === "atm-worker");
+      const teammate = tree?.teammates[0];
       expect(teammate?.kind).toBe("teammate");
       expect(teammate?.teammate_name).toBe("worker");
       expect(teammate?.model).toBe("claude-fable-5");
+      expect(tree?.workflows).toEqual([]);
       // 未使用の変数の意図をコンパイラに教える
       void rootFile;
       void sidDir;
@@ -1235,9 +1237,9 @@ describe("agent tree from meta.json (r44 m7)", () => {
         });
       }
       const state = createSessionStatusState();
-      const tree = readAgentTree(dir, rootFile, state) ?? [];
+      const tree = readAgentTree(dir, rootFile, state);
       // walk deepest chain
-      let node = tree.find((n) => n.agent_id === "a0");
+      let node = tree?.agents.find((n) => n.agent_id === "a0");
       let depth = 0;
       while (node?.children[0]) {
         node = node.children[0];
@@ -1264,8 +1266,131 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_unknown",
         spawnDepth: 1,
       });
-      const tree = readAgentTree(dir, rootFile, createSessionStatusState()) ?? [];
-      expect(tree.map((n) => n.agent_id)).toEqual(["orphan"]);
+      const tree = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(tree?.agents.map((n) => n.agent_id)).toEqual(["orphan"]);
+      expect(tree?.teammates).toEqual([]);
+      expect(tree?.workflows).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("workflow メンバーは workflows グループに run 単位でネストされ、state.json 由来のフェーズ木で並ぶ (r46 m12)", () => {
+    // 2 phase / 3 member の workflow を用意し、state.json (workflowProgress
+    // の workflow_phase + workflow_agent) からフェーズ + 進捗が組み上がる
+    // ことを確認する。member node は subagents/workflows/<runId>/ の meta.json
+    // から拾い、drilldown の state を採用する。
+    const dir = fixtureDir();
+    try {
+      fs.writeFileSync(`${dir}.jsonl`, "");
+      const runId = "wf_00112233-abc";
+      const runDir = path.join(dir, "subagents", "workflows", runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      for (const agentId of ["a0000000001", "a0000000002", "a0000000003"]) {
+        fs.writeFileSync(
+          path.join(runDir, `agent-${agentId}.meta.json`),
+          JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1, model: "haiku" }),
+        );
+        fs.writeFileSync(path.join(runDir, `agent-${agentId}.jsonl`), "");
+      }
+      // state.json (完了 run) を書く: phase 1 = Scan (2 agents, both done),
+      // phase 2 = Report (1 agent, running)
+      const workflowsDir = path.join(dir, "workflows");
+      fs.mkdirSync(workflowsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(workflowsDir, `${runId}.json`),
+        JSON.stringify({
+          runId,
+          phases: [{ title: "Scan" }, { title: "Report" }],
+          workflowProgress: [
+            { type: "workflow_phase", index: 1, title: "Scan" },
+            {
+              type: "workflow_agent",
+              agentId: "a0000000001",
+              state: "done",
+              phaseIndex: 1,
+              phaseTitle: "Scan",
+            },
+            {
+              type: "workflow_agent",
+              agentId: "a0000000002",
+              state: "done",
+              phaseIndex: 1,
+              phaseTitle: "Scan",
+            },
+            { type: "workflow_phase", index: 2, title: "Report" },
+            {
+              type: "workflow_agent",
+              agentId: "a0000000003",
+              state: "running",
+              phaseIndex: 2,
+              phaseTitle: "Report",
+            },
+          ],
+        }),
+      );
+      const tree = readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+      expect(tree).toBeDefined();
+      expect(tree?.workflows.length).toBe(1);
+      const wf = tree?.workflows[0];
+      expect(wf?.workflow_id).toBe(runId);
+      expect(wf?.done).toBe(2);
+      expect(wf?.total).toBe(3);
+      expect(wf?.phases.map((p) => p.title)).toEqual(["Scan", "Report"]);
+      const scan = wf?.phases[0];
+      expect(scan?.done).toBe(2);
+      expect(scan?.total).toBe(2);
+      expect(scan?.members.map((m) => m.agent_id).sort()).toEqual(["a0000000001", "a0000000002"]);
+      expect(scan?.members[0].kind).toBe("workflow_member");
+      expect(scan?.members[0].workflow_id).toBe(runId);
+      const report = wf?.phases[1];
+      expect(report?.done).toBe(0);
+      expect(report?.total).toBe(1);
+      expect(report?.members[0].state).toBe("running");
+      expect(wf?.unassigned).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("state.json 未 landing の run 中 workflow は journal.jsonl から member state を復元し unassigned に落ちる (r46 m12)", () => {
+    // state.json (workflows/<runId>.json) 不在 = 現在進行中の run。journal.jsonl
+    // の started/result 行から member 状態を "running" / "done" に振り分け、
+    // フェーズ情報は取れないため unassigned bucket に流す (phases: [])。
+    const dir = fixtureDir();
+    try {
+      fs.writeFileSync(`${dir}.jsonl`, "");
+      const runId = "wf_44556677-def";
+      const runDir = path.join(dir, "subagents", "workflows", runId);
+      fs.mkdirSync(runDir, { recursive: true });
+      for (const agentId of ["a0000000010", "a0000000011"]) {
+        fs.writeFileSync(
+          path.join(runDir, `agent-${agentId}.meta.json`),
+          JSON.stringify({ agentType: "workflow-subagent", spawnDepth: 1 }),
+        );
+        fs.writeFileSync(path.join(runDir, `agent-${agentId}.jsonl`), "");
+      }
+      fs.writeFileSync(
+        path.join(runDir, "journal.jsonl"),
+        [
+          JSON.stringify({ type: "started", key: "k1", agentId: "a0000000010" }),
+          JSON.stringify({ type: "started", key: "k2", agentId: "a0000000011" }),
+          JSON.stringify({ type: "result", key: "k1", agentId: "a0000000010", result: "ok" }),
+          "",
+        ].join("\n"),
+      );
+      const tree = readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+      const wf = tree?.workflows[0];
+      expect(wf?.workflow_id).toBe(runId);
+      expect(wf?.phases).toEqual([]);
+      expect(wf?.total).toBe(2);
+      expect(wf?.done).toBe(1);
+      const byId = new Map(wf?.unassigned.map((n) => [n.agent_id, n]));
+      expect(byId.get("a0000000010")?.state).toBe("done");
+      expect(byId.get("a0000000011")?.state).toBe("running");
+      expect(byId.get("a0000000010")?.kind).toBe("workflow_member");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
       fs.rmSync(`${dir}.jsonl`, { force: true });

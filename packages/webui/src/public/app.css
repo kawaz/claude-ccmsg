@@ -4947,6 +4947,83 @@ button.session-tab {
   text-decoration: underline;
 }
 
+/* r46 m8 / m12: Teammates / Agents / Workflows の 3 グループ + 完了折りたたみ +
+ * workflow フェーズ (title + done/total)。ヘッダ 1 行 + 内側 ul は既存の
+ * .agent-tree-root スタイルを流用する。 */
+.agent-tree-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.agent-tree-group-header {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-muted);
+  margin: 0 0 0.2rem 0;
+  padding: 0;
+}
+
+.agent-tree-group-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.agent-tree-completed {
+  margin-top: 0.15rem;
+}
+
+.agent-tree-completed-toggle {
+  background: none;
+  border: 0;
+  padding: 0.1rem 0;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.agent-tree-completed-list {
+  opacity: 0.75;
+}
+
+.agent-tree-workflow-run-row,
+.agent-tree-phase-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0;
+}
+
+.agent-tree-workflow-run-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.agent-tree-workflow-run-progress,
+.agent-tree-phase-progress {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+}
+
+.agent-tree-phase-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 /* r46 m5: AgentTreePanel は Timeline タブ内左ペイン (TimelinePanes) に置く。
  * .session-pane (overflow:hidden + flex column) の中で自前スクロールと
  * 内側パディングをここで担う (.file-tree の同種のルールと同じ役割)。 */

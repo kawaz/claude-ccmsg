@@ -445,10 +445,17 @@ export interface AgentTreeNode {
   team_name?: string;
   /** meta.json `spawnDepth` (0-based; root's direct child = 0). */
   spawn_depth: number;
-  /** "teammate" (long-lived agent-teams member) vs "subagent" (one-shot
-   * Agent tool invocation, sync or async). The distinguishing field in
-   * meta.json is `taskKind === "in_process_teammate"`. */
-  kind: "teammate" | "subagent";
+  /** ノードの由来:
+   *   - "teammate"        — agent-teams の長期在住メンバー (`taskKind ===
+   *     "in_process_teammate"`)。
+   *   - "subagent"        — 単発 Agent tool 起動 (sync/async 問わず)。
+   *     plugin/skill 由来の `agentType`(`:` を含む) もこちらに含める。
+   *   - "workflow_member" — `subagents/workflows/<runId>/agent-*.meta.json`
+   *     配下のワークフロー構成員。ルート集約側では workflow run 単位に
+   *     `AgentTreeGroups.workflows[]` としてネストされる。 */
+  kind: "teammate" | "subagent" | "workflow_member";
+  /** workflow_member 限定。所属 run の id (`wf_XXXXXXXX-XXX`)。 */
+  workflow_id?: string;
   /** Estimated liveness state, open-set: "active" | "idle" | "spawned" |
    * "stopped" | "completed" | "unknown". Depth-0 nodes reuse the fold's
    * background/teammate state (transcript-observed); deeper nodes fall back
@@ -462,6 +469,53 @@ export interface AgentTreeNode {
   children: AgentTreeNode[];
 }
 
+/** r46 m8: エージェントツリーのルート集約。種別ごとに 3 グループに分ける
+ * (kawaz「ルートはその辺で分けるべき」)。同一種別のノードは (親子関係が
+ * 通常はフラットなので) 各配列に並列で並ぶ。空カテゴリ (= 0 件) は空配列を
+ * 返す — UI 側でヘッダごと非表示にする。 */
+export interface AgentTreeGroups {
+  /** agent-teams の在住メンバー。root 直下 = depth 0。 */
+  teammates: AgentTreeNode[];
+  /** 単発 Agent 起動 (plugin/skill 由来含む)。親子関係がある場合は
+   * `children` にネストする (既存挙動)。 */
+  agents: AgentTreeNode[];
+  /** ワークフロー run 単位。1 run = 1 subgroup。 */
+  workflows: AgentTreeWorkflowGroup[];
+}
+
+/** r46 m8 / m12: 1 workflow run 分の subgroup。フェーズ情報の出典は
+ * `readWorkflowDrilldown` (state.json → journal.jsonl の 2 段フォールバック、
+ * DR-0025 Phase 1)。既存 `SessionWorkflowStatus.phases` / `.agents` と同一
+ * ソースを再利用する = TUI / SessionStatusView の phase 表示と数値が揃う。 */
+export interface AgentTreeWorkflowGroup {
+  /** `wf_XXXXXXXX-XXX` (RUN_ID_RE)。 */
+  workflow_id: string;
+  /** run 全体の done/total (all agents 集計)。UI ヘッダの
+   *「Workflow wf_xxx  4/6」表示に使う。 */
+  done: number;
+  total: number;
+  /** 宣言済みフェーズ (state.json 由来)。run 中で state.json が未 landing の
+   * 場合は空配列 (このとき agents は `unassigned` に流れる、フェーズ未知)。 */
+  phases: AgentTreeWorkflowPhase[];
+  /** phase_index を持たない member (state.json 未 landing の run 中、または
+   * drilldown が phase を割当てられなかった変則) の fallback bucket。
+   * 通常は空。空でない場合 UI は「(phase 未確定)」ヘッダで並べる。 */
+  unassigned: AgentTreeNode[];
+  /** run 内 member で最も新しい `last_activity_ms`。run 単位のソート用。 */
+  last_activity_ms?: number;
+}
+
+/** r46 m12: workflow run 内の 1 フェーズ (title + 完了/総数 + 構成 member)。 */
+export interface AgentTreeWorkflowPhase {
+  /** 1-based (readWorkflowDrilldown の canonical index を踏襲)。 */
+  index: number;
+  title: string;
+  done: number;
+  total: number;
+  /** 当該フェーズに割当てられた member (順序は drilldown 出現順)。 */
+  members: AgentTreeNode[];
+}
+
 export interface SessionStatusSnapshot {
   todos: SessionTodo[];
   workflows: SessionWorkflowStatus[];
@@ -469,10 +523,12 @@ export interface SessionStatusSnapshot {
   context?: SessionContextUsage;
   /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
   teammates?: SessionTeammate[];
-  /** r44 m7: agent tree rooted at the session. Absent when the session has
-   * no subagents/ dir (never spawned an Agent). See AgentTreeNode for the
-   * per-node shape and depth cap. */
-  agent_tree?: AgentTreeNode[];
+  /** r44 m7 / r46 m8: セッションが起点となるエージェントツリーの種別別集約。
+   * `subagents/` が無い、または全カテゴリ空のセッションでは省略される。
+   * カテゴリ内のノードは `AgentTreeNode` (深さ上限つきの再帰木) が並ぶ。
+   * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
+   * そのまま返す。 */
+  agent_tree?: AgentTreeGroups;
   /** DR-0024: absolute paths outside the session's containment root that its
    * transcript records as file-tool inputs. Existing targets are realpaths;
    * missing/deleted targets retain a normalized lexical path. This is exactly
@@ -1145,6 +1201,14 @@ export interface ErrorResponse {
 export interface HelloResponse {
   ok: true;
   version: string;
+  /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
+   * hello に対してのみ、`<dataDir>/config.json` の `terminal_gateway_url`
+   * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)
+   * をエコーバックする。未設定 / スキーム不正 / role="session" の場合は
+   * 省略。webui はこれを iframe embed の base URL として使い、未設定なら
+   * Terminal タブ自体を出さない (= 設定していないユーザには存在しない機能
+   * に倒す。旧 localStorage `ccmsg.terminalGatewayUrl` 方式は廃止)。 */
+  terminal_gateway_url?: string;
 }
 export interface PostResponse {
   ok: true;

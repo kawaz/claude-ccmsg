@@ -9,7 +9,7 @@
 // agent_tree が空 (undefined / 0 件) の場合は左ペインを出さず Timeline 単独描画。
 // SessionView 側で判定して本コンポーネントは agent_tree が非空の時のみ mount する。
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { AgentTreeNode, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { AgentTreeGroups, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { AgentRef } from "../locator.ts";
 import type { TimelineState } from "../store.ts";
 import { clampPaneRatio, paneRatioFromPointer, SESSION_PANE_DEFAULT_RATIO } from "../utils.ts";
@@ -42,8 +42,9 @@ export function TimelinePanes({
   agent,
 }: {
   sid: string;
-  /** 呼び出し側 (SessionView) で空でないことを確認済み前提。 */
-  agentTree: AgentTreeNode[];
+  /** 呼び出し側 (SessionView) で空でないことを確認済み前提。r46 m8:
+   * 3 種グループ (teammates / agents / workflows) に統合。 */
+  agentTree: AgentTreeGroups;
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
   sessionStatus: SessionStatusSnapshot | undefined;

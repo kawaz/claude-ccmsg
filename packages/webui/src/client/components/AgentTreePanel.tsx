@@ -1,36 +1,54 @@
-// r46 m5: Timeline タブ内左ペイン (TimelinePanes) の中身として置くセッション
-// ツリー。Files タブが FilesPanes (左ツリー + 右ビューア) でそのセッション
-// スコープを表現しているのに合わせ (kawaz「Files を参考に」)、セッションツリー
-// も同一セッションのスコープを担う左カラムとして配置する。
+// r46 m8 / m12: セッションツリーの左ペイン (TimelinePanes 内)。
+// daemon 側で 3 グループ (Teammates / Agents / Workflows) に分けた
+// AgentTreeGroups を受け取り、以下のルールで描画する:
 //
-// 表示要素は 1 ノード = 1 ラベル に統一 (teammate は teammate_name、subagent は
-// name があれば name、無ければ agent_id をそのまま出す)。description /
-// agent_type バッジ / TL リンク併記は廃止 — kawaz「条件によって出るものが
-// 違う方がよほどキモい」。
+// - グループヘッダは "Teammates (N live / M)" 形式。空グループはヘッダごと非表示。
+// - Teammates / Agents グループ内は、live 状態 (active/idle/spawned/running) と
+//   完了 (completed/stopped/done/killed/failed) を 2 分し、完了は
+//   「完了 (N)」の折りたたみ (default 閉) に格納する。
+// - Workflows は run 単位でネスト。run ヘッダに done/total、run の下に
+//   フェーズ (title + done/total)、フェーズの下に member agent を並べる。
+//   フェーズ情報が取れない (run 中で state.json 未 landing) 場合は unassigned
+//   バケットに直接 member を並べる。
 //
-// クリック挙動:
-//   - ノードのラベル (<a>) 全体が TL リンク (agentTimelineHref)。
-//   - 子を持つノードは左端に ▶︎/▽ の折りたたみマーカー (<button>) を出し、
-//     ラベルクリックとは独立させる。子なしノードは同じ幅の spacer を置いて
-//     インデントを揃える。details/summary は summary クリックが全体で
-//     折りたたみに食われる仕様なので採用せず、useState + button で自前制御。
-import type { AgentTreeNode } from "@ccmsg/protocol";
+// ノード 1 行は [caret? live-dot label] の 3 要素 (r46 m3 の設計を継承)。
+// 種別バッジ・description 併記は廃止。
+import type {
+  AgentTreeGroups,
+  AgentTreeNode,
+  AgentTreeWorkflowGroup,
+  AgentTreeWorkflowPhase,
+} from "@ccmsg/protocol";
 import { useState } from "preact/hooks";
 import { agentTimelineHref } from "../locator.ts";
 
-/** teammate は teammate_name、subagent は teammate_name (無ければ agent_id)
- * を 1 要素で出す。description / agent_type は表示しない (kawaz r46m3)。 */
-function displayLabel(node: AgentTreeNode): string {
-  return node.teammate_name ?? node.agent_id;
+/** live vs 完了 の 2 分類。open-set の state 語彙から live 側を列挙し、
+ * それ以外はすべて完了扱い (状態未知の "unknown" も控えめに完了へ)。 */
+// live 側: state.background 由来 (active/idle/spawned/running) と、workflow
+// drilldown 由来 (running/progress) を包含。それ以外 (done/completed/stopped/
+// killed/failed/unknown) はすべて完了扱い。
+const LIVE_STATES = new Set(["active", "idle", "spawned", "running", "progress"]);
+function isLive(state: string): boolean {
+  return LIVE_STATES.has(state);
 }
 
-/** state → dot の CSS class 名。StatusPanel の teammate dot と同じ語彙を
- * daemon 側 readAgentTree が橋渡し済み。 */
+function displayLabel(node: AgentTreeNode): string {
+  return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;
+}
+
 function dotClass(state: string): string {
   return `status-teammate-dot status-teammate-dot-${state}`;
 }
 
-function AgentTreeNodeRow({ sid, node }: { sid: string; node: AgentTreeNode }) {
+function AgentTreeNodeRow({
+  sid,
+  node,
+  workflowId,
+}: {
+  sid: string;
+  node: AgentTreeNode;
+  workflowId?: string;
+}) {
   const [open, setOpen] = useState(true);
   const label = displayLabel(node);
   const href = node.teammate_name
@@ -38,7 +56,7 @@ function AgentTreeNodeRow({ sid, node }: { sid: string; node: AgentTreeNode }) {
     : agentTimelineHref(sid, { agentId: node.agent_id });
   const hasChildren = node.children.length > 0;
   return (
-    <li class="agent-tree-node">
+    <li class="agent-tree-node" data-workflow-id={workflowId}>
       <div class="agent-tree-row">
         {hasChildren ? (
           <button
@@ -71,20 +89,201 @@ function AgentTreeNodeRow({ sid, node }: { sid: string; node: AgentTreeNode }) {
   );
 }
 
-export function AgentTreePanel({
+function StandardGroup({
   sid,
-  tree,
+  label,
+  nodes,
 }: {
   sid: string;
-  /** SessionStatusSnapshot.agent_tree — 空の場合は呼び出し側 (SessionView) で
-   * TimelinePanes 自体を描画せず Timeline 単独に倒す (無駄な空カラムを出さない)。 */
-  tree: AgentTreeNode[];
+  label: string;
+  nodes: AgentTreeNode[];
 }) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  if (nodes.length === 0) return null;
+  const live: AgentTreeNode[] = [];
+  const completed: AgentTreeNode[] = [];
+  for (const n of nodes) (isLive(n.state) ? live : completed).push(n);
   return (
-    <ul class="agent-tree-root">
-      {tree.map((child) => (
-        <AgentTreeNodeRow key={child.agent_id} sid={sid} node={child} />
-      ))}
-    </ul>
+    <section class="agent-tree-group">
+      <h3 class="agent-tree-group-header">
+        {label}
+        <span class="agent-tree-group-count">
+          {" "}
+          ({live.length} live / {nodes.length})
+        </span>
+      </h3>
+      {live.length > 0 ? (
+        <ul class="agent-tree-root">
+          {live.map((n) => (
+            <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
+          ))}
+        </ul>
+      ) : null}
+      {completed.length > 0 ? (
+        <div class="agent-tree-completed">
+          <button
+            type="button"
+            class="agent-tree-completed-toggle"
+            aria-expanded={showCompleted}
+            onClick={() => setShowCompleted((v) => !v)}
+          >
+            {showCompleted ? "▽" : "▶"} 完了 ({completed.length})
+          </button>
+          {showCompleted ? (
+            <ul class="agent-tree-root agent-tree-completed-list">
+              {completed.map((n) => (
+                <AgentTreeNodeRow key={n.agent_id} sid={sid} node={n} />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WorkflowPhaseRow({
+  sid,
+  phase,
+  workflowId,
+}: {
+  sid: string;
+  phase: AgentTreeWorkflowPhase;
+  workflowId: string;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <li class="agent-tree-phase">
+      <div class="agent-tree-phase-row">
+        <button
+          type="button"
+          class="agent-tree-caret"
+          aria-expanded={open}
+          aria-label={open ? "折りたたむ" : "展開する"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "▽" : "▶"}
+        </button>
+        <span class="agent-tree-phase-title">{phase.title}</span>
+        <span class="agent-tree-phase-progress">
+          {phase.done}/{phase.total}
+        </span>
+      </div>
+      {open && phase.members.length > 0 ? (
+        <ul class="agent-tree-children">
+          {phase.members.map((m) => (
+            <AgentTreeNodeRow key={m.agent_id} sid={sid} node={m} workflowId={workflowId} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function WorkflowRunRow({ sid, run }: { sid: string; run: AgentTreeWorkflowGroup }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <li class="agent-tree-workflow-run">
+      <div class="agent-tree-workflow-run-row">
+        <button
+          type="button"
+          class="agent-tree-caret"
+          aria-expanded={open}
+          aria-label={open ? "折りたたむ" : "展開する"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? "▽" : "▶"}
+        </button>
+        <span class="agent-tree-workflow-run-id" title={run.workflow_id}>
+          {run.workflow_id}
+        </span>
+        <span class="agent-tree-workflow-run-progress">
+          {run.done}/{run.total}
+        </span>
+      </div>
+      {open ? (
+        <ul class="agent-tree-children">
+          {run.phases.map((p) => (
+            <WorkflowPhaseRow key={p.index} sid={sid} phase={p} workflowId={run.workflow_id} />
+          ))}
+          {run.unassigned.length > 0 ? (
+            <li class="agent-tree-phase agent-tree-phase-unassigned">
+              <div class="agent-tree-phase-row">
+                <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
+                <span class="agent-tree-phase-title">(phase 未確定)</span>
+              </div>
+              <ul class="agent-tree-children">
+                {run.unassigned.map((m) => (
+                  <AgentTreeNodeRow
+                    key={m.agent_id}
+                    sid={sid}
+                    node={m}
+                    workflowId={run.workflow_id}
+                  />
+                ))}
+              </ul>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function WorkflowsGroup({ sid, runs }: { sid: string; runs: AgentTreeWorkflowGroup[] }) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  if (runs.length === 0) return null;
+  const liveRuns: AgentTreeWorkflowGroup[] = [];
+  const completedRuns: AgentTreeWorkflowGroup[] = [];
+  for (const r of runs) {
+    // done < total = まだ動いている run、done === total = 完了。
+    (r.total === 0 || r.done < r.total ? liveRuns : completedRuns).push(r);
+  }
+  return (
+    <section class="agent-tree-group">
+      <h3 class="agent-tree-group-header">
+        Workflows
+        <span class="agent-tree-group-count">
+          {" "}
+          ({liveRuns.length} live / {runs.length})
+        </span>
+      </h3>
+      {liveRuns.length > 0 ? (
+        <ul class="agent-tree-root">
+          {liveRuns.map((r) => (
+            <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} />
+          ))}
+        </ul>
+      ) : null}
+      {completedRuns.length > 0 ? (
+        <div class="agent-tree-completed">
+          <button
+            type="button"
+            class="agent-tree-completed-toggle"
+            aria-expanded={showCompleted}
+            onClick={() => setShowCompleted((v) => !v)}
+          >
+            {showCompleted ? "▽" : "▶"} 完了 ({completedRuns.length})
+          </button>
+          {showCompleted ? (
+            <ul class="agent-tree-root agent-tree-completed-list">
+              {completedRuns.map((r) => (
+                <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} />
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function AgentTreePanel({ sid, tree }: { sid: string; tree: AgentTreeGroups }) {
+  return (
+    <div class="agent-tree-panel">
+      <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
+      <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
+      <WorkflowsGroup sid={sid} runs={tree.workflows} />
+    </div>
   );
 }

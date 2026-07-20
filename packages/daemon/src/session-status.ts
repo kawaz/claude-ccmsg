@@ -2,7 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   ErrorCode,
+  type AgentTreeGroups,
   type AgentTreeNode,
+  type AgentTreeWorkflowGroup,
+  type AgentTreeWorkflowPhase,
   type SessionBackgroundStatus,
   type SessionContextUsage,
   type SessionStatusSnapshot,
@@ -794,7 +797,12 @@ export function snapshot(
       });
     })(),
     external_files: [...state.externalFiles].sort(),
-    ...(agentTree && agentTree.length > 0 ? { agent_tree: agentTree } : {}),
+    ...(agentTree &&
+    (agentTree.teammates.length > 0 ||
+      agentTree.agents.length > 0 ||
+      agentTree.workflows.length > 0)
+      ? { agent_tree: agentTree }
+      : {}),
     // DR-0026: discovered inline at snapshot time — the workspace file is
     // hand-edited out of band and there is no transcript event to fold on.
     // Read cost is bounded (cwd top level only). Omit entirely when nothing
@@ -979,7 +987,7 @@ export function readAgentTree(
   rootTranscriptPath: string,
   state: SessionStatusState,
   nowMs: number = Date.now(),
-): AgentTreeNode[] | undefined {
+): AgentTreeGroups | undefined {
   const subagentsDir = path.join(sidDir, "subagents");
   let entries: fs.Dirent[];
   try {
@@ -988,35 +996,44 @@ export function readAgentTree(
     return undefined;
   }
 
+  // (a) subagents/ 直下: teammate / 単発 subagent / それらの子孫
   const metas: AgentMetaFile[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    const agentId = parseAgentIdFromFilename(entry.name);
-    if (!agentId) continue;
-    const metaPath = path.join(subagentsDir, entry.name);
-    const transcriptPath = path.join(subagentsDir, `agent-${agentId}.jsonl`);
-    let meta: unknown;
-    let transcriptMtimeMs = 0;
+    const meta = loadAgentMeta(subagentsDir, entry.name);
+    if (meta) metas.push(meta);
+  }
+  // (b) subagents/workflows/<runId>/: workflow メンバー。run 単位でまとめる。
+  const workflowsDir = path.join(subagentsDir, "workflows");
+  const workflowMembersByRun = new Map<string, AgentMetaFile[]>();
+  let runDirEntries: fs.Dirent[] = [];
+  try {
+    runDirEntries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+  } catch {
+    // workflows/ 不在は空扱い (通常セッション)
+  }
+  for (const runEntry of runDirEntries) {
+    if (!runEntry.isDirectory()) continue;
+    // RUN_ID_RE と同型の緩い基本判定 (path.join 前に traversal 文字を弾く)。
+    if (!/^wf_[0-9a-f]{8}-[0-9a-f]{3}$/.test(runEntry.name)) continue;
+    const runDir = path.join(workflowsDir, runEntry.name);
+    let members: fs.Dirent[];
     try {
-      meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+      members = fs.readdirSync(runDir, { withFileTypes: true });
     } catch {
       continue;
     }
-    if (!isRecord(meta)) continue;
-    try {
-      transcriptMtimeMs = fs.statSync(transcriptPath).mtimeMs;
-    } catch {
-      // No transcript yet (extremely early after spawn) — fall back to
-      // meta.json mtime so age display still has a value.
-      try {
-        transcriptMtimeMs = fs.statSync(metaPath).mtimeMs;
-      } catch {
-        transcriptMtimeMs = 0;
-      }
+    const runMetas: AgentMetaFile[] = [];
+    for (const m of members) {
+      if (!m.isFile()) continue;
+      const meta = loadAgentMeta(runDir, m.name);
+      if (meta) runMetas.push(meta);
     }
-    metas.push({ agentId, metaPath, transcriptPath, mtimeMs: transcriptMtimeMs, meta });
+    if (runMetas.length > 0) workflowMembersByRun.set(runEntry.name, runMetas);
   }
-  if (metas.length === 0) return [];
+  if (metas.length === 0 && workflowMembersByRun.size === 0) {
+    return { teammates: [], agents: [], workflows: [] };
+  }
 
   // Reverse map: toolUseId → parent agentId (or null for root). Only
   // populated for meta entries that carry a toolUseId (the sync/async
@@ -1042,6 +1059,7 @@ export function readAgentTree(
   interface WorkingNode {
     node: AgentTreeNode;
     parent: string | null; // null = root; string = parent agentId
+    isTeammate: boolean;
   }
   const working = new Map<string, WorkingNode>();
   for (const m of metas) {
@@ -1049,17 +1067,12 @@ export function readAgentTree(
     const taskKind = stringValue(m.meta.taskKind);
     const isTeammate = taskKind === "in_process_teammate";
     const name = stringValue(m.meta.name);
-    const spawnDepth = typeof m.meta.spawnDepth === "number" ? m.meta.spawnDepth : 0;
 
     let parentAgentId: string | null;
     if (isTeammate || !toolUseId) {
-      // Teammates and any meta lacking toolUseId attach directly to root —
-      // they're spawned by the root session and don't carry a parent-side
-      // toolUseId in meta.
       parentAgentId = null;
     } else {
       const found = findParent(toolUseId);
-      // undefined = orphan; fall back to root so the node stays visible.
       parentAgentId = found === undefined ? null : found;
     }
 
@@ -1069,7 +1082,6 @@ export function readAgentTree(
       const teammate = state.teammates.get(name);
       liveState = teammate?.state ?? "unknown";
     } else if (parentAgentId === null) {
-      // depth-0 subagent: match against state.background by agentId.
       const bg = state.background.get(m.agentId);
       liveState = bg
         ? bg.status === "running"
@@ -1083,51 +1095,127 @@ export function readAgentTree(
         m.mtimeMs > 0 && nowMs - m.mtimeMs < AGENT_LIVE_MTIME_WINDOW_MS ? "active" : "stopped";
     }
 
-    const label =
-      stringValue(m.meta.description) ?? name ?? stringValue(m.meta.agentType) ?? m.agentId;
-    const node: AgentTreeNode = {
-      agent_id: m.agentId,
-      spawn_depth: spawnDepth,
-      kind: isTeammate ? "teammate" : "subagent",
-      state: liveState,
-      children: [],
-      ...(isTeammate && name ? { teammate_name: name } : {}),
-      ...(stringValue(m.meta.agentType) ? { agent_type: stringValue(m.meta.agentType)! } : {}),
-      ...(stringValue(m.meta.description) ? { description: stringValue(m.meta.description)! } : {}),
-      ...(stringValue(m.meta.color) ? { color: stringValue(m.meta.color)! } : {}),
-      ...(stringValue(m.meta.model) ? { model: stringValue(m.meta.model)! } : {}),
-      ...(stringValue(m.meta.teamName) ? { team_name: stringValue(m.meta.teamName)! } : {}),
-      ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
-    };
-    // label は現状 UI 側の派生に委ねる (agent_type/description/name の chain)。
-    // node に label は載せずに済むが、意図の可視化として local 変数だけ残す。
-    void label;
-    working.set(m.agentId, { node, parent: parentAgentId });
+    const node = buildAgentTreeNode(m, isTeammate ? "teammate" : "subagent", liveState);
+    working.set(m.agentId, { node, parent: parentAgentId, isTeammate });
   }
 
   // Wire children under parents; unknown-parent nodes stay at root as
   // orphan fallback (already resolved to `null` above).
-  const roots: AgentTreeNode[] = [];
+  const teammateRoots: AgentTreeNode[] = [];
+  const agentRoots: AgentTreeNode[] = [];
   for (const w of working.values()) {
     if (w.parent === null) {
-      roots.push(w.node);
+      (w.isTeammate ? teammateRoots : agentRoots).push(w.node);
     } else {
       const parent = working.get(w.parent);
       if (!parent) {
         // parent's meta.json disappeared while we were reading — treat as root.
-        roots.push(w.node);
+        (w.isTeammate ? teammateRoots : agentRoots).push(w.node);
       } else {
         parent.node.children.push(w.node);
       }
     }
   }
 
-  // Depth cap via BFS: root direct children are depth 0, matching
-  // `spawnDepth` in the meta.json. Nodes exceeding MAX_AGENT_TREE_DEPTH are
-  // dropped in place (their subtree goes with them). A depth counted here
-  // uses the tree position, not the meta's `spawnDepth` — a re-parented
-  // orphan is measured from where it ended up. Sort each level by
-  // `last_activity_ms` desc so the freshest agent bubbles to the top.
+  // r46 m12: workflow run 単位で subgroup を組む。フェーズ情報の一次ソースは
+  // readWorkflowDrilldown (SessionStatusView / TUI と同経路)。member の agentId
+  // をキーに drilldown.agents の state / phase_index を突き合わせ、node は
+  // meta.json から生成 (last_activity_ms は agent-<id>.jsonl mtime)。
+  const workflowGroups: AgentTreeWorkflowGroup[] = [];
+  for (const [runId, runMetas] of workflowMembersByRun) {
+    const drilldown = readWorkflowDrilldown(sidDir, runId);
+    const drillByAgent = new Map<
+      string,
+      { state: string; phase_index?: number; phase_title?: string }
+    >();
+    for (const a of drilldown?.agents ?? []) {
+      drillByAgent.set(a.agent_id, {
+        state: a.state,
+        ...(a.phase_index !== undefined ? { phase_index: a.phase_index } : {}),
+        ...(a.phase_title ? { phase_title: a.phase_title } : {}),
+      });
+    }
+
+    // phase skeleton: drilldown.phases が正 (state.json 済 run)。無ければ
+    // 空 → unassigned bucket に全 member を流す。
+    interface WorkingPhase {
+      index: number;
+      title: string;
+      done: number;
+      total: number;
+      members: AgentTreeNode[];
+    }
+    const phaseByIndex = new Map<number, WorkingPhase>();
+    let phaseSeq = 0;
+    for (const p of drilldown?.phases ?? []) {
+      phaseSeq += 1;
+      phaseByIndex.set(phaseSeq, {
+        index: phaseSeq,
+        title: p.title,
+        done: p.done,
+        total: p.total,
+        members: [],
+      });
+    }
+
+    const unassigned: AgentTreeNode[] = [];
+    let latest = 0;
+    let doneTotal = 0;
+    let totalTotal = 0;
+    for (const m of runMetas) {
+      const drill = drillByAgent.get(m.agentId);
+      // state 優先: drilldown ("done"/"running") → mtime 推定
+      const liveState =
+        drill?.state ??
+        (m.mtimeMs > 0 && nowMs - m.mtimeMs < AGENT_LIVE_MTIME_WINDOW_MS ? "active" : "stopped");
+      const node = buildAgentTreeNode(m, "workflow_member", liveState, { workflow_id: runId });
+      const idx = drill?.phase_index;
+      if (idx !== undefined && phaseByIndex.has(idx)) {
+        phaseByIndex.get(idx)!.members.push(node);
+      } else {
+        unassigned.push(node);
+      }
+      if (m.mtimeMs > latest) latest = m.mtimeMs;
+    }
+
+    // phase 統計は drilldown 値を優先。drilldown が phases を持たない (run 中)
+    // 場合は member 側の集計 (今回は 0 件) から差し戻し。
+    const phases: AgentTreeWorkflowPhase[] = [];
+    for (const wp of phaseByIndex.values()) {
+      phases.push({
+        index: wp.index,
+        title: wp.title,
+        done: wp.done,
+        total: wp.total,
+        members: wp.members,
+      });
+      doneTotal += wp.done;
+      totalTotal += wp.total;
+    }
+    if (phases.length === 0) {
+      // run 中 (state.json 未 landing): drilldown.agents の done 数から
+      // 手動で done/total を出す。unassigned に全 member。
+      totalTotal = unassigned.length;
+      doneTotal = 0;
+      for (const n of unassigned) {
+        if (n.state === "done") doneTotal += 1;
+      }
+    }
+
+    workflowGroups.push({
+      workflow_id: runId,
+      done: doneTotal,
+      total: totalTotal,
+      phases,
+      unassigned,
+      ...(latest > 0 ? { last_activity_ms: latest } : {}),
+    });
+  }
+  workflowGroups.sort((a, b) => (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0));
+
+  // Depth cap via BFS (teammate / agents 側のみ。workflow member はフェーズ
+  // 内で常に depth 0 相当のフラット列挙なので対象外)。root direct 子 =
+  // depth 0、上限 MAX_AGENT_TREE_DEPTH。
   function capAndSort(nodes: AgentTreeNode[], depth: number): AgentTreeNode[] {
     if (depth > MAX_AGENT_TREE_DEPTH) return [];
     const capped = nodes.map((n) => ({
@@ -1137,7 +1225,69 @@ export function readAgentTree(
     capped.sort((a, b) => (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0));
     return capped;
   }
-  return capAndSort(roots, 0);
+  return {
+    teammates: capAndSort(teammateRoots, 0),
+    agents: capAndSort(agentRoots, 0),
+    workflows: workflowGroups,
+  };
+}
+
+/** r46 m8: `subagents/` 直下や `subagents/workflows/<runId>/` 直下から
+ * `agent-<agentId>.meta.json` を 1 件読んで `AgentMetaFile` に整形する共通
+ * ヘルパ。JSON parse エラー / 型不一致は undefined を返し呼び出し側で skip。
+ * mtime は transcript (`agent-<agentId>.jsonl`) を優先、無ければ meta.json
+ * 自身。 */
+function loadAgentMeta(dir: string, fileName: string): AgentMetaFile | undefined {
+  const agentId = parseAgentIdFromFilename(fileName);
+  if (!agentId) return undefined;
+  const metaPath = path.join(dir, fileName);
+  const transcriptPath = path.join(dir, `agent-${agentId}.jsonl`);
+  let meta: unknown;
+  try {
+    meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(meta)) return undefined;
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(transcriptPath).mtimeMs;
+  } catch {
+    try {
+      mtimeMs = fs.statSync(metaPath).mtimeMs;
+    } catch {
+      mtimeMs = 0;
+    }
+  }
+  return { agentId, metaPath, transcriptPath, mtimeMs, meta };
+}
+
+/** r46 m8: meta.json + kind + state から `AgentTreeNode` を組む共通ヘルパ。
+ * teammate は meta.name / description の chain、subagent は description /
+ * agentType / agentId の chain。オプションで workflow_id を追加。 */
+function buildAgentTreeNode(
+  m: AgentMetaFile,
+  kind: AgentTreeNode["kind"],
+  state: string,
+  extra?: { workflow_id?: string },
+): AgentTreeNode {
+  const name = stringValue(m.meta.name);
+  const spawnDepth = typeof m.meta.spawnDepth === "number" ? m.meta.spawnDepth : 0;
+  return {
+    agent_id: m.agentId,
+    spawn_depth: spawnDepth,
+    kind,
+    state,
+    children: [],
+    ...(kind === "teammate" && name ? { teammate_name: name } : {}),
+    ...(stringValue(m.meta.agentType) ? { agent_type: stringValue(m.meta.agentType)! } : {}),
+    ...(stringValue(m.meta.description) ? { description: stringValue(m.meta.description)! } : {}),
+    ...(stringValue(m.meta.color) ? { color: stringValue(m.meta.color)! } : {}),
+    ...(stringValue(m.meta.model) ? { model: stringValue(m.meta.model)! } : {}),
+    ...(stringValue(m.meta.teamName) ? { team_name: stringValue(m.meta.teamName)! } : {}),
+    ...(m.mtimeMs > 0 ? { last_activity_ms: m.mtimeMs } : {}),
+    ...(extra?.workflow_id ? { workflow_id: extra.workflow_id } : {}),
+  };
 }
 
 function deriveSidDir(file: string): string | undefined {
