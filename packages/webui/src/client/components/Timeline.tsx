@@ -57,6 +57,7 @@ import {
   type SearchWord,
 } from "../in-view-search.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
+import { reindexStableSelection } from "../user-nav.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
@@ -1834,6 +1835,7 @@ export function Timeline({
   const userTurnKeySet = useMemo(() => new Set(userTurnKeys), [userTurnKeys]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const userNavScrollAnimationRef = useRef<number | null>(null);
   // nav key -> mounted DOM node for each green bubble. Entries for turns
   // dropped by a "更新" (replace) reload are pruned below rather than leaked.
   const userTurnRefs = useRef(new Map<string, HTMLDivElement>());
@@ -2081,6 +2083,24 @@ export function Timeline({
   // 初回読み込み時に最大値 (M) で初期化し、以降は ↑↓ ボタンで増減してユーザ
   // が明示的にジャンプした値だけを保持する (スクロール位置とは独立)。
   const [currentUserIdx, setCurrentUserIdx] = useState(0);
+  const previousUserTurnKeysRef = useRef(userTurnKeys);
+  useEffect(() => {
+    const previousKeys = previousUserTurnKeysRef.current;
+    previousUserTurnKeysRef.current = userTurnKeys;
+    setCurrentUserIdx((current) => {
+      const reindexed = reindexStableSelection(current, previousKeys, userTurnKeys);
+      return reindexed ?? current;
+    });
+  }, [userTurnKeys]);
+
+  useEffect(
+    () => () => {
+      if (userNavScrollAnimationRef.current !== null) {
+        cancelAnimationFrame(userNavScrollAnimationRef.current);
+      }
+    },
+    [],
+  );
 
   // Live tail 自動スクロール追従 (kawaz spec) のための「今ユーザは最下部付近
   // を見ているか」フラグ。scroll イベント (下の rAF スロットル済み onScroll)
@@ -2246,7 +2266,32 @@ export function Timeline({
       container.scrollTop -
       headerH -
       8;
-    container.scrollTo({ top });
+
+    if (userNavScrollAnimationRef.current !== null) {
+      cancelAnimationFrame(userNavScrollAnimationRef.current);
+      userNavScrollAnimationRef.current = null;
+    }
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      container.scrollTo({ top });
+      return;
+    }
+
+    const startTop = container.scrollTop;
+    const distance = top - startTop;
+    const durationMs = 180;
+    let startTime: number | null = null;
+    const animate = (now: number) => {
+      startTime ??= now;
+      const progress = Math.min((now - startTime) / durationMs, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      container.scrollTo({ top: startTop + distance * eased });
+      if (progress < 1) {
+        userNavScrollAnimationRef.current = requestAnimationFrame(animate);
+      } else {
+        userNavScrollAnimationRef.current = null;
+      }
+    };
+    userNavScrollAnimationRef.current = requestAnimationFrame(animate);
   }
 
   // kawaz r17 mid=54: state を減増してから対応要素へジャンプする単純な形
@@ -2362,9 +2407,15 @@ export function Timeline({
                 ⤓
               </button>
               <div class="tl-user-nav">
-                <span class="tl-user-nav-count">
+                <button
+                  type="button"
+                  class="tl-user-nav-count"
+                  disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
+                  onClick={() => scrollToUserTurn(currentUserIdx)}
+                  title="現在のユーザ発言へ戻る"
+                >
                   👤 {currentUserIdx}/{userTurnKeys.length}
-                </span>
+                </button>
                 {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
                  * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
                  * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
