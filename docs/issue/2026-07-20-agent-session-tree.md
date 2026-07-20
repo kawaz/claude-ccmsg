@@ -29,18 +29,19 @@ origin: 自リポ TODO
 
 ## 背景
 
-Status タブは既にチームメイト表示を持つが、Agent tool 経由の子は別経路で扱われており見えていない。参考実装候補として webui の `Timeline.tsx` にある `AgentTimelineHrefsContext` (teammates + workflow agents から sid を解決するロジック) が収集の土台として使えそうだが未確認。daemon 側では `packages/daemon/src/agents.ts` の poller が関連候補として挙がっている。
+m6 分 (Status タブへの同期サブエージェント表示) は commit 3a001e9e で実装済み (未 push)。原因は `isTrackedToolUse` が `name` / `run_in_background` 無しの同期 Agent tool 呼び出しを追跡していなかったこと。Agent tool を無条件追跡に変更し、agent 行に live dot + TL リンク + agent_type バッジを表示するようにした。
 
-kawaz からの依頼を受けて着手したが、コンテキスト残量不足のため調査未着手のまま中断 (2026-07-20)。
+補足: サブエージェントの meta.json に `model` フィールドは存在しない (teammate のみ持つ) ため model 表示は不可、`agent_type` で代替するのが確定情報。
+
+残スコープは m7 分のみ (孫エージェントの再帰収集と専用パネル UI)。
 
 ## 受け入れ条件
 
-- [ ] Agent tool 経由のサブエージェント (孫を含め最大 5 段) がツリー構造で収集できる収集経路の特定
-- [ ] 深さ上限 (5 段) とループガードを備えた再帰的なツリー構築ロジック
+- [x] Agent tool 経由のサブエージェント (Status タブでの同期表示) がツリー構造で収集できる収集経路の特定 (m6、commit 3a001e9e)
+- [ ] 深さ上限 (5 段) とループガードを備えた再帰的なツリー構築ロジック (孫エージェントまで)
 - [ ] TL 画面の隣にセッションツリーパネルを新設 (ルート=セッション、子孫=サブエージェント/チームメイト、live dot + 名前 + TL リンク、折りたたみ可)
 
 ## TODO
 
-- [ ] `Timeline.tsx` の `AgentTimelineHrefsContext` (teammates + workflow agents → sid 解決) の実装を読み、サブエージェント収集にも転用できるか確認
-- [ ] `packages/daemon/src/agents.ts` の poller が Agent tool 子エージェントの情報を持っているか調査
-- [ ] Status タブでチームメイトのみ表示されサブエージェントが表示されない原因 (収集経路の欠落箇所) を特定
+- [ ] 孫エージェント (最大 5 段) の再帰的なツリー収集ロジックを実装 (深さ上限 + ループガード)
+- [ ] TL 画面の隣にセッションツリーパネル UI を新設 (現状は Status タブのフラットリスト表示のみ)
