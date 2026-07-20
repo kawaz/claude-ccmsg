@@ -208,20 +208,34 @@ describe("ccmsg CLI end-to-end", () => {
         session: sid,
         since: "2026-07-20T00:00:00.000Z",
         until: null,
-        format: "ccmsg-session-dump-v1",
+        format: "ccmsg-session-dump-v2",
       });
-      expect(jsonLines.slice(1)).toMatchObject([
+      // The second JSONL row is always the complete handoff context, even when
+      // every collection is empty; conversation entries retain their v1 shape.
+      expect(jsonLines[1]).toEqual({
+        kind: "session-context",
+        note: expect.stringContaining("only when rewind or context clearing preserved"),
+        agents: [],
+        workflows: [],
+        background: [],
+        schedules: [],
+        rooms: [],
+      });
+      expect(jsonLines.slice(2)).toMatchObject([
         { t: 0, kind: "user", from: "user", to: "self", text: "hello" },
         { t: 1000, kind: "assistant", from: "self", to: "user", text: "line 1\nline 2" },
       ]);
-      expect(jsonLines.slice(1).every((entry) => "meta" in entry)).toBe(true);
-      expect(jsonLines.slice(1).every((entry) => !("ts" in entry) && !("session" in entry))).toBe(
+      expect(jsonLines.slice(2).every((entry) => "meta" in entry)).toBe(true);
+      expect(jsonLines.slice(2).every((entry) => !("ts" in entry) && !("session" in entry))).toBe(
         true,
       );
 
       const text = await runCli(["dump", sid, "--format", "text"], env);
       expect(text.code).toBe(0);
       expect(text.out).toContain(`Session: ${sid}`);
+      expect(text.out).toContain('Session context:\n{\n  "note":');
+      expect(text.out).toContain('  "background": [],');
+      expect(text.out).toContain('  "schedules": [],');
       expect(text.out).toContain("[+0ms user user→self]\nhello");
       expect(text.out).toContain("[+1000ms assistant self→user]\nline 1\nline 2");
       expect(text.out).not.toContain("transcript_line");

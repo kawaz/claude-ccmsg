@@ -1,6 +1,14 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { MsgEvent, StorageEvent } from "@ccmsg/protocol";
+import type {
+  MemberEvent,
+  MsgEvent,
+  RoomKind,
+  SessionWorkflowStatus,
+  StorageEvent,
+} from "@ccmsg/protocol";
+import { AGENT_ID_RE } from "./agent-transcripts.ts";
+import { createSessionStatusState, foldLine, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 
 export type SessionDumpKind =
@@ -28,7 +36,51 @@ export interface SessionDumpHeader {
   since: string;
   until: string | null;
   generated: string;
-  format: "ccmsg-session-dump-v1";
+  format: "ccmsg-session-dump-v2";
+}
+
+export interface SessionContextAgent {
+  agent_id: string;
+  kind: "teammate" | "subagent";
+  state: string;
+  name?: string;
+  description?: string;
+  agent_type?: string;
+  model?: string;
+}
+
+export interface SessionContextRoom {
+  room: string;
+  title?: string;
+  kind: RoomKind;
+  last_mid: number;
+  members: MemberEvent[];
+}
+
+export interface SessionContextBackground {
+  task_id: string;
+  kind: "monitor" | "bash";
+  description: string;
+  state: "possibly-alive";
+  started_at: string;
+}
+
+export interface SessionContextSchedule {
+  task_id: string;
+  cron: string;
+  prompt: string;
+  recurring: boolean;
+  state: "possibly-alive";
+}
+
+export interface SessionDumpContext {
+  kind: "session-context";
+  note: string;
+  agents: SessionContextAgent[];
+  workflows: SessionWorkflowStatus[];
+  background: SessionContextBackground[];
+  schedules: SessionContextSchedule[];
+  rooms: SessionContextRoom[];
 }
 
 export interface SessionDumpEntry {
@@ -42,6 +94,7 @@ export interface SessionDumpEntry {
 
 export interface SessionDump {
   header: SessionDumpHeader;
+  context: SessionDumpContext;
   entries: SessionDumpEntry[];
 }
 
@@ -76,6 +129,8 @@ const TEAMMATE_MESSAGE_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)
 const EVENT_TAG_RE = /<event>([\s\S]*?)<\/event>/g;
 const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 const CCMSG_COMMAND_RE = /(?:^|[\s;&|])(?:[^\s;&|]*\/)?ccmsg\s+(post|reply)\b/;
+const SESSION_CONTEXT_NOTE =
+  "IDs and possibly-alive tasks are best-effort hints. They are usable only when rewind or context clearing preserved the original session process; after a process restart they may already be unreachable.";
 
 function parseBound(value: string | undefined, name: "since" | "until"): number | undefined {
   if (value === undefined) return undefined;
@@ -314,6 +369,215 @@ function normalizeSessionReference(value: unknown, session: string): unknown {
   );
 }
 
+function stringField(value: Record<string, unknown>, key: string): string | undefined {
+  const field = value[key];
+  return typeof field === "string" && field !== "" ? field : undefined;
+}
+
+function loadTaskNotificationStates(transcriptFile: string): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const { row } of parseTranscript(transcriptFile)) {
+    if (row.type !== "queue-operation" || row.operation !== "enqueue") continue;
+    const content = typeof row.content === "string" ? row.content : "";
+    const summaryIndex = content.indexOf("<summary>");
+    const eventIndex = content.indexOf("<event>");
+    const resultIndex = content.indexOf("<result>");
+    const boundaries = [summaryIndex, eventIndex, resultIndex].filter((index) => index >= 0);
+    const prefix = content.slice(0, boundaries.length > 0 ? Math.min(...boundaries) : undefined);
+    const agentId = /<task-id>([^<]+)<\/task-id>/.exec(prefix)?.[1]?.trim();
+    const state = /<status>([^<]+)<\/status>/.exec(prefix)?.[1]?.trim();
+    if (agentId && state) states.set(agentId, state);
+  }
+  return states;
+}
+
+function loadContextSchedules(
+  transcriptFile: string,
+  notificationStates: ReadonlyMap<string, string>,
+): SessionContextSchedule[] {
+  const pending = new Map<string, { name: string; input: Record<string, unknown> }>();
+  const schedules = new Map<string, SessionContextSchedule>();
+  for (const { row } of parseTranscript(transcriptFile)) {
+    if (row.type === "assistant") {
+      for (const block of contentBlocks(row)) {
+        const value = record(block);
+        const input = record(value?.input);
+        if (
+          value?.type === "tool_use" &&
+          typeof value.id === "string" &&
+          (value.name === "CronCreate" || value.name === "CronDelete") &&
+          input
+        ) {
+          pending.set(value.id, { name: value.name, input });
+        }
+      }
+      continue;
+    }
+    if (row.type !== "user") continue;
+    for (const block of contentBlocks(row)) {
+      const value = record(block);
+      if (value?.type !== "tool_result" || typeof value.tool_use_id !== "string") continue;
+      const use = pending.get(value.tool_use_id);
+      if (!use) continue;
+      pending.delete(value.tool_use_id);
+      if (value.is_error === true) continue;
+      if (use.name === "CronDelete") {
+        const taskId = stringField(use.input, "id");
+        if (taskId) schedules.delete(taskId);
+        continue;
+      }
+      const result = toolResultText(value);
+      const taskId = /Scheduled (?:one-shot|recurring) task ([A-Za-z0-9_-]+)/.exec(result)?.[1];
+      const cron = stringField(use.input, "cron");
+      const prompt = stringField(use.input, "prompt");
+      if (!taskId || !cron || !prompt) continue;
+      schedules.set(taskId, {
+        task_id: taskId,
+        cron,
+        prompt,
+        recurring: use.input.recurring !== false,
+        state: "possibly-alive",
+      });
+    }
+  }
+  for (const [taskId, state] of notificationStates) {
+    if (state !== "running") schedules.delete(taskId);
+  }
+  return [...schedules.values()].sort((a, b) => a.task_id.localeCompare(b.task_id, "en"));
+}
+
+function loadContextAgents(
+  sidDir: string,
+  status: ReturnType<typeof snapshot>,
+  notificationStates: ReadonlyMap<string, string>,
+): SessionContextAgent[] {
+  const subagentsDir = path.join(sidDir, "subagents");
+  let files: fs.Dirent[];
+  try {
+    files = fs.readdirSync(subagentsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const teammateByName = new Map((status.teammates ?? []).map((item) => [item.name, item]));
+  const backgroundById = new Map(status.background.map((item) => [item.task_id, item]));
+  const agents: SessionContextAgent[] = [];
+  for (const file of files) {
+    if (!file.isFile() || !file.name.startsWith("agent-") || !file.name.endsWith(".meta.json")) {
+      continue;
+    }
+    const agentId = file.name.slice("agent-".length, -".meta.json".length);
+    if (!AGENT_ID_RE.test(agentId)) continue;
+    let meta: Record<string, unknown> | null = null;
+    try {
+      meta = record(JSON.parse(fs.readFileSync(path.join(subagentsDir, file.name), "utf8")));
+    } catch {
+      continue;
+    }
+    if (!meta) continue;
+    const name = stringField(meta, "name");
+    const teammate = meta.taskKind === "in_process_teammate";
+    const agentState = teammate
+      ? name
+        ? teammateByName.get(name)?.state
+        : undefined
+      : (notificationStates.get(agentId) ?? backgroundById.get(agentId)?.status);
+    agents.push({
+      agent_id: agentId,
+      kind: teammate ? "teammate" : "subagent",
+      state: agentState ?? "unknown",
+      ...(name ? { name } : {}),
+      ...(stringField(meta, "description")
+        ? { description: stringField(meta, "description")! }
+        : {}),
+      ...(stringField(meta, "agentType") ? { agent_type: stringField(meta, "agentType")! } : {}),
+      ...(stringField(meta, "model") ? { model: stringField(meta, "model")! } : {}),
+    });
+  }
+  return agents.sort((a, b) => (a.name ?? a.agent_id).localeCompare(b.name ?? b.agent_id, "en"));
+}
+
+function loadContextRooms(dataDir: string, session: string): SessionContextRoom[] {
+  const roomsDir = path.join(dataDir, "rooms");
+  let files: fs.Dirent[];
+  try {
+    files = fs.readdirSync(roomsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const rooms: SessionContextRoom[] = [];
+  for (const file of files) {
+    if (!file.isFile() || !/^r\d+\.jsonl$/.test(file.name)) continue;
+    const present = new Map<string, MemberEvent>();
+    let title: string | undefined;
+    let kind: RoomKind = "normal";
+    let lastMid = 0;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(path.join(roomsDir, file.name), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split("\n")) {
+      if (line.trim() === "") continue;
+      let event: StorageEvent;
+      try {
+        event = JSON.parse(line) as StorageEvent;
+      } catch {
+        continue;
+      }
+      if (event.type === "member") present.set(event.id, event);
+      else if (event.type === "leave") present.delete(event.id);
+      else if (event.type === "title") title = event.title;
+      else if (event.type === "kind") kind = event.kind;
+      else if (event.type === "msg" && event.mid > lastMid) lastMid = event.mid;
+    }
+    const members = [...present.values()];
+    if (!members.some((member) => member.sid === session)) continue;
+    rooms.push({
+      room: file.name.slice(0, -".jsonl".length),
+      ...(title ? { title } : {}),
+      kind,
+      last_mid: lastMid,
+      members,
+    });
+  }
+  return rooms.sort((a, b) => Number(a.room.slice(1)) - Number(b.room.slice(1)));
+}
+
+function loadSessionContext(
+  session: string,
+  transcriptFile: string,
+  dataDir: string,
+): SessionDumpContext {
+  const state = createSessionStatusState();
+  for (const { row } of parseTranscript(transcriptFile)) foldLine(state, JSON.stringify(row));
+  const sidDir = transcriptFile.endsWith(".jsonl")
+    ? transcriptFile.slice(0, -".jsonl".length)
+    : undefined;
+  const status = snapshot(state, sidDir);
+  const notificationStates = loadTaskNotificationStates(transcriptFile);
+  return {
+    kind: "session-context",
+    note: SESSION_CONTEXT_NOTE,
+    agents: sidDir ? loadContextAgents(sidDir, status, notificationStates) : [],
+    workflows: status.workflows,
+    background: status.background
+      .filter(
+        (task): task is typeof task & { kind: "monitor" | "bash" } =>
+          task.status === "running" && (task.kind === "monitor" || task.kind === "bash"),
+      )
+      .map((task) => ({
+        task_id: task.task_id,
+        kind: task.kind,
+        description: task.description,
+        state: "possibly-alive",
+        started_at: task.started_at,
+      })),
+    schedules: loadContextSchedules(transcriptFile, notificationStates),
+    rooms: loadContextRooms(dataDir, session),
+  };
+}
+
 export function dumpSession(session: string, options: SessionDumpOptions): SessionDump {
   const since = parseBound(options.since, "since");
   const until = parseBound(options.until, "until");
@@ -518,8 +782,9 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
       since: new Date(base).toISOString(),
       until: until === undefined ? null : new Date(until).toISOString(),
       generated: new Date().toISOString(),
-      format: "ccmsg-session-dump-v1",
+      format: "ccmsg-session-dump-v2",
     },
+    context: loadSessionContext(session, resolved.file, options.dataDir),
     entries: filtered.map(({ _index: _discard, ts, session: _session, ...entry }) => ({
       ...entry,
       t: Date.parse(ts) - base,

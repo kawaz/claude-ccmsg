@@ -263,13 +263,16 @@ function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]):
 }
 
 function formatTextDump(dump: SessionDump): string {
-  const { header, entries } = dump;
+  const { header, context, entries } = dump;
+  const { kind: _contextKind, ...contextFields } = context;
   const lines = [
     `Session: ${header.session}`,
     `Since: ${header.since}`,
     `Until: ${header.until ?? "(end)"}`,
     `Generated: ${header.generated}`,
     `Format: ${header.format} text`,
+    "Session context:",
+    JSON.stringify(contextFields, null, 2),
     "",
   ];
   for (const entry of entries) {
@@ -469,9 +472,9 @@ Commands:
                                carries its reply_via instruction
   read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
-  dump <session-id>            Export conversation entries as compact jsonl (default)
-                               or readable text (--format text). --since/--until
-                               accept timezone-qualified ISO 8601
+  dump <session-id>            Export session handoff context + conversation entries as
+                               compact jsonl (default) or readable text (--format text).
+                               --since/--until accept timezone-qualified ISO 8601
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -724,6 +727,7 @@ async function main(): Promise<void> {
         process.stdout.write(formatTextDump(dump));
       } else {
         process.stdout.write(`${JSON.stringify(dump.header)}\n`);
+        process.stdout.write(`${JSON.stringify(dump.context)}\n`);
         for (const entry of dump.entries) process.stdout.write(`${JSON.stringify(entry)}\n`);
       }
       return;

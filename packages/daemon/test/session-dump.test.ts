@@ -142,7 +142,7 @@ describe("dumpSession", () => {
       session: SID,
       since: "2026-07-20T00:00:00.000Z",
       until: null,
-      format: "ccmsg-session-dump-v1",
+      format: "ccmsg-session-dump-v2",
     });
     expect(entries.map((entry) => entry.kind)).toEqual([
       "user",
@@ -254,6 +254,288 @@ describe("dumpSession", () => {
         until: "2026-07-20T00:00:00Z",
       }),
     ).toThrow("must not be later");
+  });
+
+  // A dump is a self-contained handoff: current agent/workflow identities, possibly-alive
+  // process-local work, and only rooms where the session is still a member must be
+  // recoverable without consulting the live daemon. Terminal notification and CronDelete
+  // rows remove false liveness candidates; text inside summary/result cannot forge status.
+  test("includes folded handoff state and excludes completed background work", () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const sidDir = transcript.slice(0, -".jsonl".length);
+    const subagentsDir = path.join(sidDir, "subagents");
+    const runId = "wf_12345678-abc";
+    fs.mkdirSync(path.join(subagentsDir, "workflows", runId), { recursive: true });
+    fs.mkdirSync(path.join(sidDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(subagentsDir, "agent-ateam-worker-123456.meta.json"),
+      JSON.stringify({
+        taskKind: "in_process_teammate",
+        name: "worker",
+        description: "team work",
+        agentType: "claude",
+        model: "claude-fable-5[1m]",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(subagentsDir, "agent-a1234567890abcdef.meta.json"),
+      JSON.stringify({ description: "direct work", agentType: "codex-sol-worker" }),
+    );
+    fs.writeFileSync(
+      path.join(subagentsDir, "agent-a2222222222222222.meta.json"),
+      JSON.stringify({
+        description: "nested work",
+        agentType: "codex-sol-reviewer",
+        parentAgentId: "a1234567890abcdef",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(sidDir, "workflows", `${runId}.json`),
+      JSON.stringify({
+        phases: [{ title: "Inspect" }],
+        workflowProgress: [
+          { type: "workflow_phase", index: 1, title: "Inspect" },
+          {
+            type: "workflow_agent",
+            agentId: "aabcdef1234567890",
+            state: "done",
+            label: "reader",
+            phaseIndex: 1,
+          },
+        ],
+      }),
+    );
+    const teammateUse = {
+      type: "tool_use",
+      id: "team-use",
+      name: "Agent",
+      input: { name: "worker", description: "team work" },
+    };
+    const directUse = {
+      type: "tool_use",
+      id: "direct-use",
+      name: "Agent",
+      input: { description: "direct work", run_in_background: true },
+    };
+    const workflowUse = {
+      type: "tool_use",
+      id: "workflow-use",
+      name: "Workflow",
+      input: {},
+    };
+    const monitorUse = {
+      type: "tool_use",
+      id: "monitor-use",
+      name: "Monitor",
+      input: { description: "ccmsg subscribe", persistent: true },
+    };
+    const bashUse = {
+      type: "tool_use",
+      id: "bash-use",
+      name: "Bash",
+      input: { description: "background build", run_in_background: true },
+    };
+    const cronKeepUse = {
+      type: "tool_use",
+      id: "cron-keep-use",
+      name: "CronCreate",
+      input: { cron: "33 4 20 7 *", prompt: "keep prompt", recurring: false },
+    };
+    const cronDeleteUse = {
+      type: "tool_use",
+      id: "cron-delete-use",
+      name: "CronCreate",
+      input: { cron: "7 * * * *", prompt: "delete prompt" },
+    };
+    fs.writeFileSync(
+      transcript,
+      [
+        row("2026-07-20T00:00:00Z", "assistant", [
+          teammateUse,
+          directUse,
+          workflowUse,
+          monitorUse,
+          bashUse,
+          cronKeepUse,
+          cronDeleteUse,
+        ]),
+        row(
+          "2026-07-20T00:00:01Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "team-use", content: "ok" }],
+          { toolUseResult: { status: "teammate_spawned", name: "worker" } },
+        ),
+        row(
+          "2026-07-20T00:00:02Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "direct-use", content: "ok" }],
+          { toolUseResult: { agentId: "a1234567890abcdef" } },
+        ),
+        row(
+          "2026-07-20T00:00:03Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "workflow-use", content: "ok" }],
+          {
+            toolUseResult: {
+              taskId: "workflow-task",
+              workflowName: "handoff-check",
+              status: "async_launched",
+              runId,
+            },
+          },
+        ),
+        row(
+          "2026-07-20T00:00:04Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "monitor-use", content: "ok" }],
+          { toolUseResult: { taskId: "monitor-task" } },
+        ),
+        row(
+          "2026-07-20T00:00:05Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "bash-use", content: "ok" }],
+          { toolUseResult: { backgroundTaskId: "bash-task" } },
+        ),
+        row("2026-07-20T00:00:06Z", "user", [
+          {
+            type: "tool_result",
+            tool_use_id: "cron-keep-use",
+            content:
+              "Scheduled one-shot task dkeep123 (33 4 20 7 *). Session-only (not written to disk, dies when Claude exits).",
+          },
+        ]),
+        row("2026-07-20T00:00:07Z", "user", [
+          {
+            type: "tool_result",
+            tool_use_id: "cron-delete-use",
+            content: "Scheduled recurring task ddelete1 (7 * * * *).",
+          },
+        ]),
+        row("2026-07-20T00:00:08Z", "assistant", [
+          {
+            type: "tool_use",
+            id: "cron-remove-use",
+            name: "CronDelete",
+            input: { id: "ddelete1" },
+          },
+        ]),
+        row("2026-07-20T00:00:09Z", "user", [
+          { type: "tool_result", tool_use_id: "cron-remove-use", content: "Deleted task." },
+        ]),
+        JSON.stringify({
+          timestamp: "2026-07-20T00:00:10Z",
+          type: "queue-operation",
+          operation: "enqueue",
+          content:
+            "<task-notification><task-id>a1234567890abcdef</task-id><status>completed</status></task-notification>",
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-20T00:00:11Z",
+          type: "queue-operation",
+          operation: "enqueue",
+          content:
+            "<task-notification><task-id>a2222222222222222</task-id><status>completed</status><summary>nested finished</summary><result>body with <status>failed</status></result></task-notification>",
+        }),
+        JSON.stringify({
+          timestamp: "2026-07-20T00:00:12Z",
+          type: "queue-operation",
+          operation: "enqueue",
+          content:
+            "<task-notification><task-id>bash-task</task-id><status>completed</status></task-notification>",
+        }),
+      ].join("\n") + "\n",
+    );
+    const member = {
+      type: "member",
+      id: "a1",
+      sid: SID,
+      repo: "repo",
+      ws: "main",
+      cwd: "/repo",
+      joined_at: "2026-07-20T00:00:00Z",
+    };
+    fs.writeFileSync(
+      path.join(dataDir, "rooms", "r3.jsonl"),
+      [
+        member,
+        { ...member, id: "a2", sid: "peer", ws: "peer" },
+        { type: "title", title: "handoff room", ts: "2026-07-20T00:00:01Z" },
+        { type: "kind", kind: "broadcast", ts: "2026-07-20T00:00:02Z" },
+        { type: "msg", mid: 7, from: "a2", ts: "2026-07-20T00:00:03Z", msg: "latest" },
+      ]
+        .map((event) => JSON.stringify(event))
+        .join("\n") + "\n",
+    );
+    fs.writeFileSync(
+      path.join(dataDir, "rooms", "r4.jsonl"),
+      [member, { type: "leave", id: "a1", ts: "2026-07-20T00:00:01Z" }]
+        .map((event) => JSON.stringify(event))
+        .join("\n") + "\n",
+    );
+
+    const { context } = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    expect(context.kind).toBe("session-context");
+    expect(context.note).toContain("only when rewind or context clearing preserved");
+    expect(context.agents).toEqual([
+      expect.objectContaining({
+        agent_id: "a1234567890abcdef",
+        kind: "subagent",
+        state: "completed",
+        description: "direct work",
+      }),
+      expect.objectContaining({
+        agent_id: "a2222222222222222",
+        kind: "subagent",
+        state: "completed",
+        description: "nested work",
+      }),
+      expect.objectContaining({
+        agent_id: "ateam-worker-123456",
+        kind: "teammate",
+        name: "worker",
+        state: "spawned",
+        model: "claude-fable-5[1m]",
+      }),
+    ]);
+    expect(context.workflows).toEqual([
+      expect.objectContaining({
+        task_id: "workflow-task",
+        name: "handoff-check",
+        run_id: runId,
+        phases: [{ title: "Inspect", done: 1, total: 1 }],
+        agents: [expect.objectContaining({ agent_id: "aabcdef1234567890", state: "done" })],
+      }),
+    ]);
+    expect(context.background).toEqual([
+      {
+        task_id: "monitor-task",
+        kind: "monitor",
+        description: "ccmsg subscribe",
+        state: "possibly-alive",
+        started_at: "2026-07-20T00:00:00Z",
+      },
+    ]);
+    expect(context.schedules).toEqual([
+      {
+        task_id: "dkeep123",
+        cron: "33 4 20 7 *",
+        prompt: "keep prompt",
+        recurring: false,
+        state: "possibly-alive",
+      },
+    ]);
+    expect(context.rooms).toEqual([
+      expect.objectContaining({
+        room: "r3",
+        title: "handoff room",
+        kind: "broadcast",
+        last_mid: 7,
+        members: [
+          expect.objectContaining({ id: "a1", sid: SID }),
+          expect.objectContaining({ id: "a2", sid: "peer" }),
+        ],
+      }),
+    ]);
   });
 
   test("emits thinking blocks as their own kind (kawaz r38 mid=40)", () => {

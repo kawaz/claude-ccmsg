@@ -43,9 +43,9 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>] [--format <jsonl|text>]` を使う。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
 
-デフォルトの JSONL は、1 行目が `session`, `since`, `until`, `generated`, `format` を持つヘッダ。以降は `t` (ヘッダの `since` からの経過 ms), `kind`, `from`, `to`, `text`, `meta` を持つ。`--since` 省略時は最初の entry 時刻が基準になる。自セッションを指す `from` / `to` / `meta` の値は `self` になる。
+デフォルトの JSONL は、1 行目が `session`, `since`, `until`, `generated`, `format` を持つ `ccmsg-session-dump-v2` ヘッダ、2 行目が `{kind:"session-context", note, agents, workflows, background, schedules, rooms}`。`agents` は direct subagent / teammate の agent ID・名前・状態、`workflows` は run ID・phase・agent、`background` は完了通知がない Monitor / background Bash、`schedules` は削除・発火通知がない session-only cron、`rooms` は対象 session が現在参加している room の title・kind・最新 mid・member 情報を持つ。`background` / `schedules` の状態は厳密な生存確認ではなく `possibly-alive`。`note` のとおり、ID や session-only task は rewind 等で元プロセスを維持したまま context だけを失った場合の best-effort hint であり、プロセス再起動後は利用できない。3 行目以降は `t` (ヘッダの `since` からの経過 ms), `kind`, `from`, `to`, `text`, `meta` を持つ会話 entry。`--since` 省略時は最初の会話 entry 時刻が基準になる。自セッションを指す `from` / `to` / `meta` の値は `self` になる。
 
-AI が直接読む用途では `--format text` を使える。人間可読ヘッダと `[+<経過ms>ms <kind> <from>→<to>]`、本文を空行区切りで出し、`meta` は省略する。
+AI が直接読む用途では `--format text` を使える。人間可読ヘッダ直後に Session context の JSON、続いて `[+<経過ms>ms <kind> <from>→<to>]` と本文を空行区切りで出し、会話 entry の `meta` は省略する。
 
 `kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`, `thinking`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
 
