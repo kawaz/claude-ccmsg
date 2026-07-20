@@ -920,14 +920,25 @@ function SegmentView({
 // のでどの kind から来ても等幅になる (副作用として無害)。
 type PeerMessageRich = Extract<SystemMessageRich, { display: "peer" }>;
 
+// idle 通知は operational noise (kawaz r46m6: 「でしゃばらせるな」)。
+// 通常 peer メッセージのような decorated fold / AgentCard には流さず、
+// 閉じた <details> の compact 行に demote する — 第 1 層 (Timeline 直下 /
+// 展開済み fold 内) では時刻 + 淡色の "idle {from}" のみを見せて、body
+// (実際の通知テキスト) は summary を開いたときだけ表示する。
 function IdlePeerRow({ peer, ts }: { peer: PeerMessageRich; ts: string | null }) {
   const presentation = peerMessagePresentation(peer);
   if (presentation.kind !== "idle") return null;
   return (
-    <div class="tl-line tl-agent-idle">
-      {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
-      <span class="tl-fold-label">peer-message ← [idle通知] {peer.from}</span>
-    </div>
+    <details class="tl-line tl-fold tl-agent-idle">
+      <summary>
+        {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
+        <span class="tl-agent-idle-label">
+          <span class="tl-agent-idle-kind">idle</span>
+          <span class="tl-agent-idle-from">{peer.from}</span>
+        </span>
+      </summary>
+      <div class="tl-agent-idle-body">{presentation.text}</div>
+    </details>
   );
 }
 

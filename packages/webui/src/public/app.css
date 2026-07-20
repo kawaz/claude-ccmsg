@@ -3158,6 +3158,36 @@ button.session-tab {
   border: 1px dashed var(--border);
 }
 
+/* idle 通知 (kawaz r46m6: 「でしゃばらせるな」) — Timeline の第 1 層に
+ * bold で露出させず、時刻の隣に淡色 sans-serif の compact 行として置く。
+ * marker (▶/▼) は default disclosure のまま。展開時のみ body が出る。 */
+.tl-agent-idle > summary {
+  list-style-position: outside;
+  color: var(--muted, #888);
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+.tl-agent-idle > summary::-webkit-details-marker {
+  color: var(--muted, #888);
+}
+.tl-agent-idle-label {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: baseline;
+}
+.tl-agent-idle-kind {
+  text-transform: lowercase;
+}
+.tl-agent-idle-from {
+  opacity: 0.85;
+}
+.tl-agent-idle-body {
+  margin: 0.15rem 0 0.15rem 1.2rem;
+  color: var(--muted, #888);
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
 .tl-direction-badge {
   display: inline-flex;
   align-items: center;
