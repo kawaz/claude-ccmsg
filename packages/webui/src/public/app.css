@@ -4178,7 +4178,10 @@ button.session-tab {
   display: flex;
   align-items: stretch;
   max-width: 100vw;
-  transform: translate(calc(100% - 44px), -50%);
+  /* 閉時は handle 幅 (18px、.tl-auto-open-handle) だけ残して収納。値は
+   * handle 幅と同期させること (kawaz r38 mid=65: 44px のまま残っていて
+   * パネルが 26px はみ出していた)。 */
+  transform: translate(calc(100% - 18px), -50%);
   transition: transform 180ms ease-out;
 }
 
@@ -4202,8 +4205,10 @@ button.session-tab {
   border: 1px solid var(--border);
   border-right: 0;
   border-radius: 0.4rem 0 0 0.4rem;
-  background: var(--bg-alt);
-  color: var(--fg-muted);
+  /* 背景 (bg-alt) と同化してコントラスト不足 (kawaz r38 mid=65) — 一段
+   * 明るいグレーで塗る。 */
+  background: color-mix(in srgb, var(--fg) 18%, var(--bg-alt));
+  color: var(--fg);
   font: inherit;
   font-size: 0.85rem;
   line-height: 1;
