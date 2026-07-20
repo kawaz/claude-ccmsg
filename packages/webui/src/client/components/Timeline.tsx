@@ -1596,6 +1596,20 @@ export function Timeline({
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
   const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
+  // パネル外 click で自動収納 (kawaz r38 mid=66)。useFabPopup と同じ理由で
+  // click イベント (tap 完了) のみ — mousedown/touchstart はスクロール目的の
+  // タッチでも閉じてしまう。open 中だけ listener を張る。
+  const autoOpenFloatRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!autoOpenPanelOpen) return;
+    const onClick = (e: MouseEvent) => {
+      const el = autoOpenFloatRef.current;
+      if (!el || !(e.target instanceof Node)) return;
+      if (!el.contains(e.target)) setAutoOpenPanelOpen(false);
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [autoOpenPanelOpen]);
   useEffect(() => {
     setAutoOpenSettings(defaultTimelineAutoOpen(agentActive));
     setAutoOpenRevision((revision) => revision + 1);
@@ -2494,7 +2508,10 @@ export function Timeline({
                 )}
               </div>
             )}
-            <div class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}>
+            <div
+              ref={autoOpenFloatRef}
+              class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
+            >
               <button
                 type="button"
                 class="tl-auto-open-handle"
