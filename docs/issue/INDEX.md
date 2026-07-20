@@ -33,3 +33,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-17 | request | open | [subscribe-no-backlog-default](./2026-07-17-subscribe-no-backlog-default.md) | subscribe のデフォルトを過去メッセージ再送なしに変更 (kawaz 裁定)。接続時イベントを `{roomid, last_mid}` 一覧のみにし、追いつき判断をセッション側に委ねる。従来挙動は `--since` 等へ退避、daemon+CLI+SKILL.md 追従 |
 | 2026-07-17 | task | open | [session-creator-cwd-picker-unify](./2026-07-17-session-creator-cwd-picker-unify.md) | SessionCreator の cwd 選択 UI を統合 (kawaz 裁定)。手入力欄とツリー検索欄を1つに統合、選択後は確定表示+編集ボタンに切替。コマンドプレビュー workflow (wf_89c77eac) 完了後に着手 |
 | 2026-07-20 | design | wip | [agent-session-tree](./2026-07-20-agent-session-tree.md) | サブエージェント (Agent tool の子) のセッションツリー表示 (kawaz r44 m6-m7)。m6 済 (commit 3a001e9e)、m7 (孫再帰収集+専用パネル UI) を実装着手中 |
+| 2026-07-21 | request | open | [webui-terminal-tab-embed](./2026-07-21-webui-terminal-tab-embed.md) | webui セッションヘッダーに Terminal タブを追加、外部 web gateway の embed 用ページを iframe 表示するのみ (ccmsg 側の追加実装は最小)。着手条件: セッションツリーパネル (m7) push 後 |
