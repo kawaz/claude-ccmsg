@@ -1642,7 +1642,12 @@ function CcmsgBubble({
         <div class="tl-bubble-from">
           {isUser ? <UserAvatar size={16} /> : null}
           {from || "…"}
-          {to?.length ? ` → ${to.join(", ")}` : ""}
+          {(() => {
+            // u1 (ADMIN_ID) は always-exempt 配信済みなので mention 表示から
+            // 除外 (TimelineItem 側と同ポリシー、kawaz 2026-07-20)。
+            const shown = to?.filter((id) => id !== ADMIN_ID) ?? [];
+            return shown.length ? ` → ${shown.join(", ")}` : "";
+          })()}
           {" · #"}
           {message.room}
           {message.mid === undefined ? null : `m${message.mid}`}

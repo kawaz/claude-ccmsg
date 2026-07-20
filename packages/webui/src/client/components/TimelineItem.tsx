@@ -45,21 +45,29 @@ export function TimelineItem({
           <div class="msg-meta">
             <MemberAvatar id={event.from} room={room} />
             <span class="msg-from">{memberLabel(event.from, room)}</span>
-            {event.to?.length ? (
-              <span class="msg-to">
-                →{" "}
-                {event.to.map((id, i) => (
-                  // ": " 区切りテキストとアイコン+名前ペアを混ぜる。key は id 単体だと
-                  // 同一 id が to に重複した時に衝突するので `${id}-${i}` にする
-                  // (protocol 的には重複しない想定だが、防御的に i を混ぜる)。
-                  <span key={`${id}-${i}`} class="msg-to-item">
-                    {i > 0 ? ", " : null}
-                    <MemberAvatar id={id} room={room} />
-                    {memberLabel(id, room)}
-                  </span>
-                ))}
-              </span>
-            ) : null}
+            {(() => {
+              // u1 (ADMIN_ID) は always-exempt 配信で常に受け取っており、
+              // agent 同士の会話画面に "→ u1" を毎回添えるのはノイズ (kawaz
+              // 2026-07-20: 「エージェント同士の会話にユーザを含める必要なし。
+              // ユーザには全部見える仕様でしょ」)。表示上は除外し、除外後が
+              // 空 (= u1 単独宛) なら → 表記自体を出さない。
+              const displayTo = event.to?.filter((id) => id !== ADMIN_ID) ?? [];
+              return displayTo.length ? (
+                <span class="msg-to">
+                  →{" "}
+                  {displayTo.map((id, i) => (
+                    // ": " 区切りテキストとアイコン+名前ペアを混ぜる。key は id 単体だと
+                    // 同一 id が to に重複した時に衝突するので `${id}-${i}` にする
+                    // (protocol 的には重複しない想定だが、防御的に i を混ぜる)。
+                    <span key={`${id}-${i}`} class="msg-to-item">
+                      {i > 0 ? ", " : null}
+                      <MemberAvatar id={id} room={room} />
+                      {memberLabel(id, room)}
+                    </span>
+                  ))}
+                </span>
+              ) : null;
+            })()}
             {/* 年月日 + 時刻 + 相対時間 (kawaz r17 mid=30): 時刻だけだと日を
              * 跨いだ msg の古さが読めない。now は RoomView の useNow (3 分
              * おきの雑更新)。 */}

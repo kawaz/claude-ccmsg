@@ -1102,12 +1102,18 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       // Targets = original author + everyone the original msg addressed,
-      // minus the replier, plus u1 (always-delivered admin; also satisfies
-      // the broadcast room's agent-post constraint by construction). Sorted
-      // for a stable wire shape.
+      // minus the replier. u1 is intentionally NOT force-added here: the User
+      // is an always-exempt delivery target (see deliver()'s admin fanout),
+      // and this reply op runs *between agents* on kawaz's screen — surfacing
+      // u1 in every agent-to-agent reply's `to` list is noise on a channel
+      // where "u1 sees everything" is already the invariant. The broadcast
+      // room's agent-post u1-target constraint (§2.4) is enforced in `post`,
+      // not here, and is still satisfied by construction for the cases reply
+      // covers: replies to a u1-authored msg have target.from == u1, and
+      // replies to an agent post in a broadcast room inherit u1 from
+      // target.to (§2.4 required it there). Sorted for a stable wire shape.
       const parts = new Set<string>([target.from, ...(target.to ?? [])]);
       parts.delete(from);
-      parts.add(ADMIN_ID);
       const to = [...parts].sort(compareIds);
       const mid = room.lastMid + 1;
       const ev: MsgEvent = {

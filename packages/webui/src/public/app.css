@@ -1627,6 +1627,19 @@ a {
   min-width: 0;
 }
 
+/* mention 先リスト全体も inline-flex の baseline 揃えに寄せる。囲み側が
+ * 通常の inline text baseline のままだと、中に置いた .msg-to-item
+ * (inline-flex) の先頭に来る avatar SVG は baseline を持たないため
+ * ペア全体が持ち上がってしまい "→" やカンマとアイコンが縦にズレて見える。
+ * 親も flex にして align-items:center で揃え、flex-wrap で長い to リストが
+ * 収まらない場合の改行を許す。 */
+.msg-to {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
 /* mention 先の (avatar + name) 1 ペアを inline-flex でまとめ、カンマ区切りの
  * 途中で改行しても avatar と name が離れないようにする (kawaz 2026-07-13:
  * mention 先アイコン追加)。gap は avatar と label の識別性用の 3px。 */

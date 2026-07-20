@@ -29,11 +29,11 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
 
 describe("DR-0017 reply op", () => {
   // 何を保証するか (§2.2 の宛先構成): reply の to = 元 msg の from + (元 to −
-  // 返信者) + u1、canonical id 順。返信者自身は入らない (自分に配る意味が
-  // ない)、u1 は常に入る (admin 常時配信 + broadcast の agent post 制約を
-  // 構成上満たす)。storage には reply_to: "rNmN" が残る (スレッド素材)。
+  // 返信者)、canonical id 順。返信者自身は入らない (自分に配る意味がない)。
+  // u1 は force-add しない (always-exempt 配信は別経路、agent 同士の会話に
+  // 毎回 "→ u1" 表示を混ぜないため)。storage には reply_to: "rNmN" が残る。
   test(
-    "reply builds to = original from + (original to - replier) + u1, records reply_to",
+    "reply builds to = original from + (original to - replier), records reply_to",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -47,8 +47,9 @@ describe("DR-0017 reply op", () => {
         const room = created.room;
 
         // A (a1) posts to B (a2) + C (a3). B replies: to must be
-        // [u1, a1, a3] — original from (a1) + original to minus B himself
-        // (a3) + u1. Sorted canonical: u before a, numeric ascending.
+        // [a1, a3] — original from (a1) + original to minus B himself (a3).
+        // u1 is NOT included (delivered via always-exempt fanout instead).
+        // Sorted canonical: a-prefix, numeric ascending.
         const posted = await a.request<{ mid: number }>({
           op: "post",
           room,
@@ -62,7 +63,7 @@ describe("DR-0017 reply op", () => {
           msg: "answer",
         });
         expect(replied.ok).toBe(true);
-        expect(replied.to).toEqual(["u1", "a1", "a3"]);
+        expect(replied.to).toEqual(["a1", "a3"]);
 
         // The stored msg carries reply_to pointing at the original.
         const raw = fs.readFileSync(`${ctx.roomsDir}/${room}.jsonl`, "utf8");
@@ -72,7 +73,7 @@ describe("DR-0017 reply op", () => {
           .map((l) => JSON.parse(l));
         const replyLine = lines.find((l) => l.type === "msg" && l.mid === replied.mid);
         expect(replyLine.reply_to).toBe(`${room}m${posted.mid}`);
-        expect(replyLine.to).toEqual(["u1", "a1", "a3"]);
+        expect(replyLine.to).toEqual(["a1", "a3"]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -185,9 +186,11 @@ describe("DR-0017 reply op", () => {
   );
 
   // 何を保証するか (§2.2 × DR-0013): broadcast room の u1 msg への agent
-  // reply が成立する — reply の構成は必ず u1 を含むため、broadcast の
-  // 「agent post は to に u1 必須」制約 (DR-0013 §2.4) を構成上自動で満たす。
-  // agent が自力で to を組む必要がないことの実証でもある。
+  // reply が成立する — 元 msg の from が u1 なので reply の to に u1 が
+  // 入り、broadcast の「agent post は to に u1 必須」制約 (DR-0013 §2.4) を
+  // 構成上自動で満たす (reply op は §2.4 の post チェックを通らないが、
+  // 意味論としての「u1 が受け手」は保たれる)。agent が自力で to を組む
+  // 必要がないことの実証でもある。
   test(
     "agent reply in a broadcast room satisfies the u1-target constraint by construction",
     async () => {

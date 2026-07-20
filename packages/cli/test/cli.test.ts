@@ -915,8 +915,8 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           .out,
       ) as { ok: boolean; mid: number; to: string[] };
       expect(replied.ok).toBe(true);
-      // to = 元 from (S1 = a1) + u1、返信者 S2 (a2) は含まれない
-      expect(replied.to).toEqual(["u1", "a1"]);
+      // to = 元 from (S1 = a1)。返信者 S2 (a2) は含まれず、u1 は implicit 配信のため to に載らない
+      expect(replied.to).toEqual(["a1"]);
 
       const read = JSON.parse(
         (await runCli(["read", created.room, String(replied.mid)], env)).out,
