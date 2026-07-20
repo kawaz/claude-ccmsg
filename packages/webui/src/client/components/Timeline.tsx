@@ -24,7 +24,7 @@ import {
   groupTimelineLines,
   isSearchableSegment,
   splitFoldSubgroups,
-  isUserNavTurn,
+  userNavTargets,
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
@@ -1227,6 +1227,7 @@ function ItemsSubFold({
 function UserPromptBubble({
   line,
   offsetKey,
+  navKey,
   registerUserTurnRef,
   translationAvailability,
   now,
@@ -1235,22 +1236,23 @@ function UserPromptBubble({
 }: {
   line: TurnLine;
   offsetKey: number;
+  navKey: string;
   // "👤 N/M" nav indicator の DOM 測定対象として登録する — 実ユーザ発話
   // (isUserTextTurn) はこの吹き出し以外の経路には現れないので、fold-inner
   // 側 (LineView) はこの登録を一切行わない。
-  registerUserTurnRef: (key: number, el: HTMLDivElement | null) => void;
+  registerUserTurnRef: (key: string, el: HTMLDivElement | null) => void;
   translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
   // 👤 nav のクリック同期 (DR-0022 §2.2 の仕様を 👤 nav にも共通化): この吹き
   // 出しをクリックすると、スクロールなしで currentUserIdx をその位置に合わせる。
-  onUserTurnClick: (offsetKey: number) => void;
+  onUserTurnClick: (navKey: string) => void;
 }) {
   return (
     <div
       class="tl-bubble tl-bubble-right"
-      ref={(el) => registerUserTurnRef(offsetKey, el)}
-      onClick={() => onUserTurnClick(offsetKey)}
+      ref={(el) => registerUserTurnRef(navKey, el)}
+      onClick={() => onUserTurnClick(navKey)}
     >
       <div class="tl-bubble-body tl-bubble-body-user">
         {line.segments.length === 0 ? (
@@ -1426,10 +1428,16 @@ function CcmsgBubble({
   now,
   searchKey,
   searchCtx,
+  navKey,
+  registerUserTurnRef,
+  onUserTurnClick,
 }: {
   message: CcmsgMessage;
   rawText: string;
   now: number;
+  navKey?: string;
+  registerUserTurnRef: (key: string, el: HTMLDivElement | null) => void;
+  onUserTurnClick: (navKey: string) => void;
   // In-view search (DR-0022 §3, extended by kawaz r26 mid=97's 💬 target
   // toggle): undefined whenever the ccmsg target toggle is off, mirroring
   // SegmentView's searchCtx={undefined} convention for out-of-scope units —
@@ -1465,6 +1473,10 @@ function CcmsgBubble({
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
           : "tl-bubble tl-bubble-left tl-bubble-peer"
       }
+      ref={(el) => {
+        if (navKey !== undefined) registerUserTurnRef(navKey, el);
+      }}
+      onClick={navKey === undefined ? undefined : () => onUserTurnClick(navKey)}
     >
       <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
         <div class="tl-bubble-from">
@@ -1815,24 +1827,17 @@ export function Timeline({
   // top/bottom of the loaded transcript and to the previous/next user-text
   // turn, plus a live "current position" counter. ---
 
-  // Preact-key (byte offset, stable across prepend) of every currently-loaded
-  // user-text turn, in document order — the "M" denominator and the index
-  // space goPrevUserTurn/goNextUserTurn/scrollPositionToUserTurnIndex work in.
-  const userTurnKeys = useMemo(
-    () =>
-      parsed
-        .map((line, i) => (isUserNavTurn(line) ? offsets[i] : null))
-        .filter((k): k is number => k !== null),
-    [parsed, offsets],
-  );
+  // Stable key of every mounted green bubble in document order. The pure
+  // model applies the same ccmsg deduplication as rendering, so the denominator
+  // and every index in this array have exactly one DOM target.
+  const userTurnKeys = useMemo(() => userNavTargets(groups).map((target) => target.key), [groups]);
+  const userTurnKeySet = useMemo(() => new Set(userTurnKeys), [userTurnKeys]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  // key (byte offset) -> mounted DOM node for each user-text turn, populated
-  // by LineView's ref callback. Only ever read for keys currently in
-  // userTurnKeys; entries for turns dropped by a "更新" (replace) reload are
-  // pruned below rather than left to leak.
-  const userTurnRefs = useRef(new Map<number, HTMLDivElement>());
-  const registerUserTurnRef = useCallback((key: number, el: HTMLDivElement | null) => {
+  // nav key -> mounted DOM node for each green bubble. Entries for turns
+  // dropped by a "更新" (replace) reload are pruned below rather than leaked.
+  const userTurnRefs = useRef(new Map<string, HTMLDivElement>());
+  const registerUserTurnRef = useCallback((key: string, el: HTMLDivElement | null) => {
     if (el) userTurnRefs.current.set(key, el);
     else userTurnRefs.current.delete(key);
   }, []);
@@ -2265,11 +2270,11 @@ export function Timeline({
 
   // 👤 nav のクリック同期 (DR-0022 §2.2 を 👤 nav にも統一適用): クリックされた
   // 吹き出しの offsetKey が userTurnKeys の何番目かを引いて、スクロールなしで
-  // currentUserIdx を合わせる。offsetKey がユーザ発話の位置と一致しない (ここ
-  // には来ないはずだが型上あり得る) 場合は何もしない。
+  // currentUserIdx を合わせる。navKey が現在の描画対象と一致しない場合は
+  // 何もしない。
   const onUserTurnClick = useCallback(
-    (offsetKey: number) => {
-      const pos = userTurnKeys.indexOf(offsetKey);
+    (navKey: string) => {
+      const pos = userTurnKeys.indexOf(navKey);
       if (pos < 0) return;
       setCurrentUserIdx(pos + 1);
     },
@@ -2454,6 +2459,7 @@ export function Timeline({
                               key={offset}
                               line={line}
                               offsetKey={offset}
+                              navKey={`user:${offset}`}
                               registerUserTurnRef={registerUserTurnRef}
                               translationAvailability={translationAvailability}
                               now={now}
@@ -2490,6 +2496,7 @@ export function Timeline({
                               const dedupKey = ccmsgDedupKey(m);
                               if (seenCcmsg.has(dedupKey)) return null;
                               seenCcmsg.add(dedupKey);
+                              const navKey = `ccmsg:${offset}:${j}`;
                               return (
                                 <CcmsgBubble
                                   key={`${offset}-${j}`}
@@ -2498,6 +2505,9 @@ export function Timeline({
                                   now={now}
                                   searchKey={`${offset}-ccmsg-${j}`}
                                   searchCtx={searchCtx}
+                                  navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
+                                  registerUserTurnRef={registerUserTurnRef}
+                                  onUserTurnClick={onUserTurnClick}
                                 />
                               );
                             })

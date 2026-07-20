@@ -531,6 +531,42 @@ export type TimelineGroup =
   | { kind: "entry"; offset: number; line: ParsedLine }
   | { kind: "fold"; entries: TimelineEntry[] };
 
+export type UserNavTarget =
+  | { key: string; offset: number; kind: "user-prompt" }
+  | { key: string; offset: number; kind: "ccmsg"; messageIndex: number };
+
+/**
+ * Returns the mounted green bubbles that the user-message navigation can jump
+ * to. ccmsg messages use the same document-wide deduplication as Timeline's
+ * renderer, so the counter and the set of registered DOM targets stay equal.
+ */
+export function userNavTargets(groups: TimelineGroup[]): UserNavTarget[] {
+  const targets: UserNavTarget[] = [];
+  const seenCcmsg = new Set<string>();
+  for (const group of groups) {
+    if (group.kind !== "entry" || group.line.kind !== "turn") continue;
+    const boundary = classifyBoundaryLine(group.line);
+    if (boundary?.kind === "user-prompt") {
+      targets.push({ key: `user:${group.offset}`, offset: group.offset, kind: "user-prompt" });
+      continue;
+    }
+    if (boundary?.kind !== "ccmsg") continue;
+    boundary.messages.forEach((message, messageIndex) => {
+      const dedupKey = ccmsgDedupKey(message);
+      if (seenCcmsg.has(dedupKey)) return;
+      seenCcmsg.add(dedupKey);
+      if (message.from !== "u1") return;
+      targets.push({
+        key: `ccmsg:${group.offset}:${messageIndex}`,
+        offset: group.offset,
+        kind: "ccmsg",
+        messageIndex,
+      });
+    });
+  }
+  return targets;
+}
+
 /** Which of the three chat-bubble kinds (webui Timeline display unification
  * task, kawaz spec) a boundary line renders as — `null` for every non-boundary
  * line (folds instead). The single source of truth both `isBoundaryLine`

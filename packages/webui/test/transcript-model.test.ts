@@ -26,6 +26,7 @@ import {
   resolveFileToolResults,
   scrollPositionToUserTurnIndex,
   segmentSearchText,
+  userNavTargets,
   stripAnsiEscapes,
   type CcmsgMessage,
   type ParsedLine,
@@ -2377,6 +2378,56 @@ describe("DR-0027 dedup: (room, mid) canonical key collapses send-side + receive
 // is new here — "user-prompt"/"assistant-response" are already covered by
 // the isUserTextTurn/groupTimelineLines describe blocks above via
 // isBoundaryLine's behavior.
+describe("userNavTargets", () => {
+  function ccmsgLine(message: CcmsgMessage): ParsedLine {
+    const event = {
+      type: "msg",
+      mid: 1,
+      from: message.from,
+      r: message.room,
+      ts: message.ts,
+      msg: message.msg,
+    };
+    return parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n<teammate-message teammate_id="${message.from}">\n${JSON.stringify(event)}\n</teammate-message>`,
+        },
+      }),
+    );
+  }
+
+  test("returns one target for every rendered green bubble in document order", () => {
+    const userCcmsg = { from: "u1", room: "r1", ts: "t1", msg: "via ccmsg" };
+    const lines = [userText("prompt"), ccmsgLine(userCcmsg), assistantText("done")];
+    const groups = groupTimelineLines(lines, [10, 20, 30]);
+
+    expect(userNavTargets(groups)).toEqual([
+      { key: "user:10", offset: 10, kind: "user-prompt" },
+      { key: "ccmsg:20:0", offset: 20, kind: "ccmsg", messageIndex: 0 },
+    ]);
+  });
+
+  test("excludes duplicate and non-user ccmsg bubbles exactly as rendering does", () => {
+    const userCcmsg = { from: "u1", room: "r1", ts: "t1", msg: "same message" };
+    const agentCcmsg = { from: "a1", room: "r1", ts: "t2", msg: "agent message" };
+    const lines = [
+      ccmsgLine(userCcmsg),
+      ccmsgLine(agentCcmsg),
+      ccmsgLine(userCcmsg),
+      userText("prompt"),
+    ];
+    const groups = groupTimelineLines(lines, [10, 20, 30, 40]);
+
+    expect(userNavTargets(groups)).toEqual([
+      { key: "ccmsg:10:0", offset: 10, kind: "ccmsg", messageIndex: 0 },
+      { key: "user:40", offset: 40, kind: "user-prompt" },
+    ]);
+  });
+});
+
 describe("classifyBoundaryLine", () => {
   test("a system-origin line carrying a ccmsg type:msg event -> {kind:'ccmsg', messages:[...]}", () => {
     const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
