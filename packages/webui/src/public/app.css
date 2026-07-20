@@ -4172,17 +4172,63 @@ button.session-tab {
  * 余白帯の位置に負 margin で引き上げて「無駄空白の中」に置く。末尾まで
  * スクロールしたときだけ見える。A <button> (not <div>+onClick) for free
  * keyboard/focus semantics on the "タップで Status タブへ遷移" affordance. */
-.tl-status-mini {
-  /* kawaz r26 mid=96: 余白帯の上端 (-11rem) だと TL 直下に接して「TL の
-   * 続きの何か」に見えて紛らわしい — 帯の**一番下**に置く。.tl-lines の
-   * padding-bottom 12rem の後 (帯の下端直後) が flow 上の自然位置なので
-   * 負 margin は最小限 (-1rem) にして下端付近へ。 */
+.tl-bottom-controls {
   margin: -1rem 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tl-auto-open {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  margin: 0;
+  padding: 0.25rem 0.55rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font-size: 0.72rem;
+}
+
+.tl-auto-open legend {
+  padding: 0 0.25rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tl-auto-open label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  cursor: pointer;
+  font-family: ui-monospace, monospace;
+}
+
+.tl-auto-open label:has(input:disabled) {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.tl-auto-open input {
+  margin: 0;
+}
+
+.tl-auto-open-separator {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
+}
+
+.tl-status-mini {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.1rem;
-  width: calc(100% - 1.5rem);
+  width: 100%;
   padding: 0.35rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: 0.4rem;
