@@ -3,71 +3,35 @@
 // = ヘッダ無しのターミナル + resume バナー + input 欄) を iframe で埋め込む。
 // ccmsg 側はターミナル描画/入力ロジックを一切持たない — iframe を出すだけ。
 //
-// 表示条件は SessionView 側で管理する (agent の hyoui_session_id が解決済み
-// のセッションでのみ Terminal タブ自体を出す)。ここに来る時点で
-// hyouiSessionId は non-empty が保証されているが、gateway URL の設定は
-// ここで判定して未設定なら簡易入力欄にフォールバックする。
-import { useState } from "preact/hooks";
-import {
-  buildTerminalEmbedUrl,
-  loadTerminalGatewayUrl,
-  saveTerminalGatewayUrl,
-} from "../terminal-gateway-store.ts";
+// gateway URL は daemon `<dataDir>/config.json` の `terminal_gateway_url`
+// で設定し hello response 経由で受け取る (旧 localStorage `ccmsg.terminalGatewayUrl`
+// 方式と画面内の設定 UI は r46m7 で撤去)。gateway URL 未設定 / HYOUI_SESSION_ID
+// 未解決の場合は SessionView 側でそもそも Terminal タブ自体を出さないので、
+// ここに来る時点で両方 non-empty が保証される。防御的に不正 URL は
+// buildTerminalEmbedUrl 側で null を返し、その時だけ簡素なエラー表示に落ちる
+// (通常発生しない — daemon 側で http:// / https:// スキームは検証済み)。
+import { buildTerminalEmbedUrl } from "../terminal-gateway-store.ts";
 
 interface Props {
   hyouiSessionId: string;
+  gatewayUrl: string;
 }
 
-export function TerminalPanel({ hyouiSessionId }: Props) {
-  const [gatewayUrl, setGatewayUrl] = useState<string | null>(() => loadTerminalGatewayUrl());
-  const [draft, setDraft] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-
+export function TerminalPanel({ hyouiSessionId, gatewayUrl }: Props) {
   const embedUrl = buildTerminalEmbedUrl(gatewayUrl, hyouiSessionId);
-
   if (!embedUrl) {
-    // gateway URL 未設定 or 不正 → 簡易入力欄。localStorage 直書きなので
-    // 各 webui クライアントで独立に設定する (端末・PWA ごとに別値)。
+    // 通常到達しない (daemon が config.json 読み込み時に http/https 以外を
+    // 弾いており、hello では検証済みの URL しか流れてこない)。万一 URL が
+    // 壊れて届いた時のフォールバック表示 — 設定は config.json 側で直す。
     return (
-      <div class="terminal-pane terminal-pane-config">
-        <form
-          class="terminal-config-form"
-          onSubmit={(ev) => {
-            ev.preventDefault();
-            const url = draft.trim();
-            if (!url) {
-              setError("URL を入力してください");
-              return;
-            }
-            const test = buildTerminalEmbedUrl(url, hyouiSessionId);
-            if (!test) {
-              setError("URL の形式が不正です (http:// または https:// で始まる base URL を入力)");
-              return;
-            }
-            saveTerminalGatewayUrl(url);
-            setGatewayUrl(url);
-            setError(null);
-          }}
-        >
-          <label>
-            <div>Web gateway URL (未設定です)</div>
-            <input
-              type="url"
-              placeholder="https://your-gateway.example / http://127.0.0.1:43690"
-              value={draft}
-              onInput={(ev) => setDraft((ev.target as HTMLInputElement).value)}
-              inputMode="url"
-              autocomplete="off"
-              spellcheck={false}
-            />
-          </label>
-          <button type="submit">保存</button>
-          {error ? <p class="terminal-config-error">{error}</p> : null}
-        </form>
+      <div class="terminal-pane">
+        <p id="empty-state">
+          Terminal gateway URL が不正です (daemon config.json の `terminal_gateway_url`
+          を確認してください)。
+        </p>
       </div>
     );
   }
-
   return (
     <div class="terminal-pane">
       <iframe
@@ -79,18 +43,6 @@ export function TerminalPanel({ hyouiSessionId }: Props) {
         sandbox="allow-scripts allow-same-origin allow-forms"
         allow="clipboard-read; clipboard-write"
       />
-      <button
-        type="button"
-        class="terminal-gateway-reset"
-        title="gateway URL を再設定"
-        onClick={() => {
-          saveTerminalGatewayUrl(null);
-          setGatewayUrl(null);
-          setDraft("");
-        }}
-      >
-        設定変更
-      </button>
     </div>
   );
 }

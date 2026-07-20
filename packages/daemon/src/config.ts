@@ -15,6 +15,33 @@ import {
 
 export interface DaemonConfig {
   session_launcher?: SessionLauncherConfig;
+  /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
+   * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
+   * 埋める (issue 2026-07-21-webui-terminal-tab-embed)。http:// / https:// の
+   * 絶対 URL のみ受け付け、それ以外は warn + 未設定扱い (= webui 側で
+   * Terminal タブ自体を出さない)。 */
+  terminal_gateway_url?: string;
+}
+
+function parseTerminalGatewayUrl(raw: unknown, file: string, log: Log): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    warn(log, file, "terminal_gateway_url must be a non-empty string; ignoring");
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    warn(log, file, `terminal_gateway_url is not a valid URL: ${trimmed}; ignoring`);
+    return undefined;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    warn(log, file, `terminal_gateway_url must be http:// or https://: ${trimmed}; ignoring`);
+    return undefined;
+  }
+  return trimmed;
 }
 
 interface Log {
@@ -192,8 +219,13 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
     warn(log, file, "top level must be a JSON object; treating as empty");
     return {};
   }
-  if (parsed.session_launcher === undefined) return {};
-
-  const sessionLauncher = parseSessionLauncher(parsed.session_launcher, file, log);
-  return sessionLauncher ? { session_launcher: sessionLauncher } : {};
+  const sessionLauncher =
+    parsed.session_launcher === undefined
+      ? undefined
+      : parseSessionLauncher(parsed.session_launcher, file, log);
+  const terminalGatewayUrl = parseTerminalGatewayUrl(parsed.terminal_gateway_url, file, log);
+  const cfg: DaemonConfig = {};
+  if (sessionLauncher) cfg.session_launcher = sessionLauncher;
+  if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
+  return cfg;
 }

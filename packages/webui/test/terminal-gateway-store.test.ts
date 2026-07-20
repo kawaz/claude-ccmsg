@@ -1,62 +1,10 @@
-// Terminal タブ (issue 2026-07-21-webui-terminal-tab-embed) の gateway URL
-// 保存と embed URL 組み立ての固定。localStorage 直の I/O と URL 組み立ての
-// 純関数の 2 点で、SessionView 側のタブ表示条件 (hyoui_session_id の有無)
-// とは独立に検証する。
-import { beforeEach, describe, expect, test } from "bun:test";
-import {
-  buildTerminalEmbedUrl,
-  loadTerminalGatewayUrl,
-  saveTerminalGatewayUrl,
-  TERMINAL_GATEWAY_STORAGE_KEY,
-} from "../src/client/terminal-gateway-store.ts";
-
-class MemStorage {
-  private data = new Map<string, string>();
-  get length(): number {
-    return this.data.size;
-  }
-  key(i: number): string | null {
-    return [...this.data.keys()][i] ?? null;
-  }
-  getItem(k: string): string | null {
-    return this.data.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
-    this.data.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.data.delete(k);
-  }
-  clear(): void {
-    this.data.clear();
-  }
-}
-
-beforeEach(() => {
-  (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
-});
-
-describe("terminal gateway URL storage", () => {
-  test("round-trip through localStorage", () => {
-    expect(loadTerminalGatewayUrl()).toBeNull();
-    saveTerminalGatewayUrl("https://gw.example");
-    expect(loadTerminalGatewayUrl()).toBe("https://gw.example");
-  });
-
-  test("save trims whitespace", () => {
-    saveTerminalGatewayUrl("  http://127.0.0.1:43690  ");
-    expect(localStorage.getItem(TERMINAL_GATEWAY_STORAGE_KEY)).toBe("http://127.0.0.1:43690");
-  });
-
-  test("saving null / empty removes the key", () => {
-    saveTerminalGatewayUrl("https://gw.example");
-    saveTerminalGatewayUrl(null);
-    expect(loadTerminalGatewayUrl()).toBeNull();
-    saveTerminalGatewayUrl("https://gw.example");
-    saveTerminalGatewayUrl("   ");
-    expect(loadTerminalGatewayUrl()).toBeNull();
-  });
-});
+// Terminal タブ (issue 2026-07-21-webui-terminal-tab-embed) の embed URL
+// 組み立てを固定する。gateway URL は daemon config.json → hello response
+// 経由で AppState に載る (旧 localStorage 方式は r46m7 で撤去)。ここでは
+// 純関数の URL 組み立てだけを検証し、AppState 反映は ws.ts のハンドシェイク
+// テスト側で見る。
+import { describe, expect, test } from "bun:test";
+import { buildTerminalEmbedUrl } from "../src/client/terminal-gateway-store.ts";
 
 describe("buildTerminalEmbedUrl", () => {
   test("returns null when gateway or sessionId is missing", () => {

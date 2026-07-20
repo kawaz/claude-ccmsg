@@ -285,4 +285,61 @@ describe("loadConfig", () => {
     ]);
     expect(warnings).toHaveLength(2);
   });
+
+  // terminal_gateway_url (issue 2026-07-21-webui-terminal-tab-embed):
+  // 独立トップレベルキー。session_launcher の有無とは無関係にパースする。
+  describe("terminal_gateway_url", () => {
+    test("valid https URL is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "https://gw.example" }));
+      expect(loadConfig(file, log).terminal_gateway_url).toBe("https://gw.example");
+      expect(warnings).toEqual([]);
+    });
+
+    test("valid http URL with port is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://127.0.0.1:43690" }));
+      expect(loadConfig(file, log).terminal_gateway_url).toBe("http://127.0.0.1:43690");
+    });
+
+    test("whitespace is trimmed", () => {
+      fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "  https://gw.example  " }));
+      expect(loadConfig(file, log).terminal_gateway_url).toBe("https://gw.example");
+    });
+
+    test("non-string / empty value degrades to unset with a warning", () => {
+      for (const value of [42, "", "   ", null]) {
+        fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
+        warnings = [];
+        expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    test("unparseable URL degrades to unset with a warning", () => {
+      fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "not a url" }));
+      expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+      expect(warnings).toHaveLength(1);
+    });
+
+    test("non-http scheme is rejected (ftp / javascript / file)", () => {
+      for (const value of ["ftp://gw.example", "javascript:alert(1)", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
+        warnings = [];
+        expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    test("coexists with session_launcher", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          session_launcher: { root_dirs: [dir], command: "run" },
+          terminal_gateway_url: "https://gw.example",
+        }),
+      );
+      const cfg = loadConfig(file, log);
+      expect(cfg.session_launcher).toBeDefined();
+      expect(cfg.terminal_gateway_url).toBe("https://gw.example");
+    });
+  });
 });

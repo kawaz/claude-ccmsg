@@ -104,12 +104,15 @@ export function SessionView({ state }: { state: AppState }) {
   // hasTranscript と同値だが、early return より前 = hooks 位置で必要なので
   // ここで引く)。
   const peer = state.peers.find((p) => p.sid === sid);
-  // Terminal タブは agent の hyoui_session_id が解決済みのセッションでのみ
-  // 表示する (issue 2026-07-21)。未解決のセッションでは Terminal タブ自体を
-  // 出さない (iframe の src が組めないため)。
+  // Terminal タブは agent の hyoui_session_id が解決済み かつ daemon の
+  // config.json で terminal_gateway_url が設定されているセッションでのみ
+  // 表示する (issue 2026-07-21, kawaz r46m7)。どちらか欠けていれば Terminal
+  // タブ自体を出さない (「設定していないユーザには存在しない機能」に倒す +
+  // iframe の src が組めない)。
   const agentForSid = sid ? state.agents.find((a) => a.sessionId === sid) : undefined;
   const hyouiSessionId = agentForSid?.hyoui_session_id;
-  const hasTerminal = !!hyouiSessionId;
+  const terminalGatewayUrl = state.terminalGatewayUrl;
+  const hasTerminal = !!hyouiSessionId && !!terminalGatewayUrl;
   // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1):
   //
   // - hasStatusFeed: the daemon's session_status_subscribe resolves the
@@ -251,6 +254,17 @@ export function SessionView({ state }: { state: AppState }) {
             Timeline
           </span>
         )}
+        {/* kawaz r46 mid=9,11: Terminal は Timeline の右隣 (類似ビュー同士を
+         * 隣接させる。Rooms の隣は変、の指摘)。 */}
+        {hasTerminal ? (
+          <button
+            type="button"
+            class={"session-tab" + (tab === "terminal" ? " active" : "")}
+            onClick={() => setLocalTab("terminal")}
+          >
+            Terminal
+          </button>
+        ) : null}
         {/* kawaz r26 mid=66: Rooms は一番右 (Files / Timeline / Status / Rooms) */}
         {/* kawaz r38 mid=7: Status タブはサブエージェント TL 閲覧中 (= state.
          * currentAgent が付いた状態) でも押せるようにする。押した時は親セッション
@@ -274,15 +288,6 @@ export function SessionView({ state }: { state: AppState }) {
         >
           Rooms
         </button>
-        {hasTerminal ? (
-          <button
-            type="button"
-            class={"session-tab" + (tab === "terminal" ? " active" : "")}
-            onClick={() => setLocalTab("terminal")}
-          >
-            Terminal
-          </button>
-        ) : null}
         <button
           type="button"
           class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
@@ -295,8 +300,8 @@ export function SessionView({ state }: { state: AppState }) {
           {state.pinnedSessions.has(sid) ? "Unpin" : "Pin"}
         </button>
       </div>
-      {tab === "terminal" && hyouiSessionId ? (
-        <TerminalPanel hyouiSessionId={hyouiSessionId} />
+      {tab === "terminal" && hyouiSessionId && terminalGatewayUrl ? (
+        <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
       ) : tab === "rooms" ? (
         <SessionRooms sid={sid} state={state} />
       ) : tab === "status" ? (
@@ -331,10 +336,13 @@ export function SessionView({ state }: { state: AppState }) {
           // スコープで左ツリー + 右コンテンツ)。agent_tree が空/undefined の
           // ときは左ペインを出さず Timeline 単独描画に倒す (無駄な空カラムを
           // 出さない)。
-          (sessionStatus?.agent_tree?.length ?? 0) > 0 ? (
+          (() => {
+            const g = sessionStatus?.agent_tree;
+            return g && (g.teammates.length > 0 || g.agents.length > 0 || g.workflows.length > 0);
+          })() ? (
             <TimelinePanes
               sid={sid}
-              agentTree={sessionStatus?.agent_tree ?? []}
+              agentTree={sessionStatus!.agent_tree!}
               timeline={tree.timeline}
               search={tree.timelineSearch}
               sessionStatus={sessionStatus}

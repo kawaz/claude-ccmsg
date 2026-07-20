@@ -28,6 +28,7 @@ import type {
   FsEditResponse,
   FsReadResponse,
   FsWriteResponse,
+  HelloResponse,
   InviteResponse,
   KickResponse,
   PeersResponse,
@@ -357,7 +358,17 @@ export function createWsClient(
     // the cheaper delta-replay path regardless of this flag.
     const spaHasState = getState().rooms.size > 0;
     try {
-      await send({ op: "hello", role: "user" });
+      const hello = await send<HelloResponse>({ op: "hello", role: "user" });
+      // Terminal タブの gateway URL (issue 2026-07-21) — daemon config.json 未設定
+      // なら省略されるので null に落とす。値が来ていれば AppState に反映し、
+      // SessionView は「hyoui_session_id 解決済み かつ この URL 有り」の
+      // 両条件でのみ Terminal タブを出す。
+      if (hello.ok) {
+        dispatch({
+          type: "terminal-gateway/loaded",
+          url: hello.terminal_gateway_url ?? null,
+        });
+      }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
       await send(

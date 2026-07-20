@@ -149,6 +149,12 @@ export interface AppState {
   daemonInfo: DaemonInfo | null;
   /** DR-0023 host translation capability, probed once after each hello. */
   hostTranslatorAvailable: boolean;
+  /** Web gateway (hyoui) の base URL。hello response の
+   * `terminal_gateway_url` を保持し、SessionView の Terminal タブは
+   * この値が非 null かつ agent の hyoui_session_id が解決済みの時のみ
+   * 表示する (issue 2026-07-21-webui-terminal-tab-embed)。daemon の
+   * `<dataDir>/config.json` の `terminal_gateway_url` 未設定なら null。 */
+  terminalGatewayUrl: string | null;
   /** which top-level screen the locator currently selects. */
   view: View;
   currentRoomId: string | null;
@@ -195,6 +201,7 @@ export function initialState(): AppState {
     agents: [],
     daemonInfo: null,
     hostTranslatorAvailable: false,
+    terminalGatewayUrl: null,
     view: "room",
     currentRoomId: null,
     currentMid: null,
@@ -219,6 +226,7 @@ export type Action =
   | { type: "agents/loaded"; agents: AgentInfo[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
   | { type: "translator/availability"; host: boolean }
+  | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "mention/toggle"; id: string }
@@ -638,6 +646,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "translator/availability":
       return { ...state, hostTranslatorAvailable: action.host };
+    case "terminal-gateway/loaded":
+      return { ...state, terminalGatewayUrl: action.url };
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":

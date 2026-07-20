@@ -976,7 +976,16 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         // deliberately didn't make.
         maybeBroadcastPeers(daemon);
       }
-      send(conn, { ok: true, version: daemon.version });
+      // user role の hello にだけ terminal_gateway_url を返す (issue
+      // 2026-07-21): session role は Terminal タブを持たないので不要。
+      // config.json 未設定なら省略 → webui は Terminal タブを出さない。
+      const terminalGatewayUrl =
+        newId.role === "user" ? daemon.config.terminal_gateway_url : undefined;
+      send(conn, {
+        ok: true,
+        version: daemon.version,
+        ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
+      });
       return;
     }
 
