@@ -1,6 +1,6 @@
 ---
 title: 1on1 宛 create-room/next-room の初期 msg にも session 発ガードを適用
-status: open
+status: resolved
 category: design
 created: 2026-07-17T17:21:32+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T03:40:19+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: create_room/next_room ハンドラで 1on1 宛かつ session 発の初期 --msg を sendReplyViaTlError で拒否済み。post 経路と同一文言・同一 code、broadcast 例外は one-on-one.test.ts で維持確認"]
 blocked_by:
 origin: 自リポ TODO
 ---
