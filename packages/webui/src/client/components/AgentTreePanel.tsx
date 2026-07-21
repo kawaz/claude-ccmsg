@@ -272,7 +272,8 @@ function WorkflowPhaseRow({
   workflowId: string;
   drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
-  const [open, setOpen] = useState(true);
+  // kawaz r46 mid=27: workflow 配下は内部含めて default 全閉
+  const [open, setOpen] = useState(false);
   // issue 2026-07-21 (#3): 宣言済みだが member 0 & total 0 の phase は「未開始」
   // として淡色表示 (index + title、TUI の「3 Finalize」形式)。members が居るが
   // 未 done は running 側なので dim にしない (done < total は進行中)。
@@ -298,6 +299,8 @@ function WorkflowPhaseRow({
         <span class="agent-tree-phase-title">{phase.title}</span>
         {isEmpty ? null : (
           <span class="agent-tree-phase-progress">
+            {/* kawaz r46 mid=27: 全完了は頭に ✓ */}
+            {phase.done >= phase.total && phase.total > 0 ? "✓ " : ""}
             {phase.done}/{phase.total}
           </span>
         )}
@@ -328,7 +331,8 @@ function WorkflowRunRow({
   run: AgentTreeWorkflowGroup;
   drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
-  const [open, setOpen] = useState(true);
+  // kawaz r46 mid=27: workflow 配下は内部含めて default 全閉
+  const [open, setOpen] = useState(false);
   return (
     <li class="agent-tree-workflow-run">
       <div class="agent-tree-workflow-run-row">
@@ -345,6 +349,8 @@ function WorkflowRunRow({
           {run.workflow_id}
         </span>
         <span class="agent-tree-workflow-run-progress">
+          {/* kawaz r46 mid=27: 全完了は頭に ✓ */}
+          {run.done >= run.total && run.total > 0 ? "✓ " : ""}
           {run.done}/{run.total}
         </span>
       </div>
