@@ -1,11 +1,11 @@
 ---
 title: セッションツリーの workflow 表示を TUI 同等にリッチ化 (モデル名/tok/状態注記/ドリルダウン)
-status: open
+status: wip
 category: design
 created: 2026-07-21T06:35:39+09:00
 last_read:
 open_entered: 2026-07-21T06:35:39+09:00
-wip_entered:
+wip_entered: 2026-07-21T09:36:41+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -51,3 +51,6 @@ kawaz 方針 (2026-07-21): Status タブの現在の workflow 表示は「まぁ
 ## TODO
 
 <!-- wip 時のみ -->
+
+- 実装着手 (2026-07-21): Status タブの workflow 表示ロジックのツリー流用 + pause→resume の run 重複 dedup + モデル名フル ID 統一を opus47-medium worker に委譲
+- ドリルダウン (Prompt/Activity/Outcome) は規模次第で Phase 分割の可能性あり
