@@ -18,6 +18,7 @@ import type {
 import {
   buildStatusSections,
   buildWorkflowDrilldown,
+  canonicalModelId,
   formatAgentLiveState,
   formatContextUsage,
   groupAgentsByPhase,
@@ -219,7 +220,9 @@ function WorkflowAgentLink({
           <summary>
             <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
             <span class="status-wf-agent-label">{agent.label}</span>
-            {agent.model ? <span class="status-wf-agent-model">{agent.model}</span> : null}
+            {agent.model ? (
+              <span class="status-wf-agent-model">{canonicalModelId(agent.model)}</span>
+            ) : null}
             {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
             <a class="status-wf-agent-tl" href={href}>
               TL
@@ -235,7 +238,9 @@ function WorkflowAgentLink({
         <div class="status-wf-agent-summary">
           <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
           <span class="status-wf-agent-label">{agent.label}</span>
-          {agent.model ? <span class="status-wf-agent-model">{agent.model}</span> : null}
+          {agent.model ? (
+            <span class="status-wf-agent-model">{canonicalModelId(agent.model)}</span>
+          ) : null}
           {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
           <a class="status-wf-agent-tl" href={href}>
             TL

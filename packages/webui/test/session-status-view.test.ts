@@ -14,6 +14,8 @@ import type {
 import {
   buildStatusSections,
   buildWorkflowDrilldown,
+  canonicalModelId,
+  dedupeWorkflowRunsByRunId,
   estimateContextLimit,
   formatAgentLiveState,
   formatContextUsage,
@@ -427,6 +429,128 @@ describe("formatSidebarBadge", () => {
       teammates: [],
     };
     expect(formatSidebarBadge(snapshot)).toBe("wf:1 bg:1 todo:0/1");
+  });
+});
+
+describe("canonicalModelId (issue 2026-07-21 #6)", () => {
+  test("既知の短縮エイリアスは full ID に寄せる", () => {
+    // workflowProgress や meta.json は呼び出し側の値をそのまま記録するため
+    // 「haiku」等の alias 表記が混じる。表示層で full ID 側に統一する。
+    expect(canonicalModelId("haiku")).toBe("claude-haiku-4-5-20251001");
+    expect(canonicalModelId("sonnet")).toBe("claude-sonnet-5");
+    expect(canonicalModelId("opus")).toBe("claude-opus-4-7");
+    expect(canonicalModelId("fable")).toBe("claude-fable-5");
+  });
+  test("既に full ID / 未知の値は passthrough (open-set)", () => {
+    // 新しいモデル alias や snapshot 付き ID を沈黙で切り落とさないため、
+    // 未知は生値のまま返す。
+    expect(canonicalModelId("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5-20251001");
+    expect(canonicalModelId("claude-fable-5[1m]")).toBe("claude-fable-5[1m]");
+    expect(canonicalModelId("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+  });
+});
+
+describe("dedupeWorkflowRunsByRunId (issue 2026-07-21 #5)", () => {
+  test("run_id が同じ複数 entry は 1 件に集約 (running 優先で最新 started_at)", () => {
+    // pause→resume で同一 runId の Workflow toolUseResult が taskId 別に複数出現する
+    // 実データ (wf_666fea3f-0be, 3 件観測) に対する fold。
+    const wfs = [
+      workflow({
+        task_id: "w1mej0pil",
+        status: "completed",
+        run_id: "wf_666fea3f-0be",
+        started_at: "2026-07-21T00:00:00.000Z",
+      }),
+      workflow({
+        task_id: "wwrizukyz",
+        status: "running",
+        run_id: "wf_666fea3f-0be",
+        started_at: "2026-07-21T00:05:00.000Z",
+      }),
+      workflow({
+        task_id: "wwwn9yid4",
+        status: "running",
+        run_id: "wf_666fea3f-0be",
+        started_at: "2026-07-21T00:10:00.000Z",
+      }),
+    ];
+    const out = dedupeWorkflowRunsByRunId(wfs);
+    expect(out).toHaveLength(1);
+    // running のうち最新 started_at → wwwn9yid4
+    expect(out[0]?.task_id).toBe("wwwn9yid4");
+  });
+  test("全て terminal なら started_at が最新の entry を採用", () => {
+    const wfs = [
+      workflow({
+        task_id: "a",
+        status: "completed",
+        run_id: "wf_11111111-abc",
+        started_at: "2026-07-21T00:00:00.000Z",
+      }),
+      workflow({
+        task_id: "b",
+        status: "failed",
+        run_id: "wf_11111111-abc",
+        started_at: "2026-07-21T01:00:00.000Z",
+      }),
+    ];
+    const out = dedupeWorkflowRunsByRunId(wfs);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.task_id).toBe("b");
+  });
+  test("run_id 未設定 (旧型 / 不正 run_id) の entry は passthrough (落とさない)", () => {
+    const wfs = [
+      workflow({ task_id: "old1", status: "running" }),
+      workflow({ task_id: "old2", status: "completed" }),
+    ];
+    expect(dedupeWorkflowRunsByRunId(wfs).map((w) => w.task_id)).toEqual(["old1", "old2"]);
+  });
+  test("出現順は初回登場位置を保つ (混在 case)", () => {
+    // run_id 有無を混ぜても表示順序が崩れないことを固定する
+    // (Status タブでの並びが不意にひっくり返らないため)。
+    const wfs = [
+      workflow({ task_id: "solo1", status: "running" }),
+      workflow({
+        task_id: "grpA1",
+        status: "running",
+        run_id: "wf_22222222-abc",
+        started_at: "2026-07-21T00:00:00.000Z",
+      }),
+      workflow({ task_id: "solo2", status: "completed" }),
+      workflow({
+        task_id: "grpA2",
+        status: "running",
+        run_id: "wf_22222222-abc",
+        started_at: "2026-07-21T00:05:00.000Z",
+      }),
+    ];
+    expect(dedupeWorkflowRunsByRunId(wfs).map((w) => w.task_id)).toEqual([
+      "solo1",
+      "grpA2",
+      "solo2",
+    ]);
+  });
+  test("splitWorkflows は dedup 済みの結果を running/done に振り分ける", () => {
+    // pause→resume の途中でスナップショットを撮ると completed + running の
+    // 両方が混じる (fold の別 taskId 由来)。dedup により running が採用されるため
+    // running セクションだけに 1 件、done セクションは空。
+    const wfs = [
+      workflow({
+        task_id: "old",
+        status: "completed",
+        run_id: "wf_33333333-abc",
+        started_at: "2026-07-21T00:00:00.000Z",
+      }),
+      workflow({
+        task_id: "new",
+        status: "running",
+        run_id: "wf_33333333-abc",
+        started_at: "2026-07-21T00:05:00.000Z",
+      }),
+    ];
+    const sections = splitWorkflows(wfs);
+    expect(sections.running.map((w) => w.task_id)).toEqual(["new"]);
+    expect(sections.done).toEqual([]);
   });
 });
 

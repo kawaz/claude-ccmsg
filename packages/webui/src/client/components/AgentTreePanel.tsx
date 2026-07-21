@@ -21,9 +21,42 @@ import type {
   AgentTreeNode,
   AgentTreeWorkflowGroup,
   AgentTreeWorkflowPhase,
+  SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import { useState } from "preact/hooks";
 import { agentTimelineHref } from "../locator.ts";
+import {
+  buildWorkflowDrilldown,
+  canonicalModelId,
+  dedupeWorkflowRunsByRunId,
+  type WorkflowDrilldownAgentView,
+} from "../session-status-view.ts";
+
+/** issue 2026-07-21 (workflow TUI parity): agentId → workflow drilldown view の
+ * 逆引き。同一 agentId が複数 run に出現する事はない (workflows/<runId>/ の
+ * 一意 subagent id) が、pause→resume で同じ run が複数 Workflow toolUseResult
+ * を持つ場合に備えて dedup 後の workflows から作る。呼び出し側 (TimelinePanes)
+ * が snapshot.workflows を渡さない場合は空 Map (enrichment 無し)。 */
+function buildAgentDrillLookup(
+  workflows: SessionWorkflowStatus[] | undefined,
+): Map<string, WorkflowDrilldownAgentView> {
+  const map = new Map<string, WorkflowDrilldownAgentView>();
+  if (!workflows) return map;
+  for (const wf of dedupeWorkflowRunsByRunId(workflows)) {
+    const drill = buildWorkflowDrilldown(wf);
+    if (!drill) continue;
+    for (const a of drill.agents) {
+      if (!map.has(a.agentId)) map.set(a.agentId, a);
+    }
+  }
+  return map;
+}
+
+function formatTokens(tokens: number | undefined): string | null {
+  if (tokens === undefined) return null;
+  if (tokens < 1000) return `${tokens}`;
+  return `${Math.round(tokens / 1000)}k`;
+}
 
 /** live vs 完了 の 2 分類。open-set の state 語彙から live 側を列挙し、
  * それ以外はすべて完了扱い (状態未知の "unknown" も控えめに完了へ)。 */
@@ -67,10 +100,15 @@ function AgentTreeNodeRow({
   sid,
   node,
   workflowId,
+  drillLookup,
 }: {
   sid: string;
   node: AgentTreeNode;
   workflowId?: string;
+  /** issue 2026-07-21 (workflow TUI parity): agentId → drilldown view lookup。
+   * Workflows section の member 行にモデル名/tokens/state 注記を出すためだけに
+   * 参照する (teammate / agent section の node には無い情報)。 */
+  drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
   const [open, setOpen] = useState(true);
   const label = displayLabel(node);
@@ -78,6 +116,16 @@ function AgentTreeNodeRow({
     ? agentTimelineHref(sid, { teammate: node.teammate_name })
     : agentTimelineHref(sid, { agentId: node.agent_id });
   const hasChildren = node.children.length > 0;
+  // Drill enrichment は workflow_member (workflowId prop 経由) 限定。
+  // teammate/agent 側 node には tokens 情報が無いので drillLookup を引かない
+  // (agentId 衝突は理論上無いが、責務境界を UI 側にも残す)。
+  const drill = workflowId ? drillLookup?.get(node.agent_id) : undefined;
+  const modelRaw = node.model ?? drill?.model;
+  const modelDisplay = modelRaw ? canonicalModelId(modelRaw) : null;
+  const tokensLabel = formatTokens(drill?.tokens);
+  // state 注記: workflow member は drill.state (done / running / error /
+  // progress / pending) を優先。それ以外は node.state (fold 由来)。
+  const stateNote = drill?.state ?? node.state;
   return (
     <li class="agent-tree-node" data-workflow-id={workflowId}>
       <div class="agent-tree-row">
@@ -100,11 +148,19 @@ function AgentTreeNodeRow({
         <a class="agent-tree-label" href={href} title={label}>
           {label}
         </a>
+        {modelDisplay ? <span class="agent-tree-model">{modelDisplay}</span> : null}
+        {tokensLabel ? <span class="agent-tree-tokens">{tokensLabel} tok</span> : null}
+        {stateNote ? <span class="agent-tree-state-note">{stateNote}</span> : null}
       </div>
       {hasChildren && open ? (
         <ul class="agent-tree-children">
           {node.children.map((child) => (
-            <AgentTreeNodeRow key={child.agent_id} sid={sid} node={child} />
+            <AgentTreeNodeRow
+              key={child.agent_id}
+              sid={sid}
+              node={child}
+              drillLookup={drillLookup}
+            />
           ))}
         </ul>
       ) : null}
@@ -209,33 +265,53 @@ function WorkflowPhaseRow({
   sid,
   phase,
   workflowId,
+  drillLookup,
 }: {
   sid: string;
   phase: AgentTreeWorkflowPhase;
   workflowId: string;
+  drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
   const [open, setOpen] = useState(true);
+  // issue 2026-07-21 (#3): 宣言済みだが member 0 & total 0 の phase は「未開始」
+  // として淡色表示 (index + title、TUI の「3 Finalize」形式)。members が居るが
+  // 未 done は running 側なので dim にしない (done < total は進行中)。
+  const isEmpty = phase.members.length === 0 && phase.total === 0;
+  const cls = "agent-tree-phase" + (isEmpty ? " agent-tree-phase-empty" : "");
   return (
-    <li class="agent-tree-phase">
+    <li class={cls}>
       <div class="agent-tree-phase-row">
-        <button
-          type="button"
-          class="agent-tree-caret"
-          aria-expanded={open}
-          aria-label={open ? "折りたたむ" : "展開する"}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? "▽" : "▶"}
-        </button>
+        {isEmpty ? (
+          <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
+        ) : (
+          <button
+            type="button"
+            class="agent-tree-caret"
+            aria-expanded={open}
+            aria-label={open ? "折りたたむ" : "展開する"}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "▽" : "▶"}
+          </button>
+        )}
+        <span class="agent-tree-phase-index">{phase.index}</span>
         <span class="agent-tree-phase-title">{phase.title}</span>
-        <span class="agent-tree-phase-progress">
-          {phase.done}/{phase.total}
-        </span>
+        {isEmpty ? null : (
+          <span class="agent-tree-phase-progress">
+            {phase.done}/{phase.total}
+          </span>
+        )}
       </div>
       {open && phase.members.length > 0 ? (
         <ul class="agent-tree-children">
           {phase.members.map((m) => (
-            <AgentTreeNodeRow key={m.agent_id} sid={sid} node={m} workflowId={workflowId} />
+            <AgentTreeNodeRow
+              key={m.agent_id}
+              sid={sid}
+              node={m}
+              workflowId={workflowId}
+              drillLookup={drillLookup}
+            />
           ))}
         </ul>
       ) : null}
@@ -243,7 +319,15 @@ function WorkflowPhaseRow({
   );
 }
 
-function WorkflowRunRow({ sid, run }: { sid: string; run: AgentTreeWorkflowGroup }) {
+function WorkflowRunRow({
+  sid,
+  run,
+  drillLookup,
+}: {
+  sid: string;
+  run: AgentTreeWorkflowGroup;
+  drillLookup?: Map<string, WorkflowDrilldownAgentView>;
+}) {
   const [open, setOpen] = useState(true);
   return (
     <li class="agent-tree-workflow-run">
@@ -267,7 +351,13 @@ function WorkflowRunRow({ sid, run }: { sid: string; run: AgentTreeWorkflowGroup
       {open ? (
         <ul class="agent-tree-children">
           {run.phases.map((p) => (
-            <WorkflowPhaseRow key={p.index} sid={sid} phase={p} workflowId={run.workflow_id} />
+            <WorkflowPhaseRow
+              key={p.index}
+              sid={sid}
+              phase={p}
+              workflowId={run.workflow_id}
+              drillLookup={drillLookup}
+            />
           ))}
           {run.unassigned.length > 0 ? (
             <li class="agent-tree-phase agent-tree-phase-unassigned">
@@ -282,6 +372,7 @@ function WorkflowRunRow({ sid, run }: { sid: string; run: AgentTreeWorkflowGroup
                     sid={sid}
                     node={m}
                     workflowId={run.workflow_id}
+                    drillLookup={drillLookup}
                   />
                 ))}
               </ul>
@@ -293,7 +384,15 @@ function WorkflowRunRow({ sid, run }: { sid: string; run: AgentTreeWorkflowGroup
   );
 }
 
-function WorkflowsGroup({ sid, runs }: { sid: string; runs: AgentTreeWorkflowGroup[] }) {
+function WorkflowsGroup({
+  sid,
+  runs,
+  drillLookup,
+}: {
+  sid: string;
+  runs: AgentTreeWorkflowGroup[];
+  drillLookup?: Map<string, WorkflowDrilldownAgentView>;
+}) {
   const [showCompleted, setShowCompleted] = useState(false);
   if (runs.length === 0) return null;
   const liveRuns: AgentTreeWorkflowGroup[] = [];
@@ -314,7 +413,7 @@ function WorkflowsGroup({ sid, runs }: { sid: string; runs: AgentTreeWorkflowGro
       {liveRuns.length > 0 ? (
         <ul class="agent-tree-root">
           {liveRuns.map((r) => (
-            <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} />
+            <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} drillLookup={drillLookup} />
           ))}
         </ul>
       ) : null}
@@ -331,7 +430,7 @@ function WorkflowsGroup({ sid, runs }: { sid: string; runs: AgentTreeWorkflowGro
           {showCompleted ? (
             <ul class="agent-tree-root agent-tree-completed-list">
               {completedRuns.map((r) => (
-                <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} />
+                <WorkflowRunRow key={r.workflow_id} sid={sid} run={r} drillLookup={drillLookup} />
               ))}
             </ul>
           ) : null}
@@ -341,12 +440,24 @@ function WorkflowsGroup({ sid, runs }: { sid: string; runs: AgentTreeWorkflowGro
   );
 }
 
-export function AgentTreePanel({ sid, tree }: { sid: string; tree: AgentTreeGroups }) {
+export function AgentTreePanel({
+  sid,
+  tree,
+  workflows,
+}: {
+  sid: string;
+  tree: AgentTreeGroups;
+  /** issue 2026-07-21 (workflow TUI parity): Status タブの workflow drilldown と
+   * 同じ SessionWorkflowStatus[] を渡すと、workflow member 行に model / tokens /
+   * state 注記が付く (無ければ従来通り [dot label] だけ)。 */
+  workflows?: SessionWorkflowStatus[];
+}) {
+  const drillLookup = buildAgentDrillLookup(workflows);
   return (
     <div class="agent-tree-panel">
       <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
       <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
-      <WorkflowsGroup sid={sid} runs={tree.workflows} />
+      <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
     </div>
   );
 }

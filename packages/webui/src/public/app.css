@@ -5122,6 +5122,40 @@ button.session-tab {
   flex: 1 1 auto;
 }
 
+/* issue 2026-07-21 (workflow TUI parity, #3): 宣言済みだが未開始 (members 0 /
+ * total 0) の phase は「index title」を淡色で見せて、run が今後どこへ進むかの
+ * 骨格を示す (TUI 側 /workflows の未着手行と同じ役割)。 */
+.agent-tree-phase-index {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+}
+.agent-tree-phase-empty {
+  opacity: 0.55;
+}
+.agent-tree-phase-empty .agent-tree-phase-title {
+  font-weight: 400;
+}
+
+/* issue 2026-07-21 (workflow TUI parity, #1/#2): workflow member 行に付く
+ * モデル名 / トークン数 / state 注記。ラベル本文とは視覚的に区別できる淡色
+ * かつ小さめのサイズで並べる (Status タブ .status-wf-agent-model と同格)。 */
+.agent-tree-model,
+.agent-tree-tokens,
+.agent-tree-state-note {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.agent-tree-tokens {
+  font-variant-numeric: tabular-nums;
+}
+.agent-tree-state-note {
+  font-style: italic;
+}
+
 /* r46 m5: AgentTreePanel は Timeline タブ内左ペイン (TimelinePanes) に置く。
  * .session-pane (overflow:hidden + flex column) の中で自前スクロールと
  * 内側パディングをここで担う (.file-tree の同種のルールと同じ役割)。 */

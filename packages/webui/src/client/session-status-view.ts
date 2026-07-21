@@ -44,9 +44,12 @@ export interface RunSections<T> {
 export function splitWorkflows(
   workflows: SessionWorkflowStatus[],
 ): RunSections<SessionWorkflowStatus> {
+  // issue 2026-07-21 (#5): dedup by run_id first so pause→resume の複数 Workflow
+  // toolUseResult が 1 行にまとまる。dedup 後の status で running/done を振り分ける。
+  const deduped = dedupeWorkflowRunsByRunId(workflows);
   return {
-    running: workflows.filter((w) => w.status === "running"),
-    done: workflows.filter((w) => w.status !== "running"),
+    running: deduped.filter((w) => w.status === "running"),
+    done: deduped.filter((w) => w.status !== "running"),
   };
 }
 
@@ -87,6 +90,75 @@ export function estimateContextLimit(tokens: number): 200_000 | 1_000_000 {
  * (launch-time 1M context pin). */
 export function shortModel(model: string): string {
   return model.startsWith("claude-") ? model.slice("claude-".length) : model;
+}
+
+/** issue 2026-07-21 (workflow ID 表示ゆれ #6): workflow の workflowProgress や
+ * meta.json では `model` が短縮エイリアス ("haiku") と full ID
+ * ("claude-haiku-4-5-20251001") で混在することがある (呼び出し側が渡した値
+ * をそのまま記録するため)。kawaz 裁定 (2026-07-21): 表示名 ("Haiku 4.5") への
+ * 正規化は情報を減らすため行わない — エイリアスだけを full ID に寄せて混在を
+ * 解消する。未知の値はそのまま通す (open-set: 新しいモデル alias が増えた時に
+ * 沈黙で切り落とさない)。 */
+const MODEL_ALIAS_TO_CANONICAL: Record<string, string> = {
+  haiku: "claude-haiku-4-5-20251001",
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-4-7",
+  fable: "claude-fable-5",
+};
+export function canonicalModelId(raw: string): string {
+  return MODEL_ALIAS_TO_CANONICAL[raw] ?? raw;
+}
+
+/** issue 2026-07-21 (#5): 同一 workflow run が pause→resume を経ると transcript
+ * に `Workflow` toolUseResult が複数回出現する。Fold は taskId をキーにするため
+ * (毎回異なる taskId で追記される) 同じ run_id を持つ workflow が WORKFLOWS
+ * セクションに複数行並ぶ。表示層でこれを畳む: run_id が同じ entry は 1 件に
+ * 集約する。集約規則:
+ *   - running が 1 件でもあれば running のうち最新 (started_at 降順) を採用
+ *   - すべて terminal なら started_at が最新のものを採用
+ * run_id 未設定 (旧型 workflow / RUN_ID_RE 不合致) は元の entry を落とさず並列で通す。
+ * 出現順は「run_id グループの初回登場位置」を保つ (fold 順を大きく崩さない)。 */
+export function dedupeWorkflowRunsByRunId(
+  workflows: SessionWorkflowStatus[],
+): SessionWorkflowStatus[] {
+  const groupsByRun = new Map<string, SessionWorkflowStatus[]>();
+  const orderKeys: string[] = [];
+  const passthrough: { key: string; wf: SessionWorkflowStatus }[] = [];
+  for (const wf of workflows) {
+    if (!wf.run_id) {
+      const key = `#task:${wf.task_id}`;
+      orderKeys.push(key);
+      passthrough.push({ key, wf });
+      continue;
+    }
+    const key = `#run:${wf.run_id}`;
+    const bucket = groupsByRun.get(key);
+    if (bucket) {
+      bucket.push(wf);
+    } else {
+      groupsByRun.set(key, [wf]);
+      orderKeys.push(key);
+    }
+  }
+  const startedAtMs = (s: string): number => Date.parse(s) || 0;
+  const pickRep = (bucket: SessionWorkflowStatus[]): SessionWorkflowStatus => {
+    const running = bucket.filter((w) => w.status === "running");
+    const candidates = running.length > 0 ? running : bucket;
+    return candidates.reduce((best, w) =>
+      startedAtMs(w.started_at) > startedAtMs(best.started_at) ? w : best,
+    );
+  };
+  const result: SessionWorkflowStatus[] = [];
+  const passthroughByKey = new Map(passthrough.map((p) => [p.key, p.wf] as const));
+  for (const key of orderKeys) {
+    const bucket = groupsByRun.get(key);
+    if (bucket) result.push(pickRep(bucket));
+    else {
+      const wf = passthroughByKey.get(key);
+      if (wf) result.push(wf);
+    }
+  }
+  return result;
 }
 
 /** Live state text from `claude agents --json`. Values are intentionally
@@ -169,8 +241,11 @@ function formatTeammatesLine(teammates: SessionTeammate[]): string | null {
  * workflow/todo と異なるため、2 行キャップの対象には含めず必ず追加行として
  * 出す (workflow/todo の "more" 集約とは独立)。 */
 export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLine[] {
+  // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
+  // (Status タブの WORKFLOWS 表示と数値を一致させる)。
+  const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
   const items: MiniSummaryLine[] = [
-    ...snapshot.workflows
+    ...dedupedWorkflows
       .filter((w) => w.status === "running")
       .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name })),
     ...snapshot.todos
@@ -319,7 +394,8 @@ export function buildWorkflowDrilldown(wf: SessionWorkflowStatus): WorkflowDrill
 export function formatSidebarBadge(snapshot: SessionStatusSnapshot | undefined): string | null {
   if (!snapshot) return null;
   const parts: string[] = [];
-  const wfRunning = snapshot.workflows.filter((w) => w.status === "running").length;
+  const dedupedWorkflows = dedupeWorkflowRunsByRunId(snapshot.workflows);
+  const wfRunning = dedupedWorkflows.filter((w) => w.status === "running").length;
   if (wfRunning > 0) parts.push(`wf:${wfRunning}`);
   const bgRunning = snapshot.background.filter((b) => b.status === "running").length;
   if (bgRunning > 0) parts.push(`bg:${bgRunning}`);
