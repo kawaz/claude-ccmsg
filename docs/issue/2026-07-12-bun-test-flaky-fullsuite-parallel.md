@@ -108,3 +108,20 @@ push gate で tailscale origin auto-allow が再 fail。ただし v0.68.2 で根
 
 次回調査時の観点: `startTestDaemon` の HTTP listen ready 判定 (`waitConnectable` が
 UDS のみで HTTP port の listen を待っていない可能性)、port 払い出しと listen 完了の race。
+
+## 追記: 2026-07-21 3 件目の根治 (v0.71.1) — tailscale origin auto-allow 第 2 モードの根治
+
+tailscale origin auto-allow の第 2 モード (`tooSoon` fetch の `ConnectionRefused`) を根治。
+
+真因は構造的な race: 当該テストのみ `freeTcpPort` の pre-known port を使い、
+`httpAddress()` (UDS ping = HTTP bind 完了後にしか返らない implicit wait) を
+経由しないため、UDS ready → HTTP bind 完了までの ~100ms の窓に fetch が刺さる。
+port 奪取説は失敗形態 (`ConnectionRefused` ≠ 別プロセス応答) で棄却、高負荷起因説は
+load<8 での再現で棄却。
+
+修正: fetch 前に `waitHttpConnectable` (25ms retry / 5s 上限) を挿入。daemon full
+suite で 5 連続 0 fail を確認。これで tailscale origin の既知 2 モードは両方根治した。
+
+残る散発 fail 候補 (いずれも「短い固定 timeout × 高負荷」同型の疑い、未調査):
+TranslationHelperService watchdog 系 / agents polling 系 / bin/ccmsg self-update
+timeout 系 / reconnect timeout。
