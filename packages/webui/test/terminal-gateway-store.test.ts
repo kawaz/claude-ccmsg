@@ -22,29 +22,29 @@ describe("buildTerminalEmbedUrl", () => {
 
   test("builds /sessions/<id>?embed=1 from https base URL", () => {
     expect(buildTerminalEmbedUrl("https://hyoui.example", "abc123")).toBe(
-      "https://hyoui.example/sessions/abc123?embed=1",
+      "https://hyoui.example/sessions/abc123?embed=1&resize=1",
     );
   });
 
   test("builds URL from http base with port", () => {
     expect(buildTerminalEmbedUrl("http://127.0.0.1:43690", "sid-42")).toBe(
-      "http://127.0.0.1:43690/sessions/sid-42?embed=1",
+      "http://127.0.0.1:43690/sessions/sid-42?embed=1&resize=1",
     );
   });
 
   test("trailing slash / existing path on base is normalized (path replaced)", () => {
     expect(buildTerminalEmbedUrl("https://gw.example/", "s")).toBe(
-      "https://gw.example/sessions/s?embed=1",
+      "https://gw.example/sessions/s?embed=1&resize=1",
     );
     // path が付いていても最終的な pathname は /sessions/<id> に差し替わる
     expect(buildTerminalEmbedUrl("https://gw.example/old/path", "s")).toBe(
-      "https://gw.example/sessions/s?embed=1",
+      "https://gw.example/sessions/s?embed=1&resize=1",
     );
   });
 
   test("sessionId is percent-encoded", () => {
     expect(buildTerminalEmbedUrl("https://gw.example", "a b/c")).toBe(
-      "https://gw.example/sessions/a%20b%2Fc?embed=1",
+      "https://gw.example/sessions/a%20b%2Fc?embed=1&resize=1",
     );
   });
 });

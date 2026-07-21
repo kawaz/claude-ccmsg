@@ -32,7 +32,9 @@ export function buildTerminalEmbedUrl(
   // (hyoui gateway の URL 仕様)。
   const embedded = new URL(base.toString());
   embedded.pathname = `/sessions/${encodeURIComponent(hyouiSessionId)}`;
-  embedded.search = "?embed=1";
+  // resize=1: iframe サイズに合わせた PTY 自動 resize (hyoui r45m11。embed は
+  // UI トグルが無く iframe の localStorage も分離されるため URL パラメータ方式)
+  embedded.search = "?embed=1&resize=1";
   embedded.hash = "";
   return embedded.toString();
 }
