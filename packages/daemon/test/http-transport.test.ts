@@ -571,6 +571,38 @@ exit 1
   return scriptPath;
 }
 
+/** Retries a plain TCP connect until the daemon's HTTP listener is accepting on `addr`,
+ *  same rationale as waitConnectable's retry-until-connectable but for HTTP (rather than
+ *  UDS). Needed only when a test bypasses httpAddress() — that helper's UDS ping is
+ *  naturally serialized behind the daemon's synchronous startup stretch (UDS listen →
+ *  HTTP listen → daemon.httpListeners assign all run before any event-loop callback,
+ *  so by the time ping is handled HTTP is bound). Tests that construct `addr` from a
+ *  pre-allocated port (freeTcpPort) never call ping, so they lose that implicit wait
+ *  and the first fetch can hit the ~100ms window between UDS ready (which is what
+ *  startTestDaemon awaits) and HTTP bind (which comes later in the daemon's startup).
+ *  Full-suite parallel load widens the window enough to become flaky. */
+async function waitHttpConnectable(addr: string, timeoutMs = 5000): Promise<void> {
+  const colon = addr.lastIndexOf(":");
+  const hostname = addr.slice(0, colon);
+  const port = Number(addr.slice(colon + 1));
+  const start = Date.now();
+  for (;;) {
+    try {
+      const s = await Bun.connect({
+        hostname,
+        port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      s.end();
+      return;
+    } catch {
+      // listener not up yet
+    }
+    if (Date.now() - start > timeoutMs) throw new Error(`http not connectable: ${addr}`);
+    await sleep(25);
+  }
+}
+
 /** Retries a same-origin-tagged fetch until the daemon's async serve-origin lookup has
  *  landed (or timeoutMs elapses) — there is no event to await for "subprocess finished
  *  and its result got folded into extraOrigins", so polling the externally-observable
@@ -634,6 +666,13 @@ describe("tailscale serve origin auto-allow (docs/issue/2026-07-11)", () => {
         try {
           const origin = `https://${hostname}`;
           const addr = `127.0.0.1:${port}`;
+
+          // startTestDaemon only awaits the UDS socket; this test constructs `addr` from
+          // a pre-allocated port rather than asking the daemon via httpAddress(), so we
+          // don't inherit that helper's implicit HTTP-ready wait. Do it explicitly here
+          // — otherwise the tooSoon fetch below can hit ECONNREFUSED under full-suite
+          // parallel load (see waitHttpConnectable doc).
+          await waitHttpConnectable(addr);
 
           // before auto-allow lands, the origin is not yet trusted (proves the WS
           // success below is actually caused by the auto-allow, not some pre-existing
