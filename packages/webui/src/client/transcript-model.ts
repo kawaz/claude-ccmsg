@@ -788,6 +788,7 @@ export type UserMessageKind =
   | "task-notification"
   | "workflow-resume"
   | "peer-message"
+  | "spawn-prompt"
   | "unknown-meta"
   | "unknown-array";
 
@@ -846,6 +847,19 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   const message = entry.message as Record<string, unknown> | undefined;
   const content = message?.content;
   const isMeta = entry.isMeta === true;
+
+  // Agent (subagent) transcript の先頭 user 行 = Agent tool の spawn prompt
+  // (親セッションから渡された指示書)。wire signal: `parentUuid` field が
+  // 明示的に `null` — 通常セッションの `type:"user"` 行は必ず親 uuid を持ち
+  // (最初の real prompt は `type:"last-prompt"` として書かれ、`type:"user"` の
+  // 側では常に parent-linked)、agent 転写だけがこの形になる (2026-07-21 実観測、
+  // ~/.claude-personal/projects/*/subagents/*.jsonl の全件で unique)。
+  // string 直接値 + プレフィックスマッチではなく wire フィールドで判定して、
+  // 「plain text spawn」「<teammate-message> wrapper 付き spawn」の両ケースを
+  // 同一 kind に落とす (peer-message 経路は「会話中に届いた relay」用として
+  // 温存)。property 自体が欠落しているケース (= 手組みテストフィクスチャや
+  // 旧形式) は判定を skip し、以下の既存分類に委ねる。
+  if ("parentUuid" in entry && entry.parentUuid === null) return "spawn-prompt";
 
   if (entry.promptSource === "system") {
     const origin =
@@ -1474,6 +1488,12 @@ export function parseSystemMessageFields(
       };
     }
     case "peer-message":
+      return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
+    case "spawn-prompt":
+      // team-lead 経由の Agent spawn は本文が <teammate-message ...>...</...>
+      // で来る (parsePeerMessage が from/summary を抽出可能) が、通常の Agent
+      // tool 呼び出しは plain text — 前者は peer 表示に載せ、後者は text で
+      // そのまま出す。どちらもラベル側で「spawn prompt」と識別済み。
       return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
     case "slash-command-invocation": {
       const fields = extractXmlFields(rawText);

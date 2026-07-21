@@ -1092,13 +1092,16 @@ function SystemMessageFold({
   const setOpen = peer ? setAgentOpen : setManualOpen;
   const taskSummary =
     kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
+  // kind 文字列は internal enum なので UI に出す時だけ人間可読形へ (現状
+  // spawn-prompt のみ special-case、他 kind は enum ラベルのまま踏襲)。
+  const kindLabel = kind === "spawn-prompt" ? "spawn prompt" : kind;
   const label = peer
-    ? `${kind} ← ${peer.from}`
+    ? `${kindLabel} ← ${peer.from}`
     : taskSummary && !open
-      ? `${kind} ${taskSummary}`
-      : kind;
+      ? `${kindLabel} ${taskSummary}`
+      : kindLabel;
   const decoration: FoldSummaryDecoration | undefined = peer
-    ? { kind: "agent", prefix: kind, name: peer.from, direction: "inbound" }
+    ? { kind: "agent", prefix: kindLabel, name: peer.from, direction: "inbound" }
     : taskSummary
       ? { kind: "task-notification" }
       : undefined;

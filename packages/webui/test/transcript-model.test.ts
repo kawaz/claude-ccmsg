@@ -1506,6 +1506,69 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
   });
+
+  // Agent (subagent) 転写の先頭 user 行 — Agent tool の spawn prompt (親からの
+  // 指示書)。wire signal は `parentUuid` field が明示的に `null` で、通常
+  // セッションの `type:"user"` 行 (常に parent-linked) と区別できる。plain text
+  // spawn / <teammate-message> wrapper 付き spawn の両方を同じ kind に落として
+  // 「親からの指示」と分かる fold 表示に載せる (kawaz r46m28 2026-07-21)。
+  describe("agent spawn prompt (parentUuid === null) — report category F", () => {
+    test("parentUuid:null with plain text -> spawn-prompt", () => {
+      const entry = {
+        type: "user",
+        parentUuid: null,
+        message: {
+          role: "user",
+          content: "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("spawn-prompt");
+    });
+
+    test("parentUuid:null with <teammate-message> wrapper (team-lead spawn) -> spawn-prompt", () => {
+      const entry = {
+        type: "user",
+        parentUuid: null,
+        message: {
+          role: "user",
+          content:
+            '<teammate-message teammate_id="team-lead" summary="タスク">本文</teammate-message>',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("spawn-prompt");
+    });
+
+    // parentUuid が string (通常の user 行) の時は spawn 判定に落ちてはならず、
+    // 既存分類が引き続き適用される。
+    test("parentUuid:string with plain text -> user-prompt", () => {
+      const entry = {
+        type: "user",
+        parentUuid: "a3eb3a8a-9c46-4d5a-93e9-5ceb24fe6957",
+        message: { role: "user", content: "hello" },
+      };
+      expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
+    // parentUuid property そのものが欠落しているケース (手組みフィクスチャ /
+    // 旧形式) は既存分類にフォールバックする — 既存 classifier テスト群を
+    // 破らないための境界。
+    test("parentUuid property missing entirely -> falls through to existing classification", () => {
+      const entry = { message: { role: "user", content: "hello" } };
+      expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
+    // parentUuid:null が最優先で走ることの確認: たとえ content が
+    // <teammate-message>/isMeta:true など既存分類のトリガを持っていても、
+    // spawn 判定が勝つ (agent 転写の先頭は文脈的に spawn 指示書として扱う)。
+    test("parentUuid:null overrides isMeta:true classification -> spawn-prompt", () => {
+      const entry = {
+        parentUuid: null,
+        isMeta: true,
+        message: { role: "user", content: "<command-name>/foo</command-name>" },
+      };
+      expect(classifyUserMessage(entry)).toBe("spawn-prompt");
+    });
+  });
 });
 
 // parseTranscriptLine's userMessageKind wiring (U2): only role:"user" turns
@@ -1635,6 +1698,24 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
     expect(line.userMessageKind).toBe("peer-message");
     expect(line.segments.some((s) => s.kind === "text")).toBe(true);
     expect(isUserTextTurn(line)).toBe(false);
+  });
+
+  // Agent spawn prompt (parentUuid:null) も system-origin と同じく boundary
+  // 化させず fold に落とす — SystemMessageFold 経由で「spawn prompt (親からの
+  // 指示)」として表示される (green user bubble にはしない、kawaz r46m28)。
+  test("agent spawn prompt (parentUuid:null) -> isUserTextTurn false, folds into surrounding group", () => {
+    const spawnLine = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        parentUuid: null,
+        message: { role: "user", content: "spawned task: investigate X" },
+      }),
+    );
+    expect(spawnLine.kind).toBe("turn");
+    if (spawnLine.kind !== "turn") return;
+    expect(spawnLine.userMessageKind).toBe("spawn-prompt");
+    expect(spawnLine.segments.some((s) => s.kind === "text")).toBe(true);
+    expect(isUserTextTurn(spawnLine)).toBe(false);
   });
 
   // Explicit userMessageKind:"user-prompt" (as parseTranscriptLine actually
@@ -2709,6 +2790,27 @@ describe("parseSystemMessageFields", () => {
       const raw = "Another Claude session sent a message: some future shape with no tag";
       expect(() => parseSystemMessageFields("peer-message", raw)).not.toThrow();
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({ display: "text", text: raw });
+    });
+  });
+
+  // spawn-prompt: agent 転写の先頭 user 行 (kawaz r46m28)。team-lead 経由の
+  // spawn は <teammate-message> wrapper で来るので peer 表示 (from/summary) に
+  // 載る。通常の Agent tool 直接呼び出しは plain text で来るので text 表示に
+  // 落とす。両ケースで壊れず表示できることを保証する。
+  describe("spawn-prompt", () => {
+    test("<teammate-message> wrapper (team-lead spawn) -> peer display with from + body", () => {
+      const raw =
+        '<teammate-message teammate_id="team-lead" summary="translate bug">TL 翻訳バグを調査してください。</teammate-message>';
+      expect(parseSystemMessageFields("spawn-prompt", raw)).toMatchObject({
+        display: "peer",
+        from: "team-lead",
+        summary: "translate bug",
+      });
+    });
+
+    test("plain text (bare Agent tool spawn) -> text display carrying the raw prompt unchanged", () => {
+      const raw = "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...";
+      expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({ display: "text", text: raw });
     });
   });
 
