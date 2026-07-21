@@ -5,12 +5,14 @@
 // the fs_read
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
+import type { JSX, RefObject } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import {
+  editorLineCount,
   errorMessage,
   inboxAutoFilename,
   isExternalFilePath,
@@ -48,6 +50,57 @@ function splitLines(content: string): string[] {
     lines.pop();
   }
   return lines;
+}
+
+/** 行番号ガター + textarea を横並びで表示する編集用エディタ。閲覧側の
+ * .viewer-body と font / 行番号スタイルを揃え、視覚行 = 論理行にするため
+ * wrap="off" + white-space: pre で運用する。行番号は textarea の scrollTop に
+ * 追従させる (行高は CSS で厳密に一致させてある)。 */
+function LineNumberedTextarea({
+  textareaRef,
+  value,
+  ariaLabel,
+  placeholder,
+  disabled,
+  onInput,
+  onKeyDown,
+}: {
+  textareaRef: RefObject<HTMLTextAreaElement>;
+  value: string;
+  ariaLabel: string;
+  placeholder?: string;
+  disabled?: boolean;
+  onInput: (e: Event) => void;
+  onKeyDown?: (e: KeyboardEvent) => void;
+}) {
+  const gutterRef = useRef<HTMLDivElement | null>(null);
+  const lineCount = editorLineCount(value);
+  const handleScroll = (e: Event) => {
+    const ta = e.currentTarget as HTMLTextAreaElement;
+    if (gutterRef.current) gutterRef.current.scrollTop = ta.scrollTop;
+  };
+  const items: JSX.Element[] = [];
+  for (let i = 1; i <= lineCount; i += 1) items.push(<div key={i}>{i}</div>);
+  return (
+    <div class="memo-editor-body-wrap">
+      <div ref={gutterRef} class="memo-editor-lineno" aria-hidden="true">
+        {items}
+      </div>
+      <textarea
+        ref={textareaRef}
+        class="memo-editor-body"
+        aria-label={ariaLabel}
+        placeholder={placeholder}
+        value={value}
+        disabled={disabled}
+        onInput={onInput}
+        onKeyDown={onKeyDown}
+        onScroll={handleScroll}
+        wrap="off"
+        spellcheck={false}
+      />
+    </div>
+  );
 }
 
 /** Full-pane new-memo editor. It deliberately owns only the draft and the
@@ -131,10 +184,9 @@ function InboxNewEditor({
         </div>
       </header>
       {error ? <p class="memo-editor-error">{error}</p> : null}
-      <textarea
-        ref={bodyRef}
-        class="memo-editor-body"
-        aria-label="メモ本文"
+      <LineNumberedTextarea
+        textareaRef={bodyRef}
+        ariaLabel="メモ本文"
         placeholder="メモ本文"
         value={content}
         onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
@@ -236,10 +288,9 @@ function TextFileEditor({
         </div>
       </header>
       {error ? <p class="memo-editor-error">{error}</p> : null}
-      <textarea
-        ref={bodyRef}
-        class="memo-editor-body"
-        aria-label="ファイル本文"
+      <LineNumberedTextarea
+        textareaRef={bodyRef}
+        ariaLabel="ファイル本文"
         value={content}
         onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
         onKeyDown={(e) => {

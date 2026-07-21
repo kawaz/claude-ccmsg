@@ -1016,3 +1016,12 @@ export function parsePinnedSessions(raw: string | null): SessionSearchHit[] {
 export function sortPinnedSessions(pins: SessionSearchHit[]): SessionSearchHit[] {
   return [...pins].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
+
+/** textarea の視覚行数 = 改行 + 1 (空文字でも 1 行、末尾改行はその後ろの
+ * 空行を 1 行として数える — textarea 上でカーソル可能な行と一致させる)。
+ * `splitLines` (閲覧用) と違って末尾改行を吸収しないのが意図。 */
+export function editorLineCount(value: string): number {
+  let count = 1;
+  for (let i = 0; i < value.length; i += 1) if (value.charCodeAt(i) === 10) count += 1;
+  return count;
+}
