@@ -1,6 +1,6 @@
 ---
 title: セッションツリーの workflow 表示を TUI 同等にリッチ化 (モデル名/tok/状態注記/ドリルダウン)
-status: wip
+status: resolved
 category: design
 created: 2026-07-21T06:35:39+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-21T09:36:41+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-21T10:06:51+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.71.0でモデルID+tok+状態注記の表示(#1-3)、run重複dedup(#5)、モデル名フルID統一(#6)を実装","discarded:ドリルダウン(#4)はkawaz裁定WFT-Q1=cでスコープ外(TLリンク経由でagent TLに飛べば代替可能なためツリーは一覧に徹する)","done:裁定時の追加要件(workflow配下default全閉+完了アイテムの✓前置)はv0.71.2予定分として次リリースに同乗"]
 blocked_by:
 origin: 自リポ TODO
 ---
