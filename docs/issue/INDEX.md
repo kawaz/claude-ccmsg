@@ -21,3 +21,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-21 | design | open | [session-tree-workflow-tui-parity](./2026-07-21-session-tree-workflow-tui-parity.md) | セッションツリーの webui workflow 表示を TUI 同等にリッチ化: モデル名/tok表示、状態注記、未開始フェーズの淡色表示、ノード選択ドリルダウン。v0.69.0 の AgentTreeGroups 上に構築 |
 | 2026-07-17 | bug | open | [session-search-double-escape-literal-miss](./2026-07-17-session-search-double-escape-literal-miss.md) | Session Search literal モードが二重 JSON エスケープの ccmsg メッセージ (queue-operation 行) を検索できない既存制限。プリフィルタ needle に二重エスケープ綴りも OR 追加が修正候補 |
 | 2026-07-17 | task | open | [session-creator-cwd-picker-unify](./2026-07-17-session-creator-cwd-picker-unify.md) | SessionCreator の cwd 選択 UI を統合 (kawaz 裁定)。手入力欄とツリー検索欄を1つに統合、選択後は確定表示+編集ボタンに切替。コマンドプレビュー workflow (wf_89c77eac) 完了後に着手 |
+| 2026-07-21 | design | open | [tl-auto-open-ur-fold](./2026-07-21-tl-auto-open-ur-fold.md) | TL AUTO OPEN トグルを U/R (常時表示行) にも適用したい構想。fold 構造への組み込みが前提で、kawaz の形の裁定待ち |
