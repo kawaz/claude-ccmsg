@@ -94,6 +94,37 @@ interface FavContext {
   onToggle: (path: string) => void;
 }
 
+/** Threaded down every DirNode so it can render its own "+ 新規" affordance
+ * and, when this DirNode is the target of an active create, the inline input
+ * row. Only one directory hosts a live input at a time; `activePath` is that
+ * directory's key (matches DirNode.path exactly — root-relative for contained,
+ * absolute for workspace/favorited dirs).
+ *
+ * The kind passed through determines which authorization surface fs_create
+ * uses on the daemon side — mirrors loadDir's own workspace/contained branch
+ * (isWorkspaceFilePath). External favorites are files not directories, so no
+ * DirNode ever receives kind="external"; the union stays two-valued here. */
+interface CreateContext {
+  activePath: string | null;
+  errorMsg: string | null;
+  submitting: boolean;
+  onStart: (dirPath: string, kind: "contained" | "workspace") => void;
+  onCancel: () => void;
+  onSubmit: (name: string) => void;
+}
+
+/** Threaded down to every FileNode so it can render its own delete button
+ * (visible only when the row is selected — the affordance is meant to be
+ * discoverable but not always-on, mirroring the "select then act" pattern
+ * kawaz asked for at r46 m25). External files (transcript-observed absolute
+ * paths outside the containment surfaces fs_delete supports) get a null
+ * context and no button. Confirmation lives in the callback (window.confirm
+ * with the target path), never in the daemon — the daemon has no
+ * confirmation channel. */
+interface DeleteContext {
+  onDelete: (filePath: string) => void;
+}
+
 /** fs_list round trip for one directory, shared by DirNode's click-to-expand,
  * FileTree's own root/auto-expand effects, and FilesPanes' post-memo-create
  * ancestor reload (webui simplify componentization, issue 2026-07-17) — all
@@ -153,6 +184,8 @@ function DirNode({
   ownWsPath,
   workspaceFolders,
   fav,
+  create,
+  del,
 }: {
   sid: string;
   path: string;
@@ -163,16 +196,29 @@ function DirNode({
   ownWsPath: string | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
+  create: CreateContext | null;
+  del: DeleteContext | null;
 }) {
   const { store, ws } = useApp();
   const expanded = tree.expanded.has(path);
   const entries = tree.dirs.get(path);
   const error = tree.dirErrors.get(path);
   const isOwnWs = ownWsPath !== null && path === ownWsPath;
+  const creatingHere = create !== null && create.activePath === path;
 
   function toggle() {
     store.dispatch({ type: "fs/dir-toggled", sid, path });
     if (!expanded && entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
+  }
+
+  function onNewFile(e: MouseEvent) {
+    e.stopPropagation();
+    if (!create) return;
+    // Auto-expand + eager-load so the newly-created file lands in an already
+    // visible listing (mirrors DirNode.toggle's own lazy-load path).
+    if (!expanded) store.dispatch({ type: "fs/dir-toggled", sid, path });
+    if (entries === undefined) void loadDir(store, ws, sid, path, workspaceFolders);
+    create.onStart(path, isWorkspaceFilePath(path, workspaceFolders) ? "workspace" : "contained");
   }
 
   return (
@@ -192,12 +238,32 @@ function DirNode({
           <FileTypeIcon kind={fileIconKind(name, "dir", expanded)} />
           {name}
         </button>
+        {create ? (
+          <button
+            type="button"
+            class="tree-new-file-toggle"
+            onClick={onNewFile}
+            aria-label={`${path} に新規ファイルを作成`}
+            title="このディレクトリに新規ファイル"
+          >
+            +
+          </button>
+        ) : null}
         {fav ? (
           <FavoriteToggle path={path} favorited={fav.favorites.has(path)} onToggle={fav.onToggle} />
         ) : null}
       </div>
       {expanded ? (
         <ul class="tree-children">
+          {creatingHere && create ? (
+            <NewFileInputRow
+              depth={depth + 1}
+              errorMsg={create.errorMsg}
+              submitting={create.submitting}
+              onCancel={create.onCancel}
+              onSubmit={create.onSubmit}
+            />
+          ) : null}
           {error ? (
             <li class="tree-error" style={{ paddingLeft: `${depth + 1}rem` }}>
               {error}
@@ -217,10 +283,67 @@ function DirNode({
               ownWsPath={ownWsPath}
               workspaceFolders={workspaceFolders}
               fav={fav}
+              create={create}
+              del={del}
             />
           )}
         </ul>
       ) : null}
+    </li>
+  );
+}
+
+/** Inline file-name editor rendered as the first child of the directory being
+ * created into. Enter submits, Esc cancels, blur without submit cancels.
+ * Kept local (uncontrolled input value) since the FileTree-level context only
+ * owns the "which dir is active" bit, not per-keystroke draft state — the
+ * name is only observed at submit time. */
+function NewFileInputRow({
+  depth,
+  errorMsg,
+  submitting,
+  onCancel,
+  onSubmit,
+}: {
+  depth: number;
+  errorMsg: string | null;
+  submitting: boolean;
+  onCancel: () => void;
+  onSubmit: (name: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const value = inputRef.current?.value.trim() ?? "";
+      if (value === "") return;
+      onSubmit(value);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  }
+  return (
+    <li class="tree-new-file-row" style={{ paddingLeft: `${depth}rem` }}>
+      <input
+        ref={inputRef}
+        type="text"
+        class="tree-new-file-input"
+        placeholder="ファイル名"
+        disabled={submitting}
+        onKeyDown={onKeyDown}
+        // A pointerdown outside the input in the same tree exits the mode;
+        // rely on blur since input focus doesn't survive the outer click.
+        onBlur={() => {
+          // Defer: if user clicked a "submit"-adjacent element there wouldn't
+          // be any here (Enter is the submit path), so blur == cancel.
+          if (!submitting) onCancel();
+        }}
+      />
+      {errorMsg ? <span class="tree-new-file-error">{errorMsg}</span> : null}
     </li>
   );
 }
@@ -233,6 +356,7 @@ function FileNode({
   selected,
   symlink,
   fav,
+  del,
 }: {
   sid: string;
   path: string;
@@ -241,6 +365,7 @@ function FileNode({
   selected: boolean;
   symlink: boolean;
   fav: FavContext | null;
+  del: DeleteContext | null;
 }) {
   // Judgment call (DR-0008): fs_list reports type "symlink" for the link
   // itself and never resolves whether the target is a file or a directory
@@ -267,6 +392,21 @@ function FileNode({
           <FileTypeIcon kind={fileIconKind(name, symlink ? "symlink" : "file")} />
           {name}
         </a>
+        {del && selected ? (
+          <button
+            type="button"
+            class="tree-delete-toggle"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              del.onDelete(path);
+            }}
+            aria-label={`${path} を削除`}
+            title="このファイルを削除"
+          >
+            ×
+          </button>
+        ) : null}
         {fav ? (
           <FavoriteToggle path={path} favorited={fav.favorites.has(path)} onToggle={fav.onToggle} />
         ) : null}
@@ -285,6 +425,8 @@ function Nodes({
   ownWsPath,
   workspaceFolders,
   fav,
+  create,
+  del,
   sorted = false,
 }: {
   sid: string;
@@ -296,6 +438,8 @@ function Nodes({
   ownWsPath: string | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
+  create: CreateContext | null;
+  del: DeleteContext | null;
   /** Skips the directories-first/alphabetical sortEntries pass — set by
    * FileTree's repo-container-root ws list, which has already ordered
    * `entries` itself (own workspace pinned first, see workspaceRootEntries)
@@ -323,6 +467,8 @@ function Nodes({
               ownWsPath={ownWsPath}
               workspaceFolders={workspaceFolders}
               fav={fav}
+              create={create}
+              del={del}
             />
           );
         }
@@ -345,6 +491,7 @@ function Nodes({
             selected={selectedPath === path}
             symlink={entry.type === "symlink"}
             fav={fav}
+            del={del}
           />
         );
       })}
@@ -444,6 +591,118 @@ export function FileTree({
   const sortedFavorites = sortFavorites(favorites);
   const sortedExternalFiles = sortExternalFiles(externalFiles);
 
+  // New-file creation state (kawaz r46 mid=24): kept here so at most one
+  // DirNode hosts the inline input at a time — sharing a single `activePath`
+  // slot across all rows means a user starting a create somewhere else
+  // implicitly exits any prior one. Pure component state (no reducer) since
+  // it's ephemeral UI that dies with the session tab (same posture as
+  // FilesPanes' memoEditorOpen). Kind is captured at onStart time so submit
+  // doesn't have to re-derive it from the path (workspace vs contained).
+  const [createActive, setCreateActive] = useState<{
+    path: string;
+    kind: "contained" | "workspace";
+  } | null>(null);
+  const [createErr, setCreateErr] = useState<string | null>(null);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  // Reset the mode on sid switch (session tabs are independent) — same idea
+  // as FilesPanes' setMemoEditorOpen(false) on [sid, selectedPath] change.
+  useEffect(() => {
+    setCreateActive(null);
+    setCreateErr(null);
+    setCreateSubmitting(false);
+  }, [sid]);
+  const createCtx: CreateContext = {
+    activePath: createActive?.path ?? null,
+    errorMsg: createErr,
+    submitting: createSubmitting,
+    onStart: (dirPath, kind) => {
+      setCreateActive({ path: dirPath, kind });
+      setCreateErr(null);
+    },
+    onCancel: () => {
+      if (createSubmitting) return;
+      setCreateActive(null);
+      setCreateErr(null);
+    },
+    onSubmit: (name) => {
+      if (!createActive || createSubmitting) return;
+      // Reject anything that would escape the selected directory: no slashes,
+      // no ".." — the server enforces containment too, but a client-side
+      // check gives a faster / clearer error.
+      if (name.includes("/") || name === "." || name === "..") {
+        setCreateErr("ファイル名にスラッシュや . / .. は使えません");
+        return;
+      }
+      const dirPath = createActive.path;
+      const kind = createActive.kind;
+      const target =
+        kind === "workspace"
+          ? dirPath.endsWith("/")
+            ? `${dirPath}${name}`
+            : `${dirPath}/${name}`
+          : dirPath === ""
+            ? name
+            : `${dirPath}/${name}`;
+      setCreateSubmitting(true);
+      setCreateErr(null);
+      ws.fsCreate(sid, target, kind, "")
+        .then(async (res) => {
+          if (!res.ok) {
+            setCreateErr(res.error.msg);
+            setCreateSubmitting(false);
+            return;
+          }
+          // Refresh the containing listing so the new leaf appears; use the
+          // dirPath we captured (server echoes a normalized realpath which
+          // may differ if an in-tree symlink resolved elsewhere — but the
+          // tree keys off the lexical path the user browsed by).
+          await loadDir(store, ws, sid, dirPath, workspaceFolders);
+          setCreateActive(null);
+          setCreateSubmitting(false);
+          // Open the new file in the viewer pane — mirrors FilesPanes'
+          // onMemoCreated navigation. Use the client-side target for the URL
+          // (same lexical space as fs_list results).
+          location.assign(fileHref(sid, target));
+        })
+        .catch((err) => {
+          setCreateErr(errorMessage(err));
+          setCreateSubmitting(false);
+        });
+    },
+  };
+
+  // File delete (kawaz r46 m25): confirm() gate on the client, fs_delete on
+  // the daemon. Success → refresh the containing dir listing so the row
+  // disappears; the currently-shown FileViewer keeps its stale content (an
+  // fs_read follow-up would fail with not_found, which the viewer handles as
+  // any read error). External paths (path.startsWith("/") and NOT under a
+  // workspace folder) get no delete button (deleteCtx passed as null for that
+  // section) since fs_delete's kind union doesn't cover them.
+  const deleteCtx: DeleteContext = {
+    onDelete: (filePath: string) => {
+      // eslint-disable-next-line no-alert -- kawaz r46 m25 explicitly asked for confirm() gate; a modal would be nicer UI but is not in scope for this task.
+      const ok = window.confirm(`このファイルを削除しますか?\n\n${filePath}`);
+      if (!ok) return;
+      const kind: "contained" | "workspace" = isWorkspaceFilePath(filePath, workspaceFolders)
+        ? "workspace"
+        : "contained";
+      const slash = filePath.lastIndexOf("/");
+      const parentPath = slash < 0 ? "" : filePath.slice(0, slash);
+      ws.fsDelete(sid, filePath, kind)
+        .then(async (res) => {
+          if (!res.ok) {
+            // eslint-disable-next-line no-alert -- surface daemon reject reasons to the user; a status toast would be better but out of scope here.
+            window.alert(`削除に失敗しました: ${res.error.msg}`);
+            return;
+          }
+          await loadDir(store, ws, sid, parentPath, workspaceFolders);
+        })
+        .catch((err) => {
+          window.alert(`削除に失敗しました: ${errorMessage(err)}`);
+        });
+    },
+  };
+
   // Root listing loads eagerly on mount / session switch — everything below
   // it is lazy, click-driven (see DirNode.toggle above). Gated on connStatus
   // so a direct `#s<sid>` link opened before the WS handshake completes
@@ -522,6 +781,13 @@ export function FileTree({
           <ul class="tree-root tree-favorites">
             {sortedFavorites.map((path) => {
               const { kind, symlink } = favoriteEntryKind(path, tree);
+              // Favorites can hold either project-relative or /-prefixed
+              // external paths. External paths (starts with "/" and NOT a
+              // workspace folder path) can't be deleted through fs_delete
+              // (external is outside its authorization surfaces), so drop the
+              // affordance for those rows only.
+              const isExternal =
+                path.startsWith("/") && !isWorkspaceFilePath(path, workspaceFolders);
               return kind === "dir" ? (
                 <DirNode
                   key={path}
@@ -534,6 +800,8 @@ export function FileTree({
                   ownWsPath={ownWsPath}
                   workspaceFolders={workspaceFolders}
                   fav={fav}
+                  create={createCtx}
+                  del={isExternal ? null : deleteCtx}
                 />
               ) : (
                 <FileNode
@@ -545,6 +813,7 @@ export function FileTree({
                   selected={tree.selectedPath === path}
                   symlink={symlink}
                   fav={fav}
+                  del={isExternal ? null : deleteCtx}
                 />
               );
             })}
@@ -575,6 +844,8 @@ export function FileTree({
                 ownWsPath={ownWsPath}
                 workspaceFolders={workspaceFolders}
                 fav={fav}
+                create={createCtx}
+                del={deleteCtx}
               />
             ))}
           </ul>
@@ -620,6 +891,8 @@ export function FileTree({
             ownWsPath={ownWsPath}
             workspaceFolders={workspaceFolders}
             fav={fav}
+            create={createCtx}
+            del={deleteCtx}
             sorted={rootLabel !== null}
           />
         </ul>
@@ -643,6 +916,9 @@ export function FileTree({
                 selected={tree.selectedPath === externalPath}
                 symlink={false}
                 fav={fav}
+                // DR-0024 external files live outside fs_delete's authorization
+                // surfaces (contained | workspace) — no delete affordance.
+                del={null}
               />
             ))}
           </ul>

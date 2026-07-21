@@ -35,6 +35,8 @@ import { dirTree } from "./dir-tree.ts";
 import {
   fsList,
   fsListWorkspace,
+  fsCreate,
+  fsDelete,
   fsEdit,
   fsRead,
   fsReadExternal,
@@ -846,6 +848,8 @@ const IDENTITY_OPS = new Set([
   "fs_list_workspace",
   "fs_read_workspace",
   "fs_write",
+  "fs_create",
+  "fs_delete",
   "fs_edit",
   "transcript_read",
   "session_search",
@@ -1837,6 +1841,47 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const result = fsWrite(daemon.sessions, req.sid, req.path, req.content);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_create": {
+      // user-role only: fs_create is the symmetric partner of fs_edit under
+      // the same authorization surfaces (contained | workspace). A session
+      // (AI) creates files via its own tool loop, not through the daemon.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_create' requires user role");
+        return;
+      }
+      const result = fsCreate(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+        req.kind,
+        req.content,
+      );
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_delete": {
+      // user-role only: file deletion is a viewer feature (kawaz r46 m25),
+      // gated behind an explicit confirm() dialog on the client side. A
+      // session (AI) does not delete files via the daemon.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_delete' requires user role");
+        return;
+      }
+      const result = fsDelete(daemon.sessions, daemon.sessionStatus, req.sid, req.path, req.kind);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

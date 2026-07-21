@@ -24,6 +24,8 @@ import type {
   DeliveredEvent,
   DirTreeResponse,
   ErrorResponse,
+  FsCreateResponse,
+  FsDeleteResponse,
   FsListResponse,
   FsEditResponse,
   FsReadResponse,
@@ -144,6 +146,24 @@ export interface WsHandle {
    * root. Never overwrites — an existing path replies `file_exists`, a path
    * outside cwd/docs/inbox/ replies `path_not_writable`. */
   fsWrite(sid: string, path: string, content: string): Promise<FsWriteResponse | ErrorResponse>;
+  /** Create a new empty (or short-content) text file at `path` under fs_edit's
+   * authorization surfaces (kind ∈ {contained, workspace}). Symmetric partner
+   * of fsEdit — used by the FileTree "+" affordance to create a file in the
+   * currently-shown directory. Existing paths reply `file_exists`. */
+  fsCreate(
+    sid: string,
+    path: string,
+    kind: "contained" | "workspace",
+    content: string,
+  ): Promise<FsCreateResponse | ErrorResponse>;
+  /** Delete a regular file (viewer trash action, kawaz r46 m25). File-only,
+   * never recursive; refuses directories/symlinks. The caller is expected to
+   * confirm() before invoking — the daemon has no confirmation surface. */
+  fsDelete(
+    sid: string,
+    path: string,
+    kind: "contained" | "workspace",
+  ): Promise<FsDeleteResponse | ErrorResponse>;
   /** Overwrite an existing text file (viewer edit action). `kind` picks the
    * authorization surface — the same three the read ops use. `expectedMtime`
    * and `expectedSize` come from the FsReadResponse the viewer opened with;
@@ -645,6 +665,8 @@ export function createWsClient(
     fsListWorkspace: (sid, path) => send({ op: "fs_list_workspace", sid, path }),
     fsReadWorkspace: (sid, path) => send({ op: "fs_read_workspace", sid, path }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
+    fsCreate: (sid, path, kind, content) => send({ op: "fs_create", sid, path, kind, content }),
+    fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),
     fsEdit: (sid, path, kind, content, expected_mtime, expected_size) =>
       send({ op: "fs_edit", sid, path, kind, content, expected_mtime, expected_size }),
     transcriptRead: (sid, opts) =>

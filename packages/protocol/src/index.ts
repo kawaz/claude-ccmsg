@@ -984,6 +984,46 @@ export interface FsWriteRequest {
  * copy. Binary files (NUL byte in current on-disk head) are refused with
  * `not_a_text_file` so this op can never turn a binary into a UTF-8 blob.
  */
+/**
+ * Create a new empty (or short-content) text file at `path` under the same
+ * authorization surfaces fs_edit / fs_read use (kind ∈ {contained, workspace}
+ * — external is not supported because that allowlist is per-file, not per-dir,
+ * so there is no notion of a "directory to create in"). Unlike fs_write
+ * (inbox-only) this op accepts any writable location inside the read
+ * containment, making it the symmetric partner of fs_edit: fs_edit overwrites,
+ * fs_create creates. Never overwrites — an existing path replies `file_exists`
+ * (O_EXCL). Parent directory must already exist; the op does not mkdir. `kind`
+ * mirrors fs_edit exactly so no new trust surface is introduced.
+ */
+export interface FsCreateRequest {
+  op: "fs_create";
+  sid: string;
+  /** relative when kind="contained", absolute when kind="workspace" — mirrors
+   * the corresponding read op's path contract exactly. */
+  path: string;
+  kind: "contained" | "workspace";
+  /** UTF-8 text content, capped at FS_READ_MAX_BYTES. Empty string is fine
+   * (the common case — the UI creates an empty file and lets the user edit). */
+  content: string;
+}
+
+/**
+ * Delete an existing regular file under fs_edit's authorization surfaces
+ * (kind ∈ {contained, workspace} — external is not supported: the transcript
+ * allowlist is read-oriented; deleting a file the user only observed via
+ * transcript is out of scope). Refuses directories, symlinks, and every
+ * non-regular file — this op only ever unlinks real files the user could see
+ * as a leaf in the tree. Never recursive.
+ */
+export interface FsDeleteRequest {
+  op: "fs_delete";
+  sid: string;
+  /** relative when kind="contained", absolute when kind="workspace" — same
+   * path contract as fs_edit/fs_read. */
+  path: string;
+  kind: "contained" | "workspace";
+}
+
 export interface FsEditRequest {
   op: "fs_edit";
   sid: string;
@@ -1169,6 +1209,8 @@ export type Request =
   | FsListWorkspaceRequest
   | FsReadWorkspaceRequest
   | FsWriteRequest
+  | FsCreateRequest
+  | FsDeleteRequest
   | FsEditRequest
   | TranscriptReadRequest
   | SessionSearchRequest
@@ -1404,6 +1446,20 @@ export interface FsWriteResponse {
   /** normalized path relative to the session root */
   path: string;
 }
+export interface FsCreateResponse {
+  ok: true;
+  sid: string;
+  /** normalized path (relative for contained — always relative to the session
+   * containment root, matching fs_list — absolute for workspace, matching the
+   * FsListWorkspace echo). */
+  path: string;
+}
+export interface FsDeleteResponse {
+  ok: true;
+  sid: string;
+  /** echoed request path (relative for contained, absolute for workspace) */
+  path: string;
+}
 export interface FsEditResponse {
   ok: true;
   sid: string;
@@ -1568,6 +1624,8 @@ export type Response =
   | FsListResponse
   | FsReadResponse
   | FsWriteResponse
+  | FsCreateResponse
+  | FsDeleteResponse
   | FsEditResponse
   | TranscriptReadResponse
   | AgentsResponse

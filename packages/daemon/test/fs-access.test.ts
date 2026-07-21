@@ -1895,6 +1895,348 @@ describe("fs_edit (viewer text edit)", () => {
   );
 });
 
+// fs_create (kawaz r46 mid=24, symmetric partner of fs_edit): create a new
+// file under fs_read's containment surface. Reuses resolveContained /
+// resolveWorkspaceContained-equivalent walks, so the containment corner cases
+// are covered by fs_list/fs_read/fs_write; this describe focuses on the
+// create-specific behavior: role gate, existing conflict, missing parent,
+// path traversal refusal.
+describe("fs_create (kawaz r46 mid=24)", () => {
+  test(
+    "role gate: session role cannot call fs_create",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const session = await sessionAt(ctx, "A", root);
+        const res = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_create",
+          sid: "A",
+          path: "new.txt",
+          kind: "contained",
+          content: "",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("bad_request");
+        expect(fs.existsSync(path.join(root, "new.txt"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "happy path: creates an empty text file at a fresh path in root",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_create",
+          sid: "A",
+          path: "new.txt",
+          kind: "contained",
+          content: "",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.path).toBe("new.txt");
+        expect(fs.readFileSync(path.join(root, "new.txt"), "utf-8")).toBe("");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "happy path: creates a file inside an existing subdirectory (mirrors what the FileTree '+' does)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        fs.mkdirSync(path.join(root, "sub"));
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_create",
+          sid: "A",
+          path: "sub/hello.md",
+          kind: "contained",
+          content: "hi\n",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.path).toBe("sub/hello.md");
+        expect(fs.readFileSync(path.join(root, "sub/hello.md"), "utf-8")).toBe("hi\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "file_exists: refuses to overwrite an existing file",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        fs.writeFileSync(path.join(root, "dup.txt"), "original\n");
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_create",
+          sid: "A",
+          path: "dup.txt",
+          kind: "contained",
+          content: "clobber\n",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("file_exists");
+        // Original bytes preserved: create must never overwrite.
+        expect(fs.readFileSync(path.join(root, "dup.txt"), "utf-8")).toBe("original\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "not_found: refuses to create when the parent directory does not exist (never mkdir)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_create",
+          sid: "A",
+          path: "missing/leaf.txt",
+          kind: "contained",
+          content: "",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("not_found");
+        expect(fs.existsSync(path.join(root, "missing"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "containment: an absolute path outside the session root is path_forbidden",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_create",
+          sid: "A",
+          path: path.join(outside, "escape.txt"),
+          kind: "contained",
+          content: "should not land",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.existsSync(path.join(outside, "escape.txt"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "containment: a ../ escape is path_forbidden even with a real ancestor sibling",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        // Sibling of root that a naive lexical join would reach via "../".
+        const sibling = path.join(path.dirname(root), "sibling");
+        fs.mkdirSync(sibling, { recursive: true });
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_create",
+          sid: "A",
+          path: "../sibling/escape.txt",
+          kind: "contained",
+          content: "no",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.existsSync(path.join(sibling, "escape.txt"))).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+// fs_delete (kawaz r46 m25, symmetric partner of fs_create on the destructive
+// side): unlink a regular file under fs_edit's authorization surfaces. Reuses
+// fsResolveForServe so the containment corner cases are covered by the
+// fs_read/fs_edit suites; this describe focuses on the delete-specific
+// behavior: role gate, happy path, directory refusal, authorization refusal.
+describe("fs_delete (kawaz r46 m25)", () => {
+  test(
+    "role gate: session role cannot call fs_delete",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "keep.txt");
+        fs.writeFileSync(target, "keep\n");
+        const session = await sessionAt(ctx, "A", root);
+        const res = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_delete",
+          sid: "A",
+          path: "keep.txt",
+          kind: "contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("bad_request");
+        expect(fs.existsSync(target)).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "happy path: deletes an existing regular file",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const target = path.join(root, "gone.txt");
+        fs.writeFileSync(target, "bye\n");
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: true; sid: string; path: string }>({
+          op: "fs_delete",
+          sid: "A",
+          path: "gone.txt",
+          kind: "contained",
+        });
+        expect(res.ok).toBe(true);
+        expect(res.path).toBe("gone.txt");
+        expect(fs.existsSync(target)).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "directory refusal: fs_delete refuses to unlink a directory",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        const dir = path.join(root, "keepdir");
+        fs.mkdirSync(dir);
+        fs.writeFileSync(path.join(dir, "child.txt"), "child\n");
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_delete",
+          sid: "A",
+          path: "keepdir",
+          kind: "contained",
+        });
+        expect(res.ok).toBe(false);
+        // fsResolveForServe rejects non-files with invalid_args; the message
+        // may originate from either the resolver or fs_delete's own re-check,
+        // but the outcome is the same: no unlink.
+        expect(res.error.code).toBe("invalid_args");
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(fs.existsSync(path.join(dir, "child.txt"))).toBe(true);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "containment: an absolute path outside the session root is path_forbidden and does not unlink",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const outsideFile = path.join(outside, "safe.txt");
+        fs.writeFileSync(outsideFile, "safe\n");
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_delete",
+          sid: "A",
+          path: outsideFile,
+          kind: "contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("path_forbidden");
+        expect(fs.readFileSync(outsideFile, "utf-8")).toBe("safe\n");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "not_found: deleting a missing path replies not_found",
+    async () => {
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      try {
+        await sessionAt(ctx, "A", root);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_delete",
+          sid: "A",
+          path: "missing.txt",
+          kind: "contained",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("not_found");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
 // repo_root containment (DR-0008 addendum): a session's self-declared
 // repo_root, once hello-time-validated (fs-access.ts's validateRepoRoot),
 // widens fs_list/fs_read's containment root from "just this session's cwd" to

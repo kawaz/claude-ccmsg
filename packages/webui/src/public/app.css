@@ -2317,6 +2317,103 @@ button.session-tab {
   color: var(--fg);
 }
 
+/* Per-DirNode "+ 新規ファイル" affordance (kawaz r46 mid=24). Sits inside
+ * .tree-row-line as a flex sibling of the row button, next to (before) the
+ * ★ toggle so both trailing affordances line up at the pane edge. Same
+ * "small glyph, generous touch target" split as .tree-fav-toggle. */
+.tree-new-file-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tree-new-file-toggle:hover {
+  color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .tree-new-file-toggle {
+    min-width: 32px;
+    height: 1.6rem;
+    min-height: 28px;
+  }
+}
+
+/* Inline new-file input row, injected as the first child of the directory
+ * being created into. Keeps the same left indent as the sibling entries at
+ * that depth (padding-left comes from the inline style) so the input aligns
+ * with the file rows that will appear once fs_create + loadDir resolve. */
+.tree-new-file-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-top: 0.15rem;
+  padding-bottom: 0.15rem;
+}
+
+.tree-new-file-input {
+  flex: 0 1 14rem;
+  min-width: 0;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--fg);
+  font-size: 0.85rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.tree-new-file-input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: 0;
+}
+
+.tree-new-file-error {
+  color: var(--danger);
+  font-size: 0.75rem;
+}
+
+/* Per-FileNode delete affordance (kawaz r46 m25). Only rendered while the row
+ * is selected — the "select then act" pattern makes the destructive action
+ * discoverable but never present on every row. Same "small glyph, generous
+ * touch target on coarse pointers" split as .tree-fav-toggle / .tree-new-file-toggle,
+ * hover color shifts to --danger so it reads as destructive. Confirmation
+ * lives in FileTree.tsx's onDelete via window.confirm(). */
+.tree-delete-toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tree-delete-toggle:hover {
+  color: var(--danger);
+}
+
+@media (pointer: coarse) {
+  .tree-delete-toggle {
+    min-width: 32px;
+    height: 1.6rem;
+    min-height: 28px;
+  }
+}
+
 .file-viewer {
   flex: 1 1 auto;
   min-width: 0;
@@ -2387,10 +2484,36 @@ button.session-tab {
   font-size: 0.8rem;
 }
 
-.memo-editor-body {
+/* 行番号ガター + textarea を横並びにする flex ラッパ。閲覧側の .viewer-body /
+ * .viewer-line と見た目 (等幅フォント・行番号色・行番号幅) を揃えて、
+ * 「編集モードに切り替えると別物のエディタに見える」違和を消す。
+ * wrap は off (textarea 側 white-space: pre + wrap="off") で、視覚行 =
+ * 論理行にして行番号と 1:1 対応させる — コードエディタの慣習。 */
+.memo-editor-body-wrap {
   flex: 1 1 auto;
   min-height: 0;
-  width: 100%;
+  display: flex;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.memo-editor-lineno {
+  flex: 0 0 auto;
+  min-width: 3.5em;
+  padding: 0.75rem 0.5rem 12rem 0.75rem;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-align: right;
+  user-select: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  box-sizing: content-box;
+}
+
+.memo-editor-body {
+  flex: 1 1 auto;
+  min-width: 0;
   resize: none;
   border: 0;
   padding: 0.75rem;
@@ -2401,9 +2524,13 @@ button.session-tab {
   padding-bottom: 12rem;
   background: var(--bg);
   color: var(--fg);
-  font: inherit;
-  font-size: 0.9rem;
+  /* 閲覧側 .viewer-body と合わせる (kawaz r46 mid=23): 編集中も同じ等幅・
+   * 同じ文字サイズで、コード見た目のまま編集できる。 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
   line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
 }
 
 .memo-editor-body:focus {

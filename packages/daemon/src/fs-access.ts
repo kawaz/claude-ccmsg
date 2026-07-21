@@ -14,6 +14,8 @@ import * as path from "node:path";
 import {
   ErrorCode,
   FS_READ_MAX_BYTES,
+  type FsCreateResponse,
+  type FsDeleteResponse,
   type FsEditResponse,
   type FsEntry,
   type FsListResponse,
@@ -977,4 +979,217 @@ export function fsEdit(
       mtime: after.mtime.toISOString(),
     },
   };
+}
+
+// --- fs_create (create a new file under fs_edit's authorization surfaces) ----
+
+/**
+ * Create a new file at `reqPath`. Symmetric partner of fsEdit: fsEdit
+ * overwrites an existing text file under (contained | workspace | external),
+ * fsCreate creates a new one under (contained | workspace). "external" isn't
+ * offered — the external allowlist is a per-file set with no notion of a
+ * "directory to create in".
+ *
+ * Authorization reuses the same resolvers fs_list / fs_read use: for
+ * "contained", resolveContained with allowMissing=true and requestBase=root
+ * (fs_list's own base, so the create surface matches what the user can see in
+ * the tree — unlike fs_write which narrows to the session's cwd/docs/inbox);
+ * for "workspace", a walk that mirrors resolveWorkspaceContained but permits a
+ * missing leaf. Both refuse to create outside the browsable containment.
+ *
+ * Never overwrites (O_EXCL). Parent directory must already exist — the op does
+ * NOT mkdir, so a caller creating a file in the currently-displayed tree
+ * folder is safe by construction (fs_list only enumerates directories that
+ * exist), and a typo like "newdir/file.txt" surfaces as `not_found` rather
+ * than silently creating a directory chain.
+ */
+export function fsCreate(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+  kind: "contained" | "workspace",
+  content: string,
+): FsAccessResult<Omit<FsCreateResponse, "ok">> {
+  if (typeof reqPath !== "string" || reqPath === "") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_create requires path" };
+  }
+  if (typeof content !== "string") {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_create content must be a string" };
+  }
+  const contentBytes = Buffer.byteLength(content, "utf-8");
+  if (contentBytes > FS_READ_MAX_BYTES) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `fs_create content exceeds FS_READ_MAX_BYTES (${contentBytes} > ${FS_READ_MAX_BYTES})`,
+    };
+  }
+
+  let realPath: string;
+  let echoPath: string;
+  if (kind === "contained") {
+    const rootResult = resolveRoot(sessions, sid);
+    if (!rootResult.ok) return rootResult;
+    const root = rootResult.root;
+    const resolved = resolveContained(root, reqPath, true, root);
+    if (!resolved.ok) return resolved;
+    realPath = resolved.realPath;
+    echoPath = path.relative(root, realPath);
+  } else {
+    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    if (!allow.ok) return allow;
+    if (typeof reqPath !== "string" || !path.isAbsolute(reqPath)) {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: "fs_create workspace path must be absolute",
+      };
+    }
+    // Reuse resolveWorkspaceContained's containment; when the leaf is missing
+    // it returns not_found (nearest existing ancestor is allowlisted). Walk up
+    // manually here to obtain the realpath of the nearest existing ancestor,
+    // then compose the create target from that + the missing lexical remainder
+    // — mirrors resolveContained(allowMissing=true) for the workspace surface.
+    const insideAny = (candidate: string): boolean => {
+      for (const folder of allow.folders) {
+        if (candidate === folder) return true;
+        const prefix = folder.endsWith(path.sep) ? folder : folder + path.sep;
+        if (candidate.startsWith(prefix)) return true;
+      }
+      return false;
+    };
+    const requested = path.normalize(reqPath);
+    let cursor = requested;
+    let ancestorReal: string | null = null;
+    for (;;) {
+      try {
+        ancestorReal = fs.realpathSync(cursor);
+        break;
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          return {
+            ok: false,
+            code: ErrorCode.path_forbidden,
+            msg: `cannot resolve path: ${reqPath}`,
+          };
+        }
+        const parent = path.dirname(cursor);
+        if (parent === cursor) {
+          return {
+            ok: false,
+            code: ErrorCode.path_forbidden,
+            msg: `path not allowed: ${reqPath}`,
+          };
+        }
+        cursor = parent;
+      }
+    }
+    if (!insideAny(ancestorReal)) {
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+    }
+    realPath =
+      cursor === requested
+        ? ancestorReal
+        : path.join(ancestorReal, path.relative(cursor, requested));
+    // Re-check containment on the composed (post-realpath) location so a
+    // symlinked ancestor exposing an escape can't smuggle a create outside.
+    if (!insideAny(realPath)) {
+      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
+    }
+    echoPath = realPath;
+  }
+
+  // Parent must already exist (as a directory). No mkdir: keeps the write
+  // surface narrow to "one file in an existing folder the user can see".
+  const parentDir = path.dirname(realPath);
+  let parentStat: fs.Stats;
+  try {
+    parentStat = fs.lstatSync(parentDir);
+  } catch {
+    return {
+      ok: false,
+      code: ErrorCode.not_found,
+      msg: `parent directory does not exist: ${reqPath}`,
+    };
+  }
+  if (!parentStat.isDirectory()) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `parent is not a directory: ${reqPath}`,
+    };
+  }
+
+  try {
+    fs.writeFileSync(realPath, content, { encoding: "utf-8", flag: "wx" });
+  } catch (e) {
+    const err = e as NodeJS.ErrnoException;
+    if (err.code === "EEXIST") {
+      return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${reqPath}` };
+    }
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot write path: ${reqPath}` };
+  }
+
+  return { ok: true, data: { sid, path: echoPath } };
+}
+
+// --- fs_delete (delete a regular file under fs_edit's authorization surfaces) -
+
+/**
+ * Delete a regular file at `reqPath`. Symmetric partner of fsCreate on the
+ * destructive side — kind ∈ {contained, workspace}, same authorization
+ * surfaces fs_edit reuses via fsResolveForServe. Refuses:
+ *   - directories (never recursive; a "delete dir" op would need its own
+ *     policy design and the scope was explicitly file-only per kawaz r46 m25)
+ *   - symlinks (a symlinked leaf could point outside the containment root
+ *     even if the link itself lives inside — we do not follow before unlink,
+ *     and unlink of the link itself is not what the viewer's "delete this
+ *     file" intent means; refuse rather than surprise)
+ *   - non-regular files (sockets/devices/fifos)
+ *
+ * Any of these replies invalid_args and no unlink happens.
+ */
+export function fsDelete(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  reqPath: string,
+  kind: "contained" | "workspace",
+): FsAccessResult<Omit<FsDeleteResponse, "ok">> {
+  const resolved = fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
+  if (!resolved.ok) return resolved;
+  const { realPath } = resolved.data;
+
+  // fsResolveForServe already stat'd via lstat and confirmed isFile() (i.e.
+  // regular file, not symlink/dir/other) — but re-lstat here so we notice a
+  // symlink swap between the two steps and never unlink through a link.
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(realPath);
+  } catch {
+    return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
+  }
+  if (stat.isSymbolicLink()) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_delete refuses symlinks" };
+  }
+  if (stat.isDirectory()) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_delete refuses directories" };
+  }
+  if (!stat.isFile()) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "fs_delete target is not a regular file",
+    };
+  }
+
+  try {
+    fs.unlinkSync(realPath);
+  } catch {
+    return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot delete path: ${reqPath}` };
+  }
+
+  return { ok: true, data: { sid, path: reqPath } };
 }
