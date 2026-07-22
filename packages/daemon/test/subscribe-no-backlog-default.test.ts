@@ -27,11 +27,19 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
+// The bare-default subscribe path additionally emits a **recent-replay** of
+// msgs from the last few minutes with `replay: true` (kawaz r46 mid=35, see
+// subscribe-recent-replay.test.ts). These tests isolate the pure no-backlog
+// contract for **pre-window** history by disabling the recent-replay window
+// (CCMSG_RECENT_REPLAY_MS=0) — the recent-replay concern lives in its own
+// test file so the two contracts don't tangle here.
+const NO_RECENT = { CCMSG_RECENT_REPLAY_MS: "0" };
+
 describe("subscribe: no-backlog bare default", () => {
   test(
     "bare `subscribe` (no since, no backlog) delivers no msg backlog — only ev:room_cursors",
     async () => {
-      const ctx = await startTestDaemon();
+      const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, "A");
         const created = await a.request<{ room: string }>({
@@ -71,7 +79,7 @@ describe("subscribe: no-backlog bare default", () => {
   test(
     "room_cursors covers every visible room the subscriber has no cursor for, one event",
     async () => {
-      const ctx = await startTestDaemon();
+      const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, "A");
         await session(ctx, "C"); // just needs to be a resolvable peer for create_room

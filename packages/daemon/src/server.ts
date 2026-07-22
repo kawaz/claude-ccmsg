@@ -246,6 +246,22 @@ function readWireMsgSafeBytesEnv(): number {
 }
 const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
 
+/** Recent-replay window for the bare-default subscribe path (kawaz r46 mid=35).
+ * A subscriber that didn't set a `since_seq`/`backlog` cursor for a room still
+ * receives msgs posted within the last N ms that would have been live-delivered
+ * had they been present — with `replay: true` marking them as catch-up. Fixes
+ * the "post → target hasn't wired their subscribe yet → msg silently dropped"
+ * failure mode for freshly-spawned peer AI sessions. 3 min default; env override
+ * exists purely for tests (production keeps the default). */
+function readRecentReplayMsEnv(): number {
+  const raw = process.env.CCMSG_RECENT_REPLAY_MS;
+  if (raw === undefined || raw === "") return 3 * 60 * 1000;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 3 * 60 * 1000;
+  return n;
+}
+const RECENT_REPLAY_WINDOW_MS = readRecentReplayMsEnv();
+
 /** subscribe wire order for `msg` events: `msg` (the body) is placed last,
  * after every other field (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md).
  * The harness's task-notification truncation cuts from the block's tail, so
@@ -272,17 +288,22 @@ function orderedMsgFrame(
   roomId: string,
   replyVia: string | undefined,
   redirectOversize: boolean,
+  replay: boolean = false,
 ): Record<string, unknown> {
   // Field order is scope/importance order (kawaz r38 mid=23):
-  // type,r,seq,mid,from[,to,reply_to],msg|msg_via,reply_via,ts. `msg`/`msg_via`
-  // sits before the fixed-size tail (reply_via, ts) so an inline body is as
+  // type,r,seq,mid,from[,to,reply_to],msg|msg_via,reply_via,replay,ts.
+  // `msg`/`msg_via` sits before the fixed-size tail so an inline body is as
   // late as possible while the trailing fields stay in a predictable place.
+  // `replay` is a boolean marker for the recent-replay path (see subscribe
+  // handler) — placed alongside reply_via so a receiver sees the framing
+  // flags before ts.
   const out: Record<string, unknown> = { type: ev.type, r: roomId, mid: ev.mid, from: ev.from };
   if (ev.seq !== undefined) out.seq = ev.seq;
   if (ev.to !== undefined) out.to = ev.to;
   if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
   out.msg = ev.msg;
   if (replyVia !== undefined) out.reply_via = replyVia;
+  if (replay) out.replay = true;
   out.ts = ev.ts;
   // Predict truncation from the natural frame, then replace the body entirely
   // with the fetch instruction in the same slot.
@@ -297,7 +318,7 @@ function orderedMsgFrame(
   return out;
 }
 
-function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
+function writeDelivered(conn: Conn, room: Room, ev: StorageEvent, replay: boolean = false): void {
   if (ev.type === "msg") {
     const rid = recipientId(conn, room);
     // reply_via is a delivery-time wire instruction, never stored in the room's
@@ -310,7 +331,7 @@ function writeDelivered(conn: Conn, room: Room, ev: StorageEvent): void {
     // webui (user role) renders frames directly with no Monitor in between,
     // so it always gets the full body.
     const redirectOversize = conn.identity?.role === "session";
-    send(conn, orderedMsgFrame(ev, room.id, replyVia, redirectOversize));
+    send(conn, orderedMsgFrame(ev, room.id, replyVia, redirectOversize, replay));
     return;
   }
   send(conn, { ...ev, r: room.id });
@@ -1537,6 +1558,33 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         // all the way to the new no-cursor-named default.
         const hasCursor = sinceMid !== undefined || sinceSeq !== undefined;
         if (!hasCursor && req.backlog !== true) {
+          // Recent-replay: for this room the subscriber gets no history via
+          // sendBacklog, but msgs from the last RECENT_REPLAY_WINDOW_MS that
+          // pass the same live-delivery filter (msgVisibleTo, author-echo
+          // suppression, broadcast-stream suppression) are surfaced with a
+          // `replay: true` marker. This closes the "post → peer session
+          // hadn't wired subscribe yet → msg silently missed" gap without
+          // reverting the no-backlog default that keeps context clean on
+          // reconnects. CLI's sinceMap update path is unchanged (r+seq drives
+          // it), so a follow-up reconnect's since_seq excludes these msgs
+          // from a duplicate replay.
+          if (RECENT_REPLAY_WINDOW_MS > 0) {
+            const cutoff = Date.now() - RECENT_REPLAY_WINDOW_MS;
+            const selfId = conn.identity;
+            const selfMemberId =
+              selfId?.role === "session" ? memberIdBySid(room).get(selfId.sid) : undefined;
+            for (const ev of room.events) {
+              if (ev.type !== "msg") continue;
+              if (isSuppressedForBroadcastStream(room, ev)) continue;
+              if (Date.parse(ev.ts) < cutoff) continue;
+              if (!msgVisibleTo(conn, room, ev)) continue;
+              // Skip msgs the subscriber themselves authored — a session that
+              // just posted and then subscribed doesn't need its own post
+              // echoed back (parity with the live-deliver echo suppression).
+              if (selfMemberId !== undefined && ev.from === selfMemberId) continue;
+              writeDelivered(conn, room, ev, true);
+            }
+          }
           cursors.push({ room: room.id, last_mid: room.lastMid });
           continue;
         }

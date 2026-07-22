@@ -230,8 +230,22 @@ export type RoomKind = "normal" | "broadcast" | "1on1";
  * directly actionable English instruction for the receiving agent. The three
  * forms direct it to `ccmsg reply`, its normal assistant response, or no reply.
  * Injected at delivery time, NOT persisted in the room jsonl: room state and
- * recipient determine the instruction. Only present on `type:"msg"` deliveries. */
-export type DeliveredEvent = (StorageEvent & { r: string }) & { reply_via?: string };
+ * recipient determine the instruction. Only present on `type:"msg"` deliveries.
+ *
+ * `replay: true` marks a msg emitted as a **recent-replay** at `subscribe`
+ * time: the bare-default subscribe (no `since`/`since_seq` cursor for the room
+ * and no `backlog: true`) additionally surfaces msgs from the last few minutes
+ * that would have been live-delivered had the subscriber been present
+ * (window default 3 min, `CCMSG_RECENT_REPLAY_MS` for tests). Lets the
+ * receiver distinguish a fresh live delivery from a short-window catch-up
+ * without changing the msg body or subscriber-side dispatch: `to`, `from`,
+ * `reply_via` still hold their normal meanings, only the framing marker
+ * differs. Never present on live-delivered msgs or the since/backlog replay
+ * paths — those never re-flag past events. */
+export type DeliveredEvent = (StorageEvent & { r: string }) & {
+  reply_via?: string;
+  replay?: true;
+};
 
 /**
  * Sender of a notify, daemon-stamped from the connection identity (DR-0003 §7).

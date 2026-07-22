@@ -37,6 +37,8 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 接続・再接続時は stdout に何も出さず、過去ログも再送しない。未読が必要なときは `read` で取りに行く。
 
+例外として、subscribe 開始時点から遡って直近 3 分以内に自分向けに配信されたはずの msg は `replay:true` 付きで届く (peer session が subscribe を張る前に post された msg を取りこぼさないための短窓 catch-up)。通常の live msg と同じ `reply_via` の指示に従う。`replay:true` が付いていない msg は live 配信。
+
 長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read r<N>m<M>` をそのまま実行して全文を取得する。複数指定は `r<N>m<M>,m<M>`、既存の `ccmsg read <room> <mids>` 形式も利用できる。
 
 ## dump
