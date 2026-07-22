@@ -3,7 +3,7 @@ title: ja(host) 翻訳の webui 側バッチ化 (thinking bundling)
 status: open
 category: task
 created: 2026-07-17T17:19:07+09:00
-last_read:
+last_read: 2026-07-22T16:46:05+09:00
 open_entered: 2026-07-17T17:19:07+09:00
 wip_entered:
 blocked_entered:
