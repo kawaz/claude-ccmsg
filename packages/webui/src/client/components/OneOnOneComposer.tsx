@@ -39,6 +39,7 @@ import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
 import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
 import { useFabPopup } from "../useFabPopup.ts";
+import { isPanelDragHandle, useDraggable } from "../useDraggable.ts";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -168,6 +169,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // ので `blocked: false` 固定 (挙動不変)。onClose で従来の handleClose が
   // 兼ねていた `setError(null)` を維持する。
   const { open, openPanel, closePanel, panelRef } = useFabPopup(false, () => setError(null));
+  // kawaz r46 m44: FAB とパネルを個別に D&D 移動可能に。位置は永続化しない
+  // (component state のみ) — open/close や tab 切替を跨いでも SessionView が
+  // OneOnOneComposer instance を維持するため位置は残るが、リロードで初期化。
+  const fabDrag = useDraggable();
+  const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
@@ -445,6 +451,9 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         class={"one-on-one-fab" + (hasDraft ? " composer-fab-draft" : "")}
         title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
         onClick={openPanel}
+        ref={fabDrag.setElement}
+        onPointerDown={fabDrag.onPointerDown}
+        style={fabDrag.style}
       >
         +
       </button>
@@ -452,7 +461,19 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   }
 
   return (
-    <div class="one-on-one-panel" role="dialog" aria-label="1on1 priv composer" ref={panelRef}>
+    <div
+      class="one-on-one-panel"
+      role="dialog"
+      aria-label="1on1 priv composer"
+      ref={(el) => {
+        // useFabPopup と useDraggable の両方に同じ DOM を届ける (ref forwarding
+        // で最小限の relay)。callback ref なので mount/unmount 両方で発火。
+        panelRef.current = el;
+        panelDrag.setElement(el);
+      }}
+      onPointerDown={panelDrag.onPointerDown}
+      style={panelDrag.style}
+    >
       <header class="one-on-one-panel-header">
         {/* 宛先はセッション ID でなくアイコン + リポ名で示す (kawaz r17
             mid=1、2026-07-14): sid の 8 桁 hex は人間には識別子として

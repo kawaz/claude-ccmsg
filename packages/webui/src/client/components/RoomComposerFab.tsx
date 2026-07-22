@@ -27,6 +27,7 @@ import { useState } from "preact/hooks";
 import type { RoomState } from "../store.ts";
 import { Composer } from "./Composer.tsx";
 import { useFabPopup } from "../useFabPopup.ts";
+import { isPanelDragHandle, useDraggable } from "../useDraggable.ts";
 
 export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionTo: Set<string> }) {
   const [sending, setSending] = useState(false);
@@ -43,6 +44,11 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
   // post 送信中は外部クリック無視 (中断リスク回避、sending が false に戻れば
   // 再び listener が張られる)。
   const { open, openTicket, openPanel, closePanel, panelRef } = useFabPopup(sending);
+  // kawaz r46 m44: FAB とパネルを個別に D&D 移動可能に。位置は永続化しない
+  // (component state のみ、リロードで初期位置に戻る)。panel は常時 mount
+  // (display 切替) なので open/close 越しに位置は保たれる。
+  const fabDrag = useDraggable();
+  const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
 
   const fabTitle = room.kind === "broadcast" ? "broadcast メッセージを送信" : "メッセージを送信";
 
@@ -59,16 +65,26 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
           title={hasDraft ? "書きかけの下書きがあります" : fabTitle}
           aria-label={hasDraft ? "書きかけの下書きがあります" : fabTitle}
           onClick={openPanel}
+          ref={fabDrag.setElement}
+          onPointerDown={fabDrag.onPointerDown}
+          style={fabDrag.style}
         >
           +
         </button>
       ) : null}
       <div
-        ref={panelRef}
+        ref={(el) => {
+          // useFabPopup と useDraggable の両方に同じ DOM を届ける (callback
+          // ref 経由の relay。OneOnOneComposer 側と同型)。
+          panelRef.current = el;
+          panelDrag.setElement(el);
+        }}
         class={"room-composer-panel" + (open ? "" : " room-composer-panel-hidden")}
         role="dialog"
         aria-label="composer"
         aria-hidden={open ? undefined : "true"}
+        onPointerDown={panelDrag.onPointerDown}
+        style={panelDrag.style}
       >
         <Composer
           room={room}

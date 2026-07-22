@@ -371,20 +371,16 @@ export function SessionView({ state }: { state: AppState }) {
           workspaceFolders={sessionStatus?.workspace_folders ?? []}
         />
       )}
-      {/* DR-0014 §2.6 floating 1on1 composer: only makes sense on the
-       * Files/Timeline tabs (kawaz can already open a room directly from
-       * the Rooms tab, so an extra FAB there would be noise; Status is the
-       * same kind of read-only reporting tab, DR-0020). Positioned over the
-       * tab content via position:fixed in app.css; each tab switch keeps the
-       * same instance so an in-progress compose survives a Files↔Timeline
-       * hop.
+      {/* DR-0014 §2.6 floating 1on1 composer. kawaz r46 m44 (2026-07-23):
+       * セッション選択中は tab (files/timeline/status/rooms/terminal) に
+       * よらず常時表示する — position:fixed の floating FAB なので裏のタブ
+       * コンテンツと干渉しない。tab 切替を跨いでも同じ OneOnOneComposer
+       * instance が生き続けるので、書きかけ text / attachments state も
+       * 保たれる (関連: draft は localStorage 保存 §2.6)。
        * kawaz r26 mid=65: ccmsg 未接続セッション (pinned/仮想閲覧、agents-only
        * 行) では 1on1 送信先が存在しないため FAB 自体を出さない — daemon 側
-       * でも配送不能なのでガード。Files 経由のコード閲覧・編集系はこの条件と
-       * 無関係に従来通り。 */}
-      {peer && (tab === "files" || tab === "timeline") ? (
-        <OneOnOneComposer sid={sid} state={state} />
-      ) : null}
+       * でも配送不能なのでガード。 */}
+      {peer ? <OneOnOneComposer sid={sid} state={state} /> : null}
     </main>
   );
 }
