@@ -490,6 +490,24 @@ describe("session_search three-stage filtering", () => {
     expect(asAgent.hits[0]!.matches[0]!.role).toBe("agent");
   });
 
+  // Guarantees literal-mode prefilter finds escape-bearing needles inside
+  // ccmsg deliveries. The event JSON gets serialized into the outer row's
+  // `content` string, so a tab / `"` / `\` in the message reaches the raw
+  // JSONL line double-escaped. A single-escape-only needle would miss it.
+  test("literal query with escape-bearing chars matches ccmsg double-escaped payload", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [
+      ccmsg("u1", "tabbed col1\tcol2 value"),
+      ccmsg("u1", "path C:\\Users\\me\\file"),
+    ]);
+    writeSession(config, sid(2), [user("unrelated transcript")]);
+
+    const tabHit = await search(config, { query: "col1\tcol2" });
+    expect(tabHit.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    const backslashHit = await search(config, { query: "C:\\Users" });
+    expect(backslashHit.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+  });
+
   // Guarantees the strict third stage removes a grep hit from a structural field
   // (cwd) when the actual user message does not contain the query.
   test("strict field parsing removes structural prefilter false positives", () => {

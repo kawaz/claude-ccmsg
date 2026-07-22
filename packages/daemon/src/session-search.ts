@@ -59,9 +59,15 @@ function lowerIncludesAll(text: string, needles: readonly string[]): boolean {
 
 interface CompiledQueryPattern {
   matcher: RegExp;
-  /** Serialized-line substring that every strict match must contain. null means
-   * this pattern cannot safely participate in the JSONL prefilter. */
-  prefilter: string | null;
+  /** Serialized-line substrings, any of which every strict match must contain.
+   * null means this pattern cannot safely participate in the JSONL prefilter.
+   * Literal-mode patterns carry both the singly-JSON-escaped and doubly-escaped
+   * spellings: ccmsg deliveries land as a JSON-encoded event body inside an
+   * outer row's `content` string, so their escape-bearing characters (tab,
+   * `"`, `\`, ...) appear double-escaped in the raw line and would miss a
+   * single-escape needle. Any-match semantics keep the strict decoder as the
+   * final authority. */
+  prefilters: readonly string[] | null;
 }
 
 /** Returns a conservative top-level ASCII-alphanumeric run that every match of
@@ -132,6 +138,29 @@ function regexRequiredLiteral(pattern: string): string | null {
   return runs.sort((a, b) => b.length - a.length)[0] ?? null;
 }
 
+function jsonEscape(source: string): string {
+  return JSON.stringify(source).slice(1, -1);
+}
+
+/** Literal-mode prefilter spellings. A ccmsg delivery serializes its inner
+ * event JSON into the outer row's `content` string, so escape-bearing
+ * characters (tab, `"`, `\`, ...) reach the raw JSONL line as the
+ * doubly-escaped form and would slip past a needle that only spells the
+ * single-escape form. Words with no escape-bearing characters collapse to a
+ * single unique spelling. */
+function literalListFromPlain(word: string): readonly string[] | null {
+  const single = jsonEscape(word);
+  const double = jsonEscape(single);
+  return single === double ? [single] : [single, double];
+}
+
+/** Regex prefilter runs are extracted from a top-level ASCII-alphanumeric
+ * run, so no escape-bearing character is ever present — the double-escape
+ * alternative would be identical and adds no coverage. */
+function literalListFromRegex(literal: string | null): readonly string[] | null {
+  return literal === null ? null : [literal];
+}
+
 function compileQueryGroups(
   groups: readonly (readonly SearchQueryPattern[])[],
   caseSensitive: boolean,
@@ -147,14 +176,19 @@ function compileQueryGroups(
           msg: `session_search query contains an invalid regular expression: ${pattern.error}`,
         };
       }
-      const literal = regex
-        ? regexRequiredLiteral(pattern.source)
-        : JSON.stringify(
+      const literals = regex
+        ? literalListFromRegex(regexRequiredLiteral(pattern.source))
+        : literalListFromPlain(
             pattern.text.split(/\s+/v).sort((a, b) => b.length - a.length)[0] ?? "",
-          ).slice(1, -1);
+          );
       compiled.push({
         matcher: new RegExp(pattern.source, pattern.flags),
-        prefilter: literal === null ? null : caseSensitive ? literal : literal.toLowerCase(),
+        prefilters:
+          literals === null
+            ? null
+            : caseSensitive
+              ? literals
+              : literals.map((literal) => literal.toLowerCase()),
       });
     }
     compiledGroups.push(compiled);
@@ -253,7 +287,11 @@ function linePassesPrefilter(
   // row survives when any OR alternative in any group may match it. A pattern
   // without a safe literal admits every row to the strict stage.
   return groups.some((group) =>
-    group.some((pattern) => pattern.prefilter === null || haystack.includes(pattern.prefilter)),
+    group.some(
+      (pattern) =>
+        pattern.prefilters === null ||
+        pattern.prefilters.some((needle) => haystack.includes(needle)),
+    ),
   );
 }
 
