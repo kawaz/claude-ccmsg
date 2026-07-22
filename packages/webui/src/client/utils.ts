@@ -619,9 +619,13 @@ export function badgeLabel(kind: string): string {
  * *not* listed here — it's always sorted last regardless of this array (see
  * `orderedSectionKeys`), it's the least actionable section (nothing to do
  * from the webui for a session that hasn't connected). */
-const SESSION_SECTION_KNOWN_ORDER: string[] = ["busy", "idle", "inactive", "done"];
+// "waiting" (承認待ち等でユーザ入力を待っている) は Busy より先頭 (kawaz r46
+// mid=41: 「Busyより優先度高いので一番上に」— 人間のアクションが要る状態が
+// 最も actionable)。
+const SESSION_SECTION_KNOWN_ORDER: string[] = ["waiting", "busy", "idle", "inactive", "done"];
 
 const SESSION_SECTION_LABELS: Record<string, string> = {
+  waiting: "Waiting",
   busy: "Busy",
   idle: "Idle",
   inactive: "Inactive",
