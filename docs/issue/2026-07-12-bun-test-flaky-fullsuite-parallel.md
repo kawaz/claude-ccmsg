@@ -125,3 +125,15 @@ suite で 5 連続 0 fail を確認。これで tailscale origin の既知 2 モ
 残る散発 fail 候補 (いずれも「短い固定 timeout × 高負荷」同型の疑い、未調査):
 TranslationHelperService watchdog 系 / agents polling 系 / bin/ccmsg self-update
 timeout 系 / reconnect timeout。
+
+## 追記: 2026-07-22 4-5 件目の根治 (commit 53825794)
+
+`translate-helper.test.ts` (parallel queue の deadline 800ms ギリギリ設計 +
+realHelperTest の Swift cold spawn 5000ms 不足) と `bin/ccmsg.test.ts`
+(bash launcher spawnSync が負荷下 5000ms 超過) を根治。いずれも「短い固定
+timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
+
+残り 2 系統 (agents polling / reconnect) は 24 並列でも再現せず — 後続改修
+での緩和 or load 16+ 限定の可能性、次に full suite fail を観測した時に
+再調査する運用とする。既知 flaky はこれで全て根治 or 再現不能となったため、
+次の安定期間を見て issue close を検討。
