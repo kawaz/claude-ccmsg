@@ -539,4 +539,145 @@ describe("DR-0013 broadcast room", () => {
     },
     T,
   );
+
+  // 何を保証するか (data quality): daemon restart で同一 sid が re-hello しても、
+  // 既に自分の member 行を持っている broadcast room の jsonl に MemberEvent を
+  // 二重追記しない。isSuppressedForBroadcastStream が subscriber からは見えなく
+  // していても、jsonl そのものは source of truth なので毎回 restart する度に
+  // 重複行が蓄積するのはデータ品質バグ (issue
+  // 2026-07-22-joinallbroadcasts-duplicate-member-rows)。
+  test(
+    "restart + re-hello does not append duplicate member rows to broadcast jsonl",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        // First run: A hellos, broadcast room is created and auto-populates A.
+        await session(ctx, "A");
+        {
+          const creator = await user(ctx);
+          const res = await creator.request<{ room: string }>({
+            op: "create_room",
+            members: [],
+            kind: "broadcast",
+          });
+          creator.close();
+          const file = `${ctx.roomsDir}/${res.room}.jsonl`;
+          const before = fs
+            .readFileSync(file, "utf8")
+            .split("\n")
+            .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+          expect(before.length).toBe(1);
+
+          // Bounce the daemon on the same paths.
+          const c = await connect(ctx.sock);
+          await c.request({ op: "shutdown" });
+          c.close();
+          await ctx.proc.exited;
+          try {
+            fs.unlinkSync(ctx.sock);
+          } catch {}
+          const proc2 = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
+          ctx.proc = proc2;
+          await waitConnectable(ctx.sock);
+
+          // A re-hellos three restart cycles in a row (fresh daemon in-memory
+          // sessions map ⇒ isNewEntry=true, which historically walked
+          // joinAllBroadcasts and appended a NEW MemberEvent every restart
+          // cycle).
+          for (let i = 0; i < 3; i++) {
+            await session(ctx, "A");
+            await Bun.sleep(50);
+            const c2 = await connect(ctx.sock);
+            await c2.request({ op: "shutdown" });
+            c2.close();
+            await ctx.proc.exited;
+            try {
+              fs.unlinkSync(ctx.sock);
+            } catch {}
+            ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
+            await waitConnectable(ctx.sock);
+          }
+          // Final re-hello and read
+          await session(ctx, "A");
+          await Bun.sleep(50);
+          const after = fs
+            .readFileSync(file, "utf8")
+            .split("\n")
+            .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+          expect(after.length).toBe(1);
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 何を保証するか (data quality, real production path): 同一 sid が
+  // disconnect (leaveAllBroadcasts → LeaveEvent) してから re-hello しても、
+  // broadcast room jsonl に MemberEvent を二重追記しない。実運用の r*.jsonl で
+  // 大量に観測された蓄積経路は「daemon restart」ではなく「短命 CLI 接続 or
+  // subscribe drop で detachSession → leave が書かれた後の re-hello」。
+  // guard は memberIdBySid ベースだが、broadcast 特別扱いで leave を無視する
+  // ので、かつて join した sid は永続的に「member 扱い」となり join guard が
+  // 発動する (issue 2026-07-22-joinallbroadcasts-duplicate-member-rows)。
+  test(
+    "disconnect + re-hello does not append duplicate member rows to broadcast jsonl",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        // Session A joins, broadcast is created (A auto-populates as a1).
+        const a1 = await session(ctx, "A");
+        const creator = await user(ctx);
+        const res = await creator.request<{ room: string }>({
+          op: "create_room",
+          members: [],
+          kind: "broadcast",
+        });
+        const file = `${ctx.roomsDir}/${res.room}.jsonl`;
+        const initial = fs
+          .readFileSync(file, "utf8")
+          .split("\n")
+          .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+        expect(initial.length).toBe(1);
+
+        // Drive several disconnect + rehello cycles — the exact live shape of
+        // the production dup source (transient ccmsg CLI calls that hello,
+        // do work, then close; each cycle detachSession → leaveAllBroadcasts
+        // → LeaveEvent, then the next hello historically triggered a new
+        // MemberEvent append).
+        a1.close();
+        for (let i = 0; i < 4; i++) {
+          // let the daemon observe the previous close (detachSession →
+          // leaveAllBroadcasts is synchronous inside removeConn)
+          await Bun.sleep(30);
+          const c = await session(ctx, "A");
+          await Bun.sleep(10);
+          c.close();
+        }
+        await Bun.sleep(50);
+
+        const after = fs
+          .readFileSync(file, "utf8")
+          .split("\n")
+          .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
+        // Sanity: leaves were actually written (that's the whole point of the
+        // guard — without leaves, memberIdBySid would still show A present and
+        // there'd be no bug to fix). Multiple leave rows for a1 prove we hit
+        // the "sid was removed from presentMembers" path that the old guard
+        // failed to handle.
+        const leaves = fs
+          .readFileSync(file, "utf8")
+          .split("\n")
+          .filter((l) => l.includes('"type":"leave"'));
+        expect(leaves.length).toBeGreaterThan(0);
+        // Core assertion: still only ONE member row for sid=A even after all
+        // the leave/rehello churn.
+        expect(after.length).toBe(1);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 });

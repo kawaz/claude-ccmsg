@@ -71,9 +71,45 @@ export function presentMembers(room: Room): PresentMember[] {
   return [...byId.values()].sort((a, b) => compareIds(a.id, b.id));
 }
 
-/** Map present member sid -> id. */
+/** Map member sid -> id.
+ *
+ * Design rationale (broadcast special-case):
+ * For broadcast rooms, `leave` events are ignored: any sid that ever had a
+ * `member` event is treated as a member forever. This is deliberately
+ * different from `presentMembers`, which continues to reflect **live**
+ * presence (join minus leave) so `rooms.members` and DR-0013 §2.2's
+ * "disconnect ⇒ auto-leave" contract stay intact.
+ *
+ * Why the split: the sole write source of `leave` events on broadcast rooms
+ * is `leaveAllBroadcasts` (server.ts, called from `detachSession` on the
+ * last-conn close of a session). Real production traffic hits that path on
+ * every short-lived `ccmsg` CLI invocation and on subscribe reconnect (e.g.
+ * newer-wins daemon swap), so a sid's tail ends up being a `leave` very
+ * often. When the same sid re-hellos, the old `joinAllBroadcasts` guard —
+ * which checked `presentMembers`-derived presence — no longer saw the sid
+ * as a member and appended a fresh `MemberEvent` every cycle, accumulating
+ * duplicate member rows in the jsonl (issue
+ * 2026-07-22-joinallbroadcasts-duplicate-member-rows). Two invariants have
+ * to hold simultaneously to fix that without breaking the disconnect
+ * contract or losing subscribe visibility after leave:
+ *   1. join-guard: skip the MemberEvent append if this sid was **ever** a
+ *      member of this broadcast room (regardless of any interleaved leave).
+ *   2. subscribe visibility: `subscriberSeesRoom` must return true for the
+ *      re-hello'd conn so it actually receives live msgs.
+ * Both callers read `memberIdBySid`; special-casing it here lets a single,
+ * localized change satisfy both without touching `presentMembers`. Normal
+ * rooms are unchanged. */
 export function memberIdBySid(room: Room): Map<string, string> {
   const m = new Map<string, string>();
+  if (room.kind === "broadcast") {
+    // last member event wins on id (identity mapping is used by msgVisibleTo
+    // to resolve a sid → its current member id for `to` filtering; the most
+    // recently appended member row reflects the sid's latest identity/meta).
+    for (const ev of room.events) {
+      if (ev.type === "member") m.set(ev.sid, ev.id);
+    }
+    return m;
+  }
   for (const mem of presentMembers(room)) m.set(mem.sid, mem.id);
   return m;
 }
