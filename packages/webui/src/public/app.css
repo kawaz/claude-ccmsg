@@ -211,6 +211,11 @@ a {
   flex-shrink: 0;
   background: var(--bg-alt);
   overflow-y: auto;
+  /* 横方向は sidebar 自身では絶対にスクロールさせない (kawaz r46m36:
+   * iPad 等で D&D すると sidebar 全体 = 実質ページ全体が左右に運ばれる
+   * 現象の根治)。長い行は下の #rooms-panel / #sessions-panel が個別に
+   * 横スクロールを担う。 */
+  overflow-x: hidden;
   padding: 0.5rem;
 }
 
@@ -279,6 +284,28 @@ a {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* kawaz r46m36: サイドバー Rooms / Sessions リストは長いリポ名 / パス /
+ * タイトルを ellipsis で切らず、リスト単位で横スクロールさせる (DR-0024
+ * の .tree-root / .tree-row と同じ形式)。行の背景 (hover / active) が
+ * スクロール幅全体に伸びるよう、行側は width:max-content + min-width:100%。
+ * サイドバー全体が左右に運ばれる事故は上の #sidebar { overflow-x:hidden }
+ * で塞ぎ、実際の横スクロール担当をここに集約する。 */
+#room-list,
+#room-list-1on1 > ul,
+#room-list-archived > ul,
+#session-list {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+#room-list > li,
+#room-list-1on1 > ul > li,
+#room-list-archived > ul > li,
+.session-row {
+  width: max-content;
+  min-width: 100%;
 }
 
 /* U3: Sessions list grouped into Busy/Idle/Done/ccmsg未起動 <details>
@@ -396,7 +423,6 @@ a {
   min-width: 0;
   text-decoration: none;
   color: var(--fg);
-  overflow: hidden;
 }
 
 .session-main-link.session-disconnected {
@@ -405,8 +431,6 @@ a {
 
 .session-repo-ws {
   font-size: 0.8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -480,8 +504,6 @@ a {
 .session-line2-ws {
   font-size: 0.7rem;
   color: var(--fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -506,8 +528,6 @@ a {
   font-size: 0.7rem;
   color: var(--fg-muted);
   opacity: 0.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -553,8 +573,6 @@ a {
   display: block;
   font-weight: 600;
   font-size: 0.9rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -5138,13 +5156,8 @@ button.session-tab {
   font-weight: 400;
 }
 
-/* issue 2026-07-21 (workflow TUI parity, #1/#2): workflow member 行に付く
- * モデル名 / トークン数 / state 注記。ラベル本文とは視覚的に区別できる淡色
- * かつ小さめのサイズで並べる (Status タブ .status-wf-agent-model と同格)。 */
-.agent-tree-model,
-.agent-tree-tokens,
-/* kawaz r46 mid=29: 選択中の agent TL のノード行をハイライト (accent 左縁 +
- * 薄背景 + ラベル強調)。aria-current="true" と対で付く。 */
+/* kawaz r46 mid=29: 選択中の agent TL のノード行をハイライト (accent 薄背景 +
+ * ラベル強調)。aria-current="true" と対で付く。 */
 .agent-tree-row-current {
   background: color-mix(in srgb, var(--accent, #4a9eff) 14%, transparent);
   border-radius: 4px;
@@ -5154,6 +5167,13 @@ button.session-tab {
   text-decoration: underline;
 }
 
+/* issue 2026-07-21 (workflow TUI parity, #1/#2): workflow member 行に付く
+ * モデル名 / トークン数 / state 注記。ラベル本文とは視覚的に区別できる淡色
+ * かつ小さめのサイズで並べる (Status タブ .status-wf-agent-model と同格)。
+ * kawaz r46 mid=37: ハイフンで折り返して行が縦に膨らまないよう nowrap
+ * (ツリーは横スクロールで全文が見える、r46 mid=18 方針)。 */
+.agent-tree-model,
+.agent-tree-tokens,
 .agent-tree-state-note {
   font-size: 0.7rem;
   color: var(--fg-muted);
@@ -5162,6 +5182,15 @@ button.session-tab {
 }
 .agent-tree-tokens {
   font-variant-numeric: tabular-nums;
+}
+
+/* kawaz r46m37: モデル名 chip (claude-opus-4-7[1m] 等) やトークン数がハイフン
+ * で折り返して 2-3 行に膨れるのを 1 行固定に。r46m18 の「折り返さず右
+ * スクロール」方針と整合 (.timeline-pane-tree 側で overflow-x:auto 済み)。
+ * .agent-tree-state-note は上で既に nowrap 指定あり。 */
+.agent-tree-model,
+.agent-tree-tokens {
+  white-space: nowrap;
 }
 .agent-tree-state-note {
   font-style: italic;
