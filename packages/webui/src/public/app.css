@@ -5184,14 +5184,6 @@ button.session-tab {
   font-variant-numeric: tabular-nums;
 }
 
-/* kawaz r46m37: モデル名 chip (claude-opus-4-7[1m] 等) やトークン数がハイフン
- * で折り返して 2-3 行に膨れるのを 1 行固定に。r46m18 の「折り返さず右
- * スクロール」方針と整合 (.timeline-pane-tree 側で overflow-x:auto 済み)。
- * .agent-tree-state-note は上で既に nowrap 指定あり。 */
-.agent-tree-model,
-.agent-tree-tokens {
-  white-space: nowrap;
-}
 .agent-tree-state-note {
   font-style: italic;
 }
