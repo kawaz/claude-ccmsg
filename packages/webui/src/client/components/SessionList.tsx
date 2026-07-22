@@ -308,7 +308,17 @@ export function SessionList({
         currentSid={currentSid}
       />
       {sections.map((section) => (
-        <details key={section.key} open class="session-section">
+        <details
+          key={section.key}
+          open
+          class={
+            // kawaz r46 mid=42: waiting はユーザ対応を促す強調 (warn 色 +
+            // 跳ねアニメーション、composer-fab-draft と同系)
+            section.key === "waiting"
+              ? "session-section session-section-waiting"
+              : "session-section"
+          }
+        >
           <summary class="session-section-summary">
             {section.label} ({section.rows.length})
           </summary>

@@ -328,6 +328,36 @@ a {
   color: var(--fg-muted);
 }
 
+/* kawaz r46 mid=42: Waiting セクション (承認待ち等でユーザ入力待ち) は配置
+ * 先頭 (r46 mid=41) に加えて warn 色 + 時々跳ねるアニメーションでユーザ対応を
+ * 促す。跳ねは composer-fab-draft と同じ「周期の一部だけ」方式で鬱陶しさを
+ * 抑える (keyframes も流用)。reduced-motion では静止色のみ。 */
+.session-section-waiting > .session-section-summary {
+  color: var(--warn);
+}
+.session-section-waiting .session-row {
+  animation: session-waiting-nudge 3s infinite;
+  transform-origin: bottom center;
+}
+@keyframes session-waiting-nudge {
+  0%,
+  12%,
+  100% {
+    transform: none;
+  }
+  4% {
+    transform: translateY(-2px);
+  }
+  8% {
+    transform: translateY(1px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-section-waiting .session-row {
+    animation: none;
+  }
+}
+
 /* Room 行の `<li><a>` は #room-list (非アーカイブ・非1on1) と
  * #room-list-archived / #room-list-1on1 (折り畳みグループ内、同じ RoomRow
  * を render) のいずれにも現れる — 後者をセレクタから漏らすとデフォルトの
