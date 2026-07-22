@@ -65,16 +65,40 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
   // ことは fab クリック自体を閉じ扱いする事故の防止でもある (open にした
   // click は listener 登録 (re-render 後) より前のイベントなので二重発火も
   // しない)。
+  //
+  // kawaz r46 mid=39 (2026-07-23): capture-phase pointerdown で「押した瞬間」
+  // に panel 内かを ref に記録し、click 時にその記録を優先する。
+  // Why: 添付ピルの × を押すと React が該当 `<li>` を DOM から即除去する
+  // ため、click イベントが document に来た時点で `e.target` (= × ボタン)
+  // は既に panel 外にある。素の `panel.contains(e.target)` はそれを「外側
+  // クリック」と誤判定して composer を閉じてしまう (r46m39 バグ)。
+  // pointerdown は capture phase なら React の render/removal より前に走る
+  // ため、その瞬間の内外判定が信頼できる。close は依然 click でだけ判定
+  // するので、スクロール gesture (pointerdown → 移動 → pointerup → click
+  // 発火せず) では close されない ─ 元の click 単発判定の安全性は維持。
   useEffect(() => {
     if (!open) return;
     if (blocked) return;
+    // pointerdown 時点で panel 内だったかどうか。click 時に target が DOM
+    // から外れていても、押した瞬間が内側なら内側クリックとして扱う。
+    let pressedInside = false;
+    const onPointerDown = (e: PointerEvent) => {
+      const panel = panelRef.current;
+      pressedInside = !!(panel && e.target instanceof Node && panel.contains(e.target));
+    };
     const onClick = (e: MouseEvent) => {
+      if (pressedInside) {
+        pressedInside = false;
+        return;
+      }
       const panel = panelRef.current;
       if (!panel || !(e.target instanceof Node)) return;
       if (!panel.contains(e.target)) closePanel();
     };
+    document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("click", onClick);
     return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("click", onClick);
     };
   }, [open, blocked, closePanel]);
