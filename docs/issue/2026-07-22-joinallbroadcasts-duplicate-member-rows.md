@@ -3,7 +3,7 @@ title: daemon 再起動毎に joinAllBroadcasts が broadcast room jsonl へ dup
 status: open
 category: bug
 created: 2026-07-22T16:43:44+09:00
-last_read: 2026-07-22T16:59:47+09:00
+last_read: 2026-07-22T17:21:39+09:00
 open_entered: 2026-07-22T16:43:44+09:00
 wip_entered:
 blocked_entered:
