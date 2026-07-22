@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { DirTreeEntry, SessionLauncherConfig } from "@ccmsg/protocol";
-import { dirTree } from "../src/dir-tree.ts";
+import { dirTree, matchesAllTokens, tokenizeFilter } from "../src/dir-tree.ts";
 
 function config(root: string, depth = 2): SessionLauncherConfig {
   return {
@@ -21,6 +21,52 @@ function config(root: string, depth = 2): SessionLauncherConfig {
 function names(entries: DirTreeEntry[]): string[] {
   return entries.map((entry) => path.basename(entry.path));
 }
+
+describe("tokenizeFilter", () => {
+  test("empty input yields zero tokens", () => {
+    expect(tokenizeFilter("")).toEqual([]);
+  });
+
+  test("whitespace-only input yields zero tokens", () => {
+    expect(tokenizeFilter("   ")).toEqual([]);
+  });
+
+  test("a single word yields one token", () => {
+    expect(tokenizeFilter("foo")).toEqual(["foo"]);
+  });
+
+  test("space-separated words yield multiple tokens", () => {
+    expect(tokenizeFilter("foo bar")).toEqual(["foo", "bar"]);
+  });
+
+  test("runs of consecutive spaces collapse to a single separator", () => {
+    expect(tokenizeFilter("foo    bar")).toEqual(["foo", "bar"]);
+  });
+
+  test("full-width spaces separate tokens", () => {
+    expect(tokenizeFilter("foo　bar")).toEqual(["foo", "bar"]);
+  });
+
+  test("leading and trailing whitespace is trimmed", () => {
+    expect(tokenizeFilter("  foo bar  ")).toEqual(["foo", "bar"]);
+  });
+});
+
+describe("matchesAllTokens", () => {
+  test("zero tokens matches any haystack", () => {
+    expect(matchesAllTokens("anything", [])).toBe(true);
+  });
+
+  test("a single token requires that substring", () => {
+    expect(matchesAllTokens("group/foo-project", ["foo"])).toBe(true);
+    expect(matchesAllTokens("group/bar-project", ["foo"])).toBe(false);
+  });
+
+  test("multiple tokens require all substrings (AND)", () => {
+    expect(matchesAllTokens("group/foo-project", ["foo", "project"])).toBe(true);
+    expect(matchesAllTokens("group/foo-project", ["foo", "bar"])).toBe(false);
+  });
+});
 
 describe("dirTree", () => {
   let base: string;
@@ -134,6 +180,32 @@ describe("dirTree", () => {
 
     expect(names(result.data.entries)).toEqual(["group"]);
     expect(names(result.data.entries[0]!.children!)).toEqual(["foo-project"]);
+  });
+
+  // Multi-token filters (kawaz r46m31) require every whitespace-separated
+  // token to appear in the root-relative path (AND), not just one of them.
+  test("a multi-token filter requires all tokens to match (AND)", () => {
+    fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });
+    fs.mkdirSync(path.join(root, "group", "bar-project"), { recursive: true });
+    fs.mkdirSync(path.join(root, "unrelated"));
+    const result = dirTree(config(root), [root], 2, "foo project");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(names(result.data.entries)).toEqual(["group"]);
+    expect(names(result.data.entries[0]!.children!)).toEqual(["foo-project"]);
+  });
+
+  // A whitespace-only filter is equivalent to no filter: it should not
+  // exclude anything.
+  test("a whitespace-only filter matches everything", () => {
+    fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });
+    fs.mkdirSync(path.join(root, "unrelated"));
+    const result = dirTree(config(root), [root], 2, "   ");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(names(result.data.entries)).toEqual(["group", "unrelated"]);
   });
 
   // A missing requested root is distinguishable from a forbidden existing path

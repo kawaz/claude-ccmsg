@@ -17,6 +17,26 @@ import { containedInRoots } from "./launcher-paths.ts";
 // levels while keeping one request's walk finite; deeper navigation stays lazy.
 const MAX_DIR_TREE_DEPTH = 5;
 
+/** Splits a filter string into non-empty, trimmed tokens on whitespace runs
+ * (half-width and full-width `　` alike — JS `\s` covers both). An
+ * empty/whitespace-only filter yields zero tokens, which `matchesAllTokens`
+ * treats as "match everything" (kawaz r46m31: cwd search should stay a no-op
+ * filter until the user types something). */
+export function tokenizeFilter(filter: string): string[] {
+  return filter
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
+}
+
+/** True when `haystack` contains every token (AND match, case-sensitive —
+ * matching the prior single-token `includes` behavior this replaces). Zero
+ * tokens always matches, so an empty filter keeps the "show everything"
+ * behavior callers already relied on. */
+export function matchesAllTokens(haystack: string, tokens: string[]): boolean {
+  return tokens.every((token) => haystack.includes(token));
+}
+
 function compareEntries(a: DirTreeEntry, b: DirTreeEntry): number {
   // Plain codepoint order is deterministic across daemon/test/user locales,
   // matching fs-access.ts's stable name-order contract.
@@ -48,7 +68,7 @@ function walkDirectory(
   requestRoot: string,
   current: string,
   remainingDepth: number,
-  filter: string | undefined,
+  filterTokens: string[] | undefined,
 ): DirTreeEntry[] {
   let dirents: fs.Dirent[];
   try {
@@ -78,12 +98,12 @@ function walkDirectory(
 
     const entry: DirTreeEntry = { path: entryPath, is_dir: true };
     if (remainingDepth > 1) {
-      entry.children = walkDirectory(cfg, requestRoot, entryPath, remainingDepth - 1, filter);
+      entry.children = walkDirectory(cfg, requestRoot, entryPath, remainingDepth - 1, filterTokens);
     }
 
-    if (filter !== undefined) {
+    if (filterTokens !== undefined) {
       const relativePath = path.relative(requestRoot, entryPath);
-      const matches = relativePath.includes(filter);
+      const matches = matchesAllTokens(relativePath, filterTokens);
       const descendantMatches = entry.children !== undefined && entry.children.length > 0;
       if (!matches && !descendantMatches) continue;
     }
@@ -120,6 +140,10 @@ export function dirTree(
   const boundedDepth = effectiveDepth(cfg.dir_tree_depth, depth);
   if (!boundedDepth.ok) return boundedDepth;
 
+  const filterTokens = filter === undefined ? undefined : tokenizeFilter(filter);
+  const effectiveFilterTokens =
+    filterTokens !== undefined && filterTokens.length === 0 ? undefined : filterTokens;
+
   const entries: DirTreeEntry[] = [];
   for (const root of roots) {
     const contained = containedInRoots(cfg.root_dirs, root, "dir_tree root");
@@ -130,7 +154,7 @@ export function dirTree(
         contained.data.realPath,
         contained.data.realPath,
         boundedDepth.data.depth,
-        filter === "" ? undefined : filter,
+        effectiveFilterTokens,
       ),
     );
   }
