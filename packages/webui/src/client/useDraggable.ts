@@ -17,6 +17,16 @@
 //     dragging を開始しない。パネル側は textarea / button / input などの
 //     form control 上からのドラッグを禁止するのに使う (input 選択・text選択
 //     ジェスチャと衝突しないため)。
+//
+// iframe 対策 (kawaz r46m45、2026-07-23):
+//   - Terminal タブの iframe 上を pointer が横切ると、pointer events が iframe
+//     内 document に持っていかれて親 window の pointermove/up が途切れる。
+//     setPointerCapture(pointerId) で pointerdown した element に pointer を
+//     固定すると、iframe 越しでも pointermove / pointerup が届き続ける。
+//     touch drag でも同じ問題 (Safari の implicit capture は要素境界で外れる
+//     ことがある) なので明示 capture が確実。listener は element に直接張る
+//     (window listener は capture 中の event 経路にも入るが、element 経由の
+//     方が capture の意味が明確)。
 import { useCallback, useRef, useState } from "preact/hooks";
 
 export const DRAG_THRESHOLD_PX = 5;
@@ -94,9 +104,22 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
     const origTop = rect.top;
     const width = rect.width;
     const height = rect.height;
+    const pointerId = e.pointerId;
     let dragging = false;
 
+    // Terminal タブの iframe 上を pointer が通っても move/up が途切れないよう
+    // 明示 capture (kawaz r46m45)。pointerdown 時点で即掴む — 閾値未満で終わる
+    // 通常 click でも capture は click 発火を妨げない (releasePointerCapture
+    // は pointerup 時に自動発火するが、safety のため onUp でも明示解放)。
+    try {
+      el.setPointerCapture(pointerId);
+    } catch {
+      // pointerId が既に無効化されている等の稀ケースは無視 (capture 無しで
+      // fallback 動作、iframe を跨がない normal 領域では従来通り動く)。
+    }
+
     const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
       if (!dragging) {
@@ -113,10 +136,16 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
       });
       setPosition(next);
     };
-    const onUp = (_ev: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      try {
+        el.releasePointerCapture(pointerId);
+      } catch {
+        // 既に自動解放済みの場合など。
+      }
       if (dragging) {
         // ドラッグ完了時、直後に発火する click イベント (FAB の onClick に
         // つながる) を 1 度だけ抑止する。open トグルの暴発防止 + useFabPopup
@@ -136,9 +165,9 @@ export function useDraggable(options: UseDraggableOptions = {}): UseDraggableRes
         }, 0);
       }
     };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
   }, []);
 
   const style: Record<string, string> | undefined = position
