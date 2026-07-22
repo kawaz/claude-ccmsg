@@ -175,6 +175,10 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // 空 (未解決の [FILE<N>] は送信時 substitute でリテラル残る)。
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const pendingCaretRef = useRef<number | null>(null);
+  // placeholder 挿入直後に復元すべき caret 位置 (kawaz r46 mid=33、Composer.tsx
+  // と同型): controlled textarea は value がプログラム的に変わると caret が
+  // 末尾に飛ぶため、DOM 反映後の effect で setSelectionRange して戻す。
+  const restoreCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル (kawaz r17 mid=1): repo → ws → cwd 末尾 → sid8。
@@ -230,6 +234,20 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     el.setSelectionRange(start, end);
   }, [open, text]);
 
+  // beginUpload が placeholder 挿入直後に予約した caret 位置を、DOM へ text が
+  // 反映された後に復元する (kawaz r46 mid=33)。上の open 時 focus effect は
+  // focusedForOpenRef ガードで最初の 1 回しか走らないため、以降の text 変化
+  // (= 添付挿入) はこちらの effect が拾う。
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    if (restoreCaretRef.current !== null) {
+      const pos = Math.min(restoreCaretRef.current, el.value.length);
+      el.setSelectionRange(pos, pos);
+      restoreCaretRef.current = null;
+    }
+  }, [text]);
+
   // Persist text + done attachments as the user types/uploads. Empty text
   // explicitly clears the entry rather than storing an empty draft — an
   // unused compose that never gets typed shouldn't count as a draft needing
@@ -269,10 +287,15 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         const n = assignedN || nextAttachmentNumber(attachments) || 1;
         const at = Math.min(caret, current.length);
         const inserted = insertPlaceholder(current, at, n);
-        pendingCaretRef.current = at + (inserted.length - current.length);
+        const nextCaret = at + (inserted.length - current.length);
+        pendingCaretRef.current = nextCaret;
         queueMicrotask(() => {
           pendingCaretRef.current = null;
         });
+        // 表示上の caret も placeholder の直後に復元する (末尾へ飛ぶのを防ぐ)。
+        // DOM 反映後でないと setSelectionRange が効かないので、下の [text]
+        // effect に委ねる。
+        restoreCaretRef.current = nextCaret;
         return inserted;
       });
       const n = assignedN;

@@ -76,16 +76,29 @@ export function Composer({
   /** 同一 tick 内の連続添付で共有する挿入位置 (直前 placeholder の直後)。
    * microtask で null に戻る — 単発添付は常に textarea caret を使う。 */
   const pendingCaretRef = useRef<number | null>(null);
+  // placeholder 挿入直後に復元すべき caret 位置 (kawaz r46 mid=33): controlled
+  // textarea は value がプログラム的に変わると caret が末尾に飛ぶ (React/Preact
+  // 共通の挙動)。beginUpload が setText で挿入した直後、DOM への反映後に
+  // setSelectionRange で挿入した placeholder の直後へ戻す必要がある。
+  // pendingCaretRef は「同 tick 連続添付」用で microtask で null に戻る
+  // (DOM 反映前に消える) ため、別 ref で effect まで値を持ち越す。
+  const restoreCaretRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // text 変化のたび textarea の高さを content に追随させる (上限で頭打ち)。
   // 空になった時 (送信後 reset) も呼ぶことで rows 属性由来の min-height 相当に
-  // 戻る (scrollHeight が rows 分だけになる)。
+  // 戻る (scrollHeight が rows 分だけになる)。同じ effect で caret 復元も行う
+  // (DOM に text が反映された後でないと setSelectionRange が効かないため)。
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     autosizeTextarea(el, COMPOSER_MAX_HEIGHT_REM);
+    if (restoreCaretRef.current !== null) {
+      const pos = Math.min(restoreCaretRef.current, el.value.length);
+      el.setSelectionRange(pos, pos);
+      restoreCaretRef.current = null;
+    }
   }, [text]);
 
   // UNIF-Q1=b: focusOnOpen が変わった (0 でない値 = fab がクリックされた) 時
@@ -156,11 +169,16 @@ export function Composer({
       const n = assignedN || nextAttachmentNumber(attachments) || 1;
       const at = Math.min(caret, current.length);
       const inserted = insertPlaceholder(current, at, n);
+      const nextCaret = at + (inserted.length - current.length);
       // 次の同 tick 添付は今回の placeholder の直後に挿入する (順序保存)。
-      pendingCaretRef.current = at + (inserted.length - current.length);
+      pendingCaretRef.current = nextCaret;
       queueMicrotask(() => {
         pendingCaretRef.current = null;
       });
+      // 表示上の caret も placeholder の直後に復元する (末尾へ飛ぶのを防ぐ)。
+      // 実際の DOM 反映後でないと setSelectionRange が効かないので、上の
+      // [text] effect に委ねる。
+      restoreCaretRef.current = nextCaret;
       return inserted;
     });
     // 3. upload 開始 (async)、progress は state に反映
