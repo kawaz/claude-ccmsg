@@ -1,6 +1,6 @@
 ---
 title: デーモン先起動のたびに既存セッションへ通知が飛んでうるさい — 先起動時の通知を抑止し lazy ensure に任せる
-status: wip
+status: resolved
 category: bug
 created: 2026-07-12T18:14:39+09:00
 last_read: 2026-07-22T16:25:37+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-22T16:27:59+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-23T07:05:55+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:kawaz裁定 SN-Q1=c — v0.67系 subscribe no-backlog化 + ev:room_cursors集約で既に解消済みだった","done:isolated daemon実測で daemon起動/入れ替え/SessionStart単体から session subscriberへ通知が流れる経路が現行コードに存在しないことを確認","done:member/leaveはDR-0013 §2.3で suppress済み、reconnectも無音","done:SessionStartのdaemon pre-warmはlazy ensureに任せる方針で撤廃済み(v0.71.6)","done:broadcast room新規作成時のkind+title配信は正当な設計仕様として維持"]
 blocked_by:
 origin: cache-warden (クロスプロジェクト起票)
 ---
