@@ -8,7 +8,7 @@
 // 解釈が呼び出し側ごとに違うため、生の PointerEvent を onDrag に渡して
 // 呼び出し側が解釈する。ここに解釈まで入れると「両方の長所を 1 つに」型の
 // 統合になり、どちらかの都合で歪む。
-import { useRef } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 
 export function PaneSplitter({
   id,
@@ -25,14 +25,21 @@ export function PaneSplitter({
   onDrag: (e: PointerEvent) => void;
 }) {
   const draggingRef = useRef(false);
+  // Mirrors draggingRef in state so the "being grabbed" class actually
+  // re-renders (kawaz r46m40: wants visible feedback while dragging, not
+  // just the drag plumbing). The ref stays the source of truth read inside
+  // pointermove/up handlers to avoid stale-closure races; this state exists
+  // purely to drive the class.
+  const [dragging, setDragging] = useState(false);
   return (
     <div
       id={id}
-      class={cls}
+      class={dragging ? `${cls} dragging` : cls}
       role="separator"
       aria-orientation={ariaOrientation}
       onPointerDown={(e) => {
         draggingRef.current = true;
+        setDragging(true);
         // Pointer capture keeps pointermove/pointerup coming even after the
         // pointer leaves the splitter's own hitbox — otherwise a fast drag
         // would strand the splitter mid-move. Mouse and touch share the
@@ -47,11 +54,13 @@ export function PaneSplitter({
       onPointerUp={(e) => {
         if (!draggingRef.current) return;
         draggingRef.current = false;
+        setDragging(false);
         (e.currentTarget as Element).releasePointerCapture(e.pointerId);
       }}
       onPointerCancel={(e) => {
         if (!draggingRef.current) return;
         draggingRef.current = false;
+        setDragging(false);
         (e.currentTarget as Element).releasePointerCapture(e.pointerId);
       }}
     />
