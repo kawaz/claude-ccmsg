@@ -5143,6 +5143,17 @@ button.session-tab {
  * かつ小さめのサイズで並べる (Status タブ .status-wf-agent-model と同格)。 */
 .agent-tree-model,
 .agent-tree-tokens,
+/* kawaz r46 mid=29: 選択中の agent TL のノード行をハイライト (accent 左縁 +
+ * 薄背景 + ラベル強調)。aria-current="true" と対で付く。 */
+.agent-tree-row-current {
+  background: color-mix(in srgb, var(--accent, #4a9eff) 14%, transparent);
+  border-radius: 4px;
+}
+.agent-tree-row-current > .agent-tree-label {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 .agent-tree-state-note {
   font-size: 0.7rem;
   color: var(--fg-muted);

@@ -76,7 +76,12 @@ export function TimelinePanes({
   return (
     <div class="session-panes" ref={containerRef}>
       <div class="session-pane session-pane-tree timeline-pane-tree" style={treeStyle}>
-        <AgentTreePanel sid={sid} tree={agentTree} workflows={sessionStatus?.workflows} />
+        <AgentTreePanel
+          sid={sid}
+          tree={agentTree}
+          workflows={sessionStatus?.workflows}
+          currentAgent={agent}
+        />
       </div>
       <PaneSplitter class="session-splitter" ariaOrientation="vertical" onDrag={onSplitterDrag} />
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>

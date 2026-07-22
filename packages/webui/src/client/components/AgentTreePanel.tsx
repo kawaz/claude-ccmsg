@@ -23,8 +23,9 @@ import type {
   AgentTreeWorkflowPhase,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
-import { useState } from "preact/hooks";
-import { agentTimelineHref } from "../locator.ts";
+import { createContext } from "preact";
+import { useContext, useState } from "preact/hooks";
+import { agentTimelineHref, type AgentRef } from "../locator.ts";
 import {
   buildWorkflowDrilldown,
   canonicalModelId,
@@ -96,6 +97,16 @@ function dotClass(state: string): string {
   return `status-teammate-dot status-teammate-dot-${state}`;
 }
 
+/** kawaz r46 mid=29: 選択中の agent TL をツリー上で識別するための現在地。
+ * prop drilling (4 呼び出し経路 × 階層) を避けて context で配る。 */
+const CurrentAgentContext = createContext<AgentRef | null>(null);
+
+function isCurrentAgent(current: AgentRef | null, node: AgentTreeNode): boolean {
+  if (!current) return false;
+  if (node.teammate_name) return current.teammate === node.teammate_name;
+  return !!node.agent_id && current.agentId === node.agent_id;
+}
+
 function AgentTreeNodeRow({
   sid,
   node,
@@ -126,9 +137,13 @@ function AgentTreeNodeRow({
   // state 注記: workflow member は drill.state (done / running / error /
   // progress / pending) を優先。それ以外は node.state (fold 由来)。
   const stateNote = drill?.state ?? node.state;
+  const current = isCurrentAgent(useContext(CurrentAgentContext), node);
   return (
     <li class="agent-tree-node" data-workflow-id={workflowId}>
-      <div class="agent-tree-row">
+      <div
+        class={"agent-tree-row" + (current ? " agent-tree-row-current" : "")}
+        aria-current={current ? "true" : undefined}
+      >
         {hasChildren ? (
           <button
             type="button"
@@ -450,6 +465,7 @@ export function AgentTreePanel({
   sid,
   tree,
   workflows,
+  currentAgent,
 }: {
   sid: string;
   tree: AgentTreeGroups;
@@ -457,13 +473,18 @@ export function AgentTreePanel({
    * 同じ SessionWorkflowStatus[] を渡すと、workflow member 行に model / tokens /
    * state 注記が付く (無ければ従来通り [dot label] だけ)。 */
   workflows?: SessionWorkflowStatus[];
+  /** kawaz r46 mid=29: 選択中の agent TL (locator の AgentRef)。一致する
+   * ノード行がハイライトされる。 */
+  currentAgent?: AgentRef | null;
 }) {
   const drillLookup = buildAgentDrillLookup(workflows);
   return (
-    <div class="agent-tree-panel">
-      <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
-      <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
-      <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
-    </div>
+    <CurrentAgentContext.Provider value={currentAgent ?? null}>
+      <div class="agent-tree-panel">
+        <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
+        <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
+        <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />
+      </div>
+    </CurrentAgentContext.Provider>
   );
 }
