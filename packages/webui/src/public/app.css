@@ -2714,6 +2714,9 @@ button.session-tab {
   scroll-behavior: smooth;
   font-size: 0.9rem;
   line-height: 1.5;
+  /* .viewer-body / .memo-editor-body と同じ意図の末尾余白 (kawaz r46 mid=43):
+   * floating composer がプレビュー末尾を隠して見ながら書けない。 */
+  padding-bottom: 12rem;
 }
 
 .md-toc {
