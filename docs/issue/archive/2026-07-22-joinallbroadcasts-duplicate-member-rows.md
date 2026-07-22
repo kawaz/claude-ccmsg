@@ -1,6 +1,6 @@
 ---
 title: daemon 再起動毎に joinAllBroadcasts が broadcast room jsonl へ duplicate member rows を蓄積する
-status: open
+status: resolved
 category: bug
 created: 2026-07-22T16:43:44+09:00
 last_read: 2026-07-22T17:21:39+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-22T17:32:23+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["fix commit d1740c65","BC-Q1=A decision: memberIdBySid broadcast-only leave-ignore","DR-0013 §2.2 presentMembers contract preserved","existing dirty jsonl left as-is (last-write-wins tolerant)","follow-up: 2026-07-22-broadcast-room-membership-topic (B案)"]
 blocked_by:
 origin: 自リポ TODO
 ---
