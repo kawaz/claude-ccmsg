@@ -125,7 +125,7 @@ describe("bin/ccmsg self-exec pure decisions", () => {
     expect(runFunction("__ccmsg_version_compare", ["1.2.3", "1.2.3"]).out).toBe("0");
     expect(runFunction("__ccmsg_version_compare", ["1.2.3-a", "1.2.3"]).out).toBe("-1");
     expect(runFunction("__ccmsg_version_compare", ["1.2.3", "1.2.3-a"]).out).toBe("1");
-  });
+  }, 30_000);
 
   test("親 directory の symlink も解決した物理 realpath を比較に使う", () => {
     // A stable PATH directory may itself be a symlink; lexical normalization alone
@@ -143,13 +143,13 @@ describe("bin/ccmsg self-exec pure decisions", () => {
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   test("realpath が同一なら redirect しない", () => {
     // PATH lookup が自分自身を指す通常起動は exec せず、そのプロセスで続行する。
     const self = "/cache/ccmsg/1.2.3/bin/ccmsg";
     expect(runFunction("__ccmsg_should_self_exec", [self, self]).code).not.toBe(0);
-  });
+  }, 30_000);
 
   test("PATH 側 realpath の semver が新しい時だけ redirect する", () => {
     // Path difference alone is insufficient: only a monotonic version advance may exec.
@@ -160,7 +160,7 @@ describe("bin/ccmsg self-exec pure decisions", () => {
     expect(
       runFunction("__ccmsg_should_self_exec", [self, "/cache/ccmsg/1.2.2/bin/ccmsg"]).code,
     ).not.toBe(0);
-  });
+  }, 30_000);
 });
 
 describe("bin/ccmsg self-exec", () => {
@@ -175,7 +175,7 @@ describe("bin/ccmsg self-exec", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("CCMSG_NO_SELF_EXEC=1 は PATH 上の新版への exec を無効化する", () => {
     // Tests can pin the working copy process even when an installed ccmsg is newer.
@@ -188,7 +188,7 @@ describe("bin/ccmsg self-exec", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("PATH に ccmsg が無ければ起動元の実体で続行する", () => {
     // Fail-open keeps absolute plugin-cache invocations usable before PATH install.
@@ -200,7 +200,7 @@ describe("bin/ccmsg self-exec", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 });
 
 describe("bin/ccmsg self-update (DR-0007 §2)", () => {
@@ -214,7 +214,7 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("古い版から実行しても PATH の symlink は退行しない", () => {
     const f = makeFixture();
@@ -226,7 +226,7 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("PATH の ccmsg が versioned cache 外を指す symlink なら不干渉", () => {
     const f = makeFixture();
@@ -239,7 +239,7 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("PATH の ccmsg が symlink でない (実ファイル) なら不干渉", () => {
     const f = makeFixture();
@@ -254,7 +254,7 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("dev checkout (unversioned path) からの実行では不発火", () => {
     const f = makeFixture();
@@ -267,7 +267,7 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 
   test("PATH に ccmsg が無ければ何も作らない (best-effort no-op)", () => {
     const f = makeFixture();
@@ -278,5 +278,5 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     } finally {
       f.cleanup();
     }
-  });
+  }, 30_000);
 });

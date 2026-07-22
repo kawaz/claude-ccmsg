@@ -306,7 +306,7 @@ import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
   const request = JSON.parse(line);
-  await new Promise((r) => setTimeout(r, 100)); // serial per-request work, like translations(from:)
+  await new Promise((r) => setTimeout(r, 500)); // serial per-request work, like translations(from:)
   const results = request.texts.map((text) => ({ ok: true, text: "[ja]" + text }));
   process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
 }
@@ -316,13 +316,15 @@ for await (const line of lines) {
       const service = createTranslateService({
         platform: "darwin",
         binaryPath: helper,
-        // 12 requests x 100ms serial = ~1200ms total queue time, far past the
-        // 800ms deadline — yet no request may time out, because each one's
-        // clock starts when it reaches the helper, not when it was issued.
-        // The 700ms slack between per-request work and deadline absorbs
-        // scheduler jitter under a fully-parallel suite run (a 500ms deadline
-        // was observed flaky there).
-        watchdogTimeoutMs: () => 800,
+        // 12 requests x 500ms serial = ~6000ms total queue time, far past the
+        // 3000ms per-request deadline — yet no request may time out, because
+        // each one's clock starts when it reaches the helper, not when it was
+        // issued. The 2500ms slack between per-request work and deadline
+        // absorbs scheduler jitter under a fully-parallel suite run: earlier
+        // values (100ms/800ms, 100ms/500ms) were observed flaky under 8x
+        // parallel load where the mock's 100ms setTimeout stretched to
+        // hundreds of ms and individual requests exceeded the deadline.
+        watchdogTimeoutMs: () => 3_000,
       });
       services.push(service);
 
@@ -335,7 +337,7 @@ for await (const line of lines) {
           expect(result.results[0].text).toBe(`[ja]paragraph ${i}`);
         }
       }
-    }, 15_000);
+    }, 30_000);
   });
 });
 
@@ -365,26 +367,34 @@ describe("translateWatchdogTimeoutMs", () => {
 // recipe exercises Translation.framework itself in the normal bun test suite.
 const helperBinary = defaultTranslateHelperPaths().binary;
 const realHelperTest = fs.existsSync(helperBinary) ? test : test.skip;
-realHelperTest("the built Swift helper translates a mixed-text batch over JSONL", async () => {
-  const proc = Bun.spawn([helperBinary], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-  const stdin = proc.stdin as Bun.FileSink;
-  await stdin.write(
-    JSON.stringify({
-      id: "mixed",
-      texts: ["The build completed successfully.ここから日本語です。", "これは日本語です。"],
-    }) + "\n",
-  );
-  await stdin.end();
-  const output = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
-  const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
-  expect(await proc.exited).toBe(0);
-  expect(stderr).toBe("");
-  const response = JSON.parse(output.trim());
-  expect(response.id).toBe("mixed");
-  expect(response.results).toHaveLength(2);
-  expect(response.results[0].ok).toBe(true);
-  expect(response.results[0].text).toContain("ここから日本語です。");
-  expect(response.results[0].text).not.toContain("The build completed successfully.");
-  expect(response.results[1].ok).toBe(true);
-  expect(response.results[1].text).toBe("これは日本語です。");
-});
+realHelperTest(
+  "the built Swift helper translates a mixed-text batch over JSONL",
+  async () => {
+    // The Swift helper cold-spawns Translation.framework, which under an 8x
+    // parallel suite run has been observed to blow past the 5000ms default per-
+    // test deadline. Give it a generous ceiling — this test is a smoke check on
+    // the real binary, not a latency bound.
+    const proc = Bun.spawn([helperBinary], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const stdin = proc.stdin as Bun.FileSink;
+    await stdin.write(
+      JSON.stringify({
+        id: "mixed",
+        texts: ["The build completed successfully.ここから日本語です。", "これは日本語です。"],
+      }) + "\n",
+    );
+    await stdin.end();
+    const output = await new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+    const stderr = await new Response(proc.stderr as ReadableStream<Uint8Array>).text();
+    expect(await proc.exited).toBe(0);
+    expect(stderr).toBe("");
+    const response = JSON.parse(output.trim());
+    expect(response.id).toBe("mixed");
+    expect(response.results).toHaveLength(2);
+    expect(response.results[0].ok).toBe(true);
+    expect(response.results[0].text).toContain("ここから日本語です。");
+    expect(response.results[0].text).not.toContain("The build completed successfully.");
+    expect(response.results[1].ok).toBe(true);
+    expect(response.results[1].text).toBe("これは日本語です。");
+  },
+  30_000,
+);
