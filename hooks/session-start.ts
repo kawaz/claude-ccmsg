@@ -2,15 +2,8 @@
 /**
  * SessionStart hook.
  *
- * Four jobs:
- *   (a) Wake the central daemon by going through the *same* ensure-daemon path
- *       every client uses — we shell out to the launcher (`ccmsg peers`) rather
- *       than importing daemon internals, so the hook depends only on the public
- *       `bin/ccmsg` contract. Blocking on it also lets the spawned daemon reparent
- *       to init before this hook exits, so a hook process-group teardown won't take
- *       the daemon with it (and if it ever does, the next ensure — subscribe's own —
- *       respawns it, DR-0002 §5). (DR-0002 §2)
- *   (b) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
+ * Three jobs:
+ *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
  *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
  *       hello time. This replaces an earlier approach of embedding these as env
  *       prefixes (CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS) on the suggested
@@ -19,9 +12,11 @@
  *       file the CLI reads on its own keeps the suggested command down to
  *       `CCMSG_SID=<sid> ccmsg subscribe` regardless of how much identity metadata
  *       accumulates (kawaz decision, 2026-07-11).
- *   (c) Tell the AI to hold a `ccmsg subscribe` stream open under the Monitor tool.
- *       (DR-0002 §2)
- *   (d) When PATH has no `ccmsg` but a stable, writable candidate dir does, tell
+ *   (b) Tell the AI to hold a `ccmsg subscribe` stream open under the Monitor tool.
+ *       That subscribe call is the first client action of this session and it goes
+ *       through `ensureDaemon`, which spawns/upgrades the daemon on demand — so no
+ *       separate pre-warm from this hook is needed (DR-0002 §5 lazy ensure).
+ *   (c) When PATH has no `ccmsg` but a stable, writable candidate dir does, tell
  *       the AI to ask the user (AskUserQuestion) whether to symlink one in.
  *       The hook itself never writes the symlink or the decline marker — only
  *       detects and instructs; the AI performs the confirmed action. (DR-0007 §1)
@@ -388,22 +383,7 @@ async function main(): Promise<void> {
   const bin = resolveBin();
   const stateDir = resolvePaths().stateDir;
 
-  // (a) Ensure the daemon is up. `peers` is a read-only op that flows through
-  // ensure-daemon (connect -> spawn+upgrade if needed). Output is discarded; a
-  // slow/failed spawn is capped by the timeout and never fails the session.
-  try {
-    Bun.spawnSync({
-      cmd: [bin, "peers"],
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
-      timeout: 5000,
-    });
-  } catch {
-    // best-effort warm-up
-  }
-
-  // (b) Write this session's state file (transcript_path/cwd/repo/ws) for the CLI
+  // (a) Write this session's state file (transcript_path/cwd/repo/ws) for the CLI
   // to pick up at hello time (see the module header). Always overwrite (unlike
   // UserPromptSubmit's "only if missing" — this is the fresh, authoritative source
   // per session start, e.g. a `/cd` or `claude --resume` should refresh it).
@@ -423,7 +403,7 @@ async function main(): Promise<void> {
   }
   pruneOldSessionFiles(stateDir);
 
-  // (c) Guide the AI. subscribe is a long-running blocking stream, so it must run
+  // (b) Guide the AI. subscribe is a long-running blocking stream, so it must run
   // under the Monitor tool (persistent), never the Bash tool.
   //
   // CCMSG_SID must be embedded in the suggested command: CLAUDE_CODE_SESSION_ID
@@ -443,7 +423,7 @@ async function main(): Promise<void> {
     "Without it you cannot proactively notice incoming messages (the UserPromptSubmit hook only nags you on your next turn).",
   ];
 
-  // (d) PATH install suggestion (DR-0007 §1), only when detected.
+  // (c) PATH install suggestion (DR-0007 §1), only when detected.
   try {
     const home = process.env.HOME ?? os.homedir();
     const candidate = detectPathInstallCandidate(process.env.PATH, home, stateDir);
