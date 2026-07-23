@@ -104,22 +104,34 @@ export function LinkedMarkdownView({
   probeSource,
   highlightWords,
   onMatchClick,
+  restricted = false,
 }: {
   source: string;
   ctx: FilePathResolveCtx | undefined;
   probeSource?: string | undefined;
   highlightWords?: readonly SearchWord[];
   onMatchClick?: () => void;
+  /** kawaz r55 m12: forward MarkdownView's restricted mode. In restricted
+   * mode we skip filepath probing entirely — user-authored inline code isn't
+   * a session-scoped path reference (that channel is agent-only per DR-0028
+   * / TimelineItem's existing pattern), and the linker's cache would be
+   * churned by noise. Hooks stay called unconditionally so React's call
+   * order is stable regardless of the flag. */
+  restricted?: boolean;
 }) {
-  useFilePathProbeEnqueue(probeSource === undefined ? source : probeSource, ctx);
+  useFilePathProbeEnqueue(
+    restricted ? undefined : probeSource === undefined ? source : probeSource,
+    restricted ? undefined : ctx,
+  );
   const cacheTick = useFilePathCacheTick();
-  const linker = makeFilePathLinker(ctx, cacheTick);
+  const linker = restricted ? undefined : makeFilePathLinker(ctx, cacheTick);
   return (
     <MarkdownView
       source={source}
       highlightWords={highlightWords}
       onMatchClick={onMatchClick}
       filePathLinker={linker}
+      restricted={restricted}
     />
   );
 }

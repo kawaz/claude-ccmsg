@@ -3134,6 +3134,20 @@ button.session-tab {
   white-space: pre-wrap;
 }
 
+/* kawaz r55 m12: user-authored msg (u1) は restricted markdown で描画する。
+ * heading / list / emphasis / autolink 等は解釈せず verbatim なので、行分けは
+ * white-space: pre-wrap で表現する (元テキストの改行がそのまま可視化される)。
+ * .md-restricted-text は「非 code / 非 blockquote」の連続テキストを 1 塊で
+ * 包む span で、そこに pre-wrap を効かせる。 */
+.md-restricted .md-restricted-text {
+  white-space: pre-wrap;
+}
+.md-restricted > blockquote {
+  margin: 0.3em 0;
+  padding: 0 0.6em;
+  border-left: 3px solid var(--fg-muted, #888);
+}
+
 .tl-bubble-right .tl-bubble-body {
   border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
   background: var(--user-bubble-bg);

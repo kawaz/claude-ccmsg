@@ -119,13 +119,19 @@ function MsgItem({
       </div>
       <div class="msg-body">
         {renderAsMarkdown ? (
-          // Only agent-authored markdown messages carry file-path links; the
-          // undefined `probeSource` on the non-markdown branch is moot because
-          // that branch renders `event.msg` verbatim without going through
-          // LinkedMarkdownView at all.
+          // Only agent-authored markdown messages carry file-path links; user
+          // (u1) messages fall through to restricted mode below where the
+          // linker context is dropped anyway.
           <LinkedMarkdownView source={event.msg} ctx={filePathCtx} />
         ) : (
-          event.msg
+          // kawaz r55 m12: user-authored msgs get restricted markdown — only
+          // inline code / fenced blocks / blockquotes render as markdown,
+          // everything else (headings, lists, emphasis, autolinks, HTML) is
+          // shown verbatim so `#123` doesn't disappear as an H1 and
+          // `<R G B>` doesn't lose its brackets. Previously this branch
+          // rendered `event.msg` as a raw string which lost inline code
+          // rendering the user did intend.
+          <LinkedMarkdownView source={event.msg} ctx={undefined} restricted />
         )}
       </div>
     </div>

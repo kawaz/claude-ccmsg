@@ -21,6 +21,7 @@ import {
   isSafeUrl,
   parseMarkdownSource,
   renderMarkdownAst,
+  renderRestrictedMarkdown,
 } from "../src/client/markdown-view.tsx";
 import { CodeBlock } from "../src/client/components/CodeBlock.tsx";
 import { parseSearchQuery, type SearchWord } from "../src/client/in-view-search.ts";
@@ -825,5 +826,83 @@ describe("renderMarkdownAst / DR-0022 search highlighting", () => {
     const vnode = renderMarkdownAst(textRoot("hello world"), { words, onMatchClick: () => {} });
     expect(collect(vnode, (n) => n.type === "mark")).toHaveLength(0);
     expect(flattenText(vnode)).toBe("hello world");
+  });
+});
+
+// kawaz r55 m12: user-authored messages are rendered through a restricted
+// pipeline where only inline code / fenced code blocks / blockquotes are
+// interpreted as markdown, so the composer's `#123` text or `<R G B>` don't
+// disappear into an H1 or an autolink.
+describe("renderRestrictedMarkdown", () => {
+  test("leading #NNNN is NOT a heading — the `#` and the rest survive verbatim", () => {
+    const src = "別件でルール系の作業として追加。\n\n#NNNN でPRやIssue番号を書く際は...";
+    const vnode = renderRestrictedMarkdown(src);
+    // No heading tag, and the whole source text is present in the output.
+    expect(collect(vnode, (n) => /^h[1-6]$/.test(String(n.type)))).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(src);
+  });
+
+  test("<R G B> is NOT an autolink / HTML tag — angle brackets survive", () => {
+    const src = "色は <R G B> の順で並ぶ";
+    const vnode = renderRestrictedMarkdown(src);
+    expect(flattenText(vnode)).toBe(src);
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+  });
+
+  test("emphasis / strong / list / hr / table markers are shown verbatim", () => {
+    const src = "**bold** *em* _u_\n- item1\n- item2\n\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+    const vnode = renderRestrictedMarkdown(src);
+    expect(flattenText(vnode)).toBe(src);
+    expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "em")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "ul" || n.type === "ol")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "hr")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "table")).toHaveLength(0);
+  });
+
+  test("inline `code` renders as <code>", () => {
+    const vnode = renderRestrictedMarkdown("run `foo bar` please");
+    const codes = collect(vnode, (n) => n.type === "code");
+    expect(codes).toHaveLength(1);
+    expect(flattenText(codes[0])).toBe("foo bar");
+    expect(flattenText(vnode)).toContain("run ");
+    expect(flattenText(vnode)).toContain(" please");
+  });
+
+  test("fenced ``` code block renders as CodeBlock (lang preserved)", () => {
+    const src = "before\n```ts\nconst x = 1\n```\nafter";
+    const vnode = renderRestrictedMarkdown(src);
+    const blocks = collect(vnode, (n) => n.type === CodeBlock);
+    expect(blocks).toHaveLength(1);
+    const props = blocks[0]!.props as unknown as { code: string; lang: string | null };
+    expect(props.code).toBe("const x = 1");
+    expect(props.lang).toBe("ts");
+    // The `#`-heading disaster does not happen inside fences either — the
+    // fence body is opaque to the tokenizer.
+    const src2 = "```\n# not a heading\n```";
+    const vnode2 = renderRestrictedMarkdown(src2);
+    expect(collect(vnode2, (n) => /^h[1-6]$/.test(String(n.type)))).toHaveLength(0);
+  });
+
+  test("> quoted lines render as <blockquote>, adjacent runs coalesce", () => {
+    const src = "> line1\n> line2\nafter";
+    const vnode = renderRestrictedMarkdown(src);
+    const quotes = collect(vnode, (n) => n.type === "blockquote");
+    expect(quotes).toHaveLength(1);
+    expect(flattenText(quotes[0])).toBe("line1\nline2");
+  });
+
+  test("bare newlines survive (rendered via pre-wrap span)", () => {
+    // The output span carries `md-restricted-text` so CSS `pre-wrap` reveals
+    // the `\n`; we assert the character actually reaches the DOM text.
+    const vnode = renderRestrictedMarkdown("line1\nline2\nline3");
+    expect(flattenText(vnode)).toBe("line1\nline2\nline3");
+  });
+
+  test("unclosed backtick is left as literal text (no swallowing)", () => {
+    const src = "here is a ` stray backtick";
+    const vnode = renderRestrictedMarkdown(src);
+    expect(flattenText(vnode)).toBe(src);
+    expect(collect(vnode, (n) => n.type === "code")).toHaveLength(0);
   });
 });

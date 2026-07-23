@@ -584,6 +584,105 @@ export function parseMarkdownSource(source: string): Root {
   return root;
 }
 
+/** Restricted-mode renderer for user-authored messages (kawaz r55 m12).
+ *
+ * When a human types a message into the composer, they almost never intend
+ * `#foo` to be an H1 heading, `**word**` to be bold, or `<R G B>` to be an
+ * HTML tag / autolink — the CommonMark syntax collides with everyday prose
+ * and looks broken (heading swallowing the rest of the message, autolink
+ * dropping the angle brackets and linkifying `R G B`). What users *do* use
+ * on purpose is: inline code (`` `foo` ``), fenced code blocks (```` ``` ````),
+ * and blockquote lines (`> ...`). This renderer keeps exactly those three
+ * markdown constructs live and shows everything else verbatim as plain text.
+ *
+ * Deliberately tokenizes source directly (no `parse()` involvement) instead
+ * of walking the mdast tree and flattening disallowed nodes back to text —
+ * the mdast round trip loses positional details (`#NNNN` where the parser
+ * ate the `#`, exact whitespace inside `_foo_` etc.), so reconstructing the
+ * user's original characters from the tree is fragile. A three-token lexer
+ * is small enough to test exhaustively and can't accidentally drop input.
+ *
+ * The output is wrapped in `<div class="md md-restricted">`; `.md-restricted`
+ * applies `white-space: pre-wrap` so bare newlines in the user's message
+ * render as line breaks (matching how the composer showed them). */
+export function renderRestrictedMarkdown(source: string): VNode {
+  const lines = source.split("\n");
+  const blocks: (VNode | string)[] = [];
+  let key = 0;
+  let i = 0;
+  let pending: string[] = [];
+  const flushText = () => {
+    if (pending.length === 0) return;
+    const text = pending.join("\n");
+    pending = [];
+    blocks.push(
+      <span class="md-restricted-text" key={`b${key++}`}>
+        {renderRestrictedInline(text, `b${key}`)}
+      </span>,
+    );
+  };
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const fence = /^(`{3,})(\S*)\s*$/.exec(line);
+    if (fence) {
+      flushText();
+      const marker = fence[1]!;
+      const lang = fence[2] ? fence[2] : null;
+      const body: string[] = [];
+      i += 1;
+      const closer = new RegExp(`^${marker}\\s*$`);
+      while (i < lines.length && !closer.test(lines[i]!)) {
+        body.push(lines[i]!);
+        i += 1;
+      }
+      if (i < lines.length) i += 1; // consume closing fence
+      blocks.push(<CodeBlock key={`b${key++}`} code={body.join("\n")} lang={lang} />);
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      flushText();
+      const quoted: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i]!)) {
+        quoted.push(lines[i]!.replace(/^>\s?/, ""));
+        i += 1;
+      }
+      const text = quoted.join("\n");
+      blocks.push(
+        <blockquote key={`b${key++}`}>
+          <span class="md-restricted-text">{renderRestrictedInline(text, `b${key}`)}</span>
+        </blockquote>,
+      );
+      continue;
+    }
+    pending.push(line);
+    i += 1;
+  }
+  flushText();
+  return <div class="md md-restricted">{blocks}</div>;
+}
+
+/** Inline pass for restricted rendering: only the `` `code` `` span is
+ * markdown-styled, everything else is untouched text. A backtick with no
+ * closing pair on the same string is left verbatim (no swallowing). */
+function renderRestrictedInline(text: string, keyPrefix: string): (VNode | string)[] {
+  const out: (VNode | string)[] = [];
+  const re = /`([^`\n]+)`/g;
+  let last = 0;
+  let n = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(
+      <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>
+        {m[1]}
+      </code>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out.length > 0 ? out : [text];
+}
+
 /** Pure mdast-AST -> VNode transform, split out from `MarkdownView` so tests
  * can hand-construct mdast fragments (DR-0010) without going through
  * `parse()`. */
@@ -615,6 +714,7 @@ export function MarkdownView({
   onMatchClick,
   tableOfContents = false,
   filePathLinker,
+  restricted = false,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -626,10 +726,21 @@ export function MarkdownView({
    * InlineFileViewer reads a file rendered inline — the file being viewed
    * *is* the target, there's no separate author to link out from). */
   filePathLinker?: FilePathLinker;
+  /** kawaz r55 m12: user-authored message rendering. In restricted mode,
+   * only inline code / fenced code blocks / blockquotes render as markdown;
+   * everything else (headings, lists, tables, emphasis, links, HTML) is
+   * shown verbatim so a user typing `#123 の件` doesn't lose the line to an
+   * H1 heading and `<R G B>` isn't consumed as an HTML tag / autolink.
+   * `tableOfContents`, `filePathLinker`, and `highlightWords` do not apply
+   * in this mode (user messages don't need TOC or session-scoped file
+   * linkification; in-view search on user text is handled by the caller's
+   * plain-text path already). */
+  restricted?: boolean;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
   return useMemo(() => {
+    if (restricted) return renderRestrictedMarkdown(source);
     const root = parseMarkdownSource(source);
     const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
     const markdown = renderMarkdownAst(
@@ -674,5 +785,5 @@ export function MarkdownView({
         {markdown}
       </div>
     );
-  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker]);
+  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker, restricted]);
 }

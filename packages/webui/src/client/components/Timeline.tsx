@@ -1841,7 +1841,7 @@ function CcmsgBubble({
           // 空白に潰れる。文書様式が前提の assistant markdown には波及させない
           // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
           <div class="tl-ccmsg-msg">
-            <LinkedMarkdownView source={msgBody} ctx={filePathCtx} />
+            <LinkedMarkdownView source={msgBody} ctx={filePathCtx} restricted={isUser} />
           </div>
         ) : (
           <pre class="tl-fold-body">{rawText}</pre>
