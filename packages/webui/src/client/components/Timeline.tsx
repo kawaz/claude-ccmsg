@@ -464,20 +464,36 @@ function AgentCard({
   model?: string;
 }) {
   const marker = agentDirectionMarker(direction);
-  // AgentCard は控えめな共通配色 (`--agent-comm-bg` + dashed border) のまま
-  // にする (kawaz 2026-07-23 裁定): 関心の高い CcmsgBubble (別セッション間
-  // メッセージ) と関心の薄い AgentCard (サブエージェント間、可視性トグル
-  // OFF 運用) を両方 hue で色付けすると区別が付かなくなるため、AgentCard
-  // 側の v0.73.2 rich-unify は revert。CcmsgBubble 側の hue 化は維持。
+  // AgentCard の展開表示は CcmsgBubble (別セッション間 msg) と同じ rich
+  // バブル形式に統一する (kawaz r55m29 裁定: 「もういいよ ccmsg 形式でさ。
+  // そこから微調整していく」)。hue seed は AgentIdentity アイコンと同じ
+  // `agent:${name}` — 同画面に並ぶ AgentCard とアイコンで色が揃う。左寄せ
+  // (`.tl-bubble-left`) + max-width 85% で右端 (ユーザエリア) に触れさせない
+  // — direction は header 内 badge (`marker + 送信/受信/new`) で示す。
+  // body は plain pre-wrap ではなく LinkedMarkdownView で描画: SendMessage /
+  // spawn の prompt に含まれる `path:line` を TL 側同様にリンク化する
+  // (filePathCtx はセッション owner の SessionFilePathCtxContext を使う)。
+  const filePathCtx = useContext(SessionFilePathCtxContext);
+  const hue = hueForSeed(`agent:${name}`);
   return (
-    <div class={`tl-agent-card tl-agent-${direction}`}>
-      <div class="tl-agent-card-head">
-        <span>{marker}</span>
-        <AgentIdentity name={name} model={model} linkify />
-        <span class="tl-agent-badge">{badge}</span>
+    <div
+      class={`tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-agent tl-bubble-agent-${direction}`}
+      style={{ "--member-hue": String(hue) }}
+    >
+      <div class="tl-bubble-body">
+        <div class="tl-bubble-from tl-agent-card-head">
+          <AgentIdentity name={name} model={model} linkify />
+          <span class="tl-agent-badge">
+            {marker} {badge}
+          </span>
+        </div>
+        {title ? <div class="tl-agent-title">{title}</div> : null}
+        {body ? (
+          <div class="tl-agent-md">
+            <LinkedMarkdownView source={body} ctx={filePathCtx} />
+          </div>
+        ) : null}
       </div>
-      {title ? <div class="tl-agent-title">{title}</div> : null}
-      {body ? <div class="tl-agent-body">{body}</div> : null}
     </div>
   );
 }

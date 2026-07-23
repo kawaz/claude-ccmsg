@@ -3755,33 +3755,13 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
-.tl-agent-card {
-  margin-top: 0.25rem;
-  width: min(85%, 48rem);
-  padding: 0.4rem 0.55rem;
-  border: 1px dashed var(--agent-comm-border);
-  border-radius: 0.55rem;
-  background: var(--agent-comm-bg);
-  color: var(--fg-muted);
-  font-size: 0.78rem;
-}
-
-/* outbound の AgentCard (SendMessage / Agent spawn) は右寄せするが、右端には
- * 触れさせない (kawaz 2026-07-23 r55m6): 「右端に触れるのはユーザメッセージ
- * のみ」— agent 間メッセージが右端に届くと、hue がたまたま緑系だったとき
- * にユーザバブル (tl-bubble-right、右端接触) と見分けが付かなくなる。
- * margin-left:auto で右寄せを維持したまま、margin-right でユーザバブル側と
- * 明確な非対称を作る (ユーザ = 右端接触 / agent outbound = 右端非接触)。
- * inbound (左寄せ) は左端接触のままで OK (左端接触するのは全種類の
- * 「左寄せ発話」で共通、user 判定に使われるシグナルではない)。 */
-.tl-agent-outbound {
-  margin-left: auto;
-  margin-right: 1.5rem;
-}
-
-.tl-agent-inbound {
-  margin-right: auto;
-}
+/* AgentCard は CcmsgBubble と同じ rich バブル (`.tl-bubble.tl-bubble-peer`)
+ * を再利用する (kawaz r55m29 裁定「もういいよ ccmsg 形式でさ」)。左寄せ
+ * (`.tl-bubble-left`, max-width 85%) で右端 (ユーザエリア) に触れさせず、
+ * direction は header 内 badge (`marker + 送信/受信/new`) で示す。以前あった
+ * `.tl-agent-card` / `.tl-agent-outbound` / `.tl-agent-inbound` の右寄せ +
+ * dashed background 表示は revert 済み — 下記 `.tl-bubble-agent` 系ルールが
+ * 後任。 */
 
 /* CcmsgBubble (peer 側) を thinking と同じ折り畳みで包む (kawaz r55 m10,
  * 2026-07-23): TL の主役は TL セッション自身、peer からの ccmsg は参照材料。
@@ -3881,9 +3861,11 @@ button.session-tab {
   align-items: center;
 }
 
+/* AgentCard の header 行は `.tl-bubble-from` を継承しつつ、name/model と
+ * badge を両端に振り分ける (badge 側は `margin-left:auto`)。 */
 .tl-agent-card-head {
-  justify-content: space-between;
   gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .tl-agent-identity {
@@ -3932,13 +3914,37 @@ button.session-tab {
   font-weight: 600;
 }
 
-.tl-agent-body {
+/* AgentCard 本文 (SendMessage の `message` / Agent spawn の `prompt`)。
+ * plain pre-wrap ではなく LinkedMarkdownView で描画する — filepath:line や
+ * inline code / list を assistant markdown と同じ体裁で見せる (kawaz r55m29
+ * 「ccmsg 形式でさ」)。CcmsgBubble の msg タブと同じく、`.md p` 段落内の
+ * 改行を pre-wrap で保つ (SendMessage の message にはハードラップされた
+ * プロンプト整形が多く、改行が消えると読めなくなる)。 */
+.tl-agent-md {
   margin-top: 0.25rem;
+}
+.tl-agent-md .md p {
   white-space: pre-wrap;
-  word-break: break-word;
 }
 
-.tl-agent-fold > .tl-guided > .tl-agent-card {
+/* AgentCard を CcmsgBubble と同じ hue バブルにする (kawaz r55m29): 内側
+ * `.tl-bubble-body` に hue 背景 + 左ボーダー。hue seed は `agent:${name}`
+ * (AgentIdentity アイコンと同一) — 同画面で AgentCard とアイコンの色が揃う。 */
+.tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
+  background: hsl(var(--member-hue) 45% 94%);
+  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+}
+@media (prefers-color-scheme: dark) {
+  .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
+    background: hsl(var(--member-hue) 22% 18%);
+    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+  }
+}
+
+/* AgentCard は fold-guide の隣で content 幅を吸って左寄せさせる。
+ * (`.tl-guided` は row flex、`.tl-bubble` の align-self:flex-start は
+ * cross-axis しか効かないため、明示的に flex 空間を与える必要がある。) */
+.tl-agent-fold > .tl-guided > .tl-bubble {
   flex: 1;
   min-width: 0;
 }
