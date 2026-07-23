@@ -596,12 +596,14 @@ export type BoundaryKind =
  * assistant turn carrying at least one `text` segment — the "次のユーザ向け
  * アシスタント最終レスポンス" that ends a run of intermediate entries — is
  * `"assistant-response"`; a system-origin "type:user" line that itself
- * carries at least one ccmsg room message (`extractCcmsgMessages`, checked
- * last since it's the least common case and the function does its own
- * `kind==="turn"` guard) is `"ccmsg"`. Anything else — including an assistant
- * turn with only thinking/tool_use segments (no text yet), which folds with
- * the rest of the run until a text-bearing turn or the next user prompt
- * closes it — is `null` (not a boundary).
+ * carries at least one **u1 (ADMIN)-発** ccmsg room message (kawaz r55 m14
+ * 裁定: u1 発 ccmsg は本物のユーザ発話と同格の主役表示なので boundary
+ * 維持、peer 発 ccmsg は thinking/agent と同様に fold group 内へ) is
+ * `"ccmsg"`. Anything else — including an assistant turn with only thinking/
+ * tool_use segments (no text yet), and system-origin lines that carry only
+ * peer-発 ccmsg (which fold into the surrounding fold group where CcmsgBubble
+ * still renders each one as a direct entry with thinking-style summary) —
+ * is `null` (not a boundary).
  */
 export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (isUserTextTurn(line)) return { kind: "user-prompt" };
@@ -612,7 +614,13 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   )
     return { kind: "assistant-response" };
   const ccmsgMessages = extractCcmsgMessages(line);
-  return ccmsgMessages.length > 0 ? { kind: "ccmsg", messages: ccmsgMessages } : null;
+  if (ccmsgMessages.length === 0) return null;
+  // r55 m14: peer 発 ccmsg のみの line は boundary にせず fold group へ流す。
+  // u1 発を 1 件でも含む line は boundary として standalone。
+  // "u1" は protocol の ADMIN_ID。この module は pure で外部 import なし
+  // (unit-test 容易性のため) — 文字列リテラルで揃える。
+  const hasU1 = ccmsgMessages.some((m) => m.from === "u1");
+  return hasU1 ? { kind: "ccmsg", messages: ccmsgMessages } : null;
 }
 
 /** True for a line that should render on its own (never folded into a tools

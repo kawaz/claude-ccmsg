@@ -2541,7 +2541,27 @@ describe("userNavTargets", () => {
 });
 
 describe("classifyBoundaryLine", () => {
-  test("a system-origin line carrying a ccmsg type:msg event -> {kind:'ccmsg', messages:[...]}", () => {
+  // u1 (ADMIN) 発 ccmsg は本物のユーザ発話と同格に扱う (r55 m14) — boundary。
+  test("a system-origin line carrying a u1-sent ccmsg -> {kind:'ccmsg', messages:[...]}", () => {
+    const msgEvent = { type: "msg", mid: 1, from: "u1", r: "r1", ts: "t1", msg: "hi" };
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n<teammate-message teammate_id="u1">\n${JSON.stringify(msgEvent)}\n</teammate-message>`,
+        },
+      }),
+    );
+    expect(classifyBoundaryLine(line)).toEqual({
+      kind: "ccmsg",
+      messages: [{ from: "u1", to: undefined, room: "r1", msg: "hi", ts: "t1", mid: 1 }],
+    });
+  });
+
+  // r55 m14: peer 発 (u1 以外) ccmsg は boundary にせず fold group 内で
+  // thinking/agent と同格の direct 要素として描画する。
+  test("a system-origin line carrying a peer-sent ccmsg -> null (folds)", () => {
     const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
     const line = parseTranscriptLine(
       JSON.stringify({
@@ -2552,15 +2572,32 @@ describe("classifyBoundaryLine", () => {
         },
       }),
     );
-    expect(classifyBoundaryLine(line)).toEqual({
-      kind: "ccmsg",
-      messages: [{ from: "a1", to: undefined, room: "r1", msg: "hi", ts: "t1", mid: 1 }],
-    });
+    expect(classifyBoundaryLine(line)).toBeNull();
   });
 
-  // ccmsg メッセージを含む行は groupTimelineLines でも境界 (standalone
-  // entry) として扱われる — fold group の中に埋もれない。
-  test("a ccmsg-carrying line stands alone as a boundary in groupTimelineLines, not folded", () => {
+  // u1 ccmsg-carrying line は境界として standalone、peer ccmsg-carrying line
+  // は fold group に入る。
+  test("u1 ccmsg-carrying line stands alone as a boundary in groupTimelineLines", () => {
+    const msgEvent = { type: "msg", mid: 1, from: "u1", r: "r1", ts: "t1", msg: "hi" };
+    const ccmsgLine = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n<teammate-message teammate_id="u1">\n${JSON.stringify(msgEvent)}\n</teammate-message>`,
+        },
+      }),
+    );
+    const lines = [userText("go"), ccmsgLine, assistantText("done")];
+    const offsets = [0, 1, 2];
+    expect(groupTimelineLines(lines, offsets)).toEqual([
+      { kind: "entry", offset: 0, line: lines[0] },
+      { kind: "entry", offset: 1, line: ccmsgLine },
+      { kind: "entry", offset: 2, line: lines[2] },
+    ]);
+  });
+
+  test("peer ccmsg-carrying line folds into surrounding group, not boundary", () => {
     const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
     const ccmsgLine = parseTranscriptLine(
       JSON.stringify({
@@ -2575,7 +2612,7 @@ describe("classifyBoundaryLine", () => {
     const offsets = [0, 1, 2];
     expect(groupTimelineLines(lines, offsets)).toEqual([
       { kind: "entry", offset: 0, line: lines[0] },
-      { kind: "entry", offset: 1, line: ccmsgLine },
+      { kind: "fold", entries: [{ offset: 1, line: ccmsgLine }] },
       { kind: "entry", offset: 2, line: lines[2] },
     ]);
   });
