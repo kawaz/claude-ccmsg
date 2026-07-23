@@ -1,7 +1,7 @@
 {
   "name": "ccmsg",
   "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
-  "version": "0.72.5",
+  "version": "0.72.6",
   "author": { "name": "kawaz" },
   "license": "MIT",
   "repository": "https://github.com/kawaz/claude-ccmsg"
