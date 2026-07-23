@@ -4100,6 +4100,13 @@ button.session-tab {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   z-index: var(--z-composer);
+  /* kawaz r46 mid=46: D&D ハンドルとしての FAB。touch-action: none が無いと
+   * touch drag がブラウザの pan (背景 TL のスクロール) に取られて「+ の
+   * 1 文字分しか掴めない」ように見える。user-select は長押しでボタン文字や
+   * 背後のテキスト選択が始まるのを止める。 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .one-on-one-fab:hover,
