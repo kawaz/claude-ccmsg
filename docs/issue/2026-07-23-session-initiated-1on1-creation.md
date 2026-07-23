@@ -70,7 +70,6 @@ origin: 依頼元プロジェクト (claude-ccmsg dogfooding セッション)
 
 - [ ] 1on1 room への post をエラーで拒否し、「TL (通常応答) に書け」と
   案内するエラーメッセージを実装する
-- [ ] 誤って作られた r54 の archive 手段の検討は残す (= 後始末のみ、恒久機構は不要)
 
 ## TODO
 
