@@ -444,17 +444,12 @@ function BashResultFold({
 function AgentCard({
   name,
   direction,
-  badge,
   title,
   body,
   model,
 }: {
   name: string;
   direction: "inbound" | "outbound";
-  // "送信" / "受信" (SendMessage / peer-message) の位置。Agent spawn は同じ
-  // 位置に "new" を置くことで「送受信ではなく新規起動」を表す (kawaz r46m15:
-  // 「送信 とか 受信 でしょ、ならそこに置くべきは Agent なら new でしょ」)。
-  badge: string;
   title?: string | null;
   body: string;
   // Agent spawn 用: モデル名は名前のすぐ右に淡色で並べる (kawaz r46m15:
@@ -468,8 +463,13 @@ function AgentCard({
   // バブル形式に統一する (kawaz r55m29 裁定: 「もういいよ ccmsg 形式でさ。
   // そこから微調整していく」)。hue seed は AgentIdentity アイコンと同じ
   // `agent:${name}` — 同画面に並ぶ AgentCard とアイコンで色が揃う。左寄せ
-  // (`.tl-bubble-left`) + max-width 85% で右端 (ユーザエリア) に触れさせない
-  // — direction は header 内 badge (`marker + 送信/受信/new`) で示す。
+  // (`.tl-bubble-left`) + max-width 85% で右端 (ユーザエリア) に触れさせない。
+  //
+  // ヘッダ順序 (kawaz r55m33): 行頭に direction marker (🤖← / 🤖→)、続けて
+  // 相手セッションの icon + 名前 (model chip があれば名前の右)。peer-message
+  // はルーム経由ではないため 🏠 room 表記は付けない (kawaz r55m32 で撤回)。
+  // 右上の "送信 / 受信 / new / タスク指示 …" badge チップは kawaz 指示外
+  // の改変だったので撤去し、direction は marker で表現する。
   // body は plain pre-wrap ではなく LinkedMarkdownView で描画: SendMessage /
   // spawn の prompt に含まれる `path:line` を TL 側同様にリンク化する
   // (filePathCtx はセッション owner の SessionFilePathCtxContext を使う)。
@@ -482,10 +482,8 @@ function AgentCard({
     >
       <div class="tl-bubble-body">
         <div class="tl-bubble-from tl-agent-card-head">
+          <span class="tl-agent-direction-marker">{marker}</span>
           <AgentIdentity name={name} model={model} linkify />
-          <span class="tl-agent-badge">
-            {marker} {badge}
-          </span>
         </div>
         {title ? <div class="tl-agent-title">{title}</div> : null}
         {body ? (
@@ -529,7 +527,6 @@ function AgentSendFold({
         <AgentCard
           name={segment.to}
           direction="outbound"
-          badge={segment.messageType === "message" ? "送信" : segment.messageType}
           title={segment.summary}
           body={segment.message}
         />
@@ -576,7 +573,6 @@ function AgentSpawnFold({
         <AgentCard
           name={segment.name}
           direction="outbound"
-          badge="new"
           model={segment.model || undefined}
           title={combinedTitle}
           body={segment.prompt}
@@ -1061,13 +1057,7 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
       const presentation = peerMessagePresentation(rich);
       if (presentation.kind === "idle") return <IdlePeerRow peer={rich} ts={null} />;
       return (
-        <AgentCard
-          name={rich.from}
-          direction="inbound"
-          badge={presentation.badge}
-          title={rich.summary}
-          body={rich.body}
-        />
+        <AgentCard name={rich.from} direction="inbound" title={rich.summary} body={rich.body} />
       );
     }
     case "text":

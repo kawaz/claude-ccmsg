@@ -3939,16 +3939,16 @@ button.session-tab {
 }
 
 /* AgentCard を CcmsgBubble と同じ hue バブルにする (kawaz r55m29): 内側
- * `.tl-bubble-body` に hue 背景 + 左ボーダー。hue seed は `agent:${name}`
- * (AgentIdentity アイコンと同一) — 同画面で AgentCard とアイコンの色が揃う。 */
+ * `.tl-bubble-body` に hue 背景。hue seed は `agent:${name}` (AgentIdentity
+ * アイコンと同一) — 同画面で AgentCard とアイコンの色が揃う。
+ * kawaz r55m34: 左ボーダー (3px solid hue) は色主張が強いので撤去し、hue の
+ * 薄背景のみで識別する (CcmsgBubble = ルームメッセージ側は現状維持)。 */
 .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
   background: hsl(var(--member-hue) 45% 94%);
-  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
     background: hsl(var(--member-hue) 22% 18%);
-    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
   }
 }
 
