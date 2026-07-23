@@ -905,4 +905,61 @@ describe("renderRestrictedMarkdown", () => {
     expect(flattenText(vnode)).toBe(src);
     expect(collect(vnode, (n) => n.type === "code")).toHaveLength(0);
   });
+
+  // kawaz r55 m16: user msgs carry composer attachments as
+  // `[FILE<N>:name](path)` markdown links; the restricted tokenizer must
+  // keep them live so a sent u1 bubble still shows the attachment.
+  test("[FILE:name](attachment path) renders inline <img> for image mimes", () => {
+    const src = "見て `[FILE1:screenshot.png](/tmp/claude-ccmsg-501/attachment/abcd.png)";
+    // (leading backtick above is a distractor to verify the code/link race —
+    // unclosed backtick stays verbatim, the link still tokenizes)
+    const cleanSrc = "見て [FILE1:screenshot.png](/tmp/claude-ccmsg-501/attachment/abcd.png)";
+    const vnode = renderRestrictedMarkdown(cleanSrc);
+    const imgs = collect(vnode, (n) => n.type === "img");
+    expect(imgs).toHaveLength(1);
+    const props = imgs[0]!.props as unknown as { src: string; alt: string };
+    // Rewritten to daemon HTTP endpoint (DR-0015 §2.6), not the raw fs path.
+    expect(props.src).toBe("/attachment/abcd.png");
+    expect(props.alt).toBe("FILE1:screenshot.png");
+    // Ensure the raw fs path did not leak into visible text.
+    expect(flattenText(vnode)).not.toContain("/tmp/claude-ccmsg-501");
+    // Silence the eslint-unused warning for the distractor probe.
+    expect(src).toContain("`");
+  });
+
+  test("[FILE:name](attachment path) renders <a class=md-attachment-link> for non-image mimes", () => {
+    const src = "log は [FILE2:trace.txt](/private/tmp/claude-ccmsg-501/attachment/xyz.txt) を参照";
+    const vnode = renderRestrictedMarkdown(src);
+    const anchors = collect(vnode, (n) => n.type === "a");
+    expect(anchors).toHaveLength(1);
+    const props = anchors[0]!.props as unknown as { href: string; class?: string };
+    expect(props.href).toBe("/attachment/xyz.txt");
+    expect(props.class).toBe("md-attachment-link");
+    expect(flattenText(anchors[0])).toBe("FILE2:trace.txt");
+  });
+
+  test("plain http link renders as <a>, javascript: is disarmed to text", () => {
+    const vnode = renderRestrictedMarkdown(
+      "見て [ここ](https://example.com/x) と [悪](javascript:alert(1))",
+    );
+    const anchors = collect(vnode, (n) => n.type === "a");
+    // Only the https link produces an <a>; javascript: becomes a bare <span>.
+    expect(anchors).toHaveLength(1);
+    const props = anchors[0]!.props as unknown as { href: string };
+    expect(props.href).toBe("https://example.com/x");
+    // The disarmed link's label is still visible.
+    expect(flattenText(vnode)).toContain("悪");
+    // And no href ever carried the javascript: scheme.
+    for (const a of anchors) {
+      const p = a.props as unknown as { href: string };
+      expect(p.href.toLowerCase()).not.toContain("javascript:");
+    }
+  });
+
+  test("image markdown ![alt](url) stays verbatim (composer does not emit it)", () => {
+    const src = "![alt](https://example.com/pic.png)";
+    const vnode = renderRestrictedMarkdown(src);
+    expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(src);
+  });
 });

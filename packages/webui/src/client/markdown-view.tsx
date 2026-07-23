@@ -661,26 +661,105 @@ export function renderRestrictedMarkdown(source: string): VNode {
   return <div class="md md-restricted">{blocks}</div>;
 }
 
-/** Inline pass for restricted rendering: only the `` `code` `` span is
- * markdown-styled, everything else is untouched text. A backtick with no
- * closing pair on the same string is left verbatim (no swallowing). */
+/** Inline pass for restricted rendering: only these two constructs are
+ * markdown-styled — everything else is untouched text.
+ *
+ *   1. Inline code `` `foo` `` → `<code>`
+ *   2. Inline link `[text](url)` → `<a>` (with DR-0015 §2.6 attachment
+ *      rewrite: the composer emits `[FILE<N>:name](/…/claude-ccmsg-<uid>/
+ *      attachment/<uuid.ext>)` and both image + non-image mimes need to
+ *      round-trip identically to how the full MarkdownView renders them
+ *      today, otherwise sent-message attachments vanish from u1 bubbles).
+ *      URL scheme is filtered by `isSafeUrl` — a hostile `javascript:` is
+ *      disarmed to the link's own text with no `<a>`, matching the full
+ *      renderer's link handling.
+ *
+ * Image markdown `![alt](url)` is NOT tokenized here — the composer does
+ * not emit it (attachments always ship as `[FILE<N>:...](...)` links, and
+ * an image mime is detected from the target path, not the `!` prefix), so
+ * a literal `![alt](url)` a user typed stays verbatim as prose the same
+ * way heading/list markers do.
+ *
+ * A backtick or `[` with no matching pair on the same string is left
+ * verbatim (no swallowing). Scanning is left-to-right with `lastIndex`
+ * tracked manually so each character is claimed by at most one token. */
 function renderRestrictedInline(text: string, keyPrefix: string): (VNode | string)[] {
+  // Match either `code` OR [text](url). Alternation is left-to-right so a
+  // literal `[foo](bar)` inside `code` stays inside the code span (the
+  // backtick match wins first at that position).
+  // The negative lookbehind `(?<!!)` guards image markdown `![alt](url)`:
+  // the composer never emits it, so it should stay verbatim as prose, but a
+  // bare `[alt](url)` at the same position would otherwise tokenize and
+  // swallow the trailing `alt`/`url` (see test).
+  const re = /`([^`\n]+)`|(?<!!)\[([^\]\n]*)\]\(([^)\n\s]+)\)/g;
   const out: (VNode | string)[] = [];
-  const re = /`([^`\n]+)`/g;
   let last = 0;
   let n = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(text.slice(last, m.index));
-    out.push(
-      <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>
-        {m[1]}
-      </code>,
-    );
+    if (m[1] !== undefined) {
+      out.push(
+        <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>
+          {m[1]}
+        </code>,
+      );
+    } else {
+      const label = m[2] ?? "";
+      const url = m[3] ?? "";
+      out.push(renderRestrictedLink(label, url, `${keyPrefix}l${n++}`));
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
   return out.length > 0 ? out : [text];
+}
+
+/** Render one `[label](url)` link under restricted mode. Mirrors the safe
+ * subset of MarkdownView's `link` case (DR-0015 §2.6 attachment rewrite +
+ * DR-0010 URL scheme allowlist), minus the mdast child recursion (a
+ * restricted link's label is always plain text as tokenized above). */
+function renderRestrictedLink(label: string, url: string, key: string): VNode {
+  const attachment = attachmentUrlFromPath(url);
+  if (attachment) {
+    if (attachment.isImage) {
+      const alt = label || attachment.url;
+      return (
+        <a
+          key={key}
+          class="md-attachment-image-link"
+          href={attachment.url}
+          onClick={(e) => {
+            e.preventDefault();
+            openImageLightbox(attachment.url, alt);
+          }}
+        >
+          <img class="md-attachment-image" src={attachment.url} alt={alt} />
+        </a>
+      );
+    }
+    return (
+      <a
+        key={key}
+        class="md-attachment-link"
+        href={attachment.url}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {label || attachment.url}
+      </a>
+    );
+  }
+  if (!isSafeUrl(url)) {
+    // Same disarm as the full renderer: drop the `<a>` entirely but keep
+    // the label visible so the reader isn't silently robbed of the text.
+    return <span key={key}>{label}</span>;
+  }
+  return (
+    <a key={key} href={url} target="_blank" rel="noopener noreferrer">
+      {label || url}
+    </a>
+  );
 }
 
 /** Pure mdast-AST -> VNode transform, split out from `MarkdownView` so tests
