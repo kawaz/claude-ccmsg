@@ -29,28 +29,47 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   );
 }
 
-/** Room list splits into a flat section (non-archived, non-1on1 rooms, shown
- * as before) and two collapsed `<details>` groups below it, both
- * default-closed (no `open` attribute): "1on1 (N)" (mid=61, same folding
- * pattern applied to `kind:"1on1"` rooms) and "アーカイブ (N)" (DR-0012).
- * Rooms in either group stay reachable (click through like any other room),
- * just folded out of the way so an ever-growing room count doesn't crowd the
- * sidebar. An archived 1on1 room lands in the アーカイブ group, not
- * duplicated into both — `splitRoomsByArchived` runs first, then
- * `splitRoomsByKind` only sees what's left. Either `<details>` is omitted
- * entirely when its group is empty, so the common case (no archived, no
- * 1on1) shows exactly the flat list. */
+/** Room list layout (top → bottom):
+ * 1. Flat `#room-list` at top — broadcast rooms only (kawaz r55m30:
+ *    broadcast は常にセクション群の一番上、折り畳まないで直置き)。
+ * 2. `<details id="room-list-normal" open>` "ルーム (N)" — 通常 room
+ *    (非アーカイブ・非1on1・非broadcast) を折り畳み可能に。以前はフラット
+ *    に並んでいたが、数が増えると邪魔なのでセクション化。デフォルト open
+ *    で今までの見え方を維持しつつユーザが畳めるようにする (kawaz r55m30)。
+ * 3. `<details id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
+ * 4. `<details id="room-list-archived">` "アーカイブ (N)" (default-closed,
+ *    DR-0012)。
+ * Rooms in any `<details>` stay reachable (click through like any other
+ * room). Each `<details>` (と broadcast の flat `<ul>`) は自グループが空
+ * のとき丸ごと省略される。An archived 1on1 room lands in the アーカイブ
+ * group, not duplicated — `splitRoomsByArchived` runs first, then
+ * `splitRoomsByKind` only sees what's left, then broadcast は `flat` から
+ * kind で更に切り出す。 */
 export function RoomList({ state }: { state: AppState }) {
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
   const { flat, oneOnOne } = splitRoomsByKind(active);
+  const broadcast = flat.filter((r) => r.kind === "broadcast");
+  const normal = flat.filter((r) => r.kind !== "broadcast");
   const currentRoomId = selectedRoomId(state);
   return (
     <>
-      <ul id="room-list">
-        {flat.map((room) => (
-          <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
-        ))}
-      </ul>
+      {broadcast.length > 0 && (
+        <ul id="room-list">
+          {broadcast.map((room) => (
+            <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
+          ))}
+        </ul>
+      )}
+      {normal.length > 0 && (
+        <details id="room-list-normal" open>
+          <summary>ルーム ({normal.length})</summary>
+          <ul>
+            {normal.map((room) => (
+              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
+            ))}
+          </ul>
+        </details>
+      )}
       {oneOnOne.length > 0 && (
         <details id="room-list-1on1">
           <summary>1on1 ({oneOnOne.length})</summary>

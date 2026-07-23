@@ -293,6 +293,7 @@ a {
  * サイドバー全体が左右に運ばれる事故は上の #sidebar { overflow-x:hidden }
  * で塞ぎ、実際の横スクロール担当をここに集約する。 */
 #room-list,
+#room-list-normal > ul,
 #room-list-1on1 > ul,
 #room-list-archived > ul,
 #session-list {
@@ -301,6 +302,7 @@ a {
 }
 
 #room-list > li,
+#room-list-normal > ul > li,
 #room-list-1on1 > ul > li,
 #room-list-archived > ul > li,
 .session-row {
@@ -363,6 +365,7 @@ a {
  * を render) のいずれにも現れる — 後者をセレクタから漏らすとデフォルトの
  * 青下線リンクで表示される (kawaz r17 mid=12 の実観測)。 */
 #room-list li a,
+#room-list-normal li a,
 #room-list-archived li a,
 #room-list-1on1 li a {
   display: block;
@@ -373,17 +376,21 @@ a {
 }
 
 #room-list li.active a,
+#room-list-normal li.active a,
 #room-list-archived li.active a,
 #room-list-1on1 li.active a {
   background: var(--accent);
   color: var(--accent-fg);
 }
 
-/* DR-0012: collapsed group `<details>` below the flat room list,
- * default-closed (no `open` attribute) — "アーカイブ (N)" and "1on1 (N)"
- * (mid=61) share these chrome rules. Rows inside render the same RoomRow as
- * #room-list (styled by the shared selectors above), so only the
- * `<details>`/`<summary>` chrome needs its own rules here. */
+/* DR-0012: collapsed group `<details>` below (or, for `#room-list-normal`,
+ * in place of) the flat room list. "アーカイブ (N)" and "1on1 (N)" (mid=61)
+ * は default-closed、"ルーム (N)" (kawaz r55m30) は default-open (以前フラ
+ * ットで常時見えていた通常 room を畳める様にしただけ、初期表示は据え置き)。
+ * Rows inside render the same RoomRow as #room-list (styled by the shared
+ * selectors above), so only the `<details>`/`<summary>` chrome needs its
+ * own rules here. */
+#room-list-normal,
 #room-list-archived,
 #room-list-1on1 {
   margin-top: 0.5rem;
@@ -394,6 +401,7 @@ a {
  * list-style:none + ::-webkit-details-marker { display:none } で消していたが、
  * 開閉状態が視覚的に分からないという指摘で復活。SessionList の
  * .session-section-summary と同じくデフォルトの marker をそのまま活かす。 */
+#room-list-normal summary,
 #room-list-archived summary,
 #room-list-1on1 summary {
   cursor: pointer;
@@ -401,11 +409,13 @@ a {
   color: var(--fg-muted);
 }
 
+#room-list-normal summary::-webkit-details-marker,
 #room-list-archived summary::-webkit-details-marker,
 #room-list-1on1 summary::-webkit-details-marker {
   color: var(--fg-muted);
 }
 
+#room-list-normal ul,
 #room-list-archived ul,
 #room-list-1on1 ul {
   list-style: none;
@@ -675,6 +685,7 @@ a {
 }
 
 #room-list li.active a .room-kind-badge,
+#room-list-normal li.active a .room-kind-badge,
 #room-list-archived li.active a .room-kind-badge,
 #room-list-1on1 li.active a .room-kind-badge {
   background: var(--accent-fg);
