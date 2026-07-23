@@ -4,15 +4,16 @@
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { createContext } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { SessionStatusSnapshot } from "@ccmsg/protocol";
-import type { TimelineState } from "../store.ts";
+import type { PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
-import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
+import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
+import { filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
@@ -37,7 +38,6 @@ import {
   type TurnLine,
   type UserMessageKind,
 } from "../transcript-model.ts";
-import { MarkdownView } from "../markdown-view.tsx";
 import { LinkedMarkdownView } from "../filepath-linker.tsx";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
 import {
@@ -191,18 +191,30 @@ function FoldSummary({
   );
 }
 
-// エージェント識別子 (avatar + 名前)。href 解決時は名前クリックで TL 遷移
-// (kawaz r46m15: 「名前クリックで良いんじゃないの?隣のセッションツリーは
-// そうなんだし」)。fold の details toggle と両立させるため click は
-// stopPropagation する。model があれば名前のすぐ右に淡色で並べる (Agent
-// spawn 用。SendMessage / peer-message は model 情報を持たないので undefined
-// で無表示)。
-function AgentIdentity({ name, model }: { name: string; model?: string }) {
+// エージェント識別子 (avatar + 名前)。`linkify=true` の時だけ名前クリックで
+// TL 遷移リンクを描く (kawaz r46m15 の「名前クリックで良いんじゃない?」の
+// 適用先を絞る)。kawaz 2026-07-23 追加要件: フォルド閉状態 (= FoldSummary)
+// では中身のクリック責務は open/close のみに専念させたいので、そこには
+// linkify を渡さない。展開後のバブル内ヘッダ (AgentCard 側) では従来通り
+// リンク化する。fold の details toggle と両立させるため click は
+// stopPropagation する (バブル内でも fold summary の別 <details> に
+// 巻き込まれないよう予防的に維持)。model があれば名前のすぐ右に淡色で
+// 並べる (Agent spawn 用。SendMessage / peer-message は model 情報を
+// 持たないので undefined で無表示)。
+function AgentIdentity({
+  name,
+  model,
+  linkify = false,
+}: {
+  name: string;
+  model?: string;
+  linkify?: boolean;
+}) {
   const tlHref = useContext(AgentTimelineHrefsContext).get(name);
   return (
     <span class="tl-agent-identity">
       <Avatar seed={`agent:${name}`} size={18} />
-      {tlHref ? (
+      {linkify && tlHref ? (
         <a class="tl-agent-name-link" href={tlHref} onClick={(event) => event.stopPropagation()}>
           <strong>{name}</strong>
         </a>
@@ -425,19 +437,16 @@ function AgentCard({
   model?: string;
 }) {
   const marker = agentDirectionMarker(direction);
-  // 発言者ごとにカード基調色を identicon hue で色付けする (ROOM 側 `.msg`
-  // 表示との rich-unify、kawaz 2026-07-23 依頼)。ROOM は sid を seed に
-  // するが TL の AgentCard は sid を持たない (SendMessage/peer-message/
-  // Agent spawn は agent 名しか一次識別子がない) ので、AgentIdentity の
-  // アイコンと同じ `agent:${name}` seed を使う — こうすると同じ画面内で
-  // アイコン色とカード基調色が揃う。CSS 側 (`.tl-agent-card[style*=
-  // "--member-hue"]`) が hsl() で薄い背景 + 濃い左ボーダーに変換する。
-  const hue = hueForSeed(`agent:${name}`);
+  // AgentCard は控えめな共通配色 (`--agent-comm-bg` + dashed border) のまま
+  // にする (kawaz 2026-07-23 裁定): 関心の高い CcmsgBubble (別セッション間
+  // メッセージ) と関心の薄い AgentCard (サブエージェント間、可視性トグル
+  // OFF 運用) を両方 hue で色付けすると区別が付かなくなるため、AgentCard
+  // 側の v0.73.2 rich-unify は revert。CcmsgBubble 側の hue 化は維持。
   return (
-    <div class={`tl-agent-card tl-agent-${direction}`} style={{ "--member-hue": String(hue) }}>
+    <div class={`tl-agent-card tl-agent-${direction}`}>
       <div class="tl-agent-card-head">
         <span>{marker}</span>
-        <AgentIdentity name={name} model={model} />
+        <AgentIdentity name={name} model={model} linkify />
         <span class="tl-agent-badge">{badge}</span>
       </div>
       {title ? <div class="tl-agent-title">{title}</div> : null}
@@ -1667,6 +1676,8 @@ function CcmsgBubble({
   registerUserTurnRef,
   onUserTurnClick,
   selected,
+  room,
+  peers,
 }: {
   message: CcmsgMessage;
   rawText: string;
@@ -1682,6 +1693,14 @@ function CcmsgBubble({
   // stays unhighlighted like every other raw fallback in this file.
   searchKey: string;
   searchCtx: TLSearchCtx | undefined;
+  /** ROOM チャットの MsgItem と同じ rich 表示 (identicon / memberLabel /
+   * hue カラー / filepath-linker) をするための解決元。`message.room` の
+   * RoomState は AppState.rooms 由来で、まだ届いていない (subscribe 前 /
+   * 破棄済み) 場合は undefined — その時は id そのままの from 表記に
+   * degrade する (アイコン非表示・memberLabel は id 返し・hue は from
+   * id 自体を seed に fallback、これは ROOM 側 MsgItem と同じ挙動)。 */
+  room: RoomState | undefined;
+  peers: readonly PeerInfo[];
 }) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
   // DR-0027 §2 Phase 1 lazy read: daemon-canonical body if known, otherwise
@@ -1702,14 +1721,26 @@ function CcmsgBubble({
     (lookup === "failed" ? `(本文を取得できません — #${message.room} は消えた可能性)` : "");
   const ts = body?.ts || message.ts;
   const isUser = from === ADMIN_ID;
+  // hue seed: ROOM 側 MsgItem (TimelineItem.tsx) と同一式
+  // (`room.membersById.get(from)?.sid ?? from`)。sid が解決できれば ROOM /
+  // TL で同一発言者は同色になる (これが「TL のルームメッセージを ROOM 側
+  // rich 形式に統一する」本タスクの本質)。sid が届いていない場合の from
+  // 直 seed フォールバックまで ROOM と揃えているので、暫定色も一致する。
+  const seed = room?.membersById.get(from)?.sid ?? (from || message.from);
+  const hue = isUser ? undefined : hueForSeed(seed);
+  // filePathCtxForSender は ROOM 側と同じ helper。room が未解決な場面では
+  // undefined を返し LinkedMarkdownView が MarkdownView に degrade する
+  // (プレーン表示、既存挙動と同じ)。
+  const filePathCtx = room ? filePathCtxForSender(room, peers, from) : undefined;
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   const bubble = (
     <div
       class={`${
         isUser
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
-          : "tl-bubble tl-bubble-left tl-bubble-peer"
+          : "tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-ccmsg-peer"
       }${selected ? " tl-bubble-user-nav-selected" : ""}`}
+      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
       ref={(el) => {
         if (navKey !== undefined) registerUserTurnRef(navKey, el);
       }}
@@ -1717,13 +1748,38 @@ function CcmsgBubble({
     >
       <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
         <div class="tl-bubble-from">
-          {isUser ? <UserAvatar size={16} /> : null}
-          {from || "…"}
+          {isUser ? (
+            <>
+              <UserAvatar size={16} />
+              {memberLabel(ADMIN_ID, room)}
+            </>
+          ) : from ? (
+            <>
+              <MemberAvatar id={from} room={room} />
+              {memberLabel(from, room)}
+            </>
+          ) : (
+            "…"
+          )}
           {(() => {
             // u1 (ADMIN_ID) は always-exempt 配信済みなので mention 表示から
             // 除外 (TimelineItem 側と同ポリシー、kawaz 2026-07-20)。
             const shown = to?.filter((id) => id !== ADMIN_ID) ?? [];
-            return shown.length ? ` → ${shown.join(", ")}` : "";
+            if (!shown.length) return null;
+            return (
+              <span class="msg-to">
+                {" → "}
+                {shown.map((id, i) => (
+                  // ROOM 側 MsgItem と同構造の (avatar + name) ペア。id 重複が
+                  // あっても衝突しないよう `${id}-${i}` を key に混ぜる。
+                  <span key={`${id}-${i}`} class="msg-to-item">
+                    {i > 0 ? ", " : null}
+                    <MemberAvatar id={id} room={room} />
+                    {memberLabel(id, room)}
+                  </span>
+                ))}
+              </span>
+            );
           })()}
           {" · #"}
           {message.room}
@@ -1752,7 +1808,7 @@ function CcmsgBubble({
           // 空白に潰れる。文書様式が前提の assistant markdown には波及させない
           // (ソフト折り返しを空白扱いする通常の markdown 表示のまま)。
           <div class="tl-ccmsg-msg">
-            <MarkdownView source={msgBody} />
+            <LinkedMarkdownView source={msgBody} ctx={filePathCtx} />
           </div>
         ) : (
           <pre class="tl-fold-body">{rawText}</pre>
@@ -2820,6 +2876,8 @@ export function Timeline({
                                     registerUserTurnRef={registerUserTurnRef}
                                     onUserTurnClick={onUserTurnClick}
                                     selected={selectedUserTurnKey === navKey}
+                                    room={appState.rooms.get(m.room)}
+                                    peers={appState.peers}
                                   />
                                 );
                               })

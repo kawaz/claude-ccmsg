@@ -20,9 +20,9 @@ import { LinkedMarkdownView } from "../filepath-linker.tsx";
  * convention as MemberChip); an unknown id (member row somehow absent —
  * shouldn't happen but the log is the source of truth, not membersById)
  * renders no icon rather than guessing a seed. */
-function MemberAvatar({ id, room }: { id: string; room: RoomState }) {
+export function MemberAvatar({ id, room }: { id: string; room: RoomState | undefined }) {
   if (id === ADMIN_ID) return <UserAvatar size={16} />;
-  const sid = room.membersById.get(id)?.sid;
+  const sid = room?.membersById.get(id)?.sid;
   if (!sid) return null;
   return <Avatar seed={sid} size={16} />;
 }

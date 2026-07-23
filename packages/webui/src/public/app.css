@@ -3711,30 +3711,40 @@ button.session-tab {
   font-size: 0.78rem;
 }
 
-/* AgentCard 発言者ごとの identicon 基調色 (kawaz 2026-07-23 rich-unify):
- * ROOM 側 `.msg[style*="--member-hue"]` と同じ配色ロジック — 薄い hsl 背景
- * + 濃い左ボーダーで送信者を視覚識別する。TL の AgentCard は 3 種 (SendMessage
- * / peer-message / Agent spawn) 共通で AgentIdentity のアイコンと同じ
- * `agent:${name}` seed から hue を導出しているため、同じ画面のアイコン色と
- * 揃う。左ボーダーは既存の `1px dashed` を上書きして色付きの実線に置き換え、
- * "誰の発言か" を閉じたままの状態でも視認できるようにする。 */
-.tl-agent-card[style*="--member-hue"] {
-  background: hsl(var(--member-hue) 45% 96%);
-  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
-}
-@media (prefers-color-scheme: dark) {
-  .tl-agent-card[style*="--member-hue"] {
-    background: hsl(var(--member-hue) 22% 16%);
-    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
-  }
-}
-
+/* outbound の AgentCard (SendMessage / Agent spawn) は右寄せするが、右端には
+ * 触れさせない (kawaz 2026-07-23 r55m6): 「右端に触れるのはユーザメッセージ
+ * のみ」— agent 間メッセージが右端に届くと、hue がたまたま緑系だったとき
+ * にユーザバブル (tl-bubble-right、右端接触) と見分けが付かなくなる。
+ * margin-left:auto で右寄せを維持したまま、margin-right でユーザバブル側と
+ * 明確な非対称を作る (ユーザ = 右端接触 / agent outbound = 右端非接触)。
+ * inbound (左寄せ) は左端接触のままで OK (左端接触するのは全種類の
+ * 「左寄せ発話」で共通、user 判定に使われるシグナルではない)。 */
 .tl-agent-outbound {
   margin-left: auto;
+  margin-right: 1.5rem;
 }
 
 .tl-agent-inbound {
   margin-right: auto;
+}
+
+/* CcmsgBubble (peer 側) の発言者ごと identicon 基調色 (kawaz 2026-07-23
+ * rich-unify 続き): ROOM 側 `.msg[style*="--member-hue"]` と同じ hsl 配色を
+ * TL のルームメッセージにも適用し、同一発言者が ROOM と TL で同色になる
+ * ようにする (hue seed は CcmsgBubble 側で ROOM 側 MsgItem と同一式で導出、
+ * `room.membersById.get(from)?.sid ?? from`)。u1 (自分の発話) は
+ * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
+ * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
+ * (角丸と padding を持つ層) に適用する。 */
+.tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
+  background: hsl(var(--member-hue) 45% 94%);
+  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+}
+@media (prefers-color-scheme: dark) {
+  .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
+    background: hsl(var(--member-hue) 22% 18%);
+    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+  }
 }
 
 .tl-agent-card-head,
