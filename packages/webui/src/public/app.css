@@ -4182,18 +4182,29 @@ button.session-tab {
   /* kawaz r46 mid=47: 「テキストエリア外の黒枠内」全体をドラッグハンドルに
    * する。touch-action: none をパネル面に敷き、入力系の子 (textarea 等) だけ
    * 下で auto に戻す — こうしないと touch drag がブラウザ pan に奪われて
-   * isPanelDragHandle が許可している余白からも掴めない。 */
+   * isPanelDragHandle が許可している余白からも掴めない。
+   * user-select: none も同じ理由でパネル面に必須 (kawaz r46 m49): マウスで
+   * 余白を drag するとブラウザが text selection ジェスチャを開始し、5px
+   * 動いた地点で pointer capture が事実上無効化されて pointercancel が
+   * 発火する → onUp が走って drag 終了 → 次の pointerdown で再開... の
+   * 繰り返しで「数 px ずつしか動かない」症状になる。FAB (button の default)
+   * と header (明示指定済) が動くのはこの user-select 差が理由。 */
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* 入力・操作系の子はブラウザ標準のタッチ挙動 (textarea 内スクロール、
- * タップ選択) を保つ。 */
+ * タップ選択) と text 選択を保つ。user-select は親の none を継承するので
+ * text へ戻さないと textarea 内の選択やコピーが効かなくなる。 */
 .one-on-one-panel textarea,
 .one-on-one-panel input,
 .one-on-one-panel button,
 .one-on-one-panel select,
 .one-on-one-panel a {
   touch-action: auto;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* UNIF-Q1=b: RoomView 通常/broadcast の Composer を 1on1 と同じ floating
