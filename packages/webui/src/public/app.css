@@ -4179,6 +4179,21 @@ button.session-tab {
   flex-direction: column;
   gap: 0.4rem;
   z-index: var(--z-composer);
+  /* kawaz r46 mid=47: 「テキストエリア外の黒枠内」全体をドラッグハンドルに
+   * する。touch-action: none をパネル面に敷き、入力系の子 (textarea 等) だけ
+   * 下で auto に戻す — こうしないと touch drag がブラウザ pan に奪われて
+   * isPanelDragHandle が許可している余白からも掴めない。 */
+  touch-action: none;
+}
+
+/* 入力・操作系の子はブラウザ標準のタッチ挙動 (textarea 内スクロール、
+ * タップ選択) を保つ。 */
+.one-on-one-panel textarea,
+.one-on-one-panel input,
+.one-on-one-panel button,
+.one-on-one-panel select,
+.one-on-one-panel a {
+  touch-action: auto;
 }
 
 /* UNIF-Q1=b: RoomView 通常/broadcast の Composer を 1on1 と同じ floating
@@ -4223,6 +4238,13 @@ button.session-tab {
   align-items: center;
   font-size: 0.85rem;
   color: var(--fg-muted);
+  /* kawaz r46 mid=46,47: パネルのドラッグハンドル面。FAB と同じく
+   * touch-action: none が無いと touch drag が pan に奪われて掴めない。
+   * user-select は長押しのテキスト選択抑止。cursor で掴める場所を示す。 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
 }
 
 .one-on-one-panel-header code {
