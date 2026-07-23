@@ -10,6 +10,7 @@
 // ここに来る時点で両方 non-empty が保証される。防御的に不正 URL は
 // buildTerminalEmbedUrl 側で null を返し、その時だけ簡素なエラー表示に落ちる
 // (通常発生しない — daemon 側で http:// / https:// スキームは検証済み)。
+import { useState } from "preact/hooks";
 import { buildTerminalEmbedUrl } from "../terminal-gateway-store.ts";
 
 interface Props {
@@ -19,6 +20,11 @@ interface Props {
 
 export function TerminalPanel({ hyouiSessionId, gatewayUrl }: Props) {
   const embedUrl = buildTerminalEmbedUrl(gatewayUrl, hyouiSessionId);
+  // iframe は中身のドキュメントが描画されるまで背景が UA 既定の白になる
+  // (dark テーマだと一瞬白く眩しい、kawaz r55m27)。load 完了までは iframe を
+  // opacity:0 にして親 .terminal-pane の --bg を見せ、load 後にフェードイン。
+  // embed 側 (hyoui) がどう直っても効く、埋め込み側で完結する対策。
+  const [loaded, setLoaded] = useState(false);
   if (!embedUrl) {
     // 通常到達しない (daemon が config.json 読み込み時に http/https 以外を
     // 弾いており、hello では検証済みの URL しか流れてこない)。万一 URL が
@@ -35,7 +41,8 @@ export function TerminalPanel({ hyouiSessionId, gatewayUrl }: Props) {
   return (
     <div class="terminal-pane">
       <iframe
-        class="terminal-iframe"
+        class={loaded ? "terminal-iframe" : "terminal-iframe terminal-iframe-loading"}
+        onLoad={() => setLoaded(true)}
         src={embedUrl}
         title="Terminal"
         // tailnet 内部ツール前提だが、iframe 経由の script/form/same-origin は

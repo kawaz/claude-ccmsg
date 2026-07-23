@@ -5558,6 +5558,17 @@ button.session-tab {
   background: var(--bg);
 }
 
+/* iframe 中身の描画完了までは透明にして親の --bg を見せる (kawaz r55m27:
+ * 読み込みの最初の一瞬だけ UA 既定の白ドキュメントが出て dark テーマで
+ * 眩しい)。load 後にフェードイン。 */
+.terminal-iframe-loading {
+  opacity: 0;
+}
+.terminal-iframe:not(.terminal-iframe-loading) {
+  opacity: 1;
+  transition: opacity 0.15s ease-in;
+}
+
 .terminal-gateway-reset {
   position: absolute;
   right: 0.5rem;
