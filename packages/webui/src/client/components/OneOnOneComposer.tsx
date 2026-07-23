@@ -39,7 +39,7 @@ import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
 import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
 import { useFabPopup } from "../useFabPopup.ts";
-import { isPanelDragHandle, useDraggable } from "../useDraggable.ts";
+import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -172,8 +172,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // kawaz r46 m44: FAB とパネルを個別に D&D 移動可能に。位置は永続化しない
   // (component state のみ) — open/close や tab 切替を跨いでも SessionView が
   // OneOnOneComposer instance を維持するため位置は残るが、リロードで初期化。
+  // kawaz r46m51: FAB とパネルの位置を連動 (bottom-right 角を揃える)。
+  // useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();
   const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
+  const { onFabRef, onPanelRef } = useFabPanelPositionLink({ open, fabDrag, panelDrag });
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
@@ -451,7 +454,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         class={"one-on-one-fab" + (hasDraft ? " composer-fab-draft" : "")}
         title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
         onClick={openPanel}
-        ref={fabDrag.setElement}
+        ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
         style={fabDrag.style}
       >
@@ -466,10 +469,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
       role="dialog"
       aria-label="1on1 priv composer"
       ref={(el) => {
-        // useFabPopup と useDraggable の両方に同じ DOM を届ける (ref forwarding
-        // で最小限の relay)。callback ref なので mount/unmount 両方で発火。
+        // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM を
+        // 届ける (ref forwarding で最小限の relay)。callback ref なので
+        // mount/unmount 両方で発火。onPanelRef 側で size 計測も行う。
         panelRef.current = el;
-        panelDrag.setElement(el);
+        onPanelRef(el);
       }}
       onPointerDown={panelDrag.onPointerDown}
       style={panelDrag.style}

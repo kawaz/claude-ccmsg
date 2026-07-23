@@ -27,7 +27,7 @@ import { useState } from "preact/hooks";
 import type { RoomState } from "../store.ts";
 import { Composer } from "./Composer.tsx";
 import { useFabPopup } from "../useFabPopup.ts";
-import { isPanelDragHandle, useDraggable } from "../useDraggable.ts";
+import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 
 export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionTo: Set<string> }) {
   const [sending, setSending] = useState(false);
@@ -47,8 +47,11 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
   // kawaz r46 m44: FAB とパネルを個別に D&D 移動可能に。位置は永続化しない
   // (component state のみ、リロードで初期位置に戻る)。panel は常時 mount
   // (display 切替) なので open/close 越しに位置は保たれる。
+  // kawaz r46m51: FAB とパネル位置を連動 (bottom-right 角を揃える)。
+  // useFabPanelPositionLink が open 遷移時に相手の位置を同期する。
   const fabDrag = useDraggable();
   const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
+  const { onFabRef, onPanelRef } = useFabPanelPositionLink({ open, fabDrag, panelDrag });
 
   const fabTitle = room.kind === "broadcast" ? "broadcast メッセージを送信" : "メッセージを送信";
 
@@ -65,7 +68,7 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
           title={hasDraft ? "書きかけの下書きがあります" : fabTitle}
           aria-label={hasDraft ? "書きかけの下書きがあります" : fabTitle}
           onClick={openPanel}
-          ref={fabDrag.setElement}
+          ref={onFabRef}
           onPointerDown={fabDrag.onPointerDown}
           style={fabDrag.style}
         >
@@ -74,10 +77,11 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
       ) : null}
       <div
         ref={(el) => {
-          // useFabPopup と useDraggable の両方に同じ DOM を届ける (callback
-          // ref 経由の relay。OneOnOneComposer 側と同型)。
+          // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM
+          // を届ける (callback ref 経由の relay。OneOnOneComposer 側と同型)。
+          // onPanelRef 側で size 計測も行う (r46m51 位置連動用)。
           panelRef.current = el;
-          panelDrag.setElement(el);
+          onPanelRef(el);
         }}
         class={"room-composer-panel" + (open ? "" : " room-composer-panel-hidden")}
         role="dialog"
