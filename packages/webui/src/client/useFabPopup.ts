@@ -95,11 +95,30 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
       if (!panel || !(e.target instanceof Node)) return;
       if (!panel.contains(e.target)) closePanel();
     };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("click", onClick);
+    // kawaz r46m53 (2026-07-23): listener 装着は次 macrotask に defer する。
+    // 理由: FAB クリックで open=true になった直後、Preact が commit 途中で
+    // useEffect を同期実行するケースがある (r46m51 の useFabPanelPositionLink
+    // で useLayoutEffect が panelDrag.setPosition を呼び、その付随で
+    // useEffect flush が誘発される)。すると **同じ click イベントの bubbling
+    // 継続中に** document click listener が装着され、target=FAB
+    // (panel 外) を「外側クリック」と誤判定して開いたばかりの panel を
+    // 即閉じてしまう (v0.72.9 リグレッション: FAB がドラッグ位置で残り、
+    // panel 側は position 適用済みだが display:none のまま = 開かない症状)。
+    // setTimeout(0) で macrotask 境界まで待てば、開閉トリガー click は完全に
+    // 過ぎ去ったあとに listener が張られる (通常の click 判定は不変、
+    // r17 のスクロール誤 close 回避も維持)。
+    let attached = false;
+    const timer = setTimeout(() => {
+      document.addEventListener("pointerdown", onPointerDown, true);
+      document.addEventListener("click", onClick);
+      attached = true;
+    }, 0);
     return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("click", onClick);
+      clearTimeout(timer);
+      if (attached) {
+        document.removeEventListener("pointerdown", onPointerDown, true);
+        document.removeEventListener("click", onClick);
+      }
     };
   }, [open, blocked, closePanel]);
 
