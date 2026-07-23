@@ -18,6 +18,7 @@ import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
   agentCommunicationCount,
+  ccmsgMessageCount,
   ccmsgDedupKey,
   classifyBoundaryLine,
   foldGroupLabel,
@@ -249,7 +250,9 @@ const TimelineAutoOpenContext = createContext<TimelineAutoOpenContextValue>({
   revision: 0,
 });
 
-function useCategoryOpen(category: "thinking" | "agent"): [boolean, (open: boolean) => void] {
+function useCategoryOpen(
+  category: "thinking" | "ccmsg" | "agent",
+): [boolean, (open: boolean) => void] {
   const { settings, revision } = useContext(TimelineAutoOpenContext);
   const [open, setOpen] = useState(settings[category]);
   useEffect(() => setOpen(settings[category]), [revision]);
@@ -1303,6 +1306,10 @@ function FoldGroup({
       ).length,
     [entries],
   );
+  const ccmsgCount = useMemo(
+    () => entries.reduce((count, entry) => count + ccmsgMessageCount(entry), 0),
+    [entries],
+  );
   const agentMessageCount = useMemo(
     () => entries.reduce((count, entry) => count + agentCommunicationCount(entry), 0),
     [entries],
@@ -1355,14 +1362,20 @@ function FoldGroup({
       {/* 「N agent messages」部も同様に agent カードと同じ破線トーンで囲う
        * (kawaz r38 mid=21)。 */}
       <summary>
-        {thinkingCount > 0 || agentMessageCount > 0 ? (
+        {thinkingCount > 0 || ccmsgCount > 0 || agentMessageCount > 0 ? (
           <>
             {thinkingCount > 0 ? (
               <span class="tl-summary-thinkings">{thinkingCount} thinking</span>
             ) : null}
-            {agentMessageCount > 0 ? (
+            {ccmsgCount > 0 ? (
               <>
                 {thinkingCount > 0 ? " + " : ""}
+                <span class="tl-summary-ccmsg">{ccmsgCount} ccmsg</span>
+              </>
+            ) : null}
+            {agentMessageCount > 0 ? (
+              <>
+                {thinkingCount > 0 || ccmsgCount > 0 ? " + " : ""}
                 <span class="tl-summary-agent-messages">{agentMessageCount} agent messages</span>
               </>
             ) : null}
@@ -1483,7 +1496,7 @@ function UserPromptBubble({
   // "👤 N/M" nav indicator の DOM 測定対象として登録する — 実ユーザ発話
   // (isUserTextTurn) はこの吹き出し以外の経路には現れないので、fold-inner
   // 側 (LineView) はこの登録を一切行わない。
-  registerUserTurnRef: (key: string, el: HTMLDivElement | null) => void;
+  registerUserTurnRef: (key: string, el: HTMLElement | null) => void;
   translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
@@ -1683,7 +1696,7 @@ function CcmsgBubble({
   rawText: string;
   now: number;
   navKey?: string;
-  registerUserTurnRef: (key: string, el: HTMLDivElement | null) => void;
+  registerUserTurnRef: (key: string, el: HTMLElement | null) => void;
   onUserTurnClick: (navKey: string) => void;
   selected: boolean;
   // In-view search (DR-0022 §3, extended by kawaz r26 mid=97's 💬 target
@@ -1703,6 +1716,11 @@ function CcmsgBubble({
   peers: readonly PeerInfo[];
 }) {
   const [tab, setTab] = useState<"msg" | "raw">("msg");
+  // peer 側 bubble は thinking と同じ fold パターンに乗せる (kawaz r55 m10)。
+  // auto-open は独立軸 "ccmsg" (C トグル、kawaz r55 m11) で制御 — TL 既定は
+  // C=on (自 TL に届く peer ccmsg は主要文脈)、agent TL は C=off (peer 会話
+  // よりも agent 通信/items を主にする defaultTimelineAutoOpen 参照)。
+  const [foldOpen, setFoldOpen] = useCategoryOpen("ccmsg");
   // DR-0027 §2 Phase 1 lazy read: daemon-canonical body if known, otherwise
   // the placeholder / recovered body from the extraction. Fields fall back
   // individually (not all-or-nothing) so a tool_result-detected send (from
@@ -1733,7 +1751,18 @@ function CcmsgBubble({
   // (プレーン表示、既存挙動と同じ)。
   const filePathCtx = room ? filePathCtxForSender(room, peers, from) : undefined;
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
-  const bubble = (
+  // Fold summary preview (peer 側のみ利用): 本文の最初の非空行を短縮。
+  // markdown 記号は残しても 1 行 preview として支障ないためそのまま。
+  const previewLine = (() => {
+    if (isUser) return "";
+    for (const raw of msgBody.split("\n")) {
+      const line = raw.trim();
+      if (line.length === 0) continue;
+      return line.length > 60 ? line.slice(0, 60) + "…" : line;
+    }
+    return "";
+  })();
+  const innerBubble = (
     <div
       class={`${
         isUser
@@ -1741,10 +1770,14 @@ function CcmsgBubble({
           : "tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-ccmsg-peer"
       }${selected ? " tl-bubble-user-nav-selected" : ""}`}
       style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
-      ref={(el) => {
-        if (navKey !== undefined) registerUserTurnRef(navKey, el);
-      }}
-      onClick={navKey === undefined ? undefined : () => onUserTurnClick(navKey)}
+      ref={
+        isUser
+          ? (el) => {
+              if (navKey !== undefined) registerUserTurnRef(navKey, el);
+            }
+          : undefined
+      }
+      onClick={isUser && navKey !== undefined ? () => onUserTurnClick(navKey) : undefined}
     >
       <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
         <div class="tl-bubble-from">
@@ -1816,6 +1849,46 @@ function CcmsgBubble({
       </div>
       <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span>
     </div>
+  );
+  // u1 (自分の発話) は主役側なので従来通り右寄せ吹き出しをそのまま。
+  // peer は thinking と同じ fold パターン (details + summary + tl-guided) で
+  // 包み、閉時は identicon + 名前 + #room + preview の 1 行、開時は既存の
+  // rich 表示 (hue / タブ / LinkedMarkdownView) を保つ。fold 自体の
+  // 左インデント・フォントサイズは CSS 側 (.tl-ccmsg-fold / .tl-ccmsg-body)
+  // で thinking と揃える。
+  const bubble = isUser ? (
+    innerBubble
+  ) : (
+    <details
+      class={`tl-fold tl-ccmsg-fold${selected ? " tl-bubble-user-nav-selected" : ""}`}
+      open={foldOpen}
+      onToggle={(e) => setFoldOpen((e.currentTarget as HTMLDetailsElement).open)}
+      ref={(el) => {
+        if (navKey !== undefined) registerUserTurnRef(navKey, el);
+      }}
+      onClick={navKey === undefined ? undefined : () => onUserTurnClick(navKey)}
+    >
+      <summary class="tl-decorated-summary tl-ccmsg-summary">
+        {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
+        <span
+          class="tl-fold-label tl-summary-decoration tl-ccmsg-summary-body"
+          style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
+        >
+          {from ? <MemberAvatar id={from} room={room} /> : null}
+          <strong class="tl-ccmsg-summary-name">{from ? memberLabel(from, room) : "…"}</strong>
+          <span class="tl-ccmsg-summary-loc">
+            {"#"}
+            {message.room}
+            {message.mid === undefined ? null : `m${message.mid}`}
+          </span>
+          {previewLine ? <span class="tl-ccmsg-summary-preview">{previewLine}</span> : null}
+        </span>
+      </summary>
+      <div class="tl-guided">
+        <FoldGuide />
+        <div class="tl-ccmsg-body">{innerBubble}</div>
+      </div>
+    </details>
   );
   if (!isMatch || !searchCtx) return bubble;
   return (
@@ -2136,8 +2209,8 @@ export function Timeline({
   const userNavScrollAnimationRef = useRef<number | null>(null);
   // nav key -> mounted DOM node for each green bubble. Entries for turns
   // dropped by a "更新" (replace) reload are pruned below rather than leaked.
-  const userTurnRefs = useRef(new Map<string, HTMLDivElement>());
-  const registerUserTurnRef = useCallback((key: string, el: HTMLDivElement | null) => {
+  const userTurnRefs = useRef(new Map<string, HTMLElement>());
+  const registerUserTurnRef = useCallback((key: string, el: HTMLElement | null) => {
     if (el) userTurnRefs.current.set(key, el);
     else userTurnRefs.current.delete(key);
   }, []);
@@ -2903,8 +2976,12 @@ export function Timeline({
                 </button>
                 <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
                   <legend>auto open</legend>
-                  {(["U", "R", "T", "A"] as const).map((category) => {
+                  {(["U", "R", "C", "T", "A"] as const).map((category) => {
                     const fixed = category === "U" || category === "R";
+                    // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
+                    // U/R は境界要素なので常に表示 (fixed)。
+                    const settingKey =
+                      category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
                     return (
                       <label
                         key={category}
@@ -2912,16 +2989,10 @@ export function Timeline({
                       >
                         <input
                           type="checkbox"
-                          checked={
-                            fixed
-                              ? true
-                              : category === "T"
-                                ? autoOpenSettings.thinking
-                                : autoOpenSettings.agent
-                          }
+                          checked={fixed ? true : autoOpenSettings[settingKey]}
                           disabled={fixed}
                           onChange={() => {
-                            if (!fixed) toggleAutoOpen(category === "T" ? "thinking" : "agent");
+                            if (!fixed) toggleAutoOpen(settingKey);
                           }}
                         />
                         {category}
@@ -2929,7 +3000,7 @@ export function Timeline({
                     );
                   })}
                   <span class="tl-auto-open-separator" aria-hidden="true" />
-                  <label title="T/A を含む外側の fold を自動オープン">
+                  <label title="C/T/A を含む外側の fold を自動オープン">
                     <input
                       type="checkbox"
                       checked={autoOpenSettings.items}

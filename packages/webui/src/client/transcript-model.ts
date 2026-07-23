@@ -698,19 +698,34 @@ export function agentCommunicationCount(entry: TimelineEntry): number {
   return line.segments.filter(isAgentCommunicationSegment).length;
 }
 
+/** Number of ccmsg room messages carried by this entry (0 if none). ccmsg
+ * boundary lines are normally emitted as their own top-level bubbles rather
+ * than folded, but the count is exposed here so the fold-group summary and
+ * `isDirectFoldEntry` can treat them symmetrically with thinking / agent
+ * communication if a future grouping change places one inside a fold group
+ * (kawaz r55 m11: 「Nthinking+Nccmsg+Nagentmessages+Nitems」)。 */
+export function ccmsgMessageCount(entry: TimelineEntry): number {
+  const { line } = entry;
+  if (line.kind !== "turn") return 0;
+  return extractCcmsgMessages(line).length;
+}
+
 /** Entries rendered directly between items runs instead of being counted and
- * hidden inside an items sub-fold. Thinking and agent communication stay at
- * the same level inside the outer fold and split adjacent items runs. */
+ * hidden inside an items sub-fold. Thinking, ccmsg, and agent communication
+ * stay at the same level inside the outer fold and split adjacent items runs. */
 export function isDirectFoldEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   if (line.kind !== "turn") return false;
-  return isThinkingEntry(entry) || agentCommunicationCount(entry) > 0;
+  return (
+    isThinkingEntry(entry) || ccmsgMessageCount(entry) > 0 || agentCommunicationCount(entry) > 0
+  );
 }
 
 /** Folded-group summary label: each present category is listed in the fixed
- * order "N thinking + N agent messages + N items". */
+ * order "N thinking + N ccmsg + N agent messages + N items". */
 export function foldGroupLabel(entries: TimelineEntry[]): string {
   const thinkingCount = entries.filter(isThinkingEntry).length;
+  const ccmsgCount = entries.reduce((count, entry) => count + ccmsgMessageCount(entry), 0);
   const agentMessageCount = entries.reduce(
     (count, entry) => count + agentCommunicationCount(entry),
     0,
@@ -718,6 +733,7 @@ export function foldGroupLabel(entries: TimelineEntry[]): string {
   const itemCount = entries.filter((entry) => !isDirectFoldEntry(entry)).length;
   return [
     thinkingCount > 0 ? `${thinkingCount} thinking` : null,
+    ccmsgCount > 0 ? `${ccmsgCount} ccmsg` : null,
     agentMessageCount > 0 ? `${agentMessageCount} agent messages` : null,
     itemCount > 0 ? `${itemCount} items` : null,
   ]

@@ -3728,6 +3728,79 @@ button.session-tab {
   margin-right: auto;
 }
 
+/* CcmsgBubble (peer 側) を thinking と同じ折り畳みで包む (kawaz r55 m10,
+ * 2026-07-23): TL の主役は TL セッション自身、peer からの ccmsg は参照材料。
+ * 左端接触は主役側 (assistant/thinking) の特権にするため、fold 全体を
+ * `margin-left` で左端から離す。フォントサイズと本文余白は .tl-thinking-body
+ * と揃え、控えめな見た目にする (rich 中身 = hue 色/タブ/LinkedMarkdown は
+ * 展開時にそのまま出るので、fold 自体はコンパクトに寄せる)。 */
+.tl-ccmsg-fold {
+  margin-left: 1.5rem;
+  max-width: calc(100% - 1.5rem);
+}
+
+.tl-ccmsg-fold > summary {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+
+/* 閉時サマリの装飾 (thinking / agent と同じ「破線 + 薄背景」トーン、hue が
+ * 付いていれば発言者色を薄く重ねる)。 */
+.tl-ccmsg-fold:not([open]) > .tl-ccmsg-summary .tl-summary-decoration {
+  background: var(--assistant-bubble-bg);
+  border: 1px dashed var(--assistant-bubble-border);
+}
+
+.tl-ccmsg-summary-body {
+  gap: 0.35rem;
+}
+
+.tl-ccmsg-summary-body[style*="--member-hue"] {
+  background: hsl(var(--member-hue) 45% 94%);
+  border: 1px dashed hsl(var(--member-hue) 55% 55%);
+}
+@media (prefers-color-scheme: dark) {
+  .tl-ccmsg-summary-body[style*="--member-hue"] {
+    background: hsl(var(--member-hue) 22% 18%);
+    border: 1px dashed hsl(var(--member-hue) 45% 55%);
+  }
+}
+
+.tl-ccmsg-summary-name {
+  font-weight: 600;
+}
+
+.tl-ccmsg-summary-loc {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+}
+
+.tl-ccmsg-summary-preview {
+  color: var(--fg-muted);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 24rem;
+}
+
+/* 展開時の本文コンテナ: フォントサイズ / 色は thinking と揃える。中身の
+ * .tl-bubble-ccmsg-peer が既に hue 背景 / 角丸 / padding を持っているので、
+ * ここでは字の格だけ整える。 */
+.tl-ccmsg-body {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin-top: 0.25rem;
+}
+
+/* nav 選択時の outline は fold の外郭に軽く。 */
+.tl-ccmsg-fold.tl-bubble-user-nav-selected > summary {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 0.3rem;
+}
+
 /* CcmsgBubble (peer 側) の発言者ごと identicon 基調色 (kawaz 2026-07-23
  * rich-unify 続き): ROOM 側 `.msg[style*="--member-hue"]` と同じ hsl 配色を
  * TL のルームメッセージにも適用し、同一発言者が ROOM と TL で同色になる

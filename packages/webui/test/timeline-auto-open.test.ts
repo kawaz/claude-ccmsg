@@ -15,28 +15,46 @@ function parsedEntry(offset: number, raw: Record<string, unknown>): TimelineEntr
 describe("defaultTimelineAutoOpen", () => {
   // 親 TL はユーザ向け思考過程を自動展開するが、agent 通信と外側 items fold は閉じる。
   test("main Timeline defaults to URT with inner T open and outer items closed", () => {
-    expect(defaultTimelineAutoOpen(false)).toEqual({ thinking: true, agent: false, items: false });
+    expect(defaultTimelineAutoOpen(false)).toEqual({
+      thinking: true,
+      ccmsg: true,
+      agent: false,
+      items: false,
+    });
   });
 
   // agent TL は呼び出し元・peer との通信を主情報として自動展開し、その通信を包む
   // 外側 fold も開く。thinking は既定閉で、親 TL と関心対象を反転する。
   test("agent Timeline defaults to URA with inner A and outer items open", () => {
-    expect(defaultTimelineAutoOpen(true)).toEqual({ thinking: false, agent: true, items: true });
+    expect(defaultTimelineAutoOpen(true)).toEqual({
+      thinking: false,
+      ccmsg: false,
+      agent: true,
+      items: true,
+    });
   });
 
   // T/A の inner 軸と N items の outer 軸は独立。片方の操作が他方を書き換えると、
   // main 既定の T=true/items=false と agent 既定の A=true/items=true を表現できない。
   test("thinking, agent, and items toggles update only their own axis", () => {
-    const initial = { thinking: true, agent: false, items: false };
+    const initial = { thinking: true, ccmsg: true, agent: false, items: false };
     expect(toggleTimelineAutoOpen(initial, "agent")).toEqual({
       thinking: true,
+      ccmsg: true,
       agent: true,
       items: false,
     });
     expect(toggleTimelineAutoOpen(initial, "items")).toEqual({
       thinking: true,
+      ccmsg: true,
       agent: false,
       items: true,
+    });
+    expect(toggleTimelineAutoOpen(initial, "ccmsg")).toEqual({
+      thinking: true,
+      ccmsg: false,
+      agent: false,
+      items: false,
     });
   });
 });
@@ -125,20 +143,36 @@ describe("foldGroupShouldAutoOpen", () => {
   // ItemsSubFold を一斉展開する設定ではなく、T/A が一致しなければ外側も開かない。
   test("N items gates only an outer FoldGroup containing enabled T/A", () => {
     expect(
-      foldGroupShouldAutoOpen([thinking], { thinking: true, agent: false, items: false }),
+      foldGroupShouldAutoOpen([thinking], {
+        thinking: true,
+        ccmsg: true,
+        agent: false,
+        items: false,
+      }),
     ).toBe(false);
-    expect(foldGroupShouldAutoOpen([thinking], { thinking: true, agent: false, items: true })).toBe(
-      true,
-    );
-    expect(foldGroupShouldAutoOpen([agent], { thinking: false, agent: true, items: true })).toBe(
-      true,
-    );
-    expect(foldGroupShouldAutoOpen([thinking], { thinking: false, agent: true, items: true })).toBe(
-      false,
-    );
+    expect(
+      foldGroupShouldAutoOpen([thinking], {
+        thinking: true,
+        ccmsg: false,
+        agent: false,
+        items: true,
+      }),
+    ).toBe(true);
+    expect(
+      foldGroupShouldAutoOpen([agent], { thinking: false, ccmsg: false, agent: true, items: true }),
+    ).toBe(true);
+    expect(
+      foldGroupShouldAutoOpen([thinking], {
+        thinking: false,
+        ccmsg: false,
+        agent: true,
+        items: true,
+      }),
+    ).toBe(false);
     expect(
       foldGroupShouldAutoOpen([thinking, agent], {
         thinking: false,
+        ccmsg: false,
         agent: false,
         items: true,
       }),
