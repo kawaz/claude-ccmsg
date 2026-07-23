@@ -11,7 +11,7 @@ import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { Avatar, UserAvatar } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime } from "../utils.ts";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
@@ -38,6 +38,8 @@ import {
   type UserMessageKind,
 } from "../transcript-model.ts";
 import { MarkdownView } from "../markdown-view.tsx";
+import { LinkedMarkdownView } from "../filepath-linker.tsx";
+import type { FilePathResolveCtx } from "../filepath-ref.ts";
 import {
   highlightRenderedText,
   removeRenderedTextHighlights,
@@ -214,6 +216,16 @@ function AgentIdentity({ name, model }: { name: string; model?: string }) {
 
 const AgentTimelineHrefsContext = createContext<ReadonlyMap<string, string>>(new Map());
 const FileToolSidContext = createContext("");
+
+/** Sender-scoped `FilePathResolveCtx` for the session that this Timeline pane
+ * belongs to (kawaz r46m62): TL displays this session's own transcript, so
+ * the "sender" of every assistant / thinking segment is the session owner
+ * itself, and `filepath[:LINE[:COL]]` inline-code tokens should resolve
+ * against that session's own cwd/repo_root. Undefined when the daemon has
+ * not yet announced the peer row (rare — cleared to plain code, same as
+ * before this DR). The `LinkedMarkdownView` at each MarkdownView call site
+ * consumes this via useContext. */
+const SessionFilePathCtxContext = createContext<FilePathResolveCtx | undefined>(undefined);
 
 interface TimelineAutoOpenContextValue {
   settings: TimelineAutoOpenSettings;
@@ -413,8 +425,16 @@ function AgentCard({
   model?: string;
 }) {
   const marker = agentDirectionMarker(direction);
+  // 発言者ごとにカード基調色を identicon hue で色付けする (ROOM 側 `.msg`
+  // 表示との rich-unify、kawaz 2026-07-23 依頼)。ROOM は sid を seed に
+  // するが TL の AgentCard は sid を持たない (SendMessage/peer-message/
+  // Agent spawn は agent 名しか一次識別子がない) ので、AgentIdentity の
+  // アイコンと同じ `agent:${name}` seed を使う — こうすると同じ画面内で
+  // アイコン色とカード基調色が揃う。CSS 側 (`.tl-agent-card[style*=
+  // "--member-hue"]`) が hsl() で薄い背景 + 濃い左ボーダーに変換する。
+  const hue = hueForSeed(`agent:${name}`);
   return (
-    <div class={`tl-agent-card tl-agent-${direction}`}>
+    <div class={`tl-agent-card tl-agent-${direction}`} style={{ "--member-hue": String(hue) }}>
       <div class="tl-agent-card-head">
         <span>{marker}</span>
         <AgentIdentity name={name} model={model} />
@@ -574,6 +594,7 @@ function ThinkingSegment({
   foldGroupOpen: boolean;
   mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
 }) {
+  const filePathCtx = useContext(SessionFilePathCtxContext);
   const [tab, setTab] = useState<ThinkingTab>("original");
   const [hostText, setHostText] = useState<string | null>(null);
   const [browserText, setBrowserText] = useState<string | null>(null);
@@ -770,8 +791,13 @@ function ThinkingSegment({
               </div>
             </div>
           ) : null}
-          <MarkdownView
+          <LinkedMarkdownView
             source={bodyText}
+            // ホスト/ブラウザ翻訳がかかっても probe 対象は常に原文 `text` に
+            // 揃える (翻訳結果の inline code は原文と同一で、原文で網羅すれば
+            // どのタブでも同じリンクが張れる、余計な probe も発生しない)。
+            probeSource={text}
+            ctx={filePathCtx}
             highlightWords={mdSearch?.words}
             onMatchClick={mdSearch?.onMatchClick}
           />
@@ -780,6 +806,15 @@ function ThinkingSegment({
       </div>
     </details>
   );
+}
+
+/** Assistant markdown text with session-scoped filepath linkification wired
+ * (kawaz r46m62). Small wrapper so the useContext hook has a stable
+ * top-level call site (JSX inside `SegmentView`'s IIFE is not a component
+ * boundary — extracting this keeps the rules-of-hooks contract obvious). */
+function AssistantMarkdownText({ source }: { source: string }) {
+  const filePathCtx = useContext(SessionFilePathCtxContext);
+  return <LinkedMarkdownView source={source} ctx={filePathCtx} />;
 }
 
 function SegmentView({
@@ -815,7 +850,7 @@ function SegmentView({
         return (
           <div class={"tl-text tl-text-" + segment.role}>
             {segment.role === "assistant" ? (
-              <MarkdownView source={segment.text} />
+              <AssistantMarkdownText source={segment.text} />
             ) : (
               <HighlightedPlainText text={segment.text} ctx={searchCtx} unitKey={searchKey} />
             )}
@@ -2589,263 +2624,281 @@ export function Timeline({
         ? `${agent.runId}/${agent.agentId}`
         : `${agent.agentId}`
     : null;
+  // filepath 解決 ctx は「この pane が表示しているセッション自身」の cwd/
+  // repo_root を使う (kawaz r46m62、TL は自セッションの発言表示なので発言者
+  // = 自分)。peer 行がまだ届いていない (WS 接続直後などの短い間) は
+  // undefined になり、LinkedMarkdownView がプレーンな MarkdownView に degrade
+  // する — 同じ経路を ROOM 側 (filePathCtxForSender で送信者未解決時) も
+  // 使っているので挙動は揃う。
+  const selfPeer = useMemo(() => appState.peers.find((p) => p.sid === sid), [appState.peers, sid]);
+  const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
+    () => (selfPeer ? { sid, cwd: selfPeer.cwd, repoRoot: selfPeer.repo_root } : undefined),
+    [sid, selfPeer],
+  );
   return (
     <FileToolSidContext.Provider value={sid}>
-      <AgentTimelineHrefsContext.Provider value={agentTimelineHrefs}>
-        <TimelineAutoOpenContext.Provider value={autoOpenContext}>
-          <div class="timeline-view" ref={scrollRef}>
-            {agentLabel ? (
-              <div class="tl-agent-header">
-                <span class="tl-agent-header-label">agent: {agentLabel}</span>
-                <a class="tl-agent-header-back" href={timelineHref(sid)}>
-                  親セッションへ戻る
-                </a>
-              </div>
-            ) : null}
-            <div class="tl-toolbar">
-              <button
-                type="button"
-                disabled={timeline.atStart || timeline.status === "loading"}
-                onClick={loadOlder}
-              >
-                {timeline.atStart ? "先頭まで" : "older"}
-              </button>
-              <SearchBar
-                words={parsedSearch.words}
-                queryText={searchQueryText}
-                onQueryChange={(queryText) => changeSearch({ queryText })}
-                caseSensitive={searchCaseSensitive}
-                onToggleCaseSensitive={() => changeSearch({ caseSensitive: !searchCaseSensitive })}
-                regexMode={searchRegex}
-                onToggleRegex={() => changeSearch({ regex: !searchRegex })}
-                matchCount={matchingUnitKeys.length}
-                currentIndex={searchCurrentIndex}
-                onPrev={searchPrev}
-                onNext={searchNext}
-                hasError={parsedSearch.hasError}
-                targets={{
-                  user: targetUser,
-                  onToggleUser: () => setTargetUser((v) => !v),
-                  ai: targetAI,
-                  onToggleAI: () => setTargetAI((v) => !v),
-                  ccmsg: targetCcmsg,
-                  onToggleCcmsg: () => setTargetCcmsg((v) => !v),
-                }}
-              />
-              <div class="tl-user-nav">
-                <button
-                  type="button"
-                  class="tl-user-nav-count"
-                  disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
-                  onClick={() => scrollToUserTurn(currentUserIdx)}
-                  title="現在のユーザ発言へ戻る"
-                >
-                  👤 {currentUserIdx}/{userTurnKeys.length}
-                </button>
-                {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
-                 * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
-                 * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
-                 * 意味がない)。 */}
-                <button
-                  type="button"
-                  disabled={userTurnKeys.length === 0}
-                  onClick={goPrevUserTurn}
-                  title="前のユーザ発言へ"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  disabled={userTurnKeys.length === 0}
-                  onClick={goNextUserTurn}
-                  title="次のユーザ発言へ"
-                >
-                  ↓
-                </button>
-              </div>
-              <button type="button" onClick={scrollToTop} title="最上部へ">
-                ⤒
-              </button>
-              <button type="button" onClick={scrollToBottom} title="最下部へ">
-                ⤓
-              </button>
-            </div>
-            {timeline.status === "error" ? (
-              <div class="tl-error">
-                <p>{timeline.error}</p>
-                <button type="button" onClick={refresh}>
-                  再試行 (tail から読み直す)
-                </button>
-              </div>
-            ) : (
-              <div class="tl-lines">
-                {parsed.length === 0 ? (
-                  <p class="tl-empty">(空の transcript)</p>
-                ) : (
-                  // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
-                  // 抽出されるとき (queue-operation enqueue と task-notification 経由の
-                  // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
-                  // 2026-07-14) の二重表示を避ける。この Set は本 iteration 内でだけ
-                  // 変化させる: React/Preact の render は同期 1 pass なので closure
-                  // 越しの mutation で問題ないが、次回 render では新規 Set が必要
-                  // (前回の Set を持ち越さない) — なので groups.map の直前でリセット
-                  // される形にしておく。
-                  ((seenCcmsg: Set<string>) =>
-                    groups.map((group, i) => {
-                      if (group.kind === "fold") {
-                        return (
-                          <FoldGroup
-                            key={group.entries[0]!.offset}
-                            entries={group.entries}
-                            translationAvailability={translationAvailability}
-                            searchCtx={searchCtx}
-                          />
-                        );
-                      }
-                      const { line, offset } = group;
-                      // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                      // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                      // fold group に送るので groups の "entry" 側には来ない) —
-                      // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                      // 実データ上も自明に成り立つ。
-                      if (line.kind !== "turn") return null;
-                      // boundaries[i] は上の useMemo で groups と同じ index で
-                      // 計算済み (render のたびの再分類を避けるため)。
-                      const boundary = boundaries[i]!;
-                      if (boundary === null) return null;
-                      switch (boundary.kind) {
-                        case "user-prompt":
-                          return (
-                            <UserPromptBubble
-                              key={offset}
-                              line={line}
-                              offsetKey={offset}
-                              navKey={`user:${offset}`}
-                              registerUserTurnRef={registerUserTurnRef}
-                              translationAvailability={translationAvailability}
-                              now={now}
-                              searchCtx={searchCtx}
-                              onUserTurnClick={onUserTurnClick}
-                              selected={selectedUserTurnKey === `user:${offset}`}
-                            />
-                          );
-                        case "assistant-response":
-                          return (
-                            <AssistantBubble
-                              key={offset}
-                              line={line}
-                              offset={offset}
-                              translationAvailability={translationAvailability}
-                              now={now}
-                              searchCtx={searchCtx}
-                            />
-                          );
-                        case "ccmsg": {
-                          // raw タブ用の「この行に何が書いてあったか」: subscribe/
-                          // teammate-message wrapper は text segment に、DR-0027 §2.2
-                          // の tool_result 検出行 ({ok:true,room,mid} response) は
-                          // tool-result segment にしか原文が無い — text だけ結合すると
-                          // tool_result 由来バブルの raw タブが空になるので両方拾う。
-                          const rawText = line.segments
-                            .filter(
-                              (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
-                                s.kind === "text" || s.kind === "tool-result",
-                            )
-                            .map((s) => s.text)
-                            .join("\n");
-                          return boundary.messages
-                            .map((m, j) => {
-                              const dedupKey = ccmsgDedupKey(m);
-                              if (seenCcmsg.has(dedupKey)) return null;
-                              seenCcmsg.add(dedupKey);
-                              const navKey = `ccmsg:${offset}:${j}`;
-                              return (
-                                <CcmsgBubble
-                                  key={`${offset}-${j}`}
-                                  message={m}
-                                  rawText={rawText}
-                                  now={now}
-                                  searchKey={`${offset}-ccmsg-${j}`}
-                                  searchCtx={searchCtx}
-                                  navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
-                                  registerUserTurnRef={registerUserTurnRef}
-                                  onUserTurnClick={onUserTurnClick}
-                                  selected={selectedUserTurnKey === navKey}
-                                />
-                              );
-                            })
-                            .filter((n) => n !== null);
-                        }
-                      }
-                    }))(new Set<string>())
-                )}
-              </div>
-            )}
-            <div
-              ref={autoOpenFloatRef}
-              class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
-            >
-              <button
-                type="button"
-                class="tl-auto-open-handle"
-                aria-label={autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"}
-                aria-expanded={autoOpenPanelOpen}
-                onClick={() => setAutoOpenPanelOpen((open) => !open)}
-              >
-                {autoOpenPanelOpen ? "›" : "‹"}
-              </button>
-              <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
-                <legend>auto open</legend>
-                {(["U", "R", "T", "A"] as const).map((category) => {
-                  const fixed = category === "U" || category === "R";
-                  return (
-                    <label key={category} title={fixed ? "常に表示" : `${category} を自動オープン`}>
-                      <input
-                        type="checkbox"
-                        checked={
-                          fixed
-                            ? true
-                            : category === "T"
-                              ? autoOpenSettings.thinking
-                              : autoOpenSettings.agent
-                        }
-                        disabled={fixed}
-                        onChange={() => {
-                          if (!fixed) toggleAutoOpen(category === "T" ? "thinking" : "agent");
-                        }}
-                      />
-                      {category}
-                    </label>
-                  );
-                })}
-                <span class="tl-auto-open-separator" aria-hidden="true" />
-                <label title="T/A を含む外側の fold を自動オープン">
-                  <input
-                    type="checkbox"
-                    checked={autoOpenSettings.items}
-                    onChange={() => toggleAutoOpen("items")}
-                  />
-                  N items
-                </label>
-              </fieldset>
-            </div>
-            <div class="tl-bottom-controls">
-              {miniLines.length > 0 ? (
-                <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
-                  {miniLines.map((line) => (
-                    <span
-                      key={`${line.kind}-${line.text}`}
-                      class={`tl-status-mini-line tl-status-mini-${line.kind}`}
-                    >
-                      {line.text}
-                    </span>
-                  ))}
-                </button>
+      <SessionFilePathCtxContext.Provider value={sessionFilePathCtx}>
+        <AgentTimelineHrefsContext.Provider value={agentTimelineHrefs}>
+          <TimelineAutoOpenContext.Provider value={autoOpenContext}>
+            <div class="timeline-view" ref={scrollRef}>
+              {agentLabel ? (
+                <div class="tl-agent-header">
+                  <span class="tl-agent-header-label">agent: {agentLabel}</span>
+                  <a class="tl-agent-header-back" href={timelineHref(sid)}>
+                    親セッションへ戻る
+                  </a>
+                </div>
               ) : null}
+              <div class="tl-toolbar">
+                <button
+                  type="button"
+                  disabled={timeline.atStart || timeline.status === "loading"}
+                  onClick={loadOlder}
+                >
+                  {timeline.atStart ? "先頭まで" : "older"}
+                </button>
+                <SearchBar
+                  words={parsedSearch.words}
+                  queryText={searchQueryText}
+                  onQueryChange={(queryText) => changeSearch({ queryText })}
+                  caseSensitive={searchCaseSensitive}
+                  onToggleCaseSensitive={() =>
+                    changeSearch({ caseSensitive: !searchCaseSensitive })
+                  }
+                  regexMode={searchRegex}
+                  onToggleRegex={() => changeSearch({ regex: !searchRegex })}
+                  matchCount={matchingUnitKeys.length}
+                  currentIndex={searchCurrentIndex}
+                  onPrev={searchPrev}
+                  onNext={searchNext}
+                  hasError={parsedSearch.hasError}
+                  targets={{
+                    user: targetUser,
+                    onToggleUser: () => setTargetUser((v) => !v),
+                    ai: targetAI,
+                    onToggleAI: () => setTargetAI((v) => !v),
+                    ccmsg: targetCcmsg,
+                    onToggleCcmsg: () => setTargetCcmsg((v) => !v),
+                  }}
+                />
+                <div class="tl-user-nav">
+                  <button
+                    type="button"
+                    class="tl-user-nav-count"
+                    disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
+                    onClick={() => scrollToUserTurn(currentUserIdx)}
+                    title="現在のユーザ発言へ戻る"
+                  >
+                    👤 {currentUserIdx}/{userTurnKeys.length}
+                  </button>
+                  {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
+                   * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
+                   * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
+                   * 意味がない)。 */}
+                  <button
+                    type="button"
+                    disabled={userTurnKeys.length === 0}
+                    onClick={goPrevUserTurn}
+                    title="前のユーザ発言へ"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    disabled={userTurnKeys.length === 0}
+                    onClick={goNextUserTurn}
+                    title="次のユーザ発言へ"
+                  >
+                    ↓
+                  </button>
+                </div>
+                <button type="button" onClick={scrollToTop} title="最上部へ">
+                  ⤒
+                </button>
+                <button type="button" onClick={scrollToBottom} title="最下部へ">
+                  ⤓
+                </button>
+              </div>
+              {timeline.status === "error" ? (
+                <div class="tl-error">
+                  <p>{timeline.error}</p>
+                  <button type="button" onClick={refresh}>
+                    再試行 (tail から読み直す)
+                  </button>
+                </div>
+              ) : (
+                <div class="tl-lines">
+                  {parsed.length === 0 ? (
+                    <p class="tl-empty">(空の transcript)</p>
+                  ) : (
+                    // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
+                    // 抽出されるとき (queue-operation enqueue と task-notification 経由の
+                    // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
+                    // 2026-07-14) の二重表示を避ける。この Set は本 iteration 内でだけ
+                    // 変化させる: React/Preact の render は同期 1 pass なので closure
+                    // 越しの mutation で問題ないが、次回 render では新規 Set が必要
+                    // (前回の Set を持ち越さない) — なので groups.map の直前でリセット
+                    // される形にしておく。
+                    ((seenCcmsg: Set<string>) =>
+                      groups.map((group, i) => {
+                        if (group.kind === "fold") {
+                          return (
+                            <FoldGroup
+                              key={group.entries[0]!.offset}
+                              entries={group.entries}
+                              translationAvailability={translationAvailability}
+                              searchCtx={searchCtx}
+                            />
+                          );
+                        }
+                        const { line, offset } = group;
+                        // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                        // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                        // fold group に送るので groups の "entry" 側には来ない) —
+                        // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                        // 実データ上も自明に成り立つ。
+                        if (line.kind !== "turn") return null;
+                        // boundaries[i] は上の useMemo で groups と同じ index で
+                        // 計算済み (render のたびの再分類を避けるため)。
+                        const boundary = boundaries[i]!;
+                        if (boundary === null) return null;
+                        switch (boundary.kind) {
+                          case "user-prompt":
+                            return (
+                              <UserPromptBubble
+                                key={offset}
+                                line={line}
+                                offsetKey={offset}
+                                navKey={`user:${offset}`}
+                                registerUserTurnRef={registerUserTurnRef}
+                                translationAvailability={translationAvailability}
+                                now={now}
+                                searchCtx={searchCtx}
+                                onUserTurnClick={onUserTurnClick}
+                                selected={selectedUserTurnKey === `user:${offset}`}
+                              />
+                            );
+                          case "assistant-response":
+                            return (
+                              <AssistantBubble
+                                key={offset}
+                                line={line}
+                                offset={offset}
+                                translationAvailability={translationAvailability}
+                                now={now}
+                                searchCtx={searchCtx}
+                              />
+                            );
+                          case "ccmsg": {
+                            // raw タブ用の「この行に何が書いてあったか」: subscribe/
+                            // teammate-message wrapper は text segment に、DR-0027 §2.2
+                            // の tool_result 検出行 ({ok:true,room,mid} response) は
+                            // tool-result segment にしか原文が無い — text だけ結合すると
+                            // tool_result 由来バブルの raw タブが空になるので両方拾う。
+                            const rawText = line.segments
+                              .filter(
+                                (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
+                                  s.kind === "text" || s.kind === "tool-result",
+                              )
+                              .map((s) => s.text)
+                              .join("\n");
+                            return boundary.messages
+                              .map((m, j) => {
+                                const dedupKey = ccmsgDedupKey(m);
+                                if (seenCcmsg.has(dedupKey)) return null;
+                                seenCcmsg.add(dedupKey);
+                                const navKey = `ccmsg:${offset}:${j}`;
+                                return (
+                                  <CcmsgBubble
+                                    key={`${offset}-${j}`}
+                                    message={m}
+                                    rawText={rawText}
+                                    now={now}
+                                    searchKey={`${offset}-ccmsg-${j}`}
+                                    searchCtx={searchCtx}
+                                    navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
+                                    registerUserTurnRef={registerUserTurnRef}
+                                    onUserTurnClick={onUserTurnClick}
+                                    selected={selectedUserTurnKey === navKey}
+                                  />
+                                );
+                              })
+                              .filter((n) => n !== null);
+                          }
+                        }
+                      }))(new Set<string>())
+                  )}
+                </div>
+              )}
+              <div
+                ref={autoOpenFloatRef}
+                class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
+              >
+                <button
+                  type="button"
+                  class="tl-auto-open-handle"
+                  aria-label={autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"}
+                  aria-expanded={autoOpenPanelOpen}
+                  onClick={() => setAutoOpenPanelOpen((open) => !open)}
+                >
+                  {autoOpenPanelOpen ? "›" : "‹"}
+                </button>
+                <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
+                  <legend>auto open</legend>
+                  {(["U", "R", "T", "A"] as const).map((category) => {
+                    const fixed = category === "U" || category === "R";
+                    return (
+                      <label
+                        key={category}
+                        title={fixed ? "常に表示" : `${category} を自動オープン`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={
+                            fixed
+                              ? true
+                              : category === "T"
+                                ? autoOpenSettings.thinking
+                                : autoOpenSettings.agent
+                          }
+                          disabled={fixed}
+                          onChange={() => {
+                            if (!fixed) toggleAutoOpen(category === "T" ? "thinking" : "agent");
+                          }}
+                        />
+                        {category}
+                      </label>
+                    );
+                  })}
+                  <span class="tl-auto-open-separator" aria-hidden="true" />
+                  <label title="T/A を含む外側の fold を自動オープン">
+                    <input
+                      type="checkbox"
+                      checked={autoOpenSettings.items}
+                      onChange={() => toggleAutoOpen("items")}
+                    />
+                    N items
+                  </label>
+                </fieldset>
+              </div>
+              <div class="tl-bottom-controls">
+                {miniLines.length > 0 ? (
+                  <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
+                    {miniLines.map((line) => (
+                      <span
+                        key={`${line.kind}-${line.text}`}
+                        class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+                      >
+                        {line.text}
+                      </span>
+                    ))}
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </div>
-        </TimelineAutoOpenContext.Provider>
-      </AgentTimelineHrefsContext.Provider>
+          </TimelineAutoOpenContext.Provider>
+        </AgentTimelineHrefsContext.Provider>
+      </SessionFilePathCtxContext.Provider>
     </FileToolSidContext.Provider>
   );
 }

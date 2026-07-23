@@ -3711,6 +3711,24 @@ button.session-tab {
   font-size: 0.78rem;
 }
 
+/* AgentCard 発言者ごとの identicon 基調色 (kawaz 2026-07-23 rich-unify):
+ * ROOM 側 `.msg[style*="--member-hue"]` と同じ配色ロジック — 薄い hsl 背景
+ * + 濃い左ボーダーで送信者を視覚識別する。TL の AgentCard は 3 種 (SendMessage
+ * / peer-message / Agent spawn) 共通で AgentIdentity のアイコンと同じ
+ * `agent:${name}` seed から hue を導出しているため、同じ画面のアイコン色と
+ * 揃う。左ボーダーは既存の `1px dashed` を上書きして色付きの実線に置き換え、
+ * "誰の発言か" を閉じたままの状態でも視認できるようにする。 */
+.tl-agent-card[style*="--member-hue"] {
+  background: hsl(var(--member-hue) 45% 96%);
+  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+}
+@media (prefers-color-scheme: dark) {
+  .tl-agent-card[style*="--member-hue"] {
+    background: hsl(var(--member-hue) 22% 16%);
+    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+  }
+}
+
 .tl-agent-outbound {
   margin-left: auto;
 }

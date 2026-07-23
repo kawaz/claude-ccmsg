@@ -1,24 +1,12 @@
-import { useEffect, useState } from "preact/hooks";
 import type { DeliveredEvent, PeerInfo } from "@ccmsg/protocol";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { formatMsgTime, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
-import { MarkdownView, type FilePathLinker } from "../markdown-view.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
-import {
-  extractInlineCodeTokens,
-  hrefFromStatEntry,
-  parseFilePathRef,
-  refToAbsolutePath,
-  type FilePathResolveCtx,
-} from "../filepath-ref.ts";
-import {
-  enqueueFilePathProbe,
-  getFilePathStatus,
-  subscribeFilePathCache,
-} from "../filepath-existence-cache.ts";
+import type { FilePathResolveCtx } from "../filepath-ref.ts";
+import { LinkedMarkdownView } from "../filepath-linker.tsx";
 
 /** DR-0012 (U1 icon addendum): a member's avatar shown next to its label
  * in msg-meta. Used both for the message sender (`from`) and for each
@@ -61,69 +49,10 @@ export function filePathCtxForSender(
   return { sid: member.sid, cwd: member.cwd, repoRoot: peer?.repo_root };
 }
 
-/** Build the per-message linker MarkdownView calls on every inline-code
- * token. The linker:
- *   1. parses the token into a ref (bails to null if it doesn't look like a
- *      file — the "extension or line info" heuristic in parseFilePathRef);
- *   2. absolute-resolves the ref against the sender's cwd/repo_root — that
- *      absolute path is the cache key;
- *   3. asks the filepath-existence-cache for the daemon's fs_stat_batch
- *      answer — returns the FileViewer href only when the daemon confirmed
- *      a real file. Missing / pending / declined all return null (plain
- *      inline code).
- * Reads cache state synchronously; the useEffect below is what actually
- * populates the cache by enqueueing every candidate on mount. */
-function makeFilePathLinker(
-  ctx: FilePathResolveCtx | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- `tick` forces closure identity to change on cache updates so MarkdownView's useMemo re-runs
-  _cacheTick: number,
-): FilePathLinker | undefined {
-  if (!ctx) return undefined;
-  return (token: string) => {
-    const ref = parseFilePathRef(token);
-    if (!ref) return null;
-    const abs = refToAbsolutePath(ref, ctx);
-    if (!abs) return null;
-    const status = getFilePathStatus(ctx.sid, abs);
-    if (!status || status === "pending") return null;
-    return hrefFromStatEntry(ctx.sid, status, ref);
-  };
-}
-
-/** Enqueue every candidate absolute path from a message body into the
- * filepath-existence-cache. Runs in an effect so a re-render (streaming
- * event addition, unrelated store change) does not re-enqueue — the cache
- * itself dedupes, but skipping the extraction pass when nothing changed
- * keeps the render path cheap. */
-function useFilePathProbeEnqueue(
-  source: string | undefined,
-  ctx: FilePathResolveCtx | undefined,
-): void {
-  useEffect(() => {
-    if (!ctx || !source) return;
-    for (const token of extractInlineCodeTokens(source)) {
-      const ref = parseFilePathRef(token);
-      if (!ref) continue;
-      const abs = refToAbsolutePath(ref, ctx);
-      if (!abs) continue;
-      enqueueFilePathProbe(ctx.sid, abs);
-    }
-  }, [source, ctx?.sid, ctx?.cwd, ctx?.repoRoot]);
-}
-
-/** Subscribe to cache updates so a batch response triggers a re-render;
- * returns a monotonic tick that changes on every notification, letting
- * MarkdownView's useMemo re-evaluate (via the linker identity). */
-function useFilePathCacheTick(): number {
-  const [tick, setTick] = useState(0);
-  useEffect(() => subscribeFilePathCache(() => setTick((n) => n + 1)), []);
-  return tick;
-}
-
 /** The `msg` event's rendering — hoisted into its own component so the
- * filepath-linkifier hooks (useState for the cache tick, useEffect for the
- * probe enqueue) have a stable call-order across renders. Every other event
- * type stays inline in TimelineItem because it doesn't need hooks. */
+ * filepath-linkifier hooks (used inside `LinkedMarkdownView`) have a stable
+ * call-order across renders. Every other event type stays inline in
+ * TimelineItem because it doesn't need hooks. */
 function MsgItem({
   event,
   room,
@@ -147,14 +76,6 @@ function MsgItem({
 
   const filePathCtx = filePathCtxForSender(room, peers, event.from);
   const renderAsMarkdown = shouldRenderAsMarkdown(event.from);
-  // Only agent-authored markdown messages carry file-path links; enqueuing
-  // is skipped for user-authored plaintext messages (no MarkdownView, no
-  // linkification target) so the cache doesn't accumulate probes for text
-  // the viewer already sees verbatim.
-  const probeSource = renderAsMarkdown ? event.msg : undefined;
-  useFilePathProbeEnqueue(probeSource, filePathCtx);
-  const cacheTick = useFilePathCacheTick();
-  const linker = makeFilePathLinker(filePathCtx, cacheTick);
 
   return (
     <div
@@ -197,7 +118,15 @@ function MsgItem({
         </a>
       </div>
       <div class="msg-body">
-        {renderAsMarkdown ? <MarkdownView source={event.msg} filePathLinker={linker} /> : event.msg}
+        {renderAsMarkdown ? (
+          // Only agent-authored markdown messages carry file-path links; the
+          // undefined `probeSource` on the non-markdown branch is moot because
+          // that branch renders `event.msg` verbatim without going through
+          // LinkedMarkdownView at all.
+          <LinkedMarkdownView source={event.msg} ctx={filePathCtx} />
+        ) : (
+          event.msg
+        )}
       </div>
     </div>
   );
