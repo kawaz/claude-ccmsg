@@ -34,11 +34,14 @@ export function buildTerminalEmbedUrl(
   embedded.pathname = `/sessions/${encodeURIComponent(hyouiSessionId)}`;
   // resize=1: iframe サイズに合わせた PTY 自動 resize (hyoui r45m11。embed は
   // UI トグルが無く iframe の localStorage も分離されるため URL パラメータ方式)
-  // fab=right:16,bottom:80: hyoui embed の入力フォーム呼び出しボタン (fab) の
-  // 初期位置を ccmsg の＋ボタン (right/bottom 1.2rem, 3.2rem 円) と重ならない
-  // 位置に退避 (r53m4 正式仕様、hyoui 側実機検証済み。ユーザ D&D 位置 >
-  // query > 既定 の優先順)。
-  embedded.search = "?embed=1&resize=1&fab=right:16,bottom:80";
+  // fab=...: hyoui embed の入力フォーム呼び出しボタン (fab) のデザインヒント
+  // (r53m4 + r56 合意仕様。ユーザ D&D 位置 > query > 既定 の優先順)。
+  // right:16,bottom:64 = ccmsg の＋ボタン (right/bottom 1.2rem, 3.2rem 円) と
+  // 重ならない位置 (80 は離れすぎとの kawaz 実機フィードバックで 64 に詰め)。
+  // size:51,bg:#3b82f6 = ＋ボタンと同径・同系青にして色差による大きさの錯視を
+  // 抑え、embed 外側と馴染ませる (r55m1)。未知 key は hyoui 側 silent skip
+  // なので旧 gateway に渡しても安全 (後方互換)。
+  embedded.search = "?embed=1&resize=1&fab=right:16,bottom:64,size:51,bg:%233b82f6";
   embedded.hash = "";
   return embedded.toString();
 }
