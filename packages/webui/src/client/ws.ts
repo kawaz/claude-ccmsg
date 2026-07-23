@@ -29,6 +29,7 @@ import type {
   FsListResponse,
   FsEditResponse,
   FsReadResponse,
+  FsStatBatchResponse,
   FsWriteResponse,
   HelloResponse,
   InviteResponse,
@@ -141,6 +142,12 @@ export interface WsHandle {
   /** DR-0026: read a file under one of the session's workspace_folders. Same
    * directory-prefix allowlist as fsListWorkspace. */
   fsReadWorkspace(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  /** Batch existence probe for the message-body path linkifier (kawaz r46
+   * m55-m58). `paths` must be absolute; the daemon returns a parallel array
+   * of `FsStatEntry | null` — non-null when a real regular file is reachable
+   * under one of the three read-op authorization surfaces. See
+   * `FsStatBatchRequest` in @ccmsg/protocol for the full contract. */
+  fsStatBatch(sid: string, paths: string[]): Promise<FsStatBatchResponse | ErrorResponse>;
   /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
    * session's cwd (DR-0019 fs_write), while remaining inside its containment
    * root. Never overwrites — an existing path replies `file_exists`, a path
@@ -664,6 +671,7 @@ export function createWsClient(
     fsReadExternal: (sid, path) => send({ op: "fs_read_external", sid, path }),
     fsListWorkspace: (sid, path) => send({ op: "fs_list_workspace", sid, path }),
     fsReadWorkspace: (sid, path) => send({ op: "fs_read_workspace", sid, path }),
+    fsStatBatch: (sid, paths) => send({ op: "fs_stat_batch", sid, paths }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     fsCreate: (sid, path, kind, content) => send({ op: "fs_create", sid, path, kind, content }),
     fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),

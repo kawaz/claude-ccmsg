@@ -33,6 +33,15 @@ import type {
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
+/** A callback that MarkdownView invokes on every inline-code token to decide
+ * whether it should render as a FileViewer link. Returns the href when the
+ * token names a real, daemon-confirmed file for the sender's session, or
+ * `null` otherwise (plain `<code>`). Kept as a function rather than a
+ * pre-built Map so the caller — which owns the sender-scoped `ctx`, the
+ * fs_stat_batch cache, and the ability to enqueue new probes — can express
+ * "we just asked, waiting for the answer" and "declined" identically from
+ * the renderer's viewpoint (both produce plain code). */
+export type FilePathLinker = (token: string) => string | null;
 
 // URL scheme allowlist for link/image targets (DR-0010): http/https/mailto,
 // plus scheme-less URLs (relative paths, `#fragment`s) which CommonMark
@@ -196,6 +205,12 @@ interface MarkdownRenderCtx {
   search?: MarkdownSearchCtx;
   headings?: readonly MarkdownHeading[];
   headingIndex: number;
+  /** kawaz r46 m55-m58: per-token linker that renders inline code as a
+   * FileViewer link when the sender's session has a real file matching that
+   * token (daemon-confirmed via fs_stat_batch, cached by
+   * filepath-existence-cache). `undefined` = plain rendering, matching the
+   * pre-DR baseline byte-for-byte. */
+  filePathLinker?: FilePathLinker;
 }
 
 function renderChildren(
@@ -277,12 +292,30 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     case "delete":
       return <del key={key}>{renderChildren((node as Delete).children, key, ctx)}</del>;
 
-    case "inlineCode":
+    case "inlineCode": {
+      const value = (node as InlineCode).value;
+      // kawaz r46 m55-m58: linkify inline-code tokens shaped like
+      // `packages/foo.ts:L10-12` / `foo.ts:42` when the sender's session has
+      // a real file matching that token. The link's *text* keeps the exact
+      // inline `<code>` rendering so a false-positive (or a click-averse
+      // reader) still sees the original token visually. Any token the linker
+      // declines — non-path shape, unknown to the daemon, still pending its
+      // batch answer — falls through to plain `<code>`, matching pre-DR
+      // output byte-for-byte.
+      const href = ctx.filePathLinker ? ctx.filePathLinker(value) : null;
+      if (!href) {
+        return (
+          <code class="md-inline-code" key={key}>
+            {value}
+          </code>
+        );
+      }
       return (
-        <code class="md-inline-code" key={key}>
-          {(node as InlineCode).value}
-        </code>
+        <a key={key} class="md-inline-code-file-link" href={href}>
+          <code class="md-inline-code">{value}</code>
+        </a>
       );
+    }
 
     case "code": {
       const code = node as Code;
@@ -558,8 +591,9 @@ export function renderMarkdownAst(
   root: Root,
   search?: MarkdownSearchCtx,
   headings?: readonly MarkdownHeading[],
+  filePathLinker?: FilePathLinker,
 ): VNode {
-  const ctx: MarkdownRenderCtx = { search, headings, headingIndex: 0 };
+  const ctx: MarkdownRenderCtx = { search, headings, headingIndex: 0, filePathLinker };
   return <div class="md">{renderChildren(root.children, "md", ctx)}</div>;
 }
 
@@ -580,18 +614,30 @@ export function MarkdownView({
   highlightWords,
   onMatchClick,
   tableOfContents = false,
+  filePathLinker,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
   onMatchClick?: () => void;
   tableOfContents?: boolean;
+  /** kawaz r46 m55-m58: per-token linker used to turn inline-code file
+   * references into FileViewer links (see `FilePathLinker` doc). Omit for
+   * viewers that don't have a sender to attribute paths to (e.g.
+   * InlineFileViewer reads a file rendered inline — the file being viewed
+   * *is* the target, there's no separate author to link out from). */
+  filePathLinker?: FilePathLinker;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
   return useMemo(() => {
     const root = parseMarkdownSource(source);
     const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
-    const markdown = renderMarkdownAst(root, search, tableOfContents ? headings : undefined);
+    const markdown = renderMarkdownAst(
+      root,
+      search,
+      tableOfContents ? headings : undefined,
+      filePathLinker,
+    );
     if (headings.length <= 1) return markdown;
 
     return (
@@ -628,5 +674,5 @@ export function MarkdownView({
         {markdown}
       </div>
     );
-  }, [source, highlightWords, onMatchClick, tableOfContents]);
+  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker]);
 }

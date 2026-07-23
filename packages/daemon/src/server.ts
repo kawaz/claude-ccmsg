@@ -41,6 +41,7 @@ import {
   fsRead,
   fsReadExternal,
   fsReadWorkspace,
+  fsStatBatch,
   fsWrite,
   validateRepoRoot,
 } from "./fs-access.ts";
@@ -872,6 +873,7 @@ const IDENTITY_OPS = new Set([
   "fs_create",
   "fs_delete",
   "fs_edit",
+  "fs_stat_batch",
   "transcript_read",
   "session_search",
   "agents",
@@ -1875,6 +1877,26 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const result = fsReadWorkspace(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_stat_batch": {
+      // user-role only: fs_stat_batch is a viewer feature (the message-body
+      // path linkifier, kawaz r46 m55-m58). It reuses fs_read /
+      // fs_read_external / fs_read_workspace's authorization surfaces through
+      // fsResolveForServe, so no new trust boundary is introduced — sessions
+      // (AI) have no reason to probe file existence via the daemon, they read
+      // the filesystem directly through their own tool loop.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_stat_batch' requires user role");
+        return;
+      }
+      const result = fsStatBatch(daemon.sessions, daemon.sessionStatus, req.sid, req.paths);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

@@ -9,6 +9,10 @@ import { createWsClient } from "./ws.ts";
 import { parseHash } from "./locator.ts";
 import { parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
 import { readStorage, writeStorage } from "./storage.ts";
+import {
+  clearFilePathCacheForSid,
+  configureFilePathExistenceCache,
+} from "./filepath-existence-cache.ts";
 
 const store = createStore(initialState());
 const ws = createWsClient(
@@ -24,6 +28,29 @@ function applyLocator(): void {
 window.addEventListener("hashchange", applyLocator);
 applyLocator();
 ws.connect();
+
+// kawaz r46 m55-m58: wire the message-body path linkifier's cache to the WS
+// so TimelineItem's `enqueueFilePathProbe` calls flush into fs_stat_batch.
+// Kept out of ws.ts / store.ts to keep those modules unaware of the linker
+// — this is the one place both dependencies are known simultaneously. The
+// error path collapses to per-path null so a daemon-side failure never
+// blocks the render (matches the cache's own contract).
+configureFilePathExistenceCache(async (sid, paths) => {
+  const res = await ws.fsStatBatch(sid, paths);
+  return res.ok ? res.results : paths.map(() => null);
+});
+// A session that disconnects (peers stream drops it) may reconnect with a
+// different cwd / repo_root / external_files snapshot, so cached "positive"
+// answers become stale. Clear on peer-set shrink — new peers keep their
+// existing cache (session snapshot is unchanged for them).
+let lastPeerSids = new Set<string>();
+store.subscribe(() => {
+  const current = new Set(store.getState().peers.map((p) => p.sid));
+  for (const sid of lastPeerSids) {
+    if (!current.has(sid)) clearFilePathCacheForSid(sid);
+  }
+  lastPeerSids = current;
+});
 
 // Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a): webui-local persistence, not
 // daemon-backed — hydrate once from localStorage at startup, then keep it in

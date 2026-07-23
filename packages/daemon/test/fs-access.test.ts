@@ -2604,3 +2604,271 @@ describe("validateRepoRoot decision table", () => {
     expect(got).toBe(fs.realpathSync(shallow));
   });
 });
+
+describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () => {
+  /** Session helper that plants a `.code-workspace` file at cwd (workspace
+   * kind), an outside file referenced via a Read tool_use (external kind),
+   * and one file inside cwd (contained kind), so a single batch can exercise
+   * all three authorization surfaces in one round-trip. */
+  /** Set up a session that has all three authorization surfaces populated
+   * with **disjoint** filesystem regions (contained: files inside cwd,
+   * workspace: files under a sibling directory registered via `.code-workspace`,
+   * external: a transcript-observed file elsewhere). Disjoint on purpose —
+   * the resolver order (contained → workspace → external) is only meaningfully
+   * tested when a workspace-kind path can't also masquerade as contained,
+   * which requires the workspace folder to live outside cwd. */
+  async function sessionWithAllThreeKinds(
+    ctx: DaemonCtx,
+    sid: string,
+    parent: string,
+  ): Promise<{
+    session: TestClient;
+    cwd: string;
+    containedRel: string;
+    workspaceAbs: string;
+    externalAbs: string;
+    unrelatedAbs: string;
+  }> {
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(parent, "cwd-")));
+    const sibling = fs.realpathSync(fs.mkdtempSync(path.join(parent, "sibling-")));
+    const externalDir = fs.realpathSync(fs.mkdtempSync(path.join(parent, "external-")));
+
+    const insideFile = "sub/inside.md";
+    fs.mkdirSync(path.join(cwd, "sub"));
+    fs.writeFileSync(path.join(cwd, insideFile), "inside");
+
+    const workspaceFile = path.join(sibling, "ws.md");
+    fs.writeFileSync(workspaceFile, "ws");
+    // .code-workspace's `folders[].path` is resolved relative to the
+    // .code-workspace file's own directory (cwd here). Registering `../sibling-…`
+    // adds an external directory to workspace_folders without adding cwd.
+    fs.writeFileSync(
+      path.join(cwd, "test.code-workspace"),
+      JSON.stringify({
+        folders: [{ name: "sib", path: path.relative(cwd, sibling) }],
+      }),
+    );
+
+    const externalTarget = path.join(externalDir, "external.md");
+    fs.writeFileSync(externalTarget, "external");
+
+    const unrelatedTarget = path.join(externalDir, "unrelated.md");
+    fs.writeFileSync(unrelatedTarget, "unrelated");
+
+    const transcript = path.join(cwd, `${sid}.jsonl`);
+    fs.writeFileSync(transcript, `${externalToolUse("r1", "Read", externalTarget)}\n`);
+
+    const session = await connect(ctx.sock);
+    await session.request({
+      op: "hello",
+      role: "session",
+      sid,
+      repo: "r",
+      ws: "w",
+      cwd,
+      transcript_path: transcript,
+    });
+    return {
+      session,
+      cwd,
+      containedRel: insideFile,
+      workspaceAbs: workspaceFile,
+      externalAbs: fs.realpathSync(externalTarget),
+      unrelatedAbs: unrelatedTarget,
+    };
+  }
+
+  test(
+    "3-kind happy path: contained/workspace/external all resolve, unrelated absolute path resolves to null",
+    async () => {
+      // Single batch across the three authorization surfaces establishes that
+      // the resolver order is real (contained tried first for a repo-relative
+      // absolute), and that a path outside every surface returns null rather
+      // than an error — the response shape stays parallel to `paths`.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      try {
+        const { cwd, containedRel, workspaceAbs, externalAbs, unrelatedAbs } =
+          await sessionWithAllThreeKinds(ctx, "A", parent);
+        const containedAbs = path.join(cwd, containedRel);
+
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          results: ({ kind: string; path: string } | null)[];
+        }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: [containedAbs, workspaceAbs, externalAbs, unrelatedAbs],
+        });
+        expect(res.results).toEqual([
+          { kind: "contained", path: containedRel },
+          // workspace / external echo the absolute path as it was found on
+          // disk — FileViewer's fs_read_workspace / fs_read_external dispatch
+          // takes absolute strings directly.
+          { kind: "workspace", path: workspaceAbs },
+          { kind: "external", path: externalAbs },
+          null,
+        ]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "directory targets resolve to null (not a regular file), even when inside containment",
+    async () => {
+      // The whole point of the op vs a "path shape guess" is that directories
+      // (branch-name-shaped tokens that happen to exist on disk as dirs) are
+      // rejected so the client never turns them into broken FileViewer links.
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      try {
+        const subdir = path.join(cwd, "subdir");
+        fs.mkdirSync(subdir);
+        const session = await connect(ctx.sock);
+        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          results: ({ kind: string; path: string } | null)[];
+        }>({ op: "fs_stat_batch", sid: "A", paths: [subdir, cwd] });
+        expect(res.results).toEqual([null, null]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "malformed path entries (non-string / empty / relative) become null; batch still returns results for the rest",
+    async () => {
+      // One bad token in the middle of an otherwise-valid list must not
+      // abort the whole batch — the response is a parallel array with null
+      // slots for the offenders and real entries for the valid ones.
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      try {
+        fs.writeFileSync(path.join(cwd, "ok.md"), "ok");
+        const session = await connect(ctx.sock);
+        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        const user = await userAt(ctx);
+        const okAbs = path.join(cwd, "ok.md");
+        const res = await user.request<{
+          ok: true;
+          results: ({ kind: string; path: string } | null)[];
+        }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: [okAbs, "", "relative.md", 42 as unknown as string, okAbs],
+        });
+        expect(res.results[0]).toEqual({ kind: "contained", path: "ok.md" });
+        expect(res.results[1]).toBeNull();
+        expect(res.results[2]).toBeNull();
+        expect(res.results[3]).toBeNull();
+        expect(res.results[4]).toEqual({ kind: "contained", path: "ok.md" });
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "security: existence outside external allowlist collapses to null (no oracle)",
+    async () => {
+      // Same posture as fs_read_external's path_forbidden case — a real file
+      // that isn't in the transcript-derived allowlist looks identical to a
+      // nonexistent one from the response shape, so an attacker cannot
+      // probe "does /etc/passwd exist" via fs_stat_batch.
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      const outside = fs.realpathSync(mkfixture());
+      try {
+        const allowed = path.join(outside, "allowed.md");
+        const secret = path.join(outside, "secret.md");
+        const nonexistent = path.join(outside, "missing.md");
+        fs.writeFileSync(allowed, "a");
+        fs.writeFileSync(secret, "s");
+        await sessionAtWithTranscript(ctx, "A", cwd, [externalToolUse("r1", "Read", allowed)]);
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          results: ({ kind: string; path: string } | null)[];
+        }>({ op: "fs_stat_batch", sid: "A", paths: [allowed, secret, nonexistent] });
+        expect(res.results[0]).toEqual({ kind: "external", path: fs.realpathSync(allowed) });
+        expect(res.results[1]).toBeNull();
+        expect(res.results[2]).toBeNull();
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "user-role only: session-role callers get bad_request",
+    async () => {
+      // Matches fs_read_external / fs_read_workspace's role gate — sessions
+      // (AI) can already reach the filesystem directly, so they have no
+      // reason to consume this viewer-only op.
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      try {
+        const session = await connect(ctx.sock);
+        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        const res = await session.request<{ ok: false; error: { code: string } }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: [path.join(cwd, "any.md")],
+        });
+        expect(res.error.code).toBe("bad_request");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "invalid_args: non-array or oversized paths list",
+    async () => {
+      // Whole-request contract violations still fail the batch — the caller
+      // is doing something structurally wrong, not just supplying one bad
+      // token, so a single error keeps the failure loud.
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      try {
+        const session = await connect(ctx.sock);
+        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        const user = await userAt(ctx);
+        const res1 = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: "not-an-array" as unknown as string[],
+        });
+        expect(res1.error.code).toBe("invalid_args");
+        const oversized = Array.from({ length: 257 }, (_, i) => `/abs/${i}`);
+        const res2 = await user.request<{ ok: false; error: { code: string } }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: oversized,
+        });
+        expect(res2.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});

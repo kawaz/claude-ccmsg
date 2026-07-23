@@ -14,12 +14,15 @@ import * as path from "node:path";
 import {
   ErrorCode,
   FS_READ_MAX_BYTES,
+  FS_STAT_BATCH_MAX_PATHS,
   type FsCreateResponse,
   type FsDeleteResponse,
   type FsEditResponse,
   type FsEntry,
   type FsListResponse,
   type FsReadResponse,
+  type FsStatBatchResponse,
+  type FsStatEntry,
   type FsWriteResponse,
 } from "@ccmsg/protocol";
 import {
@@ -719,6 +722,84 @@ export function fsResolveForServe(
     };
   }
   return { ok: true, data: { realPath, size: stat.size } };
+}
+
+// --- fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier) ---
+
+/** Per-path existence + kind probe used by the message-body linkifier. Each
+ * input is tried against the same three authorization surfaces the read ops
+ * use (contained → workspace → external, in that order — contained is the
+ * common case for repo-relative citations, so try it first to avoid the two
+ * absolute-path allowlist walks whenever possible), and the first surface
+ * that admits the path *and* whose target is a regular file wins. Every
+ * failure — malformed input, forbidden, not_found, target-is-directory —
+ * collapses to `null` so the response never becomes an oracle for
+ * "is this path present under a surface you cannot read?" (matches the
+ * DR-0024 posture that external's authorization outcome must not leak the
+ * existence of paths outside its exact-file allowlist).
+ *
+ * Batch failure modes are limited to whole-request contract violations
+ * (paths not an array, size cap) so a single bad token in the middle of an
+ * otherwise-valid list still returns results for the rest.
+ */
+export function fsStatBatch(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  paths: unknown,
+): FsAccessResult<Omit<FsStatBatchResponse, "ok">> {
+  if (!Array.isArray(paths)) {
+    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_stat_batch requires paths array" };
+  }
+  if (paths.length > FS_STAT_BATCH_MAX_PATHS) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `fs_stat_batch paths exceeds ${FS_STAT_BATCH_MAX_PATHS}`,
+    };
+  }
+
+  // Resolve the session's containment root once up front — contained probes
+  // rebase the client's absolute input to a root-relative path (fs_read /
+  // resolveContained refuse absolute strings by contract, so we must produce
+  // a relative candidate before calling into that surface).
+  const rootRes = resolveRoot(sessions, sid);
+  const containmentRoot = rootRes.ok ? rootRes.root : null;
+
+  const results: (FsStatEntry | null)[] = paths.map((raw) => {
+    if (typeof raw !== "string" || raw === "" || !path.isAbsolute(raw)) return null;
+    const normalized = path.normalize(raw);
+
+    // 1) contained: absolute path lies inside the session's containment root
+    //    → rebase to a root-relative string and hand off to the same
+    //    resolver fs_read uses. Skip when the input equals the root itself
+    //    (that's a directory, never a file).
+    if (containmentRoot) {
+      const prefix = containmentRoot.endsWith(path.sep)
+        ? containmentRoot
+        : containmentRoot + path.sep;
+      if (normalized.startsWith(prefix)) {
+        const rel = normalized.slice(prefix.length);
+        if (rel !== "") {
+          const r = fsResolveForServe(sessions, statusStore, sid, rel, "contained");
+          if (r.ok) return { kind: "contained", path: rel };
+        }
+      }
+    }
+
+    // 2) workspace: absolute path is under a DR-0026 workspace_folders entry.
+    const rWs = fsResolveForServe(sessions, statusStore, sid, normalized, "workspace");
+    if (rWs.ok) return { kind: "workspace", path: normalized };
+
+    // 3) external: absolute path exactly matches the DR-0024 external_files
+    //    allowlist for this sid.
+    const rEx = fsResolveForServe(sessions, statusStore, sid, normalized, "external");
+    if (rEx.ok) return { kind: "external", path: normalized };
+
+    return null;
+  });
+
+  return { ok: true, data: { results } };
 }
 
 // --- fs_write ----------------------------------------------------------

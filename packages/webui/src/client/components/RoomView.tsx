@@ -218,7 +218,7 @@ export function RoomView({ state }: { state: AppState }) {
         onDrop={(e) => void handleDrop(e)}
       >
         {room.timeline.map((ev, i) => (
-          <TimelineItem key={i} event={ev} room={room} now={now} />
+          <TimelineItem key={i} event={ev} room={room} peers={state.peers} now={now} />
         ))}
       </div>
       {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer

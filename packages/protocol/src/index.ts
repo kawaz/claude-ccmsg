@@ -1038,6 +1038,64 @@ export interface FsDeleteRequest {
   kind: "contained" | "workspace";
 }
 
+/**
+ * Batch file-existence probe for the message-body path linkifier (kawaz r46
+ * m55-m58). Client extracts inline-code tokens shaped like
+ * `filepath[:LINE[:COL]]` / `filepath[:L1-L2]` from an agent message, absolute-
+ * resolves them against the sender's cwd / repo_root, and asks the daemon
+ * which ones point at real regular files it is willing to serve. Only paths
+ * that come back non-null are turned into FileViewer links; unknowns stay as
+ * plain inline code.
+ *
+ * Each requested path is tried against the same three authorization surfaces
+ * the read ops use — `fs_read` (contained containment root), `fs_read_workspace`
+ * (DR-0026 workspace_folders directory-prefix allowlist), and `fs_read_external`
+ * (DR-0024 exact-file transcript allowlist), in that order — and the first
+ * surface that admits the path *and* whose target is a regular file wins.
+ * Everything else (not found, forbidden, not-a-file/dir/symlink) collapses to
+ * `null` so the daemon does not leak "does this exist?" information about
+ * paths outside the caller's authorization: an allowlist miss and a genuine
+ * ENOENT are indistinguishable from the response shape.
+ *
+ * User-role only (viewer feature), like the other absolute-path fs ops.
+ */
+export interface FsStatBatchRequest {
+  op: "fs_stat_batch";
+  sid: string;
+  /** Absolute paths (client-side pre-resolved from cwd / repo_root). Any
+   * non-string / empty / relative entry is answered with `null` in the
+   * corresponding response slot rather than rejecting the whole batch —
+   * one client-side rendering bug shouldn't blank every link on the screen. */
+  paths: string[];
+}
+
+/** One resolved entry in `FsStatBatchResponse.results`. `path` is the shape
+ * the client passes to `fileHref` / FileViewer — relative to the session's
+ * containment root for `contained`, absolute (echoed as requested / normalized)
+ * for `workspace` and `external`. Mirrors the read-op dispatch FileViewer
+ * already uses (relative → fs_read, absolute → fs_read_workspace or
+ * fs_read_external). */
+export interface FsStatEntry {
+  kind: "contained" | "workspace" | "external";
+  path: string;
+}
+
+export interface FsStatBatchResponse {
+  ok: true;
+  /** Parallel to `request.paths` — same length, same order. Slot values:
+   *   - `FsStatEntry` when the daemon is willing to serve the target as a
+   *     regular file under one of the three authorization surfaces;
+   *   - `null` otherwise (client renders that token as plain inline code). */
+  results: (FsStatEntry | null)[];
+}
+
+/** Maximum paths per fs_stat_batch request. A single agent message rarely
+ * exceeds a handful of file references; the cap defends the daemon against
+ * a runaway client from opening an unbounded loop of stat syscalls. Chosen
+ * generously (256) so a heavily-cited migration report still fits in one
+ * batch without needing multi-round coordination. */
+export const FS_STAT_BATCH_MAX_PATHS = 256;
+
 export interface FsEditRequest {
   op: "fs_edit";
   sid: string;
@@ -1226,6 +1284,7 @@ export type Request =
   | FsCreateRequest
   | FsDeleteRequest
   | FsEditRequest
+  | FsStatBatchRequest
   | TranscriptReadRequest
   | SessionSearchRequest
   | AgentsRequest
@@ -1641,6 +1700,7 @@ export type Response =
   | FsCreateResponse
   | FsDeleteResponse
   | FsEditResponse
+  | FsStatBatchResponse
   | TranscriptReadResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
