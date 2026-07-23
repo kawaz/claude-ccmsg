@@ -3,7 +3,7 @@ title: TL のエージェント間メッセージ表示を ROOM チャットの 
 status: open
 category: request
 created: 2026-07-23T12:24:32+09:00
-last_read:
+last_read: 2026-07-23T12:46:02+09:00
 open_entered: 2026-07-23T12:24:32+09:00
 wip_entered:
 blocked_entered:
