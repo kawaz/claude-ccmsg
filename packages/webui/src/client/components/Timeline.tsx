@@ -1165,8 +1165,12 @@ function SystemMessageFold({
   const peer = rich.display === "peer" ? rich : null;
   const idlePeer = peer?.category === "idle" ? peer : null;
   if (idlePeer) return <IdlePeerRow peer={idlePeer} ts={line.ts} />;
-  const open = peer ? agentOpen : manualOpen;
-  const setOpen = peer ? setAgentOpen : setManualOpen;
+  // spawn prompt (agent transcript 先頭の親からの指示書) は peer wrapper の
+  // 有無に関わらずエージェントメッセージのカテゴリ (kawaz r55 m35: AUTO OPEN
+  // の A チェックで開いておいてほしい対象)。
+  const isAgentCategory = peer !== null || kind === "spawn-prompt";
+  const open = isAgentCategory ? agentOpen : manualOpen;
+  const setOpen = isAgentCategory ? setAgentOpen : setManualOpen;
   const taskSummary =
     kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
   // kind 文字列は internal enum なので UI に出す時だけ人間可読形へ (現状

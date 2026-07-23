@@ -684,6 +684,13 @@ export function isPeerMessageLine(line: ParsedLine): boolean {
   return line.kind === "turn" && line.userMessageKind === "peer-message";
 }
 
+/** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間
+ * コミュニケーションの一種 (kawaz r55 m35: AUTO OPEN の A で開いておいて
+ * ほしい対象)。 */
+export function isSpawnPromptLine(line: ParsedLine): boolean {
+  return line.kind === "turn" && line.userMessageKind === "spawn-prompt";
+}
+
 /** True for a peer relay whose body is an idle_notification. Idle state is
  * operational noise rather than agent conversation, so it stays in items. */
 function isIdlePeerMessageEntry(entry: TimelineEntry): boolean {
@@ -703,6 +710,7 @@ export function agentCommunicationCount(entry: TimelineEntry): number {
   const { line } = entry;
   if (line.kind !== "turn") return 0;
   if (isPeerMessageLine(line)) return isIdlePeerMessageEntry(entry) ? 0 : 1;
+  if (isSpawnPromptLine(line)) return 1;
   return line.segments.filter(isAgentCommunicationSegment).length;
 }
 
