@@ -19,3 +19,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-17 | task | open | [session-creator-cwd-picker-unify](./2026-07-17-session-creator-cwd-picker-unify.md) | SessionCreator の cwd 選択 UI を統合 (kawaz 裁定)。手入力欄とツリー検索欄を1つに統合、選択後は確定表示+編集ボタンに切替。コマンドプレビュー workflow (wf_89c77eac) 完了後に着手 |
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-23 | request | wip | [tl-agent-message-rich-unify](./2026-07-23-tl-agent-message-rich-unify.md) | TL のエージェント間メッセージ表示 (AgentCard/SendMessage/peer-message) を ROOM チャットの rich 表示 (アイコン+名前+identicon hue) に統一する |
+| 2026-07-23 | design | open | [session-initiated-1on1-creation](./2026-07-23-session-initiated-1on1-creation.md) | セッション側から kawaz との正規 1on1 room (kind='1on1') を作る手段がない |
