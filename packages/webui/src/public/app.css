@@ -390,17 +390,20 @@ a {
   font-size: 0.8rem;
 }
 
+/* kawaz r55 mid=22: 開閉トグル (▶/▽ の details marker) を表示する。以前は
+ * list-style:none + ::-webkit-details-marker { display:none } で消していたが、
+ * 開閉状態が視覚的に分からないという指摘で復活。SessionList の
+ * .session-section-summary と同じくデフォルトの marker をそのまま活かす。 */
 #room-list-archived summary,
 #room-list-1on1 summary {
   cursor: pointer;
   padding: 0.3rem 0.5rem;
   color: var(--fg-muted);
-  list-style: none;
 }
 
 #room-list-archived summary::-webkit-details-marker,
 #room-list-1on1 summary::-webkit-details-marker {
-  display: none;
+  color: var(--fg-muted);
 }
 
 #room-list-archived ul,
@@ -426,6 +429,8 @@ a {
 .session-row.active .session-repo-ws,
 .session-row.active .session-branch,
 .session-row.active .session-sid-btn,
+.session-row.active .session-line2-ws,
+.session-row.active .session-status-badge,
 .session-row.active .session-line3 {
   color: var(--accent-fg);
 }
@@ -433,10 +438,23 @@ a {
 /* 選択中セッション行の時間表示 (kawaz r15 mid=11、2026-07-14): 通常状態は
  * fg-muted + opacity:0.65 でグレーになっているが、accent 背景の上では
  * コントラスト不足で「ほぼ読めない」。他の row 内テキストと同じ accent-fg
- * に上書きし、opacity は 0.85 (完全不透明だと存在感が強すぎるので若干残す)。 */
-.session-row.active .session-idle {
-  color: var(--accent-fg);
+ * に上書きし、opacity は 0.85 (完全不透明だと存在感が強すぎるので若干残す)。
+ * kawaz r55 mid=19: sid-btn (opacity 0.75) / line3 (opacity 0.7) も同様に
+ * 非 active の減光が accent 背景では読めなくなるため、active 時は減光を
+ * 弱める (0.85 で他のテキストと同じ存在感)。 */
+.session-row.active .session-idle,
+.session-row.active .session-sid-btn,
+.session-row.active .session-line3 {
   opacity: 0.85;
+}
+
+/* kawaz r55 mid=19: session-live-dot-running は通常 var(--accent) 塗り、
+ * session-status-badge も var(--accent) 文字 — active 行の背景と同色に
+ * なり見えなくなる (badge は「謎の左スペース」の正体)。active 時は
+ * accent-fg 側に反転して視認性を確保する。outline 側 (r15 mid=11) は
+ * base rule で accent-fg を当てている。 */
+.session-row.active .session-live-dot-running {
+  background: var(--accent-fg);
 }
 
 .session-line1 {
@@ -529,12 +547,16 @@ a {
   min-width: 0;
 }
 
-/* ws (workspace/worktree 名) — 1 行目の横幅が狭いため sid の後ろに置く
- * (kawaz r17 mid=29)。長い名前は ellipsis。 */
+/* ws (workspace/worktree 名) — kawaz r17 mid=29 で sid と同居していたが
+ * r55 mid=20 で 2 行目単独に。sid/cwd より価値が高い情報なので少し大きめ
+ * (0.75rem)、色も fg (accent 背景でも読める) に格上げ。長い名前は ellipsis。 */
 .session-line2-ws {
-  font-size: 0.7rem;
-  color: var(--fg-muted);
+  font-size: 0.75rem;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .session-sid-btn {
@@ -553,16 +575,35 @@ a {
   text-decoration: underline;
 }
 
+/* 3 行目: SID8 (session-sid-btn) + cwd (session-cwd)。kawaz r55 mid=20 で
+ * 補助情報 2 種を同一行に集約。cwd はデフォルト ellipsis、行クリックで
+ * 折り返し表示 (session-cwd-full)。sid ボタンだけは stopPropagation で
+ * cwd 折り返しトグルと分離。 */
 .session-line3 {
   padding-left: 1.3rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
   font-size: 0.7rem;
   color: var(--fg-muted);
   opacity: 0.7;
-  white-space: nowrap;
   cursor: pointer;
 }
 
+.session-cwd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
 .session-line3.session-cwd-full {
+  align-items: flex-start;
+}
+
+.session-line3.session-cwd-full .session-cwd {
   white-space: normal;
   word-break: break-all;
 }

@@ -108,12 +108,9 @@ function SessionRowItem({
         >
           <Avatar seed={row.sid} size={16} />
           {/* 1 行目は repo のみ (kawaz r17 mid=29: 横幅が狭く ws まで入れると
-           * 詰まる)。ws は 2 行目 (sid の後ろ) に移動。repo 無し行 (agent-only
-           * 等) は従来通り ws/cwd 末尾の fallback をここに出す。 */}
+           * 詰まる)。ws は 2 行目に単独で置く (kawaz r55 mid=20)。repo 無し行
+           * (agent-only 等) は従来通り ws/cwd 末尾の fallback をここに出す。 */}
           <span class="session-repo-ws">{repo || wsLabel}</span>
-          {row.branch && row.branch !== wsLabel ? (
-            <span class="session-branch">{row.branch}</span>
-          ) : null}
         </a>
         {liveState ? (
           <span
@@ -137,15 +134,35 @@ function SessionRowItem({
               {badgeLabel(b)}
             </span>
           ))}
+        {/* DR-0020 §2.1 mini badge。kawaz r55 mid=20 で 2 行目が ws 専用に
+         * なったのに伴い、live status 系ここへ移動 (idle と隣接、視覚的な
+         * まとまりを保つ)。 */}
+        {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
-      <div class="session-line2">
-        {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
+      {/* 2 行目: worktree/workspace 名 (branch も併記)。repo 無し行は 1 行目で
+       * 既に wsLabel を出しているので重複させない (kawaz r55 mid=20)。 */}
+      {repo && (wsLabel || row.branch) ? (
+        <div class="session-line2">
+          {wsLabel ? <span class="session-line2-ws">{wsLabel}</span> : null}
+          {row.branch && row.branch !== wsLabel ? (
+            <span class="session-branch">{row.branch}</span>
+          ) : null}
+        </div>
+      ) : null}
+      {/* 3 行目: SID8 + cwd (kawaz r55 mid=20)。sid / cwd はどちらも低優先の
+       * 補助情報として同一行にまとめる。cwd はクリックで折り返し表示切替。 */}
+      <div
+        class={cwdFull ? "session-line3 session-cwd-full" : "session-line3"}
+        onClick={() => setCwdFull((v) => !v)}
+      >
         <button
           type="button"
           class="session-sid-btn"
           title={`${row.sid}\nクリックでコピー`}
-          onClick={() => {
+          onClick={(e) => {
+            // cwd 折り返し切替 (親 div の onClick) と分離。sid コピーだけを実行。
+            e.stopPropagation();
             void navigator.clipboard?.writeText(row.sid).catch(() => {
               // clipboard unavailable (insecure context, permission denied) —
               // the title attribute above still exposes the full sid.
@@ -154,15 +171,7 @@ function SessionRowItem({
         >
           {shortSid(row.sid)}
         </button>
-        {/* ws は 1 行目から移動してここ (kawaz r17 mid=29)。repo 無し行は
-         * 1 行目が既に wsLabel を出しているので重複させない。 */}
-        {repo && wsLabel ? <span class="session-line2-ws">{wsLabel}</span> : null}
-      </div>
-      <div
-        class={cwdFull ? "session-line3 session-cwd-full" : "session-line3"}
-        onClick={() => setCwdFull((v) => !v)}
-      >
-        {row.cwd}
+        <span class="session-cwd">{row.cwd}</span>
       </div>
     </li>
   );
@@ -197,7 +206,6 @@ function PinnedSessionRow({
         <a href={hit.file ? timelineHref(hit.sid) : sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
           <span class="session-repo-ws">{repo || wsLabel}</span>
-          {repo && wsLabel ? <span class="session-branch">{wsLabel}</span> : null}
         </a>
         {!connected ? (
           <span
@@ -211,19 +219,27 @@ function PinnedSessionRow({
           ✕
         </button>
       </div>
-      <div class="session-line2">
+      {/* 2 行目: ws 名 (kawaz r55 mid=20、SessionRowItem と揃える)。 */}
+      {repo && wsLabel ? (
+        <div class="session-line2">
+          <span class="session-line2-ws">{wsLabel}</span>
+        </div>
+      ) : null}
+      {/* 3 行目: SID8 + cwd (kawaz r55 mid=20)。 */}
+      <div class="session-line3">
         <button
           type="button"
           class="session-sid-btn"
           title={`${hit.sid}\nクリックでコピー`}
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation();
             void navigator.clipboard?.writeText(hit.sid).catch(() => {});
           }}
         >
           {shortSid(hit.sid)}
         </button>
+        {hit.cwd ? <span class="session-cwd">{hit.cwd}</span> : null}
       </div>
-      {hit.cwd ? <div class="session-line3">{hit.cwd}</div> : null}
     </li>
   );
 }
