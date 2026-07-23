@@ -34,7 +34,11 @@ export function buildTerminalEmbedUrl(
   embedded.pathname = `/sessions/${encodeURIComponent(hyouiSessionId)}`;
   // resize=1: iframe サイズに合わせた PTY 自動 resize (hyoui r45m11。embed は
   // UI トグルが無く iframe の localStorage も分離されるため URL パラメータ方式)
-  embedded.search = "?embed=1&resize=1";
+  // fab=right:16,bottom:80: hyoui embed の入力フォーム呼び出しボタン (fab) の
+  // 初期位置を ccmsg の＋ボタン (right/bottom 1.2rem, 3.2rem 円) と重ならない
+  // 位置に退避 (r53m4 正式仕様、hyoui 側実機検証済み。ユーザ D&D 位置 >
+  // query > 既定 の優先順)。
+  embedded.search = "?embed=1&resize=1&fab=right:16,bottom:80";
   embedded.hash = "";
   return embedded.toString();
 }
