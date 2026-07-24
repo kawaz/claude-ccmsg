@@ -11,7 +11,7 @@ import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed, hueForSeed2 } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
@@ -1865,6 +1865,10 @@ function CcmsgBubble({
   // 直 seed フォールバックまで ROOM と揃えているので、暫定色も一致する。
   const seed = room?.membersById.get(from)?.sid ?? (from || message.from);
   const hue = isUser ? undefined : hueForSeed(seed);
+  // 第 2 アクセント hue: ROOM 側 MsgItem と同一の hueForSeed2 で導出。
+  // hue1 が近い 2 者でもここが分かれるので、バルーンのアクセント (ボーダー等)
+  // で区別が付く (kawaz 2026-07-24)。
+  const hue2 = isUser ? undefined : hueForSeed2(seed);
   // filePathCtxForSender は ROOM 側と同じ helper。room が未解決な場面では
   // undefined を返し LinkedMarkdownView が MarkdownView に degrade する
   // (プレーン表示、既存挙動と同じ)。
@@ -1877,7 +1881,11 @@ function CcmsgBubble({
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
           : "tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-ccmsg-peer"
       }${selected ? " tl-bubble-user-nav-selected" : ""}`}
-      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
+      style={
+        hue !== undefined
+          ? { "--member-hue": String(hue), "--member-hue2": String(hue2) }
+          : undefined
+      }
       ref={
         isUser
           ? (el) => {

@@ -1726,14 +1726,28 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
+/* 第 2 アクセント hue (kawaz 2026-07-24): 左ボーダーは --member-hue2 に
+ * 切替 + 背景を hue→hue2 の淡いグラデーションにする。identicon の色
+ * (= --member-hue) と独立した第 2 の位置ソースが加わることで、hue1 が
+ * たまたま近い 2 者でも「並んだ時に区別が付く」。主張しすぎないよう
+ * ボーダー幅・彩度は据え置き、背景グラデーションも彩度/明度を揃えて
+ * ごく淡いブレンドに留める。 */
 .msg[style*="--member-hue"] {
-  background: hsl(var(--member-hue) 45% 94%);
-  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--member-hue) 45% 94%),
+    hsl(var(--member-hue2) 45% 94%)
+  );
+  border-left: 3px solid hsl(var(--member-hue2) 55% 55%);
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
-    background: hsl(var(--member-hue) 22% 18%);
-    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--member-hue) 22% 18%),
+      hsl(var(--member-hue2) 22% 18%)
+    );
+    border-left: 3px solid hsl(var(--member-hue2) 45% 55%);
   }
 }
 
@@ -1879,6 +1893,27 @@ a {
 .composer-attach-btn:hover {
   background: var(--bg-alt);
   color: var(--fg);
+}
+
+/* kawaz r55m48: `hidden` 属性 / `display:none` の <input type="file"> は
+ * Mac Chrome で showPicker() / label→click / .click() いずれの経路でも
+ * ダイアログが開かないことがある (kawaz 実機報告: DevTools で hidden を外すと
+ * ネイティブボタンからは開く = input 自体は生きているが、非表示化された
+ * まま open picker できない)。標準的な visually-hidden パターン (絶対配置 +
+ * 極小サイズ + 透過) に切り替えることで、input を rendering ツリー内に
+ * 残しつつ視覚だけ消せる (= showPicker/click の visibility 前提を満たす)。 */
+.composer-attach-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .composer button[type="submit"] {
@@ -3858,13 +3893,21 @@ button.session-tab {
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-  background: hsl(var(--member-hue) 45% 94%);
-  border-left: 3px solid hsl(var(--member-hue) 55% 55%);
+  background: linear-gradient(
+    135deg,
+    hsl(var(--member-hue) 45% 94%),
+    hsl(var(--member-hue2) 45% 94%)
+  );
+  border-left: 3px solid hsl(var(--member-hue2) 55% 55%);
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-    background: hsl(var(--member-hue) 22% 18%);
-    border-left: 3px solid hsl(var(--member-hue) 45% 55%);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--member-hue) 22% 18%),
+      hsl(var(--member-hue2) 22% 18%)
+    );
+    border-left: 3px solid hsl(var(--member-hue2) 45% 55%);
   }
 }
 

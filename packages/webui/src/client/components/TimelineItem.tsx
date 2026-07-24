@@ -3,7 +3,7 @@ import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { formatMsgTime, memberLabel } from "../utils.ts";
-import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed, hueForSeed2 } from "../avatar.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
 import { LinkedMarkdownView } from "../filepath-linker.tsx";
@@ -73,6 +73,10 @@ function MsgItem({
   const isUser = event.from === ADMIN_ID;
   const seed = room.membersById.get(event.from)?.sid ?? event.from;
   const hue = isUser ? undefined : hueForSeed(seed);
+  // 第 2 アクセント hue: 第 1 hue と独立に導出 (avatar.tsx hueForSeed2)。
+  // hue1 が近い 2 者でも hue2 は分かれるので、バルーンのボーダー等の
+  // アクセント装飾で「並んだ時の区別」が付く (kawaz 2026-07-24)。
+  const hue2 = isUser ? undefined : hueForSeed2(seed);
 
   const filePathCtx = filePathCtxForSender(room, peers, event.from);
   const renderAsMarkdown = shouldRenderAsMarkdown(event.from);
@@ -81,7 +85,11 @@ function MsgItem({
     <div
       class={"msg" + (isUser ? " msg-user" : "")}
       id={anchorId(room.id, event.mid)}
-      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
+      style={
+        hue !== undefined
+          ? { "--member-hue": String(hue), "--member-hue2": String(hue2) }
+          : undefined
+      }
     >
       <div class="msg-meta">
         <MemberAvatar id={event.from} room={room} />
