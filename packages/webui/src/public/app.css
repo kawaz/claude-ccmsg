@@ -1726,39 +1726,37 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
-/* 第 2 アクセント hue (kawaz r56m11 で調整): 背景は元の単色に戻し、左
- * ボーダーだけを縦グラデーションにする — 上 = アイコンカラー (--member-hue)、
- * 下 = アクセントカラー (--member-hue2)。配分は均等でなく上の基本カラー
- * 多め・下のアクセント少なめ (ease-in/out 風に停止点を非線形配置)。
- * border-image は border-radius と併用できないため、ボーダー自体は
- * transparent にして背景の 2 層目 (padding-box 外側の border-box 領域) に
- * グラデーションを敷く方式。 */
+/* 第 2 アクセント hue (kawaz r56m12): 左ボーダーを左右 2 分割の 2 色縦線に
+ * する — 左半分 = アクセントカラー (--member-hue2 = B)、右半分 = アイコン
+ * カラー (--member-hue = A) の「BA」並び。グラデでなく水平方向のハード
+ * ストップなので上下どこで見ても 2 色が明瞭。border-radius と併用するため
+ * transparent ボーダー + border-box 背景 2 層方式 (幅 4px = 2px + 2px)。 */
 .msg[style*="--member-hue"] {
   background:
     linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
     linear-gradient(
-        to bottom,
-        hsl(var(--member-hue) 55% 55%) 0%,
-        hsl(var(--member-hue) 55% 55%) 45%,
-        hsl(var(--member-hue2) 55% 55%) 85%,
-        hsl(var(--member-hue2) 55% 55%) 100%
+        to right,
+        hsl(var(--member-hue2) 55% 55%) 0,
+        hsl(var(--member-hue2) 55% 55%) 2px,
+        hsl(var(--member-hue) 55% 55%) 2px,
+        hsl(var(--member-hue) 55% 55%) 100%
       )
       border-box;
-  border-left: 3px solid transparent;
+  border-left: 4px solid transparent;
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
     background:
       linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
       linear-gradient(
-          to bottom,
-          hsl(var(--member-hue) 45% 55%) 0%,
-          hsl(var(--member-hue) 45% 55%) 45%,
-          hsl(var(--member-hue2) 45% 55%) 85%,
-          hsl(var(--member-hue2) 45% 55%) 100%
+          to right,
+          hsl(var(--member-hue2) 45% 55%) 0,
+          hsl(var(--member-hue2) 45% 55%) 2px,
+          hsl(var(--member-hue) 45% 55%) 2px,
+          hsl(var(--member-hue) 45% 55%) 100%
         )
         border-box;
-    border-left: 3px solid transparent;
+    border-left: 4px solid transparent;
   }
 }
 
@@ -3903,34 +3901,34 @@ button.session-tab {
  * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
-/* r56m11: 背景は単色に戻し、左ボーダーだけを上=hue / 下=hue2 の縦グラデ
- * (基本カラー多め・アクセント少なめ) にする。ROOM 側 `.msg` と同方式。 */
+/* r56m12: 左ボーダーは左=hue2 / 右=hue の左右 2 分割 2 色縦線 (「BA」並び)。
+ * ROOM 側 `.msg` と同方式 (水平ハードストップ、幅 4px = 2px + 2px)。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
   background:
     linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
     linear-gradient(
-        to bottom,
-        hsl(var(--member-hue) 55% 55%) 0%,
-        hsl(var(--member-hue) 55% 55%) 45%,
-        hsl(var(--member-hue2) 55% 55%) 85%,
-        hsl(var(--member-hue2) 55% 55%) 100%
+        to right,
+        hsl(var(--member-hue2) 55% 55%) 0,
+        hsl(var(--member-hue2) 55% 55%) 2px,
+        hsl(var(--member-hue) 55% 55%) 2px,
+        hsl(var(--member-hue) 55% 55%) 100%
       )
       border-box;
-  border-left: 3px solid transparent;
+  border-left: 4px solid transparent;
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
     background:
       linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
       linear-gradient(
-          to bottom,
-          hsl(var(--member-hue) 45% 55%) 0%,
-          hsl(var(--member-hue) 45% 55%) 45%,
-          hsl(var(--member-hue2) 45% 55%) 85%,
-          hsl(var(--member-hue2) 45% 55%) 100%
+          to right,
+          hsl(var(--member-hue2) 45% 55%) 0,
+          hsl(var(--member-hue2) 45% 55%) 2px,
+          hsl(var(--member-hue) 45% 55%) 2px,
+          hsl(var(--member-hue) 45% 55%) 100%
         )
         border-box;
-    border-left: 3px solid transparent;
+    border-left: 4px solid transparent;
   }
 }
 
