@@ -1872,6 +1872,8 @@ a {
   cursor: pointer;
   color: var(--fg-muted);
   background: transparent;
+  border: none;
+  font-size: inherit;
 }
 
 .composer-attach-btn:hover {

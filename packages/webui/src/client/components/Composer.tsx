@@ -355,16 +355,34 @@ export function Composer({
               iCloud も accept 無指定なら写真ライブラリと同じ picker から
               呼び出せる。paste 経由の image mime 添付経路 (§2.5) は独立で
               残る。 */}
-          <label class="composer-attach-btn" aria-label="ファイルを添付">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={() => onFilesPicked(fileInputRef.current)}
-              hidden
-            />
+          {/* kawaz r55m46: label 内 hidden input への click 転送が Mac Chrome
+              で発火しないことがある (スマホは OK) ため、button から ref 経由で
+              showPicker()/click() を明示的に叩く方式に変更。 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={() => onFilesPicked(fileInputRef.current)}
+            hidden
+          />
+          <button
+            type="button"
+            class="composer-attach-btn"
+            aria-label="ファイルを添付"
+            onClick={() => {
+              const el = fileInputRef.current;
+              if (!el) return;
+              // showPicker はユーザジェスチャ必須だが onClick 内なので OK。
+              // 非対応/拒否環境は click() にフォールバック。
+              try {
+                el.showPicker();
+              } catch {
+                el.click();
+              }
+            }}
+          >
             <span aria-hidden="true">📎</span>
-          </label>
+          </button>
         </div>
         <button type="submit" disabled={sendDisabled}>
           {uploading ? "アップロード中..." : "送信"}
