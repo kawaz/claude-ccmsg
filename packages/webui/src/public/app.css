@@ -1726,37 +1726,44 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
-/* 第 2 アクセント hue (kawaz r56m12): 左ボーダーを左右 2 分割の 2 色縦線に
- * する — 左半分 = アクセントカラー (--member-hue2 = B)、右半分 = アイコン
- * カラー (--member-hue = A) の「BA」並び。グラデでなく水平方向のハード
- * ストップなので上下どこで見ても 2 色が明瞭。border-radius と併用するため
- * transparent ボーダー + border-box 背景 2 層方式 (幅 4px = 2px + 2px)。 */
+/* 第 2 アクセント hue (kawaz r56m13): 左ボーダー 3px = hue (アイコンと同色)、
+ * それより右のボーダー領域 = hue2 (room 内 index ベースで必ず別色)。加えて
+ * 上ボーダー 1px も hue2 で薄く囲う。border-radius と併用のため transparent
+ * ボーダー + border-box 背景 2 層。テーマカラーは oklch (kawaz r56m13:
+ * 「テーマカラーは oklab / グラデは oklch で計算」) — identicon 本体 (SVG) は
+ * hsl のまま (fill 文字列で widely-supported な形式を維持)、色空間差で
+ * バルーンとアイコンの hue は完全一致しないが同じ色相帯に留まるので視覚的な
+ * 「同色紐付け」は保たれる。 */
 .msg[style*="--member-hue"] {
   background:
-    linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
+    linear-gradient(oklch(0.96 0.03 var(--member-hue)), oklch(0.96 0.03 var(--member-hue)))
+      padding-box,
     linear-gradient(
         to right,
-        hsl(var(--member-hue2) 55% 55%) 0,
-        hsl(var(--member-hue2) 55% 55%) 2px,
-        hsl(var(--member-hue) 55% 55%) 2px,
-        hsl(var(--member-hue) 55% 55%) 100%
+        oklch(0.65 0.15 var(--member-hue)) 0,
+        oklch(0.65 0.15 var(--member-hue)) 3px,
+        oklch(0.65 0.15 var(--member-hue2)) 3px,
+        oklch(0.65 0.15 var(--member-hue2)) 100%
       )
       border-box;
-  border-left: 4px solid transparent;
+  border-left: 3px solid transparent;
+  border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
     background:
-      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
+      linear-gradient(oklch(0.24 0.025 var(--member-hue)), oklch(0.24 0.025 var(--member-hue)))
+        padding-box,
       linear-gradient(
           to right,
-          hsl(var(--member-hue2) 45% 55%) 0,
-          hsl(var(--member-hue2) 45% 55%) 2px,
-          hsl(var(--member-hue) 45% 55%) 2px,
-          hsl(var(--member-hue) 45% 55%) 100%
+          oklch(0.65 0.12 var(--member-hue)) 0,
+          oklch(0.65 0.12 var(--member-hue)) 3px,
+          oklch(0.65 0.12 var(--member-hue2)) 3px,
+          oklch(0.65 0.12 var(--member-hue2)) 100%
         )
         border-box;
-    border-left: 4px solid transparent;
+    border-left: 3px solid transparent;
+    border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
   }
 }
 
@@ -3848,13 +3855,13 @@ button.session-tab {
 }
 
 .tl-ccmsg-summary-body[style*="--member-hue"] {
-  background: hsl(var(--member-hue) 45% 94%);
-  border: 1px dashed hsl(var(--member-hue) 55% 55%);
+  background: oklch(0.96 0.03 var(--member-hue));
+  border: 1px dashed oklch(0.65 0.15 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .tl-ccmsg-summary-body[style*="--member-hue"] {
-    background: hsl(var(--member-hue) 22% 18%);
-    border: 1px dashed hsl(var(--member-hue) 45% 55%);
+    background: oklch(0.24 0.025 var(--member-hue));
+    border: 1px dashed oklch(0.65 0.12 var(--member-hue));
   }
 }
 
@@ -3901,34 +3908,38 @@ button.session-tab {
  * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
-/* r56m12: 左ボーダーは左=hue2 / 右=hue の左右 2 分割 2 色縦線 (「BA」並び)。
- * ROOM 側 `.msg` と同方式 (水平ハードストップ、幅 4px = 2px + 2px)。 */
+/* r56m13: 左ボーダー 3px = hue、右残り = hue2、上ボーダー 1px = hue2。
+ * ROOM 側 `.msg` と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
   background:
-    linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
+    linear-gradient(oklch(0.96 0.03 var(--member-hue)), oklch(0.96 0.03 var(--member-hue)))
+      padding-box,
     linear-gradient(
         to right,
-        hsl(var(--member-hue2) 55% 55%) 0,
-        hsl(var(--member-hue2) 55% 55%) 2px,
-        hsl(var(--member-hue) 55% 55%) 2px,
-        hsl(var(--member-hue) 55% 55%) 100%
+        oklch(0.65 0.15 var(--member-hue)) 0,
+        oklch(0.65 0.15 var(--member-hue)) 3px,
+        oklch(0.65 0.15 var(--member-hue2)) 3px,
+        oklch(0.65 0.15 var(--member-hue2)) 100%
       )
       border-box;
-  border-left: 4px solid transparent;
+  border-left: 3px solid transparent;
+  border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
     background:
-      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
+      linear-gradient(oklch(0.24 0.025 var(--member-hue)), oklch(0.24 0.025 var(--member-hue)))
+        padding-box,
       linear-gradient(
           to right,
-          hsl(var(--member-hue2) 45% 55%) 0,
-          hsl(var(--member-hue2) 45% 55%) 2px,
-          hsl(var(--member-hue) 45% 55%) 2px,
-          hsl(var(--member-hue) 45% 55%) 100%
+          oklch(0.65 0.12 var(--member-hue)) 0,
+          oklch(0.65 0.12 var(--member-hue)) 3px,
+          oklch(0.65 0.12 var(--member-hue2)) 3px,
+          oklch(0.65 0.12 var(--member-hue2)) 100%
         )
         border-box;
-    border-left: 4px solid transparent;
+    border-left: 3px solid transparent;
+    border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
   }
 }
 
@@ -4010,11 +4021,11 @@ button.session-tab {
  * kawaz r55m34: 左ボーダー (3px solid hue) は色主張が強いので撤去し、hue の
  * 薄背景のみで識別する (CcmsgBubble = ルームメッセージ側は現状維持)。 */
 .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
-  background: hsl(var(--member-hue) 45% 94%);
+  background: oklch(0.96 0.03 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
-    background: hsl(var(--member-hue) 22% 18%);
+    background: oklch(0.24 0.025 var(--member-hue));
   }
 }
 

@@ -52,15 +52,6 @@ export function hueForSeed(seed: string): number {
   return Math.floor(mulberry32(fnv1a(seed))() * 360);
 }
 
-/** 第 2 アクセント hue (kawaz 2026-07-24: 「アイコンとは別の位置ソースとして
- * セッション ID をシードとしたアクセントカラー」)。hueForSeed とは独立した
- * salt 付き seed から導出するので、第 1 hue がたまたま近い 2 者でも第 2 hue は
- * 高確率で分かれる。バルーンのボーダー / ハイライト / グラデーション等の
- * アクセント装飾に使い、identicon 本体の色 (= hueForSeed) は据え置く。 */
-export function hueForSeed2(seed: string): number {
-  return hueForSeed(`accent:${seed}`);
-}
-
 function buildSpec(seed: string): IdenticonSpec {
   const rand = mulberry32(fnv1a(seed));
   const hue = Math.floor(rand() * 360);

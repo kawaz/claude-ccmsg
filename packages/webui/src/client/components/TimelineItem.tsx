@@ -3,7 +3,7 @@ import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
 import { formatMsgTime, memberLabel } from "../utils.ts";
-import { Avatar, UserAvatar, hueForSeed, hueForSeed2 } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { shouldRenderAsMarkdown } from "./timeline-item-markdown.ts";
 import type { FilePathResolveCtx } from "../filepath-ref.ts";
 import { LinkedMarkdownView } from "../filepath-linker.tsx";
@@ -25,6 +25,30 @@ export function MemberAvatar({ id, room }: { id: string; room: RoomState | undef
   const sid = room?.membersById.get(id)?.sid;
   if (!sid) return null;
   return <Avatar seed={sid} size={16} />;
+}
+
+/** 第 2 アクセント hue の room 内 index ベース導出 (kawaz r56m13):
+ * `hue2 = (hue + 360 * (N-1) / A) mod 360` — N はそのエージェントの room 内
+ * member id `aN` の N、A は room 内の非 admin member 数。sid ベースの
+ * `hueForSeed2` だとアイコン (hue) と偶発的に近くなる事例があったのを、
+ * 「ルーム内では絶対に別色」となる導出に切り替えたもの。u1 (admin) は
+ * A のカウントから除外 (「エージェントの数」なので)。member が room を
+ * 出入りすると A/N が変わって既存メンバーの hue2 も動くのは仕様として許容
+ * (index に閉じ込めるための必然)。room / member 未解決や id が `aN` 形式で
+ * ない場合は `hue` そのまま (= 単色に degrade、視覚的に無害な fallback)。 */
+export function hue2FromMember(hue: number, room: RoomState | undefined, fromId: string): number {
+  if (!room) return hue;
+  const member = room.membersById.get(fromId);
+  if (!member || member.role === "admin") return hue;
+  let a = 0;
+  for (const m of room.membersById.values()) {
+    if (m.role !== "admin") a++;
+  }
+  if (a === 0) return hue;
+  const match = /^a(\d+)$/.exec(member.id);
+  if (!match) return hue;
+  const n = Number(match[1]);
+  return (hue + (360 * (n - 1)) / a) % 360;
 }
 
 /** kawaz r46 m55-m58: resolve the sender-scoped `FilePathResolveCtx` used to
@@ -73,10 +97,10 @@ function MsgItem({
   const isUser = event.from === ADMIN_ID;
   const seed = room.membersById.get(event.from)?.sid ?? event.from;
   const hue = isUser ? undefined : hueForSeed(seed);
-  // 第 2 アクセント hue: 第 1 hue と独立に導出 (avatar.tsx hueForSeed2)。
-  // hue1 が近い 2 者でも hue2 は分かれるので、バルーンのボーダー等の
-  // アクセント装飾で「並んだ時の区別」が付く (kawaz 2026-07-24)。
-  const hue2 = isUser ? undefined : hueForSeed2(seed);
+  // 第 2 アクセント hue: room 内 member index ベースで導出 (kawaz r56m13)。
+  // 詳細は hue2FromMember 参照。ルーム内で必ず分離するので、hue1 が近い 2 者
+  // でも hue2 は絶対に別値になる。
+  const hue2 = isUser || hue === undefined ? undefined : hue2FromMember(hue, room, event.from);
 
   const filePathCtx = filePathCtxForSender(room, peers, event.from);
   const renderAsMarkdown = shouldRenderAsMarkdown(event.from);

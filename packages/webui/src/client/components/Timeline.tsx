@@ -11,9 +11,9 @@ import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, timelineHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { Avatar, UserAvatar, hueForSeed, hueForSeed2 } from "../avatar.tsx";
+import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
-import { filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
+import { filePathCtxForSender, hue2FromMember, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
@@ -1865,10 +1865,10 @@ function CcmsgBubble({
   // 直 seed フォールバックまで ROOM と揃えているので、暫定色も一致する。
   const seed = room?.membersById.get(from)?.sid ?? (from || message.from);
   const hue = isUser ? undefined : hueForSeed(seed);
-  // 第 2 アクセント hue: ROOM 側 MsgItem と同一の hueForSeed2 で導出。
-  // hue1 が近い 2 者でもここが分かれるので、バルーンのアクセント (ボーダー等)
-  // で区別が付く (kawaz 2026-07-24)。
-  const hue2 = isUser ? undefined : hueForSeed2(seed);
+  // 第 2 アクセント hue: ROOM 側 MsgItem と同一の hue2FromMember で導出
+  // (room 内 member index ベース、kawaz r56m13)。room が未解決なら hue そのまま
+  // (helper 内で fallback)。
+  const hue2 = isUser || hue === undefined ? undefined : hue2FromMember(hue, room, from);
   // filePathCtxForSender は ROOM 側と同じ helper。room が未解決な場面では
   // undefined を返し LinkedMarkdownView が MarkdownView に degrade する
   // (プレーン表示、既存挙動と同じ)。
