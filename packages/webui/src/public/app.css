@@ -1749,8 +1749,7 @@ a {
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
     background:
-      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%))
-        padding-box,
+      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
       linear-gradient(
           to bottom,
           hsl(var(--member-hue) 45% 55%) 0%,
@@ -3922,8 +3921,7 @@ button.session-tab {
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
     background:
-      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%))
-        padding-box,
+      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%)) padding-box,
       linear-gradient(
           to bottom,
           hsl(var(--member-hue) 45% 55%) 0%,
