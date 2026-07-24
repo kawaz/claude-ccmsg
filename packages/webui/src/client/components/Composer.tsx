@@ -357,13 +357,22 @@ export function Composer({
               残る。 */}
           {/* kawaz r55m46: label 内 hidden input への click 転送が Mac Chrome
               で発火しないことがある (スマホは OK) ため、button から ref 経由で
-              showPicker()/click() を明示的に叩く方式に変更。 */}
+              showPicker()/click() を明示的に叩く方式に変更。
+              kawaz r55m48: r55m46 の button 方式でも Mac Chrome で依然無反応
+              だった (kawaz 実機報告)。root cause は `hidden` 属性: file input が
+              `hidden` / `display:none` だと Mac Chrome では showPicker()/.click()
+              いずれでもピッカーが開かない (kawaz 検証: DevTools で hidden 属性を
+              外すとネイティブボタンからは開く = input 自体は生きている)。
+              visually-hidden CSS (絶対配置 + 透過) に切り替え、rendering ツリー
+              には残す ─ この pattern は Gmail / react-dropzone 等でも定番。 */}
           <input
             ref={fileInputRef}
             type="file"
             multiple
             onChange={() => onFilesPicked(fileInputRef.current)}
-            hidden
+            class="composer-attach-file"
+            aria-hidden="true"
+            tabIndex={-1}
           />
           <button
             type="button"

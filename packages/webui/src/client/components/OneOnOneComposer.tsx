@@ -524,16 +524,34 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           {/* DR-0015 §2.5 + kawaz r15 mid=8 (2026-07-14): 画像/ファイルボタン
               の区別は不要、クリップマーク 1 個に統一。paste 経由の image
               mime 添付経路 (§2.5) は独立で残る。 */}
-          <label class="composer-attach-btn" aria-label="ファイルを添付">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              onChange={() => onFilesPicked(fileInputRef.current)}
-              hidden
-            />
+          {/* kawaz r55m48: `hidden` 属性の file input は Mac Chrome で picker が
+              開かない (Composer.tsx 同名注記参照)。visually-hidden CSS で
+              rendering ツリーに残しつつ視覚だけ消し、button から明示発火する。 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={() => onFilesPicked(fileInputRef.current)}
+            class="composer-attach-file"
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+          <button
+            type="button"
+            class="composer-attach-btn"
+            aria-label="ファイルを添付"
+            onClick={() => {
+              const el = fileInputRef.current;
+              if (!el) return;
+              try {
+                el.showPicker();
+              } catch {
+                el.click();
+              }
+            }}
+          >
             <span aria-hidden="true">📎</span>
-          </label>
+          </button>
         </div>
         <button
           type="button"
