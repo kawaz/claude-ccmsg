@@ -1726,28 +1726,40 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
-/* 第 2 アクセント hue (kawaz 2026-07-24): 左ボーダーは --member-hue2 に
- * 切替 + 背景を hue→hue2 の淡いグラデーションにする。identicon の色
- * (= --member-hue) と独立した第 2 の位置ソースが加わることで、hue1 が
- * たまたま近い 2 者でも「並んだ時に区別が付く」。主張しすぎないよう
- * ボーダー幅・彩度は据え置き、背景グラデーションも彩度/明度を揃えて
- * ごく淡いブレンドに留める。 */
+/* 第 2 アクセント hue (kawaz r56m11 で調整): 背景は元の単色に戻し、左
+ * ボーダーだけを縦グラデーションにする — 上 = アイコンカラー (--member-hue)、
+ * 下 = アクセントカラー (--member-hue2)。配分は均等でなく上の基本カラー
+ * 多め・下のアクセント少なめ (ease-in/out 風に停止点を非線形配置)。
+ * border-image は border-radius と併用できないため、ボーダー自体は
+ * transparent にして背景の 2 層目 (padding-box 外側の border-box 領域) に
+ * グラデーションを敷く方式。 */
 .msg[style*="--member-hue"] {
-  background: linear-gradient(
-    135deg,
-    hsl(var(--member-hue) 45% 94%),
-    hsl(var(--member-hue2) 45% 94%)
-  );
-  border-left: 3px solid hsl(var(--member-hue2) 55% 55%);
+  background:
+    linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
+    linear-gradient(
+        to bottom,
+        hsl(var(--member-hue) 55% 55%) 0%,
+        hsl(var(--member-hue) 55% 55%) 45%,
+        hsl(var(--member-hue2) 55% 55%) 85%,
+        hsl(var(--member-hue2) 55% 55%) 100%
+      )
+      border-box;
+  border-left: 3px solid transparent;
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
-    background: linear-gradient(
-      135deg,
-      hsl(var(--member-hue) 22% 18%),
-      hsl(var(--member-hue2) 22% 18%)
-    );
-    border-left: 3px solid hsl(var(--member-hue2) 45% 55%);
+    background:
+      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%))
+        padding-box,
+      linear-gradient(
+          to bottom,
+          hsl(var(--member-hue) 45% 55%) 0%,
+          hsl(var(--member-hue) 45% 55%) 45%,
+          hsl(var(--member-hue2) 45% 55%) 85%,
+          hsl(var(--member-hue2) 45% 55%) 100%
+        )
+        border-box;
+    border-left: 3px solid transparent;
   }
 }
 
@@ -3892,22 +3904,35 @@ button.session-tab {
  * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
+/* r56m11: 背景は単色に戻し、左ボーダーだけを上=hue / 下=hue2 の縦グラデ
+ * (基本カラー多め・アクセント少なめ) にする。ROOM 側 `.msg` と同方式。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-  background: linear-gradient(
-    135deg,
-    hsl(var(--member-hue) 45% 94%),
-    hsl(var(--member-hue2) 45% 94%)
-  );
-  border-left: 3px solid hsl(var(--member-hue2) 55% 55%);
+  background:
+    linear-gradient(hsl(var(--member-hue) 45% 94%), hsl(var(--member-hue) 45% 94%)) padding-box,
+    linear-gradient(
+        to bottom,
+        hsl(var(--member-hue) 55% 55%) 0%,
+        hsl(var(--member-hue) 55% 55%) 45%,
+        hsl(var(--member-hue2) 55% 55%) 85%,
+        hsl(var(--member-hue2) 55% 55%) 100%
+      )
+      border-box;
+  border-left: 3px solid transparent;
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-    background: linear-gradient(
-      135deg,
-      hsl(var(--member-hue) 22% 18%),
-      hsl(var(--member-hue2) 22% 18%)
-    );
-    border-left: 3px solid hsl(var(--member-hue2) 45% 55%);
+    background:
+      linear-gradient(hsl(var(--member-hue) 22% 18%), hsl(var(--member-hue) 22% 18%))
+        padding-box,
+      linear-gradient(
+          to bottom,
+          hsl(var(--member-hue) 45% 55%) 0%,
+          hsl(var(--member-hue) 45% 55%) 45%,
+          hsl(var(--member-hue2) 45% 55%) 85%,
+          hsl(var(--member-hue2) 45% 55%) 100%
+        )
+        border-box;
+    border-left: 3px solid transparent;
   }
 }
 
