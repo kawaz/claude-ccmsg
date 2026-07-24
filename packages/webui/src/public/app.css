@@ -1726,43 +1726,22 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
-/* 第 2 アクセント hue (kawaz r56m13): 左ボーダー 3px = hue (アイコンと同色)、
- * それより右のボーダー領域 = hue2 (room 内 index ベースで必ず別色)。加えて
- * 上ボーダー 1px も hue2 で薄く囲う。border-radius と併用のため transparent
- * ボーダー + border-box 背景 2 層。テーマカラーは oklch (kawaz r56m13:
- * 「テーマカラーは oklab / グラデは oklch で計算」) — identicon 本体 (SVG) は
- * hsl のまま (fill 文字列で widely-supported な形式を維持)、色空間差で
- * バルーンとアイコンの hue は完全一致しないが同じ色相帯に留まるので視覚的な
- * 「同色紐付け」は保たれる。 */
+/* 第 2 アクセント hue (kawaz r56m13 → r55m53 で簡素化): 左ボーダー 3px =
+ * hue (アイコンと同色) 単色、上ボーダー 1px = hue2 (room 内 index ベースで
+ * 必ず別色)。「左は hue だけでも良い。hue2 を top に書くだけでだいぶ
+ * 見やすい」— 2 層背景トリックは不要になり素直な border 2 本に。テーマ
+ * カラーは oklch (r56m13: 「テーマカラーは oklab / グラデは oklch」) —
+ * identicon 本体 (SVG) は hsl のまま、色空間差で hue は完全一致しないが
+ * 同じ色相帯に留まるので視覚的な「同色紐付け」は保たれる。 */
 .msg[style*="--member-hue"] {
-  background:
-    linear-gradient(oklch(0.96 0.03 var(--member-hue)), oklch(0.96 0.03 var(--member-hue)))
-      padding-box,
-    linear-gradient(
-        to right,
-        oklch(0.65 0.15 var(--member-hue)) 0,
-        oklch(0.65 0.15 var(--member-hue)) 3px,
-        oklch(0.65 0.15 var(--member-hue2)) 3px,
-        oklch(0.65 0.15 var(--member-hue2)) 100%
-      )
-      border-box;
-  border-left: 3px solid transparent;
+  background: oklch(0.96 0.03 var(--member-hue));
+  border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
   border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
-    background:
-      linear-gradient(oklch(0.24 0.025 var(--member-hue)), oklch(0.24 0.025 var(--member-hue)))
-        padding-box,
-      linear-gradient(
-          to right,
-          oklch(0.65 0.12 var(--member-hue)) 0,
-          oklch(0.65 0.12 var(--member-hue)) 3px,
-          oklch(0.65 0.12 var(--member-hue2)) 3px,
-          oklch(0.65 0.12 var(--member-hue2)) 100%
-        )
-        border-box;
-    border-left: 3px solid transparent;
+    background: oklch(0.24 0.025 var(--member-hue));
+    border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
     border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
   }
 }
@@ -3908,37 +3887,17 @@ button.session-tab {
  * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
-/* r56m13: 左ボーダー 3px = hue、右残り = hue2、上ボーダー 1px = hue2。
- * ROOM 側 `.msg` と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
+/* r55m53: 左ボーダー 3px = hue 単色、上ボーダー 1px = hue2。ROOM 側 `.msg`
+ * と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-  background:
-    linear-gradient(oklch(0.96 0.03 var(--member-hue)), oklch(0.96 0.03 var(--member-hue)))
-      padding-box,
-    linear-gradient(
-        to right,
-        oklch(0.65 0.15 var(--member-hue)) 0,
-        oklch(0.65 0.15 var(--member-hue)) 3px,
-        oklch(0.65 0.15 var(--member-hue2)) 3px,
-        oklch(0.65 0.15 var(--member-hue2)) 100%
-      )
-      border-box;
-  border-left: 3px solid transparent;
+  background: oklch(0.96 0.03 var(--member-hue));
+  border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
   border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
-    background:
-      linear-gradient(oklch(0.24 0.025 var(--member-hue)), oklch(0.24 0.025 var(--member-hue)))
-        padding-box,
-      linear-gradient(
-          to right,
-          oklch(0.65 0.12 var(--member-hue)) 0,
-          oklch(0.65 0.12 var(--member-hue)) 3px,
-          oklch(0.65 0.12 var(--member-hue2)) 3px,
-          oklch(0.65 0.12 var(--member-hue2)) 100%
-        )
-        border-box;
-    border-left: 3px solid transparent;
+    background: oklch(0.24 0.025 var(--member-hue));
+    border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
     border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
   }
 }
