@@ -183,12 +183,31 @@ function AgentTreeNodeRow({
   );
 }
 
+// 「動いている」とみなす state (グループ分類の active 昇格判定に使う)。
+const WORKING_STATES = new Set(["active", "running", "progress"]);
+
+/** グループ分類に使う実効 state。自分は idle 等でも子孫に active/running/
+ * progress がいれば、その働いている state に昇格させる (kawaz r55 m44:
+ * サブサブエージェントが active なのに親が idle でグループが idle タブに
+ * 沈み、普段閉じているタブのせいで「仕事していない」ように見える)。
+ * 行単位の state 表示 (dot / state note) は node.state のまま — 昇格は
+ * どのサブグループに入れるかの分類だけに効かせる。 */
+function effectiveState(node: AgentTreeNode): string {
+  const own = node.state || "unknown";
+  if (WORKING_STATES.has(own)) return own;
+  for (const child of node.children) {
+    const eff = effectiveState(child);
+    if (WORKING_STATES.has(eff)) return eff;
+  }
+  return own;
+}
+
 /** state ごとにグループ化。STATE_ORDER に載っている state を先頭順で、
  * 載っていない state は初回登場順で末尾に並べる。 */
 function groupByState(nodes: AgentTreeNode[]): Array<[string, AgentTreeNode[]]> {
   const buckets = new Map<string, AgentTreeNode[]>();
   for (const n of nodes) {
-    const key = n.state || "unknown";
+    const key = effectiveState(n);
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = [];
