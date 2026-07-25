@@ -819,6 +819,7 @@ export type UserMessageKind =
   | "tool-retry-hint"
   | "task-notification"
   | "workflow-resume"
+  | "agents-stopped"
   | "peer-message"
   | "spawn-prompt"
   | "unknown-meta"
@@ -981,6 +982,14 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   // false-negative)。
   if (text.startsWith("Resume the paused workflow by calling: Workflow({")) {
     return "workflow-resume";
+  }
+  // ユーザが background agent を停止した時にハーネスが注入する定型通知
+  // (kawaz r55 m61 実観測: 「2 background agents were stopped by the user: ...」)。
+  // workflow-resume と同じく wire 上は通常のユーザ発話と区別が付かないので
+  // 文字列で判定する。単数形 ("1 background agent was stopped...") も同じ
+  // 定型なので数値部分だけ緩く受ける。
+  if (/^\d+ background agents? (?:were|was) stopped by the user\b/.test(text)) {
+    return "agents-stopped";
   }
   return "user-prompt";
 }

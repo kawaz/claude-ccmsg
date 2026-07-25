@@ -1320,6 +1320,37 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
+    // ユーザが background agent を停止した時のハーネス注入通知 (kawaz r55 m61
+    // 実観測、kuu の 38095 セッションで緑のユーザバブルとして表示された)。
+    test("'N background agents were stopped by the user' -> agents-stopped", () => {
+      const entry = {
+        message: {
+          role: "user",
+          content:
+            '2 background agents were stopped by the user: "対象リポ: /Users/kawaz/.local/share/repos/github.com/k...", "対象リポ: /Users/kawaz/.local/share/repos/github.com/k...".',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("agents-stopped");
+    });
+
+    test("singular '1 background agent was stopped by the user' -> agents-stopped", () => {
+      const entry = {
+        message: { role: "user", content: '1 background agent was stopped by the user: "foo".' },
+      };
+      expect(classifyUserMessage(entry)).toBe("agents-stopped");
+    });
+
+    // 誤爆判定: 定型の数値 + 固定句で始まらなければ通常の発話のまま。
+    test("human sentence mentioning background agents -> user-prompt", () => {
+      const entry = {
+        message: {
+          role: "user",
+          content: "background agents were stopped by the user? 確認してみて",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
     test("'Another Claude session sent a message:' prefix -> peer-message", () => {
       const entry = {
         message: {
