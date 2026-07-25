@@ -2,15 +2,13 @@
 // tokens (kawaz r46 mid=55). Two independent responsibilities are covered
 // separately:
 //   - parseFilePathRef: token -> {path, line?, end?} or null (shape rules)
-//   - resolveFilePathRef: (ref, sender ctx) -> fileHref URL or null
+//   - refToAbsolutePath / hrefFromStatEntry: (ref, sender ctx) -> fileHref URL
 //     (relative/absolute normalization against cwd/repo_root)
 import { describe, expect, test } from "bun:test";
 import {
   looksLikePath,
   looksLikeFile,
   parseFilePathRef,
-  resolveFilePathRef,
-  inlineCodeToFileHref,
   refToAbsolutePath,
   hrefFromStatEntry,
   extractInlineCodeTokens,
@@ -125,90 +123,6 @@ describe("parseFilePathRef — suffix shapes", () => {
   });
   test("trims surrounding backticks (defensive; mdast inlineCode.value has none)", () => {
     expect(parseFilePathRef("`src/a.ts:5`")).toEqual({ path: "src/a.ts", line: 5 });
-  });
-});
-
-describe("resolveFilePathRef", () => {
-  const CTX = {
-    sid: "s1",
-    cwd: "/repo/pkg",
-    repoRoot: "/repo",
-  };
-
-  test("`./` prefix anchors at cwd then rebases to repoRoot", () => {
-    // `./x.ts` under cwd `/repo/pkg` -> abs `/repo/pkg/x.ts` -> repo-relative
-    // `pkg/x.ts`, no line info -> no `:L…` suffix on the href.
-    expect(resolveFilePathRef({ path: "./x.ts" }, CTX)).toBe(fileHref("s1", "pkg/x.ts"));
-  });
-
-  test("bare relative without ./ is treated as repo-root-relative (matches Claude Code output style)", () => {
-    // Claude Code cites files as `packages/foo/bar.ts` — repo-root-relative,
-    // not cwd-relative. Interpreting bare tokens against base directly avoids
-    // silently double-nesting when the writer meant repo root.
-    expect(resolveFilePathRef({ path: "packages/foo.ts" }, CTX)).toBe(
-      fileHref("s1", "packages/foo.ts"),
-    );
-  });
-
-  test("absolute inside repoRoot -> stripped to repo-relative", () => {
-    expect(resolveFilePathRef({ path: "/repo/packages/webui/foo.ts", line: 5 }, CTX)).toBe(
-      fileHref("s1", "packages/webui/foo.ts", { start: 5, end: 5 }),
-    );
-  });
-
-  test("range preserved end-to-end", () => {
-    expect(resolveFilePathRef({ path: "/repo/a.md", line: 3, end: 10 }, CTX)).toBe(
-      fileHref("s1", "a.md", { start: 3, end: 10 }),
-    );
-  });
-
-  test("absolute path outside repo_root/cwd -> null (no external allowlist)", () => {
-    expect(resolveFilePathRef({ path: "/etc/hosts" }, CTX)).toBeNull();
-  });
-
-  test("`..` escapes into repo_root correctly", () => {
-    // From cwd `/repo/pkg`, `../a.ts` -> `/repo/a.ts` -> repo-relative `a.ts`.
-    expect(resolveFilePathRef({ path: "../a.ts" }, CTX)).toBe(fileHref("s1", "a.ts"));
-  });
-
-  test("no repo_root -> cwd is the base", () => {
-    const c = { sid: "s2", cwd: "/w" };
-    expect(resolveFilePathRef({ path: "./x.ts", line: 1 }, c)).toBe(
-      fileHref("s2", "x.ts", { start: 1, end: 1 }),
-    );
-  });
-
-  test("neither cwd nor repo_root and a relative path -> null", () => {
-    expect(resolveFilePathRef({ path: "x.ts" }, { sid: "s3" })).toBeNull();
-  });
-
-  test("path that normalises to the base directory itself -> null", () => {
-    // `/repo` is the base; a ref pointing at it isn't a file link.
-    expect(resolveFilePathRef({ path: "/repo" }, CTX)).toBeNull();
-  });
-});
-
-describe("inlineCodeToFileHref (parse + resolve, integration)", () => {
-  const CTX = { sid: "s1", cwd: "/repo/pkg", repoRoot: "/repo" };
-
-  test("happy path yields href + parsed ref", () => {
-    const got = inlineCodeToFileHref("packages/webui/foo.ts:L10-12", CTX);
-    expect(got).toEqual({
-      href: fileHref("s1", "packages/webui/foo.ts", { start: 10, end: 12 }),
-      ref: { path: "packages/webui/foo.ts", line: 10, end: 12 },
-    });
-  });
-
-  test("returns null when ctx is null (no sender info known)", () => {
-    expect(inlineCodeToFileHref("packages/webui/foo.ts", null)).toBeNull();
-  });
-
-  test("returns null for non-path token", () => {
-    expect(inlineCodeToFileHref("foo", CTX)).toBeNull();
-  });
-
-  test("returns null for absolute path outside base", () => {
-    expect(inlineCodeToFileHref("/etc/hosts:1", CTX)).toBeNull();
   });
 });
 
