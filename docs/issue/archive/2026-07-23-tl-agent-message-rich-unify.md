@@ -1,6 +1,6 @@
 ---
 title: TL のエージェント間メッセージ表示を ROOM チャットの rich 形式に統一
-status: wip
+status: resolved
 category: request
 created: 2026-07-23T12:24:32+09:00
 last_read: 2026-07-23T12:46:02+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-23T12:47:25+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-25T18:54:23+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.73.2〜v0.73.23 でTL AgentCard/SendMessage/peer-messageをROOM同等のrich表示に統一","done:thinking様式のfold統合+auto-open Cトグル新設(URCTAN)","done:TL側MarkdownViewにfilePathLinker配線(発言者基準)","done:AgentCardもccmsg形式rich バブルに統一(r55m29)","done:バルーン配色をroom基準色+member indexの1系統に集約(r55m54/m60)","done:右端非接触・fold中クリックはopen/close専念などkawaz実機フィードバック反映","done:kawaz実機確認済み(r55m45「良い感じです」他)"]
 blocked_by:
 origin: kawaz 依頼
 ---
