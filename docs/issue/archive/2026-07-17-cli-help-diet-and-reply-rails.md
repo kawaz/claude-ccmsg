@@ -1,6 +1,6 @@
 ---
 title: CLI help / SKILL ダイエットとレール設計
-status: wip
+status: resolved
 category: design
 created: 2026-07-17T11:07:18+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-07-17T11:18:25+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-25T19:43:28+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: 受け入れ条件すべて実機確認 (2026-07-25, v0.73.25)", "done: --helpデフォルト出力は基本レール(reply/post/read/dump/peers/create-room/subscribe/notify)+--help-fullのみ、環境変数記載0件(grep確認)", "done: 環境変数説明は--help-fullのEnvironment Variablesセクションのみに存在", "done: --help-fullで従来相当の全情報が閲覧可能", "done: SKILL.mdはpost(新規声かけ)/reply(reply_via指示)の使い分けを前面に出す構成にダイエット済み", "implemented: reply_hint:tl問題はdaemon側レール化を採用、post/reply/create-room初期msgの3経路にkind==='1on1'&&role==='session'ガードでsendReplyViaTlError (packages/daemon/src/server.ts, one-on-one.test.ts、2026-07-25に別issueで検証済み)", "done: r26m91のuN除外指定(--to <aN[,aN...]>のみ、u1例示なし)はhelp/SKILL双方で遵守", "done: completionはccmsg未実装のためhelp↔SKILLの2者同期対象、内容に矛盾なし"]
 blocked_by:
 origin: 自リポ TODO
 ---
