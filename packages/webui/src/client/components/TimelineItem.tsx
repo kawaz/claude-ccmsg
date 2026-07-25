@@ -27,28 +27,33 @@ export function MemberAvatar({ id, room }: { id: string; room: RoomState | undef
   return <Avatar seed={sid} size={16} />;
 }
 
-/** 第 2 アクセント hue の room 内 index ベース導出 (kawaz r56m13):
- * `hue2 = (hue + 360 * (N-1) / A) mod 360` — N はそのエージェントの room 内
- * member id `aN` の N、A は room 内の非 admin member 数。sid ベースの
- * `hueForSeed2` だとアイコン (hue) と偶発的に近くなる事例があったのを、
- * 「ルーム内では絶対に別色」となる導出に切り替えたもの。u1 (admin) は
- * A のカウントから除外 (「エージェントの数」なので)。member が room を
- * 出入りすると A/N が変わって既存メンバーの hue2 も動くのは仕様として許容
- * (index に閉じ込めるための必然)。room / member 未解決や id が `aN` 形式で
- * ない場合は `hue` そのまま (= 単色に degrade、視覚的に無害な fallback)。 */
-export function hue2FromMember(hue: number, room: RoomState | undefined, fromId: string): number {
-  if (!room) return hue;
-  const member = room.membersById.get(fromId);
-  if (!member || member.role === "admin") return hue;
+/** バルーン配色の hue (kawaz r55m54): **アイコンの色は使わない**。
+ * room id (`rN`) をシードに room ごとの基準色 cR を決め、そこから room 内の
+ * member index で等分割する:
+ *
+ *   `cN = hue(cR) + 360 * N / A`  (N = member id `aN` の N、A = room の
+ *   非 admin member 数)
+ *
+ * 狙いは「色数を減らして見やすくする」こと — アイコン由来 hue と第 2
+ * アクセント hue を混ぜると色が増えすぎて視認性が落ちた (r55m54)。room 内で
+ * 必ず等間隔に分離し、room が違えば基準色から違う。u1 (admin) は A から除外。
+ * room / member 未解決や id が `aN` 形式でない場合は基準色 cR をそのまま返す。 */
+export function bubbleHue(room: RoomState | undefined, fromId: string): number | undefined {
+  if (!room) return undefined;
+  const base = hueForSeed(room.id);
+  if (fromId === ADMIN_ID) return base;
+  // N = member id `aN` の N、A = room の非 admin member 数。alive かどうかは
+  // 一切見ない (kawaz r55m60) — active 数を分母にすると、既に room を離れた
+  // エージェントの過去発言が色を失う / 残った member と衝突する (r55m59)。
+  // id 由来の N は離脱があっても不変なので、過去ログの色が保たれる。
+  const match = /^a(\d+)$/.exec(fromId);
+  if (!match) return base;
   let a = 0;
   for (const m of room.membersById.values()) {
     if (m.role !== "admin") a++;
   }
-  if (a === 0) return hue;
-  const match = /^a(\d+)$/.exec(member.id);
-  if (!match) return hue;
-  const n = Number(match[1]);
-  return (hue + (360 * (n - 1)) / a) % 360;
+  if (a === 0) return base;
+  return (base + (360 * Number(match[1])) / a) % 360;
 }
 
 /** kawaz r46 m55-m58: resolve the sender-scoped `FilePathResolveCtx` used to
@@ -95,12 +100,9 @@ function MsgItem({
   // from id そのものを seed にフォールバック (Avatar が描かれない
   // ケースでも背景色は付く)。
   const isUser = event.from === ADMIN_ID;
-  const seed = room.membersById.get(event.from)?.sid ?? event.from;
-  const hue = isUser ? undefined : hueForSeed(seed);
-  // 第 2 アクセント hue: room 内 member index ベースで導出 (kawaz r56m13)。
-  // 詳細は hue2FromMember 参照。ルーム内で必ず分離するので、hue1 が近い 2 者
-  // でも hue2 は絶対に別値になる。
-  const hue2 = isUser || hue === undefined ? undefined : hue2FromMember(hue, room, event.from);
+  // バルーン配色は room 基準色 + member index 等分割 (kawaz r55m54)。
+  // アイコン (identicon) の色は参照しない — 詳細は bubbleHue 参照。
+  const hue = isUser ? undefined : bubbleHue(room, event.from);
 
   const filePathCtx = filePathCtxForSender(room, peers, event.from);
   const renderAsMarkdown = shouldRenderAsMarkdown(event.from);
@@ -109,11 +111,7 @@ function MsgItem({
     <div
       class={"msg" + (isUser ? " msg-user" : "")}
       id={anchorId(room.id, event.mid)}
-      style={
-        hue !== undefined
-          ? { "--member-hue": String(hue), "--member-hue2": String(hue2) }
-          : undefined
-      }
+      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
     >
       <div class="msg-meta">
         <MemberAvatar id={event.from} room={room} />

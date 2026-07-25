@@ -13,7 +13,7 @@ import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
-import { filePathCtxForSender, hue2FromMember, MemberAvatar } from "./TimelineItem.tsx";
+import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
@@ -1858,17 +1858,10 @@ function CcmsgBubble({
     (lookup === "failed" ? `(本文を取得できません — #${message.room} は消えた可能性)` : "");
   const ts = body?.ts || message.ts;
   const isUser = from === ADMIN_ID;
-  // hue seed: ROOM 側 MsgItem (TimelineItem.tsx) と同一式
-  // (`room.membersById.get(from)?.sid ?? from`)。sid が解決できれば ROOM /
-  // TL で同一発言者は同色になる (これが「TL のルームメッセージを ROOM 側
-  // rich 形式に統一する」本タスクの本質)。sid が届いていない場合の from
-  // 直 seed フォールバックまで ROOM と揃えているので、暫定色も一致する。
-  const seed = room?.membersById.get(from)?.sid ?? (from || message.from);
-  const hue = isUser ? undefined : hueForSeed(seed);
-  // 第 2 アクセント hue: ROOM 側 MsgItem と同一の hue2FromMember で導出
-  // (room 内 member index ベース、kawaz r56m13)。room が未解決なら hue そのまま
-  // (helper 内で fallback)。
-  const hue2 = isUser || hue === undefined ? undefined : hue2FromMember(hue, room, from);
+  // バルーン配色は ROOM 側 MsgItem と同一の bubbleHue (room 基準色 + room 内
+  // member の nth 等分割、kawaz r55m54/m56)。同じ room の同じ発言者なら ROOM /
+  // TL で同色になる。room 未解決なら undefined = 無彩色 degrade。
+  const hue = isUser ? undefined : bubbleHue(room, from || message.from);
   // filePathCtxForSender は ROOM 側と同じ helper。room が未解決な場面では
   // undefined を返し LinkedMarkdownView が MarkdownView に degrade する
   // (プレーン表示、既存挙動と同じ)。
@@ -1881,11 +1874,7 @@ function CcmsgBubble({
           ? "tl-bubble tl-bubble-right tl-bubble-ccmsg-user"
           : "tl-bubble tl-bubble-left tl-bubble-peer tl-bubble-ccmsg-peer"
       }${selected ? " tl-bubble-user-nav-selected" : ""}`}
-      style={
-        hue !== undefined
-          ? { "--member-hue": String(hue), "--member-hue2": String(hue2) }
-          : undefined
-      }
+      style={hue !== undefined ? { "--member-hue": String(hue) } : undefined}
       ref={
         isUser
           ? (el) => {

@@ -1726,23 +1726,22 @@ a {
  * 揃える。左ボーダー 3px は同じ hue の彩度高めで送信者マーカーとして機能。
  * .msg-user (u1) は --member-hue を持たないのでこの規則にマッチしない
  * (既存の --user-bubble-bg を維持)。 */
-/* 第 2 アクセント hue (kawaz r56m13 → r55m53 で簡素化): 左ボーダー 3px =
- * hue (アイコンと同色) 単色、上ボーダー 1px = hue2 (room 内 index ベースで
- * 必ず別色)。「左は hue だけでも良い。hue2 を top に書くだけでだいぶ
- * 見やすい」— 2 層背景トリックは不要になり素直な border 2 本に。テーマ
- * カラーは oklch (r56m13: 「テーマカラーは oklab / グラデは oklch」) —
- * identicon 本体 (SVG) は hsl のまま、色空間差で hue は完全一致しないが
- * 同じ色相帯に留まるので視覚的な「同色紐付け」は保たれる。 */
+/* バルーン配色 (kawaz r55m54 で 1 系統に集約): 背景 / 左ボーダー 3px /
+ * 上ボーダー 1px すべて `--member-hue` の 1 色。hue は room id をシードに
+ * した基準色を room 内の member 数で等分割したもの (詳細は TimelineItem.tsx
+ * の `bubbleHue`) — identicon (アイコン) の色はバルーンに使わない。第 2
+ * アクセント hue との 2 系統は色数が増えすぎて見づらかったため廃止。
+ * テーマカラーは oklch (r56m13: 「テーマカラーは oklab / グラデは oklch」)。 */
 .msg[style*="--member-hue"] {
   background: oklch(0.96 0.03 var(--member-hue));
   border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
-  border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
+  border-top: 1px solid oklch(0.65 0.15 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
     background: oklch(0.24 0.025 var(--member-hue));
     border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
-    border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
+    border-top: 1px solid oklch(0.65 0.12 var(--member-hue));
   }
 }
 
@@ -3887,18 +3886,18 @@ button.session-tab {
  * `.tl-bubble-ccmsg-user` 側で `--user-bubble-bg` を維持するので --member-hue
  * は付かない。style は外側 .tl-bubble に、背景/ボーダーは内側 .tl-bubble-body
  * (角丸と padding を持つ層) に適用する。 */
-/* r55m53: 左ボーダー 3px = hue 単色、上ボーダー 1px = hue2。ROOM 側 `.msg`
- * と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
+/* 背景 / 左ボーダー 3px / 上ボーダー 1px を `--member-hue` の 1 色で。
+ * ROOM 側 `.msg` と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
   background: oklch(0.96 0.03 var(--member-hue));
   border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
-  border-top: 1px solid oklch(0.65 0.15 var(--member-hue2));
+  border-top: 1px solid oklch(0.65 0.15 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
     background: oklch(0.24 0.025 var(--member-hue));
     border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
-    border-top: 1px solid oklch(0.65 0.12 var(--member-hue2));
+    border-top: 1px solid oklch(0.65 0.12 var(--member-hue));
   }
 }
 
