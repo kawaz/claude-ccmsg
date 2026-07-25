@@ -1,6 +1,6 @@
 ---
 title: Session Search の UX 改善 3 点 (in-view 検索継承 / パネル維持 / pin 常設)
-status: open
+status: resolved
 category: design
 created: 2026-07-17T08:01:00+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-25T19:14:18+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:(1) クエリ/Aa/.*トグルのin-view検索継承を実装確認(SessionSearchPanel openResult -> session-search/opened reducer -> SessionView tree.timelineSearch prop -> Timeline parseSearchQuery/SearchBar/SegmentViewハイライト。applyLocatorChangedはagent ref変化時のみtimelineリセットでtimelineSearchは保持。実機でAa/.* ON時1/2、OFF時1/9を確認)","done:(2)検索結果クリック後もパネル維持を実装確認(openResultはonCloseを呼ばずhash-only遷移でSidebarのactivePanel state保持。実機で#session-search-panelのDOM残存を確認)","done:(3)pinボタン常設+自動pin廃止を実装確認(SessionViewタブ列末尾に.session-pin-toggle常設、pinned/added・pinned/toggledのdispatchは常設ボタンとSessionListのunpinのみでSessionSearchPanelからの自動pinは無し。store.test.tsに回帰テストあり。実機でlocalStorage未書き込みを確認)","done:(4)サマリーのワード別ハイライトを実装確認(SessionSearchPanelがsplitTextForHighlightの結果をmark.session-search-hlにマップし--hl-colorで色分け。実機で確認)","done:2026-07-25にコード読解+隔離daemonでの実機ブラウザ検証で全4条件を確認、コード変更ゼロ。TODOのDR-0022land待ちも解消済み"]
 blocked_by:
 origin: kawaz r26 mid=64
 ---
