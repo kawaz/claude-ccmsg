@@ -137,3 +137,58 @@ timeout × 高負荷」同型、8 並列で 100% 再現 → 0 fail。
 での緩和 or load 16+ 限定の可能性、次に full suite fail を観測した時に
 再調査する運用とする。既知 flaky はこれで全て根治 or 再現不能となったため、
 次の安定期間を見て issue close を検討。
+
+## 追記: 2026-07-25 6 件目の根治 — hooks 2 ファイル (故障モードは 2 つ)
+
+`hooks/session-start.test.ts` と `hooks/user-prompt-submit.test.ts` の flaky を根治。
+2026-07-21 の追記 (2 件目) で `NORMAL_TIMEOUT_MS=10_000` を入れた後も fail が残っていた
+理由が判明した — **独立した故障モードが 2 つあり、前回はうち 1 つしか塞いでいなかった**。
+
+### モード A: `ensureSessionFile` に timeoutMs の口が無い (user-prompt-submit)
+
+`getRepoWsFromVcs` は最大 5 回 `sh` を直列 spawn する共通 deadline 方式だが、
+`ensureSessionFile` は `opts` に `bin` しか持たず、**production 既定の 1000ms が
+そのままテストに効いていた**。前回の保険値はこのファイルには届いていない。
+
+実測 (fake fixture, 既定 1000ms):
+
+| 条件 | elapsed | repo |
+|---|---|---|
+| 無負荷 | 154-355ms | `"kawaz/repo"` |
+| load 70 | 1037-1229ms | `""` (5 個目 = repository が deadline 切れ) |
+
+失敗形は lead 推定どおり `expect(written.repo).toBe("kawaz/repo")` が `undefined`。
+
+### モード B: bun の per-test 既定 timeout 5000ms (両ファイル)
+
+`NORMAL_TIMEOUT_MS` を 10s にしても、**bun 側の per-test 既定が 5000ms なので
+予算を使い切る前に bun が先に test を打ち切る**。負荷下の実測 wall clock は
+2.4-3.0s (`budget10s wall=3038ms`) で、余裕があるように見えて 8 並列では超過した。
+これが「10s 渡しているのに落ちる」の正体。
+
+### 再現と検証 (いずれも同一条件・同一コマンド)
+
+8 並列 x 外部 CPU 負荷 (load 127) で修正前は **8/8 fail** (`timed out after 5000ms` 7 件 +
+`ensureSessionFile` の repo undefined 7 件)。
+
+修正後: 8/8 green → load 141 で 36/36 green → `just test` フルスイート 3/3 green
+(1682 pass) → 外部負荷下フルスイート 1/1 green (201s、無負荷比 3 倍の contention)。
+
+### 対処 (production のタイムアウト設計は不変)
+
+- `ensureSessionFile` の `opts` に `timeoutMs?` を追加し `getRepoWsFromVcs` へ透過。
+  **hook 本体は渡さないので production は 1000ms 既定のまま** (省略時は既定を使う)。
+  テストの fake は `sh` script で実バイナリより spawn が重く、テストの遅さを
+  production のレイテンシ上限の代理にしない、という趣旨
+- 両ファイルに `spawnTest` (= `test(name, fn, 30_000)`) を定義し、subprocess を
+  spawn する test だけに適用。timeout 機構自体を検証する test
+  (`timeoutMs: 300` + elapsed assert) は assert をそのまま残している
+
+共有 deadline を getter ごとに分ける案は採らなかった: hook は起動を遅らせたくないので
+**合計上限に意味がある** (5 getter が各 1s だと最悪 5s hook が止まる)。テストの都合で
+production の設計を歪めない。
+
+パターン更新: 本 issue の主機序「短い固定 timeout × 高負荷」に加えて、
+**「テスト側の予算 > テストランナーの per-test 既定」という二重 timeout の見落とし**
+が新しい型として確認された。今後 timeout 保険値を入れる時は bun の 5000ms 既定も
+同時に確認する。

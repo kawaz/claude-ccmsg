@@ -165,16 +165,22 @@ export function buildNagMessage(bin: string, sessionId: string | undefined): str
  * rather than re-deriving repo/ws via a `bump-semver` subprocess on every single
  * turn. Best-effort: any failure (unwritable stateDir, bump-semver absent, ...)
  * is swallowed by the caller, same as the rest of this hook.
+ *
+ * `opts.timeoutMs` forwards to `getRepoWsFromVcs`'s shared deadline; omitted (as
+ * the hook itself does) it keeps that function's 1000ms production default. It
+ * exists so tests, whose fake `sh` fixtures are far slower to spawn than the real
+ * binary under parallel load, can buy a budget that isn't a stand-in for the
+ * production latency ceiling.
  */
 export async function ensureSessionFile(
   stateDir: string,
   sid: string,
   input: { transcriptPath?: string; cwd?: string },
-  opts: { bin?: string } = {},
+  opts: { bin?: string; timeoutMs?: number } = {},
 ): Promise<void> {
   if (fs.existsSync(sessionFilePath(stateDir, sid))) return;
   const { repo, ws, repoRoot, branch } = input.cwd
-    ? await getRepoWsFromVcs(input.cwd, { bin: opts.bin })
+    ? await getRepoWsFromVcs(input.cwd, { bin: opts.bin, timeoutMs: opts.timeoutMs })
     : { repo: "", ws: "", repoRoot: "", branch: "" };
   writeSessionFile(stateDir, sid, {
     ...(input.transcriptPath ? { transcript_path: input.transcriptPath } : {}),

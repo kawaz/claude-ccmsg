@@ -152,6 +152,11 @@ describe("getRepoWsFromVcs", () => {
   // (実測 503-506ms、tailscale-origin flaky と同型)。timeout 機構の検証は下の
   // 専用 test が担うため、他 test は負荷耐性のある大きめ値を渡す。
   const NORMAL_TIMEOUT_MS = 10_000;
+  // 上の予算を待てるようにするための per-test timeout。bun の既定は 5000ms で、
+  // NORMAL_TIMEOUT_MS (10s) より短いため、予算を使い切る前に bun 側が先に test を
+  // 打ち切ってしまう (負荷下の実測 wall clock は 2.4-3.0s、8 並列 x 高負荷で
+  // 「timed out after 5000ms」が 100% 再現した)。subprocess を spawn する test に付ける。
+  const spawnTest = (name: string, fn: () => Promise<void>) => test(name, fn, 30_000);
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-vcsws-"));
@@ -169,7 +174,7 @@ describe("getRepoWsFromVcs", () => {
   }
 
   // バイナリ不在 (ENOENT) は黙って空フォールバックする (= hook の起動を壊さない)。
-  test("バイナリが存在しなければ空フォールバックになる", async () => {
+  spawnTest("バイナリが存在しなければ空フォールバックになる", async () => {
     const got = await getRepoWsFromVcs(dir, {
       bin: "/nonexistent/path/definitely-not-bump-semver",
       timeoutMs: NORMAL_TIMEOUT_MS,
@@ -178,7 +183,7 @@ describe("getRepoWsFromVcs", () => {
   });
 
   // cwd が VCS リポ外 (backend/root 取得が非ゼロ終了) の場合も空フォールバック。
-  test("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
+  spawnTest("VCS リポ外 (get が失敗) なら空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexit 3\n`);
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
     expect(got).toEqual({ repo: "", ws: "", repoRoot: "", branch: "" });
@@ -192,8 +197,10 @@ describe("getRepoWsFromVcs", () => {
   // branch 独自フィールドのために worktree-name の有無に関わらず常に呼ばれる。
   // repoRoot も同じ facts から (追加の subprocess 無しで) 導出される:
   // dirname(root) = ".../claude-ccmsg"。
-  test("正常系 (jj, worktree-name あり) は repository/worktree-name/current-branch から解決する", async () => {
-    const bin = writeFakeBumpSemver(`#!/bin/sh
+  spawnTest(
+    "正常系 (jj, worktree-name あり) は repository/worktree-name/current-branch から解決する",
+    async () => {
+      const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
   root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg/main" ;;
@@ -203,23 +210,26 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    // cwd (第 1 引数) は spawn の作業ディレクトリとして実在する必要がある —
-    // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
-    // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-    expect(got).toEqual({
-      repo: "kawaz/claude-ccmsg",
-      ws: "main",
-      repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
-      branch: "main",
-    });
-  });
+      // cwd (第 1 引数) は spawn の作業ディレクトリとして実在する必要がある —
+      // 実マシン固有のリポパスを渡すと CI (そのパスが無い) で spawn 自体が失敗し
+      // 空フォールバックに落ちる。fake は cwd を見ないので tmpdir で足りる。
+      const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
+      expect(got).toEqual({
+        repo: "kawaz/claude-ccmsg",
+        ws: "main",
+        repoRoot: "/Users/kawaz/.local/share/repos/github.com/kawaz/claude-ccmsg",
+        branch: "main",
+      });
+    },
+  );
 
   // 正常系 (git, worktree-name 空): current-branch の呼び出しが ws のフォール
   // バックと branch フィールドの両方に使われる。worktree-name が空なので
   // repoRoot は "" (ws 層が無く、広げる先が無い)。
-  test("正常系 (git, worktree-name 空) は current-branch を ws にフォールバックしつつ branch にも記録する", async () => {
-    const bin = writeFakeBumpSemver(`#!/bin/sh
+  spawnTest(
+    "正常系 (git, worktree-name 空) は current-branch を ws にフォールバックしつつ branch にも記録する",
+    async () => {
+      const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo git ;;
   root) echo "/Users/kawaz/.local/share/repos/github.com/kawaz/ansible-role-postfix-relay" ;;
@@ -229,20 +239,21 @@ case "$3" in
   *) exit 2 ;;
 esac
 `);
-    const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
-    expect(got).toEqual({
-      repo: "kawaz/ansible-role-postfix-relay",
-      ws: "default",
-      repoRoot: "",
-      branch: "default",
-    });
-  });
+      const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: NORMAL_TIMEOUT_MS });
+      expect(got).toEqual({
+        repo: "kawaz/ansible-role-postfix-relay",
+        ws: "default",
+        repoRoot: "",
+        branch: "default",
+      });
+    },
+  );
 
   // git linked worktree (mermaid-aa-pr1): repository getter がリモート URL 由来
   // なので、worktree 名 ("mermaid-aa-pr1") と無関係に本体の正しいリポ名
   // ("kawaz/mermaid-aa") を返す。旧 basename/dirname パースが抱えていた
   // 「repo が worktree 名と同値になる」既知の制約はここで解消される。
-  test("git linked worktree でも repository getter が本体の正しいリポ名を返す", async () => {
+  spawnTest("git linked worktree でも repository getter が本体の正しいリポ名を返す", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo git ;;
@@ -261,7 +272,7 @@ esac
   // repository getter だけが失敗 (リモート未設定 / 曖昧 = bump-semver exit 3/4)
   // しても、他フィールド (ws/repoRoot/branch) の解決は妨げない — repo だけが
   // 空文字に degrade する (fail-open、DR-0041)。
-  test("repository getter だけ失敗しても ws/repoRoot/branch は解決される", async () => {
+  spawnTest("repository getter だけ失敗しても ws/repoRoot/branch は解決される", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
@@ -287,7 +298,7 @@ esac
   // sleep に置き換える: raceExit の kill 対象は fake script の直接子である
   // sleep そのものになるため、シェルの孫プロセスが stdout パイプを握ったまま
   // 残る (= kill してもテストプロセス自体がハングする) 事故を避けられる。
-  test("バイナリが応答しなければ timeoutMs で打ち切り空フォールバックになる", async () => {
+  spawnTest("バイナリが応答しなければ timeoutMs で打ち切り空フォールバックになる", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh\nexec sleep 10\n`);
     const start = Date.now();
     const got = await getRepoWsFromVcs(dir, { bin, timeoutMs: 300 });

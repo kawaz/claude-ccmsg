@@ -176,6 +176,17 @@ describe("buildNagMessage", () => {
 // session state file を UserPromptSubmit 側で救済する「無い時だけ書く」ロジック。
 describe("ensureSessionFile", () => {
   let dir: string;
+  // 保険値 (session-start.test.ts の NORMAL_TIMEOUT_MS と同趣旨): getRepoWsFromVcs
+  // は最大 5 回 `sh` を直列 spawn する共通デッドライン方式で、production 既定の
+  // 1000ms は高負荷下だと 5 回目 (repository → repo フィールド) の前に尽きる
+  // (実測 1037-1229ms で repo が "" に degrade)。timeout 機構自体の検証は
+  // session-start.test.ts の専用 test が担うので、ここは負荷耐性のある値を渡す。
+  const NORMAL_TIMEOUT_MS = 10_000;
+  // 上の予算を待てるようにするための per-test timeout。bun の既定は 5000ms で、
+  // NORMAL_TIMEOUT_MS (10s) より短いため、予算を使い切る前に bun 側が先に test を
+  // 打ち切ってしまう (負荷下の実測 wall clock は 2.4-3.0s、8 並列 x 高負荷で
+  // 「timed out after 5000ms」が 100% 再現した)。subprocess を spawn する test に付ける。
+  const spawnTest = (name: string, fn: () => Promise<void>) => test(name, fn, 30_000);
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-ensuresf-"));
@@ -195,7 +206,7 @@ describe("ensureSessionFile", () => {
   // ファイルが存在しない場合は新規に書く。repo/ws/repo_root/branch は cwd から
   // bump-semver 経由で導出される (SessionStart の書き込みロジックと同じ
   // getRepoWsFromVcs を使う)。
-  test("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root/branch を書く", async () => {
+  spawnTest("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root/branch を書く", async () => {
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
@@ -210,7 +221,7 @@ esac
       dir,
       "sess-1",
       { transcriptPath: "/home/u/.claude/proj/sess-1.jsonl", cwd: dir },
-      { bin },
+      { bin, timeoutMs: NORMAL_TIMEOUT_MS },
     );
     const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
     expect(written.transcript_path).toBe("/home/u/.claude/proj/sess-1.jsonl");
