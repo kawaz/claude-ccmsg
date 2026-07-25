@@ -1,6 +1,6 @@
 ---
 title: SessionCreator の cwd 選択 UI を統合
-status: open
+status: resolved
 category: task
 created: 2026-07-17T22:21:34+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-25T19:51:04+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:受け入れ条件4項目すべて実装済みをコード確認 (packages/webui/src/client/components/SessionCreator.tsx CwdPicker、packages/webui/src/client/session-creator.ts initialCwdPickerMode/commitCwdInput)","done"]
 blocked_by:
 origin: 自リポ TODO
 ---
