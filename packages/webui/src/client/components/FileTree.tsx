@@ -9,6 +9,7 @@
 import type { FsEntry, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
+import { FileSearchPanel } from "./FileSearchPanel.tsx";
 import type { Store } from "../useStore.ts";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -598,6 +599,14 @@ export function FileTree({
   // it's ephemeral UI that dies with the session tab (same posture as
   // FilesPanes' memoEditorOpen). Kind is captured at onStart time so submit
   // doesn't have to re-derive it from the path (workspace vs contained).
+  // Name search (kawaz r55 m67). The box lives in this header and its
+  // emptiness is what decides between the tree body and the results panel, so
+  // the query string is owned here; the request/result cycle belongs to
+  // FileSearchPanel. Ephemeral like the create/memo modes — a query does not
+  // survive a session switch (reset below alongside the create state).
+  const [searchQuery, setSearchQuery] = useState("");
+  const searching = searchQuery.trim() !== "";
+
   const [createActive, setCreateActive] = useState<{
     path: string;
     kind: "contained" | "workspace";
@@ -610,6 +619,7 @@ export function FileTree({
     setCreateActive(null);
     setCreateErr(null);
     setCreateSubmitting(false);
+    setSearchQuery("");
   }, [sid]);
   const createCtx: CreateContext = {
     activePath: createActive?.path ?? null,
@@ -761,83 +771,169 @@ export function FileTree({
           + メモ
         </button>
       </div>
-      {/* Favorites section (U-fav): only shown once ≥1 path is favorited —
-       * an empty section would just be two separator lines with nothing
-       * between them. Each favorite renders through the same DirNode/
-       * FileNode components the main tree uses, at depth 0 with its full
-       * relative path as the display name (rather than just the basename),
-       * so expand state / lazy-load / selection-highlight / the ★ toggle
-       * itself all come for free — `path` doubles as both `tree.dirs`/
-       * `tree.expanded` key and displayed name here. A favorited directory
-       * therefore shares expand/collapse state with the *same* directory
-       * reachable via the normal tree below (both key off the identical
-       * path) — collapsing it in one place collapses it in the other too.
-       * This is an accepted, documented behavior, not a bug: keeping two
-       * independent expand states for the same path would need a second
-       * `SessionTreeState` namespace for no real benefit. */}
-      {sortedFavorites.length > 0 ? (
+      {/* Name search (kawaz r55 m67). Sits directly under the header so it
+       * reads as belonging to the whole pane rather than to any one section —
+       * it searches every browsable root at once (containment root, each
+       * workspace folder, plus the external-file list), which is exactly the
+       * set of sections rendered below it. */}
+      <div class="tree-search">
+        <input
+          type="search"
+          class="tree-search-input"
+          placeholder="Search files by name"
+          aria-label="ファイル名検索 (空白区切りで AND)"
+          value={searchQuery}
+          onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            // Esc clears rather than just blurring — the query is what's
+            // hiding the tree, so "get me out of search" and "empty the box"
+            // are the same intent here.
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setSearchQuery("");
+            }
+          }}
+        />
+      </div>
+      {/* An active query replaces the tree body outright rather than filtering
+       * it: the tree only holds directories the user already expanded
+       * (DR-0008 lazy load), so filtering it in place could never show a match
+       * in an unopened directory — which is the whole point of searching. The
+       * header (root label / + メモ / the box itself) stays put so the pane
+       * doesn't lose its identity while searching. */}
+      {searching ? (
+        <FileSearchPanel
+          sid={sid}
+          query={searchQuery}
+          workspaceFolders={workspaceFolders}
+          externalFiles={externalFiles}
+        />
+      ) : (
         <>
-          <p class="tree-section-label">お気に入り</p>
-          <ul class="tree-root tree-favorites">
-            {sortedFavorites.map((path) => {
-              const { kind, symlink } = favoriteEntryKind(path, tree);
-              // Favorites can hold either project-relative or /-prefixed
-              // external paths. External paths (starts with "/" and NOT a
-              // workspace folder path) can't be deleted through fs_delete
-              // (external is outside its authorization surfaces), so drop the
-              // affordance for those rows only.
-              const isExternal =
-                path.startsWith("/") && !isWorkspaceFilePath(path, workspaceFolders);
-              return kind === "dir" ? (
-                <DirNode
-                  key={path}
-                  sid={sid}
-                  path={path}
-                  name={path}
-                  depth={0}
-                  tree={tree}
-                  selectedPath={tree.selectedPath}
-                  ownWsPath={ownWsPath}
-                  workspaceFolders={workspaceFolders}
-                  fav={fav}
-                  create={createCtx}
-                  del={isExternal ? null : deleteCtx}
-                />
-              ) : (
-                <FileNode
-                  key={path}
-                  sid={sid}
-                  path={path}
-                  name={path}
-                  depth={0}
-                  selected={tree.selectedPath === path}
-                  symlink={symlink}
-                  fav={fav}
-                  del={isExternal ? null : deleteCtx}
-                />
-              );
-            })}
-          </ul>
-        </>
-      ) : null}
-      {/* Workspace section (DR-0026): folders discovered in the session's
-       * cwd `.code-workspace` file(s). Each folder renders as a root-level
-       * DirNode with its absolute realpath as both key and display name —
-       * expand/lazy-load/★ reuse the same components as お気に入り, and
-       * fs_list_workspace routing keys off the same path via loadDir's
-       * DR-0026 branch. Suppressed when no workspace folders were published
-       * (either no .code-workspace file, or the session hasn't subscribed
-       * to session_status yet — same posture as sortedExternalFiles). */}
-      {workspaceFolders.length > 0 ? (
-        <>
-          <p class="tree-section-label">ワークスペース</p>
-          <ul class="tree-root tree-workspace">
-            {workspaceFolders.map((folder) => (
-              <DirNode
-                key={folder.path}
+          {/* Favorites section (U-fav): only shown once ≥1 path is favorited —
+           * an empty section would just be two separator lines with nothing
+           * between them. Each favorite renders through the same DirNode/
+           * FileNode components the main tree uses, at depth 0 with its full
+           * relative path as the display name (rather than just the basename),
+           * so expand state / lazy-load / selection-highlight / the ★ toggle
+           * itself all come for free — `path` doubles as both `tree.dirs`/
+           * `tree.expanded` key and displayed name here. A favorited directory
+           * therefore shares expand/collapse state with the *same* directory
+           * reachable via the normal tree below (both key off the identical
+           * path) — collapsing it in one place collapses it in the other too.
+           * This is an accepted, documented behavior, not a bug: keeping two
+           * independent expand states for the same path would need a second
+           * `SessionTreeState` namespace for no real benefit. */}
+          {sortedFavorites.length > 0 ? (
+            <>
+              <p class="tree-section-label">お気に入り</p>
+              <ul class="tree-root tree-favorites">
+                {sortedFavorites.map((path) => {
+                  const { kind, symlink } = favoriteEntryKind(path, tree);
+                  // Favorites can hold either project-relative or /-prefixed
+                  // external paths. External paths (starts with "/" and NOT a
+                  // workspace folder path) can't be deleted through fs_delete
+                  // (external is outside its authorization surfaces), so drop the
+                  // affordance for those rows only.
+                  const isExternal =
+                    path.startsWith("/") && !isWorkspaceFilePath(path, workspaceFolders);
+                  return kind === "dir" ? (
+                    <DirNode
+                      key={path}
+                      sid={sid}
+                      path={path}
+                      name={path}
+                      depth={0}
+                      tree={tree}
+                      selectedPath={tree.selectedPath}
+                      ownWsPath={ownWsPath}
+                      workspaceFolders={workspaceFolders}
+                      fav={fav}
+                      create={createCtx}
+                      del={isExternal ? null : deleteCtx}
+                    />
+                  ) : (
+                    <FileNode
+                      key={path}
+                      sid={sid}
+                      path={path}
+                      name={path}
+                      depth={0}
+                      selected={tree.selectedPath === path}
+                      symlink={symlink}
+                      fav={fav}
+                      del={isExternal ? null : deleteCtx}
+                    />
+                  );
+                })}
+              </ul>
+            </>
+          ) : null}
+          {/* Workspace section (DR-0026): folders discovered in the session's
+           * cwd `.code-workspace` file(s). Each folder renders as a root-level
+           * DirNode with its absolute realpath as both key and display name —
+           * expand/lazy-load/★ reuse the same components as お気に入り, and
+           * fs_list_workspace routing keys off the same path via loadDir's
+           * DR-0026 branch. Suppressed when no workspace folders were published
+           * (either no .code-workspace file, or the session hasn't subscribed
+           * to session_status yet — same posture as sortedExternalFiles). */}
+          {workspaceFolders.length > 0 ? (
+            <>
+              <p class="tree-section-label">ワークスペース</p>
+              <ul class="tree-root tree-workspace">
+                {workspaceFolders.map((folder) => (
+                  <DirNode
+                    key={folder.path}
+                    sid={sid}
+                    path={folder.path}
+                    name={folder.name}
+                    depth={0}
+                    tree={tree}
+                    selectedPath={tree.selectedPath}
+                    ownWsPath={ownWsPath}
+                    workspaceFolders={workspaceFolders}
+                    fav={fav}
+                    create={createCtx}
+                    del={deleteCtx}
+                  />
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {sortedFavorites.length > 0 ||
+          workspaceFolders.length > 0 ||
+          sortedExternalFiles.length > 0 ? (
+            <p class="tree-section-label">プロジェクト</p>
+          ) : null}
+          {rootError ? (
+            <p class="tree-error">{rootError}</p>
+          ) : rootEntries === undefined ? (
+            <p class="tree-loading">loading…</p>
+          ) : (
+            <ul class="tree-root">
+              {/* DR-0008 addendum session (rootLabel !== null, tree root widened
+               * to the repo container): show only the ws/wt directories at this
+               * level (kawaz 2026-07-12), own workspace pinned first — the raw
+               * container listing (.git/.jj/dotfiles/other ws) doesn't appear
+               * here once `peer` (state.peers) has arrived, only inside an
+               * opened ws's own subtree. Filtering keys off `peer`, not the
+               * fs_list result itself: a direct `#s<sid>` link can have the
+               * fs_list("") response land before the (separately-driven, see
+               * ws.ts's peers request in onOpen) peers/loaded dispatch, in which
+               * case `rootLabel` is still null here and this one paint shows the
+               * unfiltered listing — self-corrects on the next render once
+               * `peer` arrives (adversarial review minor: known, accepted as
+               * cosmetic — fixing the race would mean gating the root fs_list
+               * effect on peers too, which delays every session's tree for a
+               * property only repo_root sessions use). A session with no
+               * repo_root (rootLabel === null) keeps the unfiltered cwd listing
+               * permanently, unchanged from before this task. */}
+              <Nodes
                 sid={sid}
-                path={folder.path}
-                name={folder.name}
+                parentPath=""
+                entries={
+                  rootLabel !== null ? workspaceRootEntries(rootEntries, ownWsPath) : rootEntries
+                }
                 depth={0}
                 tree={tree}
                 selectedPath={tree.selectedPath}
@@ -846,84 +942,39 @@ export function FileTree({
                 fav={fav}
                 create={createCtx}
                 del={deleteCtx}
+                sorted={rootLabel !== null}
               />
-            ))}
-          </ul>
+            </ul>
+          )}
+          {sortedExternalFiles.length > 0 ? (
+            <>
+              <p class="tree-section-label">プロジェクト外</p>
+              <ul class="tree-root tree-external">
+                {/* DR-0024: external paths render at depth 0 with the full absolute
+                 * path as both label and locator key. FavoriteToggle shares the
+                 * same flat string set as project rows; `/` prefix guarantees no
+                 * collision, and a starred external file therefore also appears in
+                 * the favorites section through favoriteEntryKind's file fallback. */}
+                {sortedExternalFiles.map((externalPath) => (
+                  <FileNode
+                    key={externalPath}
+                    sid={sid}
+                    path={externalPath}
+                    name={externalPath}
+                    depth={0}
+                    selected={tree.selectedPath === externalPath}
+                    symlink={false}
+                    fav={fav}
+                    // DR-0024 external files live outside fs_delete's authorization
+                    // surfaces (contained | workspace) — no delete affordance.
+                    del={null}
+                  />
+                ))}
+              </ul>
+            </>
+          ) : null}
         </>
-      ) : null}
-      {sortedFavorites.length > 0 ||
-      workspaceFolders.length > 0 ||
-      sortedExternalFiles.length > 0 ? (
-        <p class="tree-section-label">プロジェクト</p>
-      ) : null}
-      {rootError ? (
-        <p class="tree-error">{rootError}</p>
-      ) : rootEntries === undefined ? (
-        <p class="tree-loading">loading…</p>
-      ) : (
-        <ul class="tree-root">
-          {/* DR-0008 addendum session (rootLabel !== null, tree root widened
-           * to the repo container): show only the ws/wt directories at this
-           * level (kawaz 2026-07-12), own workspace pinned first — the raw
-           * container listing (.git/.jj/dotfiles/other ws) doesn't appear
-           * here once `peer` (state.peers) has arrived, only inside an
-           * opened ws's own subtree. Filtering keys off `peer`, not the
-           * fs_list result itself: a direct `#s<sid>` link can have the
-           * fs_list("") response land before the (separately-driven, see
-           * ws.ts's peers request in onOpen) peers/loaded dispatch, in which
-           * case `rootLabel` is still null here and this one paint shows the
-           * unfiltered listing — self-corrects on the next render once
-           * `peer` arrives (adversarial review minor: known, accepted as
-           * cosmetic — fixing the race would mean gating the root fs_list
-           * effect on peers too, which delays every session's tree for a
-           * property only repo_root sessions use). A session with no
-           * repo_root (rootLabel === null) keeps the unfiltered cwd listing
-           * permanently, unchanged from before this task. */}
-          <Nodes
-            sid={sid}
-            parentPath=""
-            entries={
-              rootLabel !== null ? workspaceRootEntries(rootEntries, ownWsPath) : rootEntries
-            }
-            depth={0}
-            tree={tree}
-            selectedPath={tree.selectedPath}
-            ownWsPath={ownWsPath}
-            workspaceFolders={workspaceFolders}
-            fav={fav}
-            create={createCtx}
-            del={deleteCtx}
-            sorted={rootLabel !== null}
-          />
-        </ul>
       )}
-      {sortedExternalFiles.length > 0 ? (
-        <>
-          <p class="tree-section-label">プロジェクト外</p>
-          <ul class="tree-root tree-external">
-            {/* DR-0024: external paths render at depth 0 with the full absolute
-             * path as both label and locator key. FavoriteToggle shares the
-             * same flat string set as project rows; `/` prefix guarantees no
-             * collision, and a starred external file therefore also appears in
-             * the favorites section through favoriteEntryKind's file fallback. */}
-            {sortedExternalFiles.map((externalPath) => (
-              <FileNode
-                key={externalPath}
-                sid={sid}
-                path={externalPath}
-                name={externalPath}
-                depth={0}
-                selected={tree.selectedPath === externalPath}
-                symlink={false}
-                fav={fav}
-                // DR-0024 external files live outside fs_delete's authorization
-                // surfaces (contained | workspace) — no delete affordance.
-                del={null}
-              />
-            ))}
-          </ul>
-        </>
-      ) : null}
     </div>
   );
 }

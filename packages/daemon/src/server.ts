@@ -45,6 +45,7 @@ import {
   fsWrite,
   validateRepoRoot,
 } from "./fs-access.ts";
+import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { sessionSearch } from "./session-search.ts";
@@ -874,6 +875,7 @@ const IDENTITY_OPS = new Set([
   "fs_delete",
   "fs_edit",
   "fs_stat_batch",
+  "fs_find",
   "transcript_read",
   "session_search",
   "agents",
@@ -1897,6 +1899,36 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       const result = fsStatBatch(daemon.sessions, daemon.sessionStatus, req.sid, req.paths);
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, { ok: true, ...result.data });
+      return;
+    }
+
+    case "fs_find": {
+      // user-role only, same posture as fs_list_workspace / fs_stat_batch:
+      // searching the tree is a viewer affordance. A session AI enumerates its
+      // own filesystem through its own tool loop and has no reason to walk
+      // another session's tree through the daemon.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fs_find' requires user role");
+        return;
+      }
+      const result = fsFind(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.kind,
+        req.root,
+        req.query,
+        // Matches fs_list's own allowVirtual: a historical (disconnected)
+        // session's tree is browsable for user-role readers (DR-0021 §3.1), so
+        // searching it must be too, or the search box would go dead exactly on
+        // the sessions whose layout the user is least likely to remember.
+        { allowVirtual: true },
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

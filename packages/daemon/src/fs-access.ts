@@ -648,6 +648,56 @@ export function fsReadWorkspace(
   return readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
 }
 
+// --- fs_find root authorization ----------------------------------------
+
+/** Authorize the directory an fs_find walk starts from, and hand back both its
+ *  realpath and the containment root the walk's results are expressed relative
+ *  to. Deliberately delegates to the same two resolvers the list ops use
+ *  (resolveContained / resolveWorkspaceContained + getWorkspaceAllowlist), so
+ *  fs_find can never reach a directory fs_list / fs_list_workspace would have
+ *  refused — the search surface is exactly the browsable surface, not a wider
+ *  one. Lives here rather than in fs-find.ts because both resolvers are
+ *  module-private to this file on purpose; exporting them instead would make
+ *  the raw containment primitives reusable from anywhere.
+ *
+ *  `containmentRoot` differs per kind for the same reason the response path
+ *  shapes differ: contained results are relative to the session's single
+ *  containment root, workspace results are absolute (there is no single root
+ *  to subtract from), so the workspace branch returns the walk root itself and
+ *  fs_find's display mapping ignores it. */
+export function resolveFindRoot(
+  sessions: SessionLookup,
+  statusStore: SessionStatusStore,
+  sid: string,
+  kind: "contained" | "workspace",
+  reqRoot: string | undefined,
+  opts: FsAccessOptions = {},
+): FsAccessResult<{ realPath: string; containmentRoot: string }> {
+  if (kind === "workspace") {
+    if (reqRoot === undefined || reqRoot === "") {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: "fs_find root is required when kind is 'workspace'",
+      };
+    }
+    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    if (!allow.ok) return allow;
+    const resolved = resolveWorkspaceContained(allow.folders, reqRoot);
+    if (!resolved.ok) return resolved;
+    return {
+      ok: true,
+      data: { realPath: resolved.realPath, containmentRoot: resolved.realPath },
+    };
+  }
+
+  const rootResult = resolveRoot(sessions, sid, opts);
+  if (!rootResult.ok) return rootResult;
+  const resolved = resolveContained(rootResult.root, reqRoot ?? "");
+  if (!resolved.ok) return resolved;
+  return { ok: true, data: { realPath: resolved.realPath, containmentRoot: rootResult.root } };
+}
+
 // --- fs_serve (binary HTTP serve, image viewer) ------------------------
 
 /** Authorize a read-only serve of `reqPath` for `sid` under `kind` and return

@@ -1096,6 +1096,68 @@ export interface FsStatBatchResponse {
  * batch without needing multi-round coordination. */
 export const FS_STAT_BATCH_MAX_PATHS = 256;
 
+/**
+ * Recursive file-name search under one of the browsable roots (Files pane's
+ * "Search files by name"). The lazy tree (fs_list per expanded directory)
+ * cannot answer "where is the file whose path contains X" without the user
+ * having already opened every candidate directory, so the walk happens on the
+ * daemon where the whole subtree is reachable in one request.
+ *
+ * `kind` selects the authorization surface, exactly mirroring the list ops it
+ * is built on: `contained` walks the fs_list containment root and returns
+ * root-relative paths; `workspace` walks one DR-0026 workspace folder (or a
+ * directory inside one) named by an absolute `root` and returns absolute
+ * paths. There is no `external` variant — DR-0024's allowlist is per-file with
+ * no directory to descend, so nothing could be enumerated.
+ *
+ * User-role only, like the other viewer-side fs ops: a session AI searches its
+ * own filesystem through its own tool loop, never through the daemon.
+ */
+export interface FsFindRequest {
+  op: "fs_find";
+  sid: string;
+  kind: "contained" | "workspace";
+  /** Directory to search under. Relative to the containment root for
+   * `contained` ("" / absent = the root itself); absolute for `workspace`. */
+  root?: string;
+  /** Whitespace-separated words, ANDed against each candidate's path — the
+   * same tokenize/AND filter dir_tree uses for its cwd filter. Matching is
+   * case-insensitive (see FS_FIND doc on the daemon side for why). An
+   * empty/whitespace-only query matches nothing rather than dumping the
+   * entire tree, so a cleared input box costs no walk. */
+  query: string;
+}
+
+/** One fs_find hit. `path` is directly usable as a locator/FileViewer key:
+ * root-relative for `kind:"contained"`, absolute for `kind:"workspace"` —
+ * the same two path shapes the tree already stores. */
+export interface FsFindHit {
+  path: string;
+  type: "file" | "dir" | "symlink";
+}
+
+export interface FsFindResponse {
+  ok: true;
+  sid: string;
+  hits: FsFindHit[];
+  /** The walk stopped early — either the result cap or the visited-entry
+   * budget was reached, so `hits` is not the complete match set. The client
+   * says so instead of implying "these are all the matches". */
+  truncated: boolean;
+}
+
+/** Maximum hits one fs_find reply carries. A name search is a navigation aid:
+ * past a screenful or two the user narrows the query rather than scrolling, so
+ * a modest cap keeps the response small and the walk short. */
+export const FS_FIND_RESULT_MAX = 200;
+
+/** Maximum directory entries one fs_find walk will visit before giving up,
+ * independent of how many matched. Bounds the syscall cost of a search in a
+ * repo whose tree is enormous (a monorepo with vendored dependencies), so one
+ * request cannot stall the daemon's synchronous handler indefinitely — the
+ * same concern MAX_DIR_TREE_DEPTH addresses for dir_tree. */
+export const FS_FIND_VISIT_MAX = 50_000;
+
 export interface FsEditRequest {
   op: "fs_edit";
   sid: string;
@@ -1285,6 +1347,7 @@ export type Request =
   | FsDeleteRequest
   | FsEditRequest
   | FsStatBatchRequest
+  | FsFindRequest
   | TranscriptReadRequest
   | SessionSearchRequest
   | AgentsRequest
@@ -1701,6 +1764,7 @@ export type Response =
   | FsDeleteResponse
   | FsEditResponse
   | FsStatBatchResponse
+  | FsFindResponse
   | TranscriptReadResponse
   | AgentsResponse
   | TranscriptSubscribeResponse

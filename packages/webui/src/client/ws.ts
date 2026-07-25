@@ -26,6 +26,7 @@ import type {
   ErrorResponse,
   FsCreateResponse,
   FsDeleteResponse,
+  FsFindResponse,
   FsListResponse,
   FsEditResponse,
   FsReadResponse,
@@ -148,6 +149,17 @@ export interface WsHandle {
    * under one of the three read-op authorization surfaces. See
    * `FsStatBatchRequest` in @ccmsg/protocol for the full contract. */
   fsStatBatch(sid: string, paths: string[]): Promise<FsStatBatchResponse | ErrorResponse>;
+  /** Recursive file-name search under one browsable root (Files pane's search
+   * box). `query` is whitespace-separated words ANDed against each path,
+   * case-insensitively; hits come back in breadth-first order with the same
+   * path shape the tree uses (root-relative for "contained", absolute for
+   * "workspace"). See `FsFindRequest` in @ccmsg/protocol. */
+  fsFind(
+    sid: string,
+    kind: "contained" | "workspace",
+    root: string | undefined,
+    query: string,
+  ): Promise<FsFindResponse | ErrorResponse>;
   /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
    * session's cwd (DR-0019 fs_write), while remaining inside its containment
    * root. Never overwrites — an existing path replies `file_exists`, a path
@@ -672,6 +684,8 @@ export function createWsClient(
     fsListWorkspace: (sid, path) => send({ op: "fs_list_workspace", sid, path }),
     fsReadWorkspace: (sid, path) => send({ op: "fs_read_workspace", sid, path }),
     fsStatBatch: (sid, paths) => send({ op: "fs_stat_batch", sid, paths }),
+    fsFind: (sid, kind, root, query) =>
+      send({ op: "fs_find", sid, kind, ...(root !== undefined ? { root } : {}), query }),
     fsWrite: (sid, path, content) => send({ op: "fs_write", sid, path, content }),
     fsCreate: (sid, path, kind, content) => send({ op: "fs_create", sid, path, kind, content }),
     fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),

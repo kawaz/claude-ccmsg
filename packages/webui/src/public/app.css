@@ -2539,6 +2539,72 @@ button.session-tab {
   color: var(--fg);
 }
 
+/* ファイル名検索 (kawaz r55 m67): header 直下に全幅で置き、pane 全体
+ * (containment root + workspace folder + プロジェクト外) を対象にする
+ * ことを見た目でも示す。 */
+.tree-search {
+  padding: 0.25rem 0.5rem 0.35rem 0.5rem;
+}
+
+.tree-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  color: var(--fg);
+  font-size: 0.8rem;
+  padding: 0.25rem 0.5rem;
+}
+
+.tree-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.file-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 検索結果行: 名前を先頭・所在ディレクトリを後ろに muted で。行内で
+ * ディレクトリ側だけを縮めるため name は flex 0 0 auto、dir は
+ * min-width:0 + ellipsis (長いパスで名前が潰れるのを防ぐ)。 */
+.file-search-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.75rem;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.file-search-hit:hover {
+  background: var(--bg-alt);
+}
+
+.file-search-hit-name {
+  flex: 0 0 auto;
+}
+
+.file-search-hit-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.file-search-empty,
+.file-search-truncated {
+  padding: 0.2rem 0.75rem;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+
 /* Per-DirNode "+ 新規ファイル" affordance (kawaz r46 mid=24). Sits inside
  * .tree-row-line as a flex sibling of the row button, next to (before) the
  * ★ toggle so both trailing affordances line up at the pane edge. Same
