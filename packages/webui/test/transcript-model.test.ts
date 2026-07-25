@@ -23,6 +23,7 @@ import {
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
+  parseTranscriptLines,
   resolveFileToolResults,
   scrollPositionToUserTurnIndex,
   segmentSearchText,
@@ -504,6 +505,151 @@ describe("parseTranscriptLine / assistant turns", () => {
       },
       { kind: "text", role: "assistant", text: "done" },
     ]);
+  });
+});
+
+// A queued message is written to the transcript twice: once as a bare
+// `queue-operation` enqueue row (content only — no promptSource/origin/isMeta)
+// and again as the `type:"user"` row that delivered it, which is the copy
+// carrying the metadata classifyUserMessage needs. Fixtures below are reduced
+// from the kuu 38095e85 transcript (2026-07-25), where the harness notice at
+// lines 1357/1361 rendered as a green user bubble because only the metadata-
+// less queued copy reached the classifier.
+describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
+  const STOPPED = '2 background agents were stopped by the user: "worker-a", "worker-b".';
+  const enqueue = (content: string) =>
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: "2026-07-25T07:30:44.555Z",
+      content,
+    });
+  const delivered = (content: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "user",
+      message: { role: "user", content },
+      timestamp: "2026-07-25T07:30:44.593Z",
+      ...extra,
+    });
+
+  // The reported bug: the queued copy classified as user-prompt (green
+  // bubble) while the delivered row right after it was already folded as a
+  // task-notification. Only the metadata-bearing copy may survive as a turn.
+  test("a harness notice delivered with system metadata folds its queued copy", () => {
+    const lines = parseTranscriptLines([
+      enqueue(STOPPED),
+      delivered(STOPPED, {
+        promptSource: "system",
+        origin: { kind: "task-notification" },
+        queuePriority: "later",
+      }),
+    ]);
+    expect(lines[0]).toEqual({
+      kind: "meta",
+      ts: "2026-07-25T07:30:44.555Z",
+      type: "queue-operation",
+      summary: "queue-operation: enqueue",
+      raw: enqueue(STOPPED),
+    });
+    const kept = lines[1]!;
+    expect(kept.kind).toBe("turn");
+    if (kept.kind !== "turn") return;
+    expect(kept.userMessageKind).toBe("task-notification");
+    expect(isUserTextTurn(kept)).toBe(false);
+  });
+
+  // The opposite edge: a real prompt the user typed while Claude was busy is
+  // queued and delivered exactly the same way, so the pass must not eat it —
+  // the delivered copy stays the green bubble.
+  test("a real queued human prompt keeps exactly one user-prompt turn", () => {
+    const lines = parseTranscriptLines([
+      enqueue("スキル見える？"),
+      delivered("スキル見える？", { promptSource: "queued", origin: { kind: "human" } }),
+    ]);
+    expect(lines[0]!.kind).toBe("meta");
+    const kept = lines[1]!;
+    expect(kept.kind).toBe("turn");
+    if (kept.kind !== "turn") return;
+    expect(kept.userMessageKind).toBe("user-prompt");
+    expect(isUserTextTurn(kept)).toBe(true);
+  });
+
+  // A queued prompt the user cancelled before it ran (interrupt pops the
+  // queue) has no delivered row at all — 3649 of 12425 sampled enqueues.
+  // The queued copy is then the only record of that text and must render.
+  test("a queued prompt never delivered stays a rendered turn", () => {
+    const lines = parseTranscriptLines([enqueue("pr用のブランチとか")]);
+    const only = lines[0]!;
+    expect(only.kind).toBe("turn");
+    if (only.kind !== "turn") return;
+    expect(only.userMessageKind).toBe("user-prompt");
+  });
+
+  // The delivered peer relay wraps the queued block in a fixed banner plus a
+  // trailing instruction paragraph, so pairing has to compare bodies rather
+  // than whole strings (255/255 sampled relays have this exact shape).
+  test("a peer relay pairs across the delivered banner and trailer", () => {
+    const block = '<agent-message from="tl-impl">\n本文\n</agent-message>';
+    const lines = parseTranscriptLines([
+      enqueue(block),
+      delivered(
+        `Another Claude session sent a message:\n${block}\n\nThis came from another Claude session — not typed by your user...`,
+        {
+          promptSource: "system",
+          origin: { kind: "peer" },
+        },
+      ),
+    ]);
+    expect(lines[0]!.kind).toBe("meta");
+    const kept = lines[1]!;
+    expect(kept.kind).toBe("turn");
+    if (kept.kind !== "turn") return;
+    expect(kept.userMessageKind).toBe("peer-message");
+  });
+
+  // Two genuinely separate sends of the same text must not collapse into one:
+  // each queued copy may only cancel against its own delivery.
+  test("the same text queued twice keeps both deliveries", () => {
+    const lines = parseTranscriptLines([
+      enqueue("続けて"),
+      delivered("続けて", { promptSource: "queued", origin: { kind: "human" } }),
+      enqueue("続けて"),
+      delivered("続けて", { promptSource: "queued", origin: { kind: "human" } }),
+    ]);
+    expect(lines.map((l) => l.kind)).toEqual(["meta", "turn", "meta", "turn"]);
+  });
+
+  // Ordering matters: the queue row is written when the message arrives, the
+  // user row when it is dequeued. A delivered row that only appears *before*
+  // the enqueue is a different send and must not cancel it.
+  test("a delivery preceding the enqueue does not cancel it", () => {
+    const lines = parseTranscriptLines([
+      delivered("もう一回", { promptSource: "typed", origin: { kind: "human" } }),
+      enqueue("もう一回"),
+    ]);
+    expect(lines.map((l) => l.kind)).toEqual(["turn", "turn"]);
+  });
+
+  // Index alignment is load-bearing: Timeline.tsx keys every entry by the
+  // matching `lineByteOffsets` index, so a paired row is demoted to meta
+  // rather than removed from the array.
+  test("output stays index-aligned with the input lines", () => {
+    const raws = [
+      enqueue(STOPPED),
+      delivered(STOPPED, { promptSource: "system", origin: { kind: "task-notification" } }),
+    ];
+    expect(parseTranscriptLines(raws)).toHaveLength(raws.length);
+  });
+
+  // Non-queue lines must be untouched by the new pass — same verdict as the
+  // single-line entry point for every shape it already handled.
+  test("agrees with parseTranscriptLine on lines with no queued copy", () => {
+    const raws = [
+      delivered("hello", { promptSource: "typed", origin: { kind: "human" } }),
+      JSON.stringify({ type: "queue-operation", operation: "dequeue", timestamp: "t" }),
+      "{ not json",
+    ];
+    expect(parseTranscriptLines(raws)).toEqual(raws.map(parseTranscriptLine));
   });
 });
 
@@ -1320,32 +1466,16 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
-    // ユーザが background agent を停止した時のハーネス注入通知 (kawaz r55 m61
-    // 実観測、kuu の 38095 セッションで緑のユーザバブルとして表示された)。
-    test("'N background agents were stopped by the user' -> agents-stopped", () => {
+    // 「N background agents were stopped by the user: ...」はハーネス注入だが、
+    // 本文だけを見て仕分けてはいけない — 配送された type:"user" 行は
+    // promptSource:"system" を持ち上の分岐で task-notification になる (実
+    // jsonl 確認済み)。本文が同じ文でも meta が無ければ人間の発話として扱う
+    // のが正で、二重記録の queue-operation 側は parseTranscriptLines が畳む。
+    test("harness-shaped sentence without system metadata stays user-prompt", () => {
       const entry = {
         message: {
           role: "user",
-          content:
-            '2 background agents were stopped by the user: "対象リポ: /Users/kawaz/.local/share/repos/github.com/k...", "対象リポ: /Users/kawaz/.local/share/repos/github.com/k...".',
-        },
-      };
-      expect(classifyUserMessage(entry)).toBe("agents-stopped");
-    });
-
-    test("singular '1 background agent was stopped by the user' -> agents-stopped", () => {
-      const entry = {
-        message: { role: "user", content: '1 background agent was stopped by the user: "foo".' },
-      };
-      expect(classifyUserMessage(entry)).toBe("agents-stopped");
-    });
-
-    // 誤爆判定: 定型の数値 + 固定句で始まらなければ通常の発話のまま。
-    test("human sentence mentioning background agents -> user-prompt", () => {
-      const entry = {
-        message: {
-          role: "user",
-          content: "background agents were stopped by the user? 確認してみて",
+          content: '2 background agents were stopped by the user: "worker-a", "worker-b".',
         },
       };
       expect(classifyUserMessage(entry)).toBe("user-prompt");

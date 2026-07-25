@@ -83,6 +83,12 @@ export interface TurnLine {
    * ParsedLine values elsewhere (e.g. test fixtures) that never went through
    * parseTranscriptLine. */
   userMessageKind?: UserMessageKind;
+  /** For a turn synthesized from a `queue-operation` enqueue row: that row's
+   * raw `content` string. Present only on that synthetic shape, and used by
+   * `parseTranscriptLines` to pair the queued copy with the `type:"user"`
+   * row that later delivered it (see `parseTranscriptObject`'s
+   * queue-operation branch). */
+  queuedContent?: string;
 }
 
 /** Any top-level `type` other than "user"/"assistant" — see module doc
@@ -819,7 +825,6 @@ export type UserMessageKind =
   | "tool-retry-hint"
   | "task-notification"
   | "workflow-resume"
-  | "agents-stopped"
   | "peer-message"
   | "spawn-prompt"
   | "unknown-meta"
@@ -982,14 +987,6 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   // false-negative)。
   if (text.startsWith("Resume the paused workflow by calling: Workflow({")) {
     return "workflow-resume";
-  }
-  // ユーザが background agent を停止した時にハーネスが注入する定型通知
-  // (kawaz r55 m61 実観測: 「2 background agents were stopped by the user: ...」)。
-  // workflow-resume と同じく wire 上は通常のユーザ発話と区別が付かないので
-  // 文字列で判定する。単数形 ("1 background agent was stopped...") も同じ
-  // 定型なので数値部分だけ緩く受ける。
-  if (/^\d+ background agents? (?:were|was) stopped by the user\b/.test(text)) {
-    return "agents-stopped";
   }
   return "user-prompt";
 }
@@ -1568,7 +1565,13 @@ export function parseTranscriptLine(raw: string): ParsedLine {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
     return { kind: "broken", raw, error: "not a JSON object" };
   }
-  const o = obj as Record<string, unknown>;
+  return parseTranscriptObject(obj as Record<string, unknown>, raw);
+}
+
+/** `parseTranscriptLine`'s body once the line is known to be a JSON object,
+ * split out so `parseTranscriptLines` can run its cross-line pass over the
+ * parsed objects without a second `JSON.parse` per line. */
+function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedLine {
   const ts = typeof o.timestamp === "string" ? o.timestamp : null;
   if (o.type === "user" || o.type === "assistant") {
     const role = o.type;
@@ -1577,11 +1580,16 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
     return { kind: "turn", ts, role, segments, userMessageKind };
   }
-  // queue-operation enqueue は「作業中に user が送ったメッセージが queue に
-  // 積まれた記録」で、`content` field が queue に積まれた prompt 文字列。
-  // 通常の type:user 行と同じ classifier を必ず通すことで、peer relay / task
-  // notification / slash command 等の prefix catalog が二重実装で drift せず、
-  // system wrapper も user-prompt と同じ turn shape のまま正しく fold される。
+  // queue-operation enqueue は「作業中に届いたメッセージが queue に積まれた
+  // 記録」で、`content` field が queue に積まれた prompt 文字列。この行は
+  // promptSource / origin / isMeta といった meta field を一切持たないため、
+  // 単独では「人間が queue に積んだ本物の発話」と「ハーネスがシステム由来で
+  // 積んだ通知」を wire 上で区別できない。区別できるのは queue から取り出され
+  // て実際に配送された `type:"user"` 行の方 (そちらは promptSource:"system" +
+  // origin.kind を持つ) なので、両者が揃っている transcript では配送側を正と
+  // して queue 側を落とす — `parseTranscriptLines` の cross-line パスが行う。
+  // ここでは単独行としての最善 (= 本文 prefix カタログの再利用) を返しつつ、
+  // その判断材料を `queuedContent` に残す。
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     const content = o.content;
     const userMessageKind = classifyUserMessage({
@@ -1594,6 +1602,7 @@ export function parseTranscriptLine(raw: string): ParsedLine {
       role: "user",
       segments: [{ kind: "text", role: "user", text: content }],
       userMessageKind,
+      queuedContent: content,
     };
   }
   return {
@@ -1603,4 +1612,106 @@ export function parseTranscriptLine(raw: string): ParsedLine {
     summary: summarizeMeta(o),
     raw,
   };
+}
+
+/** The fixed wrapper Claude Code puts around a teammate relay when it
+ * delivers it as a `type:"user"` row: the queued copy carries only the bare
+ * `<agent-message>`/`<teammate-message>` block, the delivered row wraps it in
+ * this banner plus a trailing instruction paragraph (255/255 paired relays in
+ * the sampled transcripts, 2026-07-25). Stripping the banner lets
+ * `deliveredMetaByContent` pair the two copies by body. */
+const PEER_RELAY_BANNER = "Another Claude session sent a message:\n";
+
+/** The delivered `type:"user"` body a queued copy should be matched against —
+ * identity for every shape except the peer relay, whose delivered row adds
+ * the banner above and a trailing instruction paragraph around the queued
+ * block. */
+function queuePairingKey(text: string): string {
+  if (!text.startsWith(PEER_RELAY_BANNER)) return text;
+  const body = text.slice(PEER_RELAY_BANNER.length);
+  for (const tag of ["</agent-message>", "</teammate-message>"]) {
+    const end = body.lastIndexOf(tag);
+    if (end >= 0) return body.slice(0, end + tag.length);
+  }
+  return body;
+}
+
+/**
+ * Parses a whole transcript window, then drops each `queue-operation` enqueue
+ * turn whose content is also delivered by a later `type:"user"` row.
+ *
+ * A queue-operation row records only `{operation, content, timestamp}` — no
+ * `promptSource`, `origin`, or `isMeta` — so `classifyUserMessage` sees a
+ * bare string and can only fall back to body-prefix matching. That is exactly
+ * how a harness notice with no wrapper ("N background agents were stopped by
+ * the user: ...") reached the green human bubble: the queued copy had nothing
+ * to classify on, while the delivered row right after it carried the decisive
+ * `promptSource:"system"` + `origin:{kind:"task-notification"}` and was
+ * already folded correctly. Rather than grow the prefix catalog (which
+ * guesses at content and mislabels a human who writes the same sentence),
+ * this pass keeps the copy that has the metadata and drops the one that
+ * doesn't — the same "one event, one rendering" rule `ccmsgDedupKey` applies
+ * to doubly-extracted room messages.
+ *
+ * Only the queued copy is dropped, and only when a matching delivered row
+ * actually follows it: a message the user queued and then cancelled (no
+ * delivered row — 3649 of 12425 sampled enqueues, e.g. an interrupt that
+ * popped the queue) is the sole record of that text and stays rendered.
+ */
+export function parseTranscriptLines(raws: string[]): ParsedLine[] {
+  const lines = raws.map((raw) => {
+    let obj: unknown;
+    try {
+      obj = JSON.parse(raw);
+    } catch (e) {
+      return {
+        kind: "broken",
+        raw,
+        error: e instanceof Error ? e.message : "parse error",
+      } as const;
+    }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+      return { kind: "broken", raw, error: "not a JSON object" } as const;
+    }
+    return parseTranscriptObject(obj as Record<string, unknown>, raw);
+  });
+  // Delivered bodies -> their line indices, so a queued copy only cancels
+  // against a delivery that comes *after* it (the queue row is written when
+  // the message arrives, the user row when it is dequeued), and N queued
+  // copies of one text can only cancel N deliveries (a prompt genuinely sent
+  // twice keeps both copies).
+  const delivered = new Map<string, number[]>();
+  lines.forEach((line, index) => {
+    if (line.kind !== "turn" || line.role !== "user" || line.queuedContent !== undefined) return;
+    const text = line.segments
+      .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+      .map((s) => s.text)
+      .join("\n");
+    if (text === "") return;
+    const key = queuePairingKey(text);
+    const indices = delivered.get(key);
+    if (indices) indices.push(index);
+    else delivered.set(key, [index]);
+  });
+  if (delivered.size === 0) return lines as ParsedLine[];
+  const consumed = new Set<number>();
+  return (lines as ParsedLine[]).map((line, index) => {
+    if (line.kind !== "turn" || line.queuedContent === undefined) return line;
+    const indices = delivered.get(line.queuedContent);
+    const match = indices?.find((at) => at > index && !consumed.has(at));
+    if (match === undefined) return line;
+    consumed.add(match);
+    // Demoted rather than removed: the array stays index-aligned with the
+    // caller's `lineByteOffsets` output (Timeline.tsx keys every entry by its
+    // absolute byte offset), and the row lands on the same compact one-line
+    // meta rendering every other queue-operation (`dequeue`, `remove`, ...)
+    // already gets, instead of a second copy of the delivered turn.
+    return {
+      kind: "meta",
+      ts: line.ts,
+      type: "queue-operation",
+      summary: "queue-operation: enqueue",
+      raw: raws[index]!,
+    };
+  });
 }

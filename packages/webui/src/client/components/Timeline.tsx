@@ -30,7 +30,7 @@ import {
   userNavTargets,
   lineByteOffsets,
   parseSystemMessageFields,
-  parseTranscriptLine,
+  parseTranscriptLines,
   resolveToolResults,
   type CcmsgMessage,
   type ParsedLine,
@@ -2286,7 +2286,7 @@ export function Timeline({
   // strings), but memoizing keeps it off the hot path of unrelated re-renders
   // (e.g. sidebar toggles) that don't change `timeline.lines`.
   const parsed = useMemo(
-    () => resolveToolResults(timeline.lines.map(parseTranscriptLine)),
+    () => resolveToolResults(parseTranscriptLines(timeline.lines)),
     [timeline.lines],
   );
   // Absolute byte offsets, one per cached line — stable Preact keys across a
