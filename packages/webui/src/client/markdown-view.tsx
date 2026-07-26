@@ -566,21 +566,32 @@ function protectIntrawordUnderscores(source: string): { source: string; marker?:
   return marker ? { source: chars.join(""), marker } : { source };
 }
 
-// @mizchi/markdown treats bare `<NAME>` as an autolink and drops its brackets.
-// Protect HTML-name-shaped tokens only; `<https://…>` and `<user@example.com>`
-// remain available to the parser as valid CommonMark autolinks.
+// The parser turns a bare `<WORD>` into an autolink and drops its brackets, so
+// prose like `<確認項目>` or `<v0.73.31>` silently became a link (kawaz r55m83).
+// Protect every `<…>` that is NOT a valid CommonMark autolink — those are only
+// `<scheme:rest>` (scheme = letter + [A-Za-z0-9+.-]{1,31}) and `<user@host>`,
+// both of which stay available to the parser. Everything else, including the
+// HTML-name shapes this function originally guarded (`<div>`, `<FILE>`), is
+// stashed behind private-use markers and restored as plain text afterwards.
 function protectTagLikeAngleBrackets(source: string): {
   source: string;
   openMarker?: string;
   closeMarker?: string;
 } {
-  const tagLike = /<(\/?[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[^<>\n]*?)?\/?)>/g;
+  const AUTOLINK_URI = /^[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$/;
+  // CommonMark's email autolink production, trimmed to what it actually needs.
+  const AUTOLINK_EMAIL =
+    /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+  const tagLike = /<([^<>\n]*)>/g;
+  const isAutolink = (content: string): boolean =>
+    AUTOLINK_URI.test(content) || AUTOLINK_EMAIL.test(content);
   if (!tagLike.test(source)) return { source };
   tagLike.lastIndex = 0;
   const openMarker = unusedPrivateUseMarker(source);
   const closeMarker = unusedPrivateUseMarker(source + openMarker);
   return {
-    source: source.replace(tagLike, (_match, content: string) => {
+    source: source.replace(tagLike, (match, content: string) => {
+      if (isAutolink(content)) return match;
       return `${openMarker}${content}${closeMarker}`;
     }),
     openMarker,

@@ -59,7 +59,7 @@ function saveFavorites(root: string, favorites: string[]): void {
  * omitting the button) is intentionally never used — FileTree simply doesn't
  * render the tree at all when favorites are disabled (see its `favorites ===
  * null` check), so every row that mounts always has a real handler. */
-function FavoriteToggle({
+export function FavoriteToggle({
   path,
   favorited,
   onToggle,
@@ -90,7 +90,7 @@ function FavoriteToggle({
  * `null` end-to-end (from FileTree) means favorites are disabled for this
  * session (see FileTree's doc comment on why) and no row renders the
  * button at all. */
-interface FavContext {
+export interface FavContext {
   favorites: Set<string>;
   onToggle: (path: string) => void;
 }
@@ -807,6 +807,7 @@ export function FileTree({
           query={searchQuery}
           workspaceFolders={workspaceFolders}
           externalFiles={externalFiles}
+          fav={fav}
         />
       ) : (
         <>

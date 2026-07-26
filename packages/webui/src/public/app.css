@@ -2573,6 +2573,21 @@ button.session-tab {
 
 .file-search-list > li {
   min-width: min-content;
+  display: flex;
+  align-items: center;
+}
+
+/* お気に入りの星は行末に置くが、パスが長くて横スクロールしている時も
+ * 画面内に留まってほしい (kawaz r55m82) ので右端に sticky で貼る。 */
+.file-search-list > li > .tree-fav-toggle {
+  position: sticky;
+  right: 0;
+  flex: none;
+  background: var(--bg);
+}
+
+.file-search-list > li:hover > .tree-fav-toggle {
+  background: var(--bg-alt);
 }
 
 /* 検索結果行: パス全体を 1 本の文字列で出す (kawaz r55m76 — 同名ファイルが

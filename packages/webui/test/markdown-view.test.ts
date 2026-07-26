@@ -344,6 +344,18 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
       "mailto:user@example.com",
     ]);
   });
+
+  // kawaz r55m83: プレースホルダ風の `<確認項目>` が autolink 化してブラケット
+  // ごと消えていた。ASCII タグ名形状 (`<div>`) だけを守っていた旧実装の穴で、
+  // 非 ASCII やバージョン番号のように「scheme でも email でもない」中身は
+  // すべてテキストのまま出す。
+  test("non-autolink angle brackets stay literal text", () => {
+    for (const src of ["<確認項目>", "<v0.73.31>", "<TODO>", "<日本語 タグ>"]) {
+      const vnode = renderSource(src);
+      expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+      expect(flattenText(vnode)).toContain(src);
+    }
+  });
 });
 
 describe("extractMarkdownHeadings", () => {
