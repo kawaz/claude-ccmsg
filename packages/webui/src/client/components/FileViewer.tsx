@@ -39,7 +39,13 @@ import {
   parseMarkdownDocument,
   type MarkdownTaskListCtx,
 } from "../markdown-view.tsx";
-import { scanTaskStates, taskStatesAlign, toggleTaskLine } from "../markdown-task-list.ts";
+import {
+  anchorTaskLine,
+  scanTaskStates,
+  taskStatesAlign,
+  toggledAnchor,
+  toggleTaskLine,
+} from "../markdown-task-list.ts";
 import {
   highlightRenderedText,
   removeRenderedTextHighlights,
@@ -209,82 +215,145 @@ function InboxNewEditor({
 }
 
 /** Owns the write behind a preview checkbox click (kawaz r55, QUESTIONS.md
- * arbitration UX). Toggling flips the one `[ ]`/`[x]` character on the item's
- * own source line and sends the whole file through the same `fs_edit`
- * optimistic-lock path the textarea editor uses — same authorization surfaces
- * (contained/workspace/external), same `expected_mtime`/`expected_size` taken
- * from the `fs_read` that populated the preview, so a file the AI rewrote
- * since the render is refused with `file_conflict` rather than clobbered.
+ * arbitration UX).
+ *
+ * **The click is applied to the view immediately** and the write happens
+ * behind it (kawaz r55 m90). The earlier design refetched the file on every
+ * successful write, which remounted the preview and threw away the scroll
+ * position — unusable for the actual workflow, which is ticking several boxes
+ * down a long document. Now a toggle patches the cached source in place
+ * (`fs/file-patched`), so the only thing that changes on screen is the one
+ * checkbox; if the write ultimately fails, that one checkbox is put back and
+ * an alert explains why. Checkboxes stay clickable throughout: writes are
+ * serialized through `queueRef` (one `fs_edit` in flight at a time, in click
+ * order) rather than blocked, so a run of quick clicks all land.
+ *
+ * Each queued write resolves its item against a **freshly read** copy of the
+ * file rather than the one the preview was rendered from. The rendered source
+ * only supplies the anchor — the clicked item's own source line
+ * (`anchorTaskLine`) — and the anchor is re-located in the fresh copy by
+ * content (`toggleTaskLine`). That is what lets a click survive the case this
+ * feature keeps hitting in practice: docs/QUESTIONS.md is rewritten by AI
+ * sessions constantly, and under a whole-file lock every such rewrite turned
+ * the user's next click into a conflict — including the reload-and-retry,
+ * which raced the next rewrite. Now only a change to *the clicked item itself*
+ * is a conflict.
+ *
+ * The write still goes through the same `fs_edit` optimistic-lock path the
+ * textarea editor uses (same authorization surfaces, same
+ * `expected_mtime`/`expected_size` contract), with the lock token taken from
+ * the fresh read — so the one thing content-matching cannot see, a write that
+ * lands in the gap between this read and this edit, is still refused by the
+ * daemon instead of clobbering.
+ *
+ * Note the cached `mtime`/`size` are deliberately *not* advanced on success.
+ * The bytes written are the fresh read's, which may carry other edits the
+ * cached view never saw, so the cache is knowingly behind disk — and the
+ * textarea editor's lock must keep reflecting that, or saving from 編集 would
+ * clobber those other edits with a token that falsely claims to be current.
  *
  * Interaction is offered only when `findTaskLines`' scan of the source agrees
  * item-for-item with the parsed tree (`taskStatesAlign`); see
  * markdown-task-list.ts for why the two can disagree and why disagreement
- * must fail closed. `truncated` reads are excluded for the same reason the
- * 編集 button is: the tail isn't in hand, so writing back would truncate the
- * file. */
+ * must fail closed. `truncated` reads are excluded — on the rendered source
+ * for the same reason the 編集 button is (the tail isn't in hand, so writing
+ * back would truncate the file), and re-checked on the fresh read because the
+ * file may have grown past the cap since. */
 function useTaskListToggle({
   sid,
   path,
   kind,
   content,
-  mtime,
-  size,
   enabled,
-  onSaved,
 }: {
   sid: string;
   path: string;
   kind: "contained" | "external" | "workspace";
   content: string;
-  mtime: string;
-  size: number;
   enabled: boolean;
-  onSaved: () => void;
 }): { taskList: MarkdownTaskListCtx | undefined; error: string | null; dismiss: () => void } {
-  const { ws } = useApp();
+  const { store, ws } = useApp();
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
+
+  // The displayed source as of *now*, not as of the last render: two clicks in
+  // one tick must chain, and the second one's anchor has to be taken from the
+  // text the first one already produced.
+  const contentRef = useRef(content);
+  contentRef.current = content;
+
+  // Tail of the write chain. Serializing keeps the reads and writes of two
+  // rapid clicks from interleaving — with `fs_edit` overwriting whole files,
+  // an interleaved pair would have the second write built on a read taken
+  // before the first one landed, silently dropping it.
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
 
   const onToggle = useCallback(
     (ordinal: number, from: boolean, to: boolean) => {
-      if (busyRef.current) return;
-      const edited = toggleTaskLine(content, ordinal, from, to);
-      if (!edited.ok) {
+      const anchor = anchorTaskLine(contentRef.current, ordinal, from);
+      const optimistic = anchor && toggleTaskLine(contentRef.current, anchor, to);
+      if (!anchor || !optimistic || !optimistic.ok) {
         setError("表示中の内容とファイルがずれています。↻ で再読み込みしてください。");
         return;
       }
-      busyRef.current = true;
-      setBusy(true);
+      // Paint the click now; everything below runs behind the updated view.
+      contentRef.current = optimistic.source;
+      store.dispatch({ type: "fs/file-patched", sid, path, content: optimistic.source });
       setError(null);
-      void ws
-        .fsEdit(sid, path, kind, edited.source, mtime, size)
-        .then((res) => {
-          if (res.ok) {
-            onSaved();
-          } else if (res.error.code === "file_conflict") {
-            setError(
-              "他のプロセスがこのファイルを変更しました。↻ で再読み込みしてからやり直してください。",
+
+      // Undo touches only this item, located by what it reads like *after* the
+      // optimistic flip — so a rollback lands correctly even if the user has
+      // toggled other items in the meantime, and never reverts those.
+      const rollback = (msg: string) => {
+        setError(msg);
+        const undone = toggleTaskLine(contentRef.current, toggledAnchor(anchor, to), from);
+        if (!undone.ok) return; // the item moved on; the alert is the only recourse
+        contentRef.current = undone.source;
+        store.dispatch({ type: "fs/file-patched", sid, path, content: undone.source });
+      };
+
+      queueRef.current = queueRef.current
+        .then(async () => {
+          const read = await (kind === "workspace"
+            ? ws.fsReadWorkspace(sid, path)
+            : kind === "external"
+              ? ws.fsReadExternal(sid, path)
+              : ws.fsRead(sid, path));
+          if (!read.ok) {
+            rollback(read.error.msg);
+            return;
+          }
+          if (read.binary || read.truncated) {
+            rollback("ファイルが大きすぎるか、テキストではないため書き込めません。");
+            return;
+          }
+          const edited = toggleTaskLine(read.content, anchor, to);
+          if (!edited.ok) {
+            rollback(
+              edited.reason === "conflict"
+                ? "この項目は他のプロセスが変更しました。↻ で再読み込みしてから確認してください。"
+                : edited.reason === "ambiguous"
+                  ? "同じ内容の項目が複数あり、どれを操作したか特定できません。↻ で再読み込みしてください。"
+                  : "この項目はファイルから削除されたか、書き換えられています。↻ で再読み込みしてください。",
             );
-          } else {
-            setError(res.error.msg);
+            return;
+          }
+          const res = await ws.fsEdit(sid, path, kind, edited.source, read.mtime, read.size);
+          if (!res.ok) {
+            rollback(
+              res.error.code === "file_conflict"
+                ? "他のプロセスがこのファイルを変更しました。↻ で再読み込みしてからやり直してください。"
+                : res.error.msg,
+            );
           }
         })
-        .catch((err) => setError(errorMessage(err)))
-        .finally(() => {
-          busyRef.current = false;
-          setBusy(false);
-        });
+        .catch((err) => rollback(errorMessage(err)));
     },
-    [ws, sid, path, kind, content, mtime, size, onSaved],
+    [store, ws, sid, path, kind],
   );
 
   // Identity is part of MarkdownView's memo key, so it must stay stable
   // across unrelated re-renders or every parent render re-parses the file.
-  const taskList = useMemo(
-    () => (enabled ? { onToggle, busy } : undefined),
-    [enabled, onToggle, busy],
-  );
+  const taskList = useMemo(() => (enabled ? { onToggle } : undefined), [enabled, onToggle]);
   return { taskList, error, dismiss: () => setError(null) };
 }
 
@@ -515,8 +584,6 @@ export function FileViewer({
     if (scanned.length === 0) return false;
     return taskStatesAlign(scanned, extractTaskStates(parseMarkdownDocument(previewSource)));
   }, [previewSource, res?.truncated]);
-  const handleRefetchRef = useRef<() => void>(() => {});
-  const onTaskSaved = useCallback(() => handleRefetchRef.current(), []);
   const taskToggle = useTaskListToggle({
     sid,
     path: path ?? "",
@@ -526,10 +593,7 @@ export function FileViewer({
         ? "external"
         : "contained",
     content: previewSource ?? "",
-    mtime: res?.mtime ?? "",
-    size: res?.size ?? 0,
     enabled: taskListEnabled && path != null,
-    onSaved: onTaskSaved,
   });
 
   useEffect(() => {
@@ -689,11 +753,6 @@ export function FileViewer({
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
       });
   };
-  // A task toggle's post-write refetch reuses the ↻ path, but `handleRefetch`
-  // is redefined every render while the toggle callback must keep a stable
-  // identity (it feeds MarkdownView's memo key) — the ref bridges the two.
-  handleRefetchRef.current = handleRefetch;
-
   const RefetchButton = () =>
     canRefetch ? (
       <button

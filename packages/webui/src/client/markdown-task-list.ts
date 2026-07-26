@@ -9,12 +9,19 @@
  * inside a blockquote come back with `offset: 0`. Both were confirmed against
  * the real parser, so offsets are unusable as write coordinates here.
  *
- * Instead the click carries an **ordinal**: "the Nth task item in this
- * document". `findTaskLines` recomputes that same ordering straight from the
- * source, and `toggleTaskLine` additionally refuses to write unless the line
- * it lands on currently holds the state the UI was displaying — so an
- * ordinal that drifted (renderer and scanner disagreeing about what counts
- * as a task item) fails closed instead of flipping an unrelated line.
+ * So a click is turned into a **content anchor** (`anchorTaskLine`): the full
+ * source text of the clicked item's line, plus the ordinal ("the Nth task
+ * item in this document") it was rendered at. The write then re-locates that
+ * line in a freshly-read source (`resolveTaskLine`) by *content* first and
+ * ordinal only as a tie-breaker, so an unrelated edit elsewhere in the file —
+ * an AI rewriting the paragraph above, which is routine for the arbitration
+ * queue this feature exists to serve — moves the anchored line without
+ * invalidating the click.
+ *
+ * Every way the anchor can fail to name exactly one still-unchanged line
+ * (gone, changed, or several indistinguishable candidates) refuses the write
+ * rather than picking one: writing the wrong line is a silent corruption of
+ * the user's file, and is strictly worse than an error the user can retry.
  */
 
 /** A task-list line: any blockquote prefix (`>` runs, which the parser
@@ -85,42 +92,140 @@ export function taskStatesAlign(scanned: readonly boolean[], parsed: readonly bo
   return scanned.length === parsed.length && scanned.every((v, i) => v === parsed[i]);
 }
 
-export type ToggleTaskResult =
-  | { ok: true; source: string }
-  /** The ordinal names no line, or the line it names is not in the state the
-   * preview was showing — the source moved under the render. */
-  | { ok: false; reason: "stale" };
-
-/**
- * Flip the `ordinal`-th task item to `next`, rewriting only that line's single
- * state character and leaving every other byte — including the rest of the
- * clicked line, and the file's trailing-newline convention — exactly as found.
+/** What the user clicked, in terms that survive edits elsewhere in the file.
  *
- * `expected` is the checked state the preview displayed for that item; a
- * mismatch means the file changed (or the ordinals drifted) since it was
- * rendered, and the write is refused rather than applied to whatever is there
- * now. The daemon's `expected_mtime`/`expected_size` lock catches the same
- * class of race one layer down; this check is what keeps a *self-consistent
- * but differently-parsed* document from being silently mis-edited.
- */
-export function toggleTaskLine(
+ * `line` is the item's entire source line as rendered — it carries both the
+ * item's identity (bullet, indent, text) and the state the preview was
+ * showing, so re-locating it and verifying it is unchanged are the same
+ * comparison. `ordinal` is only kept to break ties between lines that are
+ * textually indistinguishable. */
+export interface TaskAnchor {
+  ordinal: number;
+  line: string;
+}
+
+/** The anchored line with its state character normalized away: what makes two
+ * source lines "the same task item in different states". Re-locating matches
+ * on this, then compares the raw text, so an item whose box was flipped by
+ * someone else is reported as a conflict on *that* item instead of quietly
+ * re-locating onto a different item that happens to read identically. */
+function taskIdentity(line: string): string | null {
+  const m = TASK_LINE_RE.exec(line);
+  if (!m) return null;
+  const head = m[1]!;
+  return head + " " + line.slice(head.length + 1);
+}
+
+/** Capture the clicked item as an anchor, or refuse.
+ *
+ * `expected` is the state the preview displayed. It is checked against the
+ * source line the ordinal lands on: a mismatch means the render and the scan
+ * disagree about the numbering (`taskStatesAlign` should have prevented
+ * interaction entirely), so no anchor is produced. */
+export function anchorTaskLine(
   source: string,
   ordinal: number,
   expected: boolean,
-  next: boolean,
-): ToggleTaskResult {
-  const taskLines = findTaskLines(source);
-  const lineIndex = taskLines[ordinal];
-  if (lineIndex === undefined) return { ok: false, reason: "stale" };
+): TaskAnchor | null {
+  const lineIndex = findTaskLines(source)[ordinal];
+  if (lineIndex === undefined) return null;
+  const line = source.split("\n")[lineIndex]!;
+  const m = TASK_LINE_RE.exec(line);
+  if (!m) return null; // unreachable: findTaskLines used the same test
+  if ((m[2] !== " ") !== expected) return null;
+  return { ordinal, line };
+}
+
+/** The same item's anchor as it reads *after* being toggled to `next` — what
+ * re-anchors an optimistic UI update so it can be undone item-by-item.
+ *
+ * Undoing by restoring a whole-document snapshot would also undo any toggle
+ * the user made in the meantime; anchoring the undo to the one item keeps
+ * concurrent clicks independent. */
+export function toggledAnchor(anchor: TaskAnchor, next: boolean): TaskAnchor {
+  const head = TASK_LINE_RE.exec(anchor.line)![1]!;
+  return {
+    ordinal: anchor.ordinal,
+    line: head + (next ? "x" : " ") + anchor.line.slice(head.length + 1),
+  };
+}
+
+export type ResolveTaskResult =
+  | { ok: true; lineIndex: number }
+  /** No task line in the current source is the anchored item — it was deleted,
+   * or edited beyond recognition. */
+  | { ok: false; reason: "gone" }
+  /** The anchored item is still there but its box no longer holds the state
+   * the preview showed: someone else toggled exactly this item. */
+  | { ok: false; reason: "conflict" }
+  /** Several task lines are indistinguishable from the anchor and the ordinal
+   * does not land on any of them, so which one the user clicked is unknowable.
+   * QUESTIONS.md's `- [ ] a: …` option notation makes duplicates realistic. */
+  | { ok: false; reason: "ambiguous" };
+
+/** Find the anchored item in `source`, which may have been rewritten since the
+ * anchor was taken.
+ *
+ * Matching is by content, not position, so edits to *other* lines — the ones
+ * that make a whole-file lock reject an otherwise-valid click — are simply
+ * invisible here: the anchored line keeps its identity wherever it moved to.
+ * The ordinal is consulted only when content alone leaves a choice.
+ */
+export function resolveTaskLine(source: string, anchor: TaskAnchor): ResolveTaskResult {
+  const identity = taskIdentity(anchor.line);
+  if (identity === null) return { ok: false, reason: "gone" };
 
   const lines = source.split("\n");
-  const line = lines[lineIndex]!;
-  const m = TASK_LINE_RE.exec(line);
-  if (!m) return { ok: false, reason: "stale" }; // unreachable: findTaskLines used the same test
-  const current = m[2] !== " ";
-  if (current !== expected) return { ok: false, reason: "stale" };
+  const taskLines = findTaskLines(source);
+  const matches = taskLines.filter((i) => taskIdentity(lines[i]!) === identity);
+  if (matches.length === 0) return { ok: false, reason: "gone" };
 
-  const head = m[1]!;
-  lines[lineIndex] = head + (next ? "x" : " ") + line.slice(head.length + 1);
+  let lineIndex: number;
+  if (matches.length === 1) {
+    lineIndex = matches[0]!;
+  } else {
+    // Duplicates: the render-time ordinal is the only remaining evidence, and
+    // it is trustworthy only if it still lands on one of the candidates.
+    const atOrdinal = taskLines[anchor.ordinal];
+    if (atOrdinal === undefined || !matches.includes(atOrdinal)) {
+      return { ok: false, reason: "ambiguous" };
+    }
+    lineIndex = atOrdinal;
+  }
+
+  // Identity matched, so this is the user's item; a raw-text mismatch can only
+  // be the state character, i.e. a real concurrent toggle of this very item.
+  if (lines[lineIndex] !== anchor.line) return { ok: false, reason: "conflict" };
+  return { ok: true, lineIndex };
+}
+
+export type ToggleTaskResult =
+  | { ok: true; source: string }
+  | { ok: false; reason: "gone" | "conflict" | "ambiguous" };
+
+/**
+ * Flip the anchored task item to `next`, rewriting only that line's single
+ * state character and leaving every other byte — including the rest of the
+ * anchored line, and the file's trailing-newline convention — exactly as
+ * found.
+ *
+ * `source` is expected to be a *fresh* read rather than the one the preview
+ * was rendered from: that is what lets an unrelated concurrent edit pass
+ * through instead of blocking the user's click. The daemon's
+ * `expected_mtime`/`expected_size` lock, taken from that same fresh read,
+ * remains the backstop for anything that lands between the read and the write.
+ */
+export function toggleTaskLine(
+  source: string,
+  anchor: TaskAnchor,
+  next: boolean,
+): ToggleTaskResult {
+  const found = resolveTaskLine(source, anchor);
+  if (!found.ok) return found;
+
+  const lines = source.split("\n");
+  const line = lines[found.lineIndex]!;
+  const head = TASK_LINE_RE.exec(line)![1]!;
+  lines[found.lineIndex] = head + (next ? "x" : " ") + line.slice(head.length + 1);
   return { ok: true, source: lines.join("\n") };
 }

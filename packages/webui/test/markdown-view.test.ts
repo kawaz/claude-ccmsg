@@ -1184,10 +1184,7 @@ describe("renderMarkdownAst / task lists", () => {
       undefined,
       undefined,
       undefined,
-      {
-        onToggle: (ordinal, from, to) => seen.push([ordinal, from, to]),
-        busy: false,
-      },
+      { onToggle: (ordinal, from, to) => seen.push([ordinal, from, to]) },
     );
     const boxes = checkboxes(vnode);
     expect(boxes).toHaveLength(3);
@@ -1199,18 +1196,22 @@ describe("renderMarkdownAst / task lists", () => {
     ]);
   });
 
-  test("busy disables every checkbox so a second click can't race the write", () => {
+  // Writes are applied optimistically and serialized by the caller, so a run
+  // of quick clicks must all be accepted rather than blocked while one lands.
+  test("checkboxes stay enabled so consecutive clicks all register", () => {
+    const seen: number[] = [];
     const vnode = renderMarkdownAst(
       parseMarkdownDocument(source),
       undefined,
       undefined,
       undefined,
-      {
-        onToggle: () => {},
-        busy: true,
-      },
+      { onToggle: (ordinal) => seen.push(ordinal) },
     );
-    expect(checkboxes(vnode).every((b) => b.props.disabled === true)).toBe(true);
+    const boxes = checkboxes(vnode);
+    expect(boxes.every((b) => b.props.disabled === false)).toBe(true);
+    boxes[0]!.props.onClick?.();
+    boxes[0]!.props.onClick?.();
+    expect(seen).toEqual([0, 0]);
   });
 
   test("extractTaskStates walks the same items in the same order", () => {

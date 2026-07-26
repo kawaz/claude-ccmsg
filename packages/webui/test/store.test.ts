@@ -488,6 +488,89 @@ describe("reducer / fs/file-loading and fs/file-loaded (DR-0008)", () => {
   });
 });
 
+// The preview's task-list toggle writes the flipped source back into the
+// cached response instead of refetching, so the view updates without the
+// loading→loaded cycle that would remount the preview and lose scroll
+// position (kawaz r55 m90).
+describe("reducer / fs/file-patched", () => {
+  const loaded = () =>
+    dispatch(initialState(), {
+      type: "fs/file-loaded",
+      sid: "sess-1",
+      path: "docs/QUESTIONS.md",
+      response: {
+        ok: true,
+        sid: "sess-1",
+        path: "docs/QUESTIONS.md",
+        size: 8,
+        truncated: false,
+        binary: false,
+        content: "- [ ] a\n",
+        mtime: "2026-07-20T00:00:00.000Z",
+      },
+    });
+
+  test("replaces the cached content, keeping status and the rest of the response", () => {
+    const state = dispatch(loaded(), {
+      type: "fs/file-patched",
+      sid: "sess-1",
+      path: "docs/QUESTIONS.md",
+      content: "- [x] a\n",
+    });
+    const file = state.sessionTrees.get("sess-1")?.file;
+    expect(file?.status).toBe("loaded");
+    expect(file?.response?.content).toBe("- [x] a\n");
+    // Lock tokens are deliberately untouched by a token-less patch: the write
+    // was built on a fresh read that may hold edits this cache never saw, so
+    // claiming its mtime would let the textarea editor clobber them.
+    expect(file?.response?.mtime).toBe("2026-07-20T00:00:00.000Z");
+    expect(file?.response?.size).toBe(8);
+  });
+
+  test("advances the lock tokens when the patch carries them", () => {
+    const state = dispatch(loaded(), {
+      type: "fs/file-patched",
+      sid: "sess-1",
+      path: "docs/QUESTIONS.md",
+      content: "- [x] a\n",
+      mtime: "2026-07-21T00:00:00.000Z",
+      size: 9,
+    });
+    const response = state.sessionTrees.get("sess-1")?.file?.response;
+    expect(response?.mtime).toBe("2026-07-21T00:00:00.000Z");
+    expect(response?.size).toBe(9);
+  });
+
+  // A patch that arrives after the user navigated elsewhere must not
+  // resurrect the old file or overwrite the new one's content.
+  test("ignores a patch for a path that is no longer the cached file", () => {
+    const before = loaded();
+    const after = dispatch(before, {
+      type: "fs/file-patched",
+      sid: "sess-1",
+      path: "docs/OTHER.md",
+      content: "clobbered",
+    });
+    expect(after).toBe(before);
+  });
+
+  test("ignores a patch while the file is loading or errored", () => {
+    const loading = dispatch(initialState(), {
+      type: "fs/file-loading",
+      sid: "sess-1",
+      path: "docs/QUESTIONS.md",
+    });
+    expect(
+      dispatch(loading, {
+        type: "fs/file-patched",
+        sid: "sess-1",
+        path: "docs/QUESTIONS.md",
+        content: "- [x] a\n",
+      }),
+    ).toBe(loading);
+  });
+});
+
 describe("reducer / mention/toggle", () => {
   test("toggles an id in and out of mentionTo", () => {
     const added = dispatch(initialState(), { type: "mention/toggle", id: "a1" });

@@ -260,11 +260,10 @@ interface MarkdownRenderCtx {
 /** Wiring for interactive task lists (see `MarkdownRenderCtx.taskList`). */
 export interface MarkdownTaskListCtx {
   /** Invoked with the clicked item's document-order ordinal, the state it was
-   * displaying, and the state the click asks for. */
+   * displaying, and the state the click asks for. The caller applies the
+   * click to the rendered source immediately and writes behind it, so the
+   * checkboxes stay live rather than disabling during a write. */
   onToggle: (ordinal: number, from: boolean, to: boolean) => void;
-  /** Checkboxes render disabled while a write is in flight, so a second click
-   * can't race a pending fs_edit. */
-  busy: boolean;
 }
 
 function renderChildren(
@@ -499,7 +498,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
             // source can't be written back) keep the checkbox as a visual
             // marker only — the parser eats the `[ ]` characters, so
             // rendering nothing would silently drop them from the display.
-            disabled={!taskList || taskList.busy}
+            disabled={!taskList}
             onClick={taskList ? () => taskList.onToggle(ordinal, checked, !checked) : undefined}
           />
           <span class="md-task-body">{children}</span>

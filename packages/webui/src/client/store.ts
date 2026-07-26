@@ -243,6 +243,22 @@ export type Action =
       response?: FsReadResponse;
       error?: string;
     }
+  // In-place content/lock update for a file already "loaded" — the preview
+  // task-list toggle writes the flipped source straight into the cached
+  // response instead of refetching, so the view updates without the
+  // loading→loaded cycle that would remount the preview and lose scroll
+  // position. Ignored unless the cached file is this exact path in "loaded"
+  // state, so a late-arriving patch can't resurrect a navigated-away file.
+  | {
+      type: "fs/file-patched";
+      sid: string;
+      path: string;
+      content: string;
+      /** post-write lock tokens; omitted when the patch is a local rollback
+       * (no write happened, so the tokens on file are still current). */
+      mtime?: string;
+      size?: number;
+    }
   | { type: "timeline/loading"; sid: string }
   | {
       type: "timeline/search-changed";
@@ -695,6 +711,26 @@ export function reducer(state: AppState, action: Action): AppState {
           ? { path: action.path, status: "error", error: action.error }
           : { path: action.path, status: "loaded", response: action.response };
       sessionTrees.set(action.sid, { ...tree, file });
+      return { ...state, sessionTrees };
+    }
+    case "fs/file-patched": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      const current = tree.file;
+      if (!current || current.path !== action.path || current.status !== "loaded") return state;
+      const response = current.response;
+      if (!response) return state; // unreachable: "loaded" always carries a response
+      sessionTrees.set(action.sid, {
+        ...tree,
+        file: {
+          ...current,
+          response: {
+            ...response,
+            content: action.content,
+            ...(action.mtime !== undefined ? { mtime: action.mtime } : {}),
+            ...(action.size !== undefined ? { size: action.size } : {}),
+          },
+        },
+      });
       return { ...state, sessionTrees };
     }
     case "sidebar/set":
