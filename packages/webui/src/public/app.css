@@ -3189,6 +3189,30 @@ button.session-tab {
   padding-bottom: 12rem;
 }
 
+/* raw JSONL 表示モード (r55m68): 各キャッシュ済み行をそのまま等幅表示。
+ * 通常表示 (rich パース結果) と切替可能な toggle で、rich 表示が壊れて
+ * いても元データを確認できるフォールバック用途。 */
+.tl-raw-lines {
+  gap: 0.2rem;
+}
+
+.tl-raw-line {
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--bg-alt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tl-raw-toggle.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
 .tl-line {
   font-size: 0.85rem;
   border-radius: 0.4rem;

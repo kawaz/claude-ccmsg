@@ -2358,6 +2358,15 @@ export function Timeline({
   const [targetAI, setTargetAI] = useState(true);
   const [targetCcmsg, setTargetCcmsg] = useState(true);
 
+  // Raw JSONL view (r55m68 kawaz request): TL の各行は 1 JSONL object に
+  // 対応しているため、パース済み rich 表示の代わりに `timeline.lines` の
+  // 生テキストをそのまま出す toggle。パース側 (rich 表示) が壊れていても
+  // 元データを確認できるフォールバック用途 — SystemMessageBody の rich|raw
+  // タブと同じ思想だが、そちらは 1 行内の segment 単位、こちらは
+  // Timeline 全体をまるごと切り替える単位が違う。TL-local state で十分
+  // (セッション切替や再読込を跨いで持ち回る必要はない、既定は off)。
+  const [rawView, setRawView] = useState(false);
+
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
   // narrowed by kawaz r26 mid=97: tool-use/tool-result/unknown-segment are
@@ -2995,6 +3004,15 @@ export function Timeline({
                   <button type="button" onClick={scrollToBottom} title="最下部へ">
                     ⤓
                   </button>
+                  <button
+                    type="button"
+                    class={rawView ? "tl-raw-toggle active" : "tl-raw-toggle"}
+                    aria-pressed={rawView}
+                    onClick={() => setRawView((v) => !v)}
+                    title="raw JSONL 表示に切り替え"
+                  >
+                    raw
+                  </button>
                 </div>
                 {timeline.status === "error" ? (
                   <div class="tl-error">
@@ -3002,6 +3020,18 @@ export function Timeline({
                     <button type="button" onClick={refresh}>
                       再試行 (tail から読み直す)
                     </button>
+                  </div>
+                ) : rawView ? (
+                  <div class="tl-lines tl-raw-lines">
+                    {timeline.lines.length === 0 ? (
+                      <p class="tl-empty">(空の transcript)</p>
+                    ) : (
+                      timeline.lines.map((raw, i) => (
+                        <pre class="tl-raw-line" key={offsets[i]}>
+                          {raw}
+                        </pre>
+                      ))
+                    )}
                   </div>
                 ) : (
                   <div class="tl-lines">
