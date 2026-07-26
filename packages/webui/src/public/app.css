@@ -3718,6 +3718,25 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
+/* Markdown links pointing at files rather than off-app URLs (kawaz r55
+ * m116/m117). `.md-path-link` opens the FileViewer, so it reads as a normal
+ * in-app link (`.md a` already colors it) and only carries the dotted
+ * underline that distinguishes "opens a file here" from "leaves the app".
+ * `.md-path-link-dead` is the same reference with no file behind it — the
+ * daemon declined it, or hasn't answered yet — kept legible but visibly not
+ * clickable, because navigating it would strand a standalone PWA user. */
+.md-path-link {
+  text-decoration-style: dotted;
+  text-underline-offset: 0.15em;
+}
+
+.md-path-link-dead {
+  color: var(--fg-muted);
+  text-decoration: underline dotted var(--fg-muted);
+  text-underline-offset: 0.15em;
+  cursor: default;
+}
+
 .md-inline-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;

@@ -30,15 +30,23 @@ import {
   extractInlineCodeTokens,
   hrefFromStatEntry,
   parseFilePathRef,
+  refLinkCandidates,
   refToAbsolutePath,
   type FilePathResolveCtx,
+  type ParsedFilePathRef,
 } from "./filepath-ref.ts";
+import { classifyMarkdownLinkUrl, extractMarkdownLinkUrls } from "./markdown-link.ts";
 import {
   enqueueFilePathProbe,
   getFilePathStatus,
   subscribeFilePathCache,
 } from "./filepath-existence-cache.ts";
-import { MarkdownView, type FilePathLinker } from "./markdown-view.tsx";
+import {
+  attachmentUrlFromPath,
+  MarkdownView,
+  type FilePathLinker,
+  type MarkdownPathLinker,
+} from "./markdown-view.tsx";
 import type { SearchWord } from "./in-view-search.ts";
 
 /** Build the per-message linker MarkdownView calls on every inline-code
@@ -58,6 +66,59 @@ export function makeFilePathLinker(
     if (!status || status === "pending") return null;
     return hrefFromStatEntry(ctx.sid, status, ref);
   };
+}
+
+/** Build the resolver MarkdownView calls for every markdown *link* whose
+ * target is a filesystem path (kawaz r55 m116/m117).
+ *
+ * Structurally identical to `makeFilePathLinker` — same `refToAbsolutePath` →
+ * `fs_stat_batch` cache → `hrefFromStatEntry` pipeline, same "pending and
+ * declined are indistinguishable" contract — differing only in that the ref
+ * arrives already parsed (markdown link syntax declared the intent, so no
+ * token-shape guess is needed) and in what `null` costs: an unresolved inline
+ * code token merely stays `<code>`, whereas an unresolved link **must** stay
+ * unlinked, since the alternative is navigating the webui origin. */
+export function makeMarkdownPathLinker(
+  ctx: FilePathResolveCtx | undefined,
+  // oxlint-disable-next-line no-unused-vars -- `_cacheTick` forces closure identity to change on cache updates so MarkdownView's useMemo re-runs
+  _cacheTick: number,
+): MarkdownPathLinker | undefined {
+  if (!ctx) return undefined;
+  return (ref: ParsedFilePathRef) => {
+    // First *confirmed* candidate wins; a pending or declined one falls
+    // through to the next reading rather than settling the link.
+    for (const abs of refLinkCandidates(ref, ctx)) {
+      const status = getFilePathStatus(ctx.sid, abs);
+      if (!status || status === "pending") continue;
+      return hrefFromStatEntry(ctx.sid, status, ref);
+    }
+    return null;
+  };
+}
+
+/** Enqueue every markdown link target that resolves to an absolute path.
+ * Split from `useFilePathProbeEnqueue` rather than folded into it because the
+ * two extractors answer different questions about the same source (which
+ * inline-code tokens *look* like paths vs. which link targets *are* declared
+ * as paths) and callers enable them independently — the file preview probes
+ * links but has no sender to attribute inline code to. */
+export function useMarkdownLinkProbeEnqueue(
+  source: string | undefined,
+  ctx: FilePathResolveCtx | undefined,
+): void {
+  useEffect(() => {
+    if (!ctx || !source) return;
+    for (const url of extractMarkdownLinkUrls(source)) {
+      // Same classifier the renderer runs, so the set of URLs probed here and
+      // the set that will ask the cache for an href cannot drift apart.
+      // Attachment targets are excluded because the renderer rewrites them to
+      // a daemon HTTP endpoint before classification ever runs.
+      if (attachmentUrlFromPath(url)) continue;
+      const target = classifyMarkdownLinkUrl(url);
+      if (target.kind !== "path") continue;
+      for (const abs of refLinkCandidates(target.ref, ctx)) enqueueFilePathProbe(ctx.sid, abs);
+    }
+  }, [source, ctx?.sid, ctx?.cwd, ctx?.repoRoot, ctx?.docRoot]);
 }
 
 /** Enqueue every candidate absolute path from a message body into the
@@ -119,18 +180,20 @@ export function LinkedMarkdownView({
    * order is stable regardless of the flag. */
   restricted?: boolean;
 }) {
-  useFilePathProbeEnqueue(
-    restricted ? undefined : probeSource === undefined ? source : probeSource,
-    restricted ? undefined : ctx,
-  );
+  const probeTarget = restricted ? undefined : probeSource === undefined ? source : probeSource;
+  const probeCtx = restricted ? undefined : ctx;
+  useFilePathProbeEnqueue(probeTarget, probeCtx);
+  useMarkdownLinkProbeEnqueue(probeTarget, probeCtx);
   const cacheTick = useFilePathCacheTick();
   const linker = restricted ? undefined : makeFilePathLinker(ctx, cacheTick);
+  const pathLinker = restricted ? undefined : makeMarkdownPathLinker(ctx, cacheTick);
   return (
     <MarkdownView
       source={source}
       highlightWords={highlightWords}
       onMatchClick={onMatchClick}
       filePathLinker={linker}
+      pathLinker={pathLinker}
       restricted={restricted}
     />
   );

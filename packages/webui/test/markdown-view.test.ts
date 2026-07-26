@@ -1179,13 +1179,9 @@ describe("renderMarkdownAst / task lists", () => {
   // nested inside it.
   test("clicking reports the item's document-order ordinal and its states", () => {
     const seen: [number, boolean, boolean][] = [];
-    const vnode = renderMarkdownAst(
-      parseMarkdownDocument(source),
-      undefined,
-      undefined,
-      undefined,
-      { onToggle: (ordinal, from, to) => seen.push([ordinal, from, to]) },
-    );
+    const vnode = renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
+      taskList: { onToggle: (ordinal, from, to) => seen.push([ordinal, from, to]) },
+    });
     const boxes = checkboxes(vnode);
     expect(boxes).toHaveLength(3);
     for (const box of boxes) box.props.onClick?.();
@@ -1200,13 +1196,9 @@ describe("renderMarkdownAst / task lists", () => {
   // of quick clicks must all be accepted rather than blocked while one lands.
   test("checkboxes stay enabled so consecutive clicks all register", () => {
     const seen: number[] = [];
-    const vnode = renderMarkdownAst(
-      parseMarkdownDocument(source),
-      undefined,
-      undefined,
-      undefined,
-      { onToggle: (ordinal) => seen.push(ordinal) },
-    );
+    const vnode = renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
+      taskList: { onToggle: (ordinal) => seen.push(ordinal) },
+    });
     const boxes = checkboxes(vnode);
     expect(boxes.every((b) => b.props.disabled === false)).toBe(true);
     boxes[0]!.props.onClick?.();
@@ -1216,5 +1208,149 @@ describe("renderMarkdownAst / task lists", () => {
 
   test("extractTaskStates walks the same items in the same order", () => {
     expect(extractTaskStates(parseMarkdownDocument(source))).toEqual([false, true, false]);
+  });
+});
+
+// Renderer half of the link classification (kawaz r55 m116/m117). The pure
+// URL decisions live in markdown-link.test.ts; what is pinned here is the
+// *output shape* each decision produces — specifically that a path target
+// never becomes an `<a href>` unless a resolver confirmed it, since an
+// origin-relative href is the dead end this work exists to remove.
+describe("renderMarkdownAst / markdown links to files", () => {
+  function linkRoot(url: string, text = "click"): Root {
+    return {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "link", url, children: [{ type: "text", value: text }] }],
+        },
+      ],
+    };
+  }
+
+  const anchors = (v: VNode): VNode[] => collect(v, (n) => n.type === "a");
+  const hrefOf = (n: VNode): string | undefined => (n.props as { href?: string }).href;
+
+  test("a relative path with no resolver renders inert — no href at all", () => {
+    const vnode = renderMarkdownAst(linkRoot("fixtures/seq-parse/literal.json"));
+    expect(anchors(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toContain("click");
+  });
+
+  test("an absolute path with no resolver renders inert too", () => {
+    const vnode = renderMarkdownAst(linkRoot("/fixtures/seq-parse/literal.json"));
+    expect(anchors(vnode)).toHaveLength(0);
+  });
+
+  // "Resolver present but still waiting on the daemon" is reported as null,
+  // identically to "declined" — and both must fail closed. This is the case a
+  // naive implementation gets wrong, because the link *looks* resolvable.
+  test("a resolver returning null (pending or declined) still renders inert", () => {
+    const vnode = renderMarkdownAst(linkRoot("docs/spec.md"), undefined, undefined, {
+      pathLinker: () => null,
+    });
+    expect(anchors(vnode)).toHaveLength(0);
+  });
+
+  test("a confirmed path links to the resolver's href and stays in-app", () => {
+    const vnode = renderMarkdownAst(linkRoot("docs/spec.md"), undefined, undefined, {
+      pathLinker: () => "#sSID:docs%2Fspec.md",
+    });
+    const a = anchors(vnode);
+    expect(a).toHaveLength(1);
+    expect(hrefOf(a[0]!)).toBe("#sSID:docs%2Fspec.md");
+    // target="_blank" would leave a standalone PWA with no way back, and the
+    // destination is this same app anyway.
+    expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+  });
+
+  test("the parsed ref reaches the resolver, line fragment included", () => {
+    const seen: unknown[] = [];
+    renderMarkdownAst(linkRoot("src/a.ts#L10-L20"), undefined, undefined, {
+      pathLinker: (ref) => {
+        seen.push(ref);
+        return null;
+      },
+    });
+    expect(seen).toEqual([{ path: "src/a.ts", line: 10, end: 20 }]);
+  });
+
+  test("external URLs are untouched — still a new-tab link", () => {
+    const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
+    const a = anchors(vnode);
+    expect(a).toHaveLength(1);
+    expect(hrefOf(a[0]!)).toBe("https://example.com/x");
+    expect((a[0]!.props as { target?: string }).target).toBe("_blank");
+    expect((a[0]!.props as { rel?: string }).rel).toBe("noopener noreferrer");
+  });
+
+  test("in-page anchors stay same-window links", () => {
+    const vnode = renderMarkdownAst(linkRoot("#md-section-2"));
+    const a = anchors(vnode);
+    expect(a).toHaveLength(1);
+    expect(hrefOf(a[0]!)).toBe("#md-section-2");
+    expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+  });
+
+  test("a resolver is never consulted for a hostile scheme", () => {
+    let called = false;
+    const vnode = renderMarkdownAst(linkRoot("javascript:alert(1)"), undefined, undefined, {
+      pathLinker: () => {
+        called = true;
+        return "#anything";
+      },
+    });
+    expect(called).toBe(false);
+    expect(anchors(vnode)).toHaveLength(0);
+  });
+
+  // Images take the same four-way decision; DR-0010's "never auto-fetch"
+  // rule still holds, so a resolved image is a link, never an <img src>.
+  test("an image with a path target renders as a link, not an auto-fetched <img>", () => {
+    const root: Root = {
+      type: "root",
+      children: [
+        { type: "paragraph", children: [{ type: "image", url: "assets/d.png", alt: "diagram" }] },
+      ],
+    };
+    const unresolved = renderMarkdownAst(root);
+    expect(anchors(unresolved)).toHaveLength(0);
+    expect(collect(unresolved, (n) => n.type === "img")).toHaveLength(0);
+
+    const resolved = renderMarkdownAst(root, undefined, undefined, {
+      pathLinker: () => "#sSID:assets%2Fd.png",
+    });
+    const a = anchors(resolved);
+    expect(a).toHaveLength(1);
+    expect(hrefOf(a[0]!)).toBe("#sSID:assets%2Fd.png");
+    expect(collect(resolved, (n) => n.type === "img")).toHaveLength(0);
+  });
+
+  // Attachment links (DR-0015 §2.6) are rewritten to a daemon HTTP endpoint
+  // before classification runs, so they must not be swept into the path case.
+  test("attachment links keep their daemon endpoint rewrite", () => {
+    const vnode = renderMarkdownAst(linkRoot("/tmp/claude-ccmsg-501/attachment/x.pdf", "FILE1:x"));
+    const a = anchors(vnode);
+    expect(a).toHaveLength(1);
+    expect(hrefOf(a[0]!)).toBe("/attachment/x.pdf");
+  });
+});
+
+// Restricted mode (user-authored messages) has no session-scoped resolver, so
+// every path target is inert there. Pinned separately because restricted mode
+// runs its own tokenizer, not the mdast walk.
+describe("renderRestrictedMarkdown / link targets", () => {
+  test("a path-shaped target does not become an origin-relative link", () => {
+    const vnode = renderRestrictedMarkdown("see [notes](docs/notes.md)");
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toContain("notes");
+  });
+
+  test("an external URL still links", () => {
+    const vnode = renderRestrictedMarkdown("see [site](https://example.com)");
+    const a = collect(vnode, (n) => n.type === "a");
+    expect(a).toHaveLength(1);
+    expect((a[0]!.props as { href?: string }).href).toBe("https://example.com");
   });
 });

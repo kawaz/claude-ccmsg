@@ -33,6 +33,13 @@ import type {
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
+import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
+import type { ParsedFilePathRef } from "./filepath-ref.ts";
+
+// `isSafeUrl` moved to markdown-link.ts (scheme policy and path policy are two
+// answers to the same question); re-exported here so existing importers and
+// DR-0010's named coverage target keep resolving through this module.
+export { isSafeUrl };
 /** A callback that MarkdownView invokes on every inline-code token to decide
  * whether it should render as a FileViewer link. Returns the href when the
  * token names a real, daemon-confirmed file for the sender's session, or
@@ -43,12 +50,18 @@ import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
  * the renderer's viewpoint (both produce plain code). */
 export type FilePathLinker = (token: string) => string | null;
 
-// URL scheme allowlist for link/image targets (DR-0010): http/https/mailto,
-// plus scheme-less URLs (relative paths, `#fragment`s) which CommonMark
-// treats as valid link targets and carry no execution risk. Everything else
-// (`javascript:`, `data:`, `vbscript:`, ...) is rejected — the caller must
-// render the link's text without an `href` rather than trust the URL.
-const ALLOWED_URL_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+/** A callback that MarkdownView invokes on every markdown *link* whose target
+ * is a filesystem path rather than an off-app URL (kawaz r55 m116/m117).
+ * Returns the FileViewer href when the daemon confirmed a real file for the
+ * relevant session, or `null` otherwise.
+ *
+ * `null` deliberately covers three states the renderer treats identically —
+ * "not asked yet", "answer still in flight", and "daemon declined" — and in
+ * every one of them the link renders **without an `href`**. That is the whole
+ * point of the classification: a path-shaped target that navigates the webui
+ * origin strands a standalone PWA user with no way back, so not-yet-resolved
+ * must fail closed, not fall through to a plain `<a>`. */
+export type MarkdownPathLinker = (ref: ParsedFilePathRef) => string | null;
 
 // DR-0015 §2.6 attachment image extensions. Kept as a set (not re-derived
 // from the daemon's MIME table) so this file stays browser-only and doesn't
@@ -95,30 +108,6 @@ export function attachmentUrlFromPath(url: string): { url: string; isImage: bool
     url: `/attachment/${basename}`,
     isImage: ATTACHMENT_IMAGE_EXTENSIONS.has(ext),
   };
-}
-
-/**
- * True if `url` is safe to place in an `href`/`src`. Exported for unit
- * testing (DR-0010's required-coverage list: "javascript: リンクが無害化される").
- *
- * Strips ASCII control characters (incl. space/tab/newline) before scanning
- * for a scheme, matching how browsers' URL parsers skip them when
- * determining a URL's scheme — a naive regex that didn't strip them first
- * could be fooled by a scheme split across a stripped character (e.g.
- * `"java\tscript:alert(1)"`) into misreading it as scheme-less (= trusted).
- * A leading `//` (protocol-relative) is rejected outright: it has no
- * explicit scheme to allowlist-check, but inherits the *page's* scheme at
- * render time, so it isn't "scheme-less" in the safe sense a relative path is.
- */
-export function isSafeUrl(url: string): boolean {
-  // Intentional control-character match: stripping them is the
-  // scheme-split evasion defense described above, not an accidental match.
-  // oxlint-disable-next-line no-control-regex
-  const stripped = url.replace(/[\u0000-\u0020]+/g, "");
-  if (stripped.startsWith("//")) return false;
-  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(stripped);
-  if (!m) return true; // no scheme = relative path / fragment, safe
-  return ALLOWED_URL_SCHEMES.has(m[1]!.toLowerCase() + ":");
 }
 
 /** Synthetic node the `<details>` fold (see `foldDetailsBlocks`) inserts into
@@ -246,6 +235,11 @@ interface MarkdownRenderCtx {
    * filepath-existence-cache). `undefined` = plain rendering, matching the
    * pre-DR baseline byte-for-byte. */
   filePathLinker?: FilePathLinker;
+  /** kawaz r55 m116/m117: resolver for markdown links whose target is a
+   * filesystem path (`[x](fixtures/a.json)`, `[x](/docs/spec.md)`). When
+   * absent, such links render as inert text — never as an `<a href>` to the
+   * webui origin, which is the dead end this whole path exists to prevent. */
+  pathLinker?: MarkdownPathLinker;
   /** Interactive GFM task lists. When set, every task item renders as a real
    * `<input type="checkbox">` whose click reports the item's document-order
    * ordinal back to the caller, which owns the file write. Absent (every
@@ -419,21 +413,53 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
           </a>
         );
       }
-      if (!isSafeUrl(link.url)) {
-        // Disarmed: render the link's own text with no <a>/href at all so a
-        // hostile URL scheme can never reach the DOM, while the human-visible
-        // content (the link text) is still shown rather than dropped.
-        return <span key={key}>{renderChildren(link.children, key, ctx)}</span>;
+      // kawaz r55 m116/m117. Four outcomes, see `classifyMarkdownLinkUrl`.
+      const target = classifyMarkdownLinkUrl(link.url);
+      const label = renderChildren(link.children, key, ctx);
+      if (target.kind === "disarm") {
+        // Render the link's own text with no <a>/href at all, so neither a
+        // hostile URL scheme nor an unopenable path target can reach the DOM,
+        // while the human-visible content is still shown rather than dropped.
+        return <span key={key}>{label}</span>;
+      }
+      if (target.kind === "path") {
+        // A repo-relative / absolute path the author meant as a file. Only
+        // links once the daemon has confirmed it — until then (and forever, if
+        // it declines) the text renders inert rather than navigating the webui
+        // origin, which in a standalone PWA is unrecoverable.
+        const href = ctx.pathLinker ? ctx.pathLinker(target.ref) : null;
+        if (!href) {
+          return (
+            <span key={key} class="md-path-link-dead" title={link.url}>
+              {label}
+            </span>
+          );
+        }
+        // No `target="_blank"`: FileViewer is a view of *this* app, and in a
+        // standalone PWA `_blank` is not a new tab anyway — it replaces the
+        // current view with no way back.
+        return (
+          <a key={key} class="md-path-link" href={href} title={link.url}>
+            {label}
+          </a>
+        );
+      }
+      if (target.kind === "anchor") {
+        return (
+          <a key={key} href={target.url} title={link.title ?? undefined}>
+            {label}
+          </a>
+        );
       }
       return (
         <a
           key={key}
-          href={link.url}
+          href={target.url}
           title={link.title ?? undefined}
           target="_blank"
           rel="noopener noreferrer"
         >
-          {renderChildren(link.children, key, ctx)}
+          {label}
         </a>
       );
     }
@@ -446,14 +472,40 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // instead as alt text plus a clickable link the user opts into.
       const image = node as Image;
       const label = image.alt || image.url;
-      if (!isSafeUrl(image.url)) {
+      const target = classifyMarkdownLinkUrl(image.url);
+      if (target.kind === "disarm") {
         return <span key={key}>🖼 {label}</span>;
+      }
+      if (target.kind === "path") {
+        // `![alt](docs/diagram.png)` names a file in the tree. Same rule as
+        // the link case — open it in FileViewer (which renders images) rather
+        // than as an origin-relative <a> that leads nowhere.
+        const href = ctx.pathLinker ? ctx.pathLinker(target.ref) : null;
+        if (!href) {
+          return (
+            <span key={key} class="md-path-link-dead" title={image.url}>
+              🖼 {label}
+            </span>
+          );
+        }
+        return (
+          <a key={key} class="md-image-link md-path-link" href={href} title={image.url}>
+            🖼 {label}
+          </a>
+        );
+      }
+      if (target.kind === "anchor") {
+        return (
+          <a key={key} class="md-image-link" href={target.url}>
+            🖼 {label}
+          </a>
+        );
       }
       return (
         <a
           key={key}
           class="md-image-link"
-          href={image.url}
+          href={target.url}
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -1101,13 +1153,34 @@ function renderRestrictedLink(label: string, url: string, key: string): VNode {
       </a>
     );
   }
-  if (!isSafeUrl(url)) {
-    // Same disarm as the full renderer: drop the `<a>` entirely but keep
-    // the label visible so the reader isn't silently robbed of the text.
+  const target = classifyMarkdownLinkUrl(url);
+  // Restricted mode has no `pathLinker` (a user-typed path isn't a
+  // session-scoped reference — same reasoning that keeps `filePathLinker` off
+  // this path), so a path target renders inert rather than navigating the
+  // webui origin. Disarm and path collapse to the same output here.
+  if (target.kind === "path") {
+    return (
+      <span key={key} class="md-path-link-dead">
+        {label || url}
+      </span>
+    );
+  }
+  if (target.kind === "disarm") {
+    // Drop the `<a>` entirely but keep the label visible so the reader isn't
+    // silently robbed of the text. The URL itself is deliberately not shown
+    // as a fallback the way a path target's is — a rejected scheme is exactly
+    // the string we don't want to surface.
     return <span key={key}>{label}</span>;
   }
+  if (target.kind === "anchor") {
+    return (
+      <a key={key} href={target.url}>
+        {label || url}
+      </a>
+    );
+  }
   return (
-    <a key={key} href={url} target="_blank" rel="noopener noreferrer">
+    <a key={key} href={target.url} target="_blank" rel="noopener noreferrer">
       {label || url}
     </a>
   );
@@ -1120,15 +1193,23 @@ export function renderMarkdownAst(
   root: Root,
   search?: MarkdownSearchCtx,
   headings?: readonly MarkdownHeading[],
-  filePathLinker?: FilePathLinker,
-  taskList?: MarkdownTaskListCtx,
+  /** Everything past `headings` is named rather than positional: the tail had
+   * grown to four independent optionals, so call sites needing only the last
+   * one were writing `undefined, undefined, undefined` and a mis-ordered
+   * argument would have type-checked between the two linkers. */
+  opts?: {
+    filePathLinker?: FilePathLinker;
+    pathLinker?: MarkdownPathLinker;
+    taskList?: MarkdownTaskListCtx;
+  },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
     search,
     headings,
     headingIndex: 0,
-    filePathLinker,
-    taskList,
+    filePathLinker: opts?.filePathLinker,
+    pathLinker: opts?.pathLinker,
+    taskList: opts?.taskList,
     taskIndex: 0,
   };
   return <div class="md">{renderChildren(root.children, "md", ctx)}</div>;
@@ -1152,6 +1233,7 @@ export function MarkdownView({
   onMatchClick,
   tableOfContents = false,
   filePathLinker,
+  pathLinker,
   restricted = false,
   taskList,
 }: {
@@ -1165,6 +1247,10 @@ export function MarkdownView({
    * InlineFileViewer reads a file rendered inline — the file being viewed
    * *is* the target, there's no separate author to link out from). */
   filePathLinker?: FilePathLinker;
+  /** kawaz r55 m116/m117: resolver for markdown links/images whose target is a
+   * filesystem path. Omit and such links render inert — which is the safe
+   * default, not a degraded one (see `MarkdownPathLinker`). */
+  pathLinker?: MarkdownPathLinker;
   /** kawaz r55 m12: user-authored message rendering. In restricted mode,
    * only inline code / fenced code blocks / blockquotes render as markdown;
    * everything else (headings, lists, tables, emphasis, links, HTML) is
@@ -1186,13 +1272,11 @@ export function MarkdownView({
     if (restricted) return renderRestrictedMarkdown(source);
     const root = parseMarkdownDocument(source);
     const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
-    const markdown = renderMarkdownAst(
-      root,
-      search,
-      tableOfContents ? headings : undefined,
+    const markdown = renderMarkdownAst(root, search, tableOfContents ? headings : undefined, {
       filePathLinker,
+      pathLinker,
       taskList,
-    );
+    });
     if (headings.length <= 1) return markdown;
 
     return (
@@ -1229,5 +1313,14 @@ export function MarkdownView({
         {markdown}
       </div>
     );
-  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker, restricted, taskList]);
+  }, [
+    source,
+    highlightWords,
+    onMatchClick,
+    tableOfContents,
+    filePathLinker,
+    pathLinker,
+    restricted,
+    taskList,
+  ]);
 }

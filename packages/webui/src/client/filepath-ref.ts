@@ -137,6 +137,11 @@ export interface FilePathResolveCtx {
   /** Absolute cwd of the sender at the time the message was sent. The anchor
    * every relative token resolves against — see `refToAbsolutePath`. */
   cwd?: string;
+  /** Root a markdown link's leading `/` is read against (`refLinkCandidates`).
+   * Set only where a document's own conventions apply — the file preview,
+   * where it is the session's containment root. Absent for message bodies,
+   * whose paths are process-relative, not document-relative. */
+  docRoot?: string;
   /** Absolute repo containment root, when the session announced one and the
    * daemon accepted it. Only a fallback anchor for senders that announced no
    * cwd; the daemon owns the containment semantics and returns the
@@ -200,6 +205,82 @@ export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCt
   const abs = normalizePosix(anchorTrim + "/" + ref.path);
   if (abs === anchorTrim) return null; // resolves to a directory (anchor itself)
   return abs;
+}
+
+/** Absolute candidates to probe for a **markdown link** target, in preference
+ * order (kawaz r55 m116/m117).
+ *
+ * A relative target has exactly one reading (anchored at `ctx.cwd`, same as
+ * `refToAbsolutePath`). A target with a leading `/` has two, and which one an
+ * author meant depends on where they were writing:
+ *
+ *   1. Filesystem-absolute — `/etc/hosts`, `/Users/x/notes.md`.
+ *   2. Repo-root-relative — `/fixtures/a.json` written inside a repo document,
+ *      the convention most documentation tooling uses and the shape that
+ *      prompted this work.
+ *
+ * Both are probed and the first *confirmed* one wins. Ordering filesystem
+ * first keeps a genuinely absolute path resolving to itself; the repo-root
+ * reading is what a leading `/` almost always means in practice, but only
+ * where the first reading found nothing, so it can never shadow a real file.
+ *
+ * This is not the ambiguity `refToAbsolutePath` refuses to guess at. There the
+ * two candidates were sibling *worktrees* with identical tree shapes, so a
+ * fallback hit was likely to be a different same-named file. Here the two
+ * candidates live in unrelated parts of the filesystem and a hit on either is
+ * the file the author named. */
+export function refLinkCandidates(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string[] {
+  if (!ref.path.startsWith("/")) {
+    const abs = refToAbsolutePath(ref, ctx);
+    return abs ? [abs] : [];
+  }
+  const candidates = [normalizePosix(ref.path)];
+  const root = ctx.docRoot?.replace(/\/+$/, "");
+  if (root) {
+    const rebased = normalizePosix(root + ref.path);
+    if (rebased !== candidates[0] && rebased !== root) candidates.push(rebased);
+  }
+  return candidates;
+}
+
+/** Resolve context for the **file preview** (kawaz r55 m116/m117), where a
+ * relative markdown link anchors at the directory holding the previewed file
+ * rather than at the session's cwd.
+ *
+ * That difference is the markdown convention, not a preference: a link written
+ * inside `docs/design/QUESTIONS.md` as `[x](notes.md)` means
+ * `docs/design/notes.md` — the same text is expected to resolve identically
+ * whether the file is read on GitHub, in an editor, or here. A message body is
+ * the opposite case: nothing "holds" it, and a process citing a path writes it
+ * relative to the directory it is running in, so those anchor at cwd (see
+ * `refToAbsolutePath`).
+ *
+ * `viewerPath` is the FileViewer's own path — root-relative for contained
+ * files, absolute for external/workspace ones — so the containment root is
+ * needed only for the former. `sessionRoot` must be what the daemon uses for
+ * containment (`repo_root ?? cwd`, see fs-access `resolveRoot`); anything else
+ * would compute an anchor for a tree the daemon will not serve from.
+ *
+ * Returns `undefined` when no absolute anchor can be formed, which the caller
+ * passes straight through as "no linking" — the fail-closed direction. */
+export function previewFilePathCtx(
+  sid: string,
+  viewerPath: string,
+  sessionRoot: string | undefined,
+): FilePathResolveCtx | undefined {
+  const abs = viewerPath.startsWith("/")
+    ? viewerPath
+    : sessionRoot
+      ? normalizePosix(sessionRoot.replace(/\/+$/, "") + "/" + viewerPath)
+      : null;
+  if (!abs) return undefined;
+  const lastSlash = abs.lastIndexOf("/");
+  // `lastSlash === 0` is a file directly under `/`, whose directory is `/`.
+  const dir = lastSlash <= 0 ? "/" : abs.slice(0, lastSlash);
+  // `docRoot` gives a leading `/` its documentation reading (repo-root
+  // relative); it is only meaningful for a contained file, where the session
+  // root is the tree the document belongs to.
+  return { sid, cwd: dir, ...(sessionRoot ? { docRoot: sessionRoot.replace(/\/+$/, "") } : {}) };
 }
 
 /** Build a `fileHref` URL from a daemon-confirmed stat entry + the parsed

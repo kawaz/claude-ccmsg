@@ -133,6 +133,7 @@ export function FilesPanes({
         <FileViewer
           sid={sid}
           tree={tree}
+          peer={peer}
           workspaceFolders={workspaceFolders}
           memoEditorOpen={memoEditorOpen}
           onMemoCancel={() => setMemoEditorOpen(false)}

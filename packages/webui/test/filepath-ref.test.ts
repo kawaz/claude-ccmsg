@@ -12,6 +12,8 @@ import {
   refToAbsolutePath,
   hrefFromStatEntry,
   extractInlineCodeTokens,
+  previewFilePathCtx,
+  refLinkCandidates,
 } from "../src/client/filepath-ref.ts";
 import { fileHref } from "../src/client/locator.ts";
 
@@ -211,5 +213,96 @@ describe("extractInlineCodeTokens", () => {
   test("skips tilde-fenced blocks too", () => {
     const src = ["`kept.ts`", "~~~", "`inside.ts`", "~~~", "`kept2.ts`"].join("\n");
     expect(extractInlineCodeTokens(src)).toEqual(["kept.ts", "kept2.ts"]);
+  });
+});
+
+// Preview-side resolve anchor (kawaz r55 m116/m117). A relative markdown link
+// inside a previewed file anchors at *that file's* directory, not the session
+// cwd — the markdown convention, so the same link text resolves the same way
+// here as it does on GitHub or in an editor. Message bodies keep the cwd
+// anchor (`refToAbsolutePath` above); these two are deliberately different and
+// the difference is what these tests hold in place.
+describe("previewFilePathCtx", () => {
+  const ROOT = "/repo/main";
+
+  test("a contained path anchors at the previewed file's own directory", () => {
+    expect(previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)).toEqual({
+      sid: "S1",
+      cwd: "/repo/main/docs/design",
+      docRoot: "/repo/main",
+    });
+  });
+
+  test("a sibling link resolves next to the file, not next to the repo root", () => {
+    const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)!;
+    expect(refToAbsolutePath({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
+    expect(refToAbsolutePath({ path: "../spec.md" }, ctx)).toBe("/repo/main/docs/spec.md");
+  });
+
+  // An absolute link means the same thing under either anchor, so it must not
+  // be rebased onto the file's directory.
+  test("an absolute link target ignores the anchor", () => {
+    const ctx = previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)!;
+    expect(refToAbsolutePath({ path: "/etc/hosts" }, ctx)).toBe("/etc/hosts");
+  });
+
+  test("a file at the root anchors at the root itself", () => {
+    expect(previewFilePathCtx("S1", "README.md", ROOT)).toEqual({
+      sid: "S1",
+      cwd: "/repo/main",
+      docRoot: "/repo/main",
+    });
+  });
+
+  // External / workspace files reach the viewer as absolute paths, where the
+  // session root plays no part.
+  test("an absolute viewer path anchors without needing the session root", () => {
+    expect(previewFilePathCtx("S1", "/other/place/doc.md", undefined)).toEqual({
+      sid: "S1",
+      cwd: "/other/place",
+    });
+  });
+
+  test("a file directly under / anchors at /", () => {
+    expect(previewFilePathCtx("S1", "/doc.md", undefined)).toEqual({ sid: "S1", cwd: "/" });
+  });
+
+  // Fail closed: with no way to form an absolute anchor the caller gets
+  // `undefined`, which disables linking rather than guessing a base.
+  test("a relative viewer path with no session root yields no ctx", () => {
+    expect(previewFilePathCtx("S1", "docs/a.md", undefined)).toBeUndefined();
+  });
+});
+
+// Absolute-link readings (kawaz r55 m116/m117). `/fixtures/a.json` written
+// inside a repo document is the shape from the original report: read purely as
+// a filesystem path it points outside the repo and dies, but as repo-root
+// relative it is exactly the file the author meant.
+describe("refLinkCandidates", () => {
+  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main")!;
+
+  test("a relative target has the single cwd-anchored reading", () => {
+    expect(refLinkCandidates({ path: "notes.md" }, ctx)).toEqual([
+      "/repo/main/docs/design/notes.md",
+    ]);
+  });
+
+  test("an absolute target offers the filesystem reading first, repo-root second", () => {
+    expect(refLinkCandidates({ path: "/fixtures/a.json" }, ctx)).toEqual([
+      "/fixtures/a.json",
+      "/repo/main/fixtures/a.json",
+    ]);
+  });
+
+  // Without a document root there is nothing to rebase against, so the
+  // filesystem reading stands alone — message bodies take this path.
+  test("no docRoot leaves the filesystem reading as the only candidate", () => {
+    expect(refLinkCandidates({ path: "/etc/hosts" }, { sid: "S1", cwd: "/repo/main" })).toEqual([
+      "/etc/hosts",
+    ]);
+  });
+
+  test("a target naming the doc root itself yields no rebased duplicate", () => {
+    expect(refLinkCandidates({ path: "/" }, ctx)).toEqual(["/"]);
   });
 });

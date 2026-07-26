@@ -7,7 +7,7 @@
 // division of labor as FileTree for fs_list).
 import type { JSX, RefObject } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { FS_READ_MAX_BYTES, type WorkspaceFolder } from "@ccmsg/protocol";
+import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -33,6 +33,12 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
+import { previewFilePathCtx } from "../filepath-ref.ts";
+import {
+  makeMarkdownPathLinker,
+  useFilePathCacheTick,
+  useMarkdownLinkProbeEnqueue,
+} from "../filepath-linker.tsx";
 import {
   MarkdownView,
   extractTaskStates,
@@ -466,6 +472,7 @@ function TextFileEditor({
 export function FileViewer({
   sid,
   tree,
+  peer,
   workspaceFolders,
   memoEditorOpen,
   onMemoCancel,
@@ -473,6 +480,12 @@ export function FileViewer({
 }: {
   sid: string;
   tree: SessionTreeState;
+  /** Source of the session's containment root (`repo_root ?? cwd`, matching
+   * the daemon's `resolveRoot`), needed to turn the viewer's root-relative
+   * path into the absolute anchor a markdown preview's relative links resolve
+   * against. `undefined` (peer row not yet delivered) simply disables link
+   * resolution for that render. */
+  peer: PeerInfo | undefined;
   /** DR-0026 allowlist used to pick fs_read_workspace over fs_read_external
    * for absolute paths reachable through a `.code-workspace` folder. */
   workspaceFolders: readonly WorkspaceFolder[];
@@ -584,6 +597,22 @@ export function FileViewer({
     if (scanned.length === 0) return false;
     return taskStatesAlign(scanned, extractTaskStates(parseMarkdownDocument(previewSource)));
   }, [previewSource, res?.truncated]);
+  // Markdown links in the preview resolve against the *previewed file's own
+  // directory* (markdown convention, see `previewFilePathCtx`) rather than the
+  // session cwd that message bodies use.
+  const previewLinkCtx = useMemo(
+    () =>
+      markdownEligible && path !== null
+        ? previewFilePathCtx(sid, path, peer?.repo_root ?? peer?.cwd)
+        : undefined,
+    [markdownEligible, sid, path, peer?.repo_root, peer?.cwd],
+  );
+  useMarkdownLinkProbeEnqueue(previewSource ?? undefined, previewLinkCtx);
+  const linkCacheTick = useFilePathCacheTick();
+  const previewPathLinker = useMemo(
+    () => makeMarkdownPathLinker(previewLinkCtx, linkCacheTick),
+    [previewLinkCtx, linkCacheTick],
+  );
   const taskToggle = useTaskListToggle({
     sid,
     path: path ?? "",
@@ -964,7 +993,12 @@ export function FileViewer({
               </button>
             </p>
           ) : null}
-          <MarkdownView source={res.content} tableOfContents taskList={taskToggle.taskList} />
+          <MarkdownView
+            source={res.content}
+            tableOfContents
+            taskList={taskToggle.taskList}
+            pathLinker={previewPathLinker}
+          />
         </div>
       ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>
