@@ -92,6 +92,68 @@ webui の URL 構造を論理的に再設計する。
 
 位置 id は jsonl 各行の `uuid` フィールドを使う(実データで存在確認済み。byte offset より堅く、前方の行が書き換わってもずれない)。
 
+## 確定仕様 (kawaz 裁定 r55m102/m104-m109、2026-07-26)
+
+### ルーティング基盤
+
+Navigation API を採用する(2026-01 に Baseline Newly Available、Chrome/Edge/Firefox 147/Safari 26.2。ccmsg は対象ブラウザを限定できるのでフォールバック不要)。
+
+History API は以下の弱点があり、今回の用途(位置の記録と復元、セッション離脱時の保存)に直撃するため不採用:
+
+- popstate が pushState/replaceState で発火しない
+- 履歴スタックを読めない
+- hash 遷移で state が失われる
+- リンククリックを全て preventDefault で拾う必要がある
+
+Navigation API では `navigate` イベントで全遷移を一箇所で捌き、`navigation.entries()` で履歴を読み、エントリの `dispose` イベントを離脱検知に使える。
+
+### URL 形式
+
+hash でなく実パスを使う。`#/` でなく `/` から始まる通常のパス。
+
+- セッション配下: `/s/<sid>` (既定タブへリダイレクト)
+- `/s/<sid>/files?path=<path>&lines=10-20` (Files。パスと行範囲はクエリで機械的に組み立てる。可読性より生成の容易さを優先という kawaz 裁定)
+- `/s/<sid>/timeline/head` (TL 最新位置)
+- `/s/<sid>/timeline/<uuid>` (TL の特定位置。uuid は jsonl 各行の uuid フィールド、実データで存在確認済み。byte offset より堅く前方の行が書き換わってもずれない)
+- `/s/<sid>/timeline/agent/tm/<name>` | `/agent/sub/<agentId>` | `/agent/wf/<runId>/<agentId>` (エージェント 3 種を種別セグメントで対称化)
+- `/s/<sid>/terminal`
+- `/s/<sid>/status`
+- `/s/<sid>/rooms`
+- room: `/r/<roomId>`、`/r/<roomId>/m<mid>`
+
+### 既定タブとリダイレクト
+
+初回アクセス(recent 無し)の `/s/<sid>` は `/s/<sid>/timeline/head` へリダイレクト。2 回目以降は保存済み recent へリダイレクト。これによりセッション内で特定作業中(ファイルを開いている等)に他セッションを覗いて戻ってきた際、離脱直前のビューに復帰できる。
+
+### recent の保存
+
+保存先は localStorage(端末ごと。daemon には保存しない = kawaz 裁定 r55m109)。保存内容は URL 文字列そのもの(タブ + タブ内状態を丸ごと)。保存タイミングはセッション外へ遷移する直前(セッション内移動ごとの保存は不要、頻繁に更新しなくてよい)。
+
+### TL 位置の更新
+
+基本は `/head` に居る状態。メッセージバルーンをクリックしたらその uuid に replace、最下部に到達したら `/head` に replace。他タブ・他セッションへの移動直前にも保存。履歴を汚さないため replaceState 相当(Navigation API では `navigation.navigate(url, {history: "replace"})`)を使う。
+
+### history の積み方
+
+タブ切替は replace、セッション/room の移動は push。
+
+### キャッシュ (実パス化に伴い必要)
+
+現状の webui 配信(`packages/webui/src/index.ts`)はキャッシュヘッダが一切無く、`/assets/app.js` もハッシュ無しファイル名。実パス catch-all を入れる際に SPA のベストプラクティスへ揃える:
+
+- SPA シェル(`/` と catch-all)は `Cache-Control: no-cache` + ETag で毎回再検証(変わっていなければ 304)
+- バンドルは `/assets/app.<hash>.js` のハッシュ付き名にして `public, max-age=31536000, immutable`、シェルの script src はハッシュ名を指すよう生成
+- `/attachment/*` と `/fs-serve` は daemon 側で先に処理済みなので catch-all の対象外
+- SPA 専用の HTTP ステータスは存在しないため未知パスは 200 + シェルで返す(SEO 無関係の tailnet 内ツールなので soft 404 問題は該当しない)
+
+### 後方互換
+
+不要(kawaz 裁定 r55m102「どうでも良い」)。既存の `#s...`/`#t...`/`#rN` 形式のリダイレクト受けは実装しない。
+
+### タブ状態の保持
+
+URL 設計とは別軸だが同時に解決する: File と TL を交互に移動すると TL タブに戻るたびリロードされ直前の位置が出ない問題があるため、タブ切替でアンマウントせず状態を保持する実装に変える。
+
 ## 解決時の記録先
 
 - 設計判断を伴う: `decisions/DR-NNNN-...md`
