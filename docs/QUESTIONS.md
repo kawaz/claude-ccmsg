@@ -26,19 +26,26 @@
 
 ### 👺WEBUI-C8: チェックボックスの楽観的更新と競合緩和 (v0.73.34)
 
-- [ ] a: チェックしてもリロードが起きず、スクロール位置が動かない
-- [ ] b: 連続して複数チェックしても取りこぼさない
-- [ ] c: AI が同じファイルの**他の行**を書き換えた後でもチェックが通る (以前は競合扱いだった)
-- [ ] d: **その項目自体**が他所で変更された時だけ競合アラートが出て、その項目だけ元に戻る
+- [x] a: チェックしてもリロードが起きず、スクロール位置が動かない
+- [x] b: 連続して複数チェックしても取りこぼさない
+- [x] c: AI が同じファイルの**他の行**を書き換えた後でもチェックが通る (以前は競合扱いだった)
+- [x] d: **その項目自体**が他所で変更された時だけ競合アラートが出て、その項目だけ元に戻る (競合テスト用に AI が編集: 22:05)
 
 ### 👺WEBUI-C9: standalone webapp で詰まなくなったか (v0.73.36 / v0.73.37)
 
-- [ ] a: markdown 内の相対パスリンク (`fixtures/foo.json` 等) が Files ビューアを開く
-- [ ] b: 存在しないパスのリンクは押せない (遷移しない)
-- [ ] c: 万一未知 URL に着地してもアプリが立ち上がり、サイドバーから復帰できる
+下のリンクをこのプレビュー上で踏んで確認してください。
+
+- [ ] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](packages/webui/src/client/markdown-link.ts)
+- [ ] b: 先頭 `/` の絶対パスもリポルート相対として解決される → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
+- [ ] c: 行範囲付きも開ける → [DR-0008 の §7 付近](docs/decisions/DR-0008-workspace-file-access.md#L58-L66)
+- [ ] d: 存在しないパスは押せない (灰色・遷移しない) → [存在しないファイル](docs/this-file-does-not-exist.md)
+- [ ] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
+- [ ] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
+
+プロジェクト外 (`/tmp`) の試験ファイルもあります: `/tmp/ccmsg-md-testcases.md` (Files 検索や external files 経路の確認用)
 
 ### 👺WEBUI-C10: Files ツリーの起点が cwd になったか (v0.73.40)
 
-- [ ] a: Files に `main/` が出ず、`docs` / `packages` 等が直接並ぶ
-- [ ] b: Files 検索の結果も同じ範囲に収まる (兄弟 worktree のファイルが出ない)
-- [ ] c: 兄弟 worktree のファイルは直リンクからは従来どおり開ける (認可は狭めていない)
+- [x] a: Files に `main/` が出ず、`docs` / `packages` 等が直接並ぶ
+- [x] b: Files 検索の結果も同じ範囲に収まる (兄弟 worktree のファイルが出ない)
+- [x] c: 兄弟 worktree のファイルは直リンクからは従来どおり開ける (認可は狭めていない)
