@@ -373,6 +373,72 @@ export function lineByteOffsets(start: number, lines: string[]): number[] {
   return offsets;
 }
 
+/** One cached transcript line as the raw-JSONL view shows it: the original
+ * text exactly as it sits on disk, plus the two coordinates that let a reader
+ * line it up with the file. */
+export interface RawTranscriptRow {
+  /** Absolute byte offset of the line's first byte in the transcript file —
+   * the same number the rich view uses as a Preact key, so a row here and a
+   * bubble there can be matched up. Stable across a "load older" prepend. */
+  offset: number;
+  /** 1-based position among the *currently cached* lines. Not the file's line
+   * number: paging starts at the tail, so line 1 of the cache is usually not
+   * line 1 of the file (`atStart` tells whether they coincide). */
+  index: number;
+  /** The line's own content, without the trailing newline (transcript_read
+   * already strips it). */
+  text: string;
+  /** UTF-8 byte length of `text` (the line occupies `bytes + 1` on disk). */
+  bytes: number;
+}
+
+/**
+ * Pairs each cached raw jsonl line with its absolute byte offset and its
+ * 1-based position in the cache — the model behind Timeline's raw view
+ * (kawaz r55 m68: 「生の JSONL も切り替えて見られるように」). Deliberately
+ * does no parsing, folding or de-duplication: the rich view's grouping can
+ * collapse several lines into one fold, split one line into several ccmsg
+ * bubbles, or demote a row to meta, whereas here every cached line appears
+ * exactly once, in file order, verbatim — that verbatim 1:1 mapping is the
+ * whole point of the raw view.
+ *
+ * Offsets come from `lineByteOffsets`, so raw rows and rich entries key off
+ * the identical numbers.
+ */
+export function rawTranscriptRows(start: number, lines: string[]): RawTranscriptRow[] {
+  const encoder = new TextEncoder();
+  const offsets = lineByteOffsets(start, lines);
+  return lines.map((text, i) => ({
+    offset: offsets[i]!,
+    index: i + 1,
+    text,
+    bytes: encoder.encode(text).length,
+  }));
+}
+
+/** Characters of a raw line rendered before it is cut off behind a per-row
+ * "全体を表示". A pasted image or a large tool result is a single jsonl line
+ * running to megabytes of base64; rendering every such line in full turns
+ * switching to the raw view into a multi-second layout stall. */
+export const RAW_LINE_PREVIEW_LIMIT = 2000;
+
+/**
+ * Cuts `text` down to `limit` characters for the raw view's collapsed state.
+ * Splits on a code-unit boundary but never in the middle of a surrogate pair
+ * (a lone half would render as U+FFFD), so the preview is always valid text.
+ */
+export function truncateRawLine(
+  text: string,
+  limit: number = RAW_LINE_PREVIEW_LIMIT,
+): { text: string; truncated: boolean } {
+  if (text.length <= limit) return { text, truncated: false };
+  let end = limit;
+  const code = text.charCodeAt(end - 1);
+  // High surrogate at the cut point: its low half is on the other side.
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return { text: text.slice(0, end), truncated: true };
+}
+
 /**
  * True for a real human utterance — a "user" turn classified (or, for
  * hand-built fixtures, assumed) as `userMessageKind === "user-prompt"` — as

@@ -31,10 +31,13 @@ import {
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLines,
+  rawTranscriptRows,
   resolveToolResults,
+  truncateRawLine,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
+  type RawTranscriptRow,
   type SystemMessageRich,
   type TimelineEntry,
   type TurnLine,
@@ -2018,6 +2021,52 @@ function CcmsgBubble({
   );
 }
 
+/** One line of the raw view: its cache position and absolute byte offset in
+ * the gutter, the verbatim jsonl text beside it. Long lines (pasted images,
+ * big tool results) render truncated behind a per-row expander so switching
+ * into the raw view never has to lay out megabytes at once. */
+function RawLineRow({ row }: { row: RawTranscriptRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = useMemo(() => truncateRawLine(row.text), [row.text]);
+  const shown = expanded ? row.text : preview.text;
+  return (
+    <div class="tl-raw-row">
+      <div class="tl-raw-gutter">
+        <span class="tl-raw-index">{row.index}</span>
+        {/* 生 JSONL の各行を rich 表示側のバブルと突き合わせるための座標 —
+         * rich 側の Preact key と同じ絶対 byte offset (lineByteOffsets)。 */}
+        <span class="tl-raw-offset" title={`byte offset ${row.offset} / ${row.bytes} bytes`}>
+          @{row.offset}
+        </span>
+      </div>
+      <div class="tl-raw-line">
+        <pre class="tl-fold-body tl-raw-text">{shown}</pre>
+        {preview.truncated ? (
+          <button type="button" class="tl-raw-more" onClick={() => setExpanded((v) => !v)}>
+            {expanded
+              ? "省略表示に戻す"
+              : `… 残り ${row.text.length - preview.text.length} 文字を表示`}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Timeline の raw モード本体 (kawaz r55 m68)。rich 側の fold / 集約を一切
+ * 通さず、キャッシュ済みの行をファイル順にそのまま並べる。データは rich 側と
+ * 同じ `timeline.lines` — raw 表示のために daemon へ追加取得はしない。 */
+function RawTranscriptView({ rows }: { rows: RawTranscriptRow[] }) {
+  if (rows.length === 0) return <p class="tl-empty">(空の transcript)</p>;
+  return (
+    <div class="tl-raw">
+      {rows.map((row) => (
+        <RawLineRow key={row.offset} row={row} />
+      ))}
+    </div>
+  );
+}
+
 export function Timeline({
   sid,
   timeline,
@@ -2365,7 +2414,18 @@ export function Timeline({
   // タブと同じ思想だが、そちらは 1 行内の segment 単位、こちらは
   // Timeline 全体をまるごと切り替える単位が違う。TL-local state で十分
   // (セッション切替や再読込を跨いで持ち回る必要はない、既定は off)。
+  // rich 側は 1 行を複数バブルに割ったり複数行を 1 fold に畳んだりするので
+  // 「1 行 = 1 表示単位」が崩れるが、raw 側は畳まず・分けず・並べ替えずに
+  // キャッシュ済みの行をそのまま出す (RawTranscriptView)。
   const [rawView, setRawView] = useState(false);
+  // 生 JSONL の行 + その絶対 byte offset。rich 側の Preact key と同じ
+  // `lineByteOffsets` 由来なので、raw の行と rich のバブルを突き合わせられる。
+  // raw 表示中だけ組み立てる (rich 表示のままなら無駄な TextEncoder 走査を
+  // しない)。データは rich と同じ `timeline.lines` — daemon への追加取得なし。
+  const rawRows = useMemo(
+    () => (rawView ? rawTranscriptRows(timeline.start, timeline.lines) : []),
+    [rawView, timeline.start, timeline.lines],
+  );
 
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
@@ -2943,61 +3003,70 @@ export function Timeline({
                   >
                     {timeline.atStart ? "先頭まで" : "older"}
                   </button>
-                  <SearchBar
-                    words={parsedSearch.words}
-                    queryText={searchQueryText}
-                    onQueryChange={(queryText) => changeSearch({ queryText })}
-                    caseSensitive={searchCaseSensitive}
-                    onToggleCaseSensitive={() =>
-                      changeSearch({ caseSensitive: !searchCaseSensitive })
-                    }
-                    regexMode={searchRegex}
-                    onToggleRegex={() => changeSearch({ regex: !searchRegex })}
-                    matchCount={matchingUnitKeys.length}
-                    currentIndex={searchCurrentIndex}
-                    onPrev={searchPrev}
-                    onNext={searchNext}
-                    hasError={parsedSearch.hasError}
-                    targets={{
-                      user: targetUser,
-                      onToggleUser: () => setTargetUser((v) => !v),
-                      ai: targetAI,
-                      onToggleAI: () => setTargetAI((v) => !v),
-                      ccmsg: targetCcmsg,
-                      onToggleCcmsg: () => setTargetCcmsg((v) => !v),
-                    }}
-                  />
-                  <div class="tl-user-nav">
-                    <button
-                      type="button"
-                      class="tl-user-nav-count"
-                      disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
-                      onClick={() => scrollToUserTurn(currentUserIdx)}
-                      title="現在のユーザ発言へ戻る"
-                    >
-                      👤 {currentUserIdx}/{userTurnKeys.length}
-                    </button>
-                    {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
-                     * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
-                     * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
-                     * 意味がない)。 */}
-                    <button
-                      type="button"
-                      disabled={userTurnKeys.length === 0}
-                      onClick={goPrevUserTurn}
-                      title="前のユーザ発言へ"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      disabled={userTurnKeys.length === 0}
-                      onClick={goNextUserTurn}
-                      title="次のユーザ発言へ"
-                    >
-                      ↓
-                    </button>
-                  </div>
+                  {/* in-view search と 👤 nav は rich 側の描画単位 (バブル /
+                   * fold) を対象にした機構なので、raw 表示では対象が 1 つも
+                   * mount されない — 「0 件」を出し続けるより畳んで隠す。
+                   * rich に戻せば同じ state のまま復帰する (query は store
+                   * 側が保持)。 */}
+                  {rawView ? null : (
+                    <>
+                      <SearchBar
+                        words={parsedSearch.words}
+                        queryText={searchQueryText}
+                        onQueryChange={(queryText) => changeSearch({ queryText })}
+                        caseSensitive={searchCaseSensitive}
+                        onToggleCaseSensitive={() =>
+                          changeSearch({ caseSensitive: !searchCaseSensitive })
+                        }
+                        regexMode={searchRegex}
+                        onToggleRegex={() => changeSearch({ regex: !searchRegex })}
+                        matchCount={matchingUnitKeys.length}
+                        currentIndex={searchCurrentIndex}
+                        onPrev={searchPrev}
+                        onNext={searchNext}
+                        hasError={parsedSearch.hasError}
+                        targets={{
+                          user: targetUser,
+                          onToggleUser: () => setTargetUser((v) => !v),
+                          ai: targetAI,
+                          onToggleAI: () => setTargetAI((v) => !v),
+                          ccmsg: targetCcmsg,
+                          onToggleCcmsg: () => setTargetCcmsg((v) => !v),
+                        }}
+                      />
+                      <div class="tl-user-nav">
+                        <button
+                          type="button"
+                          class="tl-user-nav-count"
+                          disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
+                          onClick={() => scrollToUserTurn(currentUserIdx)}
+                          title="現在のユーザ発言へ戻る"
+                        >
+                          👤 {currentUserIdx}/{userTurnKeys.length}
+                        </button>
+                        {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
+                         * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
+                         * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
+                         * 意味がない)。 */}
+                        <button
+                          type="button"
+                          disabled={userTurnKeys.length === 0}
+                          onClick={goPrevUserTurn}
+                          title="前のユーザ発言へ"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          disabled={userTurnKeys.length === 0}
+                          onClick={goNextUserTurn}
+                          title="次のユーザ発言へ"
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    </>
+                  )}
                   <button type="button" onClick={scrollToTop} title="最上部へ">
                     ⤒
                   </button>
@@ -3023,15 +3092,7 @@ export function Timeline({
                   </div>
                 ) : rawView ? (
                   <div class="tl-lines tl-raw-lines">
-                    {timeline.lines.length === 0 ? (
-                      <p class="tl-empty">(空の transcript)</p>
-                    ) : (
-                      timeline.lines.map((raw, i) => (
-                        <pre class="tl-raw-line" key={offsets[i]}>
-                          {raw}
-                        </pre>
-                      ))
-                    )}
+                    <RawTranscriptView rows={rawRows} />
                   </div>
                 ) : (
                   <div class="tl-lines">

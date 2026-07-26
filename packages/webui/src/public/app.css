@@ -3196,15 +3196,66 @@ button.session-tab {
   gap: 0.2rem;
 }
 
-.tl-raw-line {
-  margin: 0;
+.tl-raw {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  /* 行番号 gutter と本文が親幅を食い合わないよう、flex item の既定
+   * min-width:auto を切る (長大な base64 行が gutter を押し出さない)。 */
+  min-width: 0;
+}
+
+.tl-raw-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
   padding: 0.35rem 0.5rem;
   border-radius: 0.4rem;
   background: var(--bg-alt);
+  min-width: 0;
+}
+
+/* 行番号 + byte offset。offset は rich 表示側のバブルと同じ値なので、
+ * raw の行と rich のバブルを目視で突き合わせるための座標になる。 */
+.tl-raw-gutter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
-  white-space: pre-wrap;
+  font-size: 0.65rem;
+  line-height: 1.3;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.tl-raw-offset {
+  opacity: 0.7;
+}
+
+.tl-raw-line {
+  flex: 1;
+  min-width: 0;
+}
+
+.tl-raw-text {
+  margin: 0;
+  /* 1 行が非常に長い (base64 等) ので、単語境界ではなく任意位置で折る。
+   * .tl-fold-body の word-break: break-word だと切れ目のない長大トークンが
+   * 横スクロールに逃げて 1 行が画面外まで伸びる。 */
   word-break: break-all;
+}
+
+.tl-raw-more {
+  margin-top: 0.2rem;
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
 }
 
 .tl-raw-toggle.active {

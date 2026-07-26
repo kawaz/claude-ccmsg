@@ -24,6 +24,9 @@ import {
   parseSystemMessageFields,
   parseTranscriptLine,
   parseTranscriptLines,
+  rawTranscriptRows,
+  truncateRawLine,
+  RAW_LINE_PREVIEW_LIMIT,
   resolveFileToolResults,
   scrollPositionToUserTurnIndex,
   segmentSearchText,
@@ -111,6 +114,87 @@ describe("lineByteOffsets", () => {
     // offsets they had before the prepend.
     expect(after[1]).toBe(before[0]);
     expect(after[2]).toBe(before[1]);
+  });
+});
+
+// rawTranscriptRows (r55m68): Timeline の raw 表示のモデル。rich 表示が
+// 集約 (複数行 -> 1 fold) や分解 (1 行 -> 複数 ccmsg バブル) をするのに対し、
+// raw は「キャッシュ済みの行が 1 行ずつ、ファイル順に、原文のまま」を保証
+// する — それが raw 表示の存在理由なので、その 1:1 性をテストで固定する。
+describe("rawTranscriptRows", () => {
+  test("各行に byte offset と 1 始まりの位置を付けて返す", () => {
+    expect(rawTranscriptRows(100, ["ab", "cde"])).toEqual([
+      { offset: 100, index: 1, text: "ab", bytes: 2 },
+      { offset: 103, index: 2, text: "cde", bytes: 3 },
+    ]);
+  });
+
+  test("空配列は空配列", () => {
+    expect(rawTranscriptRows(42, [])).toEqual([]);
+  });
+
+  // bytes は文字数ではなく UTF-8 バイト長 ("あ" = 3 バイト)。offset の加算も
+  // 同じ基準なので、両者が食い違うと gutter の表示と実ファイル位置がずれる。
+  test("bytes は UTF-8 バイト長 (文字数ではない)", () => {
+    expect(rawTranscriptRows(0, ["あ", "b"])).toEqual([
+      { offset: 0, index: 1, text: "あ", bytes: 3 },
+      { offset: 4, index: 2, text: "b", bytes: 1 },
+    ]);
+  });
+
+  // 「1 行 = 1 行」の核心: rich 側が畳む・割る・降格する行 (JSON として壊れて
+  // いる行を含む) でも、raw は解釈せず原文をそのまま 1 件ずつ出す。
+  test("パースせず原文をそのまま保持する (壊れた JSON 行も 1 行として出る)", () => {
+    const lines = ['{"type":"user"}', "{ broken", ""];
+    const rows = rawTranscriptRows(0, lines);
+    expect(rows.length).toBe(lines.length);
+    expect(rows.map((r) => r.text)).toEqual(lines);
+    expect(rows.map((r) => r.index)).toEqual([1, 2, 3]);
+  });
+
+  // offset は lineByteOffsets と同一の値でなければならない — rich 側の
+  // Preact key がこの値なので、ずれると raw の行と rich のバブルを
+  // 突き合わせるという raw 表示の狙いが崩れる。
+  test("offset は rich 側の Preact key (lineByteOffsets) と一致する", () => {
+    const lines = ["あ", "bc", "{}"];
+    const rows = rawTranscriptRows(7, lines);
+    expect(rows.map((r) => r.offset)).toEqual(lineByteOffsets(7, lines));
+  });
+});
+
+// truncateRawLine (r55m68): 貼り付け画像等で 1 行が数 MB の base64 になる
+// ケースがあり、全行を全長描画すると raw 切替の瞬間にレイアウトが固まる。
+describe("truncateRawLine", () => {
+  test("limit 以下はそのまま (truncated=false)", () => {
+    expect(truncateRawLine("abc", 5)).toEqual({ text: "abc", truncated: false });
+  });
+
+  test("limit 超過は limit 文字に切って truncated=true", () => {
+    expect(truncateRawLine("abcdef", 3)).toEqual({ text: "abc", truncated: true });
+  });
+
+  test("ちょうど limit 丁度は切らない (境界)", () => {
+    expect(truncateRawLine("abc", 3)).toEqual({ text: "abc", truncated: false });
+  });
+
+  // サロゲートペアの途中で切ると片割れが U+FFFD になって化ける。切り口が
+  // high surrogate なら 1 つ手前まで下げる。"😀" は 2 code unit。
+  test("サロゲートペアの途中では切らない", () => {
+    const emoji = "😀"; // 2 code units
+    const result = truncateRawLine("a" + emoji + "b", 2);
+    // limit=2 は "a" + high surrogate の位置 — 1 下げて "a" だけにする。
+    expect(result.text).toBe("a");
+    expect(result.truncated).toBe(true);
+    // 壊れた文字 (置換文字) が出ていないこと。
+    expect(result.text).not.toContain("�");
+  });
+
+  test("既定の limit は RAW_LINE_PREVIEW_LIMIT", () => {
+    const long = "x".repeat(RAW_LINE_PREVIEW_LIMIT + 10);
+    expect(truncateRawLine(long)).toEqual({
+      text: "x".repeat(RAW_LINE_PREVIEW_LIMIT),
+      truncated: true,
+    });
   });
 });
 
