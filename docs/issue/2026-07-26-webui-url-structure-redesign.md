@@ -178,6 +178,17 @@ iPad のホーム画面 webapp は standalone 表示でアドレスバーも戻�
 5. エラー表示には「セッション一覧へ」等の復帰ボタンを必ず置く(最後の砦)
 6. `navigation.canGoBack` を見て、戻れる場合のみ「戻る」ボタンも併せて出す
 
+### グローバルヘッダの back / forward ボタン (kawaz 要望 r55m128)
+
+グローバルヘッダ右端のリロードボタンの左横あたりに back / forward ボタンを常設する。用途は 2 つ:
+
+1. 迷子リンクからの回復(standalone webapp はアドレスバーも戻るボタンも無いため、アプリ内に戻る手段が無いと詰む)
+2. TL と Files を行ったり来たりする日常操作の利便性
+
+実装は Navigation API の `navigation.canGoBack` / `canGoForward` で活性判定し、`navigation.back()` / `forward()` を呼ぶだけで済む。
+
+ただし実装順序は URL 再設計(Phase 1)の後とする — 現状の hash ベース URL はタブ状態を持たないため、先に back/forward を付けても「Terminal タブから戻ったら Timeline に飛ぶ」等の期待外れな挙動になり、機能として成立しない。
+
 ## 解決時の記録先
 
 - 設計判断を伴う: `decisions/DR-NNNN-...md`
