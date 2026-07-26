@@ -20,6 +20,7 @@ import {
   isPeerMessageLine,
   isSearchableSegment,
   isUserTextTurn,
+  itemRawSourceOffsets,
   lineByteOffsets,
   parseSystemMessageFields,
   parseTranscriptLine,
@@ -70,6 +71,17 @@ function assistantText(text: string): ParsedLine {
     ts: null,
     role: "assistant",
     segments: [{ kind: "text", role: "assistant", text }],
+  };
+}
+function bashUse(toolUseId: string, command: string): Segment {
+  return {
+    kind: "bash-use",
+    toolUseId,
+    command,
+    description: "",
+    background: false,
+    result: null,
+    hasResult: false,
   };
 }
 function metaLine(type: string): ParsedLine {
@@ -159,6 +171,62 @@ describe("rawTranscriptRows", () => {
     const lines = ["あ", "bc", "{}"];
     const rows = rawTranscriptRows(7, lines);
     expect(rows.map((r) => r.offset)).toEqual(lineByteOffsets(7, lines));
+  });
+});
+
+// itemRawSourceOffsets (r55 m89): 項目ごとの jsonl トグルが「この項目は
+// どの行から作られたか」を引く対応表。rich 表示は 1 行 = 1 項目とは限らない
+// (tool_use + tool_result で 2 行 -> 1 カード、1 行 -> 複数 ccmsg バブル) の
+// で、その 3 通りの輪郭を固定する。
+describe("itemRawSourceOffsets", () => {
+  // 一番普通のケース: 表示される項目はどれも自分の行だけを指す。
+  test("1 対 1 の行はそれぞれ自分の offset だけを持つ", () => {
+    const lines = [userText("hi"), assistantText("yo")];
+    const offsets = [0, 100];
+    expect(itemRawSourceOffsets(lines, offsets)).toEqual(
+      new Map([
+        [0, [0]],
+        [100, [100]],
+      ]),
+    );
+  });
+
+  // kawaz r55 m69 の要件「両方の行を見せる」: tool_use のカードに畳み込まれた
+  // tool_result 行は groupTimelineLines が表示から落とすので、tool_use 側の
+  // 項目が両方の行を引けないと生 JSONL に到達する手段が無くなる。
+  test("カードに畳まれた tool_result は tool_use 側の項目に両方の行として付く", () => {
+    const lines = resolveFileToolResults([
+      { kind: "turn", ts: null, role: "assistant", segments: [bashUse("t1", "ls")] },
+      userToolResult("t1"),
+    ]);
+    const offsets = [0, 50];
+    const sources = itemRawSourceOffsets(lines, offsets);
+    expect(sources.get(0)).toEqual([0, 50]);
+    // 畳まれた側は独立した項目としては描画されないので、自分のキーを持たない。
+    expect(sources.has(50)).toBe(false);
+  });
+
+  // 1 行から複数バブル (ccmsg メッセージが複数載った 1 行) はどのバブルも
+  // 同じ offset を引く — 呼び出し側が同じキーで引くだけで済むよう、対応表側に
+  // バブルごとのエントリは作らない。
+  test("1 行から複数バブルが出ても対応表は行単位のまま", () => {
+    const lines = [userText("multi ccmsg line")];
+    const sources = itemRawSourceOffsets(lines, [7]);
+    expect(sources.get(7)).toEqual([7]);
+    expect(sources.size).toBe(1);
+  });
+
+  // tool_use が読み込み範囲外 (load older 前) の tool_result は、rich 表示側も
+  // 既に落としている — 引き取り先が無いので対応表にも現れない。
+  test("対応する tool_use が範囲外の tool_result はどこにも付かない", () => {
+    const lines = resolveFileToolResults([userToolResult("orphan")]);
+    // bash-use が居ないので bash-result への昇格が起きず、tool-result のまま
+    // = isConsumedToolResult ではない (単独の項目として描画される)。
+    expect(itemRawSourceOffsets(lines, [12])).toEqual(new Map([[12, [12]]]));
+  });
+
+  test("空入力は空の対応表", () => {
+    expect(itemRawSourceOffsets([], [])).toEqual(new Map());
   });
 });
 

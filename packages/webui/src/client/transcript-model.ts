@@ -416,6 +416,66 @@ export function rawTranscriptRows(start: number, lines: string[]): RawTranscript
   }));
 }
 
+/**
+ * For every line the timeline actually renders, the jsonl lines that item was
+ * built from — the model behind the per-item raw toggle (kawaz r55 m89:
+ * 「個別に raw モードトグルが欲しい。そのアイテムが raw jsonl 用ビュー
+ * コンポーネントとトグルされるイメージ」). Keyed and valued by absolute byte
+ * offset (`lineByteOffsets`), so a rendered item and its source lines line up
+ * with the whole-transcript raw view's coordinates.
+ *
+ * Usually 1:1, with one exception: a tool_use line and the tool_result line
+ * that `resolveToolResults` merged into its card render as a single item, so
+ * the tool_use's entry lists *both* offsets in file order (kawaz r55 m69:
+ * 「両方の行を見せる」). `groupTimelineLines` drops those consumed result
+ * lines (`isConsumedToolResult`) from the rendered groups entirely, so
+ * without this pairing their raw text would be unreachable from the timeline.
+ *
+ * The reverse — one line rendering as several items (a ccmsg line carrying
+ * several messages) — needs nothing special here: every bubble shares the
+ * line's offset and therefore the same single-element entry.
+ *
+ * A consumed result whose tool_use sits outside the loaded window has no
+ * owner to attach to and is simply absent, matching the rich view, which
+ * already drops it.
+ */
+export function itemRawSourceOffsets(
+  lines: ParsedLine[],
+  offsets: number[],
+): Map<number, number[]> {
+  const ownerOffsetByToolUseId = new Map<string, number>();
+  lines.forEach((line, i) => {
+    if (line.kind !== "turn") return;
+    for (const segment of line.segments) {
+      if (segment.kind === "file-read" || segment.kind === "bash-use") {
+        ownerOffsetByToolUseId.set(segment.toolUseId, offsets[i]!);
+      }
+    }
+  });
+  const sources = new Map<number, number[]>();
+  lines.forEach((line, i) => {
+    const offset = offsets[i]!;
+    if (!isConsumedToolResult(line)) {
+      // 自分の行を先頭に置く (file 順は下の push で保たれる — consumed な
+      // tool_result は必ず対応する tool_use より後ろの行)。
+      sources.set(offset, [...(sources.get(offset) ?? []), offset]);
+      return;
+    }
+    const turn = line as TurnLine;
+    const ownerOffset = turn.segments
+      .map((segment) =>
+        segment.kind === "file-tool-result" || segment.kind === "bash-result"
+          ? ownerOffsetByToolUseId.get(segment.toolUseId)
+          : undefined,
+      )
+      .find((o) => o !== undefined);
+    if (ownerOffset === undefined) return;
+    sources.set(ownerOffset, [...(sources.get(ownerOffset) ?? []), offset]);
+  });
+  for (const list of sources.values()) list.sort((a, b) => a - b);
+  return sources;
+}
+
 /** Characters of a raw line rendered before it is cut off behind a per-row
  * "全体を表示". A pasted image or a large tool result is a single jsonl line
  * running to megabytes of base64; rendering every such line in full turns

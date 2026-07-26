@@ -2,7 +2,7 @@
 // transcript_read round trip for the currently-selected session (same
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
-import { createContext } from "preact";
+import { createContext, type ComponentChildren } from "preact";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
@@ -26,6 +26,7 @@ import {
   foldGroupNeedsOuterFold,
   groupTimelineLines,
   isSearchableSegment,
+  itemRawSourceOffsets,
   splitFoldSubgroups,
   userNavTargets,
   lineByteOffsets,
@@ -93,6 +94,61 @@ interface TLSearchCtx {
   words: SearchWord[];
   /** DOM ref registration for rendered-text matching and ↑/↓ navigation. */
   registerRef: (key: string, el: HTMLElement | null) => void;
+}
+
+/**
+ * Per-item raw JSONL lookup (kawaz r55 m89: 「個別に raw モードトグルが
+ * 欲しい。そのアイテムが raw jsonl 用ビューコンポーネントとトグルされる
+ * イメージ」). Keyed by the item's byte offset — the same key the rich view
+ * already uses — and returning every jsonl line that item was built from
+ * (`itemRawSourceOffsets`: normally the item's own line, plus the merged
+ * tool_result line for a tool card). Threaded as context rather than as a
+ * prop because the toggle sits on items several levels down the
+ * FoldGroup/ItemsSubFold/LineView chain, and every one of them would
+ * otherwise have to forward it unchanged.
+ */
+const ItemRawContext = createContext<((offset: number) => RawTranscriptRow[]) | null>(null);
+
+/**
+ * Wraps one rendered timeline item with a `raw` toggle that swaps it for the
+ * verbatim jsonl line(s) it came from. Layout-neutral by construction: the
+ * wrapper is a column flex box just like the two containers items live in
+ * (`.tl-lines` and `.tl-guided-content`), so a bubble's own `align-self`
+ * still decides which side it sits on.
+ */
+function ItemRawToggle({ offset, children }: { offset: number; children: ComponentChildren }) {
+  const getRows = useContext(ItemRawContext);
+  const [raw, setRaw] = useState(false);
+  const rows = raw && getRows ? getRows(offset) : [];
+  return (
+    <div class={"tl-item" + (raw ? " tl-item-raw-on" : "")}>
+      {/* ラベルが "raw" ではなく "jsonl" なのは、ccmsg 吹き出し / システム
+       * メッセージが本文内に持つ msg|raw タブとの衝突を避けるため — あちらの
+       * "raw" は「rich パースを通さない本文テキスト」、こちらは「この項目の
+       * 元になった JSONL 行そのもの」で別物。 */}
+      <button
+        type="button"
+        class="tl-item-raw-toggle"
+        aria-pressed={raw}
+        title={raw ? "この項目をリッチ表示に戻す" : "この項目の元 JSONL 行を表示"}
+        onClick={() => setRaw((v) => !v)}
+      >
+        jsonl
+      </button>
+      {raw ? (
+        rows.length === 0 ? (
+          // 対応する行が引けない = 表示の元になった行がキャッシュ外
+          // (load older 前) — rich 表示に戻す以外にできることがないので
+          // その旨だけ出す。
+          <p class="tl-empty">(この項目の元 JSONL 行は読み込み範囲外)</p>
+        ) : (
+          rows.map((row) => <RawLineRow key={row.offset} row={row} />)
+        )
+      ) : (
+        children
+      )}
+    </div>
+  );
 }
 
 /** Renders `text` as plain (non-markdown) content, splitting it into
@@ -1260,23 +1316,26 @@ function PeerCcmsgLineView({
         if (ctx.seenCcmsg.has(dedupKey)) return null;
         ctx.seenCcmsg.add(dedupKey);
         return (
-          <CcmsgBubble
-            key={`${offset}-${j}`}
-            message={m}
-            rawText={rawText}
-            now={ctx.now}
-            searchKey={`${offset}-ccmsg-${j}`}
-            searchCtx={searchCtx}
-            // navKey/register/onUserTurnClick/selected は u1 (右寄せ user
-            // bubble) 用の user-nav 配線。peer 発では未使用なので undefined /
-            // false 固定 (userNavTargets 側も message.from !== "u1" を弾く
-            // ためここに来る対象は元々 nav 対象外)。
-            registerUserTurnRef={NOOP_REGISTER_REF}
-            onUserTurnClick={NOOP_ON_CLICK}
-            selected={false}
-            room={ctx.rooms.get(m.room)}
-            peers={ctx.peers}
-          />
+          // 1 行から複数バブルが出るケース: どのバブルの jsonl トグルも同じ
+          // 行を指す (itemRawSourceOffsets の doc comment 参照)。
+          <ItemRawToggle key={`${offset}-${j}`} offset={offset}>
+            <CcmsgBubble
+              message={m}
+              rawText={rawText}
+              now={ctx.now}
+              searchKey={`${offset}-ccmsg-${j}`}
+              searchCtx={searchCtx}
+              // navKey/register/onUserTurnClick/selected は u1 (右寄せ user
+              // bubble) 用の user-nav 配線。peer 発では未使用なので undefined /
+              // false 固定 (userNavTargets 側も message.from !== "u1" を弾く
+              // ためここに来る対象は元々 nav 対象外)。
+              registerUserTurnRef={NOOP_REGISTER_REF}
+              onUserTurnClick={NOOP_ON_CLICK}
+              selected={false}
+              room={ctx.rooms.get(m.room)}
+              peers={ctx.peers}
+            />
+          </ItemRawToggle>
         );
       })}
     </>
@@ -1313,17 +1372,21 @@ function LineView({
 }) {
   if (line.kind === "broken") {
     return (
-      <div class="tl-line tl-broken">
-        <pre class="tl-broken-raw">{line.raw || "(空行)"}</pre>
-      </div>
+      <ItemRawToggle offset={offset}>
+        <div class="tl-line tl-broken">
+          <pre class="tl-broken-raw">{line.raw || "(空行)"}</pre>
+        </div>
+      </ItemRawToggle>
     );
   }
   if (line.kind === "meta") {
     return (
-      <details class="tl-line tl-fold">
-        <FoldSummary ts={line.ts} label={line.summary} />
-        <pre class="tl-fold-body">{line.raw}</pre>
-      </details>
+      <ItemRawToggle offset={offset}>
+        <details class="tl-line tl-fold">
+          <FoldSummary ts={line.ts} label={line.summary} />
+          <pre class="tl-fold-body">{line.raw}</pre>
+        </details>
+      </ItemRawToggle>
     );
   }
   // r55 m14 (peer ccmsg を fold group 内で thinking/agent と同格に): この
@@ -1356,12 +1419,14 @@ function LineView({
       : null;
   if (sysKind) {
     return (
-      <SystemMessageFold
-        kind={sysKind}
-        line={line}
-        translationAvailability={translationAvailability}
-        foldGroupOpen={foldGroupOpen}
-      />
+      <ItemRawToggle offset={offset}>
+        <SystemMessageFold
+          kind={sysKind}
+          line={line}
+          translationAvailability={translationAvailability}
+          foldGroupOpen={foldGroupOpen}
+        />
+      </ItemRawToggle>
     );
   }
   // 残り: thinking/tool_use-only の assistant turn、tool-result-only の
@@ -1369,25 +1434,27 @@ function LineView({
   // 1 行 summary を持つので、turn の外枠はプレーンな container のまま
   // (二重に時刻を出さない)。
   return (
-    <div class="tl-line">
-      <div class="tl-segments">
-        {line.segments.length === 0 ? (
-          <span class="tl-empty-turn">(空)</span>
-        ) : (
-          line.segments.map((seg, i) => (
-            <SegmentView
-              key={i}
-              segment={seg}
-              translationAvailability={translationAvailability}
-              ts={line.ts}
-              foldGroupOpen={foldGroupOpen}
-              searchKey={`${offset}-${i}`}
-              searchCtx={searchCtx}
-            />
-          ))
-        )}
+    <ItemRawToggle offset={offset}>
+      <div class="tl-line">
+        <div class="tl-segments">
+          {line.segments.length === 0 ? (
+            <span class="tl-empty-turn">(空)</span>
+          ) : (
+            line.segments.map((seg, i) => (
+              <SegmentView
+                key={i}
+                segment={seg}
+                translationAvailability={translationAvailability}
+                ts={line.ts}
+                foldGroupOpen={foldGroupOpen}
+                searchKey={`${offset}-${i}`}
+                searchCtx={searchCtx}
+              />
+            ))
+          )}
+        </div>
       </div>
-    </div>
+    </ItemRawToggle>
   );
 }
 
@@ -2427,6 +2494,25 @@ export function Timeline({
     [rawView, timeline.start, timeline.lines],
   );
 
+  // 項目ごとの jsonl トグル (kawaz r55 m89) が引く元行。全体 raw 表示と違い
+  // 常に組み立てておく必要がある (どの項目が展開されるか事前に判らない) が、
+  // 行テキストは `timeline.lines` を指すだけなのでコピーは発生しない。
+  // offset -> RawTranscriptRow[] を毎回引き直さずに済むよう、全行を offset で
+  // 引ける index を作ってから itemRawSourceOffsets の対応表を通す。
+  const rawRowByOffset = useMemo(() => {
+    const map = new Map<number, RawTranscriptRow>();
+    for (const row of rawTranscriptRows(timeline.start, timeline.lines)) map.set(row.offset, row);
+    return map;
+  }, [timeline.start, timeline.lines]);
+  const itemRawSources = useMemo(() => itemRawSourceOffsets(parsed, offsets), [parsed, offsets]);
+  const getItemRawRows = useCallback(
+    (offset: number) =>
+      (itemRawSources.get(offset) ?? [])
+        .map((o) => rawRowByOffset.get(o))
+        .filter((row): row is RawTranscriptRow => row !== undefined),
+    [itemRawSources, rawRowByOffset],
+  );
+
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
   // narrowed by kawaz r26 mid=97: tool-use/tool-result/unknown-segment are
@@ -2986,287 +3072,292 @@ export function Timeline({
         <AgentTimelineHrefsContext.Provider value={agentTimelineHrefs}>
           <TimelineAutoOpenContext.Provider value={autoOpenContext}>
             <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
-              <div class="timeline-view" ref={scrollRef}>
-                {agentLabel ? (
-                  <div class="tl-agent-header">
-                    <span class="tl-agent-header-label">agent: {agentLabel}</span>
-                    <a class="tl-agent-header-back" href={timelineHref(sid)}>
-                      親セッションへ戻る
-                    </a>
-                  </div>
-                ) : null}
-                <div class="tl-toolbar">
-                  <button
-                    type="button"
-                    disabled={timeline.atStart || timeline.status === "loading"}
-                    onClick={loadOlder}
-                  >
-                    {timeline.atStart ? "先頭まで" : "older"}
-                  </button>
-                  {/* in-view search と 👤 nav は rich 側の描画単位 (バブル /
-                   * fold) を対象にした機構なので、raw 表示では対象が 1 つも
-                   * mount されない — 「0 件」を出し続けるより畳んで隠す。
-                   * rich に戻せば同じ state のまま復帰する (query は store
-                   * 側が保持)。 */}
-                  {rawView ? null : (
-                    <>
-                      <SearchBar
-                        words={parsedSearch.words}
-                        queryText={searchQueryText}
-                        onQueryChange={(queryText) => changeSearch({ queryText })}
-                        caseSensitive={searchCaseSensitive}
-                        onToggleCaseSensitive={() =>
-                          changeSearch({ caseSensitive: !searchCaseSensitive })
-                        }
-                        regexMode={searchRegex}
-                        onToggleRegex={() => changeSearch({ regex: !searchRegex })}
-                        matchCount={matchingUnitKeys.length}
-                        currentIndex={searchCurrentIndex}
-                        onPrev={searchPrev}
-                        onNext={searchNext}
-                        hasError={parsedSearch.hasError}
-                        targets={{
-                          user: targetUser,
-                          onToggleUser: () => setTargetUser((v) => !v),
-                          ai: targetAI,
-                          onToggleAI: () => setTargetAI((v) => !v),
-                          ccmsg: targetCcmsg,
-                          onToggleCcmsg: () => setTargetCcmsg((v) => !v),
-                        }}
-                      />
-                      <div class="tl-user-nav">
-                        <button
-                          type="button"
-                          class="tl-user-nav-count"
-                          disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
-                          onClick={() => scrollToUserTurn(currentUserIdx)}
-                          title="現在のユーザ発言へ戻る"
-                        >
-                          👤 {currentUserIdx}/{userTurnKeys.length}
-                        </button>
-                        {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
-                         * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
-                         * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
-                         * 意味がない)。 */}
-                        <button
-                          type="button"
-                          disabled={userTurnKeys.length === 0}
-                          onClick={goPrevUserTurn}
-                          title="前のユーザ発言へ"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          disabled={userTurnKeys.length === 0}
-                          onClick={goNextUserTurn}
-                          title="次のユーザ発言へ"
-                        >
-                          ↓
-                        </button>
-                      </div>
-                    </>
-                  )}
-                  <button type="button" onClick={scrollToTop} title="最上部へ">
-                    ⤒
-                  </button>
-                  <button type="button" onClick={scrollToBottom} title="最下部へ">
-                    ⤓
-                  </button>
-                  <button
-                    type="button"
-                    class={rawView ? "tl-raw-toggle active" : "tl-raw-toggle"}
-                    aria-pressed={rawView}
-                    onClick={() => setRawView((v) => !v)}
-                    title="raw JSONL 表示に切り替え"
-                  >
-                    raw
-                  </button>
-                </div>
-                {timeline.status === "error" ? (
-                  <div class="tl-error">
-                    <p>{timeline.error}</p>
-                    <button type="button" onClick={refresh}>
-                      再試行 (tail から読み直す)
-                    </button>
-                  </div>
-                ) : rawView ? (
-                  <div class="tl-lines tl-raw-lines">
-                    <RawTranscriptView rows={rawRows} />
-                  </div>
-                ) : (
-                  <div class="tl-lines">
-                    {parsed.length === 0 ? (
-                      <p class="tl-empty">(空の transcript)</p>
-                    ) : (
-                      // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
-                      // 抽出されるとき (queue-operation enqueue と task-notification 経由の
-                      // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
-                      // 2026-07-14) の二重表示を避ける。この Set は render pass 単位で
-                      // 上位 (Timeline 関数トップ) の ccmsgSeen を **boundary 側と
-                      // fold-group 側 (CcmsgRenderContext 経由の PeerCcmsgLineView)
-                      // で共有** する — 同 event が両経路に流れる場面 (r55 m14: peer
-                      // ccmsg を fold group 側に流したことで発生し得る境界) でも一箇所
-                      // だけ描画される。
-                      ((seenCcmsg: Set<string>) =>
-                        groups.map((group, i) => {
-                          if (group.kind === "fold") {
-                            return (
-                              <FoldGroup
-                                key={group.entries[0]!.offset}
-                                entries={group.entries}
-                                translationAvailability={translationAvailability}
-                                searchCtx={searchCtx}
-                              />
-                            );
-                          }
-                          const { line, offset } = group;
-                          // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                          // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                          // fold group に送るので groups の "entry" 側には来ない) —
-                          // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                          // 実データ上も自明に成り立つ。
-                          if (line.kind !== "turn") return null;
-                          // boundaries[i] は上の useMemo で groups と同じ index で
-                          // 計算済み (render のたびの再分類を避けるため)。
-                          const boundary = boundaries[i]!;
-                          if (boundary === null) return null;
-                          switch (boundary.kind) {
-                            case "user-prompt":
-                              return (
-                                <UserPromptBubble
-                                  key={offset}
-                                  line={line}
-                                  offsetKey={offset}
-                                  navKey={`user:${offset}`}
-                                  registerUserTurnRef={registerUserTurnRef}
-                                  translationAvailability={translationAvailability}
-                                  now={now}
-                                  searchCtx={searchCtx}
-                                  onUserTurnClick={onUserTurnClick}
-                                  selected={selectedUserTurnKey === `user:${offset}`}
-                                />
-                              );
-                            case "assistant-response":
-                              return (
-                                <AssistantBubble
-                                  key={offset}
-                                  line={line}
-                                  offset={offset}
-                                  translationAvailability={translationAvailability}
-                                  now={now}
-                                  searchCtx={searchCtx}
-                                />
-                              );
-                            case "ccmsg": {
-                              // raw タブ用の「この行に何が書いてあったか」: subscribe/
-                              // teammate-message wrapper は text segment に、DR-0027 §2.2
-                              // の tool_result 検出行 ({ok:true,room,mid} response) は
-                              // tool-result segment にしか原文が無い — text だけ結合すると
-                              // tool_result 由来バブルの raw タブが空になるので両方拾う。
-                              const rawText = line.segments
-                                .filter(
-                                  (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
-                                    s.kind === "text" || s.kind === "tool-result",
-                                )
-                                .map((s) => s.text)
-                                .join("\n");
-                              return boundary.messages
-                                .map((m, j) => {
-                                  const dedupKey = ccmsgDedupKey(m);
-                                  if (seenCcmsg.has(dedupKey)) return null;
-                                  seenCcmsg.add(dedupKey);
-                                  const navKey = `ccmsg:${offset}:${j}`;
-                                  return (
-                                    <CcmsgBubble
-                                      key={`${offset}-${j}`}
-                                      message={m}
-                                      rawText={rawText}
-                                      now={now}
-                                      searchKey={`${offset}-ccmsg-${j}`}
-                                      searchCtx={searchCtx}
-                                      navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
-                                      registerUserTurnRef={registerUserTurnRef}
-                                      onUserTurnClick={onUserTurnClick}
-                                      selected={selectedUserTurnKey === navKey}
-                                      room={appState.rooms.get(m.room)}
-                                      peers={appState.peers}
-                                    />
-                                  );
-                                })
-                                .filter((n) => n !== null);
-                            }
-                          }
-                        }))(ccmsgSeen)
-                    )}
-                  </div>
-                )}
-                <div
-                  ref={autoOpenFloatRef}
-                  class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
-                >
-                  <button
-                    type="button"
-                    class="tl-auto-open-handle"
-                    aria-label={
-                      autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"
-                    }
-                    aria-expanded={autoOpenPanelOpen}
-                    onClick={() => setAutoOpenPanelOpen((open) => !open)}
-                  >
-                    {autoOpenPanelOpen ? "›" : "‹"}
-                  </button>
-                  <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
-                    <legend>auto open</legend>
-                    {(["U", "R", "C", "T", "A"] as const).map((category) => {
-                      const fixed = category === "U" || category === "R";
-                      // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
-                      // U/R は境界要素なので常に表示 (fixed)。
-                      const settingKey =
-                        category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
-                      return (
-                        <label
-                          key={category}
-                          title={fixed ? "常に表示" : `${category} を自動オープン`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={fixed ? true : autoOpenSettings[settingKey]}
-                            disabled={fixed}
-                            onChange={() => {
-                              if (!fixed) toggleAutoOpen(settingKey);
-                            }}
-                          />
-                          {category}
-                        </label>
-                      );
-                    })}
-                    <span class="tl-auto-open-separator" aria-hidden="true" />
-                    <label title="C/T/A を含む外側の fold を自動オープン">
-                      <input
-                        type="checkbox"
-                        checked={autoOpenSettings.items}
-                        onChange={() => toggleAutoOpen("items")}
-                      />
-                      N items
-                    </label>
-                  </fieldset>
-                </div>
-                <div class="tl-bottom-controls">
-                  {miniLines.length > 0 ? (
-                    <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
-                      {miniLines.map((line) => (
-                        <span
-                          key={`${line.kind}-${line.text}`}
-                          class={`tl-status-mini-line tl-status-mini-${line.kind}`}
-                        >
-                          {line.text}
-                        </span>
-                      ))}
-                    </button>
+              <ItemRawContext.Provider value={getItemRawRows}>
+                <div class="timeline-view" ref={scrollRef}>
+                  {agentLabel ? (
+                    <div class="tl-agent-header">
+                      <span class="tl-agent-header-label">agent: {agentLabel}</span>
+                      <a class="tl-agent-header-back" href={timelineHref(sid)}>
+                        親セッションへ戻る
+                      </a>
+                    </div>
                   ) : null}
+                  <div class="tl-toolbar">
+                    <button
+                      type="button"
+                      disabled={timeline.atStart || timeline.status === "loading"}
+                      onClick={loadOlder}
+                    >
+                      {timeline.atStart ? "先頭まで" : "older"}
+                    </button>
+                    {/* in-view search と 👤 nav は rich 側の描画単位 (バブル /
+                     * fold) を対象にした機構なので、raw 表示では対象が 1 つも
+                     * mount されない — 「0 件」を出し続けるより畳んで隠す。
+                     * rich に戻せば同じ state のまま復帰する (query は store
+                     * 側が保持)。 */}
+                    {rawView ? null : (
+                      <>
+                        <SearchBar
+                          words={parsedSearch.words}
+                          queryText={searchQueryText}
+                          onQueryChange={(queryText) => changeSearch({ queryText })}
+                          caseSensitive={searchCaseSensitive}
+                          onToggleCaseSensitive={() =>
+                            changeSearch({ caseSensitive: !searchCaseSensitive })
+                          }
+                          regexMode={searchRegex}
+                          onToggleRegex={() => changeSearch({ regex: !searchRegex })}
+                          matchCount={matchingUnitKeys.length}
+                          currentIndex={searchCurrentIndex}
+                          onPrev={searchPrev}
+                          onNext={searchNext}
+                          hasError={parsedSearch.hasError}
+                          targets={{
+                            user: targetUser,
+                            onToggleUser: () => setTargetUser((v) => !v),
+                            ai: targetAI,
+                            onToggleAI: () => setTargetAI((v) => !v),
+                            ccmsg: targetCcmsg,
+                            onToggleCcmsg: () => setTargetCcmsg((v) => !v),
+                          }}
+                        />
+                        <div class="tl-user-nav">
+                          <button
+                            type="button"
+                            class="tl-user-nav-count"
+                            disabled={currentUserIdx <= 0 || userTurnKeys.length === 0}
+                            onClick={() => scrollToUserTurn(currentUserIdx)}
+                            title="現在のユーザ発言へ戻る"
+                          >
+                            👤 {currentUserIdx}/{userTurnKeys.length}
+                          </button>
+                          {/* disabled のみ「ユーザ発言が 1 件も無い」を基準にする — 境界での
+                           * disabled (旧 currentUserIdx<=1 / >=length) は DR-0022 §2.2 の
+                           * ループ仕様と両立しない (ループするボタンを境界で押せなくしては
+                           * 意味がない)。 */}
+                          <button
+                            type="button"
+                            disabled={userTurnKeys.length === 0}
+                            onClick={goPrevUserTurn}
+                            title="前のユーザ発言へ"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={userTurnKeys.length === 0}
+                            onClick={goNextUserTurn}
+                            title="次のユーザ発言へ"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    <button type="button" onClick={scrollToTop} title="最上部へ">
+                      ⤒
+                    </button>
+                    <button type="button" onClick={scrollToBottom} title="最下部へ">
+                      ⤓
+                    </button>
+                    <button
+                      type="button"
+                      class={rawView ? "tl-raw-toggle active" : "tl-raw-toggle"}
+                      aria-pressed={rawView}
+                      onClick={() => setRawView((v) => !v)}
+                      title="raw JSONL 表示に切り替え"
+                    >
+                      raw
+                    </button>
+                  </div>
+                  {timeline.status === "error" ? (
+                    <div class="tl-error">
+                      <p>{timeline.error}</p>
+                      <button type="button" onClick={refresh}>
+                        再試行 (tail から読み直す)
+                      </button>
+                    </div>
+                  ) : rawView ? (
+                    <div class="tl-lines tl-raw-lines">
+                      <RawTranscriptView rows={rawRows} />
+                    </div>
+                  ) : (
+                    <div class="tl-lines">
+                      {parsed.length === 0 ? (
+                        <p class="tl-empty">(空の transcript)</p>
+                      ) : (
+                        // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
+                        // 抽出されるとき (queue-operation enqueue と task-notification 経由の
+                        // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
+                        // 2026-07-14) の二重表示を避ける。この Set は render pass 単位で
+                        // 上位 (Timeline 関数トップ) の ccmsgSeen を **boundary 側と
+                        // fold-group 側 (CcmsgRenderContext 経由の PeerCcmsgLineView)
+                        // で共有** する — 同 event が両経路に流れる場面 (r55 m14: peer
+                        // ccmsg を fold group 側に流したことで発生し得る境界) でも一箇所
+                        // だけ描画される。
+                        ((seenCcmsg: Set<string>) =>
+                          groups.map((group, i) => {
+                            if (group.kind === "fold") {
+                              return (
+                                <FoldGroup
+                                  key={group.entries[0]!.offset}
+                                  entries={group.entries}
+                                  translationAvailability={translationAvailability}
+                                  searchCtx={searchCtx}
+                                />
+                              );
+                            }
+                            const { line, offset } = group;
+                            // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                            // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                            // fold group に送るので groups の "entry" 側には来ない) —
+                            // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                            // 実データ上も自明に成り立つ。
+                            if (line.kind !== "turn") return null;
+                            // boundaries[i] は上の useMemo で groups と同じ index で
+                            // 計算済み (render のたびの再分類を避けるため)。
+                            const boundary = boundaries[i]!;
+                            if (boundary === null) return null;
+                            switch (boundary.kind) {
+                              case "user-prompt":
+                                return (
+                                  <ItemRawToggle key={offset} offset={offset}>
+                                    <UserPromptBubble
+                                      line={line}
+                                      offsetKey={offset}
+                                      navKey={`user:${offset}`}
+                                      registerUserTurnRef={registerUserTurnRef}
+                                      translationAvailability={translationAvailability}
+                                      now={now}
+                                      searchCtx={searchCtx}
+                                      onUserTurnClick={onUserTurnClick}
+                                      selected={selectedUserTurnKey === `user:${offset}`}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "assistant-response":
+                                return (
+                                  <ItemRawToggle key={offset} offset={offset}>
+                                    <AssistantBubble
+                                      line={line}
+                                      offset={offset}
+                                      translationAvailability={translationAvailability}
+                                      now={now}
+                                      searchCtx={searchCtx}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "ccmsg": {
+                                // raw タブ用の「この行に何が書いてあったか」: subscribe/
+                                // teammate-message wrapper は text segment に、DR-0027 §2.2
+                                // の tool_result 検出行 ({ok:true,room,mid} response) は
+                                // tool-result segment にしか原文が無い — text だけ結合すると
+                                // tool_result 由来バブルの raw タブが空になるので両方拾う。
+                                const rawText = line.segments
+                                  .filter(
+                                    (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
+                                      s.kind === "text" || s.kind === "tool-result",
+                                  )
+                                  .map((s) => s.text)
+                                  .join("\n");
+                                return boundary.messages
+                                  .map((m, j) => {
+                                    const dedupKey = ccmsgDedupKey(m);
+                                    if (seenCcmsg.has(dedupKey)) return null;
+                                    seenCcmsg.add(dedupKey);
+                                    const navKey = `ccmsg:${offset}:${j}`;
+                                    return (
+                                      <ItemRawToggle key={`${offset}-${j}`} offset={offset}>
+                                        <CcmsgBubble
+                                          message={m}
+                                          rawText={rawText}
+                                          now={now}
+                                          searchKey={`${offset}-ccmsg-${j}`}
+                                          searchCtx={searchCtx}
+                                          navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
+                                          registerUserTurnRef={registerUserTurnRef}
+                                          onUserTurnClick={onUserTurnClick}
+                                          selected={selectedUserTurnKey === navKey}
+                                          room={appState.rooms.get(m.room)}
+                                          peers={appState.peers}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  })
+                                  .filter((n) => n !== null);
+                              }
+                            }
+                          }))(ccmsgSeen)
+                      )}
+                    </div>
+                  )}
+                  <div
+                    ref={autoOpenFloatRef}
+                    class={`tl-auto-open-float${autoOpenPanelOpen ? " tl-auto-open-float-open" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      class="tl-auto-open-handle"
+                      aria-label={
+                        autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"
+                      }
+                      aria-expanded={autoOpenPanelOpen}
+                      onClick={() => setAutoOpenPanelOpen((open) => !open)}
+                    >
+                      {autoOpenPanelOpen ? "›" : "‹"}
+                    </button>
+                    <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
+                      <legend>auto open</legend>
+                      {(["U", "R", "C", "T", "A"] as const).map((category) => {
+                        const fixed = category === "U" || category === "R";
+                        // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
+                        // U/R は境界要素なので常に表示 (fixed)。
+                        const settingKey =
+                          category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
+                        return (
+                          <label
+                            key={category}
+                            title={fixed ? "常に表示" : `${category} を自動オープン`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={fixed ? true : autoOpenSettings[settingKey]}
+                              disabled={fixed}
+                              onChange={() => {
+                                if (!fixed) toggleAutoOpen(settingKey);
+                              }}
+                            />
+                            {category}
+                          </label>
+                        );
+                      })}
+                      <span class="tl-auto-open-separator" aria-hidden="true" />
+                      <label title="C/T/A を含む外側の fold を自動オープン">
+                        <input
+                          type="checkbox"
+                          checked={autoOpenSettings.items}
+                          onChange={() => toggleAutoOpen("items")}
+                        />
+                        N items
+                      </label>
+                    </fieldset>
+                  </div>
+                  <div class="tl-bottom-controls">
+                    {miniLines.length > 0 ? (
+                      <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
+                        {miniLines.map((line) => (
+                          <span
+                            key={`${line.kind}-${line.text}`}
+                            class={`tl-status-mini-line tl-status-mini-${line.kind}`}
+                          >
+                            {line.text}
+                          </span>
+                        ))}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
+              </ItemRawContext.Provider>
             </CcmsgRenderContext.Provider>
           </TimelineAutoOpenContext.Provider>
         </AgentTimelineHrefsContext.Provider>

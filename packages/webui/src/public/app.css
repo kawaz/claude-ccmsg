@@ -3336,6 +3336,62 @@ button.session-tab {
   border-color: var(--accent);
 }
 
+/* 項目ごとの jsonl トグル (kawaz r55 m89)。ラッパ自体は縦 flex — 項目が
+ * 元々置かれていた 2 つの親 (.tl-lines / .tl-guided-content) と同じ方向な
+ * ので、間に挟んでも吹き出しの align-self (左右振り分け) がそのまま効く。 */
+.tl-item {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+}
+
+/* ボタンは通常時ほぼ不可視 (アイテム毎に並ぶと邪魔、kawaz 要望)。hover /
+ * focus / 展開中だけ浮かび上がる。位置は項目の右上角に重ね、レイアウトを
+ * 一切動かさない (absolute)。 */
+.tl-item-raw-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  font: inherit;
+  font-size: 0.6rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.3rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.tl-item:hover > .tl-item-raw-toggle,
+.tl-item:focus-within > .tl-item-raw-toggle,
+.tl-item-raw-on > .tl-item-raw-toggle {
+  opacity: 1;
+}
+
+/* タッチ端末には hover が無いので常時薄く見せる (押せることが判る程度)。 */
+@media (hover: none) {
+  .tl-item-raw-toggle {
+    opacity: 0.45;
+  }
+}
+
+.tl-item-raw-on > .tl-item-raw-toggle {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* jsonl 展開中の行は、全体 raw 表示の .tl-raw-row と同じ体裁のまま、
+ * トグルボタンと重ならないよう右肩を空ける。 */
+.tl-item-raw-on > .tl-raw-row {
+  padding-right: 3rem;
+}
+
 .tl-line {
   font-size: 0.85rem;
   border-radius: 0.4rem;
@@ -3352,8 +3408,12 @@ button.session-tab {
  * (kawaz r17 mid=51 — devtools 実測で行あたり左右 8px が積み、ガイドの
  * ネストと合わせて thinking が余計にインデントして見えた)。縦 padding は
  * 行間の見やすさのため残す。 */
+/* .tl-item は項目ごとの jsonl トグルのラッパ (r55 m89) — 行そのものは
+ * その 1 つ内側に来るので、直下・ラッパ越しの両方を対象にする。 */
 .tl-guided-content > .tl-line,
-.tl-guided-content details.tl-line {
+.tl-guided-content details.tl-line,
+.tl-guided-content > .tl-item > .tl-line,
+.tl-guided-content > .tl-item > details.tl-line {
   padding-left: 0;
   padding-right: 0;
 }
