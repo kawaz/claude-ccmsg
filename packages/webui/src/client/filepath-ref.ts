@@ -134,13 +134,13 @@ export function parseFilePathRef(token: string): ParsedFilePathRef | null {
 export interface FilePathResolveCtx {
   /** Session sid to link to (owner of the file view). Required. */
   sid: string;
-  /** Absolute cwd of the sender at the time the message was sent. Used to
-   * resolve `./` / `../` / bare-relative tokens and to strip absolute paths
-   * that live below cwd. */
+  /** Absolute cwd of the sender at the time the message was sent. The anchor
+   * every relative token resolves against — see `refToAbsolutePath`. */
   cwd?: string;
   /** Absolute repo containment root, when the session announced one and the
-   * daemon accepted it. When present, this is the FileTree's base — so the
-   * `path` we pass to `fileHref()` must be relative to `repo_root`. */
+   * daemon accepted it. Only a fallback anchor for senders that announced no
+   * cwd; the daemon owns the containment semantics and returns the
+   * FileViewer-shaped path itself, so nothing here rebases against it. */
   repoRoot?: string;
 }
 
@@ -170,15 +170,31 @@ function normalizePosix(p: string): string {
  * probe — the client is the natural place to expand `./` / `../` /
  * bare-relative tokens against the sender's cwd, so the daemon side only has
  * to test absolute strings against its authorization surfaces. Returns
- * `null` when the ref cannot be pinned to an absolute path (no cwd on the
- * sender, or the ref is bare-relative and neither cwd nor repo_root is
- * available). */
+ * `null` when the ref cannot be pinned to an absolute path (the sender
+ * announced neither cwd nor repo_root).
+ *
+ * Every relative form — `./x`, `../x`, and bare `docs/x.md` alike — anchors
+ * at the sender's **cwd**. A bare relative path is what a process writes when
+ * it cites a file it is working on, and that is cwd-relative by construction;
+ * repo_root is a containment root the daemon widens fs access to, not a base
+ * anyone resolves paths against. Anchoring bare paths at repo_root breaks
+ * every worktree layout where cwd sits below it (jj: cwd `<repo>/<ws>`,
+ * repo_root `<repo>`) — `docs/x.md` resolved to `<repo>/docs/x.md` misses the
+ * real file under `<repo>/<ws>/`.
+ *
+ * No repo_root fallback is attempted when the cwd-anchored probe misses.
+ * `fs_stat_batch` could take both candidates in one round trip, but a hit on
+ * the repo_root candidate is more likely a *different* same-named file than
+ * the intended one — sibling workspaces under a repo container share tree
+ * shapes (`docs/`, `packages/`), so the fallback would link confidently to
+ * the wrong file. A missed link costs nothing (the plain `<code>` stays);
+ * a wrong link costs a wasted click and misleads the reader.
+ *
+ * `ctx.repoRoot` is used only as a last resort when the sender announced no
+ * cwd at all, where a plausible anchor beats no link. */
 export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string | null {
   if (ref.path.startsWith("/")) return normalizePosix(ref.path);
-  const anchor =
-    ref.path.startsWith("./") || ref.path.startsWith("../") || ref.path === "."
-      ? ctx.cwd
-      : (ctx.repoRoot ?? ctx.cwd);
+  const anchor = ctx.cwd ?? ctx.repoRoot;
   if (!anchor) return null;
   const anchorTrim = anchor.replace(/\/+$/, "");
   const abs = normalizePosix(anchorTrim + "/" + ref.path);

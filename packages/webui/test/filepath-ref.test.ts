@@ -3,7 +3,7 @@
 // separately:
 //   - parseFilePathRef: token -> {path, line?, end?} or null (shape rules)
 //   - refToAbsolutePath / hrefFromStatEntry: (ref, sender ctx) -> fileHref URL
-//     (relative/absolute normalization against cwd/repo_root)
+//     (relative paths normalize against the sender's cwd)
 import { describe, expect, test } from "bun:test";
 import {
   looksLikePath,
@@ -137,9 +137,32 @@ describe("refToAbsolutePath (Phase B/C: cache-key form for daemon probe)", () =>
     expect(refToAbsolutePath({ path: "./x.ts" }, CTX)).toBe("/repo/pkg/x.ts");
     expect(refToAbsolutePath({ path: "../a.ts" }, CTX)).toBe("/repo/a.ts");
   });
-  test("bare relative anchors at repo_root when present, cwd otherwise", () => {
-    expect(refToAbsolutePath({ path: "packages/foo.ts" }, CTX)).toBe("/repo/packages/foo.ts");
+  test("bare relative anchors at cwd, same as `./`", () => {
+    // kawaz r55 m93: bare paths used to anchor at repo_root, on the premise
+    // that senders cite monorepo-root-relative paths. They don't — a process
+    // citing a file it is working on writes it cwd-relative. Under the jj
+    // worktree layout (cwd `<repo>/<ws>`, repo_root `<repo>`) the old rule
+    // resolved `docs/QUESTIONS.md` to `<repo>/docs/QUESTIONS.md`, which the
+    // daemon's stat probe rejected, so the token never linkified.
+    expect(refToAbsolutePath({ path: "packages/foo.ts" }, CTX)).toBe("/repo/pkg/packages/foo.ts");
     expect(refToAbsolutePath({ path: "x.ts" }, { sid: "s2", cwd: "/w" })).toBe("/w/x.ts");
+  });
+  test("worktree layout: bare path resolves under the workspace, not the container", () => {
+    // The real shape from the bug report: jj names the workspace dir one
+    // level under the repo container, and repo_root is that container.
+    const wt = {
+      sid: "s4",
+      cwd: "/Users/k/repos/claude-ccmsg/main",
+      repoRoot: "/Users/k/repos/claude-ccmsg",
+    };
+    expect(refToAbsolutePath({ path: "docs/QUESTIONS.md" }, wt)).toBe(
+      "/Users/k/repos/claude-ccmsg/main/docs/QUESTIONS.md",
+    );
+  });
+  test("repo_root is the fallback anchor only when the sender announced no cwd", () => {
+    expect(refToAbsolutePath({ path: "x.ts" }, { sid: "s5", repoRoot: "/repo" })).toBe(
+      "/repo/x.ts",
+    );
   });
   test("null when there is no anchor", () => {
     expect(refToAbsolutePath({ path: "x.ts" }, { sid: "s3" })).toBeNull();
