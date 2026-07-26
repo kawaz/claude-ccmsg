@@ -34,3 +34,11 @@ TL ツールバーの `raw` トグルで生 JSONL に切り替わり、行番号
 
 ### 👺WEBUI-C3: FAB フォームが Terminal タブで閉じるか (v0.73.28)
 Terminal タブでプラスボタンのフォームを開き、hyoui の iframe 内をクリックしてフォームが閉じるか。パネル右上の ✕ ボタンでも閉じるか。書きかけテキストが保持されるか。
+
+### 👺WEBUI-C4: markdown の `<details>` 折りたたみ (v0.73.31)
+`<details><summary>title</summary> ... </details>` が折りたたみとして描画されるか。枠線・余白の見栄えは worker 側で未検証なので、調整が要るか併せて見てほしい。
+
+#### 確認手順
+- 空行あり / なし両方の書き方で畳まれるか、`<details open>` が開いた状態で出るか
+- `<summary>` 内の `**bold**` が太字になるか
+- 閉じタグ無しや `<details onclick=...>` がテキストのまま出るか (安全側の挙動)
