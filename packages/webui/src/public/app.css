@@ -5195,6 +5195,127 @@ button.session-tab {
   margin-left: auto;
 }
 
+/* --- Status tab ENV panel (kawaz r55m132) --- */
+
+/* Collapsed by default; the summary is the only thing visible until opened,
+ * which is also what keeps a screen share from surfacing secrets by accident. */
+.status-env-summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--fg-muted);
+}
+
+.status-env-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.4rem 0 0.3rem;
+}
+
+.status-env-search {
+  font: inherit;
+  font-size: 0.8rem;
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.status-env-split {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.status-env-count {
+  margin: 0 0 0.3rem;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-env-error {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--err, #c55);
+}
+
+/* Values are the wide column and can be very long (PATH, tokens), so the
+ * table scrolls horizontally inside its own box rather than widening the
+ * whole Status tab. */
+.status-env-table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.status-env-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+  padding: 0.2rem 0.5rem 0.2rem 0;
+}
+
+.status-env-table td {
+  vertical-align: top;
+  padding: 0.2rem 0.5rem 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.status-env-name {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* pre-wrap so a value that genuinely contains newlines shows them, and so the
+ * colon-split parts below keep their own lines. */
+.status-env-value {
+  font-family: var(--font-mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.status-env-value-part {
+  white-space: pre-wrap;
+}
+
+/* Masked sensitive value (kawaz r55m134): a bare-looking button so the row
+ * still reads as a table cell, with the dotted underline as the only hint
+ * that it is clickable. Revealed values drop the accent so a screenful of
+ * revealed secrets doesn't look alarming. */
+.status-env-reveal {
+  font: inherit;
+  font-family: var(--font-mono, monospace);
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  border-bottom: 1px dotted currentColor;
+  cursor: pointer;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.status-env-reveal.revealed {
+  color: inherit;
+  border-bottom-color: transparent;
+}
+
 /* --- Status tab danger zone (DR-0028 session_kill) --- */
 
 /* Visually quarantined at the very bottom of the Status tab: a --danger

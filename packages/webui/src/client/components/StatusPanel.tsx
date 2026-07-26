@@ -21,7 +21,13 @@ import {
   formatAgentLiveState,
   formatContextUsage,
 } from "../session-status-view.ts";
-import { filterEnvRows, splitColonValue, toEnvRows, type EnvRow } from "../env-filter.ts";
+import {
+  filterEnvRows,
+  isSensitiveEnvName,
+  splitColonValue,
+  toEnvRows,
+  type EnvRow,
+} from "../env-filter.ts";
 import { agentTimelineHref } from "../locator.ts";
 import { formatClockTime, resolveSessionTopbar } from "../utils.ts";
 import { useApp } from "../context.ts";
@@ -257,6 +263,51 @@ function KillZone({
   );
 }
 
+/** One value cell. A sensitive name (r55m134) renders as a button that swaps
+ * between a fixed-width mask and the real value — fixed-width because the
+ * mask's length would otherwise leak the secret's length. Non-sensitive
+ * values render as plain text with no affordance, so the click target exists
+ * only where it means something.
+ *
+ * The colon split applies to the revealed value only: masked rows have
+ * nothing to split, and applying it to the mask would turn one placeholder
+ * into a column of them. */
+function EnvValue({
+  row,
+  splitColons,
+  revealed,
+  onToggleReveal,
+}: {
+  row: EnvRow;
+  splitColons: boolean;
+  revealed: boolean;
+  onToggleReveal: () => void;
+}) {
+  const parts = splitColons ? (
+    splitColonValue(row.value).map((part, i) => (
+      // Index keys are correct here: the parts are a positional split of one
+      // string, with no identity of their own to preserve.
+      <div key={i} class="status-env-value-part">
+        {part}
+      </div>
+    ))
+  ) : (
+    <>{row.value}</>
+  );
+  if (!isSensitiveEnvName(row.name)) return parts;
+  return (
+    <button
+      type="button"
+      class={"status-env-reveal" + (revealed ? " revealed" : "")}
+      aria-pressed={revealed}
+      title={revealed ? "クリックで隠す" : "クリックで表示"}
+      onClick={onToggleReveal}
+    >
+      {revealed ? parts : "••••••••"}
+    </button>
+  );
+}
+
 /** ENV panel (kawaz r55m132): the session process's environment, folded away
  * by default and fetched lazily on first open — the daemon has to resolve
  * sid→pid and shell out to `ps`, so paying that on every Status render would
@@ -264,13 +315,12 @@ function KillZone({
  * long-lived session can gain variables (and a stale list is worse than a
  * brief spinner for a debugging view).
  *
- * Values are shown in full, unredacted, deliberately: kawaz asked to
- * "確認する" the environment, and the webui is reachable only over the
- * tailnet with Origin verification, so the viewer is already the owner of
- * these secrets. Masking would defeat the panel's only purpose while
- * protecting against nothing this transport doesn't already cover — the
- * residual risk (a screen share) is handled by the panel being collapsed by
- * default rather than by making the values unreadable. */
+ * Values whose NAME matches a sensitive pattern start masked and reveal on
+ * click (kawaz r55m134). The transport already restricts the viewer to the
+ * owner of these secrets (tailnet + Origin verification), so the masking is
+ * not an access control — it's a shoulder-surfing / screen-share guard, which
+ * is why one click is enough to lift it and why nothing is hidden from the
+ * search index below. */
 function EnvPanel({
   sid,
   onLoadEnv,
@@ -289,6 +339,18 @@ function EnvPanel({
   >({ kind: "idle" });
   const [query, setQuery] = useState("");
   const [splitColons, setSplitColons] = useState(false);
+  /** Names the user has explicitly revealed this session. Kept as a set of
+   * names (not a per-row flag) so a re-fetch or a change of filter doesn't
+   * silently re-hide what the user just chose to look at. */
+  const [revealed, setRevealed] = useState<ReadonlySet<string>>(new Set());
+
+  function toggleReveal(name: string): void {
+    setRevealed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
+  }
 
   function handleToggle(e: Event): void {
     if (!(e.currentTarget as HTMLDetailsElement).open) return;
@@ -344,16 +406,12 @@ function EnvPanel({
                     <tr key={row.name}>
                       <td class="status-env-name">{row.name}</td>
                       <td class="status-env-value">
-                        {splitColons
-                          ? splitColonValue(row.value).map((part, i) => (
-                              // Index keys are correct here: the parts are a
-                              // positional split of one string, with no
-                              // identity of their own to preserve.
-                              <div key={i} class="status-env-value-part">
-                                {part}
-                              </div>
-                            ))
-                          : row.value}
+                        <EnvValue
+                          row={row}
+                          splitColons={splitColons}
+                          revealed={revealed.has(row.name)}
+                          onToggleReveal={() => toggleReveal(row.name)}
+                        />
                       </td>
                     </tr>
                   ))}

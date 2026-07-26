@@ -22,6 +22,7 @@ import {
   type Request,
   type RoomKind,
   type SessionIdentity,
+  type SessionEnvResponse,
   type SessionKillResponse,
   type SessionLaunchResponse,
   type SessionSearchResponse,
@@ -48,6 +49,7 @@ import {
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
+import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
 import {
   createSessionStatusStore,
@@ -904,6 +906,7 @@ const SET_TITLE_MAX_LEN = 200;
  * `ev:"*_result"` event carries beside its ev/request_id envelope. */
 type TwoPhaseResult =
   | SessionKillResponse
+  | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
   | TranslateResponse
@@ -1783,6 +1786,49 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         },
         (e) => {
           daemon.log.error(`op 'session_kill' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
+    case "session_env": {
+      // user role only, same posture as session_kill and the fs ops: a
+      // session-role agent must not be able to read another session's
+      // environment (which routinely holds that session's credentials).
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_env' requires user role");
+        return;
+      }
+      if (typeof req.session_id !== "string" || req.session_id === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_env requires a non-empty session_id");
+        return;
+      }
+      // 2-phase for session_kill's reason: the fresh `claude agents` resolution
+      // is async and handleRequest pairs ordinary replies by arrival order.
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_env",
+        "session_env_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      void sessionEnv(req.session_id, productionEnvDeps(productionKillDeps)).then(
+        (result) => {
+          if (!result.found) {
+            // Unresolvable sid and a pid that failed ps verification are the
+            // same outcome for the caller, exactly as in session_kill.
+            complete({
+              ok: false,
+              error: { code: ErrorCode.not_found, msg: `no process for session ${req.session_id}` },
+            });
+            return;
+          }
+          complete({ ok: true, pid: result.pid, env: result.env });
+        },
+        (e) => {
+          daemon.log.error(`op 'session_env' failed: ${String(e)}`);
           complete({ ok: false, error: { code: "internal", msg: String(e) } });
         },
       );

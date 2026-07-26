@@ -43,6 +43,7 @@ import type {
   Request,
   Response,
   RoomsResponse,
+  SessionEnvResponse,
   SessionKillResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
@@ -292,6 +293,11 @@ export interface WsHandle {
     sessionId: string,
     opts?: { force?: boolean },
   ): Promise<SessionKillResponse | ErrorResponse>;
+  /** Read a session process's environment variables (user role only). The
+   * daemon resolves sid→pid fresh and runs the same ps verification as
+   * sessionKill, so this is 2-phase on the wire (ack +
+   * ev:"session_env_result") hidden behind one Promise. */
+  sessionEnv(sessionId: string): Promise<SessionEnvResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -300,6 +306,7 @@ export interface WsHandle {
 type TwoPhaseOutcome =
   | TranslateResponse
   | SessionKillResponse
+  | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
   | ErrorResponse;
@@ -468,6 +475,7 @@ export function createWsClient(
         (streamEv.ev === "translate_result" ||
           streamEv.ev === "session_launch_result" ||
           streamEv.ev === "session_kill_result" ||
+          streamEv.ev === "session_env_result" ||
           streamEv.ev === "session_search_result")
       ) {
         const settle = inflight.get(streamEv.request_id);
@@ -738,6 +746,12 @@ export function createWsClient(
         request_id: `q${++nextRequestId}`,
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
+      }),
+    sessionEnv: (sessionId) =>
+      sendTwoPhase({
+        op: "session_env",
+        request_id: `q${++nextRequestId}`,
+        session_id: sessionId,
       }),
   };
 }

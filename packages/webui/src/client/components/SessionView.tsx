@@ -316,6 +316,7 @@ export function SessionView({ state }: { state: AppState }) {
             snapshot={sessionStatus}
             sid={sid}
             onKill={(opts) => ws.sessionKill(sid, opts)}
+            onLoadEnv={() => ws.sessionEnv(sid)}
           />
         ) : hasTranscript ? (
           <p id="empty-state">

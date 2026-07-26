@@ -605,6 +605,13 @@ export type SessionKillResultEvent = {
   request_id: string;
 } & (SessionKillResponse | ErrorResponse);
 
+/** Completion of a 2-phase `session_env` request (see SessionEnvRequest's
+ * doc comment). Same correlation/classification rules as TranslateResultEvent. */
+export type SessionEnvResultEvent = {
+  ev: "session_env_result";
+  request_id: string;
+} & (SessionEnvResponse | ErrorResponse);
+
 /** Completion of a 2-phase `session_search` request (see SessionSearchRequest's
  * request_id doc comment). Same correlation/classification rules as
  * TranslateResultEvent. */
@@ -625,6 +632,7 @@ export type StreamEvent =
   | TranslateResultEvent
   | SessionLaunchResultEvent
   | SessionKillResultEvent
+  | SessionEnvResultEvent
   | SessionSearchResultEvent;
 
 // ---------------------------------------------------------------------------
@@ -894,6 +902,28 @@ export interface SessionKillRequest {
    * 押す 2 段動線)。sid→pid 解決と ps 検証は force 時も同じで、pid-reuse ガード
    * だけは絶対に外さない。 */
   force?: boolean;
+}
+
+/** Read the environment variables of a session's own process (user role
+ * only, kawaz r55m133). The env is read from the resolved pid rather than
+ * from the daemon's session connection: the subscribe helper the session
+ * spawns carries whatever Claude Code added on the way down, which is not
+ * the session process's environment. sid→pid resolution and the ps
+ * pid-reuse verification are shared verbatim with session_kill — reading a
+ * recycled pid's environment would disclose an unrelated process's secrets.
+ *
+ * 2-phase for the same reason as session_kill: the fresh `claude agents`
+ * resolution makes this an async op, and handleRequest pairs ordinary replies
+ * by arrival order. The outcome arrives as `ev:"session_env_result"`. */
+export interface SessionEnvRequest {
+  op: "session_env";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionKillRequest.request_id). */
+  request_id: string;
+  /** The Claude Code session UUID whose process environment to read. Carries
+   * no pid for the same reason session_kill doesn't — a client-asserted pid
+   * is a weaker basis than the daemon's own fresh resolution. */
+  session_id: string;
 }
 
 /** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
@@ -1349,6 +1379,7 @@ export type Request =
   | DirTreeRequest
   | SessionLaunchRequest
   | SessionKillRequest
+  | SessionEnvRequest
   | SessionLauncherConfigRequest
   | FsListRequest
   | FsReadRequest
@@ -1514,6 +1545,24 @@ export interface SessionLaunchResponse {
 export interface SessionKillResponse {
   ok: true;
   terminated: boolean;
+}
+/** Payload of a completed session_env, delivered inside SessionEnvResultEvent.
+ * `env` is the session process's environment as name→value pairs.
+ *
+ * On macOS the source is `ps eww`, whose output is space-separated with no
+ * quoting, so a value containing a space cannot be told apart from the next
+ * variable by tokenizing alone. The daemon reconstructs values by treating a
+ * token as a new variable only when it matches `NAME=`; a value that itself
+ * contains a `NAME=`-shaped token is the one case that mis-splits. Linux
+ * reads `/proc/<pid>/environ` (NUL-separated), which has no such ambiguity.
+ * Values are returned verbatim and are NOT redacted — the caller decides how
+ * to present secrets. */
+export interface SessionEnvResponse {
+  ok: true;
+  /** The pid the environment was read from, after the same ps verification
+   * session_kill applies. Surfaced so the UI can show what it actually read. */
+  pid: number;
+  env: Record<string, string>;
 }
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
  * passed synchronous validation and its outcome will arrive as the matching
