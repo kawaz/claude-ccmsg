@@ -529,7 +529,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
           {details.summary && details.summary.length > 0 ? (
             <summary>{renderChildren(details.summary, `${key}.s`, ctx)}</summary>
           ) : (
-            <summary>詳細</summary>
+            <summary>Details</summary>
           )}
           {renderChildren(details.children, key, ctx)}
         </details>

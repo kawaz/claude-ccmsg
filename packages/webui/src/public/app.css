@@ -3633,7 +3633,9 @@ button.session-tab {
   padding: 0.2rem 0;
   cursor: pointer;
   font-weight: 600;
-  color: var(--accent);
+  /* 本文と同じ色にする (kawaz r55m85): accent はリンク色なので、クリックで
+   * 遷移する要素だと誤読される。開閉であることは marker が示している。 */
+  color: inherit;
   touch-action: manipulation;
 }
 
