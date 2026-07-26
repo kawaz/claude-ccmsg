@@ -2566,15 +2566,25 @@ button.session-tab {
   list-style: none;
   margin: 0;
   padding: 0;
-  /* 長いパスは省略せず横スクロールで見せる (kawaz r55m76)。 */
+  /* 長いパスは省略せず横スクロールで見せる (kawaz r55m76 / m78)。行 (li) を
+   * 内容幅にするため min-content を敷き、はみ出し分をここでスクロールする。 */
   overflow-x: auto;
+}
+
+.file-search-list > li {
+  min-width: min-content;
 }
 
 /* 検索結果行: パス全体を 1 本の文字列で出す (kawaz r55m76 — 同名ファイルが
  * 多いリポでは名前だけでは識別できない)。長いパスは省略や折返しをせず
  * 横スクロールで見せる (`.file-search-list` 側が overflow-x)。 */
 .file-search-hit {
-  display: flex;
+  /* inline-flex + min-width:100% で「内容幅、ただし最低でも親幅」にする。
+   * 素の flex だと行が親幅に押し込まれてパスが ellipsis で切れ、親側の
+   * overflow-x が働かない (kawaz r55m78)。min-width があることで hover の
+   * 背景は短いパスの行でも全幅に届く。 */
+  display: inline-flex;
+  min-width: 100%;
   align-items: center;
   gap: 0.4rem;
   padding: 0.2rem 0.75rem;
