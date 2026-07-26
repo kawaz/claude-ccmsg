@@ -14,6 +14,7 @@ export { VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
 export * from "./search-query.ts";
+export * from "./file-search-query.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
 export const ADMIN_ID = "u1";
@@ -1120,12 +1121,24 @@ export interface FsFindRequest {
   /** Directory to search under. Relative to the containment root for
    * `contained` ("" / absent = the root itself); absolute for `workspace`. */
   root?: string;
-  /** Whitespace-separated words, ANDed against each candidate's path — the
-   * same tokenize/AND filter dir_tree uses for its cwd filter. Matching is
-   * case-insensitive (see FS_FIND doc on the daemon side for why). An
-   * empty/whitespace-only query matches nothing rather than dumping the
-   * entire tree, so a cleared input box costs no walk. */
+  /** Whitespace-separated words ANDed against each candidate's path, with a
+   * `-word` exclusion prefix — the grammar `parseFileSearchQuery` defines (see
+   * file-search-query.ts for the full rules and their rationale). Matching is
+   * case-insensitive. A query with nothing to include (empty, whitespace-only,
+   * or exclusions alone) matches nothing rather than dumping the entire tree,
+   * so a cleared input box costs no walk. */
   query: string;
+  /** Skip paths a `.gitignore` hides, and don't descend into ignored
+   * directories. Absent = true.
+   *
+   * Filtering is the default because the unfiltered result is dominated by
+   * vendored trees: searching this repo for "package.json" reaches ~100 hits
+   * inside `node_modules` before the user's own, and with FS_FIND_RESULT_MAX
+   * capping the reply those hits don't merely add noise — they push the real
+   * answer out of it. A default that is usually wrong would be toggled on
+   * every search, which is a worse trade than the occasional deliberate
+   * "search build output too". */
+  respect_gitignore?: boolean;
 }
 
 /** One fs_find hit. `path` is directly usable as a locator/FileViewer key:

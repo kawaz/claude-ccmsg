@@ -2534,6 +2534,23 @@ button.session-tab {
   border-color: var(--accent);
 }
 
+/* 検索ボックス直下のオプション行 (.gitignore トグル、kawaz r55m127)。
+ * 入力欄と同じ左端に揃え、結果リストより弱いテキストで従属を示す。 */
+.tree-search-option {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.tree-search-option > input {
+  margin: 0;
+  cursor: pointer;
+}
+
 .file-search-list {
   list-style: none;
   margin: 0;

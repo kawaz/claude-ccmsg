@@ -4,7 +4,12 @@
 // ask and how to present several roots' replies as one list. Kept out of
 // utils.ts as its own module — same convention as cwd-tree.ts / rooms-filter.ts
 // — so it is exercised without mounting the component or a fake WsHandle.
-import type { FsFindHit, WorkspaceFolder } from "@ccmsg/protocol";
+import {
+  type FsFindHit,
+  matchesFileSearchQuery,
+  parseFileSearchQuery,
+  type WorkspaceFolder,
+} from "@ccmsg/protocol";
 
 /** One fs_find call the panel needs to make for a single submitted query. */
 export interface FileSearchTarget {
@@ -15,6 +20,10 @@ export interface FileSearchTarget {
   /** Section heading for this target's hits; null for the project root,
    * whose hits are the unlabeled default group. */
   label: string | null;
+  /** For `workspace` targets, the folder whose absolute path prefixes every
+   * hit — what `workspaceHitDisplayPath` strips back down to `{name}/…`.
+   * null for the contained target, whose hits are already root-relative. */
+  folder: WorkspaceFolder | null;
 }
 
 /** Every browsable root a search should cover: the tree's own project root
@@ -34,11 +43,12 @@ export function fileSearchTargets(
   treeRoot: string,
 ): FileSearchTarget[] {
   return [
-    { kind: "contained", root: treeRoot, label: null },
+    { kind: "contained", root: treeRoot, label: null, folder: null },
     ...workspaceFolders.map((folder) => ({
       kind: "workspace" as const,
       root: folder.path,
       label: folder.name,
+      folder,
     })),
   ];
 }
@@ -46,6 +56,10 @@ export function fileSearchTargets(
 /** One target's answered hits, in the order `fileSearchTargets` produced. */
 export interface FileSearchGroup {
   label: string | null;
+  /** Same meaning as `FileSearchTarget.folder` — carried through so a row can
+   * shorten its own path without the renderer having to re-pair groups with
+   * the folder list they came from. */
+  folder: WorkspaceFolder | null;
   hits: FsFindHit[];
   /** This group's walk was cut short (daemon result cap / visit budget). */
   truncated: boolean;
@@ -68,19 +82,34 @@ export function fileSearchHitCount(groups: readonly FileSearchGroup[]): number {
 
 /** Client-side equivalent of the daemon's fs_find matcher, for the one path
  * set that has no directory to walk: DR-0024 external files, which the client
- * already holds in full. Same contract as the daemon's `matchesQuery` —
- * whitespace-separated words ANDed against the path, case-insensitive, empty
- * query matches nothing — so a search behaves identically no matter which
- * section a path lives in. */
+ * already holds in full. Runs the *same* protocol-level parser and matcher the
+ * daemon does (not a reimplementation of them), so one query in one box cannot
+ * mean two different things depending on which section a path lives in.
+ * `.gitignore` filtering has no counterpart here: these are individually
+ * allowlisted files observed in a transcript, not a tree that could hide
+ * anything. */
 export function filterExternalFiles(externalFiles: readonly string[], query: string): string[] {
-  const tokens = query
-    .trim()
-    .split(/\s+/)
-    .filter((token) => token.length > 0)
-    .map((token) => token.toLowerCase());
-  if (tokens.length === 0) return [];
-  return externalFiles.filter((filePath) => {
-    const haystack = filePath.toLowerCase();
-    return tokens.every((token) => haystack.includes(token));
-  });
+  const parsed = parseFileSearchQuery(query);
+  return externalFiles.filter((filePath) => matchesFileSearchQuery(filePath, parsed));
+}
+
+/** Display form of a hit inside a workspace folder: `{folder name}/{path
+ * relative to that folder}` (kawaz r55m127). The daemon returns these as
+ * absolute paths — that is the shape fs_read_workspace authorizes against, so
+ * it is what the row must *link* to — but a `/Users/…/repos/host/owner/repo/`
+ * prefix repeated down the list is prefix noise that pushes the part telling
+ * the folders apart off the right edge. The folder name reintroduces exactly
+ * the distinction the prefix was carrying, in one short token.
+ *
+ * A path that isn't under `folderPath` is returned unchanged rather than
+ * forced into a `../..` relative form: the fallback should degrade to the
+ * honest absolute path, not to something that looks relative but isn't. */
+export function workspaceHitDisplayPath(
+  hitPath: string,
+  folderPath: string,
+  folderName: string,
+): string {
+  const prefix = folderPath.endsWith("/") ? folderPath : `${folderPath}/`;
+  if (!hitPath.startsWith(prefix)) return hitPath;
+  return `${folderName}/${hitPath.slice(prefix.length)}`;
 }

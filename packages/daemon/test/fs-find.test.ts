@@ -1,15 +1,16 @@
-// fs_find: recursive file-name search for the Files pane. Two layers are
-// covered here — the pure matcher (tokenizeQuery / matchesQuery), and the op
-// itself over a real daemon + real fixture tree, where the thing worth proving
-// is that the search surface is exactly the browsable surface: nothing outside
-// the containment root or the workspace allowlist can be enumerated, and the
-// role gate matches the other viewer-only fs ops.
+// fs_find: recursive file-name search for the Files pane, exercised as the op
+// itself over a real daemon + real fixture tree. What is worth proving here is
+// that the search surface is exactly the browsable surface — nothing outside
+// the containment root or the workspace allowlist can be enumerated, the role
+// gate matches the other viewer-only fs ops, and .gitignore filtering prunes
+// what it claims to. The query grammar those walks apply is a protocol-level
+// contract shared with the client, tested in
+// packages/protocol/test/file-search-query.test.ts.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { FS_FIND_RESULT_MAX } from "@ccmsg/protocol";
-import { matchesQuery, tokenizeQuery } from "../src/fs-find.ts";
 import {
   connect,
   startTestDaemon,
@@ -87,54 +88,6 @@ function buildTree(root: string): void {
   fs.writeFileSync(path.join(root, "docs", "README.md"), "");
   fs.writeFileSync(path.join(root, "README.md"), "");
 }
-
-describe("tokenizeQuery", () => {
-  test("splits on whitespace runs and lower-cases", () => {
-    expect(tokenizeQuery("Foo  BAR")).toEqual(["foo", "bar"]);
-  });
-
-  test("treats a full-width space as a separator (JS \\s covers it)", () => {
-    expect(tokenizeQuery("foo　bar")).toEqual(["foo", "bar"]);
-  });
-
-  test("empty / whitespace-only yields no tokens", () => {
-    expect(tokenizeQuery("")).toEqual([]);
-    expect(tokenizeQuery("   ")).toEqual([]);
-  });
-});
-
-describe("matchesQuery", () => {
-  test("single word matches a substring anywhere in the path", () => {
-    expect(matchesQuery("src/components/FileTree.tsx", ["compo"])).toBe(true);
-    expect(matchesQuery("src/utils.ts", ["compo"])).toBe(false);
-  });
-
-  test("multiple words are ANDed, and may match in any order", () => {
-    expect(matchesQuery("src/components/FileTree.tsx", ["compo", "tsx"])).toBe(true);
-    expect(matchesQuery("src/components/FileTree.tsx", ["tsx", "compo"])).toBe(true);
-    expect(matchesQuery("src/components/FileTree.tsx", ["compo", "md"])).toBe(false);
-  });
-
-  test("words may match across a path separator", () => {
-    // "webui compo tsx" style queries rely on matching the whole path, not
-    // per-segment: "components/File" spans a segment boundary.
-    expect(matchesQuery("src/components/FileTree.tsx", ["components/file"])).toBe(true);
-  });
-
-  test("matching is case-insensitive in both directions", () => {
-    // Through tokenizeQuery, since that is what folds the query side —
-    // matchesQuery itself takes already-lowered tokens by contract (it folds
-    // only the path), so calling it with a raw uppercase token would be
-    // testing a combination the op never produces.
-    expect(matchesQuery("src/components/FileTree.tsx", tokenizeQuery("FileTree"))).toBe(true);
-    expect(matchesQuery("src/README.md", tokenizeQuery("readme"))).toBe(true);
-    expect(matchesQuery("src/readme.md", tokenizeQuery("README"))).toBe(true);
-  });
-
-  test("zero tokens match nothing (an empty box shows no results)", () => {
-    expect(matchesQuery("anything/at/all", [])).toBe(false);
-  });
-});
 
 describe("fs_find (contained)", () => {
   test(
@@ -619,6 +572,258 @@ describe("fs_find (workspace, DR-0026)", () => {
           sid: "A",
           kind: "external",
           query: "readme",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error.code).toBe("invalid_args");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+});
+
+describe("fs_find query grammar at the op level", () => {
+  // The grammar itself is covered exhaustively in protocol's own test; what
+  // these prove is that the op actually applies it to the walk rather than
+  // falling back to a plain substring filter.
+  test(
+    "a -term excludes matching paths from the walk's results",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      buildTree(cwd);
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "readme -docs",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["README.md"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "an exclusion-only query returns nothing rather than the whole tree minus a few",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      buildTree(cwd);
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "-docs",
+        });
+        expect(res.hits).toEqual([]);
+        expect(res.truncated).toBe(false);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "+- searches a literal hyphen instead of excluding",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      fs.writeFileSync(path.join(cwd, "file-search.ts"), "");
+      fs.writeFileSync(path.join(cwd, "filesearch.ts"), "");
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "file +-search",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["file-search.ts"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+});
+
+describe("fs_find .gitignore filtering", () => {
+  /** Repo-shaped fixture: a vendored tree the user never searches for, hidden
+   * by a .gitignore, holding a file whose name collides with a real one. */
+  function buildIgnoredTree(root: string): void {
+    fs.writeFileSync(path.join(root, ".gitignore"), "node_modules/\n*.log\n");
+    fs.writeFileSync(path.join(root, "package.json"), "");
+    fs.mkdirSync(path.join(root, "node_modules", "dep"), { recursive: true });
+    fs.writeFileSync(path.join(root, "node_modules", "dep", "package.json"), "");
+    fs.writeFileSync(path.join(root, "debug.log"), "");
+  }
+
+  test(
+    "ignored paths are absent by default, and .git is pruned unconditionally",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      buildIgnoredTree(cwd);
+      fs.mkdirSync(path.join(cwd, ".git"));
+      fs.writeFileSync(path.join(cwd, ".git", "package.json"), "");
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "package.json",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["package.json"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "respect_gitignore:false restores the unfiltered walk (but still skips .git)",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      buildIgnoredTree(cwd);
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "package.json",
+          respect_gitignore: false,
+        });
+        expect(res.hits.map((h) => h.path)).toEqual([
+          "package.json",
+          "node_modules/dep/package.json",
+        ]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a .gitignore between the containment root and the walk root still applies",
+    async () => {
+      // The Files tree passes its own browsing origin as `root`, which sits
+      // below the containment root — the rules hiding vendored trees inside it
+      // typically live in a .gitignore at the repo root, above where the walk
+      // starts.
+      const ctx = await startTestDaemon();
+      const repo = fs.realpathSync(mkfixture());
+      fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\n");
+      const pkg = path.join(repo, "pkg");
+      fs.mkdirSync(path.join(pkg, "node_modules"), { recursive: true });
+      fs.writeFileSync(path.join(pkg, "package.json"), "");
+      fs.writeFileSync(path.join(pkg, "node_modules", "package.json"), "");
+      try {
+        await sessionAt(ctx, "A", repo);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          root: "pkg",
+          query: "package.json",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["pkg/package.json"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "the ancestor scan stops at the containment root",
+    async () => {
+      // A .gitignore above the authorized surface must not shape the reply:
+      // filtering may only use files the op was already allowed to read.
+      const ctx = await startTestDaemon();
+      const outside = fs.realpathSync(mkfixture());
+      fs.writeFileSync(path.join(outside, ".gitignore"), "secret.txt\n");
+      const cwd = path.join(outside, "repo");
+      fs.mkdirSync(cwd);
+      fs.writeFileSync(path.join(cwd, "secret.txt"), "");
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "secret",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["secret.txt"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a nested .gitignore's negation re-includes what the root hid",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      fs.writeFileSync(path.join(cwd, ".gitignore"), "*.log\n");
+      fs.mkdirSync(path.join(cwd, "keep"));
+      fs.writeFileSync(path.join(cwd, "keep", ".gitignore"), "!*.log\n");
+      fs.writeFileSync(path.join(cwd, "drop.log"), "");
+      fs.writeFileSync(path.join(cwd, "keep", "kept.log"), "");
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindOk>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: ".log",
+        });
+        expect(res.hits.map((h) => h.path)).toEqual(["keep/kept.log"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a non-boolean respect_gitignore is rejected rather than coerced",
+    async () => {
+      const ctx = await startTestDaemon();
+      const cwd = fs.realpathSync(mkfixture());
+      buildTree(cwd);
+      try {
+        await sessionAt(ctx, "A", cwd);
+        const user = await userAt(ctx);
+        const res = await user.request<FindErr>({
+          op: "fs_find",
+          sid: "A",
+          kind: "contained",
+          query: "readme",
+          respect_gitignore: "yes",
         });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("invalid_args");

@@ -1923,6 +1923,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         req.kind,
         req.root,
         req.query,
+        req.respect_gitignore,
         // Matches fs_list's own allowVirtual: a historical (disconnected)
         // session's tree is browsable for user-role readers (DR-0021 §3.1), so
         // searching it must be too, or the search box would go dead exactly on

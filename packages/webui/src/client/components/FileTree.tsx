@@ -46,6 +46,25 @@ function saveFavorites(root: string, favorites: string[]): void {
   writeStorage(favoritesStorageKey(root), JSON.stringify(favorites));
 }
 
+/** localStorage key for the search box's `.gitignore` toggle (kawaz r55m127).
+ * Global rather than per-session/per-project: it expresses a habit ("I search
+ * vendored code" / "I don't"), not a property of any one repo, and a
+ * per-project key would silently reset it every time the user opens a session
+ * on a project they haven't searched before. */
+const GITIGNORE_PREF_KEY = "ccmsg.fileSearch.respectGitignore";
+
+/** Defaults to true on anything but an explicit "0" — see FsFindRequest's
+ * `respect_gitignore` for why filtering is the default, and parseFavorites for
+ * the same "garbage persisted data resolves to the default, never throws"
+ * posture. */
+function loadRespectGitignore(): boolean {
+  return readStorage(GITIGNORE_PREF_KEY) !== "0";
+}
+
+function saveRespectGitignore(value: boolean): void {
+  writeStorage(GITIGNORE_PREF_KEY, value ? "1" : "0");
+}
+
 /** Star toggle button shared by DirNode/FileNode rows and the favorites
  * section (same rows, so a favorited path shows as ★ in both places at
  * once — they share the same `favorites` Set from FileTree). Rendered as a
@@ -588,6 +607,11 @@ export function FileTree({
   // survive a session switch (reset below alongside the create state).
   const [searchQuery, setSearchQuery] = useState("");
   const searching = searchQuery.trim() !== "";
+  // Unlike the query, this one *does* survive a session switch (it is loaded
+  // from storage once at mount and never reset in the [sid] effect below):
+  // it is a standing preference about how the user reads results, not part of
+  // any single search.
+  const [respectGitignore, setRespectGitignore] = useState(loadRespectGitignore);
 
   const [createActive, setCreateActive] = useState<{
     path: string;
@@ -734,7 +758,7 @@ export function FileTree({
           type="search"
           class="tree-search-input"
           placeholder="Search files by name"
-          aria-label="ファイル名検索 (空白区切りで AND)"
+          aria-label="ファイル名検索 (空白区切りで AND、-語 で除外)"
           value={searchQuery}
           onInput={(e) => setSearchQuery((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => {
@@ -747,6 +771,24 @@ export function FileTree({
             }
           }}
         />
+        {/* .gitignore トグル (kawaz r55m127)。検索中だけ出す — 空のボックスの
+         * 下に検索の設定だけが残っていても操作対象が無い。チェックボックス
+         * なのは 2 状態の設定そのものだから (ボタンだと現在どちらなのかを
+         * ラベル文言で表現し分ける必要が出る)。 */}
+        {searching ? (
+          <label class="tree-search-option">
+            <input
+              type="checkbox"
+              checked={respectGitignore}
+              onChange={(e) => {
+                const next = (e.target as HTMLInputElement).checked;
+                setRespectGitignore(next);
+                saveRespectGitignore(next);
+              }}
+            />
+            .gitignore を除外
+          </label>
+        ) : null}
       </div>
       {/* An active query replaces the tree body outright rather than filtering
        * it: the tree only holds directories the user already expanded
@@ -758,6 +800,7 @@ export function FileTree({
         <FileSearchPanel
           sid={sid}
           query={searchQuery}
+          respectGitignore={respectGitignore}
           treeRoot={rootPath}
           workspaceFolders={workspaceFolders}
           externalFiles={externalFiles}
