@@ -46,15 +46,21 @@ describe("createWebuiApp", () => {
     expect(res.headers.get("content-type")).toContain("text/css");
   });
 
-  test("unknown paths 404", async () => {
+  // kawaz r55m115/m116: 素の 404 を返すと standalone webapp (アドレスバーも
+  // 戻るボタンも無い) で詰むため、未知パスにも HTML シェルを返す。実際に
+  // markdown 中の相対リンクを踏んで詰む事故が起きたことによる仕様変更。
+  test("unknown paths serve the SPA shell instead of 404", async () => {
     const app = createWebuiApp();
     const res = await app.fetch(new Request("http://localhost/does-not-exist"));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
   });
 
-  test("/ws is not handled by this app (daemon owns it)", async () => {
+  // `/ws` は daemon が upgrade を先に処理するのでこの app には来ない。仮に
+  // 来ても catch-all でシェルが返るだけ (詰まない)。
+  test("/ws falls through to the shell here (daemon owns the real route)", async () => {
     const app = createWebuiApp();
     const res = await app.fetch(new Request("http://localhost/ws"));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
   });
 });

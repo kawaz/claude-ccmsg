@@ -78,12 +78,23 @@ export function createWebuiApp(): WebuiApp {
     }
   });
 
+  // SPA catch-all (kawaz r55m115/m116): 未知パスにも HTML シェルを返す。
+  //
+  // 素の 404 を返すと standalone webapp (iPad のホーム画面追加) で詰む —
+  // アドレスバーも戻るボタンも無いので、フルスクリーンのエラーページから
+  // 抜ける手段がアプリ終了しかない。実際に markdown 中の相対リンク
+  // (`/fixtures/…json`) を踏んで詰む事故が起きた: `target="_blank"` は
+  // standalone では新規タブにならず同一ウィンドウ遷移になるため、リンク先が
+  // この webui の 404 に着地する。
+  //
+  // シェルを返せば少なくともアプリが立ち上がり、サイドバーから復帰できる。
+  // 未知パスをどう扱うか (SPA 側でのエラー表示) は URL 再設計側の担当。
   app.get("*", async (c) => {
     const asset = ASSETS[c.req.path];
-    if (!asset) return c.notFound();
-    const file = Bun.file(new URL(asset.file, PUBLIC_DIR));
+    const file = Bun.file(new URL(asset?.file ?? "index.html", PUBLIC_DIR));
     if (!(await file.exists())) return c.notFound();
-    return new Response(file, { headers: { "content-type": asset.contentType } });
+    const contentType = asset?.contentType ?? "text/html; charset=utf-8";
+    return new Response(file, { headers: { "content-type": contentType } });
   });
 
   return app;
