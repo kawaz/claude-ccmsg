@@ -4,6 +4,7 @@ import type {
   MemberEvent,
   MsgEvent,
   RoomKind,
+  SessionTodo,
   SessionWorkflowStatus,
   StorageEvent,
 } from "@ccmsg/protocol";
@@ -76,8 +77,20 @@ export interface SessionContextSchedule {
 export interface SessionDumpContext {
   kind: "session-context";
   note: string;
-  agents: SessionContextAgent[];
-  workflows: SessionWorkflowStatus[];
+  /** Folded TODO list (TUI-equivalent current state, DR-0020). Completed items
+   * are kept: a rewound session that only sees the open items risks redoing
+   * finished work, which is the costlier failure mode. `status` distinguishes
+   * them, so a journal consumer can filter cheaply. */
+  todos: SessionTodo[];
+  /** Omitted entirely under `--no-agent`. */
+  agents?: SessionContextAgent[];
+  /** Count of agents dropped because their state is terminal (stopped). Absent
+   * when nothing was dropped, and under `--no-agent`. Mirrors the rooms
+   * command's `archived_omitted`: "not listed" must not read as "never
+   * existed". */
+  agents_omitted?: number;
+  /** Omitted entirely under `--no-agent`. */
+  workflows?: SessionWorkflowStatus[];
   background: SessionContextBackground[];
   schedules: SessionContextSchedule[];
   rooms: SessionContextRoom[];
@@ -103,7 +116,25 @@ export interface SessionDumpOptions {
   until?: string;
   dataDir: string;
   configDirs?: readonly string[];
+  /** Drop assistant thinking blocks. Recovering a session needs the conclusions
+   * that already reached the transcript; thinking is bulk. Journal generation
+   * wants the opposite, so the default keeps them. */
+  noThinking?: boolean;
+  /** Drop the in-process agent machinery: the `agents`/`workflows` context and
+   * the `agent-spawn` / `agent-send` / `peer-message` entries. Cross-session
+   * ccmsg traffic and rooms stay — those are correspondence, not machinery. */
+  noAgent?: boolean;
 }
+
+/** `agent-spawn` / `agent-send` / `peer-message` are the three kinds produced by
+ * the in-process Agent tool machinery (Agent spawn prompts, SendMessage bodies,
+ * teammate-message deliveries). ccmsg-received / ccmsg-sent are deliberately
+ * absent: they are session-to-session correspondence that a journal is about. */
+const AGENT_ENTRY_KINDS: ReadonlySet<SessionDumpKind> = new Set<SessionDumpKind>([
+  "agent-spawn",
+  "agent-send",
+  "peer-message",
+]);
 
 interface TranscriptRow {
   row: Record<string, unknown>;
@@ -496,6 +527,15 @@ function loadContextAgents(
   return agents.sort((a, b) => (a.name ?? a.agent_id).localeCompare(b.name ?? b.agent_id, "en"));
 }
 
+/** A stopped teammate cannot be addressed, so its name/description only pads the
+ * context a rewound session has to re-read (measured: ~600 of 1330 dump lines
+ * were the agent list, mostly stopped). Terminal subagent states are left in —
+ * their notification status vocabulary is upstream-owned and open, so matching
+ * on it would silently drop live agents when a new value appears. */
+function isStoppedAgent(agent: SessionContextAgent): boolean {
+  return agent.state === "stopped";
+}
+
 function loadContextRooms(dataDir: string, session: string): SessionContextRoom[] {
   const roomsDir = path.join(dataDir, "rooms");
   let files: fs.Dirent[];
@@ -548,6 +588,7 @@ function loadSessionContext(
   session: string,
   transcriptFile: string,
   dataDir: string,
+  noAgent: boolean,
 ): SessionDumpContext {
   const state = createSessionStatusState();
   for (const { row } of parseTranscript(transcriptFile)) foldLine(state, JSON.stringify(row));
@@ -556,11 +597,15 @@ function loadSessionContext(
     : undefined;
   const status = snapshot(state, sidDir);
   const notificationStates = loadTaskNotificationStates(transcriptFile);
+  const allAgents = sidDir ? loadContextAgents(sidDir, status, notificationStates) : [];
+  const agents = allAgents.filter((agent) => !isStoppedAgent(agent));
+  const omitted = allAgents.length - agents.length;
   return {
     kind: "session-context",
     note: SESSION_CONTEXT_NOTE,
-    agents: sidDir ? loadContextAgents(sidDir, status, notificationStates) : [],
-    workflows: status.workflows,
+    todos: status.todos,
+    ...(noAgent ? {} : { agents, ...(omitted > 0 ? { agents_omitted: omitted } : {}) }),
+    ...(noAgent ? {} : { workflows: status.workflows }),
     background: status.background
       .filter(
         (task): task is typeof task & { kind: "monitor" | "bash" } =>
@@ -753,6 +798,11 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
 
   const dedup = new Set<string>();
   const filtered = entries
+    .filter(
+      (entry) =>
+        !(options.noThinking === true && entry.kind === "thinking") &&
+        !(options.noAgent === true && AGENT_ENTRY_KINDS.has(entry.kind)),
+    )
     .filter((entry) => {
       const time = Date.parse(entry.ts);
       return (
@@ -784,7 +834,7 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
       generated: new Date().toISOString(),
       format: "ccmsg-session-dump-v2",
     },
-    context: loadSessionContext(session, resolved.file, options.dataDir),
+    context: loadSessionContext(session, resolved.file, options.dataDir, options.noAgent === true),
     entries: filtered.map(({ _index: _discard, ts, session: _session, ...entry }) => ({
       ...entry,
       t: Date.parse(ts) - base,

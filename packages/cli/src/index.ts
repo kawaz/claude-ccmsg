@@ -21,6 +21,8 @@ const BOOL_FLAGS = new Set([
   "exclude-self",
   "self",
   "foreground",
+  "no-thinking",
+  "no-agent",
   "help",
   "help-full",
   "version",
@@ -472,9 +474,11 @@ Commands:
                                carries its reply_via instruction
   read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
-  dump <session-id>            Export session handoff context + conversation entries as
-                               compact jsonl (default) or readable text (--format text).
-                               --since/--until accept timezone-qualified ISO 8601
+  dump <session-id>            Export session handoff context (todos, agents, rooms) +
+                               conversation entries as compact jsonl (default) or readable
+                               text (--format text). --since/--until accept
+                               timezone-qualified ISO 8601. Stopped teammates are always
+                               omitted; --no-thinking / --no-agent trim further
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -506,6 +510,11 @@ Command Options:
                                dump: inclusive ISO 8601 lower bound with timezone
   --until <timestamp>          dump: inclusive ISO 8601 upper bound with timezone
   --format <format>            dump: 'jsonl' (default) or 'text'
+  --no-thinking                dump: drop assistant thinking entries (recovery use —
+                               conclusions already reached the transcript)
+  --no-agent                   dump: drop the agents/workflows context and the
+                               agent-spawn / agent-send / peer-message entries
+                               (journal use — leaves thinking and ccmsg traffic)
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
@@ -710,7 +719,7 @@ async function main(): Promise<void> {
     }
     case "dump": {
       const usage =
-        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>]";
+        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent]";
       const sid = requireArg(args[0], "session-id", usage);
       if (args[1] !== undefined)
         throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
@@ -722,6 +731,8 @@ async function main(): Promise<void> {
         dataDir: resolvePaths().dataDir,
         ...(str(opts, "since") ? { since: str(opts, "since") } : {}),
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
+        ...(opts["no-thinking"] === true ? { noThinking: true } : {}),
+        ...(opts["no-agent"] === true ? { noAgent: true } : {}),
       });
       if (format === "text") {
         process.stdout.write(formatTextDump(dump));

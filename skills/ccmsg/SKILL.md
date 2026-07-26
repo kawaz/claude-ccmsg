@@ -43,9 +43,11 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 ## dump
 
-コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>] [--format <jsonl|text>]` を使う。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
+コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>] [--format <jsonl|text>] [--no-thinking] [--no-agent]` を使う。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。
 
-デフォルトの JSONL は、1 行目が `session`, `since`, `until`, `generated`, `format` を持つ `ccmsg-session-dump-v2` ヘッダ、2 行目が `{kind:"session-context", note, agents, workflows, background, schedules, rooms}`。`agents` は direct subagent / teammate の agent ID・名前・状態、`workflows` は run ID・phase・agent、`background` は完了通知がない Monitor / background Bash、`schedules` は削除・発火通知がない session-only cron、`rooms` は対象 session が現在参加している room の title・kind・最新 mid・member 情報を持つ。`background` / `schedules` の状態は厳密な生存確認ではなく `possibly-alive`。`note` のとおり、ID や session-only task は rewind 等で元プロセスを維持したまま context だけを失った場合の best-effort hint であり、プロセス再起動後は利用できない。3 行目以降は `t` (ヘッダの `since` からの経過 ms), `kind`, `from`, `to`, `text`, `meta` を持つ会話 entry。`--since` 省略時は最初の会話 entry 時刻が基準になる。自セッションを指す `from` / `to` / `meta` の値は `self` になる。
+デフォルトの JSONL は、1 行目が `session`, `since`, `until`, `generated`, `format` を持つ `ccmsg-session-dump-v2` ヘッダ、2 行目が `{kind:"session-context", note, todos, agents, agents_omitted, workflows, background, schedules, rooms}`。`todos` は folded TODO リスト (`id` / `subject` / `status` / `owner` / `blocked_by` / `blocks`、completed も含む)、`agents` は direct subagent / teammate の agent ID・名前・状態、`workflows` は run ID・phase・agent、`background` は完了通知がない Monitor / background Bash、`schedules` は削除・発火通知がない session-only cron、`rooms` は対象 session が現在参加している room の title・kind・最新 mid・member 情報を持つ。`state:"stopped"` の teammate は常に除外され、除外件数が `agents_omitted` に載る (0 件なら省略)。`background` / `schedules` の状態は厳密な生存確認ではなく `possibly-alive`。`note` のとおり、ID や session-only task は rewind 等で元プロセスを維持したまま context だけを失った場合の best-effort hint であり、プロセス再起動後は利用できない。3 行目以降は `t` (ヘッダの `since` からの経過 ms), `kind`, `from`, `to`, `text`, `meta` を持つ会話 entry。`--since` 省略時は最初の会話 entry 時刻が基準になる。自セッションを指す `from` / `to` / `meta` の値は `self` になる。
+
+用途別の絞り込みが 2 つある。記憶回復用途では結論が transcript に残っているので `--no-thinking` で `thinking` entry を落とす。日誌生成用途では `thinking` を残したまま `--no-agent` で agent 機構 (`agents` / `workflows` context と `agent-spawn` / `agent-send` / `peer-message` entry) を落とす。`--no-agent` でも ccmsg のセッション間通信と `rooms` は残る。
 
 AI が直接読む用途では `--format text` を使える。人間可読ヘッダ直後に Session context の JSON、続いて `[+<経過ms>ms <kind> <from>→<to>]` と本文を空行区切りで出し、会話 entry の `meta` は省略する。
 

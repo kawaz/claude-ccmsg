@@ -157,6 +157,8 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("dump <session-id>");
       expect(help.out).toContain("--until <timestamp>");
       expect(help.out).toContain("--format <format>");
+      expect(help.out).toContain("--no-thinking");
+      expect(help.out).toContain("--no-agent");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("Command Options:");
@@ -215,6 +217,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(jsonLines[1]).toEqual({
         kind: "session-context",
         note: expect.stringContaining("only when rewind or context clearing preserved"),
+        todos: [],
         agents: [],
         workflows: [],
         background: [],
@@ -229,6 +232,15 @@ describe("ccmsg CLI end-to-end", () => {
       expect(jsonLines.slice(2).every((entry) => !("ts" in entry) && !("session" in entry))).toBe(
         true,
       );
+
+      // --no-thinking / --no-agent are boolean: placed before the positional they
+      // must not swallow the session id as their value (BOOL_FLAGS registration).
+      const trimmed = await runCli(["dump", "--no-thinking", "--no-agent", sid], env);
+      expect(trimmed.code).toBe(0);
+      const trimmedContext = JSON.parse(trimmed.out.trim().split("\n")[1]!);
+      expect(trimmedContext).not.toHaveProperty("agents");
+      expect(trimmedContext).not.toHaveProperty("workflows");
+      expect(trimmedContext).toHaveProperty("todos");
 
       const text = await runCli(["dump", sid, "--format", "text"], env);
       expect(text.code).toBe(0);

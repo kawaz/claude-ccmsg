@@ -278,6 +278,15 @@ describe("dumpSession", () => {
       }),
     );
     fs.writeFileSync(
+      path.join(subagentsDir, "agent-ateam-stale-123456.meta.json"),
+      JSON.stringify({
+        taskKind: "in_process_teammate",
+        name: "stale",
+        description: "finished work",
+        agentType: "claude",
+      }),
+    );
+    fs.writeFileSync(
       path.join(subagentsDir, "agent-a1234567890abcdef.meta.json"),
       JSON.stringify({ description: "direct work", agentType: "codex-sol-worker" }),
     );
@@ -310,6 +319,30 @@ describe("dumpSession", () => {
       id: "team-use",
       name: "Agent",
       input: { name: "worker", description: "team work" },
+    };
+    const staleTeammateUse = {
+      type: "tool_use",
+      id: "stale-use",
+      name: "Agent",
+      input: { name: "stale", description: "finished work" },
+    };
+    const stopUse = {
+      type: "tool_use",
+      id: "stop-use",
+      name: "TaskStop",
+      input: { task_id: "stale" },
+    };
+    const todoCreateUse = {
+      type: "tool_use",
+      id: "todo-create-use",
+      name: "TaskCreate",
+      input: { subject: "ship dump options" },
+    };
+    const todoDoneUse = {
+      type: "tool_use",
+      id: "todo-done-use",
+      name: "TaskUpdate",
+      input: { taskId: "1", status: "completed" },
     };
     const directUse = {
       type: "tool_use",
@@ -352,6 +385,10 @@ describe("dumpSession", () => {
       [
         row("2026-07-20T00:00:00Z", "assistant", [
           teammateUse,
+          staleTeammateUse,
+          stopUse,
+          todoCreateUse,
+          todoDoneUse,
           directUse,
           workflowUse,
           monitorUse,
@@ -364,6 +401,30 @@ describe("dumpSession", () => {
           "user",
           [{ type: "tool_result", tool_use_id: "team-use", content: "ok" }],
           { toolUseResult: { status: "teammate_spawned", name: "worker" } },
+        ),
+        row(
+          "2026-07-20T00:00:01Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "stale-use", content: "ok" }],
+          { toolUseResult: { status: "teammate_spawned", name: "stale" } },
+        ),
+        row(
+          "2026-07-20T00:00:01Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "todo-create-use", content: "ok" }],
+          { toolUseResult: { task: { id: "1", subject: "ship dump options" } } },
+        ),
+        row(
+          "2026-07-20T00:00:01Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "todo-done-use", content: "ok" }],
+          { toolUseResult: { success: true, taskId: "1" } },
+        ),
+        row(
+          "2026-07-20T00:00:01Z",
+          "user",
+          [{ type: "tool_result", tool_use_id: "stop-use", content: "ok" }],
+          { toolUseResult: { task_type: "in_process_teammate", task_id: "stale-internal" } },
         ),
         row(
           "2026-07-20T00:00:02Z",
@@ -497,6 +558,13 @@ describe("dumpSession", () => {
         model: "claude-fable-5[1m]",
       }),
     ]);
+    // A stopped teammate cannot be addressed, so it is dropped unconditionally;
+    // the count keeps "not listed" from reading as "never existed".
+    expect(context.agents?.some((agent) => agent.name === "stale")).toBe(false);
+    expect(context.agents_omitted).toBe(1);
+    // Completed todos stay: a rewound session that only sees open items risks
+    // redoing finished work.
+    expect(context.todos).toEqual([{ id: "1", subject: "ship dump options", status: "completed" }]);
     expect(context.workflows).toEqual([
       expect.objectContaining({
         task_id: "workflow-task",
@@ -554,5 +622,100 @@ describe("dumpSession", () => {
     const thinking = entries[0]!;
     expect(thinking.text).toBe("internal reasoning");
     expect(thinking.to).toBeNull();
+  });
+
+  // The two trims serve opposite readers: --no-thinking is memory recovery
+  // (conclusions already landed in the transcript, reasoning is bulk), --no-agent
+  // is journal generation (thinking is the payload, agent machinery is not).
+  // Cross-session ccmsg traffic survives both — it is correspondence, not
+  // machinery — so a journal keeps what the session actually said to peers.
+  test("--no-thinking and --no-agent trim opposite halves of the dump", () => {
+    const { configDir, dataDir, transcript } = fixture();
+    fs.writeFileSync(
+      path.join(dataDir, "rooms", "r9.jsonl"),
+      `${JSON.stringify({
+        type: "msg",
+        mid: 1,
+        from: "a2",
+        to: ["a1"],
+        ts: "2026-07-20T00:00:30Z",
+        msg: "canonical received",
+      })}\n`,
+    );
+    const receive = JSON.stringify({
+      type: "msg",
+      mid: 1,
+      from: "a2",
+      to: ["a1"],
+      ts: "2026-07-20T00:00:30Z",
+      msg_via: "ccmsg read r9m1",
+      r: "r9",
+    });
+    fs.writeFileSync(
+      transcript,
+      [
+        row("2026-07-20T00:00:00Z", "user", "human prompt"),
+        row("2026-07-20T00:00:10Z", "assistant", [
+          { type: "thinking", thinking: "internal reasoning" },
+          { type: "text", text: "visible answer" },
+        ]),
+        row("2026-07-20T00:00:20Z", "assistant", [
+          {
+            type: "tool_use",
+            id: "spawn1",
+            name: "Agent",
+            input: { name: "worker", description: "do work", prompt: "inspect it" },
+          },
+          {
+            type: "tool_use",
+            id: "send1",
+            name: "SendMessage",
+            input: { to: "worker", summary: "send task", message: "start now" },
+          },
+        ]),
+        row(
+          "2026-07-20T00:00:30Z",
+          "user",
+          `<teammate-message teammate_id="ccmsg">${receive}</teammate-message>`,
+          { isMeta: true },
+        ),
+        row("2026-07-20T00:00:40Z", "user", `<agent-message from="worker">report</agent-message>`, {
+          isMeta: true,
+        }),
+      ].join("\n") + "\n",
+    );
+
+    const base = { configDirs: [configDir], dataDir };
+    expect(dumpSession(SID, base).entries.map((e) => e.kind)).toEqual([
+      "user",
+      "thinking",
+      "assistant",
+      "agent-spawn",
+      "agent-send",
+      "ccmsg-received",
+      "peer-message",
+    ]);
+    expect(dumpSession(SID, { ...base, noThinking: true }).entries.map((e) => e.kind)).toEqual([
+      "user",
+      "assistant",
+      "agent-spawn",
+      "agent-send",
+      "ccmsg-received",
+      "peer-message",
+    ]);
+    const journal = dumpSession(SID, { ...base, noAgent: true });
+    expect(journal.entries.map((e) => e.kind)).toEqual([
+      "user",
+      "thinking",
+      "assistant",
+      "ccmsg-received",
+    ]);
+    // --no-agent drops the agent context wholesale; todos/rooms/background stay
+    // because they describe the session's own work, not its subordinates.
+    expect(journal.context.agents).toBeUndefined();
+    expect(journal.context.agents_omitted).toBeUndefined();
+    expect(journal.context.workflows).toBeUndefined();
+    expect(journal.context.todos).toEqual([]);
+    expect(journal.context.rooms.map((r) => r.room)).toEqual([]);
   });
 });
