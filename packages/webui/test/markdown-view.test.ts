@@ -18,6 +18,7 @@ import { parse } from "@mizchi/markdown";
 import {
   attachmentUrlFromPath,
   extractMarkdownHeadings,
+  extractTaskStates,
   isSafeUrl,
   parseMarkdownDocument,
   parseMarkdownSource,
@@ -1146,5 +1147,73 @@ describe("parseMarkdownDocument / <details> folding", () => {
     const src = `${"<details>\n".repeat(50)}body\n${"</details>\n".repeat(3)}`;
     expect(() => render(src)).not.toThrow();
     expect(flattenText(render(src))).toContain("body");
+  });
+});
+
+// GFM task lists (kawaz r55: QUESTIONS.md arbitration UX). The parser
+// consumes the `[ ]` characters, so a task item that rendered as a bare <li>
+// would lose them from the display entirely — the checkbox is the rendering
+// of those characters, and is merely disabled where it can't be clicked.
+describe("renderMarkdownAst / task lists", () => {
+  const source = "- [ ] a\n- [x] b\n  - [ ] nested\n- plain\n";
+  const checkboxes = (vnode: unknown) =>
+    collect(vnode, (n) => n.type === "input") as (VNode & {
+      props: { checked?: boolean; disabled?: boolean; onClick?: () => void };
+    })[];
+
+  test("task items render a checkbox reflecting `checked`; plain items do not", () => {
+    const vnode = renderMarkdownAst(parseMarkdownDocument(source));
+    const boxes = checkboxes(vnode);
+    expect(boxes.map((b) => b.props.checked)).toEqual([false, true, false]);
+    expect(collect(vnode, (n) => n.type === "li")).toHaveLength(4);
+  });
+
+  test("without a taskList ctx every checkbox is disabled and inert", () => {
+    const boxes = checkboxes(renderMarkdownAst(parseMarkdownDocument(source)));
+    expect(boxes.every((b) => b.props.disabled === true)).toBe(true);
+    expect(boxes.every((b) => b.props.onClick === undefined)).toBe(true);
+  });
+
+  // Ordinals are the coordinate the write uses (see markdown-task-list.ts), so
+  // the click must report document order — a parent numbers before the items
+  // nested inside it.
+  test("clicking reports the item's document-order ordinal and its states", () => {
+    const seen: [number, boolean, boolean][] = [];
+    const vnode = renderMarkdownAst(
+      parseMarkdownDocument(source),
+      undefined,
+      undefined,
+      undefined,
+      {
+        onToggle: (ordinal, from, to) => seen.push([ordinal, from, to]),
+        busy: false,
+      },
+    );
+    const boxes = checkboxes(vnode);
+    expect(boxes).toHaveLength(3);
+    for (const box of boxes) box.props.onClick?.();
+    expect(seen).toEqual([
+      [0, false, true],
+      [1, true, false],
+      [2, false, true],
+    ]);
+  });
+
+  test("busy disables every checkbox so a second click can't race the write", () => {
+    const vnode = renderMarkdownAst(
+      parseMarkdownDocument(source),
+      undefined,
+      undefined,
+      undefined,
+      {
+        onToggle: () => {},
+        busy: true,
+      },
+    );
+    expect(checkboxes(vnode).every((b) => b.props.disabled === true)).toBe(true);
+  });
+
+  test("extractTaskStates walks the same items in the same order", () => {
+    expect(extractTaskStates(parseMarkdownDocument(source))).toEqual([false, true, false]);
   });
 });

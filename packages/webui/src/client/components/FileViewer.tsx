@@ -33,7 +33,13 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
-import { MarkdownView } from "../markdown-view.tsx";
+import {
+  MarkdownView,
+  extractTaskStates,
+  parseMarkdownDocument,
+  type MarkdownTaskListCtx,
+} from "../markdown-view.tsx";
+import { scanTaskStates, taskStatesAlign, toggleTaskLine } from "../markdown-task-list.ts";
 import {
   highlightRenderedText,
   removeRenderedTextHighlights,
@@ -200,6 +206,86 @@ function InboxNewEditor({
       />
     </form>
   );
+}
+
+/** Owns the write behind a preview checkbox click (kawaz r55, QUESTIONS.md
+ * arbitration UX). Toggling flips the one `[ ]`/`[x]` character on the item's
+ * own source line and sends the whole file through the same `fs_edit`
+ * optimistic-lock path the textarea editor uses — same authorization surfaces
+ * (contained/workspace/external), same `expected_mtime`/`expected_size` taken
+ * from the `fs_read` that populated the preview, so a file the AI rewrote
+ * since the render is refused with `file_conflict` rather than clobbered.
+ *
+ * Interaction is offered only when `findTaskLines`' scan of the source agrees
+ * item-for-item with the parsed tree (`taskStatesAlign`); see
+ * markdown-task-list.ts for why the two can disagree and why disagreement
+ * must fail closed. `truncated` reads are excluded for the same reason the
+ * 編集 button is: the tail isn't in hand, so writing back would truncate the
+ * file. */
+function useTaskListToggle({
+  sid,
+  path,
+  kind,
+  content,
+  mtime,
+  size,
+  enabled,
+  onSaved,
+}: {
+  sid: string;
+  path: string;
+  kind: "contained" | "external" | "workspace";
+  content: string;
+  mtime: string;
+  size: number;
+  enabled: boolean;
+  onSaved: () => void;
+}): { taskList: MarkdownTaskListCtx | undefined; error: string | null; dismiss: () => void } {
+  const { ws } = useApp();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+
+  const onToggle = useCallback(
+    (ordinal: number, from: boolean, to: boolean) => {
+      if (busyRef.current) return;
+      const edited = toggleTaskLine(content, ordinal, from, to);
+      if (!edited.ok) {
+        setError("表示中の内容とファイルがずれています。↻ で再読み込みしてください。");
+        return;
+      }
+      busyRef.current = true;
+      setBusy(true);
+      setError(null);
+      void ws
+        .fsEdit(sid, path, kind, edited.source, mtime, size)
+        .then((res) => {
+          if (res.ok) {
+            onSaved();
+          } else if (res.error.code === "file_conflict") {
+            setError(
+              "他のプロセスがこのファイルを変更しました。↻ で再読み込みしてからやり直してください。",
+            );
+          } else {
+            setError(res.error.msg);
+          }
+        })
+        .catch((err) => setError(errorMessage(err)))
+        .finally(() => {
+          busyRef.current = false;
+          setBusy(false);
+        });
+    },
+    [ws, sid, path, kind, content, mtime, size, onSaved],
+  );
+
+  // Identity is part of MarkdownView's memo key, so it must stay stable
+  // across unrelated re-renders or every parent render re-parses the file.
+  const taskList = useMemo(
+    () => (enabled ? { onToggle, busy } : undefined),
+    [enabled, onToggle, busy],
+  );
+  return { taskList, error, dismiss: () => setError(null) };
 }
 
 /** In-place text-file editor. Uses fs_edit's optimistic-lock contract:
@@ -418,6 +504,34 @@ export function FileViewer({
     setEditMode(false);
   }, [path]);
   const markdownEligible = path != null && isMarkdownPath(path);
+
+  // Preview task-list interaction. Both hooks run unconditionally (hook-order
+  // rule) and collapse to `undefined` for every file that isn't an
+  // interactively-editable markdown preview.
+  const previewSource = markdownEligible && res && !res.binary ? res.content : null;
+  const taskListEnabled = useMemo(() => {
+    if (previewSource === null || res?.truncated) return false;
+    const scanned = scanTaskStates(previewSource);
+    if (scanned.length === 0) return false;
+    return taskStatesAlign(scanned, extractTaskStates(parseMarkdownDocument(previewSource)));
+  }, [previewSource, res?.truncated]);
+  const handleRefetchRef = useRef<() => void>(() => {});
+  const onTaskSaved = useCallback(() => handleRefetchRef.current(), []);
+  const taskToggle = useTaskListToggle({
+    sid,
+    path: path ?? "",
+    kind: isWorkspaceFilePath(path ?? "", workspaceFolders)
+      ? "workspace"
+      : isExternalFilePath(path ?? "")
+        ? "external"
+        : "contained",
+    content: previewSource ?? "",
+    mtime: res?.mtime ?? "",
+    size: res?.size ?? 0,
+    enabled: taskListEnabled && path != null,
+    onSaved: onTaskSaved,
+  });
+
   useEffect(() => {
     if (path === null) return;
     const saved = loadFilesView(sid);
@@ -575,6 +689,11 @@ export function FileViewer({
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
       });
   };
+  // A task toggle's post-write refetch reuses the ↻ path, but `handleRefetch`
+  // is redefined every render while the toggle callback must keep a stable
+  // identity (it feeds MarkdownView's memo key) — the ref bridges the two.
+  handleRefetchRef.current = handleRefetch;
+
   const RefetchButton = () =>
     canRefetch ? (
       <button
@@ -778,7 +897,15 @@ export function FileViewer({
         // paragraph; that's a visible cue matching the banner, not a
         // silent truncation.
         <div class="viewer-preview" ref={(el) => registerSearchLineRef(0, el)}>
-          <MarkdownView source={res.content} tableOfContents />
+          {taskToggle.error ? (
+            <p class="viewer-task-error" role="alert">
+              {taskToggle.error}
+              <button type="button" class="viewer-task-error-dismiss" onClick={taskToggle.dismiss}>
+                閉じる
+              </button>
+            </p>
+          ) : null}
+          <MarkdownView source={res.content} tableOfContents taskList={taskToggle.taskList} />
         </div>
       ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>

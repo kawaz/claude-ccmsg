@@ -2885,6 +2885,61 @@ button.session-tab {
   padding-bottom: 12rem;
 }
 
+/* GFM task list. The parser consumes the `[ ]` characters, so the checkbox is
+ * rendered for every task item — read-only contexts just get it disabled — and
+ * the marker is suppressed since the box itself is the bullet. */
+.md-task-item {
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-left: -1.1rem;
+}
+
+.md-task-checkbox {
+  flex: none;
+  /* Tap target on touch without inflating the visual box (kawaz uses this
+   * from a phone to answer arbitration files). */
+  margin: 0;
+  padding: 0.35rem;
+  accent-color: var(--accent);
+}
+
+.md-task-checkbox:not(:disabled) {
+  cursor: pointer;
+}
+
+.md-task-body {
+  min-width: 0;
+}
+
+/* Checked items recede — the point of the file is what is still unanswered. */
+.md-task-checked > .md-task-body {
+  opacity: 0.62;
+}
+
+.md-task-item > .md-task-body > p {
+  margin: 0;
+}
+
+.viewer-task-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--danger, #c0392b);
+  border-radius: 0.4rem;
+  background: var(--bg-alt);
+  color: var(--fg);
+  font-size: 0.85rem;
+}
+
+.viewer-task-error-dismiss {
+  flex: none;
+  margin-left: auto;
+}
+
 .md-toc {
   margin: 0 0 0.75rem;
   border: 1px solid var(--border);

@@ -197,6 +197,26 @@ export function extractMarkdownHeadings(root: Root): MarkdownHeading[] {
   return headings;
 }
 
+/** Checked state of every GFM task item in the tree, in the order the render
+ * walk visits them (= the order that assigns ordinals). Paired with
+ * `scanTaskStates` by `taskStatesAlign` to decide whether ordinals are a
+ * trustworthy coordinate for writing back to the source. */
+export function extractTaskStates(root: Root): boolean[] {
+  const states: boolean[] = [];
+  function visit(nodes: AnyNode[] | undefined): void {
+    if (!nodes) return;
+    for (const node of nodes) {
+      if (node.type === "listItem" && typeof (node as ListItem).checked === "boolean") {
+        states.push((node as ListItem).checked as boolean);
+      }
+      const parent = node as AnyNode & { children?: AnyNode[] };
+      visit(parent.children);
+    }
+  }
+  visit(root.children);
+  return states;
+}
+
 /** In-view search context threaded through the mdast walk (DR-0022 §3: TL
  * highlighting must reach into markdown-rendered assistant text, not just
  * plain segments) — `undefined` (the common case, no active search) skips
@@ -226,6 +246,25 @@ interface MarkdownRenderCtx {
    * filepath-existence-cache). `undefined` = plain rendering, matching the
    * pre-DR baseline byte-for-byte. */
   filePathLinker?: FilePathLinker;
+  /** Interactive GFM task lists. When set, every task item renders as a real
+   * `<input type="checkbox">` whose click reports the item's document-order
+   * ordinal back to the caller, which owns the file write. Absent (every
+   * viewer that isn't showing a writable file) the items render exactly as
+   * they always have. */
+  taskList?: MarkdownTaskListCtx;
+  /** Running count of task items visited so far — the ordinal assigned to the
+   * next one. Mutated during the walk, mirroring `headingIndex`. */
+  taskIndex: number;
+}
+
+/** Wiring for interactive task lists (see `MarkdownRenderCtx.taskList`). */
+export interface MarkdownTaskListCtx {
+  /** Invoked with the clicked item's document-order ordinal, the state it was
+   * displaying, and the state the click asks for. */
+  onToggle: (ordinal: number, from: boolean, to: boolean) => void;
+  /** Checkboxes render disabled while a write is in flight, so a second click
+   * can't race a pending fs_edit. */
+  busy: boolean;
 }
 
 function renderChildren(
@@ -434,8 +473,39 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       ) as VNode;
     }
 
-    case "listItem":
-      return <li key={key}>{renderChildren((node as ListItem).children, key, ctx)}</li>;
+    case "listItem": {
+      const item = node as ListItem;
+      // `checked` is non-null exactly for GFM task items (confirmed against
+      // the real parser). Every task item consumes an ordinal whether or not
+      // interaction is enabled, so the numbering the click reports is the
+      // same numbering `findTaskLines` reconstructs from the source. The
+      // ordinal is taken *before* recursing so a parent item numbers ahead of
+      // the nested items inside it, matching document order.
+      if (typeof item.checked !== "boolean") {
+        return <li key={key}>{renderChildren(item.children, key, ctx)}</li>;
+      }
+      const checked = item.checked;
+      const ordinal = ctx.taskIndex;
+      ctx.taskIndex += 1;
+      const children = renderChildren(item.children, key, ctx);
+      const taskList = ctx.taskList;
+      return (
+        <li key={key} class={"md-task-item" + (checked ? " md-task-checked" : "")}>
+          <input
+            type="checkbox"
+            class="md-task-checkbox"
+            checked={checked}
+            // Read-only contexts (message bodies, and any preview whose
+            // source can't be written back) keep the checkbox as a visual
+            // marker only — the parser eats the `[ ]` characters, so
+            // rendering nothing would silently drop them from the display.
+            disabled={!taskList || taskList.busy}
+            onClick={taskList ? () => taskList.onToggle(ordinal, checked, !checked) : undefined}
+          />
+          <span class="md-task-body">{children}</span>
+        </li>
+      );
+    }
 
     case "blockquote":
       return (
@@ -1052,8 +1122,16 @@ export function renderMarkdownAst(
   search?: MarkdownSearchCtx,
   headings?: readonly MarkdownHeading[],
   filePathLinker?: FilePathLinker,
+  taskList?: MarkdownTaskListCtx,
 ): VNode {
-  const ctx: MarkdownRenderCtx = { search, headings, headingIndex: 0, filePathLinker };
+  const ctx: MarkdownRenderCtx = {
+    search,
+    headings,
+    headingIndex: 0,
+    filePathLinker,
+    taskList,
+    taskIndex: 0,
+  };
   return <div class="md">{renderChildren(root.children, "md", ctx)}</div>;
 }
 
@@ -1076,6 +1154,7 @@ export function MarkdownView({
   tableOfContents = false,
   filePathLinker,
   restricted = false,
+  taskList,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -1097,6 +1176,10 @@ export function MarkdownView({
    * linkification; in-view search on user text is handled by the caller's
    * plain-text path already). */
   restricted?: boolean;
+  /** Interactive task lists. Only the file preview passes this — a message
+   * body has no file behind it to write a toggle back to. Ignored in
+   * `restricted` mode (user-typed `- [ ]` is prose, not a task list). */
+  taskList?: MarkdownTaskListCtx;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
@@ -1109,6 +1192,7 @@ export function MarkdownView({
       search,
       tableOfContents ? headings : undefined,
       filePathLinker,
+      taskList,
     );
     if (headings.length <= 1) return markdown;
 
@@ -1146,5 +1230,5 @@ export function MarkdownView({
         {markdown}
       </div>
     );
-  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker, restricted]);
+  }, [source, highlightWords, onMatchClick, tableOfContents, filePathLinker, restricted, taskList]);
 }
