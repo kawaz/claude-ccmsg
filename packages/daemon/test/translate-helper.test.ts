@@ -11,6 +11,7 @@ import {
   WATCHDOG_MAX_MS,
   WATCHDOG_PER_100_CHARS_MS,
   type TranslateService,
+  type TranslateServiceOptions,
 } from "../src/translate-helper.ts";
 
 const services: TranslateService[] = [];
@@ -20,6 +21,34 @@ afterEach(() => {
   for (const service of services.splice(0)) service.stop();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
+
+/**
+ * A service serving a mock binary, with the staleness rebuild ruled out.
+ *
+ * A mock is a hard link to the committed shim (see writeMockBin), so it carries
+ * the shim's checkout mtime rather than "now". Against the *default* source path
+ * that gets compared to the repo's real main.swift, and a checkout that happened
+ * to write main.swift last makes every mock look stale: the service then runs
+ * swiftc, which compiles the real helper over the mock, and the test silently
+ * exercises Translation.framework instead of the script it just wrote. Ordering
+ * within a checkout is arbitrary, which is why this passed locally and failed on
+ * both CI runners.
+ *
+ * Pointing the source at a path that does not exist removes the comparison
+ * entirely — statSync throws and sourceNewerThanBinary answers false — and states
+ * what is actually true of these tests: a binary is injected, there is no source
+ * behind it. findSwiftc is stubbed out as well so that any future path into
+ * build() fails loudly instead of reaching a real compiler.
+ */
+function mockService(opts: TranslateServiceOptions): TranslateService {
+  const service = createTranslateService({
+    ...opts,
+    sourcePath: opts.sourcePath ?? path.join(os.tmpdir(), "ccmsg-translate-absent-source.swift"),
+    findSwiftc: opts.findSwiftc ?? (() => null),
+  });
+  services.push(service);
+  return service;
+}
 
 function mockHelper(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-mock-"));
@@ -120,8 +149,7 @@ describe("TranslationHelperService", () => {
   });
 
   test("one persistent helper process serves consecutive batches and preserves per-item errors", async () => {
-    const service = createTranslateService({ platform: "darwin", binaryPath: mockHelper() });
-    services.push(service);
+    const service = mockService({ platform: "darwin", binaryPath: mockHelper() });
 
     const first = await service.translate(["one", "__error__"]);
     const second = await service.translate(["two"]);
@@ -159,8 +187,7 @@ for await (const line of lines) {
 }
 `,
     );
-    const service = createTranslateService({ platform: "darwin", binaryPath: helper });
-    services.push(service);
+    const service = mockService({ platform: "darwin", binaryPath: helper });
 
     const result = await service.translate(["a", "b"]);
     expect(result).toEqual({
@@ -171,8 +198,7 @@ for await (const line of lines) {
   });
 
   test("after the helper dies, the failed call stays failed and the next call respawns", async () => {
-    const service = createTranslateService({ platform: "darwin", binaryPath: mockHelper() });
-    services.push(service);
+    const service = mockService({ platform: "darwin", binaryPath: mockHelper() });
 
     const before = await service.translate(["before"]);
     expect(before.ok).toBe(true);
@@ -219,12 +245,11 @@ for await (const line of lines) {
     }
 
     test("a request that outlives its deadline fails with a timeout error and kills the helper", async () => {
-      const service = createTranslateService({
+      const service = mockService({
         platform: "darwin",
         binaryPath: hangingHelper(),
         watchdogTimeoutMs: () => 50,
       });
-      services.push(service);
 
       const result = await service.translate(["__hang__"]);
       expect(result.ok).toBe(false);
@@ -235,7 +260,7 @@ for await (const line of lines) {
     });
 
     test("after a watchdog kill, the next request respawns a fresh helper and succeeds", async () => {
-      const service = createTranslateService({
+      const service = mockService({
         platform: "darwin",
         binaryPath: hangingHelper(),
         // The injected deadline sees only the total char count, so the test
@@ -245,7 +270,6 @@ for await (const line of lines) {
         // spawn and answer, which must not count as a wedge here.
         watchdogTimeoutMs: (chars) => (chars >= 8 ? 50 : 5_000),
       });
-      services.push(service);
 
       const before = await service.translate(["before"]);
       expect(before.ok).toBe(true);
@@ -267,7 +291,7 @@ for await (const line of lines) {
     });
 
     test("a request answered within its deadline is unaffected by the watchdog", async () => {
-      const service = createTranslateService({
+      const service = mockService({
         platform: "darwin",
         binaryPath: mockHelper(),
         // Generous deadline: the mock answers immediately, so this passes
@@ -275,7 +299,6 @@ for await (const line of lines) {
         // is not killed after the fact.
         watchdogTimeoutMs: () => 5_000,
       });
-      services.push(service);
 
       const first = await service.translate(["quick"]);
       expect(first.ok).toBe(true);
@@ -311,7 +334,7 @@ for await (const line of lines) {
 }
 `,
       );
-      const service = createTranslateService({
+      const service = mockService({
         platform: "darwin",
         binaryPath: helper,
         // 12 requests x 500ms serial = ~6000ms total queue time, far past the
@@ -324,7 +347,6 @@ for await (const line of lines) {
         // hundreds of ms and individual requests exceeded the deadline.
         watchdogTimeoutMs: () => 3_000,
       });
-      services.push(service);
 
       const results = await Promise.all(
         Array.from({ length: 12 }, (_, i) => service.translate([`paragraph ${i}`])),
