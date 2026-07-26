@@ -2566,11 +2566,13 @@ button.session-tab {
   list-style: none;
   margin: 0;
   padding: 0;
+  /* 長いパスは省略せず横スクロールで見せる (kawaz r55m76)。 */
+  overflow-x: auto;
 }
 
-/* 検索結果行: 名前を先頭・所在ディレクトリを後ろに muted で。行内で
- * ディレクトリ側だけを縮めるため name は flex 0 0 auto、dir は
- * min-width:0 + ellipsis (長いパスで名前が潰れるのを防ぐ)。 */
+/* 検索結果行: パス全体を 1 本の文字列で出す (kawaz r55m76 — 同名ファイルが
+ * 多いリポでは名前だけでは識別できない)。長いパスは省略や折返しをせず
+ * 横スクロールで見せる (`.file-search-list` 側が overflow-x)。 */
 .file-search-hit {
   display: flex;
   align-items: center;
@@ -2584,18 +2586,8 @@ button.session-tab {
   background: var(--bg-alt);
 }
 
-.file-search-hit-name {
-  flex: 0 0 auto;
-}
-
-.file-search-hit-dir {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.file-search-hit-path {
   white-space: nowrap;
-  font-size: 0.75rem;
-  color: var(--fg-muted);
 }
 
 .file-search-empty,

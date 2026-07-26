@@ -182,13 +182,12 @@ describe("fs_find (contained)", () => {
           kind: "contained",
           query: "components",
         });
-        // The directory itself matches, and so does everything under it —
-        // "components" is a substring of those children's paths too. That is
-        // the intended contract (match the whole path, not just the basename):
-        // typing a directory name is a legitimate way to ask "show me what's
-        // in there".
+        // Typing a directory name lists what is inside it — "components" is a
+        // substring of every child's path too. The directory entry itself is
+        // NOT a hit (kawaz r55m76): FileViewer cannot open one, so it would be
+        // an unselectable row that only eats into the result cap. The walk
+        // still descends into it, which is why the children are here.
         expect(res.hits).toEqual([
-          { path: "src/components", type: "dir" },
           { path: "src/components/FileTree.tsx", type: "file" },
           { path: "src/components/FileViewer.tsx", type: "file" },
         ]);

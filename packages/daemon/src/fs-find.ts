@@ -105,7 +105,10 @@ function walkFind(absRoot: string, toDisplay: (abs: string) => string, lowerToke
       const type = findableType(dirent);
       if (type === null) continue;
       const abs = path.join(dir, dirent.name);
-      if (matchesQuery(toDisplay(abs), lowerTokens)) {
+      // ディレクトリはヒットに含めない (kawaz r55m76): FileViewer で開けない
+      // ので結果に出ても選べず、件数上限だけを消費する邪魔な行になる。走査
+      // 対象としては引き続き queue に積む (配下のファイルを探すため)。
+      if (type !== "dir" && matchesQuery(toDisplay(abs), lowerTokens)) {
         if (hits.length >= FS_FIND_RESULT_MAX) {
           truncated = true;
           return { hits, truncated };
