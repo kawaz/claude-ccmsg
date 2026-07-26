@@ -3548,6 +3548,34 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
+/* kawaz r55 m77: `<details>`/`<summary>` は markdown 中で唯一構造として解釈する
+ * HTML (markdown-view.tsx の foldDetailsBlocks 参照)。RoomList 等の既存折り畳み
+ * と同じく marker はデフォルトのまま活かす。 */
+.md-details {
+  margin: 0.3rem 0;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg-alt);
+}
+
+.md-details > summary {
+  padding: 0.2rem 0;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--accent);
+  touch-action: manipulation;
+}
+
+.md-details[open] > summary {
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-details > :last-child {
+  margin-bottom: 0.2rem;
+}
+
 .md a {
   color: var(--accent);
 }

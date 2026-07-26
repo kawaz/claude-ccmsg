@@ -121,7 +121,22 @@ export function isSafeUrl(url: string): boolean {
   return ALLOWED_URL_SCHEMES.has(m[1]!.toLowerCase() + ":");
 }
 
-type AnyNode = RootContent | PhrasingContent;
+/** Synthetic node the `<details>` fold (see `foldDetailsBlocks`) inserts into
+ * the mdast tree. Not an mdast type — `type` is namespaced so it can never
+ * collide with a future CommonMark/GFM node, and `renderNode` is the only
+ * place that knows how to render it. */
+export interface MarkdownDetails {
+  type: "ccmsgDetails";
+  /** `<details open>`; any other attribute disqualifies the tag entirely. */
+  open: boolean;
+  /** Inline children of the `<summary>` line, already parsed as markdown.
+   * Absent when the block had no recognizable `<summary>` line (the browser
+   * then supplies its own default disclosure label). */
+  summary?: PhrasingContent[];
+  children: AnyNode[];
+}
+
+type AnyNode = RootContent | PhrasingContent | MarkdownDetails;
 
 export interface MarkdownHeading {
   depth: Heading["depth"];
@@ -433,6 +448,24 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
     case "break":
       return <br key={key} />;
 
+    case "ccmsgDetails": {
+      // The sole structural HTML mapping (kawaz r55 m77, see foldDetailsBlocks).
+      // Only `open` crosses from source into the DOM, and only as a boolean —
+      // the tag's own text never becomes markup, so this stays inside the
+      // "no raw HTML" guarantee the module doc comment describes.
+      const details = node as MarkdownDetails;
+      return (
+        <details key={key} class="md-details" open={details.open}>
+          {details.summary && details.summary.length > 0 ? (
+            <summary>{renderChildren(details.summary, `${key}.s`, ctx)}</summary>
+          ) : (
+            <summary>詳細</summary>
+          )}
+          {renderChildren(details.children, key, ctx)}
+        </details>
+      );
+    }
+
     case "html":
       // Never executed: the raw source text of an HTML block/inline node is
       // shown as a plain JSX text child (Preact-escaped), not parsed or
@@ -572,6 +605,235 @@ function restoreProtectedText(value: unknown, marker: string, replacement: strin
   }
 }
 
+// ---------------------------------------------------------------------------
+// `<details>` folding (kawaz r55 m77)
+//
+// The one HTML construct this renderer understands structurally. Everything
+// else stays literal text — see the module doc comment; enabling arbitrary
+// HTML would reintroduce the injection surface DR-0010 closed. The tags below
+// are recognized by *shape* and mapped onto Preact's own `<details>`/
+// `<summary>` elements, so no attacker-controlled string ever becomes markup:
+// the only thing a matched tag can influence is the boolean `open`.
+//
+// The matching runs on the mdast tree rather than the raw source because
+// `protectTagLikeAngleBrackets` (above) rewrites every tag-shaped token before
+// `parse()` sees it, so `<details>` never arrives as an mdast `html` node —
+// it lands as literal `text`. Working post-parse also means fenced code and
+// inline code are already claimed by their own nodes, so a `<details>` inside
+// a ```html fence is a `code` node and can't be mistaken for a real tag.
+//
+// After parsing, a `<details>` block appears as text lines split across
+// `paragraph` children: the opening tag and the `<summary>` line are separate
+// `text` children of one paragraph (joined by a `"\n"` text node or a `break`
+// when the line ended in two spaces), the body is whatever sibling nodes
+// follow, and `</details>` is a paragraph of its own. The fold below
+// reassembles that.
+
+/** `<details>` / `<details open>` — nothing else. The name is anchored on both
+ * sides so `<detailsfoo>` cannot match, and the only accepted attribute is a
+ * bare `open`; anything else (`onclick=…`, `class=…`, `open="x"`) fails to
+ * match and the tag stays literal text. */
+const DETAILS_OPEN_TAG_RE = /^<details(\s+open)?\s*>$/i;
+const DETAILS_CLOSE_TAG_RE = /^<\/details\s*>$/i;
+const SUMMARY_OPEN_RE = /^<summary\s*>([\s\S]*)$/i;
+const SUMMARY_CLOSE_RE = /^([\s\S]*)<\/summary\s*>$/i;
+
+/** One source line's worth of inline nodes, tagged with the paragraph it came
+ * from so the rebuild can tell "two lines of one paragraph" from "two
+ * paragraphs". `block` items are every other node kind, passed through whole. */
+type FoldItem =
+  | { kind: "line"; line: PhrasingContent[]; group: number }
+  | { kind: "block"; node: AnyNode };
+
+/** Flatten a sibling list into the line stream the fold scans. Paragraphs
+ * explode into their source lines — mdast encodes a soft break inside a
+ * paragraph as a `"\n"` text child and a hard break as a `break` node — so a
+ * `<details>` block written without blank lines (which the parser keeps as a
+ * *single* paragraph) is matched by exactly the same code path as the
+ * blank-line-separated form. */
+function toFoldItems(nodes: AnyNode[]): FoldItem[] {
+  const items: FoldItem[] = [];
+  nodes.forEach((node, group) => {
+    if (node.type !== "paragraph") {
+      items.push({ kind: "block", node });
+      return;
+    }
+    let line: PhrasingContent[] = [];
+    const endLine = () => {
+      items.push({ kind: "line", line, group });
+      line = [];
+    };
+    for (const child of node.children) {
+      if (child.type === "break") {
+        endLine();
+        continue;
+      }
+      if (child.type === "text" && child.value.includes("\n")) {
+        const parts = child.value.split("\n");
+        parts.forEach((part, i) => {
+          if (i > 0) endLine();
+          if (part !== "") line.push({ type: "text", value: part });
+        });
+        continue;
+      }
+      line.push(child);
+    }
+    endLine();
+  });
+  return items;
+}
+
+/** Turn a run of line items back into paragraphs, one per source paragraph
+ * (`group`), restoring the `"\n"` separators `toFoldItems` consumed. Blocks
+ * pass through untouched, and all-whitespace remnants are dropped rather than
+ * emitted as empty paragraphs. */
+function fromFoldItems(items: FoldItem[]): AnyNode[] {
+  const out: AnyNode[] = [];
+  let pending: PhrasingContent[][] = [];
+  let pendingGroup = -1;
+  const flush = () => {
+    if (pending.length === 0) return;
+    const children: PhrasingContent[] = [];
+    pending.forEach((line, i) => {
+      if (i > 0) children.push({ type: "text", value: "\n" });
+      children.push(...line);
+    });
+    pending = [];
+    if (children.some((c) => c.type !== "text" || c.value.trim() !== "")) {
+      out.push({ type: "paragraph", children } satisfies Paragraph);
+    }
+  };
+  for (const item of items) {
+    if (item.kind === "block") {
+      flush();
+      out.push(item.node);
+      continue;
+    }
+    if (item.group !== pendingGroup) {
+      flush();
+      pendingGroup = item.group;
+    }
+    pending.push(item.line);
+  }
+  flush();
+  return out;
+}
+
+/** The line's text when it is pure text, else `null`. A tag line is by
+ * definition pure text, so a line holding emphasis or a link is not one. */
+function lineAsPlainText(line: PhrasingContent[]): string | null {
+  let out = "";
+  for (const node of line) {
+    if (node.type !== "text") return null;
+    out += node.value;
+  }
+  return out.trim();
+}
+
+/** `<summary>…</summary>` occupying a whole line, returning the label's inline
+ * nodes. Matching on the parsed children (rather than re-parsing a flattened
+ * string) is what lets `<summary>**bold** t</summary>` keep its `strong` node:
+ * the parser already turned the label into inline markdown, and only the
+ * literal tag text at the two ends needs stripping. */
+function matchSummaryLine(line: PhrasingContent[]): PhrasingContent[] | null {
+  const first = line[0];
+  const last = line[line.length - 1];
+  if (!first || !last || first.type !== "text" || last.type !== "text") return null;
+  if (line.length === 1) {
+    const m = /^<summary\s*>([\s\S]*)<\/summary\s*>$/i.exec(first.value.trim());
+    if (!m) return null;
+    const inner = m[1]!.trim();
+    return inner === "" ? [] : [{ type: "text", value: inner }];
+  }
+  const openMatch = SUMMARY_OPEN_RE.exec(first.value.trimStart());
+  const closeMatch = SUMMARY_CLOSE_RE.exec(last.value.trimEnd());
+  if (!openMatch || !closeMatch) return null;
+  const head = openMatch[1]!;
+  const tail = closeMatch[1]!;
+  const middle = line.slice(1, -1);
+  const label: PhrasingContent[] = [];
+  if (head !== "") label.push({ type: "text", value: head });
+  label.push(...middle);
+  if (tail !== "") label.push({ type: "text", value: tail });
+  return label;
+}
+
+/** Collapse balanced `<details>`…`</details>` runs into `ccmsgDetails` nodes,
+ * recursing into the folded body and into every other container so a block
+ * inside a blockquote or list item folds the same way.
+ *
+ * An opener with no matching closer is left exactly as parsed (literal tag
+ * text) — a half-written block should look unfinished rather than silently
+ * swallow the rest of the document. Nesting is handled by depth counting: the
+ * closer that ends a block is the one bringing depth back to zero.
+ *
+ * Termination: the outer scan advances past the closer it consumed each time,
+ * and the recursive call receives the strictly shorter body slice (both tag
+ * lines excluded), so depth is bounded by the input length. */
+function foldDetailsBlocks(nodes: AnyNode[]): AnyNode[] {
+  const items = toFoldItems(nodes);
+  const out: FoldItem[] = [];
+  let i = 0;
+  while (i < items.length) {
+    const item = items[i]!;
+    const tag = item.kind === "line" ? lineAsPlainText(item.line) : null;
+    const openMatch = tag === null ? null : DETAILS_OPEN_TAG_RE.exec(tag);
+    if (!openMatch) {
+      out.push(
+        item.kind === "block" ? { kind: "block", node: foldInsideContainer(item.node) } : item,
+      );
+      i += 1;
+      continue;
+    }
+    let depth = 1;
+    let closeAt = -1;
+    for (let j = i + 1; j < items.length; j += 1) {
+      const candidate = items[j]!;
+      if (candidate.kind !== "line") continue;
+      const text = lineAsPlainText(candidate.line);
+      if (text === null) continue;
+      if (DETAILS_CLOSE_TAG_RE.test(text)) {
+        depth -= 1;
+        if (depth === 0) {
+          closeAt = j;
+          break;
+        }
+        continue;
+      }
+      if (DETAILS_OPEN_TAG_RE.test(text)) depth += 1;
+    }
+    if (closeAt < 0) {
+      out.push(item);
+      i += 1;
+      continue;
+    }
+    // A `<summary>` counts only as the block's very first line.
+    const next = items[i + 1];
+    const summary = next && next.kind === "line" ? matchSummaryLine(next.line) : null;
+    const bodyStart = summary ? i + 2 : i + 1;
+    out.push({
+      kind: "block",
+      node: {
+        type: "ccmsgDetails",
+        open: openMatch[1] !== undefined,
+        ...(summary ? { summary } : {}),
+        children: foldDetailsBlocks(fromFoldItems(items.slice(bodyStart, closeAt))),
+      },
+    });
+    i = closeAt + 1;
+  }
+  return fromFoldItems(out);
+}
+
+/** Recurse the fold into a non-`<details>` container's children (blockquote,
+ * list, listItem, …) without disturbing leaf nodes. */
+function foldInsideContainer(node: AnyNode): AnyNode {
+  if (node.type === "heading" || node.type === "code") return node;
+  const parent = node as AnyNode & { children?: AnyNode[] };
+  if (!Array.isArray(parent.children)) return node;
+  return { ...node, children: foldDetailsBlocks(parent.children) } as AnyNode;
+}
+
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
  * parser-level compatibility fixes are exercised without a DOM. */
 export function parseMarkdownSource(source: string): Root {
@@ -582,6 +844,15 @@ export function parseMarkdownSource(source: string): Root {
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
   if (protectedUnderscores.marker) restoreProtectedText(root, protectedUnderscores.marker, "_");
   return root;
+}
+
+/** `parseMarkdownSource` plus the `<details>` fold. Separate from the parse
+ * seam so the fold can be unit-tested against hand-built trees, and so the
+ * `<summary>` re-parse above can call the unfolded parse without recursing
+ * into itself. */
+export function parseMarkdownDocument(source: string): Root {
+  const root = parseMarkdownSource(source);
+  return { ...root, children: foldDetailsBlocks(root.children) as RootContent[] };
 }
 
 /** Restricted-mode renderer for user-authored messages (kawaz r55 m12).
@@ -820,7 +1091,7 @@ export function MarkdownView({
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
   return useMemo(() => {
     if (restricted) return renderRestrictedMarkdown(source);
-    const root = parseMarkdownSource(source);
+    const root = parseMarkdownDocument(source);
     const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
     const markdown = renderMarkdownAst(
       root,

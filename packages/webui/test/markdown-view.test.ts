@@ -19,6 +19,7 @@ import {
   attachmentUrlFromPath,
   extractMarkdownHeadings,
   isSafeUrl,
+  parseMarkdownDocument,
   parseMarkdownSource,
   renderMarkdownAst,
   renderRestrictedMarkdown,
@@ -961,5 +962,177 @@ describe("renderRestrictedMarkdown", () => {
     const vnode = renderRestrictedMarkdown(src);
     expect(collect(vnode, (n) => n.type === "img")).toHaveLength(0);
     expect(flattenText(vnode)).toBe(src);
+  });
+});
+
+// `<details>` folding (kawaz r55 m77). The renderer maps exactly two HTML tags
+// onto real elements; everything else stays literal text, so these tests
+// pin both halves — the shapes that must fold, and the near-misses that must
+// not. Sources go through `parseMarkdownDocument` (parse + fold) because the
+// fold's whole job is reassembling what the parser split apart, and a
+// hand-built tree would not exercise that.
+describe("parseMarkdownDocument / <details> folding", () => {
+  function render(source: string): VNode {
+    return renderMarkdownAst(parseMarkdownDocument(source));
+  }
+  const details = (vnode: VNode) => collect(vnode, (n) => n.type === "details");
+  const summaries = (vnode: VNode) => collect(vnode, (n) => n.type === "summary");
+
+  test("the canonical blank-line-separated form becomes a real <details>", () => {
+    const vnode = render("<details>\n<summary>title</summary>\n\ncontent\n\n</details>");
+    const found = details(vnode);
+    expect(found).toHaveLength(1);
+    expect(flattenText(summaries(vnode)[0])).toBe("title");
+    expect(flattenText(found[0])).toContain("content");
+    // The tag text itself never survives into the output as prose.
+    expect(flattenText(vnode)).not.toContain("<details>");
+    expect(flattenText(vnode)).not.toContain("</summary>");
+  });
+
+  // Without blank lines the parser keeps the entire block as ONE paragraph,
+  // so the fold has to split paragraphs into source lines rather than rely on
+  // node boundaries. Same visible result as the form above.
+  test("the compact form with no blank lines folds identically", () => {
+    const vnode = render("<details>\n<summary>t</summary>\ncontent\n</details>");
+    expect(details(vnode)).toHaveLength(1);
+    expect(flattenText(summaries(vnode)[0])).toBe("t");
+    expect(flattenText(details(vnode)[0])).toContain("content");
+  });
+
+  test("`<details open>` renders expanded, a bare `<details>` collapsed", () => {
+    const openProps = details(render("<details open>\n<summary>t</summary>\n\nx\n\n</details>"))[0]!
+      .props as unknown as { open: boolean };
+    expect(openProps.open).toBe(true);
+    const shutProps = details(render("<details>\n<summary>t</summary>\n\nx\n\n</details>"))[0]!
+      .props as unknown as { open: boolean };
+    expect(shutProps.open).toBe(false);
+  });
+
+  // The label is prose in every real use, so it keeps its inline markdown
+  // rather than being flattened to the raw characters the author typed.
+  test("summary keeps inline markdown", () => {
+    const vnode = render(
+      "<details>\n<summary>**bold** and [d](https://e.com)</summary>\n\nx\n\n</details>",
+    );
+    const summary = summaries(vnode)[0]!;
+    expect(collect(summary, (n) => n.type === "strong")).toHaveLength(1);
+    expect(collect(summary, (n) => n.type === "a")).toHaveLength(1);
+    expect(flattenText(summary)).toContain("bold");
+  });
+
+  test("block markdown inside the body still renders as markdown", () => {
+    const vnode = render(
+      "<details>\n<summary>t</summary>\n\n- a\n- b\n\n```js\nvar a=1\n```\n\n</details>",
+    );
+    expect(collect(vnode, (n) => n.type === "ul")).toHaveLength(1);
+    expect(collect(vnode, (n) => n.type === "li")).toHaveLength(2);
+    expect(collect(vnode, (n) => n.type === CodeBlock)).toHaveLength(1);
+  });
+
+  test("a body with no <summary> still folds (browser supplies the label)", () => {
+    const vnode = render("<details>\n\nx\n\n</details>");
+    expect(details(vnode)).toHaveLength(1);
+    expect(summaries(vnode)).toHaveLength(1);
+    expect(flattenText(details(vnode)[0])).toContain("x");
+  });
+
+  test("surrounding prose is preserved on both sides", () => {
+    const vnode = render("before\n\n<details>\n<summary>t</summary>\n\nx\n\n</details>\n\nafter");
+    expect(details(vnode)).toHaveLength(1);
+    const text = flattenText(vnode);
+    expect(text).toContain("before");
+    expect(text).toContain("after");
+  });
+
+  test("nesting produces nested elements without hanging or dropping content", () => {
+    const src =
+      "<details>\n<summary>outer</summary>\n\n<details>\n<summary>inner</summary>\n\ndeep\n\n</details>\n\n</details>";
+    const vnode = render(src);
+    const found = details(vnode);
+    expect(found).toHaveLength(2);
+    // The inner one is a descendant of the outer, not a sibling.
+    expect(collect(found[0]!, (n) => n.type === "details")).toHaveLength(2);
+    expect(flattenText(vnode)).toContain("deep");
+    expect(summaries(vnode).map(flattenText)).toEqual(["outer", "inner"]);
+  });
+
+  test("blockquotes and other containers fold their own <details>", () => {
+    const vnode = render("> <details>\n> <summary>t</summary>\n>\n> x\n>\n> </details>");
+    expect(collect(vnode, (n) => n.type === "blockquote")).toHaveLength(1);
+    expect(details(vnode)).toHaveLength(1);
+  });
+
+  // --- near-misses: everything below must stay literal text ---
+
+  test("an opener with no closer stays literal text", () => {
+    const src = "<details>\n<summary>t</summary>\n\ncontent";
+    const vnode = render(src);
+    expect(details(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toContain("<details>");
+    expect(flattenText(vnode)).toContain("<summary>t</summary>");
+    expect(flattenText(vnode)).toContain("content");
+  });
+
+  test("a stray closer alone stays literal text", () => {
+    const vnode = render("x\n\n</details>\n\ny");
+    expect(details(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toContain("</details>");
+  });
+
+  test("<detailsfoo> does not match the tag name", () => {
+    const vnode = render("<detailsfoo>\n<summary>t</summary>\n\nx\n\n</detailsfoo>");
+    expect(details(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toContain("<detailsfoo>");
+  });
+
+  // Security: the tag is recognized by exact shape, and `open` is the ONLY
+  // attribute accepted. An attribute-carrying tag fails to match entirely,
+  // so its text is escaped prose — no handler, no attribute, no element.
+  test("attribute-carrying tags are refused and shown as text", () => {
+    for (const tag of [
+      '<details onclick="alert(1)">',
+      '<details open="true">',
+      '<details class="x">',
+    ]) {
+      const vnode = render(`${tag}\n<summary>t</summary>\n\nx\n\n</details>`);
+      expect(details(vnode)).toHaveLength(0);
+      expect(flattenText(vnode)).toContain(tag);
+    }
+  });
+
+  test("no attribute other than `open` ever reaches the rendered element", () => {
+    const vnode = render("<details open>\n<summary>t</summary>\n\nx\n\n</details>");
+    const props = details(vnode)[0]!.props as unknown as Record<string, unknown>;
+    expect(Object.keys(props).sort()).toEqual(["children", "class", "open"]);
+    expect(props.class).toBe("md-details");
+  });
+
+  test("tags inside a fenced code block are code, not markup", () => {
+    const vnode = render("```html\n<details>\n<summary>t</summary>\n</details>\n```");
+    expect(details(vnode)).toHaveLength(0);
+    const blocks = collect(vnode, (n) => n.type === CodeBlock);
+    expect(blocks).toHaveLength(1);
+    expect((blocks[0]!.props as unknown as { code: string }).code).toContain("<details>");
+  });
+
+  test("a tag mentioned mid-sentence is prose, not a fold", () => {
+    const src = "Use <details> for folding.";
+    const vnode = render(src);
+    expect(details(vnode)).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(src);
+  });
+
+  test("restricted mode (user-authored messages) keeps the source verbatim", () => {
+    const src = "<details>\n<summary>title</summary>\n\ncontent\n\n</details>";
+    const vnode = renderRestrictedMarkdown(src);
+    expect(collect(vnode, (n) => n.type === "details")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe(src);
+  });
+
+  // A deeply unbalanced document must terminate rather than recurse forever.
+  test("pathological unbalanced input terminates and drops nothing", () => {
+    const src = `${"<details>\n".repeat(50)}body\n${"</details>\n".repeat(3)}`;
+    expect(() => render(src)).not.toThrow();
+    expect(flattenText(render(src))).toContain("body");
   });
 });
