@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import {
   anchorTaskLine,
   findTaskLines,
+  locateTaskOrdinal,
   resolveTaskLine,
   scanTaskStates,
   taskStatesAlign,
@@ -385,6 +386,45 @@ describe("resolveTaskLine", () => {
       ok: false,
       reason: "gone",
     });
+  });
+});
+
+// Where a failed write's message is shown. The renderer numbers checkboxes by
+// document-order ordinal, so pointing a message at the right row means naming
+// the ordinal the item occupies *now* — the click's own ordinal can be stale
+// by the time the write comes back (kawaz r55 m125).
+describe("locateTaskOrdinal", () => {
+  test("re-derives the ordinal after items are inserted above", () => {
+    const source = "- [ ] a\n- [ ] b\n";
+    const anchor = click(source, 1, false);
+    expect(locateTaskOrdinal("- [ ] new\n- [ ] a\n- [ ] b\n", anchor)).toBe(2);
+  });
+
+  test("returns the click's own ordinal when nothing moved", () => {
+    const source = "- [ ] a\n- [ ] b\n- [ ] c\n";
+    expect(locateTaskOrdinal(source, click(source, 2, false))).toBe(2);
+  });
+
+  test("non-task lines between items do not count toward the ordinal", () => {
+    const source = "- [ ] a\n\ntext\n\n- [ ] b\n";
+    const anchor = click(source, 1, false);
+    expect(locateTaskOrdinal(source, anchor)).toBe(1);
+  });
+
+  // No row to point at: the caller falls back to the ordinal the user clicked
+  // rather than dropping the message.
+  test("gives up when the item is gone, conflicted, or ambiguous", () => {
+    const source = "- [ ] a\n";
+    const anchor = click(source, 0, false);
+    expect(locateTaskOrdinal("- [ ] other\n", anchor)).toBeNull();
+    expect(locateTaskOrdinal("- [x] a\n", anchor)).toBeNull();
+
+    // Duplicates: the ordinal is trusted only while it still lands on one of
+    // the identical candidates.
+    const dup = "- [ ] a\n- [ ] a\n";
+    const dupAnchor = click(dup, 1, false);
+    expect(locateTaskOrdinal("- [ ] a\n- [ ] a\n- [ ] a\n", dupAnchor)).toBe(1);
+    expect(locateTaskOrdinal("- [ ] a\n- [x] z\n- [ ] a\n", dupAnchor)).toBeNull();
   });
 });
 

@@ -199,6 +199,23 @@ export function resolveTaskLine(source: string, anchor: TaskAnchor): ResolveTask
   return { ok: true, lineIndex };
 }
 
+/** The ordinal the anchored item occupies in `source` *now* — the coordinate
+ * the renderer numbers checkboxes by, so it is what attaches a message to the
+ * item's own row on screen.
+ *
+ * The anchor's own `ordinal` is the one the click was rendered at and can be
+ * stale by the time a failed write comes back, so it is re-derived from the
+ * item's current position rather than trusted. `null` whenever the item can no
+ * longer be named exactly (`resolveTaskLine`'s refusals), which is the caller's
+ * signal that there is no row to point at.
+ */
+export function locateTaskOrdinal(source: string, anchor: TaskAnchor): number | null {
+  const found = resolveTaskLine(source, anchor);
+  if (!found.ok) return null;
+  const ordinal = findTaskLines(source).indexOf(found.lineIndex);
+  return ordinal < 0 ? null : ordinal;
+}
+
 export type ToggleTaskResult =
   | { ok: true; source: string }
   | { ok: false; reason: "gone" | "conflict" | "ambiguous" };

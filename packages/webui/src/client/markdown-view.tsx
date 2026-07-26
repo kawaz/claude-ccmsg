@@ -251,6 +251,18 @@ interface MarkdownRenderCtx {
   taskIndex: number;
 }
 
+/** A failed write, reported against the item it happened to.
+ *
+ * `seq` increments on every fresh occurrence, including a repeat failure of an
+ * item that is already showing this same message. It is the element key of the
+ * rendered message, so a repeat remounts it and its one-shot flash animation
+ * plays again — otherwise a second click on an already-errored item would
+ * change nothing on screen and read as "the click did nothing". */
+export interface MarkdownTaskError {
+  message: string;
+  seq: number;
+}
+
 /** Wiring for interactive task lists (see `MarkdownRenderCtx.taskList`). */
 export interface MarkdownTaskListCtx {
   /** Invoked with the clicked item's document-order ordinal, the state it was
@@ -258,6 +270,16 @@ export interface MarkdownTaskListCtx {
    * click to the rendered source immediately and writes behind it, so the
    * checkboxes stay live rather than disabling during a write. */
   onToggle: (ordinal: number, from: boolean, to: boolean) => void;
+  /** Failures to show *at* the items they belong to, keyed by the ordinal the
+   * item occupies now. A write that fails only becomes visible when the user
+   * is looking at the checkbox that just sprang back, and that checkbox is
+   * wherever the user last clicked — not the top of a document they have
+   * scrolled away from. Several items can fail independently (writes are
+   * queued, each resolved against its own fresh read), so this is a map rather
+   * than one message. */
+  errors?: ReadonlyMap<number, MarkdownTaskError>;
+  /** Dismiss the message on one item. Absent = no dismiss affordance. */
+  onDismissError?: (ordinal: number) => void;
 }
 
 function renderChildren(
@@ -540,8 +562,21 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       ctx.taskIndex += 1;
       const children = renderChildren(item.children, key, ctx);
       const taskList = ctx.taskList;
+      const error = taskList?.errors?.get(ordinal);
+      const onDismissError = taskList?.onDismissError;
       return (
-        <li key={key} class={"md-task-item" + (checked ? " md-task-checked" : "")}>
+        <li
+          // `seq` is part of the key so a *repeat* failure remounts the row and
+          // replays its one-shot flash. Without it the class is already set,
+          // the animation never restarts, and a second failing click looks
+          // like nothing happened.
+          key={error ? `${key}!${error.seq}` : key}
+          class={
+            "md-task-item" +
+            (checked ? " md-task-checked" : "") +
+            (error ? " md-task-item-error" : "")
+          }
+        >
           <input
             type="checkbox"
             class="md-task-checkbox"
@@ -553,7 +588,24 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
             disabled={!taskList}
             onClick={taskList ? () => taskList.onToggle(ordinal, checked, !checked) : undefined}
           />
-          <span class="md-task-body">{children}</span>
+          <span class="md-task-body">
+            {children}
+            {error ? (
+              <span class="md-task-error" role="alert">
+                <span class="md-task-error-text">{error.message}</span>
+                {onDismissError ? (
+                  <button
+                    type="button"
+                    class="md-task-error-dismiss"
+                    aria-label="このエラーを閉じる"
+                    onClick={() => onDismissError(ordinal)}
+                  >
+                    {"×"}
+                  </button>
+                ) : null}
+              </span>
+            ) : null}
+          </span>
         </li>
       );
     }

@@ -1209,6 +1209,93 @@ describe("renderMarkdownAst / task lists", () => {
   test("extractTaskStates walks the same items in the same order", () => {
     expect(extractTaskStates(parseMarkdownDocument(source))).toEqual([false, true, false]);
   });
+
+  // A write that fails has to be visible where the user is looking: at the
+  // checkbox that just sprang back, not in a banner at the top of a document
+  // they have scrolled down (kawaz r55 m125).
+  describe("per-item write failures", () => {
+    const withErrors = (
+      errors: Map<number, { message: string; seq: number }>,
+      onDismissError?: (ordinal: number) => void,
+    ) =>
+      renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
+        taskList: { onToggle: () => {}, errors, onDismissError },
+      });
+    const items = (vnode: unknown) =>
+      collect(vnode, (n) => n.type === "li") as (VNode & { props: { class?: string } })[];
+    const errorNodes = (vnode: unknown) =>
+      collect(vnode, (n) => (n.props as { class?: string }).class === "md-task-error");
+
+    test("the message renders inside the failing item, not at the document top", () => {
+      const vnode = withErrors(new Map([[1, { message: "競合しました", seq: 1 }]]));
+      const errored = items(vnode).filter((li) => li.props.class?.includes("md-task-item-error"));
+      expect(errored).toHaveLength(1);
+      // Ordinal 1 is the second task item ("b"), so the message must live in
+      // that item's subtree alongside its own text.
+      expect(flattenText(errored[0])).toContain("b");
+      expect(flattenText(errored[0])).toContain("競合しました");
+      expect(errorNodes(vnode)).toHaveLength(1);
+    });
+
+    test("items without an error are untouched", () => {
+      const vnode = withErrors(new Map([[1, { message: "競合しました", seq: 1 }]]));
+      const clean = items(vnode).filter((li) => !li.props.class?.includes("md-task-item-error"));
+      expect(clean).toHaveLength(3);
+      for (const li of clean) expect(flattenText(li)).not.toContain("競合しました");
+    });
+
+    // Writes are queued per click, each resolved against its own fresh read,
+    // so two items can fail independently — one banner could only show one.
+    test("several items can report failures at once", () => {
+      const vnode = withErrors(
+        new Map([
+          [0, { message: "削除されています", seq: 1 }],
+          [2, { message: "競合しました", seq: 2 }],
+        ]),
+      );
+      expect(errorNodes(vnode)).toHaveLength(2);
+      expect(
+        items(vnode).filter((li) => li.props.class?.includes("md-task-item-error")),
+      ).toHaveLength(2);
+    });
+
+    // The flash that marks a rollback is a one-shot CSS animation, so a repeat
+    // failure of an already-errored item must remount the row to replay it.
+    test("a new seq changes the item's key so its flash replays", () => {
+      const first = items(withErrors(new Map([[1, { message: "競合", seq: 1 }]])));
+      const again = items(withErrors(new Map([[1, { message: "競合", seq: 2 }]])));
+      const keyOf = (li: VNode) => (li as unknown as { key?: unknown }).key;
+      const erroredKey = (list: VNode[]) =>
+        keyOf(list.find((li) => (li.props as { class?: string }).class?.includes("error"))!);
+      expect(erroredKey(first)).not.toBe(erroredKey(again));
+    });
+
+    test("dismissing reports the item's own ordinal; absent handler renders no button", () => {
+      const dismissed: number[] = [];
+      const withButton = withErrors(new Map([[2, { message: "競合", seq: 1 }]]), (o) =>
+        dismissed.push(o),
+      );
+      const buttons = collect(
+        withButton,
+        (n) => (n.props as { class?: string }).class === "md-task-error-dismiss",
+      ) as (VNode & { props: { onClick?: () => void } })[];
+      expect(buttons).toHaveLength(1);
+      buttons[0]!.props.onClick?.();
+      expect(dismissed).toEqual([2]);
+
+      const noHandler = collect(
+        withErrors(new Map([[2, { message: "競合", seq: 1 }]])),
+        (n) => (n.props as { class?: string }).class === "md-task-error-dismiss",
+      );
+      expect(noHandler).toHaveLength(0);
+    });
+
+    test("a read-only render (no taskList ctx) shows no error decoration", () => {
+      const vnode = renderMarkdownAst(parseMarkdownDocument(source));
+      expect(errorNodes(vnode)).toHaveLength(0);
+      expect(items(vnode).some((li) => li.props.class?.includes("md-task-item-error"))).toBe(false);
+    });
+  });
 });
 
 // Renderer half of the link classification (kawaz r55 m116/m117). The pure

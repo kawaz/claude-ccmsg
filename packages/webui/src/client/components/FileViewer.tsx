@@ -43,10 +43,12 @@ import {
   MarkdownView,
   extractTaskStates,
   parseMarkdownDocument,
+  type MarkdownTaskError,
   type MarkdownTaskListCtx,
 } from "../markdown-view.tsx";
 import {
   anchorTaskLine,
+  locateTaskOrdinal,
   scanTaskStates,
   taskStatesAlign,
   toggledAnchor,
@@ -230,7 +232,13 @@ function InboxNewEditor({
  * down a long document. Now a toggle patches the cached source in place
  * (`fs/file-patched`), so the only thing that changes on screen is the one
  * checkbox; if the write ultimately fails, that one checkbox is put back and
- * an alert explains why. Checkboxes stay clickable throughout: writes are
+ * the reason appears *at that item*, which is where the user is looking — a
+ * preview banner is off-screen the moment the document is scrolled, so the
+ * rollback read as unexplained. The row also flashes once as it reverts, since
+ * a checkbox quietly returning to its old state is easy to miss. Failures are
+ * per-item (several writes can be in flight), and clear on reload: they
+ * describe a disagreement between the view and disk, which is precisely what
+ * ↻ resolves. Checkboxes stay clickable throughout: writes are
  * serialized through `queueRef` (one `fs_edit` in flight at a time, in click
  * order) rather than blocked, so a run of quick clicks all land.
  *
@@ -271,15 +279,29 @@ function useTaskListToggle({
   kind,
   content,
   enabled,
+  loadSeq,
 }: {
   sid: string;
   path: string;
   kind: "contained" | "external" | "workspace";
   content: string;
   enabled: boolean;
-}): { taskList: MarkdownTaskListCtx | undefined; error: string | null; dismiss: () => void } {
+  /** Bumped by the parent every time the file is (re)fetched from the daemon.
+   * Failures describe a disagreement between the view and disk, so a reload —
+   * the very action every message tells the user to take — has to clear them;
+   * leaving them up made a resolved conflict look unresolved (kawaz r55
+   * m125). */
+  loadSeq: number;
+}): { taskList: MarkdownTaskListCtx | undefined } {
   const { store, ws } = useApp();
-  const [error, setError] = useState<string | null>(null);
+  // Keyed by the ordinal the failed item occupies *now*, so the message lands
+  // on that item's own row. Items are independent: one conflict must not clear
+  // another item's message.
+  const [errors, setErrors] = useState<ReadonlyMap<number, MarkdownTaskError>>(new Map());
+  const seqRef = useRef(0);
+  useEffect(() => {
+    setErrors(new Map());
+  }, [loadSeq, path]);
 
   // The displayed source as of *now*, not as of the last render: two clicks in
   // one tick must chain, and the second one's anchor has to be taken from the
@@ -293,28 +315,55 @@ function useTaskListToggle({
   // before the first one landed, silently dropping it.
   const queueRef = useRef<Promise<void>>(Promise.resolve());
 
+  /** Attach a message to one item's row, replacing whatever that row was
+   * showing. `seq` advances even for a repeat of the same text so the render
+   * remounts and its flash replays. */
+  const report = useCallback((ordinal: number, message: string) => {
+    seqRef.current += 1;
+    const seq = seqRef.current;
+    setErrors((prev) => new Map(prev).set(ordinal, { message, seq }));
+  }, []);
+
   const onToggle = useCallback(
     (ordinal: number, from: boolean, to: boolean) => {
       const anchor = anchorTaskLine(contentRef.current, ordinal, from);
       const optimistic = anchor && toggleTaskLine(contentRef.current, anchor, to);
       if (!anchor || !optimistic || !optimistic.ok) {
-        setError("表示中の内容とファイルがずれています。↻ で再読み込みしてください。");
+        // No anchor means the ordinal is the only coordinate we have — but it
+        // is also the one the user just clicked, so the message still lands on
+        // the right row.
+        report(ordinal, "表示中の内容とファイルがずれています。↻ で再読み込みしてください。");
         return;
       }
       // Paint the click now; everything below runs behind the updated view.
       contentRef.current = optimistic.source;
       store.dispatch({ type: "fs/file-patched", sid, path, content: optimistic.source });
-      setError(null);
+      setErrors((prev) => {
+        if (!prev.has(ordinal)) return prev;
+        const next = new Map(prev);
+        next.delete(ordinal);
+        return next;
+      });
 
       // Undo touches only this item, located by what it reads like *after* the
       // optimistic flip — so a rollback lands correctly even if the user has
       // toggled other items in the meantime, and never reverts those.
       const rollback = (msg: string) => {
-        setError(msg);
         const undone = toggleTaskLine(contentRef.current, toggledAnchor(anchor, to), from);
-        if (!undone.ok) return; // the item moved on; the alert is the only recourse
+        if (!undone.ok) {
+          // The item moved on and can no longer be pointed at; report against
+          // the click's own ordinal so the message is still somewhere the user
+          // was looking rather than nowhere.
+          report(ordinal, msg);
+          return;
+        }
         contentRef.current = undone.source;
         store.dispatch({ type: "fs/file-patched", sid, path, content: undone.source });
+        // Re-derive the ordinal from the rolled-back text: other items may have
+        // been added or removed since the click, and the message has to sit on
+        // the checkbox that just sprang back, not on whoever holds that
+        // position now.
+        report(locateTaskOrdinal(contentRef.current, anchor) ?? ordinal, msg);
       };
 
       queueRef.current = queueRef.current
@@ -354,13 +403,27 @@ function useTaskListToggle({
         })
         .catch((err) => rollback(errorMessage(err)));
     },
-    [store, ws, sid, path, kind],
+    [store, ws, sid, path, kind, report],
   );
+
+  const onDismissError = useCallback((ordinal: number) => {
+    setErrors((prev) => {
+      if (!prev.has(ordinal)) return prev;
+      const next = new Map(prev);
+      next.delete(ordinal);
+      return next;
+    });
+  }, []);
 
   // Identity is part of MarkdownView's memo key, so it must stay stable
   // across unrelated re-renders or every parent render re-parses the file.
-  const taskList = useMemo(() => (enabled ? { onToggle } : undefined), [enabled, onToggle]);
-  return { taskList, error, dismiss: () => setError(null) };
+  // `errors` belongs in that key: a new failure has to reach the render, and
+  // the map's identity only changes when one actually occurred.
+  const taskList = useMemo(
+    () => (enabled ? { onToggle, errors, onDismissError } : undefined),
+    [enabled, onToggle, errors, onDismissError],
+  );
+  return { taskList };
 }
 
 /** In-place text-file editor. Uses fs_edit's optimistic-lock contract:
@@ -517,10 +580,17 @@ export function FileViewer({
   // doesn't race ws.send() (rejects synchronously while not open, see
   // ws.ts) — the "読み込み中…" fallback below just holds until connStatus
   // flips to "connected", which re-evaluates this effect via the dep list.
+  // Counts fetches of this viewer's file from the daemon (initial load, path
+  // switch, and every ↻ / post-save refetch). Consumers that cache a judgement
+  // about "the view vs disk" — task-list write failures — reset on it, since a
+  // reload is exactly what resolves such a disagreement.
+  const [loadSeq, setLoadSeq] = useState(0);
+
   useEffect(() => {
     if (!path) return;
     if (file && file.path === path) return;
     if (connStatus !== "connected") return;
+    setLoadSeq((n) => n + 1);
     store.dispatch({ type: "fs/file-loading", sid, path });
     // Three-way op selection for the currently-selected path:
     // - relative → fs_read (DR-0008 containment root)
@@ -623,6 +693,7 @@ export function FileViewer({
         : "contained",
     content: previewSource ?? "",
     enabled: taskListEnabled && path != null,
+    loadSeq,
   });
 
   useEffect(() => {
@@ -766,6 +837,7 @@ export function FileViewer({
   const canRefetch = path != null && connStatus === "connected";
   const handleRefetch = () => {
     if (!canRefetch) return;
+    setLoadSeq((n) => n + 1);
     store.dispatch({ type: "fs/file-loading", sid, path });
     void (
       isWorkspaceFilePath(path, workspaceFolders)
@@ -985,14 +1057,12 @@ export function FileViewer({
         // paragraph; that's a visible cue matching the banner, not a
         // silent truncation.
         <div class="viewer-preview" ref={(el) => registerSearchLineRef(0, el)}>
-          {taskToggle.error ? (
-            <p class="viewer-task-error" role="alert">
-              {taskToggle.error}
-              <button type="button" class="viewer-task-error-dismiss" onClick={taskToggle.dismiss}>
-                閉じる
-              </button>
-            </p>
-          ) : null}
+          {/* Task-list write failures are *not* reported here. A banner at the
+           * top of the preview is off-screen for anyone who scrolled down to
+           * the item they clicked, which is everyone (kawaz r55 m125); the
+           * message is rendered at the item itself instead, next to the
+           * checkbox that just sprang back. `MarkdownView`'s `taskList` ctx
+           * carries them. */}
           <MarkdownView
             source={res.content}
             tableOfContents
