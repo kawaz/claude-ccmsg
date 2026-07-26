@@ -21,8 +21,9 @@
 //     失敗時は開いたまま = text は残っている = 再送 UI 維持)。
 //
 // 外部タップ判定 (mousedown + touchstart、panelRef.contains) は
-// OneOnOneComposer と同じ pattern。× ボタンは持たない (フォーム外タップで
-// 閉じる UX に統一)。
+// OneOnOneComposer と同じ pattern。加えてヘッダ右端に ✕ ボタンを常設する
+// (kawaz r55 mid=70): Terminal タブでは panel の外側 = cross-origin iframe
+// なので外側タップが親 document に届かず、確実な close 動線が要る。
 import { useState } from "preact/hooks";
 import type { RoomState } from "../store.ts";
 import { Composer } from "./Composer.tsx";
@@ -90,6 +91,21 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
         onPointerDown={panelDrag.onPointerDown}
         style={panelDrag.style}
       >
+        {/* kawaz r55 mid=70: 明示的な閉じるボタン。外側クリックでの close は
+            Terminal タブの hyoui iframe 上では成立しにくい (cross-origin
+            iframe 内のクリックは親に伝播しない) ため、確実な close 動線を
+            常設する。header 自体はパネルのドラッグハンドルも兼ねる。 */}
+        <header class="room-composer-panel-header">
+          <button
+            type="button"
+            class="composer-panel-close"
+            onClick={closePanel}
+            title="閉じる"
+            aria-label="composer を閉じる"
+          >
+            ✕
+          </button>
+        </header>
         <Composer
           room={room}
           mentionTo={mentionTo}

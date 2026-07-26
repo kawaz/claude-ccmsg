@@ -33,6 +33,21 @@ export interface FabPopup {
  * `onClose` は close (外側クリック / 明示 close 呼び出しの両方) のたびに
  * 呼ばれる — OneOnOneComposer の handleClose が close と同時に
  * `setError(null)` していた副作用を、close 経路を一本化した後も保つため。 */
+/** window blur 時に「cross-origin iframe がクリックされた」と見なすか。
+ * `activeElement` が IFRAME かつ panel の外側にある時だけ true。
+ * 判定を pure 関数に切り出してあるのは、hook 本体が DOM + focus 挙動前提で
+ * bun test から回せないため (useDraggable の `clampPosition` /
+ * `isPanelDragHandle` と同じ流儀)。 */
+export function isOutsideIframeFocus(
+  activeElement: { tagName?: string } | null,
+  panel: { contains: (n: never) => boolean } | null,
+): boolean {
+  if (!activeElement || activeElement.tagName !== "IFRAME") return false;
+  // panel 自身が内包する iframe は「外側」ではない (他の内外判定と同じ基準)。
+  if (panel && panel.contains(activeElement as never)) return false;
+  return true;
+}
+
 export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
   const [open, setOpen] = useState(false);
   const [openTicket, setOpenTicket] = useState(0);
@@ -120,6 +135,32 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
         document.removeEventListener("click", onClick);
       }
     };
+  }, [open, blocked, closePanel]);
+
+  // cross-origin iframe (Terminal タブの hyoui embed) 内のクリックで閉じる
+  // (kawaz r55 mid=70、2026-07-26)。iframe 内のイベントは親 document に
+  // 伝播しないため、上の click 判定は Terminal タブでは一切発火しない
+  // (= フォーム外をタップしても閉じない)。代わりに window の blur を見て
+  // 「フォーカスが iframe へ移った」ことを検知する。
+  //
+  // 実測 (Chrome Beta、cross-origin iframe を仕込んだ probe ページ):
+  //   - iframe 内クリック → blur 発火、`document.activeElement.tagName ===
+  //     "IFRAME"`、`document.hasFocus() === true`、visibility は "visible"
+  //   - 別タブ / 別ウィンドウへの切替では activeElement は移動前の要素の
+  //     まま (IFRAME にならない) ので、この判定に引っかからない
+  // 仮に別アプリ切替で blur したとしても、activeElement が IFRAME という
+  // ことは既に iframe をクリック済み = その時点で閉じているので二重に
+  // 閉じるだけ (実害なし)。panel は close されても unmount されないため
+  // 書きかけの本文・添付は保持される (RoomComposerFab は display 切替、
+  // OneOnOneComposer は state + localStorage 保存)。
+  useEffect(() => {
+    if (!open) return;
+    if (blocked) return;
+    const onBlur = () => {
+      if (isOutsideIframeFocus(document.activeElement, panelRef.current)) closePanel();
+    };
+    window.addEventListener("blur", onBlur);
+    return () => window.removeEventListener("blur", onBlur);
   }, [open, blocked, closePanel]);
 
   return { open, openTicket, openPanel, closePanel, panelRef };

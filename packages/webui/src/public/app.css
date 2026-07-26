@@ -4607,6 +4607,41 @@ button.session-tab {
   cursor: grab;
 }
 
+/* RoomComposerFab のパネルヘッダ (kawaz r55 mid=70)。1on1 と違って宛先
+ * ラベルを持たないので ✕ ボタンだけを右端に置く。ドラッグハンドル面としても
+ * 機能させるため touch-action / user-select は 1on1 ヘッダと同じ扱い。 */
+.room-composer-panel-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+/* パネルの閉じるボタン (kawaz r55 mid=70)。SessionSearchPanel の
+ * `.session-search-close` と同じ地味な見た目 (背景なし、muted 色、hover で
+ * 前景色) に揃える。padding で指のタップ target を稼ぐ (グリフ自体は
+ * 0.85rem と小さいため、素の inline サイズでは押しにくい)。 */
+.composer-panel-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.35rem;
+  border-radius: 0.25rem;
+  /* 宛先ラベル (1on1 ヘッダ) が長い時に潰されないよう縮小を禁じる。 */
+  flex: none;
+}
+
+.composer-panel-close:hover {
+  color: var(--fg);
+  background: var(--bg-alt);
+}
+
 .one-on-one-panel-header code {
   color: var(--fg);
   background: var(--bg-alt);

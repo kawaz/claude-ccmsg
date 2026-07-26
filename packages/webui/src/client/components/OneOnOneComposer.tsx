@@ -491,6 +491,19 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
             <code>{targetLabel}</code>
           </AvatarLabel>
         </span>
+        {/* kawaz r55 mid=70: 明示的な閉じるボタン。外側クリックでの close は
+            Terminal タブの hyoui iframe 上では成立しにくい (cross-origin
+            iframe 内のクリックは親に伝播しない) ため、確実な close 動線を
+            常設する。 */}
+        <button
+          type="button"
+          class="composer-panel-close"
+          onClick={closePanel}
+          title="閉じる"
+          aria-label="composer を閉じる"
+        >
+          ✕
+        </button>
       </header>
       <textarea
         ref={textareaRef}
