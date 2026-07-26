@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 import {
   buildSubscribeCommand,
   candidateBinDirs,
@@ -167,10 +168,7 @@ describe("getRepoWsFromVcs", () => {
   });
 
   function writeFakeBumpSemver(script: string): string {
-    const scriptPath = path.join(dir, "fake-bump-semver");
-    fs.writeFileSync(scriptPath, script);
-    fs.chmodSync(scriptPath, 0o755);
-    return scriptPath;
+    return writeMockBin(path.join(dir, "fake-bump-semver"), script);
   }
 
   // バイナリ不在 (ENOENT) は黙って空フォールバックする (= hook の起動を壊さない)。

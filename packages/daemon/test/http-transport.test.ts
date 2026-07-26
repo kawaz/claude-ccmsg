@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
 
 const T = 15000;
@@ -550,12 +551,11 @@ async function freeTcpPort(): Promise<number> {
  *  exits non-zero, the origin never gets allowed, and waitForOriginAllowed reports
  *  that visibly. */
 function writeFakeTailscale(dir: string, hostname: string, port: number, gatePath: string): string {
-  const scriptPath = path.join(dir, "fake-tailscale");
   const json = JSON.stringify({
     Web: { [`${hostname}:443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } },
   });
-  fs.writeFileSync(
-    scriptPath,
+  return writeMockBin(
+    path.join(dir, "fake-tailscale"),
     `#!/bin/sh
 i=0
 while [ ! -f '${gatePath}' ]; do
@@ -567,8 +567,6 @@ if [ "$1 $2 $3" = "serve status --json" ]; then echo '${json}'; exit 0; fi
 exit 1
 `,
   );
-  fs.chmodSync(scriptPath, 0o755);
-  return scriptPath;
 }
 
 /** Retries a plain TCP connect until the daemon's HTTP listener is accepting on `addr`,

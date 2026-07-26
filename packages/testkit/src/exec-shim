@@ -1,0 +1,22 @@
+#!/bin/sh
+# Warm exec shim for test mock executables (see mock-bin.ts for the rationale).
+#
+# Every mock instance is a hard link to THIS file, so the kernel only ever execs
+# this one inode. The per-instance behaviour lives in a sidecar "<own path>.script"
+# which is passed to its interpreter as a *data file* and is never exec'd itself.
+#
+# Reads the sidecar's shebang and dispatches to it, i.e. does by hand what the
+# kernel would have done — so mock scripts keep their own "#!" line and their
+# text stays exactly what it would be if they were executed directly.
+#
+# One deviation: a script that reads "$0" sees the sidecar's path, not the mock's.
+# An interpreter given a file to run always derives "$0" from that file, so this
+# is not fixable from here (exec -a does not survive it); mocks that need their
+# own path should take it as an argument or an env var instead.
+set -e
+script="$0.script"
+shebang=$(sed -n '1s/^#![[:space:]]*//p' "$script")
+[ -n "$shebang" ] || shebang=/bin/sh
+# Unquoted on purpose: "/usr/bin/env bun" must split into command + argument.
+# shellcheck disable=SC2086
+exec $shebang "$script" "$@"

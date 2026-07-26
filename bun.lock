@@ -35,6 +35,10 @@
       "name": "@ccmsg/protocol",
       "version": "0.0.0",
     },
+    "packages/testkit": {
+      "name": "@ccmsg/testkit",
+      "version": "0.0.0",
+    },
     "packages/translate-helper": {
       "name": "@ccmsg/translate-helper",
       "version": "0.0.0",
@@ -59,6 +63,8 @@
     "@ccmsg/daemon": ["@ccmsg/daemon@workspace:packages/daemon"],
 
     "@ccmsg/protocol": ["@ccmsg/protocol@workspace:packages/protocol"],
+
+    "@ccmsg/testkit": ["@ccmsg/testkit@workspace:packages/testkit"],
 
     "@ccmsg/translate-helper": ["@ccmsg/translate-helper@workspace:packages/translate-helper"],
 

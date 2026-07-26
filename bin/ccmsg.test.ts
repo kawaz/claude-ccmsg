@@ -11,8 +11,25 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 
 const LAUNCHER = fileURLToPath(new URL("./ccmsg", import.meta.url));
+
+/** Places the launcher at `dest` as a hard link rather than a copy. The launcher
+ *  only ever creates symlinks — it never rewrites a file — so every fixture copy
+ *  can share the repo's inode, and sharing it is what keeps these tests fast on
+ *  macOS: a copy is a new inode, and the first exec of a new inode waits for
+ *  Gatekeeper (minutes under load; see packages/testkit/src/mock-bin.ts). Falls
+ *  back to copying when a link is impossible (e.g. across filesystems). */
+function linkLauncher(dest: string): void {
+  fs.rmSync(dest, { force: true });
+  try {
+    fs.linkSync(LAUNCHER, dest);
+  } catch {
+    fs.copyFileSync(LAUNCHER, dest);
+    fs.chmodSync(dest, 0o755);
+  }
+}
 
 interface Fixture {
   base: string;
@@ -38,8 +55,7 @@ function makeFixture(): Fixture {
       "",
     );
     const dest = path.join(binDir, "ccmsg");
-    fs.copyFileSync(LAUNCHER, dest);
-    fs.chmodSync(dest, 0o755);
+    linkLauncher(dest);
     return dest;
   };
   const v1 = mkVersion("0.0.1");
@@ -51,17 +67,15 @@ function makeFixture(): Fixture {
   fs.mkdirSync(stubBin);
   // Stub `bun`: records the CLI entry path passed by the launcher, then no-ops.
   // The recorded path makes an exec redirect observable without booting the daemon.
-  fs.writeFileSync(
+  writeMockBin(
     path.join(stubBin, "bun"),
     '#!/usr/bin/env bash\nprintf \'%s\\n\' "$2" >> "$CCMSG_TEST_BUN_LOG"\nexit 0\n',
   );
-  fs.chmodSync(path.join(stubBin, "bun"), 0o755);
 
   const devCheckoutBin = path.join(base, "devcheckout", "bin");
   fs.mkdirSync(devCheckoutBin, { recursive: true });
   const devDest = path.join(devCheckoutBin, "ccmsg");
-  fs.copyFileSync(LAUNCHER, devDest);
-  fs.chmodSync(devDest, 0o755);
+  linkLauncher(devDest);
 
   return {
     base,
@@ -245,6 +259,9 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     const f = makeFixture();
     try {
       const userCcmsg = path.join(f.userBin, "ccmsg");
+      // A real copy, not a hard link: this test asserts the file was left alone,
+      // which only means something if it is its own inode. It is never exec'd
+      // (the launcher run below is f.v2), so it costs no Gatekeeper evaluation.
       fs.copyFileSync(f.v1, userCcmsg);
       fs.chmodSync(userCcmsg, 0o755);
       run(f, f.v2);

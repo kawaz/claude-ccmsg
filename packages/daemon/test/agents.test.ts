@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
   spawnDaemonProc,
@@ -50,7 +51,6 @@ function writeMockClaude(
   callLog: string,
   rowsByConfigDir: Record<string, unknown[]>,
 ): void {
-  const file = path.join(binDir, "claude");
   const script = `#!/usr/bin/env bash
 set -e
 if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
@@ -65,7 +65,7 @@ ${Object.entries(rowsByConfigDir)
 fi
 exit 1
 `;
-  fs.writeFileSync(file, script, { mode: 0o755 });
+  writeMockBin(path.join(binDir, "claude"), script);
 }
 
 async function startAgentsTestDaemon(
@@ -444,7 +444,7 @@ if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
 fi
 exit 1
 `;
-        fs.writeFileSync(file, script, { mode: 0o755 });
+        writeMockBin(file, script);
 
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
@@ -504,7 +504,7 @@ if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
 fi
 exit 1
 `;
-        fs.writeFileSync(file, script, { mode: 0o755 });
+        writeMockBin(file, script);
 
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {

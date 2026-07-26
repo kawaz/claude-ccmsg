@@ -192,3 +192,36 @@ production の設計を歪めない。
 **「テスト側の予算 > テストランナーの per-test 既定」という二重 timeout の見落とし**
 が新しい型として確認された。今後 timeout 保険値を入れる時は bun の 5000ms 既定も
 同時に確認する。
+
+## 追記: 2026-07-27 7 件目の根治 — macOS Gatekeeper の inode 単位評価 (機序が別系統)
+
+これまでの追記は全て「短い固定 timeout × 高負荷」だったが、今回は**別系統の機序**を
+実機で確定した。詳細は `docs/findings/2026-07-27-macos-gatekeeper-per-inode-exec-stall.md`。
+
+真因: テストが mock 実行ファイルを毎回新規作成しており、macOS は**新規 inode の初回
+exec** を syspolicyd / XProtect の評価が終わるまで同期ブロックする。高負荷時この評価が
+**100-173 秒**かかることを実測した (load 46-74)。timeout を伸ばす対処が効かないのは
+このため。キャッシュ単位は inode で、パスでも内容でもない (in-place 書き換え 8 回は
+全て 15-18ms、同一パスでの unlink→再作成は 405-726ms に戻る、で確認)。
+
+対処: `packages/testkit/src/mock-bin.ts` の `writeMockBin` を追加し、mock をリポに
+コミットした 1 個の shim への **hardlink** にした。挙動の差分は exec されない sidecar
+に置き、shim がその shebang を読んでインタープリタへ**データファイルとして**渡す
+(この経路は評価対象外、実測 16-17ms)。mock のスクリプト本文は 1 バイトも変えていない。
+
+対象: `hooks/session-start.test.ts` / `hooks/user-prompt-submit.test.ts` /
+`packages/daemon/test/{agents,translate-helper,http-transport}.test.ts` /
+`bin/ccmsg.test.ts` (launcher の fixture コピーも hardlink 化)。
+
+実測 (対策前後、同一テスト): 82.12s で 1 fail (`timed out after 30000ms`) →
+**1.09s で 21 pass**。フルスイートは外部負荷を足した load 72 / 144 / 175 で 3 回とも
+1862 pass / 0 fail、所要は 89.33s / 91.36s / 95.05s と **load 2.4 倍でも 7% しか
+伸びない** (= 負荷感受性が消えた)。初回 1 回だけ走る評価は `just test` の `warm.ts` で
+テストの外に追い出した (cold 実測 34.6s、warm 時は 0.1s で無出力)。
+
+なお workspace package 追加に伴い `bun.lock` の更新が必要 (未更新だと CI の
+`bun install --frozen-lockfile` が落ちる — 実際に落ちるのを確認済み)。
+
+mock の等価性 (引数・exit code・stdout/stderr・env・stdin・シグナル) は
+`packages/testkit/test/mock-bin.test.ts` に恒久化。既知の差異は mock 内の `$0` が
+sidecar のパスになる点のみ (インタープリタの仕様で回避不能、現存 mock は未使用)。

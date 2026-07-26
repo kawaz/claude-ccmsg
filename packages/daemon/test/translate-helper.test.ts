@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   createTranslateService,
   defaultTranslateHelperPaths,
@@ -23,9 +24,8 @@ afterEach(() => {
 function mockHelper(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-mock-"));
   tempDirs.push(dir);
-  const helper = path.join(dir, "helper.ts");
-  fs.writeFileSync(
-    helper,
+  return writeMockBin(
+    path.join(dir, "helper"),
     `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
@@ -40,9 +40,7 @@ for await (const line of lines) {
   process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
 }
 `,
-    { mode: 0o755 },
   );
-  return helper;
 }
 
 describe("TranslationHelperService", () => {
@@ -85,19 +83,26 @@ describe("TranslationHelperService", () => {
     tempDirs.push(dir);
     const sourcePath = path.join(dir, "main.swift");
     const binaryPath = path.join(dir, "translate-helper");
-    // Stale state: binary exists but the source was modified afterwards.
-    fs.writeFileSync(binaryPath, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-    const past = new Date(Date.now() - 60_000);
-    fs.utimesSync(binaryPath, past, past);
-    fs.writeFileSync(sourcePath, "// updated source");
-    // Fake swiftc: writes a valid new-protocol helper to the -o target.
-    const fakeSwiftc = path.join(dir, "swiftc");
+    // Fake swiftc: puts a valid new-protocol helper at the -o target by hard-linking
+    // the mock (see writeMockBin) rather than writing a new file, so the "rebuilt"
+    // binary is an already-evaluated inode. Its sidecar script is copied alongside.
     const template = mockHelper();
-    fs.writeFileSync(
-      fakeSwiftc,
-      `#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\ncp ${JSON.stringify(template)} "$2"\nchmod 755 "$2"\n`,
-      { mode: 0o755 },
+    const fakeSwiftc = writeMockBin(
+      path.join(dir, "swiftc"),
+      `#!/bin/sh\nwhile [ "$1" != "-o" ]; do shift; done\nrm -f "$2"\nln ${JSON.stringify(template)} "$2"\ncp ${JSON.stringify(template + ".script")} "$2.script"\n`,
     );
+    // Stale state: binary exists but the source was modified afterwards. The
+    // timestamps are anchored to the mock's own mtime rather than to now, because
+    // the rebuilt binary is a hard link and therefore inherits that mtime — with
+    // wall-clock anchors the final "binary is at least as new as source" check
+    // would depend on when the repo happened to be checked out.
+    const builtMs = fs.statSync(template).mtimeMs;
+    fs.writeFileSync(binaryPath, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const staleBinary = new Date(builtMs - 60_000);
+    fs.utimesSync(binaryPath, staleBinary, staleBinary);
+    fs.writeFileSync(sourcePath, "// updated source");
+    const updatedSource = new Date(builtMs - 30_000);
+    fs.utimesSync(sourcePath, updatedSource, updatedSource);
     const service = createTranslateService({
       platform: "darwin",
       sourcePath,
@@ -143,9 +148,8 @@ describe("TranslationHelperService", () => {
   test("a response with fewer results than requested texts fails instead of truncating", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-short-"));
     tempDirs.push(dir);
-    const helper = path.join(dir, "helper.ts");
-    fs.writeFileSync(
-      helper,
+    const helper = writeMockBin(
+      path.join(dir, "helper"),
       `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
@@ -154,7 +158,6 @@ for await (const line of lines) {
   process.stdout.write(JSON.stringify({ id: request.id, results: [] }) + "\\n");
 }
 `,
-      { mode: 0o755 },
     );
     const service = createTranslateService({ platform: "darwin", binaryPath: helper });
     services.push(service);
@@ -200,9 +203,8 @@ for await (const line of lines) {
     function hangingHelper(): string {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-hang-"));
       tempDirs.push(dir);
-      const helper = path.join(dir, "helper.ts");
-      fs.writeFileSync(
-        helper,
+      return writeMockBin(
+        path.join(dir, "helper"),
         `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
@@ -213,9 +215,7 @@ for await (const line of lines) {
   process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
 }
 `,
-        { mode: 0o755 },
       );
-      return helper;
     }
 
     test("a request that outlives its deadline fails with a timeout error and kills the helper", async () => {
@@ -298,9 +298,8 @@ for await (const line of lines) {
     test("parallel single-paragraph requests queue without tripping each other's watchdog", async () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-translate-slow-"));
       tempDirs.push(dir);
-      const helper = path.join(dir, "helper.ts");
-      fs.writeFileSync(
-        helper,
+      const helper = writeMockBin(
+        path.join(dir, "helper"),
         `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
 const lines = createInterface({ input: process.stdin });
@@ -311,7 +310,6 @@ for await (const line of lines) {
   process.stdout.write(JSON.stringify({ id: request.id, results }) + "\\n");
 }
 `,
-        { mode: 0o755 },
       );
       const service = createTranslateService({
         platform: "darwin",

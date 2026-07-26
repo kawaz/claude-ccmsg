@@ -73,7 +73,10 @@ typecheck: lint
     bun x tsc --noEmit -p packages/webui
 
 # テスト (bun test で全 package の *.test.ts を実行)
+# warm は macOS の Gatekeeper 評価 (inode 単位、初回 exec 時に同期ブロック) を
+# テストの外で先に済ませるための前処理。詳細は packages/testkit/src/mock-bin.ts
 test: lint typecheck
+    bun packages/testkit/src/warm.ts
     bun test
 
 # Claude Plugin の構造検証

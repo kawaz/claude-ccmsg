@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 import { sessionFilePath } from "./session-start.ts";
 import {
   parsePs,
@@ -197,10 +198,7 @@ describe("ensureSessionFile", () => {
   });
 
   function writeFakeBumpSemver(script: string): string {
-    const scriptPath = path.join(dir, "fake-bump-semver");
-    fs.writeFileSync(scriptPath, script);
-    fs.chmodSync(scriptPath, 0o755);
-    return scriptPath;
+    return writeMockBin(path.join(dir, "fake-bump-semver"), script);
   }
 
   // ファイルが存在しない場合は新規に書く。repo/ws/repo_root/branch は cwd から
