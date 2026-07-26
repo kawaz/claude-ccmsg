@@ -63,7 +63,7 @@ kawaz 裁定「どうリポに ws/wt 複数あるならソレもみれるよう�
 - **検証 (daemon、hello 時)**: 絶対パス + realpath 解決可 + **realpath(cwd) の strict ancestor** + **`/` でない** + **realpath($HOME) の ancestor-or-self でない** (= `/Users` のような home より広い root も弾く) を全て満たした時のみ採用。落ちたら黙って不採用 = 従来の cwd root (fail-open)
 - **§2 との整合**: これは「任意 root 指定」の再導入ではない。root はクライアントの op 引数では一切指定できず (§2 のまま)、hello 時に申告された値が「cwd の ancestor である」ことを daemon が検証して初めて root になる — つまり広がる先は常に「そのセッションが現に中で作業しているディレクトリの包含元」に限られる。`CCMSG_REPO_ROOT` env は同 UID の operator (kawaz 自身) 向け override であり、同 UID プロセスはそもそも FS を直接読めるため trust boundary を変えない (DR-0004 の u1 真正性の議論と同根)
 - **latest-hello-wins**: repo_root は repo/ws と同じく毎 hello 上書き (state ファイル経由で毎回届くため)。transcript_path の preserve-on-omit 特例には倣わない — 省略/不採用は「現在の実態」を反映しており、古い広い root の残置は縮小方向の安全性と逆行する
-- webui は repo container を tree の起点にし、セッション自身の workspace を初期展開・ハイライトする
+- **webui の tree 起点は cwd** (kawaz r55m97 で変更、v0.73.40)。cwd = `<repo>/<ws>` の運用で repo container を起点にすると自分の ws が 1 階層下のディレクトリとして見え、「cwd で起動しているのに親が root」という不整合になるため。**containment root の拡張自体は維持**する — 兄弟 workspace のファイルは直リンク (inline code のパス、markdown リンク) から到達でき、fs_list/fs_read の認可も従来どおり repo container 基準。つまり「見える範囲 (tree)」は狭め、「到達できる範囲 (認可)」は広いまま、という非対称を意図して持つ。Files 検索 (fs_find) のスコープは tree 起点に揃える (見えていない兄弟 ws のファイルが検索結果に出る不整合を避ける)
 
 ## Security boundary (DR-0004 addendum との関係)
 
