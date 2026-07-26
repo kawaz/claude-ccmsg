@@ -4,6 +4,7 @@
 // integration is covered once the daemon mounts this app (out of scope here).
 import { describe, expect, test } from "bun:test";
 import { createWebuiApp } from "../src/index.ts";
+import { isUnknownAppPath } from "../src/client/utils.ts";
 
 describe("createWebuiApp", () => {
   test("GET / returns the HTML shell", async () => {
@@ -62,5 +63,28 @@ describe("createWebuiApp", () => {
     const app = createWebuiApp();
     const res = await app.fetch(new Request("http://localhost/ws"));
     expect(res.status).toBe(200);
+  });
+});
+
+// The shell is served everywhere so a standalone PWA is never stranded on an
+// unescapable error page — but that makes a wrong URL look exactly like the
+// home screen. The client decides what to *show* there (kawaz r55 m130), and
+// this is the predicate it decides with.
+describe("isUnknownAppPath", () => {
+  test("the two paths the shell is legitimately served at are known", () => {
+    expect(isUnknownAppPath("/")).toBe(false);
+    expect(isUnknownAppPath("/index.html")).toBe(false);
+  });
+
+  test("anything else is off-route", () => {
+    expect(isUnknownAppPath("/fixtures/a.json")).toBe(true);
+    expect(isUnknownAppPath("/does-not-exist")).toBe(true);
+    expect(isUnknownAppPath("/docs/")).toBe(true);
+  });
+
+  // Routing lives in the hash, so a locator is never a 404 — an unknown room
+  // or session id is an ordinary empty state, reachable and recoverable.
+  test("hash locators on a known path stay known", () => {
+    expect(isUnknownAppPath("/")).toBe(false);
   });
 });

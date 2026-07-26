@@ -34,11 +34,7 @@ import {
   type HighlightSpan,
 } from "../highlight.ts";
 import { previewFilePathCtx } from "../filepath-ref.ts";
-import {
-  makeMarkdownPathLinker,
-  useFilePathCacheTick,
-  useMarkdownLinkProbeEnqueue,
-} from "../filepath-linker.tsx";
+import { makeMarkdownPathLinker } from "../filepath-linker.tsx";
 import {
   MarkdownView,
   extractTaskStates,
@@ -612,7 +608,14 @@ export function FileViewer({
     )
       .then((res) => {
         if (res.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: res });
-        else store.dispatch({ type: "fs/file-loaded", sid, path, error: res.error.msg });
+        else
+          store.dispatch({
+            type: "fs/file-loaded",
+            sid,
+            path,
+            error: res.error.msg,
+            errorCode: res.error.code,
+          });
       })
       .catch((err) => {
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
@@ -677,12 +680,9 @@ export function FileViewer({
         : undefined,
     [markdownEligible, sid, path, peer?.repo_root, peer?.cwd],
   );
-  useMarkdownLinkProbeEnqueue(previewSource ?? undefined, previewLinkCtx);
-  const linkCacheTick = useFilePathCacheTick();
-  const previewPathLinker = useMemo(
-    () => makeMarkdownPathLinker(previewLinkCtx, linkCacheTick),
-    [previewLinkCtx, linkCacheTick],
-  );
+  // No existence probe: link targets resolve synchronously so they are
+  // clickable the moment the preview renders (kawaz r55 m129).
+  const previewPathLinker = useMemo(() => makeMarkdownPathLinker(previewLinkCtx), [previewLinkCtx]);
   const taskToggle = useTaskListToggle({
     sid,
     path: path ?? "",
@@ -848,7 +848,14 @@ export function FileViewer({
     )
       .then((r) => {
         if (r.ok) store.dispatch({ type: "fs/file-loaded", sid, path, response: r });
-        else store.dispatch({ type: "fs/file-loaded", sid, path, error: r.error.msg });
+        else
+          store.dispatch({
+            type: "fs/file-loaded",
+            sid,
+            path,
+            error: r.error.msg,
+            errorCode: r.error.code,
+          });
       })
       .catch((err) => {
         store.dispatch({ type: "fs/file-loaded", sid, path, error: errorMessage(err) });
@@ -888,6 +895,30 @@ export function FileViewer({
   }
 
   if (file.status === "error") {
+    // "This address names nothing" is its own presentation (kawaz r55 m129/m130).
+    // Markdown links no longer verify their target before linking, so following
+    // one to a file that isn't there is a normal outcome — it should read as a
+    // 404, telling the user plainly that they are somewhere that doesn't exist,
+    // rather than as a raw daemon error string. The sidebar stays mounted
+    // either way, so this is a place to leave, not a dead end.
+    if (file.errorCode === "not_found") {
+      return (
+        <div class="file-viewer">
+          <header class="viewer-header">
+            <span class="viewer-path">{path}</span>
+            <RefetchButton />
+          </header>
+          <div class="viewer-notfound">
+            <p class="viewer-notfound-code">404</p>
+            <p class="viewer-notfound-msg">このファイルはありません</p>
+            <p class="viewer-notfound-path">{path}</p>
+            <p class="viewer-notfound-hint">
+              左のファイル一覧から選び直してください。移動・削除された可能性があります。
+            </p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div class="file-viewer">
         <header class="viewer-header">

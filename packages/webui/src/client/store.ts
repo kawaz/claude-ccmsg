@@ -62,6 +62,12 @@ export interface FileViewState {
   response?: FsReadResponse;
   /** present when status is "error" */
   error?: string;
+  /** The daemon's error code, when it sent one. Only `not_found` is acted on:
+   * it is the one failure that means "this address names nothing", which the
+   * viewer presents as a 404 rather than as a generic error — markdown links
+   * resolve without checking existence (kawaz r55 m129), so landing on a
+   * missing file is now an ordinary, expected outcome. */
+  errorCode?: string;
 }
 
 /** Timeline (transcript) state for one session (DR-0009), cached alongside
@@ -242,6 +248,7 @@ export type Action =
       path: string;
       response?: FsReadResponse;
       error?: string;
+      errorCode?: string;
     }
   // In-place content/lock update for a file already "loaded" — the preview
   // task-list toggle writes the flipped source straight into the cached
@@ -708,7 +715,12 @@ export function reducer(state: AppState, action: Action): AppState {
       const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
       const file: FileViewState =
         action.error !== undefined
-          ? { path: action.path, status: "error", error: action.error }
+          ? {
+              path: action.path,
+              status: "error",
+              error: action.error,
+              ...(action.errorCode !== undefined ? { errorCode: action.errorCode } : {}),
+            }
           : { path: action.path, status: "loaded", response: action.response };
       sessionTrees.set(action.sid, { ...tree, file });
       return { ...state, sessionTrees };

@@ -1330,10 +1330,11 @@ describe("renderMarkdownAst / markdown links to files", () => {
     expect(anchors(vnode)).toHaveLength(0);
   });
 
-  // "Resolver present but still waiting on the daemon" is reported as null,
-  // identically to "declined" — and both must fail closed. This is the case a
-  // naive implementation gets wrong, because the link *looks* resolvable.
-  test("a resolver returning null (pending or declined) still renders inert", () => {
+  // A resolver reports null when it cannot form an absolute path at all (no
+  // anchor in its ctx). Existence is no longer consulted (kawaz r55 m129), so
+  // this is the only remaining null — and it must still fail closed rather
+  // than fall through to an origin-relative <a>.
+  test("a resolver returning null renders inert rather than an origin-relative link", () => {
     const vnode = renderMarkdownAst(linkRoot("docs/spec.md"), undefined, undefined, {
       pathLinker: () => null,
     });

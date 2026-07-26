@@ -39,8 +39,8 @@
 - [ ] b: 先頭 `/` の絶対パスもリポルート相対として解決される → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
 - [ ] c: 行範囲付きも開ける → [DR-0008 の §7 付近](docs/decisions/DR-0008-workspace-file-access.md#L58-L66)
 - [ ] d: 存在しないパスは押せない (灰色・遷移しない) → [存在しないファイル](docs/this-file-does-not-exist.md)
-- [ ] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
-- [ ] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
+- [x] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
+- [x] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
 
 プロジェクト外 (`/tmp`) の試験ファイルもあります: `/tmp/ccmsg-md-testcases.md` (Files 検索や external files 経路の確認用)
 

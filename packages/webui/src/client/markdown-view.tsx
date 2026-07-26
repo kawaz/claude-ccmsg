@@ -52,15 +52,14 @@ export type FilePathLinker = (token: string) => string | null;
 
 /** A callback that MarkdownView invokes on every markdown *link* whose target
  * is a filesystem path rather than an off-app URL (kawaz r55 m116/m117).
- * Returns the FileViewer href when the daemon confirmed a real file for the
- * relevant session, or `null` otherwise.
+ * Returns the FileViewer href naming that path.
  *
- * `null` deliberately covers three states the renderer treats identically —
- * "not asked yet", "answer still in flight", and "daemon declined" — and in
- * every one of them the link renders **without an `href`**. That is the whole
- * point of the classification: a path-shaped target that navigates the webui
- * origin strands a standalone PWA user with no way back, so not-yet-resolved
- * must fail closed, not fall through to a plain `<a>`. */
+ * Whether the file exists is deliberately not consulted (kawaz r55 m129): the
+ * viewer reports a missing file itself, and resolving synchronously is what
+ * makes a link clickable the instant the document renders. `null` means no
+ * absolute path could be formed at all — the link then renders **without an
+ * `href`**, never as a plain `<a>`, since a path-shaped target that navigates
+ * the webui origin strands a standalone PWA user with no way back. */
 export type MarkdownPathLinker = (ref: ParsedFilePathRef) => string | null;
 
 // DR-0015 §2.6 attachment image extensions. Kept as a set (not re-derived
@@ -445,14 +444,16 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
         return <span key={key}>{label}</span>;
       }
       if (target.kind === "path") {
-        // A repo-relative / absolute path the author meant as a file. Only
-        // links once the daemon has confirmed it — until then (and forever, if
-        // it declines) the text renders inert rather than navigating the webui
-        // origin, which in a standalone PWA is unrecoverable.
+        // A repo-relative / absolute path the author meant as a file. The
+        // resolver does not check that the file exists (kawaz r55 m129) — a
+        // target that names nothing opens the viewer's not-found view, which
+        // is recoverable and legible, whereas gating on a probe left every
+        // link inert until it answered. `null` here means no absolute path
+        // could be formed at all, so there is nothing to link to.
         const href = ctx.pathLinker ? ctx.pathLinker(target.ref) : null;
         if (!href) {
           return (
-            <span key={key} class="md-path-link-dead" title={link.url}>
+            <span key={key} title={link.url}>
               {label}
             </span>
           );
@@ -505,7 +506,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
         const href = ctx.pathLinker ? ctx.pathLinker(target.ref) : null;
         if (!href) {
           return (
-            <span key={key} class="md-path-link-dead" title={image.url}>
+            <span key={key} title={image.url}>
               🖼 {label}
             </span>
           );
@@ -1211,11 +1212,7 @@ function renderRestrictedLink(label: string, url: string, key: string): VNode {
   // this path), so a path target renders inert rather than navigating the
   // webui origin. Disarm and path collapse to the same output here.
   if (target.kind === "path") {
-    return (
-      <span key={key} class="md-path-link-dead">
-        {label || url}
-      </span>
-    );
+    return <span key={key}>{label || url}</span>;
   }
   if (target.kind === "disarm") {
     // Drop the `<a>` entirely but keep the label visible so the reader isn't

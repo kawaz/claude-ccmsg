@@ -1001,3 +1001,19 @@ export function editorLineCount(value: string): number {
   for (let i = 0; i < value.length; i += 1) if (value.charCodeAt(i) === 10) count += 1;
   return count;
 }
+
+/** True when the browser is sitting on a path this app does not serve.
+ *
+ * The daemon answers *every* path with the HTML shell rather than a bare 404,
+ * because a full-screen error page is unescapable in a standalone PWA (no
+ * address bar, no back button). That rescue works — the app boots and the
+ * sidebar is usable — but it also means a wrong URL looks exactly like the
+ * home screen, so nothing tells the user they are somewhere that doesn't
+ * exist (kawaz r55 m130).
+ *
+ * Deliberately a pathname test only: routing lives entirely in the hash, and a
+ * hash locator always resolves to *some* view (an unknown room or session id
+ * is an ordinary empty state, not a 404). */
+export function isUnknownAppPath(pathname: string): boolean {
+  return pathname !== "/" && pathname !== "/index.html";
+}

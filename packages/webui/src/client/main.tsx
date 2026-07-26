@@ -7,7 +7,7 @@ import { createStore } from "./useStore.ts";
 import { initialState } from "./store.ts";
 import { createWsClient } from "./ws.ts";
 import { parseHash } from "./locator.ts";
-import { parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
+import { isUnknownAppPath, parsePinnedSessions, PINNED_SESSIONS_STORAGE_KEY } from "./utils.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import {
   clearFilePathCacheForSid,
@@ -25,7 +25,19 @@ function applyLocator(): void {
   store.dispatch({ type: "locator/changed", locator });
 }
 
-window.addEventListener("hashchange", applyLocator);
+// Escaping the off-route 404 (kawaz r55 m130). Every in-app link is a bare
+// hash, so clicking one while the *pathname* is unknown changes only the
+// fragment: the locator updates, the 404 stays up because the path is still
+// wrong, and the sidebar reads as broken. Carrying the chosen hash over to the
+// real app path turns those clicks back into working navigation. `replace`
+// rather than `assign` so the dead URL doesn't become a back-button trap.
+window.addEventListener("hashchange", () => {
+  if (isUnknownAppPath(location.pathname) && location.hash !== "") {
+    location.replace(`/${location.hash}`);
+    return;
+  }
+  applyLocator();
+});
 applyLocator();
 ws.connect();
 

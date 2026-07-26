@@ -2,7 +2,7 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { lastPathSegment, resolveSessionTopbar } from "../utils.ts";
+import { isUnknownAppPath, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
@@ -62,9 +62,33 @@ function TopbarTitle({ state }: { state: AppState }) {
   return <h1 class="topbar-title">ccmsg</h1>;
 }
 
+/** Shown in the content area, with the sidebar left mounted beside it — the
+ * point is that the user can see they are off-route *and* click their way
+ * back, which is exactly what a served-from-the-daemon 404 page could not
+ * offer. */
+function UnknownPathView({ pathname }: { pathname: string }) {
+  return (
+    <main class="app-notfound">
+      <p class="app-notfound-code">404</p>
+      <p class="app-notfound-msg">このページはありません</p>
+      <p class="app-notfound-path">{pathname}</p>
+      <p class="app-notfound-hint">
+        左の一覧からセッションやルームを選ぶか、
+        <a href="/">トップに戻る</a>
+        でやり直せます。
+      </p>
+    </main>
+  );
+}
+
 export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
+  // Read once at mount: the pathname cannot change without a full page load
+  // (all in-app navigation is hash-based), so there is nothing to subscribe to.
+  const [unknownPath] = useState(() =>
+    isUnknownAppPath(location.pathname) ? location.pathname : null,
+  );
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
@@ -81,7 +105,7 @@ export function App() {
         >
           &#9776;
         </button>
-        <TopbarTitle state={state} />
+        {unknownPath !== null ? <h1 class="topbar-title">ccmsg</h1> : <TopbarTitle state={state} />}
         <ConnectionStatus status={state.connStatus} />
         {/* SPA 内リロードボタン (kawaz 2026-07-14、RLD-Q1=a): iOS ホーム画面
          * 追加 (standalone display mode = PWA 起動) 時にブラウザのリロードが
@@ -116,7 +140,9 @@ export function App() {
           class={state.sidebarOpen ? "visible" : undefined}
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
-        {state.view === "session" || state.view === "timeline" ? (
+        {unknownPath !== null ? (
+          <UnknownPathView pathname={unknownPath} />
+        ) : state.view === "session" || state.view === "timeline" ? (
           <SessionView state={state} />
         ) : (
           <RoomView state={state} />

@@ -14,6 +14,8 @@ import {
   extractInlineCodeTokens,
   previewFilePathCtx,
   refLinkCandidates,
+  refLinkTarget,
+  viewerPathForAbsolute,
 } from "../src/client/filepath-ref.ts";
 import { fileHref } from "../src/client/locator.ts";
 
@@ -304,5 +306,60 @@ describe("refLinkCandidates", () => {
 
   test("a target naming the doc root itself yields no rebased duplicate", () => {
     expect(refLinkCandidates({ path: "/" }, ctx)).toEqual(["/"]);
+  });
+});
+
+// With the existence probe gone (kawaz r55 m129) the reading of a leading `/`
+// can no longer be settled by "whichever one exists", so it is decided up
+// front. What is pinned here is *which* reading wins, since that is the whole
+// user-visible behavior of an ambiguous target now.
+describe("refLinkTarget", () => {
+  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main")!;
+
+  test("a relative target keeps its single cwd-anchored reading", () => {
+    expect(refLinkTarget({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
+  });
+
+  // The document reading, not the filesystem one: `/fixtures/a.json` inside a
+  // repo document means repo-root-relative, which is the case this resolution
+  // exists to serve.
+  test("inside a document, a leading / is read as repo-root relative", () => {
+    expect(refLinkTarget({ path: "/fixtures/a.json" }, ctx)).toBe("/repo/main/fixtures/a.json");
+  });
+
+  test("without a docRoot the only reading is filesystem-absolute", () => {
+    expect(refLinkTarget({ path: "/etc/hosts" }, { sid: "S1", cwd: "/repo/main" })).toBe(
+      "/etc/hosts",
+    );
+  });
+
+  test("no anchor at all yields null — nothing to link to", () => {
+    expect(refLinkTarget({ path: "notes.md" }, { sid: "S1" })).toBeNull();
+  });
+});
+
+// The FileViewer addresses contained files root-relatively and everything else
+// absolutely. `fs_stat_batch` used to report which; the client now derives it.
+describe("viewerPathForAbsolute", () => {
+  test("a file under the root becomes root-relative", () => {
+    expect(viewerPathForAbsolute("/repo/main/docs/spec.md", "/repo/main")).toBe("docs/spec.md");
+  });
+
+  test("a file outside the root stays absolute", () => {
+    expect(viewerPathForAbsolute("/etc/hosts", "/repo/main")).toBe("/etc/hosts");
+  });
+
+  // Prefix collision: `/repo/mainline` is not inside `/repo/main`.
+  test("a sibling sharing a name prefix is not treated as contained", () => {
+    expect(viewerPathForAbsolute("/repo/mainline/x.ts", "/repo/main")).toBe("/repo/mainline/x.ts");
+  });
+
+  test("the root itself, and an absent root, stay absolute", () => {
+    expect(viewerPathForAbsolute("/repo/main", "/repo/main")).toBe("/repo/main");
+    expect(viewerPathForAbsolute("/repo/main/x.ts", undefined)).toBe("/repo/main/x.ts");
+  });
+
+  test("a trailing slash on the root does not leak into the result", () => {
+    expect(viewerPathForAbsolute("/repo/main/x.ts", "/repo/main/")).toBe("x.ts");
   });
 });

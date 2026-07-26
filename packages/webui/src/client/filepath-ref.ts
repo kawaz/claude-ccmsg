@@ -243,6 +243,44 @@ export function refLinkCandidates(ref: ParsedFilePathRef, ctx: FilePathResolveCt
   return candidates;
 }
 
+/** The single absolute path a markdown link target names — chosen without
+ * asking the daemon anything (kawaz r55 m129).
+ *
+ * Links used to be rendered only once `fs_stat_batch` confirmed the file, so
+ * the reading could be picked by which candidate existed. That gate is gone:
+ * it made every link inert until the probe answered (so a reload left the
+ * whole document unclickable for a beat) and the unconfirmed styling was
+ * indistinguishable from an ordinary in-app link. Links now always resolve,
+ * and a wrong guess lands on the viewer's not-found view, which says so and
+ * leaves the sidebar intact.
+ *
+ * Without a probe the two readings of a leading `/` (see `refLinkCandidates`)
+ * have to be decided up front, and the **document reading wins wherever a
+ * `docRoot` exists**: inside a repo document `/fixtures/a.json` means
+ * repo-root-relative — that convention is the reason this resolution exists at
+ * all — whereas a filesystem-absolute target is nearly always written as one
+ * the reader can also see in the tree. With no `docRoot` (message bodies) the
+ * only reading is filesystem-absolute, unchanged. */
+export function refLinkTarget(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string | null {
+  const candidates = refLinkCandidates(ref, ctx);
+  if (candidates.length === 0) return null;
+  return candidates[candidates.length - 1]!;
+}
+
+/** Turn an absolute path into the shape the FileViewer addresses it by:
+ * root-relative when it lies inside the session's containment root (what
+ * `fs_read` serves), absolute otherwise (`fs_read_external` /
+ * `fs_read_workspace`). This is the classification `fs_stat_batch` used to
+ * return; with the probe gone the client derives it from the root it already
+ * knows. */
+export function viewerPathForAbsolute(abs: string, docRoot: string | undefined): string {
+  const root = docRoot?.replace(/\/+$/, "");
+  if (!root) return abs;
+  if (abs === root) return abs;
+  if (!abs.startsWith(root + "/")) return abs;
+  return abs.slice(root.length + 1);
+}
+
 /** Resolve context for the **file preview** (kawaz r55 m116/m117), where a
  * relative markdown link anchors at the directory holding the previewed file
  * rather than at the session's cwd.
