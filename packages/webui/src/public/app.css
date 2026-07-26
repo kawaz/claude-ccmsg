@@ -4966,12 +4966,6 @@ button.session-tab {
   font-size: 0.85em;
 }
 
-.status-estimate-note {
-  margin: -0.15rem 0 0.4rem;
-  color: var(--fg-muted);
-  font-size: 0.7rem;
-}
-
 .status-section-title {
   margin: 0 0 0.4rem;
   font-size: 0.75rem;
@@ -5000,29 +4994,17 @@ button.session-tab {
   font-size: 0.8rem;
 }
 
-/* 走行中 workflow/background/in_progress TODO の強調 (DR-0020 §2.1
- * 「走行中強調、完了は畳む」) — accent の左ボーダー + わずかな背景差で、一覧
- * を流し読みしても「今動いているもの」が即座に判別できるようにする。 */
+/* 走行中 background / in_progress TODO の強調 (DR-0020 §2.1「走行中強調、
+ * 完了は畳む」) — accent の左ボーダー + わずかな背景差で、一覧を流し読み
+ * しても「今動いているもの」が即座に判別できるようにする。 */
 .status-row-active,
-.status-todo-active,
-.status-teammate-active {
+.status-todo-active {
   border-left: 3px solid var(--accent);
   background: var(--bg-alt);
 }
 
-.status-teammate {
-  border-left-width: 3px;
-}
-.status-teammate-idle {
-  opacity: 0.75;
-}
-
-.status-teammate-stopped {
-  opacity: 0.5;
-}
-
-/* r38 mid=5: teammate state のカラードット + ラベル。色語彙は Status タブ内で
- * 統一 (active=--ok / idle=--warn / spawned=--accent / stopped=muted)。active
+/* エージェント state のカラードット。色語彙は webui 全体で統一
+ * (active=--ok / idle=--warn / spawned=--accent / stopped=muted)。active
  * は subtle な pulse animation で「今動いている」を強調するが、animation を
  * disable するユーザ環境 (prefers-reduced-motion) では静止色のみ。 */
 .status-teammate-dot {
@@ -5045,25 +5027,6 @@ button.session-tab {
 .status-teammate-dot-stopped {
   color: var(--fg-muted);
 }
-.status-teammate-state-label {
-  font-size: 0.75rem;
-  color: var(--fg-muted);
-  flex: 0 1 auto;
-  min-width: 0;
-}
-.status-teammate-tl {
-  margin-left: 0;
-}
-.status-teammate-time {
-  display: grid;
-  grid-template-columns: 9ch 2ch 9ch;
-  width: 20ch;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.status-teammate-time > :nth-child(2) {
-  text-align: center;
-}
 @media (prefers-reduced-motion: reduce) {
   .status-teammate-dot-active {
     animation: none;
@@ -5079,7 +5042,6 @@ button.session-tab {
   }
 }
 
-.status-row-name,
 .status-row-kind {
   font-weight: 600;
   flex-shrink: 0;
@@ -5162,140 +5124,11 @@ button.session-tab {
   margin-left: auto;
 }
 
-/* DR-0025 Phase 2: workflow drilldown */
-.status-wf-drill {
-  display: block;
-}
-.status-wf-drill > details > summary {
-  cursor: pointer;
-  display: flex;
-  gap: 0.5rem;
-  align-items: baseline;
-  list-style: revert;
-}
-.status-row-drill {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  color: var(--fg-muted);
-}
-.status-wf-phases {
-  list-style: none;
-  padding: 0.25rem 0 0.25rem 1rem;
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-.status-wf-phase {
-  display: flex;
-  gap: 0.3rem;
-  font-size: 0.75rem;
-}
-.status-wf-phase-count {
-  color: var(--fg-muted);
-}
-
-/* r38 mid=3: Phase 単位の group 表示 (TUI 相当)。宣言 phase の見出しの下に
- * その phase 所属の agent が並ぶ入れ子構造。完了 phase は "✓" を付けて視認性
- * を上げる。合成 group ("(no phase)") は phase 見出しと同格に見えないよう
- * 見た目を弱める。 */
-.status-wf-groups {
-  list-style: none;
-  padding: 0.25rem 0 0 1rem;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.status-wf-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.status-wf-group-header {
-  display: flex;
-  gap: 0.4rem;
-  align-items: baseline;
-  font-size: 0.78rem;
-}
-.status-wf-group-title {
-  flex-shrink: 0;
-}
-.status-wf-group-count {
-  color: var(--fg-muted);
-  font-size: 0.72rem;
-}
-.status-wf-group-check {
-  color: var(--ok, #4a8);
-}
-.status-wf-group-complete .status-wf-group-title {
-  color: var(--ok, #4a8);
-}
-.status-wf-group-synthetic .status-wf-group-title {
-  color: var(--fg-muted);
-  font-style: italic;
-}
-.status-wf-group .status-wf-agents {
-  padding-left: 1rem;
-}
-.status-wf-agents {
-  list-style: none;
-  padding: 0.25rem 0 0 1rem;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-.status-wf-agent-summary,
-.status-wf-agent-details > summary {
-  display: flex;
-  gap: 0.4rem;
-  align-items: baseline;
-  font-size: 0.8rem;
-  cursor: pointer;
-  list-style: revert;
-}
-.status-wf-agent-icon {
-  flex-shrink: 0;
-  width: 1em;
-  text-align: center;
-}
-.status-wf-agent-icon-done {
-  color: var(--ok, #4a8);
-}
-.status-wf-agent-icon-error {
-  color: var(--err, #c55);
-}
-.status-wf-agent-icon-running {
-  color: var(--warn, #ba5);
-}
-.status-wf-agent-icon-pending {
-  color: var(--fg-muted);
-}
-.status-wf-agent-label {
-  flex-shrink: 0;
-}
-.status-wf-agent-model,
-.status-wf-agent-tokens {
-  flex-shrink: 0;
-  font-size: 0.7rem;
-  color: var(--fg-muted);
-}
-.status-wf-agent-tl {
+/* Background row の TL リンク: 行の右端に寄せる。 */
+.status-row-tl {
   flex-shrink: 0;
   font-size: 0.7rem;
   margin-left: auto;
-}
-.status-wf-agent-error,
-.status-wf-agent-tool,
-.status-wf-agent-preview {
-  margin: 0.15rem 0 0 1.5rem;
-  font-size: 0.75rem;
-  color: var(--fg-muted);
-  white-space: pre-wrap;
-}
-.status-wf-agent-error {
-  color: var(--err, #c55);
 }
 
 /* --- Status tab danger zone (DR-0028 session_kill) --- */
@@ -5900,7 +5733,7 @@ button.session-tab {
 
 /* issue 2026-07-21 (workflow TUI parity, #1/#2): workflow member 行に付く
  * モデル名 / トークン数 / state 注記。ラベル本文とは視覚的に区別できる淡色
- * かつ小さめのサイズで並べる (Status タブ .status-wf-agent-model と同格)。
+ * かつ小さめのサイズで並べる。
  * kawaz r46 mid=37: ハイフンで折り返して行が縦に膨らまないよう nowrap
  * (ツリーは横スクロールで全文が見える、r46 mid=18 方針)。 */
 .agent-tree-model,
@@ -5942,8 +5775,7 @@ button.session-tab {
 }
 
 /* mtime 推定など未確定状態の dot 色。既存の status-teammate-dot-* に「unknown」
- * は無いためここで補う (StatusPanel 側は open-set を許容する語彙のため、
- * CSS 側も同じ open-set 前提)。 */
+ * は無いためここで補う (state 語彙は open-set 前提)。 */
 .status-teammate-dot-unknown {
   color: var(--fg-muted);
 }

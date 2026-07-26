@@ -30,27 +30,14 @@ export function splitTodos(todos: SessionTodo[]): TodoSections {
   };
 }
 
-/** Running/terminal split shared by workflows and background tasks — both
- * protocol shapes document their `status` field the same way ("running" |
- * terminal task-notification values, open set). Anything not literally
- * "running" is terminal, so an upstream-added terminal value (e.g. a new
- * failure kind) still lands in `done` without this module needing to know
- * its name. */
+/** Running/terminal split for background tasks — the protocol shape documents
+ * its `status` field as "running" | terminal task-notification values (open
+ * set). Anything not literally "running" is terminal, so an upstream-added
+ * terminal value (e.g. a new failure kind) still lands in `done` without this
+ * module needing to know its name. */
 export interface RunSections<T> {
   running: T[];
   done: T[];
-}
-
-export function splitWorkflows(
-  workflows: SessionWorkflowStatus[],
-): RunSections<SessionWorkflowStatus> {
-  // issue 2026-07-21 (#5): dedup by run_id first so pause→resume の複数 Workflow
-  // toolUseResult が 1 行にまとまる。dedup 後の status で running/done を振り分ける。
-  const deduped = dedupeWorkflowRunsByRunId(workflows);
-  return {
-    running: deduped.filter((w) => w.status === "running"),
-    done: deduped.filter((w) => w.status !== "running"),
-  };
 }
 
 export function splitBackground(
@@ -62,17 +49,16 @@ export function splitBackground(
   };
 }
 
-/** Status タブ本体向けの一括 fold (DR-0020 §2.1: 3 セクション一覧)。 */
+/** Status タブ本体向けの一括 fold (DR-0020 §2.1)。workflow / agent 構造は
+ * Timeline のエージェントツリー (`AgentTreePanel`) が担うので含めない。 */
 export interface StatusSections {
   todos: TodoSections;
-  workflows: RunSections<SessionWorkflowStatus>;
   background: RunSections<SessionBackgroundStatus>;
 }
 
 export function buildStatusSections(snapshot: SessionStatusSnapshot): StatusSections {
   return {
     todos: splitTodos(snapshot.todos),
-    workflows: splitWorkflows(snapshot.workflows),
     background: splitBackground(snapshot.background),
   };
 }
@@ -187,20 +173,6 @@ export function formatContextUsage(ctx: SessionContextUsage): { text: string; ti
   };
 }
 
-function teammateActivity(teammate: SessionTeammate): number {
-  return Math.max(
-    Date.parse(teammate.spawned_at ?? "") || 0,
-    Date.parse(teammate.last_sent_at ?? "") || 0,
-    Date.parse(teammate.last_received_at ?? "") || 0,
-  );
-}
-
-/** Teammates are shown by their latest transcript-observed activity. A copied
- * array keeps protocol snapshot order immutable for other consumers. */
-export function splitTeammates(teammates: SessionTeammate[]): SessionTeammate[] {
-  return [...teammates].sort((a, b) => teammateActivity(b) - teammateActivity(a));
-}
-
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。
  * `kind:"more"` は MINI_SUMMARY_MAX_LINES を超えた workflow/todo の残数を
  * 畳んだ表示専用で実データを持たない。`kind:"context"`/`"teammate"` は
@@ -292,64 +264,6 @@ export interface WorkflowDrilldownAgentView {
 export interface WorkflowDrilldownView {
   phases: { title: string; done: number; total: number }[];
   agents: WorkflowDrilldownAgentView[];
-}
-
-/** DR-0025 Phase 2 (r38 mid=3): Phase 単位に agents を束ねた表示形。TUI の
- * workflow 表示 (Phase 見出しの下にその phase のサブセッションが並ぶ) を webui でも
- * 再現するための fold。`complete` は total > 0 かつ done === total で立ち、
- * UI 側で見出しに ✓ を付ける合図に使う。
- *
- * 対応関係:
- * - 宣言済み phase (drilldown.phases に載っている title) に属する agent は
- *   その phase の group へ。done/total は daemon 側で集計済みの値をそのまま採用
- *   (agent 側の phase_index/phase_title は raw、group 全体の集計値は daemon が
- *   source of truth)
- * - 宣言 phase に紐づかない agent (phase_title 未設定 / 宣言 phase と title 不一致)
- *   は末尾の "(no phase)" group に集約。宣言 phase が 1 つも無いワークフロー
- *   (旧型 / 走行中で state json 未生成) では全 agent がこの group に入る
- * - 該当 agent が無い宣言 phase は group ごと出す (kawaz: Phase 見出しは残す。
- *   0/0 phase も設計上意味を持つため隠さない)
- */
-export interface WorkflowDrilldownGroupView {
-  title: string;
-  done: number;
-  total: number;
-  complete: boolean;
-  agents: WorkflowDrilldownAgentView[];
-  /** "(no phase)" 用の合成 group を区別するフラグ。UI 側で見た目を弱める
-   * (宣言外の残余であり Phase 見出しと同格ではないため) 用途。 */
-  synthetic?: boolean;
-}
-
-const NO_PHASE_TITLE = "(no phase)";
-
-export function groupAgentsByPhase(view: WorkflowDrilldownView): WorkflowDrilldownGroupView[] {
-  const groups: WorkflowDrilldownGroupView[] = [];
-  const declared = new Set(view.phases.map((p) => p.title));
-  for (const phase of view.phases) {
-    const agents = view.agents.filter((a) => a.phaseTitle === phase.title);
-    groups.push({
-      title: phase.title,
-      done: phase.done,
-      total: phase.total,
-      complete: phase.total > 0 && phase.done === phase.total,
-      agents,
-    });
-  }
-  const leftover = view.agents.filter((a) => !a.phaseTitle || !declared.has(a.phaseTitle));
-  if (leftover.length > 0) {
-    const done = leftover.filter((a) => a.icon === "done").length;
-    const total = leftover.length;
-    groups.push({
-      title: NO_PHASE_TITLE,
-      done,
-      total,
-      complete: total > 0 && done === total,
-      agents: leftover,
-      synthetic: true,
-    });
-  }
-  return groups;
 }
 
 function agentIcon(state: string): WorkflowDrilldownAgentView["icon"] {

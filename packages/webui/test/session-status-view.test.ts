@@ -7,7 +7,6 @@ import type {
   AgentInfo,
   SessionBackgroundStatus,
   SessionStatusSnapshot,
-  SessionTeammate,
   SessionTodo,
   SessionWorkflowStatus,
 } from "@ccmsg/protocol";
@@ -19,14 +18,11 @@ import {
   estimateContextLimit,
   formatAgentLiveState,
   formatContextUsage,
-  groupAgentsByPhase,
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
   splitBackground,
-  splitTeammates,
   splitTodos,
-  splitWorkflows,
 } from "../src/client/session-status-view.ts";
 
 function todo(overrides: Partial<SessionTodo> & { id: string; status: string }): SessionTodo {
@@ -76,36 +72,25 @@ describe("splitTodos", () => {
   });
 });
 
-describe("splitWorkflows / splitBackground", () => {
+describe("splitBackground", () => {
   test("zero entries: both buckets empty", () => {
-    expect(splitWorkflows([])).toEqual({ running: [], done: [] });
     expect(splitBackground([])).toEqual({ running: [], done: [] });
   });
 
   test("only 'running' counts as running, any other status is done (open-set terminal values)", () => {
-    const workflows = [
-      workflow({ task_id: "w1", status: "running" }),
-      workflow({ task_id: "w2", status: "completed" }),
-      workflow({ task_id: "w3", status: "failed" }), // unrecognized-but-terminal value
-    ];
-    const sections = splitWorkflows(workflows);
-    expect(sections.running.map((w) => w.task_id)).toEqual(["w1"]);
-    expect(sections.done.map((w) => w.task_id)).toEqual(["w2", "w3"]);
-  });
-
-  test("background follows the same running/done split", () => {
     const background_ = [
       background({ task_id: "b1", status: "running" }),
       background({ task_id: "b2", status: "done" }),
+      background({ task_id: "b3", status: "failed" }), // unrecognized-but-terminal value
     ];
     const sections = splitBackground(background_);
     expect(sections.running.map((b) => b.task_id)).toEqual(["b1"]);
-    expect(sections.done.map((b) => b.task_id)).toEqual(["b2"]);
+    expect(sections.done.map((b) => b.task_id)).toEqual(["b2", "b3"]);
   });
 });
 
 describe("buildStatusSections", () => {
-  test("folds all three snapshot arrays in one call", () => {
+  test("folds todos と background を 1 回で射影する", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress" })],
       workflows: [workflow({ task_id: "w1", status: "running" })],
@@ -114,7 +99,6 @@ describe("buildStatusSections", () => {
     };
     const sections = buildStatusSections(snapshot);
     expect(sections.todos.inProgress).toHaveLength(1);
-    expect(sections.workflows.running).toHaveLength(1);
     expect(sections.background.running).toHaveLength(1);
   });
 });
@@ -352,37 +336,6 @@ describe("context usage display", () => {
   });
 });
 
-describe("splitTeammates", () => {
-  test("spawn・送信・受信を合わせた最終観測時刻の降順で並べる", () => {
-    // Teams 一覧は TUI 内部状態でなく transcript 上の最後の活動を先頭に出す。
-    const teammates: SessionTeammate[] = [
-      {
-        name: "spawn-only",
-        spawned: true,
-        state: "spawned",
-        spawned_at: "2026-07-17T00:03:00.000Z",
-      },
-      {
-        name: "sent",
-        spawned: false,
-        state: "active",
-        last_sent_at: "2026-07-17T00:01:00.000Z",
-      },
-      {
-        name: "received",
-        spawned: false,
-        state: "active",
-        last_received_at: "2026-07-17T00:02:00.000Z",
-      },
-    ];
-    expect(splitTeammates(teammates).map((teammate) => teammate.name)).toEqual([
-      "spawn-only",
-      "received",
-      "sent",
-    ]);
-  });
-});
-
 describe("formatSidebarBadge", () => {
   test("no snapshot (not subscribed / not yet arrived): null", () => {
     expect(formatSidebarBadge(undefined)).toBeNull();
@@ -530,28 +483,6 @@ describe("dedupeWorkflowRunsByRunId (issue 2026-07-21 #5)", () => {
       "solo2",
     ]);
   });
-  test("splitWorkflows は dedup 済みの結果を running/done に振り分ける", () => {
-    // pause→resume の途中でスナップショットを撮ると completed + running の
-    // 両方が混じる (fold の別 taskId 由来)。dedup により running が採用されるため
-    // running セクションだけに 1 件、done セクションは空。
-    const wfs = [
-      workflow({
-        task_id: "old",
-        status: "completed",
-        run_id: "wf_33333333-abc",
-        started_at: "2026-07-21T00:00:00.000Z",
-      }),
-      workflow({
-        task_id: "new",
-        status: "running",
-        run_id: "wf_33333333-abc",
-        started_at: "2026-07-21T00:05:00.000Z",
-      }),
-    ];
-    const sections = splitWorkflows(wfs);
-    expect(sections.running.map((w) => w.task_id)).toEqual(["new"]);
-    expect(sections.done).toEqual([]);
-  });
 });
 
 describe("buildWorkflowDrilldown (DR-0025)", () => {
@@ -600,81 +531,5 @@ describe("buildWorkflowDrilldown (DR-0025)", () => {
     expect(view?.agents[0]?.tokens).toBe(149564);
     expect(view?.agents[0]?.phaseTitle).toBe("Plan");
     expect(view?.agents[2]?.error).toBe("boom");
-  });
-});
-
-describe("groupAgentsByPhase (r38 mid=3)", () => {
-  test("宣言 phase 順で group を並べ、宣言 phase の done/total は daemon 集計値を採用", () => {
-    // Phase 見出しの done/total は daemon 側 (workflow-drilldown.ts) が唯一の source of truth。
-    // agent 側の phase_title で group 分けだけ行い、集計値は再計算しない。
-    const groups = groupAgentsByPhase({
-      phases: [
-        { title: "Plan", done: 1, total: 1 },
-        { title: "Verify", done: 0, total: 2 },
-      ],
-      agents: [
-        { agentId: "a1", label: "plan", state: "done", icon: "done", phaseTitle: "Plan" },
-        { agentId: "a2", label: "v1", state: "running", icon: "running", phaseTitle: "Verify" },
-        { agentId: "a3", label: "v2", state: "pending", icon: "pending", phaseTitle: "Verify" },
-      ],
-    });
-    expect(groups.map((g) => g.title)).toEqual(["Plan", "Verify"]);
-    expect(groups[0]).toMatchObject({ done: 1, total: 1, complete: true });
-    expect(groups[0]?.agents.map((a) => a.agentId)).toEqual(["a1"]);
-    expect(groups[1]).toMatchObject({ done: 0, total: 2, complete: false });
-    expect(groups[1]?.agents.map((a) => a.agentId)).toEqual(["a2", "a3"]);
-    expect(groups[1]?.synthetic).toBeUndefined();
-  });
-
-  test("宣言 phase に紐づかない agent は末尾の (no phase) group に集約 (synthetic フラグ付き)", () => {
-    // phase_title 未設定と、宣言に無い title を持つ agent の両方が対象。合成 group の done/total は
-    // 残余 agent 集計から出す (宣言 phase の集計と混ざらない)。
-    const groups = groupAgentsByPhase({
-      phases: [{ title: "Plan", done: 1, total: 1 }],
-      agents: [
-        { agentId: "a1", label: "plan", state: "done", icon: "done", phaseTitle: "Plan" },
-        { agentId: "a2", label: "orphan1", state: "done", icon: "done" }, // phase_title 未設定
-        { agentId: "a3", label: "orphan2", state: "running", icon: "running", phaseTitle: "Ghost" }, // 未宣言 phase
-      ],
-    });
-    expect(groups.map((g) => g.title)).toEqual(["Plan", "(no phase)"]);
-    const noPhase = groups[1]!;
-    expect(noPhase.agents.map((a) => a.agentId)).toEqual(["a2", "a3"]);
-    expect(noPhase).toMatchObject({ done: 1, total: 2, complete: false, synthetic: true });
-  });
-
-  test("宣言 phase が空 (旧型 / 走行中 state json 未生成) の場合、全 agent が (no phase) に集まる", () => {
-    // drilldown.phases が空でも agents だけで表示できるパスを維持する (WorkflowRow の
-    // `Agents N` label 経路と対応)。
-    const groups = groupAgentsByPhase({
-      phases: [],
-      agents: [
-        { agentId: "a1", label: "x", state: "done", icon: "done" },
-        { agentId: "a2", label: "y", state: "running", icon: "running" },
-      ],
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ title: "(no phase)", done: 1, total: 2, synthetic: true });
-  });
-
-  test("該当 agent が無い宣言 phase も group ごと表示 (0/0 は complete=false)", () => {
-    // 設計上 phase が宣言されているのに 0/0 のまま (まだ agent 未起動) の状態を隠さない。
-    // total===0 では complete フラグを立てない (0/0 に ✓ を付けない、TUI と同じ)。
-    const groups = groupAgentsByPhase({
-      phases: [{ title: "Empty", done: 0, total: 0 }],
-      agents: [],
-    });
-    expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({
-      title: "Empty",
-      done: 0,
-      total: 0,
-      complete: false,
-      agents: [],
-    });
-  });
-
-  test("phases も agents も空なら groups も空", () => {
-    expect(groupAgentsByPhase({ phases: [], agents: [] })).toEqual([]);
   });
 });

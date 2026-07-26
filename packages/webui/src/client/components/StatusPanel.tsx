@@ -1,42 +1,35 @@
-// SessionView Status-tab body (DR-0020 Phase 2): a session's currently
-// running workflows / background tasks / TODOs, folded from the daemon's
+// SessionView Status-tab body (DR-0020 Phase 2): a session's identity
+// metadata, background tasks and TODOs, folded from the daemon's
 // session_status_subscribe snapshot. The subscribe/unsubscribe round trip
 // itself lives in SessionView (shared with the Timeline mini panel, which
 // needs the same live data); session identity metadata is resolved here from
 // the shared store so Status uses the same peer/pin/agent fallback as the topbar.
+// Agent/workflow structure is shown by the Timeline's agent tree
+// (`AgentTreePanel`), which is the single place for that view.
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type {
   ErrorResponse,
   SessionBackgroundStatus,
+  SessionEnvResponse,
   SessionKillResponse,
   SessionStatusSnapshot,
-  SessionTeammate,
   SessionTodo,
-  SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import {
   buildStatusSections,
-  buildWorkflowDrilldown,
-  canonicalModelId,
   formatAgentLiveState,
   formatContextUsage,
-  groupAgentsByPhase,
-  shortModel,
-  splitTeammates,
-  type WorkflowDrilldownAgentView,
-  type WorkflowDrilldownGroupView,
 } from "../session-status-view.ts";
+import { filterEnvRows, splitColonValue, toEnvRows, type EnvRow } from "../env-filter.ts";
 import { agentTimelineHref } from "../locator.ts";
-import { formatClockTime, formatRelativeAge, resolveSessionTopbar } from "../utils.ts";
+import { formatClockTime, resolveSessionTopbar } from "../utils.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
-import { useNow } from "../useNow.ts";
 
-/** r38 mid=4: TODO 行の頭状態マーカー。workflow drilldown の agent icon 語彙
- * (✓/⟳/·) と揃えることで Status タブ内の視覚言語を一貫させる。open set の status
- * (upstream が値を追加しうる) は default で pending と同じ空マーカー扱い、独自
- * 分岐は生やさない (未知値に色や記号を勝手に当てないポリシー)。 */
+/** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
+ * 追加しうる) は default で pending と同じ空マーカー扱い、独自分岐は生やさない
+ * (未知値に色や記号を勝手に当てないポリシー)。 */
 function todoIconGlyph(status: string): string {
   if (status === "completed") return "✓";
   if (status === "in_progress") return "⟳";
@@ -89,168 +82,6 @@ function TodoRow({ todo }: { todo: SessionTodo }) {
   );
 }
 
-const ICON_GLYPH: Record<WorkflowDrilldownAgentView["icon"], string> = {
-  done: "✓",
-  running: "⟳",
-  error: "✗",
-  pending: "·",
-};
-
-function formatTokens(tokens: number | undefined): string | null {
-  if (tokens === undefined) return null;
-  if (tokens < 1000) return `${tokens}`;
-  return `${Math.round(tokens / 1000)}k`;
-}
-
-function WorkflowRow({
-  wf,
-  running,
-  sid,
-}: {
-  wf: SessionWorkflowStatus;
-  running: boolean;
-  sid: string;
-}) {
-  const drilldown = buildWorkflowDrilldown(wf);
-  const groups = drilldown ? groupAgentsByPhase(drilldown) : [];
-  // Header の右肩要約: 宣言 phase がある時は「Phases 完了数/総数」、agents だけの
-  // 旧型 / 走行中 (state json 未生成) は「Agents N」。r38 mid=3 で Phase 単位の
-  // グループ化は展開後の一覧側に持たせるため、header 側は畳んだ時の要約だけを担う。
-  const phasesLabel = drilldown
-    ? drilldown.phases.length > 0
-      ? `Phases ${drilldown.phases.filter((p) => p.total > 0 && p.done === p.total).length}/${drilldown.phases.length}`
-      : `Agents ${drilldown.agents.length}`
-    : null;
-  const header = (
-    <>
-      <span class="status-row-name">{wf.name}</span>
-      {wf.summary ? <span class="status-row-summary">{wf.summary}</span> : null}
-      {phasesLabel ? <span class="status-row-drill">{phasesLabel}</span> : null}
-      <span class="status-row-time">
-        {formatClockTime(wf.started_at)}
-        {wf.ended_at ? ` – ${formatClockTime(wf.ended_at)}` : ""}
-      </span>
-    </>
-  );
-  if (!drilldown) {
-    return <li class={"status-row" + (running ? " status-row-active" : "")}>{header}</li>;
-  }
-  // r38 mid=3: 走行中 workflow は Status タブを開いた瞬間に Phase / agent が
-  // 見える方が「今何が動いているか」の視認性が高い (kawaz)。完了 workflow は
-  // 「完了 (N)」の中に既に 1 段畳まれているため、そこから開いた時点で意図があり
-  // 更に 1 段畳んだままにする合理性が薄いので同じく open にする。
-  return (
-    <li class={"status-row status-wf-drill" + (running ? " status-row-active" : "")}>
-      <details open>
-        <summary>{header}</summary>
-        {groups.length > 0 ? (
-          <ul class="status-wf-groups">
-            {groups.map((group) => (
-              <WorkflowPhaseGroup key={group.title} group={group} sid={sid} runId={wf.run_id} />
-            ))}
-          </ul>
-        ) : null}
-      </details>
-    </li>
-  );
-}
-
-/** Phase 見出し + その配下の agent list。TUI で workflow 展開時に見える
- * 「Phase タイトル (done/total ✓) — 下にサブセッション」の構造を webui でも
- * 再現するグループ描画 (r38 mid=3)。合成 group ("(no phase)") は synthetic
- * class で見た目を弱め、宣言 phase 見出しと同格に見えないようにする。 */
-function WorkflowPhaseGroup({
-  group,
-  sid,
-  runId,
-}: {
-  group: WorkflowDrilldownGroupView;
-  sid: string;
-  runId?: string;
-}) {
-  const cls =
-    "status-wf-group" +
-    (group.complete ? " status-wf-group-complete" : "") +
-    (group.synthetic ? " status-wf-group-synthetic" : "");
-  return (
-    <li class={cls}>
-      <div class="status-wf-group-header">
-        <span class="status-wf-group-title">{group.title}</span>
-        <span class="status-wf-group-count">
-          {group.done}/{group.total}
-        </span>
-        {group.complete ? <span class="status-wf-group-check">✓</span> : null}
-      </div>
-      {group.agents.length > 0 ? (
-        <ul class="status-wf-agents">
-          {group.agents.map((agent) => (
-            <WorkflowAgentLink key={agent.agentId} agent={agent} sid={sid} runId={runId} />
-          ))}
-        </ul>
-      ) : null}
-    </li>
-  );
-}
-
-/** Bridges `AgentDrillRow` (which has no runId in scope) to `WorkflowRow`
- * (which knows the runId of the whole workflow). Kept as a thin wrapper so
- * the row renderer stays a pure presentation function against
- * `WorkflowDrilldownAgentView` — the TL link is the only place that needs
- * the runId, and forwarding it through props keeps the shape uniform. */
-function WorkflowAgentLink({
-  agent,
-  sid,
-  runId,
-}: {
-  agent: WorkflowDrilldownAgentView;
-  sid: string;
-  runId?: string;
-}) {
-  const href = agentTimelineHref(sid, {
-    agentId: agent.agentId,
-    ...(runId ? { runId } : {}),
-  });
-  const tokensLabel = formatTokens(agent.tokens);
-  const iconClass = `status-wf-agent-icon status-wf-agent-icon-${agent.icon}`;
-  const hasDetails = !!(agent.resultPreview || agent.lastTool || agent.error);
-  return (
-    <li class="status-wf-agent">
-      {hasDetails ? (
-        <details class="status-wf-agent-details">
-          <summary>
-            <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
-            <span class="status-wf-agent-label">{agent.label}</span>
-            {agent.model ? (
-              <span class="status-wf-agent-model">{canonicalModelId(agent.model)}</span>
-            ) : null}
-            {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
-            <a class="status-wf-agent-tl" href={href}>
-              TL
-            </a>
-          </summary>
-          {agent.error ? <p class="status-wf-agent-error">{agent.error}</p> : null}
-          {agent.lastTool ? <p class="status-wf-agent-tool">{agent.lastTool}</p> : null}
-          {agent.resultPreview ? (
-            <p class="status-wf-agent-preview">{agent.resultPreview}</p>
-          ) : null}
-        </details>
-      ) : (
-        <div class="status-wf-agent-summary">
-          <span class={iconClass}>{ICON_GLYPH[agent.icon]}</span>
-          <span class="status-wf-agent-label">{agent.label}</span>
-          {agent.model ? (
-            <span class="status-wf-agent-model">{canonicalModelId(agent.model)}</span>
-          ) : null}
-          {tokensLabel ? <span class="status-wf-agent-tokens">{tokensLabel}</span> : null}
-          <a class="status-wf-agent-tl" href={href}>
-            TL
-          </a>
-        </div>
-      )}
-    </li>
-  );
-}
-
 function BackgroundRow({
   bg,
   running,
@@ -261,8 +92,8 @@ function BackgroundRow({
   sid: string;
 }) {
   // r44 m6: kind=="agent" は subagent の TL を持つので TL リンク + agent_type
-  // バッジを添える。live dot は teammate と同じ流儀 (running=active、
-  // 終端=stopped) で色味を寄せ、Status タブ内の視覚言語を一貫させる。
+  // バッジを添える。live dot はエージェントツリーと同じ流儀 (running=active、
+  // 終端=stopped) で色味を寄せ、webui 全体の視覚言語を一貫させる。
   // 判定は `running` prop (buildStatusSections が status 値から算出) を利用
   // するため、"completed"/"failed"/"killed" 等の open-set terminal 値を
   // ここで列挙する必要はない。
@@ -277,7 +108,7 @@ function BackgroundRow({
             ●
           </span>
           {agentHref ? (
-            <a class="status-wf-agent-tl status-teammate-tl" href={agentHref}>
+            <a class="status-row-tl" href={agentHref}>
               TL
             </a>
           ) : null}
@@ -290,67 +121,6 @@ function BackgroundRow({
       <span class="status-row-time">
         {formatClockTime(bg.started_at)}
         {bg.ended_at ? ` – ${formatClockTime(bg.ended_at)}` : ""}
-      </span>
-    </li>
-  );
-}
-
-/** r38 mid=5: teammate state を日本語ラベル + カラードットで視覚化する。
- *
- * daemon 側 (`session-status.ts`) が state を transcript 観測から推定済み:
- *
- * - `active`: teammate からの relay body が `idle_notification` 以外の
- *   通常メッセージだった時、または (spawn 直後で) 自分が SendMessage で
- *   先に話しかけた時。「今しゃべっている / 応答待ち中」
- * - `idle`: relay body が `{"type":"idle_notification"...}` (subagent が idle
- *   に落ちた自己申告) だった時。「一区切りついて next input 待ち」
- * - `spawned`: Agent tool の `teammate_spawned` result が観測されたが、以降
- *   send/receive が無い状態。「起動直後、まだ何もやり取りしていない」
- * - `stopped`: TaskStop で明示的に殺した teammate。「終了済み、以後の観測なし」
- *
- * 判定根拠を daemon 側の transcript 実観測に置いているため、ここでは UI の
- * 語彙揃えだけを担う (mtime ベースの staleness 判定を UI で足すと『新規
- * setInterval 追加禁止』要件と衝突する。時系列的な rawer 情報が要る場面は
- * 既存の send/受信 timestamp が担っている)。 */
-const TEAMMATE_STATE_LABEL: Record<string, string> = {
-  active: "活動中",
-  idle: "idle 中",
-  spawned: "起動済み",
-  stopped: "停止",
-};
-
-function TeammateRow({
-  teammate,
-  sid,
-  now,
-}: {
-  teammate: SessionTeammate;
-  sid: string;
-  now: number;
-}) {
-  const href = agentTimelineHref(sid, { teammate: teammate.name });
-  const label = TEAMMATE_STATE_LABEL[teammate.state] ?? teammate.state;
-  const dotClass = "status-teammate-dot status-teammate-dot-" + teammate.state;
-  const sentAge = formatRelativeAge(teammate.last_sent_at ?? null, now);
-  const receivedAge = formatRelativeAge(teammate.last_received_at ?? null, now);
-  return (
-    <li class={"status-row status-teammate status-teammate-" + teammate.state}>
-      <span class={dotClass} aria-hidden="true">
-        ●
-      </span>
-      <a class="status-wf-agent-tl status-teammate-tl" href={href}>
-        TL
-      </a>
-      <span class="status-row-name">{teammate.name}</span>
-      {teammate.agent_type ? <span class="status-row-kind">{teammate.agent_type}</span> : null}
-      {teammate.model ? <span class="status-row-kind">{shortModel(teammate.model)}</span> : null}
-      <span class="status-row-summary status-teammate-state-label">{label}</span>
-      <span class="status-row-time status-teammate-time">
-        <span title={teammate.last_sent_at ?? undefined}>{sentAge ? `送 ${sentAge}` : ""}</span>
-        <span aria-hidden="true">{sentAge && receivedAge ? "·" : ""}</span>
-        <span title={teammate.last_received_at ?? undefined}>
-          {receivedAge ? `受 ${receivedAge}` : ""}
-        </span>
       </span>
     </li>
   );
@@ -389,22 +159,6 @@ function Section<T>({
           <ul class="status-list">{done.map((item) => renderRow(item, false))}</ul>
         </details>
       ) : null}
-    </section>
-  );
-}
-
-function TeamsSection({ teammates, sid }: { teammates: SessionTeammate[]; sid: string }) {
-  const now = useNow();
-  if (teammates.length === 0) return null;
-  return (
-    <section class="status-section">
-      <h3 class="status-section-title">Teams</h3>
-      <p class="status-estimate-note">transcript 観測ベースの推定 (TUI 内部状態は非観測)</p>
-      <ul class="status-list">
-        {splitTeammates(teammates).map((teammate) => (
-          <TeammateRow key={teammate.name} teammate={teammate} sid={sid} now={now} />
-        ))}
-      </ul>
     </section>
   );
 }
@@ -503,14 +257,128 @@ function KillZone({
   );
 }
 
+/** ENV panel (kawaz r55m132): the session process's environment, folded away
+ * by default and fetched lazily on first open — the daemon has to resolve
+ * sid→pid and shell out to `ps`, so paying that on every Status render would
+ * be waste for a panel most visits never open. Re-opening refetches, since a
+ * long-lived session can gain variables (and a stale list is worse than a
+ * brief spinner for a debugging view).
+ *
+ * Values are shown in full, unredacted, deliberately: kawaz asked to
+ * "確認する" the environment, and the webui is reachable only over the
+ * tailnet with Origin verification, so the viewer is already the owner of
+ * these secrets. Masking would defeat the panel's only purpose while
+ * protecting against nothing this transport doesn't already cover — the
+ * residual risk (a screen share) is handled by the panel being collapsed by
+ * default rather than by making the values unreadable. */
+function EnvPanel({
+  sid,
+  onLoadEnv,
+}: {
+  sid: string;
+  onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
+}) {
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "loaded"; pid: number; rows: EnvRow[] }
+    | {
+        kind: "error";
+        msg: string;
+      }
+  >({ kind: "idle" });
+  const [query, setQuery] = useState("");
+  const [splitColons, setSplitColons] = useState(false);
+
+  function handleToggle(e: Event): void {
+    if (!(e.currentTarget as HTMLDetailsElement).open) return;
+    setState({ kind: "loading" });
+    void onLoadEnv()
+      .then((res) => {
+        if (res.ok) setState({ kind: "loaded", pid: res.pid, rows: toEnvRows(res.env) });
+        else setState({ kind: "error", msg: res.error.msg });
+      })
+      .catch((e: unknown) => setState({ kind: "error", msg: String(e) }));
+  }
+
+  const rows = state.kind === "loaded" ? filterEnvRows(state.rows, query) : [];
+  return (
+    <section class="status-section">
+      <details class="status-env" key={sid} onToggle={handleToggle}>
+        <summary class="status-env-summary">ENV</summary>
+        {state.kind === "loading" ? <p class="status-empty">読み込み中…</p> : null}
+        {state.kind === "error" ? <p class="status-env-error">{state.msg}</p> : null}
+        {state.kind === "loaded" ? (
+          <>
+            <div class="status-env-controls">
+              <input
+                type="search"
+                class="status-env-search"
+                placeholder="空白区切りで AND 検索 (名前・値の両方)"
+                aria-label="環境変数を検索"
+                value={query}
+                onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)}
+              />
+              <label class="status-env-split">
+                <input
+                  type="checkbox"
+                  checked={splitColons}
+                  onChange={(e) => setSplitColons((e.currentTarget as HTMLInputElement).checked)}
+                />
+                コロンを改行で表示
+              </label>
+            </div>
+            <p class="status-env-count">
+              {rows.length}/{state.rows.length} 件 · pid {state.pid}
+            </p>
+            {rows.length > 0 ? (
+              <table class="status-env-table">
+                <thead>
+                  <tr>
+                    <th scope="col">名前</th>
+                    <th scope="col">値</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.name}>
+                      <td class="status-env-name">{row.name}</td>
+                      <td class="status-env-value">
+                        {splitColons
+                          ? splitColonValue(row.value).map((part, i) => (
+                              // Index keys are correct here: the parts are a
+                              // positional split of one string, with no
+                              // identity of their own to preserve.
+                              <div key={i} class="status-env-value-part">
+                                {part}
+                              </div>
+                            ))
+                          : row.value}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p class="status-empty">一致する環境変数なし</p>
+            )}
+          </>
+        ) : null}
+      </details>
+    </section>
+  );
+}
+
 export function StatusPanel({
   snapshot,
   sid,
   onKill,
+  onLoadEnv,
 }: {
   snapshot: SessionStatusSnapshot | undefined;
   sid: string;
   onKill: (opts?: { force?: boolean }) => Promise<SessionKillResponse | ErrorResponse>;
+  onLoadEnv: () => Promise<SessionEnvResponse | ErrorResponse>;
 }) {
   const { store } = useApp();
   const state = useStoreState(store);
@@ -526,14 +394,12 @@ export function StatusPanel({
   }
   const sections = buildStatusSections(snapshot);
   const context = snapshot.context ? formatContextUsage(snapshot.context) : null;
-  // Context is nearly always present and Teams is an independent observation.
-  // Keep the empty-state predicate scoped to DR-0020's three operational axes.
+  // Context is nearly always present, so the empty-state predicate stays
+  // scoped to the operational axes this tab renders.
   const nothingAtAll =
     sections.todos.pending.length === 0 &&
     sections.todos.inProgress.length === 0 &&
     sections.todos.completed.length === 0 &&
-    sections.workflows.running.length === 0 &&
-    sections.workflows.done.length === 0 &&
     sections.background.running.length === 0 &&
     sections.background.done.length === 0;
   return (
@@ -591,18 +457,9 @@ export function StatusPanel({
         </dd>
       </dl>
       {nothingAtAll ? (
-        <p class="status-empty">このセッションの workflow / background / TODO はまだありません</p>
+        <p class="status-empty">このセッションの background / TODO はまだありません</p>
       ) : (
         <>
-          <Section
-            title="Workflows"
-            running={sections.workflows.running}
-            done={sections.workflows.done}
-            renderRow={(wf, running) => (
-              <WorkflowRow key={wf.task_id} wf={wf} running={running} sid={sid} />
-            )}
-            emptyRunningText="走行中の workflow なし"
-          />
           <Section
             title="Background"
             running={sections.background.running}
@@ -646,7 +503,7 @@ export function StatusPanel({
           </section>
         </>
       )}
-      <TeamsSection teammates={snapshot.teammates ?? []} sid={sid} />
+      <EnvPanel sid={sid} onLoadEnv={onLoadEnv} />
       <KillZone key={sid} sid={sid} onKill={onKill} />
     </div>
   );
