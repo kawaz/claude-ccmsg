@@ -3,7 +3,7 @@
 // ws.ts send() (e.g. Error("ws not open"), see ws.test.ts) into the same
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
-import type { AgentInfo, FsEntry, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import type { RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
@@ -30,12 +30,10 @@ import {
   memberLabel,
   nextPeerSortKey,
   offlineAgentRows,
-  ownWorkspaceSegment,
   paneRatioFromPointer,
   parseFavorites,
   parsePinnedSessions,
   peerSortButtonLabel,
-  repoRootLabel,
   resolveInboxFilename,
   resolveSessionTopbar,
   sessionBadges,
@@ -50,12 +48,12 @@ import {
   sortExternalFiles,
   sortFavorites,
   sortPeers,
+  treeRootPath,
   sortPinnedSessions,
   splitRoomsByArchived,
   splitRoomsByKind,
   toggleFavorite,
   toSessionRow,
-  workspaceRootEntries,
   type PeerSortKey,
   type SessionRow,
   type SessionSearchForm,
@@ -302,51 +300,41 @@ describe("isMemberConnected", () => {
   });
 });
 
-describe("ownWorkspaceSegment", () => {
-  test("returns the first cwd segment past repo_root", () => {
+describe("treeRootPath", () => {
+  // kawaz r55 m97: the tree browses from the session's own cwd, expressed in
+  // the containment-root-relative space fs_list/fs_read/fs_find path keys use.
+  // Under a jj worktree layout that is the workspace directory name, so the
+  // tree opens on the session's own files instead of a `main/` node wrapping
+  // them. The daemon's containment root stays the wider repo container.
+  test("returns cwd relative to repo_root", () => {
     expect(
-      ownWorkspaceSegment(
-        peer({ repo_root: "/repos/claude-ccmsg", cwd: "/repos/claude-ccmsg/main" }),
-      ),
+      treeRootPath({ repo_root: "/repos/claude-ccmsg", cwd: "/repos/claude-ccmsg/main" }),
     ).toBe("main");
   });
 
-  test("returns the first segment even when cwd is deeper inside the workspace", () => {
+  test("keeps every segment when cwd sits deeper than one level below repo_root", () => {
     expect(
-      ownWorkspaceSegment(
-        peer({ repo_root: "/repos/claude-ccmsg", cwd: "/repos/claude-ccmsg/main/packages/webui" }),
-      ),
+      treeRootPath({
+        repo_root: "/repos/claude-ccmsg",
+        cwd: "/repos/claude-ccmsg/main/packages/webui",
+      }),
+    ).toBe("main/packages/webui");
+  });
+
+  // No accepted repo_root means the daemon's containment root already *is*
+  // cwd, so the relative root is the empty string (fs_list's own default).
+  test("returns '' when the peer has no repo_root", () => {
+    expect(treeRootPath({ repo_root: undefined, cwd: "/repos/claude-ccmsg/main" })).toBe("");
+  });
+
+  test("returns '' when cwd is unexpectedly outside repo_root (defensive)", () => {
+    expect(treeRootPath({ repo_root: "/other/root", cwd: "/repos/claude-ccmsg/main" })).toBe("");
+  });
+
+  test("tolerates a trailing slash on either end", () => {
+    expect(
+      treeRootPath({ repo_root: "/repos/claude-ccmsg/", cwd: "/repos/claude-ccmsg/main/" }),
     ).toBe("main");
-  });
-
-  test("returns null when the peer has no repo_root (fs root is still cwd)", () => {
-    expect(
-      ownWorkspaceSegment(peer({ repo_root: undefined, cwd: "/repos/claude-ccmsg/main" })),
-    ).toBeNull();
-  });
-
-  test("returns null when cwd is unexpectedly outside repo_root (defensive)", () => {
-    expect(
-      ownWorkspaceSegment(peer({ repo_root: "/other/root", cwd: "/repos/claude-ccmsg/main" })),
-    ).toBeNull();
-  });
-
-  test("tolerates a trailing slash on repo_root", () => {
-    expect(
-      ownWorkspaceSegment(
-        peer({ repo_root: "/repos/claude-ccmsg/", cwd: "/repos/claude-ccmsg/main" }),
-      ),
-    ).toBe("main");
-  });
-});
-
-describe("repoRootLabel", () => {
-  test("returns the last path segment of repo_root", () => {
-    expect(repoRootLabel(peer({ repo_root: "/repos/claude-ccmsg" }))).toBe("claude-ccmsg");
-  });
-
-  test("returns null when the peer has no repo_root", () => {
-    expect(repoRootLabel(peer({ repo_root: undefined }))).toBeNull();
   });
 });
 
@@ -840,80 +828,6 @@ describe("sessionRowRepoWs", () => {
   test("falls back to cwd's last segment when repo/ws/agent.name are all absent", () => {
     const row = sessionRow({ repo: "", ws: "", cwd: "/repos/x/y", connected: false });
     expect(sessionRowRepoWs(row)).toEqual({ repo: "", ws: "y" });
-  });
-});
-
-function fsEntry(overrides: Partial<FsEntry>): FsEntry {
-  return { name: "x", type: "dir", ...overrides };
-}
-
-describe("workspaceRootEntries", () => {
-  // FileTree's repo-container-root ws list (kawaz 2026-07-12): only
-  // non-dotfile directories qualify as a workspace — files (README.md) and
-  // dot-entries (.git, .envrc) never show at this level, even though a plain
-  // fs_list("") against the container root would report them all.
-  test("keeps only non-dotfile directories, dropping files and dot-entries", () => {
-    const entries = [
-      fsEntry({ name: "main", type: "dir" }),
-      fsEntry({ name: "README.md", type: "file" }),
-      fsEntry({ name: ".git", type: "dir" }),
-      fsEntry({ name: ".envrc", type: "file" }),
-    ];
-    expect(workspaceRootEntries(entries, null).map((e) => e.name)).toEqual(["main"]);
-  });
-
-  // "そのセッションの wt/ws は常に一番上の位置": own workspace sorts first
-  // regardless of its name, ahead of every alphabetically-earlier sibling —
-  // FileTree relies on this ordering (plus its own auto-expand effect) to
-  // default-open the row a session actually cares about.
-  test("pins the own workspace first even when it doesn't sort first alphabetically", () => {
-    const entries = [
-      fsEntry({ name: "aaa-review", type: "dir" }),
-      fsEntry({ name: "main", type: "dir" }),
-      fsEntry({ name: "zzz-wip", type: "dir" }),
-    ];
-    expect(workspaceRootEntries(entries, "main").map((e) => e.name)).toEqual([
-      "main",
-      "aaa-review",
-      "zzz-wip",
-    ]);
-  });
-
-  // No workspace to pin (ownWsPath null, or not among the entries — e.g. a
-  // stale/mismatched cwd segment) falls back to plain alphabetical, same as
-  // any other directory listing.
-  test("sorts the rest alphabetically when there's no own workspace to pin", () => {
-    const entries = [
-      fsEntry({ name: "zzz-wip", type: "dir" }),
-      fsEntry({ name: "aaa-review", type: "dir" }),
-    ];
-    expect(workspaceRootEntries(entries, null).map((e) => e.name)).toEqual([
-      "aaa-review",
-      "zzz-wip",
-    ]);
-    expect(workspaceRootEntries(entries, "not-present").map((e) => e.name)).toEqual([
-      "aaa-review",
-      "zzz-wip",
-    ]);
-  });
-
-  // adversarial review nit: a dot-prefixed own workspace (e.g. a jj/git
-  // workspace literally named with a leading dot) must still be pinned —
-  // the dotfile filter is meant to hide *other* dotfiles (.git, .jj) from
-  // this level, not the session's own workspace regardless of its name.
-  // Checking `ownWsPath` before the dotfile filter (rather than filtering
-  // dotfiles first, which would drop a dot-named own ws before the pin
-  // check ever sees it) is what makes this hold.
-  test("pins a dot-prefixed own workspace instead of dropping it as a dotfile", () => {
-    const entries = [
-      fsEntry({ name: ".hidden-ws", type: "dir" }),
-      fsEntry({ name: "main", type: "dir" }),
-      fsEntry({ name: ".git", type: "dir" }),
-    ];
-    expect(workspaceRootEntries(entries, ".hidden-ws").map((e) => e.name)).toEqual([
-      ".hidden-ws",
-      "main",
-    ]);
   });
 });
 

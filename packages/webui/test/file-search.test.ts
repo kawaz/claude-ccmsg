@@ -16,20 +16,33 @@ function group(over: Partial<FileSearchGroup> = {}): FileSearchGroup {
 }
 
 describe("fileSearchTargets", () => {
-  test("always searches the containment root, as the unlabeled group", () => {
-    expect(fileSearchTargets([])).toEqual([{ kind: "contained", root: undefined, label: null }]);
+  test("searches the tree's own root as the unlabeled group", () => {
+    expect(fileSearchTargets([], "")).toEqual([{ kind: "contained", root: "", label: null }]);
+  });
+
+  // kawaz r55 m97: the tree browses from cwd, which under a worktree layout
+  // sits below the daemon's containment root. The search must walk that same
+  // subtree — a containment-rooted walk would return hits from sibling
+  // worktrees that the tree itself never shows.
+  test("scopes the contained walk to the tree root rather than the containment root", () => {
+    expect(fileSearchTargets([], "main")).toEqual([
+      { kind: "contained", root: "main", label: null },
+    ]);
   });
 
   test("adds one workspace target per folder, labeled by folder name", () => {
     // The tree renders a ワークスペース section for these, so a search that
     // skipped them would cover less than the tree the user is looking at.
     expect(
-      fileSearchTargets([
-        { name: "sibling", path: "/repo/sibling" },
-        { name: "other", path: "/repo/other" },
-      ]),
+      fileSearchTargets(
+        [
+          { name: "sibling", path: "/repo/sibling" },
+          { name: "other", path: "/repo/other" },
+        ],
+        "main",
+      ),
     ).toEqual([
-      { kind: "contained", root: undefined, label: null },
+      { kind: "contained", root: "main", label: null },
       { kind: "workspace", root: "/repo/sibling", label: "sibling" },
       { kind: "workspace", root: "/repo/other", label: "other" },
     ]);

@@ -20,13 +20,11 @@ import {
   errorMessage,
   favoritesStorageKey,
   isWorkspaceFilePath,
-  ownWorkspaceSegment,
   parseFavorites,
-  repoRootLabel,
   sortExternalFiles,
   sortFavorites,
   toggleFavorite,
-  workspaceRootEntries,
+  treeRootPath,
 } from "../utils.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 
@@ -182,7 +180,6 @@ function DirNode({
   depth,
   tree,
   selectedPath,
-  ownWsPath,
   workspaceFolders,
   fav,
   create,
@@ -194,7 +191,6 @@ function DirNode({
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;
-  ownWsPath: string | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   create: CreateContext | null;
@@ -204,7 +200,6 @@ function DirNode({
   const expanded = tree.expanded.has(path);
   const entries = tree.dirs.get(path);
   const error = tree.dirErrors.get(path);
-  const isOwnWs = ownWsPath !== null && path === ownWsPath;
   const creatingHere = create !== null && create.activePath === path;
 
   function toggle() {
@@ -227,13 +222,9 @@ function DirNode({
       <div class="tree-row-line">
         <button
           type="button"
-          class={"tree-row tree-dir" + (isOwnWs ? " tree-own-ws" : "")}
+          class="tree-row tree-dir"
           style={{ paddingLeft: `${depth}rem` }}
           onClick={toggle}
-          // DR-0008 addendum: marks the session's own workspace/worktree dir
-          // when the tree root has been widened to the repo container — a
-          // hint distinct from tree-selected (which tracks the open file).
-          title={isOwnWs ? "このセッションのワークスペース" : undefined}
         >
           <span class="tree-caret">{expanded ? "▾" : "▸"}</span>
           <FileTypeIcon kind={fileIconKind(name, "dir", expanded)} />
@@ -281,7 +272,6 @@ function DirNode({
               depth={depth + 1}
               tree={tree}
               selectedPath={selectedPath}
-              ownWsPath={ownWsPath}
               workspaceFolders={workspaceFolders}
               fav={fav}
               create={create}
@@ -423,12 +413,10 @@ function Nodes({
   depth,
   tree,
   selectedPath,
-  ownWsPath,
   workspaceFolders,
   fav,
   create,
   del,
-  sorted = false,
 }: {
   sid: string;
   parentPath: string;
@@ -436,21 +424,12 @@ function Nodes({
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;
-  ownWsPath: string | null;
   workspaceFolders: readonly WorkspaceFolder[];
   fav: FavContext | null;
   create: CreateContext | null;
   del: DeleteContext | null;
-  /** Skips the directories-first/alphabetical sortEntries pass — set by
-   * FileTree's repo-container-root ws list, which has already ordered
-   * `entries` itself (own workspace pinned first, see workspaceRootEntries)
-   * and would otherwise have that ordering undone by sortEntries' plain
-   * alphabetical pass. Every recursive Nodes call from inside DirNode omits
-   * this (defaults false), so every level below the root still sorts the
-   * conventional way. */
-  sorted?: boolean;
 }) {
-  const ordered = sorted ? entries : sortEntries(entries);
+  const ordered = sortEntries(entries);
   return (
     <>
       {ordered.map((entry) => {
@@ -465,7 +444,6 @@ function Nodes({
               depth={depth}
               tree={tree}
               selectedPath={selectedPath}
-              ownWsPath={ownWsPath}
               workspaceFolders={workspaceFolders}
               fav={fav}
               create={create}
@@ -550,8 +528,8 @@ export function FileTree({
    * session's cwd carries no `.code-workspace` file, and the section is
    * suppressed. */
   workspaceFolders: readonly WorkspaceFolder[];
-  /** Peer record for `sid`, as seen in state.peers — carries repo_root/cwd
-   * for the DR-0008-addendum root label + own-workspace auto-expand below.
+  /** Peer record for `sid`, as seen in state.peers — carries the repo_root/cwd
+   * pair the tree's browsing origin is derived from (see rootPath below).
    * Undefined for a sid that hasn't shown up in a peers/loaded response yet
    * (same fallback posture as SessionView's hasTranscript lookup). */
   peer: PeerInfo | undefined;
@@ -561,10 +539,14 @@ export function FileTree({
 }) {
   const { store, ws } = useApp();
   const connStatus = useStoreState(store).connStatus;
-  const rootEntries = tree.dirs.get("");
-  const rootError = tree.dirErrors.get("");
-  const rootLabel = peer ? repoRootLabel(peer) : null;
-  const ownWsPath = peer ? ownWorkspaceSegment(peer) : null;
+  // Browsing origin is the session's own cwd (kawaz r55 m97), expressed in the
+  // containment-root-relative space every fs path key uses — see treeRootPath.
+  // `null` peer means the daemon hasn't told us this sid's cwd yet, in which
+  // case "" (the containment root) is the only root we can name; it self-
+  // corrects to the cwd root once `peer` arrives.
+  const rootPath = peer ? treeRootPath(peer) : "";
+  const rootEntries = tree.dirs.get(rootPath);
+  const rootError = tree.dirErrors.get(rootPath);
 
   // Favorites (U-fav): keyed on peer.repo_root ?? peer.cwd (kawaz), so every
   // session/tab open on the same project shares one favorites list. `peer`
@@ -724,34 +706,11 @@ export function FileTree({
   useEffect(() => {
     if (rootEntries !== undefined || rootError !== undefined) return;
     if (connStatus !== "connected") return;
-    // Root of the containment tree is always fs_list (relative "" root), so no
-    // workspaceFolders arg is needed here — the DR-0026 branch only fires for
-    // absolute workspace-folder paths, not for the session's own root.
-    void loadDir(store, ws, sid, "");
-  }, [sid, rootEntries, rootError, connStatus]);
-
-  // DR-0008 addendum: once the (now possibly repo-container-wide) root is
-  // loaded, auto-expand the session's own workspace/worktree dir so the
-  // tree doesn't open on an undifferentiated list of sibling workspaces.
-  //
-  // Idempotency can't be keyed off `tree.expanded.has(ownWsPath)`: toggling a
-  // dir *removes* it from `expanded` (see the `fs/dir-toggled` reducer), so a
-  // user collapsing their own workspace made this effect's dep (`tree.expanded`)
-  // change and re-fire, reading `has(ownWsPath)` as false again and forcing it
-  // back open — the user's collapse could never stick. Instead, remember (per
-  // sid) that auto-expand has already run at all — attempted once, never again,
-  // regardless of what the user does to `expanded` afterward.
-  const autoExpandedForSid = useRef<string | null>(null);
-  useEffect(() => {
-    if (!ownWsPath || rootEntries === undefined) return;
-    if (autoExpandedForSid.current === sid) return;
-    const isDir = rootEntries.some((e) => e.name === ownWsPath && e.type === "dir");
-    if (!isDir) return;
-    autoExpandedForSid.current = sid;
-    if (!tree.expanded.has(ownWsPath))
-      store.dispatch({ type: "fs/dir-toggled", sid, path: ownWsPath });
-    if (tree.dirs.get(ownWsPath) === undefined) void loadDir(store, ws, sid, ownWsPath);
-  }, [sid, ownWsPath, rootEntries]);
+    // The root is a plain containment-relative path (cwd's, see rootPath), so
+    // no workspaceFolders arg is needed here — the DR-0026 branch only fires
+    // for absolute workspace-folder paths, not for the session's own root.
+    void loadDir(store, ws, sid, rootPath);
+  }, [sid, rootPath, rootEntries, rootError, connStatus]);
 
   return (
     <div class="file-tree">
@@ -760,13 +719,7 @@ export function FileTree({
        * FilesPanes, so creating a memo has the same full-size surface as
        * reading a file instead of inserting a form into the navigation tree. */}
       <div class="tree-header">
-        {rootLabel ? (
-          <p class="tree-root-label" title={peer?.repo_root}>
-            {rootLabel}
-          </p>
-        ) : (
-          <span class="tree-header-spacer" />
-        )}
+        <span class="tree-header-spacer" />
         <button type="button" class="tree-inbox-new-btn" onClick={onNewMemo}>
           + メモ
         </button>
@@ -805,6 +758,7 @@ export function FileTree({
         <FileSearchPanel
           sid={sid}
           query={searchQuery}
+          treeRoot={rootPath}
           workspaceFolders={workspaceFolders}
           externalFiles={externalFiles}
           fav={fav}
@@ -847,7 +801,6 @@ export function FileTree({
                       depth={0}
                       tree={tree}
                       selectedPath={tree.selectedPath}
-                      ownWsPath={ownWsPath}
                       workspaceFolders={workspaceFolders}
                       fav={fav}
                       create={createCtx}
@@ -891,7 +844,6 @@ export function FileTree({
                     depth={0}
                     tree={tree}
                     selectedPath={tree.selectedPath}
-                    ownWsPath={ownWsPath}
                     workspaceFolders={workspaceFolders}
                     fav={fav}
                     create={createCtx}
@@ -912,38 +864,20 @@ export function FileTree({
             <p class="tree-loading">loading…</p>
           ) : (
             <ul class="tree-root">
-              {/* DR-0008 addendum session (rootLabel !== null, tree root widened
-               * to the repo container): show only the ws/wt directories at this
-               * level (kawaz 2026-07-12), own workspace pinned first — the raw
-               * container listing (.git/.jj/dotfiles/other ws) doesn't appear
-               * here once `peer` (state.peers) has arrived, only inside an
-               * opened ws's own subtree. Filtering keys off `peer`, not the
-               * fs_list result itself: a direct `#s<sid>` link can have the
-               * fs_list("") response land before the (separately-driven, see
-               * ws.ts's peers request in onOpen) peers/loaded dispatch, in which
-               * case `rootLabel` is still null here and this one paint shows the
-               * unfiltered listing — self-corrects on the next render once
-               * `peer` arrives (adversarial review minor: known, accepted as
-               * cosmetic — fixing the race would mean gating the root fs_list
-               * effect on peers too, which delays every session's tree for a
-               * property only repo_root sessions use). A session with no
-               * repo_root (rootLabel === null) keeps the unfiltered cwd listing
-               * permanently, unchanged from before this task. */}
+              {/* Top level is the session's cwd listing, whatever the daemon's
+               * containment root happens to be (kawaz r55 m97) — no filtering
+               * or pinning pass, just the directory as it is on disk. */}
               <Nodes
                 sid={sid}
-                parentPath=""
-                entries={
-                  rootLabel !== null ? workspaceRootEntries(rootEntries, ownWsPath) : rootEntries
-                }
+                parentPath={rootPath}
+                entries={rootEntries}
                 depth={0}
                 tree={tree}
                 selectedPath={tree.selectedPath}
-                ownWsPath={ownWsPath}
                 workspaceFolders={workspaceFolders}
                 fav={fav}
                 create={createCtx}
                 del={deleteCtx}
-                sorted={rootLabel !== null}
               />
             </ul>
           )}

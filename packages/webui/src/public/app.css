@@ -2316,19 +2316,6 @@ button.session-tab {
   font-size: 0.85rem;
 }
 
-/* DR-0008 addendum: labels the tree root once it's been widened from cwd to
- * the session's repo container, so sibling-workspace entries below it don't
- * read as "cwd contains other repos". */
-.tree-root-label {
-  margin: 0 0 0.25rem;
-  padding: 0.1rem 0.75rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-}
-
 .tree-root,
 .tree-children {
   list-style: none;
@@ -2395,14 +2382,6 @@ button.session-tab {
 
 .tree-symlink {
   font-style: italic;
-}
-
-/* DR-0008 addendum: marks the session's own workspace/worktree dir within a
- * repo-container-rooted tree. Deliberately quieter than .tree-selected
- * (--user-bg, no border) — this is a passive orientation cue ("you are
- * here"), not the active-selection state FileViewer reflects. */
-.tree-own-ws {
-  background: var(--user-bg);
 }
 
 .tree-other {
@@ -2502,21 +2481,14 @@ button.session-tab {
   flex: 0 0 auto;
 }
 
-/* docs/inbox メモ作成 (DR-0019 Phase W2): tree-root-label 行と「+ メモ」
- * ボタンを同居させる flex 行。rootLabel が無いセッションでも spacer
- * (.tree-header-spacer) で右寄せ位置を揃える (FileTree.tsx の配置判断
- * コメント参照)。 */
+/* docs/inbox メモ作成 (DR-0019 Phase W2): 「+ メモ」ボタンを右寄せで置く
+ * flex 行。左側は spacer (.tree-header-spacer) が埋める。 */
 .tree-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0 0.5rem 0 0;
-}
-
-.tree-header .tree-root-label {
-  flex: 1 1 auto;
-  min-width: 0;
 }
 
 .tree-header-spacer {

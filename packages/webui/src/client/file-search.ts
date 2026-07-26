@@ -9,25 +9,32 @@ import type { FsFindHit, WorkspaceFolder } from "@ccmsg/protocol";
 /** One fs_find call the panel needs to make for a single submitted query. */
 export interface FileSearchTarget {
   kind: "contained" | "workspace";
-  /** undefined = the session's containment root (fs_find's own default). */
+  /** Walk root. For `contained`, a path relative to the session's containment
+   * root; `""` means the containment root itself (fs_find's own default). */
   root: string | undefined;
-  /** Section heading for this target's hits; null for the containment root,
+  /** Section heading for this target's hits; null for the project root,
    * whose hits are the unlabeled default group. */
   label: string | null;
 }
 
-/** Every browsable root a search should cover: the session's containment root
- * plus each DR-0026 workspace folder. Searching only the containment root
- * would silently miss the ワークスペース section the tree renders right above
- * it — the user has no reason to expect the search box to cover less than the
- * tree does. DR-0024 external files are deliberately absent: that allowlist is
- * per-file with no directory to walk, and the tree shows all of them at once
- * anyway (they are filtered client-side instead, see filterExternalFiles). */
+/** Every browsable root a search should cover: the tree's own project root
+ * plus each DR-0026 workspace folder. Searching only the project root would
+ * silently miss the ワークスペース section the tree renders right above it —
+ * the user has no reason to expect the search box to cover less than the tree
+ * does. The reverse matters just as much (kawaz r55 m97): `treeRoot` is the
+ * session's cwd, not the daemon's wider containment root, so the search covers
+ * exactly the subtree shown rather than every sibling worktree the daemon
+ * would still authorize. Hits stay containment-relative either way, which is
+ * the same space the tree's own path keys live in. DR-0024 external files are
+ * deliberately absent: that allowlist is per-file with no directory to walk,
+ * and the tree shows all of them at once anyway (they are filtered client-side
+ * instead, see filterExternalFiles). */
 export function fileSearchTargets(
   workspaceFolders: readonly WorkspaceFolder[],
+  treeRoot: string,
 ): FileSearchTarget[] {
   return [
-    { kind: "contained", root: undefined, label: null },
+    { kind: "contained", root: treeRoot, label: null },
     ...workspaceFolders.map((folder) => ({
       kind: "workspace" as const,
       root: folder.path,

@@ -3,7 +3,6 @@
 // (which must stay a pure function of state + action).
 import type {
   AgentInfo,
-  FsEntry,
   PeerInfo,
   SessionSearchHit,
   SessionSearchMatch,
@@ -249,59 +248,32 @@ export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
   return sorted;
 }
 
-/** First path segment of `peer.cwd` relative to `peer.repo_root` — the
- * session's own workspace/worktree directory as it appears under the tree's
- * (now repo-container-rooted, DR-0008 addendum) root. `null` when the
- * session didn't announce/get-accepted a repo_root (fs root is still cwd,
- * nothing to highlight relative to it), or when cwd unexpectedly isn't
- * inside repo_root (defensive — the daemon's hello-time validation already
- * guarantees ancestry, but this stays a pure function of the input alone and
- * shouldn't throw on a malformed peer). FileTree uses this both to pin/
- * auto-expand the tree's own-workspace entry (see workspaceRootEntries) and
- * to mark it `tree-own-ws` in the rendered tree. Parameter is the narrow
- * `{repo_root, cwd}` shape (not `PeerInfo` itself) so it stays reusable by
- * any caller that only carries those two fields. */
-export function ownWorkspaceSegment(peer: { repo_root?: string; cwd: string }): string | null {
-  if (!peer.repo_root) return null;
+/** Where the FileTree starts browsing: the session's own **cwd**, expressed
+ * as a path relative to the daemon's containment root (`repo_root ?? cwd`,
+ * DR-0008 §7) — the space every fs_list/fs_read/fs_find path key already
+ * lives in, so this doubles as the tree's root `tree.dirs` key.
+ *
+ * kawaz r55 m97: the tree shows the directory the session is actually working
+ * in, not the repo container above it. With a jj worktree layout (cwd
+ * `<repo>/main`, repo_root `<repo>`) a container-rooted tree made every path
+ * start at a `main/` node the user has to open first, which reads as "the tree
+ * is one level off" for the session's own files. Widening the *daemon's*
+ * containment to the container stays correct and unchanged (a sibling
+ * worktree's file stays readable when a message links to it); only the
+ * browsing origin comes back down to cwd.
+ *
+ * `""` (the containment root itself) when the session announced no accepted
+ * repo_root — the containment root *is* cwd then — and likewise when cwd
+ * unexpectedly isn't inside repo_root (defensive: the daemon's hello-time
+ * validation already guarantees strict ancestry, but this stays a pure
+ * function of its input and shouldn't invent a root for a malformed peer).
+ * Parameter is the narrow `{repo_root, cwd}` shape (not `PeerInfo` itself)
+ * so it stays reusable by any caller carrying only those two fields. */
+export function treeRootPath(peer: { repo_root?: string; cwd: string }): string {
+  if (!peer.repo_root) return "";
   const root = peer.repo_root.replace(/\/+$/, "");
-  if (!peer.cwd.startsWith(`${root}/`)) return null;
-  const rel = peer.cwd.slice(root.length + 1);
-  const seg = rel.split("/")[0];
-  return seg || null;
-}
-
-/** Last path segment of `peer.repo_root`, for the FileTree's root label
- * (DR-0008 addendum) — tells the viewer what the (now possibly
- * container-wide) tree root actually is, since it's no longer always "this
- * session's cwd". `null` when there's no repo_root to label (tree root is
- * still cwd, no label shown — same as today). */
-export function repoRootLabel(peer: PeerInfo): string | null {
-  if (!peer.repo_root) return null;
-  const parts = peer.repo_root.split("/").filter(Boolean);
-  return parts[parts.length - 1] ?? peer.repo_root;
-}
-
-/** FileTree's top-level listing when the tree root has been widened to the
- * repo container (kawaz 2026-07-12: "Files は ws を root にしてほしい" — the
- * container root's raw fs_list result mixes .git/.jj/dotfiles in with every
- * sibling ws/wt, which isn't what a "pick a workspace" top level should show).
- * Heuristic: a workspace is any directory directly under the container root;
- * non-dotfile ones sort in alphabetically, dot-prefixed ones are dropped
- * (they still show up normally once a ws is opened, this only narrows the
- * root itself) *unless* they're the session's own workspace. The own
- * workspace (`ownWsPath`, from `ownWorkspaceSegment`) is always pinned first
- * when present — checked before the dotfile filter (adversarial review nit)
- * so a dot-prefixed own ws (e.g. jj's default `.` workspace name, or any
- * dotfile-named workspace directory) still gets pinned+auto-expanded instead
- * of silently vanishing from this level — FileTree auto-expands it and
- * leaves every other entry closed. */
-export function workspaceRootEntries(entries: FsEntry[], ownWsPath: string | null): FsEntry[] {
-  const dirs = entries.filter((e) => e.type === "dir");
-  const own = dirs.filter((e) => e.name === ownWsPath);
-  const rest = dirs
-    .filter((e) => e.name !== ownWsPath && !e.name.startsWith("."))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  return [...own, ...rest];
+  if (!peer.cwd.startsWith(`${root}/`)) return "";
+  return peer.cwd.slice(root.length + 1).replace(/\/+$/, "");
 }
 
 /** Renders a caught value from a rejected ws.ts send() (e.g. `Error("ws not
@@ -702,7 +674,7 @@ export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
  * root does (kawaz: favorites should follow the project, not the individual
  * session). Kept as a plain string-formatting function (not reading `peer`
  * itself) so it stays testable without a PeerInfo fixture, mirroring
- * `favoritesStorageKey`'s sibling helpers above (`ownWorkspaceSegment` etc.)
+ * `favoritesStorageKey`'s sibling helpers above (`treeRootPath` etc.)
  * that narrow their input to just the fields they need. */
 export function favoritesStorageKey(root: string): string {
   return `ccmsg.favorites.${root}`;
