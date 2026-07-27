@@ -1663,9 +1663,9 @@ export function parseSystemMessageFields(
       return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
     case "spawn-prompt":
       // spawn prompt は「親から渡された指示書」= 実質 agent message なので、
-      // 専用表示ではなく agent message と同じ表示に載せる (kawaz r55m155:
-      // 「このカテゴリにしているものは実質は agent message の類だと思うので、
-      // その表示コンポーネントを当てるのが良さそう」)。
+      // agent message の見た目 (AgentCard) を当てる (kawaz r55m155/156:
+      // 「ただの json 展開しかできない item 扱いなのでエージェントメッセージの
+      // 見た目を当ててやりましょう」)。カテゴリ分け自体は維持する (同 m156)。
       //
       // team-lead 経由の spawn は本文が <teammate-message ...>...</...> で来る
       // ので parsePeerMessage が from/summary を拾えるが、通常の Agent tool
