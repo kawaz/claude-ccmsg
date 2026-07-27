@@ -30,10 +30,10 @@
 
 相対リンクはこのファイル自身の位置 (`docs/`) が基準です (markdown の慣習、GitHub / エディタと同じ読み)。リポルートからの記法にしたい時は b のように先頭 `/` を付けます。
 
-- [ ] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
+- [x] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
 - [ ] b: 先頭 `/` の絶対パスもリポルート相対として解決される → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
 - [ ] c: 行範囲付きも開ける → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
-- [ ] d: 存在しないパスも**押せて、404 が出る** (v0.74.0 で仕様変更。probe 待ちの灰色期間を廃止し、外した先で 404 を見せる方式へ) → [存在しないファイル](this-file-does-not-exist.md)
+- [x] d: 存在しないパスも**押せて、404 が出る** (v0.74.0 で仕様変更。probe 待ちの灰色期間を廃止し、外した先で 404 を見せる方式へ) → [存在しないファイル](this-file-does-not-exist.md)
 - [x] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
 - [x] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
 
@@ -44,7 +44,7 @@
 相対リンクの基準を書き間違えても 404 で行き止まりにならず、逆算した候補が出ます。
 
 - [ ] a: 基準を間違えたリンクで「もしかして」が出て、押すと開く → [リポルート基準で書いたリンク](packages/webui/src/client/markdown-link.ts)
-- [ ] b: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
+- [x] b: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
 - [ ] c: Files ツリーから存在しないパスを開いた時 (遷移元が無い) は候補が出ない
 
 ### 👺WEBUI-C12: Status タブの入れ替え (v0.74.0)
