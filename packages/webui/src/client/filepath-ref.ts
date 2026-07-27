@@ -147,6 +147,12 @@ export interface FilePathResolveCtx {
    * cwd; the daemon owns the containment semantics and returns the
    * FileViewer-shaped path itself, so nothing here rebases against it. */
   repoRoot?: string;
+  /** FileViewer path of the document whose links are being resolved, when
+   * there is one (the file preview). Carried into every link this ctx
+   * produces so a 404 can re-read the link against the other convention
+   * (`alternateReadings`). Absent for message bodies — nothing holds them, so
+   * there is no second reading to try. */
+  docPath?: string;
 }
 
 /** POSIX-style path normalization (collapse `.` / `..`, strip duplicate `/`).
@@ -318,7 +324,42 @@ export function previewFilePathCtx(
   // `docRoot` gives a leading `/` its documentation reading (repo-root
   // relative); it is only meaningful for a contained file, where the session
   // root is the tree the document belongs to.
-  return { sid, cwd: dir, ...(sessionRoot ? { docRoot: sessionRoot.replace(/\/+$/, "") } : {}) };
+  return {
+    sid,
+    cwd: dir,
+    docPath: viewerPath,
+    ...(sessionRoot ? { docRoot: sessionRoot.replace(/\/+$/, "") } : {}),
+  };
+}
+
+/** The repo-root reading of a link that landed on nothing (kawaz r55 m152/m153).
+ *
+ * A relative markdown link resolves against the document holding it, and that
+ * is the correct rule — but an author (routinely an AI) writing `docs/x.md`
+ * inside `docs/QUESTIONS.md` means the repo root and gets `docs/docs/x.md`.
+ *
+ * This runs **only after the link has already 404'd**, which is what makes it
+ * a derivation rather than a guess: a correctly-written link never gets here,
+ * and the failed path is by construction `sourceDir + "/" + <what was
+ * written>`. Stripping `sourceDir` therefore recovers the original text
+ * exactly — one candidate, not a search. Nothing else in the tree is
+ * consulted, so a same-named file living somewhere else can never be offered.
+ *
+ * `failed` and the result are FileViewer paths (root-relative for contained
+ * files); `sourceDir` is the directory of the document the link was written
+ * in, in that same shape (`""` for a document at the repo root, which has
+ * nothing to strip). Returns `null` when no reading can be recovered.
+ * Existence is *not* checked here — only the daemon can say what is readable. */
+export function rootRelativeReading(failed: string, sourceDir: string): string | null {
+  if (failed.startsWith("/")) return null; // absolute targets have one reading
+  const dir = sourceDir.replace(/^\/+|\/+$/g, "");
+  if (dir === "") return null;
+  const prefix = dir + "/";
+  if (!failed.startsWith(prefix)) return null;
+  const written = failed.slice(prefix.length);
+  if (written === "" || written === failed) return null;
+  if (written.startsWith("..") || written.startsWith("/")) return null;
+  return written;
 }
 
 /** Build a `fileHref` URL from a daemon-confirmed stat entry + the parsed
@@ -329,10 +370,13 @@ export function hrefFromStatEntry(
   sid: string,
   entry: { path: string },
   ref: ParsedFilePathRef,
+  /** Document the reference was written in — carried into the URL so a 404 can
+   * offer alternate readings (`alternateReadings`). */
+  from?: string,
 ): string {
   const lineRange =
     ref.line !== undefined ? { start: ref.line, end: ref.end ?? ref.line } : undefined;
-  return fileHref(sid, entry.path, lineRange);
+  return fileHref(sid, entry.path, lineRange, from);
 }
 
 /** Walk a raw markdown source and extract every inline-code token

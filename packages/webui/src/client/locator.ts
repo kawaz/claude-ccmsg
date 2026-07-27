@@ -44,6 +44,10 @@ export type Locator =
       sid: string;
       path: string | null;
       lineRange?: { start: number; end: number };
+      /** The document a markdown link was followed *from*, when this locator
+       * came from one — the "did you mean" resolution hint (kawaz r55 m152).
+       * Read only after the target 404s; see `alternateReadings`. */
+      from?: string;
     }
   | { view: "timeline"; sid: string; agent?: AgentRef };
 
@@ -85,7 +89,21 @@ export function parseHash(hash: string): Locator {
     if (colon === -1) return { view: "session", sid, path: null };
     // an undecodable path segment means "no file selected" rather than a
     // garbled/mojibake path — same session, empty FileViewer.
-    const pathAndRange = rest.slice(colon + 1);
+    let pathAndRange = rest.slice(colon + 1);
+    // The "followed from" hint (kawaz r55 m152) rides *inside* the fragment
+    // rather than in a real `?query`: routing here is entirely hash-based, and
+    // a query string cannot change without reloading the page — which would
+    // turn every in-app markdown link into a full app restart. `?` is safe as
+    // an inner separator because the path segment is encodeURIComponent'd
+    // (a literal `?` in a filename arrives as `%3F`).
+    let from: string | undefined;
+    const q = pathAndRange.indexOf("?from=");
+    if (q !== -1) {
+      const fromRaw = pathAndRange.slice(q + "?from=".length);
+      pathAndRange = pathAndRange.slice(0, q);
+      const decoded = tryDecode(fromRaw, "");
+      if (decoded !== "") from = decoded;
+    }
     const rangeMatch = pathAndRange.match(/:L(\d+)-(\d+)$/);
     const pathRaw = rangeMatch ? pathAndRange.slice(0, rangeMatch.index) : pathAndRange;
     let path: string | null;
@@ -97,7 +115,13 @@ export function parseHash(hash: string): Locator {
     const start = rangeMatch ? Number(rangeMatch[1]) : 0;
     const end = rangeMatch ? Number(rangeMatch[2]) : 0;
     const lineRange = start > 0 && end >= start ? { start, end } : undefined;
-    return { view: "session", sid, path, ...(lineRange ? { lineRange } : {}) };
+    return {
+      view: "session",
+      sid,
+      path,
+      ...(lineRange ? { lineRange } : {}),
+      ...(from !== undefined ? { from } : {}),
+    };
   }
   const m = raw.match(/^(.+)-m(\d+)$/);
   if (m) return { view: "room", room: m[1] ?? null, mid: Number(m[2]) };
@@ -124,9 +148,15 @@ export function fileHref(
   sid: string,
   path: string,
   lineRange?: { start: number; end: number },
+  /** The document this link was written in, for the 404's "did you mean"
+   * recovery (kawaz r55 m152). Only markdown link rendering passes it; every
+   * other caller (file tree, tool-result paths) links to a path it already
+   * knows exists, so there is nothing to recover from. */
+  from?: string,
 ): string {
   const range = lineRange ? `:L${lineRange.start}-${lineRange.end}` : "";
-  return `#s${encodeURIComponent(sid)}:${encodeURIComponent(path)}${range}`;
+  const hint = from ? `?from=${encodeURIComponent(from)}` : "";
+  return `#s${encodeURIComponent(sid)}:${encodeURIComponent(path)}${range}${hint}`;
 }
 
 export function timelineHref(sid: string): string {

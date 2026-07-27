@@ -32,6 +32,7 @@ const EMPTY_TREE: SessionTreeState = {
   expanded: new Set(),
   selectedPath: null,
   selectedLineRange: null,
+  selectedFrom: null,
   file: null,
   timeline: { status: "idle", lines: [], start: 0, end: 0, size: 0, atStart: false },
   timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },

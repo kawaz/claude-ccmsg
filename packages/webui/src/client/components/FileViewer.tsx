@@ -33,7 +33,8 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
-import { previewFilePathCtx } from "../filepath-ref.ts";
+import { previewFilePathCtx, rootRelativeReading } from "../filepath-ref.ts";
+import { fileHref } from "../locator.ts";
 import { makeMarkdownPathLinker } from "../filepath-linker.tsx";
 import {
   MarkdownView,
@@ -422,6 +423,77 @@ function useTaskListToggle({
   return { taskList };
 }
 
+/** "Did you mean…" recovery for a link that landed on nothing (kawaz r55 m152/m153).
+ *
+ * A relative markdown link resolves against the document holding it, which is
+ * correct but routinely not what the author (usually an AI) meant — writing
+ * `docs/x.md` inside `docs/QUESTIONS.md` yields `docs/docs/x.md`.
+ *
+ * This only runs once the target has already 404'd, and that ordering is what
+ * makes the candidate trustworthy rather than a guess: a correctly-written
+ * link never reaches here, and the failed path is by construction the
+ * document's directory plus what the author typed, so stripping that directory
+ * recovers the original text exactly (`rootRelativeReading`). There is one
+ * candidate, and nothing else in the tree is searched — a same-named file
+ * living elsewhere can never be suggested.
+ *
+ * It is still **offered, never taken**. Silently redirecting somewhere the
+ * user did not ask for is harder to understand than the 404 itself, so the
+ * derivation earns a link, not a navigation.
+ *
+ * Returns `null` unless every precondition holds (a `from` hint, a 404, a
+ * recoverable reading the daemon confirms), so nothing renders in the ordinary
+ * case of a genuinely missing file. */
+function useDidYouMean({
+  sid,
+  path,
+  from,
+  root,
+  active,
+}: {
+  sid: string;
+  path: string;
+  /** The document the link was written in, from the locator's `?from=`. */
+  from: string | null;
+  /** Session containment root — `fs_stat_batch` takes absolute paths only. */
+  root: string | undefined;
+  /** Only probe on an actual not-found; other errors are not a wrong-reading. */
+  active: boolean;
+}): string | null {
+  const { ws } = useApp();
+  const [found, setFound] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFound(null);
+    if (!active || from === null || path === "" || !root) return;
+    const lastSlash = from.lastIndexOf("/");
+    const candidate = rootRelativeReading(path, lastSlash === -1 ? "" : from.slice(0, lastSlash));
+    if (candidate === null) return;
+    // `fs_stat_batch` is an absolute-path op (it rebases onto the containment
+    // root itself), so the viewer-shaped candidate is expanded before the
+    // probe and read back from the response afterwards.
+    const base = root.replace(/\/+$/, "");
+    let cancelled = false;
+    void ws
+      .fsStatBatch(sid, [`${base}/${candidate}`])
+      .then((res) => {
+        if (cancelled || !res.ok) return;
+        // A non-null slot means the daemon will serve it, and carries the
+        // viewer-shaped path to link to.
+        setFound(res.results[0]?.path ?? null);
+      })
+      .catch(() => {
+        // A failed probe just means no suggestion — never surface it as a
+        // second error on top of the 404 the user is already looking at.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ws, sid, path, from, root, active]);
+
+  return found;
+}
+
 /** In-place text-file editor. Uses fs_edit's optimistic-lock contract:
  * `expectedMtime`/`expectedSize` come straight from the FsReadResponse that
  * populated `initialContent`, so if something else touched the file between
@@ -696,6 +768,16 @@ export function FileViewer({
     loadSeq,
   });
 
+  // Hooks run unconditionally (hook-order rule); the probe itself is gated on
+  // `active`, so this is inert for every load that isn't a 404 from a link.
+  const didYouMean = useDidYouMean({
+    sid,
+    path: path ?? "",
+    from: tree.selectedFrom,
+    root: peer?.repo_root ?? peer?.cwd,
+    active: file?.status === "error" && file.errorCode === "not_found",
+  });
+
   useEffect(() => {
     if (path === null) return;
     const saved = loadFilesView(sid);
@@ -912,6 +994,20 @@ export function FileViewer({
             <p class="viewer-notfound-code">404</p>
             <p class="viewer-notfound-msg">このファイルはありません</p>
             <p class="viewer-notfound-path">{path}</p>
+            {/* The link re-read as repo-root relative — derived from this very
+             * failure, not searched for, so it is stated plainly. Still a link
+             * rather than a redirect (kawaz r55 m152/m153). */}
+            {didYouMean !== null ? (
+              <div class="viewer-notfound-suggest">
+                <p class="viewer-notfound-suggest-label">もしかして:</p>
+                <p class="viewer-notfound-suggest-item">
+                  <a href={fileHref(sid, didYouMean)}>{didYouMean}</a>
+                </p>
+                <p class="viewer-notfound-suggest-note">
+                  リンクがリポジトリルート基準で書かれている場合、この位置になります。
+                </p>
+              </div>
+            ) : null}
             <p class="viewer-notfound-hint">
               左のファイル一覧から選び直してください。移動・削除された可能性があります。
             </p>

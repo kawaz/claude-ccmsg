@@ -3148,6 +3148,38 @@ button.session-tab {
   font-size: 0.85rem;
 }
 
+/* "Did you mean" (kawaz r55 m152/m153): the failed link re-read as repo-root
+ * relative. Derived from the 404 itself rather than searched for, so it is one
+ * candidate and a confident one — but presented as a link, never a redirect,
+ * since being moved somewhere unasked is harder to follow than the 404. */
+.viewer-notfound-suggest {
+  margin: 0.9rem 0 0;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--bg-alt);
+  text-align: left;
+  max-width: 100%;
+}
+
+.viewer-notfound-suggest-label {
+  margin: 0 0 0.3rem;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+
+.viewer-notfound-suggest-item {
+  margin: 0;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.viewer-notfound-suggest-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
 .viewer-binary {
   color: var(--fg-muted);
   padding: 1rem;

@@ -123,6 +123,10 @@ export interface SessionTreeState {
   selectedPath: string | null;
   /** Optional one-based line range selected by a Timeline Read link. */
   selectedLineRange: { start: number; end: number } | null;
+  /** Document a markdown link was followed from (`?from=` in the locator), if
+   * this selection came from one. Consulted only when the target 404s, to
+   * offer alternate readings of the link (kawaz r55 m152). */
+  selectedFrom: string | null;
   file: FileViewState | null;
   timeline: TimelineState;
   /** Timeline's in-view search controls, cached per sid so Session Search can
@@ -387,6 +391,7 @@ function newSessionTree(): SessionTreeState {
     expanded: new Set(),
     selectedPath: null,
     selectedLineRange: null,
+    selectedFrom: null,
     file: null,
     timeline: newTimelineState(),
     timelineSearch: { ...DEFAULT_TIMELINE_SEARCH },
@@ -552,12 +557,14 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   }
   let [tree, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
   const selectedLineRange = locator.lineRange ?? null;
+  const selectedFrom = locator.from ?? null;
   if (
     tree.selectedPath !== locator.path ||
     tree.selectedLineRange?.start !== selectedLineRange?.start ||
-    tree.selectedLineRange?.end !== selectedLineRange?.end
+    tree.selectedLineRange?.end !== selectedLineRange?.end ||
+    tree.selectedFrom !== selectedFrom
   ) {
-    tree = { ...tree, selectedPath: locator.path, selectedLineRange };
+    tree = { ...tree, selectedPath: locator.path, selectedLineRange, selectedFrom };
     sessionTrees = new Map(sessionTrees);
     sessionTrees.set(locator.sid, tree);
   }

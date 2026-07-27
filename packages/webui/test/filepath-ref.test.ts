@@ -13,6 +13,7 @@ import {
   hrefFromStatEntry,
   extractInlineCodeTokens,
   previewFilePathCtx,
+  rootRelativeReading,
   refLinkCandidates,
   refLinkTarget,
   viewerPathForAbsolute,
@@ -231,6 +232,7 @@ describe("previewFilePathCtx", () => {
     expect(previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)).toEqual({
       sid: "S1",
       cwd: "/repo/main/docs/design",
+      docPath: "docs/design/QUESTIONS.md",
       docRoot: "/repo/main",
     });
   });
@@ -252,8 +254,15 @@ describe("previewFilePathCtx", () => {
     expect(previewFilePathCtx("S1", "README.md", ROOT)).toEqual({
       sid: "S1",
       cwd: "/repo/main",
+      docPath: "README.md",
       docRoot: "/repo/main",
     });
+  });
+
+  // The document's own viewer path rides along so a 404 downstream can re-read
+  // a failed link against the other convention (kawaz r55 m152).
+  test("the ctx carries the previewed document's own path", () => {
+    expect(previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)?.docPath).toBe("docs/QUESTIONS.md");
   });
 
   // External / workspace files reach the viewer as absolute paths, where the
@@ -262,11 +271,16 @@ describe("previewFilePathCtx", () => {
     expect(previewFilePathCtx("S1", "/other/place/doc.md", undefined)).toEqual({
       sid: "S1",
       cwd: "/other/place",
+      docPath: "/other/place/doc.md",
     });
   });
 
   test("a file directly under / anchors at /", () => {
-    expect(previewFilePathCtx("S1", "/doc.md", undefined)).toEqual({ sid: "S1", cwd: "/" });
+    expect(previewFilePathCtx("S1", "/doc.md", undefined)).toEqual({
+      sid: "S1",
+      cwd: "/",
+      docPath: "/doc.md",
+    });
   });
 
   // Fail closed: with no way to form an absolute anchor the caller gets
@@ -361,5 +375,50 @@ describe("viewerPathForAbsolute", () => {
 
   test("a trailing slash on the root does not leak into the result", () => {
     expect(viewerPathForAbsolute("/repo/main/x.ts", "/repo/main/")).toBe("x.ts");
+  });
+});
+
+// The 404's "did you mean" (kawaz r55 m152/m153). This runs only after a link
+// has already failed, and that ordering is the whole point: the failed path is
+// by construction the document's directory plus what the author typed, so
+// stripping that directory reverse-engineers the original text. One candidate,
+// derived — not a search of the tree for something similarly named.
+describe("rootRelativeReading", () => {
+  // The observed case: a link written from the repo root, resolved against the
+  // document, so the document's directory got prepended.
+  test("recovers what the author wrote by stripping the document's directory", () => {
+    expect(rootRelativeReading("docs/packages/webui/x.ts", "docs")).toBe("packages/webui/x.ts");
+    expect(rootRelativeReading("docs/docs/spec.md", "docs")).toBe("docs/spec.md");
+  });
+
+  test("nested document directories are stripped whole, not per-segment", () => {
+    expect(rootRelativeReading("docs/design/notes.md", "docs/design")).toBe("notes.md");
+  });
+
+  // A document at the repo root has nothing prepended, so the link already
+  // meant exactly what it said and there is no second reading.
+  test("a document at the root yields nothing to recover", () => {
+    expect(rootRelativeReading("spec.md", "")).toBeNull();
+    expect(rootRelativeReading("docs/spec.md", "")).toBeNull();
+  });
+
+  test("an absolute target has only one reading", () => {
+    expect(rootRelativeReading("/etc/hosts", "docs")).toBeNull();
+  });
+
+  // Only paths the document's directory actually prefixes are derivable; this
+  // is what keeps a same-named file elsewhere in the tree from being offered.
+  test("a failed path outside the document's directory yields nothing", () => {
+    expect(rootRelativeReading("other/spec.md", "docs")).toBeNull();
+    expect(rootRelativeReading("docs-archive/spec.md", "docs")).toBeNull();
+  });
+
+  test("the candidate never escapes the root or repeats the failed path", () => {
+    expect(rootRelativeReading("docs/", "docs")).toBeNull();
+    expect(rootRelativeReading("docs/../outside.md", "docs")).toBeNull();
+  });
+
+  test("a trailing or leading slash on the document directory is tolerated", () => {
+    expect(rootRelativeReading("docs/spec.md", "/docs/")).toBe("spec.md");
   });
 });

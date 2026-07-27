@@ -87,7 +87,12 @@ export function makeMarkdownPathLinker(
   return (ref: ParsedFilePathRef) => {
     const abs = refLinkTarget(ref, ctx);
     if (!abs) return null;
-    return hrefFromStatEntry(ctx.sid, { path: viewerPathForAbsolute(abs, ctx.docRoot) }, ref);
+    return hrefFromStatEntry(
+      ctx.sid,
+      { path: viewerPathForAbsolute(abs, ctx.docRoot) },
+      ref,
+      ctx.docPath,
+    );
   };
 }
 

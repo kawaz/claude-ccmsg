@@ -212,3 +212,49 @@ describe("parseHash / room, session, and timeline forms never collide", () => {
     expect(loc.view).toBe("timeline");
   });
 });
+
+// The "followed from" hint (kawaz r55 m152). It rides inside the fragment
+// rather than in a real query string: routing is entirely hash-based, and a
+// `?query` cannot change without reloading the page — which would turn every
+// in-app markdown link into a full app restart.
+describe("fileHref / parseHash round-trip with the ?from= hint", () => {
+  test("fileHref omits the hint unless one is given", () => {
+    expect(fileHref("S1", "docs/a.md")).toBe("#sS1:docs%2Fa.md");
+    expect(fileHref("S1", "docs/a.md", { start: 3, end: 9 })).toBe("#sS1:docs%2Fa.md:L3-9");
+  });
+
+  test("the hint survives a round-trip, alongside a line range", () => {
+    const href = fileHref("S1", "docs/docs/a.md", { start: 3, end: 9 }, "docs/QUESTIONS.md");
+    expect(href).toBe("#sS1:docs%2Fdocs%2Fa.md:L3-9?from=docs%2FQUESTIONS.md");
+    const loc = parseHash(href);
+    expect(loc).toEqual({
+      view: "session",
+      sid: "S1",
+      path: "docs/docs/a.md",
+      lineRange: { start: 3, end: 9 },
+      from: "docs/QUESTIONS.md",
+    });
+  });
+
+  test("no hint in the URL means no `from` on the locator", () => {
+    const loc = parseHash("#sS1:docs%2Fa.md") as Extract<Locator, { view: "session" }>;
+    expect(loc.from).toBeUndefined();
+  });
+
+  // A literal `?` in a filename arrives percent-encoded, so it can never be
+  // mistaken for the hint separator.
+  test("a path containing '?' is not split at it", () => {
+    const loc = parseHash(fileHref("S1", "weird?name.md")) as Extract<Locator, { view: "session" }>;
+    expect(loc.path).toBe("weird?name.md");
+    expect(loc.from).toBeUndefined();
+  });
+
+  test("an empty or undecodable hint is dropped, keeping the path usable", () => {
+    expect(
+      (parseHash("#sS1:a.md?from=") as Extract<Locator, { view: "session" }>).from,
+    ).toBeUndefined();
+    const bad = parseHash("#sS1:a.md?from=%zz") as Extract<Locator, { view: "session" }>;
+    expect(bad.path).toBe("a.md");
+    expect(bad.from).toBeUndefined();
+  });
+});
