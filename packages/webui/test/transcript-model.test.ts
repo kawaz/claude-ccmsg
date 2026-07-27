@@ -3143,10 +3143,10 @@ describe("parseSystemMessageFields", () => {
     });
   });
 
-  // spawn-prompt: agent 転写の先頭 user 行 (kawaz r46m28)。team-lead 経由の
-  // spawn は <teammate-message> wrapper で来るので peer 表示 (from/summary) に
-  // 載る。通常の Agent tool 直接呼び出しは plain text で来るので text 表示に
-  // 落とす。両ケースで壊れず表示できることを保証する。
+  // spawn-prompt: agent 転写の先頭 user 行 (kawaz r46m28)。実質は親から届いた
+  // agent message なので、wrapper の有無に関わらず peer 表示 = AgentCard に
+  // 載せる (kawaz r55m155)。wrapper 付きは from/summary を wire から取り、
+  // plain text は送り主が wire に無いので「親」を当てる。
   describe("spawn-prompt", () => {
     test("<teammate-message> wrapper (team-lead spawn) -> peer display with from + body", () => {
       const raw =
@@ -3158,9 +3158,18 @@ describe("parseSystemMessageFields", () => {
       });
     });
 
-    test("plain text (bare Agent tool spawn) -> text display carrying the raw prompt unchanged", () => {
+    test("plain text (bare Agent tool spawn) -> peer display で本文を保ったまま送り主は「親」", () => {
+      // r55m155 以前は text 表示に落ちて素の <pre> になっていた。実データでは
+      // 73 件中 39 件がこの plain 形だったので、ここが揃わないと「spawn prompt
+      // だけ見た目が違う」状態が過半で残る。
       const raw = "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...";
-      expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({ display: "text", text: raw });
+      expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({
+        display: "peer",
+        from: "親",
+        summary: null,
+        category: "message",
+        body: raw,
+      });
     });
   });
 

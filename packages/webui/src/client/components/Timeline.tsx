@@ -1224,10 +1224,11 @@ function SystemMessageFold({
   const peer = rich.display === "peer" ? rich : null;
   const idlePeer = peer?.category === "idle" ? peer : null;
   if (idlePeer) return <IdlePeerRow peer={idlePeer} ts={line.ts} />;
-  // spawn prompt (agent transcript 先頭の親からの指示書) は peer wrapper の
-  // 有無に関わらずエージェントメッセージのカテゴリ (kawaz r55 m35: AUTO OPEN
-  // の A チェックで開いておいてほしい対象)。
-  const isAgentCategory = peer !== null || kind === "spawn-prompt";
+  // peer 形に落ちたものがエージェントメッセージのカテゴリ (kawaz r55 m35:
+  // AUTO OPEN の A チェックで開いておいてほしい対象)。spawn prompt は
+  // wrapper の有無に関わらず parseSystemMessageFields が peer 形を返すので
+  // (r55m155)、ここで kind を個別に見る必要はない。
+  const isAgentCategory = peer !== null;
   const open = isAgentCategory ? agentOpen : manualOpen;
   const setOpen = isAgentCategory ? setAgentOpen : setManualOpen;
   const taskSummary =

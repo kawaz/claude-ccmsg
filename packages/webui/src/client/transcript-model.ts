@@ -1559,6 +1559,14 @@ export function stripAnsiEscapes(text: string): string {
   return text.replace(ANSI_CSI_RE, "");
 }
 
+/** Sender shown for a spawn prompt that carries no `<teammate-message>`
+ * wrapper (a bare `Agent` tool call). The wire gives no name in that shape,
+ * but an agent transcript's first line is by definition the instruction its
+ * parent handed it, so "親" is a statement of that structure rather than a
+ * guess. Japanese to match the surrounding UI vocabulary (「タスク指示」
+ * 「受信」…) and to read as a role rather than a session name. */
+const SPAWN_PROMPT_FROM = "親";
+
 function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
   const match = rawText.match(PEER_MESSAGE_ATTRS_RE);
   if (!match) return null;
@@ -1654,11 +1662,27 @@ export function parseSystemMessageFields(
     case "peer-message":
       return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
     case "spawn-prompt":
-      // team-lead 経由の Agent spawn は本文が <teammate-message ...>...</...>
-      // で来る (parsePeerMessage が from/summary を抽出可能) が、通常の Agent
-      // tool 呼び出しは plain text — 前者は peer 表示に載せ、後者は text で
-      // そのまま出す。どちらもラベル側で「spawn prompt」と識別済み。
-      return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
+      // spawn prompt は「親から渡された指示書」= 実質 agent message なので、
+      // 専用表示ではなく agent message と同じ表示に載せる (kawaz r55m155:
+      // 「このカテゴリにしているものは実質は agent message の類だと思うので、
+      // その表示コンポーネントを当てるのが良さそう」)。
+      //
+      // team-lead 経由の spawn は本文が <teammate-message ...>...</...> で来る
+      // ので parsePeerMessage が from/summary を拾えるが、通常の Agent tool
+      // 呼び出しは plain text で wrapper が無い。後者も peer 形へ落として
+      // 同じカードに載せる — 送り主は wire 上に無いが、agent 転写の先頭行は
+      // 定義上「親セッションからの指示書」なので SPAWN_PROMPT_FROM が唯一の
+      // 正しい送り主であり、推測ではない (classifyUserMessage の
+      // parentUuid === null 判定がこの前提を保証している)。
+      return (
+        parsePeerMessage(rawText) ?? {
+          display: "peer",
+          from: SPAWN_PROMPT_FROM,
+          summary: null,
+          category: "message",
+          body: rawText,
+        }
+      );
     case "slash-command-invocation": {
       const fields = extractXmlFields(rawText);
       const command = fields.find((f) => f.name === "command-name")?.value ?? null;
