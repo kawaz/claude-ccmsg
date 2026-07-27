@@ -180,6 +180,45 @@ describe("resolveMarkdownViewMode / …Persist (r26 mid=112 の A→B→A 復元
     expect(loadFilesView(sid)?.path).toBe(A);
     expect(loadFilesView(sid)?.viewMode).toBe("preview");
   });
+
+  // 行範囲付きで開いた場合 (`file.md:42` のリンク / 検索ヒット)。指定行は
+  // 行番号付きの code ビューにしか存在せず、preview のまま開くと「その行を
+  // 見せろ」という要求に対して何も見えない。記憶より行指定が優先する。
+  test("a line range forces code even when preview is remembered", () => {
+    const saved = { path: "docs/QUESTIONS.md", viewMode: "preview" as const, updatedAt: "t" };
+    expect(resolveMarkdownViewMode(saved, "docs/QUESTIONS.md", true)).toBe("code");
+    // 行指定なしでは従来どおり記憶を復元する (引き継ぎ挙動は現状維持)
+    expect(resolveMarkdownViewMode(saved, "docs/QUESTIONS.md", false)).toBe("preview");
+  });
+
+  // 強制はその 1 回のナビゲーションだけのもの。記憶に "code" を焼き付けると、
+  // 行付きリンクを 1 度踏んだ以降すべての markdown が code で開く — r26
+  // mid=112 で潰した「一度 .ts を開くと記憶が消える」の再来になる。
+  test("the forced code mode is not written back to the remembered choice", () => {
+    const saved = { path: "docs/QUESTIONS.md", viewMode: "preview" as const, updatedAt: "t" };
+    expect(resolveMarkdownViewModePersist(saved, "docs/QUESTIONS.md", "code", true)).toBe(
+      "preview",
+    );
+  });
+
+  test("integration: a line-range visit leaves the next plain visit in preview", () => {
+    const sid = "sid-lineRange";
+    const A = "docs/QUESTIONS.md";
+    saveFilesView(sid, { path: A, viewMode: "preview" });
+
+    // 行付きリンクで A を開く
+    let saved = loadFilesView(sid);
+    const restoredWithLine = resolveMarkdownViewMode(saved, A, true);
+    expect(restoredWithLine).toBe("code");
+    saveFilesView(sid, {
+      path: A,
+      viewMode: resolveMarkdownViewModePersist(saved, A, restoredWithLine, true),
+    });
+
+    // 次に行指定なしで A を開くと preview が戻る
+    saved = loadFilesView(sid);
+    expect(resolveMarkdownViewMode(saved, A)).toBe("preview");
+  });
 });
 
 describe("cleanupStaleFilesViews (1on1 draft と同じ 2 規則の sweep)", () => {

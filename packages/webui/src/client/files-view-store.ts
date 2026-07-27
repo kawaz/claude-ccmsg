@@ -50,8 +50,14 @@ export interface FilesViewState {
 export function resolveMarkdownViewMode(
   saved: FilesViewState | null,
   path: string,
+  /** 行範囲付きで開かれたか (locator の `lineRange`)。指定行は code ビューの
+   * 行番号付き表示にしか存在しない — preview は原文の行と対応しないので、
+   * 復元した preview のまま開くとリンクが指した行が**どこにも見えない**。
+   * 行指定は「この行を見せろ」という明示要求なので、記憶より優先する。 */
+  hasLineRange = false,
 ): "code" | "preview" {
   if (!isMarkdownPath(path)) return "code";
+  if (hasLineRange) return "code";
   return saved?.viewMode ?? "code";
 }
 
@@ -65,7 +71,13 @@ export function resolveMarkdownViewModePersist(
   saved: FilesViewState | null,
   path: string,
   restored: "code" | "preview",
+  /** 行範囲由来で code を強制したか。強制はその 1 回のナビゲーションに対する
+   * 上書きであってユーザの選択ではないので、記憶には書かない — 行付きリンクを
+   * 1 度踏んだだけで以後の markdown が全部 code で開くのは、r26 mid=112 で
+   * 潰した「一度 .ts を開くと記憶が消える」と同じ壊れ方になる。 */
+  hasLineRange = false,
 ): "code" | "preview" {
+  if (hasLineRange) return saved?.viewMode ?? "code";
   if (isMarkdownPath(path)) return restored;
   return saved?.viewMode ?? "code";
 }

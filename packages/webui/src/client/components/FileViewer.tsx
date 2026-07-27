@@ -33,7 +33,7 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
-import { previewFilePathCtx, rootRelativeReading } from "../filepath-ref.ts";
+import { alternateLinkReading, previewFilePathCtx } from "../filepath-ref.ts";
 import { fileHref } from "../locator.ts";
 import { makeMarkdownPathLinker } from "../filepath-linker.tsx";
 import {
@@ -427,15 +427,17 @@ function useTaskListToggle({
  *
  * A relative markdown link resolves against the document holding it, which is
  * correct but routinely not what the author (usually an AI) meant — writing
- * `docs/x.md` inside `docs/QUESTIONS.md` yields `docs/docs/x.md`.
+ * `docs/x.md` inside `docs/QUESTIONS.md` yields `docs/docs/x.md`. An absolute
+ * `/docs/x.md` written in a document outside the session's cwd tree has the
+ * mirror problem: it kept its filesystem reading, and the documentation one is
+ * what was meant.
  *
  * This only runs once the target has already 404'd, and that ordering is what
  * makes the candidate trustworthy rather than a guess: a correctly-written
- * link never reaches here, and the failed path is by construction the
- * document's directory plus what the author typed, so stripping that directory
- * recovers the original text exactly (`rootRelativeReading`). There is one
- * candidate, and nothing else in the tree is searched — a same-named file
- * living elsewhere can never be suggested.
+ * link never reaches here, and each candidate reverses a rebase the resolver
+ * itself performed (`alternateLinkReading`). There is one candidate, and
+ * nothing else in the tree is searched — a same-named file living elsewhere
+ * can never be suggested.
  *
  * It is still **offered, never taken**. Silently redirecting somewhere the
  * user did not ask for is harder to understand than the 404 itself, so the
@@ -449,6 +451,7 @@ function useDidYouMean({
   path,
   from,
   root,
+  cwd,
   active,
 }: {
   sid: string;
@@ -457,6 +460,9 @@ function useDidYouMean({
   from: string | null;
   /** Session containment root — `fs_stat_batch` takes absolute paths only. */
   root: string | undefined;
+  /** Session cwd — the tree an absolute target's documentation reading is
+   * recovered against. */
+  cwd: string | undefined;
   /** Only probe on an actual not-found; other errors are not a wrong-reading. */
   active: boolean;
 }): string | null {
@@ -467,15 +473,21 @@ function useDidYouMean({
     setFound(null);
     if (!active || from === null || path === "" || !root) return;
     const lastSlash = from.lastIndexOf("/");
-    const candidate = rootRelativeReading(path, lastSlash === -1 ? "" : from.slice(0, lastSlash));
+    const candidate = alternateLinkReading(
+      path,
+      lastSlash === -1 ? "" : from.slice(0, lastSlash),
+      cwd,
+    );
     if (candidate === null) return;
     // `fs_stat_batch` is an absolute-path op (it rebases onto the containment
-    // root itself), so the viewer-shaped candidate is expanded before the
-    // probe and read back from the response afterwards.
+    // root itself), so a viewer-shaped candidate is expanded before the probe
+    // and read back from the response afterwards. The cwd reading is already
+    // absolute.
     const base = root.replace(/\/+$/, "");
+    const probe = candidate.startsWith("/") ? candidate : `${base}/${candidate}`;
     let cancelled = false;
     void ws
-      .fsStatBatch(sid, [`${base}/${candidate}`])
+      .fsStatBatch(sid, [probe])
       .then((res) => {
         if (cancelled || !res.ok) return;
         // A non-null slot means the daemon will serve it, and carries the
@@ -489,7 +501,7 @@ function useDidYouMean({
     return () => {
       cancelled = true;
     };
-  }, [ws, sid, path, from, root, active]);
+  }, [ws, sid, path, from, root, cwd, active]);
 
   return found;
 }
@@ -748,7 +760,7 @@ export function FileViewer({
   const previewLinkCtx = useMemo(
     () =>
       markdownEligible && path !== null
-        ? previewFilePathCtx(sid, path, peer?.repo_root ?? peer?.cwd)
+        ? previewFilePathCtx(sid, path, peer?.repo_root ?? peer?.cwd, peer?.cwd)
         : undefined,
     [markdownEligible, sid, path, peer?.repo_root, peer?.cwd],
   );
@@ -775,19 +787,24 @@ export function FileViewer({
     path: path ?? "",
     from: tree.selectedFrom,
     root: peer?.repo_root ?? peer?.cwd,
+    cwd: peer?.cwd,
     active: file?.status === "error" && file.errorCode === "not_found",
   });
 
   useEffect(() => {
     if (path === null) return;
     const saved = loadFilesView(sid);
-    const restored = resolveMarkdownViewMode(saved, path);
+    // 行範囲付きで開かれたら記憶より code を優先する (指定行は code ビューに
+    // しか存在しない)。記憶自体は書き換えない — resolveMarkdownViewModePersist
+    // 参照。
+    const hasLineRange = selectedLineRange !== null;
+    const restored = resolveMarkdownViewMode(saved, path, hasLineRange);
     setViewMode(restored);
     saveFilesView(sid, {
       path,
-      viewMode: resolveMarkdownViewModePersist(saved, path, restored),
+      viewMode: resolveMarkdownViewModePersist(saved, path, restored, hasLineRange),
     });
-  }, [sid, path]);
+  }, [sid, path, selectedLineRange?.start, selectedLineRange?.end]);
   // viewMode のユーザ操作は state 更新と同時に record へ書く (effect 監視
   // でなく操作起点 — 復元由来の setViewMode と書き込みが交錯しないように)。
   // toggle は markdown ファイルでしか render されない (markdownEligible 判定、

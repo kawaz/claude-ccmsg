@@ -139,9 +139,20 @@ export interface FilePathResolveCtx {
   cwd?: string;
   /** Root a markdown link's leading `/` is read against (`refLinkCandidates`).
    * Set only where a document's own conventions apply — the file preview,
-   * where it is the session's containment root. Absent for message bodies,
-   * whose paths are process-relative, not document-relative. */
+   * where it is the **session's cwd**: "the repo root" as an author means it is
+   * the working copy they are editing in, which is what cwd names. The
+   * containment root is deliberately *not* used here — under a worktree layout
+   * (cwd `<repo>/<ws>`, repo_root `<repo>`) it is a container holding sibling
+   * workspaces, and reading `/docs/x.md` against it lands in a tree the author
+   * never wrote about. Absent for message bodies, whose paths are
+   * process-relative, not document-relative. */
   docRoot?: string;
+  /** Root the FileViewer addresses contained paths relative to — the daemon's
+   * containment root (`repo_root ?? cwd`, see fs-access `resolveRoot`). Used
+   * only to convert a resolved absolute path back into a viewer path
+   * (`viewerPathForAbsolute`); it is a *serving* boundary, never a reading
+   * base, which is why it is separate from `docRoot`. */
+  containmentRoot?: string;
   /** Absolute repo containment root, when the session announced one and the
    * daemon accepted it. Only a fallback anchor for senders that announced no
    * cwd; the daemon owns the containment semantics and returns the
@@ -310,48 +321,78 @@ export function viewerPathForAbsolute(abs: string, docRoot: string | undefined):
 export function previewFilePathCtx(
   sid: string,
   viewerPath: string,
-  sessionRoot: string | undefined,
+  containmentRoot: string | undefined,
+  sessionCwd: string | undefined,
 ): FilePathResolveCtx | undefined {
+  const root = containmentRoot?.replace(/\/+$/, "");
   const abs = viewerPath.startsWith("/")
     ? viewerPath
-    : sessionRoot
-      ? normalizePosix(sessionRoot.replace(/\/+$/, "") + "/" + viewerPath)
+    : root
+      ? normalizePosix(root + "/" + viewerPath)
       : null;
   if (!abs) return undefined;
   const lastSlash = abs.lastIndexOf("/");
   // `lastSlash === 0` is a file directly under `/`, whose directory is `/`.
   const dir = lastSlash <= 0 ? "/" : abs.slice(0, lastSlash);
-  // `docRoot` gives a leading `/` its documentation reading (repo-root
-  // relative); it is only meaningful for a contained file, where the session
-  // root is the tree the document belongs to.
+  // `docRoot` gives a leading `/` its documentation reading, and the tree an
+  // author calls "the root" is the working copy they edit in — the session's
+  // **cwd**. Only offered for a document that actually lies in that tree; for
+  // one outside it (external / a sibling workspace under the container) the
+  // cwd is not its root, and a leading `/` keeps its filesystem reading.
+  const docRoot = sessionCwd?.replace(/\/+$/, "");
+  const inCwdTree = docRoot !== undefined && docRoot !== "" && abs.startsWith(docRoot + "/");
   return {
     sid,
     cwd: dir,
     docPath: viewerPath,
-    ...(sessionRoot ? { docRoot: sessionRoot.replace(/\/+$/, "") } : {}),
+    ...(inCwdTree ? { docRoot } : {}),
+    ...(root ? { containmentRoot: root } : {}),
   };
 }
 
-/** The repo-root reading of a link that landed on nothing (kawaz r55 m152/m153).
+/** The *other* reading of a link that landed on nothing (kawaz r55 m152/m153).
  *
- * A relative markdown link resolves against the document holding it, and that
- * is the correct rule — but an author (routinely an AI) writing `docs/x.md`
- * inside `docs/QUESTIONS.md` means the repo root and gets `docs/docs/x.md`.
+ * A link target has one reading the resolver committed to and, in two shapes,
+ * a second one the author may have meant. This runs **only after the committed
+ * reading 404'd**, which is what makes each candidate a derivation rather than
+ * a guess: a correctly-written link never gets here, and both derivations
+ * reverse a rebase the resolver itself performed. Nothing in the tree is
+ * searched, so a same-named file living elsewhere can never be offered.
  *
- * This runs **only after the link has already 404'd**, which is what makes it
- * a derivation rather than a guess: a correctly-written link never gets here,
- * and the failed path is by construction `sourceDir + "/" + <what was
- * written>`. Stripping `sourceDir` therefore recovers the original text
- * exactly — one candidate, not a search. Nothing else in the tree is
- * consulted, so a same-named file living somewhere else can never be offered.
+ * Two shapes reach here:
  *
- * `failed` and the result are FileViewer paths (root-relative for contained
- * files); `sourceDir` is the directory of the document the link was written
- * in, in that same shape (`""` for a document at the repo root, which has
- * nothing to strip). Returns `null` when no reading can be recovered.
- * Existence is *not* checked here — only the daemon can say what is readable. */
-export function rootRelativeReading(failed: string, sourceDir: string): string | null {
-  if (failed.startsWith("/")) return null; // absolute targets have one reading
+ *   - **Relative target** (`failed` is a viewer path). A relative markdown link
+ *     resolves against the document holding it, and that is the correct rule —
+ *     but an author (routinely an AI) writing `docs/x.md` inside
+ *     `docs/QUESTIONS.md` means the repo root and gets `docs/docs/x.md`. The
+ *     failed path is by construction `sourceDir + "/" + <what was written>`, so
+ *     stripping `sourceDir` recovers the original text exactly.
+ *   - **Absolute target** (`failed` starts with `/`), which happens where the
+ *     document had no `docRoot` — it lies outside the session's cwd tree, so
+ *     `refLinkTarget` kept the filesystem reading. The other reading is the
+ *     documentation one: `/docs/x.md` read against `cwd`. Recovering it needs
+ *     `cwd`; without one there is only the filesystem reading and the answer is
+ *     `null`, as before.
+ *
+ * `sourceDir` is the directory of the document the link was written in, in
+ * viewer shape (`""` for a document at the root, which has nothing to strip).
+ * The result is a viewer path for the relative shape and an **absolute** path
+ * for the cwd shape — the caller probes both the same way (`fs_stat_batch` is
+ * an absolute op and reports the viewer path back). Returns `null` when no
+ * reading can be recovered. Existence is *not* checked here — only the daemon
+ * can say what is readable. */
+export function alternateLinkReading(
+  failed: string,
+  sourceDir: string,
+  cwd?: string,
+): string | null {
+  if (failed.startsWith("/")) {
+    const base = cwd?.replace(/\/+$/, "");
+    if (!base) return null;
+    const rebased = normalizePosix(base + failed);
+    // `/` itself, or a target that rebases onto the cwd, names a directory.
+    return rebased === base || rebased === failed ? null : rebased;
+  }
   const dir = sourceDir.replace(/^\/+|\/+$/g, "");
   if (dir === "") return null;
   const prefix = dir + "/";
