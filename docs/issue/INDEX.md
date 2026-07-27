@@ -17,3 +17,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
 | 2026-07-26 | design | open | [webui-url-structure-redesign](./2026-07-26-webui-url-structure-redesign.md) | webui の URL 構造を論理的に再設計する。機能追加のたびにバラバラになった URL 形式の棚卸し・論理体系の設計・移行方針の決定 |
+| 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |
