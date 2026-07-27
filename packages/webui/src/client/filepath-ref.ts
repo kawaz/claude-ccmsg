@@ -149,9 +149,9 @@ export interface FilePathResolveCtx {
   repoRoot?: string;
   /** FileViewer path of the document whose links are being resolved, when
    * there is one (the file preview). Carried into every link this ctx
-   * produces so a 404 can re-read the link against the other convention
-   * (`alternateReadings`). Absent for message bodies — nothing holds them, so
-   * there is no second reading to try. */
+   * produces so a 404 can recover the repo-root reading of the link
+   * (`rootRelativeReading`). Absent for message bodies — nothing holds them,
+   * so there is no directory to strip back off. */
   docPath?: string;
 }
 
@@ -371,7 +371,7 @@ export function hrefFromStatEntry(
   entry: { path: string },
   ref: ParsedFilePathRef,
   /** Document the reference was written in — carried into the URL so a 404 can
-   * offer alternate readings (`alternateReadings`). */
+   * recover the repo-root reading of the link (`rootRelativeReading`). */
   from?: string,
 ): string {
   const lineRange =

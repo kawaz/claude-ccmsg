@@ -46,7 +46,7 @@ export type Locator =
       lineRange?: { start: number; end: number };
       /** The document a markdown link was followed *from*, when this locator
        * came from one — the "did you mean" resolution hint (kawaz r55 m152).
-       * Read only after the target 404s; see `alternateReadings`. */
+       * Read only after the target 404s; see `rootRelativeReading`. */
       from?: string;
     }
   | { view: "timeline"; sid: string; agent?: AgentRef };
