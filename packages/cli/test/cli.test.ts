@@ -159,6 +159,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("--format <format>");
       expect(help.out).toContain("--no-thinking");
       expect(help.out).toContain("--no-agent");
+      expect(help.out).toContain("--agent <id|name>");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("Command Options:");
@@ -255,6 +256,26 @@ describe("ccmsg CLI end-to-end", () => {
       const invalid = await runCli(["dump", sid, "--format", "yaml"], env);
       expect(invalid.code).toBe(1);
       expect(invalid.err).toContain("--format must be 'jsonl' or 'text'");
+
+      // An agent the dumped range never involves folds to one line. In text
+      // that line is rendered flat rather than pretty-printed JSON — four lines
+      // per agent would spend exactly what the fold saves.
+      const subagentsDir = path.join(projectDir, sid, "subagents");
+      fs.mkdirSync(subagentsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(subagentsDir, "agent-apast-123456789012.meta.json"),
+        JSON.stringify({ taskKind: "in_process_teammate", name: "past", description: "old job" }),
+      );
+      const folded = await runCli(["dump", sid, "--format", "text"], env);
+      expect(folded.code).toBe(0);
+      expect(folded.out).toContain(
+        "Agents outside this range (1):\n  apast-123456789012 past — old job",
+      );
+      expect(folded.out).toContain(`Agent detail: ccmsg dump ${sid} --agent`);
+
+      const missing = await runCli(["dump", sid, "--agent", "nobody"], env);
+      expect(missing.code).toBe(1);
+      expect(missing.err).toContain("no agent matches --agent nobody");
     } finally {
       cleanup();
     }

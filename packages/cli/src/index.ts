@@ -266,15 +266,30 @@ function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]):
 
 function formatTextDump(dump: SessionDump): string {
   const { header, context, entries } = dump;
-  const { kind: _contextKind, ...contextFields } = context;
+  // `agents_past` is one line per agent by design; pretty-printing it as JSON
+  // would spend four lines each and defeat the fold. It is lifted out of the
+  // context JSON and rendered as the flat list it represents.
+  const { kind: _contextKind, agents_past: past, ...contextFields } = context;
   const lines = [
     `Session: ${header.session}`,
     `Since: ${header.since}`,
     `Until: ${header.until ?? "(end)"}`,
     `Generated: ${header.generated}`,
     `Format: ${header.format} text`,
+    ...(header.agent_detail ? [`Agent detail: ${header.agent_detail}`] : []),
     "Session context:",
     JSON.stringify(contextFields, null, 2),
+    ...(past && past.length > 0
+      ? [
+          `Agents outside this range (${past.length}):`,
+          ...past.map(
+            (agent) =>
+              `  ${agent.agent_id}${agent.name ? ` ${agent.name}` : ""}${
+                agent.description ? ` — ${agent.description}` : ""
+              }`,
+          ),
+        ]
+      : []),
     "",
   ];
   for (const entry of entries) {
@@ -477,8 +492,9 @@ Commands:
   dump <session-id>            Export session handoff context (todos, agents, rooms) +
                                conversation entries as compact jsonl (default) or readable
                                text (--format text). --since/--until accept
-                               timezone-qualified ISO 8601. Stopped teammates are always
-                               omitted; --no-thinking / --no-agent trim further
+                               timezone-qualified ISO 8601. Agents the dumped range never
+                               involves fold to one line each (--agent expands one);
+                               --no-thinking / --no-agent trim further
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -515,6 +531,10 @@ Command Options:
   --no-agent                   dump: drop the agents/workflows context and the
                                agent-spawn / agent-send / peer-message entries
                                (journal use — leaves thinking and ccmsg traffic)
+  --agent <id|name>            dump: keep only the entries involving one agent —
+                               its spawn prompt, the messages sent to it, its
+                               replies. Takes an agent id, a teammate name, or an
+                               unambiguous id prefix. Conflicts with --no-agent
   --self                       notify: target own session (default when no --sid)
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
@@ -719,7 +739,7 @@ async function main(): Promise<void> {
     }
     case "dump": {
       const usage =
-        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent]";
+        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
       const sid = requireArg(args[0], "session-id", usage);
       if (args[1] !== undefined)
         throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
@@ -733,6 +753,7 @@ async function main(): Promise<void> {
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
         ...(opts["no-thinking"] === true ? { noThinking: true } : {}),
         ...(opts["no-agent"] === true ? { noAgent: true } : {}),
+        ...(str(opts, "agent") ? { agent: str(opts, "agent") } : {}),
       });
       if (format === "text") {
         process.stdout.write(formatTextDump(dump));

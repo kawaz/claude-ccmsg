@@ -288,7 +288,11 @@ describe("dumpSession", () => {
     );
     fs.writeFileSync(
       path.join(subagentsDir, "agent-a1234567890abcdef.meta.json"),
-      JSON.stringify({ description: "direct work", agentType: "codex-sol-worker" }),
+      JSON.stringify({
+        description: "direct work",
+        agentType: "codex-sol-worker",
+        toolUseId: "direct-use",
+      }),
     );
     fs.writeFileSync(
       path.join(subagentsDir, "agent-a2222222222222222.meta.json"),
@@ -544,11 +548,13 @@ describe("dumpSession", () => {
         state: "completed",
         description: "direct work",
       }),
+      // Spawned and stopped inside the range: a rewound session was working
+      // with it moments ago, so its state and prompt still matter.
       expect.objectContaining({
-        agent_id: "a2222222222222222",
-        kind: "subagent",
-        state: "completed",
-        description: "nested work",
+        agent_id: "ateam-stale-123456",
+        kind: "teammate",
+        name: "stale",
+        state: "stopped",
       }),
       expect.objectContaining({
         agent_id: "ateam-worker-123456",
@@ -558,10 +564,12 @@ describe("dumpSession", () => {
         model: "claude-fable-5[1m]",
       }),
     ]);
-    // A stopped teammate cannot be addressed, so it is dropped unconditionally;
-    // the count keeps "not listed" from reading as "never existed".
-    expect(context.agents?.some((agent) => agent.name === "stale")).toBe(false);
-    expect(context.agents_omitted).toBe(1);
+    // The nested subagent was spawned by another agent, so this session's
+    // entries never name it. One line keeps "not listed" from reading as
+    // "never existed" while staying cheap.
+    expect(context.agents_past).toEqual([
+      { agent_id: "a2222222222222222", description: "nested work" },
+    ]);
     // Completed todos stay: a rewound session that only sees open items risks
     // redoing finished work.
     expect(context.todos).toEqual([{ id: "1", subject: "ship dump options", status: "completed" }]);
@@ -713,9 +721,182 @@ describe("dumpSession", () => {
     // --no-agent drops the agent context wholesale; todos/rooms/background stay
     // because they describe the session's own work, not its subordinates.
     expect(journal.context.agents).toBeUndefined();
-    expect(journal.context.agents_omitted).toBeUndefined();
+    expect(journal.context.agents_past).toBeUndefined();
     expect(journal.context.workflows).toBeUndefined();
     expect(journal.context.todos).toEqual([]);
     expect(journal.context.rooms.map((r) => r.room)).toEqual([]);
+  });
+
+  // A rewound session must re-read the agents it is still working with, not the
+  // roster of everyone it ever spawned (measured: 45 agents, 43 of them idle).
+  // The dumped range decides: an agent the entries never mention belongs to a
+  // past this session is not resuming, so it folds to a line that keeps it
+  // recognizable and addressable via --agent.
+  describe("range-scoped agent context", () => {
+    function agentFixture(): ReturnType<typeof fixture> {
+      const f = fixture();
+      const subagentsDir = path.join(f.transcript.slice(0, -".jsonl".length), "subagents");
+      fs.mkdirSync(subagentsDir, { recursive: true });
+      for (const [file, meta] of [
+        ["agent-aearly-111111111111.meta.json", { taskKind: "in_process_teammate", name: "early" }],
+        ["agent-alate-2222222222222.meta.json", { taskKind: "in_process_teammate", name: "late" }],
+        [
+          "agent-a3333333333333333.meta.json",
+          { description: "nameless background work", toolUseId: "bg-use" },
+        ],
+      ] as const) {
+        fs.writeFileSync(path.join(subagentsDir, file), JSON.stringify(meta));
+      }
+      fs.writeFileSync(
+        f.transcript,
+        [
+          row("2026-07-20T00:00:00Z", "assistant", [
+            {
+              type: "tool_use",
+              id: "early-use",
+              name: "Agent",
+              input: { name: "early", description: "early job", prompt: "early prompt" },
+            },
+          ]),
+          row("2026-07-20T00:00:01Z", "assistant", [
+            {
+              type: "tool_use",
+              id: "early-send",
+              name: "SendMessage",
+              input: { to: "early", message: "early instruction" },
+            },
+          ]),
+          row("2026-07-20T02:00:00Z", "assistant", [
+            {
+              type: "tool_use",
+              id: "late-use",
+              name: "Agent",
+              input: { name: "late", description: "late job", prompt: "late prompt" },
+            },
+            { type: "tool_use", id: "bg-use", name: "Agent", input: { description: "bg job" } },
+          ]),
+          row(
+            "2026-07-20T02:00:01Z",
+            "user",
+            `<agent-message from="late">late report</agent-message>`,
+            {
+              isMeta: true,
+            },
+          ),
+        ].join("\n") + "\n",
+      );
+      return f;
+    }
+
+    test("expands agents the range involves and folds the rest to one line", () => {
+      const { configDir, dataDir } = agentFixture();
+      const dump = dumpSession(SID, {
+        dataDir,
+        configDirs: [configDir],
+        since: "2026-07-20T01:00:00Z",
+      });
+      expect(dump.context.agents?.map((a) => a.name ?? a.agent_id)).toEqual([
+        "a3333333333333333",
+        "late",
+      ]);
+      // Folded to the three fields that let a reader recognize it and name it
+      // in --agent — the spawn prompt and live state are deliberately gone.
+      expect(dump.context.agents_past).toEqual([
+        { agent_id: "aearly-111111111111", name: "early" },
+      ]);
+      expect(dump.header.agent_detail).toContain("--agent");
+    });
+
+    test("keeps every agent expanded when the range covers them all", () => {
+      const { configDir, dataDir } = agentFixture();
+      const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+      expect(dump.context.agents?.map((a) => a.name ?? a.agent_id)).toEqual([
+        "a3333333333333333",
+        "early",
+        "late",
+      ]);
+      // Nothing folded, so the read-back hint would be noise.
+      expect(dump.context.agents_past).toBeUndefined();
+      expect(dump.header.agent_detail).toBeUndefined();
+    });
+
+    test("--agent expands one agent regardless of the range, by name or id prefix", () => {
+      const { configDir, dataDir } = agentFixture();
+      const base = { dataDir, configDirs: [configDir] };
+      const byName = dumpSession(SID, { ...base, agent: "early" });
+      // The read-back of a folded agent is issued without the --since that
+      // folded it, so the whole exchange comes back — and only that exchange.
+      expect(byName.entries.map((e) => e.text)).toEqual(["early prompt", "early instruction"]);
+      expect(byName.context.agents?.map((a) => a.name)).toEqual(["early"]);
+      // --agent narrows alongside --since rather than overriding it, and the
+      // selected agent stays expanded even when the range holds none of it.
+      const ranged = dumpSession(SID, {
+        ...base,
+        agent: "early",
+        since: "2026-07-20T01:00:00Z",
+      });
+      expect(ranged.entries).toEqual([]);
+      expect(ranged.context.agents?.map((a) => a.name)).toEqual(["early"]);
+      // A targeted read already answers "which agent", so the others are not
+      // listed at all.
+      expect(byName.context.agents_past).toBeUndefined();
+      // A nameless background subagent is reachable by its id prefix, and its
+      // entries only carry the spawning tool_use_id.
+      const byPrefix = dumpSession(SID, { ...base, agent: "a333" });
+      expect(byPrefix.entries.map((e) => e.meta.description)).toEqual(["bg job"]);
+      expect(byPrefix.context.agents?.map((a) => a.agent_id)).toEqual(["a3333333333333333"]);
+    });
+
+    test("--agent rejects unknown and ambiguous selectors, and --no-agent", () => {
+      const { configDir, dataDir } = agentFixture();
+      const base = { dataDir, configDirs: [configDir] };
+      expect(() => dumpSession(SID, { ...base, agent: "nobody" })).toThrow("no agent matches");
+      expect(() => dumpSession(SID, { ...base, agent: "a" })).toThrow("use more characters");
+      expect(() => dumpSession(SID, { ...base, agent: "early", noAgent: true })).toThrow(
+        "contradict each other",
+      );
+    });
+
+    test("--agent returns every round of a repeatedly delegated name", () => {
+      const { configDir, dataDir, transcript } = fixture();
+      const subagentsDir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
+      fs.mkdirSync(subagentsDir, { recursive: true });
+      for (const id of ["aretry-111111111111", "aretry-222222222222"]) {
+        fs.writeFileSync(
+          path.join(subagentsDir, `agent-${id}.meta.json`),
+          JSON.stringify({ taskKind: "in_process_teammate", name: "retry" }),
+        );
+      }
+      fs.writeFileSync(
+        transcript,
+        [
+          row("2026-07-20T00:00:00Z", "assistant", [
+            {
+              type: "tool_use",
+              id: "round-1",
+              name: "Agent",
+              input: { name: "retry", description: "retry job", prompt: "round one" },
+            },
+          ]),
+          row("2026-07-20T00:00:01Z", "assistant", [
+            {
+              type: "tool_use",
+              id: "round-2",
+              name: "Agent",
+              input: { name: "retry", description: "retry job", prompt: "round two" },
+            },
+          ]),
+        ].join("\n") + "\n",
+      );
+      // Re-delegating the same job spawns a fresh agent per round under one
+      // name. "Show me the retry work" means all the rounds, so the shared name
+      // selects them all rather than demanding a choice between opaque ids.
+      const dump = dumpSession(SID, { dataDir, configDirs: [configDir], agent: "retry" });
+      expect(dump.entries.map((e) => e.text)).toEqual(["round one", "round two"]);
+      expect(dump.context.agents?.map((a) => a.agent_id)).toEqual([
+        "aretry-111111111111",
+        "aretry-222222222222",
+      ]);
+    });
   });
 });

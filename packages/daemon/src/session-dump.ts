@@ -38,6 +38,10 @@ export interface SessionDumpHeader {
   until: string | null;
   generated: string;
   format: "ccmsg-session-dump-v2";
+  /** How to read back an agent that this dump folded to one line. Present only
+   * when something was folded, so it never adds noise to a dump that already
+   * shows every agent in full. */
+  agent_detail?: string;
 }
 
 export interface SessionContextAgent {
@@ -48,6 +52,14 @@ export interface SessionContextAgent {
   description?: string;
   agent_type?: string;
   model?: string;
+}
+
+/** One-line form of an agent that never appears in the dumped range: enough to
+ * recognize it and to name it in `--agent`, nothing more. */
+export interface SessionContextAgentBrief {
+  agent_id: string;
+  name?: string;
+  description?: string;
 }
 
 export interface SessionContextRoom {
@@ -82,13 +94,15 @@ export interface SessionDumpContext {
    * finished work, which is the costlier failure mode. `status` distinguishes
    * them, so a journal consumer can filter cheaply. */
   todos: SessionTodo[];
-  /** Omitted entirely under `--no-agent`. */
+  /** Agents this dump's range actually involves, in full. Omitted entirely
+   * under `--no-agent`. */
   agents?: SessionContextAgent[];
-  /** Count of agents dropped because their state is terminal (stopped). Absent
-   * when nothing was dropped, and under `--no-agent`. Mirrors the rooms
-   * command's `archived_omitted`: "not listed" must not read as "never
-   * existed". */
-  agents_omitted?: number;
+  /** Agents that only exist outside the dumped range, folded to one line each.
+   * They are still addressable identities, so dropping them would hide work the
+   * session did; but their spawn prompts and states belong to a past the
+   * rewound session is not resuming. `header.agent_detail` names the command
+   * that expands one. Absent when empty, and under `--no-agent`. */
+  agents_past?: SessionContextAgentBrief[];
   /** Omitted entirely under `--no-agent`. */
   workflows?: SessionWorkflowStatus[];
   background: SessionContextBackground[];
@@ -124,6 +138,15 @@ export interface SessionDumpOptions {
    * the `agent-spawn` / `agent-send` / `peer-message` entries. Cross-session
    * ccmsg traffic and rooms stay — those are correspondence, not machinery. */
   noAgent?: boolean;
+  /** Expand one agent instead of the whole session: keep only the entries that
+   * involve it (its spawn prompt, the SendMessage bodies addressed to it, its
+   * replies). Accepts an agent id, an agent name, or an unambiguous agent id
+   * prefix. This is the read-back path for an agent folded into `agents_past`;
+   * that fold is what `--since` caused, so the read-back is normally issued
+   * without one. It narrows independently of `--since`/`--until` rather than
+   * overriding them: an explicitly given range silently ignored would be the
+   * bigger surprise. */
+  agent?: string;
 }
 
 /** `agent-spawn` / `agent-send` / `peer-message` are the three kinds produced by
@@ -477,11 +500,17 @@ function loadContextSchedules(
   return [...schedules.values()].sort((a, b) => a.task_id.localeCompare(b.task_id, "en"));
 }
 
+interface ContextAgentRecord {
+  agent: SessionContextAgent;
+  /** Every token a dump entry can use to name this agent (see `agentTokens`). */
+  tokens: string[];
+}
+
 function loadContextAgents(
   sidDir: string,
   status: ReturnType<typeof snapshot>,
   notificationStates: ReadonlyMap<string, string>,
-): SessionContextAgent[] {
+): ContextAgentRecord[] {
   const subagentsDir = path.join(sidDir, "subagents");
   let files: fs.Dirent[];
   try {
@@ -491,7 +520,7 @@ function loadContextAgents(
   }
   const teammateByName = new Map((status.teammates ?? []).map((item) => [item.name, item]));
   const backgroundById = new Map(status.background.map((item) => [item.task_id, item]));
-  const agents: SessionContextAgent[] = [];
+  const agents: ContextAgentRecord[] = [];
   for (const file of files) {
     if (!file.isFile() || !file.name.startsWith("agent-") || !file.name.endsWith(".meta.json")) {
       continue;
@@ -513,27 +542,87 @@ function loadContextAgents(
         : undefined
       : (notificationStates.get(agentId) ?? backgroundById.get(agentId)?.status);
     agents.push({
-      agent_id: agentId,
-      kind: teammate ? "teammate" : "subagent",
-      state: agentState ?? "unknown",
-      ...(name ? { name } : {}),
-      ...(stringField(meta, "description")
-        ? { description: stringField(meta, "description")! }
-        : {}),
-      ...(stringField(meta, "agentType") ? { agent_type: stringField(meta, "agentType")! } : {}),
-      ...(stringField(meta, "model") ? { model: stringField(meta, "model")! } : {}),
+      agent: {
+        agent_id: agentId,
+        kind: teammate ? "teammate" : "subagent",
+        state: agentState ?? "unknown",
+        ...(name ? { name } : {}),
+        ...(stringField(meta, "description")
+          ? { description: stringField(meta, "description")! }
+          : {}),
+        ...(stringField(meta, "agentType") ? { agent_type: stringField(meta, "agentType")! } : {}),
+        ...(stringField(meta, "model") ? { model: stringField(meta, "model")! } : {}),
+      },
+      // A dump entry names an agent in one of three ways, and which one is
+      // available depends on how it was spawned: teammates appear by `name`
+      // (SendMessage `to`, peer-message `from`), nameless background subagents
+      // only ever appear as the spawning `tool_use_id`, and the agent id itself
+      // shows up wherever the session quotes it back. Collect all three.
+      tokens: [
+        agentId,
+        ...(name ? [name] : []),
+        ...(stringField(meta, "toolUseId") ? [stringField(meta, "toolUseId")!] : []),
+      ],
     });
   }
-  return agents.sort((a, b) => (a.name ?? a.agent_id).localeCompare(b.name ?? b.agent_id, "en"));
+  return agents.sort((a, b) =>
+    (a.agent.name ?? a.agent.agent_id).localeCompare(b.agent.name ?? b.agent.agent_id, "en"),
+  );
 }
 
-/** A stopped teammate cannot be addressed, so its name/description only pads the
- * context a rewound session has to re-read (measured: ~600 of 1330 dump lines
- * were the agent list, mostly stopped). Terminal subagent states are left in —
- * their notification status vocabulary is upstream-owned and open, so matching
- * on it would silently drop live agents when a new value appears. */
-function isStoppedAgent(agent: SessionContextAgent): boolean {
-  return agent.state === "stopped";
+function brief(agent: SessionContextAgent): SessionContextAgentBrief {
+  return {
+    agent_id: agent.agent_id,
+    ...(agent.name ? { name: agent.name } : {}),
+    ...(agent.description ? { description: agent.description } : {}),
+  };
+}
+
+/** Resolve a `--agent` selector to the agents it names.
+ *
+ * An exact id picks exactly one. An exact name picks *every* agent carrying it:
+ * a session that delegates the same job repeatedly spawns a fresh agent per
+ * round under one name, and "show me what I did with local-issue-update" means
+ * all of those rounds — forcing a choice between twenty opaque ids would answer
+ * a question nobody asked. An id prefix is the last resort, since ids are long
+ * hex a reader will paste in fragments; there it must be unambiguous, because a
+ * prefix collision is an accident rather than a shared identity, and silently
+ * dumping the wrong agent is worse than asking for more characters. */
+function resolveAgentSelector(
+  selector: string,
+  agents: readonly ContextAgentRecord[],
+): ContextAgentRecord[] {
+  const byId = agents.filter(({ agent }) => agent.agent_id === selector);
+  if (byId.length > 0) return byId;
+  const byName = agents.filter(({ agent }) => agent.name === selector);
+  if (byName.length > 0) return byName;
+  const byPrefix = agents.filter(({ agent }) => agent.agent_id.startsWith(selector));
+  if (byPrefix.length === 1) return byPrefix;
+  if (byPrefix.length === 0) {
+    throw new Error(`no agent matches --agent ${selector} in this session`);
+  }
+  const shown = byPrefix
+    .slice(0, 5)
+    .map(({ agent }) => (agent.name ? `${agent.agent_id} (${agent.name})` : agent.agent_id));
+  const rest = byPrefix.length - shown.length;
+  throw new Error(
+    `--agent ${selector} matches ${byPrefix.length} agents, use more characters: ` +
+      `${shown.join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`,
+  );
+}
+
+/** The tokens by which one dump entry names the agent it concerns. Only the
+ * three agent machinery kinds are consulted: ccmsg endpoints are room member
+ * ids belonging to other sessions, not agents of this one. */
+function entryAgentTokens(entry: RawSessionDumpEntry): string[] {
+  if (!AGENT_ENTRY_KINDS.has(entry.kind)) return [];
+  const values: unknown[] = [entry.from, ...(Array.isArray(entry.to) ? entry.to : [entry.to])];
+  // `meta.name` falls back to the spawn description when the Agent call passed
+  // no name; that fallback is prose, not an identity, so only take it when the
+  // two differ.
+  if (entry.meta.name !== entry.meta.description) values.push(entry.meta.name);
+  values.push(entry.meta.tool_use_id);
+  return values.filter((value): value is string => typeof value === "string" && value !== "");
 }
 
 function loadContextRooms(dataDir: string, session: string): SessionContextRoom[] {
@@ -584,12 +673,13 @@ function loadContextRooms(dataDir: string, session: string): SessionContextRoom[
   return rooms.sort((a, b) => Number(a.room.slice(1)) - Number(b.room.slice(1)));
 }
 
-function loadSessionContext(
-  session: string,
-  transcriptFile: string,
-  dataDir: string,
-  noAgent: boolean,
-): SessionDumpContext {
+interface SessionStatusBundle {
+  status: ReturnType<typeof snapshot>;
+  notificationStates: ReadonlyMap<string, string>;
+  agents: ContextAgentRecord[];
+}
+
+function loadStatusBundle(transcriptFile: string): SessionStatusBundle {
   const state = createSessionStatusState();
   for (const { row } of parseTranscript(transcriptFile)) foldLine(state, JSON.stringify(row));
   const sidDir = transcriptFile.endsWith(".jsonl")
@@ -597,14 +687,41 @@ function loadSessionContext(
     : undefined;
   const status = snapshot(state, sidDir);
   const notificationStates = loadTaskNotificationStates(transcriptFile);
-  const allAgents = sidDir ? loadContextAgents(sidDir, status, notificationStates) : [];
-  const agents = allAgents.filter((agent) => !isStoppedAgent(agent));
-  const omitted = allAgents.length - agents.length;
+  return {
+    status,
+    notificationStates,
+    agents: sidDir ? loadContextAgents(sidDir, status, notificationStates) : [],
+  };
+}
+
+function loadSessionContext(
+  session: string,
+  transcriptFile: string,
+  dataDir: string,
+  noAgent: boolean,
+  bundle: SessionStatusBundle,
+  /** Tokens naming the agents the dumped entries actually involve. Agents
+   * outside it are folded to one line. */
+  rangeTokens: ReadonlySet<string>,
+  /** `--agent` already answers "which agent", so the roster of the others is
+   * pure noise in a targeted read. */
+  listPast: boolean,
+): SessionDumpContext {
+  const { status, notificationStates } = bundle;
+  const inRange = new Set(
+    bundle.agents.filter((record) => record.tokens.some((token) => rangeTokens.has(token))),
+  );
+  const past = listPast ? bundle.agents.filter((record) => !inRange.has(record)) : [];
   return {
     kind: "session-context",
     note: SESSION_CONTEXT_NOTE,
     todos: status.todos,
-    ...(noAgent ? {} : { agents, ...(omitted > 0 ? { agents_omitted: omitted } : {}) }),
+    ...(noAgent
+      ? {}
+      : {
+          agents: bundle.agents.filter((record) => inRange.has(record)).map(({ agent }) => agent),
+          ...(past.length > 0 ? { agents_past: past.map((record) => brief(record.agent)) } : {}),
+        }),
     ...(noAgent ? {} : { workflows: status.workflows }),
     background: status.background
       .filter(
@@ -629,9 +746,17 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
   if (since !== undefined && until !== undefined && since > until) {
     throw new Error("--since must not be later than --until");
   }
+  if (options.agent !== undefined && options.noAgent === true) {
+    throw new Error("--agent and --no-agent contradict each other: pick one");
+  }
   const resolved = resolveVirtualTranscript(session, options.configDirs);
   if (!resolved) throw new Error(`session transcript not found: ${session}`);
   const rows = parseTranscript(resolved.file);
+  const bundle = loadStatusBundle(resolved.file);
+  const selectedTokens =
+    options.agent === undefined
+      ? undefined
+      : new Set(resolveAgentSelector(options.agent, bundle.agents).flatMap(({ tokens }) => tokens));
   const canonical = loadCanonicalMessages(options.dataDir);
   const toolUses = new Map<string, ToolUse>();
   const sentEntries: RawSessionDumpEntry[] = [];
@@ -813,6 +938,10 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts) || a._index - b._index)
     .filter((entry) => {
+      if (selectedTokens === undefined) return true;
+      return entryAgentTokens(entry).some((token) => selectedTokens.has(token));
+    })
+    .filter((entry) => {
       const key =
         (entry.kind === "ccmsg-received" || entry.kind === "ccmsg-sent") &&
         typeof entry.meta.room === "string" &&
@@ -820,12 +949,31 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
           ? `${entry.kind}|${entry.meta.room}|${entry.meta.mid}`
           : entry.kind === "peer-message"
             ? `${entry.kind}|${entry.from ?? ""}|${entry.text}`
-            : `${entry.kind}|${entry._index}|${entry.text}`;
+            : // Two tool_use blocks are two distinct actions even when their
+              // texts coincide (several spawns in one assistant turn, all with
+              // an empty prompt), so the tool_use_id keys them apart.
+              typeof entry.meta.tool_use_id === "string"
+              ? `${entry.kind}|${entry.meta.tool_use_id}`
+              : `${entry.kind}|${entry._index}|${entry.text}`;
       if (dedup.has(key)) return false;
       dedup.add(key);
       return true;
     });
   const base = since ?? (filtered[0] ? Date.parse(filtered[0].ts) : Date.now());
+  // An agent is "in range" when the dumped entries involve it. The `--agent`
+  // selection counts too, so the agent that was asked for stays expanded even
+  // when the surrounding time range holds none of its entries.
+  const rangeTokens = new Set<string>(selectedTokens ?? []);
+  for (const entry of filtered) for (const token of entryAgentTokens(entry)) rangeTokens.add(token);
+  const context = loadSessionContext(
+    session,
+    resolved.file,
+    options.dataDir,
+    options.noAgent === true,
+    bundle,
+    rangeTokens,
+    selectedTokens === undefined,
+  );
   return {
     header: {
       session,
@@ -833,8 +981,13 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
       until: until === undefined ? null : new Date(until).toISOString(),
       generated: new Date().toISOString(),
       format: "ccmsg-session-dump-v2",
+      ...(context.agents_past === undefined
+        ? {}
+        : {
+            agent_detail: `ccmsg dump ${session} --agent <agent_id|name> — expand one of the agents_past entries (its spawn prompt, the messages sent to it, its replies)`,
+          }),
     },
-    context: loadSessionContext(session, resolved.file, options.dataDir, options.noAgent === true),
+    context,
     entries: filtered.map(({ _index: _discard, ts, session: _session, ...entry }) => ({
       ...entry,
       t: Date.parse(ts) - base,
