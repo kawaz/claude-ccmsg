@@ -1112,6 +1112,24 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
           {rich.detail ? <span class="tl-sysmsg-chip-detail">{rich.detail}</span> : null}
         </div>
       );
+    case "bash":
+      // TUI の `! <cmd>` 実行 (kawaz r76m7: 「専用分類と表示コンポーネント」)。
+      // ユーザ発話の吹き出しではなく端末実行と分かる形 — プロンプト記号付きの
+      // コマンド行 + 等幅の出力ブロック。stdout/stderr は無い側を出さない。
+      return (
+        <div class="tl-bashcmd">
+          {rich.command !== null ? (
+            <div class="tl-bashcmd-line">
+              <span class="tl-bashcmd-prompt">$</span>
+              <code class="tl-bashcmd-cmd">{rich.command}</code>
+            </div>
+          ) : null}
+          {rich.stdout !== null ? <pre class="tl-bashcmd-out">{rich.stdout}</pre> : null}
+          {rich.stderr !== null ? (
+            <pre class="tl-bashcmd-out tl-bashcmd-err">{rich.stderr}</pre>
+          ) : null}
+        </div>
+      );
     case "peer": {
       const presentation = peerMessagePresentation(rich);
       if (presentation.kind === "idle") return <IdlePeerRow peer={rich} ts={null} />;
@@ -1236,11 +1254,16 @@ function SystemMessageFold({
   // kind 文字列は internal enum なので UI に出す時だけ人間可読形へ (現状
   // spawn-prompt のみ special-case、他 kind は enum ラベルのまま踏襲)。
   const kindLabel = kind === "spawn-prompt" ? "spawn prompt" : kind;
+  // `! <cmd>` の入力行は閉じたままでも何を実行したか分かるように、summary に
+  // コマンドそのものを出す (出力行は本文側にしかないので kindLabel のまま)。
+  const bashCommand = rich.display === "bash" ? rich.command : null;
   const label = peer
     ? `${kindLabel} ← ${peer.from}`
-    : taskSummary && !open
-      ? `${kindLabel} ${taskSummary}`
-      : kindLabel;
+    : bashCommand !== null
+      ? `$ ${bashCommand}`
+      : taskSummary && !open
+        ? `${kindLabel} ${taskSummary}`
+        : kindLabel;
   const decoration: FoldSummaryDecoration | undefined = peer
     ? { kind: "agent", prefix: kindLabel, name: peer.from, direction: "inbound" }
     : taskSummary

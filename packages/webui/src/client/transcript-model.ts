@@ -948,6 +948,8 @@ export type UserMessageKind =
   | "system-caveat"
   | "slash-command-invocation"
   | "slash-command-stdout"
+  | "bash-command-invocation"
+  | "bash-command-stdout"
   | "tool-retry-hint"
   | "task-notification"
   | "workflow-resume"
@@ -1073,6 +1075,16 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
   if (text.startsWith("<agent-message") || text.startsWith("<teammate-message")) {
     return "peer-message";
+  }
+
+  // TUI の `! <cmd>` (bash モード) 実行。ハーネスは入力を `<bash-input>`、
+  // 直後の結果を `<bash-stdout>`+`<bash-stderr>` の別 `type:"user"` 行として
+  // 書く (2026-07-25 実観測、`isMeta` は付かない)。slash command 系と同じく
+  // タグ prefix は人間の発話が取り得ない形なので meta フラグに依らず判定し、
+  // isMeta 分岐の前に置いて両形を 1 箇所で拾う。
+  if (text.startsWith("<bash-input>")) return "bash-command-invocation";
+  if (text.startsWith("<bash-stdout>") || text.startsWith("<bash-stderr>")) {
+    return "bash-command-stdout";
   }
 
   if (isMeta) {
@@ -1479,6 +1491,7 @@ export type PeerMessageCategory = "message" | "idle" | "task-assignment" | "life
 export type SystemMessageRich =
   | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
   | { display: "chip"; label: string; detail: string | null }
+  | { display: "bash"; command: string | null; stdout: string | null; stderr: string | null }
   | {
       display: "peer";
       from: string;
@@ -1692,6 +1705,26 @@ export function parseSystemMessageFields(
         fields.find((f) => f.name === "command-message")?.value ??
         null;
       return { display: "chip", label: command, detail };
+    }
+    case "bash-command-invocation": {
+      const command = unwrapOuterTag(rawText, "bash-input");
+      if (command === null) return { display: "text", text: rawText };
+      return { display: "bash", command: command.trim(), stdout: null, stderr: null };
+    }
+    case "bash-command-stdout": {
+      // 1 行に `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` が
+      // 並ぶ (実観測の形)。空の側は null にして、描画側が出さずに済むように
+      // する (kawaz spec: 「stderr は空なら出さない」)。両方欠けた壊れた入力
+      // だけ text フォールバックへ。
+      const stdout = unwrapOuterTag(rawText, "bash-stdout");
+      const stderr = unwrapOuterTag(rawText, "bash-stderr");
+      if (stdout === null && stderr === null) return { display: "text", text: rawText };
+      return {
+        display: "bash",
+        command: null,
+        stdout: stdout && stdout !== "" ? stripAnsiEscapes(stdout) : null,
+        stderr: stderr && stderr !== "" ? stripAnsiEscapes(stderr) : null,
+      };
     }
     case "slash-command-stdout": {
       const inner = unwrapOuterTag(rawText, "local-command-stdout") ?? rawText;

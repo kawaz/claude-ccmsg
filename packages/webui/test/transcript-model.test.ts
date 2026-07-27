@@ -1425,6 +1425,36 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("slash-command-stdout");
     });
 
+    // TUI の `! <cmd>` (bash モード)。実 transcript では isMeta なしで届く
+    // (2026-07-25 実観測)。
+    test("<bash-input> without isMeta -> bash-command-invocation", () => {
+      const entry = {
+        parentUuid: "p",
+        message: { role: "user", content: "<bash-input>ls</bash-input>" },
+      };
+      expect(classifyUserMessage(entry)).toBe("bash-command-invocation");
+    });
+
+    test("<bash-stdout> + <bash-stderr> -> bash-command-stdout", () => {
+      const entry = {
+        parentUuid: "p",
+        message: {
+          role: "user",
+          content: "<bash-stdout>bin\nbun.lock</bash-stdout><bash-stderr></bash-stderr>",
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("bash-command-stdout");
+    });
+
+    // stdout が空で stderr だけ返るケース (コマンド失敗時) も同じ kind。
+    test("<bash-stderr>-leading content -> bash-command-stdout", () => {
+      const entry = {
+        parentUuid: "p",
+        message: { role: "user", content: "<bash-stderr>no such file</bash-stderr>" },
+      };
+      expect(classifyUserMessage(entry)).toBe("bash-command-stdout");
+    });
+
     test("exact malformed-tool-call retry text -> tool-retry-hint", () => {
       const entry = {
         isMeta: true,
@@ -3238,6 +3268,59 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("slash-command-stdout", raw)).toEqual({
         display: "text",
         text: "Set model to Fable 5",
+      });
+    });
+  });
+
+  describe("bash-command-invocation / bash-command-stdout", () => {
+    test("bash-input -> command with no output fields", () => {
+      const raw = "<bash-input>  ls -la</bash-input>";
+      expect(parseSystemMessageFields("bash-command-invocation", raw)).toEqual({
+        display: "bash",
+        command: "ls -la",
+        stdout: null,
+        stderr: null,
+      });
+    });
+
+    // 空の stderr は null に落として描画側に出させない (kawaz spec:
+    // 「stderr は空なら出さない」)。
+    test("bash-stdout with empty bash-stderr -> stderr null", () => {
+      const raw = "<bash-stdout>bin\nbun.lock</bash-stdout><bash-stderr></bash-stderr>";
+      expect(parseSystemMessageFields("bash-command-stdout", raw)).toEqual({
+        display: "bash",
+        command: null,
+        stdout: "bin\nbun.lock",
+        stderr: null,
+      });
+    });
+
+    test("non-empty stderr is kept, ANSI stripped on both streams", () => {
+      const raw =
+        "<bash-stdout>\x1b[32mok\x1b[0m</bash-stdout><bash-stderr>\x1b[31mboom\x1b[0m</bash-stderr>";
+      expect(parseSystemMessageFields("bash-command-stdout", raw)).toEqual({
+        display: "bash",
+        command: null,
+        stdout: "ok",
+        stderr: "boom",
+      });
+    });
+
+    // 壊れた入力: タグが無い -> text フォールバック (throw しない)。
+    test("missing bash-input tag -> text fallback, no throw", () => {
+      const raw = "ls";
+      expect(() => parseSystemMessageFields("bash-command-invocation", raw)).not.toThrow();
+      expect(parseSystemMessageFields("bash-command-invocation", raw)).toEqual({
+        display: "text",
+        text: "ls",
+      });
+    });
+
+    test("neither bash-stdout nor bash-stderr tag -> text fallback", () => {
+      const raw = "unexpected shape";
+      expect(parseSystemMessageFields("bash-command-stdout", raw)).toEqual({
+        display: "text",
+        text: "unexpected shape",
       });
     });
   });

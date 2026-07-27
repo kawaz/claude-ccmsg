@@ -4483,6 +4483,52 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
+/* TUI の `! <cmd>` 実行 (kawaz r76m7)。ユーザ発話の吹き出しではなく
+ * 「端末で叩いた」と読める見た目にする: プロンプト記号付きコマンド行 +
+ * 等幅の出力ブロック。 */
+.tl-bashcmd {
+  margin-top: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.tl-bashcmd-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.3rem;
+  background: var(--bg-alt);
+}
+
+.tl-bashcmd-prompt {
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.tl-bashcmd-cmd {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tl-bashcmd-out {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  border-left: 2px solid var(--border);
+}
+
+.tl-bashcmd-err {
+  color: var(--danger);
+}
+
 /* tools folding (kawaz spec): ユーザプロンプトと次のユーザ向けアシスタント
  * 最終レスポンスの間に挟まる thinking/tool_use/tool_result/meta 行/ccmsg
  * メッセージを含まないシステムメッセージをまとめて 1 グループに折り畳む。
