@@ -170,7 +170,7 @@ export function SessionView({
   // Phase 3 後続に持ち越す)。
   const needsStatus = tab === "files" || tab === "status" || tab === "timeline";
   useEffect(() => {
-    if (!sid || !needsStatus || !hasStatusFeed) return;
+    if (!active || !sid || !needsStatus || !hasStatusFeed) return;
     if (state.connStatus !== "connected") return;
     // Cancellation guard (same pattern as Timeline's scroll effect): without
     // it, a tab/session switch that tears this effect down BEFORE the
@@ -208,7 +208,7 @@ export function SessionView({
       void ws.sessionStatusUnsubscribe(sid).catch(() => {});
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [sid, needsStatus, hasStatusFeed, statusSource, state.connStatus]);
+  }, [active, sid, needsStatus, hasStatusFeed, statusSource, state.connStatus]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -312,6 +312,7 @@ export function SessionView({
                   sessionStatus={sessionStatus}
                   onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
+                  active={active}
                 />
               ) : (
                 <Timeline
@@ -321,6 +322,7 @@ export function SessionView({
                   sessionStatus={sessionStatus}
                   onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
+                  active={active}
                 />
               );
             })()

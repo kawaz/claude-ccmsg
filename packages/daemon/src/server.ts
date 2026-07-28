@@ -441,6 +441,16 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     ...(id.branch ? { branch: id.branch } : {}),
   };
   const isNewEntry = !entry;
+  const previousTranscriptPath = entry?.meta.transcript_path;
+  if (
+    previousTranscriptPath !== undefined &&
+    transcriptPath !== undefined &&
+    previousTranscriptPath !== transcriptPath
+  ) {
+    daemon.log.info(
+      `session hello: transcript_path changed sid=${id.sid} from=${previousTranscriptPath} to=${transcriptPath}`,
+    );
+  }
   if (!entry) {
     entry = { meta, conns: new Set(), connectedAt: nowIso() };
     daemon.sessions.set(id.sid, entry);

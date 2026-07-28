@@ -390,6 +390,7 @@ interface Watch {
   lineListeners: Set<TranscriptLineListener>;
   fsWatcher: fs.FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
+  log: TailLog;
 }
 
 export interface TranscriptTailStore {
@@ -573,7 +574,7 @@ function startWatching(watch: Watch, log: TailLog): void {
     });
     w.on("error", (e) => {
       log.info(
-        `transcript tail: fs.watch error for ${watch.sid} (${String(e)}), falling back to ${TAIL_POLL_FALLBACK_MS}ms poll`,
+        `transcript tail: fs.watch error sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
       );
       stopFsWatcher(watch);
       stopPolling(watch); // drop the backup-frequency timer before restarting at fallback frequency
@@ -583,13 +584,16 @@ function startWatching(watch: Watch, log: TailLog): void {
     startPolling(watch, log, TAIL_BACKUP_POLL_MS);
   } catch (e) {
     log.info(
-      `transcript tail: fs.watch unavailable for ${watch.sid} (${String(e)}), falling back to ${TAIL_POLL_FALLBACK_MS}ms poll`,
+      `transcript tail: fs.watch unavailable sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} error=${String(e)} fallback_poll_ms=${TAIL_POLL_FALLBACK_MS}`,
     );
     startPolling(watch, log, TAIL_POLL_FALLBACK_MS);
   }
 }
 
-function teardownWatch(watch: Watch): void {
+function teardownWatch(watch: Watch, reason: string): void {
+  watch.log.info(
+    `transcript tail: teardown sid=${watch.sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size} reason=${reason}`,
+  );
   stopFsWatcher(watch);
   stopPolling(watch);
 }
@@ -604,8 +608,17 @@ function getOrCreateWatch(
   if (!resolved.ok) return resolved;
 
   let watch = store.watches.get(sid);
+  let migratedSubscribers: Set<TailConn> | undefined;
+  let migratedListeners: Set<TranscriptLineListener> | undefined;
+  let replacedFrom: string | undefined;
   if (watch && watch.file !== resolved.file) {
-    teardownWatch(watch);
+    replacedFrom = watch.file;
+    migratedSubscribers = watch.subscribers;
+    migratedListeners = watch.lineListeners;
+    log.info(
+      `transcript tail: path replace sid=${sid} from=${watch.file} to=${resolved.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size}`,
+    );
+    teardownWatch(watch, "path-replaced");
     store.watches.delete(sid);
     watch = undefined;
   }
@@ -623,20 +636,27 @@ function getOrCreateWatch(
       ino: stat.ino,
       birthtimeMs: stat.birthtimeMs,
       sawMissing: false,
-      subscribers: new Set(),
-      lineListeners: new Set(),
+      subscribers: migratedSubscribers ?? new Set(),
+      lineListeners: migratedListeners ?? new Set(),
       fsWatcher: null,
       pollTimer: null,
+      log,
     };
     store.watches.set(sid, watch);
     startWatching(watch, log);
+    log.info(
+      `transcript tail: create sid=${sid} file=${watch.file} subscribers=${watch.subscribers.size} listeners=${watch.lineListeners.size}`,
+    );
+    if (replacedFrom !== undefined) {
+      broadcast(watch, { lines: [], start: stat.size, end: stat.size, size: stat.size });
+    }
   }
   return { ok: true, data: watch };
 }
 
 function maybeTeardownWatch(store: TranscriptTailStore, watch: Watch): void {
   if (watch.subscribers.size !== 0 || watch.lineListeners.size !== 0) return;
-  teardownWatch(watch);
+  teardownWatch(watch, "unused");
   store.watches.delete(watch.sid);
 }
 
@@ -719,6 +739,6 @@ export function transcriptUnsubscribeAll(store: TranscriptTailStore, conn: TailC
 
 /** Unconditional stop of every Watch, for daemon shutdown. */
 export function stopAllTailWatches(store: TranscriptTailStore): void {
-  for (const watch of store.watches.values()) teardownWatch(watch);
+  for (const watch of store.watches.values()) teardownWatch(watch, "shutdown");
   store.watches.clear();
 }

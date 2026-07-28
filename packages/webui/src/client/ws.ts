@@ -68,6 +68,15 @@ import { readStorage, writeStorage } from "./storage.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
+const KEEPALIVE_IDLE_MS = 30_000;
+const KEEPALIVE_TIMEOUT_MS = 10_000;
+const KEEPALIVE_CHECK_MS = 5_000;
+
+export interface WsKeepaliveOptions {
+  idleMs?: number;
+  timeoutMs?: number;
+  checkMs?: number;
+}
 
 function loadSince(): Record<string, number> {
   const raw = readStorage(SINCE_KEY);
@@ -323,6 +332,7 @@ type TwoPhaseOutcome =
 export function createWsClient(
   dispatch: (action: Action) => void,
   getState: () => AppState,
+  keepalive: WsKeepaliveOptions = {},
 ): WsHandle {
   let ws: WebSocket | null = null;
   let pending: Array<(v: Response) => void> = [];
@@ -337,6 +347,12 @@ export function createWsClient(
   let reconnectAttempt = 0;
   let closedByUs = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  let keepaliveTimeout: ReturnType<typeof setTimeout> | null = null;
+  let lastReceivedAt = Date.now();
+  const keepaliveIdleMs = keepalive.idleMs ?? KEEPALIVE_IDLE_MS;
+  const keepaliveTimeoutMs = keepalive.timeoutMs ?? KEEPALIVE_TIMEOUT_MS;
+  const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
   const since = loadSince();
 
   function send<T extends Response>(req: Request): Promise<T> {
@@ -628,7 +644,39 @@ export function createWsClient(
     for (const settle of stale) settle(closed);
   }
 
+  function stopKeepalive(): void {
+    if (keepaliveTimer !== null) {
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = null;
+    }
+    if (keepaliveTimeout !== null) {
+      clearTimeout(keepaliveTimeout);
+      keepaliveTimeout = null;
+    }
+  }
+
+  function startKeepalive(socket: WebSocket): void {
+    stopKeepalive();
+    lastReceivedAt = Date.now();
+    keepaliveTimer = setInterval(() => {
+      if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
+      if (keepaliveTimeout !== null || Date.now() - lastReceivedAt < keepaliveIdleMs) return;
+
+      void send<PingResponse>({ op: "ping" }).then(() => {
+        if (socket !== ws || keepaliveTimeout === null) return;
+        clearTimeout(keepaliveTimeout);
+        keepaliveTimeout = null;
+      });
+      keepaliveTimeout = setTimeout(() => {
+        if (socket !== ws) return;
+        keepaliveTimeout = null;
+        connect();
+      }, keepaliveTimeoutMs);
+    }, keepaliveCheckMs);
+  }
+
   function onClose(): void {
+    stopKeepalive();
     dispatch({ type: "conn/status", status: "disconnected" });
     flushPending();
     if (closedByUs) return;
@@ -640,6 +688,7 @@ export function createWsClient(
 
   function connect(): void {
     closedByUs = false;
+    stopKeepalive();
     // A manual connect() supersedes any scheduled auto-reconnect; without this,
     // the pending timer would fire later and knock down the fresh socket.
     if (reconnectTimer !== null) {
@@ -661,10 +710,12 @@ export function createWsClient(
     // connection — that's the mis-delivery this whole file exists to avoid.
     socket.addEventListener("open", () => {
       if (socket !== ws) return;
+      startKeepalive(socket);
       void onOpen();
     });
     socket.addEventListener("message", (e) => {
       if (socket !== ws) return;
+      lastReceivedAt = Date.now();
       onMessage(e.data as string);
     });
     socket.addEventListener("close", () => {
@@ -687,6 +738,7 @@ export function createWsClient(
     connect,
     close() {
       closedByUs = true;
+      stopKeepalive();
       // Cancel a scheduled auto-reconnect too: close() means "stop", including
       // the reconnect already queued by a close event that preceded this call.
       if (reconnectTimer !== null) {

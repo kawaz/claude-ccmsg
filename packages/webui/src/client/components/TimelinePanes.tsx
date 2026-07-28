@@ -40,6 +40,7 @@ export function TimelinePanes({
   sessionStatus,
   onOpenStatus,
   agent,
+  active,
 }: {
   sid: string;
   /** 呼び出し側 (SessionView) で空でないことを確認済み前提。r46 m8:
@@ -50,6 +51,7 @@ export function TimelinePanes({
   sessionStatus: SessionStatusSnapshot | undefined;
   onOpenStatus: () => void;
   agent?: AgentRef | null;
+  active: boolean;
 }) {
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,6 +94,7 @@ export function TimelinePanes({
           sessionStatus={sessionStatus}
           onOpenStatus={onOpenStatus}
           agent={agent}
+          active={active}
         />
       </div>
     </div>

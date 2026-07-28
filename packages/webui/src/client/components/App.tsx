@@ -1,3 +1,4 @@
+import { memo } from "preact/compat";
 import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
@@ -11,7 +12,11 @@ import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
-import { touchSessionViewCache, type CachedSessionView } from "../session-view-cache.ts";
+import {
+  skipInactiveSessionViewRender,
+  touchSessionViewCache,
+  type CachedSessionView,
+} from "../session-view-cache.ts";
 
 const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
 const SIDEBAR_MIN_PX = 200;
@@ -93,6 +98,10 @@ function NavigationErrorView({ message, onDismiss }: { message: string; onDismis
     </main>
   );
 }
+
+const CachedSessionViewComponent = memo(SessionView, (previous, next) =>
+  skipInactiveSessionViewRender(previous.active, next.active),
+);
 
 export function App() {
   const { store } = useApp();
@@ -189,7 +198,7 @@ export function App() {
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
         {sessionViewsRef.current.map((view) => (
-          <SessionView
+          <CachedSessionViewComponent
             key={view.sid}
             state={state}
             sid={view.sid}

@@ -930,6 +930,43 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
   );
 
   test(
+    "transcript_path 変更で Watch を置換しても既存 wire subscriber を新しいファイルへ移行する",
+    async () => {
+      const ctx = await startTestDaemon();
+      const dir1 = mkfixtureDir();
+      const dir2 = mkfixtureDir();
+      try {
+        const sid = "A";
+        const file1 = path.join(dir1, `${sid}.jsonl`);
+        const file2 = path.join(dir2, `${sid}.jsonl`);
+        fs.writeFileSync(file1, "old\n");
+        fs.writeFileSync(file2, "new\n");
+        await sessionHello(ctx, sid, { transcript_path: file1 });
+
+        const u = await userHello(ctx);
+        // session-errors の内部 line listener を有効にする。path 変更時にこの
+        // listener が新 Watch を要求しても、同じ Watch を共有する Timeline の
+        // wire subscriber は失われず、新 path の追記を受け続ける必要がある。
+        await u.request({ op: "subscribe" });
+        await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+
+        await sessionHello(ctx, sid, { transcript_path: file2 });
+        fs.appendFileSync(file2, "after-path-change\n");
+        const { ev } = await u.readEventUntil<TranscriptTailEvent>(
+          (event) => event.ev === "transcript" && event.lines.length > 0,
+        );
+        expect(ev.lines).toEqual(["after-path-change"]);
+        expect(ev.start).toBe(Buffer.byteLength("new\n"));
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir1, { recursive: true, force: true });
+        fs.rmSync(dir2, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
     "transcript_unsubscribe 後は追記してもイベントが届かない",
     async () => {
       const ctx = await startTestDaemon();

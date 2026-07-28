@@ -1,10 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { touchSessionViewCache, type CachedSessionView } from "../src/client/session-view-cache.ts";
+import {
+  skipInactiveSessionViewRender,
+  touchSessionViewCache,
+  type CachedSessionView,
+} from "../src/client/session-view-cache.ts";
 
 const entry = (sid: string, tab: CachedSessionView["tab"] = "timeline"): CachedSessionView => ({
   sid,
   tab,
   agent: null,
+});
+
+describe("hidden session view render bailout", () => {
+  // Hidden DOM is retained solely for instant restoration. Store updates while
+  // both renders are hidden must not rebuild it, while activation/deactivation
+  // edges must render so visibility and catch-up effects change ownership.
+  test("skips only inactive-to-inactive updates", () => {
+    expect(skipInactiveSessionViewRender(false, false)).toBe(true);
+    expect(skipInactiveSessionViewRender(false, true)).toBe(false);
+    expect(skipInactiveSessionViewRender(true, false)).toBe(false);
+    expect(skipInactiveSessionViewRender(true, true)).toBe(false);
+  });
 });
 
 describe("session view LRU cache", () => {

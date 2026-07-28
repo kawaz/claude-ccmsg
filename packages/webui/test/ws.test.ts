@@ -104,6 +104,29 @@ afterEach(() => {
   }
 });
 
+describe("createWsClient keepalive", () => {
+  test("an open socket that receives nothing is pinged and replaced when the ping also gets no reply", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+      { idleMs: 15, checkMs: 5, timeoutMs: 10 },
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0]!;
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+
+    // The hello handshake itself is deliberately left unanswered: a silently
+    // dead TCP/WebSocket can remain OPEN locally while delivering no daemon
+    // frames. Keepalive must not depend on the handshake Promise settling.
+    await Bun.sleep(50);
+    expect(ws1.sent.map((raw) => JSON.parse(raw).op)).toContain("ping");
+    expect(instances.length).toBeGreaterThanOrEqual(2);
+    expect(ws1.readyState).toBe(MockWebSocket.CLOSED);
+  });
+});
+
 describe("createWsClient pending queue on close/reconnect", () => {
   test("onClose settles in-flight requests instead of hanging their Promise forever", async () => {
     const actions: Action[] = [];

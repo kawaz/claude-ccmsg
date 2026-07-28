@@ -2316,6 +2316,7 @@ export function Timeline({
   sessionStatus,
   onOpenStatus,
   agent,
+  active,
 }: {
   sid: string;
   timeline: TimelineState;
@@ -2338,6 +2339,7 @@ export function Timeline({
    * 遷移」)。SessionView 側のローカルタブ state を差し替えるだけなので、
    * ここではコールバックとして受け取る。 */
   onOpenStatus: () => void;
+  active: boolean;
 }) {
   const { store, ws } = useApp();
   const appState = useStoreState(store);
@@ -2426,13 +2428,13 @@ export function Timeline({
     [autoOpenSettings, autoOpenRevision],
   );
   useEffect(() => {
-    if (agentActive) return;
+    if (!active || agentActive) return;
     if (connStatus !== "connected") return;
     void ws.transcriptSubscribe(sid).catch(() => {});
     return () => {
       void ws.transcriptUnsubscribe(sid).catch(() => {});
     };
-  }, [sid, connStatus, agentActive]);
+  }, [active, sid, connStatus, agentActive]);
 
   // Build the transcriptRead opts once so every call site below stays in sync.
   const agentOpts = useMemo(() => {
@@ -2452,7 +2454,7 @@ export function Timeline({
   // rendered as "読み込み中…" below) until connStatus flips to "connected",
   // which re-evaluates this effect via the dep list.
   useEffect(() => {
-    if (timeline.status !== "idle") return;
+    if (!active || timeline.status !== "idle") return;
     if (connStatus !== "connected") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
@@ -2466,7 +2468,7 @@ export function Timeline({
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
-  }, [sid, timeline.status, connStatus]);
+  }, [active, sid, timeline.status, connStatus]);
 
   // Resync on a non-contiguous tail push (DR-0009 addendum, adversarial
   // review fix): applyTimelineTail (store.ts) can only detect that a
@@ -2484,7 +2486,7 @@ export function Timeline({
   // again — self-healing, no bound on retries needed since each attempt is
   // a normal full tail read.
   useEffect(() => {
-    if (!timeline.needsResync) return;
+    if (!active || !timeline.needsResync) return;
     if (connStatus !== "connected") return;
     void ws
       .transcriptRead(sid, agentOpts)
@@ -2497,7 +2499,7 @@ export function Timeline({
       .catch((err) => {
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
-  }, [sid, timeline.needsResync, connStatus]);
+  }, [active, sid, timeline.needsResync, connStatus]);
 
   // Auto-refresh on Timeline visit (TLR-Q1=b裁定, issue
   // 2026-07-14-session-tl-refresh-on-revisit): SessionTreeState's timeline
@@ -2524,7 +2526,7 @@ export function Timeline({
   //   the current protocol. The response's own start/end/lines become the
   //   new cache wholesale (same shape as refresh() below).
   useEffect(() => {
-    if (connStatus !== "connected") return;
+    if (!active || connStatus !== "connected") return;
     if (timeline.status !== "loaded" && timeline.status !== "error") return;
     store.dispatch({ type: "timeline/loading", sid });
     void ws
@@ -2539,7 +2541,7 @@ export function Timeline({
         store.dispatch({ type: "timeline/loaded", sid, mode: "replace", error: errorMessage(err) });
       });
     // timeline.status is intentionally not in deps — see doc comment above.
-  }, [sid, connStatus]);
+  }, [active, sid, connStatus]);
 
   function loadOlder() {
     if (timeline.status === "loading" || timeline.atStart) return;
