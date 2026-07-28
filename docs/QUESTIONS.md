@@ -74,10 +74,10 @@
 
 ### 👺WEBUI-C12: Status タブの入れ替え (v0.74.0)
 
-- [ ] a: Workflows と Teams のセクションが消えている (TL のエージェントツリーに一本化)
-- [ ] b: 残った Background / TODO / メタ情報 (CWD・SESSION_ID・PID・CTX 等) / 危険ゾーンが正常に出る
-- [ ] c: ENV が折りたたみで出て、開くと名前昇順のテーブルになる
-- [ ] d: 空白区切りの AND 検索が名前と値の両方に当たる (例: `claude personal`)
+- [x] a: Workflows と Teams のセクションが消えている (TL のエージェントツリーに一本化)
+- [x] b: 残った Background / TODO / メタ情報 (CWD・SESSION_ID・PID・CTX 等) / 危険ゾーンが正常に出る
+- [x] c: ENV が折りたたみで出て、開くと名前昇順のテーブルになる
+- [x] d: 空白区切りの AND 検索が名前と値の両方に当たる (例: `claude personal`)
 - [ ] e: コロン区切りを改行にするスイッチで `PATH` が読みやすくなる
 - [ ] f: 機微な名前 (`*TOKEN` / `*KEY` / `*SESSION*` 等) の値が伏字で、クリックで表示・再クリックで非表示に戻る
 - [ ] g: マスクされた値も検索に当たる (値で探して名前が見つかる)
