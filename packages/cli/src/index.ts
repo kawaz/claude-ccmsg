@@ -13,6 +13,7 @@ import {
   reconnectSubscribeNoSpawn,
   waitDaemonGone,
 } from "./client.ts";
+import { watchSubscribeOwner } from "./subscribe-owner.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -345,6 +346,27 @@ async function runSubscribe(
   // (BBS delta model, DR-0003 §5)。ユーザ指定の --since を初期値として seed し、
   // 以降は受信した event 毎に更新する。
   const sinceMap: Record<string, number> = { ...initialSince };
+  // Claude Code keeps one sessions/<pid>.json registry row for the current
+  // conversation and rewrites its sessionId on /clear. Watch that row so this
+  // sidecar cannot keep announcing the old sid after its owner moved on. The
+  // watcher is conservative: absent/unreadable registry state disables this
+  // supervision rather than terminating a potentially valid stream.
+  const ownerWatch =
+    identity.role === "session"
+      ? watchSubscribeOwner(process.env.CLAUDE_CONFIG_DIR, identity.sid)
+      : null;
+  const OWNER_STALE: unique symbol = Symbol("owner-stale");
+  const ownerStale = ownerWatch?.stale.then(() => OWNER_STALE);
+  const stopForStaleOwner = (): never => {
+    ownerWatch?.close();
+    process.exit(0);
+  };
+  const raceOwner = async <T>(operation: Promise<T>): Promise<T> => {
+    if (!ownerStale) return operation;
+    const result = await Promise.race([operation, ownerStale]);
+    if (result === OWNER_STALE) stopForStaleOwner();
+    return result as T;
+  };
   let client: Client = await ensureDaemon(paths, identity);
   const ack = await client.request<{ ok?: boolean }>({
     op: "subscribe",
@@ -358,7 +380,7 @@ async function runSubscribe(
   let attempt = 0;
   outer: for (;;) {
     for (;;) {
-      const line = await client.readLine();
+      const line = await raceOwner(client.readLine());
       if (line === null) break; // socket closed → 再接続へ
       // 1 行 parse して 2 つの副作用を掛ける:
       //   (a) 接続制御イベント (`restarting` / `room_cursors`) は stdout に流さない。
@@ -389,7 +411,7 @@ async function runSubscribe(
     // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
     // `ccmsg daemon stop` を subscribe が resurrection しない契約。
     for (;;) {
-      const c = await reconnectSubscribeNoSpawn(paths, identity, sinceMap);
+      const c = await raceOwner(reconnectSubscribeNoSpawn(paths, identity, sinceMap));
       if (c !== null) {
         client = c;
         attempt = 0;
@@ -397,7 +419,7 @@ async function runSubscribe(
       }
       const delay = BACKOFFS_MS[Math.min(attempt, BACKOFFS_MS.length - 1)]!;
       attempt++;
-      await new Promise<void>((res) => setTimeout(res, delay));
+      await raceOwner(new Promise<void>((res) => setTimeout(res, delay)));
     }
   }
 }
