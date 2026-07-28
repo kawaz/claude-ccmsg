@@ -14,7 +14,6 @@ import {
   extractInlineCodeTokens,
   previewFilePathCtx,
   alternateLinkReading,
-  refLinkCandidates,
   refLinkTarget,
   viewerPathForAbsolute,
 } from "../src/client/filepath-ref.ts";
@@ -229,17 +228,16 @@ describe("previewFilePathCtx", () => {
   const ROOT = "/repo/main";
 
   test("a contained path anchors at the previewed file's own directory", () => {
-    expect(previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT, ROOT)).toEqual({
+    expect(previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)).toEqual({
       sid: "S1",
       cwd: "/repo/main/docs/design",
       docPath: "docs/design/QUESTIONS.md",
-      docRoot: "/repo/main",
       containmentRoot: "/repo/main",
     });
   });
 
   test("a sibling link resolves next to the file, not next to the repo root", () => {
-    const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT, ROOT)!;
+    const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", ROOT)!;
     expect(refToAbsolutePath({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
     expect(refToAbsolutePath({ path: "../spec.md" }, ctx)).toBe("/repo/main/docs/spec.md");
   });
@@ -247,16 +245,15 @@ describe("previewFilePathCtx", () => {
   // An absolute link means the same thing under either anchor, so it must not
   // be rebased onto the file's directory.
   test("an absolute link target ignores the anchor", () => {
-    const ctx = previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT, ROOT)!;
+    const ctx = previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)!;
     expect(refToAbsolutePath({ path: "/etc/hosts" }, ctx)).toBe("/etc/hosts");
   });
 
   test("a file at the root anchors at the root itself", () => {
-    expect(previewFilePathCtx("S1", "README.md", ROOT, ROOT)).toEqual({
+    expect(previewFilePathCtx("S1", "README.md", ROOT)).toEqual({
       sid: "S1",
       cwd: "/repo/main",
       docPath: "README.md",
-      docRoot: "/repo/main",
       containmentRoot: "/repo/main",
     });
   });
@@ -264,15 +261,13 @@ describe("previewFilePathCtx", () => {
   // The document's own viewer path rides along so a 404 downstream can re-read
   // a failed link against the other convention (kawaz r55 m152).
   test("the ctx carries the previewed document's own path", () => {
-    expect(previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT, ROOT)?.docPath).toBe(
-      "docs/QUESTIONS.md",
-    );
+    expect(previewFilePathCtx("S1", "docs/QUESTIONS.md", ROOT)?.docPath).toBe("docs/QUESTIONS.md");
   });
 
   // External / workspace files reach the viewer as absolute paths, where the
   // session root plays no part.
   test("an absolute viewer path anchors without needing the session root", () => {
-    expect(previewFilePathCtx("S1", "/other/place/doc.md", undefined, undefined)).toEqual({
+    expect(previewFilePathCtx("S1", "/other/place/doc.md", undefined)).toEqual({
       sid: "S1",
       cwd: "/other/place",
       docPath: "/other/place/doc.md",
@@ -280,7 +275,7 @@ describe("previewFilePathCtx", () => {
   });
 
   test("a file directly under / anchors at /", () => {
-    expect(previewFilePathCtx("S1", "/doc.md", undefined, undefined)).toEqual({
+    expect(previewFilePathCtx("S1", "/doc.md", undefined)).toEqual({
       sid: "S1",
       cwd: "/",
       docPath: "/doc.md",
@@ -290,103 +285,67 @@ describe("previewFilePathCtx", () => {
   // Fail closed: with no way to form an absolute anchor the caller gets
   // `undefined`, which disables linking rather than guessing a base.
   test("a relative viewer path with no session root yields no ctx", () => {
-    expect(previewFilePathCtx("S1", "docs/a.md", undefined, undefined)).toBeUndefined();
+    expect(previewFilePathCtx("S1", "docs/a.md", undefined)).toBeUndefined();
   });
 });
 
-// The worktree layout, where the two roots differ: the daemon serves from the
-// container (`repo_root`) so viewer paths are relative to it, but the tree an
-// author calls "the root" is the working copy (`cwd`). Reading a leading `/`
-// against the container lands under `<repo>/`, which in a jj repo holds only
-// sibling workspaces — no `docs/`, no `packages/` — so every root-relative link
-// in every previewed document 404'd (kawaz 実機報告).
-describe("previewFilePathCtx (worktree layout: cwd below the containment root)", () => {
+// The worktree layout, where the daemon serves from a container (`repo_root`)
+// holding sibling workspaces, so viewer paths are relative to it while the
+// document itself lives a level down. The anchor is derived from the document's
+// own location either way, so nothing here depends on which of the two roots
+// the session announced.
+describe("previewFilePathCtx (worktree layout: document below the containment root)", () => {
   const CONTAINER = "/repo";
-  const CWD = "/repo/main";
 
-  test("docRoot is the cwd, containmentRoot the container", () => {
-    expect(previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER, CWD)).toEqual({
+  test("the anchor is the document's directory, the containment root the container", () => {
+    expect(previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER)).toEqual({
       sid: "S1",
       cwd: "/repo/main/docs",
       docPath: "main/docs/QUESTIONS.md",
-      docRoot: "/repo/main",
       containmentRoot: "/repo",
     });
   });
 
-  test("a root-relative link resolves inside the working copy, not the container", () => {
-    const ctx = previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER, CWD)!;
-    expect(refLinkTarget({ path: "/docs/decisions/DR-0008.md" }, ctx)).toBe(
+  test("a resolved target is addressed relative to what the daemon serves from", () => {
+    const ctx = previewFilePathCtx("S1", "main/docs/QUESTIONS.md", CONTAINER)!;
+    expect(refLinkTarget({ path: "decisions/DR-0008.md" }, ctx)).toBe(
       "/repo/main/docs/decisions/DR-0008.md",
     );
-    // …and the viewer addresses it relative to what the daemon serves from.
     expect(viewerPathForAbsolute("/repo/main/docs/decisions/DR-0008.md", ctx.containmentRoot)).toBe(
       "main/docs/decisions/DR-0008.md",
     );
   });
-
-  // A document in a *sibling* workspace is reachable through the container but
-  // is not in the cwd tree, so the cwd is not its root and a leading `/` keeps
-  // its filesystem reading rather than being rebased into the wrong workspace.
-  test("a document outside the cwd tree gets no docRoot", () => {
-    const ctx = previewFilePathCtx("S1", "other-ws/docs/x.md", CONTAINER, CWD)!;
-    expect(ctx.docRoot).toBeUndefined();
-    expect(refLinkTarget({ path: "/docs/x.md" }, ctx)).toBe("/docs/x.md");
-  });
 });
 
-// Absolute-link readings (kawaz r55 m116/m117). `/fixtures/a.json` written
-// inside a repo document is the shape from the original report: read purely as
-// a filesystem path it points outside the repo and dies, but as repo-root
-// relative it is exactly the file the author meant.
-describe("refLinkCandidates", () => {
-  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main", "/repo/main")!;
-
-  test("a relative target has the single cwd-anchored reading", () => {
-    expect(refLinkCandidates({ path: "notes.md" }, ctx)).toEqual([
-      "/repo/main/docs/design/notes.md",
-    ]);
-  });
-
-  test("an absolute target offers the filesystem reading first, repo-root second", () => {
-    expect(refLinkCandidates({ path: "/fixtures/a.json" }, ctx)).toEqual([
-      "/fixtures/a.json",
-      "/repo/main/fixtures/a.json",
-    ]);
-  });
-
-  // Without a document root there is nothing to rebase against, so the
-  // filesystem reading stands alone — message bodies take this path.
-  test("no docRoot leaves the filesystem reading as the only candidate", () => {
-    expect(refLinkCandidates({ path: "/etc/hosts" }, { sid: "S1", cwd: "/repo/main" })).toEqual([
-      "/etc/hosts",
-    ]);
-  });
-
-  test("a target naming the doc root itself yields no rebased duplicate", () => {
-    expect(refLinkCandidates({ path: "/" }, ctx)).toEqual(["/"]);
-  });
-});
-
-// With the existence probe gone (kawaz r55 m129) the reading of a leading `/`
-// can no longer be settled by "whichever one exists", so it is decided up
-// front. What is pinned here is *which* reading wins, since that is the whole
-// user-visible behavior of an ambiguous target now.
+// The reading of a leading `/` (kawaz r76 m11). The viewer reaches files
+// outside the session's tree (DR-0008), so an absolute target has to name the
+// file it literally spells — that reading is unambiguously correct, whereas the
+// root-relative one is a convention the author only might have meant. A
+// root-relative intent 404s and is recovered by `alternateLinkReading` below.
 describe("refLinkTarget", () => {
-  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main", "/repo/main")!;
+  const ctx = previewFilePathCtx("S1", "docs/design/QUESTIONS.md", "/repo/main")!;
 
-  test("a relative target keeps its single cwd-anchored reading", () => {
+  test("a relative target anchors at the document's own directory", () => {
     expect(refLinkTarget({ path: "notes.md" }, ctx)).toBe("/repo/main/docs/design/notes.md");
+    expect(refLinkTarget({ path: "../spec.md" }, ctx)).toBe("/repo/main/docs/spec.md");
   });
 
-  // The document reading, not the filesystem one: `/fixtures/a.json` inside a
-  // repo document means repo-root-relative, which is the case this resolution
-  // exists to serve.
-  test("inside a document, a leading / is read as repo-root relative", () => {
-    expect(refLinkTarget({ path: "/fixtures/a.json" }, ctx)).toBe("/repo/main/fixtures/a.json");
+  // The whole point of the change: a genuine absolute path — including one
+  // outside the session's tree, which the external read path serves — resolves
+  // to itself instead of being rebased into the document's tree and dying.
+  test("a leading / is the filesystem path, never rebased onto the document tree", () => {
+    expect(refLinkTarget({ path: "/Users/x/notes.md" }, ctx)).toBe("/Users/x/notes.md");
+    expect(refLinkTarget({ path: "/etc/hosts" }, ctx)).toBe("/etc/hosts");
   });
 
-  test("without a docRoot the only reading is filesystem-absolute", () => {
+  // A target written with root-relative intent gets the same treatment — it
+  // resolves outside the repo and 404s, which is what earns the "did you mean".
+  test("a root-relative intent is not honored, it resolves literally", () => {
+    expect(refLinkTarget({ path: "/fixtures/a.json" }, ctx)).toBe("/fixtures/a.json");
+  });
+
+  // Message bodies carry no document ctx and always took this reading.
+  test("the reading does not depend on having a document ctx", () => {
     expect(refLinkTarget({ path: "/etc/hosts" }, { sid: "S1", cwd: "/repo/main" })).toBe(
       "/etc/hosts",
     );
@@ -447,10 +406,10 @@ describe("alternateLinkReading", () => {
     expect(alternateLinkReading("docs/spec.md", "")).toBeNull();
   });
 
-  // Absolute targets reach here only from a document outside the session's cwd
-  // tree, where `refLinkTarget` kept the filesystem reading. The documentation
-  // reading is the recoverable other one — but only when there is a cwd to read
-  // it against.
+  // `refLinkTarget` always keeps the filesystem reading of a leading `/`, so
+  // every absolute target that 404s reaches here. The documentation reading is
+  // the recoverable other one — but only when there is a cwd to read it
+  // against.
   test("an absolute target has only one reading without a cwd", () => {
     expect(alternateLinkReading("/etc/hosts", "docs")).toBeNull();
   });

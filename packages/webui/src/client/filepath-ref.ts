@@ -137,21 +137,11 @@ export interface FilePathResolveCtx {
   /** Absolute cwd of the sender at the time the message was sent. The anchor
    * every relative token resolves against — see `refToAbsolutePath`. */
   cwd?: string;
-  /** Root a markdown link's leading `/` is read against (`refLinkCandidates`).
-   * Set only where a document's own conventions apply — the file preview,
-   * where it is the **session's cwd**: "the repo root" as an author means it is
-   * the working copy they are editing in, which is what cwd names. The
-   * containment root is deliberately *not* used here — under a worktree layout
-   * (cwd `<repo>/<ws>`, repo_root `<repo>`) it is a container holding sibling
-   * workspaces, and reading `/docs/x.md` against it lands in a tree the author
-   * never wrote about. Absent for message bodies, whose paths are
-   * process-relative, not document-relative. */
-  docRoot?: string;
   /** Root the FileViewer addresses contained paths relative to — the daemon's
    * containment root (`repo_root ?? cwd`, see fs-access `resolveRoot`). Used
    * only to convert a resolved absolute path back into a viewer path
    * (`viewerPathForAbsolute`); it is a *serving* boundary, never a reading
-   * base, which is why it is separate from `docRoot`. */
+   * base — nothing resolves a link against it. */
   containmentRoot?: string;
   /** Absolute repo containment root, when the session announced one and the
    * daemon accepted it. Only a fallback anchor for senders that announced no
@@ -224,64 +214,30 @@ export function refToAbsolutePath(ref: ParsedFilePathRef, ctx: FilePathResolveCt
   return abs;
 }
 
-/** Absolute candidates to probe for a **markdown link** target, in preference
- * order (kawaz r55 m116/m117).
+/** The single absolute path a **markdown link** target names (kawaz r76 m11).
  *
- * A relative target has exactly one reading (anchored at `ctx.cwd`, same as
- * `refToAbsolutePath`). A target with a leading `/` has two, and which one an
- * author meant depends on where they were writing:
+ * Each of the two target shapes has exactly one reading:
  *
- *   1. Filesystem-absolute — `/etc/hosts`, `/Users/x/notes.md`.
- *   2. Repo-root-relative — `/fixtures/a.json` written inside a repo document,
- *      the convention most documentation tooling uses and the shape that
- *      prompted this work.
+ *   - Relative — anchored at `ctx.cwd`, same as `refToAbsolutePath`. In the
+ *     file preview that is the previewed document's own directory, which is
+ *     the markdown convention (see `previewFilePathCtx`).
+ *   - Leading `/` — the filesystem path, always. The viewer reaches files
+ *     outside the session's tree too (DR-0008), so `/Users/x/notes.md` has to
+ *     name that file and nothing else; rebasing it onto the document's tree
+ *     would break the one reading that is unambiguously correct in order to
+ *     serve a root-relative convention the author only *might* have meant.
  *
- * Both are probed and the first *confirmed* one wins. Ordering filesystem
- * first keeps a genuinely absolute path resolving to itself; the repo-root
- * reading is what a leading `/` almost always means in practice, but only
- * where the first reading found nothing, so it can never shadow a real file.
+ * A leading `/` written with root-relative intent therefore 404s. That is the
+ * accepted cost and it is not a dead end: the not-found view derives the
+ * cwd-relative reading and offers it (`alternateLinkReading`), so the wrong
+ * guess costs one extra click instead of silently landing somewhere else.
  *
- * This is not the ambiguity `refToAbsolutePath` refuses to guess at. There the
- * two candidates were sibling *worktrees* with identical tree shapes, so a
- * fallback hit was likely to be a different same-named file. Here the two
- * candidates live in unrelated parts of the filesystem and a hit on either is
- * the file the author named. */
-export function refLinkCandidates(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string[] {
-  if (!ref.path.startsWith("/")) {
-    const abs = refToAbsolutePath(ref, ctx);
-    return abs ? [abs] : [];
-  }
-  const candidates = [normalizePosix(ref.path)];
-  const root = ctx.docRoot?.replace(/\/+$/, "");
-  if (root) {
-    const rebased = normalizePosix(root + ref.path);
-    if (rebased !== candidates[0] && rebased !== root) candidates.push(rebased);
-  }
-  return candidates;
-}
-
-/** The single absolute path a markdown link target names — chosen without
- * asking the daemon anything (kawaz r55 m129).
- *
- * Links used to be rendered only once `fs_stat_batch` confirmed the file, so
- * the reading could be picked by which candidate existed. That gate is gone:
- * it made every link inert until the probe answered (so a reload left the
- * whole document unclickable for a beat) and the unconfirmed styling was
- * indistinguishable from an ordinary in-app link. Links now always resolve,
- * and a wrong guess lands on the viewer's not-found view, which says so and
- * leaves the sidebar intact.
- *
- * Without a probe the two readings of a leading `/` (see `refLinkCandidates`)
- * have to be decided up front, and the **document reading wins wherever a
- * `docRoot` exists**: inside a repo document `/fixtures/a.json` means
- * repo-root-relative — that convention is the reason this resolution exists at
- * all — whereas a filesystem-absolute target is nearly always written as one
- * the reader can also see in the tree. With no `docRoot` (message bodies) the
- * only reading is filesystem-absolute, unchanged. */
+ * Nothing is probed before rendering — links resolve synchronously so they are
+ * clickable the moment the document paints, and a miss lands on the viewer's
+ * not-found view rather than leaving the link inert (kawaz r55 m129). */
 export function refLinkTarget(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): string | null {
-  const candidates = refLinkCandidates(ref, ctx);
-  if (candidates.length === 0) return null;
-  return candidates[candidates.length - 1]!;
+  if (ref.path.startsWith("/")) return normalizePosix(ref.path);
+  return refToAbsolutePath(ref, ctx);
 }
 
 /** Turn an absolute path into the shape the FileViewer addresses it by:
@@ -290,8 +246,8 @@ export function refLinkTarget(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): 
  * `fs_read_workspace`). This is the classification `fs_stat_batch` used to
  * return; with the probe gone the client derives it from the root it already
  * knows. */
-export function viewerPathForAbsolute(abs: string, docRoot: string | undefined): string {
-  const root = docRoot?.replace(/\/+$/, "");
+export function viewerPathForAbsolute(abs: string, containmentRoot: string | undefined): string {
+  const root = containmentRoot?.replace(/\/+$/, "");
   if (!root) return abs;
   if (abs === root) return abs;
   if (!abs.startsWith(root + "/")) return abs;
@@ -322,7 +278,6 @@ export function previewFilePathCtx(
   sid: string,
   viewerPath: string,
   containmentRoot: string | undefined,
-  sessionCwd: string | undefined,
 ): FilePathResolveCtx | undefined {
   const root = containmentRoot?.replace(/\/+$/, "");
   const abs = viewerPath.startsWith("/")
@@ -334,18 +289,10 @@ export function previewFilePathCtx(
   const lastSlash = abs.lastIndexOf("/");
   // `lastSlash === 0` is a file directly under `/`, whose directory is `/`.
   const dir = lastSlash <= 0 ? "/" : abs.slice(0, lastSlash);
-  // `docRoot` gives a leading `/` its documentation reading, and the tree an
-  // author calls "the root" is the working copy they edit in — the session's
-  // **cwd**. Only offered for a document that actually lies in that tree; for
-  // one outside it (external / a sibling workspace under the container) the
-  // cwd is not its root, and a leading `/` keeps its filesystem reading.
-  const docRoot = sessionCwd?.replace(/\/+$/, "");
-  const inCwdTree = docRoot !== undefined && docRoot !== "" && abs.startsWith(docRoot + "/");
   return {
     sid,
     cwd: dir,
     docPath: viewerPath,
-    ...(inCwdTree ? { docRoot } : {}),
     ...(root ? { containmentRoot: root } : {}),
   };
 }
@@ -367,12 +314,11 @@ export function previewFilePathCtx(
  *     `docs/QUESTIONS.md` means the repo root and gets `docs/docs/x.md`. The
  *     failed path is by construction `sourceDir + "/" + <what was written>`, so
  *     stripping `sourceDir` recovers the original text exactly.
- *   - **Absolute target** (`failed` starts with `/`), which happens where the
- *     document had no `docRoot` — it lies outside the session's cwd tree, so
- *     `refLinkTarget` kept the filesystem reading. The other reading is the
- *     documentation one: `/docs/x.md` read against `cwd`. Recovering it needs
- *     `cwd`; without one there is only the filesystem reading and the answer is
- *     `null`, as before.
+ *   - **Absolute target** (`failed` starts with `/`). `refLinkTarget` always
+ *     keeps the filesystem reading of a leading `/`, so this is the recovery
+ *     for an author who meant the documentation one: `/docs/x.md` read against
+ *     `cwd`. Recovering it needs a `cwd`; without one the filesystem reading is
+ *     the only one there is and the answer is `null`.
  *
  * `sourceDir` is the directory of the document the link was written in, in
  * viewer shape (`""` for a document at the root, which has nothing to strip).

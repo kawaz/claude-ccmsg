@@ -428,9 +428,9 @@ function useTaskListToggle({
  * A relative markdown link resolves against the document holding it, which is
  * correct but routinely not what the author (usually an AI) meant — writing
  * `docs/x.md` inside `docs/QUESTIONS.md` yields `docs/docs/x.md`. An absolute
- * `/docs/x.md` written in a document outside the session's cwd tree has the
- * mirror problem: it kept its filesystem reading, and the documentation one is
- * what was meant.
+ * `/docs/x.md` has the mirror problem: a leading `/` always keeps its
+ * filesystem reading, so an author who meant it root-relative lands on
+ * nothing, and the documentation reading is what they wanted.
  *
  * This only runs once the target has already 404'd, and that ordering is what
  * makes the candidate trustworthy rather than a guess: a correctly-written
@@ -760,7 +760,7 @@ export function FileViewer({
   const previewLinkCtx = useMemo(
     () =>
       markdownEligible && path !== null
-        ? previewFilePathCtx(sid, path, peer?.repo_root ?? peer?.cwd, peer?.cwd)
+        ? previewFilePathCtx(sid, path, peer?.repo_root ?? peer?.cwd)
         : undefined,
     [markdownEligible, sid, path, peer?.repo_root, peer?.cwd],
   );

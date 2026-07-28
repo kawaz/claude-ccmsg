@@ -90,8 +90,8 @@ export function makeMarkdownPathLinker(
     return hrefFromStatEntry(
       ctx.sid,
       // The viewer addresses contained files relative to the *containment*
-      // root, which is what the daemon serves from — not `docRoot`, which is
-      // only how a leading `/` in the document is read.
+      // root, which is what the daemon serves from; a file outside it stays
+      // absolute and reaches the external/workspace read path.
       { path: viewerPathForAbsolute(abs, ctx.containmentRoot) },
       ref,
       ctx.docPath,
