@@ -322,7 +322,9 @@ describe("session launch validation", () => {
   // zsh is the second supported shell and parses the same prologue text
   // (`unset -v`, quoted assignment) identically — pinned by execution, since a
   // prologue that only works under bash would silently break zsh admins.
-  test("the prologue behaves identically under zsh", async () => {
+  // Skipped where zsh is not installed (CI's ubuntu runner ships without it);
+  // the bash-side coverage above runs everywhere.
+  test.skipIf(Bun.which("zsh") === null)("the prologue behaves identically under zsh", async () => {
     const cfg = {
       ...config(root, "zsh"),
       command:
