@@ -198,6 +198,30 @@ describe("ccmsg CLI end-to-end", () => {
             type: "assistant",
             message: { role: "assistant", content: [{ type: "text", text: "line 1\nline 2" }] },
           }),
+          JSON.stringify({
+            timestamp: "2026-07-20T00:00:02Z",
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "todo-create-use",
+                  name: "TaskCreate",
+                  input: { subject: "ship dump options" },
+                },
+              ],
+            },
+          }),
+          JSON.stringify({
+            timestamp: "2026-07-20T00:00:03Z",
+            type: "user",
+            message: {
+              role: "user",
+              content: [{ type: "tool_result", tool_use_id: "todo-create-use", content: "ok" }],
+            },
+            toolUseResult: { task: { id: "1", subject: "ship dump options" } },
+          }),
         ].join("\n") + "\n",
       );
 
@@ -214,11 +238,12 @@ describe("ccmsg CLI end-to-end", () => {
         format: "ccmsg-session-dump-v2",
       });
       // The second JSONL row is always the complete handoff context, even when
-      // every collection is empty; conversation entries retain their v1 shape.
+      // every other collection is empty; conversation entries retain their v1
+      // shape. `todos` carries the one TaskCreate folded from the transcript.
       expect(jsonLines[1]).toEqual({
         kind: "session-context",
         note: expect.stringContaining("only when rewind or context clearing preserved"),
-        todos: [],
+        todos: [{ id: "1", subject: "ship dump options", status: "pending" }],
         agents: [],
         workflows: [],
         background: [],
@@ -249,6 +274,10 @@ describe("ccmsg CLI end-to-end", () => {
       expect(text.out).toContain('Session context:\n{\n  "note":');
       expect(text.out).toContain('  "background": [],');
       expect(text.out).toContain('  "schedules": [],');
+      // todos render as one compact line each rather than pretty-printed JSON
+      // (kawaz r76m50: the JSON form spent several lines per task).
+      expect(text.out).not.toContain('"todos"');
+      expect(text.out).toContain("Todos (1):\n  [pending] #1 ship dump options");
       expect(text.out).toContain("[+0ms user user→self]\nhello");
       expect(text.out).toContain("[+1000ms assistant self→user]\nline 1\nline 2");
       expect(text.out).not.toContain("transcript_line");
