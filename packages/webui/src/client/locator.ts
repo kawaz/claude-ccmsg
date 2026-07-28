@@ -1,62 +1,25 @@
-// URL fragment locator. Three independent forms share the fragment,
-// disambiguated by a leading `r` / `s` / `t` (DR-0008, DR-0009):
-//   - room (DR-0004 §5, unchanged): `#rXXXX` selects a room, `#rXXXX-mNN`
-//     selects a room and a message within it. Room ids are opaque
-//     server-issued tokens ("r1", "r2", ...); splitting on the trailing
-//     `-m<digits>` suffix keeps this independent of the id's own shape.
-//   - session (DR-0008): `#s<sid>` selects a session's file-browsing view,
-//     `#s<sid>:<relpath>` additionally selects a file within it. Unlike room
-//     ids, `sid` has no reserved shape of its own (it comes from
-//     `CCMSG_SID`/`CLAUDE_CODE_SESSION_ID`, DR-0006), so the leading literal `s` is
-//     a real syntax marker here, not a character baked into the id — that's
-//     also why the file path uses a distinct `:` separator rather than
-//     reusing room's `-m`, since a raw sid could plausibly contain `-`.
-//   - timeline (DR-0009): `#t<sid>` selects a session's transcript Timeline
-//     view. This is a distinct leading-marker form (not a third `session`
-//     sub-case behind `:`) because the Timeline pane carries no client-chosen
-//     path — the byte-offset paging state lives in the store's per-sid cache,
-//     not the URL — so there's nothing to put after a separator. A dedicated
-//     marker char also sidesteps the encoding trap a `!timeline`-style suffix
-//     would have: encodeURIComponent leaves `!` unescaped, so a raw sid
-//     containing it could collide with such a suffix; a *leading* marker
-//     can't collide because the sid segment is always what's decoded, never
-//     what's matched against.
-// The path segment (and, symmetrically, the sid segment) is
-// `encodeURIComponent`-ed so `/` in a relpath — or `:` in a raw sid — survives
-// the fragment round-trip unambiguously.
-
-/** DR-0025 Phase 2: agent-transcript sub-selection inside a timeline
- * locator. Encoded as `#t<sid>:<segment>` where segment is one of:
- *   - `wf_XXX/a...` (workflow-owned agent — runId + `/` + agentId, both encoded)
- *   - `a...`       (direct subagent under `<sid>/subagents/`)
- *   - `tm/<name>`  (teammate resolved via `agent-*.meta.json` scan)
- * All fields are absent when the locator selects the session's own transcript. */
 export interface AgentRef {
   agentId?: string;
   runId?: string;
   teammate?: string;
 }
 
+export type SessionTab = "files" | "timeline" | "terminal" | "status" | "rooms";
+
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
   | {
       view: "session";
+      tab?: Exclude<SessionTab, "timeline">;
       sid: string;
       path: string | null;
       lineRange?: { start: number; end: number };
-      /** The document a markdown link was followed *from*, when this locator
-       * came from one — the "did you mean" resolution hint (kawaz r55 m152).
-       * Read only after the target 404s; see `rootRelativeReading`. */
       from?: string;
     }
-  | { view: "timeline"; sid: string; agent?: AgentRef };
+  | { view: "timeline"; tab?: "timeline"; sid: string; position?: string; agent?: AgentRef }
+  | { view: "session-root"; sid: string }
+  | { view: "unknown"; pathname: string };
 
-/** `decodeURIComponent` throws on malformed percent-encoding (e.g. a lone
- *  `%zz`) instead of returning some best-effort value. A hand-edited or
- *  corrupted `location.hash` must not be able to crash the whole app at
- *  startup (main.tsx calls parseHash() at module load, uncaught) — so a
- *  segment that fails to decode falls back to `fallback` rather than
- *  propagating the exception. */
 function tryDecode(segment: string, fallback: string): string {
   try {
     return decodeURIComponent(segment);
@@ -65,67 +28,102 @@ function tryDecode(segment: string, fallback: string): string {
   }
 }
 
-export function parseHash(hash: string): Locator {
-  const raw = hash.replace(/^#/, "");
-  if (!raw) return { view: "room", room: null, mid: null };
-  if (raw.startsWith("t")) {
-    const rest = raw.slice(1);
-    const colon = rest.indexOf(":");
-    const sidRaw = colon === -1 ? rest : rest.slice(0, colon);
-    // fall back to the raw (still-encoded) sid rather than losing it entirely,
-    // same policy as the session form below.
-    const sid = tryDecode(sidRaw, sidRaw);
-    if (colon === -1) return { view: "timeline", sid };
-    const segment = rest.slice(colon + 1);
-    const agent = parseAgentSegment(segment);
-    return agent ? { view: "timeline", sid, agent } : { view: "timeline", sid };
+function decodeNonEmpty(segment: string): string | null {
+  const value = tryDecode(segment, "");
+  return value === "" ? null : value;
+}
+
+function sessionLocator(
+  sid: string,
+  tab: Exclude<SessionTab, "timeline">,
+  extra: Partial<Extract<Locator, { view: "session" }>> = {},
+): Extract<Locator, { view: "session" }> {
+  return { view: "session", tab, sid, path: null, ...extra };
+}
+
+export function parseUrl(pathname: string, search = ""): Locator {
+  if (pathname === "/" || pathname === "/index.html") {
+    return { view: "room", room: null, mid: null };
   }
-  if (raw.startsWith("s")) {
-    const rest = raw.slice(1);
-    const colon = rest.indexOf(":");
-    const sidRaw = colon === -1 ? rest : rest.slice(0, colon);
-    // fall back to the raw (still-encoded) sid rather than losing it entirely
-    const sid = tryDecode(sidRaw, sidRaw);
-    if (colon === -1) return { view: "session", sid, path: null };
-    // an undecodable path segment means "no file selected" rather than a
-    // garbled/mojibake path — same session, empty FileViewer.
-    let pathAndRange = rest.slice(colon + 1);
-    // The "followed from" hint (kawaz r55 m152) rides *inside* the fragment
-    // rather than in a real `?query`: routing here is entirely hash-based, and
-    // a query string cannot change without reloading the page — which would
-    // turn every in-app markdown link into a full app restart. `?` is safe as
-    // an inner separator because the path segment is encodeURIComponent'd
-    // (a literal `?` in a filename arrives as `%3F`).
-    let from: string | undefined;
-    const q = pathAndRange.indexOf("?from=");
-    if (q !== -1) {
-      const fromRaw = pathAndRange.slice(q + "?from=".length);
-      pathAndRange = pathAndRange.slice(0, q);
-      const decoded = tryDecode(fromRaw, "");
-      if (decoded !== "") from = decoded;
-    }
-    const rangeMatch = pathAndRange.match(/:L(\d+)-(\d+)$/);
-    const pathRaw = rangeMatch ? pathAndRange.slice(0, rangeMatch.index) : pathAndRange;
-    let path: string | null;
-    try {
-      path = decodeURIComponent(pathRaw);
-    } catch {
-      path = null;
-    }
-    const start = rangeMatch ? Number(rangeMatch[1]) : 0;
-    const end = rangeMatch ? Number(rangeMatch[2]) : 0;
+
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] === "r" && segments.length >= 2) {
+    const room = decodeNonEmpty(segments[1] ?? "");
+    if (!room || segments.length > 3) return { view: "unknown", pathname };
+    if (segments.length === 2) return { view: "room", room, mid: null };
+    const match = segments[2]?.match(/^m(\d+)$/);
+    return match ? { view: "room", room, mid: Number(match[1]) } : { view: "unknown", pathname };
+  }
+
+  if (segments[0] !== "s" || segments.length < 2) {
+    return { view: "unknown", pathname };
+  }
+  const sid = decodeNonEmpty(segments[1] ?? "");
+  if (!sid) return { view: "unknown", pathname };
+  if (segments.length === 2) return { view: "session-root", sid };
+
+  const tab = segments[2];
+  if (tab === "files" && segments.length === 3) {
+    if (/%(?![0-9a-fA-F]{2})/.test(search)) return { view: "unknown", pathname };
+    const params = new URLSearchParams(search);
+    const path = params.get("path") || null;
+    const range = params.get("lines")?.match(/^(\d+)-(\d+)$/);
+    const start = range ? Number(range[1]) : 0;
+    const end = range ? Number(range[2]) : 0;
     const lineRange = start > 0 && end >= start ? { start, end } : undefined;
-    return {
-      view: "session",
-      sid,
+    const from = params.get("from") || undefined;
+    return sessionLocator(sid, "files", {
       path,
       ...(lineRange ? { lineRange } : {}),
-      ...(from !== undefined ? { from } : {}),
-    };
+      ...(from ? { from } : {}),
+    });
   }
-  const m = raw.match(/^(.+)-m(\d+)$/);
-  if (m) return { view: "room", room: m[1] ?? null, mid: Number(m[2]) };
-  return { view: "room", room: raw, mid: null };
+  if ((tab === "terminal" || tab === "status" || tab === "rooms") && segments.length === 3) {
+    return sessionLocator(sid, tab);
+  }
+  if (tab !== "timeline" || segments.length < 4) {
+    return { view: "unknown", pathname };
+  }
+
+  if (segments[3] === "agent") {
+    const kind = segments[4];
+    if (kind === "tm" && segments.length === 6) {
+      const teammate = decodeNonEmpty(segments[5] ?? "");
+      return teammate
+        ? { view: "timeline", tab: "timeline", sid, position: "head", agent: { teammate } }
+        : { view: "unknown", pathname };
+    }
+    if (kind === "sub" && segments.length === 6) {
+      const agentId = decodeNonEmpty(segments[5] ?? "");
+      return agentId
+        ? { view: "timeline", tab: "timeline", sid, position: "head", agent: { agentId } }
+        : { view: "unknown", pathname };
+    }
+    if (kind === "wf" && segments.length === 7) {
+      const runId = decodeNonEmpty(segments[5] ?? "");
+      const agentId = decodeNonEmpty(segments[6] ?? "");
+      return runId && agentId
+        ? {
+            view: "timeline",
+            tab: "timeline",
+            sid,
+            position: "head",
+            agent: { runId, agentId },
+          }
+        : { view: "unknown", pathname };
+    }
+    return { view: "unknown", pathname };
+  }
+
+  if (segments.length === 4) {
+    const position = decodeNonEmpty(segments[3] ?? "");
+    if (position) return { view: "timeline", tab: "timeline", sid, position };
+  }
+  return { view: "unknown", pathname };
+}
+
+function sidBase(sid: string): string {
+  return `/s/${encodeURIComponent(sid)}`;
 }
 
 export function anchorId(roomId: string, mid: number): string {
@@ -133,72 +131,58 @@ export function anchorId(roomId: string, mid: number): string {
 }
 
 export function messageHref(roomId: string, mid: number): string {
-  return `#${roomId}-m${mid}`;
+  return `${roomHref(roomId)}/m${mid}`;
 }
 
 export function roomHref(roomId: string): string {
-  return `#${roomId}`;
+  return `/r/${encodeURIComponent(roomId)}`;
 }
 
 export function sessionHref(sid: string): string {
-  return `#s${encodeURIComponent(sid)}`;
+  return sidBase(sid);
+}
+
+export function filesHref(sid: string): string {
+  return `${sidBase(sid)}/files`;
 }
 
 export function fileHref(
   sid: string,
   path: string,
   lineRange?: { start: number; end: number },
-  /** The document this link was written in, for the 404's "did you mean"
-   * recovery (kawaz r55 m152). Only markdown link rendering passes it; every
-   * other caller (file tree, tool-result paths) links to a path it already
-   * knows exists, so there is nothing to recover from. */
   from?: string,
 ): string {
-  const range = lineRange ? `:L${lineRange.start}-${lineRange.end}` : "";
-  const hint = from ? `?from=${encodeURIComponent(from)}` : "";
-  return `#s${encodeURIComponent(sid)}:${encodeURIComponent(path)}${range}${hint}`;
+  const params = new URLSearchParams();
+  params.set("path", path);
+  if (lineRange) params.set("lines", `${lineRange.start}-${lineRange.end}`);
+  if (from) params.set("from", from);
+  return `${filesHref(sid)}?${params.toString()}`;
 }
 
-export function timelineHref(sid: string): string {
-  return `#t${encodeURIComponent(sid)}`;
+export function timelineHref(sid: string, position = "head"): string {
+  return `${sidBase(sid)}/timeline/${encodeURIComponent(position)}`;
 }
 
-/** DR-0025 Phase 2: link to an agent / teammate timeline inside `sid`. The
- * three shapes below are decoded by `parseAgentSegment` on the receiving
- * side. Nothing is trusted to be regex-clean here — the daemon-side resolver
- * (`AGENT_ID_RE` / `RUN_ID_RE` / `TEAMMATE_NAME_RE`) is the security boundary
- * and will refuse anything shaped wrong even if a hand-edited URL sneaks a
- * pathological value through. */
+export function terminalHref(sid: string): string {
+  return `${sidBase(sid)}/terminal`;
+}
+
+export function statusHref(sid: string): string {
+  return `${sidBase(sid)}/status`;
+}
+
+export function sessionRoomsHref(sid: string): string {
+  return `${sidBase(sid)}/rooms`;
+}
+
 export function agentTimelineHref(sid: string, ref: AgentRef): string {
-  const sidEnc = encodeURIComponent(sid);
-  if (ref.teammate !== undefined) {
-    return `#t${sidEnc}:tm/${encodeURIComponent(ref.teammate)}`;
-  }
+  const base = `${sidBase(sid)}/timeline/agent`;
+  if (ref.teammate !== undefined) return `${base}/tm/${encodeURIComponent(ref.teammate)}`;
   if (ref.agentId !== undefined) {
-    const agentEnc = encodeURIComponent(ref.agentId);
-    if (ref.runId !== undefined) {
-      return `#t${sidEnc}:${encodeURIComponent(ref.runId)}/${agentEnc}`;
-    }
-    return `#t${sidEnc}:${agentEnc}`;
+    const agent = encodeURIComponent(ref.agentId);
+    return ref.runId !== undefined
+      ? `${base}/wf/${encodeURIComponent(ref.runId)}/${agent}`
+      : `${base}/sub/${agent}`;
   }
-  return `#t${sidEnc}`;
-}
-
-function parseAgentSegment(segment: string): AgentRef | undefined {
-  if (segment.length === 0) return undefined;
-  const slash = segment.indexOf("/");
-  if (slash === -1) {
-    const agentId = tryDecode(segment, "");
-    return agentId ? { agentId } : undefined;
-  }
-  const left = segment.slice(0, slash);
-  const right = segment.slice(slash + 1);
-  if (left === "tm") {
-    const teammate = tryDecode(right, "");
-    return teammate ? { teammate } : undefined;
-  }
-  const runId = tryDecode(left, "");
-  const agentId = tryDecode(right, "");
-  if (!runId || !agentId) return undefined;
-  return { runId, agentId };
+  return timelineHref(sid);
 }

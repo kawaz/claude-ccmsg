@@ -16,6 +16,7 @@ import { useState } from "preact/hooks";
 import type { PeerInfo } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { roomHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import { errorMessage, sessionLabel, shortSid } from "../utils.ts";
 import {
   buildCreateRoomRequest,
@@ -44,7 +45,7 @@ export function RoomCreator({ peers, onClose }: { peers: PeerInfo[]; onClose: ()
         return;
       }
       onClose();
-      location.hash = roomHref(res.room);
+      pushNavigation(roomHref(res.room));
     } catch (err) {
       setError(errorMessage(err));
     } finally {

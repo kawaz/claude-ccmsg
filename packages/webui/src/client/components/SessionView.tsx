@@ -4,10 +4,18 @@
 // state.view is "session" or "timeline"). Files/Timeline/Rooms/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect } from "preact/hooks";
 import type { SessionSearchHit } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
-import { fileHref, sessionHref, timelineHref } from "../locator.ts";
+import {
+  fileHref,
+  filesHref,
+  sessionRoomsHref,
+  statusHref,
+  terminalHref,
+  timelineHref,
+} from "../locator.ts";
+import { replaceNavigation } from "../navigation.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
@@ -17,14 +25,6 @@ import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
-
-/** Local (non-locator) tab layered on top of Files/Timeline locator routing,
- * same rationale as the pre-existing Rooms tab (see `localTab`'s doc comment
- * in SessionView below): Status has no per-sid persisted sub-state worth
- * round-tripping through the URL, just a live snapshot already cached in
- * `state.sessionStatuses`. `null` = follow the locator-driven tab
- * (Files/Timeline). */
-type LocalTab = "rooms" | "status" | "terminal" | null;
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -67,24 +67,6 @@ export function SessionView({ state }: { state: AppState }) {
   const { store, ws } = useApp();
   const sid = state.currentSid;
   const tree = sid ? (state.sessionTrees.get(sid) ?? EMPTY_TREE) : EMPTY_TREE;
-  // Rooms/Status are tabs layered on top of the Files/Timeline locator
-  // routing (`#s<sid>` / `#t<sid>`, see locator.ts) rather than a locator
-  // form of their own — neither has per-sid persisted sub-state worth
-  // round-tripping through the URL (unlike Files' selectedPath or Timeline's
-  // paging position), so a local toggle is enough. Clicking Files/Timeline
-  // (both real `<a href>` locator links) clears it back to whatever
-  // state.view says.
-  const [localTab, setLocalTab] = useState<LocalTab>(null);
-
-  // Reset back to the locator-driven tab (Files/Timeline) on a session
-  // switch (adversarial review nit finding): SessionView doesn't remount
-  // across a sid change (sidebar navigation just changes `state.currentSid`),
-  // so without this a Rooms/Status tab left open before switching sessions
-  // would keep showing that tab for the newly-selected session too,
-  // inconsistent with Files/Timeline's locator-driven behavior (every other
-  // tab always matches the URL for the session you just navigated to).
-  useEffect(() => setLocalTab(null), [sid]);
-
   // tab の確定は sid の有無に関係なく毎 render 行う (下の early return より前
   // — hooks は無条件に同じ順序で呼ぶ必要があるため、購読 effect もここで
   // 確定させた tab を見て判断する)。
@@ -95,9 +77,7 @@ export function SessionView({ state }: { state: AppState }) {
   // Status タブに戻ってしまい、agent TL が見えず要件 (DR-0025 §2.1 「TL を
   // 見る」→ Timeline ビュー) を満たさない。agent ref が locator に載って
   // いる間は localTab を無視して timeline を強制する。
-  const tab = state.currentAgent
-    ? "timeline"
-    : (localTab ?? (state.view === "timeline" ? "timeline" : "files"));
+  const tab = state.currentTab ?? "files";
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // hello 時に transcript_path を申告・検証済みのセッションでしか
   // session_status_subscribe は成立しない (daemon の resolveTranscript が
@@ -209,10 +189,10 @@ export function SessionView({ state }: { state: AppState }) {
   // (path 一致時のみ) が担う。
   const selectedPath = sid ? (state.sessionTrees.get(sid)?.selectedPath ?? null) : null;
   useEffect(() => {
-    if (!sid || state.view !== "session" || selectedPath !== null) return;
+    if (!sid || tab !== "files" || selectedPath !== null) return;
     const saved = loadFilesView(sid);
-    if (saved) location.replace(fileHref(sid, saved.path));
-  }, [sid, state.view, selectedPath]);
+    if (saved) replaceNavigation(fileHref(sid, saved.path));
+  }, [sid, tab, selectedPath]);
 
   // 保存 record の mount-time sweep (OneOnOneComposer の draft sweep と同じ
   // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
@@ -235,19 +215,11 @@ export function SessionView({ state }: { state: AppState }) {
   return (
     <main id="session-view">
       <div class="session-tabs">
-        <a
-          class={"session-tab" + (tab === "files" ? " active" : "")}
-          href={sessionHref(sid)}
-          onClick={() => setLocalTab(null)}
-        >
+        <a class={"session-tab" + (tab === "files" ? " active" : "")} href={filesHref(sid)}>
           Files
         </a>
         {hasTranscript ? (
-          <a
-            class={"session-tab" + (tab === "timeline" ? " active" : "")}
-            href={timelineHref(sid)}
-            onClick={() => setLocalTab(null)}
-          >
+          <a class={"session-tab" + (tab === "timeline" ? " active" : "")} href={timelineHref(sid)}>
             Timeline
           </a>
         ) : (
@@ -258,13 +230,9 @@ export function SessionView({ state }: { state: AppState }) {
         {/* kawaz r46 mid=9,11: Terminal は Timeline の右隣 (類似ビュー同士を
          * 隣接させる。Rooms の隣は変、の指摘)。 */}
         {hasTerminal ? (
-          <button
-            type="button"
-            class={"session-tab" + (tab === "terminal" ? " active" : "")}
-            onClick={() => setLocalTab("terminal")}
-          >
+          <a class={"session-tab" + (tab === "terminal" ? " active" : "")} href={terminalHref(sid)}>
             Terminal
-          </button>
+          </a>
         ) : null}
         {/* kawaz r26 mid=66: Rooms は一番右 (Files / Timeline / Status / Rooms) */}
         {/* kawaz r38 mid=7: Status タブはサブエージェント TL 閲覧中 (= state.
@@ -275,20 +243,12 @@ export function SessionView({ state }: { state: AppState }) {
          * 残っている限り上の tab 判定 (`state.currentAgent ? "timeline" : ...`)
          * が "timeline" を強制するため Status に切り替わらない。Files/Timeline
          * の <a> と同じ導線に揃えて accessibility も統一する。 */}
-        <a
-          class={"session-tab" + (tab === "status" ? " active" : "")}
-          href={sessionHref(sid)}
-          onClick={() => setLocalTab("status")}
-        >
+        <a class={"session-tab" + (tab === "status" ? " active" : "")} href={statusHref(sid)}>
           Status
         </a>
-        <button
-          type="button"
-          class={"session-tab" + (tab === "rooms" ? " active" : "")}
-          onClick={() => setLocalTab("rooms")}
-        >
+        <a class={"session-tab" + (tab === "rooms" ? " active" : "")} href={sessionRoomsHref(sid)}>
           Rooms
-        </button>
+        </a>
         <button
           type="button"
           class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
@@ -348,7 +308,7 @@ export function SessionView({ state }: { state: AppState }) {
               timeline={tree.timeline}
               search={tree.timelineSearch}
               sessionStatus={sessionStatus}
-              onOpenStatus={() => setLocalTab("status")}
+              onOpenStatus={() => replaceNavigation(statusHref(sid))}
               agent={state.currentAgent}
             />
           ) : (
@@ -357,7 +317,7 @@ export function SessionView({ state }: { state: AppState }) {
               timeline={tree.timeline}
               search={tree.timelineSearch}
               sessionStatus={sessionStatus}
-              onOpenStatus={() => setLocalTab("status")}
+              onOpenStatus={() => replaceNavigation(statusHref(sid))}
               agent={state.currentAgent}
             />
           )

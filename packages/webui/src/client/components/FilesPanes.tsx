@@ -15,6 +15,7 @@ import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { fileHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import {
   clampPaneRatio,
   fileAncestorDirectories,
@@ -91,7 +92,7 @@ export function FilesPanes({
       fileAncestorDirectories(createdPath).map((dirPath) => loadDir(store, ws, sid, dirPath)),
     );
     setMemoEditorOpen(false);
-    location.assign(fileHref(sid, createdPath));
+    pushNavigation(fileHref(sid, createdPath));
   }
 
   // Drag plumbing lives in the shared PaneSplitter (kawaz r26 mid=76) — this

@@ -2,7 +2,7 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { isUnknownAppPath, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
+import { lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
@@ -81,14 +81,21 @@ function UnknownPathView({ pathname }: { pathname: string }) {
   );
 }
 
+function NavigationErrorView({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <main class="app-notfound">
+      <p class="app-notfound-msg">移動できませんでした</p>
+      <p class="app-notfound-path">{message}</p>
+      <button type="button" onClick={onDismiss}>
+        元の画面に戻る
+      </button>
+    </main>
+  );
+}
+
 export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
-  // Read once at mount: the pathname cannot change without a full page load
-  // (all in-app navigation is hash-based), so there is nothing to subscribe to.
-  const [unknownPath] = useState(() =>
-    isUnknownAppPath(location.pathname) ? location.pathname : null,
-  );
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
@@ -105,7 +112,11 @@ export function App() {
         >
           &#9776;
         </button>
-        {unknownPath !== null ? <h1 class="topbar-title">ccmsg</h1> : <TopbarTitle state={state} />}
+        {state.unknownPath !== null ? (
+          <h1 class="topbar-title">ccmsg</h1>
+        ) : (
+          <TopbarTitle state={state} />
+        )}
         <ConnectionStatus status={state.connStatus} />
         {/* SPA 内リロードボタン (kawaz 2026-07-14、RLD-Q1=a): iOS ホーム画面
          * 追加 (standalone display mode = PWA 起動) 時にブラウザのリロードが
@@ -140,8 +151,13 @@ export function App() {
           class={state.sidebarOpen ? "visible" : undefined}
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
-        {unknownPath !== null ? (
-          <UnknownPathView pathname={unknownPath} />
+        {state.navigationError !== null ? (
+          <NavigationErrorView
+            message={state.navigationError}
+            onDismiss={() => store.dispatch({ type: "navigation/error", message: null })}
+          />
+        ) : state.unknownPath !== null ? (
+          <UnknownPathView pathname={state.unknownPath} />
         ) : state.view === "session" || state.view === "timeline" ? (
           <SessionView state={state} />
         ) : (

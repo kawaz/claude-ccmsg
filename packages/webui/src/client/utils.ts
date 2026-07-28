@@ -11,6 +11,7 @@ import type {
 } from "@ccmsg/protocol";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
+import { parseUrl } from "./locator.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -1057,5 +1058,5 @@ export function editorLineCount(value: string): number {
  * hash locator always resolves to *some* view (an unknown room or session id
  * is an ordinary empty state, not a 404). */
 export function isUnknownAppPath(pathname: string): boolean {
-  return pathname !== "/" && pathname !== "/index.html";
+  return parseUrl(pathname).view === "unknown";
 }

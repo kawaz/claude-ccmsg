@@ -15,6 +15,7 @@ import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { fileHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
@@ -678,7 +679,7 @@ export function FileTree({
           // Open the new file in the viewer pane — mirrors FilesPanes'
           // onMemoCreated navigation. Use the client-side target for the URL
           // (same lexical space as fs_list results).
-          location.assign(fileHref(sid, target));
+          pushNavigation(fileHref(sid, target));
         })
         .catch((err) => {
           setCreateErr(errorMessage(err));

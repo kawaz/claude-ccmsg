@@ -1,260 +1,131 @@
-// Locator parse/format tests (DR-0004 §5 room form, DR-0008 session form).
-// The core contract this file guards: format(x) round-trips through
-// parseHash back to an equivalent Locator, for every shape the two views
-// produce, and the two forms never get confused for one another.
 import { describe, expect, test } from "bun:test";
 import {
   agentTimelineHref,
   fileHref,
+  filesHref,
   messageHref,
-  parseHash,
+  parseUrl,
   roomHref,
   sessionHref,
+  sessionRoomsHref,
+  statusHref,
+  terminalHref,
   timelineHref,
-  type Locator,
 } from "../src/client/locator.ts";
 
-describe("parseHash / room form (unchanged, DR-0004 §5)", () => {
-  test("empty hash -> no room selected", () => {
-    expect(parseHash("")).toEqual({ view: "room", room: null, mid: null });
-    expect(parseHash("#")).toEqual({ view: "room", room: null, mid: null });
+describe("real-path locators", () => {
+  test("the app root selects no room", () => {
+    expect(parseUrl("/")).toEqual({ view: "room", room: null, mid: null });
   });
 
-  test("#rXXXX -> room only, no message anchor", () => {
-    expect(parseHash("#r1")).toEqual({ view: "room", room: "r1", mid: null });
+  test("room and message paths round-trip without sharing the session namespace", () => {
+    expect(parseUrl(roomHref("r/7"))).toEqual({ view: "room", room: "r/7", mid: null });
+    expect(parseUrl(messageHref("r7", 9))).toEqual({ view: "room", room: "r7", mid: 9 });
   });
 
-  test("#rXXXX-mNN -> room + message anchor", () => {
-    expect(parseHash("#r1-m42")).toEqual({ view: "room", room: "r1", mid: 42 });
+  test("a bare session path is a redirect target, not an implicit tab", () => {
+    expect(parseUrl(sessionHref("sess-1"))).toEqual({ view: "session-root", sid: "sess-1" });
   });
 
-  test("roomHref/messageHref round-trip through parseHash", () => {
-    expect(parseHash(roomHref("r7"))).toEqual({ view: "room", room: "r7", mid: null });
-    expect(parseHash(messageHref("r7", 9))).toEqual({ view: "room", room: "r7", mid: 9 });
-  });
-});
-
-describe("parseHash / session form (DR-0008)", () => {
-  // Bare `#s<sid>`: session selected, no file open yet (FileTree shown, viewer empty).
-  test("#s<sid> -> session view, no file selected", () => {
-    expect(parseHash("#sabc123")).toEqual({ view: "session", sid: "abc123", path: null });
-  });
-
-  // `#s<sid>:<relpath>`: session + file selected. Path is percent-decoded so
-  // the reducer/components work with the real relpath, not its wire form.
-  test("#s<sid>:<relpath> -> session view with file selected", () => {
-    expect(parseHash("#sabc123:src%2Findex.ts")).toEqual({
+  test("all session tabs have distinct reloadable paths", () => {
+    expect(parseUrl(filesHref("s1"))).toEqual({
       view: "session",
-      sid: "abc123",
-      path: "src/index.ts",
-    });
-  });
-
-  test("sessionHref/fileHref round-trip through parseHash", () => {
-    expect(parseHash(sessionHref("sess-1"))).toEqual({
-      view: "session",
-      sid: "sess-1",
+      tab: "files",
+      sid: "s1",
       path: null,
     });
-    const loc: Locator = { view: "session", sid: "sess-1", path: "a/b c.txt" };
-    expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
-  });
-
-  test("fileHref preserves an optional selected line range", () => {
-    expect(parseHash(fileHref("sess-1", "src/a.ts", { start: 10, end: 14 }))).toEqual({
-      view: "session",
-      sid: "sess-1",
-      path: "src/a.ts",
-      lineRange: { start: 10, end: 14 },
-    });
-  });
-
-  test("DR-0024 absolute external path survives fileHref round-trip", () => {
-    // The whole path is percent-encoded, so a leading `/` remains data rather
-    // than becoming locator syntax and FileViewer receives the exact allowlist key.
-    const loc: Locator = { view: "session", sid: "sess-1", path: "/external/shared file.md" };
-    expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
-  });
-
-  // A relpath containing characters that would otherwise collide with the
-  // locator's own syntax (`:`, `#`, `/`) must still survive because fileHref
-  // encodes the whole path segment, not just risky characters.
-  test("relpath containing ':' and '/' survives the round-trip", () => {
-    const loc: Locator = { view: "session", sid: "s1", path: "weird:name/deep/file.txt" };
-    expect(parseHash(fileHref(loc.sid, loc.path ?? ""))).toEqual(loc);
-  });
-
-  // sid is encoded symmetrically with path (both via sessionHref/fileHref and
-  // decoded back in parseHash), so a sid containing ':' — which would
-  // otherwise be misread as the sid/path separator — still round-trips.
-  test("sid containing ':' survives the round-trip", () => {
-    const loc: Locator = { view: "session", sid: "weird:sid", path: null };
-    expect(parseHash(sessionHref(loc.sid))).toEqual(loc);
-
-    const withPath: Locator = { view: "session", sid: "weird:sid", path: "a.txt" };
-    expect(parseHash(fileHref(withPath.sid, withPath.path ?? ""))).toEqual(withPath);
-  });
-
-  // Malformed percent-encoding (e.g. a lone "%zz") must not throw — parseHash
-  // runs at module load in main.tsx, uncaught it would blank the whole page.
-  // The path segment falls back to "no file selected" (same session, empty
-  // viewer) rather than a garbled path.
-  test("malformed percent-encoding in the path segment falls back to no file selected, not a thrown error", () => {
-    expect(() => parseHash("#s1:%zz")).not.toThrow();
-    expect(parseHash("#s1:%zz")).toEqual({ view: "session", sid: "1", path: null });
-  });
-
-  // Same guarantee for a malformed sid segment: falls back to the raw
-  // (still-encoded) sid rather than throwing.
-  test("malformed percent-encoding in the sid segment falls back to the raw sid, not a thrown error", () => {
-    expect(() => parseHash("#s%zz")).not.toThrow();
-    expect(parseHash("#s%zz")).toEqual({ view: "session", sid: "%zz", path: null });
-  });
-});
-
-describe("parseHash / timeline form (DR-0009)", () => {
-  // Bare `#t<sid>`: the Timeline pane has no client-chosen path (byte-offset
-  // paging state lives in the store, not the URL), so — unlike the session
-  // form — there is no `:<something>` sub-form to test here.
-  test("#t<sid> -> timeline view for that sid", () => {
-    expect(parseHash("#tabc123")).toEqual({ view: "timeline", sid: "abc123" });
-  });
-
-  test("timelineHref round-trips through parseHash", () => {
-    expect(parseHash(timelineHref("sess-1"))).toEqual({ view: "timeline", sid: "sess-1" });
-  });
-
-  // Same encode/decode symmetry the session form guarantees for sid: a raw
-  // sid containing characters with syntactic meaning elsewhere (':', '#')
-  // must still survive because timelineHref encodes the whole segment.
-  test("sid containing ':' and '#' survives the round-trip", () => {
-    const loc: Locator = { view: "timeline", sid: "weird:sid#1" };
-    expect(parseHash(timelineHref(loc.sid))).toEqual(loc);
-  });
-
-  // Malformed percent-encoding must not throw, same policy as the session
-  // form's sid fallback (falls back to the raw, still-encoded sid).
-  test("malformed percent-encoding in the sid segment falls back to the raw sid, not a thrown error", () => {
-    expect(() => parseHash("#t%zz")).not.toThrow();
-    expect(parseHash("#t%zz")).toEqual({ view: "timeline", sid: "%zz" });
-  });
-});
-
-describe("parseHash / timeline agent form (DR-0025)", () => {
-  test("#t<sid>:a... -> direct subagent under sid", () => {
-    const loc = parseHash("#tabc:a1234567890abcdef");
-    expect(loc).toEqual({
+    expect(parseUrl(timelineHref("s1"))).toEqual({
       view: "timeline",
-      sid: "abc",
-      agent: { agentId: "a1234567890abcdef" },
+      tab: "timeline",
+      sid: "s1",
+      position: "head",
     });
-  });
-
-  test("#t<sid>:<runId>/<agentId> -> workflow-owned agent", () => {
-    const loc = parseHash("#tabc:wf_01234567-abc/a1111111111111111");
-    expect(loc).toEqual({
-      view: "timeline",
-      sid: "abc",
-      agent: { runId: "wf_01234567-abc", agentId: "a1111111111111111" },
-    });
-  });
-
-  test("#t<sid>:tm/<name> -> teammate", () => {
-    const loc = parseHash("#tabc:tm/my-mate");
-    expect(loc).toEqual({
-      view: "timeline",
-      sid: "abc",
-      agent: { teammate: "my-mate" },
-    });
-  });
-
-  test("agentTimelineHref round-trips through parseHash", () => {
-    for (const ref of [
-      { agentId: "a1234567890abcdef" },
-      { runId: "wf_01234567-abc", agentId: "a2222222222222222" },
-      { teammate: "some/mate" }, // encoded through
-    ]) {
-      const href = agentTimelineHref("sess-1", ref);
-      const parsed = parseHash(href);
-      expect(parsed.view).toBe("timeline");
-      if (parsed.view === "timeline") {
-        expect(parsed.sid).toBe("sess-1");
-        expect(parsed.agent).toEqual(ref);
-      }
+    for (const [href, tab] of [
+      [terminalHref("s1"), "terminal"],
+      [statusHref("s1"), "status"],
+      [sessionRoomsHref("s1"), "rooms"],
+    ] as const) {
+      expect(parseUrl(href)).toEqual({ view: "session", tab, sid: "s1", path: null });
     }
   });
 
-  test("existing plain #t<sid> stays agentless", () => {
-    const loc = parseHash("#tabc123");
-    expect(loc).toEqual({ view: "timeline", sid: "abc123" });
-  });
-});
-
-describe("parseHash / room, session, and timeline forms never collide", () => {
-  // Room ids are always daemon-assigned as "r<n>" (server.ts), so a session
-  // locator's leading literal "s" cannot be produced by roomHref, and no
-  // existing room id starts with "s" — this test pins that invariant from
-  // the client side.
-  test("a hash starting with 's' is always parsed as a session locator", () => {
-    const loc = parseHash("#s1");
-    expect(loc.view).toBe("session");
-  });
-
-  test("a hash starting with 'r' is always parsed as a room locator", () => {
-    const loc = parseHash("#r1");
-    expect(loc.view).toBe("room");
-  });
-
-  // Same invariant for the timeline form's leading "t" (DR-0009): no
-  // daemon-assigned room id starts with "t" either.
-  test("a hash starting with 't' is always parsed as a timeline locator", () => {
-    const loc = parseHash("#t1");
-    expect(loc.view).toBe("timeline");
-  });
-});
-
-// The "followed from" hint (kawaz r55 m152). It rides inside the fragment
-// rather than in a real query string: routing is entirely hash-based, and a
-// `?query` cannot change without reloading the page — which would turn every
-// in-app markdown link into a full app restart.
-describe("fileHref / parseHash round-trip with the ?from= hint", () => {
-  test("fileHref omits the hint unless one is given", () => {
-    expect(fileHref("S1", "docs/a.md")).toBe("#sS1:docs%2Fa.md");
-    expect(fileHref("S1", "docs/a.md", { start: 3, end: 9 })).toBe("#sS1:docs%2Fa.md:L3-9");
-  });
-
-  test("the hint survives a round-trip, alongside a line range", () => {
-    const href = fileHref("S1", "docs/docs/a.md", { start: 3, end: 9 }, "docs/QUESTIONS.md");
-    expect(href).toBe("#sS1:docs%2Fdocs%2Fa.md:L3-9?from=docs%2FQUESTIONS.md");
-    const loc = parseHash(href);
-    expect(loc).toEqual({
+  test("file path, line range, and source hint use independent query parameters", () => {
+    const href = fileHref("s:1", "/external/weird? file.md", { start: 10, end: 20 }, "docs/a.md");
+    const url = new URL(href, "http://localhost");
+    expect(parseUrl(url.pathname, url.search)).toEqual({
       view: "session",
-      sid: "S1",
-      path: "docs/docs/a.md",
-      lineRange: { start: 3, end: 9 },
-      from: "docs/QUESTIONS.md",
+      tab: "files",
+      sid: "s:1",
+      path: "/external/weird? file.md",
+      lineRange: { start: 10, end: 20 },
+      from: "docs/a.md",
     });
   });
 
-  test("no hint in the URL means no `from` on the locator", () => {
-    const loc = parseHash("#sS1:docs%2Fa.md") as Extract<Locator, { view: "session" }>;
-    expect(loc.from).toBeUndefined();
+  test("invalid line ranges are ignored while the file remains selected", () => {
+    expect(parseUrl("/s/s1/files", "?path=a.ts&lines=20-10")).toEqual({
+      view: "session",
+      tab: "files",
+      sid: "s1",
+      path: "a.ts",
+    });
   });
 
-  // A literal `?` in a filename arrives percent-encoded, so it can never be
-  // mistaken for the hint separator.
-  test("a path containing '?' is not split at it", () => {
-    const loc = parseHash(fileHref("S1", "weird?name.md")) as Extract<Locator, { view: "session" }>;
-    expect(loc.path).toBe("weird?name.md");
-    expect(loc.from).toBeUndefined();
+  test("an empty path means no selected file", () => {
+    expect(parseUrl("/s/s1/files", "?path=")).toEqual({
+      view: "session",
+      tab: "files",
+      sid: "s1",
+      path: null,
+    });
   });
 
-  test("an empty or undecodable hint is dropped, keeping the path usable", () => {
-    expect(
-      (parseHash("#sS1:a.md?from=") as Extract<Locator, { view: "session" }>).from,
-    ).toBeUndefined();
-    const bad = parseHash("#sS1:a.md?from=%zz") as Extract<Locator, { view: "session" }>;
-    expect(bad.path).toBe("a.md");
-    expect(bad.from).toBeUndefined();
+  test("malformed percent encoding in a files query is rejected instead of becoming a path", () => {
+    expect(parseUrl("/s/s1/files", "?path=%zz")).toEqual({
+      view: "unknown",
+      pathname: "/s/s1/files",
+    });
+    expect(parseUrl("/s/s1/files", "?path=a.ts&from=%")).toEqual({
+      view: "unknown",
+      pathname: "/s/s1/files",
+    });
+  });
+
+  test("timeline requires an explicit head or uuid position segment", () => {
+    expect(parseUrl("/s/s1/timeline")).toEqual({
+      view: "unknown",
+      pathname: "/s/s1/timeline",
+    });
+  });
+
+  test("timeline position is parsed now even though Phase 1 renders it as head", () => {
+    expect(parseUrl(timelineHref("s1", "uuid/opaque"))).toEqual({
+      view: "timeline",
+      tab: "timeline",
+      sid: "s1",
+      position: "uuid/opaque",
+    });
+  });
+
+  test("the three agent kinds are symmetric and round-trip", () => {
+    for (const ref of [
+      { teammate: "some/mate" },
+      { agentId: "a123" },
+      { runId: "wf/1", agentId: "a456" },
+    ]) {
+      const href = agentTimelineHref("s1", ref);
+      const url = new URL(href, "http://localhost");
+      const parsed = parseUrl(url.pathname, url.search);
+      expect(parsed.view).toBe("timeline");
+      if (parsed.view === "timeline") expect(parsed.agent).toEqual(ref);
+    }
+  });
+
+  test("malformed and structurally unknown paths become an in-app unknown locator", () => {
+    expect(parseUrl("/s/%zz/files")).toEqual({ view: "unknown", pathname: "/s/%zz/files" });
+    expect(parseUrl("/does-not-exist")).toEqual({
+      view: "unknown",
+      pathname: "/does-not-exist",
+    });
   });
 });

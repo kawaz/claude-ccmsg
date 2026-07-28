@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
-import { sessionHref, timelineHref } from "../locator.ts";
+import { sessionHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
@@ -101,13 +101,10 @@ function SessionRowItem({
         }
       >
         <a
-          // U3: a row that announced (and had accepted) a transcript opens
-          // straight to Timeline — that's the view kawaz actually wants on
-          // click for a live Claude session; Files stays the default for a
-          // row with no transcript (e.g. a non-Claude ccmsg client, or an
-          // agent-only "ccmsg 未起動" row, which never carries transcript_path
-          // — see SessionRow's doc comment).
-          href={row.transcript_path ? timelineHref(row.sid) : sessionHref(row.sid)}
+          // Session rows always enter through the session root so the router can
+          // restore that sid's recent tab/path. With no recent record the root
+          // falls back to Timeline/head.
+          href={sessionHref(row.sid)}
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
           <Avatar seed={row.sid} size={16} />
@@ -193,8 +190,8 @@ function SessionRowItem({
  * forcing it through the same merge shape `toSessionRow` builds would need a
  * lot of made-up filler fields. `connected` only decides the badge text
  * ("仮想" = daemon resolves this sid via allowVirtual with no live peer,
- * DR-0021 §3.1). Search-origin pins link to Timeline; arbitrary pins without a
- * transcript file link to Files instead. */
+ * DR-0021 §3.1). Every pin enters through the session root so recent restoration
+ * is identical to a live session row. */
 function PinnedSessionRow({
   hit,
   currentSid,
@@ -213,7 +210,7 @@ function PinnedSessionRow({
       title={hit.cwd ?? undefined}
     >
       <div class="session-line1">
-        <a href={hit.file ? timelineHref(hit.sid) : sessionHref(hit.sid)} class="session-main-link">
+        <a href={sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
           <span class="session-repo-ws">{repo || wsLabel}</span>
         </a>

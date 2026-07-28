@@ -12,6 +12,7 @@ import { useRef, useState } from "preact/hooks";
 import type { AppState, RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { roomHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import { relTime, splitRoomsByArchived } from "../utils.ts";
 import { roomsForSession, roomsForSids, sameCwdSids } from "../rooms-filter.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
@@ -102,7 +103,7 @@ function NewRoomForm({ sid }: { sid: string }) {
       }
       settledRef.current = true;
       setOpen(false);
-      location.hash = roomHref(res.room);
+      pushNavigation(roomHref(res.room));
     } catch {
       setError("接続エラーのため作成できませんでした");
     } finally {

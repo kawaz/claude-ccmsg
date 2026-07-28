@@ -22,7 +22,7 @@ import {
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
-import type { AgentRef, Locator } from "./locator.ts";
+import type { AgentRef, Locator, SessionTab } from "./locator.ts";
 
 export { ADMIN_ID };
 
@@ -152,12 +152,15 @@ export interface DaemonInfo {
 
 export interface AppState {
   rooms: Map<string, RoomState>;
+  roomsLoaded: boolean;
   peers: PeerInfo[];
+  peersLoaded: boolean;
   /** `claude agents --json` rows, merged with `peers` by sessionId in the
    * Sidebar Sessions list (U1, see utils.ts's toSessionRow/offlineAgentRows).
    * Populated by ws.ts's onOpen `op:"agents"` fetch and kept live via
    * `ev:"agents"` push — no manual refresh needed. */
   agents: AgentInfo[];
+  agentsLoaded: boolean;
   daemonInfo: DaemonInfo | null;
   /** DR-0023 host translation capability, probed once after each hello. */
   hostTranslatorAvailable: boolean;
@@ -169,6 +172,12 @@ export interface AppState {
   terminalGatewayUrl: string | null;
   /** which top-level screen the locator currently selects. */
   view: View;
+  /** Session tab selected by the real-path locator. */
+  currentTab: SessionTab | null;
+  /** Structurally invalid SPA path shown inside the content area. */
+  unknownPath: string | null;
+  /** Recoverable navigation error shown without changing the URL. */
+  navigationError: string | null;
   currentRoomId: string | null;
   /** message anchor requested by the URL locator (`#room-mNN`), if any. */
   currentMid: number | null;
@@ -222,12 +231,18 @@ export interface AppState {
 export function initialState(): AppState {
   return {
     rooms: new Map(),
+    roomsLoaded: false,
     peers: [],
+    peersLoaded: false,
     agents: [],
+    agentsLoaded: false,
     daemonInfo: null,
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
     view: "room",
+    currentTab: null,
+    unknownPath: null,
+    navigationError: null,
     currentRoomId: null,
     currentMid: null,
     currentSid: null,
@@ -261,6 +276,7 @@ export type Action =
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
+  | { type: "navigation/error"; message: string | null }
   | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean }
   | { type: "fs/dir-toggled"; sid: string; path: string }
@@ -530,10 +546,17 @@ function agentRefKey(agent: AgentRef | null | undefined): string {
 }
 
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
+  if (locator.view === "unknown") {
+    return { ...state, unknownPath: locator.pathname, sidebarOpen: false };
+  }
+  if (locator.view === "session-root") return state;
   if (locator.view === "room") {
     return {
       ...state,
       view: "room",
+      currentTab: null,
+      unknownPath: null,
+      navigationError: null,
       currentRoomId: locator.room,
       currentMid: locator.mid,
       currentAgent: null,
@@ -570,6 +593,9 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     return {
       ...state,
       view: "timeline",
+      currentTab: "timeline",
+      unknownPath: null,
+      navigationError: null,
       currentSid: locator.sid,
       currentAgent: nextAgent,
       sessionTrees,
@@ -593,6 +619,9 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   return {
     ...state,
     view: "session",
+    currentTab: locator.tab ?? "files",
+    unknownPath: null,
+    navigationError: null,
     currentSid: locator.sid,
     currentAgent: null,
     sessionTrees,
@@ -686,11 +715,11 @@ export function reducer(state: AppState, action: Action): AppState {
     case "conn/status":
       return { ...state, connStatus: action.status };
     case "rooms/loaded":
-      return applyRoomsLoaded(state, action.rooms);
+      return { ...applyRoomsLoaded(state, action.rooms), roomsLoaded: true };
     case "peers/loaded":
-      return { ...state, peers: action.peers };
+      return { ...state, peers: action.peers, peersLoaded: true };
     case "agents/loaded":
-      return { ...state, agents: action.agents };
+      return { ...state, agents: action.agents, agentsLoaded: true };
     case "session-errors/loaded":
       return {
         ...state,
@@ -711,6 +740,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return applyProtocolEvent(state, action.event);
     case "locator/changed":
       return applyLocatorChanged(state, action.locator);
+    case "navigation/error":
+      return { ...state, navigationError: action.message };
     case "mention/toggle": {
       const mentionTo = new Set(state.mentionTo);
       if (mentionTo.has(action.id)) mentionTo.delete(action.id);

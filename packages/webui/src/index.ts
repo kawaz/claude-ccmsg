@@ -27,7 +27,13 @@ export interface WebuiApp {
   fetch(req: Request): Response | Promise<Response>;
 }
 
-async function bundleClient(): Promise<string> {
+interface ClientBundle {
+  code: string;
+  hash: string;
+  path: string;
+}
+
+async function bundleClient(): Promise<ClientBundle> {
   const result = await Bun.build({
     entrypoints: [CLIENT_ENTRY.pathname],
     target: "browser",
@@ -43,7 +49,9 @@ async function bundleClient(): Promise<string> {
   }
   const output = result.outputs[0];
   if (!output) throw new Error("Bun.build produced no output for the webui client entry");
-  return output.text();
+  const code = await output.text();
+  const hash = new Bun.CryptoHasher("sha256").update(code).digest("hex").slice(0, 16);
+  return { code, hash, path: `/assets/app.${hash}.js` };
 }
 
 // Serve-time bundle of the preact/TSX client (DR-0005 §3): built once per
@@ -56,8 +64,8 @@ async function bundleClient(): Promise<string> {
 // build removes that surface. A build failure is surfaced as a 500 with the
 // error text — never a silent fallback to stale or missing content — and is
 // not cached, so the next request retries the build.
-let bundlePromise: Promise<string> | null = null;
-function getBundle(): Promise<string> {
+let bundlePromise: Promise<ClientBundle> | null = null;
+function getBundle(): Promise<ClientBundle> {
   bundlePromise ??= bundleClient().catch((err: unknown) => {
     bundlePromise = null;
     throw err;
@@ -68,10 +76,16 @@ function getBundle(): Promise<string> {
 export function createWebuiApp(): WebuiApp {
   const app = new Hono();
 
-  app.get("/assets/app.js", async (c) => {
+  app.get("/assets/*", async (c) => {
     try {
-      const code = await getBundle();
-      return new Response(code, { headers: { "content-type": "text/javascript; charset=utf-8" } });
+      const bundle = await getBundle();
+      if (c.req.path !== bundle.path) return c.notFound();
+      return new Response(bundle.code, {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.text(`webui client build failed:\n\n${message}`, 500);
@@ -91,10 +105,25 @@ export function createWebuiApp(): WebuiApp {
   // 未知パスをどう扱うか (SPA 側でのエラー表示) は URL 再設計側の担当。
   app.get("*", async (c) => {
     const asset = ASSETS[c.req.path];
-    const file = Bun.file(new URL(asset?.file ?? "index.html", PUBLIC_DIR));
-    if (!(await file.exists())) return c.notFound();
-    const contentType = asset?.contentType ?? "text/html; charset=utf-8";
-    return new Response(file, { headers: { "content-type": contentType } });
+    if (asset && asset.file !== "index.html") {
+      const file = Bun.file(new URL(asset.file, PUBLIC_DIR));
+      if (!(await file.exists())) return c.notFound();
+      return new Response(file, { headers: { "content-type": asset.contentType } });
+    }
+
+    const [template, bundle] = await Promise.all([
+      Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
+      getBundle(),
+    ]);
+    const shell = template.replace("/assets/app.js", bundle.path);
+    const etag = `"${new Bun.CryptoHasher("sha256").update(shell).digest("hex")}"`;
+    const headers = {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-cache",
+      etag,
+    };
+    if (c.req.header("if-none-match") === etag) return new Response(null, { status: 304, headers });
+    return new Response(shell, { headers });
   });
 
   return app;

@@ -18,6 +18,7 @@ import {
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { timelineHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import {
   buildSessionSearchRequest,
   DEFAULT_SESSION_SEARCH_FORM,
@@ -184,7 +185,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
       hit,
       search: sessionSearchFormToTimelineSearch(resultForm ?? form),
     });
-    location.assign(timelineHref(hit.sid));
+    pushNavigation(timelineHref(hit.sid));
   }
 
   return (
