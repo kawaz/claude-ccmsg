@@ -557,6 +557,30 @@ export interface SessionStatusSnapshot {
    * `folders[].name` is absent). Deduplicated by realpath — the same folder
    * referenced twice (or via two different workspace files) appears once. */
   workspace_folders?: WorkspaceFolder[];
+  /** Present iff the session's latest main-context turn ended with a harness
+   * API-error row — the session is stopped waiting for the user, not working.
+   * Absent for a healthy session (see SessionApiError for the exact rule). */
+  api_error?: SessionApiError;
+}
+
+/** A harness-synthesized API-error row observed as the last thing the main
+ * context did (`{"type":"assistant","isApiErrorMessage":true,...}` with
+ * `message.model === "<synthetic>"`). Claude Code writes these in the agent's
+ * own voice — "Prompt is too long", "API Error: 500 ...", "You're out of extra
+ * usage · resets 7pm", "Please run /login" — but they are the CLI reporting a
+ * stopped turn, not the agent speaking, and the session sits idle until the
+ * user intervenes.
+ *
+ * Only the *latest* turn counts: a later real assistant row clears this, so a
+ * session that hit a transient connection error and recovered is not flagged.
+ * Sidechain (subagent) error rows never set it — a failed subagent does not
+ * stop the main context. */
+export interface SessionApiError {
+  /** Verbatim error text of the row, so a client can show *why* the session
+   * stopped. Concatenation of the row's text blocks; may be multi-line. */
+  text: string;
+  /** ISO timestamp of the error row. */
+  timestamp: string;
 }
 
 /** DR-0026 workspace folder descriptor: one entry from the `folders[]` array
@@ -576,6 +600,15 @@ export interface WorkspaceFolder {
 export interface SessionStatusStreamEvent extends SessionStatusSnapshot {
   ev: "session_status";
   sid: string;
+}
+/** Push update of the set of connected sessions stopped on a harness API
+ * error (user-role subscribers only, same shape the `session_errors` op
+ * returns). Emitted whenever that set changes — a session hitting an error,
+ * recovering from one, or disconnecting while flagged. Always the full list,
+ * not a delta, so a client that missed a push still converges. */
+export interface SessionErrorsStreamEvent {
+  ev: "session_errors";
+  errors: SessionErrorEntry[];
 }
 
 /** Completion of a 2-phase `translate` request (see TranslateRequest's doc
@@ -629,6 +662,7 @@ export type StreamEvent =
   | PeersStreamEvent
   | TranscriptStreamEvent
   | SessionStatusStreamEvent
+  | SessionErrorsStreamEvent
   | TranslateResultEvent
   | SessionLaunchResultEvent
   | SessionKillResultEvent
@@ -1316,6 +1350,17 @@ export interface SessionStatusUnsubscribeRequest {
   sid: string;
 }
 
+/** One-shot fetch of every connected session currently stopped on a harness
+ * API error (user role only). The webui uses this for the initial paint;
+ * later changes arrive as `ev:"session_errors"` stream events. Unlike
+ * `session_status`, this is not per-sid: the sidebar has to colour *other*
+ * sessions' rows, and subscribing a full status fold per visible peer is the
+ * cost DR-0020 §2.1 (a) explicitly avoided. The daemon instead folds the one
+ * api_error pattern over every connected peer's transcript tail. */
+export interface SessionErrorsRequest {
+  op: "session_errors";
+}
+
 export interface PingRequest {
   op: "ping";
 }
@@ -1400,6 +1445,7 @@ export type Request =
   | SessionStatusRequest
   | SessionStatusSubscribeRequest
   | SessionStatusUnsubscribeRequest
+  | SessionErrorsRequest
   | PingRequest
   | TranslateRequest
   | ShutdownRequest
@@ -1757,6 +1803,17 @@ export interface SessionStatusUnsubscribeResponse {
   ok: true;
   sid: string;
 }
+/** One entry of the session-error list: which session is stopped, and on what. */
+export interface SessionErrorEntry extends SessionApiError {
+  sid: string;
+}
+export interface SessionErrorsResponse {
+  ok: true;
+  /** Only sessions currently stopped on an error appear; a recovered session
+   * drops out of the list rather than appearing with an empty error. Sorted
+   * by sid for a stable compare on the daemon's change check. */
+  errors: SessionErrorEntry[];
+}
 export type TranslateResult = { ok: true; text: string } | { ok: false; error: string };
 export interface TranslateResponse {
   ok: true;
@@ -1834,6 +1891,7 @@ export type Response =
   | SessionStatusResponse
   | SessionStatusSubscribeResponse
   | SessionStatusUnsubscribeResponse
+  | SessionErrorsResponse
   | PingResponse
   | ShutdownResponse
   | LeaveResponse

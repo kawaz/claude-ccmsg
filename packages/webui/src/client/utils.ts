@@ -4,6 +4,7 @@
 import type {
   AgentInfo,
   PeerInfo,
+  SessionApiError,
   SessionSearchHit,
   SessionSearchMatch,
   SessionSearchRequest,
@@ -403,6 +404,17 @@ export interface SessionRow {
   transcript_path?: string;
   agent?: AgentInfo;
   connected: boolean;
+  /** Present iff the daemon currently reports this (connected) session as
+   * stopped on a harness API error — the row's status then becomes `"error"`
+   * ahead of anything `claude agents` says (see sessionStatus). Filled in by
+   * `toSessionRow` from the store's by-sid error map rather than passed to
+   * `sessionStatus` as a second argument: every existing caller reads a row's
+   * status from the row alone (`sessionBadges`, `groupSessionsBySection`), and
+   * that invariant is what keeps those two from ever disagreeing. Always
+   * absent on an agent-only row (`offlineAgentRows`): the daemon only folds
+   * this over *connected* peers' transcripts, and such a row is `"offline"`
+   * regardless. */
+  api_error?: SessionApiError;
 }
 
 /** Indexes `claude agents --json` rows by sessionId for O(1) lookup while
@@ -416,12 +428,19 @@ export function indexAgentsBySid(agents: AgentInfo[]): Map<string, AgentInfo> {
 }
 
 /** Builds one SessionRow for a connected peer, attaching the matching agent
- * (if `claude agents` has polled one with the same sessionId) — used for
- * every entry in the Sidebar's already-sorted peers array, so the existing
- * abc/idle/new ordering (Sidebar.tsx's sortPeers over `peers`) carries
- * straight through unchanged; this function only adds fields, never
- * reorders. */
-export function toSessionRow(peer: PeerInfo, agentsBySid: Map<string, AgentInfo>): SessionRow {
+ * (if `claude agents` has polled one with the same sessionId) and the matching
+ * harness API error (if the daemon currently reports this session as stopped
+ * on one) — used for every entry in the Sidebar's already-sorted peers array,
+ * so the existing abc/idle/new ordering (Sidebar.tsx's sortPeers over `peers`)
+ * carries straight through unchanged; this function only adds fields, never
+ * reorders. `errorsBySid` is `AppState.sessionErrors` — already a by-sid Map,
+ * so unlike agents it needs no index pass. Required, not optional: a caller
+ * that forgot it would silently render every stopped session as busy. */
+export function toSessionRow(
+  peer: PeerInfo,
+  agentsBySid: Map<string, AgentInfo>,
+  errorsBySid: Map<string, SessionApiError>,
+): SessionRow {
   return {
     sid: peer.sid,
     repo: peer.repo,
@@ -434,6 +453,7 @@ export function toSessionRow(peer: PeerInfo, agentsBySid: Map<string, AgentInfo>
     transcript_path: peer.transcript_path,
     agent: agentsBySid.get(peer.sid),
     connected: true,
+    api_error: errorsBySid.get(peer.sid),
   };
 }
 
@@ -534,6 +554,15 @@ export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } 
  * - A disconnected (agent-only, "ccmsg 未起動") row is always `"offline"`,
  *   regardless of what its matched agent's `status`/`state` say — offline
  *   rows form their own section (U3), not a busy/idle/inactive/done bucket.
+ *   This stays the first check: `api_error` below can only be set for a
+ *   connected row anyway (the daemon folds it over connected peers only), so
+ *   testing it first would be a second way to say the same thing while
+ *   weakening the "disconnected ⇒ offline" invariant.
+ * - `api_error` (harness API-error row ended the latest main-context turn)
+ *   outranks everything `claude agents` reports for a connected row. Such a
+ *   session still looks busy from the outside but is actually stopped waiting
+ *   for the user, which makes it the most actionable state there is — the
+ *   opposite of what a "busy" section heading would tell the reader.
  * - `state: "done"` (background-session completion) takes priority over
  *   `status` — a finished background agent shouldn't still read as busy.
  * - A *connected* row with no matched agent, or a matched agent with no
@@ -546,6 +575,7 @@ export type SessionStatus = string;
 
 export function sessionStatus(row: SessionRow): SessionStatus {
   if (!row.connected) return "offline";
+  if (row.api_error) return "error";
   if (!row.agent) return "idle";
   if (row.agent.state === "done") return "done";
   return row.agent.status || "idle";
@@ -594,9 +624,21 @@ export function badgeLabel(kind: string): string {
 // "waiting" (承認待ち等でユーザ入力を待っている) は Busy より先頭 (kawaz r46
 // mid=41: 「Busyより優先度高いので一番上に」— 人間のアクションが要る状態が
 // 最も actionable)。
-const SESSION_SECTION_KNOWN_ORDER: string[] = ["waiting", "busy", "idle", "inactive", "done"];
+// "error" (harness の API エラー行で turn が終わり停止している) は更にその先頭。
+// waiting と同じく人間の介入待ちだが、waiting は Claude 側が能動的に待っている
+// のに対し error は誰も何も待っていない (放置すると永久に止まったまま) ため、
+// 気付く優先度が一段高い。
+const SESSION_SECTION_KNOWN_ORDER: string[] = [
+  "error",
+  "waiting",
+  "busy",
+  "idle",
+  "inactive",
+  "done",
+];
 
 const SESSION_SECTION_LABELS: Record<string, string> = {
+  error: "Error",
   waiting: "Waiting",
   busy: "Busy",
   idle: "Idle",

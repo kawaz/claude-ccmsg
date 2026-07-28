@@ -16,6 +16,8 @@ import {
   type PeerInfo,
   type RoomKind,
   type RoomSummary,
+  type SessionApiError,
+  type SessionErrorEntry,
   type SessionSearchHit,
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
@@ -188,6 +190,19 @@ export interface AppState {
    * decision (a): sidebar mini badge only shows for the session currently
    * open, see SessionList.tsx). */
   sessionStatuses: Map<string, SessionStatusSnapshot>;
+  /** Connected sessions whose latest main-context turn ended on a harness
+   * API-error row (SessionApiError), keyed by sid. Populated by ws.ts's onOpen
+   * `op:"session_errors"` fetch and kept live via `ev:"session_errors"` pushes
+   * — the same one-shot + push pairing `agents` uses.
+   *
+   * Deliberately NOT the same thing as `sessionStatuses` above: that map only
+   * ever holds the sid(s) SessionView is actively subscribed to (DR-0020 §2.1
+   * (a)), whereas this one carries *every* connected session that is currently
+   * stopped, which is exactly what the sidebar needs to colour other sessions'
+   * rows without a status subscription per visible peer. Always replaced whole
+   * (the daemon sends the full list, never a delta), so a recovered session
+   * simply stops appearing. */
+  sessionErrors: Map<string, SessionApiError>;
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
@@ -219,6 +234,7 @@ export function initialState(): AppState {
     currentAgent: null,
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
+    sessionErrors: new Map(),
     pinnedSessions: new Map(),
     mentionTo: new Set(),
     connStatus: "connecting",
@@ -234,6 +250,12 @@ export type Action =
   // `ev:"agents"` stream event (subsequent changes) fold in here — the
   // reducer just replaces the list either way, same as peers/loaded.
   | { type: "agents/loaded"; agents: AgentInfo[] }
+  // Both the one-shot `op:"session_errors"` reply and the pushed
+  // `ev:"session_errors"` stream event fold in here (same pairing as
+  // agents/loaded). The wire shape is a flat list keyed by `sid`; the reducer
+  // is the one place that turns it into the by-sid Map the sidebar looks rows
+  // up in, so ws.ts stays a verbatim relay.
+  | { type: "session-errors/loaded"; errors: SessionErrorEntry[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
@@ -669,6 +691,13 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, peers: action.peers };
     case "agents/loaded":
       return { ...state, agents: action.agents };
+    case "session-errors/loaded":
+      return {
+        ...state,
+        sessionErrors: new Map(
+          action.errors.map((e) => [e.sid, { text: e.text, timestamp: e.timestamp }]),
+        ),
+      };
     case "daemon-info/loaded":
       return {
         ...state,

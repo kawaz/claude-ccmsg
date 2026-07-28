@@ -646,16 +646,31 @@ describe("indexAgentsBySid / toSessionRow", () => {
 
   test("toSessionRow attaches the matching agent and marks connected: true", () => {
     const idx = indexAgentsBySid([agent({ sessionId: "s1", status: "busy" })]);
-    const row = toSessionRow(peer({ sid: "s1" }), idx);
+    const row = toSessionRow(peer({ sid: "s1" }), idx, new Map());
     expect(row.connected).toBe(true);
     expect(row.agent?.status).toBe("busy");
   });
 
   test("toSessionRow leaves agent undefined when claude agents hasn't reported this sid", () => {
     const idx = indexAgentsBySid([agent({ sessionId: "other" })]);
-    const row = toSessionRow(peer({ sid: "s1" }), idx);
+    const row = toSessionRow(peer({ sid: "s1" }), idx, new Map());
     expect(row.connected).toBe(true);
     expect(row.agent).toBeUndefined();
+  });
+
+  // The error map is the row's only source of api_error — this is the seam
+  // that makes `sessionStatus(row)` able to report "error" from the row alone
+  // (see SessionRow.api_error's doc comment).
+  test("toSessionRow attaches the matching session error", () => {
+    const err = { text: "API Error: 500", timestamp: "2026-07-27T00:00:00Z" };
+    const row = toSessionRow(peer({ sid: "s1" }), indexAgentsBySid([]), new Map([["s1", err]]));
+    expect(row.api_error).toEqual(err);
+  });
+
+  test("toSessionRow leaves api_error undefined for a session with no reported error", () => {
+    const err = { text: "API Error: 500", timestamp: "2026-07-27T00:00:00Z" };
+    const row = toSessionRow(peer({ sid: "s1" }), indexAgentsBySid([]), new Map([["other", err]]));
+    expect(row.api_error).toBeUndefined();
   });
 });
 
@@ -881,6 +896,13 @@ describe("sessionBadges / badgeLabel", () => {
 
 // --- U3: Sessions-list status sections --- //
 
+/** A harness API-error row as the daemon reports it (text is deliberately the
+ * long one-line JSON shape real "API Error: 500 ..." rows have). */
+const apiError = {
+  text: 'API Error: 500 {"type":"error","error":{"message":"overloaded"}}',
+  timestamp: "2026-07-27T09:00:00Z",
+};
+
 describe("sessionStatus", () => {
   test("disconnected (agent-only) row is always 'offline', regardless of agent status/state", () => {
     expect(sessionStatus(sessionRow({ connected: false, agent: agent({ status: "busy" }) }))).toBe(
@@ -940,6 +962,38 @@ describe("sessionStatus", () => {
       "paused",
     );
   });
+
+  // A session stopped on a harness API error is waiting for the user, not
+  // working — it must not be reported as anything else.
+  test("connected row with api_error -> 'error'", () => {
+    expect(sessionStatus(sessionRow({ connected: true, api_error: apiError }))).toBe("error");
+  });
+
+  // The whole point of the "error" status: `claude agents` still reports such
+  // a session as busy (its process is alive), which is exactly the misleading
+  // signal this overrides.
+  test("api_error takes priority over agent status 'busy'", () => {
+    expect(
+      sessionStatus(
+        sessionRow({ connected: true, agent: agent({ status: "busy" }), api_error: apiError }),
+      ),
+    ).toBe("error");
+  });
+
+  test("api_error takes priority over agent.state 'done'", () => {
+    expect(
+      sessionStatus(
+        sessionRow({ connected: true, agent: agent({ state: "done" }), api_error: apiError }),
+      ),
+    ).toBe("error");
+  });
+
+  // "disconnected ⇒ offline" stays the outermost invariant (see
+  // sessionStatus's doc comment): an offline row belongs in the offline
+  // section even if a stale error is still attached to it.
+  test("disconnected row with api_error is still 'offline' (offline check comes first)", () => {
+    expect(sessionStatus(sessionRow({ connected: false, api_error: apiError }))).toBe("offline");
+  });
 });
 
 describe("groupSessionsBySection", () => {
@@ -988,6 +1042,23 @@ describe("groupSessionsBySection", () => {
       "done",
       "offline",
     ]);
+  });
+
+  // "error" leads every other section: an API-error-stopped session is the
+  // only one where nothing at all will happen until the user acts, so it must
+  // outrank even "waiting" (where Claude is actively asking).
+  test("'error' section comes first, ahead of waiting/busy", () => {
+    const rows = [
+      sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "waiting", connected: true, agent: agent({ status: "waiting" }) }),
+      sessionRow({ sid: "err", connected: true, api_error: apiError }),
+    ];
+    expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual(["error", "waiting", "busy"]);
+  });
+
+  test("'error' section label is 'Error'", () => {
+    const rows = [sessionRow({ sid: "err", connected: true, api_error: apiError })];
+    expect(groupSessionsBySection(rows)[0]?.label).toBe("Error");
   });
 
   // Regression (kawaz 2026-07-16): an unrecognized status must still get its
@@ -1059,13 +1130,13 @@ describe("groupSessionsBySection", () => {
 describe("toSessionRow: transcript_path passthrough (U3)", () => {
   test("carries transcript_path through when the peer announced one", () => {
     const idx = indexAgentsBySid([]);
-    const row = toSessionRow(peer({ sid: "s1", transcript_path: "/tmp/t.jsonl" }), idx);
+    const row = toSessionRow(peer({ sid: "s1", transcript_path: "/tmp/t.jsonl" }), idx, new Map());
     expect(row.transcript_path).toBe("/tmp/t.jsonl");
   });
 
   test("leaves transcript_path undefined when the peer didn't announce one", () => {
     const idx = indexAgentsBySid([]);
-    const row = toSessionRow(peer({ sid: "s1", transcript_path: undefined }), idx);
+    const row = toSessionRow(peer({ sid: "s1", transcript_path: undefined }), idx, new Map());
     expect(row.transcript_path).toBeUndefined();
   });
 });

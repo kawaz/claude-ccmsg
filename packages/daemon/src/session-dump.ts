@@ -4,6 +4,7 @@ import type {
   MemberEvent,
   MsgEvent,
   RoomKind,
+  SessionApiError,
   SessionTodo,
   SessionWorkflowStatus,
   StorageEvent,
@@ -108,6 +109,12 @@ export interface SessionDumpContext {
   background: SessionContextBackground[];
   schedules: SessionContextSchedule[];
   rooms: SessionContextRoom[];
+  /** Present iff the session's last main-context turn ended on a harness API
+   * error ("Prompt is too long", a 500, a usage limit) instead of a completed
+   * turn. That is why the transcript stops where it does — worth stating
+   * outright, since a rewind consumer otherwise has to infer it from a
+   * conversation that simply ends mid-air. */
+  api_error?: SessionApiError;
 }
 
 export interface SessionDumpEntry {
@@ -737,6 +744,7 @@ function loadSessionContext(
       })),
     schedules: loadContextSchedules(transcriptFile, notificationStates),
     rooms: loadContextRooms(dataDir, session),
+    ...(status.api_error ? { api_error: status.api_error } : {}),
   };
 }
 

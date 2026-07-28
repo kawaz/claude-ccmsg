@@ -1077,6 +1077,14 @@ describe("createWsClient agents/ping (U1)", () => {
       }),
     );
     await tick();
+    // session_errors — one connected session stopped on a harness API error.
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        errors: [{ sid: "s1", text: "API Error: 500", timestamp: "2026-07-27T09:00:00Z" }],
+      }),
+    );
+    await tick();
     // ping
     ws1.triggerMessage(
       JSON.stringify({
@@ -1096,7 +1104,7 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
     // empty-batch host translation capability probe — 2-phase like every
     // translate: ack on the positional lane, outcome on the result event.
-    const probe = JSON.parse(ws1.sent[6] ?? "{}") as Record<string, unknown> & {
+    const probe = JSON.parse(ws1.sent[7] ?? "{}") as Record<string, unknown> & {
       request_id: string;
     };
     expect(probe).toEqual({ op: "translate", request_id: probe.request_id, texts: [] });
@@ -1113,14 +1121,18 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const agentsAction = actions.find((a) => a.type === "agents/loaded");
+    const errorsAction = actions.find((a) => a.type === "session-errors/loaded");
     const daemonAction = actions.find((a) => a.type === "daemon-info/loaded");
     const translatorAction = actions.find(
       (a) => a.type === "translator/availability" && a.host === true,
     );
     expect(agentsAction).toBeDefined();
+    expect(errorsAction).toBeDefined();
     expect(daemonAction).toBeDefined();
     expect(translatorAction).toBeDefined();
     if (agentsAction?.type === "agents/loaded") expect(agentsAction.agents).toHaveLength(1);
+    if (errorsAction?.type === "session-errors/loaded")
+      expect(errorsAction.errors.map((e) => e.sid)).toEqual(["s1"]);
     if (daemonAction?.type === "daemon-info/loaded") expect(daemonAction.script).toBe("entry.ts");
   });
 
@@ -1343,6 +1355,55 @@ describe("createWsClient agents/ping (U1)", () => {
         ],
       },
     ]);
+  });
+
+  // Mirrors the ev:"agents" coverage above: the push carries the full list
+  // (never a delta) and folds into the same action the one-shot
+  // op:"session_errors" reply in onOpen uses.
+  test("ev:'session_errors' push dispatches session-errors/loaded", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient(
+      (a) => actions.push(a),
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "session_errors",
+        errors: [{ sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:00:00Z" }],
+      }),
+    );
+
+    expect(actions).toEqual([
+      {
+        type: "session-errors/loaded",
+        errors: [{ sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:00:00Z" }],
+      },
+    ]);
+  });
+
+  // An empty list is the "every session recovered" push — it must still reach
+  // the reducer, otherwise a cleared error would leave the sidebar red forever.
+  test("ev:'session_errors' with an empty list still dispatches (clears the set)", () => {
+    const actions: Action[] = [];
+    const handle = createWsClient(
+      (a) => actions.push(a),
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    actions.length = 0;
+
+    ws1.triggerMessage(JSON.stringify({ ev: "session_errors", errors: [] }));
+
+    expect(actions).toEqual([{ type: "session-errors/loaded", errors: [] }]);
   });
 });
 

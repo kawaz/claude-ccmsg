@@ -44,6 +44,8 @@ import type {
   Response,
   RoomsResponse,
   SessionEnvResponse,
+  SessionErrorsResponse,
+  SessionErrorsStreamEvent,
   SessionKillResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
@@ -241,6 +243,13 @@ export interface WsHandle {
    * Called once in onOpen's handshake for the initial paint; subsequent
    * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
   agents(): Promise<AgentsResponse | ErrorResponse>;
+  /** One-shot fetch of every connected session currently stopped on a harness
+   * API error. Called once in onOpen's handshake for the initial paint;
+   * subsequent changes arrive unprompted as `ev:"session_errors"` pushes (see
+   * onMessage below) — same one-shot + push pairing as `agents` above. Not
+   * per-sid: the sidebar has to colour *other* sessions' rows, which a status
+   * subscription per visible peer would cost far more to answer. */
+  sessionErrors(): Promise<SessionErrorsResponse | ErrorResponse>;
   /** Search historical Claude Code session transcripts under daemon-detected
    * config dirs (DR-0021 Phase 1 op, Phase 2 client wiring; user role only).
    * `params` excludes `op` and `request_id` — the wire shape (including the
@@ -433,6 +442,11 @@ export function createWsClient(
       // and skips these two dispatches, same as any other mid-handshake drop.
       const agentsRes = await send<AgentsResponse>({ op: "agents" });
       if (agentsRes.ok) dispatch({ type: "agents/loaded", agents: agentsRes.agents });
+      // Initial paint of the "stopped on an API error" set for the sidebar;
+      // later changes arrive as `ev:"session_errors"` pushes. Same
+      // failure-tolerance as the agents fetch above.
+      const errorsRes = await send<SessionErrorsResponse>({ op: "session_errors" });
+      if (errorsRes.ok) dispatch({ type: "session-errors/loaded", errors: errorsRes.errors });
       const ping = await send<PingResponse>({ op: "ping" });
       if (ping.ok)
         dispatch({
@@ -515,6 +529,19 @@ export function createWsClient(
     // one code path for "replace the agents list".
     if ("ev" in streamEv && streamEv.ev === "agents") {
       dispatch({ type: "agents/loaded", agents: (streamEv as AgentsStreamEvent).agents });
+      return;
+    }
+    // Live push whenever the set of sessions stopped on a harness API error
+    // changes (a session hitting one, recovering, or disconnecting while
+    // flagged). Always the full list, never a delta, so this folds into the
+    // same session-errors/loaded action the one-shot op:"session_errors" reply
+    // in onOpen uses — one reducer path for "replace the error set", same
+    // pattern as ev:"agents" above.
+    if ("ev" in streamEv && streamEv.ev === "session_errors") {
+      dispatch({
+        type: "session-errors/loaded",
+        errors: (streamEv as SessionErrorsStreamEvent).errors,
+      });
       return;
     }
     // U1: live push whenever the connected-session list changes (registers,
@@ -725,6 +752,7 @@ export function createWsClient(
     sessionStatusSubscribe: (sid) => send({ op: "session_status_subscribe", sid }),
     sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
     agents: () => send({ op: "agents" }),
+    sessionErrors: () => send({ op: "session_errors" }),
     sessionSearch: (params) =>
       sendTwoPhase({ op: "session_search", request_id: `q${++nextRequestId}`, ...params }),
     ping: () => send({ op: "ping" }),

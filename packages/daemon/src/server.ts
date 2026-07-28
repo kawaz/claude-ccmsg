@@ -52,6 +52,13 @@ import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
 import {
+  createSessionErrorsStore,
+  sessionErrorEntries,
+  stopAllSessionErrors,
+  syncSessionErrorWatches,
+  type SessionErrorsStore,
+} from "./session-errors.ts";
+import {
   createSessionStatusStore,
   getSessionStatus,
   sessionStatusUnsubscribeAll,
@@ -165,6 +172,13 @@ export interface Daemon {
   transcriptTail: TranscriptTailStore;
   /** folded transcript status subscriptions per sid (DR-0020 Phase 1). */
   sessionStatus: SessionStatusStore;
+  /** api_error fold across every connected peer, for the sidebar's error
+   * section. Independent of `sessionStatus`, which only follows the sids a
+   * client explicitly subscribed to. */
+  sessionErrors: SessionErrorsStore;
+  /** sessionErrorEntries() as of the last `ev:"session_errors"` broadcast —
+   * same "don't push an unchanged list" guard as peersSnapshot. */
+  sessionErrorsSnapshot: string;
   /** Persistent macOS Translation.framework helper (DR-0023). */
   translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
@@ -483,6 +497,9 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
   maybeStopAgentsPoller(daemon.agentsPoller, daemon.subscribers);
+  // The departing conn may have been the last user-role subscriber, in which
+  // case syncSessionErrors drops every watch (see its doc comment).
+  syncSessionErrors(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
   transcriptUnsubscribeAll(daemon.transcriptTail, conn);
   const id = conn.identity;
@@ -543,6 +560,49 @@ function maybeBroadcastPeers(daemon: Daemon): void {
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
   }
+  // The connected set just changed, so the set of transcripts worth folding
+  // for api_error did too.
+  syncSessionErrors(daemon);
+}
+
+function hasUserSubscriber(daemon: Daemon): boolean {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") return true;
+  }
+  return false;
+}
+
+/** Push ev:"session_errors" when the list actually differs from the last one
+ * sent — a transcript event that leaves the error state alone (the common
+ * case, since every appended line is examined) must not produce a push. */
+function broadcastSessionErrors(daemon: Daemon): void {
+  const errors = sessionErrorEntries(daemon.sessionErrors);
+  const key = JSON.stringify(errors);
+  if (key === daemon.sessionErrorsSnapshot) return;
+  daemon.sessionErrorsSnapshot = key;
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "session_errors", errors });
+  }
+}
+
+/** Follow every connected session's transcript for api_error — but only while
+ * a user-role subscriber is connected, the same "webui-only work costs nothing
+ * when no webui is watching" rule the agents poller follows (DR-0009-agents
+ * addendum). With no such subscriber the wanted set is empty, which tears every
+ * watch down. Called from the three places that can change either input: peers
+ * changing (maybeBroadcastPeers), a user subscribing, and a subscriber leaving. */
+function syncSessionErrors(daemon: Daemon): void {
+  const sids = hasUserSubscriber(daemon)
+    ? [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid)
+    : [];
+  syncSessionErrorWatches(
+    daemon.sessionErrors,
+    daemon.transcriptTail,
+    daemon.sessions,
+    sids,
+    daemon.log,
+    () => broadcastSessionErrors(daemon),
+  );
 }
 
 /** id the connection posts as in this room: "u1" for the admin user, member id for a session, null if a session that isn't a member. */
@@ -917,6 +977,7 @@ const IDENTITY_OPS = new Set([
   "session_status",
   "session_status_subscribe",
   "session_status_unsubscribe",
+  "session_errors",
   "translate",
 ]);
 
@@ -1642,6 +1703,10 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
             }
           },
         );
+        // Same "only while a webui is watching" gate as the agents poller:
+        // this conn may be the first user subscriber, which is what makes the
+        // per-peer api_error watches worth holding.
+        syncSessionErrors(daemon);
       }
       return;
     }
@@ -2141,6 +2206,17 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    // user role only, same rationale as "agents": which sessions are stopped
+    // on an API error is a webui display concern.
+    case "session_errors": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_errors' requires user role");
+        return;
+      }
+      send(conn, { ok: true, errors: sessionErrorEntries(daemon.sessionErrors) });
+      return;
+    }
+
     case "translate": {
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'translate' requires user role");
@@ -2369,6 +2445,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   stopAgentsPoller(daemon.agentsPoller);
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
+  stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
   stopAllTailWatches(daemon.transcriptTail);
   try {
     daemon.server?.stop();
@@ -2501,6 +2578,8 @@ export function startDaemon(opts: StartOptions = {}): void {
     agentsPoller: createAgentsPoller(),
     transcriptTail: createTranscriptTailStore(),
     sessionStatus: createSessionStatusStore(),
+    sessionErrors: createSessionErrorsStore(),
+    sessionErrorsSnapshot: "",
     translator: createTranslateService(),
     peersSnapshot: "",
   };

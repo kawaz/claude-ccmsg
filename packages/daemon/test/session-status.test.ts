@@ -1587,6 +1587,152 @@ function nameOf(file: string): string {
   return path.basename(file);
 }
 
+/** Harness API-error row, shaped after a real transcript line (CC 2.1.x): the
+ * text lives in a normal content block and the row carries a zeroed `usage`,
+ * so nothing but `isApiErrorMessage` distinguishes it from a real turn. */
+function apiErrorRow(
+  text: string,
+  opts: { timestamp?: string; isSidechain?: boolean; isApiErrorMessage?: boolean } = {},
+): string {
+  return JSON.stringify({
+    type: "assistant",
+    isSidechain: opts.isSidechain ?? false,
+    timestamp: opts.timestamp ?? START,
+    message: {
+      model: "<synthetic>",
+      role: "assistant",
+      stop_reason: "stop_sequence",
+      content: [{ type: "text", text }],
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+    },
+    error: "invalid_request",
+    isApiErrorMessage: opts.isApiErrorMessage ?? true,
+  });
+}
+
+describe("api_error fold (最終 turn が harness の API エラーで終わっているか)", () => {
+  // 実 transcript から採取したテキストのバリエーション。文言は上流任せなので
+  // 分類は文字列マッチではなく isApiErrorMessage で行う — この一覧はその方針が
+  // 文言の広がりに耐えることを示すためのもの。
+  const OBSERVED_TEXTS = [
+    "Prompt is too long",
+    "You're out of extra usage · resets 7pm (Asia/Tokyo)",
+    "API Error: Unable to connect to API (ConnectionRefused)",
+    'API Error: 500 {"type":"error","error":{"type":"api_error","message":"Internal server error"}}',
+    "Not logged in · Please run /login",
+    "The model's tool call could not be parsed (retry also failed).",
+    "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
+  ];
+
+  test("観測済みのエラー文言をすべて api_error として拾う", () => {
+    for (const text of OBSERVED_TEXTS) {
+      expect(apply([apiErrorRow(text)]).api_error).toEqual({ text, timestamp: START });
+    }
+  });
+
+  test("エラーが無ければ api_error は snapshot に現れない", () => {
+    expect(apply([assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 })]).api_error).toBe(
+      undefined,
+    );
+  });
+
+  test("エラー後に本物の assistant 応答が続けば解除される", () => {
+    // kawaz 裁定の核心: 「過去に 1 度でもエラーがあったら error」ではなく
+    // 「最後の turn がエラーで終わっているか」。復帰したセッションは通常表示に戻る。
+    const result = apply([
+      apiErrorRow("API Error: Unable to connect to API (ConnectionRefused)"),
+      assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 }, { timestamp: END }),
+    ]);
+    expect(result.api_error).toBe(undefined);
+  });
+
+  test("リトライ連発では最後のエラーが残る", () => {
+    // 実データでは 1 回の停止に対し数行のエラーが連続して書かれる。ユーザが実際に
+    // 詰まっている最新のものを表示する。
+    const result = apply([
+      apiErrorRow("API Error: Unable to connect to API (FailedToOpenSocket)"),
+      apiErrorRow("Prompt is too long", { timestamp: END }),
+    ]);
+    expect(result.api_error).toEqual({ text: "Prompt is too long", timestamp: END });
+  });
+
+  test("isApiErrorMessage:false の synthetic 行はエラーを立ても消しもしない", () => {
+    // harness が書く "No response requested." 等。エージェントの発話ではないので
+    // 直前のエラーを解除してはいけない。
+    const state = createSessionStatusState();
+    expect(foldLine(state, apiErrorRow("Prompt is too long"))).toBe(true);
+    expect(
+      foldLine(state, apiErrorRow("No response requested.", { isApiErrorMessage: false })),
+    ).toBe(false);
+    expect(snapshot(state).api_error?.text).toBe("Prompt is too long");
+  });
+
+  test("sidechain (サブエージェント) のエラーはメインの状態にしない", () => {
+    // subagent の transcript は同じ file に混ざるが、サブエージェントが落ちても
+    // メインコンテキストは止まっていない。
+    expect(apply([apiErrorRow("Prompt is too long", { isSidechain: true })]).api_error).toBe(
+      undefined,
+    );
+  });
+
+  test("sidechain の正常応答はメインのエラーを解除しない", () => {
+    // 解除側も同じ境界を守らないと、走行中の subagent が親のエラーを消してしまう。
+    const result = apply([
+      apiErrorRow("Prompt is too long"),
+      assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 }, { isSidechain: true }),
+    ]);
+    expect(result.api_error?.text).toBe("Prompt is too long");
+  });
+
+  test("同一エラーの再観測では foldLine=false (無駄な push を出さない)", () => {
+    const state = createSessionStatusState();
+    expect(foldLine(state, apiErrorRow("Prompt is too long"))).toBe(true);
+    expect(foldLine(state, apiErrorRow("Prompt is too long"))).toBe(false);
+  });
+
+  test("解除は状態が立っている時だけ変化として報告する", () => {
+    const state = createSessionStatusState();
+    const healthy = assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 });
+    foldLine(state, healthy);
+    // 既に api_error 無し。context も同値なので変化ゼロ。
+    expect(foldLine(state, healthy)).toBe(false);
+  });
+
+  test("エラー行は context 使用量を汚染しない", () => {
+    // synthetic の usage 全ゼロを main context として採用しない既存境界と共存する。
+    const result = apply([
+      assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
+      apiErrorRow("Prompt is too long", { timestamp: END }),
+    ]);
+    expect(result.context?.tokens).toBe(100);
+    expect(result.api_error?.text).toBe("Prompt is too long");
+  });
+
+  test("prefilter がエラー行と解除行の両方を通す", () => {
+    // fold は候補行しか見ないので、prefilter を抜ける行が両方向とも必要。
+    expect(isSessionStatusCandidate(apiErrorRow("Prompt is too long"))).toBe(true);
+    expect(
+      isSessionStatusCandidate(assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 })),
+    ).toBe(true);
+  });
+
+  test("テキストブロックが無いエラー行は無視する (表示すべき理由が無い)", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      isSidechain: false,
+      timestamp: START,
+      message: { model: "<synthetic>", content: [] },
+      isApiErrorMessage: true,
+    });
+    expect(apply([line]).api_error).toBe(undefined);
+  });
+});
+
 describe("session_status daemon ops (DR-0020 Phase 1)", () => {
   test(
     "one-shot は hello 済み transcript 全量を返し、未接続 sid は session_not_found",

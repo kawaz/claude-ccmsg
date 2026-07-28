@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ccmsgDedupKey,
+  classifyAssistantMessage,
   classifyBoundaryLine,
   classifyUserMessage,
   extractCcmsgMessages,
@@ -17,6 +18,7 @@ import {
   splitFoldSubgroups,
   groupTimelineLines,
   isAgentCommunicationSegment,
+  isApiErrorLine,
   isPeerMessageLine,
   isSearchableSegment,
   isUserTextTurn,
@@ -2007,6 +2009,181 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
     expect(line.userMessageKind).toBeUndefined();
+  });
+});
+
+// classifyAssistantMessage / assistantMessageKind wiring: Claude Code writes a
+// *synthesized* assistant line when a turn is cut short instead of answered
+// (context overflow, API failure, usage limit, ...). It wears the wire
+// "assistant" role, so without this classification the Timeline renders the
+// CLI's own interruption report as something the agent said (kawaz: 「これを
+// 見分けられるようにしたい」). Fixtures below are reduced from real observed
+// lines, keeping their wire metadata; the *text* varies freely upstream and is
+// never matched on, so each variant must be caught by the flag alone.
+describe("classifyAssistantMessage / api-error lines", () => {
+  function apiErrorRaw(
+    text: string,
+    over: { stopReason?: string; error?: string | null } = {},
+  ): string {
+    const error = over.error === undefined ? "invalid_request" : over.error;
+    return JSON.stringify({
+      type: "assistant",
+      isSidechain: false,
+      timestamp: "2026-07-27T10:11:12.000Z",
+      message: {
+        model: "<synthetic>",
+        role: "assistant",
+        stop_reason: over.stopReason ?? "stop_sequence",
+        content: [{ type: "text", text }],
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+      ...(error === null ? {} : { error }),
+      isApiErrorMessage: true,
+    });
+  }
+
+  // Categorically different upstream shapes. Each (text, error, stop_reason)
+  // triple is taken from lines actually present in local transcripts
+  // (2026-07-27 sweep of ~/.claude*/projects): across the ~700 flagged lines
+  // there, the top-level `error` value takes 8 forms (invalid_request /
+  // rate_limit / unknown / authentication_failed / server_error /
+  // model_not_found / billing_error / field absent), `stop_reason` two, and
+  // the wording differs in every one — the flag is the only invariant, which
+  // is exactly why classification reads nothing else.
+  const variants: [
+    name: string,
+    text: string,
+    over?: { stopReason?: string; error?: string | null },
+  ][] = [
+    ["context overflow", "Prompt is too long", { error: "invalid_request" }],
+    ["usage limit", "You're out of extra usage · resets 7pm (Asia/Tokyo)", { error: "rate_limit" }],
+    [
+      "transport failure",
+      "API Error: Unable to connect to API (ConnectionRefused)",
+      { error: "unknown" },
+    ],
+    ["login required", "Not logged in · Please run /login", { error: "authentication_failed" }],
+    [
+      "unparseable tool call (no top-level error field)",
+      "The model's tool call could not be parsed (retry also failed).",
+      { error: null },
+    ],
+    [
+      "safeguard refusal",
+      "API Error: Fable 5's safeguards flagged this message (request id: abc123)",
+      { stopReason: "refusal", error: "invalid_request" },
+    ],
+  ];
+
+  for (const [name, text, over] of variants) {
+    test(`${name} -> api-error, text still extracted, boundary renders as api-error`, () => {
+      const raw = apiErrorRaw(text, over ?? {});
+      expect(classifyAssistantMessage(JSON.parse(raw))).toBe("api-error");
+
+      const line = parseTranscriptLine(raw);
+      expect(line.kind).toBe("turn");
+      if (line.kind !== "turn") return;
+      expect(line.role).toBe("assistant");
+      expect(line.assistantMessageKind).toBe("api-error");
+      expect(isApiErrorLine(line)).toBe(true);
+      // segments 側は従来どおり: 本文は text segment として取れる
+      // (ApiErrorNotice がそこから本文を組み立てる)。
+      expect(line.segments).toEqual([{ kind: "text", role: "assistant", text }]);
+      // text segment を持つので、api-error 判定が無ければ
+      // "assistant-response" (= 紫の発話バブル) に落ちていた行。
+      expect(classifyBoundaryLine(line)).toEqual({ kind: "api-error" });
+    });
+  }
+
+  test("an ordinary assistant response -> assistant-response, unchanged boundary", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model: "claude-opus-5",
+          role: "assistant",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "Prompt is too long" }],
+        },
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    // 同じ文言でも flag が無ければ本物の発話 (文字列マッチ判定でないことの担保)。
+    expect(line.assistantMessageKind).toBe("assistant-response");
+    expect(isApiErrorLine(line)).toBe(false);
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+  });
+
+  // ハーネスは error でない合成行も書く (`model:"<synthetic>"` だが
+  // `isApiErrorMessage:false`)。ローカル transcript には "No response
+  // requested." だけでなく **本物のアシスタント文面**を載せた flag:false の
+  // synthetic 行も 300 件超あるので、`<synthetic>` を見て判定すると通常の
+  // 発話まで error 扱いになる。
+  test("non-error synthetic line (isApiErrorMessage:false) -> assistant-response", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        isApiErrorMessage: false,
+        message: {
+          model: "<synthetic>",
+          role: "assistant",
+          stop_reason: "stop_sequence",
+          content: [{ type: "text", text: "No response requested." }],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.assistantMessageKind).toBe("assistant-response");
+    expect(isApiErrorLine(line)).toBe(false);
+  });
+
+  test("an assistant turn with only tool_use segments is still assistant-response (not a boundary)", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a" } }],
+        },
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.assistantMessageKind).toBe("assistant-response");
+    expect(classifyBoundaryLine(line)).toBeNull();
+  });
+
+  test("a user line gets no assistantMessageKind (classification never runs for user)", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.assistantMessageKind).toBeUndefined();
+  });
+
+  // api-error 行は fold group に沈めず standalone entry のまま
+  // (turn が終わった位置を示す構造的役割は assistant-response と同じ)。
+  test("an api-error line stays a standalone boundary entry, splitting the surrounding fold group", () => {
+    const thinking = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "hmm" }] },
+      }),
+    );
+    const apiError = parseTranscriptLine(apiErrorRaw("Prompt is too long"));
+    expect(groupTimelineLines([thinking, apiError], [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: thinking }] },
+      { kind: "entry", offset: 20, line: apiError },
+    ]);
   });
 });
 

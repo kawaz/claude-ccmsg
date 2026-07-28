@@ -77,12 +77,18 @@ export interface TurnLine {
   segments: Segment[];
   /** classifyUserMessage's verdict for a role:"user" line — which pattern of
    * "type:user に見えるシステム由来メッセージ" (or a real human utterance,
-   * "user-prompt") this line matches. Absent for role:"assistant"
-   * (classification only concerns Claude Code's user-role injection
-   * patterns; see classifyUserMessage's doc comment) and for hand-built
-   * ParsedLine values elsewhere (e.g. test fixtures) that never went through
-   * parseTranscriptLine. */
+   * "user-prompt") this line matches. Absent for role:"assistant" (that side
+   * has its own `assistantMessageKind`, since the user-role injection
+   * patterns classifyUserMessage catalogs never appear there) and for
+   * hand-built ParsedLine values elsewhere (e.g. test fixtures) that never
+   * went through parseTranscriptLine. */
   userMessageKind?: UserMessageKind;
+  /** classifyAssistantMessage's verdict for a role:"assistant" line — real
+   * model output ("assistant-response") vs a harness-synthesized report of
+   * the turn being cut short ("api-error"). The mirror of `userMessageKind`
+   * on the assistant side; absent for role:"user" and for hand-built
+   * ParsedLine values that never went through parseTranscriptLine. */
+  assistantMessageKind?: AssistantMessageKind;
   /** For a turn synthesized from a `queue-operation` enqueue row: that row's
    * raw `content` string. Present only on that synthetic shape, and used by
    * `parseTranscriptLines` to pair the queued copy with the `type:"user"`
@@ -717,6 +723,7 @@ export function userNavTargets(groups: TimelineGroup[]): UserNavTarget[] {
 export type BoundaryKind =
   | { kind: "user-prompt" }
   | { kind: "assistant-response" }
+  | { kind: "api-error" }
   | { kind: "ccmsg"; messages: CcmsgMessage[] };
 
 /**
@@ -725,6 +732,10 @@ export type BoundaryKind =
  * system-origin "type:user" messages such as teammate-message/
  * task-notification/slash-command plumbing, so those fold like any other
  * intermediate entry instead of standing alone) is `"user-prompt"`; an
+ * assistant-role line that is really Claude Code reporting the turn being cut
+ * short (`isApiErrorLine`) is `"api-error"` — checked before the plain
+ * assistant case since such a line does carry a `text` segment and would
+ * otherwise render as the agent's own final response; an
  * assistant turn carrying at least one `text` segment — the "次のユーザ向け
  * アシスタント最終レスポンス" that ends a run of intermediate entries — is
  * `"assistant-response"`; a system-origin "type:user" line that itself
@@ -739,6 +750,7 @@ export type BoundaryKind =
  */
 export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (isUserTextTurn(line)) return { kind: "user-prompt" };
+  if (isApiErrorLine(line)) return { kind: "api-error" };
   if (
     line.kind === "turn" &&
     line.role === "assistant" &&
@@ -814,6 +826,16 @@ export function isAgentCommunicationSegment(segment: Segment): boolean {
 /** Incoming peer relays use a user-role transcript line rather than a Segment. */
 export function isPeerMessageLine(line: ParsedLine): boolean {
   return line.kind === "turn" && line.userMessageKind === "peer-message";
+}
+
+/** True for an assistant-role line Claude Code synthesized to report that the
+ * turn was cut short instead of answered (see `classifyAssistantMessage`).
+ * The assistant-side counterpart of `isPeerMessageLine`: the one predicate
+ * both `classifyBoundaryLine` (which bubble/notice to render) and Timeline's
+ * in-view-search unit count key off, so the render side and the count side
+ * can't disagree about what is agent speech. */
+export function isApiErrorLine(line: ParsedLine): boolean {
+  return line.kind === "turn" && line.assistantMessageKind === "api-error";
 }
 
 /** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間
@@ -1127,6 +1149,44 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
     return "workflow-resume";
   }
   return "user-prompt";
+}
+
+/**
+ * Classification of a `type:"assistant"` jsonl entry's actual origin — the
+ * assistant-side mirror of `UserMessageKind`. Claude Code writes a
+ * *synthesized* assistant line whenever a turn is cut short instead of
+ * answered (main-context overflow, API/transport failure, usage limit
+ * exhausted, not logged in, unparseable tool call, safeguard refusal): the
+ * CLI's own report of the interruption, wearing the wire "assistant" role, so
+ * it renders identically to something the agent said.
+ *
+ * Kept a union (rather than a boolean flag) for the same reason
+ * `UserMessageKind` is one: the genuine case is a named member, so a future
+ * synthetic-assistant shape is a new member here and at the render switch,
+ * not a second parallel boolean.
+ */
+export type AssistantMessageKind = "assistant-response" | "api-error";
+
+/**
+ * Classifies one raw jsonl `type:"assistant"` entry (the full top-level
+ * parsed object, so the top-level `isApiErrorMessage` flag is visible, not
+ * just `message`).
+ *
+ * The wire signal is top-level `isApiErrorMessage === true`, which Claude
+ * Code sets on exactly these synthesized lines (they also carry
+ * `message.model === "<synthetic>"`, an all-zero `usage`, and a top-level
+ * `error` — all corroborating, none needed: `<synthetic>` alone is *not*
+ * sufficient, since the harness also writes non-error synthetic lines such as
+ * "No response requested." with `isApiErrorMessage:false`).
+ *
+ * The message *text* is deliberately not consulted: its wording is the
+ * upstream CLI's ("Prompt is too long", "You're out of extra usage · resets
+ * 7pm (Asia/Tokyo)", "API Error: 500 {...}", "Not logged in · Please run
+ * /login", ...) and changes freely between versions, so any prefix catalog
+ * here would rot silently. One flag, no text matching.
+ */
+export function classifyAssistantMessage(entry: Record<string, unknown>): AssistantMessageKind {
+  return entry.isApiErrorMessage === true ? "api-error" : "assistant-response";
 }
 
 /** One ccmsg room message recovered from inside a `teammate-message`/
@@ -1761,7 +1821,8 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
     const message = o.message as Record<string, unknown> | undefined;
     const segments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
-    return { kind: "turn", ts, role, segments, userMessageKind };
+    const assistantMessageKind = role === "assistant" ? classifyAssistantMessage(o) : undefined;
+    return { kind: "turn", ts, role, segments, userMessageKind, assistantMessageKind };
   }
   // queue-operation enqueue は「作業中に届いたメッセージが queue に積まれた
   // 記録」で、`content` field が queue に積まれた prompt 文字列。この行は

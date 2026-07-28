@@ -6,6 +6,7 @@ import {
   type AgentTreeNode,
   type AgentTreeWorkflowGroup,
   type AgentTreeWorkflowPhase,
+  type SessionApiError,
   type SessionBackgroundStatus,
   type SessionContextUsage,
   type SessionStatusSnapshot,
@@ -55,6 +56,11 @@ const PREFILTER = [
   '"file_path":',
   '"notebook_path":',
   '"cache_read_input_tokens"',
+  // Harness API-error rows (api_error fold). Observed rows also carry a
+  // `usage` object and would pass via cache_read_input_tokens above, but the
+  // classification must not silently depend on synthetic rows keeping a
+  // token count they have no real use for.
+  '"isApiErrorMessage":true',
   "<task-notification>",
   "<teammate-message",
 ] as const;
@@ -97,6 +103,10 @@ export interface SessionStatusState {
    * fs_read_external. Values are realpaths when the target exists, otherwise
    * normalized absolute lexical paths for Write-before-create/deleted files. */
   externalFiles: Set<string>;
+  /** Latest-turn API error, or undefined while the session looks healthy.
+   * Set by an `isApiErrorMessage` assistant row, cleared by the next real
+   * assistant row (see classifyApiErrorRow). */
+  apiError?: SessionApiError;
 }
 
 export function createSessionStatusState(externalRoot?: string): SessionStatusState {
@@ -287,8 +297,81 @@ function foldContextUsage(state: SessionStatusState, row: Record<string, unknown
   return true;
 }
 
+/** What one assistant row says about the session's API-error state:
+ * - `"error"` — a harness-synthesized error row ended the turn. Claude Code
+ *   writes these as assistant messages ("Prompt is too long", "API Error: 500
+ *   ...", "You're out of extra usage · resets 7pm", "Please run /login"), but
+ *   they are the CLI reporting a stopped turn, and the session then sits doing
+ *   nothing until the user intervenes.
+ * - `"clear"` — a real, model-generated assistant row: the agent is answering
+ *   again, so whatever error preceded it is over. This is what keeps the state
+ *   scoped to the *latest* turn instead of latching on the first error ever
+ *   seen. A new user turn is not itself a clear signal — the user typing does
+ *   not mean the error is resolved (`Prompt is too long` survives it), and the
+ *   assistant row that follows within the same turn settles it either way.
+ * - `undefined` — the row says nothing either way. Notably synthetic rows with
+ *   `isApiErrorMessage: false` (the harness's own "No response requested.")
+ *   are not the agent speaking, so they must not clear a preceding error.
+ *
+ * Sidechain rows never signal: subagent transcripts interleave into the same
+ * file, and neither a subagent's failure nor its recovery describes what the
+ * main context is doing.
+ *
+ * Exported for session-errors.ts, which folds this one pattern across every
+ * connected peer without paying for a full status fold per session. */
+export type ApiErrorSignal = { kind: "error"; error: SessionApiError } | { kind: "clear" };
+
+export function classifyApiErrorRow(row: Record<string, unknown>): ApiErrorSignal | undefined {
+  if (row.type !== "assistant" || row.isSidechain === true) return undefined;
+  const message = row.message;
+  if (!isRecord(message)) return undefined;
+  if (row.isApiErrorMessage !== true) {
+    // A real turn is one the model produced; `<synthetic>` marks every row the
+    // harness wrote itself, error or not.
+    const model = stringValue(message.model);
+    return model && model !== "<synthetic>" ? { kind: "clear" } : undefined;
+  }
+  const text = errorText(message.content);
+  if (!text) return undefined;
+  return { kind: "error", error: { text, timestamp: stringValue(row.timestamp) ?? "" } };
+}
+
+/** Joins an error row's text blocks. Observed rows carry exactly one, but the
+ * content is a normal block array, so a multi-block row concatenates rather
+ * than reporting only its first line. */
+function errorText(content: unknown): string | undefined {
+  if (typeof content === "string") return content.trim() || undefined;
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== "text") continue;
+    const text = stringValue(block.text);
+    if (text) parts.push(text);
+  }
+  return parts.join("\n").trim() || undefined;
+}
+
+function foldApiError(state: SessionStatusState, row: Record<string, unknown>): boolean {
+  const signal = classifyApiErrorRow(row);
+  if (!signal) return false;
+  if (signal.kind === "clear") {
+    if (!state.apiError) return false;
+    state.apiError = undefined;
+    return true;
+  }
+  const current = state.apiError;
+  // A retry burst writes several error rows for one stall; the newest wins so
+  // the UI shows the error the user is actually stuck on.
+  if (current?.text === signal.error.text && current.timestamp === signal.error.timestamp) {
+    return false;
+  }
+  state.apiError = signal.error;
+  return true;
+}
+
 function foldAssistant(state: SessionStatusState, row: Record<string, unknown>): boolean {
   let changed = foldContextUsage(state, row);
+  if (foldApiError(state, row)) changed = true;
   const timestamp = stringValue(row.timestamp);
   const message = row.message;
   if (!isRecord(message) || !Array.isArray(message.content)) return changed;
@@ -797,6 +880,7 @@ export function snapshot(
       });
     })(),
     external_files: [...state.externalFiles].sort(),
+    ...(state.apiError ? { api_error: { ...state.apiError } } : {}),
     ...(agentTree &&
     (agentTree.teammates.length > 0 ||
       agentTree.agents.length > 0 ||
@@ -1294,8 +1378,14 @@ function deriveSidDir(file: string): string | undefined {
   return file.endsWith(".jsonl") ? file.slice(0, -".jsonl".length) : undefined;
 }
 
-/** Scan complete lines from the start of a transcript without loading the file whole. */
-export function scanTranscript(file: string, state: SessionStatusState, endOffset?: number): void {
+/** Scan complete lines from the start of a transcript without loading the file
+ * whole. Shared by the full status fold (scanTranscript) and session-errors.ts,
+ * which folds a single pattern and needs the same bounded-memory read. */
+export function scanTranscriptLines(
+  file: string,
+  endOffset: number | undefined,
+  onLine: (line: string) => void,
+): void {
   const limit = endOffset ?? fs.statSync(file).size;
   const fd = fs.openSync(file, "r");
   let offset = 0;
@@ -1313,8 +1403,7 @@ export function scanTranscript(file: string, state: SessionStatusState, endOffse
       for (;;) {
         const newline = data.indexOf(0x0a, start);
         if (newline < 0) break;
-        const line = data.toString("utf-8", start, newline);
-        if (isSessionStatusCandidate(line)) foldLine(state, line);
+        onLine(data.toString("utf-8", start, newline));
         start = newline + 1;
       }
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
@@ -1322,6 +1411,12 @@ export function scanTranscript(file: string, state: SessionStatusState, endOffse
   } finally {
     fs.closeSync(fd);
   }
+}
+
+export function scanTranscript(file: string, state: SessionStatusState, endOffset?: number): void {
+  scanTranscriptLines(file, endOffset, (line) => {
+    if (isSessionStatusCandidate(line)) foldLine(state, line);
+  });
 }
 
 interface LiveSessionStatus {

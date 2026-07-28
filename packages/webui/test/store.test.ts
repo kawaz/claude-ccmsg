@@ -646,6 +646,54 @@ describe("reducer / agents/loaded and daemon-info/loaded (U1)", () => {
   });
 });
 
+// Sessions stopped on a harness API error: the one-shot op:"session_errors"
+// reply and the pushed ev:"session_errors" stream event both fold in through
+// this one action (same pairing as agents/loaded above, see ws.ts).
+describe("reducer / session-errors/loaded", () => {
+  test("initial state has an empty sessionErrors map", () => {
+    expect(initialState().sessionErrors.size).toBe(0);
+  });
+
+  test("session-errors/loaded indexes the wire list by sid, dropping the sid from the value", () => {
+    const state = dispatch(initialState(), {
+      type: "session-errors/loaded",
+      errors: [{ sid: "s1", text: "API Error: 500", timestamp: "2026-07-27T09:00:00Z" }],
+    });
+    expect(state.sessionErrors.get("s1")).toEqual({
+      text: "API Error: 500",
+      timestamp: "2026-07-27T09:00:00Z",
+    });
+  });
+
+  // The daemon always sends the full list, so a session that recovered simply
+  // stops appearing — replacing (not merging) is what makes it drop out.
+  test("a later list replaces the map wholesale, so a recovered session drops out", () => {
+    const first = dispatch(initialState(), {
+      type: "session-errors/loaded",
+      errors: [
+        { sid: "s1", text: "API Error: 500", timestamp: "2026-07-27T09:00:00Z" },
+        { sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:01:00Z" },
+      ],
+    });
+    expect(first.sessionErrors.size).toBe(2);
+    const second = dispatch(first, {
+      type: "session-errors/loaded",
+      errors: [{ sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:01:00Z" }],
+    });
+    expect([...second.sessionErrors.keys()]).toEqual(["s2"]);
+  });
+
+  test("an empty list clears every flagged session", () => {
+    const first = dispatch(initialState(), {
+      type: "session-errors/loaded",
+      errors: [{ sid: "s1", text: "API Error: 500", timestamp: "2026-07-27T09:00:00Z" }],
+    });
+    expect(dispatch(first, { type: "session-errors/loaded", errors: [] }).sessionErrors.size).toBe(
+      0,
+    );
+  });
+});
+
 describe("reducer / locator/changed (timeline view, DR-0009)", () => {
   // Bare `#t<sid>`: switches to the timeline view and creates a fresh
   // per-session tree (with an idle TimelineState) on first visit — no fetch

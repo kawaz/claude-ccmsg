@@ -25,6 +25,7 @@ import {
   foldGroupLabel,
   foldGroupNeedsOuterFold,
   groupTimelineLines,
+  isApiErrorLine,
   isSearchableSegment,
   itemRawSourceOffsets,
   splitFoldSubgroups,
@@ -1781,6 +1782,40 @@ function AssistantBubble({
   );
 }
 
+/** Claude Code's synthesized "the turn was cut short" line
+ * (`assistantMessageKind === "api-error"`, transcript-model.ts) — main-context
+ * overflow, API failure, usage limit, ... It wears the wire "assistant" role,
+ * so AssistantBubble would render it as the agent's own final response
+ * (purple bubble, markdown), which reads as "the agent said this".
+ *
+ * Rendered as a danger-colored notice row rather than a chat bubble: the
+ * bubble shape *is* the "someone spoke" signal in this Timeline (user green /
+ * assistant purple / peer blue), so anything that isn't speech must leave it.
+ * It stays a standalone boundary entry (not folded into the surrounding tools
+ * group like system-origin user lines are) because it marks where a turn
+ * ended — the same structural role `assistant-response` plays — and because a
+ * failure that cost a whole turn shouldn't need a click to notice.
+ *
+ * Body text is rendered verbatim (no markdown): the wording is the upstream
+ * CLI's — sometimes a raw JSON error payload — not authored prose. */
+function ApiErrorNotice({ line }: { line: TurnLine }) {
+  const text = systemMessageRawText(line);
+  return (
+    <div
+      class="tl-line tl-api-error"
+      title="Claude Code が報告した turn の中断 (エージェントの発話ではない)"
+    >
+      {line.ts ? <span class="tl-time">{formatClockTime(line.ts)}</span> : null}
+      <span class="tl-api-error-label">turn interrupted</span>
+      {text === "" ? (
+        <span class="tl-empty-turn">(空)</span>
+      ) : (
+        <span class="tl-api-error-text">{text}</span>
+      )}
+    </div>
+  );
+}
+
 // DR-0027 §2 (Phase 1 lazy read cache): the daemon holds the canonical full
 // message body in rooms/*.jsonl — transcript-model.ts's extraction only
 // promises (room, mid, from, ts) + a best-effort recovered body (a truncated
@@ -2556,6 +2591,10 @@ export function Timeline({
       if (line.kind !== "turn") return;
       if (line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt")
         return;
+      // 同じ理由で assistant 側の合成行 (Claude Code の turn 中断報告) も除外:
+      // ApiErrorNotice は searchCtx を渡さず本文を verbatim 描画するので、
+      // ここで数えると highlight も scroll 先も無い ghost match になる。
+      if (isApiErrorLine(line)) return;
       line.segments.forEach((seg, i) => {
         if (!isSearchableSegment(seg, targets)) return;
         units.push({ key: `${offset}-${i}` });
@@ -3269,6 +3308,12 @@ export function Timeline({
                                       now={now}
                                       searchCtx={searchCtx}
                                     />
+                                  </ItemRawToggle>
+                                );
+                              case "api-error":
+                                return (
+                                  <ItemRawToggle key={offset} offset={offset}>
+                                    <ApiErrorNotice line={line} />
                                   </ItemRawToggle>
                                 );
                               case "ccmsg": {

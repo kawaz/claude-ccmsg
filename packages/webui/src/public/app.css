@@ -360,6 +360,25 @@ a {
   }
 }
 
+/* Error セクション (harness の API エラーで turn が終わり停止中)。Waiting と
+ * 同じ「人間の介入待ち」だが、跳ねアニメーションは付けない — 両セクションが
+ * 同時に出た時に動きで区別できなくなるので、区別は色 (--danger vs --warn)
+ * だけで付ける。 */
+.session-section-error > .session-section-summary {
+  color: var(--danger);
+}
+
+/* 行内に出す停止理由。"API Error: 500 {...}" のような長い JSON が来るので
+ * 必ず 1 行に省略する (全文は行の title 属性)。 */
+.session-error-text {
+  padding-left: 1.3rem;
+  font-size: 0.72rem;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Room 行の `<li><a>` は #room-list (非アーカイブ・非1on1) と
  * #room-list-archived / #room-list-1on1 (折り畳みグループ内、同じ RoomRow
  * を render) のいずれにも現れる — 後者をセレクタから漏らすとデフォルトの
@@ -441,6 +460,11 @@ a {
 .session-row.active .session-sid-btn,
 .session-row.active .session-line2-ws,
 .session-row.active .session-status-badge,
+/* --danger (#dc2626) は accent 背景 (#2563eb) の上ではコントラストが取れない
+ * ので、選択行では他のテキストと同じ accent-fg に落とす。色の signal は失う
+ * が、選択行は既にユーザが見ている行であり、Error セクションの見出し側に色は
+ * 残っている。 */
+.session-row.active .session-error-text,
 .session-row.active .session-line3 {
   color: var(--accent-fg);
 }
@@ -3635,6 +3659,35 @@ button.session-tab {
 .tl-bubble-assistant .tl-bubble-body {
   background: var(--assistant-bubble-bg);
   border: 1px solid var(--assistant-bubble-border);
+}
+
+/* Claude Code が turn の中断 (context 溢れ / API エラー / usage 上限 / 未
+ * ログイン等) を報告する合成 assistant 行 (ApiErrorNotice)。三者三色の
+ * 吹き出し (緑=ユーザ / 紫=アシスタント / 青=別セッション) は「誰かが喋った」
+ * 印なので、発話ではないこの行は吹き出しを持たず、danger 色の通知行として
+ * 出す。 */
+.tl-api-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.tl-api-error-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+/* 本文は上流 CLI の文言そのまま (JSON payload が入ることもある) なので
+ * 改行を潰さず、長い 1 行でも横スクロールを外へ伝播させない。 */
+.tl-api-error-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tl-bubble-time {

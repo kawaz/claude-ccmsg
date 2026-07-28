@@ -75,6 +75,10 @@ function SessionRowItem({
     titleParts.push(`started: ${new Date(row.agent.startedAt).toISOString()}`);
   }
   if (!row.connected) titleParts.push("ccmsg 未起動 (claude agents のみで検出)");
+  // 停止理由は行内には 1 行分しか出せない (下の session-error-text は CSS で
+  // 省略される) ので、全文は hover の title 側で読めるようにしておく。
+  if (row.api_error)
+    titleParts.push(`API error (${row.api_error.timestamp}):\n${row.api_error.text}`);
 
   return (
     <li
@@ -140,6 +144,12 @@ function SessionRowItem({
         {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
+      {/* 停止理由 (harness API エラー): なぜ止まっているかが分からないと
+       * Error セクションに居ること自体が action に繋がらないので、色分けだけ
+       * でなく本文も出す。"API Error: 500 {...}" のような長い JSON が来るため
+       * 1 行に truncate (全文は上の title に入っている)。1 行目の badge 群とは
+       * 別の行に置いて statusBadge の並びを崩さない。 */}
+      {row.api_error ? <div class="session-error-text">{row.api_error.text}</div> : null}
       {/* 2 行目: worktree/workspace 名 (branch も併記)。repo 無し行は 1 行目で
        * 既に wsLabel を出しているので重複させない (kawaz r55 mid=20)。 */}
       {repo && (wsLabel || row.branch) ? (
@@ -284,6 +294,24 @@ function PinnedSessionsSection({
   );
 }
 
+/** Extra class for a status section's `<details>`, for the two sections that
+ * need the reader's attention:
+ * - `waiting`: ユーザ対応を促す強調 (warn 色 + 跳ねアニメーション、
+ *   composer-fab-draft と同系。kawaz r46 mid=42)
+ * - `error`: harness API エラーで停止中 (danger 色)。跳ねは付けない —
+ *   同時に出た時 waiting と見分けが付かなくなるため、区別は色だけで付ける。
+ * Kept as a lookup rather than a chain of ternaries in the JSX: a third
+ * highlighted section would otherwise nest the conditional one level deeper
+ * each time. */
+const SESSION_SECTION_CLASS: Record<string, string> = {
+  waiting: "session-section session-section-waiting",
+  error: "session-section session-section-error",
+};
+
+function sectionClass(key: string): string {
+  return SESSION_SECTION_CLASS[key] ?? "session-section";
+}
+
 /** Sidebar "Sessions" section (U1, developed from the DR-0008 peers list):
  * merges the ccmsg-connected `peers` (pre-sorted by Sidebar's name/created/
  * recent toggle — this component never reorders those) with the daemon's
@@ -309,11 +337,14 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, pinnedSessions } = useStoreState(store);
+  const { agents, sessionStatuses, sessionErrors, pinnedSessions } = useStoreState(store);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
-    () => [...peers.map((p) => toSessionRow(p, agentsBySid)), ...offlineAgentRows(peers, agents)],
-    [peers, agents, agentsBySid],
+    () => [
+      ...peers.map((p) => toSessionRow(p, agentsBySid, sessionErrors)),
+      ...offlineAgentRows(peers, agents),
+    ],
+    [peers, agents, agentsBySid, sessionErrors],
   );
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
   return (
@@ -324,17 +355,7 @@ export function SessionList({
         currentSid={currentSid}
       />
       {sections.map((section) => (
-        <details
-          key={section.key}
-          open
-          class={
-            // kawaz r46 mid=42: waiting はユーザ対応を促す強調 (warn 色 +
-            // 跳ねアニメーション、composer-fab-draft と同系)
-            section.key === "waiting"
-              ? "session-section session-section-waiting"
-              : "session-section"
-          }
-        >
+        <details key={section.key} open class={sectionClass(section.key)}>
           <summary class="session-section-summary">
             {section.label} ({section.rows.length})
           </summary>
