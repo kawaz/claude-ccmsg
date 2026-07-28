@@ -20,12 +20,7 @@
 
 ## 裁定待ち
 
-### 👺TL-Q1: `<persisted-output>` サイドカーを external_files に畳んでよいか
-
-`! <cmd>` の 30KB 超出力は CC がサイドカーファイル (transcript の隣) に退避し、transcript にはパス付きスタブが残ります。TL の「全文を開く」リンクを動かすには、このパスを [DR-0024](decisions/DR-0024-external-file-allowlist.md) の external_files allowlist に畳む必要があります (信頼形状は既存と同一 = transcript 自身が名指すパスの完全一致付与、ディレクトリ付与なし)。ただし webui の読み取り範囲が広がるため裁定に回しています。現状は「サイドカーが読める場合だけリンク点灯、読めなければパス表示のみ」。
-
-- [ ] a: 畳んでよい (全文リンクが常に点灯するようになる)
-- [ ] b: 現状維持 (リンクは読める時だけ、通常はパス表示)
+(なし)
 
 ## 確認待ち
 
@@ -41,78 +36,25 @@
 
 - [ ] a: `! ls` がユーザ側の並びに Bash ツール実行風カードで出る (通常メッセージの見た目ではない)
 - [ ] b: 長い出力は max-height で切れてブロック内スクロールになる
-- [ ] c: 30KB 超の出力は CC がサイドカー退避するため、スタブ (パス + プレビュー) が表示される (「全文を開く」リンクは TL-Q1 の裁定待ち)
+- [ ] c: 30KB 超の出力は CC がサイドカー退避するため、スタブ (パス + プレビュー) が表示される。「全文を開く」リンクは TL-Q1=a の裁定を実装後に常時点灯予定
 
-### 👺WEBUI-C9: standalone webapp で詰まなくなったか (v0.73.36 / v0.73.37 / v0.74.0)
+### 👺WEBUI-C22: リンク解決の再確認 (URL 実パス化後の総ざらい、v0.80.1)
 
-下のリンクをこのプレビュー上で踏んで確認してください。
+URL が実パス化 (v0.78.0) された後の再確認です。旧チェック済み分もリンク経路が変わったためリセットしています。このプレビュー上で踏んでください。相対リンクはこのファイルの位置 (`docs/`) 基準、先頭 `/` はファイルシステム絶対パスです。
 
-相対リンクはこのファイル自身の位置 (`docs/`) が基準です (markdown の慣習、GitHub / エディタと同じ読み)。先頭 `/` はファイルシステムの絶対パスとして読みます (g のようにプロジェクト外も指せるため)。リポルート相対のつもりで書くと 404 になり、「もしかして」で cwd 基準の読みが出ます。
-
-- [x] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
+- [ ] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
 - [ ] b: リポルート相対のつもりの先頭 `/` は 404 になり、「もしかして」が出て押すと開く → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
-- [x] c: 行範囲付きも開ける → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
-- [x] d: 存在しないパスも**押せて、404 が出る** (v0.74.0 で仕様変更。probe 待ちの灰色期間を廃止し、外した先で 404 を見せる方式へ) → [存在しないファイル](this-file-does-not-exist.md)
-- [x] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
-- [x] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
-- [ ] g: [プロジェクト外ファイル](/Users/kawaz/.cache/claude-session-state/ccmsg/20260727-1045.md)は開けるか？(このセッションでアクセスしたことがあるものは可能なはず)
-プロジェクト外 (`/tmp`) の試験ファイルもあります: `/tmp/ccmsg-md-testcases.md` (Files 検索や external files 経路の確認用)
-
-### 👺WEBUI-C11: リンクを踏み外した時に救済が出るか (v0.76.0)
-
-相対リンクの基準を書き間違えても 404 で行き止まりにならず、逆算した候補が出ます。
-
-- [ ] a: 基準を間違えたリンクで「もしかして」が出て、押すと開く → [リポルート基準で書いたリンク](packages/webui/src/client/markdown-link.ts)
-- [x] b: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
-- [ ] c: Files ツリーから存在しないパスを開いた時 (遷移元が無い) は候補が出ない
-
-### 👺WEBUI-C16: リンク修正の再確認 (v0.76.1)
-
-先頭 `/` はファイルシステム絶対パス一義 (プロジェクト外ファイルを開ける仕様との整合)、行指定時は code モード強制。リロード後に該当リンクを踏み直してください。
-
-- [ ] a: C9 b の先頭 `/` リンクが 404 になり、「もしかして」で cwd 基準の候補が出て開く
-- [ ] b: C9 c の行範囲リンクが code モードで開き、指定行にジャンプ・ハイライトされる (プレビューモードの記憶は消えない)
-- [ ] c: C11 a の「もしかして」が出て、押すと開く
-
-### 👺WEBUI-C17: TUI の `!` bash 実行の TL 表示 (v0.76.2)
-
-- [ ] a: `! ls` の入力がユーザ吹き出しでなく `$ ls` のコマンド行表示になる
-- [ ] b: 出力が等幅ブロックで出る (stderr は danger 色、空なら非表示)
-- [ ] c: 閉じた fold の summary に `$ ls` が出る
+- [ ] c: 行範囲付きは code モードで開き、指定行にジャンプ・ハイライト (プレビューモードの記憶は消えない) → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
+- [ ] d: 存在しないパスも押せて 404 が出る → [存在しないファイル](this-file-does-not-exist.md)
+- [ ] e: 基準を間違えた相対リンクで「もしかして」が出て、押すと開く → [リポルート基準で書いたリンク](packages/webui/src/client/markdown-link.ts)
+- [ ] f: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
+- [ ] g: プロジェクト外ファイルが開ける (このセッションでアクセス済みのもの) → [プロジェクト外ファイル](/Users/kawaz/.cache/claude-session-state/ccmsg/20260727-1045.md)
+- [ ] h: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
+- [ ] i: 未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
 
 ### 👺DAEMON-C18: ルーム自己 echo の解消 (v0.76.3)
 
 - [ ] a: 複数エージェントのルームで post しても自分に echo されない (daemon 再起動後の再接続でも)
-
-### 👺WEBUI-C19: API エラーセッションの表示 (v0.77.0)
-
-- [x] a: コンテキスト溢れ等で停止したセッションがサイドバー最上段の Error セクションに danger 色で出る (busy より優先)
-- [x] b: 行内にエラー理由 (Prompt is too long 等) が出る
-- [x] c: セッションが復帰する (本物の assistant 応答が出る) と Error から消える
-- [x] d: TL で該当行がエージェント発話でなく danger 色の通知行になっている
-
-### 👺WEBUI-C12: Status タブの入れ替え (v0.74.0)
-
-- [x] a: Workflows と Teams のセクションが消えている (TL のエージェントツリーに一本化)
-- [x] b: 残った Background / TODO / メタ情報 (CWD・SESSION_ID・PID・CTX 等) / 危険ゾーンが正常に出る
-- [x] c: ENV が折りたたみで出て、開くと名前昇順のテーブルになる
-- [x] d: 空白区切りの AND 検索が名前と値の両方に当たる (例: `claude personal`)
-- [x] e: コロン区切りを改行にするスイッチで `PATH` が読みやすくなる
-- [x] f: 機微な名前 (`*TOKEN` / `*KEY` / `*SESSION*` 等) の値が伏字で、クリックで表示・再クリックで非表示に戻る
-- [x] g: マスクされた値も検索に当たる (値で探して名前が見つかる)
-
-### 👺WEBUI-C13: Files 検索の 3 改善 (v0.74.0)
-
-- [x] a: workspace のヒットが `{ws名}/{相対パス}` で表示される (フルパスは hover で見える)
-- [x] b: `.gitignore` トグルが既定 ON で、`node_modules` 等が結果に出ない
-- [x] c: トグルを OFF にすると出るようになり、リロードしても設定が残る
-- [x] d: `-語` で除外できる (例: `package.json -webui`)
-- [x] e: 中間のハイフンはリテラル扱い (例: `file-search` がそのまま引ける)
-
-### 👺WEBUI-C14: サブエージェント TL の spawn prompt (v0.76.0)
-
-- [x] a: サブエージェントの TL を開くと、先頭の spawn prompt が他の agent メッセージと同じ見た目 (アイコン + 名前 + markdown 描画) になっている
-- [x] b: 閉じた状態のラベルが `spawn prompt ← 親` (または `← team-lead`) で、どの経路のメッセージか読める
 
 ### 👺CLI-C15: `ccmsg dump` の改善 (v0.75.0 / v0.76.0)
 
