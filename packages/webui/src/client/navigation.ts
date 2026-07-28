@@ -195,6 +195,11 @@ export function setupNavigation(store: Store, ws: WsClient): void {
   window.navigation.addEventListener("navigate", (rawEvent) => {
     const event = rawEvent as NavigateEvent;
     if (!event.canIntercept || event.downloadRequest !== null || event.hashChange) return;
+    // A reload (location.reload(), the header reload button, Cmd+R) also fires
+    // `navigate` with canIntercept=true. Intercepting it would turn "restart
+    // the whole bundle" into a soft SPA re-route — the header button exists
+    // precisely to throw broken state away, so let the browser handle it.
+    if (event.navigationType === "reload") return;
     const targetUrl = new URL(event.destination.url);
     if (targetUrl.origin !== location.origin) return;
     window.dispatchEvent(new Event(BEFORE_NAVIGATION_EVENT));
