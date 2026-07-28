@@ -32,11 +32,11 @@
 
 - [x] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
 - [ ] b: 先頭 `/` の絶対パスもリポルート相対として解決される → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
-- [ ] c: 行範囲付きも開ける → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
+- [x] c: 行範囲付きも開ける → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
 - [x] d: 存在しないパスも**押せて、404 が出る** (v0.74.0 で仕様変更。probe 待ちの灰色期間を廃止し、外した先で 404 を見せる方式へ) → [存在しないファイル](this-file-does-not-exist.md)
 - [x] e: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
 - [x] f: 万一未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
-
+- [ ] g: [プロジェクト外ファイル](/Users/kawaz/.cache/claude-session-state/ccmsg/20260727-1045.md)は開けるか？(このセッションでアクセスしたことがあるものは可能なはず)
 プロジェクト外 (`/tmp`) の試験ファイルもあります: `/tmp/ccmsg-md-testcases.md` (Files 検索や external files 経路の確認用)
 
 ### 👺WEBUI-C11: リンクを踏み外した時に救済が出るか (v0.76.0)
