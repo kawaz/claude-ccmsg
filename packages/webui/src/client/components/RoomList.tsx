@@ -1,7 +1,13 @@
 import type { AppState, RoomState } from "../store.ts";
 import { selectedRoomId } from "../store.ts";
 import { roomHref } from "../locator.ts";
-import { activeRoomsSorted, relTime, splitRoomsByArchived, splitRoomsByKind } from "../utils.ts";
+import {
+  activeRoomsSorted,
+  relTime,
+  splitRoomsByArchived,
+  splitRoomsByKind,
+  splitRoomsByLiveness,
+} from "../utils.ts";
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
@@ -32,12 +38,15 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
 /** Room list layout (top → bottom):
  * 1. Flat `#room-list` at top — broadcast rooms only (kawaz r55m30:
  *    broadcast は常にセクション群の一番上、折り畳まないで直置き)。
- * 2. `<details id="room-list-normal" open>` "ルーム (N)" — 通常 room
- *    (非アーカイブ・非1on1・非broadcast) を折り畳み可能に。以前はフラット
- *    に並んでいたが、数が増えると邪魔なのでセクション化。デフォルト open
- *    で今までの見え方を維持しつつユーザが畳めるようにする (kawaz r55m30)。
- * 3. `<details id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
- * 4. `<details id="room-list-archived">` "アーカイブ (N)" (default-closed,
+ * 2. `<details id="room-list-normal" open>` "Active (N)" — 生存中の参加
+ *    エージェントが 2 名以上いる通常 room (非アーカイブ・非1on1・非
+ *    broadcast)。デフォルト open で今までの見え方を維持しつつユーザが畳める
+ *    ようにする (kawaz r55m30)。セクション名は ROOMS 直下で「ルーム」と
+ *    名乗っても情報がないため Active に (kawaz r76m51)。
+ * 3. `<details id="room-list-inactive">` "Inactive (N)" (default-closed,
+ *    kawaz r76m51) — 生存中の参加エージェントが 0〜1 名の通常 room。
+ * 4. `<details id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
+ * 5. `<details id="room-list-archived">` "アーカイブ (N)" (default-closed,
  *    DR-0012)。
  * Rooms in any `<details>` stay reachable (click through like any other
  * room). Each `<details>` (と broadcast の flat `<ul>`) は自グループが空
@@ -49,7 +58,13 @@ export function RoomList({ state }: { state: AppState }) {
   const { active, archived } = splitRoomsByArchived(activeRoomsSorted(state.rooms));
   const { flat, oneOnOne } = splitRoomsByKind(active);
   const broadcast = flat.filter((r) => r.kind === "broadcast");
-  const normal = flat.filter((r) => r.kind !== "broadcast");
+  // broadcast は liveness で振り分けない — 常にセクション群の一番上に直置き
+  // する枠 (kawaz r55m30) なので、参加者が減った瞬間に Inactive へ沈むと
+  // 「いつもそこにある」性質が壊れる。
+  const { active: normal, inactive } = splitRoomsByLiveness(
+    flat.filter((r) => r.kind !== "broadcast"),
+    state.peers,
+  );
   const currentRoomId = selectedRoomId(state);
   return (
     <>
@@ -62,9 +77,19 @@ export function RoomList({ state }: { state: AppState }) {
       )}
       {normal.length > 0 && (
         <details id="room-list-normal" open>
-          <summary>ルーム ({normal.length})</summary>
+          <summary>Active ({normal.length})</summary>
           <ul>
             {normal.map((room) => (
+              <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
+            ))}
+          </ul>
+        </details>
+      )}
+      {inactive.length > 0 && (
+        <details id="room-list-inactive">
+          <summary>Inactive ({inactive.length})</summary>
+          <ul>
+            {inactive.map((room) => (
               <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>

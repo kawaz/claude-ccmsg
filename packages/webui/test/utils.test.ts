@@ -4,7 +4,7 @@
 // plain-string shape as ErrorResponse["error"]["msg"].
 import { describe, expect, test } from "bun:test";
 import type { AgentInfo, MemberEvent, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
-import type { RoomState } from "../src/client/store.ts";
+import type { MemberInfo, RoomState } from "../src/client/store.ts";
 import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
 import {
@@ -52,6 +52,8 @@ import {
   sortPinnedSessions,
   splitRoomsByArchived,
   splitRoomsByKind,
+  splitRoomsByLiveness,
+  liveAgentCount,
   toggleFavorite,
   toSessionRow,
   type PeerSortKey,
@@ -281,6 +283,116 @@ describe("splitRoomsByKind", () => {
 
   test("empty input yields two empty buckets", () => {
     expect(splitRoomsByKind([])).toEqual({ flat: [], oneOnOne: [] });
+  });
+});
+
+// kawaz r76m51: 通常 room は「生存中の参加エージェントが 2 名以上」で Active、
+// それ未満で Inactive。生存判定は peers 由来なので、member 行の sid が peers
+// に居るかだけで決まる。
+function roomWithMembers(
+  id: string,
+  members: Array<{ id: string; sid: string; left?: boolean }>,
+): RoomState {
+  const membersById = new Map<string, MemberInfo>();
+  for (const m of members) {
+    membersById.set(m.id, {
+      type: "member",
+      id: m.id,
+      sid: m.sid,
+      repo: "claude-ccmsg",
+      ws: "main",
+      cwd: "/repo",
+      joined_at: "2026-07-28T00:00:00.000Z",
+      left: m.left ?? false,
+    });
+  }
+  return makeRoom({ id, membersById, memberOrder: members.map((m) => m.id) });
+}
+
+describe("liveAgentCount", () => {
+  const peers: PeerInfo[] = [peer({ sid: "s1" }), peer({ sid: "s2" })];
+
+  test("counts active members whose session is in peers", () => {
+    const room = roomWithMembers("r1", [
+      { id: "a1", sid: "s1" },
+      { id: "a2", sid: "s2" },
+    ]);
+    expect(liveAgentCount(room, peers)).toBe(2);
+  });
+
+  test("excludes members whose session has disconnected", () => {
+    const room = roomWithMembers("r1", [
+      { id: "a1", sid: "s1" },
+      { id: "a2", sid: "gone" },
+    ]);
+    expect(liveAgentCount(room, peers)).toBe(1);
+  });
+
+  test("excludes members that left the room even while their session lives", () => {
+    const room = roomWithMembers("r1", [
+      { id: "a1", sid: "s1" },
+      { id: "a2", sid: "s2", left: true },
+    ]);
+    expect(liveAgentCount(room, peers)).toBe(1);
+  });
+
+  // The User (u1) is an implicit member of every room and has no peers row;
+  // counting it would make a room with a single agent look like a live pair.
+  test("never counts the User (u1)", () => {
+    const room = roomWithMembers("r1", [
+      { id: ADMIN_ID, sid: "s1" },
+      { id: "a1", sid: "s2" },
+    ]);
+    expect(liveAgentCount(room, peers)).toBe(1);
+  });
+});
+
+describe("splitRoomsByLiveness", () => {
+  const peers: PeerInfo[] = [peer({ sid: "s1" }), peer({ sid: "s2" })];
+
+  test("two or more live agents is Active, fewer is Inactive", () => {
+    const rooms = [
+      roomWithMembers("two-live", [
+        { id: "a1", sid: "s1" },
+        { id: "a2", sid: "s2" },
+      ]),
+      roomWithMembers("one-live", [
+        { id: "a1", sid: "s1" },
+        { id: "a2", sid: "gone" },
+      ]),
+      roomWithMembers("none-live", [{ id: "a1", sid: "gone" }]),
+    ];
+    const { active, inactive } = splitRoomsByLiveness(rooms, peers);
+    expect(active.map((r) => r.id)).toEqual(["two-live"]);
+    expect(inactive.map((r) => r.id)).toEqual(["one-live", "none-live"]);
+  });
+
+  test("preserves each bucket's relative input order", () => {
+    const live = (id: string) =>
+      roomWithMembers(id, [
+        { id: "a1", sid: "s1" },
+        { id: "a2", sid: "s2" },
+      ]);
+    const rooms = [live("r1"), roomWithMembers("r2", []), live("r3"), roomWithMembers("r4", [])];
+    const { active, inactive } = splitRoomsByLiveness(rooms, peers);
+    expect(active.map((r) => r.id)).toEqual(["r1", "r3"]);
+    expect(inactive.map((r) => r.id)).toEqual(["r2", "r4"]);
+  });
+
+  // Every room is Inactive with nobody connected — the ws roster being empty
+  // (daemon restart,初回ロード前) must not throw or promote anything.
+  test("an empty peers roster puts every room in Inactive", () => {
+    const rooms = [
+      roomWithMembers("r1", [
+        { id: "a1", sid: "s1" },
+        { id: "a2", sid: "s2" },
+      ]),
+    ];
+    expect(splitRoomsByLiveness(rooms, []).inactive.map((r) => r.id)).toEqual(["r1"]);
+  });
+
+  test("empty input yields two empty buckets", () => {
+    expect(splitRoomsByLiveness([], peers)).toEqual({ active: [], inactive: [] });
   });
 });
 

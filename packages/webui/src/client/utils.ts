@@ -137,6 +137,39 @@ export function splitRoomsByKind(rooms: RoomState[]): {
   return { flat, oneOnOne };
 }
 
+/** How many of a room's members are agents with a live session: an active
+ * (not-left) member row whose sid appears in `peers`. The User (u1) never
+ * counts — it's an implicit member of every room with no `peers` row backing
+ * it (see MemberChip's isAdmin handling), so counting it would make every
+ * room look inhabited. */
+export function liveAgentCount(room: RoomState, peers: PeerInfo[]): number {
+  let n = 0;
+  for (const m of room.membersById.values()) {
+    if (m.id === ADMIN_ID || m.left) continue;
+    if (isMemberConnected(m, peers)) n++;
+  }
+  return n;
+}
+
+/** Splits the non-1on1, non-archived rooms into "Active" and "Inactive"
+ * buckets (kawaz r76m51): a room with fewer than two live agents has nobody
+ * left to talk to (one agent alone can only talk to the User, zero means the
+ * room is dormant), so it folds into a collapsed "Inactive (N)" group rather
+ * than crowding the sidebar. Same one-pass shape as `splitRoomsByArchived` /
+ * `splitRoomsByKind`, and run after both so an archived or 1on1 room lands
+ * in its own group instead of being re-bucketed here. Liveness is derived
+ * from `peers` (the live roster), so the split re-evaluates on every
+ * connect/disconnect without any stored per-room flag. */
+export function splitRoomsByLiveness(
+  rooms: RoomState[],
+  peers: PeerInfo[],
+): { active: RoomState[]; inactive: RoomState[] } {
+  const active: RoomState[] = [];
+  const inactive: RoomState[] = [];
+  for (const room of rooms) (liveAgentCount(room, peers) >= 2 ? active : inactive).push(room);
+  return { active, inactive };
+}
+
 /** Whether a room member (by sid) is currently reachable over an open ws
  * connection — the `peers` op response only ever lists connected sessions,
  * so "not present" means offline (DR-0012: MemberChip's grey/strikethrough
