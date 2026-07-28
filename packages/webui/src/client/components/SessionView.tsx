@@ -4,7 +4,7 @@
 // state.view is "session" or "timeline"). Files/Timeline/Rooms/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useEffect } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import type { SessionSearchHit } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
@@ -14,8 +14,10 @@ import {
   statusHref,
   terminalHref,
   timelineHref,
+  type AgentRef,
+  type SessionTab,
 } from "../locator.ts";
-import { replaceNavigation } from "../navigation.ts";
+import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
@@ -63,21 +65,50 @@ function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): Ses
   };
 }
 
-export function SessionView({ state }: { state: AppState }) {
+export function SessionView({
+  state,
+  sid,
+  tab,
+  agent,
+  active,
+}: {
+  state: AppState;
+  sid: string;
+  tab: SessionTab;
+  agent: AgentRef | null;
+  active: boolean;
+}) {
   const { store, ws } = useApp();
-  const sid = state.currentSid;
-  const tree = sid ? (state.sessionTrees.get(sid) ?? EMPTY_TREE) : EMPTY_TREE;
-  // tab の確定は sid の有無に関係なく毎 render 行う (下の early return より前
-  // — hooks は無条件に同じ順序で呼ぶ必要があるため、購読 effect もここで
-  // 確定させた tab を見て判断する)。
-  // DR-0025 Phase 2: `state.currentAgent` が付いた `#t<sid>:...` locator は
-  // 「Status パネルの TL リンクからエージェント TL に遷移した」状態 — この
-  // 経路では `localTab` が "status" のまま残っている (Status ボタンの
-  // `setLocalTab("status")` が最後の toggle だったため) ので普通に読むと
-  // Status タブに戻ってしまい、agent TL が見えず要件 (DR-0025 §2.1 「TL を
-  // 見る」→ Timeline ビュー) を満たさない。agent ref が locator に載って
-  // いる間は localTab を無視して timeline を強制する。
-  const tab = state.currentTab ?? "files";
+  const tree = state.sessionTrees.get(sid) ?? EMPTY_TREE;
+  const visitedTabs = useRef(new Set<SessionTab>());
+  const rootRef = useRef<HTMLElement>(null);
+  const scrollPositions = useRef(new Map<HTMLElement, { top: number; left: number }>());
+  visitedTabs.current.add(tab);
+
+  useEffect(() => {
+    if (!active) return;
+    const capture = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      const next = new Map<HTMLElement, { top: number; left: number }>();
+      for (const element of root.querySelectorAll<HTMLElement>("*")) {
+        if (element.scrollTop !== 0 || element.scrollLeft !== 0) {
+          next.set(element, { top: element.scrollTop, left: element.scrollLeft });
+        }
+      }
+      scrollPositions.current = next;
+    };
+    window.addEventListener(BEFORE_NAVIGATION_EVENT, capture);
+    return () => window.removeEventListener(BEFORE_NAVIGATION_EVENT, capture);
+  }, [active]);
+
+  useLayoutEffect(() => {
+    if (!active) return;
+    for (const [element, position] of scrollPositions.current) {
+      element.scrollTop = position.top;
+      element.scrollLeft = position.left;
+    }
+  }, [active]);
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // hello 時に transcript_path を申告・検証済みのセッションでしか
   // session_status_subscribe は成立しない (daemon の resolveTranscript が
@@ -187,12 +218,12 @@ export function SessionView({ state }: { state: AppState }) {
   // 「path なし → 復元後」の中間状態を history に残さないため — back で
   // 直前の画面に戻れる挙動を維持する)。viewMode の復元は FileViewer 側
   // (path 一致時のみ) が担う。
-  const selectedPath = sid ? (state.sessionTrees.get(sid)?.selectedPath ?? null) : null;
+  const selectedPath = state.sessionTrees.get(sid)?.selectedPath ?? null;
   useEffect(() => {
-    if (!sid || tab !== "files" || selectedPath !== null) return;
+    if (!active || tab !== "files" || selectedPath !== null) return;
     const saved = loadFilesView(sid);
     if (saved) replaceNavigation(fileHref(sid, saved.path));
-  }, [sid, tab, selectedPath]);
+  }, [active, sid, tab, selectedPath]);
 
   // 保存 record の mount-time sweep (OneOnOneComposer の draft sweep と同じ
   // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
@@ -202,18 +233,10 @@ export function SessionView({ state }: { state: AppState }) {
     if (state.peers.length > 0) cleanupStaleFilesViews(state);
   }, [state.peers.length]);
 
-  if (!sid) {
-    return (
-      <main id="session-view">
-        <p id="empty-state">session を選んでください</p>
-      </main>
-    );
-  }
-
   const sessionStatus = state.sessionStatuses.get(sid);
 
   return (
-    <main id="session-view">
+    <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
       <div class="session-tabs">
         <a class={"session-tab" + (tab === "files" ? " active" : "")} href={filesHref(sid)}>
           Files
@@ -261,78 +284,79 @@ export function SessionView({ state }: { state: AppState }) {
           {state.pinnedSessions.has(sid) ? "Unpin" : "Pin"}
         </button>
       </div>
-      {tab === "terminal" && hyouiSessionId && terminalGatewayUrl ? (
-        <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
-      ) : tab === "rooms" ? (
-        <SessionRooms sid={sid} state={state} />
-      ) : tab === "status" ? (
-        // Status data is a live fold over a CONNECTED session's transcript
-        // (DR-0020 §3.1; the daemon's session_status_subscribe deliberately
-        // has no allowVirtual fallback) — so both a session that never
-        // announced a transcript and a pinned-but-disconnected (virtual,
-        // DR-0021) one can never produce a snapshot. Explain which instead
-        // of leaving StatusPanel's "読み込み中…" spinner up forever.
-        hasStatusFeed ? (
-          <StatusPanel
-            snapshot={sessionStatus}
+      {visitedTabs.current.has("files") ? (
+        <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">
+          <FilesPanes
             sid={sid}
-            onKill={(opts) => ws.sessionKill(sid, opts)}
-            onLoadEnv={() => ws.sessionEnv(sid)}
+            tree={tree}
+            peer={peer}
+            externalFiles={sessionStatus?.external_files ?? []}
+            workspaceFolders={sessionStatus?.workspace_folders ?? []}
           />
-        ) : hasTranscript ? (
-          <p id="empty-state">
-            Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
-          </p>
-        ) : (
-          <p id="empty-state">このセッションは transcript を申告していません</p>
-        )
-      ) : tab === "timeline" ? (
-        // Guard against a stale/hand-typed `#t<sid>` link outliving the
-        // session's transcript announcement (e.g. reconnect without hello
-        // re-sending transcript_path) — the disabled tab above already tells
-        // the user why, so the pane falls back to the same explanation
-        // rather than calling ws.transcriptRead for a session we know lacks one.
-        hasTranscript ? (
-          // r46 m5: セッションツリーは Timeline タブ内の左ペインに置く
-          // (kawaz 指摘「Files を参考に」= FilesPanes と同じく本セッション
-          // スコープで左ツリー + 右コンテンツ)。agent_tree が空/undefined の
-          // ときは左ペインを出さず Timeline 単独描画に倒す (無駄な空カラムを
-          // 出さない)。
-          (() => {
-            const g = sessionStatus?.agent_tree;
-            return g && (g.teammates.length > 0 || g.agents.length > 0 || g.workflows.length > 0);
-          })() ? (
-            <TimelinePanes
-              sid={sid}
-              agentTree={sessionStatus!.agent_tree!}
-              timeline={tree.timeline}
-              search={tree.timelineSearch}
-              sessionStatus={sessionStatus}
-              onOpenStatus={() => replaceNavigation(statusHref(sid))}
-              agent={state.currentAgent}
-            />
+        </div>
+      ) : null}
+      {visitedTabs.current.has("timeline") ? (
+        <div class="session-tab-panel" hidden={tab !== "timeline"} data-session-tab="timeline">
+          {hasTranscript ? (
+            (() => {
+              const graph = sessionStatus?.agent_tree;
+              return graph &&
+                (graph.teammates.length > 0 ||
+                  graph.agents.length > 0 ||
+                  graph.workflows.length > 0) ? (
+                <TimelinePanes
+                  sid={sid}
+                  agentTree={graph}
+                  timeline={tree.timeline}
+                  search={tree.timelineSearch}
+                  sessionStatus={sessionStatus}
+                  onOpenStatus={() => replaceNavigation(statusHref(sid))}
+                  agent={agent}
+                />
+              ) : (
+                <Timeline
+                  sid={sid}
+                  timeline={tree.timeline}
+                  search={tree.timelineSearch}
+                  sessionStatus={sessionStatus}
+                  onOpenStatus={() => replaceNavigation(statusHref(sid))}
+                  agent={agent}
+                />
+              );
+            })()
           ) : (
-            <Timeline
+            <p id="empty-state">このセッションは transcript を申告していません</p>
+          )}
+        </div>
+      ) : null}
+      {visitedTabs.current.has("terminal") && hyouiSessionId && terminalGatewayUrl ? (
+        <div class="session-tab-panel" hidden={tab !== "terminal"} data-session-tab="terminal">
+          <TerminalPanel hyouiSessionId={hyouiSessionId} gatewayUrl={terminalGatewayUrl} />
+        </div>
+      ) : null}
+      {visitedTabs.current.has("status") ? (
+        <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
+          {hasStatusFeed ? (
+            <StatusPanel
+              snapshot={sessionStatus}
               sid={sid}
-              timeline={tree.timeline}
-              search={tree.timelineSearch}
-              sessionStatus={sessionStatus}
-              onOpenStatus={() => replaceNavigation(statusHref(sid))}
-              agent={state.currentAgent}
+              onKill={(opts) => ws.sessionKill(sid, opts)}
+              onLoadEnv={() => ws.sessionEnv(sid)}
             />
-          )
-        ) : (
-          <p id="empty-state">このセッションは transcript を申告していません</p>
-        )
-      ) : (
-        <FilesPanes
-          sid={sid}
-          tree={tree}
-          peer={peer}
-          externalFiles={sessionStatus?.external_files ?? []}
-          workspaceFolders={sessionStatus?.workspace_folders ?? []}
-        />
-      )}
+          ) : hasTranscript ? (
+            <p id="empty-state">
+              Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
+            </p>
+          ) : (
+            <p id="empty-state">このセッションは transcript を申告していません</p>
+          )}
+        </div>
+      ) : null}
+      {visitedTabs.current.has("rooms") ? (
+        <div class="session-tab-panel" hidden={tab !== "rooms"} data-session-tab="rooms">
+          <SessionRooms sid={sid} state={state} />
+        </div>
+      ) : null}
       {/* DR-0014 §2.6 floating 1on1 composer. kawaz r46 m44 (2026-07-23):
        * セッション選択中は tab (files/timeline/status/rooms/terminal) に
        * よらず常時表示する — position:fixed の floating FAB なので裏のタブ

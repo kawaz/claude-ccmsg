@@ -6,6 +6,7 @@ import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 
 const RECENT_PREFIX = "ccmsg.recent.";
 const RECENT_STALE_MS = 10 * 24 * 60 * 60 * 1000;
+export const BEFORE_NAVIGATION_EVENT = "ccmsg:before-navigation";
 
 export interface RecentRecord {
   url: string;
@@ -162,6 +163,7 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     if (!event.canIntercept || event.downloadRequest !== null || event.hashChange) return;
     const targetUrl = new URL(event.destination.url);
     if (targetUrl.origin !== location.origin) return;
+    window.dispatchEvent(new Event(BEFORE_NAVIGATION_EVENT));
     const target = parseUrl(targetUrl.pathname, targetUrl.search);
     const current = parseUrl(location.pathname, location.search);
 

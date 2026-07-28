@@ -9,8 +9,9 @@ import { RoomView } from "./RoomView.tsx";
 import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
+import { touchSessionViewCache, type CachedSessionView } from "../session-view-cache.ts";
 
 const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
 const SIDEBAR_MIN_PX = 200;
@@ -97,6 +98,20 @@ export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
+  const sessionViewsRef = useRef<CachedSessionView[]>([]);
+  const visibleSessionSid =
+    state.navigationError === null &&
+    state.unknownPath === null &&
+    (state.view === "session" || state.view === "timeline")
+      ? state.currentSid
+      : null;
+  if (visibleSessionSid !== null) {
+    sessionViewsRef.current = touchSessionViewCache(sessionViewsRef.current, {
+      sid: visibleSessionSid,
+      tab: state.currentTab ?? "files",
+      agent: state.currentAgent,
+    });
+  }
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
@@ -151,6 +166,16 @@ export function App() {
           class={state.sidebarOpen ? "visible" : undefined}
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
+        {sessionViewsRef.current.map((view) => (
+          <SessionView
+            key={view.sid}
+            state={state}
+            sid={view.sid}
+            tab={view.tab}
+            agent={view.agent}
+            active={visibleSessionSid === view.sid}
+          />
+        ))}
         {state.navigationError !== null ? (
           <NavigationErrorView
             message={state.navigationError}
@@ -158,11 +183,9 @@ export function App() {
           />
         ) : state.unknownPath !== null ? (
           <UnknownPathView pathname={state.unknownPath} />
-        ) : state.view === "session" || state.view === "timeline" ? (
-          <SessionView state={state} />
-        ) : (
+        ) : state.view === "room" ? (
           <RoomView state={state} />
-        )}
+        ) : null}
       </div>
       <footer id="app-footer">
         {state.daemonInfo ? (
