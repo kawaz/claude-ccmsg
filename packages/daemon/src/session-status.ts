@@ -63,6 +63,10 @@ const PREFILTER = [
   '"isApiErrorMessage":true',
   "<task-notification>",
   "<teammate-message",
+  // Oversized `! <cmd>` results, whose sidecar path joins the DR-0024
+  // allowlist. These rows carry no tool input, so no `file_path` key admits
+  // them.
+  "<persisted-output>",
 ] as const;
 
 export function isSessionStatusCandidate(line: string): boolean {
@@ -182,14 +186,23 @@ function foldExternalFile(
   name: string,
   input: Record<string, unknown>,
 ): boolean {
-  if (!state.externalRoot) return false;
   const rawPath =
     name === "NotebookEdit"
       ? input.notebook_path
       : name === "Read" || name === "Write" || name === "Edit" || name === "MultiEdit"
         ? input.file_path
         : undefined;
-  if (typeof rawPath !== "string" || rawPath === "" || !path.isAbsolute(rawPath)) return false;
+  if (typeof rawPath !== "string") return false;
+  return addExternalFile(state, rawPath);
+}
+
+/** Canonicalize one transcript-named absolute path and add it to the allowlist
+ * when it falls outside the containment root. Shared by every fold that grants
+ * external reads so they agree on normalization and on the fail-closed
+ * behaviour when the session root is unresolvable. */
+function addExternalFile(state: SessionStatusState, rawPath: string): boolean {
+  if (!state.externalRoot) return false;
+  if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
 
   const normalized = path.normalize(rawPath);
   let canonical = normalized;
@@ -736,10 +749,46 @@ function foldTeammateRelay(state: SessionStatusState, row: Record<string, unknow
   return changed;
 }
 
+/** DR-0024 addendum: the sidecar an oversized `! <cmd>` result was spilled to.
+ * Claude Code replaces such a result with a `<persisted-output>` stub naming
+ * the file it wrote next to the transcript, so the path is transcript-named in
+ * exactly the sense the DR's allowlist already relies on — the same grant as a
+ * `Read` tool input, and equally an exact-path one.
+ *
+ * The two patterns mirror `parsePersistedOutput` in the webui's
+ * transcript-model.ts, which decides whether the bash card offers its "open the
+ * full text" link. They are duplicated rather than shared because the daemon
+ * does not otherwise reach into the webui's client code; should the two drift,
+ * a path this side misses simply leaves that link dark (the card's existence
+ * probe gates it), never the reverse.
+ *
+ * Anchoring `<persisted-output>` to the whole `<bash-stdout>` body is what
+ * keeps a command's own output from naming arbitrary paths: to be folded, the
+ * output must be nothing but the stub. A user who deliberately echoes one is
+ * granting a read of their own choosing, which `! <cmd>` already permits far
+ * more directly. */
+const PERSISTED_STDOUT_RE = /<bash-stdout>([\s\S]*?)<\/bash-stdout>/;
+const PERSISTED_OUTPUT_RE =
+  /^\s*<persisted-output>\s*([\s\S]*?)\n\s*Preview \(first [^)]*\):\n[\s\S]*?<\/persisted-output>\s*$/;
+const PERSISTED_PATH_RE = /saved to:\s*(\S+)/;
+
+function foldPersistedOutput(state: SessionStatusState, content: string): boolean {
+  const stdout = content.match(PERSISTED_STDOUT_RE)?.[1];
+  if (stdout === undefined) return false;
+  const note = stdout.match(PERSISTED_OUTPUT_RE)?.[1];
+  if (note === undefined) return false;
+  const sidecar = note.match(PERSISTED_PATH_RE)?.[1];
+  if (sidecar === undefined) return false;
+  return addExternalFile(state, sidecar);
+}
+
 function foldUser(state: SessionStatusState, row: Record<string, unknown>): boolean {
   const message = row.message;
   if (!isRecord(message)) return false;
   let changed = foldTeammateRelay(state, row);
+  if (typeof message.content === "string" && foldPersistedOutput(state, message.content)) {
+    changed = true;
+  }
   if (!Array.isArray(message.content)) return changed;
   const result = row.toolUseResult;
 

@@ -500,15 +500,13 @@ function BashRunOutput({ output }: { output: BashCommandOutput }) {
   const ctx = useContext(SessionFilePathCtxContext);
   const persistedPath = output.persisted?.path ?? null;
   // Gate the link on the same existence probe the inline-code linkifier uses.
-  // The sidecar Claude Code wrote is a real file, but it lives beside the
-  // transcript rather than inside the session's workspace, so the daemon's
-  // read authorization (DR-0024's exact-path `external_files` allowlist, fed
-  // only from Read/Write/Edit tool inputs) does not currently cover it and
-  // fs_read answers `path not allowed` — verified 2026-07-29 against a real
-  // oversized run. Probing means the offer appears only when the daemon will
-  // actually serve the file: today the path shows as plain text the user can
-  // open themselves, and if the allowlist later grows to include the
-  // session's own tool-results the link lights up with no change here.
+  // The sidecar lives beside the transcript rather than inside the session's
+  // workspace, so serving it depends on the daemon having folded the stub's
+  // path into DR-0024's exact-path `external_files` allowlist. It does, but
+  // the probe stays as the affordance's condition: a sidecar that was cleaned
+  // up, or a stub the two parsers read differently, then costs a dead link
+  // rather than a `path not allowed` error, and the path itself still shows as
+  // text the user can open themselves.
   // `useFilePathCacheTick` re-renders this card when the batch answer lands.
   useFilePathCacheTick();
   useEffect(() => {

@@ -1581,7 +1581,80 @@ describe("session status external file fold (DR-0024)", () => {
       isSessionStatusCandidate(toolUse("notebook", "NotebookEdit", { notebook_path: "/tmp/x" })),
     ).toBe(true);
   });
+
+  test("`! <cmd>` の persisted-output スタブが名指すサイドカーを allowlist に加える", () => {
+    // fixture は実測 transcript
+    // (~/.claude-personal/projects/-private-tmp-bashout-probe, CC 2.1.220) の
+    // 行そのままの形: type=user かつ message.content が配列でなく string で、
+    // tool 入力を一切持たない。他 fold と違い row の tool_use を経由しない
+    // 経路なので、スタブ本文だけから path を採れることを固定する。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const sidecar = path.join(outside, "tool-results", "bv1juwnqq.txt");
+      fs.mkdirSync(path.dirname(sidecar));
+      fs.writeFileSync(sidecar, "x".repeat(64));
+      const result = apply([persistedOutputRow(sidecar)], root);
+      expect(result.external_files).toEqual([fs.realpathSync(sidecar)]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("persisted-output fixture は scan の文字列 prefilter を通過する", () => {
+    // これらの行には file_path も notebook_path も無いため、専用の prefilter
+    // 項目が無いと全量/逐次 scan の入口で捨てられ fold まで届かない。
+    expect(isSessionStatusCandidate(persistedOutputRow("/tmp/x/tool-results/a.txt"))).toBe(true);
+  });
+
+  test("スタブ形でない `! <cmd>` 出力からは path を採らない", () => {
+    // 巨大出力でない通常実行の stdout は素通しで載るので、その中に現れた
+    // persisted-output らしき断片で任意 path が allowlist に入らないことを固定
+    // する。採用条件は「stdout 全体がスタブであること」。
+    const root = fixtureDir();
+    try {
+      const forged =
+        "<bash-stdout>see below\n<persisted-output>\n" +
+        "Output too large (1.0MB). Full output saved to: /etc/passwd\n\n" +
+        "Preview (first 2KB):\nzz\n</persisted-output>\n</bash-stdout><bash-stderr></bash-stderr>";
+      const noPreviewMarker =
+        "<bash-stdout><persisted-output>\nFull output saved to: /etc/passwd\n" +
+        "</persisted-output></bash-stdout>";
+      const noPath =
+        "<bash-stdout><persisted-output>\nOutput too large (1.0MB).\n\n" +
+        "Preview (first 2KB):\nzz\n</persisted-output></bash-stdout>";
+      const relative =
+        "<bash-stdout><persisted-output>\n" +
+        "Output too large (1.0MB). Full output saved to: tool-results/a.txt\n\n" +
+        "Preview (first 2KB):\nzz\n</persisted-output></bash-stdout>";
+      const result = apply([forged, noPreviewMarker, noPath, relative].map(userTextRow), root);
+      expect(result.external_files).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
+
+/** A `type: "user"` row whose `message.content` is the plain string Claude Code
+ * writes for a `! <cmd>` result (not the tool_result block array). */
+function userTextRow(content: string): string {
+  return JSON.stringify({
+    type: "user",
+    timestamp: END,
+    message: { role: "user", content },
+  });
+}
+
+function persistedOutputRow(sidecar: string): string {
+  return userTextRow(
+    "<bash-stdout><persisted-output>\n" +
+      `Output too large (58.6KB). Full output saved to: ${sidecar}\n\n` +
+      "Preview (first 2KB):\n" +
+      "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n...\n" +
+      "</persisted-output></bash-stdout><bash-stderr></bash-stderr>",
+  );
+}
 
 function nameOf(file: string): string {
   return path.basename(file);

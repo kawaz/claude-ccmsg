@@ -49,6 +49,25 @@ realpath で検査 (既存 fs-access の流儀)。
 | Phase 1 | daemon: 抽出 + allowlist 読み出し認可 + テスト (敵対: allowlist 外 / symlink) |
 | Phase 2 | webui: プロジェクト外セクション + 横スクロール + ★ |
 
+## 4.1 Addendum: `! <cmd>` の persisted-output サイドカー (kawaz TL-Q1 = a, 2026-07-29)
+
+30KB 超の `! <cmd>` 出力を Claude Code が退避するサイドカーファイル (transcript
+の隣の `<sid>/tool-results/*.txt`) のパスも allowlist に含める。抽出元は
+transcript の `<persisted-output>` スタブ本文の `Full output saved to:` 行。
+
+**信頼形状は § 3.1 の既存エントリと同一**: transcript 自身が名指した絶対パスを
+1 件だけ、完全一致で付与する (ディレクトリ付与・prefix 付与なし)。読み出し認可は
+§ 3.2 の `fs_read_external` をそのまま通り、realpath 再検査も同じ。
+
+スタブ判定は **`<bash-stdout>` の中身全体がスタブであること**を要求する
+(先頭・末尾 anchor)。巨大でない通常出力はそのまま `<bash-stdout>` に載るため、
+コマンド出力中に現れた断片で任意パスが allowlist に入らない。全体がスタブに
+なるよう自分で `echo` したユーザは、`! <cmd>` で直接読める範囲を自分に許可した
+だけで、権限は増えない。
+
+webui は無変更。バッシュカードの「全文を別タブで開く」リンクは元から実在プローブ
+で gate されているため、allowlist 化により自然に点灯する。
+
 ## 5. 関連
 
 - kawaz r26 mid=99 (仕様全文)
