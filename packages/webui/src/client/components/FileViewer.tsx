@@ -6,7 +6,7 @@
 // round trip for the currently-selected path (component-effect pattern, same
 // division of labor as FileTree for fs_list).
 import type { JSX, RefObject } from "preact";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { FS_READ_MAX_BYTES, type PeerInfo, type WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -35,6 +35,13 @@ import {
 } from "../highlight.ts";
 import { alternateLinkReading, previewFilePathCtx } from "../filepath-ref.ts";
 import { fileHref } from "../locator.ts";
+import { BEFORE_NAVIGATION_EVENT } from "../navigation.ts";
+import {
+  readViewerScroll,
+  rememberViewerScroll,
+  resolveViewerScrollTop,
+  VIEWER_SCROLLER_SELECTOR,
+} from "../viewer-scroll-store.ts";
 import { makeMarkdownPathLinker } from "../filepath-linker.tsx";
 import {
   MarkdownView,
@@ -814,6 +821,80 @@ export function FileViewer({
     setViewMode(mode);
     if (path !== null) saveFilesView(sid, { path, viewMode: mode });
   };
+
+  // ── スクロール位置の history entry 単位の記憶 / 復元 (kawaz r76 m39) ──
+  // スクロールするのは root ではなく中身側 (VIEWER_SCROLLER_SELECTOR)。
+  const viewerRef = useRef<HTMLDivElement | null>(null);
+  const scroller = (): HTMLElement | null =>
+    viewerRef.current?.querySelector<HTMLElement>(VIEWER_SCROLLER_SELECTOR) ?? null;
+  // 「離れる直前」= navigate イベントの発火時に、まだ現在の entry が
+  // currentEntry である間に記録する (navigation.ts が intercept の前に
+  // BEFORE_NAVIGATION_EVENT を投げる)。
+  useEffect(() => {
+    if (path === null) return;
+    const capture = () => {
+      const el = scroller();
+      const key = window.navigation.currentEntry?.key;
+      if (!el || !key) return;
+      rememberViewerScroll(key, { path, top: el.scrollTop });
+    };
+    window.addEventListener(BEFORE_NAVIGATION_EVENT, capture);
+    return () => window.removeEventListener(BEFORE_NAVIGATION_EVENT, capture);
+  }, [path]);
+
+  // 復元。back/forward で戻ってきた entry にだけ記録があるので、新規遷移
+  // (= 新しい key) は自動的に素通りして従来どおり先頭から表示される。
+  // 内容が描かれた後の layout effect なので、ペイント前に位置が決まる。
+  // 「この entry でこの path は復元済み」の印。復元は 1 訪問につき 1 回だけ
+  // — 記録は離脱時にしか更新されないので、滞在中の再レンダ (再取得 /
+  // モード切替) で当て直すと、ユーザがその後に動かした位置を古い記録で
+  // 引き戻してしまう。
+  const visitRef = useRef<string | null>(null);
+  const restoredRef = useRef(false);
+  useLayoutEffect(() => {
+    const el = scroller();
+    const key = window.navigation.currentEntry?.key;
+    if (!el || !key || path === null) return;
+    // 「同じ entry の同じ path を見続けている」間だけ印を保つ。別の entry /
+    // path を経由して戻ってきたら別の訪問なので、印は落として復元し直す
+    // (= Back → Forward → Back の 2 周目も効く)。
+    const visit = `${key}|${path}`;
+    if (visitRef.current !== visit) {
+      visitRef.current = visit;
+      restoredRef.current = false;
+    }
+    if (restoredRef.current) return;
+    const target = resolveViewerScrollTop(readViewerScroll(key), path, selectedLineRange !== null);
+    if (target === null) return;
+    restoredRef.current = true;
+    // `.viewer-preview` は scroll-behavior: smooth。復元は移動ではなく初期
+    // 位置なので instant で当てる。
+    const jump = () => el.scrollTo({ top: target, behavior: "instant" });
+    jump();
+    // markdown preview は画像や埋め込みの読み込みで後から高さが伸びる。伸びる
+    // 前の代入は末尾側でクランプされるので、1 回で終わりにすると「ちょっと
+    // 足りない位置」に着地する。高さ変化を ResizeObserver で拾って当て直し、
+    // ユーザが自分でスクロールし始めたら即座に手を引く (= 操作を奪わない)。
+    // 監視対象はスクローラ自身ではなく中身 — スクローラのボックスは伸びない
+    // ので resize が来ない。
+    const observer = new ResizeObserver(jump);
+    for (const child of el.children) observer.observe(child);
+    const release = () => observer.disconnect();
+    const events = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    for (const type of events) el.addEventListener(type, release, { passive: true });
+    return () => {
+      observer.disconnect();
+      for (const type of events) el.removeEventListener(type, release);
+    };
+  }, [
+    path,
+    file?.path,
+    file?.status,
+    res?.content,
+    viewMode,
+    selectedLineRange?.start,
+    selectedLineRange?.end,
+  ]);
   useEffect(() => {
     if (!highlightEligible || !res || !lang || !path) return;
     let cancelled = false;
@@ -1122,7 +1203,7 @@ export function FileViewer({
   const highlightedLines = highlighted && highlighted.path === path ? highlighted.lines : null;
   const showPreview = markdownEligible && viewMode === "preview";
   return (
-    <div class="file-viewer">
+    <div class="file-viewer" ref={viewerRef}>
       <header class="viewer-header">
         <span class="viewer-path">{path}</span>
         {res.truncated ? (
