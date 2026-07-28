@@ -24,8 +24,11 @@ import {
   isUserTextTurn,
   itemRawSourceOffsets,
   lineByteOffsets,
+  parseBashInputText,
+  parseBashOutputText,
   parseSystemMessageFields,
   parseTranscriptLine,
+  resolveToolResults,
   parseTranscriptLines,
   rawTranscriptRows,
   truncateRawLine,
@@ -3455,8 +3458,7 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("bash-command-invocation", raw)).toEqual({
         display: "bash",
         command: "ls -la",
-        stdout: null,
-        stderr: null,
+        output: null,
       });
     });
 
@@ -3467,8 +3469,7 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("bash-command-stdout", raw)).toEqual({
         display: "bash",
         command: null,
-        stdout: "bin\nbun.lock",
-        stderr: null,
+        output: { stdout: "bin\nbun.lock", stderr: null, persisted: null },
       });
     });
 
@@ -3478,8 +3479,7 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("bash-command-stdout", raw)).toEqual({
         display: "bash",
         command: null,
-        stdout: "ok",
-        stderr: "boom",
+        output: { stdout: "ok", stderr: "boom", persisted: null },
       });
     });
 
@@ -3499,6 +3499,108 @@ describe("parseSystemMessageFields", () => {
         display: "text",
         text: "unexpected shape",
       });
+    });
+  });
+
+  // Claude Code 実機 (v2.1.220, 2026-07-29 実測) は ~50KB 超の `! <cmd>` 出力を
+  // <persisted-output> (注記 + サイドカーの絶対パス + 2KB プレビュー) に差し替える。
+  // 30KB はそのまま inline、60KB / 4.8MB は差し替えを確認済み。
+  describe("persisted-output (oversized `! <cmd>` results)", () => {
+    const persistedRaw =
+      "<bash-stdout><persisted-output>\n" +
+      "Output too large (4.8MB). Full output saved to: /tmp/p/tool-results/bv1.txt\n" +
+      "\nPreview (first 2KB):\n" +
+      "xxx\nyyy\n" +
+      "</persisted-output></bash-stdout><bash-stderr></bash-stderr>";
+
+    test("splits the stub into note / sidecar path / preview instead of showing it verbatim", () => {
+      expect(parseBashOutputText(persistedRaw)).toEqual({
+        stdout: null,
+        stderr: null,
+        persisted: {
+          note: "Output too large (4.8MB). Full output saved to: /tmp/p/tool-results/bv1.txt",
+          path: "/tmp/p/tool-results/bv1.txt",
+          preview: "xxx\nyyy",
+        },
+      });
+    });
+
+    // 上流が注記の文言を変えてパスを取れなくなっても、丸ごと raw に落とすのではなく
+    // 「リンク無しの通常出力」に劣化させる (バイトは決して隠さない)。
+    test("a stub with no recoverable path degrades to plain stdout, not to a dropped block", () => {
+      const raw =
+        "<bash-stdout><persisted-output>\nSomething else\n\nPreview (first 2KB):\nzz\n</persisted-output></bash-stdout>";
+      const out = parseBashOutputText(raw);
+      expect(out?.persisted).toBeNull();
+      expect(out?.stdout).toContain("Something else");
+    });
+  });
+
+  describe("`! <cmd>` invocation/output pairing (resolveToolResults)", () => {
+    const bashLine = (kind: "bash-command-invocation" | "bash-command-stdout", text: string) =>
+      ({
+        kind: "turn",
+        ts: null,
+        role: "user",
+        userMessageKind: kind,
+        segments: [{ kind: "text", role: "user", text }],
+      }) satisfies ParsedLine;
+
+    const invocation = bashLine("bash-command-invocation", "<bash-input>ls</bash-input>");
+    const output = bashLine(
+      "bash-command-stdout",
+      "<bash-stdout>bin</bash-stdout><bash-stderr></bash-stderr>",
+    );
+
+    test("the adjacent output row merges into the command's own segment", () => {
+      const [merged] = resolveToolResults([invocation, output]);
+      expect(merged).toMatchObject({
+        segments: [
+          { kind: "bash-command", command: "ls", output: { stdout: "bin", stderr: null } },
+        ],
+      });
+    });
+
+    // 取り込まれた側は groupTimelineLines が落とす (= 同じ出力が二重に出ない)。
+    // 行自体は配列に残るので transcript の byte offset は保たれる。
+    test("the consumed output row is dropped from the rendered groups but keeps its offset slot", () => {
+      const lines = resolveToolResults([invocation, output]);
+      expect(lines).toHaveLength(2);
+      const groups = groupTimelineLines(lines, [0, 100]);
+      expect(groups).toHaveLength(1);
+      expect(groups[0]).toMatchObject({ kind: "entry", offset: 0 });
+    });
+
+    // 隣が出力行でなければ無関係な行を飲み込まず、結果なしのコマンドとして描く。
+    test("an invocation whose next line is unrelated keeps output null and swallows nothing", () => {
+      const other = {
+        kind: "turn",
+        ts: null,
+        role: "assistant",
+        segments: [{ kind: "text", role: "assistant", text: "hi" }],
+      } satisfies ParsedLine;
+      const [merged, kept] = resolveToolResults([invocation, other]);
+      expect(merged).toMatchObject({ segments: [{ kind: "bash-command", output: null }] });
+      expect(kept).toBe(other);
+    });
+
+    // kawaz r76m20: 「それ自体は確実にユーザが入力したもの」なので、他のシステム由来
+    // メッセージのように fold へ沈めず、ユーザ側の流れに standalone で出す。
+    test("a `! <cmd>` run is a boundary (stands alone) rather than folding away", () => {
+      const [merged] = resolveToolResults([invocation, output]);
+      expect(classifyBoundaryLine(merged!)).toMatchObject({ kind: "bash-command" });
+    });
+
+    // 相方の来なかった出力行も同様に standalone (= バイトを黙って隠さない)。
+    test("an orphaned output row still stands alone instead of sinking into a fold", () => {
+      const [only] = resolveToolResults([output]);
+      expect(classifyBoundaryLine(only!)).toMatchObject({ kind: "bash-command-output" });
+      expect(groupTimelineLines([only!], [0])).toMatchObject([{ kind: "entry" }]);
+    });
+
+    test("parseBashInputText trims the command", () => {
+      expect(parseBashInputText("<bash-input>  ls -la  </bash-input>")).toBe("ls -la");
+      expect(parseBashInputText("ls")).toBeNull();
     });
   });
 

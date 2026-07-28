@@ -167,6 +167,14 @@ a {
  * リロードが無い時のフォールバック。ConnectionStatus の隣に配置、他 topbar
  * ボタン (#menu-toggle) と同じ pill 系スタイル。&#8635; (↻) は system font
  * が表現する回転矢印。 */
+.app-history-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+#app-back,
+#app-forward,
 #app-reload {
   background: none;
   border: none;
@@ -176,8 +184,17 @@ a {
   padding: 0 0.25rem;
   line-height: 1;
 }
+
+#app-back:hover:not(:disabled),
+#app-forward:hover:not(:disabled),
 #app-reload:hover {
   color: var(--fg);
+}
+
+#app-back:disabled,
+#app-forward:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .status {
@@ -3661,6 +3678,11 @@ button.session-tab {
   outline-offset: 2px;
 }
 
+.tl-position-selected .tl-bubble-body,
+.tl-position-selected .tl-api-error {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
 .tl-bubble-peer .tl-bubble-body {
   background: var(--peer-bubble-bg);
 }
@@ -4549,50 +4571,79 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
-/* TUI の `! <cmd>` 実行 (kawaz r76m7)。ユーザ発話の吹き出しではなく
- * 「端末で叩いた」と読める見た目にする: プロンプト記号付きコマンド行 +
- * 等幅の出力ブロック。 */
-.tl-bashcmd {
-  margin-top: 0.3rem;
+/* TUI の `! <cmd>` 実行 (kawaz r76m20)。ユーザが確実に打ったものなので
+ * ユーザ発話と同じ流れに置くが、緑の吹き出しではなく Bash ツール実行と
+ * 同系統のカード (.tl-file-tool-card/.tl-bash-* を共用) で描く。畳まないので
+ * 代わりに出力側を max-height で抑えてカード内スクロールさせる。 */
+.tl-bashrun {
   display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
+  justify-content: flex-end;
 }
 
-.tl-bashcmd-line {
+/* ユーザ発話の吹き出し (.tl-bubble) と同じ寄せ・同じ最大幅にして、
+ * 「ユーザ側の流れに並ぶ」ことが位置で読み取れるようにする。 */
+.tl-bashrun > .tl-file-tool-card {
+  width: 100%;
+  max-width: 85%;
+  min-width: 0;
+}
+
+.tl-bashrun-head {
   display: flex;
-  align-items: baseline;
-  gap: 0.4rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 0.3rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
 }
 
-.tl-bashcmd-prompt {
-  color: var(--fg-muted);
-  user-select: none;
-}
-
-.tl-bashcmd-cmd {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.tl-bashcmd-out {
-  margin: 0;
-  padding: 0.3rem 0.5rem;
+.tl-bashrun-badge {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.72rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-x: auto;
-  border-left: 2px solid var(--border);
+  font-weight: 600;
+  color: var(--accent);
 }
 
-.tl-bashcmd-err {
+/* 実測 (Claude Code v2.1.220): jsonl に入る出力は ~50KB で頭打ちになり、
+ * それ以上は <persisted-output> の 2KB プレビューに差し替わる。つまり丈は
+ * 有界なので、UI 側でバイト単位に切り詰める必要はなく、視野を専有しない
+ * 高さに抑えてスクロールさせれば足りる。 */
+.tl-bashrun-out {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.65rem 0.7rem;
+  border-top: 1px solid var(--border);
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.tl-bashrun-out.is-error {
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.tl-bashrun-persisted-note {
+  padding: 0.4rem 0.7rem;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tl-bashrun-persisted-link {
+  display: block;
+  padding: 0 0.7rem 0.4rem;
+  background: var(--bg-alt);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 /* tools folding (kawaz spec): ユーザプロンプトと次のユーザ向けアシスタント

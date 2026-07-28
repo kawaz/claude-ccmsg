@@ -5,8 +5,11 @@ import {
   isSameSessionTabChange,
   missingTargetMessage,
   recentIsValid,
+  rememberTimelinePosition,
   resolveSessionRootTarget,
   sessionRootHistory,
+  transcriptContainsUuid,
+  urlWithRememberedTimelinePosition,
   type RecentRecord,
   type WsClient,
 } from "../src/client/navigation.ts";
@@ -53,6 +56,17 @@ describe("Navigation API routing decisions", () => {
     expect(sessionRootHistory(files("s1"), "s1")).toBe("replace");
     expect(sessionRootHistory(files("s1"), "s2")).toBe("push");
     expect(sessionRootHistory({ view: "room", room: "r1", mid: null }, "s1")).toBe("push");
+  });
+
+  test("the last visible UUID is substituted only for recent persistence, and bottom clears it back to head", () => {
+    rememberTimelinePosition("position-sid", "u-42");
+    expect(urlWithRememberedTimelinePosition("/s/position-sid/timeline/head", "position-sid")).toBe(
+      "/s/position-sid/timeline/u-42",
+    );
+    rememberTimelinePosition("position-sid", "head");
+    expect(urlWithRememberedTimelinePosition("/s/position-sid/timeline/head", "position-sid")).toBe(
+      "/s/position-sid/timeline/head",
+    );
   });
 
   test("only a tab change within one session is converted from push to replace", () => {
@@ -145,6 +159,30 @@ describe("recent session restoration", () => {
       true,
     );
     expect(probed).toEqual(["/repo/src/app.ts"]);
+  });
+
+  test("a timeline UUID recent is valid only when the loaded transcript window contains that row", async () => {
+    const record = recent("/s/s1/timeline/u-2");
+    const present = {
+      transcriptRead: async () => ({ ok: true, lines: ['{"uuid":"u-1"}', '{"uuid":"u-2"}'] }),
+    } as unknown as WsClient;
+    const missing = {
+      transcriptRead: async () => ({ ok: true, lines: ['{"uuid":"u-1"}'] }),
+    } as unknown as WsClient;
+
+    expect(await recentIsValid(record, "s1", stateWithSession(), present, "http://localhost")).toBe(
+      true,
+    );
+    expect(await recentIsValid(record, "s1", stateWithSession(), missing, "http://localhost")).toBe(
+      false,
+    );
+    expect(
+      await resolveSessionRootTarget(record, "s1", stateWithSession(), missing, "http://localhost"),
+    ).toBe("/s/s1/timeline/head");
+  });
+
+  test("malformed JSONL rows cannot accidentally validate a UUID", () => {
+    expect(transcriptContainsUuid(["not-json", '{"uuid":"u-1"}'], "u-2")).toBe(false);
   });
 
   test("a missing recent file falls back to timeline/head", async () => {

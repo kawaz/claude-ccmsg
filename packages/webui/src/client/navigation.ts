@@ -5,6 +5,7 @@ import { parseUrl, timelineHref, type Locator } from "./locator.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 
 const RECENT_PREFIX = "ccmsg.recent.";
+const timelinePositions = new Map<string, string>();
 const RECENT_STALE_MS = 10 * 24 * 60 * 60 * 1000;
 export const BEFORE_NAVIGATION_EVENT = "ccmsg:before-navigation";
 
@@ -14,6 +15,27 @@ export interface RecentRecord {
 }
 
 export type WsClient = ReturnType<typeof createWsClient>;
+
+export function rememberTimelinePosition(sid: string, position: string): void {
+  if (position === "head") timelinePositions.delete(sid);
+  else timelinePositions.set(sid, position);
+}
+
+export function urlWithRememberedTimelinePosition(url: string, sid: string): string {
+  const position = timelinePositions.get(sid);
+  return position ? timelineHref(sid, position) : url;
+}
+
+export function transcriptContainsUuid(lines: readonly string[], uuid: string): boolean {
+  return lines.some((line) => {
+    try {
+      const value = JSON.parse(line) as { uuid?: unknown };
+      return value.uuid === uuid;
+    } catch {
+      return false;
+    }
+  });
+}
 
 function recentKey(sid: string): string {
   return `${RECENT_PREFIX}${sid}`;
@@ -51,6 +73,14 @@ export async function recentIsValid(
   if (!sessionExists(state, sid)) return false;
   const url = new URL(record.url, origin);
   const locator = parseUrl(url.pathname, url.search);
+  if (locator.view === "timeline" && locator.position && locator.position !== "head") {
+    try {
+      const result = await ws.transcriptRead(sid);
+      return result.ok && transcriptContainsUuid(result.lines, locator.position);
+    } catch {
+      return false;
+    }
+  }
   if (locator.view !== "session" || locator.tab !== "files" || !locator.path) return true;
   const peer = state.peers.find((item) => item.sid === sid);
   const stored = state.pinnedSessions.get(sid) ?? state.sessionTrees.get(sid)?.searchHit;
@@ -106,7 +136,11 @@ export function missingTargetMessage(state: AppState, locator: Locator): string 
 }
 
 function currentUrl(): string {
-  return `${location.pathname}${location.search}`;
+  const url = `${location.pathname}${location.search}`;
+  const locator = parseUrl(location.pathname, location.search);
+  return locator.view === "timeline" && !locator.agent
+    ? urlWithRememberedTimelinePosition(url, locator.sid)
+    : url;
 }
 
 export function sessionRootHistory(current: Locator, targetSid: string): "push" | "replace" {

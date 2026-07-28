@@ -8,7 +8,8 @@ import type { PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
-import { agentTimelineHref, fileHref, timelineHref } from "../locator.ts";
+import { agentTimelineHref, fileHref, parseUrl, timelineHref } from "../locator.ts";
+import { rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
@@ -36,6 +37,7 @@ import {
   rawTranscriptRows,
   resolveToolResults,
   truncateRawLine,
+  type BashCommandOutput,
   type CcmsgMessage,
   type ParsedLine,
   type Segment,
@@ -45,8 +47,13 @@ import {
   type TurnLine,
   type UserMessageKind,
 } from "../transcript-model.ts";
-import { LinkedMarkdownView } from "../filepath-linker.tsx";
-import type { FilePathResolveCtx } from "../filepath-ref.ts";
+import { LinkedMarkdownView, useFilePathCacheTick } from "../filepath-linker.tsx";
+import { enqueueFilePathProbe, getFilePathStatus } from "../filepath-existence-cache.ts";
+import {
+  hrefFromStatEntry,
+  viewerPathForAbsolute,
+  type FilePathResolveCtx,
+} from "../filepath-ref.ts";
 import {
   highlightRenderedText,
   removeRenderedTextHighlights,
@@ -117,12 +124,33 @@ const ItemRawContext = createContext<((offset: number) => RawTranscriptRow[]) | 
  * (`.tl-lines` and `.tl-guided-content`), so a bubble's own `align-self`
  * still decides which side it sits on.
  */
-function ItemRawToggle({ offset, children }: { offset: number; children: ComponentChildren }) {
+function ItemRawToggle({
+  offset,
+  uuid,
+  selectedPosition = false,
+  onSelectPosition,
+  children,
+}: {
+  offset: number;
+  uuid?: string;
+  selectedPosition?: boolean;
+  onSelectPosition?: (uuid: string) => void;
+  children: ComponentChildren;
+}) {
   const getRows = useContext(ItemRawContext);
   const [raw, setRaw] = useState(false);
   const rows = raw && getRows ? getRows(offset) : [];
   return (
-    <div class={"tl-item" + (raw ? " tl-item-raw-on" : "")}>
+    <div
+      class={`tl-item${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
+      data-timeline-uuid={uuid}
+      onClick={(event) => {
+        if (!uuid || !onSelectPosition) return;
+        const target = event.target as Element;
+        if (target.closest("a, button, input, textarea, select, summary")) return;
+        onSelectPosition(uuid);
+      }}
+    >
       {/* ラベルが "raw" ではなく "jsonl" なのは、ccmsg 吹き出し / システム
        * メッセージが本文内に持つ msg|raw タブとの衝突を避けるため — あちらの
        * "raw" は「rich パースを通さない本文テキスト」、こちらは「この項目の
@@ -463,6 +491,108 @@ function BashUseFold({
         </div>
       </div>
     </details>
+  );
+}
+
+/** The output half of a `! <cmd>` card. Split out because an output row that
+ * arrived without its command renders the same block on its own. */
+function BashRunOutput({ output }: { output: BashCommandOutput }) {
+  const ctx = useContext(SessionFilePathCtxContext);
+  const persistedPath = output.persisted?.path ?? null;
+  // Gate the link on the same existence probe the inline-code linkifier uses.
+  // The sidecar Claude Code wrote is a real file, but it lives beside the
+  // transcript rather than inside the session's workspace, so the daemon's
+  // read authorization (DR-0024's exact-path `external_files` allowlist, fed
+  // only from Read/Write/Edit tool inputs) does not currently cover it and
+  // fs_read answers `path not allowed` — verified 2026-07-29 against a real
+  // oversized run. Probing means the offer appears only when the daemon will
+  // actually serve the file: today the path shows as plain text the user can
+  // open themselves, and if the allowlist later grows to include the
+  // session's own tool-results the link lights up with no change here.
+  // `useFilePathCacheTick` re-renders this card when the batch answer lands.
+  useFilePathCacheTick();
+  useEffect(() => {
+    if (persistedPath && ctx) enqueueFilePathProbe(ctx.sid, persistedPath);
+  }, [persistedPath, ctx?.sid]);
+  const persistedStat =
+    persistedPath && ctx ? getFilePathStatus(ctx.sid, persistedPath) : undefined;
+  const persistedHref =
+    persistedPath && ctx && persistedStat && persistedStat !== "pending"
+      ? hrefFromStatEntry(
+          ctx.sid,
+          { path: viewerPathForAbsolute(persistedPath, ctx.containmentRoot) },
+          { path: persistedPath },
+        )
+      : null;
+  return (
+    <>
+      {output.persisted ? (
+        <div class="tl-bashrun-persisted">
+          <div class="tl-bashrun-persisted-note">{output.persisted.note}</div>
+          {persistedHref ? (
+            <a
+              class="tl-bashrun-persisted-link"
+              href={persistedHref}
+              target="_blank"
+              rel="noopener"
+            >
+              全文を別タブで開く
+            </a>
+          ) : null}
+          <div class="tl-bash-output-label">preview</div>
+          <pre class="tl-bashrun-out">{output.persisted.preview}</pre>
+        </div>
+      ) : null}
+      {output.stdout !== null ? <pre class="tl-bashrun-out">{output.stdout}</pre> : null}
+      {output.stderr !== null ? (
+        <>
+          <div class="tl-bash-output-label">stderr</div>
+          <pre class="tl-bashrun-out is-error">{output.stderr}</pre>
+        </>
+      ) : null}
+      {output.persisted === null && output.stdout === null && output.stderr === null ? (
+        <div class="tl-bash-result-status">(出力なし)</div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A TUI `! <cmd>` run, drawn on the user side of the conversation as a
+ * terminal execution rather than as speech (kawaz r76m20). Deliberately not a
+ * `<details>` fold: unlike the harness plumbing that surrounds it this is
+ * something the user typed and expects to see, so it stays open and the
+ * *output* is what gets bounded — `max-height` + scroll in CSS, with the
+ * oversized case already reduced by Claude Code itself to a preview plus a
+ * link to the full bytes (see `BashCommandOutput`).
+ */
+function BashRunCard({
+  command,
+  output,
+  ts,
+}: {
+  command: string | null;
+  output: BashCommandOutput | null;
+  ts: string | null;
+}) {
+  return (
+    <div class="tl-line tl-bashrun">
+      <div class="tl-file-tool-card tl-bash-card">
+        <div class="tl-bashrun-head">
+          <span class="tl-bashrun-badge">shell</span>
+          {ts ? <span class="tl-time">{formatClockTime(ts)}</span> : null}
+        </div>
+        {command !== null ? (
+          <div class="tl-bash-command">
+            <CodeBlock code={command || "(空のコマンド)"} lang="bash" />
+          </div>
+        ) : null}
+        {output ? <BashRunOutput output={output} /> : null}
+        {command !== null && output === null ? (
+          <div class="tl-bash-result-status">実行中 / 結果なし</div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -1114,23 +1244,11 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
         </div>
       );
     case "bash":
-      // TUI の `! <cmd>` 実行 (kawaz r76m7: 「専用分類と表示コンポーネント」)。
-      // ユーザ発話の吹き出しではなく端末実行と分かる形 — プロンプト記号付きの
-      // コマンド行 + 等幅の出力ブロック。stdout/stderr は無い側を出さない。
-      return (
-        <div class="tl-bashcmd">
-          {rich.command !== null ? (
-            <div class="tl-bashcmd-line">
-              <span class="tl-bashcmd-prompt">$</span>
-              <code class="tl-bashcmd-cmd">{rich.command}</code>
-            </div>
-          ) : null}
-          {rich.stdout !== null ? <pre class="tl-bashcmd-out">{rich.stdout}</pre> : null}
-          {rich.stderr !== null ? (
-            <pre class="tl-bashcmd-out tl-bashcmd-err">{rich.stderr}</pre>
-          ) : null}
-        </div>
-      );
+      // Reached only when a `! <cmd>` row somehow renders through the
+      // system-message path instead of standing on its own (an unpaired half
+      // whose sibling never arrived, a hand-built line). Same card either way
+      // so the two paths can't look different.
+      return <BashRunCard command={rich.command} output={rich.output} ts={null} />;
     case "peer": {
       const presentation = peerMessagePresentation(rich);
       if (presentation.kind === "idle") return <IdlePeerRow peer={rich} ts={null} />;
@@ -2226,6 +2344,18 @@ export function Timeline({
   const { store, ws } = useApp();
   const appState = useStoreState(store);
   const connStatus = appState.connStatus;
+  const currentLocator = parseUrl(location.pathname, location.search);
+  const currentPosition =
+    currentLocator.view === "timeline" && currentLocator.sid === sid
+      ? (currentLocator.position ?? "head")
+      : "head";
+  const selectPosition = useCallback(
+    (uuid: string) => {
+      rememberTimelinePosition(sid, uuid);
+      replaceNavigation(timelineHref(sid, uuid));
+    },
+    [sid],
+  );
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
   // capability probe。両方を同じ値オブジェクトに束ねて下位コンポーネントへ渡す。
@@ -2839,7 +2969,18 @@ export function Timeline({
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     isNearBottomRef.current = distance < NEAR_BOTTOM_PX;
-  }, []);
+    if (isNearBottomRef.current) {
+      rememberTimelinePosition(sid, "head");
+      if (currentPosition !== "head") replaceNavigation(timelineHref(sid));
+      return;
+    }
+    const viewportTop = el.getBoundingClientRect().top;
+    const visible = [...el.querySelectorAll<HTMLElement>("[data-timeline-uuid]")].find(
+      (item) => item.getBoundingClientRect().bottom > viewportTop,
+    );
+    const uuid = visible?.dataset.timelineUuid;
+    if (uuid) rememberTimelinePosition(sid, uuid);
+  }, [currentPosition, sid]);
 
   useEffect(() => {
     // Drop refs for turns that no longer exist post-reload (a "更新" replace
@@ -2925,7 +3066,8 @@ export function Timeline({
   }, []);
   useEffect(() => {
     prevEndRef.current = timeline.end;
-    isNearBottomRef.current = true;
+    isNearBottomRef.current = currentPosition === "head";
+    if (currentPosition !== "head") return;
     return scrollToBottomSettled();
     // 依存は [sid] のみ意図的 — timeline.end を含めると「セッション切替
     // 検知」ではなく毎回の tail 追記でもリセットされてしまい、下の
@@ -2947,7 +3089,7 @@ export function Timeline({
     // "末尾ユーザメッセージ" を選択状態にする。tail 追記 (appended) 時は
     // ユーザが今どこを読んでいるかに関係なく数値を勝手に増やさない。
     if (initialLoad || !appended) setCurrentUserIdx(userTurnKeys.length);
-    if (!appended) return;
+    if (!appended || currentPosition !== "head") return;
     // 初回 tail ロード (リロード直後: mount 時の [sid] effect は空 timeline
     // に空振りし、ここが実質の初回スクロール) は位置ガードなしで必ず末尾へ
     // (kawaz r17 mid=34,37 — 「まだ top に居る」を「ユーザが離れた」と誤認
@@ -2960,6 +3102,23 @@ export function Timeline({
     // scrollHeight が伸びるので、1 発の書き込みでは上に取り残される。
     return scrollToBottomSettled();
   }, [timeline.end]);
+
+  useEffect(() => {
+    if (timeline.status !== "loaded" || currentPosition === "head") return;
+    const target = scrollRef.current?.querySelector<HTMLElement>(
+      `[data-timeline-uuid="${CSS.escape(currentPosition)}"]`,
+    );
+    if (!target) {
+      rememberTimelinePosition(sid, "head");
+      replaceNavigation(timelineHref(sid));
+      return;
+    }
+    rememberTimelinePosition(sid, currentPosition);
+    const ids = [0, 60, 300, 1000].map((ms) =>
+      setTimeout(() => target.scrollIntoView({ block: "center" }), ms),
+    );
+    return () => ids.forEach(clearTimeout);
+  }, [sid, currentPosition, timeline.status, parsed]);
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
   // エフェクトはウザいので削除)。
@@ -3284,7 +3443,13 @@ export function Timeline({
                             switch (boundary.kind) {
                               case "user-prompt":
                                 return (
-                                  <ItemRawToggle key={offset} offset={offset}>
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
                                     <UserPromptBubble
                                       line={line}
                                       offsetKey={offset}
@@ -3300,7 +3465,13 @@ export function Timeline({
                                 );
                               case "assistant-response":
                                 return (
-                                  <ItemRawToggle key={offset} offset={offset}>
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
                                     <AssistantBubble
                                       line={line}
                                       offset={offset}
@@ -3312,8 +3483,46 @@ export function Timeline({
                                 );
                               case "api-error":
                                 return (
-                                  <ItemRawToggle key={offset} offset={offset}>
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
                                     <ApiErrorNotice line={line} />
+                                  </ItemRawToggle>
+                                );
+                              case "bash-command":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <BashRunCard
+                                      command={boundary.segment.command}
+                                      output={boundary.segment.output}
+                                      ts={line.ts}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "bash-command-output":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <BashRunCard
+                                      command={null}
+                                      output={boundary.segment}
+                                      ts={line.ts}
+                                    />
                                   </ItemRawToggle>
                                 );
                               case "ccmsg": {
@@ -3336,7 +3545,13 @@ export function Timeline({
                                     seenCcmsg.add(dedupKey);
                                     const navKey = `ccmsg:${offset}:${j}`;
                                     return (
-                                      <ItemRawToggle key={`${offset}-${j}`} offset={offset}>
+                                      <ItemRawToggle
+                                        key={`${offset}-${j}`}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
                                         <CcmsgBubble
                                           message={m}
                                           rawText={rawText}

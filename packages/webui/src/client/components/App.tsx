@@ -133,6 +133,28 @@ export function App() {
           <TopbarTitle state={state} />
         )}
         <ConnectionStatus status={state.connStatus} />
+        <div class="app-history-controls" aria-label="navigation history">
+          <button
+            id="app-back"
+            type="button"
+            aria-label="back"
+            title="戻る"
+            disabled={!window.navigation.canGoBack}
+            onClick={() => void window.navigation.back()}
+          >
+            &#8592;
+          </button>
+          <button
+            id="app-forward"
+            type="button"
+            aria-label="forward"
+            title="進む"
+            disabled={!window.navigation.canGoForward}
+            onClick={() => void window.navigation.forward()}
+          >
+            &#8594;
+          </button>
+        </div>
         {/* SPA 内リロードボタン (kawaz 2026-07-14、RLD-Q1=a): iOS ホーム画面
          * 追加 (standalone display mode = PWA 起動) 時にブラウザのリロードが
          * 画面上に現れないため、topbar に置いてどの起動形態でも常時アクセス可

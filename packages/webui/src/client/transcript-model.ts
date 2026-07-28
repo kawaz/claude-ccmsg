@@ -67,12 +67,29 @@ export type Segment =
       prompt: string;
       background: boolean;
     }
+  | { kind: "bash-command"; command: string; output: BashCommandOutput | null }
+  | ({ kind: "bash-command-output"; hasCommand: boolean } & BashCommandOutput)
   | { kind: "tool-result"; toolUseId: string; isError: boolean; text: string }
   | { kind: "unknown-segment"; type: string; raw: unknown };
+
+/** Output of one TUI `! <cmd>` run. Claude Code caps what it writes into the
+ * transcript: past roughly 50KB the `<bash-stdout>` body is replaced by a
+ * `<persisted-output>` block holding a short note, the absolute path of a
+ * sidecar file with the untruncated bytes, and a 2KB preview (measured
+ * 2026-07-29 against Claude Code v2.1.220: 30KB inline verbatim, 60KB and
+ * 4.8MB both persisted with a ~2.3KB stub). So `stdout` here is always small
+ * enough to render directly, and `persisted` is what points at the rest. */
+export interface BashCommandOutput {
+  stdout: string | null;
+  stderr: string | null;
+  persisted: { note: string; path: string; preview: string } | null;
+}
 
 export interface TurnLine {
   kind: "turn";
   ts: string | null;
+  /** Stable JSONL row identifier used by Timeline position URLs. */
+  uuid?: string;
   role: "user" | "assistant";
   segments: Segment[];
   /** classifyUserMessage's verdict for a role:"user" line — which pattern of
@@ -102,6 +119,8 @@ export interface TurnLine {
 export interface MetaLine {
   kind: "meta";
   ts: string | null;
+  /** Stable JSONL row identifier used by Timeline position URLs. */
+  uuid?: string;
   type: string;
   summary: string;
   raw: string;
@@ -305,7 +324,7 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
       }
     }
   }
-  return lines.map((line) => {
+  const withToolResults = lines.map((line): ParsedLine => {
     if (line.kind !== "turn") return line;
     let changed = false;
     const segments = line.segments.map((segment): Segment => {
@@ -337,6 +356,60 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
     });
     return changed ? { ...line, segments } : line;
   });
+  return resolveBashCommands(withToolResults);
+}
+
+/** Text of a line classified as one of the two `! <cmd>` shapes, or `null`
+ * for any other line. The classification (`classifyUserMessage`) is what
+ * identifies these, so a normal user message that merely starts with the
+ * same characters is never picked up here. */
+function bashLineText(line: ParsedLine | undefined, kind: UserMessageKind): string | null {
+  if (line === undefined || line.kind !== "turn" || line.userMessageKind !== kind) return null;
+  const text = line.segments
+    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
+    .map((s) => s.text)
+    .join("\n");
+  return text === "" ? null : text;
+}
+
+/**
+ * Joins each `! <cmd>` invocation with the output row that follows it, the
+ * same way `resolveToolResults` joins a tool_use with its tool_result: the
+ * invocation line gets a `bash-command` segment carrying both halves, and the
+ * output line gets a `bash-command-output` segment flagged `hasCommand` so
+ * `isConsumedToolResult` drops it from the rendered groups. Both lines stay
+ * in the array so transcript byte offsets remain aligned.
+ *
+ * Pairing is by adjacency rather than by id because the harness gives these
+ * rows no correlation id — it writes the output as the immediately next
+ * `type:"user"` row. Verified against every `! <cmd>` run in the local
+ * session corpus (2026-07-29: 77/77 pairs adjacent, no orphans), and an
+ * invocation whose next line is something else simply keeps `output: null`
+ * and renders as a command with no result, rather than swallowing an
+ * unrelated line.
+ */
+function resolveBashCommands(lines: ParsedLine[]): ParsedLine[] {
+  const consumed = new Set<number>();
+  const merged = lines.map((line, i): ParsedLine => {
+    const rawCommand = bashLineText(line, "bash-command-invocation");
+    if (rawCommand === null) return line;
+    const command = parseBashInputText(rawCommand);
+    if (command === null) return line;
+    const nextRaw = bashLineText(lines[i + 1], "bash-command-stdout");
+    const output = nextRaw === null ? null : parseBashOutputText(nextRaw);
+    if (output !== null) consumed.add(i + 1);
+    return { ...(line as TurnLine), segments: [{ kind: "bash-command", command, output }] };
+  });
+  return merged.map((line, i): ParsedLine => {
+    const raw = bashLineText(line, "bash-command-stdout");
+    if (raw === null) return line;
+    const output = parseBashOutputText(raw);
+    if (output === null) return line;
+    return {
+      ...(line as TurnLine),
+      segments: [{ kind: "bash-command-output", hasCommand: consumed.has(i), ...output }],
+    };
+  });
 }
 
 export const resolveFileToolResults = resolveToolResults;
@@ -348,7 +421,8 @@ function isConsumedToolResult(line: ParsedLine): boolean {
     line.segments.every(
       (segment) =>
         segment.kind === "file-tool-result" ||
-        (segment.kind === "bash-result" && !segment.background && segment.hasCommand),
+        (segment.kind === "bash-result" && !segment.background && segment.hasCommand) ||
+        (segment.kind === "bash-command-output" && segment.hasCommand),
     )
   );
 }
@@ -583,6 +657,14 @@ export function segmentSearchText(segment: Segment): string {
         .join("\n");
     case "bash-result":
       return segment.text;
+    case "bash-command":
+      return [segment.command, segment.output?.stdout, segment.output?.stderr]
+        .filter(Boolean)
+        .join("\n");
+    case "bash-command-output":
+      return [segment.stdout, segment.stderr, segment.persisted?.preview]
+        .filter(Boolean)
+        .join("\n");
     case "agent-send":
       return [segment.to, segment.summary, segment.message].filter(Boolean).join("\n");
     case "agent-spawn":
@@ -632,6 +714,8 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
     case "file-tool-result":
     case "bash-use":
     case "bash-result":
+    case "bash-command":
+    case "bash-command-output":
     case "agent-send":
     case "agent-spawn":
     case "tool-result":
@@ -724,6 +808,8 @@ export type BoundaryKind =
   | { kind: "user-prompt" }
   | { kind: "assistant-response" }
   | { kind: "api-error" }
+  | { kind: "bash-command"; segment: Extract<Segment, { kind: "bash-command" }> }
+  | { kind: "bash-command-output"; segment: Extract<Segment, { kind: "bash-command-output" }> }
   | { kind: "ccmsg"; messages: CcmsgMessage[] };
 
 /**
@@ -751,6 +837,18 @@ export type BoundaryKind =
 export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (isUserTextTurn(line)) return { kind: "user-prompt" };
   if (isApiErrorLine(line)) return { kind: "api-error" };
+  // A TUI `! <cmd>` run (kawaz r76m20 裁定): unlike the other system-origin
+  // "type:user" shapes this module catalogs, this one *is* something the user
+  // demonstrably typed, so it belongs on the user side of the conversation
+  // rather than folded away with harness plumbing — just drawn as a terminal
+  // execution rather than as speech. An output row still paired with its
+  // command never reaches here (`isConsumedToolResult` drops it); one that
+  // arrives orphaned stands alone rather than sinking into a fold, so its
+  // bytes are never silently hidden.
+  const bashSegment = line.kind === "turn" ? line.segments[0] : undefined;
+  if (bashSegment?.kind === "bash-command") return { kind: "bash-command", segment: bashSegment };
+  if (bashSegment?.kind === "bash-command-output")
+    return { kind: "bash-command-output", segment: bashSegment };
   if (
     line.kind === "turn" &&
     line.role === "assistant" &&
@@ -1551,7 +1649,7 @@ export type PeerMessageCategory = "message" | "idle" | "task-assignment" | "life
 export type SystemMessageRich =
   | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
   | { display: "chip"; label: string; detail: string | null }
-  | { display: "bash"; command: string | null; stdout: string | null; stderr: string | null }
+  | { display: "bash"; command: string | null; output: BashCommandOutput | null }
   | {
       display: "peer";
       from: string;
@@ -1630,6 +1728,54 @@ const ANSI_CSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
  * generically useful primitive, not only used by `parseSystemMessageFields`. */
 export function stripAnsiEscapes(text: string): string {
   return text.replace(ANSI_CSI_RE, "");
+}
+
+/** Matches the `<persisted-output>` block Claude Code substitutes for an
+ * oversized `! <cmd>` result. Capture 1 is the note line naming the original
+ * size and the sidecar path; capture 2 is the preview body that follows the
+ * `Preview (first NKB):` marker. The path is pulled separately by
+ * `PERSISTED_PATH_RE` rather than woven into this pattern so a wording change
+ * upstream degrades to "no link, full text still shown" instead of dropping
+ * the whole block back to raw. */
+const PERSISTED_OUTPUT_RE =
+  /^\s*<persisted-output>\s*([\s\S]*?)\n\s*Preview \(first [^)]*\):\n([\s\S]*?)\s*<\/persisted-output>\s*$/;
+const PERSISTED_PATH_RE = /saved to:\s*(\S+)/;
+
+/** Splits a `<bash-stdout>` body into either plain text or the
+ * `<persisted-output>` shape. Returns `null` for a body that is not
+ * persisted, letting the caller keep it verbatim. */
+function parsePersistedOutput(stdout: string): BashCommandOutput["persisted"] | null {
+  const match = stdout.match(PERSISTED_OUTPUT_RE);
+  if (!match) return null;
+  const note = match[1]!.trim();
+  const path = note.match(PERSISTED_PATH_RE)?.[1] ?? "";
+  if (path === "") return null;
+  return { note, path, preview: match[2]! };
+}
+
+/** Parses one `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` line
+ * (the observed single-line shape) into the display model. Returns `null`
+ * only when neither tag is present — a malformed body the caller renders raw.
+ * Empty sides become `null` so the renderer can omit them (kawaz spec:
+ * 「stderr は空なら出さない」). Shared by `resolveToolResults`' pairing pass
+ * and `parseSystemMessageFields` so the two can't drift. */
+export function parseBashOutputText(rawText: string): BashCommandOutput | null {
+  const stdout = unwrapOuterTag(rawText, "bash-stdout");
+  const stderr = unwrapOuterTag(rawText, "bash-stderr");
+  if (stdout === null && stderr === null) return null;
+  const persisted = stdout === null ? null : parsePersistedOutput(stdout);
+  const plainStdout = persisted !== null ? null : stdout;
+  return {
+    stdout: plainStdout ? stripAnsiEscapes(plainStdout) : null,
+    stderr: stderr ? stripAnsiEscapes(stderr) : null,
+    persisted,
+  };
+}
+
+/** Parses one `<bash-input>` line into the command text, or `null` when the
+ * tag is absent. */
+export function parseBashInputText(rawText: string): string | null {
+  return unwrapOuterTag(rawText, "bash-input")?.trim() ?? null;
 }
 
 /** Sender shown for a spawn prompt that carries no `<teammate-message>`
@@ -1767,24 +1913,14 @@ export function parseSystemMessageFields(
       return { display: "chip", label: command, detail };
     }
     case "bash-command-invocation": {
-      const command = unwrapOuterTag(rawText, "bash-input");
+      const command = parseBashInputText(rawText);
       if (command === null) return { display: "text", text: rawText };
-      return { display: "bash", command: command.trim(), stdout: null, stderr: null };
+      return { display: "bash", command, output: null };
     }
     case "bash-command-stdout": {
-      // 1 行に `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` が
-      // 並ぶ (実観測の形)。空の側は null にして、描画側が出さずに済むように
-      // する (kawaz spec: 「stderr は空なら出さない」)。両方欠けた壊れた入力
-      // だけ text フォールバックへ。
-      const stdout = unwrapOuterTag(rawText, "bash-stdout");
-      const stderr = unwrapOuterTag(rawText, "bash-stderr");
-      if (stdout === null && stderr === null) return { display: "text", text: rawText };
-      return {
-        display: "bash",
-        command: null,
-        stdout: stdout && stdout !== "" ? stripAnsiEscapes(stdout) : null,
-        stderr: stderr && stderr !== "" ? stripAnsiEscapes(stderr) : null,
-      };
+      const output = parseBashOutputText(rawText);
+      if (output === null) return { display: "text", text: rawText };
+      return { display: "bash", command: null, output };
     }
     case "slash-command-stdout": {
       const inner = unwrapOuterTag(rawText, "local-command-stdout") ?? rawText;
@@ -1816,13 +1952,22 @@ export function parseTranscriptLine(raw: string): ParsedLine {
  * parsed objects without a second `JSON.parse` per line. */
 function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedLine {
   const ts = typeof o.timestamp === "string" ? o.timestamp : null;
+  const uuid = typeof o.uuid === "string" && o.uuid !== "" ? o.uuid : undefined;
   if (o.type === "user" || o.type === "assistant") {
     const role = o.type;
     const message = o.message as Record<string, unknown> | undefined;
     const segments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
     const assistantMessageKind = role === "assistant" ? classifyAssistantMessage(o) : undefined;
-    return { kind: "turn", ts, role, segments, userMessageKind, assistantMessageKind };
+    return {
+      kind: "turn",
+      ts,
+      ...(uuid ? { uuid } : {}),
+      role,
+      segments,
+      userMessageKind,
+      assistantMessageKind,
+    };
   }
   // queue-operation enqueue は「作業中に届いたメッセージが queue に積まれた
   // 記録」で、`content` field が queue に積まれた prompt 文字列。この行は
@@ -1843,6 +1988,7 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
     return {
       kind: "turn",
       ts,
+      ...(uuid ? { uuid } : {}),
       role: "user",
       segments: [{ kind: "text", role: "user", text: content }],
       userMessageKind,
@@ -1852,6 +1998,7 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
   return {
     kind: "meta",
     ts,
+    ...(uuid ? { uuid } : {}),
     type: typeof o.type === "string" ? o.type : "?",
     summary: summarizeMeta(o),
     raw,
@@ -1953,6 +2100,7 @@ export function parseTranscriptLines(raws: string[]): ParsedLine[] {
     return {
       kind: "meta",
       ts: line.ts,
+      ...(line.uuid ? { uuid: line.uuid } : {}),
       type: "queue-operation",
       summary: "queue-operation: enqueue",
       raw: raws[index]!,
