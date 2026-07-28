@@ -33,7 +33,11 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
-import { alternateLinkReading, previewFilePathCtx } from "../filepath-ref.ts";
+import {
+  alternateLinkReading,
+  isRecoverableLinkError,
+  previewFilePathCtx,
+} from "../filepath-ref.ts";
 import { fileHref } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT } from "../navigation.ts";
 import {
@@ -430,6 +434,28 @@ function useTaskListToggle({
   return { taskList };
 }
 
+/** The recovered reading, offered as a link (kawaz r55 m152/m153). Derived from
+ * the failure itself rather than searched for, so it is stated plainly — and it
+ * stays a link rather than a redirect, since sending someone silently to an
+ * address they did not ask for is harder to follow than the error was.
+ *
+ * Rendering `null` when there is no candidate is what lets both error
+ * presentations mount it unconditionally. */
+function DidYouMeanSuggestion({ sid, candidate }: { sid: string; candidate: string | null }) {
+  if (candidate === null) return null;
+  return (
+    <div class="viewer-notfound-suggest">
+      <p class="viewer-notfound-suggest-label">もしかして:</p>
+      <p class="viewer-notfound-suggest-item">
+        <a href={fileHref(sid, candidate)}>{candidate}</a>
+      </p>
+      <p class="viewer-notfound-suggest-note">
+        リンクがリポジトリルート基準で書かれている場合、この位置になります。
+      </p>
+    </div>
+  );
+}
+
 /** "Did you mean…" recovery for a link that landed on nothing (kawaz r55 m152/m153).
  *
  * A relative markdown link resolves against the document holding it, which is
@@ -439,25 +465,24 @@ function useTaskListToggle({
  * filesystem reading, so an author who meant it root-relative lands on
  * nothing, and the documentation reading is what they wanted.
  *
- * This only runs once the target has already 404'd, and that ordering is what
- * makes the candidate trustworthy rather than a guess: a correctly-written
- * link never reaches here, and each candidate reverses a rebase the resolver
- * itself performed (`alternateLinkReading`). There is one candidate, and
- * nothing else in the tree is searched — a same-named file living elsewhere
- * can never be suggested.
+ * This only runs once the target has already failed to open
+ * (`isRecoverableLinkError`), and that ordering is what makes the candidate
+ * trustworthy rather than a guess: a correctly-written link never reaches here,
+ * and each candidate reverses a rebase the resolver itself performed
+ * (`alternateLinkReading`). There is one candidate, and nothing else in the
+ * tree is searched — a same-named file living elsewhere can never be suggested.
  *
  * It is still **offered, never taken**. Silently redirecting somewhere the
- * user did not ask for is harder to understand than the 404 itself, so the
+ * user did not ask for is harder to understand than the failure itself, so the
  * derivation earns a link, not a navigation.
  *
- * Returns `null` unless every precondition holds (a `from` hint, a 404, a
- * recoverable reading the daemon confirms), so nothing renders in the ordinary
+ * Returns `null` unless every precondition holds (a `from` hint, a recoverable
+ * error, a reading the daemon confirms), so nothing renders in the ordinary
  * case of a genuinely missing file. */
 function useDidYouMean({
   sid,
   path,
   from,
-  root,
   cwd,
   active,
 }: {
@@ -465,12 +490,9 @@ function useDidYouMean({
   path: string;
   /** The document the link was written in, from the locator's `?from=`. */
   from: string | null;
-  /** Session containment root — `fs_stat_batch` takes absolute paths only. */
-  root: string | undefined;
-  /** Session cwd — the tree an absolute target's documentation reading is
-   * recovered against. */
+  /** Session cwd — the tree both readings are recovered against. */
   cwd: string | undefined;
-  /** Only probe on an actual not-found; other errors are not a wrong-reading. */
+  /** Only probe on an error a wrong reading can explain. */
   active: boolean;
 }): string | null {
   const { ws } = useApp();
@@ -478,7 +500,7 @@ function useDidYouMean({
 
   useEffect(() => {
     setFound(null);
-    if (!active || from === null || path === "" || !root) return;
+    if (!active || from === null || path === "") return;
     const lastSlash = from.lastIndexOf("/");
     const candidate = alternateLinkReading(
       path,
@@ -486,15 +508,11 @@ function useDidYouMean({
       cwd,
     );
     if (candidate === null) return;
-    // `fs_stat_batch` is an absolute-path op (it rebases onto the containment
-    // root itself), so a viewer-shaped candidate is expanded before the probe
-    // and read back from the response afterwards. The cwd reading is already
-    // absolute.
-    const base = root.replace(/\/+$/, "");
-    const probe = candidate.startsWith("/") ? candidate : `${base}/${candidate}`;
+    // `alternateLinkReading` answers in absolute form and `fs_stat_batch` is an
+    // absolute-path op, which reports the viewer-shaped path back.
     let cancelled = false;
     void ws
-      .fsStatBatch(sid, [probe])
+      .fsStatBatch(sid, [candidate])
       .then((res) => {
         if (cancelled || !res.ok) return;
         // A non-null slot means the daemon will serve it, and carries the
@@ -508,7 +526,7 @@ function useDidYouMean({
     return () => {
       cancelled = true;
     };
-  }, [ws, sid, path, from, root, cwd, active]);
+  }, [ws, sid, path, from, cwd, active]);
 
   return found;
 }
@@ -793,9 +811,8 @@ export function FileViewer({
     sid,
     path: path ?? "",
     from: tree.selectedFrom,
-    root: peer?.repo_root ?? peer?.cwd,
     cwd: peer?.cwd,
-    active: file?.status === "error" && file.errorCode === "not_found",
+    active: file?.status === "error" && isRecoverableLinkError(file.errorCode),
   });
 
   useEffect(() => {
@@ -1092,20 +1109,7 @@ export function FileViewer({
             <p class="viewer-notfound-code">404</p>
             <p class="viewer-notfound-msg">このファイルはありません</p>
             <p class="viewer-notfound-path">{path}</p>
-            {/* The link re-read as repo-root relative — derived from this very
-             * failure, not searched for, so it is stated plainly. Still a link
-             * rather than a redirect (kawaz r55 m152/m153). */}
-            {didYouMean !== null ? (
-              <div class="viewer-notfound-suggest">
-                <p class="viewer-notfound-suggest-label">もしかして:</p>
-                <p class="viewer-notfound-suggest-item">
-                  <a href={fileHref(sid, didYouMean)}>{didYouMean}</a>
-                </p>
-                <p class="viewer-notfound-suggest-note">
-                  リンクがリポジトリルート基準で書かれている場合、この位置になります。
-                </p>
-              </div>
-            ) : null}
+            <DidYouMeanSuggestion sid={sid} candidate={didYouMean} />
             <p class="viewer-notfound-hint">
               左のファイル一覧から選び直してください。移動・削除された可能性があります。
             </p>
@@ -1119,7 +1123,12 @@ export function FileViewer({
           <span class="viewer-path">{path}</span>
           <RefetchButton />
         </header>
+        {/* The error keeps its own words rather than borrowing the 404's: a
+         * refused path is not a missing one, and only the daemon knows whether
+         * anything is there. The recovery is offered all the same — for a
+         * leading-`/` link this branch is where a mis-read target lands. */}
         <p class="viewer-error">{file.error}</p>
+        <DidYouMeanSuggestion sid={sid} candidate={didYouMean} />
       </div>
     );
   }

@@ -14,6 +14,7 @@ import {
   extractInlineCodeTokens,
   previewFilePathCtx,
   alternateLinkReading,
+  isRecoverableLinkError,
   refLinkTarget,
   viewerPathForAbsolute,
 } from "../src/client/filepath-ref.ts";
@@ -389,29 +390,51 @@ describe("viewerPathForAbsolute", () => {
 // derived — not a search of the tree for something similarly named.
 describe("alternateLinkReading", () => {
   // The observed case: a link written from the repo root, resolved against the
-  // document, so the document's directory got prepended.
+  // document, so the document's directory got prepended. The answer is
+  // absolute because the caller has no business picking a base for it.
   test("recovers what the author wrote by stripping the document's directory", () => {
-    expect(alternateLinkReading("docs/packages/webui/x.ts", "docs")).toBe("packages/webui/x.ts");
-    expect(alternateLinkReading("docs/docs/spec.md", "docs")).toBe("docs/spec.md");
+    expect(alternateLinkReading("docs/packages/webui/x.ts", "docs", "/repo/main")).toBe(
+      "/repo/main/packages/webui/x.ts",
+    );
+    expect(alternateLinkReading("docs/docs/spec.md", "docs", "/repo/main")).toBe(
+      "/repo/main/docs/spec.md",
+    );
   });
 
   test("nested document directories are stripped whole, not per-segment", () => {
-    expect(alternateLinkReading("docs/design/notes.md", "docs/design")).toBe("notes.md");
+    expect(alternateLinkReading("docs/design/notes.md", "docs/design", "/repo/main")).toBe(
+      "/repo/main/notes.md",
+    );
+  });
+
+  // kawaz r76 m45 (C22e): with DR-0008's repo_root widening, viewer paths are
+  // relative to the *container* of sibling worktrees, so the document is
+  // `main/docs/QUESTIONS.md` and the failed target keeps the `main/` prefix.
+  // The recovered text has to be read against the working copy the author was
+  // in — anchoring it at the container names `<container>/packages/...`, which
+  // exists in no worktree, and the suggestion silently disappears.
+  test("the recovery anchors at the cwd, not at a widened containment root", () => {
+    expect(
+      alternateLinkReading(
+        "main/docs/packages/webui/src/client/markdown-link.ts",
+        "main/docs",
+        "/repo/main",
+      ),
+    ).toBe("/repo/main/packages/webui/src/client/markdown-link.ts");
   });
 
   // A document at the repo root has nothing prepended, so the link already
   // meant exactly what it said and there is no second reading.
   test("a document at the root yields nothing to recover", () => {
-    expect(alternateLinkReading("spec.md", "")).toBeNull();
-    expect(alternateLinkReading("docs/spec.md", "")).toBeNull();
+    expect(alternateLinkReading("spec.md", "", "/repo/main")).toBeNull();
+    expect(alternateLinkReading("docs/spec.md", "", "/repo/main")).toBeNull();
   });
 
-  // `refLinkTarget` always keeps the filesystem reading of a leading `/`, so
-  // every absolute target that 404s reaches here. The documentation reading is
-  // the recoverable other one — but only when there is a cwd to read it
-  // against.
-  test("an absolute target has only one reading without a cwd", () => {
+  // Both shapes are read against the cwd, so neither has a second reading
+  // without one.
+  test("no cwd means no second reading, for either shape", () => {
     expect(alternateLinkReading("/etc/hosts", "docs")).toBeNull();
+    expect(alternateLinkReading("docs/spec.md", "docs")).toBeNull();
   });
 
   test("an absolute target recovers its documentation reading against the cwd", () => {
@@ -431,16 +454,38 @@ describe("alternateLinkReading", () => {
   // Only paths the document's directory actually prefixes are derivable; this
   // is what keeps a same-named file elsewhere in the tree from being offered.
   test("a failed path outside the document's directory yields nothing", () => {
-    expect(alternateLinkReading("other/spec.md", "docs")).toBeNull();
-    expect(alternateLinkReading("docs-archive/spec.md", "docs")).toBeNull();
+    expect(alternateLinkReading("other/spec.md", "docs", "/repo/main")).toBeNull();
+    expect(alternateLinkReading("docs-archive/spec.md", "docs", "/repo/main")).toBeNull();
   });
 
   test("the candidate never escapes the root or repeats the failed path", () => {
-    expect(alternateLinkReading("docs/", "docs")).toBeNull();
-    expect(alternateLinkReading("docs/../outside.md", "docs")).toBeNull();
+    expect(alternateLinkReading("docs/", "docs", "/repo/main")).toBeNull();
+    expect(alternateLinkReading("docs/../outside.md", "docs", "/repo/main")).toBeNull();
   });
 
   test("a trailing or leading slash on the document directory is tolerated", () => {
-    expect(alternateLinkReading("docs/spec.md", "/docs/")).toBe("spec.md");
+    expect(alternateLinkReading("docs/spec.md", "/docs/", "/repo/main")).toBe("/repo/main/spec.md");
+    expect(alternateLinkReading("docs/spec.md", "docs", "/repo/main/")).toBe("/repo/main/spec.md");
+  });
+});
+
+// Which failures earn a second reading (kawaz r76 m45, C22b). The recovery used
+// to run on `not_found` alone, which silently excluded every absolute target:
+// those go through the DR-0024 exact-file allowlist, so a `/docs/x.md` written
+// with root-relative intent comes back "path not allowed" rather than "not
+// found" — the one shape the absolute-target recovery was built for.
+describe("isRecoverableLinkError", () => {
+  test("a missing file and a refused path both earn a second reading", () => {
+    expect(isRecoverableLinkError("not_found")).toBe(true);
+    expect(isRecoverableLinkError("path_forbidden")).toBe(true);
+  });
+
+  // Everything else describes the request or the session, not the target, so
+  // re-reading the link cannot explain it.
+  test("errors a wrong reading cannot explain are left alone", () => {
+    expect(isRecoverableLinkError("session_not_found")).toBe(false);
+    expect(isRecoverableLinkError("invalid_args")).toBe(false);
+    expect(isRecoverableLinkError("file_conflict")).toBe(false);
+    expect(isRecoverableLinkError(undefined)).toBe(false);
   });
 });

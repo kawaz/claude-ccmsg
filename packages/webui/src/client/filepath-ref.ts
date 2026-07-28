@@ -322,19 +322,29 @@ export function previewFilePathCtx(
  *
  * `sourceDir` is the directory of the document the link was written in, in
  * viewer shape (`""` for a document at the root, which has nothing to strip).
- * The result is a viewer path for the relative shape and an **absolute** path
- * for the cwd shape — the caller probes both the same way (`fs_stat_batch` is
- * an absolute op and reports the viewer path back). Returns `null` when no
- * reading can be recovered. Existence is *not* checked here — only the daemon
- * can say what is readable. */
+ *
+ * Both shapes are read against `cwd` and the result is **always absolute**, so
+ * the caller has no base left to choose (`fs_stat_batch` is an absolute op and
+ * reports the viewer path back). `cwd` rather than the containment root is what
+ * "the repo root" means to whoever wrote the link: DR-0008 widens containment
+ * to `repo_root`, which for a worktree layout is the *container* of sibling
+ * working copies, and an author writing `packages/x.ts` means their own working
+ * copy. Anchoring the recovery at the container instead probes a path that
+ * exists in no worktree, which is silence rather than a wrong link — but
+ * silence exactly where the suggestion is most wanted. Where containment is not
+ * widened the two are the same directory and this is a distinction without a
+ * difference.
+ *
+ * Returns `null` when no reading can be recovered. Existence is *not* checked
+ * here — only the daemon can say what is readable. */
 export function alternateLinkReading(
   failed: string,
   sourceDir: string,
   cwd?: string,
 ): string | null {
+  const base = cwd?.replace(/\/+$/, "");
+  if (!base) return null;
   if (failed.startsWith("/")) {
-    const base = cwd?.replace(/\/+$/, "");
-    if (!base) return null;
     const rebased = normalizePosix(base + failed);
     // `/` itself, or a target that rebases onto the cwd, names a directory.
     return rebased === base || rebased === failed ? null : rebased;
@@ -346,7 +356,26 @@ export function alternateLinkReading(
   const written = failed.slice(prefix.length);
   if (written === "" || written === failed) return null;
   if (written.startsWith("..") || written.startsWith("/")) return null;
-  return written;
+  return normalizePosix(base + "/" + written);
+}
+
+/** Errors a mis-read link target can explain, and so the ones worth deriving a
+ * second reading for (kawaz r76 m45).
+ *
+ * `not_found` is the obvious one. `path_forbidden` is the same failure wearing
+ * a different code: the viewer serves absolute targets through the DR-0024
+ * exact-file allowlist, so a leading-`/` link written with root-relative intent
+ * names a path that is not merely absent but was never a file this session
+ * read — `/docs/x.md` answers "path not allowed", never "not found". Gating the
+ * recovery on `not_found` alone therefore skipped exactly the shape the
+ * absolute-target recovery exists for.
+ *
+ * Widening the gate does not widen what can be suggested. The candidate is
+ * still a single derivation, and it is still `fs_stat_batch` — the same
+ * authorization the failed read went through — that decides whether a link
+ * appears, so a path the session may not see stays unseen either way. */
+export function isRecoverableLinkError(code: string | undefined): boolean {
+  return code === "not_found" || code === "path_forbidden";
 }
 
 /** Build a `fileHref` URL from a daemon-confirmed stat entry + the parsed

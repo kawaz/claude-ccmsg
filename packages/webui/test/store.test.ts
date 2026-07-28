@@ -365,6 +365,31 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
     expect(state.sessionTrees.has("sess-2")).toBe(false);
   });
 
+  // The `?from=` hint is the document a markdown link was followed from, and
+  // the FileViewer's "did you mean" recovery is the only thing that reads it —
+  // which means a break in this hop is invisible until a link 404s and the
+  // suggestion silently fails to appear (kawaz r76 m45). Pin the hop.
+  test("the source-document hint reaches the tree, and clears when absent", () => {
+    const followed = dispatch(initialState(), {
+      type: "locator/changed",
+      locator: {
+        view: "session",
+        sid: "sess-1",
+        path: "docs/packages/x.ts",
+        from: "docs/QUESTIONS.md",
+      },
+    });
+    expect(followed.sessionTrees.get("sess-1")?.selectedFrom).toBe("docs/QUESTIONS.md");
+
+    // Selecting a file from the tree carries no hint; the previous document
+    // must not linger and get credited for the next failure.
+    const picked = dispatch(followed, {
+      type: "locator/changed",
+      locator: { view: "session", sid: "sess-1", path: "docs/other.md" },
+    });
+    expect(picked.sessionTrees.get("sess-1")?.selectedFrom).toBeNull();
+  });
+
   // Revisiting a session (locator fires again with the same sid/path, e.g. a
   // duplicate hashchange) must not discard tree state already loaded for it —
   // this is the whole point of keying sessionTrees by sid instead of holding
