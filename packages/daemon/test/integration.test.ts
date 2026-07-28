@@ -86,6 +86,90 @@ describe("wire protocol integration", () => {
     T,
   );
 
+  // The echo rule (DR-0003 §5) has to hold on the cursor-replay path too, not just
+  // live delivery. The CLI's reconnect carries a `since_seq` cursor built only from
+  // events it actually wrote to stdout — and an author never receives their own post —
+  // so that cursor ALWAYS predates the author's own last post. Replaying it verbatim
+  // fed an agent its own message back (with a `reply_via` telling it to reply to
+  // itself). Both cursor branches are covered: `since_seq` (current CLI) and `since`
+  // (mid cursor, old-client compat).
+  for (const [label, cursorKey] of [
+    ["since_seq", "since_seq"],
+    ["since (mid)", "since"],
+  ] as const) {
+    test(
+      `no echo back on ${label} cursor replay: a reconnecting author is not fed its own post, but does get the co-member posts it missed`,
+      async () => {
+        const ctx = await startTestDaemon();
+        try {
+          const aPost = await session(ctx, "A");
+          const bPost = await session(ctx, "B");
+          const created = await aPost.request<{ room: string }>({
+            op: "create_room",
+            members: ["B"],
+          });
+          const room = created.room;
+
+          const aSub = await session(ctx, "A");
+          await aSub.request({ op: "subscribe" });
+
+          // B posts, so A's cursor advances to a point *before* A's own next post —
+          // exactly the state the CLI's sinceMap ends up in.
+          await bPost.request({ op: "post", room, msg: "from B (seen)" });
+          const seen = await aSub.readEventUntil((ev) => ev.type === "msg");
+          const cursor = cursorKey === "since_seq" ? seen.ev.seq : seen.ev.mid;
+
+          // Then A posts (never echoed live), and B posts again while A is away.
+          await aPost.request({ op: "post", room, msg: "from A (mine)" });
+          await bPost.request({ op: "post", room, msg: "from B (missed)" });
+
+          // A's subscribe reconnects with the stale cursor.
+          const aSub2 = await session(ctx, "A");
+          await aSub2.request({ op: "subscribe", [cursorKey]: { [room]: cursor } });
+
+          // The first — and only — msg replayed is B's, A's own post is filtered.
+          const got = await aSub2.readEventUntil((ev) => ev.type === "msg");
+          expect(got.ev.msg).toBe("from B (missed)");
+          expect(got.ev.from).toBe("a2");
+          expect(got.seen.some((ev) => ev.type === "msg" && ev.from === "a1")).toBe(false);
+        } finally {
+          await stopTestDaemon(ctx);
+        }
+      },
+      T,
+    );
+
+    test(
+      `${label} cursor replay still returns the admin User (u1) its own posts: the webui is an observation surface, so a reconnect must not open a hole where kawaz's own messages were`,
+      async () => {
+        const ctx = await startTestDaemon();
+        try {
+          const aPost = await session(ctx, "A");
+          const created = await aPost.request<{ room: string }>({ op: "create_room", members: [] });
+          const room = created.room;
+
+          const uSub = await user(ctx);
+          await uSub.request({ op: "subscribe" });
+          await aPost.request({ op: "post", room, msg: "from A" });
+          const seen = await uSub.readEventUntil((ev) => ev.type === "msg");
+          const cursor = cursorKey === "since_seq" ? seen.ev.seq : seen.ev.mid;
+
+          const uPost = await user(ctx);
+          await uPost.request({ op: "post", room, msg: "from u1" });
+
+          const uSub2 = await user(ctx);
+          await uSub2.request({ op: "subscribe", [cursorKey]: { [room]: cursor } });
+          const got = await uSub2.readEventUntil((ev) => ev.type === "msg" && ev.r === room);
+          expect(got.ev.msg).toBe("from u1");
+          expect(got.ev.from).toBe("u1");
+        } finally {
+          await stopTestDaemon(ctx);
+        }
+      },
+      T,
+    );
+  }
+
   // DR-0011 changed `to` from a mention (attention marker, full-room delivery) to a
   // delivery filter: a `to`-bearing msg is now live-delivered only to the listed
   // members, the sender, and the admin User (u1, exempt). This replaces the prior

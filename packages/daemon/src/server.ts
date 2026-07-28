@@ -581,6 +581,17 @@ function msgVisibleTo(sub: Conn, room: Room, ev: MsgEvent): boolean {
   return ev.to.includes(memberId);
 }
 
+/** The member id this connection posts as inside `room`, but only for
+ * session-role (agent) connections — the ones the echo rule applies to.
+ * Returns undefined for the admin User: u1 is an observation surface whose own
+ * messages must stay in every history/replay it asks for (a webui reconnect
+ * must not open a gap where kawaz's own messages were). */
+function selfMemberId(conn: Conn, room: Room): string | undefined {
+  const id = conn.identity;
+  if (id?.role !== "session") return undefined;
+  return memberIdBySid(room).get(id.sid);
+}
+
 function normalizeTo(to: string | string[] | undefined): string[] | undefined {
   if (to === undefined) return undefined;
   const arr = Array.isArray(to) ? to : [to];
@@ -663,6 +674,19 @@ function isValidSeqCursor(v: number | undefined): v is number {
  * All paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
  * offline member reconnecting via since-replay must not see a `to` msg that excluded
  * them any more than a live subscriber would.
+ *
+ * The two cursor branches additionally apply the echo rule (DR-0003 §5) for
+ * session-role subscribers: a cursor replay is the delivery continuation of the
+ * live stream — "what I would have received had I stayed connected" — so it must
+ * filter exactly as live `deliver` does. Without this, the CLI's reconnect path
+ * echoes an agent's own posts straight back at it: `sinceMap` only advances on
+ * events actually written to stdout, and an author never receives their own post,
+ * so the cursor a reconnect carries always predates that post. The webui is
+ * unaffected: it subscribes with `since_seq` too, but as the admin User, which
+ * `selfMemberId` exempts. The no-cursor
+ * snapshot branch below is deliberately NOT changed — `backlog: true` is an
+ * explicit "paint me this room's history" request, not a delivery continuation,
+ * and history legitimately includes one's own messages.
  */
 function sendBacklog(
   conn: Conn,
@@ -671,6 +695,7 @@ function sendBacklog(
   suppressAuthorId?: string,
   sinceSeq?: number,
 ): void {
+  const selfId = selfMemberId(conn, room);
   if (isValidSeqCursor(sinceSeq)) {
     // Anchoring on "last event with seq <= sinceSeq" is correct at both ends:
     // a caught-up client (sinceSeq >= room.lastSeq) gets nothing, a client
@@ -687,7 +712,10 @@ function sendBacklog(
       const ev = room.events[i]!;
       // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
       if (isSuppressedForBroadcastStream(room, ev)) continue;
-      if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
+      if (ev.type === "msg") {
+        if (ev.from === selfId) continue; // echo rule (see docstring)
+        if (!msgVisibleTo(conn, room, ev)) continue;
+      }
       writeDelivered(conn, room, ev);
     }
     return;
@@ -708,7 +736,10 @@ function sendBacklog(
       // live deliver と since replay の両輪でスキップして、遅れて再接続した member
       // の subscribe stream にも noise を復元させない。
       if (isSuppressedForBroadcastStream(room, ev)) continue;
-      if (ev.type === "msg" && !msgVisibleTo(conn, room, ev)) continue;
+      if (ev.type === "msg") {
+        if (ev.from === selfId) continue; // echo rule (see docstring)
+        if (!msgVisibleTo(conn, room, ev)) continue;
+      }
       writeDelivered(conn, room, ev);
     }
     return;
@@ -1577,9 +1608,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
           // from a duplicate replay.
           if (RECENT_REPLAY_WINDOW_MS > 0) {
             const cutoff = Date.now() - RECENT_REPLAY_WINDOW_MS;
-            const selfId = conn.identity;
-            const selfMemberId =
-              selfId?.role === "session" ? memberIdBySid(room).get(selfId.sid) : undefined;
+            const selfId = selfMemberId(conn, room);
             for (const ev of room.events) {
               if (ev.type !== "msg") continue;
               if (isSuppressedForBroadcastStream(room, ev)) continue;
@@ -1588,7 +1617,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
               // Skip msgs the subscriber themselves authored — a session that
               // just posted and then subscribed doesn't need its own post
               // echoed back (parity with the live-deliver echo suppression).
-              if (selfMemberId !== undefined && ev.from === selfMemberId) continue;
+              if (ev.from === selfId) continue;
               writeDelivered(conn, room, ev, true);
             }
           }
