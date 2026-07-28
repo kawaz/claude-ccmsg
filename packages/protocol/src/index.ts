@@ -70,8 +70,9 @@ export interface SessionLauncherConfig {
    * …) which would silently reconfigure every launched session. `*` matches
    * any substring of a key name (no separator semantics); everything else is
    * literal, case-sensitive. Absent/empty = no cleaning (previous behavior).
-   * The launcher's own CWD/MODEL/EFFORT/PROMPT are layered on AFTER cleaning,
-   * so they can never be removed by a pattern. */
+   * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
+   * shell turns into $CWD/$MODEL/$EFFORT/$PROMPT) are layered on AFTER
+   * cleaning, so they can never be removed by a pattern. */
   clean_env?: string[];
   /** DR-0018 §3.1 addendum 2026-07-18 (2nd): wildcard patterns naming
    * environment variables to KEEP even when a `clean_env` pattern matches
@@ -897,7 +898,8 @@ export interface SessionLaunchRequest {
    * (server.ts continues to reject session_launch from non-user roles before
    * this field is even inspected). No template substitution is performed on
    * this value either — it is passed to the same `shellArgv(shell, command)`
-   * path as the config value, with the same CWD/MODEL/EFFORT/PROMPT env. */
+   * path as the config value, and sees the same $CWD/$MODEL/$EFFORT/$PROMPT
+   * shell variables. */
   command?: string;
 }
 

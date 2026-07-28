@@ -113,6 +113,29 @@ keep_env のみにマッチするキーは元々除去されないので no-op (
 警告して空配列に degrade — clean_env と逆で「より多く消える」方向であり、壊れた
 allowlist がクリーニング自体を黙って無効化しない安全側。
 
+**Addendum 2026-07-28 (kawaz r76m15): 受け渡し変数を子プロセスへ引き継がせない**:
+LN-Q2 の env 渡しは受け渡し手段として良かったが、env である以上 `PROMPT` 等が
+**起動された claude セッションのさらに子プロセス群まで引き継がれる**。一時的な
+受け渡し変数なので望ましくない。そこで transport と template 語彙を分離する:
+
+- daemon は値を **`ccmsg_new_session_cwd` / `_model` / `_effort` / `_prompt`**
+  (小文字 prefix の carrier) として env にセットして shell を起動する
+- shell に渡す program は **prologue + config の command** を改行で連結したもの。
+  prologue は carrier 1 つにつき 1 行:
+  ```sh
+  unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd
+  ```
+  先頭の `unset -v` が 2 つの役割を持つ: daemon 自身が同名変数を export していた
+  場合の残骸を落とすことと、export 属性を外して続く代入を **非 export のシェル
+  変数**にすること
+- **config が参照する語彙 (`$CWD`/`$MODEL`/`$EFFORT`/`$PROMPT`) は不変** — 既存
+  config はそのまま動く。変わるのは「env ではなくシェル変数として届く」点だけ
+- **prologue と command は同一 shell で実行する** (nested `bash -c` にしない)。
+  非 export 変数は子 shell に渡らず、渡すには再 export が必要になって設計目的が
+  消えるため
+- prologue は固定の識別子だけで構成され、request の値を shell source に埋め込む
+  ことは一切ない (= injection 面は従来どおり config 筆者の quote 責務に閉じる)
+
 ### 3.2 protocol (新 op)
 
 新 request/response 型を `packages/protocol/src/index.ts` に追加:

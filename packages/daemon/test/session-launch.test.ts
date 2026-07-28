@@ -8,6 +8,8 @@ import type { SessionLaunchRequest, SessionLauncherConfig } from "@ccmsg/protoco
 import {
   buildLaunchEnv,
   executeSessionLaunch,
+  launchPrecode,
+  launchShellProgram,
   shellArgv,
   validateSessionLaunch,
 } from "../src/session-launch.ts";
@@ -63,19 +65,50 @@ describe("session launch validation", () => {
 
   // The four request values cross the daemon/command boundary only as opaque
   // environment strings; no template substitution or value rewriting occurs.
-  test("a valid request returns the four environment variables unchanged", () => {
+  // They ride in the `ccmsg_new_session_*` carriers, which the shell prologue
+  // converts back to the template vocabulary ($CWD/$MODEL/$EFFORT/$PROMPT).
+  test("a valid request returns the four carrier variables unchanged", () => {
     const req = request(cwd);
     const result = validateSessionLaunch(config(root), req);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     expect(result.env).toEqual({
-      CWD: fs.realpathSync(cwd),
-      MODEL: req.model,
-      EFFORT: req.effort,
-      PROMPT: req.prompt,
+      ccmsg_new_session_cwd: fs.realpathSync(cwd),
+      ccmsg_new_session_model: req.model,
+      ccmsg_new_session_effort: req.effort,
+      ccmsg_new_session_prompt: req.prompt,
     });
-    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", 'launch "$PROMPT"']);
+    expect(result.cwd).toBe(fs.realpathSync(cwd));
+    expect(result.shellArgv).toEqual([
+      "bash",
+      "-eu",
+      "-o",
+      "pipefail",
+      "-c",
+      launchShellProgram('launch "$PROMPT"'),
+    ]);
+  });
+
+  // The prologue is fixed text over fixed identifiers: no request value is
+  // interpolated into shell source, so a hostile prompt cannot reach it.
+  test("the prologue moves every carrier into a plain variable and unsets it", () => {
+    expect(launchPrecode).toBe(
+      [
+        'unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd',
+        'unset -v MODEL; MODEL="$ccmsg_new_session_model"; unset -v ccmsg_new_session_model',
+        'unset -v EFFORT; EFFORT="$ccmsg_new_session_effort"; unset -v ccmsg_new_session_effort',
+        'unset -v PROMPT; PROMPT="$ccmsg_new_session_prompt"; unset -v ccmsg_new_session_prompt',
+      ].join("\n"),
+    );
+  });
+
+  // Newline, not `;`: a template opening with a comment or a shell keyword must
+  // parse exactly as the administrator wrote it.
+  test("the command is appended on its own line after the prologue", () => {
+    expect(launchShellProgram("# leading comment\nrun")).toBe(
+      `${launchPrecode}\n# leading comment\nrun`,
+    );
   });
 
   // Bash's exact strict option sequence is part of the administrator-visible
@@ -121,7 +154,7 @@ describe("session launch validation", () => {
     });
     expect(validateSessionLaunch(config(root), request(cwd, ""))).toMatchObject({
       ok: true,
-      env: { PROMPT: "" },
+      env: { ccmsg_new_session_prompt: "" },
     });
   });
 
@@ -135,7 +168,14 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), { ...request(cwd), command: override });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", override]);
+    expect(result.shellArgv).toEqual([
+      "bash",
+      "-eu",
+      "-o",
+      "pipefail",
+      "-c",
+      launchShellProgram(override),
+    ]);
   });
 
   // Absent override falls through to the config template (previous behavior)
@@ -144,7 +184,14 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), request(cwd));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", 'launch "$PROMPT"']);
+    expect(result.shellArgv).toEqual([
+      "bash",
+      "-eu",
+      "-o",
+      "pipefail",
+      "-c",
+      launchShellProgram('launch "$PROMPT"'),
+    ]);
   });
 
   // Empty string is deliberately invalid_args rather than a silent fallback to
@@ -180,7 +227,7 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), request(cwd, prompt));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.env.PROMPT).toBe(prompt);
+    expect(result.env.ccmsg_new_session_prompt).toBe(prompt);
   });
 
   // A successful child receives the validated real cwd and all four opaque
@@ -209,6 +256,85 @@ describe("session launch validation", () => {
       stderr: "stderr-value",
       exit_code: 0,
       timed_out: false,
+    });
+  });
+
+  // The whole point of the carrier + prologue design (kawaz r76m15): the launch
+  // values are a transport detail, so neither the template names nor the
+  // carriers may survive into the process tree the command starts — a claude
+  // session must not hand $PROMPT down to every command it later runs. `env`
+  // is executed in a grandchild, i.e. exactly what the launched session sees.
+  test("no launch variable reaches a grandchild process environment", async () => {
+    const cfg = {
+      ...config(root),
+      command:
+        "residue=$(bash -c env | " +
+        "grep -E '^(CWD|MODEL|EFFORT|PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
+        `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
+    };
+
+    expect(await execute(cfg, request(cwd, "secret prompt"))).toMatchObject({
+      ok: true,
+      exit_code: 0,
+      stdout: "residue=[] prompt=[secret prompt]",
+    });
+  });
+
+  // Values reach the command through the environment and a quoted assignment,
+  // never through shell source, so every metacharacter class survives byte for
+  // byte: quotes of both kinds, command substitution, backticks, backslashes,
+  // a trailing newline, and leading/trailing whitespace.
+  test("quoting-hostile prompt text arrives at the command verbatim", async () => {
+    const prompt = `  'single' "double" $(id) \`tick\` \\back $HOME\nsecond line\n`;
+    const cfg = { ...config(root), command: `printf '[%s]' "$PROMPT"` };
+
+    expect(await execute(cfg, request(cwd, prompt))).toMatchObject({
+      ok: true,
+      exit_code: 0,
+      stdout: `[${prompt}]`,
+    });
+  });
+
+  // The daemon may itself be running with PROMPT/CWD/MODEL/EFFORT exported
+  // (they are ordinary-looking names). Those no longer get overwritten by an
+  // overlay, so the prologue's leading `unset -v` is what guarantees the
+  // command sees this launch's value — and that the stale export does not
+  // survive into the grandchild either.
+  test("a stale same-named variable in the daemon env is replaced, not inherited", async () => {
+    process.env.PROMPT = "stale-from-daemon";
+    try {
+      const cfg = {
+        ...config(root),
+        command:
+          "leaked=$(bash -c env | grep -E '^PROMPT=' || true); " +
+          `printf 'prompt=[%s] leaked=[%s]' "$PROMPT" "$leaked"`,
+      };
+      expect(await execute(cfg, request(cwd, "fresh"))).toMatchObject({
+        ok: true,
+        exit_code: 0,
+        stdout: "prompt=[fresh] leaked=[]",
+      });
+    } finally {
+      delete process.env.PROMPT;
+    }
+  });
+
+  // zsh is the second supported shell and parses the same prologue text
+  // (`unset -v`, quoted assignment) identically — pinned by execution, since a
+  // prologue that only works under bash would silently break zsh admins.
+  test("the prologue behaves identically under zsh", async () => {
+    const cfg = {
+      ...config(root, "zsh"),
+      command:
+        "residue=$(zsh -c env | " +
+        "grep -E '^(PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
+        `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
+    };
+
+    expect(await execute(cfg, request(cwd, "zsh prompt"))).toMatchObject({
+      ok: true,
+      exit_code: 0,
+      stdout: "residue=[] prompt=[zsh prompt]",
     });
   });
 
@@ -305,7 +431,12 @@ describe("session launch validation", () => {
 // semantics (literal keys, `*` = any substring, regex metachars inert) and the
 // layering rule (launch env always wins over the cleaned base).
 describe("clean_env pattern matching", () => {
-  const launch = { CWD: "/w", MODEL: "m", EFFORT: "e", PROMPT: "p" };
+  const launch = {
+    ccmsg_new_session_cwd: "/w",
+    ccmsg_new_session_model: "m",
+    ccmsg_new_session_effort: "e",
+    ccmsg_new_session_prompt: "p",
+  };
 
   // Trailing-* prefix pattern removes every key sharing the prefix, while an
   // unrelated key survives — the primary real-world use ("CLAUDE_*").
@@ -407,13 +538,13 @@ describe("clean_env pattern matching", () => {
   });
 
   // Layering rule: launch.env is applied AFTER cleaning, so a pattern naming
-  // one of the four launcher variables (here CWD) cannot remove it — the
-  // launched command's contract of always receiving CWD/MODEL/EFFORT/PROMPT
-  // holds regardless of what the administrator lists.
-  test("launch env wins even when a pattern names CWD", () => {
-    const base = { CWD: "/stale-from-daemon", PATH: "/bin" };
-    const env = buildLaunchEnv(base, ["CWD"], launch);
-    expect(env.CWD).toBe("/w");
+  // one of the four carrier variables cannot remove it — the launched
+  // command's contract of always receiving CWD/MODEL/EFFORT/PROMPT holds
+  // regardless of what the administrator lists.
+  test("launch env wins even when a pattern names a carrier", () => {
+    const base = { ccmsg_new_session_cwd: "/stale-from-daemon", PATH: "/bin" };
+    const env = buildLaunchEnv(base, ["ccmsg_new_session_*"], launch);
+    expect(env.ccmsg_new_session_cwd).toBe("/w");
   });
 });
 
@@ -423,7 +554,12 @@ describe("clean_env pattern matching", () => {
 // launched session's config-plane isolation — removing it broke session
 // launch entirely. Precedence contract: keep wins over clean.
 describe("keep_env allowlist", () => {
-  const launch = { CWD: "/w", MODEL: "m", EFFORT: "e", PROMPT: "p" };
+  const launch = {
+    ccmsg_new_session_cwd: "/w",
+    ccmsg_new_session_model: "m",
+    ccmsg_new_session_effort: "e",
+    ccmsg_new_session_prompt: "p",
+  };
 
   // The core precedence rule and the motivating incident in one case: a key
   // matched by BOTH a clean pattern and a keep pattern survives
@@ -487,13 +623,13 @@ describe("keep_env allowlist", () => {
   });
 
   // keep_env protects only against cleaning, not against the launch overlay:
-  // CWD/MODEL/EFFORT/PROMPT are layered on AFTER the keep/clean decision, so
-  // even a kept stale CWD from the daemon env is overwritten by the launch's
-  // CWD — the launched command's four-variable contract stays absolute.
+  // the carriers are layered on AFTER the keep/clean decision, so even a kept
+  // stale carrier from the daemon env is overwritten by this launch's value —
+  // the launched command's four-variable contract stays absolute.
   test("launch env still wins over a kept key", () => {
-    const base = { CWD: "/stale-from-daemon" };
-    const env = buildLaunchEnv(base, ["CWD"], launch, ["CWD"]);
-    expect(env.CWD).toBe("/w");
+    const base = { ccmsg_new_session_cwd: "/stale-from-daemon" };
+    const env = buildLaunchEnv(base, ["ccmsg_new_session_cwd"], launch, ["ccmsg_new_session_cwd"]);
+    expect(env.ccmsg_new_session_cwd).toBe("/w");
   });
 });
 

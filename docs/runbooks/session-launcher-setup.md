@@ -53,7 +53,9 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
      必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
      `"bash"` で良い
    - `command`: 実行するコマンド。`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`
-     の 4 環境変数が渡される (文字列置換ではなく env、quote は書き手の責務)
+     の 4 変数が渡される (文字列置換ではなく変数渡し、quote は書き手の責務)。
+     この 4 つは **export されていないシェル変数** — command が起動する
+     プロセス (= claude セッションとその子孫) には引き継がれない
    - `timeout_seconds`: 省略時 10。超過で SIGTERM → 少し待って SIGKILL
    - `dir_tree_depth`: cwd ツリーの初期一括ロード深さ。省略時 2
 
@@ -80,7 +82,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 |---|---|---|
 | 「+ 新規」を押しても未設定の案内のまま | `config.json` の JSON 構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、`command` は非空文字列である必要がある |
 | cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
-| 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) を手元で `CWD`/`MODEL`/`EFFORT`/`PROMPT` を export した状態で試して構文を確認 |
+| 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に `CWD=...; MODEL=...; EFFORT=...; PROMPT=...` を書いた状態で手元で試して構文を確認 |
 | 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--dettach` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |
 
 ## 関連

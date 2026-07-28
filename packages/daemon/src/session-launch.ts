@@ -12,6 +12,7 @@ import { containedInRoots } from "./launcher-paths.ts";
 export type SessionLaunchValidation =
   | {
       ok: true;
+      cwd: string;
       env: Record<string, string>;
       shellArgv: string[];
       cleanEnv: string[];
@@ -65,6 +66,47 @@ function collectStream(stream: ReadableStream<Uint8Array>): {
 export function shellArgv(shell: "bash" | "zsh", command: string): string[] {
   if (shell === "bash") return ["bash", "-eu", "-o", "pipefail", "-c", command];
   return ["zsh", "-e", "-u", "-o", "pipefail", "-c", command];
+}
+
+/** Template-visible shell variable name -> the transport environment variable
+ * that carries its value into the launcher shell. The template vocabulary
+ * (`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`, DR-0018 §3.1) is unchanged; only
+ * the transport is renamed to a lowercase `ccmsg_new_session_*` namespace that
+ * the shell erases from its environment before running the command. */
+const LAUNCH_VARS = {
+  CWD: "ccmsg_new_session_cwd",
+  MODEL: "ccmsg_new_session_model",
+  EFFORT: "ccmsg_new_session_effort",
+  PROMPT: "ccmsg_new_session_prompt",
+} as const;
+
+/** Shell prologue that moves each launch value out of the environment and into
+ * a plain (non-exported) shell variable, so nothing the command starts — the
+ * claude session and its whole process tree — inherits it. Per variable:
+ *
+ *   unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd
+ *
+ * The leading `unset -v` matters twice: it drops any same-named variable the
+ * daemon itself inherited (which would otherwise survive as a stale export,
+ * since the launch values no longer overwrite it), and it clears the export
+ * attribute so the following assignment creates a shell-local variable.
+ *
+ * The prologue and the command run in *one* shell — a nested `bash -c` would
+ * defeat the whole design, because non-exported variables do not cross into a
+ * child shell and re-exporting them would put the values right back into the
+ * environment we are trying to keep clean.
+ *
+ * Only fixed identifiers appear here; no request value is ever interpolated
+ * into shell text, so the prologue cannot be injected through. */
+export const launchPrecode: string = Object.entries(LAUNCH_VARS)
+  .map(([name, carrier]) => `unset -v ${name}; ${name}="$${carrier}"; unset -v ${carrier}`)
+  .join("\n");
+
+/** Join prologue and command with a newline rather than `;` so a command that
+ * opens with a comment or a shell keyword parses exactly as the administrator
+ * wrote it. Exported for tests. */
+export function launchShellProgram(command: string): string {
+  return `${launchPrecode}\n${command}`;
 }
 
 export function validateSessionLaunch(
@@ -125,15 +167,16 @@ export function validateSessionLaunch(
   // to a daemon release. Prompt is allowed to be empty because the DR defines
   // no non-empty constraint. None of the values is substituted or interpreted.
   const env = {
-    CWD: cwd.data.realPath,
-    MODEL: req.model,
-    EFFORT: req.effort,
-    PROMPT: req.prompt,
+    [LAUNCH_VARS.CWD]: cwd.data.realPath,
+    [LAUNCH_VARS.MODEL]: req.model,
+    [LAUNCH_VARS.EFFORT]: req.effort,
+    [LAUNCH_VARS.PROMPT]: req.prompt,
   };
   return {
     ok: true,
+    cwd: cwd.data.realPath,
     env,
-    shellArgv: shellArgv(cfg.shell, command),
+    shellArgv: shellArgv(cfg.shell, launchShellProgram(command)),
     cleanEnv: cfg.clean_env ?? [],
     keepEnv: cfg.keep_env ?? [],
   };
@@ -152,11 +195,13 @@ function cleanEnvPatternToRegExp(pattern: string): RegExp {
   return new RegExp(`^${escaped.replaceAll("\\*", ".*")}$`);
 }
 
-/** Build the child environment: daemon env minus clean_env matches (except
- * keys a keep_env pattern also matches — keep wins over clean, DR-0018 §3.1
- * addendum: a broad `CLAUDE*` clean must not remove CLAUDE_CONFIG_DIR), with
- * the launch's own CWD/MODEL/EFFORT/PROMPT layered on top afterwards — so
- * those four always win even if a pattern names them. Exported for tests. */
+/** Build the launcher shell's environment: daemon env minus clean_env matches
+ * (except keys a keep_env pattern also matches — keep wins over clean, DR-0018
+ * §3.1 addendum: a broad `CLAUDE*` clean must not remove CLAUDE_CONFIG_DIR),
+ * with the launch's own `ccmsg_new_session_*` carriers layered on top
+ * afterwards — so those four always win even if a pattern names them. The
+ * carriers live only in this shell; `launchPrecode` unsets them before the
+ * command runs. Exported for tests. */
 export function buildLaunchEnv(
   baseEnv: Record<string, string | undefined>,
   cleanEnv: string[],
@@ -180,7 +225,7 @@ export async function executeSessionLaunch(
   timeoutSeconds: number,
 ): Promise<SessionLaunchResponse> {
   const proc = Bun.spawn(launch.shellArgv, {
-    cwd: launch.env.CWD,
+    cwd: launch.cwd,
     env: buildLaunchEnv(process.env, launch.cleanEnv, launch.env, launch.keepEnv),
     stdout: "pipe",
     stderr: "pipe",
