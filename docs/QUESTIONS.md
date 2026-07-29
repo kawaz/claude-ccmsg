@@ -20,9 +20,33 @@
 
 ## 裁定待ち
 
-(なし)
+### 👺TL-Q2: 自 post/reply の専用バブルを復活させるか
+
+[issue](issue/2026-07-29-self-ccmsg-post-bubbles-missing.md): 自セッションが Bash tool で `ccmsg post/reply` した時の専用バブル (DR-0027 §2.2) が v0.80.0 の bash 一体カード化で出なくなっています (実行自体は bash カードとして見える)。
+
+- [ ] a: 専用バブルを復活 (bash カードと併存。修正は小さい)
+- [ ] b: bash カードで代替済みとして DR-0027 §2.2 を supersede
+
+### 👺TL-Q3: in-view search が閉じた fold の中を数えない件
+
+[issue](issue/2026-07-29-inview-search-skips-closed-folds.md): 現状は閉じた fold 内のマッチが 0 件扱い (コード内コメントの記述と食い違い)。
+
+- [ ] a: 閉じた fold の中も数え、ヒットへのジャンプで fold を自動展開 (検索体験としては素直)
+- [ ] b: 現挙動を仕様としてコメントを直すだけ
+
+### 👺ISSUE-Q1: 棚卸しの close 候補 3 件
+
+- [ ] a: `kawaz-req1` / `kawaz-agents-status` を close (起票 commit に「v0.34.14 で対応済み」とあり解決済みの可能性大。中身の再確認込みで任せてもらえれば close します)
+- [ ] b: `2026-07-04-daemon-side-subscribe-detection` を close (v0.82 系の supersede + /clear 検出で元の動機が解消していれば)
+- [ ] c: `2026-07-26-webui-url-structure-redesign` を close (Phase 1〜3 出荷済み。C20c の確認が済んだら)
 
 ## 確認待ち
+
+### 👺WEBUI-C23: agent TL からメインへ戻れる (v0.82.3)
+
+- [ ] a: サブエージェントの TL を開いた後、サイドバーのセッションリンクで戻るとメイン TL (または直前に見ていた Files 等) に着地する (agent TL に引き戻されない)
+- [ ] b: エージェントツリーの先頭に main 行があり、クリックでメイン TL に戻れる
+- [ ] c: agent TL 上で TL 項目をクリックしても親 TL に弾き出されない
 
 ### 👺WEBUI-C20: URL 再設計 Phase 3 (v0.80.0)
 
