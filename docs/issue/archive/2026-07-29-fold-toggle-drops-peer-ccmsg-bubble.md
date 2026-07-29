@@ -1,6 +1,6 @@
 ---
 title: fold group の開閉で peer ccmsg バブルが消える
-status: open
+status: resolved
 category: bug
 created: 2026-07-29T12:09:15+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-29T13:23:45+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.82.2 で修正 (commit 3fe0863a)。dedup 判定を render 中の Set mutation から分類フェーズの純関数 ccmsgRenderTargets に移して根治。修正前ビルドとの並行実機比較で消失0->維持を確認、同種経路の横断確認は他0件。副次的に in-view search のカウント不一致も解消"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -36,7 +36,3 @@ Timeline.tsx:3297-3299 のコメント「sub-tree の再 render は親 render �
 - [ ] fold group の開閉 toggle で peer ccmsg バブルが消えない
 - [ ] 修正方向 (dedup を parse/分類フェーズに移す、または seenCcmsg のリセット構造を修正) のいずれかで実装
 - [ ] 同種の経路 (`useCategoryOpen` 等) に同じ構造がないか確認
-
-## 解決時の記録先
-
-バグ修正のみなら commit message で足りる。
