@@ -26,35 +26,35 @@
 
 ### 👺WEBUI-C20: URL 再設計 Phase 3 (v0.80.0)
 
-- [ ] a: TL でメッセージバルーンをクリックすると URL が `/timeline/<uuid>` に replace され、履歴は増えない
-- [ ] b: 最下部までスクロールすると `/head` に戻る
+- [x] a: TL でメッセージバルーンをクリックすると URL が `/timeline/<uuid>` に replace され、履歴は増えない
+- [x] b: 最下部までスクロールすると `/head` に戻る
 - [ ] c: uuid 付き URL 直アクセスで該当位置にスクロール + ハイライト (ロード窓外なら head へ)
-- [ ] d: ヘッダの back/forward ボタンが活性状態も含めて動く
-- [ ] e: セッションを離れて戻ると、見ていた位置 (uuid) に復帰する
+- [x] d: ヘッダの back/forward ボタンが活性状態も含めて動く
+- [x] e: セッションを離れて戻ると、見ていた位置 (uuid) に復帰する
 
 ### 👺WEBUI-C21: `!` bash 実行表示の作り直し (v0.80.0)
 
-- [ ] a: `! ls` がユーザ側の並びに Bash ツール実行風カードで出る (通常メッセージの見た目ではない)
-- [ ] b: 長い出力は max-height で切れてブロック内スクロールになる
-- [ ] c: 30KB 超の出力は CC がサイドカー退避するため、スタブ (パス + プレビュー) が表示される。「全文を開く」リンクは TL-Q1=a の裁定を実装後に常時点灯予定
+- [x] a: `! ls` がユーザ側の並びに Bash ツール実行風カードで出る (通常メッセージの見た目ではない)
+- [x] b: 長い出力は max-height で切れてブロック内スクロールになる
+- [x] c: 30KB 超の出力は CC がサイドカー退避するため、スタブ (パス + プレビュー) が表示される。「全文を開く」リンクは TL-Q1=a の裁定を実装後に常時点灯予定
 
 ### 👺WEBUI-C22: リンク解決の再確認 (URL 実パス化後の総ざらい、v0.80.1)
 
 URL が実パス化 (v0.78.0) された後の再確認です。旧チェック済み分もリンク経路が変わったためリセットしています。このプレビュー上で踏んでください。相対リンクはこのファイルの位置 (`docs/`) 基準、先頭 `/` はファイルシステム絶対パスです。
 
-- [ ] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
+- [x] a: 相対パスリンクが Files ビューアを開く → [markdown-link.ts](../packages/webui/src/client/markdown-link.ts)
 - [ ] b: リポルート相対のつもりの先頭 `/` は 404 になり、「もしかして」が出て押すと開く → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
-- [ ] c: 行範囲付きは code モードで開き、指定行にジャンプ・ハイライト (プレビューモードの記憶は消えない) → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
-- [ ] d: 存在しないパスも押せて 404 が出る → [存在しないファイル](this-file-does-not-exist.md)
+- [x] c: 行範囲付きは code モードで開き、指定行にジャンプ・ハイライト (プレビューモードの記憶は消えない) → [DR-0008 の §7 付近](decisions/DR-0008-workspace-file-access.md#L58-L66)
+- [x] d: 存在しないパスも押せて 404 が出る → [存在しないファイル](this-file-does-not-exist.md)
 - [ ] e: 基準を間違えた相対リンクで「もしかして」が出て、押すと開く → [リポルート基準で書いたリンク](packages/webui/src/client/markdown-link.ts)
-- [ ] f: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
-- [ ] g: プロジェクト外ファイルが開ける (このセッションでアクセス済みのもの) → [プロジェクト外ファイル](/Users/kawaz/.cache/claude-session-state/ccmsg/20260727-1045.md)
-- [ ] h: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
-- [ ] i: 未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
+- [x] f: どちらの読みでも存在しないファイルでは候補が出ない → [本当に無いファイル](totally-nonexistent-xyz.md)
+- [x] g: プロジェクト外ファイルが開ける (このセッションでアクセス済みのもの) → [プロジェクト外ファイル](/Users/kawaz/.cache/claude-session-state/ccmsg/20260727-1045.md)
+- [x] h: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
+- [x] i: 未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
 
 ### 👺DAEMON-C18: ルーム自己 echo の解消 (v0.76.3)
 
-- [ ] a: 複数エージェントのルームで post しても自分に echo されない (daemon 再起動後の再接続でも)
+- [x] a: 複数エージェントのルームで post しても自分に echo されない (daemon 再起動後の再接続でも)
 
 ### 👺CLI-C15: `ccmsg dump` の改善 (v0.75.0 / v0.76.0)
 
@@ -63,4 +63,4 @@ CLI での確認です。`ccmsg dump <sid> --format text` で見てください�
 - [ ] a: `--since` を付けると、その範囲に関わったエージェントだけが指示文込みで展開され、それ以外は 1 行に畳まれる
 - [ ] b: 畳まれた分を `--agent <名前 or id>` で読み戻せる (ヘッダにそのヒントが出る)
 - [ ] c: task list (TODO) が context に載っている
-- [ ] d: `--no-thinking` で思考が消え、`--no-agent` でエージェント情報と通信が消える (日誌用途)
+- [x] d: `--no-thinking` で思考が消え、`--no-agent` でエージェント情報と通信が消える (日誌用途)
