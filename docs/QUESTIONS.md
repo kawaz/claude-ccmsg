@@ -76,6 +76,16 @@ URL が実パス化 (v0.78.0) された後の再確認です。旧チェック�
 - [x] h: 外部 URL は in-app browser で開き、閉じる/戻るが出る → [hyoui](https://hyoui.kawaz-mbp16-20211217.kawaz.jp)
 - [x] i: 未知 URL に着地してもアプリが立ち上がりサイドバーから復帰できる → [same-origin の未知パス](https://ccmsg.kawaz-mbp16-20211217.kawaz.jp/this-path-does-not-exist)
 
+### 👺WEBUI-C24: workflow の TL と状態表示 (v0.83.0)
+
+- [ ] a: workflow 配下エージェントの TL がツリーから開ける (agent transcript not found が出ない)
+- [ ] b: workflow の running / done / error が dot の色で見分けられる (running=active 色、done=グレー、error=danger 色)。run 行にも dot が付く
+
+### 👺WEBUI-C25: メモリ/重さ対策 (v0.83.0)
+
+- [ ] a: 長時間使用 + セッション巡回でブラウザが重くなっていく現象が改善した (実測ではセッション巡回の常駐メモリが頭打ち化、追記時の処理が約 8 倍高速化)
+- [ ] b: TL の表示・fold・検索・位置ジャンプ・スクロール復元に退行がない
+
 ### 👺DAEMON-C18: ルーム自己 echo の解消 (v0.76.3)
 
 - [x] a: 複数エージェントのルームで post しても自分に echo されない (daemon 再起動後の再接続でも)
