@@ -65,6 +65,7 @@ import type {
 } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
+import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
 const RECONNECT_DELAYS_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
@@ -366,6 +367,17 @@ export function createWsClient(
     });
   }
 
+  // The Timeline supplies the DOM-commit end of the trace and has no handle on
+  // this client, so the collector is published for it here. A trace report is
+  // fire-and-forget: a rejected post (socket closing) drops that one sample.
+  setActiveTraceCollector(
+    createTraceCollector({
+      post: (req) => {
+        void send(req).catch(() => {});
+      },
+    }),
+  );
+
   /** Send a 2-phase op (translate / session_launch / session_search): the
    * positional reply slot only consumes the immediate ack (or a synchronous
    * validation error, which settles the Promise right away), and the final
@@ -576,6 +588,10 @@ export function createWsClient(
     // whether this batch is contiguous with what's cached (see its doc
     // comment) — this layer just relays the wire shape verbatim.
     if ("ev" in streamEv && streamEv.ev === "transcript") {
+      // trace: arrival, then the reducer's return — the pair isolates "the tab
+      // got it late" from "the tab got it on time and the store was slow".
+      const trace = activeTraceCollector();
+      trace?.noteWsReceive(streamEv.sid, streamEv.start, streamEv.end, streamEv.size);
       dispatch({
         type: "timeline/tail",
         sid: streamEv.sid,
@@ -584,6 +600,7 @@ export function createWsClient(
         end: streamEv.end,
         size: streamEv.size,
       });
+      trace?.noteStoreDispatch(streamEv.sid, streamEv.end);
       return;
     }
     // Live-tail push for a session's folded status (DR-0020 Phase 1/2

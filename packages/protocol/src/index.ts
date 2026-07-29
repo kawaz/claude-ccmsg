@@ -267,6 +267,14 @@ export interface RestartingStreamEvent {
   ev: "restarting";
   reason?: string;
 }
+/** Sent to an older session-role subscribe stream when a newer `subscribe` for
+ * the same sid arrives. Two live subscribe streams for one session double every
+ * notification, so the daemon keeps the newest (the deliberate start) and tells
+ * the older one to exit. `sid` is the session both streams share. */
+export interface SubscribeSupersededStreamEvent {
+  ev: "subscribe_superseded";
+  sid: string;
+}
 /** Emitted once at `subscribe` time for every visible room that did NOT get a
  * backlog/delta replay (no `since`/`since_seq` entry for it and the request
  * didn't set `backlog: true` — issue 2026-07-17-subscribe-no-backlog-default).
@@ -658,6 +666,7 @@ export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
   | RestartingStreamEvent
+  | SubscribeSupersededStreamEvent
   | RoomCursorsStreamEvent
   | AgentsStreamEvent
   | PeersStreamEvent
@@ -1339,6 +1348,26 @@ export interface TranscriptUnsubscribeRequest {
   sid: string;
 }
 
+export interface ClientTracePoint {
+  ts: string;
+  comp: "webui";
+  edge: "in" | "out";
+  kind: "ws_receive" | "store_dispatch" | "dom_commit";
+}
+
+/** Browser-side transcript boundary timestamps returned to the daemon so one
+ * trace.jsonl contains the complete file-to-DOM path. User role only. */
+export interface ClientTraceRequest {
+  op: "client_trace";
+  sid: string;
+  start: number;
+  end: number;
+  size: number;
+  sampled: boolean;
+  elapsed_ms: number;
+  points: ClientTracePoint[];
+}
+
 export interface SessionStatusRequest {
   op: "session_status";
   sid: string;
@@ -1444,6 +1473,7 @@ export type Request =
   | AgentsRequest
   | TranscriptSubscribeRequest
   | TranscriptUnsubscribeRequest
+  | ClientTraceRequest
   | SessionStatusRequest
   | SessionStatusSubscribeRequest
   | SessionStatusUnsubscribeRequest
@@ -1793,6 +1823,13 @@ export interface TranscriptUnsubscribeResponse {
   ok: true;
   sid: string;
 }
+export interface ClientTraceResponse {
+  ok: true;
+  sid: string;
+  /** how many of the posted points reached trace.jsonl (the daemon caps the
+   * batch, so a client that sends more learns its extras were dropped). */
+  written: number;
+}
 export interface SessionStatusResponse extends SessionStatusSnapshot {
   ok: true;
   sid: string;
@@ -1890,6 +1927,7 @@ export type Response =
   | AgentsResponse
   | TranscriptSubscribeResponse
   | TranscriptUnsubscribeResponse
+  | ClientTraceResponse
   | SessionStatusResponse
   | SessionStatusSubscribeResponse
   | SessionStatusUnsubscribeResponse

@@ -14,6 +14,7 @@ import {
 } from "@ccmsg/protocol";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 import { resolveAgentTranscript } from "./agent-transcripts.ts";
+import type { TraceWriter } from "./trace.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -391,14 +392,16 @@ interface Watch {
   fsWatcher: fs.FSWatcher | null;
   pollTimer: ReturnType<typeof setInterval> | null;
   log: TailLog;
+  trace?: TraceWriter;
 }
 
 export interface TranscriptTailStore {
   watches: Map<string, Watch>;
+  trace?: TraceWriter;
 }
 
-export function createTranscriptTailStore(): TranscriptTailStore {
-  return { watches: new Map() };
+export function createTranscriptTailStore(trace?: TraceWriter): TranscriptTailStore {
+  return { watches: new Map(), trace };
 }
 
 function sendTail(
@@ -412,7 +415,22 @@ function broadcast(
   watch: Watch,
   payload: { lines: string[]; start: number; end: number; size: number },
 ): void {
-  for (const sub of watch.subscribers) sendTail(sub, { sid: watch.sid, ...payload });
+  let subscriber = 0;
+  const entryTs = extractEntryTimestamp(payload.lines);
+  for (const sub of watch.subscribers) {
+    watch.trace?.write({
+      comp: "daemon",
+      edge: "out",
+      kind: "wire_write",
+      sid: watch.sid,
+      start: payload.start,
+      end: payload.end,
+      size: payload.size,
+      ...(entryTs ? { entry_ts: entryTs } : {}),
+      subscriber: subscriber++,
+    });
+    sendTail(sub, { sid: watch.sid, ...payload });
+  }
   for (const listener of watch.lineListeners) listener(payload);
 }
 
@@ -423,6 +441,18 @@ function broadcast(
  * line (the writer mid-append) is dropped and left for the next check
  * (`end` stays at `from` in that case, signaling "nothing complete yet").
  */
+export function extractEntryTimestamp(lines: readonly string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const value = JSON.parse(lines[i]!) as { timestamp?: unknown };
+      if (typeof value.timestamp === "string") return value.timestamp;
+    } catch {
+      // malformed transcript rows are still delivered; they simply have no entry timestamp
+    }
+  }
+  return undefined;
+}
+
 function readLinesForTail(
   file: string,
   from: number,
@@ -470,7 +500,7 @@ function readLinesForTail(
  *    trailing partial line is deferred to the next check), broadcast if at
  *    least one full line was found.
  */
-function checkNow(watch: Watch, log: TailLog): void {
+function checkNow(watch: Watch, log: TailLog, source: "fs_watch" | "poll"): void {
   let stat: fs.Stats;
   try {
     stat = fs.statSync(watch.file);
@@ -485,6 +515,24 @@ function checkNow(watch: Watch, log: TailLog): void {
     stat.ino !== watch.ino ||
     watch.sawMissing ||
     (stat.birthtimeMs > 0 && watch.birthtimeMs > 0 && stat.birthtimeMs !== watch.birthtimeMs);
+  // Only a check that found something records a detect: idle poll ticks outnumber
+  // real events by orders of magnitude and would rotate the interesting history
+  // out of trace.jsonl. `mtime_ms` vs `ts` is the file-write-to-detect gap, the
+  // first boundary of the path this trace exists to measure.
+  if (identityChanged || stat.size !== watch.lastEnd) {
+    watch.trace?.write({
+      comp: "daemon",
+      edge: "in",
+      kind: "transcript_detect",
+      sid: watch.sid,
+      start: watch.lastEnd,
+      end: stat.size,
+      size: stat.size,
+      mtime_ms: stat.mtimeMs,
+      source,
+      ...(identityChanged ? { identity_changed: true } : {}),
+    });
+  }
   if (identityChanged) {
     watch.ino = stat.ino;
     watch.birthtimeMs = stat.birthtimeMs;
@@ -509,13 +557,27 @@ function checkNow(watch: Watch, log: TailLog): void {
   }
   if (result.lines.length === 0) return; // trailing partial line only; wait for more
   const start = watch.lastEnd;
+  const entryTs = extractEntryTimestamp(result.lines);
+  watch.trace?.write({
+    comp: "daemon",
+    edge: "out",
+    kind: "transcript_read",
+    sid: watch.sid,
+    start,
+    end: result.end,
+    size: stat.size,
+    bytes: result.end - start,
+    lines: result.lines.length,
+    ...(entryTs ? { entry_ts: entryTs } : {}),
+    source,
+  });
   watch.lastEnd = result.end;
   broadcast(watch, { lines: result.lines, start, end: result.end, size: stat.size });
 }
 
 function startPolling(watch: Watch, log: TailLog, intervalMs: number): void {
   if (watch.pollTimer !== null) return;
-  watch.pollTimer = setInterval(() => checkNow(watch, log), intervalMs);
+  watch.pollTimer = setInterval(() => checkNow(watch, log, "poll"), intervalMs);
   watch.pollTimer.unref?.();
 }
 
@@ -570,7 +632,7 @@ function startWatching(watch: Watch, log: TailLog): void {
   try {
     const w = fs.watch(dir, { persistent: false }, (_eventType, filename) => {
       if (filename !== null && filename !== base) return; // unrelated sibling file
-      checkNow(watch, log);
+      checkNow(watch, log, "fs_watch");
     });
     w.on("error", (e) => {
       log.info(
@@ -641,6 +703,7 @@ function getOrCreateWatch(
       fsWatcher: null,
       pollTimer: null,
       log,
+      trace: store.trace,
     };
     store.watches.set(sid, watch);
     startWatching(watch, log);

@@ -18,6 +18,8 @@ export interface Paths {
   lock: string;
   pid: string;
   log: string;
+  /** Correlated component-boundary timestamps for transcript latency diagnosis. */
+  trace: string;
   /** persisted extra allowed `Origin` values (JSON string[]), managed by
    * `ccmsg origins add/remove/list` and read by the daemon's Origin check.
    * Lives in data/ (not state/) because it is user configuration that must
@@ -57,6 +59,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     lock: path.join(stateDir, "daemon.lock"),
     pid: path.join(stateDir, "daemon.pid"),
     log: path.join(stateDir, "daemon.log"),
+    trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(dataDir, "allowed-origins.json"),
     config: path.join(dataDir, "config.json"),
   };

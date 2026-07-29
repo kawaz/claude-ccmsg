@@ -270,9 +270,10 @@ function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]):
  * distinction, so no separate marker is needed for "in progress". */
 function formatTodoLine(todo: SessionTodo): string {
   const owner = todo.owner ? ` (owner: ${todo.owner})` : "";
-  const blockedBy = todo.blocked_by && todo.blocked_by.length > 0
-    ? ` blocked by: ${todo.blocked_by.join(",")}`
-    : "";
+  const blockedBy =
+    todo.blocked_by && todo.blocked_by.length > 0
+      ? ` blocked by: ${todo.blocked_by.join(",")}`
+      : "";
   return `[${todo.status}] #${todo.id} ${todo.subject}${owner}${blockedBy}`;
 }
 
@@ -412,6 +413,18 @@ async function runSubscribe(
           r?: string;
           seq?: number;
         };
+        if (ev.ev === "subscribe_superseded") {
+          // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
+          // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
+          // 契約なので、古いこちらは再接続せず正常終了する。
+          process.stderr.write(
+            "ccmsg subscribe: a newer subscribe started for this session " +
+              "(duplicate detected). Exiting this older one so messages are not " +
+              "delivered twice; the newer subscribe now receives them.\n",
+          );
+          ownerWatch?.close();
+          process.exit(0);
+        }
         if (ev.ev === "restarting" || ev.ev === "room_cursors") {
           filtered = true;
         } else if (typeof ev.r === "string" && typeof ev.seq === "number") {

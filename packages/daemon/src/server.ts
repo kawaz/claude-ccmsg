@@ -31,6 +31,7 @@ import {
   type TranslateResponse,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
+import { TraceWriter } from "./trace.ts";
 import { loadConfig, type DaemonConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
 import {
@@ -170,6 +171,10 @@ export interface Daemon {
   agentsPoller: AgentsPoller;
   /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
   transcriptTail: TranscriptTailStore;
+  /** component-boundary timestamps for transcript latency diagnosis, from the
+   * daemon's own file check through the browser points posted via
+   * `client_trace`. See docs/runbooks/transcript-latency-trace.md. */
+  trace: TraceWriter;
   /** folded transcript status subscriptions per sid (DR-0020 Phase 1). */
   sessionStatus: SessionStatusStore;
   /** api_error fold across every connected peer, for the sidebar's error
@@ -841,6 +846,25 @@ function sendBacklog(
   }
 }
 
+/** A session may only have one live subscribe stream: two of them turn every
+ * delivery into a duplicate notification for the same AI. The newest subscribe
+ * is the deliberate one, so any older session-role subscriber on the same sid is
+ * told to exit and is dropped from delivery here (the notice may be the last
+ * thing that conn ever reads, and delivery must stop either way). User-role
+ * subscribers are untouched — several webui tabs are normal. */
+function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
+  const id = conn.identity;
+  if (id?.role !== "session") return;
+  for (const sub of daemon.subscribers) {
+    if (sub === conn) continue;
+    if (sub.identity?.role !== "session" || sub.identity.sid !== id.sid) continue;
+    send(sub, { ev: "subscribe_superseded", sid: id.sid });
+    sub.subscribed = false;
+    daemon.subscribers.delete(sub);
+    daemon.log.info(`subscribe superseded for sid=${id.sid}: dropped an older subscribe stream`);
+  }
+}
+
 /** Deliver a brand-new room's snapshot to every subscriber that sees it. */
 function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: string | null): void {
   for (const sub of daemon.subscribers) {
@@ -984,12 +1008,18 @@ const IDENTITY_OPS = new Set([
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
+  "client_trace",
   "session_status",
   "session_status_subscribe",
   "session_status_unsubscribe",
   "session_errors",
   "translate",
 ]);
+
+/** One `client_trace` batch covers one tail delivery, which has three boundaries.
+ * The margin absorbs future points without letting a client append unbounded
+ * lines to trace.jsonl. */
+const CLIENT_TRACE_MAX_POINTS = 8;
 
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
@@ -1645,6 +1675,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       conn.subscribed = true;
       daemon.subscribers.add(conn);
       send(conn, { ok: true, subscribed: true });
+      supersedeOlderSessionSubscribers(daemon, conn);
       // handler runs to completion synchronously, so no live event interleaves the snapshot.
       // Default (no `since`/`since_seq` entry for a room, and no `backlog: true`) is
       // NO backlog at all — a fresh sidecar connect doesn't want its context flooded
@@ -2295,6 +2326,37 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       return;
     }
 
+    // The browser half of the transcript trace. The daemon can time everything up
+    // to the wire write; ws_receive/store_dispatch/dom_commit only exist in the
+    // tab, so the tab posts them back and they land in the same trace.jsonl,
+    // correlated by (sid, start, end). User role only, like the tail ops it
+    // annotates. Points are timestamped in the browser: a skewed client clock
+    // shifts its own three points together, so browser-to-browser deltas stay
+    // usable even when they don't line up with the daemon's clock.
+    case "client_trace": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'client_trace' requires user role");
+        return;
+      }
+      const points = Array.isArray(req.points) ? req.points.slice(0, CLIENT_TRACE_MAX_POINTS) : [];
+      for (const point of points) {
+        daemon.trace.write({
+          ts: typeof point.ts === "string" ? point.ts : undefined,
+          comp: "webui",
+          edge: point.edge === "out" ? "out" : "in",
+          kind: String(point.kind),
+          sid: req.sid,
+          start: req.start,
+          end: req.end,
+          size: req.size,
+          elapsed_ms: req.elapsed_ms,
+          sampled: req.sampled,
+        });
+      }
+      send(conn, { ok: true, sid: req.sid, written: points.length });
+      return;
+    }
+
     case "session_status": {
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'session_status' requires user role");
@@ -2568,6 +2630,7 @@ export function startDaemon(opts: StartOptions = {}): void {
 
   const rooms = scanRooms(paths.roomsDir, log);
   const config = loadConfig(paths.config, log);
+  const trace = new TraceWriter(paths.trace);
   const daemon: Daemon = {
     paths,
     config,
@@ -2586,7 +2649,8 @@ export function startDaemon(opts: StartOptions = {}): void {
     dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
-    transcriptTail: createTranscriptTailStore(),
+    transcriptTail: createTranscriptTailStore(trace),
+    trace,
     sessionStatus: createSessionStatusStore(),
     sessionErrors: createSessionErrorsStore(),
     sessionErrorsSnapshot: "",

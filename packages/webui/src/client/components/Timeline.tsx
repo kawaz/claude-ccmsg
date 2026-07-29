@@ -3,7 +3,15 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { createContext, type ComponentChildren } from "preact";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "preact/hooks";
 import type { PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
@@ -12,6 +20,7 @@ import { agentTimelineHref, fileHref, parseUrl, timelineHref } from "../locator.
 import { rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { activeTraceCollector } from "../trace.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
@@ -3080,6 +3089,15 @@ export function Timeline({
   // で、この条件は自然に prepend を除外し、tail 追記 (と初回 tail ロード)
   // だけに反応する。smooth アニメーションなし — 高頻度で届く tail 行ごとに
   // アニメーションが重なるとかえって読みにくいため、即座にジャンプする。
+  // Closes the latency trace started in ws.ts: useLayoutEffect runs once the
+  // appended rows are in the document, which is the boundary the trace names
+  // dom_commit. (The later scroll settle below is deliberately not part of it —
+  // markdown/highlight keep resizing for a second after the rows are visible.)
+  useLayoutEffect(() => {
+    if (timeline.status !== "loaded") return;
+    activeTraceCollector()?.noteDomCommit(sid, timeline.end);
+  }, [sid, timeline.end, timeline.status]);
+
   useEffect(() => {
     const appended = timeline.end > prevEndRef.current;
     const initialLoad = prevEndRef.current === 0 && timeline.end > 0;
