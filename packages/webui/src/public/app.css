@@ -6023,6 +6023,12 @@ button.session-tab {
   gap: 0.75rem;
 }
 
+/* セッション自身の行 (ツリー先頭)。グループヘッダを持たない単独行なので、
+ * 続く Teammates グループとの間に同じ間隔を空ける。 */
+.agent-tree-self {
+  margin-bottom: 0.45rem;
+}
+
 .agent-tree-group-header {
   font-size: 0.75rem;
   font-weight: 600;

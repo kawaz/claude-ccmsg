@@ -2378,12 +2378,18 @@ export function Timeline({
     currentLocator.view === "timeline" && currentLocator.sid === sid
       ? (currentLocator.position ?? "head")
       : "head";
+  // 位置指定 URL (`/timeline/<uuid>`) は親セッションの TL しか指せない —
+  // locator の grammar 上、agent TL (`/timeline/agent/...`) の position は
+  // 常に "head" で、agent ref と uuid を同時に表す形が無い (locator.ts)。
+  // agent TL で位置を書き込むと agent ref が落ち、項目をクリックしただけで
+  // 親 TL へ弾き出される。表せない選択なので agent TL では行わない。
   const selectPosition = useCallback(
     (uuid: string) => {
+      if (agent && (agent.agentId || agent.teammate)) return;
       rememberTimelinePosition(sid, uuid);
       replaceNavigation(timelineHref(sid, uuid));
     },
-    [sid],
+    [sid, agent?.agentId, agent?.teammate],
   );
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon

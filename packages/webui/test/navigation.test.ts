@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { initialState, reducer, type AppState } from "../src/client/store.ts";
 import {
   initialLocatorReady,
+  isAgentTimelineUrl,
   isSameSessionTabChange,
   missingTargetMessage,
   recentIsValid,
@@ -179,6 +180,36 @@ describe("recent session restoration", () => {
     expect(
       await resolveSessionRootTarget(record, "s1", stateWithSession(), missing, "http://localhost"),
     ).toBe("/s/s1/timeline/head");
+  });
+
+  const agentUrls = [
+    "/s/s1/timeline/agent/tm/worker",
+    "/s/s1/timeline/agent/sub/a0123456789abcdef",
+    "/s/s1/timeline/agent/wf/wf_0123abcd-001/a0123456789abcdef",
+  ];
+
+  test("every agent TL URL shape is recognised, and the session's own views are not", () => {
+    for (const url of agentUrls) {
+      expect(isAgentTimelineUrl(url, "http://localhost")).toBe(true);
+    }
+    for (const url of ["/s/s1/timeline/head", "/s/s1/timeline/u-2", "/s/s1/files?path=a.ts"]) {
+      expect(isAgentTimelineUrl(url, "http://localhost")).toBe(false);
+    }
+  });
+
+  test("an agent TL is never restored for the session root, so the sidebar always lands on the session's own timeline", async () => {
+    const state = stateWithSession();
+    const ws = wsWithStat(null);
+    for (const url of agentUrls) {
+      expect(await recentIsValid(recent(url), "s1", state, ws, "http://localhost")).toBe(false);
+      expect(await resolveSessionRootTarget(recent(url), "s1", state, ws, "http://localhost")).toBe(
+        "/s/s1/timeline/head",
+      );
+    }
+    // 親セッション自身の TL は従来どおり復元対象のまま。
+    expect(
+      await recentIsValid(recent("/s/s1/timeline/head"), "s1", state, ws, "http://localhost"),
+    ).toBe(true);
   });
 
   test("malformed JSONL rows cannot accidentally validate a UUID", () => {

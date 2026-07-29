@@ -25,7 +25,7 @@ import type {
 } from "@ccmsg/protocol";
 import { createContext } from "preact";
 import { useContext, useState } from "preact/hooks";
-import { agentTimelineHref, type AgentRef } from "../locator.ts";
+import { agentTimelineHref, timelineHref, type AgentRef } from "../locator.ts";
 import {
   buildWorkflowDrilldown,
   canonicalModelId,
@@ -497,9 +497,30 @@ export function AgentTreePanel({
   currentAgent?: AgentRef | null;
 }) {
   const drillLookup = buildAgentDrillLookup(workflows);
+  const onMain = !currentAgent;
   return (
     <CurrentAgentContext.Provider value={currentAgent ?? null}>
       <div class="agent-tree-panel">
+        {/* kawaz r76 m59: ツリーはセッションが生やした agent しか並べておらず、
+         * agent TL からセッション自身の TL へ戻る導線がツリー側に無かった。
+         * 先頭にセッション自身の行を置き、他の行と同じ選択ハイライト規則
+         * (agent 未選択 = ここが current) で現在地も示す。 */}
+        <ul class="agent-tree-root agent-tree-self">
+          <li class="agent-tree-node">
+            <div
+              class={"agent-tree-row" + (onMain ? " agent-tree-row-current" : "")}
+              aria-current={onMain ? "true" : undefined}
+            >
+              <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
+              {/* state を持たない行なので dot は描かず、幅だけ揃えて
+               * agent 行とラベル位置を合わせる。 */}
+              <span class="status-teammate-dot" aria-hidden="true" />
+              <a class="agent-tree-label" href={timelineHref(sid)} title="このセッション自身の TL">
+                main
+              </a>
+            </div>
+          </li>
+        </ul>
         <StandardGroup sid={sid} label="Teammates" nodes={tree.teammates} />
         <StandardGroup sid={sid} label="Agents" nodes={tree.agents} />
         <WorkflowsGroup sid={sid} runs={tree.workflows} drillLookup={drillLookup} />

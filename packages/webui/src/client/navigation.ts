@@ -59,7 +59,27 @@ function readRecent(sid: string): RecentRecord | null {
   }
 }
 
+/** An agent TL is a drill-down into one subagent's transcript, not a place the
+ * session itself was — so it is neither recorded as nor accepted as the
+ * session's recent view. Restoring one for `/s/<sid>` (the sidebar's session
+ * link) made every return to the session land back on that subagent, with no
+ * way to reach the session's own timeline from the sidebar (kawaz r76 m59).
+ * The agent may also be gone by the time the record is read, while the
+ * session's own timeline always exists. */
+export function isAgentTimelineUrl(url: string, origin: string = location.origin): boolean {
+  const parsed = new URL(url, origin);
+  const locator = parseUrl(parsed.pathname, parsed.search);
+  return locator.view === "timeline" && !!locator.agent;
+}
+
+/** Records where the user was working in `sid`, for `/s/<sid>` to restore.
+ * Skipping agent TLs here keeps the last non-agent view, so drilling into a
+ * subagent and leaving doesn't throw away the file or timeline position the
+ * session was actually parked on. recentIsValid re-checks on the read side
+ * because a record written before this gate existed outlives it by up to
+ * RECENT_STALE_MS. */
 function saveRecent(sid: string, url: string): void {
+  if (isAgentTimelineUrl(url)) return;
   writeStorage(recentKey(sid), JSON.stringify({ url, updatedAt: new Date().toISOString() }));
 }
 
@@ -73,6 +93,7 @@ export async function recentIsValid(
   if (!sessionExists(state, sid)) return false;
   const url = new URL(record.url, origin);
   const locator = parseUrl(url.pathname, url.search);
+  if (isAgentTimelineUrl(record.url, origin)) return false;
   if (locator.view === "timeline" && locator.position && locator.position !== "head") {
     try {
       const result = await ws.transcriptRead(sid);
