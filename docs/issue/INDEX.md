@@ -4,20 +4,22 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-07-04 | design | idea | [daemon-side-subscribe-detection](./2026-07-04-daemon-side-subscribe-detection.md) | UserPromptSubmit hook の subscribe 稼働検出を ps 走査から daemon 問い合わせへ置き換える案 |
-| 2026-07-09 | design | wip | [webui-workspace-roadmap](./2026-07-09-webui-workspace-roadmap.md) | webui を workspace UI に育てる長期 roadmap (セッションリスト/ルームリスト+チャット/ファイルツリー+コードビューア、並列進行) |
-| 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | ccmsg メッセージを WebRTC DataChannel に載せ、静的ホスティング + ICE candidate URL + passkey 認証で tailnet 非依存の transport を実現する構想 |
-| 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | webui 配信経路を自作 Bun.build+キャッシュ構成から Bun 1.3 公式 fullstack 機能 (HTML import + Bun.serve routes) へ置換できないか検討 |
+| 2026-07-17 | task | idea | [webui-simplify-componentization](./2026-07-17-webui-simplify-componentization.md) | webui の場当たり改修で重複したパターン (localStorage load/save、FAB+popup、fs_list dispatch、details 折りたたみ、タブ切替) のコンポーネント化・simplify 棚卸し。機能実装キューが捌けた後に着手 |
+| 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
+| 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
 | 2026-07-11 | design | idea | [origin-isolated-app-reverse-proxy](./2026-07-11-origin-isolated-app-reverse-proxy.md) | 自己所有ドメイン + wildcard ACME の app リバースプロキシ構想 (docroot ごとの origin 分離で JS 実行可能な file serving) |
+| 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | webui 配信経路を自作 Bun.build+キャッシュ構成から Bun 1.3 公式 fullstack 機能 (HTML import + Bun.serve routes) へ置換できないか検討 |
+| 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | ccmsg メッセージを WebRTC DataChannel に載せ、静的ホスティング + ICE candidate URL + passkey 認証で tailnet 非依存の transport を実現する構想 |
+| 2026-07-04 | design | idea | [daemon-side-subscribe-detection](./2026-07-04-daemon-side-subscribe-detection.md) | UserPromptSubmit hook の subscribe 稼働検出を ps 走査から daemon 問い合わせへ置き換える案 |
+| 2026-07-29 | bug | open | [inview-search-skips-closed-folds](./2026-07-29-inview-search-skips-closed-folds.md) | TL の in-view search が閉じた fold の中身をカウントしない (「fold の開閉に関わらず数える」というコメントの仕様記述と実装が食い違い) |
+| 2026-07-29 | bug | open | [self-ccmsg-post-bubbles-missing](./2026-07-29-self-ccmsg-post-bubbles-missing.md) | DR-0027 §2.2 の自 post/reply バブルが TL に出ていない。bash 一体カード実装で自 post 検出が tool-result のみ見る片面変更が回帰原因、DR を復活/supersede どちらにするか裁定待ち |
+| 2026-07-29 | design | open | [sandbox-origin-raw-content-serving](./2026-07-29-sandbox-origin-raw-content-serving.md) | canddy sandbox origin (apps とは別 eTLD+1) を使い、MIME 制限なしの生配信 (HTML/バイナリ/長大出力) を capability トークンで提供する設計検討 |
+| 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |
+| 2026-07-26 | design | open | [webui-url-structure-redesign](./2026-07-26-webui-url-structure-redesign.md) | webui の URL 構造を論理的に再設計する。機能追加のたびにバラバラになった URL 形式の棚卸し・論理体系の設計・移行方針の決定 |
+| 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
+| 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
+| 2026-07-16 | request | open | [kawaz-agents-status](./kawaz-agents-status.md) | claude agents --json を見るとbusyの他に status:"inactive" などもあるはずだがサイドバー |
+| 2026-07-16 | request | open | [kawaz-req1](./kawaz-req1.md) | claude agents --jsonを見るとbusyの他に status:"inactive" などもあるが、現在サイドバーのSESSIONSでは bysy… |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
-| 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
-| 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
-| 2026-07-17 | task | idea | [webui-simplify-componentization](./2026-07-17-webui-simplify-componentization.md) | webui の場当たり改修で重複したパターン (localStorage load/save、FAB+popup、fs_list dispatch、details 折りたたみ、タブ切替) のコンポーネント化・simplify 棚卸し。機能実装キューが捌けた後に着手 |
-| 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
-| 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
-| 2026-07-26 | design | open | [webui-url-structure-redesign](./2026-07-26-webui-url-structure-redesign.md) | webui の URL 構造を論理的に再設計する。機能追加のたびにバラバラになった URL 形式の棚卸し・論理体系の設計・移行方針の決定 |
-| 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |
-| 2026-07-29 | design | open | [sandbox-origin-raw-content-serving](./2026-07-29-sandbox-origin-raw-content-serving.md) | canddy sandbox origin (apps とは別 eTLD+1) を使い、MIME 制限なしの生配信 (HTML/バイナリ/長大出力) を capability トークンで提供する設計検討 |
-| 2026-07-29 | bug | open | [self-ccmsg-post-bubbles-missing](./2026-07-29-self-ccmsg-post-bubbles-missing.md) | DR-0027 §2.2 の自 post/reply バブルが TL に出ていない。bash 一体カード実装で自 post 検出が tool-result のみ見る片面変更が回帰原因、DR を復活/supersede どちらにするか裁定待ち |
-| 2026-07-29 | bug | open | [inview-search-skips-closed-folds](./2026-07-29-inview-search-skips-closed-folds.md) | TL の in-view search が閉じた fold の中身をカウントしない (「fold の開閉に関わらず数える」というコメントの仕様記述と実装が食い違い) |
+| 2026-07-09 | design | wip | [webui-workspace-roadmap](./2026-07-09-webui-workspace-roadmap.md) | webui を workspace UI に育てる長期 roadmap (セッションリスト/ルームリスト+チャット/ファイルツリー+コードビューア、並列進行) |
