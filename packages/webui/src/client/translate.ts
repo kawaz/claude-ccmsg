@@ -1,4 +1,5 @@
 import type { ErrorResponse, TranslateResponse } from "@ccmsg/protocol";
+import { setBounded } from "./bounded-map.ts";
 
 // thinking ブロックの原文 -> 日本語訳を提供する薄いレイヤ (U2: Timeline
 // thinking 翻訳タブ)。Chrome built-in Translator API
@@ -86,6 +87,13 @@ function getTranslator(): Promise<TranslatorLike> {
  * 投げ直さない — kawaz spec の「結果は segment 単位でメモリキャッシュ」。 */
 const paragraphCache = new Map<string, string>();
 
+/** 段落キャッシュ (browser / host 共通) の保持上限。キーは段落の原文そのもの
+ * なので、開いた thinking ブロックの総量がそのまま常駐ヒープになる。再訪で
+ * 効かせたいのは「今見ている周辺の thinking」であって全履歴ではないため、
+ * 直近書き込み順で古い段落から捨てる。溢れた段落は次に開いた時に再翻訳
+ * (host 経路なら daemon へ 1 op) されるだけで、表示は壊れない。 */
+const PARAGRAPH_CACHE_MAX_ENTRIES = 512;
+
 /** 1 段落を翻訳する。既に日本語を含む段落・空段落は原文のまま、API 呼び出し
  * が失敗した段落も原文へ fallback する (kawaz spec: 「失敗段落は原文
  * fallback」) — 一部失敗が全体の結果を壊さない。 */
@@ -96,7 +104,7 @@ async function translateParagraph(paragraph: string): Promise<string> {
   try {
     const translator = await getTranslator();
     const result = await translator.translate(paragraph);
-    paragraphCache.set(paragraph, result);
+    setBounded(paragraphCache, paragraph, result, PARAGRAPH_CACHE_MAX_ENTRIES);
     return result;
   } catch {
     return paragraph;
@@ -117,7 +125,12 @@ export type HostTranslateRequest = (texts: string[]) => Promise<TranslateRespons
 
 /** host 翻訳も browser 翻訳と同じ段落単位で成功結果を共有する。同じ段落は
  * thinking text をまたいで再利用し、失敗時は削除して helper 復帰後の再試行を
- * 許す。Promise を保持するため、同じ段落の並行要求も 1 op に集約される。 */
+ * 許す。Promise を保持するため、同じ段落の並行要求も 1 op に集約される。
+ *
+ * paragraphCache と同じ上限を持つ。未解決の Promise が溢れて捨てられても、
+ * onResult 側は「自分が入れた promise がまだ載っているか」を確認してから
+ * 消すので他人のエントリを壊さない。捨てられた直後に同じ段落が再要求されれば
+ * daemon への op が 1 回余分に出るだけで、結果は同じ。 */
 const hostTextCache = new Map<string, Promise<string>>();
 
 // 未完了の host 段落リクエスト数。daemon は helper を直列で回すため、この
@@ -248,7 +261,7 @@ function translateParagraphOnHost(
   const promise = new Promise<string>((resolve) => {
     resolveOuter = resolve;
   });
-  hostTextCache.set(paragraph, promise);
+  setBounded(hostTextCache, paragraph, promise, PARAGRAPH_CACHE_MAX_ENTRIES);
   enqueueBatchItem({
     paragraph,
     request,

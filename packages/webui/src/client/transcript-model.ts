@@ -442,13 +442,29 @@ function isConsumedToolResult(line: ParsedLine): boolean {
  * page is spliced in front — so offsets computed this way stay stable across
  * prepends for every line that was already cached.
  */
-export function lineByteOffsets(start: number, lines: string[]): number[] {
-  const encoder = new TextEncoder();
+export function lineByteOffsets(start: number, lines: readonly string[]): number[] {
+  return byteOffsetsFromLengths(start, lines.map(utf8ByteLength));
+}
+
+const TEXT_ENCODER = new TextEncoder();
+
+/** UTF-8 size of one transcript line, without its newline. Split out (with
+ * `byteOffsetsFromLengths` below) so Timeline.tsx can measure each line once
+ * and keep the measurement across renders — offsets shift wholesale when a
+ * "load older" page moves `start`, but a line's own byte length never changes.
+ */
+export function utf8ByteLength(line: string): number {
+  return TEXT_ENCODER.encode(line).length;
+}
+
+/** Absolute offsets from `start` given each line's UTF-8 byte length, adding
+ * back the newline that separates them on disk. */
+export function byteOffsetsFromLengths(start: number, byteLengths: readonly number[]): number[] {
   const offsets: number[] = [];
   let pos = start;
-  for (const line of lines) {
+  for (const bytes of byteLengths) {
     offsets.push(pos);
-    pos += encoder.encode(line).length + 1;
+    pos += bytes + 1;
   }
   return offsets;
 }
@@ -485,14 +501,24 @@ export interface RawTranscriptRow {
  * Offsets come from `lineByteOffsets`, so raw rows and rich entries key off
  * the identical numbers.
  */
-export function rawTranscriptRows(start: number, lines: string[]): RawTranscriptRow[] {
-  const encoder = new TextEncoder();
-  const offsets = lineByteOffsets(start, lines);
+export function rawTranscriptRows(start: number, lines: readonly string[]): RawTranscriptRow[] {
+  const byteLengths = lines.map(utf8ByteLength);
+  return rawTranscriptRowsFrom(lines, byteOffsetsFromLengths(start, byteLengths), byteLengths);
+}
+
+/** `rawTranscriptRows` for a caller that already holds the two per-line
+ * measurements (Timeline.tsx keeps both across renders). All three arrays are
+ * index-aligned. */
+export function rawTranscriptRowsFrom(
+  lines: readonly string[],
+  offsets: readonly number[],
+  byteLengths: readonly number[],
+): RawTranscriptRow[] {
   return lines.map((text, i) => ({
     offset: offsets[i]!,
     index: i + 1,
     text,
-    bytes: encoder.encode(text).length,
+    bytes: byteLengths[i]!,
   }));
 }
 
@@ -2126,22 +2152,20 @@ function queuePairingKey(text: string): string {
  * popped the queue) is the sole record of that text and stays rendered.
  */
 export function parseTranscriptLines(raws: string[]): ParsedLine[] {
-  const lines = raws.map((raw) => {
-    let obj: unknown;
-    try {
-      obj = JSON.parse(raw);
-    } catch (e) {
-      return {
-        kind: "broken",
-        raw,
-        error: e instanceof Error ? e.message : "parse error",
-      } as const;
-    }
-    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-      return { kind: "broken", raw, error: "not a JSON object" } as const;
-    }
-    return parseTranscriptObject(obj as Record<string, unknown>, raw);
-  });
+  return pairQueuedTurns(raws.map(parseTranscriptLine), raws);
+}
+
+/**
+ * The cross-line half of `parseTranscriptLines` (see its doc comment for what
+ * the pairing does and why), split out so a caller that parses lines one at a
+ * time — Timeline.tsx reuses the parse of every line a live-tail append left
+ * untouched — can still apply it over the whole window. Pure: `lines` and
+ * `raws` are index-aligned inputs, neither is mutated.
+ */
+export function pairQueuedTurns(
+  lines: readonly ParsedLine[],
+  raws: readonly string[],
+): ParsedLine[] {
   // Delivered bodies -> their line indices, so a queued copy only cancels
   // against a delivery that comes *after* it (the queue row is written when
   // the message arrives, the user row when it is dequeued), and N queued
@@ -2160,9 +2184,9 @@ export function parseTranscriptLines(raws: string[]): ParsedLine[] {
     if (indices) indices.push(index);
     else delivered.set(key, [index]);
   });
-  if (delivered.size === 0) return lines as ParsedLine[];
+  if (delivered.size === 0) return lines.slice();
   const consumed = new Set<number>();
-  return (lines as ParsedLine[]).map((line, index) => {
+  return lines.map((line, index) => {
     if (line.kind !== "turn" || line.queuedContent === undefined) return line;
     const indices = delivered.get(line.queuedContent);
     const match = indices?.find((at) => at > index && !consumed.has(at));

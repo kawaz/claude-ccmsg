@@ -341,6 +341,13 @@ export type Action =
       end: number;
       size: number;
     }
+  // Drops the cached transcript of sessions whose SessionView has been
+  // evicted from App's LRU (see session-view-cache.ts's
+  // evictedSessionViewSids for why the transcript specifically, and why the
+  // rest of the tree stays). Resets each sid's TimelineState to its initial
+  // "idle" shape rather than deleting the tree, so a revisit takes the same
+  // first-visit path as a session that was never opened.
+  | { type: "timeline/evicted"; sids: string[] }
   // Folded status snapshot (DR-0020 Phase 1/2): dispatched both from
   // sessionStatusSubscribe's resolved response (initial paint) and from
   // ws.ts's `ev:"session_status"` push handler (every later recompute) —
@@ -834,6 +841,25 @@ export function reducer(state: AppState, action: Action): AppState {
         ...tree,
         timeline: { ...tree.timeline, status: "loading", error: undefined },
       });
+      return { ...state, sessionTrees };
+    }
+    case "timeline/evicted": {
+      // Only touch sids that actually hold something — an eviction for a
+      // session whose Timeline was never opened must not fabricate a tree
+      // entry (absence is meaningful for `sessionTrees` the same way it is
+      // for `sessionStatuses`), and re-idling an already-idle timeline would
+      // hand every subscriber a new state object for no change.
+      const targets = action.sids.filter((sid) => {
+        const timeline = state.sessionTrees.get(sid)?.timeline;
+        return timeline !== undefined && timeline.status !== "idle";
+      });
+      if (targets.length === 0) return state;
+      const sessionTrees = new Map(state.sessionTrees);
+      for (const sid of targets) {
+        const tree = sessionTrees.get(sid);
+        if (!tree) continue; // unreachable: filtered above
+        sessionTrees.set(sid, { ...tree, timeline: newTimelineState() });
+      }
       return { ...state, sessionTrees };
     }
     case "timeline/loaded":

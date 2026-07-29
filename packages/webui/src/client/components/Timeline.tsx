@@ -21,6 +21,8 @@ import { rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { activeTraceCollector } from "../trace.ts";
+import { setBounded } from "../bounded-map.ts";
+import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-map.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
@@ -41,11 +43,13 @@ import {
   itemRawSourceOffsets,
   splitFoldSubgroups,
   userNavTargets,
-  lineByteOffsets,
+  byteOffsetsFromLengths,
+  pairQueuedTurns,
   parseSystemMessageFields,
-  parseTranscriptLines,
-  rawTranscriptRows,
+  parseTranscriptLine,
+  rawTranscriptRowsFrom,
   resolveToolResults,
+  utf8ByteLength,
   truncateRawLine,
   type BashCommandOutput,
   type CcmsgMessage,
@@ -1972,6 +1976,16 @@ interface CcmsgReadBody {
 type CcmsgBodyCacheEntry = CcmsgReadBody | Promise<CcmsgReadBody | null> | "failed";
 const CCMSG_BODY_CACHE = new Map<string, CcmsgBodyCacheEntry>();
 
+/** 保持する (room, mid) 数の上限。1 セッションで開く transcript が増えるほど
+ * 別々の key が積み上がり、値は msg 本文なので 1 件が小さいとも限らない。
+ * 溢れた key は「まだ fetch していない」状態に戻るだけで、次にその bubble が
+ * mount された時に read し直される (= "failed" と同じ復帰経路)。 */
+const CCMSG_BODY_CACHE_MAX_ENTRIES = 256;
+
+function setCcmsgBody(key: string, entry: CcmsgBodyCacheEntry): void {
+  setBounded(CCMSG_BODY_CACHE, key, entry, CCMSG_BODY_CACHE_MAX_ENTRIES);
+}
+
 function ccmsgBodyCacheKey(room: string, mid: number): string {
   return `${room}|m${mid}`;
 }
@@ -2014,7 +2028,7 @@ function useCcmsgBody(room: string, mid: number | undefined): CcmsgReadBody | "f
       .read(room, [mid])
       .then((resp) => {
         if (!resp.ok || resp.msgs.length === 0) {
-          CCMSG_BODY_CACHE.set(key, "failed");
+          setCcmsgBody(key, "failed");
           return null;
         }
         const m = resp.msgs[0]!;
@@ -2024,14 +2038,14 @@ function useCcmsgBody(room: string, mid: number | undefined): CcmsgReadBody | "f
           msg: m.msg,
           ts: m.ts,
         };
-        CCMSG_BODY_CACHE.set(key, body);
+        setCcmsgBody(key, body);
         return body;
       })
       .catch(() => {
-        CCMSG_BODY_CACHE.set(key, "failed");
+        setCcmsgBody(key, "failed");
         return null;
       });
-    CCMSG_BODY_CACHE.set(key, p);
+    setCcmsgBody(key, p);
     void p.then(onSettle);
     return () => {
       cancelled = true;
@@ -2622,18 +2636,40 @@ export function Timeline({
       });
   }
 
-  // Re-parsing on every render is cheap (pure JSON.parse over cached
-  // strings), but memoizing keeps it off the hot path of unrelated re-renders
-  // (e.g. sidebar toggles) that don't change `timeline.lines`.
+  // Per-line derivations (JSON parse, UTF-8 size) are memoized per *line*,
+  // not per lines-array: the store hands us a new array for every live-tail
+  // push, and re-deriving the whole window meant re-parsing the entire
+  // transcript once per appended line. See incremental-line-map.ts.
+  const parseCacheRef = useRef(emptyLineMapCache<ParsedLine>());
+  const byteLengthCacheRef = useRef(emptyLineMapCache<number>());
+  const perLine = useMemo(() => {
+    parseCacheRef.current = mapLinesIncrementally(
+      parseCacheRef.current,
+      timeline.lines,
+      parseTranscriptLine,
+    );
+    return parseCacheRef.current.values;
+  }, [timeline.lines]);
+  const byteLengths = useMemo(() => {
+    byteLengthCacheRef.current = mapLinesIncrementally(
+      byteLengthCacheRef.current,
+      timeline.lines,
+      utf8ByteLength,
+    );
+    return byteLengthCacheRef.current.values;
+  }, [timeline.lines]);
+  // The two passes that need the whole window (queue-operation pairing,
+  // tool_use/tool_result joining) run over the per-line results — they read
+  // neighbouring lines, so they can't be folded into the per-line cache.
   const parsed = useMemo(
-    () => resolveToolResults(parseTranscriptLines(timeline.lines)),
-    [timeline.lines],
+    () => resolveToolResults(pairQueuedTurns(perLine, timeline.lines)),
+    [perLine, timeline.lines],
   );
   // Absolute byte offsets, one per cached line — stable Preact keys across a
   // "load older" prepend (see transcript-model.ts's lineByteOffsets doc).
   const offsets = useMemo(
-    () => lineByteOffsets(timeline.start, timeline.lines),
-    [timeline.start, timeline.lines],
+    () => byteOffsetsFromLengths(timeline.start, byteLengths),
+    [timeline.start, byteLengths],
   );
   // Tools folding (kawaz spec): boundary lines (user prompts / assistant
   // user-facing final responses) stay standalone entries, everything between
@@ -2722,25 +2758,22 @@ export function Timeline({
   // 「1 行 = 1 表示単位」が崩れるが、raw 側は畳まず・分けず・並べ替えずに
   // キャッシュ済みの行をそのまま出す (RawTranscriptView)。
   const [rawView, setRawView] = useState(false);
-  // 生 JSONL の行 + その絶対 byte offset。rich 側の Preact key と同じ
-  // `lineByteOffsets` 由来なので、raw の行と rich のバブルを突き合わせられる。
-  // raw 表示中だけ組み立てる (rich 表示のままなら無駄な TextEncoder 走査を
-  // しない)。データは rich と同じ `timeline.lines` — daemon への追加取得なし。
+  // 生 JSONL の行 + その絶対 byte offset。rich 側の Preact key と同じ offset
+  // 由来なので、raw の行と rich のバブルを突き合わせられる。全体 raw 表示
+  // (rawRows) と項目ごとの jsonl トグル (rawRowByOffset、kawaz r55 m89) が
+  // 同じ配列を共有する — 後者は「どの項目が展開されるか事前に判らない」ため
+  // 常に必要なので、rawView で組み立てを出し分ける意味がない。行テキストは
+  // `timeline.lines` を指すだけなのでコピーは発生しない。データは rich と
+  // 同じ `timeline.lines` — daemon への追加取得なし。
   const rawRows = useMemo(
-    () => (rawView ? rawTranscriptRows(timeline.start, timeline.lines) : []),
-    [rawView, timeline.start, timeline.lines],
+    () => rawTranscriptRowsFrom(timeline.lines, offsets, byteLengths),
+    [timeline.lines, offsets, byteLengths],
   );
-
-  // 項目ごとの jsonl トグル (kawaz r55 m89) が引く元行。全体 raw 表示と違い
-  // 常に組み立てておく必要がある (どの項目が展開されるか事前に判らない) が、
-  // 行テキストは `timeline.lines` を指すだけなのでコピーは発生しない。
-  // offset -> RawTranscriptRow[] を毎回引き直さずに済むよう、全行を offset で
-  // 引ける index を作ってから itemRawSourceOffsets の対応表を通す。
   const rawRowByOffset = useMemo(() => {
     const map = new Map<number, RawTranscriptRow>();
-    for (const row of rawTranscriptRows(timeline.start, timeline.lines)) map.set(row.offset, row);
+    for (const row of rawRows) map.set(row.offset, row);
     return map;
-  }, [timeline.start, timeline.lines]);
+  }, [rawRows]);
   const itemRawSources = useMemo(() => itemRawSourceOffsets(parsed, offsets), [parsed, offsets]);
   const getItemRawRows = useCallback(
     (offset: number) =>

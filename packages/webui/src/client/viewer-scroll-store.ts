@@ -20,6 +20,8 @@
 // replaceNavigation で使い回す経路 (タブ切替) があるため、key だけを信じると
 // 別コンテンツへ他人の位置を当ててしまう。
 
+import { setBounded } from "./bounded-map.ts";
+
 export interface ViewerScrollRecord {
   /** 記録時に viewer が表示していた path。復元時の照合に使う。 */
   path: string;
@@ -41,13 +43,7 @@ export const VIEWER_SCROLL_MAX_ENTRIES = 64;
 const records = new Map<string, ViewerScrollRecord>();
 
 export function rememberViewerScroll(key: string, record: ViewerScrollRecord): void {
-  records.delete(key);
-  records.set(key, record);
-  while (records.size > VIEWER_SCROLL_MAX_ENTRIES) {
-    const oldest = records.keys().next();
-    if (oldest.done) break;
-    records.delete(oldest.value);
-  }
+  setBounded(records, key, record, VIEWER_SCROLL_MAX_ENTRIES);
 }
 
 export function readViewerScroll(key: string): ViewerScrollRecord | null {

@@ -1214,6 +1214,69 @@ describe("reducer / timeline/tail (U2 live-tail addendum)", () => {
   });
 });
 
+// timeline/evicted: App's SessionView LRU drops a session's whole view, and
+// the transcript it cached in the store has no other release path — without
+// this every distinct session ever opened leaves its lines resident for the
+// lifetime of the tab. Everything else in the tree survives, because a revisit
+// genuinely reuses it (the transcript, by contrast, is re-read wholesale on
+// arrival regardless).
+describe("reducer / timeline/evicted", () => {
+  function loadedTree(sid: string, lines: string[]) {
+    let state = dispatch(initialState(), { type: "fs/dir-toggled", sid, path: "src" });
+    state = dispatch(state, {
+      type: "fs/dir-loaded",
+      sid,
+      path: "src",
+      entries: [{ name: "main.ts", type: "file" }],
+    });
+    return dispatch(state, {
+      type: "timeline/loaded",
+      sid,
+      mode: "replace",
+      response: { ok: true, sid, lines, start: 0, end: 10, size: 10 },
+    });
+  }
+
+  test("drops the evicted session's transcript but keeps its file-browsing state", () => {
+    const loaded = loadedTree("sess-1", ["a", "b"]);
+    const state = dispatch(loaded, { type: "timeline/evicted", sids: ["sess-1"] });
+    const tree = state.sessionTrees.get("sess-1");
+    expect(tree?.timeline.lines).toEqual([]);
+    // "idle", not "loaded" with empty lines: a revisit must take the same
+    // first-visit load path as a session that was never opened.
+    expect(tree?.timeline.status).toBe("idle");
+    expect(tree?.dirs.get("src")).toEqual([{ name: "main.ts", type: "file" }]);
+    expect(tree?.expanded.has("src")).toBe(true);
+  });
+
+  test("evicts only the named sessions", () => {
+    let state = loadedTree("sess-1", ["a"]);
+    state = dispatch(state, {
+      type: "timeline/loaded",
+      sid: "sess-2",
+      mode: "replace",
+      response: { ok: true, sid: "sess-2", lines: ["b"], start: 0, end: 10, size: 10 },
+    });
+    const evicted = dispatch(state, { type: "timeline/evicted", sids: ["sess-1"] });
+    expect(evicted.sessionTrees.get("sess-1")?.timeline.lines).toEqual([]);
+    expect(evicted.sessionTrees.get("sess-2")?.timeline.lines).toEqual(["b"]);
+  });
+
+  test("evicting a session with nothing loaded changes nothing", () => {
+    const state = loadedTree("sess-1", ["a"]);
+    // Never-opened sid: absence in sessionTrees is meaningful, so no entry is
+    // fabricated. Already-idle sid: no new state object for subscribers.
+    const evicted = dispatch(state, { type: "timeline/evicted", sids: ["never-seen"] });
+    expect(evicted).toBe(state);
+    expect(evicted.sessionTrees.has("never-seen")).toBe(false);
+    const twice = dispatch(dispatch(state, { type: "timeline/evicted", sids: ["sess-1"] }), {
+      type: "timeline/evicted",
+      sids: ["sess-1"],
+    });
+    expect(twice.sessionTrees.get("sess-1")?.timeline.status).toBe("idle");
+  });
+});
+
 // selectedRoomId/selectedSid (kawaz 2026-07-12): the sidebar's RoomList and
 // SessionList must highlight exactly the row the locator (state.view)
 // currently points at, never a leftover id from a previously-visited view.

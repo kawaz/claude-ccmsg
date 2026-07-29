@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  evictedSessionViewSids,
   skipInactiveSessionViewRender,
   touchSessionViewCache,
   type CachedSessionView,
@@ -43,5 +44,36 @@ describe("session view LRU cache", () => {
 
   test("a zero limit retains no session DOM", () => {
     expect(touchSessionViewCache([entry("s1")], entry("s2"), 0)).toEqual([]);
+  });
+});
+
+describe("session view eviction", () => {
+  test("reports the sessions the LRU pushed out", () => {
+    const previous = [entry("s1"), entry("s2"), entry("s3")];
+    const next = touchSessionViewCache(previous, entry("s4"), 3);
+    expect(evictedSessionViewSids(previous, next)).toEqual(["s1"]);
+  });
+
+  test("reports nothing while the cache still has room", () => {
+    const previous = [entry("s1")];
+    expect(
+      evictedSessionViewSids(previous, touchSessionViewCache(previous, entry("s2"), 3)),
+    ).toEqual([]);
+  });
+
+  test("re-visiting a cached session evicts no one", () => {
+    // s1 moves to the most-recent end rather than leaving the cache — its
+    // transcript is still mounted and must not be dropped.
+    const previous = [entry("s1"), entry("s2"), entry("s3")];
+    expect(
+      evictedSessionViewSids(previous, touchSessionViewCache(previous, entry("s1"), 3)),
+    ).toEqual([]);
+  });
+
+  test("a shrunk limit reports every session it dropped", () => {
+    const previous = [entry("s1"), entry("s2"), entry("s3")];
+    expect(
+      evictedSessionViewSids(previous, touchSessionViewCache(previous, entry("s4"), 1)),
+    ).toEqual(["s1", "s2", "s3"]);
   });
 });

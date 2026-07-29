@@ -13,6 +13,7 @@ import { PaneSplitter } from "./PaneSplitter.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
 import {
+  evictedSessionViewSids,
   skipInactiveSessionViewRender,
   touchSessionViewCache,
   type CachedSessionView,
@@ -108,6 +109,11 @@ export function App() {
   const state = useStoreState(store);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
   const sessionViewsRef = useRef<CachedSessionView[]>([]);
+  // Sids the LRU dropped since the last commit, queued for the effect below.
+  // The eviction is discovered here (render) but dispatched there, because a
+  // dispatch during render would re-enter the store while Preact is building
+  // this tree.
+  const evictedSidsRef = useRef<string[]>([]);
   const visibleSessionSid =
     state.navigationError === null &&
     state.unknownPath === null &&
@@ -115,12 +121,26 @@ export function App() {
       ? state.currentSid
       : null;
   if (visibleSessionSid !== null) {
-    sessionViewsRef.current = touchSessionViewCache(sessionViewsRef.current, {
+    const previous = sessionViewsRef.current;
+    sessionViewsRef.current = touchSessionViewCache(previous, {
       sid: visibleSessionSid,
       tab: state.currentTab ?? "files",
       agent: state.currentAgent,
     });
+    const evicted = evictedSessionViewSids(previous, sessionViewsRef.current);
+    if (evicted.length > 0) evictedSidsRef.current.push(...evicted);
   }
+  useEffect(() => {
+    const queued = evictedSidsRef.current;
+    if (queued.length === 0) return;
+    evictedSidsRef.current = [];
+    // A sid can be evicted and then re-visited before this effect runs (fast
+    // A→B→C→D→A navigation); dropping its transcript at that point would
+    // throw away a Timeline that is mounted and current.
+    const mounted = new Set(sessionViewsRef.current.map((view) => view.sid));
+    const sids = queued.filter((sid) => !mounted.has(sid));
+    if (sids.length > 0) store.dispatch({ type: "timeline/evicted", sids });
+  });
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);

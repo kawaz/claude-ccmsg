@@ -30,6 +30,7 @@ import {
   parseBashInputText,
   parseBashOutputText,
   parseSystemMessageFields,
+  pairQueuedTurns,
   parseTranscriptLine,
   resolveToolResults,
   parseTranscriptLines,
@@ -675,6 +676,40 @@ describe("parseTranscriptLine / assistant turns", () => {
 // from the kuu 38095e85 transcript (2026-07-25), where the harness notice at
 // lines 1357/1361 rendered as a green user bubble because only the metadata-
 // less queued copy reached the classifier.
+// Timeline.tsx does not call parseTranscriptLines: to avoid re-parsing the
+// whole transcript on every live-tail append it parses lines one at a time
+// (caching the ones that did not change) and runs the cross-line pairing pass
+// separately. That split is only safe while the two spellings agree, including
+// on the pairing that reaches across lines.
+describe("parseTranscriptLines / per-line + cross-line split", () => {
+  test("parsing line by line and pairing afterwards matches the whole-window call", () => {
+    const raws = [
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "enqueue",
+        timestamp: "t1",
+        content: "hello",
+      }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "hello" },
+        timestamp: "t2",
+        promptSource: "system",
+        origin: { kind: "task-notification" },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: "hi" },
+        timestamp: "t3",
+      }),
+      "{ not json",
+    ];
+    expect(pairQueuedTurns(raws.map(parseTranscriptLine), raws)).toEqual(
+      parseTranscriptLines(raws),
+    );
+  });
+});
+
 describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   const STOPPED = '2 background agents were stopped by the user: "worker-a", "worker-b".';
   const enqueue = (content: string) =>
