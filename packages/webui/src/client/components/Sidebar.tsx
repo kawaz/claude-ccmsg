@@ -152,20 +152,6 @@ export function Sidebar({ state }: { state: AppState }) {
 
   return (
     <nav id="sidebar" class={state.sidebarOpen ? "open" : undefined}>
-      <section id="rooms-panel">
-        <h2>
-          Rooms{" "}
-          <RoomCreatorToggleButton
-            open={activePanel === "room-creator"}
-            onToggle={() => togglePanel("room-creator")}
-          />
-        </h2>
-        {activePanel === "room-creator" ? (
-          <RoomCreator peers={sortedPeers} onClose={closePanel} />
-        ) : (
-          <RoomList state={state} />
-        )}
-      </section>
       <section id="sessions-panel">
         <h2>
           Sessions{" "}
@@ -193,6 +179,21 @@ export function Sidebar({ state }: { state: AppState }) {
           <SessionSearchPanel onClose={closePanel} />
         ) : (
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
+        )}
+      </section>
+      {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は参照頻度が低い */}
+      <section id="rooms-panel">
+        <h2>
+          Rooms{" "}
+          <RoomCreatorToggleButton
+            open={activePanel === "room-creator"}
+            onToggle={() => togglePanel("room-creator")}
+          />
+        </h2>
+        {activePanel === "room-creator" ? (
+          <RoomCreator peers={sortedPeers} onClose={closePanel} />
+        ) : (
+          <RoomList state={state} />
         )}
       </section>
     </nav>
