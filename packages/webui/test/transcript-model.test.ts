@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ccmsgDedupKey,
+  ccmsgMessageCount,
   classifyAssistantMessage,
   classifyBoundaryLine,
   classifyUserMessage,
@@ -19,6 +20,7 @@ import {
   groupTimelineLines,
   isAgentCommunicationSegment,
   isApiErrorLine,
+  isDirectFoldEntry,
   isPeerMessageLine,
   isSearchableSegment,
   isUserTextTurn,
@@ -2402,6 +2404,47 @@ describe("splitFoldSubgroups", () => {
     ]);
     expect(foldGroupLabel(entries)).toBe("3 agent messages + 4 items");
     expect(foldGroupNeedsOuterFold(entries)).toBe(true);
+  });
+
+  // 何を保証するか (kawaz r76 m49 の実データ形状): subscribe 通知で届く
+  // peer 発のルームメッセージ (`<task-notification>` に `<event>` の jsonl が
+  // 載る形) は fold group 直下の direct — thinking と同じ階層に出る。
+  // classifyBoundaryLine 側は r55 m14 どおり null (u1 発を含まないので
+  // トップレベルの主役バブルにはしない) のままであることも同時に固定する。
+  test("a peer-sent ccmsg room message is a direct subgroup, not folded into items", () => {
+    const event = {
+      type: "msg",
+      mid: 2,
+      from: "a2",
+      ts: "2026-07-28T12:00:00.000Z",
+      to: ["a1"],
+      r: "r90",
+      seq: 7,
+      msg: "届いています",
+    };
+    const peerCcmsg: TimelineEntry = {
+      offset: 2,
+      line: parseTranscriptLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: `<task-notification>\n<event>${JSON.stringify(event)}</event>\n</task-notification>`,
+          },
+        }),
+      ),
+    };
+    const entries = [toolEntry(1), peerCcmsg, toolEntry(3)];
+
+    expect(ccmsgMessageCount(peerCcmsg)).toBe(1);
+    expect(isDirectFoldEntry(peerCcmsg)).toBe(true);
+    expect(classifyBoundaryLine(peerCcmsg.line)).toBeNull();
+    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
+      "items",
+      "direct",
+      "items",
+    ]);
+    expect(foldGroupLabel(entries)).toBe("1 ccmsg + 2 items");
   });
 
   test("idle_notification peer messages stay in the items run", () => {

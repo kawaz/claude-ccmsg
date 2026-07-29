@@ -313,6 +313,7 @@ export function SessionView({
                   onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
                   active={active}
+                  visible={active && tab === "timeline"}
                 />
               ) : (
                 <Timeline
@@ -323,6 +324,7 @@ export function SessionView({
                   onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
                   active={active}
+                  visible={active && tab === "timeline"}
                 />
               );
             })()

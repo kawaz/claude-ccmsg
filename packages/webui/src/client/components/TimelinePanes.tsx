@@ -41,6 +41,7 @@ export function TimelinePanes({
   onOpenStatus,
   agent,
   active,
+  visible,
 }: {
   sid: string;
   /** 呼び出し側 (SessionView) で空でないことを確認済み前提。r46 m8:
@@ -52,6 +53,8 @@ export function TimelinePanes({
   onOpenStatus: () => void;
   agent?: AgentRef | null;
   active: boolean;
+  /** Timeline タブの可視状態 — そのまま Timeline へ渡すだけ。 */
+  visible: boolean;
 }) {
   const [ratio, setRatio] = useState<number>(loadPaneRatio);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -95,6 +98,7 @@ export function TimelinePanes({
           onOpenStatus={onOpenStatus}
           agent={agent}
           active={active}
+          visible={visible}
         />
       </div>
     </div>

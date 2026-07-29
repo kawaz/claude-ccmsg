@@ -2318,6 +2318,18 @@ function RawTranscriptView({ rows }: { rows: RawTranscriptRow[] }) {
   );
 }
 
+/** `container` の scrollTop に書けば `target` が「TL の表示領域の一番上」＝
+ * sticky な `.tl-toolbar` のすぐ下に来る値。toolbar の実高さを毎回測るのは
+ * モバイル幅で 2 行以上に wrap するため (kawaz r35 mid=51: 固定の
+ * scroll-margin-top では不足して対象がヘッダ裏に隠れた)。👤 nav の
+ * ジャンプと uuid 直アクセスの着地が同じ「ヘッダ直下」に揃う唯一の定義。 */
+function topBelowToolbar(container: HTMLElement, target: HTMLElement): number {
+  const toolbar = container.querySelector<HTMLElement>(".tl-toolbar");
+  const toolbarBottom =
+    toolbar?.getBoundingClientRect().bottom ?? container.getBoundingClientRect().top;
+  return target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
+}
+
 export function Timeline({
   sid,
   timeline,
@@ -2326,6 +2338,7 @@ export function Timeline({
   onOpenStatus,
   agent,
   active,
+  visible,
 }: {
   sid: string;
   timeline: TimelineState;
@@ -2349,6 +2362,12 @@ export function Timeline({
    * ここではコールバックとして受け取る。 */
   onOpenStatus: () => void;
   active: boolean;
+  /** Timeline タブが実際に画面に出ているか (`active` はセッション単位なので、
+   * Files タブを見ている間も true のまま)。タブ往復では Timeline は unmount
+   * されず scroller の scrollTop が残るため、「Timeline タブをクリックした
+   * のに途中/一番上のまま」になる (kawaz r76 m47)。head 表示への遷移は
+   * 「最新を見たい」意図なので、可視化された瞬間に末尾へ寄せ直す。 */
+  visible: boolean;
 }) {
   const { store, ws } = useApp();
   const appState = useStoreState(store);
@@ -3083,6 +3102,20 @@ export function Timeline({
     // tail-append effect の appended 判定が常に false になってしまう。
   }, [sid]);
 
+  // Timeline タブが「隠れている → 見えている」に変わった瞬間の末尾ジャンプ
+  // (kawaz r76 m47)。上の [sid] effect は mount / セッション切替でしか走らず、
+  // タブ往復では Timeline が unmount されない (SessionView の visitedTabs が
+  // hidden のまま保持する) ため scroller の scrollTop が前回のまま残る。
+  // head 以外 (= /timeline/<uuid> 直リンクでタブが開いた場合) は下の
+  // uuid 着地 effect が担当するので、ここでは触らない。
+  const wasVisibleRef = useRef(visible);
+  useEffect(() => {
+    const becameVisible = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (!becameVisible || currentPosition !== "head") return;
+    return scrollToBottomSettled();
+  }, [visible, currentPosition]);
+
   // Live tail で新しい行が追記されたとき (`timeline.end` が伸びる) だけ、か
   // つユーザが最下部付近を見ているときだけ自動スクロールする (kawaz spec)。
   // `end` は「load older」prepend では変わらない (applyTimelineLoaded) の
@@ -3132,8 +3165,17 @@ export function Timeline({
       return;
     }
     rememberTimelinePosition(sid, currentPosition);
+    // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
+    // 画面中央ではなく先頭に置く。scrollIntoView({block:"center"}) では
+    // sticky toolbar を考慮できず、そもそも中央になってしまうので、👤 nav
+    // と同じ topBelowToolbar で位置を計算して container 側へ書く。
+    // 多段 (0/60/300/1000ms) は fold 展開 / markdown / highlight で着地後も
+    // 高さが伸びるため — 1 発では上に取り残される (既存の settled 方式と同旨)。
     const ids = [0, 60, 300, 1000].map((ms) =>
-      setTimeout(() => target.scrollIntoView({ block: "center" }), ms),
+      setTimeout(() => {
+        const container = scrollRef.current;
+        if (container) container.scrollTo({ top: topBelowToolbar(container, target) });
+      }, ms),
     );
     return () => ids.forEach(clearTimeout);
   }, [sid, currentPosition, timeline.status, parsed]);
@@ -3161,10 +3203,7 @@ export function Timeline({
     // (kawaz r35 mid=51: 固定の scroll-margin-top 4rem ではモバイル幅で
     // toolbar が 2 行以上に wrap した時に不足し、対象がヘッダ裏に隠れた)。
     // toolbar は container 内 sticky なので offsetHeight が常に実高さ。
-    const toolbar = container.querySelector<HTMLElement>(".tl-toolbar");
-    const toolbarBottom =
-      toolbar?.getBoundingClientRect().bottom ?? container.getBoundingClientRect().top;
-    const top = target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
+    const top = topBelowToolbar(container, target);
 
     if (userNavScrollAnimationRef.current !== null) {
       cancelAnimationFrame(userNavScrollAnimationRef.current);

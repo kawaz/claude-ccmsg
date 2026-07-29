@@ -4318,8 +4318,15 @@ button.session-tab {
  * 左端接触は主役側 (assistant/thinking) の特権にするため、fold 全体を
  * `margin-left` で左端から離す。フォントサイズと本文余白は .tl-thinking-body
  * と揃え、控えめな見た目にする (rich 中身 = hue 色/タブ/LinkedMarkdown は
- * 展開時にそのまま出るので、fold 自体はコンパクトに寄せる)。 */
-.tl-ccmsg-fold {
+ * 展開時にそのまま出るので、fold 自体はコンパクトに寄せる)。
+ *
+ * この余白は **トップレベル配置に固有** の関心なので `:not(.tl-fold-group *)`
+ * で限定する (kawaz r76 m49)。fold group の中 (peer 発のみの ccmsg 行、r55 m14)
+ * では FoldGuide が既にインデントを与えており、そこへ更に 1.5rem 乗せると
+ * thinking / items サブ fold より一段深く見え「items の内側にネストされている」
+ * ように読める。u1 発を含む行は今も boundary = トップレベルなので、そちらでは
+ * 従来どおり左端から離れる。 */
+.tl-ccmsg-fold:not(.tl-fold-group *) {
   margin-left: 1.5rem;
   max-width: calc(100% - 1.5rem);
 }
