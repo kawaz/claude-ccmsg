@@ -25,7 +25,8 @@ import type {
 } from "@ccmsg/protocol";
 import { createContext } from "preact";
 import { useContext, useState } from "preact/hooks";
-import { agentTimelineHref, timelineHref, type AgentRef } from "../locator.ts";
+import { timelineHref, type AgentRef } from "../locator.ts";
+import { agentNodeHref, dotProps, isRunLive } from "./agent-tree-view.ts";
 import {
   buildWorkflowDrilldown,
   canonicalModelId,
@@ -93,10 +94,6 @@ function displayLabel(node: AgentTreeNode): string {
   return node.teammate_name ?? node.description ?? node.agent_type ?? node.agent_id;
 }
 
-function dotClass(state: string): string {
-  return `status-teammate-dot status-teammate-dot-${state}`;
-}
-
 /** kawaz r46 mid=29: 選択中の agent TL をツリー上で識別するための現在地。
  * prop drilling (4 呼び出し経路 × 階層) を避けて context で配る。 */
 const CurrentAgentContext = createContext<AgentRef | null>(null);
@@ -123,9 +120,7 @@ function AgentTreeNodeRow({
 }) {
   const [open, setOpen] = useState(true);
   const label = displayLabel(node);
-  const href = node.teammate_name
-    ? agentTimelineHref(sid, { teammate: node.teammate_name })
-    : agentTimelineHref(sid, { agentId: node.agent_id });
+  const href = agentNodeHref(sid, node);
   const hasChildren = node.children.length > 0;
   // Drill enrichment は workflow_member (workflowId prop 経由) 限定。
   // teammate/agent 側 node には tokens 情報が無いので drillLookup を引かない
@@ -157,7 +152,7 @@ function AgentTreeNodeRow({
         ) : (
           <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
         )}
-        <span class={dotClass(node.state)} aria-hidden="true">
+        <span {...dotProps(stateNote || node.state)} aria-hidden="true">
           ●
         </span>
         <a class="agent-tree-label" href={href} title={label}>
@@ -367,6 +362,9 @@ function WorkflowRunRow({
 }) {
   // kawaz r46 mid=27: workflow 配下は内部含めて default 全閉
   const [open, setOpen] = useState(false);
+  // run 単位の走行状態。判定は WorkflowsGroup の live/完了 振り分けと同じ式で、
+  // 畳んだ run 行だけを見ても走行中か完了かが分かるようにする。
+  const runState = isRunLive(run) ? "running" : "done";
   return (
     <li class="agent-tree-workflow-run">
       <div class="agent-tree-workflow-run-row">
@@ -379,6 +377,9 @@ function WorkflowRunRow({
         >
           {open ? "▽" : "▶"}
         </button>
+        <span {...dotProps(runState)} aria-hidden="true">
+          ●
+        </span>
         <span class="agent-tree-workflow-run-id" title={run.workflow_id}>
           {run.workflow_id}
         </span>
@@ -438,8 +439,7 @@ function WorkflowsGroup({
   const liveRuns: AgentTreeWorkflowGroup[] = [];
   const completedRuns: AgentTreeWorkflowGroup[] = [];
   for (const r of runs) {
-    // done < total = まだ動いている run、done === total = 完了。
-    (r.total === 0 || r.done < r.total ? liveRuns : completedRuns).push(r);
+    (isRunLive(r) ? liveRuns : completedRuns).push(r);
   }
   return (
     <section class="agent-tree-group">
