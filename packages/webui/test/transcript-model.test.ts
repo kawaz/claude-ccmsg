@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import {
   ccmsgDedupKey,
   ccmsgMessageCount,
+  ccmsgRenderTargets,
   classifyAssistantMessage,
   classifyBoundaryLine,
   classifyUserMessage,
@@ -3056,6 +3057,102 @@ describe("DR-0027 dedup: (room, mid) canonical key collapses send-side + receive
 // is new here — "user-prompt"/"assistant-response" are already covered by
 // the isUserTextTurn/groupTimelineLines describe blocks above via
 // isBoundaryLine's behavior.
+// ccmsgRenderTargets: 「どの ccmsg バブルを描画するか」の唯一の決定点。
+// dedup を render の副作用から追い出したのがこの関数の存在理由なので、
+// 「同じ groups なら何度呼んでも同じ答え」を明示的に固定する — 旧実装は
+// render 中に共有 Set を mutate していたため、fold group の開閉 (子局所
+// re-render) で 2 回目以降の判定が変わり、peer 発バブルが消えていた
+// (docs/issue/2026-07-29-fold-toggle-drops-peer-ccmsg-bubble)。
+describe("ccmsgRenderTargets", () => {
+  // 1 行が複数の <teammate-message> を運ぶ形 (実観測: 相手が続けて idle に
+  // なった等) も扱えるよう、events を可変長で受ける。
+  function ccmsgLine(...events: (CcmsgMessage & { mid: number })[]): ParsedLine {
+    const tags = events
+      .map((message) => {
+        const event = {
+          type: "msg",
+          mid: message.mid,
+          from: message.from,
+          r: message.room,
+          ts: message.ts,
+          msg: message.msg,
+        };
+        return `<teammate-message teammate_id="${message.from}">\n${JSON.stringify(event)}\n</teammate-message>`;
+      })
+      .join("\n");
+    return parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: `Another Claude session sent a message:\n${tags}`,
+        },
+      }),
+    );
+  }
+
+  test("peer 発は fold placement、u1 発は boundary placement で document 順に並ぶ", () => {
+    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 1 };
+    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 2 };
+    const groups = groupTimelineLines(
+      [ccmsgLine(peer), ccmsgLine(user), assistantText("done")],
+      [10, 20, 30],
+    );
+
+    expect(
+      ccmsgRenderTargets(groups).map(({ key, offset, messageIndex, placement }) => ({
+        key,
+        offset,
+        messageIndex,
+        placement,
+      })),
+    ).toEqual([
+      { key: "10-ccmsg-0", offset: 10, messageIndex: 0, placement: "fold" },
+      { key: "20-ccmsg-0", offset: 20, messageIndex: 0, placement: "boundary" },
+    ]);
+  });
+
+  // 同じ (room, mid) が fold group 内と boundary の両方から抽出される場面:
+  // peer 発 event が単独行にも、後続の u1 発 event と同じ行にも載っている
+  // (task-notification の echo)。残るのは transcript で先に現れた fold 側で、
+  // Preact が boundary を先に render することには引きずられない (render 順
+  // ではなく document 順が正 — in-view search の unit 列と同じ規則)。
+  // boundary 側で index 0 が落ちても index 1 の key は 1 のまま = messageIndex
+  // は「その行の message 配列上の位置」であって描画順の連番ではない。
+  test("経路をまたぐ重複は document 順で先の 1 件だけが残る", () => {
+    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 7 };
+    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 8 };
+    const groups = groupTimelineLines([ccmsgLine(peer), ccmsgLine(peer, user)], [10, 20]);
+
+    expect(
+      ccmsgRenderTargets(groups).map(({ key, messageIndex, placement }) => ({
+        key,
+        messageIndex,
+        placement,
+      })),
+    ).toEqual([
+      { key: "10-ccmsg-0", messageIndex: 0, placement: "fold" },
+      { key: "20-ccmsg-1", messageIndex: 1, placement: "boundary" },
+    ]);
+  });
+
+  // 本命の回帰: fold の開閉は Timeline 本体を再実行しないので、判定関数は
+  // 同じ入力に対して何度でも同じ答えを返さなければならない。
+  test("同じ groups で繰り返し呼んでも結果が変わらない (fold 開閉で消えない)", () => {
+    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 1 };
+    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 2 };
+    const groups = groupTimelineLines(
+      [userText("prompt"), ccmsgLine(peer), ccmsgLine(user)],
+      [10, 20, 30],
+    );
+
+    const first = ccmsgRenderTargets(groups).map((target) => target.key);
+    expect(first).toEqual(["20-ccmsg-0", "30-ccmsg-0"]);
+    expect(ccmsgRenderTargets(groups).map((target) => target.key)).toEqual(first);
+    expect(ccmsgRenderTargets(groups).map((target) => target.key)).toEqual(first);
+  });
+});
+
 describe("userNavTargets", () => {
   function ccmsgLine(message: CcmsgMessage): ParsedLine {
     const event = {

@@ -766,14 +766,93 @@ export type UserNavTarget =
   | { key: string; offset: number; kind: "user-prompt" }
   | { key: string; offset: number; kind: "ccmsg"; messageIndex: number };
 
+/** One ccmsg bubble the Timeline mounts, identified by the line it came from
+ * (`offset`) and its index within that line's `extractCcmsgMessages` output.
+ * `placement` says which renderer draws it: `"boundary"` = a u1 発 line that
+ * `classifyBoundaryLine` kept standalone (Timeline() 直下の CcmsgBubble),
+ * `"fold"` = a peer 発 line inside a fold group (LineView →
+ * PeerCcmsgLineView). */
+export interface CcmsgRenderTarget {
+  key: string;
+  offset: number;
+  messageIndex: number;
+  message: CcmsgMessage;
+  placement: "boundary" | "fold";
+}
+
+/** Per-bubble key shared by everything that has to agree on "which ccmsg
+ * bubbles exist": the render-visibility set, the in-view search unit list, and
+ * the `searchKey` each `CcmsgBubble` registers. */
+export function ccmsgUnitKey(offset: number, messageIndex: number): string {
+  return `${offset}-ccmsg-${messageIndex}`;
+}
+
+/**
+ * Every ccmsg bubble the Timeline mounts, in document order, with duplicates
+ * (`ccmsgDedupKey`) already dropped — the single source of truth for the
+ * dedup decision (kawaz r15 mid=21 の 2 重表示回避).
+ *
+ * The decision has to live here, in a phase the caller can memoize on
+ * `groups`, rather than in the renderer: the two render paths (boundary側と
+ * fold group 側) are *different components*, so a `Set` threaded through
+ * context and mutated while rendering only holds "first wins" as long as every
+ * pass starts from an empty Set. `FoldGroup` の開閉 (子局所 `setOpen`) は
+ * Timeline 本体を再実行しないので、その前提が破れて前 pass の残留 key で
+ * バブルが消える (docs/issue/2026-07-29-fold-toggle-drops-peer-ccmsg-bubble)。
+ *
+ * Document order also settles which copy of a cross-path duplicate survives:
+ * the first one in the transcript, regardless of the fact that Preact renders
+ * every boundary bubble before it descends into any fold group.
+ */
+export function ccmsgRenderTargets(groups: TimelineGroup[]): CcmsgRenderTarget[] {
+  const targets: CcmsgRenderTarget[] = [];
+  const seen = new Set<string>();
+  const push = (
+    offset: number,
+    messages: CcmsgMessage[],
+    placement: CcmsgRenderTarget["placement"],
+  ) => {
+    messages.forEach((message, messageIndex) => {
+      const dedupKey = ccmsgDedupKey(message);
+      if (seen.has(dedupKey)) return;
+      seen.add(dedupKey);
+      targets.push({
+        key: ccmsgUnitKey(offset, messageIndex),
+        offset,
+        messageIndex,
+        message,
+        placement,
+      });
+    });
+  };
+  for (const group of groups) {
+    if (group.kind === "fold") {
+      for (const entry of group.entries) {
+        if (entry.line.kind !== "turn") continue;
+        push(entry.offset, extractCcmsgMessages(entry.line), "fold");
+      }
+      continue;
+    }
+    if (group.line.kind !== "turn") continue;
+    const boundary = classifyBoundaryLine(group.line);
+    if (boundary?.kind !== "ccmsg") continue;
+    push(group.offset, boundary.messages, "boundary");
+  }
+  return targets;
+}
+
 /**
  * Returns the mounted green bubbles that the user-message navigation can jump
- * to. ccmsg messages use the same document-wide deduplication as Timeline's
- * renderer, so the counter and the set of registered DOM targets stay equal.
+ * to. ccmsg messages reuse `ccmsgRenderTargets`' deduplication, so the counter
+ * and the set of registered DOM targets stay equal.
  */
 export function userNavTargets(groups: TimelineGroup[]): UserNavTarget[] {
+  const rendered = new Set(
+    ccmsgRenderTargets(groups)
+      .filter((target) => target.placement === "boundary" && target.message.from === "u1")
+      .map((target) => target.key),
+  );
   const targets: UserNavTarget[] = [];
-  const seenCcmsg = new Set<string>();
   for (const group of groups) {
     if (group.kind !== "entry" || group.line.kind !== "turn") continue;
     const boundary = classifyBoundaryLine(group.line);
@@ -782,11 +861,8 @@ export function userNavTargets(groups: TimelineGroup[]): UserNavTarget[] {
       continue;
     }
     if (boundary?.kind !== "ccmsg") continue;
-    boundary.messages.forEach((message, messageIndex) => {
-      const dedupKey = ccmsgDedupKey(message);
-      if (seenCcmsg.has(dedupKey)) return;
-      seenCcmsg.add(dedupKey);
-      if (message.from !== "u1") return;
+    boundary.messages.forEach((_message, messageIndex) => {
+      if (!rendered.has(ccmsgUnitKey(group.offset, messageIndex))) return;
       targets.push({
         key: `ccmsg:${group.offset}:${messageIndex}`,
         offset: group.offset,

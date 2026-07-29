@@ -29,7 +29,8 @@ import { miniSummaryLines } from "../session-status-view.ts";
 import {
   agentCommunicationCount,
   ccmsgMessageCount,
-  ccmsgDedupKey,
+  ccmsgRenderTargets,
+  ccmsgUnitKey,
   classifyBoundaryLine,
   extractCcmsgMessages,
   foldGroupLabel,
@@ -355,9 +356,9 @@ const TimelineAutoOpenContext = createContext<TimelineAutoOpenContextValue>({
  * - now: msg 相対時刻の再描画 tick 値 (useNow)
  * - rooms/peers: CcmsgBubble の rich 表示 (identicon / hue / filepath-linker)
  *   に必要な AppState の投影
- * - seenCcmsg: boundary 側と fold-group 側で **同一 Set を共有** — 同じ
- *   ccmsg event が両経路で dedup されるように (kawaz r15 mid=21 の 2 重表示
- *   回避方針を維持)
+ * - visibleCcmsgKeys: `ccmsgRenderTargets` が確定させた「描画するバブル」の
+ *   key 集合 (boundary 側と共有)。同じ ccmsg event が両経路に流れても一箇所
+ *   だけ残る (kawaz r15 mid=21 の 2 重表示回避方針を維持)
  *
  * boundary 側 CcmsgBubble が使う registerUserTurnRef / onUserTurnClick /
  * selected / navKey は u1 発 (右寄せユーザバブル) 限定の user-nav 用配線で、
@@ -367,7 +368,7 @@ interface CcmsgRenderCtxValue {
   now: number;
   rooms: ReadonlyMap<string, RoomState>;
   peers: readonly PeerInfo[];
-  seenCcmsg: Set<string>;
+  visibleCcmsgKeys: ReadonlySet<string>;
 }
 const CcmsgRenderContext = createContext<CcmsgRenderCtxValue | null>(null);
 
@@ -1428,11 +1429,13 @@ function SystemMessageFold({
 
 /** fold group 内で peer 発 ccmsg messages を描画する (r55 m14 kawaz 裁定)。
  * CcmsgBubble を再利用するため、boundary 側 (Timeline() 直下) と同じ props
- * を組み立てる。共有状態 (now / rooms / peers / seenCcmsg) は
- * CcmsgRenderContext から取り、ここには peer 側でしか要らない dedup と
- * search-unit key 生成だけを局所化する。u1 発は含まれない前提
- * (classifyBoundaryLine で boundary に格上げされている) — 万一混じっても
- * boundary 側 seenCcmsg の Set で dedup される。 */
+ * を組み立てる。共有状態 (now / rooms / peers / visibleCcmsgKeys) は
+ * CcmsgRenderContext から取る。どのバブルを出すかは `ccmsgRenderTargets` が
+ * 分類フェーズで確定済み — ここは key の在否を読むだけ (render 中に dedup
+ * 状態を書き換えない: fold の開閉は Timeline 本体を再実行しないため、
+ * render 中の mutation では 2 回目以降の pass で自分を消してしまう)。
+ * u1 発は含まれない前提 (classifyBoundaryLine で boundary に格上げされて
+ * いる) — 万一混じっても同じ key 集合で dedup される。 */
 function PeerCcmsgLineView({
   line,
   offset,
@@ -1462,9 +1465,7 @@ function PeerCcmsgLineView({
   return (
     <>
       {messages.map((m, j) => {
-        const dedupKey = ccmsgDedupKey(m);
-        if (ctx.seenCcmsg.has(dedupKey)) return null;
-        ctx.seenCcmsg.add(dedupKey);
+        if (!ctx.visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
         return (
           // 1 行から複数バブルが出るケース: どのバブルの jsonl トグルも同じ
           // 行を指す (itemRawSourceOffsets の doc comment 参照)。
@@ -1473,7 +1474,7 @@ function PeerCcmsgLineView({
               message={m}
               rawText={rawText}
               now={ctx.now}
-              searchKey={`${offset}-ccmsg-${j}`}
+              searchKey={ccmsgUnitKey(offset, j)}
               searchCtx={searchCtx}
               // navKey/register/onUserTurnClick/selected は u1 (右寄せ user
               // bubble) 用の user-nav 配線。peer 発では未使用なので undefined /
@@ -2643,6 +2644,19 @@ export function Timeline({
       ),
     [groups],
   );
+  // 同一 ccmsg event (room + ts + from、DR-0027 以降は room + mid) が transcript
+  // の複数箇所から抽出される場合 (queue-operation enqueue と task-notification
+  // 経由の Monitor tool_result 両方に載っているケース、kawaz r15 mid=21) の
+  // 二重表示を避ける。**どれを描画するかは分類フェーズで確定**させ、render は
+  // key の在否を読むだけにする — boundary 側 (下の groups.map) と fold-group 側
+  // (CcmsgRenderContext 経由の PeerCcmsgLineView) は別コンポーネントなので、
+  // render 中に共有 Set を mutate すると fold の開閉のような子局所 re-render で
+  // 判定が変わってしまう。
+  const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
+  const visibleCcmsgKeys = useMemo(
+    () => new Set(ccmsgTargets.map((target) => target.key)),
+    [ccmsgTargets],
+  );
 
   // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
   // top/bottom of the loaded transcript and to the previous/next user-text
@@ -2765,41 +2779,15 @@ export function Timeline({
         pushLine(group.offset, group.line);
       }
     }
-    // ccmsg messages (💬 toggle): boundary "entry" groups classified "ccmsg"
-    // by classifyBoundaryLine (= u1 発)、および fold group 内 entry で peer 発
-    // ccmsg を運ぶもの (r55 m14: peer ccmsg は boundary から外し fold group
-    // 内で CcmsgBubble を描画) を document 順に歩き、render 側 (groups.map の
-    // seenCcmsg / PeerCcmsgLineView 側 ctx.seenCcmsg 共有) と同じ dedup key +
-    // 順序を再現する。ccmsgDedupKey の doc comment の通り、両側で key を
-    // 揃えないと 💬 toggle の [N/M] と実 DOM 数が乖離する。
+    // ccmsg messages (💬 toggle): 描画されるバブルそのもの (boundary 側 = u1 発、
+    // fold group 内 = peer 発) を分類フェーズの確定結果から document 順に拾う。
+    // render 側と同じ key 集合を使うので、💬 toggle の [N/M] と実 DOM 数が
+    // 乖離しない (dedup で落ちた message が幽霊マッチとして数に残らない)。
     if (targetCcmsg) {
-      const seenCcmsg = new Set<string>();
-      groups.forEach((group, i) => {
-        if (group.kind === "entry") {
-          const boundary = boundaries[i];
-          if (!boundary || boundary.kind !== "ccmsg") return;
-          boundary.messages.forEach((m, j) => {
-            const dedupKey = ccmsgDedupKey(m);
-            if (seenCcmsg.has(dedupKey)) return;
-            seenCcmsg.add(dedupKey);
-            units.push({ key: `${group.offset}-ccmsg-${j}` });
-          });
-        } else {
-          for (const entry of group.entries) {
-            if (entry.line.kind !== "turn") continue;
-            const msgs = extractCcmsgMessages(entry.line);
-            msgs.forEach((m, j) => {
-              const dedupKey = ccmsgDedupKey(m);
-              if (seenCcmsg.has(dedupKey)) return;
-              seenCcmsg.add(dedupKey);
-              units.push({ key: `${entry.offset}-ccmsg-${j}` });
-            });
-          }
-        }
-      });
+      for (const target of ccmsgTargets) units.push({ key: target.key });
     }
     return units;
-  }, [groups, boundaries, targetUser, targetAI, targetCcmsg]);
+  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg]);
 
   // The "M" in "[N/M]" and the document-order nav ↑/↓ walks (DR-0022 §2.1/
   // §2.2) — units are counted regardless of whether their fold is currently
@@ -3330,20 +3318,15 @@ export function Timeline({
     [sid, selfPeer],
   );
   // r55 m14: peer 発 ccmsg は boundary から外れて fold group 内 (LineView →
-  // PeerCcmsgLineView) で CcmsgBubble を描画するため、boundary 側 (groups.map
-  // 直下の IIFE) と fold-group 側で **同一の dedup Set を共有** する必要が
-  // ある (同 event が両経路に流れる場面 = kawaz r15 mid=21 の 2 重表示回避)。
-  // render pass ごとに新規 Set を作り、Provider 経由で PeerCcmsgLineView に
-  // 供給する。boundary 側は下の JSX でこの Set を直接参照。
-  // Set は render pass ごとに新規。Provider value も新規 object になるが
-  // 消費側 (PeerCcmsgLineView) は useContext で読むだけで sub-tree の
-  // 再 render は既に走っている (親 render の一環) ため実害なし。
-  const ccmsgSeen = new Set<string>();
+  // PeerCcmsgLineView) で CcmsgBubble を描画するため、boundary 側 (下の
+  // groups.map) と fold-group 側が **同一の可視 key 集合** (visibleCcmsgKeys、
+  // 上の分類フェーズで確定) を参照する。どちらの経路も読むだけなので、
+  // fold の開閉が何度起きても判定は変わらない。
   const ccmsgRenderValue: CcmsgRenderCtxValue = {
     now,
     rooms: appState.rooms,
     peers: appState.peers,
-    seenCcmsg: ccmsgSeen,
+    visibleCcmsgKeys,
   };
   return (
     <FileToolSidContext.Provider value={sid}>
@@ -3465,170 +3448,158 @@ export function Timeline({
                       {parsed.length === 0 ? (
                         <p class="tl-empty">(空の transcript)</p>
                       ) : (
-                        // 同一 ccmsg event (room + ts + from) が transcript の複数箇所から
-                        // 抽出されるとき (queue-operation enqueue と task-notification 経由の
-                        // Monitor tool_result 両方に載っているケース、kawaz r15 mid=21、
-                        // 2026-07-14) の二重表示を避ける。この Set は render pass 単位で
-                        // 上位 (Timeline 関数トップ) の ccmsgSeen を **boundary 側と
-                        // fold-group 側 (CcmsgRenderContext 経由の PeerCcmsgLineView)
-                        // で共有** する — 同 event が両経路に流れる場面 (r55 m14: peer
-                        // ccmsg を fold group 側に流したことで発生し得る境界) でも一箇所
-                        // だけ描画される。
-                        ((seenCcmsg: Set<string>) =>
-                          groups.map((group, i) => {
-                            if (group.kind === "fold") {
+                        groups.map((group, i) => {
+                          if (group.kind === "fold") {
+                            return (
+                              <FoldGroup
+                                key={group.entries[0]!.offset}
+                                entries={group.entries}
+                                translationAvailability={translationAvailability}
+                                searchCtx={searchCtx}
+                              />
+                            );
+                          }
+                          const { line, offset } = group;
+                          // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                          // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                          // fold group に送るので groups の "entry" 側には来ない) —
+                          // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                          // 実データ上も自明に成り立つ。
+                          if (line.kind !== "turn") return null;
+                          // boundaries[i] は上の useMemo で groups と同じ index で
+                          // 計算済み (render のたびの再分類を避けるため)。
+                          const boundary = boundaries[i]!;
+                          if (boundary === null) return null;
+                          switch (boundary.kind) {
+                            case "user-prompt":
                               return (
-                                <FoldGroup
-                                  key={group.entries[0]!.offset}
-                                  entries={group.entries}
-                                  translationAvailability={translationAvailability}
-                                  searchCtx={searchCtx}
-                                />
+                                <ItemRawToggle
+                                  key={offset}
+                                  offset={offset}
+                                  uuid={line.uuid}
+                                  selectedPosition={currentPosition === line.uuid}
+                                  onSelectPosition={selectPosition}
+                                >
+                                  <UserPromptBubble
+                                    line={line}
+                                    offsetKey={offset}
+                                    navKey={`user:${offset}`}
+                                    registerUserTurnRef={registerUserTurnRef}
+                                    translationAvailability={translationAvailability}
+                                    now={now}
+                                    searchCtx={searchCtx}
+                                    onUserTurnClick={onUserTurnClick}
+                                    selected={selectedUserTurnKey === `user:${offset}`}
+                                  />
+                                </ItemRawToggle>
                               );
-                            }
-                            const { line, offset } = group;
-                            // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                            // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                            // fold group に送るので groups の "entry" 側には来ない) —
-                            // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                            // 実データ上も自明に成り立つ。
-                            if (line.kind !== "turn") return null;
-                            // boundaries[i] は上の useMemo で groups と同じ index で
-                            // 計算済み (render のたびの再分類を避けるため)。
-                            const boundary = boundaries[i]!;
-                            if (boundary === null) return null;
-                            switch (boundary.kind) {
-                              case "user-prompt":
-                                return (
-                                  <ItemRawToggle
-                                    key={offset}
+                            case "assistant-response":
+                              return (
+                                <ItemRawToggle
+                                  key={offset}
+                                  offset={offset}
+                                  uuid={line.uuid}
+                                  selectedPosition={currentPosition === line.uuid}
+                                  onSelectPosition={selectPosition}
+                                >
+                                  <AssistantBubble
+                                    line={line}
                                     offset={offset}
-                                    uuid={line.uuid}
-                                    selectedPosition={currentPosition === line.uuid}
-                                    onSelectPosition={selectPosition}
-                                  >
-                                    <UserPromptBubble
-                                      line={line}
-                                      offsetKey={offset}
-                                      navKey={`user:${offset}`}
-                                      registerUserTurnRef={registerUserTurnRef}
-                                      translationAvailability={translationAvailability}
-                                      now={now}
-                                      searchCtx={searchCtx}
-                                      onUserTurnClick={onUserTurnClick}
-                                      selected={selectedUserTurnKey === `user:${offset}`}
-                                    />
-                                  </ItemRawToggle>
-                                );
-                              case "assistant-response":
-                                return (
-                                  <ItemRawToggle
-                                    key={offset}
-                                    offset={offset}
-                                    uuid={line.uuid}
-                                    selectedPosition={currentPosition === line.uuid}
-                                    onSelectPosition={selectPosition}
-                                  >
-                                    <AssistantBubble
-                                      line={line}
+                                    translationAvailability={translationAvailability}
+                                    now={now}
+                                    searchCtx={searchCtx}
+                                  />
+                                </ItemRawToggle>
+                              );
+                            case "api-error":
+                              return (
+                                <ItemRawToggle
+                                  key={offset}
+                                  offset={offset}
+                                  uuid={line.uuid}
+                                  selectedPosition={currentPosition === line.uuid}
+                                  onSelectPosition={selectPosition}
+                                >
+                                  <ApiErrorNotice line={line} />
+                                </ItemRawToggle>
+                              );
+                            case "bash-command":
+                              return (
+                                <ItemRawToggle
+                                  key={offset}
+                                  offset={offset}
+                                  uuid={line.uuid}
+                                  selectedPosition={currentPosition === line.uuid}
+                                  onSelectPosition={selectPosition}
+                                >
+                                  <BashRunCard
+                                    command={boundary.segment.command}
+                                    output={boundary.segment.output}
+                                    ts={line.ts}
+                                  />
+                                </ItemRawToggle>
+                              );
+                            case "bash-command-output":
+                              return (
+                                <ItemRawToggle
+                                  key={offset}
+                                  offset={offset}
+                                  uuid={line.uuid}
+                                  selectedPosition={currentPosition === line.uuid}
+                                  onSelectPosition={selectPosition}
+                                >
+                                  <BashRunCard
+                                    command={null}
+                                    output={boundary.segment}
+                                    ts={line.ts}
+                                  />
+                                </ItemRawToggle>
+                              );
+                            case "ccmsg": {
+                              // raw タブ用の「この行に何が書いてあったか」: subscribe/
+                              // teammate-message wrapper は text segment に、DR-0027 §2.2
+                              // の tool_result 検出行 ({ok:true,room,mid} response) は
+                              // tool-result segment にしか原文が無い — text だけ結合すると
+                              // tool_result 由来バブルの raw タブが空になるので両方拾う。
+                              const rawText = line.segments
+                                .filter(
+                                  (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
+                                    s.kind === "text" || s.kind === "tool-result",
+                                )
+                                .map((s) => s.text)
+                                .join("\n");
+                              return boundary.messages
+                                .map((m, j) => {
+                                  if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
+                                  const navKey = `ccmsg:${offset}:${j}`;
+                                  return (
+                                    <ItemRawToggle
+                                      key={`${offset}-${j}`}
                                       offset={offset}
-                                      translationAvailability={translationAvailability}
-                                      now={now}
-                                      searchCtx={searchCtx}
-                                    />
-                                  </ItemRawToggle>
-                                );
-                              case "api-error":
-                                return (
-                                  <ItemRawToggle
-                                    key={offset}
-                                    offset={offset}
-                                    uuid={line.uuid}
-                                    selectedPosition={currentPosition === line.uuid}
-                                    onSelectPosition={selectPosition}
-                                  >
-                                    <ApiErrorNotice line={line} />
-                                  </ItemRawToggle>
-                                );
-                              case "bash-command":
-                                return (
-                                  <ItemRawToggle
-                                    key={offset}
-                                    offset={offset}
-                                    uuid={line.uuid}
-                                    selectedPosition={currentPosition === line.uuid}
-                                    onSelectPosition={selectPosition}
-                                  >
-                                    <BashRunCard
-                                      command={boundary.segment.command}
-                                      output={boundary.segment.output}
-                                      ts={line.ts}
-                                    />
-                                  </ItemRawToggle>
-                                );
-                              case "bash-command-output":
-                                return (
-                                  <ItemRawToggle
-                                    key={offset}
-                                    offset={offset}
-                                    uuid={line.uuid}
-                                    selectedPosition={currentPosition === line.uuid}
-                                    onSelectPosition={selectPosition}
-                                  >
-                                    <BashRunCard
-                                      command={null}
-                                      output={boundary.segment}
-                                      ts={line.ts}
-                                    />
-                                  </ItemRawToggle>
-                                );
-                              case "ccmsg": {
-                                // raw タブ用の「この行に何が書いてあったか」: subscribe/
-                                // teammate-message wrapper は text segment に、DR-0027 §2.2
-                                // の tool_result 検出行 ({ok:true,room,mid} response) は
-                                // tool-result segment にしか原文が無い — text だけ結合すると
-                                // tool_result 由来バブルの raw タブが空になるので両方拾う。
-                                const rawText = line.segments
-                                  .filter(
-                                    (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
-                                      s.kind === "text" || s.kind === "tool-result",
-                                  )
-                                  .map((s) => s.text)
-                                  .join("\n");
-                                return boundary.messages
-                                  .map((m, j) => {
-                                    const dedupKey = ccmsgDedupKey(m);
-                                    if (seenCcmsg.has(dedupKey)) return null;
-                                    seenCcmsg.add(dedupKey);
-                                    const navKey = `ccmsg:${offset}:${j}`;
-                                    return (
-                                      <ItemRawToggle
-                                        key={`${offset}-${j}`}
-                                        offset={offset}
-                                        uuid={line.uuid}
-                                        selectedPosition={currentPosition === line.uuid}
-                                        onSelectPosition={selectPosition}
-                                      >
-                                        <CcmsgBubble
-                                          message={m}
-                                          rawText={rawText}
-                                          now={now}
-                                          searchKey={`${offset}-ccmsg-${j}`}
-                                          searchCtx={searchCtx}
-                                          navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
-                                          registerUserTurnRef={registerUserTurnRef}
-                                          onUserTurnClick={onUserTurnClick}
-                                          selected={selectedUserTurnKey === navKey}
-                                          room={appState.rooms.get(m.room)}
-                                          peers={appState.peers}
-                                        />
-                                      </ItemRawToggle>
-                                    );
-                                  })
-                                  .filter((n) => n !== null);
-                              }
+                                      uuid={line.uuid}
+                                      selectedPosition={currentPosition === line.uuid}
+                                      onSelectPosition={selectPosition}
+                                    >
+                                      <CcmsgBubble
+                                        message={m}
+                                        rawText={rawText}
+                                        now={now}
+                                        searchKey={ccmsgUnitKey(offset, j)}
+                                        searchCtx={searchCtx}
+                                        navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
+                                        registerUserTurnRef={registerUserTurnRef}
+                                        onUserTurnClick={onUserTurnClick}
+                                        selected={selectedUserTurnKey === navKey}
+                                        room={appState.rooms.get(m.room)}
+                                        peers={appState.peers}
+                                      />
+                                    </ItemRawToggle>
+                                  );
+                                })
+                                .filter((n) => n !== null);
                             }
-                          }))(ccmsgSeen)
+                          }
+                        })
                       )}
                     </div>
                   )}
