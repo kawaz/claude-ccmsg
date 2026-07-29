@@ -20,3 +20,4 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |
 | 2026-07-29 | design | open | [sandbox-origin-raw-content-serving](./2026-07-29-sandbox-origin-raw-content-serving.md) | canddy sandbox origin (apps とは別 eTLD+1) を使い、MIME 制限なしの生配信 (HTML/バイナリ/長大出力) を capability トークンで提供する設計検討 |
 | 2026-07-29 | bug | open | [self-ccmsg-post-bubbles-missing](./2026-07-29-self-ccmsg-post-bubbles-missing.md) | DR-0027 §2.2 の自 post/reply バブルが TL に出ていない。bash 一体カード実装で自 post 検出が tool-result のみ見る片面変更が回帰原因、DR を復活/supersede どちらにするか裁定待ち |
+| 2026-07-29 | bug | open | [inview-search-skips-closed-folds](./2026-07-29-inview-search-skips-closed-folds.md) | TL の in-view search が閉じた fold の中身をカウントしない (「fold の開閉に関わらず数える」というコメントの仕様記述と実装が食い違い) |
