@@ -286,6 +286,10 @@ export type Action =
   | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean }
   | { type: "fs/dir-toggled"; sid: string; path: string }
+  // Additive-only counterpart of fs/dir-toggled: opens every listed path and
+  // never closes one, so the auto-expand that reveals a selected file cannot
+  // collapse a directory the user opened by hand.
+  | { type: "fs/dirs-expanded"; sid: string; paths: readonly string[] }
   // entries on success, error on fs_list failure — never both (mirrors
   // fs/file-loaded's success/error split one line below).
   | { type: "fs/dir-loaded"; sid: string; path: string; entries?: FsEntry[]; error?: string }
@@ -766,6 +770,17 @@ export function reducer(state: AppState, action: Action): AppState {
       const expanded = new Set(tree.expanded);
       if (expanded.has(action.path)) expanded.delete(action.path);
       else expanded.add(action.path);
+      sessionTrees.set(action.sid, { ...tree, expanded });
+      return { ...state, sessionTrees };
+    }
+    case "fs/dirs-expanded": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      // Identity-stable when everything asked for is already open — the
+      // caller re-runs on tree changes and a fresh Set each time would
+      // re-render the whole tree for nothing.
+      if (action.paths.every((path) => tree.expanded.has(path))) return state;
+      const expanded = new Set(tree.expanded);
+      for (const path of action.paths) expanded.add(path);
       sessionTrees.set(action.sid, { ...tree, expanded });
       return { ...state, sessionTrees };
     }

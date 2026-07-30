@@ -19,6 +19,7 @@ import { pushNavigation } from "../navigation.ts";
 import type { WsHandle } from "../ws.ts";
 import {
   errorMessage,
+  expandPathsForSelection,
   favoritesStorageKey,
   isWorkspaceFilePath,
   parseFavorites,
@@ -737,8 +738,100 @@ export function FileTree({
     void loadDir(store, ws, sid, rootPath);
   }, [sid, rootPath, rootEntries, rootError, connStatus]);
 
+  // Reveal the selected file (kawaz r76 m85): open every ancestor directory of
+  // `selectedPath` and fetch the listings the newly-opened nodes need, so a
+  // file opened from outside the tree (timeline link, markdown link, direct
+  // URL) doesn't land on a viewer whose tree still shows a collapsed root.
+  // The listings are independent fs_list calls keyed by path — nothing forces
+  // us to walk the chain one level at a time, so they all go out at once and
+  // the rows appear as replies arrive.
+  //
+  // Runs once per (sid, rootPath, selection) rather than on every tree change:
+  // re-running would fight the user, re-opening an ancestor they deliberately
+  // collapsed while the file stayed selected. Neither guard clause below marks
+  // the key as handled, so a selection that arrives before the socket opens or
+  // before session_status publishes the workspace folders is expanded once the
+  // missing piece shows up.
+  const selectedPath = tree.selectedPath;
+  const autoExpandedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedPath === null) return;
+    if (connStatus !== "connected") return;
+    // An absolute path is either a workspace file (ancestors to open) or a
+    // DR-0024 external one (a flat row); which of the two is unknowable until
+    // the folder list arrives.
+    if (selectedPath.startsWith("/") && workspaceFolders.length === 0) return;
+    const key = `${sid} ${rootPath} ${selectedPath}`;
+    if (autoExpandedFor.current === key) return;
+    autoExpandedFor.current = key;
+    const paths = expandPathsForSelection(selectedPath, rootPath, workspaceFolders);
+    if (paths.length === 0) return;
+    store.dispatch({ type: "fs/dirs-expanded", sid, paths });
+    for (const path of paths) {
+      if (tree.dirs.has(path) || tree.dirErrors.has(path)) continue;
+      void loadDir(store, ws, sid, path, workspaceFolders);
+    }
+  }, [sid, rootPath, selectedPath, workspaceFolders, connStatus, tree]);
+
+  // Scroll the revealed row into the tree pane. Waits for every ancestor
+  // listing above to resolve rather than scrolling as soon as the row mounts:
+  // the listings arrive in any order, and each one that lands above the row
+  // pushes it further down, so an early scroll leaves it off-screen again. The
+  // row itself can't own this — it only sees its own mount, not its siblings'
+  // arrival. `block: "nearest"` throughout, so selecting a row that is already
+  // on screen (the click-inside-the-tree case) doesn't move the pane at all.
+  const treeRef = useRef<HTMLDivElement>(null);
+  const revealedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedPath === null) return;
+    // An active query replaces the tree body outright (see the render below),
+    // so there is no row to reveal yet — and clicking a search result is one
+    // of the ways a file gets selected. Leaving the key unmarked here is what
+    // makes the reveal happen when the query is cleared and the tree is back.
+    if (searching) return;
+    const key = `${sid} ${selectedPath}`;
+    if (revealedFor.current === key) return;
+    const paths = expandPathsForSelection(selectedPath, rootPath, workspaceFolders);
+    if (!paths.every((path) => tree.dirs.has(path) || tree.dirErrors.has(path))) return;
+    // Absent until the deepest listing renders — and permanently absent for a
+    // path that no listing contains (a stale link, say), which is why this
+    // leaves the key unmarked and simply retries on the next tree change.
+    const row = treeRef.current?.querySelector(".tree-selected");
+    if (!row) return;
+    revealedFor.current = key;
+    row.scrollIntoView({ block: "nearest" });
+  }, [sid, rootPath, selectedPath, workspaceFolders, tree, searching]);
+
+  // A revealed row can be pushed back out of sight by the *pane* shrinking
+  // rather than by anything moving inside it: on a cold load the daemon-info
+  // footer arrives after the listings do and takes 18px off the bottom of the
+  // tree pane, which was enough to hide a row the scroll above had just parked
+  // against that edge (measured: pane 650px -> 632px at ~2.1s, row unmoved).
+  // Resizing observes exactly that, and nothing else — re-running the reveal
+  // on every tree change instead would re-scroll while a user is browsing
+  // elsewhere with a file still selected. Scrolls only when the row has
+  // actually gone out of view, so an ordinary splitter drag with the row on
+  // screen stays a no-op.
+  useEffect(() => {
+    const container = treeRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const row = container.querySelector(".tree-selected");
+      if (!row) return;
+      const rowBox = row.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      // A pixel of slack: scrollIntoView parks the row against the edge with
+      // a sub-pixel overhang of its own (~0.4px measured), and treating that
+      // as "hidden" would make every later resize re-scroll for nothing.
+      if (rowBox.top >= box.top - 1 && rowBox.bottom <= box.bottom + 1) return;
+      row.scrollIntoView({ block: "nearest" });
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div class="file-tree">
+    <div class="file-tree" ref={treeRef}>
       {/* docs/inbox メモ作成: FileTree owns only the launch affordance. The
        * editor itself replaces FileViewer in the right pane, coordinated by
        * FilesPanes, so creating a memo has the same full-size surface as

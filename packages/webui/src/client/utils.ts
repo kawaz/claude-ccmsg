@@ -877,6 +877,45 @@ export function fileAncestorDirectories(filePath: string): string[] {
   return directories;
 }
 
+/** FileTree で `selectedPath` の行を見える状態にするために展開すべき
+ * ディレクトリ (浅い順)。`fileAncestorDirectories` が「fs_write が触った
+ * かもしれない listing」を数えるのに対し、こちらは「ツリー上でその行に
+ * 到達するために開かねばならない node」を数える — 起点となる section root
+ * の扱いが違うので別関数になる:
+ *
+ * - プロジェクト section の root (`rootPath`) は常に展開済みとして描画される
+ *   (`<Nodes parentPath={rootPath}>`) ので、それ自身と祖先は返さない。
+ *   `rootPath` 配下でない相対パスはツリーに現れない (お気に入り section が
+ *   フルパス 1 行で描くだけ) ので空を返す。
+ * - ワークスペース section の folder root は畳める DirNode なので、それ自身を
+ *   含めて返す。
+ * - どの workspace folder にも属さない絶対パス (DR-0024 のプロジェクト外
+ *   ファイル) は depth 0 の平坦な行なので展開対象なし。 */
+export function expandPathsForSelection(
+  selectedPath: string,
+  rootPath: string,
+  workspaceFolders: readonly { path: string }[],
+): string[] {
+  if (selectedPath === "") return [];
+  let base: string;
+  let includeBase: boolean;
+  if (selectedPath.startsWith("/")) {
+    const folder = workspaceFolders.find((f) => isWorkspaceFilePath(selectedPath, [f]));
+    if (!folder) return [];
+    base = folder.path.replace(/\/+$/, "");
+    includeBase = true;
+  } else {
+    base = rootPath.replace(/\/+$/, "");
+    if (base !== "" && !selectedPath.startsWith(`${base}/`)) return [];
+    includeBase = false;
+  }
+  const prefix = base === "" ? "" : `${base}/`;
+  const deeper = fileAncestorDirectories(selectedPath).filter(
+    (dir) => dir.length > base.length && dir.startsWith(prefix),
+  );
+  return includeBase ? [base, ...deeper] : deeper;
+}
+
 /** docs/inbox メモ作成エディタ (FileViewer.tsx) の自動ファイル名。DR-0019 §2.2
  * が指定する `YYYYMMDD-HHmm.md` を端末のローカル時刻 (`Date` の非-UTC
  * ゲッター) から組み立てる — inbox は「今この瞬間に拾ってほしい雑メモ」を

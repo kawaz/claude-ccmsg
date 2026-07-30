@@ -430,6 +430,32 @@ describe("reducer / fs/dir-toggled and fs/dir-loaded (DR-0008)", () => {
     expect(closed.sessionTrees.get("sess-1")?.expanded.has("src")).toBe(false);
   });
 
+  // Auto-expanding the ancestors of a selected file must never undo what the
+  // user opened by hand, so this action only ever adds.
+  test("fs/dirs-expanded adds every path and keeps existing ones open", () => {
+    const manual = dispatch(initialState(), {
+      type: "fs/dir-toggled",
+      sid: "sess-1",
+      path: "docs",
+    });
+    const state = dispatch(manual, {
+      type: "fs/dirs-expanded",
+      sid: "sess-1",
+      paths: ["src", "src/client", "docs"],
+    });
+    expect([...(state.sessionTrees.get("sess-1")?.expanded ?? [])].sort()).toEqual([
+      "docs",
+      "src",
+      "src/client",
+    ]);
+  });
+
+  test("fs/dirs-expanded returns the same state when nothing is new", () => {
+    const opened = dispatch(initialState(), { type: "fs/dir-toggled", sid: "sess-1", path: "src" });
+    const again = dispatch(opened, { type: "fs/dirs-expanded", sid: "sess-1", paths: ["src"] });
+    expect(again).toBe(opened);
+  });
+
   test("fs/dir-loaded stores entries for the path and clears any prior error there", () => {
     const failed = dispatch(initialState(), {
       type: "fs/dir-loaded",

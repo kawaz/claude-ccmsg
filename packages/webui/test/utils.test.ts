@@ -13,6 +13,7 @@ import {
   clampPaneRatio,
   DEFAULT_SESSION_SEARCH_FORM,
   errorMessage,
+  expandPathsForSelection,
   fileAncestorDirectories,
   favoritesStorageKey,
   formatBytes,
@@ -1457,6 +1458,58 @@ describe("fileAncestorDirectories", () => {
   // directory whose entries changed.
   test("root-level file reloads only the root listing", () => {
     expect(fileAncestorDirectories("memo.md")).toEqual([""]);
+  });
+});
+
+describe("expandPathsForSelection", () => {
+  const folders = [{ path: "/repo/one", name: "one" }];
+
+  // The project section renders rootPath's listing already expanded, so the
+  // chain to open starts one level below it and the root never appears.
+  test("returns each directory between the tree root and the file", () => {
+    expect(expandPathsForSelection("main/packages/webui/src/app.ts", "main", [])).toEqual([
+      "main/packages",
+      "main/packages/webui",
+      "main/packages/webui/src",
+    ]);
+  });
+
+  test("a containment-rooted session starts the chain at the first segment", () => {
+    expect(expandPathsForSelection("docs/inbox/memo.md", "", [])).toEqual(["docs", "docs/inbox"]);
+  });
+
+  // Already visible in the root listing — nothing to open.
+  test("a file directly in the root needs no expansion", () => {
+    expect(expandPathsForSelection("main/README.md", "main", [])).toEqual([]);
+  });
+
+  // A sibling worktree is inside the daemon's containment but outside the
+  // browsed root, so no row for it exists in the project section to reveal.
+  test("a path outside the tree root expands nothing", () => {
+    expect(expandPathsForSelection("other/pkg/x.ts", "main", [])).toEqual([]);
+  });
+
+  // Unlike the project root, a workspace folder root is a collapsible DirNode,
+  // so it has to open too.
+  test("a workspace file opens its folder root and everything below it", () => {
+    expect(expandPathsForSelection("/repo/one/src/deep/x.ts", "main", folders)).toEqual([
+      "/repo/one",
+      "/repo/one/src",
+      "/repo/one/src/deep",
+    ]);
+  });
+
+  test("a file directly in a workspace folder opens just that folder", () => {
+    expect(expandPathsForSelection("/repo/one/x.ts", "main", folders)).toEqual(["/repo/one"]);
+  });
+
+  // DR-0024 external files render flat at depth 0 in プロジェクト外.
+  test("an absolute path under no workspace folder expands nothing", () => {
+    expect(expandPathsForSelection("/elsewhere/deep/x.ts", "main", folders)).toEqual([]);
+  });
+
+  test("no selection expands nothing", () => {
+    expect(expandPathsForSelection("", "main", folders)).toEqual([]);
   });
 });
 
