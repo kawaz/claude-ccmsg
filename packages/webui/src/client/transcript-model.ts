@@ -1584,63 +1584,6 @@ function tryParseTruncatedCcmsgMessage(
   };
 }
 
-/** DR-0027 §2.2: matches a ccmsg CLI `post`/`reply` success response as it
- * appears in a Bash tool_result content. The daemon returns
- * `{"ok":true,"room":"rN","mid":M}\n` for `post` and
- * `{"ok":true,"room":"rN","mid":M,"to":["a1","u1"]}\n` for `reply`
- * (server.ts's reply handler appends the computed delivery list — observed
- * shapes: post at bbc718cd line 184, reply per PostResponse/reply send in
- * packages/daemon/src/server.ts), and Claude Code's Bash tool wraps the
- * stdout verbatim as the tool_result's content. The optional `to` group
- * accepts exactly a JSON string array (quoted ids, no escapes — daemon ids
- * are `aN`/`uN` shaped) so the reply shape is captured without loosening
- * the tail anchor. Anchored with `\s*$` so a trailing newline is fine but
- * longer noise (a `2>&1`-piped error banner mixed with the JSON, help text
- * on argv misuse) doesn't false-match. Any other extra JSON key is rejected
- * (`\}\s*$`), so an unrelated daemon op that carries `ok:true,room,mid` but
- * adds different fields fails the match (design-priority: reject unknown
- * keys rather than assume they don't come). */
-const CCMSG_POST_RESPONSE_RE =
-  /^\s*\{"ok":true,"room":"([^"\\]+)","mid":(\d+)(?:,"to":\["[^"\\]*"(?:,"[^"\\]*")*\])?\}\s*$/;
-
-/** DR-0027 §2.2 送信側: scans this user turn's `tool-result` segments for a
- * ccmsg `post`/`reply` success response, and returns one placeholder
- * `CcmsgMessage` per match with just `(room, mid)` populated (from/to/msg
- * empty, ts filled from the line — CcmsgBubble does a lazy `ws.read(room,
- * [mid])` and replaces the placeholder body with the daemon-canonical
- * message on resolve, DR-0027 §2). A tool_result whose content isn't
- * exactly the response JSON — anything with pre/postfix noise from `2>&1`,
- * a `{"ok":false,...}` error response, or an unrelated Bash output — falls
- * through unmatched and stays in the normal fold path. Non-turn / non-user
- * lines and turns with no tool_result segments return `[]`.
- *
- * The line's `ts` (transcript timestamp, when the tool_result was written)
- * is used as the placeholder ts so the bubble sorts / date-groups correctly
- * before the read resolves — the real send ts (daemon's authoritative one)
- * overwrites it once the lazy read comes back. Absent line.ts (test
- * fixtures with `ts: null`) degrades to an empty string, same convention
- * as the wrapper-parse path (`tryParseCcmsgMessage` requires `ts`, but the
- * tool_result path can't require one — the daemon knows, we don't yet).
- */
-export function extractCcmsgToolResultRefs(line: ParsedLine): CcmsgMessage[] {
-  if (line.kind !== "turn" || line.role !== "user") return [];
-  const out: CcmsgMessage[] = [];
-  for (const seg of line.segments) {
-    if (seg.kind !== "tool-result") continue;
-    if (seg.isError) continue;
-    const m = seg.text.match(CCMSG_POST_RESPONSE_RE);
-    if (!m) continue;
-    out.push({
-      from: "",
-      room: m[1]!,
-      msg: "",
-      ts: line.ts ?? "",
-      mid: Number(m[2]!),
-    });
-  }
-  return out;
-}
-
 /**
  * Recovers every ccmsg room message (`type:"msg"` events) embedded in a
  * `role:"user"` line's text, regardless of which system-injection wrapper
@@ -1675,25 +1618,18 @@ export function extractCcmsgToolResultRefs(line: ParsedLine): CcmsgMessage[] {
  */
 export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   if (line.kind !== "turn" || line.role !== "user") return [];
-  // DR-0027 §2.2 送信側: assistant が Bash 経由で叩いた `ccmsg post` /
-  // `ccmsg reply` の response (tool_result の content が `{"ok":true,"room":
-  // "rN","mid":M}` の JSON) を検出して placeholder CcmsgMessage にする。
-  // 実本文は CcmsgBubble が (room, mid) で lazy read するので from/to/msg は
-  // 空のまま (ts は line.ts で補完)。tool_result は同 turn 内に複数並ぶことが
-  // あり (Anthropic API のバッチ)、非 ccmsg のものは pattern に合致せずスキップ。
-  const fromToolResults = extractCcmsgToolResultRefs(line);
   const text = line.segments
     .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
     .map((s) => s.text)
     .join("\n");
-  if (!text) return fromToolResults;
+  if (!text) return [];
   // 早期 return: どちらのタグも含まない (大半の user 行、システム注入行は
   // 本文が巨大になりがち) なら matchAll を 2 本走らせるまでもない — join
   // コスト自体は避けられないが、この関数は classifyBoundaryLine 経由で
   // groups が変わるたび (load older / tail 追記 / refresh, Timeline.tsx)
   // に呼ばれるので、軽いほど再分類コストが下がる。
-  if (!text.includes("<teammate-message") && !text.includes("<event>")) return fromToolResults;
-  const results: CcmsgMessage[] = [...fromToolResults];
+  if (!text.includes("<teammate-message") && !text.includes("<event>")) return [];
+  const results: CcmsgMessage[] = [];
   for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
     const parsed = tryParseCcmsgMessage(m[1]!);
     if (parsed) results.push(parsed);

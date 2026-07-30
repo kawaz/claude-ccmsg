@@ -4,7 +4,7 @@
 // した時に 3 分以内の自分宛メッセージを受け取れる、という穴を塞ぐ。
 // - since_seq / backlog:true 経路には影響しない (opt-in 既定の delta/full replay 側)
 // - broadcast room の member/leave suppression と msgVisibleTo は live 配信と同じルール
-// - 自 authored msg は echo 抑止 (subscribe 前に自分で post → 自分に echo しない)
+// - 自 authored msg は軽量エコー化 (本文なしの msg_via + echo:true、DR-0003 §5 Addendum)
 import { describe, expect, test } from "bun:test";
 import {
   connect,
@@ -171,7 +171,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
   );
 
   test(
-    "subscriber's own past post is NOT re-echoed via recent-replay",
+    "subscriber's own past post comes back through recent-replay bodyless (echo), never with its body",
     async () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
@@ -181,13 +181,19 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
           members: ["B"],
         });
         const room = created.room;
-        // A posts, then A subscribes bare-default: shouldn't get its own msg back.
+        // A posts, then A subscribes bare-default: it gets the post's *record*
+        // (msg_via + echo, replay-marked) but never the body it already wrote.
         await a.request({ op: "post", room, msg: "own-post" });
 
         const aSub = await session(ctx, "A");
         await aSub.request({ op: "subscribe" });
-        const first = await aSub.readEvent<{ ev?: string; type?: string }>();
-        expect(first?.ev).toBe("room_cursors");
+        const { ev } = await aSub.readEventUntil((e) => e.type === "msg");
+        expect(ev.from).toBe("a1");
+        expect(ev.echo).toBe(true);
+        expect(ev.replay).toBe(true);
+        expect(ev.msg).toBeUndefined();
+        expect(ev.msg_via).toBe(`Use \`ccmsg read ${room}m1\``);
+        expect(ev.reply_via).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }

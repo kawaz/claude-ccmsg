@@ -41,6 +41,8 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 長文メッセージは本文 `msg` の代わりに `msg_via` が届く。値に示された `ccmsg read r<N>m<M>` をそのまま実行して全文を取得する。複数指定は `r<N>m<M>,m<M>`、既存の `ccmsg read <room> <mids>` 形式も利用できる。
 
+自分が post した msg は `echo:true` 付きのローカルエコーとして自分の subscribe にも返る。本文は無く (`msg_via` だけ) `reply_via` も付かない。**開封 (`read`) も返信も報告も不要** — 送信済みの記録がログに残るだけで、行動を要求しない。`echo:true` の無い `msg_via` (= 他者からの長文) と混同しない。
+
 ## dump
 
 コンテキスト回収には `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg dump <session-id> [--since <ISO-8601>] [--until <ISO-8601>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]` を使う。期間指定はタイムゾーン付き ISO 8601 で、境界を含む。

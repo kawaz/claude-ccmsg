@@ -14,7 +14,6 @@ import {
   classifyBoundaryLine,
   classifyUserMessage,
   extractCcmsgMessages,
-  extractCcmsgToolResultRefs,
   foldGroupLabel,
   foldGroupNeedsOuterFold,
   splitFoldSubgroups,
@@ -2703,6 +2702,37 @@ describe("extractCcmsgMessages", () => {
     ]);
   });
 
+  // DR-0003 §5 Addendum: 自分の post は本文なしの軽量エコー (msg_via + echo:true、
+  // reply_via なし) として自分の subscribe stream に返る。TL の自 post バブルは
+  // これを拾って描画し、本文は CcmsgBubble が (room, mid) で lazy read する
+  // (2026-07-29-self-ccmsg-post-bubbles-missing)。msg_via 経路と同じ placeholder
+  // を作れば足りるので、echo フィールド自体は抽出側では読まない。
+  test("self-post echo frame (msg_via + echo, no reply_via) becomes a lazy-read placeholder", () => {
+    const echoEvent = {
+      type: "msg",
+      r: "r40",
+      mid: 5,
+      from: "a2",
+      seq: 11,
+      msg_via: "Use `ccmsg read r40m5`",
+      echo: true,
+      ts: "2026-07-29T01:00:00.000Z",
+    };
+    const line = userLine(
+      `<task-notification>\n<event>${JSON.stringify(echoEvent)}</event>\n</task-notification>`,
+    );
+    expect(extractCcmsgMessages(line)).toEqual([
+      {
+        from: "a2",
+        to: undefined,
+        room: "r40",
+        msg: "",
+        ts: "2026-07-29T01:00:00.000Z",
+        mid: 5,
+      },
+    ]);
+  });
+
   test("teammate-message body is a ccmsg type:msg event -> one CcmsgMessage", () => {
     const msgEvent = {
       type: "msg",
@@ -2919,150 +2949,10 @@ describe("extractCcmsgMessages", () => {
   });
 });
 
-// DR-0027 §2.2 (送信側 tool_result 検出): AI が Bash 経由で叩いた `ccmsg
-// post`/`ccmsg reply` の response (`{"ok":true,"room":"rN","mid":M}`) を
-// tool_result content から拾って placeholder CcmsgMessage にする — from/msg
-// は空、実本文は CcmsgBubble が (room, mid) で lazy read する。実 tool_result
-// 形状は 2026-07-16 の bbc718cd セッション transcript で観測 (line 184、
-// {"ok":true,"room":"r25","mid":2})。
-describe("extractCcmsgToolResultRefs", () => {
-  function userToolResultLine(text: string, isError = false, ts: string | null = null): ParsedLine {
-    return {
-      kind: "turn",
-      ts,
-      role: "user",
-      segments: [{ kind: "tool-result", toolUseId: "toolu_x", isError, text }],
-    };
-  }
-
-  test("plain ccmsg post response -> one ref with (room, mid), from/msg empty, ts from line", () => {
-    const line = userToolResultLine(
-      '{"ok":true,"room":"r25","mid":2}',
-      false,
-      "2026-07-18T01:00:00Z",
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([
-      { from: "", room: "r25", msg: "", ts: "2026-07-18T01:00:00Z", mid: 2 },
-    ]);
-  });
-
-  // 実 transcript では stdout 末尾に \n が乗る (toolUseResult.stdout に改行が
-  // 保持される)。regex は `\s*$` で許容してあるべき。
-  test("response with a trailing newline still matches", () => {
-    const line = userToolResultLine('{"ok":true,"room":"r17","mid":68}\n');
-    expect(extractCcmsgToolResultRefs(line)).toHaveLength(1);
-    expect(extractCcmsgToolResultRefs(line)[0]!.mid).toBe(68);
-  });
-
-  // `ccmsg reply` の応答は post と違い daemon が配信先を `to` に付けて返す
-  // ({"ok":true,"room":rN,"mid":M,"to":["a1","u1"]} — server.ts の reply
-  // handler)。DR-0027 §2.2 は post/reply 両方を TL バブル化の対象とするので
-  // この形も (room, mid) ref として拾う。to の中身自体は使わない (lazy read
-  // が daemon canonical の to を取ってくる)。
-  test("reply response with `to` array also matches (DR-0027 §2.2 covers post AND reply)", () => {
-    const line = userToolResultLine(
-      '{"ok":true,"room":"r26","mid":84,"to":["a1","u1"]}\n',
-      false,
-      "2026-07-18T02:00:00Z",
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([
-      { from: "", room: "r26", msg: "", ts: "2026-07-18T02:00:00Z", mid: 84 },
-    ]);
-  });
-
-  // 単一要素の to (1on1 の reply 等) も同様。
-  test("reply response with a single-element `to` matches", () => {
-    const line = userToolResultLine('{"ok":true,"room":"r5","mid":3,"to":["u1"]}');
-    expect(extractCcmsgToolResultRefs(line)).toHaveLength(1);
-  });
-
-  // 対極: to 以外の追加キーを持つ {ok,room,mid,...} 形 (無関係な daemon op の
-  // 応答等) は reject — 未知キーを許すと誤爆面が広がる。
-  test("response with an unknown extra key -> empty (strict shape)", () => {
-    const line = userToolResultLine('{"ok":true,"room":"r5","mid":3,"seq":9}');
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  // 対極 (誤爆防止): エラー response `{"ok":false,...}` は拾わない。
-  test("failure response {ok:false,error:...} -> empty (not matched)", () => {
-    const line = userToolResultLine(
-      '{"ok":false,"error":{"code":"not_a_member","msg":"not a member of r17"}}',
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  // 対極: is_error:true な tool_result は content が response 形でも拾わない
-  // (Bash が exit non-zero を返した状況、副作用としての post 成功でも扱わない)。
-  test("is_error=true tool_result -> empty even if content matches the shape", () => {
-    const line = userToolResultLine('{"ok":true,"room":"r25","mid":2}', true);
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  // 対極: `2>&1` などで前後にノイズが混ざったら strict 検出は空 (誤爆回避)。
-  test("noisy content (mixed with other output) -> empty", () => {
-    const line = userToolResultLine(
-      'Exit code 1\n{"ok":true,"room":"r25","mid":2}\nsome trailing help',
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  // 対極: text segment のみの user turn (通常のプロンプト等) は空。
-  test("user turn with only text segments -> empty", () => {
-    const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  test("assistant turn -> empty", () => {
-    const line = parseTranscriptLine(
-      JSON.stringify({
-        type: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
-      }),
-    );
-    expect(extractCcmsgToolResultRefs(line)).toEqual([]);
-  });
-
-  // 複数 tool_result が同じ turn にバッチされている場合 (Anthropic API 慣習)、
-  // ccmsg post response と非関連 tool_result が並ぶ — ccmsg のものだけ拾う。
-  test("mixed batch: only ccmsg-shaped tool_results become refs", () => {
-    const line: ParsedLine = {
-      kind: "turn",
-      ts: "2026-07-18T00:00:00Z",
-      role: "user",
-      segments: [
-        { kind: "tool-result", toolUseId: "t1", isError: false, text: "unrelated ls output" },
-        {
-          kind: "tool-result",
-          toolUseId: "t2",
-          isError: false,
-          text: '{"ok":true,"room":"r5","mid":9}',
-        },
-        {
-          kind: "tool-result",
-          toolUseId: "t3",
-          isError: false,
-          text: '{"ok":true,"room":"r6","mid":10}',
-        },
-      ],
-    };
-    const refs = extractCcmsgToolResultRefs(line);
-    expect(refs).toHaveLength(2);
-    expect(refs.map((r) => [r.room, r.mid])).toEqual([
-      ["r5", 9],
-      ["r6", 10],
-    ]);
-  });
-});
-
-// DR-0027 §2.2 統合: extractCcmsgMessages は tool_result 検出結果と wrapper
-// 抽出結果の両方を返し、Timeline.tsx が同一 boundary の bubble 列として描画
-// できる。ccmsgDedupKey が (room, mid) canonical キーを返すので、tool_result
-// 由来の placeholder と subscribe teammate-message 由来の完全 event が同じ
-// (room, mid) を持つ場合は 1 件に collapse される (kawaz r15 mid=21 dedup の
-// 拡張、DR-0027 §2.2)。
-describe("DR-0027 dedup: (room, mid) canonical key collapses send-side + receive-side echoes", () => {
+// ccmsgDedupKey が (room, mid) canonical キーを返すので、同じ msg が別経路で
+// 2 度抽出されても (自 post の軽量エコーと、同じ行に載った完全 event 等)
+// 1 件に collapse される (kawaz r15 mid=21 dedup の拡張、DR-0027 §2.2)。
+describe("DR-0027 dedup: (room, mid) canonical key collapses duplicate extractions", () => {
   test("ccmsgDedupKey uses `${room}|m${mid}` when mid is present", () => {
     const m: CcmsgMessage = { from: "a1", room: "r5", msg: "", ts: "", mid: 42 };
     expect(ccmsgDedupKey(m)).toBe("r5|m42");
@@ -3073,8 +2963,8 @@ describe("DR-0027 dedup: (room, mid) canonical key collapses send-side + receive
     expect(ccmsgDedupKey(m)).toBe("r5|t|u1|hi");
   });
 
-  test("tool_result placeholder and wrapper-parsed message with same (room, mid) collapse", () => {
-    const placeholder: CcmsgMessage = { from: "", room: "r5", msg: "", ts: "ts1", mid: 42 };
+  test("bodyless echo placeholder and wrapper-parsed message with same (room, mid) collapse", () => {
+    const placeholder: CcmsgMessage = { from: "a1", room: "r5", msg: "", ts: "ts1", mid: 42 };
     const wrapperParsed: CcmsgMessage = {
       from: "a1",
       room: "r5",

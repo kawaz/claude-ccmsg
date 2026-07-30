@@ -305,13 +305,21 @@ const RECENT_REPLAY_WINDOW_MS = readRecentReplayMsEnv();
  * is directly executable and its presence is the oversize signal; no preview
  * or separate truncated flag is needed. The stored event and `ccmsg read`
  * result still carry the full body — only the subscribe wire frame is
- * reshaped. */
+ * reshaped.
+ *
+ * `echo` (DR-0003 §5 Addendum) reshapes the frame the same way for a
+ * different reason: the subscriber authored this msg, so the body is already
+ * in their context and only the *fact* of the post needs to reach their
+ * stream. It reuses `msg_via` (a reference that stays fetchable) and adds
+ * `echo: true` so a receiver can tell "this is my own post, nothing to open"
+ * from "this is a peer's oversize msg, fetch it". */
 function orderedMsgFrame(
   ev: MsgEvent,
   roomId: string,
   replyVia: string | undefined,
   redirectOversize: boolean,
   replay: boolean = false,
+  echo: boolean = false,
 ): Record<string, unknown> {
   // Field order is scope/importance order (kawaz r38 mid=23):
   // type,r,seq,mid,from[,to,reply_to],msg|msg_via,reply_via,replay,ts.
@@ -324,6 +332,17 @@ function orderedMsgFrame(
   if (ev.seq !== undefined) out.seq = ev.seq;
   if (ev.to !== undefined) out.to = ev.to;
   if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
+  if (echo) {
+    // Local echo of the subscriber's own post: the body is already in the
+    // author's own context, so it is replaced by the same `msg_via` fetch
+    // instruction an oversize frame uses, and `echo: true` marks the frame as
+    // "nothing to act on". No `reply_via` — there is nobody to reply to.
+    out.msg_via = `Use \`ccmsg read ${roomId}m${ev.mid}\``;
+    out.echo = true;
+    if (replay) out.replay = true;
+    out.ts = ev.ts;
+    return out;
+  }
   out.msg = ev.msg;
   if (replyVia !== undefined) out.reply_via = replyVia;
   if (replay) out.replay = true;
@@ -341,20 +360,32 @@ function orderedMsgFrame(
   return out;
 }
 
-function writeDelivered(conn: Conn, room: Room, ev: StorageEvent, replay: boolean = false): void {
+/** `replay` marks a recent-replay catch-up frame, `echo` marks the author's own
+ * post coming back to them as a bodyless local echo (see `orderedMsgFrame`). */
+interface DeliverOpts {
+  replay?: boolean;
+  echo?: boolean;
+}
+
+function writeDelivered(conn: Conn, room: Room, ev: StorageEvent, opts: DeliverOpts = {}): void {
   if (ev.type === "msg") {
+    const echo = opts.echo === true;
     const rid = recipientId(conn, room);
     // reply_via is a delivery-time wire instruction, never stored in the room's
     // jsonl — the route depends on live room state (archived changes it for later
     // replays), so persisting a snapshot at post time would go stale. Only
     // computed for actual recipients; non-recipient subscribers get no instruction.
-    const replyVia = rid !== null ? computeReplyVia(room, ev) : undefined;
+    // An echo has no recipient role at all — the author is not replying to itself.
+    const replyVia = rid !== null && !echo ? computeReplyVia(room, ev) : undefined;
     // Oversize redirection targets the harness truncation between a `ccmsg
     // subscribe` Monitor and its session AI — a session-role subscriber. The
     // webui (user role) renders frames directly with no Monitor in between,
     // so it always gets the full body.
     const redirectOversize = conn.identity?.role === "session";
-    send(conn, orderedMsgFrame(ev, room.id, replyVia, redirectOversize, replay));
+    send(
+      conn,
+      orderedMsgFrame(ev, room.id, replyVia, redirectOversize, opts.replay === true, echo),
+    );
     return;
   }
   send(conn, { ...ev, r: room.id });
@@ -705,8 +736,11 @@ function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
 
 /**
  * Live-deliver a single event to all subscribers that see the room.
- * echo suppression (DR-0003 §5) applies to `msg` only: the author's own post is
- * never pushed back to them. Membership/link/title events go to everyone incl. the actor
+ * The echo rule (DR-0003 §5) applies to `msg` only: the author's own post never
+ * comes back to them with its body. A session-role author instead gets the
+ * bodyless echo frame (§5 Addendum) so the post is recorded in their subscribe
+ * stream; a user-role author (the webui, which renders its own send optimistically)
+ * gets nothing, as before. Membership/link/title events go to everyone incl. the actor
  * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
  */
 function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
@@ -714,7 +748,12 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
     if (ev.type === "msg") {
-      if (isAuthorSub(sub, author)) continue;
+      if (isAuthorSub(sub, author)) {
+        // The `to` filter is not applied: it decides who *else* receives the
+        // msg, and the author is never excluded from their own post.
+        if (sub.identity?.role === "session") writeDelivered(sub, room, ev, { echo: true });
+        continue;
+      }
       if (!msgVisibleTo(sub, room, ev)) continue;
     }
     writeDelivered(sub, room, ev);
@@ -745,7 +784,8 @@ function isValidSeqCursor(v: number | undefined): v is number {
  *   (join snapshot); a user-role subscriber's conn gets every msg instead of just
  *   the last 50 (issue 2026-07-12-peers-live-update-protocol's sibling change —
  *   the cap only protects an agent session's context budget).
- * suppressAuthorId drops the author's own just-posted msg from their snapshot (echo rule).
+ * suppressAuthorId strips the body from the author's own just-posted msg in their
+ * snapshot (echo rule; a session-role author still gets the bodyless echo frame).
  * All paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
  * offline member reconnecting via since-replay must not see a `to` msg that excluded
  * them any more than a live subscriber would.
@@ -753,10 +793,8 @@ function isValidSeqCursor(v: number | undefined): v is number {
  * The two cursor branches additionally apply the echo rule (DR-0003 §5) for
  * session-role subscribers: a cursor replay is the delivery continuation of the
  * live stream — "what I would have received had I stayed connected" — so it must
- * filter exactly as live `deliver` does. Without this, the CLI's reconnect path
- * echoes an agent's own posts straight back at it: `sinceMap` only advances on
- * events actually written to stdout, and an author never receives their own post,
- * so the cursor a reconnect carries always predates that post. The webui is
+ * reshape exactly as live `deliver` does, or the CLI's reconnect path feeds an
+ * agent its own post bodies a second time. The webui is
  * unaffected: it subscribes with `since_seq` too, but as the admin User, which
  * `selfMemberId` exempts. The no-cursor
  * snapshot branch below is deliberately NOT changed — `backlog: true` is an
@@ -788,7 +826,11 @@ function sendBacklog(
       // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
       if (isSuppressedForBroadcastStream(room, ev)) continue;
       if (ev.type === "msg") {
-        if (ev.from === selfId) continue; // echo rule (see docstring)
+        if (ev.from === selfId) {
+          // echo rule (see docstring): own post replayed bodyless
+          writeDelivered(conn, room, ev, { echo: true });
+          continue;
+        }
         if (!msgVisibleTo(conn, room, ev)) continue;
       }
       writeDelivered(conn, room, ev);
@@ -812,7 +854,11 @@ function sendBacklog(
       // の subscribe stream にも noise を復元させない。
       if (isSuppressedForBroadcastStream(room, ev)) continue;
       if (ev.type === "msg") {
-        if (ev.from === selfId) continue; // echo rule (see docstring)
+        if (ev.from === selfId) {
+          // echo rule (see docstring): own post replayed bodyless
+          writeDelivered(conn, room, ev, { echo: true });
+          continue;
+        }
         if (!msgVisibleTo(conn, room, ev)) continue;
       }
       writeDelivered(conn, room, ev);
@@ -839,7 +885,12 @@ function sendBacklog(
     if (room.kind === "broadcast" && ev.type === "member") continue;
     if (ev.type === "msg") {
       if (!recent.has(ev)) continue;
-      if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) continue;
+      if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) {
+        // echo rule: a session-role author sees the fact of their own post
+        // without its body; the webui (user role) keeps getting nothing here.
+        if (conn.identity?.role === "session") writeDelivered(conn, room, ev, { echo: true });
+        continue;
+      }
       if (!msgVisibleTo(conn, room, ev)) continue;
     }
     writeDelivered(conn, room, ev);
@@ -1715,12 +1766,15 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
               if (ev.type !== "msg") continue;
               if (isSuppressedForBroadcastStream(room, ev)) continue;
               if (Date.parse(ev.ts) < cutoff) continue;
+              // Msgs the subscriber themselves authored come back bodyless — a
+              // session that just posted and then subscribed needs the post on
+              // record, not its body re-read (parity with live-deliver's echo).
+              if (ev.from === selfId) {
+                writeDelivered(conn, room, ev, { replay: true, echo: true });
+                continue;
+              }
               if (!msgVisibleTo(conn, room, ev)) continue;
-              // Skip msgs the subscriber themselves authored — a session that
-              // just posted and then subscribed doesn't need its own post
-              // echoed back (parity with the live-deliver echo suppression).
-              if (ev.from === selfId) continue;
-              writeDelivered(conn, room, ev, true);
+              writeDelivered(conn, room, ev, { replay: true });
             }
           }
           cursors.push({ room: room.id, last_mid: room.lastMid });

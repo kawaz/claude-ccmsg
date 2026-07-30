@@ -243,10 +243,21 @@ export type RoomKind = "normal" | "broadcast" | "1on1";
  * without changing the msg body or subscriber-side dispatch: `to`, `from`,
  * `reply_via` still hold their normal meanings, only the framing marker
  * differs. Never present on live-delivered msgs or the since/backlog replay
- * paths — those never re-flag past events. */
+ * paths — those never re-flag past events.
+ *
+ * `msg_via` replaces the `msg` body with a `ccmsg read r<N>m<M>` instruction.
+ * Two independent causes, both session-role only: an oversize body that the
+ * harness's task-notification wrapper would truncate, and — together with
+ * `echo: true` — the author's own post coming back to them (DR-0003 §5
+ * Addendum). An `echo` frame carries no `reply_via`: it is a local echo that
+ * records the post in the author's own stream, needing no read and no reply.
+ * The user role (webui) never receives either form, so the room-view code
+ * paths that consume this type always see a `msg`. */
 export type DeliveredEvent = (StorageEvent & { r: string }) & {
   reply_via?: string;
   replay?: true;
+  msg_via?: string;
+  echo?: true;
 };
 
 /**

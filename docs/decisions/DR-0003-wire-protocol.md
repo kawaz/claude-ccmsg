@@ -78,6 +78,25 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 
 - `{op:"ping"}` → `{ok:true, pong:true, version, uptime, pid, rooms, clients}`。DR-0002 の health check / version mismatch 検出 / `ccmsg status` の表示に使う
 
+## Addendum 2026-07-29: §5 の「echo back なし」を軽量ローカルエコーに変更 (kawaz r76 mid=74)
+
+session role の subscriber には、自分の post を **本文なしの軽量エコー**として配信する。
+`msg` を落として `msg_via` (= `ccmsg read r<N>m<M>` 参照) に差し替え、`echo: true` を付け、
+`reply_via` は付けない。`seq` は残す (CLI の cursor がエコー済み post を追い越せる)。
+storage は不変で、変換は配信時のみ (`reply_via` と同じ流儀)。live deliver / cursor replay
+(since_seq・since) / recent-replay / 新 room snapshot の全経路に一様に適用する。
+user role (webui) 向けの配信は変更しない — 自分の送信は composer 側で描画済みで、
+かつ observation surface として全文が要る。
+
+**Why**: 「echo back なし」は AI が自分の post を開封して「自分のでした」と報告する
+無駄を消すための規定だったが、配信が消えると **session log にルーム発言の記録が残らない**。
+webui の TL はそれを Bash tool result のパターンマッチで復元しており (DR-0027 §2.2)、
+daemon 側の応答形が変わるたびに壊れる hack になっていた
+(issue `2026-07-29-self-ccmsg-post-bubbles-missing`)。エコーを本文なしにすれば、
+元の「開封の無駄」を作らずに記録だけが残る — `echo: true` が「開封不要」の機械判定になる。
+これに伴い DR-0027 §2.2 の tool_result 検出は削除し、TL の自 post バブルはエコー由来に
+一本化した (本文は既存の (room, mid) lazy read が daemon 原本から埋める)。
+
 ## Alternatives considered
 
 - **CLI に `--as-user` フラグを残して kawaz がターミナルから u1 として post できる状態**: 不採用 [kawaz 2026-07-12、mid=9]。kawaz は webui からしか write しない運用と決まり、CLI から u1 発行できる経路自体を消すことで「sid 未設定 sidecar が u1 に化ける」事故モードごと排除する。write は webui backend (`role: "user"` hello) 経由に一本化

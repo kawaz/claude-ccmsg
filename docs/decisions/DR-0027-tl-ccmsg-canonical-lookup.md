@@ -48,7 +48,20 @@ TL 上の ccmsg メッセージ表示は現在 transcript の断片 (subscribe e
 | Phase 1 | webui: (r,mid) 同定 + lazy read + キャッシュ + フォールバック (受信側) |
 | Phase 2 | webui: tool result 検出 → AI 発バブル (送信側) |
 
-## 4. 関連
+## 4. Addendum 2026-07-29: §2.2 の実現手段を daemon の軽量エコーに置換 (kawaz r76 mid=74)
+
+§2.2 の**目的** (AI 自身の post を TL にバブル表示する) は維持し、**手段**を差し替えた。
+Bash tool result の応答 JSON パターンマッチ (`extractCcmsgToolResultRefs`) は削除。
+daemon が自 post を本文なしの軽量エコー (`msg_via` + `echo:true`) として author の
+subscribe stream にも配信するようになった (DR-0003 §5 Addendum) ため、自 post は
+受信側と同じ `<task-notification>` 経路で transcript に載り、§2.1 の (r, mid) 同定 +
+lazy read にそのまま乗る。
+
+**Why**: パターンマッチは CLI 応答 JSON の形に密結合で、v0.80.0 の種別リネームで実際に
+壊れた (issue `2026-07-29-self-ccmsg-post-bubbles-missing`)。エコーは protocol 上の
+契約なので、TL は「配信された msg を描く」という 1 つの規則だけを持てばよくなる。
+
+## 5. 関連
 
 - kawaz r26 mid=122 (方針)
 - v0.42.1 (truncated room 欠落救済) / v0.53.1 (msg-last カラム順) — 本 DR で救済 parse は

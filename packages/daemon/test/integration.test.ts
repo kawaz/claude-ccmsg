@@ -50,7 +50,7 @@ describe("wire protocol integration", () => {
   );
 
   test(
-    "no echo back: an author never receives their own post, but co-members do",
+    "local echo: an author gets its own post back bodyless (msg_via + echo, no reply_via), co-members get the body",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -70,15 +70,34 @@ describe("wire protocol integration", () => {
         await aPost.request({ op: "post", room, msg: "from A" }); // mid 1, from a1
         await bPost.request({ op: "post", room, msg: "from B" }); // mid 2, from a2
 
-        // A's stream skips its own mid 1 (echo) and first sees B's mid 2
-        const aFirst = await aSub.readEventUntil((ev) => ev.type === "msg");
-        expect(aFirst.ev.mid).toBe(2);
-        expect(aFirst.ev.from).toBe("a2");
+        // A's own mid 1 comes back as a local echo: the fact of the post with a
+        // `msg_via` reference, no body, and no reply_via (nobody to reply to).
+        // DR-0003 §5 Addendum: the echo is what puts the post in A's session log.
+        const aEcho = await aSub.readEventUntil((ev) => ev.type === "msg");
+        expect(aEcho.ev.mid).toBe(1);
+        expect(aEcho.ev.from).toBe("a1");
+        expect(aEcho.ev.echo).toBe(true);
+        expect(aEcho.ev.msg).toBeUndefined();
+        expect(aEcho.ev.msg_via).toBe(`Use \`ccmsg read ${room}m1\``);
+        expect(aEcho.ev.reply_via).toBeUndefined();
+        // seq is kept so the CLI's cursor advances past the echoed post — without
+        // it a reconnect would replay the same msg again.
+        expect(typeof aEcho.ev.seq).toBe("number");
 
-        // B's stream skips its own mid 2 and first sees A's mid 1
+        // B's post reaches A with the full body and a reply instruction.
+        const aFirst = await aSub.readEventUntil((ev) => ev.type === "msg" && ev.from === "a2");
+        expect(aFirst.ev.mid).toBe(2);
+        expect(aFirst.ev.msg).toBe("from B");
+        expect(aFirst.ev.reply_via).toBe(`Use \`ccmsg reply ${room}m2 <msg>\``);
+
+        // Symmetrically for B: A's mid 1 in full, B's own mid 2 as an echo.
         const bFirst = await bSub.readEventUntil((ev) => ev.type === "msg");
         expect(bFirst.ev.mid).toBe(1);
         expect(bFirst.ev.from).toBe("a1");
+        expect(bFirst.ev.msg).toBe("from A");
+        const bEcho = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.from === "a2");
+        expect(bEcho.ev.echo).toBe(true);
+        expect(bEcho.ev.msg).toBeUndefined();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -87,18 +106,16 @@ describe("wire protocol integration", () => {
   );
 
   // The echo rule (DR-0003 §5) has to hold on the cursor-replay path too, not just
-  // live delivery. The CLI's reconnect carries a `since_seq` cursor built only from
-  // events it actually wrote to stdout — and an author never receives their own post —
-  // so that cursor ALWAYS predates the author's own last post. Replaying it verbatim
-  // fed an agent its own message back (with a `reply_via` telling it to reply to
-  // itself). Both cursor branches are covered: `since_seq` (current CLI) and `since`
-  // (mid cursor, old-client compat).
+  // live delivery: a cursor that predates the author's own post must not replay that
+  // post's body back at it (with a `reply_via` telling it to reply to itself) — it
+  // gets the same bodyless echo the live path sends. Both cursor branches are
+  // covered: `since_seq` (current CLI) and `since` (mid cursor, old-client compat).
   for (const [label, cursorKey] of [
     ["since_seq", "since_seq"],
     ["since (mid)", "since"],
   ] as const) {
     test(
-      `no echo back on ${label} cursor replay: a reconnecting author is not fed its own post, but does get the co-member posts it missed`,
+      `${label} cursor replay: a reconnecting author gets its own post back bodyless, and the co-member posts it missed in full`,
       async () => {
         const ctx = await startTestDaemon();
         try {
@@ -119,7 +136,7 @@ describe("wire protocol integration", () => {
           const seen = await aSub.readEventUntil((ev) => ev.type === "msg");
           const cursor = cursorKey === "since_seq" ? seen.ev.seq : seen.ev.mid;
 
-          // Then A posts (never echoed live), and B posts again while A is away.
+          // Then A posts, and B posts again while A is away.
           await aPost.request({ op: "post", room, msg: "from A (mine)" });
           await bPost.request({ op: "post", room, msg: "from B (missed)" });
 
@@ -127,11 +144,15 @@ describe("wire protocol integration", () => {
           const aSub2 = await session(ctx, "A");
           await aSub2.request({ op: "subscribe", [cursorKey]: { [room]: cursor } });
 
-          // The first — and only — msg replayed is B's, A's own post is filtered.
-          const got = await aSub2.readEventUntil((ev) => ev.type === "msg");
+          // A's own post is replayed as an echo (no body, no reply_via)...
+          const mine = await aSub2.readEventUntil((ev) => ev.type === "msg");
+          expect(mine.ev.from).toBe("a1");
+          expect(mine.ev.echo).toBe(true);
+          expect(mine.ev.msg).toBeUndefined();
+          expect(mine.ev.reply_via).toBeUndefined();
+          // ...and B's missed post with its full body.
+          const got = await aSub2.readEventUntil((ev) => ev.type === "msg" && ev.from === "a2");
           expect(got.ev.msg).toBe("from B (missed)");
-          expect(got.ev.from).toBe("a2");
-          expect(got.seen.some((ev) => ev.type === "msg" && ev.from === "a1")).toBe(false);
         } finally {
           await stopTestDaemon(ctx);
         }
@@ -218,10 +239,18 @@ describe("wire protocol integration", () => {
         const cGot = await cSub.readEventUntil((ev) => ev.type === "msg");
         expect(cGot.ev.mid).toBe(2);
 
-        // echo suppression (DR-0003 §5) is unchanged by the `to` filter: A's own
-        // to-filtered mid 1 is never echoed back; A's first seen msg is B's mid 2.
-        const aGot = await aSub.readEventUntil((ev) => ev.type === "msg");
+        // The echo rule (DR-0003 §5) is unchanged by the `to` filter: A's own
+        // to-filtered mid 1 comes back bodyless (the `to` list decides who ELSE
+        // receives it, never whether the author sees their own post), and B's mid 2
+        // arrives with its body.
+        const aEcho = await aSub.readEventUntil((ev) => ev.type === "msg");
+        expect(aEcho.ev.mid).toBe(1);
+        expect(aEcho.ev.echo).toBe(true);
+        expect(aEcho.ev.msg).toBeUndefined();
+        expect(aEcho.ev.to).toEqual(["a2"]);
+        const aGot = await aSub.readEventUntil((ev) => ev.type === "msg" && ev.echo !== true);
         expect(aGot.ev.mid).toBe(2);
+        expect(aGot.ev.msg).toBe("broadcast");
 
         // storage/read/rooms stay unfiltered (DR-0011 §1-3): C can still pull the
         // skipped mid on request, and the mid gap is visible in `rooms.last_mid`.
