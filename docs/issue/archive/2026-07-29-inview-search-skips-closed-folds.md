@@ -1,6 +1,6 @@
 ---
 title: TL の in-view search が閉じた fold の中身をカウントしない (コメントの仕様記述と食い違い)
-status: open
+status: resolved
 category: bug
 created: 2026-07-29T13:25:27+09:00
 last_read: 2026-07-30T08:24:30+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-30T20:54:08+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:起票の前提が誤りと確定 (実機再検証 2026-07-30)。閉じた fold の中身は従来から検索対象で実装とコメントに食い違いは無かった。当初の「数えない」観測は thinking の ja 翻訳が fold を開くまで DOM に生成されないケースと推定。kawaz 裁定 (r76m73) により「閉じた fold を対象にするか」の on/off トグルを実装 (commit 954dce7c、既定 ON = 従来動作)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -36,6 +36,3 @@ worker 実測 (2026-07-29, v0.82.1/v0.82.2 とも) で確認。v0.82.2 の dedup
 - (a) コメントどおり「閉じた fold の中も数え、ヒットへのジャンプで fold を自動展開」に実装を寄せる。検索体験としては素直だが fold 自動展開の UX 判断を含む
 - (b) 現挙動を仕様としてコメントを直す
 
-## 解決時の記録先
-
-- (a) を採るなら commit message で足りる。(b) ならコメント修正のみ
