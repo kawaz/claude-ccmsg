@@ -1,6 +1,6 @@
 ---
 title: DR-0027 §2.2 の自 post/reply バブルが TL に出ていない (回帰疑い)
-status: open
+status: resolved
 category: bug
 created: 2026-07-29T12:09:43+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-30T21:00:00+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:kawaz 裁定 (r76m74) で「バブル復活 vs supersede」の二択でなく設計の作り直しに (自 post の echo 抑制をやめ、本文なしの軽量ローカルエコー = msg_via + echo:true、reply_via なし、を配信する形へ変更)","dr/DR-0003-wire-protocol §5 Addendum","dr/DR-0027-tl-ccmsg-canonical-lookup","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
