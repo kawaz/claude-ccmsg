@@ -25,11 +25,6 @@
 
 ## 確認待ち
 
-### 👺WEBUI-C24: workflow の TL と状態表示 (v0.83.0)
-
-- [ ] a: workflow 配下エージェントの TL がツリーから開ける (agent transcript not found が出ない)
-- [ ] b: workflow の running / done / error が dot の色で見分けられる
-
 ### 👺WEBUI-C25: メモリ/重さ対策 (v0.83.0)
 
 - [ ] a: 長時間使用 + セッション巡回でブラウザが重くなっていく現象が改善した
