@@ -464,7 +464,7 @@ describe("parseTranscriptLine / assistant turns", () => {
       path: "/x/a.ts",
       offset: 9,
       limit: 3,
-      content: null,
+      result: null,
     });
     const write = parse("Write", { file_path: "/x/a.ts", content: "new\n" });
     expect(write.kind === "turn" ? write.segments[0] : null).toEqual({
@@ -512,9 +512,188 @@ describe("parseTranscriptLine / assistant turns", () => {
       path: "a.ts",
       offset: null,
       limit: null,
-      content: "alpha\n",
+      result: { kind: "text", content: "alpha\n" },
     });
     expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
+    ]);
+  });
+
+  // 画像ファイルの Read は toolUseResult に file.content を持たず、base64 +
+  // mime + 表示寸法だけが載る (実測 2026-07-30、ローカルの session corpus で
+  // Read 結果 254 件中 15 件)。text 前提のままだと結果なし扱いになり、カードが
+  // 「(空のファイル)」+「範囲外」を出したうえに、300KB の base64 が独立した
+  // tool_result fold として TL に並ぶ (kawaz r76 m90 の報告)。
+  test("画像 Read の結果は image として Read カードに畳まれる", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu_img", name: "Read", input: { file_path: "/tmp/shot.png" } },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_img",
+              content: [
+                {
+                  type: "image",
+                  source: { type: "base64", data: "iVBOR", media_type: "image/png" },
+                },
+              ],
+            },
+          ],
+        },
+        toolUseResult: {
+          type: "image",
+          file: {
+            base64: "iVBOR",
+            type: "image/png",
+            originalSize: 91572,
+            dimensions: {
+              originalWidth: 1776,
+              originalHeight: 287,
+              displayWidth: 888,
+              displayHeight: 143,
+            },
+          },
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null).toEqual({
+      kind: "file-read",
+      toolUseId: "tu_img",
+      path: "/tmp/shot.png",
+      offset: null,
+      limit: null,
+      // 寸法は base64 側の実寸 (harness が縮小した後の display 寸法)。
+      result: {
+        kind: "image",
+        mediaType: "image/png",
+        base64: "iVBOR",
+        width: 888,
+        height: 143,
+      },
+    });
+    // 結果行は Read カードに畳まれ、単独の tool_result としては描画されない。
+    expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
+    ]);
+  });
+
+  // toolUseResult サイドカーが無い行 (別バージョンの harness) でも、
+  // tool_result ブロック自身が同じ base64 を持っているので画像として出す。
+  test("toolUseResult が無くても tool_result の image ブロックから読む", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu_img2", name: "Read", input: { file_path: "/tmp/a.gif" } },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_img2",
+              content: [
+                {
+                  type: "image",
+                  source: { type: "base64", data: "R0lGOD", media_type: "image/gif" },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    const segment = resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null;
+    expect(segment?.kind === "file-read" ? segment.result : null).toEqual({
+      kind: "image",
+      mediaType: "image/gif",
+      base64: "R0lGOD",
+      width: null,
+      height: null,
+    });
+  });
+
+  // 失敗した Read ("File does not exist.") は file payload を持たないので
+  // 汎用 tool_result として届く。カード側に畳まないと「結果は読み込み範囲外」
+  // と誤報しつつ、理由が別項目に分かれて出る。
+  test("失敗した Read の結果は error として Read カードに畳まれる", () => {
+    const use = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", id: "tu_err", name: "Read", input: { file_path: "/tmp/gone.png" } },
+          ],
+        },
+      }),
+    );
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_err",
+              is_error: true,
+              content: "File does not exist.",
+            },
+          ],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([use, result]);
+    const segment = resolved[0]?.kind === "turn" ? resolved[0].segments[0] : null;
+    expect(segment?.kind === "file-read" ? segment.result : null).toEqual({
+      kind: "error",
+      message: "File does not exist.",
+    });
+    expect(groupTimelineLines(resolved, [10, 20])).toEqual([
+      { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
+    ]);
+  });
+
+  // 対応する Read が読み込み範囲外なら畳む先が無い — エラーは単独の
+  // tool_result 項目として見えたままにする (握りつぶさない)。
+  test("Read が範囲外のエラー tool_result は単独項目として残る", () => {
+    const result = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_orphan",
+              is_error: true,
+              content: "File does not exist.",
+            },
+          ],
+        },
+      }),
+    );
+    const resolved = resolveFileToolResults([result]);
+    expect(resolved[0]?.kind === "turn" ? resolved[0].segments[0]?.kind : null).toBe("tool-result");
+    expect(groupTimelineLines(resolved, [10])).toEqual([
       { kind: "fold", entries: [{ offset: 10, line: resolved[0] }] },
     ]);
   });

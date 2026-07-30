@@ -54,6 +54,7 @@ import {
   truncateRawLine,
   type BashCommandOutput,
   type CcmsgMessage,
+  type FileToolResult,
   type ParsedLine,
   type Segment,
   type RawTranscriptRow,
@@ -94,6 +95,13 @@ import {
   type SearchWord,
 } from "../in-view-search.ts";
 import { readStorage, writeStorage } from "../storage.ts";
+import {
+  canPrettyRawLine,
+  prettyRawLine,
+  setRawViewPretty,
+  useRawViewPretty,
+  RAW_PRETTY_MAX_CHARS,
+} from "../raw-view-mode.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
@@ -137,6 +145,45 @@ interface TLSearchCtx {
  */
 const ItemRawContext = createContext<((offset: number) => RawTranscriptRow[]) | null>(null);
 
+/** raw / pretty の切替タブ (kawaz r76 m91)。raw 展開のすぐ上に出す (全体 raw
+ * ビューの先頭、項目トグルなら展開した行の直前)。設定は raw-view-mode.ts の
+ * グローバル store — 全体ビューと項目トグル、複数ペインの Timeline が同じ
+ * 1 つの値を見る。`disabled` は「この場に整形できる行が 1 つも無い」場合 —
+ * 押しても何も変わらないボタンを生かしておかない。 */
+function RawModeTabs({
+  disabled = false,
+  disabledReason,
+}: {
+  disabled?: boolean;
+  disabledReason?: string;
+}) {
+  const pretty = useRawViewPretty();
+  const setPretty = setRawViewPretty;
+  return (
+    <div class="tl-raw-mode">
+      <button
+        type="button"
+        class={"tl-thinking-tab" + (pretty ? "" : " active")}
+        aria-pressed={!pretty}
+        onClick={() => setPretty(false)}
+        title="JSONL の行をそのまま表示"
+      >
+        raw
+      </button>
+      <button
+        type="button"
+        class={"tl-thinking-tab" + (pretty ? " active" : "")}
+        aria-pressed={pretty}
+        disabled={disabled}
+        onClick={() => setPretty(true)}
+        title={disabled ? disabledReason : "JSON として整形して表示"}
+      >
+        pretty
+      </button>
+    </div>
+  );
+}
+
 /**
  * Wraps one rendered timeline item with a `raw` toggle that swaps it for the
  * verbatim jsonl line(s) it came from. Layout-neutral by construction: the
@@ -160,6 +207,9 @@ function ItemRawToggle({
   const getRows = useContext(ItemRawContext);
   const [raw, setRaw] = useState(false);
   const rows = raw && getRows ? getRows(offset) : [];
+  // この項目の行が 1 つも整形できないなら pretty を選ばせない (押しても
+  // 全行が raw に落ちるだけ)。項目あたり数行なので毎 render の判定で足りる。
+  const anyPretty = rows.some((row) => canPrettyRawLine(row.text));
   return (
     <div
       class={`tl-item${raw ? " tl-item-raw-on" : ""}${selectedPosition ? " tl-position-selected" : ""}`}
@@ -191,7 +241,15 @@ function ItemRawToggle({
           // その旨だけ出す。
           <p class="tl-empty">(この項目の元 JSONL 行は読み込み範囲外)</p>
         ) : (
-          rows.map((row) => <RawLineRow key={row.offset} row={row} />)
+          <>
+            <RawModeTabs
+              disabled={!anyPretty}
+              disabledReason="この項目の JSONL 行は JSON として整形できません"
+            />
+            {rows.map((row) => (
+              <RawLineRow key={row.offset} row={row} />
+            ))}
+          </>
         )
       ) : (
         children
@@ -400,6 +458,57 @@ function fileToolLineRange(segment: Extract<Segment, { kind: "file-read" }>): {
   return { start, end: segment.limit === null ? start : start + Math.max(0, segment.limit - 1) };
 }
 
+/**
+ * Body of a Read card: the file's text, the image it returned, the error it
+ * failed with, or a note when no result has been loaded for it.
+ *
+ * The image is rendered from the base64 the transcript row already carries,
+ * as a data URL, rather than from the daemon's /fs-serve endpoint the Files
+ * view uses. A Read's subject is often a temp file (a pasted attachment in
+ * the per-user ccmsg attachment directory under `$TMPDIR`) that may be gone
+ * by the time anyone reads the transcript, and the base64 is exactly what the
+ * model was
+ * shown — downscaled by the harness, so a full-resolution re-fetch would not
+ * be the same picture. Cost of the choice: those bytes (~100-400KB) become a
+ * DOM string, so the `<img>` is only mounted once the fold is open.
+ */
+function FileReadResultView({
+  path,
+  result,
+  open,
+}: {
+  path: string;
+  result: FileToolResult | null;
+  open: boolean;
+}) {
+  if (result === null) {
+    return (
+      <p class="tl-file-tool-unavailable">
+        読み取り結果はまだ読み込まれていません (実行中か、結果の行が読み込み範囲より後)。
+        上へスクロールして古い行を読み込むと表示されます。
+      </p>
+    );
+  }
+  if (result.kind === "error") {
+    return <p class="tl-file-tool-error">{result.message}</p>;
+  }
+  if (result.kind === "image") {
+    return (
+      <div class="tl-file-tool-image">
+        {open ? (
+          <img
+            src={`data:${result.mediaType};base64,${result.base64}`}
+            width={result.width ?? undefined}
+            height={result.height ?? undefined}
+            alt={path}
+          />
+        ) : null}
+      </div>
+    );
+  }
+  return <InlineFileViewer path={path} content={result.content} />;
+}
+
 function FileToolFold({
   segment,
   ts,
@@ -428,15 +537,11 @@ function FileToolFold({
           </a>
           {segment.kind === "file-edit" ? (
             <InlineDiffViewer oldText={segment.oldString} newText={segment.newString} />
+          ) : segment.kind === "file-write" ? (
+            <InlineFileViewer path={segment.path} content={segment.content} />
           ) : (
-            <InlineFileViewer
-              path={segment.path}
-              content={segment.kind === "file-write" ? segment.content : (segment.content ?? "")}
-            />
+            <FileReadResultView path={segment.path} result={segment.result} open={open} />
           )}
-          {segment.kind === "file-read" && segment.content === null ? (
-            <p class="tl-file-tool-unavailable">読み取り結果は現在の読み込み範囲外です</p>
-          ) : null}
         </div>
       </div>
     </details>
@@ -2295,8 +2400,15 @@ function CcmsgBubble({
  * into the raw view never has to lay out megabytes at once. */
 function RawLineRow({ row }: { row: RawTranscriptRow }) {
   const [expanded, setExpanded] = useState(false);
-  const preview = useMemo(() => truncateRawLine(row.text), [row.text]);
-  const shown = expanded ? row.text : preview.text;
+  const pretty = useRawViewPretty();
+  // 整形は選択中のときだけ (巨大行の JSON.parse を raw 表示のたびに走らせ
+  // ない)。失敗しても表示を止めず raw に落として理由だけ添える — 壊れた行を
+  // そのまま読めることが raw ビューの存在理由なので、整形不能は例外ではなく
+  // 通常の分岐。
+  const prettied = useMemo(() => (pretty ? prettyRawLine(row.text) : null), [pretty, row.text]);
+  const text = prettied?.ok ? prettied.text : row.text;
+  const preview = useMemo(() => truncateRawLine(text), [text]);
+  const shown = expanded ? text : preview.text;
   return (
     <div class="tl-raw-row">
       <div class="tl-raw-gutter">
@@ -2308,12 +2420,24 @@ function RawLineRow({ row }: { row: RawTranscriptRow }) {
         </span>
       </div>
       <div class="tl-raw-line">
-        <pre class="tl-fold-body tl-raw-text">{shown}</pre>
+        {prettied && !prettied.ok ? (
+          <p class="tl-raw-note">
+            {prettied.reason === "too-large"
+              ? `(${row.text.length.toLocaleString()} 文字 — 整形の上限 ${RAW_PRETTY_MAX_CHARS.toLocaleString()} 文字を超えるため raw 表示)`
+              : "(JSON として解釈できない行 — raw 表示)"}
+          </p>
+        ) : null}
+        {prettied?.ok ? (
+          // 装飾は FileViewer / markdown の fence と同じ Shiki パイプライン
+          // (CodeBlock -> highlight.ts) をそのまま使う。json 文法は既に
+          // バンドル済みで、トークナイズ失敗時の plain fallback も込み。
+          <CodeBlock code={shown} lang="json" />
+        ) : (
+          <pre class="tl-fold-body tl-raw-text">{shown}</pre>
+        )}
         {preview.truncated ? (
           <button type="button" class="tl-raw-more" onClick={() => setExpanded((v) => !v)}>
-            {expanded
-              ? "省略表示に戻す"
-              : `… 残り ${row.text.length - preview.text.length} 文字を表示`}
+            {expanded ? "省略表示に戻す" : `… 残り ${text.length - preview.text.length} 文字を表示`}
           </button>
         ) : null}
       </div>
@@ -2328,6 +2452,9 @@ function RawTranscriptView({ rows }: { rows: RawTranscriptRow[] }) {
   if (rows.length === 0) return <p class="tl-empty">(空の transcript)</p>;
   return (
     <div class="tl-raw">
+      {/* 全体表示ではタブを殺さない: 整形できない行が混ざっていてもその行
+       * だけ raw に落ちるので、他の行のために pretty は選べる必要がある。 */}
+      <RawModeTabs />
       {rows.map((row) => (
         <RawLineRow key={row.offset} row={row} />
       ))}
@@ -2845,6 +2972,11 @@ export function Timeline({
   // 「1 行 = 1 表示単位」が崩れるが、raw 側は畳まず・分けず・並べ替えずに
   // キャッシュ済みの行をそのまま出す (RawTranscriptView)。
   const [rawView, setRawView] = useState(false);
+  // 展開した JSONL を raw / pretty どちらで読むか (kawaz r76 m91) は
+  // rawView と違い、TL の state ではなく raw-view-mode.ts の永続グローバル
+  // 設定 — 全体 raw ビューを開くか個々の項目を展開するかはその場の操作だが、
+  // 開いた JSONL をどう読みたいかは読み手の恒常的な好みなので、ここには
+  // 持たない (searchClosedFolds と同じ posture)。
   // 生 JSONL の行 + その絶対 byte offset。rich 側の Preact key と同じ offset
   // 由来なので、raw の行と rich のバブルを突き合わせられる。全体 raw 表示
   // (rawRows) と項目ごとの jsonl トグル (rawRowByOffset、kawaz r55 m89) が

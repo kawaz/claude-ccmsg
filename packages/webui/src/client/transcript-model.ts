@@ -15,6 +15,33 @@
 // no special-case needed — "safe fallback for unknown types" and "compact
 // display for the other known types" are the same code path, not two.
 
+/**
+ * What a file tool (Read/Write/Edit) actually got back, in the three shapes
+ * Claude Code writes for it. Measured over the local session corpus
+ * (2026-07-30, 254 Read results): 235 text, 15 image, 4 error — no fourth
+ * shape, and every one of those 19 non-text results used to leave the Read
+ * card claiming "読み取り結果は現在の読み込み範囲外です" (kawaz r76 m90).
+ *
+ * - `text`: `toolUseResult.file.content` — the file's decoded text.
+ * - `image`: reading an image file. `toolUseResult` carries no `content`;
+ *   the bytes arrive as `file.base64` (`file.type` = mime), sized to
+ *   `file.dimensions.display{Width,Height}` — the harness downscales large
+ *   images before handing them to the model, so these are the dimensions of
+ *   the base64 payload itself, not of the file on disk.
+ * - `error`: the tool failed (`is_error`, e.g. "File does not exist."), so
+ *   there is no file payload at all.
+ */
+export type FileToolResult =
+  | { kind: "text"; content: string }
+  | {
+      kind: "image";
+      mediaType: string;
+      base64: string;
+      width: number | null;
+      height: number | null;
+    }
+  | { kind: "error"; message: string };
+
 /** One block inside a user/assistant turn's `message.content`, normalized
  * across the shapes Claude Code emits (string content, array of typed
  * blocks). `unknown-segment` is the forward-compat catch-all for a content
@@ -29,11 +56,11 @@ export type Segment =
       path: string;
       offset: number | null;
       limit: number | null;
-      content: string | null;
+      result: FileToolResult | null;
     }
   | { kind: "file-write"; path: string; content: string }
   | { kind: "file-edit"; path: string; oldString: string; newString: string }
-  | { kind: "file-tool-result"; toolUseId: string; content: string }
+  | { kind: "file-tool-result"; toolUseId: string; result: FileToolResult }
   | {
       kind: "bash-use";
       toolUseId: string;
@@ -191,7 +218,7 @@ function parseSpecialTool(name: string, toolUseId: string, input: unknown): Segm
       path,
       offset: typeof obj.offset === "number" ? obj.offset : null,
       limit: typeof obj.limit === "number" ? obj.limit : null,
-      content: null,
+      result: null,
     };
   }
   if (name === "Write" && path) {
@@ -231,6 +258,56 @@ function parseSpecialTool(name: string, toolUseId: string, input: unknown): Segm
       description: stringField(obj, "description"),
       prompt: stringField(obj, "prompt"),
       background: obj.run_in_background === true,
+    };
+  }
+  return null;
+}
+
+/**
+ * Image payload of a tool_result, or `null` when it carries none.
+ *
+ * Read from `toolUseResult.file` when present (that side also carries the
+ * dimensions), and otherwise from the tool_result block's own
+ * `{type:"image", source:{type:"base64", data, media_type}}` content — the
+ * same bytes in the shape the Anthropic API uses. Taking either means a
+ * transcript row that has only the block (no `toolUseResult` sidecar, e.g. a
+ * row written by a different harness version) still renders as an image
+ * rather than falling through to the raw-JSON tool_result fold.
+ */
+function imageResult(
+  file: Record<string, unknown> | null,
+  blockContent: unknown,
+): Extract<FileToolResult, { kind: "image" }> | null {
+  if (typeof file?.base64 === "string" && typeof file.type === "string") {
+    const dims =
+      file.dimensions && typeof file.dimensions === "object"
+        ? (file.dimensions as Record<string, unknown>)
+        : null;
+    const size = (name: string) => (typeof dims?.[name] === "number" ? dims[name] : null);
+    return {
+      kind: "image",
+      mediaType: file.type,
+      base64: file.base64,
+      width: size("displayWidth"),
+      height: size("displayHeight"),
+    };
+  }
+  if (!Array.isArray(blockContent)) return null;
+  for (const item of blockContent) {
+    if (!item || typeof item !== "object") continue;
+    const block = item as Record<string, unknown>;
+    if (block.type !== "image") continue;
+    const source =
+      block.source && typeof block.source === "object"
+        ? (block.source as Record<string, unknown>)
+        : null;
+    if (typeof source?.data !== "string" || typeof source.media_type !== "string") continue;
+    return {
+      kind: "image",
+      mediaType: source.media_type,
+      base64: source.data,
+      width: null,
+      height: null,
     };
   }
   return null;
@@ -277,7 +354,15 @@ function parseSegments(
             ? (result.file as Record<string, unknown>)
             : null;
         if (typeof file?.content === "string") {
-          return { kind: "file-tool-result", toolUseId, content: file.content };
+          return {
+            kind: "file-tool-result",
+            toolUseId,
+            result: { kind: "text", content: file.content },
+          };
+        }
+        const image = imageResult(file, b.content);
+        if (image !== null) {
+          return { kind: "file-tool-result", toolUseId, result: image };
         }
         return {
           kind: "tool-result",
@@ -309,14 +394,17 @@ function summarizeMeta(obj: Record<string, unknown>): string {
  * been attached to the command card. Background Bash results stay visible and
  * link back to their command card. */
 export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
-  const fileContents = new Map<string, string>();
+  const fileResults = new Map<string, FileToolResult>();
   const genericResults = new Map<string, { text: string; isError: boolean }>();
   const bashUses = new Map<string, { background: boolean }>();
+  const fileReads = new Set<string>();
   for (const line of lines) {
     if (line.kind !== "turn") continue;
     for (const segment of line.segments) {
       if (segment.kind === "file-tool-result") {
-        fileContents.set(segment.toolUseId, segment.content);
+        fileResults.set(segment.toolUseId, segment.result);
+      } else if (segment.kind === "file-read") {
+        fileReads.add(segment.toolUseId);
       } else if (segment.kind === "tool-result") {
         genericResults.set(segment.toolUseId, { text: segment.text, isError: segment.isError });
       } else if (segment.kind === "bash-use") {
@@ -329,10 +417,13 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
     let changed = false;
     const segments = line.segments.map((segment): Segment => {
       if (segment.kind === "file-read") {
-        const content = fileContents.get(segment.toolUseId);
-        if (content === undefined) return segment;
+        const generic = genericResults.get(segment.toolUseId);
+        const result =
+          fileResults.get(segment.toolUseId) ??
+          (generic?.isError ? ({ kind: "error", message: generic.text } as const) : undefined);
+        if (result === undefined) return segment;
         changed = true;
-        return { ...segment, content };
+        return { ...segment, result };
       }
       if (segment.kind === "bash-use") {
         const result = genericResults.get(segment.toolUseId) ?? null;
@@ -340,6 +431,21 @@ export function resolveToolResults(lines: ParsedLine[]): ParsedLine[] {
         return { ...segment, result, hasResult: result !== null };
       }
       if (segment.kind === "tool-result") {
+        // A failed Read ("File does not exist.") has no file payload, so it
+        // arrives here rather than as a file-tool-result. Fold it into the
+        // Read card the same way a successful one is folded — otherwise the
+        // card claims its result is unavailable while the reason sits in a
+        // separate tool_result item right below it. Only `is_error` results
+        // are taken: a non-error result of an unrecognized shape keeps its
+        // own fold rather than being silently relabeled as file content.
+        if (segment.isError && fileReads.has(segment.toolUseId)) {
+          changed = true;
+          return {
+            kind: "file-tool-result",
+            toolUseId: segment.toolUseId,
+            result: { kind: "error", message: segment.text },
+          };
+        }
         const use = bashUses.get(segment.toolUseId);
         if (!use) return segment;
         changed = true;
@@ -671,6 +777,22 @@ export function isUserTextTurn(line: ParsedLine): boolean {
  * null, 2)`) so a search hit corresponds to something visibly on screen once
  * the fold is expanded, rather than searching raw unrendered JSON shape.
  */
+/** Searchable projection of a file tool result: its text, or the error the
+ * card shows. An image contributes nothing — its base64 is data the viewer
+ * never displays as text, and matching it would produce hits with no visible
+ * counterpart on screen. */
+function fileToolResultText(result: FileToolResult | null): string {
+  if (result === null) return "";
+  switch (result.kind) {
+    case "text":
+      return result.content;
+    case "error":
+      return result.message;
+    case "image":
+      return "";
+  }
+}
+
 export function segmentSearchText(segment: Segment): string {
   switch (segment.kind) {
     case "text":
@@ -680,13 +802,13 @@ export function segmentSearchText(segment: Segment): string {
     case "tool-use":
       return JSON.stringify(segment.input, null, 2);
     case "file-read":
-      return [segment.path, segment.content].filter(Boolean).join("\n");
+      return [segment.path, fileToolResultText(segment.result)].filter(Boolean).join("\n");
     case "file-write":
       return `${segment.path}\n${segment.content}`;
     case "file-edit":
       return `${segment.path}\n${segment.oldString}\n${segment.newString}`;
     case "file-tool-result":
-      return segment.content;
+      return fileToolResultText(segment.result);
     case "bash-use":
       return [segment.description, segment.command, segment.result?.text]
         .filter(Boolean)

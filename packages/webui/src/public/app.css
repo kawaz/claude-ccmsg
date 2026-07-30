@@ -3514,6 +3514,42 @@ button.session-tab {
   cursor: pointer;
 }
 
+/* raw / pretty の切替タブ (r76m91)。見た目は thinking の original|ja タブに
+ * 揃える (.tl-thinking-tab を再利用) — TL 内の小さなモード切替という役割が
+ * 同じなので、raw 表示だけ別の意匠を持たせる理由がない。 */
+.tl-raw-mode {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.3rem;
+}
+
+.tl-raw-mode .tl-thinking-tab:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* pretty 化できなかった行の理由書き (壊れた行 / 上限超過)。本文が raw に
+ * 落ちていることの説明なので、行本体より小さく淡く。 */
+.tl-raw-note {
+  margin: 0 0 0.2rem;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+}
+
+/* pretty 表示は markdown の fence と同じ CodeBlock を使うが、raw 行の中では
+ * 折り返し方を raw 表示 (.tl-raw-text) に合わせる: 既定の overflow-x auto +
+ * white-space: pre だと base64 の長大な値で行ごとに横スクロールが生まれ、
+ * 縦に並べて読む raw ビューでは読み進められない。 */
+.tl-raw-line > .md-code {
+  margin: 0;
+  overflow-x: visible;
+}
+
+.tl-raw-line > .md-code code {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .tl-raw-toggle.active {
   background: var(--accent);
   color: var(--accent-fg);
@@ -4167,6 +4203,29 @@ button.session-tab {
   margin: 0;
   padding: 0.75rem;
   color: var(--fg-muted);
+}
+
+.tl-file-tool-error {
+  margin: 0;
+  padding: 0.75rem;
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tl-file-tool-image {
+  padding: 0.75rem;
+  max-height: 28rem;
+  overflow: auto;
+}
+
+/* 幅は原寸を上限にカードへ収め、高さは img 属性の縦横比で決める (属性側の
+   width/height はレイアウトシフト防止用なので auto で打ち消す)。 */
+.tl-file-tool-image > img {
+  max-width: 100%;
+  height: auto;
 }
 
 .tl-diff-body {
