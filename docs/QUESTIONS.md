@@ -25,16 +25,6 @@
 
 ## 確認待ち
 
-### 👺WEBUI-C22: リンク救済の再確認 (v0.82.x で修正済みの 2 点)
-
-- [ ] b: リポルート相対のつもりの先頭 `/` は 404 になり、「もしかして」が出て押すと開く → [DR-0008](/docs/decisions/DR-0008-workspace-file-access.md)
-- [ ] e: 基準を間違えた相対リンクで「もしかして」が出て、押すと開く → [リポルート基準で書いたリンク](packages/webui/src/client/markdown-link.ts)
-
-### 👺WEBUI-C23: agent TL 導線の残り (v0.82.3)
-
-- [ ] b: エージェントツリーの先頭に main 行があり、クリックでメイン TL に戻れる
-- [ ] c: agent TL 上で TL 項目をクリックしても親 TL に弾き出されない
-
 ### 👺WEBUI-C24: workflow の TL と状態表示 (v0.83.0)
 
 - [ ] a: workflow 配下エージェントの TL がツリーから開ける (agent transcript not found が出ない)
