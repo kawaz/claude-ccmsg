@@ -28,6 +28,7 @@ import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../ut
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
+import { positionLandingKey, shouldLandOnPosition, togglePosition } from "./timeline-position.ts";
 import {
   agentCommunicationCount,
   ccmsgMessageCount,
@@ -2333,6 +2334,50 @@ function RawTranscriptView({ rows }: { rows: RawTranscriptRow[] }) {
   );
 }
 
+/** 目的の scroll 位置を 0/60/300/1000ms の 4 回書く (kawaz r17 mid=26)。
+ * fold group / 画像 / フォント / markdown / Shiki highlight の非同期差し替えで
+ * paint 後も scrollHeight が伸びるため、1 発では狙いの位置に落ち着かない。
+ * 末尾 1000ms はリロード直後の初期 fetch (2MB) 向け。
+ *
+ * 中断条件は scroll 位置でなく **ユーザ入力 (wheel / touch / キー)** で判定
+ * する (kawaz r17 mid=37 のリグレッション対策): 位置ベースのガードだと、初回
+ * ロード直後の「まだ top に居る」状態を「ユーザが上に離れた」と誤認して全
+ * タイマーが空振りする。programmatic scroll はこれらのイベントを発火しない
+ * ので、ユーザの意図した離脱だけを正確に拾える。
+ *
+ * 戻り値は effect の cleanup にそのまま返せる中断関数。 */
+function settledScroll(
+  getEl: () => HTMLElement | null,
+  apply: (el: HTMLElement) => void,
+): () => void {
+  const el0 = getEl();
+  let cancelled = false;
+  const onUserInput = () => {
+    cancelled = true;
+    detach();
+  };
+  const detach = () => {
+    el0?.removeEventListener("wheel", onUserInput);
+    el0?.removeEventListener("touchstart", onUserInput);
+    el0?.removeEventListener("keydown", onUserInput);
+  };
+  el0?.addEventListener("wheel", onUserInput, { passive: true });
+  el0?.addEventListener("touchstart", onUserInput, { passive: true });
+  el0?.addEventListener("keydown", onUserInput);
+  const ids = [0, 60, 300, 1000].map((ms) =>
+    setTimeout(() => {
+      const el = getEl();
+      if (el && !cancelled) apply(el);
+    }, ms),
+  );
+  const lastId = setTimeout(detach, 1001);
+  return () => {
+    ids.forEach(clearTimeout);
+    clearTimeout(lastId);
+    detach();
+  };
+}
+
 /** `container` の scrollTop に書けば `target` が「TL の表示領域の一番上」＝
  * sticky な `.tl-toolbar` のすぐ下に来る値。toolbar の実高さを毎回測るのは
  * モバイル幅で 2 行以上に wrap するため (kawaz r35 mid=51: 固定の
@@ -2397,13 +2442,18 @@ export function Timeline({
   // 常に "head" で、agent ref と uuid を同時に表す形が無い (locator.ts)。
   // agent TL で位置を書き込むと agent ref が落ち、項目をクリックしただけで
   // 親 TL へ弾き出される。表せない選択なので agent TL では行わない。
+  // 選択中のバルーンを再クリックしたら選択解除 = head に戻す (kawaz r76 m71:
+  // 「今だと msgid を外す方法が無い」)。head に戻しても**その場ではスクロール
+  // しない** — 末尾ジャンプは「Timeline タブが再表示された」時だけの挙動で、
+  // 選択解除は URL と装飾を外すだけ。
   const selectPosition = useCallback(
     (uuid: string) => {
       if (agent && (agent.agentId || agent.teammate)) return;
-      rememberTimelinePosition(sid, uuid);
-      replaceNavigation(timelineHref(sid, uuid));
+      const next = togglePosition(currentPosition, uuid);
+      rememberTimelinePosition(sid, next);
+      replaceNavigation(timelineHref(sid, next));
     },
-    [sid, agent?.agentId, agent?.teammate],
+    [sid, currentPosition, agent?.agentId, agent?.teammate],
   );
 
   // browser は mount 時の feature detect、host は WS hello 後の daemon
@@ -3078,47 +3128,16 @@ export function Timeline({
   // ことがあった。setTimeout(0) で initial render 完了を待ってから scroll
   // を書く — mount 直後の scrollHeight は content flush 前で 0 相当のため。
   const prevEndRef = useRef(timeline.end);
-  // mount / sid 切替直後の末尾ジャンプは 0ms 1 発でなく間隔を空けて数回書く
-  // (kawaz r17 mid=26): fold group / 画像 / フォントで paint 後に scrollHeight
-  // が伸びるケースを 1 発では取り零す。ユーザが先に手動スクロールして末尾から
-  // 離れたら (isNearBottomRef が false になったら) 以降の書き込みは中断。
-  const scrollToBottomSettled = useCallback(() => {
-    // 末尾 1000ms はリロード直後の初期 fetch (2MB) 向け: 大量行の markdown
-    // 描画 + Shiki highlight の非同期差し替えで数百 ms 後も高さが伸びる。
-    //
-    // 中断条件は scroll 位置でなく **ユーザ入力 (wheel / touch / キー)** で
-    // 判定する (kawaz r17 mid=37 のリグレッション対策): 位置ベースの
-    // isNearBottomRef ガードだと、初回ロード直後の「まだ top に居る」状態を
-    // 「ユーザが上に離れた」と誤認して全タイマーが空振りし、末尾ジャンプが
-    // 一切効かなくなる。programmatic scroll はこれらのイベントを発火しない
-    // ので、ユーザの意図した離脱だけを正確に拾える。
-    const el0 = scrollRef.current;
-    let cancelled = false;
-    const onUserInput = () => {
-      cancelled = true;
-      detach();
-    };
-    const detach = () => {
-      el0?.removeEventListener("wheel", onUserInput);
-      el0?.removeEventListener("touchstart", onUserInput);
-      el0?.removeEventListener("keydown", onUserInput);
-    };
-    el0?.addEventListener("wheel", onUserInput, { passive: true });
-    el0?.addEventListener("touchstart", onUserInput, { passive: true });
-    el0?.addEventListener("keydown", onUserInput);
-    const ids = [0, 60, 300, 1000].map((ms) =>
-      setTimeout(() => {
-        const el = scrollRef.current;
-        if (el && !cancelled) el.scrollTop = el.scrollHeight;
-      }, ms),
-    );
-    const lastId = setTimeout(detach, 1001);
-    return () => {
-      ids.forEach(clearTimeout);
-      clearTimeout(lastId);
-      detach();
-    };
-  }, []);
+  const scrollToBottomSettled = useCallback(
+    () =>
+      settledScroll(
+        () => scrollRef.current,
+        (el) => {
+          el.scrollTop = el.scrollHeight;
+        },
+      ),
+    [],
+  );
   useEffect(() => {
     prevEndRef.current = timeline.end;
     isNearBottomRef.current = currentPosition === "head";
@@ -3181,7 +3200,18 @@ export function Timeline({
     return scrollToBottomSettled();
   }, [timeline.end]);
 
+  // pin 位置 (`/timeline/<uuid>`) への着地。**その位置を開いた / その位置へ
+  // 遷移した最初の 1 回だけ**スクロールし、以降は選択装飾を出すだけ
+  // (kawaz r76 m71: 「#id 付きで URL を開いたときと同じ感覚 + 選択メッセージ
+  // に装飾を付与する程度の意味」)。この effect は tail 追記や markdown /
+  // highlight 差し替えによる `parsed` の変化でも走るので、着地済みのキーを
+  // ref に覚えて再スクロールを止める — さもないと pin したまま上を読んでいる
+  // 最中に TL が更新されるたび pin 位置へ引き戻される。
+  const landedPositionRef = useRef<string | null>(null);
   useEffect(() => {
+    // head に戻った (= 選択解除 / 末尾追いつき) 時点で着地履歴を捨てる。同じ
+    // uuid を選び直したら、それは新しい遷移なので改めて着地させる。
+    if (currentPosition === "head") landedPositionRef.current = null;
     if (timeline.status !== "loaded" || currentPosition === "head") return;
     const target = scrollRef.current?.querySelector<HTMLElement>(
       `[data-timeline-uuid="${CSS.escape(currentPosition)}"]`,
@@ -3192,19 +3222,17 @@ export function Timeline({
       return;
     }
     rememberTimelinePosition(sid, currentPosition);
+    const key = positionLandingKey(sid, currentPosition);
+    if (!shouldLandOnPosition(landedPositionRef.current, key)) return;
+    landedPositionRef.current = key;
     // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
     // 画面中央ではなく先頭に置く。scrollIntoView({block:"center"}) では
     // sticky toolbar を考慮できず、そもそも中央になってしまうので、👤 nav
     // と同じ topBelowToolbar で位置を計算して container 側へ書く。
-    // 多段 (0/60/300/1000ms) は fold 展開 / markdown / highlight で着地後も
-    // 高さが伸びるため — 1 発では上に取り残される (既存の settled 方式と同旨)。
-    const ids = [0, 60, 300, 1000].map((ms) =>
-      setTimeout(() => {
-        const container = scrollRef.current;
-        if (container) container.scrollTo({ top: topBelowToolbar(container, target) });
-      }, ms),
+    return settledScroll(
+      () => scrollRef.current,
+      (container) => container.scrollTo({ top: topBelowToolbar(container, target) }),
     );
-    return () => ids.forEach(clearTimeout);
   }, [sid, currentPosition, timeline.status, parsed]);
 
   // behavior 指定なし = "auto" = 即座にジャンプ (kawaz r17 mid=54: smooth
