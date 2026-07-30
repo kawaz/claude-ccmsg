@@ -214,6 +214,40 @@ describe("itemRawSourceOffsets", () => {
     expect(sources.has(50)).toBe(false);
   });
 
+  // kawaz r76 m87: `! <cmd>` のカードは jsonl トグルが入力行しか出さず、畳まれた
+  // 出力行が webui から到達できなかった。tool_use ペアと同じ扱いになることを固定する
+  // (相関 id が無いので所有者は隣接 = 直前の行)。
+  test("カードに畳まれた `! <cmd>` の出力行も入力行側の項目に両方の行として付く", () => {
+    const bashLine = (kind: "bash-command-invocation" | "bash-command-stdout", text: string) =>
+      ({
+        kind: "turn",
+        ts: null,
+        role: "user",
+        userMessageKind: kind,
+        segments: [{ kind: "text", role: "user", text }],
+      }) satisfies ParsedLine;
+    const lines = resolveToolResults([
+      bashLine("bash-command-invocation", "<bash-input>ls</bash-input>"),
+      bashLine("bash-command-stdout", "<bash-stdout>bin</bash-stdout><bash-stderr></bash-stderr>"),
+    ]);
+    const sources = itemRawSourceOffsets(lines, [0, 40]);
+    expect(sources.get(0)).toEqual([0, 40]);
+    expect(sources.has(40)).toBe(false);
+  });
+
+  // 相方の来なかった出力行は単独の項目として描画される (hasCommand が立たない)
+  // ので、自分の行を自分で引く — 引き取り手を探して消えたりしない。
+  test("ペアにならなかった出力行は自分の offset を持つ", () => {
+    const orphan = {
+      kind: "turn",
+      ts: null,
+      role: "user",
+      userMessageKind: "bash-command-stdout",
+      segments: [{ kind: "text", role: "user", text: "<bash-stdout>bin</bash-stdout>" }],
+    } satisfies ParsedLine;
+    expect(itemRawSourceOffsets(resolveToolResults([orphan]), [9])).toEqual(new Map([[9, [9]]]));
+  });
+
   // 1 行から複数バブル (ccmsg メッセージが複数載った 1 行) はどのバブルも
   // 同じ offset を引く — 呼び出し側が同じキーで引くだけで済むよう、対応表側に
   // バブルごとのエントリは作らない。
@@ -3598,6 +3632,73 @@ describe("parseSystemMessageFields", () => {
       const out = parseBashOutputText(raw);
       expect(out?.persisted).toBeNull();
       expect(out?.stdout).toContain("Something else");
+    });
+
+    // CC 2.1.220 実測 (78KB payload): 差し替えブロックの注記もプレビューも
+    // エスケープされずに入る (`line 0 <tag> & amp "q"` がそのまま)。ここを
+    // デコードすると、本当に "&lt;" と印字した出力を壊す。
+    test("the substituted block is left undecoded (the harness stores it raw)", () => {
+      const raw =
+        "<bash-stdout><persisted-output>\n" +
+        "Output too large (78KB). Full output saved to: /tmp/p/bu5.txt\n" +
+        "\nPreview (first 2KB):\n" +
+        "line 0 <tag> & amp &lt;kept&gt;\n" +
+        "</persisted-output></bash-stdout>";
+      expect(parseBashOutputText(raw)?.persisted?.preview).toBe("line 0 <tag> & amp &lt;kept&gt;");
+    });
+  });
+
+  // kawaz r76 m84: `! <cmd>` の出力が実体参照のまま表示されていた。ハーネスは
+  // bash-stdout/stderr の本文に入れる時だけ `&` `<` `>` をエスケープする
+  // (CC 2.1.220 実測: payload `PROBE <a> &amp; & "q" 's' &lt; -> a<b>c &#65;` が
+  // `PROBE &lt;a&gt; &amp;amp; &amp; "q" 's' &amp;lt; -&gt; a&lt;b&gt;c &amp;#65;`
+  // として保存された)。`"` `'` は素通し、数値参照は使われない。
+  describe("harness entity escaping in bash output", () => {
+    test("decodes the three escaped characters back to the printed bytes", () => {
+      expect(
+        parseBashOutputText(
+          "<bash-stdout>PROBE &lt;a&gt; &amp;amp; &amp; \"q\" 's' &amp;lt; -&gt; a&lt;b&gt;c &amp;#65;</bash-stdout><bash-stderr></bash-stderr>",
+        )?.stdout,
+      ).toBe(`PROBE <a> &amp; & "q" 's' &lt; -> a<b>c &#65;`);
+    });
+
+    test("decodes stderr too", () => {
+      expect(
+        parseBashOutputText(
+          "<bash-stdout></bash-stdout><bash-stderr>usage: hyoui &lt;subcommand&gt;</bash-stderr>",
+        )?.stderr,
+      ).toBe("usage: hyoui <subcommand>");
+    });
+
+    // `&` もエスケープされる = 逆変換は推測ではなく厳密な逆写像。出力が本当に
+    // "&lt;" と印字していたら保存形は "&amp;lt;" なので、&amp; を最後に戻せば
+    // &lt; 規則に先取りされず元に戻る。
+    test("a literally printed entity survives the round trip", () => {
+      expect(
+        parseBashOutputText("<bash-stdout>&amp;lt;&amp;gt;&amp;amp;</bash-stdout>")?.stdout,
+      ).toBe("&lt;&gt;&amp;");
+    });
+
+    // quotes は素通しなので、"&quot;" と印字した出力を実体参照と誤認しない。
+    test("does not decode quote entities the harness never produces", () => {
+      expect(parseBashOutputText("<bash-stdout>&amp;quot;x&amp;apos;</bash-stdout>")?.stdout).toBe(
+        "&quot;x&apos;",
+      );
+    });
+
+    // CSI のパラメータバイトには `<` `=` `>` が入りうる (SGR マウス報告は
+    // `ESC [ <…M`)。先に ANSI 除去すると escape 済みで一致せず素通ししてしまう
+    // ので、デコード → ANSI 除去の順であることを固定する。
+    test("decoding precedes ANSI stripping so escaped CSI parameter bytes still match", () => {
+      expect(parseBashOutputText("<bash-stdout>a\u001b[&lt;0;1;2Mb</bash-stdout>")?.stdout).toBe(
+        "ab",
+      );
+    });
+
+    test("leaves the input command alone (the harness stores it verbatim)", () => {
+      expect(parseBashInputText(`<bash-input> head f # <tag> & "q" 's'</bash-input>`)).toBe(
+        `head f # <tag> & "q" 's'`,
+      );
     });
   });
 

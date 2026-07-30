@@ -530,12 +530,15 @@ export function rawTranscriptRowsFrom(
  * offset (`lineByteOffsets`), so a rendered item and its source lines line up
  * with the whole-transcript raw view's coordinates.
  *
- * Usually 1:1, with one exception: a tool_use line and the tool_result line
- * that `resolveToolResults` merged into its card render as a single item, so
- * the tool_use's entry lists *both* offsets in file order (kawaz r55 m69:
- * 「両方の行を見せる」). `groupTimelineLines` drops those consumed result
- * lines (`isConsumedToolResult`) from the rendered groups entirely, so
- * without this pairing their raw text would be unreachable from the timeline.
+ * Usually 1:1, with one exception: a line pair that `resolveToolResults`
+ * merged into a single card renders as one item, so the owning line's entry
+ * lists *both* offsets in file order (kawaz r55 m69: 「両方の行を見せる」).
+ * `groupTimelineLines` drops those consumed lines (`isConsumedToolResult`)
+ * from the rendered groups entirely, so without this pairing their raw text
+ * would be unreachable from the timeline. Both merge shapes go through here:
+ * a tool_use/tool_result pair, correlated by `toolUseId`, and a `! <cmd>`
+ * invocation/output pair, correlated by adjacency (kawaz r76 m87: bash カードの
+ * jsonl が入力行しか出せていなかった).
  *
  * The reverse — one line rendering as several items (a ccmsg line carrying
  * several messages) — needs nothing special here: every bubble shares the
@@ -569,11 +572,18 @@ export function itemRawSourceOffsets(
     }
     const turn = line as TurnLine;
     const ownerOffset = turn.segments
-      .map((segment) =>
-        segment.kind === "file-tool-result" || segment.kind === "bash-result"
-          ? ownerOffsetByToolUseId.get(segment.toolUseId)
-          : undefined,
-      )
+      .map((segment) => {
+        if (segment.kind === "file-tool-result" || segment.kind === "bash-result") {
+          return ownerOffsetByToolUseId.get(segment.toolUseId);
+        }
+        // `! <cmd>` の出力行は harness が相関 id を振らないので id 表を引けない
+        // (`resolveBashCommands` が隣接でペアリングしている)。`hasCommand` が
+        // 立つのは直前の行に畳まれた時だけなので、所有者は必ず 1 つ前の行。
+        if (segment.kind === "bash-command-output" && segment.hasCommand) {
+          return offsets[i - 1];
+        }
+        return undefined;
+      })
       .find((o) => o !== undefined);
     if (ownerOffset === undefined) return;
     sources.set(ownerOffset, [...(sources.get(ownerOffset) ?? []), offset]);
@@ -1486,29 +1496,34 @@ function isCcmsgMsgEventLike(obj: unknown): obj is {
   );
 }
 
+/** Reverses the entity escaping Claude Code's harness applies to text it
+ * embeds in a tag body — a `<task-notification><event>` block (kawaz r26
+ * mid=30: a literal ">" in a room message showed as "&gt;" in Timeline) and a
+ * `<bash-stdout>`/`<bash-stderr>` body (kawaz r76 m84: `! <cmd>` output showed
+ * "&lt;"). The daemon's stored jsonl carries the raw text — the escaping exists
+ * only inside the transcript copy — so unescaping here restores the original.
+ *
+ * The escape set is `&`, `<`, `>` — the XML *text-content* minimum, not the
+ * five predefined entities. Measured on CC 2.1.220 by feeding a known payload
+ * through `! head payload.txt`: `<`/`>`/`&` came back as `&lt;`/`&gt;`/`&amp;`
+ * while `"` and `'` came back verbatim, and 4472 real `<event>` bodies contain
+ * zero `&quot;`/`&apos;`/numeric references. Decoding quotes would therefore
+ * only ever corrupt output that genuinely printed "&quot;".
+ *
+ * Because `&` is escaped too, this is an exact inverse rather than a guess:
+ * a literal "&lt;" in the source is stored as "&amp;lt;", and decoding &amp;
+ * last restores it without the &lt; rule stealing it first. */
+function unescapeHarnessEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+
 /** Parses one candidate fragment (a `teammate-message` tag body, or one line
  * of a `task-notification`'s `<event>` jsonl body) into a `CcmsgMessage`.
  * Returns null — never throws — for invalid JSON or a validly-parsed value
  * that isn't a ccmsg `type:"msg"` event (kawaz spec: "壊れた JSON は空で
  * fallback", and non-msg events like `idle_notification` must NOT become a
  * bubble). */
-/** Reverses the XML entity escaping Claude Code's harness applies when it
- * wraps Monitor stdout into a `<task-notification><event>` block (kawaz r26
- * mid=30: a literal ">" in a room message showed as "&gt;" in Timeline).
- * The daemon's stored jsonl carries the raw text — the escaping exists only
- * inside the transcript copy — so unescaping here restores the original.
- * Only the five XML predefined entities are reversed (that's the harness's
- * escape set); &amp; last so "&amp;gt;" round-trips to "&gt;" correctly. */
-function unescapeXmlEntities(text: string): string {
-  if (!text.includes("&")) return text;
-  return text
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&apos;", "'")
-    .replaceAll("&amp;", "&");
-}
-
 function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMessage | null {
   let obj: unknown;
   try {
@@ -1521,7 +1536,7 @@ function tryParseCcmsgMessage(fragment: string, fallbackRoom?: string): CcmsgMes
     from: obj.from,
     to: obj.to,
     room: obj.r,
-    msg: obj.msg !== undefined ? unescapeXmlEntities(obj.msg) : "",
+    msg: obj.msg !== undefined ? unescapeHarnessEntities(obj.msg) : "",
     ts: obj.ts,
     ...(obj.mid !== undefined ? { mid: obj.mid } : {}),
   };
@@ -1578,7 +1593,7 @@ function tryParseTruncatedCcmsgMessage(
   return {
     from,
     room,
-    msg: `${unescapeXmlEntities(msg)}…(切り詰め — 全文は room で)`,
+    msg: `${unescapeHarnessEntities(msg)}…(切り詰め — 全文は room で)`,
     ts,
     ...(mid !== undefined ? { mid } : {}),
   };
@@ -1791,6 +1806,22 @@ function parsePersistedOutput(stdout: string): BashCommandOutput["persisted"] | 
   return { note, path, preview: match[2]! };
 }
 
+/** Restores a `<bash-stdout>`/`<bash-stderr>` body to the bytes the command
+ * actually printed. Runs before `stripAnsiEscapes` because a CSI parameter
+ * byte may itself be `<`, `=` or `>` (SGR mouse reports are `ESC [ <…M`) —
+ * those arrive escaped, so stripping first would leave the sequence unmatched
+ * and its bytes on screen.
+ *
+ * A `<persisted-output>` block is handed back untouched: the harness
+ * substitutes it for an oversized result *instead of* escaping, so its note
+ * and preview hold raw bytes (measured on CC 2.1.220 with a 78KB payload —
+ * the preview came back as `line 0 <tag> & amp "q"`, unescaped). Decoding it
+ * would corrupt any preview that genuinely printed "&lt;". */
+function decodeBashBody(body: string): string {
+  if (body.trimStart().startsWith("<persisted-output>")) return body;
+  return stripAnsiEscapes(unescapeHarnessEntities(body));
+}
+
 /** Parses one `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` line
  * (the observed single-line shape) into the display model. Returns `null`
  * only when neither tag is present — a malformed body the caller renders raw.
@@ -1804,14 +1835,16 @@ export function parseBashOutputText(rawText: string): BashCommandOutput | null {
   const persisted = stdout === null ? null : parsePersistedOutput(stdout);
   const plainStdout = persisted !== null ? null : stdout;
   return {
-    stdout: plainStdout ? stripAnsiEscapes(plainStdout) : null,
-    stderr: stderr ? stripAnsiEscapes(stderr) : null,
+    stdout: plainStdout ? decodeBashBody(plainStdout) : null,
+    stderr: stderr ? decodeBashBody(stderr) : null,
     persisted,
   };
 }
 
 /** Parses one `<bash-input>` line into the command text, or `null` when the
- * tag is absent. */
+ * tag is absent. No entity decoding here: unlike the output tags, the harness
+ * stores the typed command verbatim (measured on CC 2.1.220 — `! head f #
+ * <tag> & "q"` round-trips with `<`, `>` and `&` intact). */
 export function parseBashInputText(rawText: string): string | null {
   return unwrapOuterTag(rawText, "bash-input")?.trim() ?? null;
 }
