@@ -21,6 +21,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolvePaths } from "@ccmsg/protocol";
+import { armHookDeadline, exitHook } from "./deadline.ts";
 import {
   buildSubscribeCommand,
   getRepoWsFromVcs,
@@ -201,7 +202,13 @@ function subscribeRunning(): boolean {
       cmd: ["ps", "-axww", "-o", "pid=,ppid=,command="],
       stdout: "pipe",
       stderr: "ignore",
-      timeout: 5000,
+      // This is a synchronous call, so the hook's own watchdog cannot interrupt
+      // it — `Bun.spawnSync`'s timeout is the only bound on it (verified
+      // honoured: a 500ms timeout against `sleep 3` returned at 503ms with
+      // SIGTERM). Sized off the measurement rather than a round guess: the real
+      // `ps` takes ~50ms across ~1000 processes on this machine, so 1000ms is a
+      // 20x margin, and overshooting it merely nags on the safe side.
+      timeout: 1000,
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
     });
     if (proc.exitCode !== 0) return false;
@@ -243,7 +250,7 @@ async function main(): Promise<void> {
 
   if (subscribeRunning()) {
     // Quiet principle: nothing to say when the stream is healthy.
-    process.exit(0);
+    await exitHook();
   }
 
   // CCMSG_SID must be embedded: CLAUDE_CODE_SESSION_ID is not reliably exported
@@ -251,10 +258,20 @@ async function main(): Promise<void> {
   // (u1) instead of this session (no peers entry, no echo suppression). See
   // session-start.ts / buildSubscribeCommand.
   // stdout is injected into the next turn as a <system-reminder>.
-  process.stdout.write(buildNagMessage(resolveBin(), sessionId));
+  await exitHook(buildNagMessage(resolveBin(), sessionId));
 }
 
+/** Wall-clock cap for this hook (see deadline.ts). This one runs before every
+ *  turn, so the cap is set against what the work actually costs rather than
+ *  against what Claude Code tolerates: ~70ms for the steady-state path (bun
+ *  startup + `ps`), and a few hundred more on the once-per-session turn that
+ *  rescues a missing state file. 1500ms leaves that whole budget intact while
+ *  turning the pathological cases — a subprocess stuck behind a repo lock, a
+ *  stdin that is never closed — from an unbounded stall into a dropped nag. */
+const USER_PROMPT_SUBMIT_DEADLINE_MS = 1500;
+
 if (import.meta.main) {
+  armHookDeadline(USER_PROMPT_SUBMIT_DEADLINE_MS);
   main().catch(() => {
     // A hook must never break the turn (exit 0).
     process.exit(0);

@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.ts\" #ccmsg"
+            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.ts\" #ccmsg",
+            "timeout": 10
           }
         ]
       }
@@ -16,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.ts\" #ccmsg"
+            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.ts\" #ccmsg",
+            "timeout": 10
           }
         ]
       }

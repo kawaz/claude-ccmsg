@@ -27,6 +27,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolvePaths } from "@ccmsg/protocol";
+import { armHookDeadline, exitHook } from "./deadline.ts";
 
 interface SessionStartInput {
   session_id?: string;
@@ -122,20 +123,52 @@ export interface VcsRepoWsOptions {
  *  after the signal fires (verified: the process — not just the awaited
  *  promise — hangs past the timeout). Racing a `setTimeout` and calling
  *  `proc.kill()` on the loser bounds the *caller's* wait regardless of
- *  whether the killed subprocess actually exits. */
+ *  whether the killed subprocess actually exits.
+ *
+ *  Bounding the caller's wait is not the same as bounding the hook, though, and
+ *  both loose ends here were costing the hook wall time long after this
+ *  function returned (see deadline.ts for the measurements):
+ *
+ *  - the losing timer has to be cleared, or it holds the event loop until the
+ *    full `remainingMs` even when the subprocess answered immediately;
+ *  - `kill()` only signals, so on the timeout path the read of the child's
+ *    stdout has to be cancelled and the subprocess handle unref'd, or a child
+ *    that outlives the signal keeps the loop alive for as long as it runs.
+ *
+ *  Reading through an explicit reader rather than `new Response(proc.stdout)`
+ *  is what makes that cancellation possible: `Response` locks the stream, and a
+ *  locked stream cannot be cancelled. */
 async function raceExit(
   proc: Bun.Subprocess<"ignore", "pipe", "ignore">,
   remainingMs: number,
 ): Promise<{ stdout: string; exitCode: number } | undefined> {
   const TIMED_OUT = Symbol("timed-out");
+  const reader = proc.stdout.getReader();
+  const readAll = async (): Promise<string> => {
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) text += decoder.decode(value, { stream: true });
+    }
+    return text + decoder.decode();
+  };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const result = await Promise.race([
-    Promise.all([new Response(proc.stdout).text(), proc.exited]).then(
+    Promise.all([readAll(), proc.exited]).then(
       ([stdout, exitCode]) => ({ stdout, exitCode }) as const,
     ),
-    new Promise<typeof TIMED_OUT>((resolve) => setTimeout(() => resolve(TIMED_OUT), remainingMs)),
+    new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(TIMED_OUT), remainingMs);
+    }),
   ]);
+  clearTimeout(timer);
   if (result === TIMED_OUT) {
     proc.kill();
+    await reader.cancel().catch(() => {});
+    proc.unref();
     return undefined;
   }
   return result;
@@ -442,7 +475,7 @@ async function main(): Promise<void> {
     // best-effort detection; never block the turn over PATH install suggestion
   }
 
-  process.stdout.write(
+  await exitHook(
     `${JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "SessionStart",
@@ -452,7 +485,15 @@ async function main(): Promise<void> {
   );
 }
 
+/** Wall-clock cap for this hook (see deadline.ts). Roomier than
+ *  UserPromptSubmit's: this fires once per session rather than once per turn,
+ *  and losing its output costs the session its ccmsg guidance entirely, where
+ *  the nag merely reappears on the next prompt. Still far below the 30s Claude
+ *  Code would otherwise allow. */
+const SESSION_START_DEADLINE_MS = 3000;
+
 if (import.meta.main) {
+  armHookDeadline(SESSION_START_DEADLINE_MS);
   main().catch((e) => {
     // A hook must never break the turn (exit 0).
     process.stderr.write(`[ccmsg session-start] ${e instanceof Error ? e.message : String(e)}\n`);
