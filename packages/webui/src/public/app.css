@@ -3140,19 +3140,19 @@ button.session-tab {
   padding: 1rem;
 }
 
-.viewer-error {
-  color: var(--danger);
-  padding: 1rem;
-}
-
-/* 404 states (kawaz r55 m129/m130). Two of them — a file address that names
- * nothing (`.viewer-*`, inside the FileViewer pane) and an app URL that does
- * (`.app-*`, in place of the whole content area) — sharing one look so "you
- * are somewhere that isn't there" reads the same wherever it happens. Both sit
- * *beside* the sidebar rather than replacing the screen: being off-route has
- * to stay recoverable by clicking, which a full-page error is not. */
-.viewer-notfound,
-.app-notfound {
+/* Failure states (kawaz r76 m76) — the single look for every "you are
+ * somewhere that isn't there, or that can't be read" screen: a file address
+ * naming nothing, a path this session may not read, a URL naming a session or
+ * room that is gone, a structurally unknown path, a transcript that would not
+ * load. They differ in glyph, words and recovery; the layout, spacing and
+ * colour live only here, so the family reads as one thing however the reader
+ * arrives at it.
+ *
+ * All of them sit *beside* the sidebar rather than replacing the screen: being
+ * off-route has to stay recoverable by clicking, which a full-page error is
+ * not. `.errorview-fill` takes the whole content area, the bare class sits
+ * inside whichever pane failed. */
+.errorview {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3162,15 +3162,14 @@ button.session-tab {
   color: var(--fg-muted);
 }
 
-.app-notfound {
+.errorview-fill {
   flex: 1;
   min-width: 0;
   justify-content: center;
   overflow-y: auto;
 }
 
-.viewer-notfound-code,
-.app-notfound-code {
+.errorview-mark {
   margin: 0;
   font-size: 2.6rem;
   font-weight: 700;
@@ -3179,15 +3178,20 @@ button.session-tab {
   opacity: 0.55;
 }
 
-.viewer-notfound-msg,
-.app-notfound-msg {
+/* Only the glyph carries the tone. Tinting the whole panel would make a failed
+ * read look louder than a missing address while saying nothing more. */
+.errorview-danger .errorview-mark {
+  color: var(--danger);
+  opacity: 0.75;
+}
+
+.errorview-title {
   margin: 0;
   font-size: 1.05rem;
   color: var(--fg);
 }
 
-.viewer-notfound-path,
-.app-notfound-path {
+.errorview-detail {
   margin: 0;
   max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -3196,17 +3200,35 @@ button.session-tab {
   overflow-wrap: anywhere;
 }
 
-.viewer-notfound-hint,
-.app-notfound-hint {
+.errorview-hint {
   margin: 0.4rem 0 0;
   font-size: 0.85rem;
 }
 
-/* "Did you mean" (kawaz r55 m152/m153): the failed link re-read as repo-root
- * relative. Derived from the 404 itself rather than searched for, so it is one
+.errorview-action {
+  margin-top: 0.9rem;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.errorview-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The supplemental slot's card treatment. Its one occupant today is "did you
+ * mean" (kawaz r55 m152/m153): the failed link re-read as repo-root relative.
+ * Derived from the failure itself rather than searched for, so it is one
  * candidate and a confident one — but presented as a link, never a redirect,
- * since being moved somewhere unasked is harder to follow than the 404. */
-.viewer-notfound-suggest {
+ * since being moved somewhere unasked is harder to follow than the error. */
+.errorview-suggest {
   margin: 0.9rem 0 0;
   padding: 0.6rem 0.9rem;
   border: 1px solid var(--border);
@@ -3216,19 +3238,19 @@ button.session-tab {
   max-width: 100%;
 }
 
-.viewer-notfound-suggest-label {
+.errorview-suggest-label {
   margin: 0 0 0.3rem;
   font-size: 0.8rem;
   color: var(--fg-muted);
 }
 
-.viewer-notfound-suggest-item {
+.errorview-suggest-item {
   margin: 0;
   font-size: 0.9rem;
   overflow-wrap: anywhere;
 }
 
-.viewer-notfound-suggest-note {
+.errorview-suggest-note {
   margin: 0.35rem 0 0;
   font-size: 0.75rem;
   color: var(--fg-muted);
@@ -4760,22 +4782,6 @@ button.session-tab {
 .tl-empty-turn {
   color: var(--fg-muted);
   padding: 1rem;
-}
-
-.tl-error {
-  color: var(--danger);
-  padding: 1rem;
-}
-
-.tl-error button {
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 0.25rem 0.7rem;
-  border-radius: 0.4rem;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--fg);
-  cursor: pointer;
 }
 
 @media (max-width: 720px) {

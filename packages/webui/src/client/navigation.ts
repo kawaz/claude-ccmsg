@@ -1,5 +1,5 @@
 import type { Store } from "./useStore.ts";
-import type { AppState } from "./store.ts";
+import type { AppState, MissingTarget } from "./store.ts";
 import type { createWsClient } from "./ws.ts";
 import { parseUrl, timelineHref, type Locator } from "./locator.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
@@ -143,15 +143,15 @@ function sessionExists(state: AppState, sid: string): boolean {
   );
 }
 
-export function missingTargetMessage(state: AppState, locator: Locator): string | null {
+export function missingTarget(state: AppState, locator: Locator): MissingTarget | null {
   if (locator.view === "room" && locator.room) {
     if (!state.roomsLoaded) return null;
-    if (!state.rooms.has(locator.room)) return `ルーム ${locator.room} は存在しません`;
+    if (!state.rooms.has(locator.room)) return { kind: "room", id: locator.room };
   }
   const sid = locatorSid(locator);
   if (sid) {
     if (!state.peersLoaded || !state.agentsLoaded) return null;
-    if (!sessionExists(state, sid)) return `セッション ${sid} は存在しません`;
+    if (!sessionExists(state, sid)) return { kind: "session", id: sid };
   }
   return null;
 }
@@ -227,10 +227,10 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     const target = parseUrl(targetUrl.pathname, targetUrl.search);
     const current = parseUrl(location.pathname, location.search);
 
-    const error = missingTargetMessage(store.getState(), target);
-    if (error) {
+    const missing = missingTarget(store.getState(), target);
+    if (missing) {
       event.preventDefault();
-      store.dispatch({ type: "navigation/error", message: error });
+      store.dispatch({ type: "navigation/missing", target: missing });
       return;
     }
 
@@ -267,8 +267,8 @@ export function setupNavigation(store: Store, ws: WsClient): void {
       const state = store.getState();
       if (!initialLocatorReady(state, initial)) return;
       unsubscribe();
-      const error = missingTargetMessage(state, initial);
-      if (error) store.dispatch({ type: "navigation/error", message: error });
+      const missing = missingTarget(state, initial);
+      if (missing) store.dispatch({ type: "navigation/missing", target: missing });
       else void redirectSessionRoot(initial.sid, "replace");
     });
   } else {
@@ -277,8 +277,8 @@ export function setupNavigation(store: Store, ws: WsClient): void {
       const state = store.getState();
       if (!initialLocatorReady(state, initial)) return;
       unsubscribe();
-      const error = missingTargetMessage(state, initial);
-      if (error) store.dispatch({ type: "navigation/error", message: error });
+      const missing = missingTarget(state, initial);
+      if (missing) store.dispatch({ type: "navigation/missing", target: missing });
     });
   }
 }

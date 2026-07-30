@@ -1,7 +1,7 @@
 import { memo } from "preact/compat";
 import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
-import type { AppState } from "../store.ts";
+import type { AppState, MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
 import { lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
@@ -10,6 +10,7 @@ import { RoomView } from "./RoomView.tsx";
 import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { ErrorView } from "./ErrorView.tsx";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
 import {
@@ -75,28 +76,38 @@ function TopbarTitle({ state }: { state: AppState }) {
  * offer. */
 function UnknownPathView({ pathname }: { pathname: string }) {
   return (
-    <main class="app-notfound">
-      <p class="app-notfound-code">404</p>
-      <p class="app-notfound-msg">このページはありません</p>
-      <p class="app-notfound-path">{pathname}</p>
-      <p class="app-notfound-hint">
-        左の一覧からセッションやルームを選ぶか、
-        <a href="/">トップに戻る</a>
-        でやり直せます。
-      </p>
-    </main>
+    <ErrorView
+      fill
+      mark="404"
+      title="このページはありません"
+      detail={pathname}
+      hint="左の一覧からセッションやルームを選んでください。"
+      action={{ label: "トップに戻る", href: "/" }}
+    />
   );
 }
 
-function NavigationErrorView({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+/** A URL naming a session or room that is gone. This is a 404 like any other —
+ * the address resolved to nothing — so it says so in the same words and the
+ * same shape as the rest, rather than reporting itself as a generic navigation
+ * failure (kawaz r76 m76). The recovery differs only because the URL was never
+ * committed to: there is a previous screen to return to. */
+function MissingTargetView({
+  target,
+  onDismiss,
+}: {
+  target: MissingTarget;
+  onDismiss: () => void;
+}) {
   return (
-    <main class="app-notfound">
-      <p class="app-notfound-msg">移動できませんでした</p>
-      <p class="app-notfound-path">{message}</p>
-      <button type="button" onClick={onDismiss}>
-        元の画面に戻る
-      </button>
-    </main>
+    <ErrorView
+      fill
+      mark="404"
+      title={target.kind === "room" ? "このルームはありません" : "このセッションはありません"}
+      detail={target.id}
+      hint="終了・削除された可能性があります。左の一覧から選び直してください。"
+      action={{ label: "元の画面に戻る", onClick: onDismiss }}
+    />
   );
 }
 
@@ -115,7 +126,7 @@ export function App() {
   // this tree.
   const evictedSidsRef = useRef<string[]>([]);
   const visibleSessionSid =
-    state.navigationError === null &&
+    state.missingTarget === null &&
     state.unknownPath === null &&
     (state.view === "session" || state.view === "timeline")
       ? state.currentSid
@@ -227,10 +238,10 @@ export function App() {
             active={visibleSessionSid === view.sid}
           />
         ))}
-        {state.navigationError !== null ? (
-          <NavigationErrorView
-            message={state.navigationError}
-            onDismiss={() => store.dispatch({ type: "navigation/error", message: null })}
+        {state.missingTarget !== null ? (
+          <MissingTargetView
+            target={state.missingTarget}
+            onDismiss={() => store.dispatch({ type: "navigation/missing", target: null })}
           />
         ) : state.unknownPath !== null ? (
           <UnknownPathView pathname={state.unknownPath} />

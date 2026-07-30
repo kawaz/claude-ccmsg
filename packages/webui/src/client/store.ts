@@ -53,6 +53,9 @@ export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarti
 
 export type View = "room" | "session" | "timeline";
 
+/** A URL that named a session or room which is not there. */
+export type MissingTarget = { kind: "session" | "room"; id: string };
+
 /** Selected-file state within a SessionTreeState (DR-0008): mirrors the
  * loading/loaded/error lifecycle of a single fs_read round trip. `path` lets
  * a component tell "still loading *this* path" apart from "stale result for
@@ -176,8 +179,11 @@ export interface AppState {
   currentTab: SessionTab | null;
   /** Structurally invalid SPA path shown inside the content area. */
   unknownPath: string | null;
-  /** Recoverable navigation error shown without changing the URL. */
-  navigationError: string | null;
+  /** Session or room named by the URL that does not exist, shown in the
+   * content area without changing the URL (`missingTarget()` in navigation.ts
+   * decides). Held as the pair rather than as a finished sentence so the view
+   * can present it as the 404 it is, with the id in its own monospace slot. */
+  missingTarget: MissingTarget | null;
   currentRoomId: string | null;
   /** message anchor requested by the URL locator (`#room-mNN`), if any. */
   currentMid: number | null;
@@ -242,7 +248,7 @@ export function initialState(): AppState {
     view: "room",
     currentTab: null,
     unknownPath: null,
-    navigationError: null,
+    missingTarget: null,
     currentRoomId: null,
     currentMid: null,
     currentSid: null,
@@ -276,7 +282,7 @@ export type Action =
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
-  | { type: "navigation/error"; message: string | null }
+  | { type: "navigation/missing"; target: MissingTarget | null }
   | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean }
   | { type: "fs/dir-toggled"; sid: string; path: string }
@@ -563,7 +569,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       view: "room",
       currentTab: null,
       unknownPath: null,
-      navigationError: null,
+      missingTarget: null,
       currentRoomId: locator.room,
       currentMid: locator.mid,
       currentAgent: null,
@@ -602,7 +608,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       view: "timeline",
       currentTab: "timeline",
       unknownPath: null,
-      navigationError: null,
+      missingTarget: null,
       currentSid: locator.sid,
       currentAgent: nextAgent,
       sessionTrees,
@@ -628,7 +634,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     view: "session",
     currentTab: locator.tab ?? "files",
     unknownPath: null,
-    navigationError: null,
+    missingTarget: null,
     currentSid: locator.sid,
     currentAgent: null,
     sessionTrees,
@@ -747,8 +753,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return applyProtocolEvent(state, action.event);
     case "locator/changed":
       return applyLocatorChanged(state, action.locator);
-    case "navigation/error":
-      return { ...state, navigationError: action.message };
+    case "navigation/missing":
+      return { ...state, missingTarget: action.target };
     case "mention/toggle": {
       const mentionTo = new Set(state.mentionTo);
       if (mentionTo.has(action.id)) mentionTo.delete(action.id);

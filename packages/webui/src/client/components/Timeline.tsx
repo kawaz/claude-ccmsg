@@ -105,6 +105,7 @@ import {
 } from "../timeline-auto-open.ts";
 import { SearchBar } from "./SearchBar.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
+import { ErrorView } from "./ErrorView.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "./InlineFileViewer.tsx";
 
 /**
@@ -3554,12 +3555,13 @@ export function Timeline({
                     </button>
                   </div>
                   {timeline.status === "error" ? (
-                    <div class="tl-error">
-                      <p>{timeline.error}</p>
-                      <button type="button" onClick={refresh}>
-                        再試行 (tail から読み直す)
-                      </button>
-                    </div>
+                    <ErrorView
+                      mark="!"
+                      tone="danger"
+                      title="transcript を読み込めませんでした"
+                      detail={timeline.error}
+                      action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
+                    />
                   ) : rawView ? (
                     <div class="tl-lines tl-raw-lines">
                       <RawTranscriptView rows={rawRows} />

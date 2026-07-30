@@ -4,7 +4,7 @@ import {
   initialLocatorReady,
   isAgentTimelineUrl,
   isSameSessionTabChange,
-  missingTargetMessage,
+  missingTarget,
   recentIsValid,
   rememberTimelinePosition,
   resolveSessionRootTarget,
@@ -78,24 +78,27 @@ describe("Navigation API routing decisions", () => {
 
   test("existence checks wait for catalogs, then reject only missing targets", () => {
     const loading = initialState();
-    expect(missingTargetMessage(loading, files("missing"))).toBeNull();
-    expect(missingTargetMessage(loading, { view: "room", room: "missing", mid: null })).toBeNull();
+    expect(missingTarget(loading, files("missing"))).toBeNull();
+    expect(missingTarget(loading, { view: "room", room: "missing", mid: null })).toBeNull();
 
     const ready = hydratedState();
-    expect(missingTargetMessage(ready, files("missing"))).toContain("missing");
-    expect(missingTargetMessage(ready, { view: "room", room: "missing", mid: null })).toContain(
-      "missing",
-    );
-    expect(missingTargetMessage(stateWithSession(), files("s1"))).toBeNull();
+    // The kind travels with the id: the view needs it to say *what* is missing,
+    // which a pre-rendered sentence could not be taken apart to recover.
+    expect(missingTarget(ready, files("missing"))).toEqual({ kind: "session", id: "missing" });
+    expect(missingTarget(ready, { view: "room", room: "missing", mid: null })).toEqual({
+      kind: "room",
+      id: "missing",
+    });
+    expect(missingTarget(stateWithSession(), files("s1"))).toBeNull();
   });
 
   test("a successful session locator clears a previous blocked-navigation error", () => {
     const failed = reducer(initialState(), {
-      type: "navigation/error",
-      message: "セッション missing は存在しません",
+      type: "navigation/missing",
+      target: { kind: "session", id: "missing" },
     });
     const recovered = reducer(failed, { type: "locator/changed", locator: files("s1") });
-    expect(recovered.navigationError).toBeNull();
+    expect(recovered.missingTarget).toBeNull();
     expect(recovered.currentSid).toBe("s1");
   });
 

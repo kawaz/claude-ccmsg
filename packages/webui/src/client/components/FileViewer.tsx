@@ -40,6 +40,7 @@ import {
 } from "../filepath-ref.ts";
 import { fileHref } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT } from "../navigation.ts";
+import { ErrorView } from "./ErrorView.tsx";
 import {
   readViewerScroll,
   rememberViewerScroll,
@@ -444,12 +445,12 @@ function useTaskListToggle({
 function DidYouMeanSuggestion({ sid, candidate }: { sid: string; candidate: string | null }) {
   if (candidate === null) return null;
   return (
-    <div class="viewer-notfound-suggest">
-      <p class="viewer-notfound-suggest-label">もしかして:</p>
-      <p class="viewer-notfound-suggest-item">
+    <div class="errorview-suggest">
+      <p class="errorview-suggest-label">もしかして:</p>
+      <p class="errorview-suggest-item">
         <a href={fileHref(sid, candidate)}>{candidate}</a>
       </p>
-      <p class="viewer-notfound-suggest-note">
+      <p class="errorview-suggest-note">
         リンクがリポジトリルート基準で書かれている場合、この位置になります。
       </p>
     </div>
@@ -1092,43 +1093,43 @@ export function FileViewer({
   }
 
   if (file.status === "error") {
-    // "This address names nothing" is its own presentation (kawaz r55 m129/m130).
-    // Markdown links no longer verify their target before linking, so following
-    // one to a file that isn't there is a normal outcome — it should read as a
-    // 404, telling the user plainly that they are somewhere that doesn't exist,
-    // rather than as a raw daemon error string. The sidebar stays mounted
-    // either way, so this is a place to leave, not a dead end.
-    if (file.errorCode === "not_found") {
-      return (
-        <div class="file-viewer">
-          <header class="viewer-header">
-            <span class="viewer-path">{path}</span>
-            <RefetchButton />
-          </header>
-          <div class="viewer-notfound">
-            <p class="viewer-notfound-code">404</p>
-            <p class="viewer-notfound-msg">このファイルはありません</p>
-            <p class="viewer-notfound-path">{path}</p>
-            <DidYouMeanSuggestion sid={sid} candidate={didYouMean} />
-            <p class="viewer-notfound-hint">
-              左のファイル一覧から選び直してください。移動・削除された可能性があります。
-            </p>
-          </div>
-        </div>
-      );
-    }
+    // Three ways a file can fail to open, told apart by glyph and words rather
+    // than by three different layouts (kawaz r76 m76). Following a markdown
+    // link to a file that isn't there is a normal outcome — links no longer
+    // verify their target first — so it reads as a 404 rather than as a raw
+    // daemon string; a path outside what this session may read is a 403, which
+    // is a different fact and says so; anything else is an actual failure and
+    // keeps the daemon's own words. The "did you mean" recovery is offered on
+    // all three, since a mis-read leading-`/` link lands on the second.
+    const notFound = file.errorCode === "not_found";
+    const forbidden = file.errorCode === "path_forbidden";
     return (
       <div class="file-viewer">
         <header class="viewer-header">
           <span class="viewer-path">{path}</span>
           <RefetchButton />
         </header>
-        {/* The error keeps its own words rather than borrowing the 404's: a
-         * refused path is not a missing one, and only the daemon knows whether
-         * anything is there. The recovery is offered all the same — for a
-         * leading-`/` link this branch is where a mis-read target lands. */}
-        <p class="viewer-error">{file.error}</p>
-        <DidYouMeanSuggestion sid={sid} candidate={didYouMean} />
+        <ErrorView
+          mark={notFound ? "404" : forbidden ? "403" : "!"}
+          tone={notFound || forbidden ? "muted" : "danger"}
+          title={
+            notFound
+              ? "このファイルはありません"
+              : forbidden
+                ? "このファイルは開けません"
+                : "このファイルを読み込めませんでした"
+          }
+          detail={notFound || forbidden ? path : file.error}
+          hint={
+            notFound
+              ? "左のファイル一覧から選び直してください。移動・削除された可能性があります。"
+              : forbidden
+                ? "このセッションが読める範囲の外にあります。左のファイル一覧から選び直してください。"
+                : "上の ↻ で読み直せます。"
+          }
+        >
+          <DidYouMeanSuggestion sid={sid} candidate={didYouMean} />
+        </ErrorView>
       </div>
     );
   }
