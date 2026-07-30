@@ -1830,7 +1830,14 @@ function FoldGroup({
                 <span class="tl-summary-agent-messages">{agentMessageCount} agent messages</span>
               </>
             ) : null}
-            {itemCount > 0 ? ` + ${itemCount} items` : ""}
+            {itemCount > 0 ? (
+              <>
+                {thinkingCount > 0 || ccmsgCount > 0 || agentMessageCount > 0 ? " + " : ""}
+                <span class="tl-summary-items">{itemCount} items</span>
+              </>
+            ) : (
+              ""
+            )}
           </>
         ) : (
           foldGroupLabel(entries)

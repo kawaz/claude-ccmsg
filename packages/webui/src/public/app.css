@@ -4822,6 +4822,14 @@ button.session-tab {
   padding: 0 0.35rem;
 }
 
+/* 「N items」部も同系の装飾 (kawaz r76 m104): 種別ごとの色は持たない
+ * 雑多アイテムなので muted の破線トーン。 */
+.tl-summary-items {
+  border: 1px dashed var(--border);
+  border-radius: 0.4rem;
+  padding: 0 0.35rem;
+}
+
 .tl-broken {
   border: 1px solid var(--danger);
 }
