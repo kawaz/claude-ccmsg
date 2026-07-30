@@ -664,6 +664,47 @@ describe("fs_read_external (DR-0024)", () => {
   );
 
   test(
+    "either spelling of one allowlisted file is readable across a symlinked ancestor",
+    async () => {
+      // The webui links a path exactly as the transcript spelled it, and on
+      // macOS a tool call under os.tmpdir() spells /var/... while the file's
+      // realpath spells /private/var/... . Both directions must land on the
+      // single allowlist entry, or the viewer 403s on the very file it just
+      // rendered from the same transcript row.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const realDir = path.join(fs.realpathSync(outside), "real");
+        const linkDir = path.join(fs.realpathSync(outside), "link");
+        fs.mkdirSync(realDir);
+        fs.symlinkSync(realDir, linkDir);
+        fs.writeFileSync(path.join(realDir, "shot.png"), "bytes");
+        const viaReal = path.join(realDir, "shot.png");
+        const viaLink = path.join(linkDir, "shot.png");
+
+        // Folded from the symlinked spelling — the one a tool call records.
+        await sessionAtWithTranscript(ctx, "A", root, [externalToolUse("r1", "Read", viaLink)]);
+        const user = await userAt(ctx);
+        for (const candidate of [viaLink, viaReal]) {
+          const res = await user.request<{ ok: true; path: string; content: string }>({
+            op: "fs_read_external",
+            sid: "A",
+            path: candidate,
+          });
+          expect(res.content).toBe("bytes");
+          expect(res.path).toBe(candidate);
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
     "security: any existing absolute path outside the allowlist is path_forbidden",
     async () => {
       // Existence is not a grant: another real file beside the recorded one must
@@ -836,10 +877,9 @@ describe("fs_read_external (DR-0024)", () => {
       // Transcript folding may retain a Write-before-create path, while file
       // tools may also point at a directory; exact authorization succeeds in
       // both cases, then the shared fs_read file contract distinguishes them.
-      // The request uses the allowlist's own canonical spelling (ancestor
-      // realpath + missing leaf) — exactly the string the UI displays and
-      // sends — not the tool call's lexical spelling through a symlinked
-      // tmpdir, which stays forbidden by exact-match.
+      // A missing target is canonicalized through its nearest existing ancestor
+      // on both sides, so the tool call's own spelling through a symlinked
+      // tmpdir reaches the same entry as the ancestor-realpath spelling.
       const ctx = await startTestDaemon();
       const root = mkfixture();
       const outside = mkfixture();
@@ -853,12 +893,14 @@ describe("fs_read_external (DR-0024)", () => {
           externalToolUse("r1", "Read", dir),
         ]);
         const user = await userAt(ctx);
-        const missingRes = await user.request<{ ok: false; error: { code: string } }>({
-          op: "fs_read_external",
-          sid: "A",
-          path: missingCanonical,
-        });
-        expect(missingRes.error.code).toBe("not_found");
+        for (const candidate of [missingCanonical, missing]) {
+          const missingRes = await user.request<{ ok: false; error: { code: string } }>({
+            op: "fs_read_external",
+            sid: "A",
+            path: candidate,
+          });
+          expect(missingRes.error.code).toBe("not_found");
+        }
         const dirRes = await user.request<{ ok: false; error: { code: string } }>({
           op: "fs_read_external",
           sid: "A",

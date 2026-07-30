@@ -26,6 +26,7 @@ import {
   type FsWriteResponse,
 } from "@ccmsg/protocol";
 import {
+  canonicalizeExternalPath,
   getSessionStatus,
   type SessionStatusLookup,
   type SessionStatusStore,
@@ -443,12 +444,16 @@ export function fsRead(
 }
 
 /** DR-0024 external-file authorization. The request must name one absolute path
- * whose normalized spelling is an exact external_files entry for this sid; no
- * prefix or directory grant exists. realpath is repeated immediately before the
- * read so a path/ancestor replaced with a symlink after transcript folding is
- * rejected when its target no longer equals an allowlist entry. Other realpath
- * failures fail closed without leaking filesystem structure. The remaining
- * realpath→lstat/open TOCTOU gap has the same-UID limitation documented for
+ * that canonicalizes to an exact external_files entry for this sid; no prefix or
+ * directory grant exists. Canonicalization runs here, at request time, with the
+ * same `canonicalizeExternalPath` the fold used to record the entry: that lets a
+ * caller name the file the way the transcript spelled it (`/var/...`) or the way
+ * realpath spells it (`/private/var/...`) — one file, either spelling — while a
+ * path/ancestor replaced by a symlink after folding still resolves elsewhere and
+ * is rejected. Every non-match is path_forbidden regardless of why the path
+ * failed to resolve, so canonicalizing before the allowlist check reveals
+ * nothing about paths the session was never granted. The remaining
+ * canonicalize→lstat/open TOCTOU gap has the same-UID limitation documented for
  * resolveContained: a process able to win it can already read the target directly. */
 export function fsReadExternal(
   sessions: SessionLookup,
@@ -467,26 +472,12 @@ export function fsReadExternal(
   const status = getSessionStatus(statusStore, sessions, sid);
   if (!status.ok) return status;
   const allowlist = new Set(status.data.external_files ?? []);
-  const normalized = path.normalize(reqPath);
-  if (!allowlist.has(normalized)) {
+  const canonical = canonicalizeExternalPath(reqPath);
+  if (!allowlist.has(canonical)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
   }
 
-  let realPath: string;
-  try {
-    realPath = fs.realpathSync(reqPath);
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
-      return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
-    }
-    return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot resolve path: ${reqPath}` };
-  }
-  if (!allowlist.has(realPath)) {
-    return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
-  }
-
-  return readRegularFile(sid, realPath, reqPath, reqPath);
+  return readRegularFile(sid, canonical, reqPath, reqPath);
 }
 
 // --- fs_list_workspace / fs_read_workspace (DR-0026) ------------------
@@ -734,19 +725,7 @@ export function fsResolveForServe(
     const status = getSessionStatus(statusStore, sessions, sid);
     if (!status.ok) return status;
     const allowlist = new Set(status.data.external_files ?? []);
-    const normalized = path.normalize(reqPath);
-    if (!allowlist.has(normalized)) {
-      return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
-    }
-    try {
-      realPath = fs.realpathSync(reqPath);
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
-        return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
-      }
-      return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot resolve path: ${reqPath}` };
-    }
+    realPath = canonicalizeExternalPath(reqPath);
     if (!allowlist.has(realPath)) {
       return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
     }

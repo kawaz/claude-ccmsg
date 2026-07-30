@@ -37,6 +37,12 @@ fs_read の containment は root 配下限定のまま。プロジェクト外�
 新しい認可面 (allowlist ベース)。任意パス読み出しには絶対に広げない。symlink escape は
 realpath で検査 (既存 fs-access の流儀)。
 
+**正規化は登録側とリクエスト側で同一関数を通す** (`canonicalizeExternalPath`)。allowlist は
+完全一致集合なので、片側だけ realpath すると同一ファイルの 2 通りの綴り (transcript が
+記録する `/var/...` と realpath の `/private/var/...`) が互いに一致せず、webui が
+表示したそのファイルへのリンクが 403 になる。リクエスト時に canonicalize することで
+fold 後に symlink へ差し替えられた経路は別 realpath に解決されて弾かれる性質は保たれる。
+
 ### 3.3 webui
 
 - FileTree に第 3 セクション。行はフルパス表示 + ★。クリックで FileViewer (認可は § 3.2 経由)

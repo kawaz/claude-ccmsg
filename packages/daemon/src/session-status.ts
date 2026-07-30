@@ -104,8 +104,8 @@ export interface SessionStatusState {
    * file collection fail-closed when the session root cannot be resolved. */
   externalRoot?: string;
   /** Exact read allowlist shared with SessionStatusSnapshot.external_files and
-   * fs_read_external. Values are realpaths when the target exists, otherwise
-   * normalized absolute lexical paths for Write-before-create/deleted files. */
+   * fs_read_external. Every value is a `canonicalizeExternalPath` result, and
+   * requests are compared against it after the same canonicalization. */
   externalFiles: Set<string>;
   /** Latest-turn API error, or undefined while the session looks healthy.
    * Set by an `isApiErrorMessage` assistant row, cleared by the next real
@@ -196,27 +196,28 @@ function foldExternalFile(
   return addExternalFile(state, rawPath);
 }
 
-/** Canonicalize one transcript-named absolute path and add it to the allowlist
- * when it falls outside the containment root. Shared by every fold that grants
- * external reads so they agree on normalization and on the fail-closed
- * behaviour when the session root is unresolvable. */
-function addExternalFile(state: SessionStatusState, rawPath: string): boolean {
-  if (!state.externalRoot) return false;
-  if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
-
-  const normalized = path.normalize(rawPath);
-  let canonical = normalized;
+/** Spelling used for every DR-0024 external_files entry, and the spelling a
+ * request must reduce to before it is compared against that set. The allowlist
+ * is a set of exact files, so the two sides only ever agree if they apply the
+ * *same* canonicalization — the transcript names a path as the tool call spelled
+ * it (`/var/folders/...`, `/tmp/...`), while the file's realpath goes through
+ * macOS's `/private` symlinks, and a one-sided realpath makes those two
+ * spellings of one file miss each other.
+ *
+ * Resolution is realpath when the target exists, otherwise the nearest existing
+ * ancestor's realpath plus the missing lexical remainder (resolveContained's
+ * flavor): a Write target does not exist yet and a previously read file may have
+ * been removed, and without the ancestor step such an entry could never equal the
+ * realpath the file gets once created. When no ancestor resolves either (or the
+ * walk hits a non-ENOENT error), the normalized lexical path is the answer and a
+ * read of it fails as not_found.
+ *
+ * `absPath` must already be absolute; callers reject relative input themselves. */
+export function canonicalizeExternalPath(absPath: string): string {
+  const normalized = path.normalize(absPath);
   try {
-    canonical = fs.realpathSync(normalized);
+    return fs.realpathSync(normalized);
   } catch {
-    // A Write target may not exist yet and a previously touched file may have
-    // been removed. Canonicalize through the nearest existing ancestor + the
-    // missing lexical remainder (resolveContained's flavor): a lexical path
-    // through a symlinked ancestor (macOS's /tmp, /var) would otherwise never
-    // equal the realpath the file has once created, and fs_read_external's
-    // read-time realpath check would reject the session's own Write target
-    // forever. When no ancestor resolves either, the normalized lexical path
-    // stays as the entry; fs_read_external returns not_found until it exists.
     let cursor = path.dirname(normalized);
     for (;;) {
       let real: string;
@@ -225,14 +226,24 @@ function addExternalFile(state: SessionStatusState, rawPath: string): boolean {
       } catch (e) {
         const err = e as NodeJS.ErrnoException;
         const parent = path.dirname(cursor);
-        if (err.code !== "ENOENT" || parent === cursor) break;
+        if (err.code !== "ENOENT" || parent === cursor) return normalized;
         cursor = parent;
         continue;
       }
-      canonical = path.join(real, path.relative(cursor, normalized));
-      break;
+      return path.join(real, path.relative(cursor, normalized));
     }
   }
+}
+
+/** Canonicalize one transcript-named absolute path and add it to the allowlist
+ * when it falls outside the containment root. Shared by every fold that grants
+ * external reads so they agree on normalization and on the fail-closed
+ * behaviour when the session root is unresolvable. */
+function addExternalFile(state: SessionStatusState, rawPath: string): boolean {
+  if (!state.externalRoot) return false;
+  if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
+
+  const canonical = canonicalizeExternalPath(rawPath);
   if (isInsideRoot(state.externalRoot, canonical)) return false;
   const sizeBefore = state.externalFiles.size;
   state.externalFiles.add(canonical);
