@@ -88,10 +88,11 @@ export interface SessionLauncherConfig {
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.
- * 500 KB (kawaz r76 m103、2026-07-31)。旧 2 MB (kawaz r15 mid=18 の「older
- * 連打を減らす」判断) は全項目 DOM 化の描画コストが実測で判明した後
- * (issue timeline-virtual-scroll) には初期表示の重さ側が勝つため縮小。 */
-export const TRANSCRIPT_READ_MAX_BYTES = 500 * 1024;
+ * 1 MB (kawaz r76 m107、2026-07-31。500KB を試して増量)。旧 2 MB (kawaz
+ * r15 mid=18 の「older 連打を減らす」判断) は全項目 DOM 化の描画コストが
+ * 実測で判明した後 (issue timeline-virtual-scroll) には初期表示の重さ側が
+ * 勝つため縮小した。 */
+export const TRANSCRIPT_READ_MAX_BYTES = 1024 * 1024;
 
 /** Historical session search response caps (DR-0021 Phase 1). These are wire
  * contract limits so every client can render truncation consistently. */
