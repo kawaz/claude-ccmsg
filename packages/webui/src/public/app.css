@@ -6000,6 +6000,11 @@ button.session-tab {
 }
 
 ::highlight(ccmsg-search-current) {
+  /* color を明示しないと、この highlight が最前面に重なった時に文字色が
+   * 下層の色付き highlight の --search-hl-fg でなく要素本来の色 (ダーク
+   * テーマでは白) に解決され、ハイライト bg + 白文字で読めなくなる
+   * (kawaz r76m101)。bg は下層のクエリ色が残るので指定しない。 */
+  color: var(--search-hl-fg);
   text-decoration: underline solid var(--search-current-color) 0.16em;
   text-underline-offset: 0.12em;
 }
