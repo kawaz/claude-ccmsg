@@ -1,6 +1,6 @@
 # DR-0021: Session Search (ccmsg 未起動の過去セッションのブラウズ)
 
-Status: Accepted (SS-Q1=a / SS-Q2=a、kawaz 2026-07-16 r26 mid=48)
+Status: Accepted (SS-Q1=a / SS-Q2=a、kawaz 2026-07-16 r26 mid=48。検索クエリの AND/OR 割当は DR-0022 §2.1 と共通で kawaz r76m78 指定が正本)
 Date: 2026-07-16
 Sponsor: kawaz r26 mid=47
 
@@ -17,7 +17,7 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 
 | 項目 | 仕様 |
 |---|---|
-| 検索クエリ | 通常検索は行内の空白区切りワードを OR、改行区切りを AND。ダブルクオート句は 1 ワード化し、句内空白は `\s+` マッチ。regex 検索は 1 行 1 パターン、改行区切り AND |
+| 検索クエリ | 通常検索は行内の空白区切りワードを AND、改行区切りを OR。AND は セッション全体で判定 (別メッセージが別ワードを満たしてよい)。ダブルクオート句は 1 ワード化し、句内空白は `\s+` マッチ。regex 検索は 1 行 1 パターン、改行区切り OR |
 | 検索対象トグル | ユーザメッセージ / エージェントメッセージ (それぞれ ccmsg 経由含む) |
 | セッション cwd | スペース区切り複数ワード部分一致 AND |
 | SESSION ID | uuid 部分一致可 |

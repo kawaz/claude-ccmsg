@@ -1,4 +1,4 @@
-// in-view-search unit tests (DR-0022): query parsing, AND matching,
+// in-view-search unit tests (DR-0022): query parsing, AND/OR matching,
 // highlight-range enumeration/overlap-resolution, and the shared 1-based
 // looping index nav used by both the search "[N/M]" counter and the 👤
 // user-turn nav.
@@ -23,30 +23,34 @@ describe("parseSearchQuery", () => {
     expect(q.hasError).toBe(false);
   });
 
-  test("plain mode uses whitespace OR within a line and newline AND between lines", () => {
+  test("plain mode uses whitespace AND within a line and newline OR between lines", () => {
     const oneLine = parseSearchQuery("foo bar", { caseSensitive: false, regex: false });
     expect(oneLine.words.map((word) => [word.text, word.clauseIndex])).toEqual([
       ["foo", 0],
       ["bar", 0],
     ]);
-    expect(unitMatchesQuery("foo only", oneLine.words)).toBe(true);
-    expect(unitMatchesQuery("bar only", oneLine.words)).toBe(true);
+    expect(unitMatchesQuery("foo and bar", oneLine.words)).toBe(true);
+    expect(unitMatchesQuery("foo only", oneLine.words)).toBe(false);
+    expect(unitMatchesQuery("bar only", oneLine.words)).toBe(false);
     expect(unitMatchesQuery("neither", oneLine.words)).toBe(false);
 
+    // Mixed: "(foo AND bar) OR buz".
     const multiline = parseSearchQuery("foo bar\nbuz", { caseSensitive: false, regex: false });
-    expect(unitMatchesQuery("foo and buz", multiline.words)).toBe(true);
-    expect(unitMatchesQuery("bar and buz", multiline.words)).toBe(true);
+    expect(unitMatchesQuery("foo and bar", multiline.words)).toBe(true);
+    expect(unitMatchesQuery("buz alone", multiline.words)).toBe(true);
     expect(unitMatchesQuery("foo only", multiline.words)).toBe(false);
+    expect(unitMatchesQuery("bar only", multiline.words)).toBe(false);
   });
 
   test("double quotes keep a phrase together and normalize internal whitespace", () => {
     const q = parseSearchQuery('"foo   bar "\nbuz', { caseSensitive: false, regex: false });
     expect(q.words.map((word) => word.text)).toEqual(["foo bar", "buz"]);
-    expect(unitMatchesQuery("foo\t \nbar and buz", q.words)).toBe(true);
-    expect(unitMatchesQuery("foo between bar and buz", q.words)).toBe(false);
+    // The quoted phrase is its own clause, so it matches on its own.
+    expect(unitMatchesQuery("foo\t \nbar", q.words)).toBe(true);
+    expect(unitMatchesQuery("foo between bar", q.words)).toBe(false);
   });
 
-  test("plain mode trims repeated whitespace between alternatives", () => {
+  test("plain mode trims repeated whitespace between AND terms", () => {
     const q = parseSearchQuery("foo   bar \n  buz", { caseSensitive: false, regex: false });
     expect(q.words.map((word) => [word.text, word.clauseIndex])).toEqual([
       ["foo", 0],
@@ -61,8 +65,10 @@ describe("parseSearchQuery", () => {
       ["foo bar", 0],
       ["buz", 1],
     ]);
-    expect(unitMatchesQuery("foo bar and buz", q.words)).toBe(true);
-    expect(unitMatchesQuery("foo or bar and buz", q.words)).toBe(false);
+    // One regex per line, OR-ed: either line alone qualifies.
+    expect(unitMatchesQuery("foo bar, nothing else", q.words)).toBe(true);
+    expect(unitMatchesQuery("buz, nothing else", q.words)).toBe(true);
+    expect(unitMatchesQuery("foo or bar", q.words)).toBe(false);
 
     const spaced = parseSearchQuery(" foo ", { caseSensitive: false, regex: true });
     expect(spaced.words[0]!.text).toBe(" foo ");
@@ -70,10 +76,9 @@ describe("parseSearchQuery", () => {
     expect(unitMatchesQuery("foo", spaced.words)).toBe(false);
   });
 
-  // "空行無視" (DR-0022 §2.1): blank lines contribute no AND clause at all,
-  // not an empty-string word (which would otherwise match everything and
-  // silently defeat the AND filter — see the module doc comment on why this
-  // interpretation was chosen over "keep as empty word").
+  // "空行無視" (DR-0022 §2.1): blank lines contribute no clause at all, not an
+  // empty-string word (which would otherwise be a clause matching everything
+  // and silently turn the whole query into a full-document hit).
   test("drops blank lines entirely, including whitespace-only lines", () => {
     const q = parseSearchQuery("foo\n\n   \nbar\n", { caseSensitive: false, regex: false });
     expect(q.words.map((w) => w.text)).toEqual(["foo", "bar"]);
@@ -131,34 +136,52 @@ describe("parseSearchQuery", () => {
   });
 });
 
-describe("unitMatchesQuery (AND semantics, DR-0022 §2.1)", () => {
-  test("true only when every word has a match", () => {
+describe("unitMatchesQuery (AND/OR semantics, DR-0022 §2.1)", () => {
+  test("newline-separated words match when either one is present", () => {
     const words = parseSearchQuery("foo\nbar", { caseSensitive: false, regex: false }).words;
     expect(unitMatchesQuery("foo and bar", words)).toBe(true);
-    expect(unitMatchesQuery("foo only", words)).toBe(false);
-    expect(unitMatchesQuery("bar only", words)).toBe(false);
+    expect(unitMatchesQuery("foo only", words)).toBe(true);
+    expect(unitMatchesQuery("bar only", words)).toBe(true);
     expect(unitMatchesQuery("neither", words)).toBe(false);
   });
 
-  // No words at all (empty query) matches nothing — there is no AND clause
-  // to satisfy, and "everything matches an empty query" would make the
-  // search bar's default (no query typed yet) look like a full-document hit.
+  test("space-separated words match only when all of them are present", () => {
+    const words = parseSearchQuery("foo bar", { caseSensitive: false, regex: false }).words;
+    expect(unitMatchesQuery("bar then foo", words)).toBe(true);
+    expect(unitMatchesQuery("foo only", words)).toBe(false);
+  });
+
+  // A three-term clause only qualifies once the last term shows up, so a
+  // partially satisfied AND can never leak through the OR.
+  test("a partially satisfied clause does not qualify", () => {
+    const words = parseSearchQuery("foo bar buz\nzzz", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    expect(unitMatchesQuery("foo bar only", words)).toBe(false);
+    expect(unitMatchesQuery("foo bar buz", words)).toBe(true);
+    expect(unitMatchesQuery("zzz", words)).toBe(true);
+  });
+
+  // No words at all (empty query) matches nothing — there is no clause to
+  // satisfy, and "everything matches an empty query" would make the search
+  // bar's default (no query typed yet) look like a full-document hit.
   test("empty word list matches nothing", () => {
     expect(unitMatchesQuery("anything", [])).toBe(false);
   });
 
-  // A word that failed to compile (regex mode) is excluded from the AND
-  // check rather than vacuously failing the whole query for every unit —
-  // see parseSearchQuery's doc comment on why callers should still gate on
+  // A word that failed to compile (regex mode) is dropped from its clause
+  // rather than vacuously failing the whole query for every unit — see
+  // parseSearchQuery's doc comment on why callers should still gate on
   // `!hasError` before trusting nav counts.
-  test("an errored word is excluded from the AND check, not treated as always-false", () => {
+  test("an errored word is excluded from the check, not treated as always-false", () => {
     const q = parseSearchQuery("foo(\nbar", { caseSensitive: false, regex: true });
     expect(unitMatchesQuery("bar only, no foo", q.words)).toBe(true);
   });
 });
 
 describe("collectHighlightRanges / splitTextForHighlight", () => {
-  test("enumerates matches with one color per AND line", () => {
+  test("enumerates matches with one color per query line", () => {
     const words = parseSearchQuery("foo fizz\nbar", {
       caseSensitive: false,
       regex: false,

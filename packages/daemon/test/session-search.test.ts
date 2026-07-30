@@ -86,10 +86,10 @@ afterEach(() => {
 });
 
 describe("session_search three-stage filtering", () => {
-  // Each non-blank query line is one session-wide AND clause. Separate
-  // messages may satisfy separate clauses, while a session missing any clause
-  // must not hit. Match summaries retain the contributing message rows.
-  test("multiline query patterns use session-wide AND semantics", async () => {
+  // Each non-blank query line is one clause, and the clauses are OR-ed: a
+  // session hits as soon as any single clause is satisfied. Match summaries
+  // retain the contributing message rows.
+  test("multiline query lines are OR-ed", async () => {
     const config = configDir();
     writeSession(config, sid(1), [
       user("alpha first"),
@@ -99,25 +99,41 @@ describe("session_search three-stage filtering", () => {
       user("beta only"),
     ]);
     writeSession(config, sid(2), [user("alpha only")]);
-    writeSession(config, sid(3), [user("alpha and beta together")]);
+    writeSession(config, sid(3), [user("beta only")]);
+    writeSession(config, sid(4), [user("neither word here")]);
 
     const result = await search(config, { query: "alpha\n\n beta" });
-    expect(result.hits.map((hit) => hit.sid)).toEqual(expect.arrayContaining([sid(1), sid(3)]));
-    expect(result.hits).toHaveLength(2);
+    expect(result.hits.map((hit) => hit.sid).sort()).toEqual([sid(1), sid(2), sid(3)].sort());
+    // Summaries are the first matching rows, capped at
+    // SESSION_SEARCH_MATCH_SUMMARY_MAX (3).
     expect(
       result.hits.find((hit) => hit.sid === sid(1))!.matches.map((match) => match.text),
-    ).toEqual(["alpha first", "beta only"]);
-    expect(result.hits.find((hit) => hit.sid === sid(3))!.matches).toHaveLength(1);
+    ).toEqual(["alpha first", "alpha second", "alpha third"]);
+  });
+
+  // A clause's AND terms are collected session-wide, so two words typed on one
+  // line may land on two different messages of the same session.
+  test("whitespace AND terms may be satisfied by separate messages", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("alpha first"), user("beta later")]);
+    writeSession(config, sid(2), [user("alpha only")]);
+
+    const result = await search(config, { query: "alpha beta" });
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.hits[0]!.matches.map((match) => match.text)).toEqual([
+      "alpha first",
+      "beta later",
+    ]);
   });
 
   // A query word only counts when it appears in an enabled role. The agent row
-  // cannot complete the session-wide AND while target_agent is disabled.
-  test("session-wide AND respects role toggles per matching message", async () => {
+  // cannot complete the clause's AND while target_agent is disabled.
+  test("AND terms respect role toggles per matching message", async () => {
     const config = configDir();
     writeSession(config, sid(1), [user("alpha from user"), agent("beta from agent")]);
 
     const result = await search(config, {
-      query: "alpha\nbeta",
+      query: "alpha beta",
       target_user: true,
       target_agent: false,
     });
@@ -136,29 +152,28 @@ describe("session_search three-stage filtering", () => {
     expect(result.hits[0]!.matches.map((match) => match.text)).toEqual(["single needle"]);
   });
 
-  test("plain query uses whitespace OR within a line and newline AND between lines", async () => {
+  test("plain query uses whitespace AND within a line and newline OR between lines", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("foo only"), user("buz elsewhere")]);
-    writeSession(config, sid(2), [user("bar and buz together")]);
-    writeSession(config, sid(3), [user("foo without the second clause")]);
+    writeSession(config, sid(1), [user("foo and bar together")]);
+    writeSession(config, sid(2), [user("buz alone")]);
+    writeSession(config, sid(3), [user("foo without the rest of its clause")]);
 
     const result = await search(config, { query: "foo bar\nbuz" });
-    expect(result.hits.map((hit) => hit.sid)).toEqual(expect.arrayContaining([sid(1), sid(2)]));
-    expect(result.hits).toHaveLength(2);
+    expect(result.hits.map((hit) => hit.sid).sort()).toEqual([sid(1), sid(2)].sort());
   });
 
-  test("quoted phrases stay one alternative and normalize internal whitespace", async () => {
+  test("quoted phrases stay one term and normalize internal whitespace", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("foo\t  bar and buz")]);
-    writeSession(config, sid(2), [user("foo between bar and buz")]);
+    writeSession(config, sid(1), [user("foo\t  bar here")]);
+    writeSession(config, sid(2), [user("foo between bar")]);
 
     const result = await search(config, { query: '"foo   bar "\nbuz' });
     expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
   });
 
-  test("repeated whitespace only separates and trims plain alternatives", async () => {
+  test("repeated whitespace only separates and trims plain AND terms", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("bar and buz")]);
+    writeSession(config, sid(1), [user("buz alone")]);
     writeSession(config, sid(2), [user("foo only")]);
 
     const result = await search(config, { query: "foo   bar \n  buz" });
@@ -181,16 +196,17 @@ describe("session_search three-stage filtering", () => {
   });
 
   // A regex with required top-level ASCII literals may use them to prune raw
-  // JSONL lines, but decoded RegExp matching remains authoritative. Separate
-  // messages may satisfy separate regex clauses within the same session.
-  test("regex mode applies one pattern per line with session-wide AND semantics", async () => {
+  // JSONL lines, but decoded RegExp matching remains authoritative. Each line
+  // is one pattern, and the lines are OR-ed.
+  test("regex mode applies one pattern per line, OR-ed between lines", async () => {
     const config = configDir();
-    writeSession(config, sid(1), [user("foo bar"), user("buz elsewhere")]);
+    writeSession(config, sid(1), [user("foo bar"), user("unrelated")]);
     writeSession(config, sid(2), [user("foo or bar"), user("buz elsewhere")]);
+    writeSession(config, sid(3), [user("foo or bar"), user("nothing else")]);
 
     const result = await search(config, { query: "foo bar\nbuz", regex: true });
-    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
-    expect(result.hits[0]!.matches).toHaveLength(2);
+    expect(result.hits.map((hit) => hit.sid).sort()).toEqual([sid(1), sid(2)].sort());
+    expect(result.hits.find((hit) => hit.sid === sid(1))!.matches).toHaveLength(1);
   });
 
   test("regex mode does not trim spaces from a line", async () => {

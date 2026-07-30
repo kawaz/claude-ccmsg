@@ -69,7 +69,8 @@ interface RenderedHighlightRange {
  * dropped. Dropping them outright would splice the surrounding visible text
  * together and invent adjacencies that are nowhere on screen ("foo" + hidden
  * + "bar" would match `oob`); a newline can never occur inside a search word
- * (the query is AND-split on newlines) nor inside a `.` in regex mode, so it
+ * (the query is split into OR clauses on newlines) nor inside a `.` in regex
+ * mode, so it
  * separates without matching.
  */
 function visibleOnlyText(nodeTexts: readonly string[], nodeVisible: readonly boolean[]): string {

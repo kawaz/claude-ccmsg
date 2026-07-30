@@ -161,15 +161,15 @@ function literalListFromRegex(literal: string | null): readonly string[] | null 
   return literal === null ? null : [literal];
 }
 
-function compileQueryGroups(
-  groups: readonly (readonly SearchQueryPattern[])[],
+function compileQueryClauses(
+  clauses: readonly (readonly SearchQueryPattern[])[],
   caseSensitive: boolean,
   regex: boolean,
-): { ok: true; groups: CompiledQueryPattern[][] } | { ok: false; msg: string } {
-  const compiledGroups: CompiledQueryPattern[][] = [];
-  for (const group of groups) {
+): { ok: true; clauses: CompiledQueryPattern[][] } | { ok: false; msg: string } {
+  const compiledClauses: CompiledQueryPattern[][] = [];
+  for (const clause of clauses) {
     const compiled: CompiledQueryPattern[] = [];
-    for (const pattern of group) {
+    for (const pattern of clause) {
       if (pattern.error !== null) {
         return {
           ok: false,
@@ -191,9 +191,9 @@ function compileQueryGroups(
               : literals.map((literal) => literal.toLowerCase()),
       });
     }
-    compiledGroups.push(compiled);
+    compiledClauses.push(compiled);
   }
-  return { ok: true, groups: compiledGroups };
+  return { ok: true, clauses: compiledClauses };
 }
 
 function patternIndex(text: string, pattern: CompiledQueryPattern): number {
@@ -262,7 +262,9 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
 
 interface ScanResult {
   matches: SessionSearchMatch[];
-  matchedGroupCount: number;
+  /** True once some clause had every one of its AND terms matched somewhere in
+   * the session (always true for an empty query). */
+  queryMatched: boolean;
   cwd: string | null;
   firstTimestamp: string | null;
   bytesRead: number;
@@ -271,7 +273,7 @@ interface ScanResult {
 
 function linePassesPrefilter(
   line: string,
-  groups: readonly (readonly CompiledQueryPattern[])[],
+  clauses: readonly (readonly CompiledQueryPattern[])[],
   caseSensitive: boolean,
 ): boolean {
   // Case-insensitive regex prefilter fragments are ASCII-alphanumeric-only
@@ -283,11 +285,12 @@ function linePassesPrefilter(
   // (U+0065 U+0301) into U+00E9 removes the raw "e" that a /cafe/iu strict match
   // depends on, creating a prefilter false negative.
   const haystack = caseSensitive ? line : line.toLowerCase().replaceAll("ſ", "s");
-  // Session-wide AND permits different groups to match different rows, so a
-  // row survives when any OR alternative in any group may match it. A pattern
-  // without a safe literal admits every row to the strict stage.
-  return groups.some((group) =>
-    group.some(
+  // A clause's AND terms are collected session-wide, so different terms may
+  // land on different rows: a row survives when any term of any clause may
+  // match it. A pattern without a safe literal admits every row to the strict
+  // stage.
+  return clauses.some((clause) =>
+    clause.some(
       (pattern) =>
         pattern.prefilters === null ||
         pattern.prefilters.some((needle) => haystack.includes(needle)),
@@ -297,7 +300,7 @@ function linePassesPrefilter(
 
 function scanCandidateFile(
   file: string,
-  groups: readonly (readonly CompiledQueryPattern[])[],
+  clauses: readonly (readonly CompiledQueryPattern[])[],
   targetUser: boolean,
   targetAgent: boolean,
   caseSensitive: boolean,
@@ -307,7 +310,10 @@ function scanCandidateFile(
   const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
-  const matchedGroupIndexes = new Set<number>();
+  // Per clause, the indexes of its AND terms seen anywhere in this session.
+  const matchedTerms = clauses.map(() => new Set<number>());
+  const someClauseComplete = (): boolean =>
+    clauses.some((clause, clauseIndex) => matchedTerms[clauseIndex]!.size === clause.length);
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
   let offset = 0;
@@ -315,25 +321,24 @@ function scanCandidateFile(
   const fd = fs.openSync(file, "r");
 
   const inspect = (line: string): void => {
-    if (groups.length > 0 && linePassesPrefilter(line, groups, caseSensitive)) {
+    if (clauses.length > 0 && linePassesPrefilter(line, clauses, caseSensitive)) {
       forEachSearchableMessage(line, targetUser, targetAgent, (role, text, timestamp) => {
         const matchingPatterns: CompiledQueryPattern[] = [];
-        let newlyMatchedGroup = false;
-        for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
-          const matchingPattern = groups[groupIndex]!.find(
-            (pattern) => patternIndex(text, pattern) >= 0,
-          );
-          if (matchingPattern === undefined) continue;
-          if (!matchedGroupIndexes.has(groupIndex)) newlyMatchedGroup = true;
-          matchedGroupIndexes.add(groupIndex);
-          matchingPatterns.push(matchingPattern);
+        for (let clauseIndex = 0; clauseIndex < clauses.length; clauseIndex++) {
+          const clause = clauses[clauseIndex]!;
+          const matched = matchedTerms[clauseIndex]!;
+          for (let termIndex = 0; termIndex < clause.length; termIndex++) {
+            const pattern = clause[termIndex]!;
+            if (patternIndex(text, pattern) < 0) continue;
+            matched.add(termIndex);
+            matchingPatterns.push(pattern);
+          }
         }
-        const allGroupsMatched = matchedGroupIndexes.size === groups.length;
-        if (
-          matchingPatterns.length === 0 ||
-          matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX ||
-          (!newlyMatchedGroup && !allGroupsMatched)
-        ) {
+        // Every message carrying a query term is summary-worthy up to the cap:
+        // a session only reaches the response once some clause is complete, so
+        // rows from a clause that never completes are discarded with the whole
+        // candidate rather than needing a per-row eligibility rule here.
+        if (matchingPatterns.length === 0 || matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX) {
           return;
         }
         const match: SessionSearchMatch = {
@@ -383,16 +388,15 @@ function scanCandidateFile(
       }
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
       // Once metadata is known, an empty query needs no more rows. A non-empty
-      // query may stop only after every session-wide AND clause has matched and
-      // the summary cap is full: after that neither hit eligibility nor the
-      // bounded response can change. If either condition is incomplete, keep
-      // scanning to avoid dropping a later clause or summary row.
+      // query may stop only after one clause is complete (the session already
+      // qualifies) and the summary cap is full: after that neither hit
+      // eligibility nor the bounded response can change. If either condition is
+      // incomplete, keep scanning to avoid dropping a later term or summary row.
       if (
         cwd !== null &&
         firstTimestamp !== null &&
-        (groups.length === 0 ||
-          (matchedGroupIndexes.size === groups.length &&
-            matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX))
+        (clauses.length === 0 ||
+          (someClauseComplete() && matches.length >= SESSION_SEARCH_MATCH_SUMMARY_MAX))
       ) {
         break;
       }
@@ -403,7 +407,7 @@ function scanCandidateFile(
   }
   return {
     matches,
-    matchedGroupCount: matchedGroupIndexes.size,
+    queryMatched: clauses.length === 0 || someClauseComplete(),
     cwd,
     firstTimestamp,
     bytesRead: offset,
@@ -420,7 +424,7 @@ export interface StrictMatchParams {
 }
 
 interface CompiledStrictMatchParams {
-  groups: readonly (readonly CompiledQueryPattern[])[];
+  clauses: readonly (readonly CompiledQueryPattern[])[];
   targetUser: boolean;
   targetAgent: boolean;
 }
@@ -550,13 +554,13 @@ function strictMatchCompiled(
   forEachSearchableMessage(line, params.targetUser, params.targetAgent, (role, text, timestamp) => {
     if (
       result !== undefined ||
-      !params.groups.every((group) => group.some((pattern) => patternIndex(text, pattern) >= 0))
+      !params.clauses.some((clause) => clause.every((pattern) => patternIndex(text, pattern) >= 0))
     ) {
       return;
     }
     result = {
       role,
-      text: snippet(text, params.groups.flat()),
+      text: snippet(text, params.clauses.flat()),
       ...(timestamp ? { timestamp } : {}),
     };
   });
@@ -573,10 +577,10 @@ export function strictMatch(
     caseSensitive,
     regex,
   });
-  const compiled = compileQueryGroups(parsed.groups, caseSensitive, regex);
+  const compiled = compileQueryClauses(parsed.clauses, caseSensitive, regex);
   if (!compiled.ok) return undefined;
   return strictMatchCompiled(line, {
-    groups: compiled.groups,
+    clauses: compiled.clauses,
     targetUser: params.targetUser,
     targetAgent: params.targetAgent,
   });
@@ -595,7 +599,7 @@ function parseMtimeWithin(raw: unknown): number | undefined {
 function validateRequest(req: SessionSearchRequest):
   | {
       ok: true;
-      groups: CompiledQueryPattern[][];
+      clauses: CompiledQueryPattern[][];
       cwdWords: string[];
       targetUser: boolean;
       targetAgent: boolean;
@@ -637,11 +641,11 @@ function validateRequest(req: SessionSearchRequest):
   const caseSensitive = req.case_sensitive ?? false;
   const regex = req.regex ?? false;
   const parsed = parseSearchQueryPatterns(req.query ?? "", { caseSensitive, regex });
-  const compiled = compileQueryGroups(parsed.groups, caseSensitive, regex);
+  const compiled = compileQueryClauses(parsed.clauses, caseSensitive, regex);
   if (!compiled.ok) return compiled;
   return {
     ok: true,
-    groups: compiled.groups,
+    clauses: compiled.clauses,
     cwdWords: words(req.cwd).map((word) => word.toLowerCase()),
     targetUser: req.target_user ?? true,
     targetAgent: req.target_agent ?? true,
@@ -686,7 +690,7 @@ export async function sessionSearch(
     try {
       scan = scanCandidateFile(
         candidate.file,
-        validated.groups,
+        validated.clauses,
         validated.targetUser,
         validated.targetAgent,
         validated.caseSensitive,
@@ -707,7 +711,7 @@ export async function sessionSearch(
     }
 
     const matches = scan.matches;
-    if (validated.groups.length > 0 && scan.matchedGroupCount < validated.groups.length) {
+    if (!scan.queryMatched) {
       continue;
     }
 

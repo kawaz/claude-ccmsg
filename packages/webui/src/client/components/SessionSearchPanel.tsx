@@ -207,13 +207,13 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
             class="session-search-query"
             aria-label={
               form.regex
-                ? "検索正規表現 (1 行 1 パターン、改行区切り AND)"
-                : "検索パターン (空白区切り OR、改行区切り AND)"
+                ? "検索正規表現 (1 行 1 パターン、改行区切り OR)"
+                : "検索パターン (空白区切り AND、改行区切り OR)"
             }
             placeholder={
               form.regex
-                ? "regular expression\n1 行 1 パターン・改行で AND"
-                : 'query words\n空白で OR・改行で AND・"引用句"'
+                ? "regular expression\n1 行 1 パターン・改行で OR"
+                : 'query words\n空白で AND・改行で OR・"引用句"'
             }
             value={form.query}
             onInput={(e) => setForm({ ...form, query: (e.target as HTMLTextAreaElement).value })}

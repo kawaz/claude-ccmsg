@@ -1318,7 +1318,8 @@ export interface SessionSearchRequest {
    * filesystem scan takes long enough that a deferred arrival-order reply
    * would stall every later reply on the same connection). */
   request_id: string;
-  /** newline-separated patterns; blank lines are ignored and all must match one message */
+  /** newline-separated clauses, OR-ed; blank lines are ignored, and a clause's
+   * whitespace-separated terms are ANDed across the session's messages */
   query?: string;
   /** default false; preserves pattern/text case when matching */
   case_sensitive?: boolean;

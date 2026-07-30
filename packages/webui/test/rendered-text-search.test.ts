@@ -91,16 +91,15 @@ describe("collectRenderedTextSpans with closed folds out of scope", () => {
     ).toEqual({ matched: false, spans: [] });
   });
 
-  test("requires every AND clause to be satisfied by visible text alone", () => {
+  test("requires every AND term of a clause to be satisfied by visible text alone", () => {
     // "alpha" is on screen but "beta" is folded away, so the unit does not
     // satisfy the query as the reader sees it.
     expect(
-      collectRenderedTextSpans(["alpha", "beta"], words("alpha\nbeta"), [true, false], false),
+      collectRenderedTextSpans(["alpha", "beta"], words("alpha beta"), [true, false], false),
     ).toEqual({ matched: false, spans: [] });
     // Same query, same text, closed folds back in scope: it counts again.
     expect(
-      collectRenderedTextSpans(["alpha", "beta"], words("alpha\nbeta"), [true, false], true)
-        .matched,
+      collectRenderedTextSpans(["alpha", "beta"], words("alpha beta"), [true, false], true).matched,
     ).toBe(true);
   });
 

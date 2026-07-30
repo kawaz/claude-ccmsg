@@ -193,13 +193,13 @@ export function SearchBar({
             class="search-bar-query"
             aria-label={
               regexMode
-                ? "検索正規表現 (1 行 1 パターン、改行区切り AND)"
-                : "検索ワード (空白区切り OR、改行区切り AND)"
+                ? "検索正規表現 (1 行 1 パターン、改行区切り OR)"
+                : "検索ワード (空白区切り AND、改行区切り OR)"
             }
             placeholder={
               regexMode
-                ? "正規表現\n1 行 1 パターン・改行で AND"
-                : '検索ワード\n空白で OR・改行で AND・"引用句"'
+                ? "正規表現\n1 行 1 パターン・改行で OR"
+                : '検索ワード\n空白で AND・改行で OR・"引用句"'
             }
             value={queryText}
             onInput={(e) => onQueryChange((e.target as HTMLTextAreaElement).value)}
@@ -230,8 +230,8 @@ export function SearchBar({
         </div>
       ) : hasQuery ? (
         // "🔍 foo bar [1/20]↑↓" (DR-0022 §2.1 表示イメージ) — chips derive a
-        // subdued tint from each per-AND-line highlight via --chip-color, so
-        // chips from one OR group remain visually associated.
+        // subdued tint from each per-line highlight via --chip-color, so
+        // chips from one clause remain visually associated.
         <div class="search-bar-chips">
           {words.map((w, i) => (
             <span

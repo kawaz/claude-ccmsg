@@ -27,8 +27,8 @@ export interface ParsedSearchQuery {
 export function parseSearchQuery(text: string, opts: SearchQueryOptions): ParsedSearchQuery {
   const parsed = parseSearchQueryPatterns(text, opts);
   return {
-    words: parsed.groups.flatMap((group, clauseIndex) =>
-      group.map((pattern) => ({
+    words: parsed.clauses.flatMap((clause, clauseIndex) =>
+      clause.map((pattern) => ({
         ...pattern,
         clauseIndex,
         colorIndex: clauseIndex % SEARCH_PALETTE_SIZE,
@@ -45,9 +45,12 @@ function wordRegExp(word: SearchWord, global: boolean): RegExp {
   return new RegExp(word.source, global ? `${word.flags}g` : word.flags);
 }
 
-/** Matches when every non-errored AND clause has at least one matching OR
- * alternative. Callers gate on `!hasError` while the user is editing an
- * invalid regular expression. */
+/** Matches when at least one clause (= query line) has all of its AND terms
+ * present. Callers gate on `!hasError` while the user is editing an invalid
+ * regular expression; an errored term is dropped from its clause rather than
+ * failing it, so the other clauses stay usable mid-edit (in plain mode a term
+ * can never error, and in regex mode a clause holds exactly one term, so a
+ * dropped term always empties its clause instead of weakening an AND). */
 export function unitMatchesQuery(text: string, words: readonly SearchWord[]): boolean {
   const clauses = new Map<number, SearchWord[]>();
   for (const word of words) {
@@ -57,8 +60,8 @@ export function unitMatchesQuery(text: string, words: readonly SearchWord[]): bo
     else clauses.set(word.clauseIndex, [word]);
   }
   if (clauses.size === 0) return false;
-  return [...clauses.values()].every((clause) =>
-    clause.some((word) => wordRegExp(word, false).test(text)),
+  return [...clauses.values()].some((clause) =>
+    clause.every((word) => wordRegExp(word, false).test(text)),
   );
 }
 
@@ -70,12 +73,12 @@ export interface HighlightRange {
 
 /**
  * Enumerates every word's matches in `text` and resolves overlaps into a
- * single non-overlapping, sorted list. Highlight colors are assigned per AND
- * line, so all OR alternatives from the same line share a color. A qualifying
- * unit shows every alternative that appears in its text.
+ * single non-overlapping, sorted list. Highlight colors are assigned per query
+ * line, so all AND terms from the same line share a color. A qualifying unit
+ * shows every term that appears in its text.
  *
- * Overlap resolution (DR text doesn't specify — the two toggles are
- * documented as independent AND-clauses, not "must not overlap", so two
+ * Overlap resolution (DR text doesn't specify — the words are
+ * documented as independent patterns, not "must not overlap", so two
  * words CAN legitimately match overlapping spans, e.g. "foo" and "oo"):
  * sorted by start ascending, ties broken by longer match first, then kept
  * greedily skipping any range that starts before the previous kept range's
