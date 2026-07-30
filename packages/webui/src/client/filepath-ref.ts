@@ -141,7 +141,12 @@ export interface FilePathResolveCtx {
    * containment root (`repo_root ?? cwd`, see fs-access `resolveRoot`). Used
    * only to convert a resolved absolute path back into a viewer path
    * (`viewerPathForAbsolute`); it is a *serving* boundary, never a reading
-   * base — nothing resolves a link against it. */
+   * base — nothing resolves a link against it.
+   *
+   * Only needed when `cwd` is *not* the session's own working directory — the
+   * file preview sets `cwd` to the previewed document's directory, so the
+   * daemon's rule cannot be re-derived from this ctx and the root has to be
+   * carried explicitly. Everywhere else `containmentRootOf` derives it. */
   containmentRoot?: string;
   /** Absolute repo containment root, when the session announced one and the
    * daemon accepted it. Only a fallback anchor for senders that announced no
@@ -246,6 +251,23 @@ export function refLinkTarget(ref: ParsedFilePathRef, ctx: FilePathResolveCtx): 
  * `fs_read_workspace`). This is the classification `fs_stat_batch` used to
  * return; with the probe gone the client derives it from the root it already
  * knows. */
+/** The containment root a resolve ctx implies — what the daemon would compute
+ * for the same session (`repo_root ?? cwd`, see fs-access `resolveRoot`), with
+ * an explicit `containmentRoot` taking precedence for the one ctx whose `cwd`
+ * is not the session's own (the file preview).
+ *
+ * Deriving it rather than requiring every ctx to carry it is what makes an
+ * in-project absolute link openable. `fs_read` addresses contained files
+ * root-relative and refuses absolute strings by contract, so an absolute target
+ * left unconverted routes to `fs_read_external`, whose DR-0024 allowlist admits
+ * only files the session actually read — an ordinary project file the session
+ * never touched comes back `path not allowed`. The daemon's own `fs_stat_batch`
+ * rebases the same way before probing, so this keeps the two ends of the link
+ * pipeline answering with one rule instead of two. */
+export function containmentRootOf(ctx: FilePathResolveCtx): string | undefined {
+  return ctx.containmentRoot ?? ctx.repoRoot ?? ctx.cwd;
+}
+
 export function viewerPathForAbsolute(abs: string, containmentRoot: string | undefined): string {
   const root = containmentRoot?.replace(/\/+$/, "");
   if (!root) return abs;

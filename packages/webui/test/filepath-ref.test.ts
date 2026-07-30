@@ -17,6 +17,7 @@ import {
   isRecoverableLinkError,
   refLinkTarget,
   viewerPathForAbsolute,
+  containmentRootOf,
 } from "../src/client/filepath-ref.ts";
 import { fileHref } from "../src/client/locator.ts";
 
@@ -380,6 +381,71 @@ describe("viewerPathForAbsolute", () => {
 
   test("a trailing slash on the root does not leak into the result", () => {
     expect(viewerPathForAbsolute("/repo/main/x.ts", "/repo/main/")).toBe("x.ts");
+  });
+});
+
+// Which root a ctx serves from. A message-body ctx carries the session's own
+// cwd/repo_root and nothing else, so the daemon's rule has to be re-derived
+// from those; the preview ctx overrides `cwd` with the document's directory
+// and therefore states the root outright.
+describe("containmentRootOf", () => {
+  test("repo_root wins over cwd, matching the daemon's resolveRoot", () => {
+    expect(containmentRootOf({ sid: "S1", cwd: "/repo/main", repoRoot: "/repo" })).toBe("/repo");
+  });
+
+  test("falls back to cwd when the session announced no repo_root", () => {
+    expect(containmentRootOf({ sid: "S1", cwd: "/proj" })).toBe("/proj");
+  });
+
+  test("an explicit containmentRoot wins — the preview's cwd is not the session's", () => {
+    expect(
+      containmentRootOf({ sid: "S1", cwd: "/repo/main/docs", containmentRoot: "/repo/main" }),
+    ).toBe("/repo/main");
+  });
+
+  test("no anchor at all leaves the root unknown", () => {
+    expect(containmentRootOf({ sid: "S1" })).toBeUndefined();
+  });
+});
+
+// The regression kawaz hit (r76 m93): a markdown link naming an in-project file
+// by its *absolute* path 403'd. `fs_read` addresses contained files
+// root-relatively and refuses absolute strings, so an unconverted absolute
+// target routed to fs_read_external, whose DR-0024 allowlist only holds files
+// the session actually read — an ordinary project file it never touched came
+// back `path not allowed`. These cover the composition the link linker runs
+// (`refLinkTarget` -> `viewerPathForAbsolute(containmentRootOf(ctx))`).
+describe("markdown link target -> viewer path (message-body ctx)", () => {
+  const viewerPath = (target: string, ctx: Parameters<typeof containmentRootOf>[0]) =>
+    viewerPathForAbsolute(refLinkTarget({ path: target }, ctx)!, containmentRootOf(ctx));
+
+  test("an in-project absolute target opens as a contained (relative) path", () => {
+    const ctx = { sid: "S1", cwd: "/repo/main" };
+    expect(viewerPath("/repo/main/packages/webui/src/client/locator.ts", ctx)).toBe(
+      "packages/webui/src/client/locator.ts",
+    );
+  });
+
+  // jj/git worktree layout: cwd sits below the container the daemon serves
+  // from, so the viewer path keeps the workspace segment.
+  test("worktree layout: the root is repo_root, not the working copy", () => {
+    const ctx = { sid: "S1", cwd: "/repo/main", repoRoot: "/repo" };
+    expect(viewerPath("/repo/main/docs/spec.md", ctx)).toBe("main/docs/spec.md");
+    // A sibling workspace is inside the container too, and reachable.
+    expect(viewerPath("/repo/feature-x/docs/spec.md", ctx)).toBe("feature-x/docs/spec.md");
+  });
+
+  test("an out-of-project absolute target stays absolute (external read path)", () => {
+    const ctx = { sid: "S1", cwd: "/repo/main", repoRoot: "/repo" };
+    expect(viewerPath("/etc/hosts", ctx)).toBe("/etc/hosts");
+    // Prefix collision: a sibling of the root sharing its name is not inside it.
+    expect(viewerPath("/repository/x.ts", ctx)).toBe("/repository/x.ts");
+  });
+
+  test("relative targets are unaffected — they resolve, then convert back", () => {
+    const ctx = { sid: "S1", cwd: "/repo/main" };
+    expect(viewerPath("docs/spec.md", ctx)).toBe("docs/spec.md");
+    expect(viewerPath("../feature-x/docs/spec.md", ctx)).toBe("/repo/feature-x/docs/spec.md");
   });
 });
 

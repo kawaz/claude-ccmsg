@@ -27,6 +27,7 @@
  */
 import { useEffect, useState } from "preact/hooks";
 import {
+  containmentRootOf,
   extractInlineCodeTokens,
   hrefFromStatEntry,
   parseFilePathRef,
@@ -92,7 +93,7 @@ export function makeMarkdownPathLinker(
       // The viewer addresses contained files relative to the *containment*
       // root, which is what the daemon serves from; a file outside it stays
       // absolute and reaches the external/workspace read path.
-      { path: viewerPathForAbsolute(abs, ctx.containmentRoot) },
+      { path: viewerPathForAbsolute(abs, containmentRootOf(ctx)) },
       ref,
       ctx.docPath,
     );
