@@ -50,3 +50,61 @@ describe("projectRangeToTextNodes", () => {
     });
   });
 });
+
+describe("collectRenderedTextSpans with closed folds out of scope", () => {
+  const words = (text: string) =>
+    parseSearchQuery(text, { caseSensitive: false, regex: false }).words;
+
+  test("drops a match that lives entirely behind a closed fold", () => {
+    // The 📁 toggle's whole point: with it off, a hit the reader cannot see
+    // must not appear in "[N/M]" — and since `matched` gates the ranges, it
+    // paints nothing either.
+    expect(
+      collectRenderedTextSpans(["prefix TARGET suffix"], words("TARGET"), [false], false),
+    ).toEqual({ matched: false, spans: [] });
+  });
+
+  test("keeps a match in visible text while a sibling node is folded away", () => {
+    expect(
+      collectRenderedTextSpans(
+        ["hidden TARGET", " visible TARGET"],
+        words("TARGET"),
+        [false, true],
+        false,
+      ),
+    ).toEqual({
+      matched: true,
+      spans: [{ nodeIndex: 1, start: 9, end: 15, colorIndex: 0 }],
+    });
+  });
+
+  test("does not splice visible text across a folded gap into a phantom match", () => {
+    // "foo" and "bar" are never adjacent on screen — the hidden node between
+    // them stands in as a newline so `foobar` cannot match.
+    expect(
+      collectRenderedTextSpans(
+        ["foo", "HIDDEN", "bar"],
+        words("foobar"),
+        [true, false, true],
+        false,
+      ),
+    ).toEqual({ matched: false, spans: [] });
+  });
+
+  test("requires every AND clause to be satisfied by visible text alone", () => {
+    // "alpha" is on screen but "beta" is folded away, so the unit does not
+    // satisfy the query as the reader sees it.
+    expect(
+      collectRenderedTextSpans(["alpha", "beta"], words("alpha\nbeta"), [true, false], false),
+    ).toEqual({ matched: false, spans: [] });
+    // Same query, same text, closed folds back in scope: it counts again.
+    expect(
+      collectRenderedTextSpans(["alpha", "beta"], words("alpha\nbeta"), [true, false], true)
+        .matched,
+    ).toBe(true);
+  });
+
+  test("counting hidden text is the default", () => {
+    expect(collectRenderedTextSpans(["TARGET"], words("TARGET"), [false]).matched).toBe(true);
+  });
+});

@@ -85,11 +85,15 @@ import {
   type HostTranslateRequest,
 } from "../translate.ts";
 import {
+  CLOSED_FOLD_SCOPE_KEY,
   loopNextIndex,
   loopPrevIndex,
+  parseSearchClosedFolds,
   parseSearchQuery,
+  serializeSearchClosedFolds,
   type SearchWord,
 } from "../in-view-search.ts";
+import { readStorage, writeStorage } from "../storage.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
@@ -1458,13 +1462,9 @@ function PeerCcmsgLineView({
     // ここに来ない (Timeline は常に Provider を張るため)。
     return null;
   }
-  // raw タブ用: boundary 側と同ロジック (text + tool-result segment 結合、
-  // DR-0027 §2.2 の tool_result 検出行対応)。
+  // raw タブ用: boundary 側と同ロジック (text segment 結合)。
   const rawText = line.segments
-    .filter(
-      (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
-        s.kind === "text" || s.kind === "tool-result",
-    )
+    .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
     .map((s) => s.text)
     .join("\n");
   return (
@@ -2797,6 +2797,42 @@ export function Timeline({
   const [targetAI, setTargetAI] = useState(true);
   const [targetCcmsg, setTargetCcmsg] = useState(true);
 
+  // Fold scope (📁, kawaz r76m73). Unlike the target toggles this one *is*
+  // persisted (loaded once at mount, never reset on session switch): it is a
+  // standing preference about how the reader wants "[N/M]" to relate to what
+  // is on screen, not part of any single query — same posture as FileTree's
+  // `.gitignore` toggle.
+  const [searchClosedFolds, setSearchClosedFolds] = useState(() =>
+    parseSearchClosedFolds(readStorage(CLOSED_FOLD_SCOPE_KEY)),
+  );
+  const toggleSearchClosedFolds = useCallback(() => {
+    setSearchClosedFolds((prev) => {
+      const next = !prev;
+      writeStorage(CLOSED_FOLD_SCOPE_KEY, serializeSearchClosedFolds(next));
+      return next;
+    });
+  }, []);
+
+  // With closed folds out of scope, "[N/M]" depends on the open/closed state
+  // of every <details> on the page — but opening one only re-renders that
+  // fold's own subtree (FoldGroup/ItemsSubFold keep `open` in local state, see
+  // ccmsgRenderTargets' doc comment), so nothing would re-run the match effect
+  // below. This bumps a revision the effect depends on. Only armed while the
+  // toggle is off and a query is live: when closed folds *are* in scope the
+  // count is fold-independent by construction, and re-running the effect
+  // (highlightRenderedText over every unit) on each toggle would be pure
+  // waste — expanding a big fold group fires one `toggle` per nested fold.
+  const [foldRevision, setFoldRevision] = useState(0);
+  const searchIsLive = parsedSearch.words.length > 0 && !parsedSearch.hasError;
+  useEffect(() => {
+    if (searchClosedFolds || !searchIsLive) return;
+    const listener = (event: Event) => {
+      if (event.target instanceof HTMLDetailsElement) setFoldRevision((n) => n + 1);
+    };
+    document.addEventListener("toggle", listener, true);
+    return () => document.removeEventListener("toggle", listener, true);
+  }, [searchClosedFolds, searchIsLive]);
+
   // Raw JSONL view (r55m68 kawaz request): TL の各行は 1 JSONL object に
   // 対応しているため、パース済み rich 表示の代わりに `timeline.lines` の
   // 生テキストをそのまま出す toggle。パース側 (rich 表示) が壊れていても
@@ -2879,21 +2915,23 @@ export function Timeline({
   }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg]);
 
   // The "M" in "[N/M]" and the document-order nav ↑/↓ walks (DR-0022 §2.1/
-  // §2.2) — units are counted regardless of whether their fold is currently
-  // open (revealAndScroll below opens ancestors on nav instead), so "M"
-  // reflects everything loaded, not just what's presently visible.
+  // §2.2). What a collapsed fold contributes is the 📁 toggle's call: on
+  // (default), units count regardless of whether their fold is open and
+  // revealAndScroll expands ancestors on nav, so "M" reflects everything
+  // loaded; off, only text that is actually on screen counts and "M" moves as
+  // folds are opened and closed.
   const [matchingUnitKeys, setMatchingUnitKeys] = useState<string[]>([]);
 
   const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
-  // A fresh search (query edit, toggle flip, or session switch) always
-  // starts back at the first match.
+  // A fresh search (query edit, mode/scope toggle flip, or session switch)
+  // always starts back at the first match.
   // Deps deliberately omit matchingUnitKeys: the reset key is "the query/
   // session changed", not the array's identity (which also changes on every
   // tail append / fold-independent reparse and would reset the index far
   // more often than intended).
   useEffect(() => {
     setSearchCurrentIndex(matchingUnitKeys.length > 0 ? 1 : 0);
-  }, [searchQueryText, searchCaseSensitive, searchRegex, sid]);
+  }, [searchQueryText, searchCaseSensitive, searchRegex, searchClosedFolds, sid]);
   // A handed-off query can exist before the initial transcript page arrives.
   // In that order the query-reset effect above sees zero matches; initialize
   // the counter when loaded content first creates a non-empty match set without
@@ -2921,10 +2959,15 @@ export function Timeline({
         removeRenderedTextHighlights(el);
         continue;
       }
-      const matched = highlightRenderedText(el, parsedSearch.words, () => {
-        const position = orderedKeys.indexOf(unit.key);
-        if (position >= 0) setSearchCurrentIndex(position + 1);
-      });
+      const matched = highlightRenderedText(
+        el,
+        parsedSearch.words,
+        () => {
+          const position = orderedKeys.indexOf(unit.key);
+          if (position >= 0) setSearchCurrentIndex(position + 1);
+        },
+        searchClosedFolds,
+      );
       if (matched) orderedKeys.push(unit.key);
     }
     const currentKey = searchCurrentIndex > 0 ? orderedKeys[searchCurrentIndex - 1] : undefined;
@@ -2940,7 +2983,14 @@ export function Timeline({
     return () => {
       for (const el of searchUnitRefs.current.values()) removeRenderedTextHighlights(el);
     };
-  }, [searchUnits, parsedSearch, matchingUnitKeys, searchCurrentIndex]);
+  }, [
+    searchUnits,
+    parsedSearch,
+    matchingUnitKeys,
+    searchCurrentIndex,
+    searchClosedFolds,
+    foldRevision,
+  ]);
 
   // Auto-expand every ancestor <details> (fold group / items sub-fold /
   // system-message fold) before scrolling — Phase 2's "fold との相互作用込み"
@@ -3449,6 +3499,10 @@ export function Timeline({
                             ccmsg: targetCcmsg,
                             onToggleCcmsg: () => setTargetCcmsg((v) => !v),
                           }}
+                          foldScope={{
+                            searchClosedFolds,
+                            onToggle: toggleSearchClosedFolds,
+                          }}
                         />
                         <div class="tl-user-nav">
                           <button
@@ -3623,15 +3677,12 @@ export function Timeline({
                                 </ItemRawToggle>
                               );
                             case "ccmsg": {
-                              // raw タブ用の「この行に何が書いてあったか」: subscribe/
-                              // teammate-message wrapper は text segment に、DR-0027 §2.2
-                              // の tool_result 検出行 ({ok:true,room,mid} response) は
-                              // tool-result segment にしか原文が無い — text だけ結合すると
-                              // tool_result 由来バブルの raw タブが空になるので両方拾う。
+                              // raw タブ用の「この行に何が書いてあったか」:
+                              // extractCcmsgMessages が読むのと同じ text segment 結合
+                              // (subscribe / teammate-message wrapper の原文はそこにある)。
                               const rawText = line.segments
                                 .filter(
-                                  (s): s is Extract<Segment, { kind: "text" | "tool-result" }> =>
-                                    s.kind === "text" || s.kind === "tool-result",
+                                  (s): s is Extract<Segment, { kind: "text" }> => s.kind === "text",
                                 )
                                 .map((s) => s.text)
                                 .join("\n");

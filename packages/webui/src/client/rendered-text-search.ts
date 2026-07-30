@@ -15,6 +15,7 @@ interface RootHighlights {
   all: Range[];
   current: boolean;
   words: readonly SearchWord[];
+  countHidden: boolean;
   clickListener: (event: MouseEvent) => void;
 }
 
@@ -62,13 +63,33 @@ interface RenderedHighlightRange {
   spans: TextNodeSpan[];
 }
 
+/**
+ * The text the query is evaluated against when hidden text is out of scope:
+ * every node behind a closed `<details>` becomes a newline instead of being
+ * dropped. Dropping them outright would splice the surrounding visible text
+ * together and invent adjacencies that are nowhere on screen ("foo" + hidden
+ * + "bar" would match `oob`); a newline can never occur inside a search word
+ * (the query is AND-split on newlines) nor inside a `.` in regex mode, so it
+ * separates without matching.
+ */
+function visibleOnlyText(nodeTexts: readonly string[], nodeVisible: readonly boolean[]): string {
+  return nodeTexts.map((text, i) => (nodeVisible[i] ? text : "\n")).join("");
+}
+
 function collectRenderedTextRangeSpans(
   nodeTexts: readonly string[],
   words: readonly SearchWord[],
   nodeVisible: readonly boolean[],
+  countHidden = true,
 ): { matched: boolean; ranges: RenderedHighlightRange[] } {
   const text = nodeTexts.join("");
-  if (!unitMatchesQuery(text, words)) return { matched: false, ranges: [] };
+  // Whether the unit counts is decided on the in-scope text, but the ranges
+  // are always projected from the full text (hidden spans are dropped just
+  // below). A unit that doesn't count therefore paints nothing either, so the
+  // "[N/M]" count and the visible highlights can never disagree — the same
+  // invariant searchUnits keeps on the segment-kind axis.
+  const scopedText = countHidden ? text : visibleOnlyText(nodeTexts, nodeVisible);
+  if (!unitMatchesQuery(scopedText, words)) return { matched: false, ranges: [] };
   const lengths = nodeTexts.map((node) => node.length);
   return {
     matched: true,
@@ -85,8 +106,9 @@ export function collectRenderedTextSpans(
   nodeTexts: readonly string[],
   words: readonly SearchWord[],
   nodeVisible: readonly boolean[] = nodeTexts.map(() => true),
+  countHidden = true,
 ): { matched: boolean; spans: RenderedHighlightSpan[] } {
-  const result = collectRenderedTextRangeSpans(nodeTexts, words, nodeVisible);
+  const result = collectRenderedTextRangeSpans(nodeTexts, words, nodeVisible, countHidden);
   return {
     matched: result.matched,
     spans: result.ranges.flatMap((range) =>
@@ -167,6 +189,7 @@ function isTextNodeVisible(node: Text): boolean {
 function collectRootRanges(
   root: HTMLElement,
   words: readonly SearchWord[],
+  countHidden: boolean,
 ): { matched: boolean; byColor: Range[][]; all: Range[] } {
   const doc = root.ownerDocument;
   const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
@@ -178,6 +201,7 @@ function collectRootRanges(
     nodes.map((node) => node.data),
     words,
     nodes.map((node) => isTextNodeVisible(node)),
+    countHidden,
   );
   const byColor = Array.from({ length: 6 }, () => [] as Range[]);
   const all: Range[] = [];
@@ -202,7 +226,7 @@ function scheduleRootRefresh(doc: Document): void {
     const roots = rootsByDocument.get(doc);
     if (!roots) return;
     for (const [root, entry] of roots) {
-      const ranges = collectRootRanges(root, entry.words);
+      const ranges = collectRootRanges(root, entry.words, entry.countHidden);
       entry.byColor = ranges.byColor;
       entry.all = ranges.all;
     }
@@ -224,17 +248,23 @@ function ensureToggleListener(doc: Document): void {
 /**
  * Searches the rendered text below `root` and registers non-destructive CSS
  * Custom Highlight ranges. Matches may cross any number of inline elements.
+ *
+ * `countHidden` (default true) decides whether text inside a closed
+ * `<details>` is in scope. Callers that live under folds (Timeline) hand it
+ * the user's toggle; callers with nothing foldable (FileViewer's per-line
+ * roots) leave it at the default.
  */
 export function highlightRenderedText(
   root: HTMLElement,
   words: readonly SearchWord[],
   onMatchClick: () => void,
+  countHidden = true,
 ): boolean {
   removeRenderedTextHighlights(root);
   if (words.length === 0) return false;
 
   const doc = root.ownerDocument;
-  const ranges = collectRootRanges(root, words);
+  const ranges = collectRootRanges(root, words, countHidden);
   if (!ranges.matched) return false;
 
   const entry: RootHighlights = {
@@ -242,6 +272,7 @@ export function highlightRenderedText(
     all: ranges.all,
     current: false,
     words,
+    countHidden,
     clickListener: () => undefined,
   };
   entry.clickListener = (event: MouseEvent) => {

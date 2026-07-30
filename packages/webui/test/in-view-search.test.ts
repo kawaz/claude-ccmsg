@@ -7,7 +7,9 @@ import {
   collectHighlightRanges,
   loopNextIndex,
   loopPrevIndex,
+  parseSearchClosedFolds,
   parseSearchQuery,
+  serializeSearchClosedFolds,
   splitTextForHighlight,
   unitMatchesQuery,
   type SearchWord,
@@ -241,5 +243,26 @@ describe("loopNextIndex / loopPrevIndex (DR-0022 §2.2, shared by search nav and
   test("single-element range loops to itself", () => {
     expect(loopNextIndex(1, 1)).toBe(1);
     expect(loopPrevIndex(1, 1)).toBe(1);
+  });
+});
+
+describe("closed-fold scope persistence", () => {
+  // The toggle is stored as "1"/"0" and everything else — unset, a stale
+  // value from an older build, hand-edited junk — must land on the default
+  // rather than throw, so a corrupt entry can never break the search bar.
+  test("defaults to searching closed folds when unset or unrecognized", () => {
+    expect(parseSearchClosedFolds(null)).toBe(true);
+    expect(parseSearchClosedFolds("1")).toBe(true);
+    expect(parseSearchClosedFolds("")).toBe(true);
+    expect(parseSearchClosedFolds("false")).toBe(true);
+  });
+
+  test('only an explicit "0" turns it off', () => {
+    expect(parseSearchClosedFolds("0")).toBe(false);
+  });
+
+  test("round-trips through the serialized form", () => {
+    expect(parseSearchClosedFolds(serializeSearchClosedFolds(true))).toBe(true);
+    expect(parseSearchClosedFolds(serializeSearchClosedFolds(false))).toBe(false);
   });
 });

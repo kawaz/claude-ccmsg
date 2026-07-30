@@ -167,3 +167,26 @@ export function loopPrevIndex(current: number, max: number): number {
   if (max <= 0) return 0;
   return current <= 1 ? max : current - 1;
 }
+
+/** localStorage key for the Timeline search's "search inside closed folds"
+ * toggle (kawaz r76m73). Global rather than per-session, for the same reason
+ * as FileTree's `.gitignore` toggle: it states a reading habit ("I want the
+ * count to cover the whole transcript" / "I only want what I can see"), not a
+ * property of any one session. */
+const CLOSED_FOLD_SCOPE_KEY = "ccmsg.inViewSearch.searchClosedFolds";
+
+/** Defaults to on for anything but an explicit "0" — that is the behaviour the
+ * Timeline has always had (a match inside a collapsed fold counts, and ↑/↓
+ * expands the fold on the way to it), so an existing user's "[N/M]" does not
+ * silently shrink the first time they load a build that has this toggle.
+ * Garbage persisted data resolves to the default and never throws, matching
+ * parseFavorites / loadRespectGitignore. */
+export function parseSearchClosedFolds(raw: string | null): boolean {
+  return raw !== "0";
+}
+
+export function serializeSearchClosedFolds(value: boolean): string {
+  return value ? "1" : "0";
+}
+
+export { CLOSED_FOLD_SCOPE_KEY };

@@ -96,6 +96,33 @@ export function SearchTargetToggles({
   );
 }
 
+/** TL's fold-scope toggle (kawaz r76m73: "閉じた fold 内を検索対象にしたく
+ * ない" 時と、畳んだまま全文を数えたい時が両方ある) — like the target
+ * toggles this is TL-only, since FileViewer renders a flat file with nothing
+ * foldable. Separate from SearchTargetToggles because it selects a *region*
+ * of the transcript rather than an author. */
+export function SearchFoldScopeToggle({
+  searchClosedFolds,
+  onToggle,
+}: {
+  searchClosedFolds: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div class="search-bar-toggles">
+      <button
+        type="button"
+        class={"search-bar-toggle-btn" + (searchClosedFolds ? " active" : "")}
+        title="閉じた fold の中も検索対象に含める (off で表示中のものだけ)"
+        aria-pressed={searchClosedFolds}
+        onClick={onToggle}
+      >
+        📁
+      </button>
+    </div>
+  );
+}
+
 export interface SearchBarTargets {
   user: boolean;
   onToggleUser: () => void;
@@ -119,6 +146,7 @@ export function SearchBar({
   onNext,
   hasError,
   targets,
+  foldScope,
 }: {
   words: SearchWord[];
   queryText: string;
@@ -135,6 +163,8 @@ export function SearchBar({
   hasError: boolean;
   /** TL-only target toggles (👤/🤖/💬) — omitted by FileViewer. */
   targets?: SearchBarTargets;
+  /** TL-only fold-scope toggle (📁) — omitted by FileViewer. */
+  foldScope?: { searchClosedFolds: boolean; onToggle: () => void };
 }) {
   // Closed by default: DR-0022 §2.1 "入力欄外クリックで入力欄を閉じ、各ワード
   // を別チップで一列表示" — the multiline textarea is only shown while
@@ -188,6 +218,12 @@ export function SearchBar({
               onToggleAI={targets.onToggleAI}
               ccmsg={targets.ccmsg}
               onToggleCcmsg={targets.onToggleCcmsg}
+            />
+          ) : null}
+          {foldScope ? (
+            <SearchFoldScopeToggle
+              searchClosedFolds={foldScope.searchClosedFolds}
+              onToggle={foldScope.onToggle}
             />
           ) : null}
           {hasError ? <span class="search-bar-error">正規表現エラー</span> : null}
