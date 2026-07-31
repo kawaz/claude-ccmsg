@@ -1177,25 +1177,33 @@ export function isSpawnPromptLine(line: ParsedLine): boolean {
   return line.kind === "turn" && line.userMessageKind === "spawn-prompt";
 }
 
-/** True for a peer relay whose body is an idle_notification. Idle state is
- * operational noise rather than agent conversation, so it stays in items. */
-function isIdlePeerMessageEntry(entry: TimelineEntry): boolean {
+/** The relayed teammate turns one incoming peer line carries (empty for any
+ * other line). Idle notifications are among them: they are operational noise
+ * rather than conversation, so callers filter them out — but a line that also
+ * carries a real relayed turn must not be demoted along with the idle
+ * notifications it happened to be batched with. */
+function peerRelaysOfEntry(entry: TimelineEntry): PeerRelay[] {
   const { line } = entry;
-  if (!isPeerMessageLine(line) || line.kind !== "turn") return false;
+  if (!isPeerMessageLine(line) || line.kind !== "turn") return [];
   const rawText = line.segments
     .filter((segment): segment is Extract<Segment, { kind: "text" }> => segment.kind === "text")
     .map((segment) => segment.text)
     .join("\n");
   const rich = parseSystemMessageFields("peer-message", rawText);
-  return rich.display === "peer" && rich.category === "idle";
+  return rich.display === "peer" ? rich.relays : [];
 }
 
 /** Number of agent communication messages represented by one entry. Outgoing
- * calls are counted per segment; a non-idle incoming peer relay is one message. */
+ * calls are counted per segment; an incoming relay line counts its non-idle
+ * relays (a single line can carry several relayed turns). */
 export function agentCommunicationCount(entry: TimelineEntry): number {
   const { line } = entry;
   if (line.kind !== "turn") return 0;
-  if (isPeerMessageLine(line)) return isIdlePeerMessageEntry(entry) ? 0 : 1;
+  if (isPeerMessageLine(line)) {
+    const relays = peerRelaysOfEntry(entry);
+    if (relays.length === 0) return 1;
+    return relays.filter((relay) => relay.category !== "idle").length;
+  }
   if (isSpawnPromptLine(line)) return 1;
   return line.segments.filter(isAgentCommunicationSegment).length;
 }
@@ -1825,14 +1833,21 @@ export type SystemMessageRich =
   | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
   | { display: "chip"; label: string; detail: string | null }
   | { display: "bash"; command: string | null; output: BashCommandOutput | null }
-  | {
-      display: "peer";
-      from: string;
-      summary: string | null;
-      category: PeerMessageCategory;
-      body: string;
-    }
+  | { display: "peer"; relays: PeerRelay[] }
   | { display: "text"; text: string };
+
+/** One relayed teammate turn — the body of a single `<teammate-message>` tag.
+ * A relay line often carries several (11% of 2597 sampled relay lines; the
+ * shapes range from `idle+idle` to `msg+idle+msg+msg+idle+idle`), because the
+ * harness batches everything that arrived while the session was busy into one
+ * injected user turn. Each is displayed on its own, so a report sharing a line
+ * with an idle notification is not swallowed by it. */
+export interface PeerRelay {
+  from: string;
+  summary: string | null;
+  category: PeerMessageCategory;
+  body: string;
+}
 
 /** Matches a top-level (non-nested) `<tag>...</tag>` pair — the backreference
  * `\1` ties the close tag to the same name as the open tag it matched, so
@@ -1875,7 +1890,7 @@ function unwrapOuterTag(text: string, tagName: string): string | null {
 /** Matches the first `<teammate-message>` or `<agent-message>` relay and captures
  * its tag name, opening-tag attributes, and body. A line can contain several
  * relays; rich mode shows the first while the raw tab preserves the full line. */
-const PEER_MESSAGE_ATTRS_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)<\/\1>/;
+const PEER_MESSAGE_ATTRS_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)<\/\1>/g;
 
 const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 
@@ -1980,14 +1995,18 @@ export function parseBashInputText(rawText: string): string | null {
 const SPAWN_PROMPT_FROM = "親";
 
 function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
-  const match = rawText.match(PEER_MESSAGE_ATTRS_RE);
-  if (!match) return null;
-  const attrs = Object.fromEntries(
-    parseXmlAttrs(match[2]!).map((field) => [field.name, field.value]),
+  const relays = [...rawText.matchAll(PEER_MESSAGE_ATTRS_RE)].map((match) =>
+    parsePeerRelay(match[2]!, match[3]!),
   );
+  if (relays.length === 0) return null;
+  return { display: "peer", relays };
+}
+
+function parsePeerRelay(attrString: string, rawTagBody: string): PeerRelay {
+  const attrs = Object.fromEntries(parseXmlAttrs(attrString).map((f) => [f.name, f.value]));
   const from = attrs.from || attrs.teammate_id || "agent";
   const summary = attrs.summary || null;
-  const rawBody = match[3]!.trim();
+  const rawBody = rawTagBody.trim();
   let category: PeerMessageCategory = "message";
   let body = rawBody;
   try {
@@ -1998,7 +2017,12 @@ function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display
       if (type === "idle_notification") {
         category = "idle";
         const reason = typeof obj.idleReason === "string" ? obj.idleReason : "idle";
-        body = `待機通知 · ${reason}`;
+        // `failureReason` (the API error that ended the peer's turn) only rides
+        // along on a failed idle notification, and it is the one part of an
+        // idle body worth reading — keep it in the text the compact idle row
+        // reveals when opened.
+        const failure = typeof obj.failureReason === "string" ? obj.failureReason : "";
+        body = failure ? `待機通知 · ${reason} · ${failure}` : `待機通知 · ${reason}`;
       } else if (type === "task_assignment") {
         category = "task-assignment";
         const subject = typeof obj.subject === "string" ? obj.subject : "タスク割り当て";
@@ -2028,7 +2052,7 @@ function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display
   } catch {
     // Plain relayed reports and instructions are already readable as-is.
   }
-  return { display: "peer", from, summary, category, body };
+  return { from, summary, category, body };
 }
 
 /**
@@ -2089,10 +2113,7 @@ export function parseSystemMessageFields(
       return (
         parsePeerMessage(rawText) ?? {
           display: "peer",
-          from: SPAWN_PROMPT_FROM,
-          summary: null,
-          category: "message",
-          body: rawText,
+          relays: [{ from: SPAWN_PROMPT_FROM, summary: null, category: "message", body: rawText }],
         }
       );
     case "slash-command-invocation": {

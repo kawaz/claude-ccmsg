@@ -1,4 +1,4 @@
-import type { SystemMessageRich } from "./transcript-model.ts";
+import type { PeerRelay } from "./transcript-model.ts";
 
 export type AgentCommunicationDirection = "outbound" | "inbound";
 
@@ -9,13 +9,11 @@ export function agentDirectionMarker(direction: AgentCommunicationDirection): "�
   return direction === "outbound" ? "🤖→" : "🤖←";
 }
 
-type PeerMessage = Extract<SystemMessageRich, { display: "peer" }>;
-
 export type PeerMessagePresentation =
   | { kind: "idle"; marker: "🤖←"; text: string }
   | { kind: "card"; marker: "🤖←"; badge: string };
 
-export function peerMessagePresentation(peer: PeerMessage): PeerMessagePresentation {
+export function peerMessagePresentation(peer: PeerRelay): PeerMessagePresentation {
   const marker = agentDirectionMarker("inbound");
   switch (peer.category) {
     case "idle":

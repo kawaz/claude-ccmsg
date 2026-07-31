@@ -773,6 +773,38 @@ function protectTagLikeAngleBrackets(source: string): {
   };
 }
 
+// A `#` run that is not a valid ATX heading opener — `#1 を commit しました`,
+// `####### seven` — makes @mizchi/markdown drop the whole block instead of
+// falling back to a paragraph, so an assistant turn opening with `#1 …` renders
+// as an empty bubble (kawaz r99m7: 「からっぽの紫色のバルーン」). CommonMark
+// requires 1-6 hashes followed by a space, a tab, or the end of the line;
+// anything else is ordinary paragraph text. Stash the offending run behind a
+// private-use marker so the parser sees plain text, and restore it afterwards.
+//
+// Runs on every line, including fenced-code and indented-code content: the
+// substitution is invisible there (code text is verbatim and
+// `restoreProtectedText` walks `code.value` too), so tracking block context
+// would add a second, drift-prone parser for no observable difference.
+function protectNonHeadingHashes(source: string): { source: string; marker?: string } {
+  if (!source.includes("#")) return { source };
+  // Container prefixes the parser strips before looking for a heading:
+  // blockquote markers and one list-item marker. Four or more leading spaces
+  // is an indented code block, where `#` is already inert — hence `{0,3}`.
+  const BLOCK_START = /^((?:[ \t]{0,3}>)*[ \t]{0,3}(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)?)(#+)(.*)$/gm;
+  let marker: string | undefined;
+  const protectedSource = source.replace(
+    BLOCK_START,
+    (match, prefix: string, hashes: string, rest: string) => {
+      if (hashes.length <= 6 && (rest === "" || rest.startsWith(" ") || rest.startsWith("\t"))) {
+        return match;
+      }
+      marker ??= unusedPrivateUseMarker(source);
+      return `${prefix}${marker.repeat(hashes.length)}${rest}`;
+    },
+  );
+  return marker ? { source: protectedSource, marker } : { source };
+}
+
 function restoreProtectedText(value: unknown, marker: string, replacement: string): void {
   if (Array.isArray(value)) {
     for (const item of value) restoreProtectedText(item, marker, replacement);
@@ -1022,12 +1054,14 @@ function foldInsideContainer(node: AnyNode): AnyNode {
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
  * parser-level compatibility fixes are exercised without a DOM. */
 export function parseMarkdownSource(source: string): Root {
-  const protectedUnderscores = protectIntrawordUnderscores(source);
+  const protectedHashes = protectNonHeadingHashes(source);
+  const protectedUnderscores = protectIntrawordUnderscores(protectedHashes.source);
   const protectedAngles = protectTagLikeAngleBrackets(protectedUnderscores.source);
   const root = parse(protectedAngles.source);
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
   if (protectedUnderscores.marker) restoreProtectedText(root, protectedUnderscores.marker, "_");
+  if (protectedHashes.marker) restoreProtectedText(root, protectedHashes.marker, "#");
   return root;
 }
 

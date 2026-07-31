@@ -19,7 +19,6 @@ describe("peerMessagePresentation", () => {
   test("normal peer message keeps its semantic badge", () => {
     expect(
       peerMessagePresentation({
-        display: "peer",
         from: "worker",
         summary: "完了報告",
         category: "message",
@@ -32,7 +31,6 @@ describe("peerMessagePresentation", () => {
   test("task and lifecycle peers keep their semantic badges", () => {
     expect(
       peerMessagePresentation({
-        display: "peer",
         from: "worker",
         summary: null,
         category: "task-assignment",
@@ -41,7 +39,6 @@ describe("peerMessagePresentation", () => {
     ).toEqual({ kind: "card", marker: "🤖←", badge: "タスク指示" });
     expect(
       peerMessagePresentation({
-        display: "peer",
         from: "worker",
         summary: null,
         category: "lifecycle",
@@ -55,7 +52,6 @@ describe("peerMessagePresentation", () => {
   test("idle peer becomes a lightweight plain row", () => {
     expect(
       peerMessagePresentation({
-        display: "peer",
         from: "worker",
         summary: null,
         category: "idle",

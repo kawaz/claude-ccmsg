@@ -359,6 +359,65 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
   });
 });
 
+// A `#` run that isn't a valid ATX heading opener made the dependency parser
+// drop the whole block, so an assistant turn opening with `#1 …` rendered as an
+// empty bubble (kawaz r99m7: 「からっぽの紫色のバルーン」). CommonMark treats
+// those lines as paragraph text, which is what these pin.
+describe("parseMarkdownSource / non-heading hash runs", () => {
+  function renderSource(source: string): VNode {
+    return renderMarkdownAst(parseMarkdownSource(source));
+  }
+
+  // The two bubbles from the report, verbatim: `#N` issue references opening a
+  // sentence. Both must survive as paragraph text.
+  test("a turn opening with an issue reference keeps its whole text", () => {
+    for (const source of [
+      "#1 を commit しました (high 4 件中 2 件が land 済み: #1 増分スキャン化、#4 添付 upload)。",
+      "#2 の報告も良好 (旧実装は yield 0 回の完全停止を実測で証明)。diff を確認して commit します。",
+    ]) {
+      const vnode = renderSource(source);
+      expect(collect(vnode, (n) => n.type === "h1")).toHaveLength(0);
+      expect(flattenText(vnode)).toBe(source);
+    }
+  });
+
+  // Only the offending block used to be dropped, so a later paragraph survived
+  // while the opening one vanished — the silent-truncation half of the bug.
+  test("a later paragraph no longer outlives the dropped opening one", () => {
+    expect(flattenText(renderSource("#1 x\n\n次の段落"))).toBe("#1 x次の段落");
+  });
+
+  // 7+ hashes exceeds CommonMark's h1-h6 range, so the line is paragraph text.
+  test("more than six hashes is paragraph text, not a heading", () => {
+    const vnode = renderSource("####### seven");
+    expect(collect(vnode, (n) => n.type.toString().startsWith("h"))).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("####### seven");
+  });
+
+  // The parser looks for a heading after container prefixes too, and dropped
+  // the line there as well.
+  test("non-heading hashes survive inside a blockquote and a list item", () => {
+    expect(flattenText(renderSource("> #1 x"))).toBe("#1 x");
+    expect(flattenText(renderSource("- #1 x"))).toBe("#1 x");
+  });
+
+  // Real headings, including the bare `#` and the h6 boundary, keep working.
+  test("valid ATX headings still parse as headings", () => {
+    expect(collect(renderSource("# heading"), (n) => n.type === "h1")).toHaveLength(1);
+    expect(collect(renderSource("###### h6"), (n) => n.type === "h6")).toHaveLength(1);
+    expect(collect(renderSource("#"), (n) => n.type === "h1")).toHaveLength(1);
+  });
+
+  // The protection marker must not leak into code text, which is verbatim and
+  // never had the parsing problem in the first place.
+  test("protected hashes are restored inside fenced and indented code", () => {
+    const codeValues = (source: string) =>
+      parseMarkdownSource(source).children.map((n) => (n as { value?: string }).value);
+    expect(codeValues("```\n#1 code\n```")).toEqual(["#1 code\n"]);
+    expect(codeValues("    #1 indented")).toEqual(["#1 indented"]);
+  });
+});
+
 describe("extractMarkdownHeadings", () => {
   test("extracts h1-h6 in document order with visible inline text", () => {
     const root = parseMarkdownSource(

@@ -59,6 +59,7 @@ import {
   type Segment,
   type RawTranscriptRow,
   type SystemMessageRich,
+  type PeerRelay,
   type TimelineEntry,
   type TurnLine,
   type UserMessageKind,
@@ -1310,7 +1311,7 @@ function SegmentView({
 // 「event 本文は monospace で」) — task-notification 以外の kind がたまたま
 // 同名フィールドを持つことは想定していないが、フィールド名一致だけで判定する
 // のでどの kind から来ても等幅になる (副作用として無害)。
-type PeerMessageRich = Extract<SystemMessageRich, { display: "peer" }>;
+type PeerMessageRich = PeerRelay;
 
 // idle 通知は operational noise (kawaz r46m6: 「でしゃばらせるな」)。
 // 通常 peer メッセージのような decorated fold / AgentCard には流さず、
@@ -1373,10 +1374,24 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
       // so the two paths can't look different.
       return <BashRunCard command={rich.command} output={rich.output} ts={null} />;
     case "peer": {
-      const presentation = peerMessagePresentation(rich);
-      if (presentation.kind === "idle") return <IdlePeerRow peer={rich} ts={null} />;
+      // One card (or compact idle row) per relayed turn — a relay line often
+      // batches several, and each stands on its own.
       return (
-        <AgentCard name={rich.from} direction="inbound" title={rich.summary} body={rich.body} />
+        <>
+          {rich.relays.map((relay, i) =>
+            peerMessagePresentation(relay).kind === "idle" ? (
+              <IdlePeerRow key={i} peer={relay} ts={null} />
+            ) : (
+              <AgentCard
+                key={i}
+                name={relay.from}
+                direction="inbound"
+                title={relay.summary}
+                body={relay.body}
+              />
+            ),
+          )}
+        </>
       );
     }
     case "text":
@@ -1481,9 +1496,21 @@ function SystemMessageFold({
     () => parseSystemMessageFields(kind, systemMessageRawText(line)),
     [kind, line.segments],
   );
-  const peer = rich.display === "peer" ? rich : null;
-  const idlePeer = peer?.category === "idle" ? peer : null;
-  if (idlePeer) return <IdlePeerRow peer={idlePeer} ts={line.ts} />;
+  const relays = rich.display === "peer" ? rich.relays : [];
+  // A line carrying only idle notifications never becomes a fold: each is
+  // demoted to its own compact row. One that also carries a real relayed turn
+  // keeps the fold — the fold's identity comes from that turn, not the idle
+  // noise it happened to be batched with.
+  if (relays.length > 0 && relays.every((relay) => relay.category === "idle")) {
+    return (
+      <>
+        {relays.map((relay, i) => (
+          <IdlePeerRow key={i} peer={relay} ts={line.ts} />
+        ))}
+      </>
+    );
+  }
+  const peer = relays.find((relay) => relay.category !== "idle") ?? relays[0] ?? null;
   // peer 形に落ちたものがエージェントメッセージのカテゴリ (kawaz r55 m35:
   // AUTO OPEN の A チェックで開いておいてほしい対象)。spawn prompt は
   // wrapper の有無に関わらず parseSystemMessageFields が peer 形を返すので
@@ -1499,8 +1526,11 @@ function SystemMessageFold({
   // `! <cmd>` の入力行は閉じたままでも何を実行したか分かるように、summary に
   // コマンドそのものを出す (出力行は本文側にしかないので kindLabel のまま)。
   const bashCommand = rich.display === "bash" ? rich.command : null;
+  // Closed summary names the relay the fold is identified by; the rest of a
+  // batched line is counted so nothing inside is invisible while it is closed.
+  const extraRelays = relays.length - 1;
   const label = peer
-    ? `${kindLabel} ← ${peer.from}`
+    ? `${kindLabel} ← ${peer.from}${extraRelays > 0 ? ` +${extraRelays}` : ""}`
     : bashCommand !== null
       ? `$ ${bashCommand}`
       : taskSummary && !open

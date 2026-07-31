@@ -22,6 +22,7 @@ import {
   isApiErrorLine,
   isDirectFoldEntry,
   isPeerMessageLine,
+  agentCommunicationCount,
   isSearchableSegment,
   isUserTextTurn,
   itemRawSourceOffsets,
@@ -2716,6 +2717,38 @@ describe("splitFoldSubgroups", () => {
     expect(foldGroupLabel(entries)).toBe("3 items");
     expect(foldGroupNeedsOuterFold(entries)).toBe(false);
   });
+
+  // The harness batches everything that arrived while the session was busy into
+  // one injected turn, so a real report routinely shares a line with idle
+  // notifications. Counting the line as idle would hide the report entirely.
+  test("a report batched with idle notifications still counts as agent communication", () => {
+    const batched: TimelineEntry = {
+      offset: 2,
+      line: parseTranscriptLine(
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              "Another Claude session sent a message:",
+              '<teammate-message teammate_id="a">{"type":"idle_notification","from":"a","idleReason":"available"}</teammate-message>',
+              '<teammate-message teammate_id="b" summary="完了報告">本文</teammate-message>',
+              '<teammate-message teammate_id="c">{"type":"idle_notification","from":"c","idleReason":"available"}</teammate-message>',
+            ].join("\n"),
+          },
+        }),
+      ),
+    };
+    const entries = [toolEntry(1), batched, toolEntry(3)];
+
+    expect(agentCommunicationCount(batched)).toBe(1);
+    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
+      "items",
+      "direct",
+      "items",
+    ]);
+    expect(foldGroupLabel(entries)).toBe("1 agent messages + 2 items");
+  });
 });
 
 describe("foldGroupNeedsOuterFold", () => {
@@ -3556,10 +3589,7 @@ describe("parseSystemMessageFields", () => {
         'Another Claude session sent a message:\n<teammate-message teammate_id="poc5" color="blue" summary="調査完了">\n本文\n</teammate-message>\n\nThis came from another Claude session...';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "poc5",
-        summary: "調査完了",
-        category: "message",
-        body: "本文",
+        relays: [{ from: "poc5", summary: "調査完了", category: "message", body: "本文" }],
       });
     });
 
@@ -3568,10 +3598,47 @@ describe("parseSystemMessageFields", () => {
       const raw = `<teammate-message teammate_id="a3">${JSON.stringify(idleEvent)}</teammate-message>`;
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "a3",
-        summary: null,
-        category: "idle",
-        body: "待機通知 · available",
+        relays: [{ from: "a3", summary: null, category: "idle", body: "待機通知 · available" }],
+      });
+    });
+
+    // 実観測 (2597 relay 行中 296 行) では 1 行が複数の relay を運ぶ。以前は
+    // 先頭タグだけを見ていたため、idle 通知と同じターンに届いた報告が丸ごと
+    // 見えなくなっていた (先頭が idle なら行全体が idle 行へ demote された)。
+    test("several teammate-message tags on one line -> one relay each, in order", () => {
+      const idle = (from: string) =>
+        `<teammate-message teammate_id="${from}">{"type":"idle_notification","from":"${from}","idleReason":"available"}</teammate-message>`;
+      const raw = [
+        "Another Claude session sent a message:",
+        idle("a"),
+        '<teammate-message teammate_id="b" summary="完了報告">本文</teammate-message>',
+        idle("c"),
+      ].join("\n");
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        relays: [
+          { from: "a", summary: null, category: "idle", body: "待機通知 · available" },
+          { from: "b", summary: "完了報告", category: "message", body: "本文" },
+          { from: "c", summary: null, category: "idle", body: "待機通知 · available" },
+        ],
+      });
+    });
+
+    // failureReason は失敗した idle 通知にしか乗らず、idle 本文の中で唯一
+    // 読む価値のある部分なので、compact 行を開いたときに見えるよう本文に残す。
+    test("a failed idle notification keeps its failure reason in the body", () => {
+      const raw =
+        '<teammate-message teammate_id="a3">{"type":"idle_notification","from":"a3","idleReason":"failed","failureReason":"API Error: 500"}</teammate-message>';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "a3",
+            summary: null,
+            category: "idle",
+            body: "待機通知 · failed · API Error: 500",
+          },
+        ],
       });
     });
 
@@ -3580,10 +3647,14 @@ describe("parseSystemMessageFields", () => {
         '<teammate-message teammate_id="worker">{"type":"task_assignment","subject":"実装","description":"テストも追加"}</teammate-message>';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "worker",
-        summary: null,
-        category: "task-assignment",
-        body: "実装\nテストも追加",
+        relays: [
+          {
+            from: "worker",
+            summary: null,
+            category: "task-assignment",
+            body: "実装\nテストも追加",
+          },
+        ],
       });
     });
 
@@ -3591,10 +3662,7 @@ describe("parseSystemMessageFields", () => {
       const raw = '<agent-message from="reviewer">確認結果です</agent-message>';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "reviewer",
-        summary: null,
-        category: "message",
-        body: "確認結果です",
+        relays: [{ from: "reviewer", summary: null, category: "message", body: "確認結果です" }],
       });
     });
 
@@ -3603,10 +3671,14 @@ describe("parseSystemMessageFields", () => {
       const raw = `<agent-message from="future">${JSON.stringify(event)}</agent-message>`;
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "future",
-        summary: null,
-        category: "unknown",
-        body: JSON.stringify(event, null, 2),
+        relays: [
+          {
+            from: "future",
+            summary: null,
+            category: "unknown",
+            body: JSON.stringify(event, null, 2),
+          },
+        ],
       });
     });
 
@@ -3614,10 +3686,7 @@ describe("parseSystemMessageFields", () => {
       const raw = "<teammate-message>\nhi\n</teammate-message>";
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        from: "agent",
-        summary: null,
-        category: "message",
-        body: "hi",
+        relays: [{ from: "agent", summary: null, category: "message", body: "hi" }],
       });
     });
 
@@ -3641,8 +3710,7 @@ describe("parseSystemMessageFields", () => {
         '<teammate-message teammate_id="team-lead" summary="translate bug">TL 翻訳バグを調査してください。</teammate-message>';
       expect(parseSystemMessageFields("spawn-prompt", raw)).toMatchObject({
         display: "peer",
-        from: "team-lead",
-        summary: "translate bug",
+        relays: [{ from: "team-lead", summary: "translate bug" }],
       });
     });
 
@@ -3653,10 +3721,7 @@ describe("parseSystemMessageFields", () => {
       const raw = "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...";
       expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({
         display: "peer",
-        from: "親",
-        summary: null,
-        category: "message",
-        body: raw,
+        relays: [{ from: "親", summary: null, category: "message", body: raw }],
       });
     });
   });
