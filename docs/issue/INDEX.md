@@ -11,7 +11,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-11 | design | idea | [origin-isolated-app-reverse-proxy](./2026-07-11-origin-isolated-app-reverse-proxy.md) | 自己所有ドメイン + wildcard ACME の app リバースプロキシ構想 (docroot ごとの origin 分離で JS 実行可能な file serving) |
 | 2026-07-10 | design | idea | [webui-bun-fullstack-serving](./2026-07-10-webui-bun-fullstack-serving.md) | webui 配信経路を自作 Bun.build+キャッシュ構成から Bun 1.3 公式 fullstack 機能 (HTML import + Bun.serve routes) へ置換できないか検討 |
 | 2026-07-10 | design | idea | [webrtc-datachannel-transport](./2026-07-10-webrtc-datachannel-transport.md) | ccmsg メッセージを WebRTC DataChannel に載せ、静的ホスティング + ICE candidate URL + passkey 認証で tailnet 非依存の transport を実現する構想 |
-| 2026-07-04 | design | idea | [daemon-side-subscribe-detection](./2026-07-04-daemon-side-subscribe-detection.md) | UserPromptSubmit hook の subscribe 稼働検出を ps 走査から daemon 問い合わせへ置き換える案 |
 | 2026-07-29 | design | open | [timeline-virtual-scroll](./2026-07-29-timeline-virtual-scroll.md) | TL が全行 DOM 化しているため DOM/リスナ数が際限なく増える (実測: 1 セッション DOM 73,000 ノード / リスナ 12,000 個)。windowing 導入の設計検討 |
 | 2026-07-29 | design | open | [sandbox-origin-raw-content-serving](./2026-07-29-sandbox-origin-raw-content-serving.md) | canddy sandbox origin (apps とは別 eTLD+1) を使い、MIME 制限なしの生配信 (HTML/バイナリ/長大出力) を capability トークンで提供する設計検討 |
 | 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |

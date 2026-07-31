@@ -1,6 +1,6 @@
 ---
 title: daemon 側で subscribe 稼働を検出する (ps 走査からの置き換え)
-status: idea
+status: discarded
 category: design
 created: 2026-07-04T09:25:05+09:00
 last_read: 2026-07-31T11:11:55+09:00
@@ -8,11 +8,11 @@ open_entered:
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-07-31T11:13:41+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["主動機だった実害(孤児 subscribe が SESSIONS に居座る)は v0.82 系で解消済み(sessions/<pid>.json watch による自動終了 + 二重起動 supersede)","残る protocol 拡張案は着手条件(ps 走査の誤検出・取りこぼしの観測)が2026-07-31時点でも未達のためコストに見合わず見送り、観測されたら再起票"]
 pending_reason:
-close_reason:
+close_reason: ["discarded"]
 blocked_by:
 origin: 自リポ TODO
 ---
