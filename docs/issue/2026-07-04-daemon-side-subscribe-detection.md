@@ -3,7 +3,7 @@ title: daemon 側で subscribe 稼働を検出する (ps 走査からの置き�
 status: idea
 category: design
 created: 2026-07-04T09:25:05+09:00
-last_read: 2026-07-15T16:21:00+09:00
+last_read: 2026-07-31T11:11:55+09:00
 open_entered:
 wip_entered:
 blocked_entered:
