@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { yieldToEventLoop } from "./event-loop.ts";
 import {
   ADMIN_ID,
   ErrorCode,
@@ -19,17 +20,6 @@ import { deriveRepoLocation, isValidSid } from "./virtual-sessions.ts";
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const REQUEST_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
-
-/** Hand the event loop a full turn. A microtask (`await Promise.resolve()`)
- * drains before any pending IO or timer callback runs, so it cannot let a
- * concurrent WebSocket delivery through; `setImmediate` re-enters the loop and
- * does. DR-0029 requires every IO-bearing request to be interruptible this way,
- * and a session scan can walk hundreds of megabytes. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setImmediate(resolve);
-  });
-}
 
 export interface SessionSearchLog {
   error(msg: string): void;

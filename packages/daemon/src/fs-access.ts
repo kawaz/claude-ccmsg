@@ -304,6 +304,32 @@ function compareEntries(a: FsEntry, b: FsEntry): number {
   return 0;
 }
 
+/** The shared body of both list ops: one `lstat` per name, in stable sort
+ * order. Each stat is an await, so listing a directory with thousands of
+ * entries re-enters the event loop between entries rather than holding it for
+ * the whole directory (DR-0029). */
+async function statEntries(dir: string, names: string[]): Promise<FsEntry[]> {
+  const entries: FsEntry[] = [];
+  for (const name of names) {
+    const full = path.join(dir, name);
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.lstat(full);
+    } catch {
+      // vanished between readdir and lstat (race with external mutation) —
+      // report as "other" rather than dropping the entry silently.
+      entries.push({ name, type: "other" });
+      continue;
+    }
+    const type = lstatType(stat);
+    const entry: FsEntry = { name, type, mtime: stat.mtime.toISOString() };
+    if (type === "file") entry.size = stat.size;
+    entries.push(entry);
+  }
+  entries.sort(compareEntries);
+  return entries;
+}
+
 function lstatType(stat: fs.Stats): FsEntry["type"] {
   if (stat.isSymbolicLink()) return "symlink";
   if (stat.isDirectory()) return "dir";
@@ -311,12 +337,12 @@ function lstatType(stat: fs.Stats): FsEntry["type"] {
   return "other";
 }
 
-export function fsList(
+export async function fsList(
   sessions: SessionLookup,
   sid: string,
   reqPath: string | undefined,
   opts: FsAccessOptions = {},
-): FsAccessResult<Omit<FsListResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsListResponse, "ok">>> {
   const rootResult = resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
@@ -330,7 +356,7 @@ export function fsList(
 
   let dirStat: fs.Stats;
   try {
-    dirStat = fs.lstatSync(resolved.realPath);
+    dirStat = await fs.promises.lstat(resolved.realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath ?? ""}` };
   }
@@ -338,23 +364,10 @@ export function fsList(
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_list target is not a directory" };
   }
 
-  const names = fs.readdirSync(resolved.realPath);
-  const entries: FsEntry[] = names.map((name) => {
-    const full = path.join(resolved.realPath, name);
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(full);
-    } catch {
-      // vanished between readdir and lstat (race with external mutation) —
-      // report as "other" rather than dropping the entry silently.
-      return { name, type: "other" as const };
-    }
-    const type = lstatType(stat);
-    const entry: FsEntry = { name, type, mtime: stat.mtime.toISOString() };
-    if (type === "file") entry.size = stat.size;
-    return entry;
-  });
-  entries.sort(compareEntries);
+  const entries = await statEntries(
+    resolved.realPath,
+    await fs.promises.readdir(resolved.realPath),
+  );
 
   const relPath = path.relative(root, resolved.realPath);
   return { ok: true, data: { sid, path: relPath, entries } };
@@ -591,7 +604,7 @@ export async function fsListWorkspace(
 
   let dirStat: fs.Stats;
   try {
-    dirStat = fs.lstatSync(resolved.realPath);
+    dirStat = await fs.promises.lstat(resolved.realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
   }
@@ -603,21 +616,10 @@ export async function fsListWorkspace(
     };
   }
 
-  const names = fs.readdirSync(resolved.realPath);
-  const entries: FsEntry[] = names.map((name) => {
-    const full = path.join(resolved.realPath, name);
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(full);
-    } catch {
-      return { name, type: "other" as const };
-    }
-    const type = lstatType(stat);
-    const entry: FsEntry = { name, type, mtime: stat.mtime.toISOString() };
-    if (type === "file") entry.size = stat.size;
-    return entry;
-  });
-  entries.sort(compareEntries);
+  const entries = await statEntries(
+    resolved.realPath,
+    await fs.promises.readdir(resolved.realPath),
+  );
 
   // Response `path` is the absolute realpath — the client keyed the request
   // by absolute path (there's no single root to subtract) and needs the

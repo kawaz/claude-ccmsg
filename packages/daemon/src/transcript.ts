@@ -418,7 +418,7 @@ function broadcast(
   let subscriber = 0;
   const entryTs = extractEntryTimestamp(payload.lines);
   for (const sub of watch.subscribers) {
-    watch.trace?.write({
+    void watch.trace?.write({
       comp: "daemon",
       edge: "out",
       kind: "wire_write",
@@ -520,7 +520,7 @@ function checkNow(watch: Watch, log: TailLog, source: "fs_watch" | "poll"): void
   // out of trace.jsonl. `mtime_ms` vs `ts` is the file-write-to-detect gap, the
   // first boundary of the path this trace exists to measure.
   if (identityChanged || stat.size !== watch.lastEnd) {
-    watch.trace?.write({
+    void watch.trace?.write({
       comp: "daemon",
       edge: "in",
       kind: "transcript_detect",
@@ -558,7 +558,7 @@ function checkNow(watch: Watch, log: TailLog, source: "fs_watch" | "poll"): void
   if (result.lines.length === 0) return; // trailing partial line only; wait for more
   const start = watch.lastEnd;
   const entryTs = extractEntryTimestamp(result.lines);
-  watch.trace?.write({
+  void watch.trace?.write({
     comp: "daemon",
     edge: "out",
     kind: "transcript_read",

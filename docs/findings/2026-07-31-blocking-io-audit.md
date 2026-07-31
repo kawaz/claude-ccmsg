@@ -36,6 +36,11 @@ kawaz r99m5「IO を伴うイベントやメッセージは全て非同期化を
 
 ## medium
 
+> daemon 側 3 件 (client_trace/trace.ts、fs 走査系、log.ts) は v0.88.2 で対応済み
+> (trace = fd 保持 + turn 内バッチ非同期 append、走査系 = fs.promises + yield、
+> log.ts = fd 保持のみで意図的に同期維持 — exit 直前行の保全、rationale はコード内)。
+> 残りは webui Shiki の Web Worker 化と hooks の ps spawnSync。
+
 - `server.ts:2397` `client_trace` + `trace.ts` — 1 リクエスト最大 8 点、各点で
   `statSync` + `appendFileSync` (fd 非保持)。webui タブが transcript 更新のたびに
   投げる。バッチ 1 回書きで syscall 1/16

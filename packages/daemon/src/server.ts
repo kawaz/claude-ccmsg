@@ -1934,7 +1934,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'dir_tree' requires user role");
         return;
       }
-      const result = dirTree(daemon.config.session_launcher, req.roots, req.depth, req.filter);
+      const result = await dirTree(
+        daemon.config.session_launcher,
+        req.roots,
+        req.depth,
+        req.filter,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2100,7 +2105,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "fs_list": {
-      const result = fsList(daemon.sessions, req.sid, req.path, {
+      const result = await fsList(daemon.sessions, req.sid, req.path, {
         allowVirtual: conn.identity?.role === "user",
       });
       if (!result.ok) {
@@ -2495,8 +2500,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       const points = Array.isArray(req.points) ? req.points.slice(0, CLIENT_TRACE_MAX_POINTS) : [];
+      // Every point of a batch is queued in this turn, so they share one flush;
+      // awaiting the last of them is awaiting the whole batch reaching disk,
+      // which is what makes `written` an honest count rather than an intent.
+      let written: Promise<void> | null = null;
       for (const point of points) {
-        daemon.trace.write({
+        written = daemon.trace.write({
           ts: typeof point.ts === "string" ? point.ts : undefined,
           comp: "webui",
           edge: point.edge === "out" ? "out" : "in",
@@ -2509,6 +2518,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           sampled: req.sampled,
         });
       }
+      if (written) await written;
       send(conn, { ok: true, sid: req.sid, written: points.length });
       return;
     }

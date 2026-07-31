@@ -28,9 +28,9 @@ describe("TraceWriter", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  test("appends one JSON object per line, stamping ts when the caller has none", () => {
+  test("appends one JSON object per line, stamping ts when the caller has none", async () => {
     const writer = new TraceWriter(file);
-    writer.write({
+    void writer.write({
       comp: "daemon",
       edge: "in",
       kind: "transcript_detect",
@@ -38,7 +38,14 @@ describe("TraceWriter", () => {
       start: 0,
       end: 10,
     });
-    writer.write({ comp: "daemon", edge: "out", kind: "wire_write", sid: "s1", start: 0, end: 10 });
+    await writer.write({
+      comp: "daemon",
+      edge: "out",
+      kind: "wire_write",
+      sid: "s1",
+      start: 0,
+      end: 10,
+    });
 
     const lines = readLines(file);
     expect(lines).toHaveLength(2);
@@ -49,9 +56,9 @@ describe("TraceWriter", () => {
 
   // Browser points are timestamped in the tab; re-stamping them on arrival would
   // erase the very delay (network / event loop) the trace exists to show.
-  test("keeps a caller-supplied ts", () => {
+  test("keeps a caller-supplied ts", async () => {
     const writer = new TraceWriter(file);
-    writer.write({
+    await writer.write({
       ts: "2026-07-29T00:00:00.000Z",
       comp: "webui",
       edge: "in",
@@ -65,9 +72,9 @@ describe("TraceWriter", () => {
 
   // An explicit `ts: undefined` reaches here whenever a caller forwards an
   // optional field, and must still produce a timestamped line.
-  test("stamps ts when the caller passes it as undefined", () => {
+  test("stamps ts when the caller passes it as undefined", async () => {
     const writer = new TraceWriter(file);
-    writer.write({
+    await writer.write({
       ts: undefined,
       comp: "webui",
       edge: "in",
@@ -81,9 +88,9 @@ describe("TraceWriter", () => {
 
   // Extra keys are how each boundary carries its own detail (source, mtime_ms,
   // entry_ts...), so they must survive verbatim for jq to filter on.
-  test("preserves caller-supplied extra fields", () => {
+  test("preserves caller-supplied extra fields", async () => {
     const writer = new TraceWriter(file);
-    writer.write({
+    await writer.write({
       comp: "daemon",
       edge: "in",
       kind: "transcript_detect",
@@ -98,18 +105,20 @@ describe("TraceWriter", () => {
     expect(line.mtime_ms).toBe(1234.5);
   });
 
-  test("rotates to .1 once the next line would exceed the limit, and keeps writing", () => {
+  test("rotates to .1 once the next line would exceed the limit, and keeps writing", async () => {
     const writer = new TraceWriter(file, 400);
-    const write = (sid: string): void =>
+    // Awaited per line: rotation is decided per flush, and this test is about
+    // which line triggers it, so each line has to be its own flush.
+    const write = (sid: string): Promise<void> =>
       writer.write({ comp: "daemon", edge: "out", kind: "wire_write", sid, start: 0, end: 1 });
 
-    write("first");
+    await write("first");
     const oneLine = fs.statSync(file).size;
     const perFile = Math.floor(400 / oneLine);
-    for (let i = 1; i < perFile; i++) write(`fill${i}`);
+    for (let i = 1; i < perFile; i++) await write(`fill${i}`);
     expect(fs.existsSync(`${file}.1`)).toBe(false);
 
-    write("overflow");
+    await write("overflow");
     expect(fs.existsSync(`${file}.1`)).toBe(true);
     // rotation must not lose the line that triggered it
     const current = readLines(file);
@@ -120,10 +129,10 @@ describe("TraceWriter", () => {
 
   // Only one generation is kept: a second rotation replaces .1 rather than
   // growing an unbounded chain of trace files in the state dir.
-  test("a second rotation replaces the previous .1", () => {
+  test("a second rotation replaces the previous .1", async () => {
     const writer = new TraceWriter(file, 200);
     for (let i = 0; i < 40; i++) {
-      writer.write({
+      await writer.write({
         comp: "daemon",
         edge: "out",
         kind: "wire_write",
@@ -138,18 +147,19 @@ describe("TraceWriter", () => {
 
   // Tracing is diagnostics: an unwritable path must degrade to no trace, never
   // throw into the delivery path that called it.
-  test("swallows write failures", () => {
+  test("swallows write failures", async () => {
     const writer = new TraceWriter(path.join(dir, "missing-subdir", "trace.jsonl"));
-    expect(() => {
-      writer.write({
-        comp: "daemon",
-        edge: "in",
-        kind: "transcript_detect",
-        sid: "s1",
-        start: 0,
-        end: 1,
-      });
-    }).not.toThrow();
+    // The failure surfaces inside the flush, so "does not throw" now means the
+    // returned promise resolves rather than rejecting into the delivery path.
+    await writer.write({
+      comp: "daemon",
+      edge: "in",
+      kind: "transcript_detect",
+      sid: "s1",
+      start: 0,
+      end: 1,
+    });
+    expect(fs.existsSync(path.join(dir, "missing-subdir"))).toBe(false);
   });
 });
 

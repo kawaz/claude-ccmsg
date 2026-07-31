@@ -87,9 +87,9 @@ describe("dirTree", () => {
 
   // depth=2 means two directory levels below each requested root. Boundary
   // nodes omit children, which is the UI's marker that lazy fetch is available.
-  test("default depth returns two levels and leaves the third unexplored", () => {
+  test("default depth returns two levels and leaves the third unexplored", async () => {
     fs.mkdirSync(path.join(root, "alpha", "beta", "gamma"), { recursive: true });
-    const result = dirTree(config(root), [root], undefined, undefined);
+    const result = await dirTree(config(root), [root], undefined, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -101,10 +101,10 @@ describe("dirTree", () => {
 
   // Lazy expansion requests a contained node as a new root with depth=1. The
   // response is that node's immediate children, not a duplicate wrapper node.
-  test("a contained subdirectory can be fetched lazily at depth one", () => {
+  test("a contained subdirectory can be fetched lazily at depth one", async () => {
     fs.mkdirSync(path.join(root, "repo", "workspace", "nested"), { recursive: true });
     const lazyRoot = path.join(root, "repo");
-    const result = dirTree(config(root), [lazyRoot], 1, undefined);
+    const result = await dirTree(config(root), [lazyRoot], 1, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -114,27 +114,27 @@ describe("dirTree", () => {
 
   // A lexical absolute path outside every configured root is never traversed;
   // this is the primary arbitrary-filesystem-read boundary of the op.
-  test("a requested root outside configured roots is path_forbidden", () => {
-    const result = dirTree(config(root), [outside], 1, undefined);
+  test("a requested root outside configured roots is path_forbidden", async () => {
+    const result = await dirTree(config(root), [outside], 1, undefined);
     expect(result).toMatchObject({ ok: false, code: "path_forbidden" });
   });
 
   // Lexically the link lives below root, but realpath points outside. Realpath
   // containment must win so a symlink cannot expand the launcher's universe.
-  test("a requested root that escapes through a symlink is path_forbidden", () => {
+  test("a requested root that escapes through a symlink is path_forbidden", async () => {
     const link = path.join(root, "outside-link");
     fs.symlinkSync(outside, link);
-    const result = dirTree(config(root), [link], 1, undefined);
+    const result = await dirTree(config(root), [link], 1, undefined);
     expect(result).toMatchObject({ ok: false, code: "path_forbidden" });
   });
 
   // Dot directories contain implementation/private state (.git, .jj, etc.) and
   // DR-0018 explicitly excludes them from the cwd picker at every depth.
-  test("dot directories are excluded at every level", () => {
+  test("dot directories are excluded at every level", async () => {
     fs.mkdirSync(path.join(root, ".git"));
     fs.mkdirSync(path.join(root, "visible", ".jj"), { recursive: true });
     fs.mkdirSync(path.join(root, "visible", "child"));
-    const result = dirTree(config(root), [root], 2, undefined);
+    const result = await dirTree(config(root), [root], 2, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -144,10 +144,10 @@ describe("dirTree", () => {
 
   // The picker selects directories only; ordinary files must not appear even
   // when they share the same names or sort positions as valid directories.
-  test("ordinary files are excluded", () => {
+  test("ordinary files are excluded", async () => {
     fs.writeFileSync(path.join(root, "a-file"), "x");
     fs.mkdirSync(path.join(root, "b-dir"));
-    const result = dirTree(config(root), [root], 1, undefined);
+    const result = await dirTree(config(root), [root], 1, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -156,10 +156,10 @@ describe("dirTree", () => {
 
   // A symlink to an in-root directory is a legitimate cwd alias. It is shown as
   // a directory and remains traversable, unlike the escaping-link case above.
-  test("an in-root directory symlink is included and traversed", () => {
+  test("an in-root directory symlink is included and traversed", async () => {
     fs.mkdirSync(path.join(root, "target", "child"), { recursive: true });
     fs.symlinkSync(path.join(root, "target"), path.join(root, "alias"));
-    const result = dirTree(config(root), [root], 2, undefined);
+    const result = await dirTree(config(root), [root], 2, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -170,11 +170,11 @@ describe("dirTree", () => {
 
   // Filtering matches the root-relative path and retains ancestors required to
   // reach a matching node, while unrelated branches disappear.
-  test("filter keeps matching paths and their ancestors only", () => {
+  test("filter keeps matching paths and their ancestors only", async () => {
     fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });
     fs.mkdirSync(path.join(root, "group", "bar-project"), { recursive: true });
     fs.mkdirSync(path.join(root, "unrelated"));
-    const result = dirTree(config(root), [root], 2, "foo");
+    const result = await dirTree(config(root), [root], 2, "foo");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -184,11 +184,11 @@ describe("dirTree", () => {
 
   // Multi-token filters (kawaz r46m31) require every whitespace-separated
   // token to appear in the root-relative path (AND), not just one of them.
-  test("a multi-token filter requires all tokens to match (AND)", () => {
+  test("a multi-token filter requires all tokens to match (AND)", async () => {
     fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });
     fs.mkdirSync(path.join(root, "group", "bar-project"), { recursive: true });
     fs.mkdirSync(path.join(root, "unrelated"));
-    const result = dirTree(config(root), [root], 2, "foo project");
+    const result = await dirTree(config(root), [root], 2, "foo project");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -198,10 +198,10 @@ describe("dirTree", () => {
 
   // A whitespace-only filter is equivalent to no filter: it should not
   // exclude anything.
-  test("a whitespace-only filter matches everything", () => {
+  test("a whitespace-only filter matches everything", async () => {
     fs.mkdirSync(path.join(root, "group", "foo-project"), { recursive: true });
     fs.mkdirSync(path.join(root, "unrelated"));
-    const result = dirTree(config(root), [root], 2, "   ");
+    const result = await dirTree(config(root), [root], 2, "   ");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -210,15 +210,15 @@ describe("dirTree", () => {
 
   // A missing requested root is distinguishable from a forbidden existing path
   // so the UI can report a stale/deleted directory accurately.
-  test("a missing requested root returns not_found", () => {
-    const result = dirTree(config(root), [path.join(root, "gone")], 1, undefined);
+  test("a missing requested root returns not_found", async () => {
+    const result = await dirTree(config(root), [path.join(root, "gone")], 1, undefined);
     expect(result).toMatchObject({ ok: false, code: "not_found" });
   });
 
   // No valid launcher config means there is no administrator-defined boundary;
   // the op fails closed instead of treating client roots as authoritative.
-  test("an unconfigured launcher returns launcher_not_configured", () => {
-    const result = dirTree(undefined, [root], 1, undefined);
+  test("an unconfigured launcher returns launcher_not_configured", async () => {
+    const result = await dirTree(undefined, [root], 1, undefined);
     expect(result).toMatchObject({ ok: false, code: "launcher_not_configured" });
   });
 
@@ -226,22 +226,22 @@ describe("dirTree", () => {
   // for at least 1; zero and negative values have no meaning in that contract,
   // so they are rejected as invalid_args instead of being clamped to something
   // the client did not ask for.
-  test("zero and negative requested depth are invalid_args", () => {
+  test("zero and negative requested depth are invalid_args", async () => {
     for (const depth of [0, -1]) {
-      const result = dirTree(config(root), [root], depth, undefined);
+      const result = await dirTree(config(root), [root], depth, undefined);
       expect(result).toMatchObject({ ok: false, code: "invalid_args" });
     }
   });
 
   // Client-supplied depth is bounded independently of config so one request
-  // cannot trigger an arbitrarily deep synchronous filesystem walk.
-  test("excessive requested depth is clamped to a finite walk", () => {
+  // cannot trigger an arbitrarily deep filesystem walk.
+  test("excessive requested depth is clamped to a finite walk", async () => {
     let cursor = root;
     for (let i = 1; i <= 7; i++) {
       cursor = path.join(cursor, `d${i}`);
       fs.mkdirSync(cursor);
     }
-    const result = dirTree(config(root), [root], 100, undefined);
+    const result = await dirTree(config(root), [root], 100, undefined);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 

@@ -120,7 +120,7 @@ describe("virtual session lookup boundary", () => {
   // Guarantees virtual fs_list/fs_read retain realpath containment while
   // fs_write stays connected-only: a valid sid may read in-root files but
   // cannot write historically or use `..` to escape its root.
-  test("virtual filesystem reads remain containment checked", () => {
+  test("virtual filesystem reads remain containment checked", async () => {
     const config = fixtureRoot();
     const cwd = path.join(fixtureRoot(), "project");
     fs.mkdirSync(cwd);
@@ -128,7 +128,7 @@ describe("virtual session lookup boundary", () => {
     fs.writeFileSync(path.join(path.dirname(cwd), "outside.txt"), "outside");
     transcript(config, sid(), cwd);
 
-    const listed = fsList(emptySessions, sid(), undefined, {
+    const listed = await fsList(emptySessions, sid(), undefined, {
       allowVirtual: true,
       configDirs: [config],
     });

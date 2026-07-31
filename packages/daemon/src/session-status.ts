@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { yieldToEventLoop } from "./event-loop.ts";
 import {
   ErrorCode,
   type AgentTreeGroups,
@@ -31,17 +32,6 @@ import { discoverWorkspaceFolders } from "./workspace-folders.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
-
-/** Hand the event loop a full turn. A microtask (`await Promise.resolve()`)
- * drains before any pending IO or timer callback runs, so it cannot let a
- * concurrent WebSocket delivery through; `setImmediate` re-enters the loop and
- * does. Same helper and rationale as session-search.ts — DR-0029 requires
- * every IO-bearing request to be interruptible this way. */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setImmediate(resolve);
-  });
-}
 
 /** String prefilter before JSON.parse. Context usage and DR-0024 file path
  * inputs appear frequently, so they weaken the filter, but transcripts are only

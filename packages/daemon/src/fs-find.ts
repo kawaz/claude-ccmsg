@@ -21,10 +21,16 @@ import {
   parseFileSearchQuery,
   type ParsedFileSearchQuery,
 } from "@ccmsg/protocol";
+import { yieldToEventLoop } from "./event-loop.ts";
 import type { FsAccessOptions, FsAccessResult, SessionLookup } from "./fs-access.ts";
 import { resolveFindRoot } from "./fs-access.ts";
 import { type IgnoreLayer, isIgnored, readIgnoreLayer } from "./gitignore.ts";
 import type { SessionStatusStore } from "./session-status.ts";
+
+/** Entries classified between yields. Keeps one turn's work bounded well below
+ * FS_FIND_VISIT_MAX (50,000) without adding a yield per entry, which would turn
+ * the walk into one event-loop round trip per dirent. */
+const FS_FIND_YIELD_VISITS = 5000;
 
 /** Entry types fs_find reports. Directories are matchable targets in their own
  * right (searching "components" should surface the directory too), and
@@ -56,7 +62,7 @@ function findableType(dirent: fs.Dirent): FsFindHit["type"] | null {
  * re-check per entry is required. `visited` bounds the cost against a tree
  * that is merely enormous rather than cyclic.
  */
-function walkFind(
+async function walkFind(
   absRoot: string,
   containmentRoot: string,
   toDisplay: (abs: string) => string,
@@ -71,7 +77,7 @@ function walkFind(
   // read once when its directory is dequeued and then shared by everything
   // below it — the BFS queue is already the natural place to thread that
   // inherited state through.
-  const rootLayers = respectGitignore ? collectLayers(absRoot, containmentRoot) : [];
+  const rootLayers = respectGitignore ? await collectLayers(absRoot, containmentRoot) : [];
   const queue: { dir: string; layers: readonly IgnoreLayer[] }[] = [
     { dir: absRoot, layers: rootLayers },
   ];
@@ -80,7 +86,7 @@ function walkFind(
     const { dir, layers } = queue.shift()!;
     let dirents: fs.Dirent[];
     try {
-      dirents = fs.readdirSync(dir, { withFileTypes: true });
+      dirents = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       // Unreadable/vanished directory (permissions, or a race with external
       // mutation). Skipping it is the same posture fs_list takes per-entry:
@@ -92,7 +98,7 @@ function walkFind(
     // directory containing the file and its subdirectories".
     let effectiveLayers = layers;
     if (respectGitignore) {
-      const own = readIgnoreLayer(dir);
+      const own = await readIgnoreLayer(dir);
       if (own) effectiveLayers = [...layers, own];
     }
     for (const dirent of dirents) {
@@ -101,6 +107,10 @@ function walkFind(
         return { hits, truncated };
       }
       visited++;
+      // One directory can hold tens of thousands of entries, so the per-
+      // directory `readdir` await is not on its own enough of a yield (DR-0029);
+      // this bounds how many entries are classified in a single turn.
+      if (visited % FS_FIND_YIELD_VISITS === 0) await yieldToEventLoop();
       const type = findableType(dirent);
       if (type === null) continue;
       const abs = path.join(dir, dirent.name);
@@ -155,7 +165,7 @@ function shouldSkip(
  * read surface than fs_find is supposed to have even when the only thing it
  * can do is remove results.
  */
-function collectLayers(absRoot: string, containmentRoot: string): IgnoreLayer[] {
+async function collectLayers(absRoot: string, containmentRoot: string): Promise<IgnoreLayer[]> {
   const ancestors: string[] = [];
   let dir = path.dirname(absRoot);
   let prev = absRoot;
@@ -168,7 +178,7 @@ function collectLayers(absRoot: string, containmentRoot: string): IgnoreLayer[] 
   const layers: IgnoreLayer[] = [];
   // Outermost first, so a nearer .gitignore's conflicting rule wins.
   for (const ancestor of ancestors.reverse()) {
-    const layer = readIgnoreLayer(ancestor);
+    const layer = await readIgnoreLayer(ancestor);
     if (layer) layers.push(layer);
   }
   return layers;
@@ -213,7 +223,7 @@ export async function fsFind(
 
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(resolved.data.realPath);
+    stat = await fs.promises.lstat(resolved.data.realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqRoot ?? ""}` };
   }
@@ -236,7 +246,7 @@ export async function fsFind(
       ? (abs: string) => path.relative(containmentRoot, abs)
       : (abs: string) => abs;
 
-  const { hits, truncated } = walkFind(
+  const { hits, truncated } = await walkFind(
     resolved.data.realPath,
     containmentRoot,
     toDisplay,

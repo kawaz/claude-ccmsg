@@ -203,10 +203,10 @@ export function compileIgnoreLayer(baseDir: string, contents: string): IgnoreLay
 /** Reads `<dir>/.gitignore` into a layer, or null when there isn't one (or it
  * can't be read — an unreadable ignore file means "no rules here", the same
  * skip-and-continue posture the walk takes for unreadable directories). */
-export function readIgnoreLayer(dir: string): IgnoreLayer | null {
+export async function readIgnoreLayer(dir: string): Promise<IgnoreLayer | null> {
   let contents: string;
   try {
-    contents = fs.readFileSync(path.join(dir, ".gitignore"), "utf8");
+    contents = await fs.promises.readFile(path.join(dir, ".gitignore"), "utf8");
   } catch {
     return null;
   }

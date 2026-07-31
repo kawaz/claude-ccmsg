@@ -11,10 +11,11 @@ import {
 import type { FsAccessResult } from "./fs-access.ts";
 import { containedInRoots } from "./launcher-paths.ts";
 
-// Design rationale: dir_tree uses synchronous filesystem APIs in the daemon's
-// request handler, so a client-controlled unbounded depth could stall every
-// connection. Five levels covers configured depth=2 plus several lazy-expansion
-// levels while keeping one request's walk finite; deeper navigation stays lazy.
+// Design rationale: a client-controlled unbounded depth would let one request's
+// walk grow without limit. Five levels covers configured depth=2 plus several
+// lazy-expansion levels while keeping one request's walk finite; deeper
+// navigation stays lazy. The walk itself is async (DR-0029), so the bound is
+// about the request's own cost, not about holding the event loop.
 const MAX_DIR_TREE_DEPTH = 5;
 
 /** Splits a filter string into non-empty, trimmed tokens on whitespace runs
@@ -63,16 +64,20 @@ function effectiveDepth(
   };
 }
 
-function walkDirectory(
+/** Each directory's `readdir` is an await, so the walk re-enters the event loop
+ * once per directory and a wide tree cannot hold a delivery back (DR-0029).
+ * Entry classification needs no per-entry stat — `withFileTypes` already
+ * carries it. */
+async function walkDirectory(
   cfg: SessionLauncherConfig,
   requestRoot: string,
   current: string,
   remainingDepth: number,
   filterTokens: string[] | undefined,
-): DirTreeEntry[] {
+): Promise<DirTreeEntry[]> {
   let dirents: fs.Dirent[];
   try {
-    dirents = fs.readdirSync(current, { withFileTypes: true });
+    dirents = await fs.promises.readdir(current, { withFileTypes: true });
   } catch {
     // A directory can become unreadable or disappear after root validation. It
     // remains a valid tree node whose explored child set is empty.
@@ -98,7 +103,13 @@ function walkDirectory(
 
     const entry: DirTreeEntry = { path: entryPath, is_dir: true };
     if (remainingDepth > 1) {
-      entry.children = walkDirectory(cfg, requestRoot, entryPath, remainingDepth - 1, filterTokens);
+      entry.children = await walkDirectory(
+        cfg,
+        requestRoot,
+        entryPath,
+        remainingDepth - 1,
+        filterTokens,
+      );
     }
 
     if (filterTokens !== undefined) {
@@ -114,12 +125,12 @@ function walkDirectory(
   return entries;
 }
 
-export function dirTree(
+export async function dirTree(
   cfg: SessionLauncherConfig | undefined,
   roots: string[],
   depth: number | undefined,
   filter: string | undefined,
-): FsAccessResult<Omit<DirTreeResponse, "ok">> {
+): Promise<FsAccessResult<Omit<DirTreeResponse, "ok">>> {
   if (!cfg) {
     return {
       ok: false,
@@ -149,13 +160,13 @@ export function dirTree(
     const contained = containedInRoots(cfg.root_dirs, root, "dir_tree root");
     if (!contained.ok) return contained;
     entries.push(
-      ...walkDirectory(
+      ...(await walkDirectory(
         cfg,
         contained.data.realPath,
         contained.data.realPath,
         boundedDepth.data.depth,
         effectiveFilterTokens,
-      ),
+      )),
     );
   }
   entries.sort(compareEntries);
