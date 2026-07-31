@@ -32,3 +32,4 @@
 | [DR-0026](./DR-0026-vscode-workspace-section.md) | Accepted | ワークスペースセクション (.code-workspace folders の allowlist ブラウズ) |
 | [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) | Accepted | TL の ccmsg を daemon 一次情報で完全復元 + AI 発 post/reply の TL 表示 |
 | [DR-0028](./DR-0028-session-kill.md) | Proposed | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) |
+| [DR-0029](./DR-0029-async-io-principle.md) | Accepted | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
