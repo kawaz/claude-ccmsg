@@ -175,8 +175,11 @@ export async function handleAttachmentUpload(req: Request): Promise<Response> {
   }
 
   try {
-    const buf = new Uint8Array(await entry.arrayBuffer());
-    fs.writeFileSync(savePath, buf);
+    // DR-0029: 最大 maxBytes (既定 50MB) の書き込みが Bun.serve の fetch /
+    // websocket 共用イベントループに乗るため、同期 write は WS 配信ごと
+    // 止める。Bun.write は Blob をストリーミングで非同期書き込みし、
+    // arrayBuffer() での全量メモリ展開も不要。
+    await Bun.write(savePath, entry);
   } catch (err) {
     return new Response(`attachment write failed: ${String(err)}`, { status: 500 });
   }

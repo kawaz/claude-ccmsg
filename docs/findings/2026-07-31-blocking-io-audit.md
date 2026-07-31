@@ -22,6 +22,7 @@ kawaz r99m5「IO を伴うイベントやメッセージは全て非同期化を
 | 1 | `session-status.ts:1056` `readAgentToolUseIds` | ルート + 全 subagent transcript を `readFileSync` フルリード + 全行走査 | status push のたび (transcript が 1 行伸びるたび) |
 | 2 | `session-search.ts:657` `sessionSearch` | 最大 256MB を無 yield で `readSync` + `JSON.parse` | 検索 1 回ごと |
 | 3 | `session-status.ts:1444` `scanTranscript` | transcript を先頭から全走査、dispatch 内で完全同期 | `session_status(_subscribe)` の初回・再接続・truncate 検知時 |
+| 4 | `attachment.ts:179` `handleAttachmentUpload` | 既定最大 50MB (`DEFAULT_ATTACHMENT_MAX_BYTES`) の `writeFileSync` が WS 配信と同一イベントループで走る (`http.ts` の Bun.serve は fetch/websocket 同一ループ、確認済み) | 添付アップロードごと |
 
 - #1 補足 (統括裏取り済み): doc comment は「Read is bounded by
   MAX_TRANSCRIPT_SCAN_BYTES」と主張するが、**この識別子はコメント 1 行以外に
@@ -57,10 +58,16 @@ kawaz r99m5「IO を伴うイベントやメッセージは全て非同期化を
 - 起動・終了時のみの同期 fs (storage/config/flock/server 終端処理)
 - CLI 起動時・単発サブコマンドの同期 fs (対象ファイル小)
 
-## 未確認 (追加調査候補)
+## 追加調査で確定した事項 (2026-07-31 二次調査)
 
-- `attachment.ts:161-255` の同期 fs が Bun.serve fetch ハンドラ経由で WS 配信と
-  同じループに乗るか (大きい添付なら high になりうる)
-- `translate-helper.ts` の `build()` がコールドスタート時にリクエスト中で同期実行
-  されうるか
-- `fs-find.ts` FS_FIND_VISIT_MAX / `fs-access.ts` FS_STAT_BATCH_MAX_PATHS の実効値
+- `attachment.ts`: upload の `writeFileSync` は **high #4** (上表)。serve 側は
+  statSync 1 回 + Bun.file ゼロコピーストリーミングで low (正しい実装)
+- `translate-helper.ts` の `build()`: swiftc は `spawn` + await で完全非同期、
+  `buildPromise` で多重ビルド排除済み。low、対応不要
+- `fs_find`: `FS_FIND_VISIT_MAX = 50,000` は dirent 単位で実効。ただし gitignore
+  枝刈りが効かないツリーでは 50k dirent の readdirSync + readFileSync (.gitignore)
+  を無 yield で走り切る。medium 据え置き、visit 5,000 ごとの yield が方向性。
+  `FS_STAT_BATCH_MAX_PATHS = 256` は実効、low〜medium
+- webui `translate.ts` (v0.87.6 個別 op 化後): メインスレッド阻害なし。観察として
+  長い thinking では数十 op が一斉に daemon キューへ積まれる (イベントループは
+  塞がない、意図した設計)
