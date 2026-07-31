@@ -12,6 +12,7 @@ import type {
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
+import { viewerPathForAbsolute } from "./filepath-ref.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -833,6 +834,38 @@ export function isWorkspaceFilePath(
     if (filePath.startsWith(prefix)) return true;
   }
   return false;
+}
+
+/** The spelling the Files panes address `selectedPath` by.
+ *
+ * A path naming a file inside the session's own containment root is the same
+ * file `fs_read` serves root-relative, so it is rebased to that shape no matter
+ * which spelling arrived (a pasted URL, a link resolved against another
+ * session's anchor, a viewer path carried between sessions). Left absolute it
+ * routes to `fs_read_external`, whose DR-0024 allowlist holds only files the
+ * session actually read — an ordinary project file then answers `path not
+ * allowed` although the tree beside it lists that very file.
+ *
+ * Rebasing grants nothing: `fs_read` re-checks containment on the daemon side,
+ * so this only picks which op a path the user can already browse goes through.
+ *
+ * Two shapes are returned untouched:
+ *   - a workspace path (DR-0026), whose folder root may sit anywhere and whose
+ *     absolute form is what the tree's ワークスペース section addresses;
+ *   - an absolute path outside the containment root, which is external by
+ *     definition and keeps the exact-file allowlist as its authorization.
+ *
+ * `containmentRoot` is `repo_root ?? cwd` — the daemon's own `resolveRoot`
+ * rule. `undefined` (peer row not delivered yet) leaves the path alone; the
+ * caller re-evaluates when the peer arrives. */
+export function canonicalViewerPath(
+  selectedPath: string,
+  containmentRoot: string | undefined,
+  workspaceFolders: readonly { path: string }[],
+): string {
+  if (!isExternalFilePath(selectedPath)) return selectedPath;
+  if (isWorkspaceFilePath(selectedPath, workspaceFolders)) return selectedPath;
+  return viewerPathForAbsolute(selectedPath, containmentRoot);
 }
 
 /** Extensions the daemon's /fs-serve endpoint renders as inline images. Keep

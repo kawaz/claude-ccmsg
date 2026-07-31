@@ -10,6 +10,7 @@ import { ADMIN_ID, initialState } from "../src/client/store.ts";
 import {
   badgeLabel,
   buildSessionSearchRequest,
+  canonicalViewerPath,
   clampPaneRatio,
   DEFAULT_SESSION_SEARCH_FORM,
   errorMessage,
@@ -1432,6 +1433,51 @@ describe("workspace file view helpers (DR-0026)", () => {
     expect(isWorkspaceFilePath("/repo/one/x", folders)).toBe(true);
     expect(isWorkspaceFilePath("/repo/two/y", folders)).toBe(true);
     expect(isWorkspaceFilePath("/repo/three", folders)).toBe(false);
+  });
+});
+
+describe("canonicalViewerPath", () => {
+  // kawaz r99 m8: opening a project file by its full path answered 403 — the
+  // absolute spelling routed to fs_read_external, whose DR-0024 allowlist only
+  // holds files the session actually read. Rebasing it to the root-relative
+  // form is what makes "open by full path" reach fs_read from any context.
+  const ROOT = "/repo/container";
+
+  test("in-project absolute path is rebased to the containment-relative form", () => {
+    expect(canonicalViewerPath(`${ROOT}/main/docs/dr.md`, ROOT, [])).toBe("main/docs/dr.md");
+  });
+
+  test("relative paths pass through untouched", () => {
+    expect(canonicalViewerPath("main/docs/dr.md", ROOT, [])).toBe("main/docs/dr.md");
+  });
+
+  test("absolute path outside the containment root stays external", () => {
+    // Still authorized by the exact-file allowlist — rebasing must not widen
+    // what the viewer can reach, only pick the op for paths already browsable.
+    expect(canonicalViewerPath("/etc/hosts", ROOT, [])).toBe("/etc/hosts");
+  });
+
+  test("prefix collision does not count as in-project", () => {
+    expect(canonicalViewerPath("/repo/container-other/x.md", ROOT, [])).toBe(
+      "/repo/container-other/x.md",
+    );
+  });
+
+  test("workspace path keeps its absolute form even inside the containment root", () => {
+    // DR-0026 folders are addressed absolutely by the tree's ワークスペース
+    // section; rebasing one would desync the selection from that listing.
+    const folders = [{ path: `${ROOT}/sibling` }];
+    expect(canonicalViewerPath(`${ROOT}/sibling/x.md`, ROOT, folders)).toBe(`${ROOT}/sibling/x.md`);
+  });
+
+  test("no containment root (peer row not delivered) leaves the path alone", () => {
+    expect(canonicalViewerPath(`${ROOT}/main/docs/dr.md`, undefined, [])).toBe(
+      `${ROOT}/main/docs/dr.md`,
+    );
+  });
+
+  test("the containment root itself is not rebased to an empty path", () => {
+    expect(canonicalViewerPath(ROOT, ROOT, [])).toBe(ROOT);
   });
 });
 

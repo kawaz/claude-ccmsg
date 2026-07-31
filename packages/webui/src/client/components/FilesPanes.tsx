@@ -15,8 +15,9 @@ import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { fileHref } from "../locator.ts";
-import { pushNavigation } from "../navigation.ts";
+import { pushNavigation, replaceNavigation } from "../navigation.ts";
 import {
+  canonicalViewerPath,
   clampPaneRatio,
   fileAncestorDirectories,
   paneRatioFromPointer,
@@ -84,6 +85,31 @@ export function FilesPanes({
     setMemoEditorOpen(false);
   }, [sid, tree.selectedPath]);
 
+  // FilesPanes owns which spelling the two panes address, so an in-project
+  // absolute selection is rebased to the root-relative form here rather than in
+  // each pane (see `canonicalViewerPath` for why it would otherwise 403).
+  const selectedPath = tree.selectedPath;
+  const canonicalPath =
+    selectedPath === null
+      ? null
+      : canonicalViewerPath(selectedPath, peer?.repo_root ?? peer?.cwd, workspaceFolders);
+  // Replace rather than push: the absolute spelling is the same destination,
+  // so it should not cost a back-button step.
+  useEffect(() => {
+    if (canonicalPath === null || canonicalPath === selectedPath) return;
+    replaceNavigation(
+      fileHref(
+        sid,
+        canonicalPath,
+        tree.selectedLineRange ?? undefined,
+        tree.selectedFrom ?? undefined,
+      ),
+    );
+  }, [sid, selectedPath, canonicalPath]);
+  // Panes read the canonical spelling immediately, so the doomed external read
+  // never fires while the URL replacement is still in flight.
+  const paneTree = canonicalPath === selectedPath ? tree : { ...tree, selectedPath: canonicalPath };
+
   async function onMemoCreated(createdPath: string): Promise<void> {
     // fs_write may have created docs/ and inbox/ as well as the file. Refresh
     // every affected listing so an already-cached empty ancestor does not hide
@@ -122,7 +148,7 @@ export function FilesPanes({
       <div class="session-pane session-pane-tree" style={treeStyle}>
         <FileTree
           sid={sid}
-          tree={tree}
+          tree={paneTree}
           peer={peer}
           externalFiles={externalFiles}
           workspaceFolders={workspaceFolders}
@@ -133,7 +159,7 @@ export function FilesPanes({
       <div class="session-pane session-pane-viewer" style={{ flex: "1 1 auto" }}>
         <FileViewer
           sid={sid}
-          tree={tree}
+          tree={paneTree}
           peer={peer}
           workspaceFolders={workspaceFolders}
           memoEditorOpen={memoEditorOpen}
