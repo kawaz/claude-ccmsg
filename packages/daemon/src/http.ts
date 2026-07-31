@@ -162,7 +162,7 @@ export function startHttpListener(
   const server = Bun.serve<WsData>({
     hostname,
     port,
-    fetch(req, srv) {
+    async fetch(req, srv) {
       // Source-IP allowlist (DR-0004 §3 addendum): defense-in-depth belt in case
       // CCMSG_HTTP_BIND is misconfigured beyond loopback. Runs before the WS upgrade
       // too, since fetch() is where upgrade happens. requestIP() returning null (e.g.
@@ -204,7 +204,7 @@ export function startHttpListener(
       // (source-IP + Origin already checked above); per-request authorization
       // reuses fs_read / fs_read_external / fs_read_workspace containment.
       if (url.pathname === "/fs-serve" && req.method === "GET") {
-        return handleFsServe(daemon.sessions, daemon.sessionStatus, url);
+        return await handleFsServe(daemon.sessions, daemon.sessionStatus, url);
       }
       if (fallback) return fallback(req);
       return new Response("Not Found", { status: 404 });

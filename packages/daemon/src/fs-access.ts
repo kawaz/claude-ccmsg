@@ -455,12 +455,12 @@ export function fsRead(
  * nothing about paths the session was never granted. The remaining
  * canonicalize→lstat/open TOCTOU gap has the same-UID limitation documented for
  * resolveContained: a process able to win it can already read the target directly. */
-export function fsReadExternal(
+export async function fsReadExternal(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
-): FsAccessResult<Omit<FsReadResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
   if (typeof reqPath !== "string" || reqPath === "" || !path.isAbsolute(reqPath)) {
     return {
       ok: false,
@@ -469,7 +469,7 @@ export function fsReadExternal(
     };
   }
 
-  const status = getSessionStatus(statusStore, sessions, sid);
+  const status = await getSessionStatus(statusStore, sessions, sid);
   if (!status.ok) return status;
   const allowlist = new Set(status.data.external_files ?? []);
   const canonical = canonicalizeExternalPath(reqPath);
@@ -567,24 +567,24 @@ function resolveWorkspaceContained(
  * ops share a single source of truth — the snapshot is what the client also
  * received to render the workspace section, so denies here can never surprise
  * a client that used a UI-visible folder. */
-function getWorkspaceAllowlist(
+async function getWorkspaceAllowlist(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
-): { ok: true; folders: string[] } | { ok: false; code: ErrorCode; msg: string } {
-  const status = getSessionStatus(statusStore, sessions, sid);
+): Promise<{ ok: true; folders: string[] } | { ok: false; code: ErrorCode; msg: string }> {
+  const status = await getSessionStatus(statusStore, sessions, sid);
   if (!status.ok) return status;
   const folders = (status.data.workspace_folders ?? []).map((f) => f.path);
   return { ok: true, folders };
 }
 
-export function fsListWorkspace(
+export async function fsListWorkspace(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
-): FsAccessResult<Omit<FsListResponse, "ok">> {
-  const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+): Promise<FsAccessResult<Omit<FsListResponse, "ok">>> {
+  const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
   if (!allow.ok) return allow;
   const resolved = resolveWorkspaceContained(allow.folders, reqPath);
   if (!resolved.ok) return resolved;
@@ -626,13 +626,13 @@ export function fsListWorkspace(
   return { ok: true, data: { sid, path: resolved.realPath, entries } };
 }
 
-export function fsReadWorkspace(
+export async function fsReadWorkspace(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
-): FsAccessResult<Omit<FsReadResponse, "ok">> {
-  const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
+  const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
   if (!allow.ok) return allow;
   const resolved = resolveWorkspaceContained(allow.folders, reqPath);
   if (!resolved.ok) return resolved;
@@ -656,14 +656,14 @@ export function fsReadWorkspace(
  *  containment root, workspace results are absolute (there is no single root
  *  to subtract from), so the workspace branch returns the walk root itself and
  *  fs_find's display mapping ignores it. */
-export function resolveFindRoot(
+export async function resolveFindRoot(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   kind: "contained" | "workspace",
   reqRoot: string | undefined,
   opts: FsAccessOptions = {},
-): FsAccessResult<{ realPath: string; containmentRoot: string }> {
+): Promise<FsAccessResult<{ realPath: string; containmentRoot: string }>> {
   if (kind === "workspace") {
     if (reqRoot === undefined || reqRoot === "") {
       return {
@@ -672,7 +672,7 @@ export function resolveFindRoot(
         msg: "fs_find root is required when kind is 'workspace'",
       };
     }
-    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
     const resolved = resolveWorkspaceContained(allow.folders, reqRoot);
     if (!resolved.ok) return resolved;
@@ -697,13 +697,13 @@ export function resolveFindRoot(
  *  are that this helper stops at "authorized realpath" (the HTTP serve layer
  *  streams bytes itself with a proper Content-Type) and imposes no
  *  FS_READ_MAX_BYTES cap so a screenshot larger than 512 KiB still renders. */
-export function fsResolveForServe(
+export async function fsResolveForServe(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
   kind: "contained" | "external" | "workspace",
-): FsAccessResult<{ realPath: string; size: number }> {
+): Promise<FsAccessResult<{ realPath: string; size: number }>> {
   let realPath: string;
   if (kind === "contained") {
     const rootResult = resolveRoot(sessions, sid);
@@ -722,7 +722,7 @@ export function fsResolveForServe(
         msg: "fs_serve external requires an absolute path",
       };
     }
-    const status = getSessionStatus(statusStore, sessions, sid);
+    const status = await getSessionStatus(statusStore, sessions, sid);
     if (!status.ok) return status;
     const allowlist = new Set(status.data.external_files ?? []);
     realPath = canonicalizeExternalPath(reqPath);
@@ -730,7 +730,7 @@ export function fsResolveForServe(
       return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
     }
   } else {
-    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
     const resolved = resolveWorkspaceContained(allow.folders, reqPath);
     if (!resolved.ok) return resolved;
@@ -771,12 +771,12 @@ export function fsResolveForServe(
  * (paths not an array, size cap) so a single bad token in the middle of an
  * otherwise-valid list still returns results for the rest.
  */
-export function fsStatBatch(
+export async function fsStatBatch(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   paths: unknown,
-): FsAccessResult<Omit<FsStatBatchResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsStatBatchResponse, "ok">>> {
   if (!Array.isArray(paths)) {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_stat_batch requires paths array" };
   }
@@ -795,38 +795,40 @@ export function fsStatBatch(
   const rootRes = resolveRoot(sessions, sid);
   const containmentRoot = rootRes.ok ? rootRes.root : null;
 
-  const results: (FsStatEntry | null)[] = paths.map((raw) => {
-    if (typeof raw !== "string" || raw === "" || !path.isAbsolute(raw)) return null;
-    const normalized = path.normalize(raw);
+  const results: (FsStatEntry | null)[] = await Promise.all(
+    paths.map(async (raw): Promise<FsStatEntry | null> => {
+      if (typeof raw !== "string" || raw === "" || !path.isAbsolute(raw)) return null;
+      const normalized = path.normalize(raw);
 
-    // 1) contained: absolute path lies inside the session's containment root
-    //    → rebase to a root-relative string and hand off to the same
-    //    resolver fs_read uses. Skip when the input equals the root itself
-    //    (that's a directory, never a file).
-    if (containmentRoot) {
-      const prefix = containmentRoot.endsWith(path.sep)
-        ? containmentRoot
-        : containmentRoot + path.sep;
-      if (normalized.startsWith(prefix)) {
-        const rel = normalized.slice(prefix.length);
-        if (rel !== "") {
-          const r = fsResolveForServe(sessions, statusStore, sid, rel, "contained");
-          if (r.ok) return { kind: "contained", path: rel };
+      // 1) contained: absolute path lies inside the session's containment root
+      //    → rebase to a root-relative string and hand off to the same
+      //    resolver fs_read uses. Skip when the input equals the root itself
+      //    (that's a directory, never a file).
+      if (containmentRoot) {
+        const prefix = containmentRoot.endsWith(path.sep)
+          ? containmentRoot
+          : containmentRoot + path.sep;
+        if (normalized.startsWith(prefix)) {
+          const rel = normalized.slice(prefix.length);
+          if (rel !== "") {
+            const r = await fsResolveForServe(sessions, statusStore, sid, rel, "contained");
+            if (r.ok) return { kind: "contained", path: rel };
+          }
         }
       }
-    }
 
-    // 2) workspace: absolute path is under a DR-0026 workspace_folders entry.
-    const rWs = fsResolveForServe(sessions, statusStore, sid, normalized, "workspace");
-    if (rWs.ok) return { kind: "workspace", path: normalized };
+      // 2) workspace: absolute path is under a DR-0026 workspace_folders entry.
+      const rWs = await fsResolveForServe(sessions, statusStore, sid, normalized, "workspace");
+      if (rWs.ok) return { kind: "workspace", path: normalized };
 
-    // 3) external: absolute path exactly matches the DR-0024 external_files
-    //    allowlist for this sid.
-    const rEx = fsResolveForServe(sessions, statusStore, sid, normalized, "external");
-    if (rEx.ok) return { kind: "external", path: normalized };
+      // 3) external: absolute path exactly matches the DR-0024 external_files
+      //    allowlist for this sid.
+      const rEx = await fsResolveForServe(sessions, statusStore, sid, normalized, "external");
+      if (rEx.ok) return { kind: "external", path: normalized };
 
-    return null;
-  });
+      return null;
+    }),
+  );
 
   return { ok: true, data: { results } };
 }
@@ -980,7 +982,7 @@ export function fsWrite(
  * overwrite; the same-UID TOCTOU limitation documented for `resolveContained`
  * applies here too.
  */
-export function fsEdit(
+export async function fsEdit(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
@@ -989,7 +991,7 @@ export function fsEdit(
   content: string,
   expectedMtime: string,
   expectedSize: number,
-): FsAccessResult<Omit<FsEditResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsEditResponse, "ok">>> {
   if (typeof content !== "string") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_edit content must be a string" };
   }
@@ -1013,7 +1015,7 @@ export function fsEdit(
 
   // Delegate authorization to the read-side resolver so every containment /
   // allowlist rule fs_read already enforces applies identically here.
-  const resolved = fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
+  const resolved = await fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
   if (!resolved.ok) return resolved;
   const { realPath } = resolved.data;
 
@@ -1113,14 +1115,14 @@ export function fsEdit(
  * exist), and a typo like "newdir/file.txt" surfaces as `not_found` rather
  * than silently creating a directory chain.
  */
-export function fsCreate(
+export async function fsCreate(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
   kind: "contained" | "workspace",
   content: string,
-): FsAccessResult<Omit<FsCreateResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsCreateResponse, "ok">>> {
   if (typeof reqPath !== "string" || reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_create requires path" };
   }
@@ -1147,7 +1149,7 @@ export function fsCreate(
     realPath = resolved.realPath;
     echoPath = path.relative(root, realPath);
   } else {
-    const allow = getWorkspaceAllowlist(sessions, statusStore, sid);
+    const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
     if (typeof reqPath !== "string" || !path.isAbsolute(reqPath)) {
       return {
@@ -1261,14 +1263,14 @@ export function fsCreate(
  *
  * Any of these replies invalid_args and no unlink happens.
  */
-export function fsDelete(
+export async function fsDelete(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
   reqPath: string,
   kind: "contained" | "workspace",
-): FsAccessResult<Omit<FsDeleteResponse, "ok">> {
-  const resolved = fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
+): Promise<FsAccessResult<Omit<FsDeleteResponse, "ok">>> {
+  const resolved = await fsResolveForServe(sessions, statusStore, sid, reqPath, kind);
   if (!resolved.ok) return resolved;
   const { realPath } = resolved.data;
 

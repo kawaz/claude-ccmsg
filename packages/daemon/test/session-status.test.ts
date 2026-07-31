@@ -999,7 +999,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos[0]?.status).toBe("completed");
   });
 
-  test("プリフィルタは大量の対象外行を parse せず、対象イベントだけを fold する", () => {
+  test("プリフィルタは大量の対象外行を parse せず、対象イベントだけを fold する", async () => {
     // 対象外 10k 行を含む大きな transcript でも機能結果が対象 3 行だけで決まる。
     const dir = fixtureDir();
     try {
@@ -1013,7 +1013,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
             .join(""),
       );
       const state = createSessionStatusState();
-      scanTranscript(file, state);
+      await scanTranscript(file, state);
       expect(snapshot(state).todos[0]?.status).toBe("completed");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -2300,6 +2300,144 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         ]) {
           const response = await session.request<ErrorLite>({ op, sid });
           expect(response.error.code).toBe("bad_request");
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+describe("session_status event loop yielding (DR-0029)", () => {
+  // Self-rescheduling setImmediate: each tick proves the loop completed a turn
+  // while the cold scan was in flight. A synchronous scan holds the turn for
+  // its whole duration and starves this. The scan runs in-process here on
+  // purpose — a daemon spawned as a child process would leave this loop idle
+  // and the assertion would pass no matter how the scan is written.
+  function startTicker(): { stop: () => number } {
+    let ticks = 0;
+    let running = true;
+    const tick = (): void => {
+      if (!running) return;
+      ticks += 1;
+      setImmediate(tick);
+    };
+    setImmediate(tick);
+    return {
+      stop: () => {
+        running = false;
+        return ticks;
+      },
+    };
+  }
+
+  /** ~9 MiB of filler spans three 4 MiB chunks, with the status-bearing rows
+   * last so a dropped chunk carry-over would lose them. */
+  function writeLargeTranscript(file: string): void {
+    const filler = `${JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(1000) }] },
+    })}\n`;
+    fs.writeFileSync(
+      file,
+      filler.repeat(9000) +
+        [...todoCreate(), ...todoUpdate("tu", "1", { status: "completed" })]
+          .map((line) => `${line}\n`)
+          .join(""),
+    );
+  }
+
+  test("cold scan は chunk ごとに event loop を明け渡し、末尾まで fold する", async () => {
+    const dir = fixtureDir();
+    try {
+      const file = path.join(dir, "large.jsonl");
+      writeLargeTranscript(file);
+      const state = createSessionStatusState();
+
+      const ticker = startTicker();
+      await scanTranscript(file, state);
+      const ticks = ticker.stop();
+
+      // 明け渡していれば chunk 境界ごとに最低 1 turn 回る。
+      expect(ticks).toBeGreaterThanOrEqual(3);
+      // yield を挟んでも最終行まで読めている。
+      expect(snapshot(state).todos[0]?.status).toBe("completed");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test(
+    "cold scan 中に別接続から届いた session_status も完全な fold を返す",
+    async () => {
+      // 2 本目は別 conn から投げる。同一 conn だと per-conn FIFO で直列化され、
+      // ready 待ちを消しても素通りする (= 検出力ゼロ) ため。別 conn なら
+      // subscribe の scan 中に dispatch が走り、scan 前に store 登録された
+      // live を覗くので、ready 待ちが無ければ prefix だけの snapshot が返る。
+      const ctx = await startTestDaemon();
+      const dir = fixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        writeLargeTranscript(file);
+        await sessionHello(ctx, sid, file);
+        const subscriber = await userHello(ctx);
+        const observer = await userHello(ctx);
+
+        const subscribed = subscriber.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const observed = observer.request<StatusOk>({ op: "session_status", sid });
+        expect((await subscribed).todos[0]?.status).toBe("completed");
+        expect((await observed).todos[0]?.status).toBe("completed");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "cold scan 中に切断した接続のキュー済み op はレジストリを汚さない",
+    async () => {
+      // FIFO チェーンは切断後もキューを進めるので、hello / subscribe 系が
+      // 遅れて実行されると読み手のいない peer と watch が残り、daemon 再起動
+      // まで消えない。受信済みでも切断後の op は捨てる。
+      const ctx = await startTestDaemon();
+      const dir = fixtureDir();
+      try {
+        const sid = "A";
+        const file = path.join(dir, `${sid}.jsonl`);
+        writeLargeTranscript(file);
+        await sessionHello(ctx, sid, file);
+
+        // 重い scan を先頭に積み、その後ろに登録系の op を並べてから切断する。
+        const leaving = await userHello(ctx);
+        leaving.write({ op: "session_status", sid });
+        leaving.write({ op: "subscribe" });
+        leaving.write({
+          op: "hello",
+          role: "session",
+          sid: "ghost",
+          repo: "r",
+          ws: "w",
+          cwd: "/tmp",
+        });
+        leaving.close();
+
+        const user = await userHello(ctx);
+        // 同じ transcript を別接続から fold しきる = 切断側の scan が終わるだけの
+        // 時間が daemon 上で経過したことの目印。ガードが無ければこの時点で
+        // キュー済みの hello は既に走っている。
+        await user.request<StatusOk>({ op: "session_status", sid });
+
+        // ghost は「出ないこと」の主張なので、遅れて現れないかを数往復ぶん見る。
+        // 上の session_status で scan 相当の時間は既に経過しており、ここは
+        // キュー末尾が流れ切るまでの猶予。
+        for (let i = 0; i < 20; i++) {
+          const peers = await user.request<{ ok: true; peers: { sid: string }[] }>({ op: "peers" });
+          expect(peers.peers.map((p) => p.sid)).not.toContain("ghost");
         }
       } finally {
         await stopTestDaemon(ctx);

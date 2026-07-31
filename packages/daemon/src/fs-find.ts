@@ -174,7 +174,7 @@ function collectLayers(absRoot: string, containmentRoot: string): IgnoreLayer[] 
   return layers;
 }
 
-export function fsFind(
+export async function fsFind(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
@@ -183,7 +183,7 @@ export function fsFind(
   query: unknown,
   respectGitignore: unknown,
   opts: FsAccessOptions = {},
-): FsAccessResult<Omit<FsFindResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsFindResponse, "ok">>> {
   if (kind !== "contained" && kind !== "workspace") {
     return {
       ok: false,
@@ -208,7 +208,7 @@ export function fsFind(
   // filtering is the default rather than the opt-in.
   const applyIgnore = respectGitignore ?? true;
 
-  const resolved = resolveFindRoot(sessions, statusStore, sid, kind, reqRoot, opts);
+  const resolved = await resolveFindRoot(sessions, statusStore, sid, kind, reqRoot, opts);
   if (!resolved.ok) return resolved;
 
   let stat: fs.Stats;

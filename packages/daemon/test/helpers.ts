@@ -131,6 +131,8 @@ export class TestClient {
   private lines: string[] = [];
   private waiters: Array<(l: string | null) => void> = [];
   private ended = false;
+  /** Stream events that arrived while `request` was waiting for a reply. */
+  private eventBacklog: string[] = [];
 
   attach(socket: Socket): void {
     this.socket = socket;
@@ -161,13 +163,26 @@ export class TestClient {
   write(obj: unknown): void {
     this.socket.write(`${JSON.stringify(obj)}\n`);
   }
+  /** Send an op and return its reply, classifying the way the real client does
+   * (ws.ts onMessage): a line carrying `ev` is a stream event, never a reply.
+   * An op that awaits IO can have a push land on the socket before its reply,
+   * so events are set aside for readEvent instead of being mistaken for one. */
   async request<T = any>(obj: unknown): Promise<T> {
     this.write(obj);
-    const line = await this.readLine();
-    if (line === null) throw new Error("connection closed before response");
-    return JSON.parse(line) as T;
+    for (;;) {
+      const line = await this.readLine();
+      if (line === null) throw new Error("connection closed before response");
+      const parsed = JSON.parse(line);
+      if (parsed !== null && typeof parsed === "object" && Object.hasOwn(parsed, "ev")) {
+        this.eventBacklog.push(line);
+        continue;
+      }
+      return parsed as T;
+    }
   }
   async readEvent<T = any>(): Promise<T | null> {
+    const buffered = this.eventBacklog.shift();
+    if (buffered !== undefined) return JSON.parse(buffered) as T;
     const line = await this.readLine();
     return line === null ? null : (JSON.parse(line) as T);
   }

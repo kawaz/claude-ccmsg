@@ -40,11 +40,11 @@ export function serveMimeForPath(p: string): string | null {
   return SERVE_MIME_BY_EXT[ext] ?? null;
 }
 
-export function handleFsServe(
+export async function handleFsServe(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   url: URL,
-): Response {
+): Promise<Response> {
   const sid = url.searchParams.get("sid");
   const reqPath = url.searchParams.get("path");
   const kindRaw = url.searchParams.get("kind");
@@ -60,7 +60,7 @@ export function handleFsServe(
     // existing FileViewer "バイナリファイル" notice, text files use fs_read.
     return new Response("unsupported media type", { status: 415 });
   }
-  const result = fsResolveForServe(sessions, statusStore, sid, reqPath, kindRaw);
+  const result = await fsResolveForServe(sessions, statusStore, sid, reqPath, kindRaw);
   if (!result.ok) {
     const status =
       result.code === "not_found"

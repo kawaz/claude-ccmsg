@@ -58,6 +58,7 @@ import {
   createSessionErrorsStore,
   sessionErrorEntries,
   stopAllSessionErrors,
+  sessionErrorsReady,
   syncSessionErrorWatches,
   type SessionErrorsStore,
 } from "./session-errors.ts";
@@ -1119,7 +1120,41 @@ function acceptTwoPhase(
   };
 }
 
+/** Per-connection FIFO for request handling.
+ *
+ * Ordinary (non 2-phase) replies pair with their request by arrival order on
+ * the client — ws.ts settles them with `pending.shift()` — so a reply must not
+ * overtake an earlier one on the same connection. Ops that await IO would do
+ * exactly that, so each connection dispatches through a chain: an awaited scan
+ * yields to the event loop, which unblocks every OTHER connection and the WS
+ * pushes DR-0029 is about, while this connection's own replies stay ordered.
+ *
+ * 2-phase ops (acceptTwoPhase) queue here too, but only to send their accept
+ * reply — that reply is positional like any other, so it must keep its slot.
+ * The work itself runs off-chain and reports through a result event carrying a
+ * request_id, which is what frees it from the ordering constraint.
+ *
+ * Keyed weakly so a chain dies with its connection, and each link swallows its
+ * own failure so one rejected op cannot poison the rest. */
+const connOpChains = new WeakMap<Conn, Promise<void>>();
+
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
+  const next = (connOpChains.get(conn) ?? Promise.resolve()).then(() =>
+    handleRequestQueued(daemon, conn, line).catch((e: unknown) => {
+      daemon.log.error(`request handling failed: ${String(e)}`);
+    }),
+  );
+  connOpChains.set(conn, next);
+}
+
+async function handleRequestQueued(daemon: Daemon, conn: Conn, line: string): Promise<void> {
+  // The conn can disconnect while earlier queued ops await IO. Its replies
+  // would be discarded (send() no-ops, and removeConn already tore down its
+  // subscriptions), but the registry writes would not: hello would resurrect a
+  // session entry for a socket nobody holds, and the subscribe ops would
+  // install watches with no reader and no future removeConn to clear them.
+  // Dropping the request is the same outcome as the bytes never arriving.
+  if (!daemon.connections.has(conn)) return;
   let req: Request;
   try {
     req = JSON.parse(line) as Request;
@@ -1136,7 +1171,7 @@ export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
     return;
   }
   try {
-    dispatch(daemon, conn, req);
+    await dispatch(daemon, conn, req);
   } catch (e) {
     daemon.log.error(`op '${req.op}' failed: ${String(e)}`);
     sendErr(conn, "internal", String(e));
@@ -1151,7 +1186,7 @@ export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   }
 }
 
-function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
+async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
   switch (req.op) {
     case "hello": {
       const prevId = conn.identity;
@@ -1951,10 +1986,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       // 2-phase like session_launch, and for a stronger reason than latency:
-      // handleRequest is synchronous and ordinary replies pair by arrival
-      // order, so an async op (fresh `claude agents` run + up to 3s kill
-      // grace) has no way to reply "immediately" without desynchronizing
-      // every later reply on this connection (DR-0028 addendum).
+      // ordinary replies pair by arrival order, so an op held open for its
+      // whole duration (fresh `claude agents` run + up to 3s kill grace) would
+      // block every later reply on this connection behind it — the per-conn
+      // chain preserves that order rather than removing the constraint. The
+      // accept reply takes the positional slot immediately and the outcome
+      // travels on a request_id-carrying event (DR-0028 addendum).
       const complete = acceptTwoPhase(
         daemon,
         conn,
@@ -2003,7 +2040,8 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       // 2-phase for session_kill's reason: the fresh `claude agents` resolution
-      // is async and handleRequest pairs ordinary replies by arrival order.
+      // is slow, and ordinary replies pair by arrival order, so holding this
+      // one open would stall every later reply on this connection.
       const complete = acceptTwoPhase(
         daemon,
         conn,
@@ -2090,7 +2128,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_read_external' requires user role");
         return;
       }
-      const result = fsReadExternal(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      const result = await fsReadExternal(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2108,7 +2146,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_list_workspace' requires user role");
         return;
       }
-      const result = fsListWorkspace(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      const result = await fsListWorkspace(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2122,7 +2165,12 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_read_workspace' requires user role");
         return;
       }
-      const result = fsReadWorkspace(daemon.sessions, daemon.sessionStatus, req.sid, req.path);
+      const result = await fsReadWorkspace(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2142,7 +2190,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_stat_batch' requires user role");
         return;
       }
-      const result = fsStatBatch(daemon.sessions, daemon.sessionStatus, req.sid, req.paths);
+      const result = await fsStatBatch(daemon.sessions, daemon.sessionStatus, req.sid, req.paths);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2160,7 +2208,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_find' requires user role");
         return;
       }
-      const result = fsFind(
+      const result = await fsFind(
         daemon.sessions,
         daemon.sessionStatus,
         req.sid,
@@ -2204,7 +2252,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_create' requires user role");
         return;
       }
-      const result = fsCreate(
+      const result = await fsCreate(
         daemon.sessions,
         daemon.sessionStatus,
         req.sid,
@@ -2228,7 +2276,13 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_delete' requires user role");
         return;
       }
-      const result = fsDelete(daemon.sessions, daemon.sessionStatus, req.sid, req.path, req.kind);
+      const result = await fsDelete(
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+        req.kind,
+      );
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2247,7 +2301,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'fs_edit' requires user role");
         return;
       }
-      const result = fsEdit(
+      const result = await fsEdit(
         daemon.sessions,
         daemon.sessionStatus,
         req.sid,
@@ -2317,6 +2371,9 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'session_errors' requires user role");
         return;
       }
+      // A watch started moments ago may still be folding; the op contract is a
+      // settled list, so wait for the scans already under way.
+      await sessionErrorsReady(daemon.sessionErrors);
       send(conn, { ok: true, errors: sessionErrorEntries(daemon.sessionErrors) });
       return;
     }
@@ -2461,7 +2518,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'session_status' requires user role");
         return;
       }
-      const result = getSessionStatus(daemon.sessionStatus, daemon.sessions, req.sid);
+      const result = await getSessionStatus(daemon.sessionStatus, daemon.sessions, req.sid);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;
@@ -2475,7 +2532,7 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         sendErr(conn, ErrorCode.bad_request, "op 'session_status_subscribe' requires user role");
         return;
       }
-      const result = subscribeSessionStatus(
+      const result = await subscribeSessionStatus(
         daemon.sessionStatus,
         daemon.transcriptTail,
         daemon.sessions,
