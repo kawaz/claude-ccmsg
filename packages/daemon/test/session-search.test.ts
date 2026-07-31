@@ -689,3 +689,47 @@ describe("session_search result metadata and limits", () => {
     if (result.ok) expect(result.data.hits).toEqual([]);
   });
 });
+
+// DR-0029: an IO-bearing request must not monopolize the event loop. The scan
+// walks the transcript in SCAN_CHUNK_BYTES (4 MiB) chunks, so a multi-chunk
+// file is the smallest fixture that can distinguish a per-chunk macrotask yield
+// from a single yield at entry.
+describe("session_search event loop yielding", () => {
+  // Self-rescheduling setImmediate: each tick proves the loop completed a turn
+  // while the scan was in flight. A microtask-only yield (or a fully
+  // synchronous scan) drains before the immediates phase and starves this.
+  function startTicker(): { stop: () => number } {
+    let ticks = 0;
+    let running = true;
+    const tick = (): void => {
+      if (!running) return;
+      ticks += 1;
+      setImmediate(tick);
+    };
+    setImmediate(tick);
+    return {
+      stop: () => {
+        running = false;
+        return ticks;
+      },
+    };
+  }
+
+  test("a multi-chunk scan lets other event loop work run and still matches", async () => {
+    const config = configDir();
+    // ~9 MiB of filler spans three 4 MiB chunks; the needle sits last so a
+    // dropped chunk carry-over or an early break would lose it.
+    const filler = Array.from({ length: 9000 }, () => user("x".repeat(1000)));
+    writeSession(config, sid(1), [...filler, user("chunkstraddlingneedle")]);
+
+    const ticker = startTicker();
+    const result = await search(config, { query: "chunkstraddlingneedle" });
+    const ticks = ticker.stop();
+
+    expect(result.hits.map((hit) => hit.sid)).toEqual([sid(1)]);
+    expect(result.hits[0]!.matches[0]!.text).toBe("chunkstraddlingneedle");
+    // One turn per chunk boundary at minimum; the pre-scan and per-project-dir
+    // yields push the real count higher.
+    expect(ticks).toBeGreaterThanOrEqual(3);
+  });
+});

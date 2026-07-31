@@ -20,6 +20,17 @@ const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const REQUEST_SCAN_MAX_BYTES = 256 * 1024 * 1024;
 const SNIPPET_CONTEXT_CHARS = 80;
 
+/** Hand the event loop a full turn. A microtask (`await Promise.resolve()`)
+ * drains before any pending IO or timer callback runs, so it cannot let a
+ * concurrent WebSocket delivery through; `setImmediate` re-enters the loop and
+ * does. DR-0029 requires every IO-bearing request to be interruptible this way,
+ * and a session scan can walk hundreds of megabytes. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 export interface SessionSearchLog {
   error(msg: string): void;
 }
@@ -213,7 +224,7 @@ function roughCwdMatches(projectDirName: string, cwdWords: readonly string[]): b
 /** Metadata-stage enumeration. The flattened project directory name is only a
  * lossy prefilter (`/`, `.`, and `_` can all become `-`); final cwd truth is
  * always checked against the first absolute top-level cwd inside the JSONL. */
-export function listCandidateFiles(params: ListCandidateParams): CandidateFile[] {
+export async function listCandidateFiles(params: ListCandidateParams): Promise<CandidateFile[]> {
   const detected = new Set(params.configDirs);
   const selected = params.selectedConfigDirs
     ? new Set(params.selectedConfigDirs.filter((dir) => detected.has(dir)))
@@ -225,7 +236,7 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
     const projects = path.join(configDir, "projects");
     let projectEntries: fs.Dirent[];
     try {
-      projectEntries = fs.readdirSync(projects, { withFileTypes: true });
+      projectEntries = await fs.promises.readdir(projects, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -235,10 +246,14 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
       const projectDir = path.join(projects, projectEntry.name);
       let files: fs.Dirent[];
       try {
-        files = fs.readdirSync(projectDir, { withFileTypes: true });
+        files = await fs.promises.readdir(projectDir, { withFileTypes: true });
       } catch {
         continue;
       }
+      // A config dir holds one project directory per session cwd, each with a
+      // stat per transcript; yielding per directory keeps the metadata sweep
+      // from monopolizing the loop on a large `~/.claude` tree.
+      await yieldToEventLoop();
       for (const entry of files) {
         if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
         const sid = entry.name.slice(0, -".jsonl".length);
@@ -247,7 +262,7 @@ export function listCandidateFiles(params: ListCandidateParams): CandidateFile[]
         const file = path.join(projectDir, entry.name);
         let stat: fs.Stats;
         try {
-          stat = fs.statSync(file);
+          stat = await fs.promises.stat(file);
         } catch {
           continue;
         }
@@ -298,15 +313,15 @@ function linePassesPrefilter(
   );
 }
 
-function scanCandidateFile(
+async function scanCandidateFile(
   file: string,
   clauses: readonly (readonly CompiledQueryPattern[])[],
   targetUser: boolean,
   targetAgent: boolean,
   caseSensitive: boolean,
   maxBytes: number,
-): ScanResult {
-  const size = fs.statSync(file).size;
+): Promise<ScanResult> {
+  const size = (await fs.promises.stat(file)).size;
   const limit = Math.min(size, Math.max(0, maxBytes));
   const matches: SessionSearchMatch[] = [];
   const seen = new Set<string>();
@@ -318,7 +333,7 @@ function scanCandidateFile(
   let firstTimestamp: string | null = null;
   let offset = 0;
   let carry = Buffer.alloc(0);
-  const fd = fs.openSync(file, "r");
+  const handle = await fs.promises.open(file, "r");
 
   const inspect = (line: string): void => {
     if (clauses.length > 0 && linePassesPrefilter(line, clauses, caseSensitive)) {
@@ -370,9 +385,12 @@ function scanCandidateFile(
 
   try {
     while (offset < limit) {
+      // Parsing and matching a chunk is pure CPU, so the loop must re-enter the
+      // event loop itself rather than relying on the read's IO wait.
+      await yieldToEventLoop();
       const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
       const chunk = Buffer.allocUnsafe(toRead);
-      const read = fs.readSync(fd, chunk, 0, toRead, offset);
+      const { bytesRead: read } = await handle.read(chunk, 0, toRead, offset);
       if (read === 0) break;
       offset += read;
       const data =
@@ -403,7 +421,7 @@ function scanCandidateFile(
     }
     if (carry.length > 0 && offset === size) inspect(carry.toString("utf-8"));
   } finally {
-    fs.closeSync(fd);
+    await handle.close();
   }
   return {
     matches,
@@ -659,15 +677,15 @@ export async function sessionSearch(
   log: SessionSearchLog,
   configDirs: readonly string[] = detectConfigDirs(),
 ): Promise<SessionSearchResult> {
-  // Yield once so server.ts can install its FIFO reply gate before the bounded
-  // synchronous scan starts. The scan itself stays synchronous to match the
-  // daemon's existing filesystem code and avoid interleaved mutable state.
-  await Promise.resolve();
+  // Yield before any filesystem work so server.ts can install its FIFO reply
+  // gate. The scan below keeps yielding per chunk, so a long search no longer
+  // blocks other clients' deliveries (DR-0029).
+  await yieldToEventLoop();
   const validated = validateRequest(req);
   if (!validated.ok) {
     return { ok: false, code: ErrorCode.invalid_args, msg: validated.msg };
   }
-  const candidates = listCandidateFiles({
+  const candidates = await listCandidateFiles({
     configDirs,
     selectedConfigDirs: req.config_dirs,
     sid: req.sid,
@@ -688,7 +706,7 @@ export async function sessionSearch(
     }
     let scan: ScanResult;
     try {
-      scan = scanCandidateFile(
+      scan = await scanCandidateFile(
         candidate.file,
         validated.clauses,
         validated.targetUser,
