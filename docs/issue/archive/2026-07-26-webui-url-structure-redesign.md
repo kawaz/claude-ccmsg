@@ -1,6 +1,6 @@
 ---
 title: "webui の URL 構造を論理的に再設計する"
-status: open
+status: resolved
 category: design
 created: 2026-07-26T19:08:12+09:00
 last_read: 2026-07-31T11:23:59+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-07-31T11:25:52+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: 確定仕様 (Navigation API 採用 / hash でなく実パス /s/<sid>/... / TL 位置は jsonl uuid / recent は localStorage / タブ切替 replace・セッション移動 push / タブ非アンマウント (LRU3) / グローバル back-forward ボタン / standalone webapp 対応) は v0.77〜v0.81 の URL 実パス化 3 フェーズで実装・リリース済み。実装正本は packages/webui/src/client/locator.ts と navigation.ts。kawaz の実機確認も完了済み (QUESTIONS.md の WEBUI-C20c チェック済み、2026-07-30)。受け入れ条件の checkbox は実装出荷後に未更新だっただけで、実体は全て満たされている。"]
 blocked_by:
 origin: "自リポ TODO"
 ---
@@ -188,7 +188,3 @@ iPad のホーム画面 webapp は standalone 表示でアドレスバーも戻�
 実装は Navigation API の `navigation.canGoBack` / `canGoForward` で活性判定し、`navigation.back()` / `forward()` を呼ぶだけで済む。
 
 ただし実装順序は URL 再設計(Phase 1)の後とする — 現状の hash ベース URL はタブ状態を持たないため、先に back/forward を付けても「Terminal タブから戻ったら Timeline に飛ぶ」等の期待外れな挙動になり、機能として成立しない。
-
-## 解決時の記録先
-
-- 設計判断を伴う: `decisions/DR-NNNN-...md`

@@ -15,7 +15,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-29 | design | open | [timeline-virtual-scroll](./2026-07-29-timeline-virtual-scroll.md) | TL が全行 DOM 化しているため DOM/リスナ数が際限なく増える (実測: 1 セッション DOM 73,000 ノード / リスナ 12,000 個)。windowing 導入の設計検討 |
 | 2026-07-29 | design | open | [sandbox-origin-raw-content-serving](./2026-07-29-sandbox-origin-raw-content-serving.md) | canddy sandbox origin (apps とは別 eTLD+1) を使い、MIME 制限なしの生配信 (HTML/バイナリ/長大出力) を capability トークンで提供する設計検討 |
 | 2026-07-27 | bug | open | [worker-todos-missing-from-status](./2026-07-27-worker-todos-missing-from-status.md) | daemon の TODO fold が main transcript しか読まず、worker (subagent) の TaskCreate/TaskUpdate が Status パネル/dump に反映されない (経路 2 系統とも塞がっている) |
-| 2026-07-26 | design | open | [webui-url-structure-redesign](./2026-07-26-webui-url-structure-redesign.md) | webui の URL 構造を論理的に再設計する。機能追加のたびにバラバラになった URL 形式の棚卸し・論理体系の設計・移行方針の決定 |
 | 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-16 | request | open | [kawaz-agents-status](./kawaz-agents-status.md) | claude agents --json を見るとbusyの他に status:"inactive" などもあるはずだがサイドバー |
