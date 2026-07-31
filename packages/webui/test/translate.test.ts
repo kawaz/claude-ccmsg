@@ -7,7 +7,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   _resetTranslatorStateForTest,
-  _setHostBatchWindowMsForTest,
   hasCachedHostThinkingText,
   hasTranslatorApi,
   translateThinkingTextInBrowser,
@@ -19,9 +18,6 @@ const originalGlobals: Record<string, unknown> = {};
 beforeEach(() => {
   originalGlobals.Translator = (globalThis as any).Translator;
   _resetTranslatorStateForTest();
-  // host 経路の microbatch 窓を 0 に落として、setTimeout(_, 0) 相当で次 macrotask に
-  // flush する。テストが 20ms スリープを挟まなくても batching 挙動を検証できる。
-  _setHostBatchWindowMsForTest(0);
 });
 
 afterEach(() => {
@@ -209,13 +205,13 @@ describe("translateThinkingTextInBrowser", () => {
   });
 });
 
-/** helper: 入力 texts を `[ja]<text>` に翻訳する成功レスポンスを返す標準 request。
- * 個別の失敗が要らないテストで request() 引数の記述を短くする。 */
-function makeEchoBatchRequest(recorder?: {
-  batches: string[][];
+/** helper: 1 段落を `[ja]<text>` に翻訳する成功レスポンスを返す標準 request。
+ * 送信ごとの texts を recorder に記録するので「1 op = 1 段落」を検証できる。 */
+function makeEchoRequest(recorder?: {
+  ops: string[][];
 }): (texts: string[]) => Promise<{ ok: true; results: { ok: true; text: string }[] }> {
   return async (texts: string[]) => {
-    recorder?.batches.push(texts.slice());
+    recorder?.ops.push(texts.slice());
     return {
       ok: true as const,
       results: texts.map((t) => ({ ok: true as const, text: `[ja]${t}` })),
@@ -225,7 +221,7 @@ function makeEchoBatchRequest(recorder?: {
 
 describe("translateThinkingTextOnHost", () => {
   test("reports a whole thinking as cached only after every English paragraph is cached", async () => {
-    const request = makeEchoBatchRequest();
+    const request = makeEchoRequest();
     const text = "First.\n\n日本語。\n\nSecond.";
 
     expect(hasCachedHostThinkingText(text)).toBe(false);
@@ -235,61 +231,67 @@ describe("translateThinkingTextOnHost", () => {
     expect(hasCachedHostThinkingText(text)).toBe(true);
   });
 
-  // host 経路も browser 経路と同じ `\n\n` 段落契約を持つ。日本語を含む段落と
-  // split が作る空段落は原文のまま保持し、英語段落だけを microbatch 集約層で
-  // 1 op にまとめて daemon に送り、元の段落順・境界で再結合する。
-  test("bundles English paragraphs from a single call into one batched request", async () => {
-    const recorder = { batches: [] as string[][] };
+  // kawaz r99 裁定: 段落は束ねず 1 op = 1 段落で送る。helper は op を直列で回すので、
+  // 段落ごとに独立した op を投げることで訳が段落単位で順次返る (束ねると長文段落が
+  // 同 op に居るだけで短文段落まで待たされる)。日本語段落と split が作る空段落は
+  // daemon へ送らず原文のまま保持し、元の段落順・境界で再結合する。
+  test("sends one op per English paragraph, each carrying exactly one text", async () => {
+    const recorder = { ops: [] as string[][] };
     const input = "First paragraph.\n\n日本語を含む段落。\n\n\n\nHello 日本語\n\nFinal paragraph.";
-    const result = await translateThinkingTextOnHost(input, makeEchoBatchRequest(recorder));
+    const result = await translateThinkingTextOnHost(input, makeEchoRequest(recorder));
 
-    // 集約層は 1 batch に束ねる (旧: 段落ごとに 1 op)。順序は入力順を保つ。
-    expect(recorder.batches).toEqual([["First paragraph.", "Final paragraph."]]);
+    expect(recorder.ops).toEqual([["First paragraph."], ["Final paragraph."]]);
     expect(result).toBe(
       "[ja]First paragraph.\n\n日本語を含む段落。\n\n\n\nHello 日本語\n\n[ja]Final paragraph.",
     );
   });
 
-  // 集約層が 1 op = N 段落で応答を受けたら、結果は入力順の段落位置に復元される
-  // (TranslateResponse.results の順序契約を利用)。resolver を後から発火しても
-  // join は入力順で組み立てる。
-  test("rejoins batched results at the original paragraph positions regardless of resolver order", async () => {
-    let externalResolve!: (response: { ok: true; results: { ok: true; text: string }[] }) => void;
-    const batches: string[][] = [];
-    const translated = translateThinkingTextOnHost("First.\n\nSecond.", (texts) => {
-      batches.push(texts.slice());
-      return new Promise((resolve) => {
-        externalResolve = resolve;
-      });
-    });
-    // await 1 tick so that microbatch flush timer fires and request() is invoked.
+  // 段落ごとの op は独立に解決するので、後段落が先に返ることもある。join は
+  // 解決順ではなく入力順で組み立てる。
+  test("rejoins results at the original paragraph positions regardless of resolve order", async () => {
+    const resolvers = new Map<string, (text: string) => void>();
+    const translated = translateThinkingTextOnHost(
+      "First.\n\nSecond.",
+      (texts) =>
+        new Promise((resolve) => {
+          resolvers.set(texts[0]!, (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+        }),
+    );
+    // request() 呼び出しは microtask 越しなので 1 tick 待つ。
     await new Promise((r) => setTimeout(r, 5));
 
-    expect(batches).toEqual([["First.", "Second."]]);
-    externalResolve({
-      ok: true,
-      results: [
-        { ok: true, text: "一番目" },
-        { ok: true, text: "二番目" },
-      ],
-    });
+    expect([...resolvers.keys()].sort()).toEqual(["First.", "Second."]);
+    // 入力と逆順に解決させる。
+    resolvers.get("Second.")!("二番目");
+    resolvers.get("First.")!("一番目");
     expect(await translated).toBe("一番目\n\n二番目");
   });
 
-  // 同時期 (batch 窓内) の複数 translateThinkingTextOnHost 呼び出しは、集約層が
-  // 段落を 1 op にまとめる。Timeline が複数 thinking を同時マウントするケースの
-  // helper 直列化コスト圧縮を担保する。
-  test("bundles paragraphs from concurrent translateThinkingTextOnHost calls into one batched request", async () => {
-    const recorder = { batches: [] as string[][] };
-    const request = makeEchoBatchRequest(recorder);
+  // 複数 thinking を同時に翻訳しても段落は束ねられず、段落ごとに 1 op が出る。
+  test("keeps ops separate across concurrent translateThinkingTextOnHost calls", async () => {
+    const recorder = { ops: [] as string[][] };
+    const request = makeEchoRequest(recorder);
     const [a, b] = await Promise.all([
       translateThinkingTextOnHost("Alpha1.\n\nAlpha2.", request),
       translateThinkingTextOnHost("Beta1.", request),
     ]);
     expect(a).toBe("[ja]Alpha1.\n\n[ja]Alpha2.");
     expect(b).toBe("[ja]Beta1.");
-    expect(recorder.batches).toHaveLength(1);
-    expect(recorder.batches[0]!.sort()).toEqual(["Alpha1.", "Alpha2.", "Beta1."]);
+    expect(recorder.ops.map((op) => op[0]).sort()).toEqual(["Alpha1.", "Alpha2.", "Beta1."]);
+    expect(recorder.ops.every((op) => op.length === 1)).toBe(true);
+  });
+
+  // 同一段落の並行要求は hostTextCache の Promise を共有し、op は 1 回で済む。
+  test("collapses concurrent requests for the same paragraph into a single op", async () => {
+    const recorder = { ops: [] as string[][] };
+    const request = makeEchoRequest(recorder);
+    const [a, b] = await Promise.all([
+      translateThinkingTextOnHost("Same paragraph.", request),
+      translateThinkingTextOnHost("Same paragraph.\n\nOther.", request),
+    ]);
+    expect(a).toBe("[ja]Same paragraph.");
+    expect(b).toBe("[ja]Same paragraph.\n\n[ja]Other.");
+    expect(recorder.ops.map((op) => op[0]).sort()).toEqual(["Other.", "Same paragraph."]);
   });
 
   // 全段落が日本語判定または空段落なら daemon/helper の仕事は無い。全文用の
@@ -306,40 +308,46 @@ describe("translateThinkingTextOnHost", () => {
     expect(calls).toBe(0);
   });
 
-  // 1 段落の helper item error はその段落だけ原文 fallback とし、成功した別段落の
-  // 訳は保持する。一部失敗で thinking 全体や host 経路を失敗扱いにしない。
+  // 1 段落の helper item error はその段落だけ原文 fallback とし、別 op で成功した
+  // 段落の訳は保持する。一部失敗で thinking 全体や host 経路を失敗扱いにしない。
   test("falls back only the paragraph whose helper item failed", async () => {
-    // 集約層は 1 batch を送る: request が受ける texts は ["Translate me.", "Fallback me."]。
-    // results 配列を入力順で組み立て、2 番目だけ item error にする。
     const result = await translateThinkingTextOnHost(
       "Translate me.\n\nFallback me.",
       async (texts) => ({
         ok: true,
-        results: texts.map((t) =>
-          t === "Fallback me."
-            ? ({ ok: false, error: "TranslationError.notInstalled" } as const)
-            : ({ ok: true, text: "翻訳成功" } as const),
-        ),
+        results:
+          texts[0] === "Fallback me."
+            ? [{ ok: false, error: "TranslationError.notInstalled" } as const]
+            : [{ ok: true, text: "翻訳成功" } as const],
       }),
     );
 
     expect(result).toBe("翻訳成功\n\nFallback me.");
   });
 
-  // batch 全体の request rejection は集約対象の全段落が原文 fallback になる
-  // (下位 op 単位での判定不能のため)。個別 item の失敗と違い、段落キャッシュに
-  // 成功訳は残らないので再試行が効く。
-  test("falls back all paragraphs in the batch when the whole request rejects", async () => {
-    const result = await translateThinkingTextOnHost("Works.\n\nRejects.", async () => {
-      throw new Error("helper exited");
-    });
+  // op が空 results を返す (helper 破損) 場合もその段落だけ原文 fallback。
+  test("falls back the paragraph when the response carries no result for it", async () => {
+    const result = await translateThinkingTextOnHost("Broken.", async () => ({
+      ok: true as const,
+      results: [],
+    }));
 
-    expect(result).toBe("Works.\n\nRejects.");
+    expect(result).toBe("Broken.");
   });
 
-  // batch 全体の ErrorResponse (ok:false) も request rejection と同じく batch 全段落を
-  // fallback する (下位 op の item 単位判定が付いてこないため)。
-  test("falls back all paragraphs in the batch when the response is an ErrorResponse", async () => {
+  // request rejection は当該段落のみの失敗として扱う (op が段落単位なので、
+  // 別段落の成功訳は巻き添えにならない)。段落キャッシュに成功訳は残らず再試行が効く。
+  test("falls back only the rejecting paragraph, keeping the other paragraph's translation", async () => {
+    const result = await translateThinkingTextOnHost("Works.\n\nRejects.", async (texts) => {
+      if (texts[0] === "Rejects.") throw new Error("helper exited");
+      return { ok: true as const, results: [{ ok: true as const, text: "成功" }] };
+    });
+
+    expect(result).toBe("成功\n\nRejects.");
+  });
+
+  // ErrorResponse (ok:false) も rejection と同じくその段落の原文 fallback。
+  test("falls back the paragraph when the response is an ErrorResponse", async () => {
     const result = await translateThinkingTextOnHost("First.\n\nSecond.", async () => ({
       ok: false as const,
       error: { code: "translate_helper_failed", msg: "helper exited" },
@@ -349,11 +357,10 @@ describe("translateThinkingTextOnHost", () => {
   });
 
   // 成功結果は全文でなく段落をキーに共有する。同じ段落が別 thinking text に再登場
-  // しても daemon へ再送せず、新しい段落だけを翻訳する。キャッシュ済み段落は
-  // batch に含まれない (受け入れ条件 4)。
-  test("caches successful translations per paragraph across different texts and excludes cached ones from later batches", async () => {
-    const recorder = { batches: [] as string[][] };
-    const request = makeEchoBatchRequest(recorder);
+  // しても daemon へ再送せず、新しい段落だけを翻訳する。
+  test("caches successful translations per paragraph across different texts and skips ops for cached ones", async () => {
+    const recorder = { ops: [] as string[][] };
+    const request = makeEchoRequest(recorder);
 
     expect(await translateThinkingTextOnHost("Repeated.\n\nFirst only.", request)).toBe(
       "[ja]Repeated.\n\n[ja]First only.",
@@ -361,9 +368,8 @@ describe("translateThinkingTextOnHost", () => {
     expect(await translateThinkingTextOnHost("Repeated.\n\nSecond only.", request)).toBe(
       "[ja]Repeated.\n\n[ja]Second only.",
     );
-    // 1 回目の batch: ["Repeated.", "First only."]、2 回目: ["Second only."] (Repeated
-    // はキャッシュ済みなので含まれない)。
-    expect(recorder.batches).toEqual([["Repeated.", "First only."], ["Second only."]]);
+    // Repeated. はキャッシュ済みなので 2 回目の op は出ない。
+    expect(recorder.ops).toEqual([["Repeated."], ["First only."], ["Second only."]]);
   });
 
   // fallback は成功訳ではないためキャッシュしない。一時的な helper 障害の後は同じ

@@ -161,90 +161,15 @@ export function hasCachedHostThinkingText(text: string): boolean {
     .every((paragraph) => shouldSkipParagraph(paragraph) || hostTextCache.has(paragraph));
 }
 
-/** Microbatch aggregator: 短時間窓 (既定 20ms) の間に enqueue された翻訳対象段落を
- * まとめて 1 回の translate op として送信する。daemon の translate op は
- * `texts: string[]` を受け入れ、Swift helper 側も `session.translations(from:)`
- * で複数段落を 1 セッション往復で処理できる (下位層は実装済み) ため、集約層を
- * 挟むだけで helper 直列化コスト (400-900ms × N) を N ではなく 1 回に圧縮できる。
- *
- * 段落単位の hostTextCache は enqueue 前に確認 (translateParagraphOnHost) するので
- * キャッシュ済み段落は batch に含まれない。 */
-const DEFAULT_HOST_BATCH_WINDOW_MS = 20;
-let hostBatchWindowMs = DEFAULT_HOST_BATCH_WINDOW_MS;
-
-type BatchItem = {
-  paragraph: string;
-  request: HostTranslateRequest;
-  /** 集約層から段落の最終テキストを引き渡すコールバック。ok=true なら翻訳成功、
-   * ok=false は失敗 fallback (原文をそのまま resolve する場合も含む)。呼び出し
-   * 側 (translateParagraphOnHost) は ok=false の時に段落キャッシュから promise を
-   * 除去して再試行を許す。 */
-  onResult: (text: string, ok: boolean) => void;
-};
-
-let pendingBatch: BatchItem[] = [];
-let batchFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-function enqueueBatchItem(item: BatchItem): void {
-  pendingBatch.push(item);
-  if (batchFlushTimer !== null) return;
-  batchFlushTimer = setTimeout(flushBatch, hostBatchWindowMs);
-}
-
-function flushBatch(): void {
-  batchFlushTimer = null;
-  if (pendingBatch.length === 0) return;
-  const items = pendingBatch;
-  pendingBatch = [];
-  // request 関数のインスタンスごとに 1 batch にまとめる。実運用では Timeline の
-  // useMemo で 1 つの stable instance を渡すため単一グループになる想定だが、
-  // 複数 request が同時に enqueue される想定外ケースでも取り違えないよう分離する。
-  const groups = new Map<HostTranslateRequest, BatchItem[]>();
-  for (const item of items) {
-    const g = groups.get(item.request);
-    if (g) g.push(item);
-    else groups.set(item.request, [item]);
-  }
-  for (const [request, group] of groups) sendBatch(request, group);
-}
-
-function fallbackWholeBatch(group: BatchItem[]): void {
-  for (const item of group) item.onResult(item.paragraph, false);
-}
-
-function sendBatch(request: HostTranslateRequest, group: BatchItem[]): void {
-  const texts = group.map((i) => i.paragraph);
-  let responsePromise: ReturnType<HostTranslateRequest>;
-  try {
-    responsePromise = request(texts);
-  } catch {
-    fallbackWholeBatch(group);
-    return;
-  }
-  responsePromise.then(
-    (response) => {
-      if (!response.ok) {
-        fallbackWholeBatch(group);
-        return;
-      }
-      // TranslateResponse.results は入力順を保つ契約 (protocol/src/index.ts)。
-      // 個別 item の ok=false はその段落のみ原文 fallback、それ以外は helper の
-      // 翻訳結果を採用する。結果配列が短い / 欠落しているケースは helper 破損と
-      // 見做してその段落のみ fallback。
-      group.forEach((item, i) => {
-        const result = response.results[i];
-        if (result && result.ok) item.onResult(result.text, true);
-        else item.onResult(item.paragraph, false);
-      });
-    },
-    () => fallbackWholeBatch(group),
-  );
-}
-
 /** host で 1 段落を翻訳する。日本語を含む段落・空段落は daemon へ送らず、
- * request/daemon/helper のどの失敗もその段落の原文へ fallback する。実際の
- * daemon 送信は microbatch aggregator (enqueueBatchItem) が短時間の他段落と
- * 束ねて 1 op に集約する。 */
+ * request/daemon/helper のどの失敗もその段落の原文へ fallback する。
+ *
+ * Design rationale: 1 op = 1 段落。daemon の translate op は `texts: string[]` を
+ * 受け取れるが、ここでは常に 1 要素で送る。daemon 側 helper は translate op を
+ * 厳密直列で処理するため、複数段落を 1 op に束ねるとその op が終わるまで 1 段落も
+ * 表示できない (短文数個の後ろに長文が並ぶと全部が長文待ちになる)。段落ごとに
+ * 独立した op を投げれば helper は 1 つずつ処理して段落単位で順次返すので、
+ * 総時間が多少増えても訳が小出しに出る (kawaz 裁定 r99: UX は小出し優先)。 */
 function translateParagraphOnHost(
   paragraph: string,
   request: HostTranslateRequest,
@@ -257,32 +182,46 @@ function translateParagraphOnHost(
 
   pendingHostCount++;
   notifyPendingChange();
-  let resolveOuter!: (text: string) => void;
-  const promise = new Promise<string>((resolve) => {
-    resolveOuter = resolve;
-  });
+
+  const settle = (text: string, ok: boolean): string => {
+    if (!ok && hostTextCache.get(paragraph) === promise) {
+      // 成功結果ではないためキャッシュを外し、後続 op で再試行できるようにする
+      // (browser 経路 paragraphCache とは対照的に、host 経路は helper の一時的
+      // 失敗からの復旧を想定してキャッシュに fallback を残さない)。
+      hostTextCache.delete(paragraph);
+    }
+    pendingHostCount--;
+    notifyPendingChange();
+    return text;
+  };
+
+  const send = async (): Promise<string> => {
+    let response: Awaited<ReturnType<HostTranslateRequest>>;
+    try {
+      // request 呼び出しを 1 microtask 遅らせる: request が同期 throw しても
+      // settle が下の `promise` 初期化より前に走らないようにするため。
+      response = await Promise.resolve().then(() => request([paragraph]));
+    } catch {
+      return settle(paragraph, false);
+    }
+    if (!response.ok) return settle(paragraph, false);
+    // TranslateResponse.results は入力順を保つ契約 (protocol/src/index.ts)。
+    // 1 要素で送っているので結果も 1 要素。item error / 結果欠落 (helper 破損)
+    // はどちらもこの段落の原文 fallback。
+    const result = response.results[0];
+    if (result?.ok) return settle(result.text, true);
+    return settle(paragraph, false);
+  };
+
+  // hostTextCache には送信前に promise を載せる: 同じ段落の並行要求はこの promise を
+  // 共有し、daemon への op は 1 回に収まる。
+  const promise = send();
   setBounded(hostTextCache, paragraph, promise, PARAGRAPH_CACHE_MAX_ENTRIES);
-  enqueueBatchItem({
-    paragraph,
-    request,
-    onResult: (text, ok) => {
-      if (!ok && hostTextCache.get(paragraph) === promise) {
-        // 成功結果ではないためキャッシュを外し、後続 op で再試行できるようにする
-        // (browser 経路 paragraphCache とは対照的に、host 経路は helper の一時的
-        // 失敗からの復旧を想定してキャッシュに fallback を残さない)。
-        hostTextCache.delete(paragraph);
-      }
-      pendingHostCount--;
-      notifyPendingChange();
-      resolveOuter(text);
-    },
-  });
   return promise;
 }
 
-/** thinking ブロックを `\n\n` で分割し、翻訳対象の各段落を microbatch 集約層
- * (enqueueBatchItem) 経由で送信する。集約層は同時期に enqueue された他 thinking
- * の段落と 1 op にまとめる。結果は入力順に `\n\n` で再結合する。 */
+/** thinking ブロックを `\n\n` で分割し、翻訳対象の各段落を段落ごとの独立した
+ * translate op として送る。結果は入力順に `\n\n` で再結合する。 */
 export async function translateThinkingTextOnHost(
   text: string,
   request: HostTranslateRequest,
@@ -294,24 +233,12 @@ export async function translateThinkingTextOnHost(
   return translated.join("\n\n");
 }
 
-/** テスト専用: browser/host 両経路のモジュール内キャッシュと microbatch 状態を
- * リセットする。バッチ窓は既定値 (20ms) に戻す。 */
+/** テスト専用: browser/host 両経路のモジュール内キャッシュと pending 状態を
+ * リセットする。 */
 export function _resetTranslatorStateForTest(): void {
   translatorPromise = null;
   paragraphCache.clear();
   hostTextCache.clear();
   pendingHostCount = 0;
   pendingListeners.clear();
-  if (batchFlushTimer !== null) {
-    clearTimeout(batchFlushTimer);
-    batchFlushTimer = null;
-  }
-  pendingBatch = [];
-  hostBatchWindowMs = DEFAULT_HOST_BATCH_WINDOW_MS;
-}
-
-/** テスト専用: microbatch 集約層の flush 窓を上書きする。0 を渡せば setTimeout(_, 0)
- * 相当で最速の次 macrotask に flush する。 */
-export function _setHostBatchWindowMsForTest(ms: number): void {
-  hostBatchWindowMs = ms;
 }
