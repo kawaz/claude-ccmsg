@@ -8,6 +8,9 @@ export type SessionTab = "files" | "timeline" | "terminal" | "status" | "rooms";
 
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
+  /** Host-wide LLM credential quota — the one screen that belongs to no
+   * session and no room, so it sits at the URL root next to /r and /s. */
+  | { view: "usage" }
   | {
       view: "session";
       tab?: Exclude<SessionTab, "timeline">;
@@ -47,6 +50,9 @@ export function parseUrl(pathname: string, search = ""): Locator {
   }
 
   const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] === "usage") {
+    return segments.length === 1 ? { view: "usage" } : { view: "unknown", pathname };
+  }
   if (segments[0] === "r" && segments.length >= 2) {
     const room = decodeNonEmpty(segments[1] ?? "");
     if (!room || segments.length > 3) return { view: "unknown", pathname };
@@ -136,6 +142,10 @@ export function messageHref(roomId: string, mid: number): string {
 
 export function roomHref(roomId: string): string {
   return `/r/${encodeURIComponent(roomId)}`;
+}
+
+export function usageHref(): string {
+  return "/usage";
 }
 
 export function sessionHref(sid: string): string {

@@ -342,4 +342,46 @@ describe("loadConfig", () => {
       expect(cfg.terminal_gateway_url).toBe("https://gw.example");
     });
   });
+
+  // llm_usage_url: another independent top-level key, sharing
+  // terminal_gateway_url's absolute-http(s)-URL rule. Its own describe rather
+  // than parametrising both keys through one block — the two features fail
+  // independently, and a shared table would hide which one a regression hit.
+  describe("llm_usage_url", () => {
+    test("valid https URL is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "https://gw.example/usage" }));
+      expect(loadConfig(file, log).llm_usage_url).toBe("https://gw.example/usage");
+      expect(warnings).toEqual([]);
+    });
+
+    test("whitespace is trimmed", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "  http://127.0.0.1:8080/usage  " }));
+      expect(loadConfig(file, log).llm_usage_url).toBe("http://127.0.0.1:8080/usage");
+    });
+
+    test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
+      for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ llm_usage_url: value }));
+        warnings = [];
+        expect(loadConfig(file, log).llm_usage_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    // Each URL key must degrade on its own: a typo in one cannot take the
+    // other feature down with it.
+    test("a malformed sibling URL key does not disturb this one", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          terminal_gateway_url: "not a url",
+          llm_usage_url: "https://gw.example/usage",
+        }),
+      );
+      const cfg = loadConfig(file, log);
+      expect(cfg.terminal_gateway_url).toBeUndefined();
+      expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
+      expect(warnings).toHaveLength(1);
+    });
+  });
 });

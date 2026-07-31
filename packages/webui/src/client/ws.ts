@@ -35,6 +35,7 @@ import type {
   HelloResponse,
   InviteResponse,
   KickResponse,
+  LlmUsageResponse,
   PeersResponse,
   PeersStreamEvent,
   PingResponse,
@@ -317,6 +318,14 @@ export interface WsHandle {
    * sessionKill, so this is 2-phase on the wire (ack +
    * ev:"session_env_result") hidden behind one Promise. */
   sessionEnv(sessionId: string): Promise<SessionEnvResponse | ErrorResponse>;
+  /** Per-credential LLM quota, proxied by the daemon from its configured
+   * gateway (user role only). 2-phase on the wire (ack +
+   * ev:"llm_usage_result") because the upstream fetch is slow; hidden behind
+   * one Promise like the others. `error.code === "llm_usage_not_configured"`
+   * means the daemon has no gateway URL — the same signal hello's
+   * `llm_usage_available` carries, seen here when the config changed under a
+   * live connection. */
+  llmUsage(): Promise<LlmUsageResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -328,6 +337,7 @@ type TwoPhaseOutcome =
   | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
+  | LlmUsageResponse
   | ErrorResponse;
 
 export function createWsClient(
@@ -454,6 +464,14 @@ export function createWsClient(
           type: "terminal-gateway/loaded",
           url: hello.terminal_gateway_url ?? null,
         });
+        // 同じく hello 由来の capability (llm_usage_url 設定済みか)。前の接続の
+        // 答えを引き継がないよう、省略時は明示的に false へ落とす — daemon の
+        // 設定が変わった後に再接続した時、古い capability のまま Usage ボタンが
+        // 残ると押した先で必ずエラーになる。
+        dispatch({
+          type: "llm-usage/availability",
+          available: hello.llm_usage_available === true,
+        });
       }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
@@ -518,7 +536,8 @@ export function createWsClient(
           streamEv.ev === "session_launch_result" ||
           streamEv.ev === "session_kill_result" ||
           streamEv.ev === "session_env_result" ||
-          streamEv.ev === "session_search_result")
+          streamEv.ev === "session_search_result" ||
+          streamEv.ev === "llm_usage_result")
       ) {
         const settle = inflight.get(streamEv.request_id);
         if (settle) {
@@ -850,5 +869,6 @@ export function createWsClient(
         request_id: `q${++nextRequestId}`,
         session_id: sessionId,
       }),
+    llmUsage: () => sendTwoPhase({ op: "llm_usage", request_id: `q${++nextRequestId}` }),
   };
 }

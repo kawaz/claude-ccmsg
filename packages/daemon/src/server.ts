@@ -14,6 +14,7 @@ import {
   type Identity,
   type KindEvent,
   type LeaveEvent,
+  type LlmUsageResponse,
   type MemberEvent,
   type MsgEvent,
   type NotifyFrom,
@@ -52,6 +53,7 @@ import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
+import { fetchLlmUsage } from "./llm-usage.ts";
 import {
   createSessionErrorsStore,
   sessionErrorEntries,
@@ -1093,6 +1095,7 @@ type TwoPhaseResult =
   | SessionLaunchResponse
   | SessionSearchResponse
   | TranslateResponse
+  | LlmUsageResponse
   | ErrorResponse;
 
 function acceptTwoPhase(
@@ -1196,10 +1199,16 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
       // config.json 未設定なら省略 → webui は Terminal タブを出さない。
       const terminalGatewayUrl =
         newId.role === "user" ? daemon.config.terminal_gateway_url : undefined;
+      // 同じ理由で llm_usage_url の「設定済みか」だけを user role に返す。URL
+      // 自体を渡さないのは fetch するのが daemon 側だから (CORS 無しの
+      // endpoint を browser から読めない) — webui は Usage メニューを出すか
+      // 否かの判断にしか使わない。
+      const llmUsageAvailable = newId.role === "user" && !!daemon.config.llm_usage_url;
       send(conn, {
         ok: true,
         version: daemon.version,
         ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
+        ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
       });
       return;
     }
@@ -2309,6 +2318,42 @@ function dispatch(daemon: Daemon, conn: Conn, req: Request): void {
         return;
       }
       send(conn, { ok: true, errors: sessionErrorEntries(daemon.sessionErrors) });
+      return;
+    }
+
+    // user role only, same posture as "agents"/"session_errors": the host's
+    // credential quota is an operator's view, and a session-role agent has no
+    // use for the standing of credentials it does not choose between.
+    case "llm_usage": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'llm_usage' requires user role");
+        return;
+      }
+      const usageUrl = daemon.config.llm_usage_url;
+      if (!usageUrl) {
+        sendErr(conn, ErrorCode.llm_usage_not_configured, "llm usage endpoint is not configured");
+        return;
+      }
+      // 2-phase for session_search's reason: the upstream fetch can take
+      // seconds, and ordinary replies pair by arrival order.
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "llm_usage",
+        "llm_usage_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      void fetchLlmUsage(usageUrl).then(
+        (result) => {
+          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
+          else complete(result.data);
+        },
+        (e) => {
+          daemon.log.error(`op 'llm_usage' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
       return;
     }
 

@@ -672,6 +672,13 @@ export type SessionSearchResultEvent = {
   request_id: string;
 } & (SessionSearchResponse | ErrorResponse);
 
+/** Completion of a 2-phase `llm_usage` request (see LlmUsageRequest's doc
+ * comment). Same correlation/classification rules as TranslateResultEvent. */
+export type LlmUsageResultEvent = {
+  ev: "llm_usage_result";
+  request_id: string;
+} & (LlmUsageResponse | ErrorResponse);
+
 export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
@@ -687,7 +694,8 @@ export type StreamEvent =
   | SessionLaunchResultEvent
   | SessionKillResultEvent
   | SessionEnvResultEvent
-  | SessionSearchResultEvent;
+  | SessionSearchResultEvent
+  | LlmUsageResultEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -994,6 +1002,24 @@ export interface SessionEnvRequest {
  * "launcher 未設定時" case). */
 export interface SessionLauncherConfigRequest {
   op: "session_launcher_config";
+}
+
+/** Per-credential LLM quota snapshot, proxied from the gateway named by
+ * `<dataDir>/config.json`'s `llm_usage_url` (user role only — quota is an
+ * operator's view of the host's credentials, not something a session's agent
+ * has any use for). The daemon fetches rather than the browser because the
+ * gateway serves no CORS headers, so a direct fetch from the webui origin is
+ * impossible; routing it through the daemon also keeps the gateway URL (an
+ * internal address) out of the browser entirely.
+ *
+ * 2-phase for session_env's reason: the upstream fetch is async and
+ * handleRequest pairs ordinary replies by arrival order. The outcome arrives
+ * as `ev:"llm_usage_result"`. */
+export interface LlmUsageRequest {
+  op: "llm_usage";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionEnvRequest.request_id). */
+  request_id: string;
 }
 
 /**
@@ -1468,6 +1494,7 @@ export type Request =
   | SessionKillRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
+  | LlmUsageRequest
   | FsListRequest
   | FsReadRequest
   | FsReadExternalRequest
@@ -1520,6 +1547,14 @@ export interface HelloResponse {
    * Terminal タブ自体を出さない (= 設定していないユーザには存在しない機能
    * に倒す。旧 localStorage `ccmsg.terminalGatewayUrl` 方式は廃止)。 */
   terminal_gateway_url?: string;
+  /** True when the daemon has a usable `llm_usage_url` configured, echoed to
+   * user-role hellos only (same posture as terminal_gateway_url). The URL
+   * itself is deliberately NOT sent: the daemon is the one that fetches it
+   * (the gateway serves no CORS headers), so the browser needs to know only
+   * whether the `llm_usage` op is worth offering. Absent means unconfigured,
+   * and the webui then hides the usage screen entirely rather than showing a
+   * menu entry that can only ever error. */
+  llm_usage_available?: boolean;
 }
 export interface PostResponse {
   ok: true;
@@ -1653,6 +1688,69 @@ export interface SessionEnvResponse {
   pid: number;
   env: Record<string, string>;
 }
+/** One quota window of one credential (upstream key "5h" / "7d" / whatever a
+ * future gateway adds — see LlmUsageSnapshot.windows). */
+export interface LlmUsageWindow {
+  /** Fraction of the window's quota already consumed, 0..1 (upstream sends
+   * 0.13 for 13%). Values above 1 are possible and are NOT clamped here. */
+  utilization: number;
+  /** Upstream verdict for the window. Known values are "allowed",
+   * "allowed_warning" and "rejected"; kept as a string because the set is the
+   * gateway's to grow and an unknown value must reach the UI as-is rather
+   * than being flattened into a wrong one. */
+  status: string;
+  /** Epoch seconds at which the window's counter resets. */
+  reset?: number;
+  reset_iso?: string;
+}
+
+/** Extra-credit spending state, which is per credential rather than per
+ * window (a credential can be out of credits while both windows are still
+ * "allowed"). */
+export interface LlmUsageOverage {
+  status: string;
+  disabled_reason?: string;
+}
+
+/** One observation of a credential's quota, as of `observed_at` — which can
+ * lag the response's own `generated_at` by minutes when the gateway has not
+ * seen traffic on that credential recently, so the UI shows its age. */
+export interface LlmUsageSnapshot {
+  observed_at?: number;
+  observed_at_iso?: string;
+  overage?: LlmUsageOverage;
+  /** Window key → window, keys verbatim from upstream. A map rather than
+   * named `five_hour`/`seven_day` fields so a gateway that starts reporting a
+   * third window shows up in the UI without a protocol change; the daemon
+   * decides membership by shape (a `utilization` number + a `status` string),
+   * so a future non-window sibling key is dropped rather than mis-rendered. */
+  windows: Record<string, LlmUsageWindow>;
+}
+
+export interface LlmUsageCredential {
+  name: string;
+  /** Credential kind, e.g. "claude_oauth" / "claude_bedrock" / "relay". */
+  type?: string;
+  /** Whether quota is knowable for this credential at all. Known values:
+   * "observed" (a snapshot is present), "not_applicable" (the credential has
+   * no quota to report), "upstream_dependent" (quota lives behind a relay).
+   * String for LlmUsageWindow.status's reason. */
+  support: string;
+  /** Present when `support` is "observed"; absent otherwise. */
+  snapshot?: LlmUsageSnapshot;
+}
+
+/** Payload of a completed llm_usage, delivered inside LlmUsageResultEvent.
+ * The gateway's own top-level fields are passed through; only `credentials`
+ * is normalized (see LlmUsageSnapshot.windows). */
+export interface LlmUsageResponse {
+  ok: true;
+  /** When the gateway assembled the response (epoch seconds). */
+  generated_at?: number;
+  generated_at_iso?: string;
+  credentials: LlmUsageCredential[];
+}
+
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
  * passed synchronous validation and its outcome will arrive as the matching
  * `*_result` stream event carrying the echoed `request_id`. This ack is the
@@ -2027,5 +2125,14 @@ export const ErrorCode = {
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",
   translate_helper_failed: "translate_helper_failed",
+  // llm_usage: `<dataDir>/config.json` has no valid `llm_usage_url`, so there
+  // is nothing to proxy. Distinct from llm_usage_unavailable so the webui can
+  // tell "operator never set this up" (hide the feature) from "the gateway is
+  // down right now" (show the error and let the user retry).
+  llm_usage_not_configured: "llm_usage_not_configured",
+  // llm_usage: the gateway was configured but did not answer usably — refused
+  // the connection, timed out, returned a non-2xx status, or sent a body that
+  // is not the expected JSON shape.
+  llm_usage_unavailable: "llm_usage_unavailable",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -51,7 +51,7 @@ export interface RoomState {
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
 
-export type View = "room" | "session" | "timeline";
+export type View = "room" | "session" | "timeline" | "usage";
 
 /** A URL that named a session or room which is not there. */
 export type MissingTarget = { kind: "session" | "room"; id: string };
@@ -173,6 +173,12 @@ export interface AppState {
    * 表示する (issue 2026-07-21-webui-terminal-tab-embed)。daemon の
    * `<dataDir>/config.json` の `terminal_gateway_url` 未設定なら null。 */
   terminalGatewayUrl: string | null;
+  /** hello response の `llm_usage_available`。daemon が LLM gateway の usage
+   * URL を設定している時だけ true になり、topbar の Usage ボタンと /usage
+   * 画面はこの時のみ出す (未設定の環境には存在しない機能に倒す —
+   * terminal_gateway_url と同じ姿勢)。URL 自体は daemon 側が fetch するので
+   * webui には来ない。 */
+  llmUsageAvailable: boolean;
   /** which top-level screen the locator currently selects. */
   view: View;
   /** Session tab selected by the real-path locator. */
@@ -245,6 +251,7 @@ export function initialState(): AppState {
     daemonInfo: null,
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
+    llmUsageAvailable: false,
     view: "room",
     currentTab: null,
     unknownPath: null,
@@ -280,6 +287,7 @@ export type Action =
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
+  | { type: "llm-usage/availability"; available: boolean }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "navigation/missing"; target: MissingTarget | null }
@@ -567,6 +575,21 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     return { ...state, unknownPath: locator.pathname, sidebarOpen: false };
   }
   if (locator.view === "session-root") return state;
+  if (locator.view === "usage") {
+    // Leaves currentSid/currentRoomId alone: the usage screen is a detour, and
+    // keeping the selection means the sidebar still shows where the user came
+    // from and the back button returns to a live view.
+    return {
+      ...state,
+      view: "usage",
+      currentTab: null,
+      unknownPath: null,
+      missingTarget: null,
+      currentAgent: null,
+      mentionTo: new Set(),
+      sidebarOpen: false,
+    };
+  }
   if (locator.view === "room") {
     return {
       ...state,
@@ -753,6 +776,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, hostTranslatorAvailable: action.host };
     case "terminal-gateway/loaded":
       return { ...state, terminalGatewayUrl: action.url };
+    case "llm-usage/availability":
+      return { ...state, llmUsageAvailable: action.available };
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":

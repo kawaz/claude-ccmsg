@@ -11,6 +11,9 @@ import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { ErrorView } from "./ErrorView.tsx";
+import { UsageView } from "./UsageView.tsx";
+import { usageHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
 import {
@@ -39,6 +42,7 @@ function loadSidebarWidth(): number {
  * セッションを見ながら「ccmsg リポにいる」と勘違いして会話する事故の温床
  * になる。何も選択していない初期状態だけアプリ名を出す。 */
 function TopbarTitle({ state }: { state: AppState }) {
+  if (state.view === "usage") return <h1 class="topbar-title">クオータ</h1>;
   if (state.view === "session" || state.view === "timeline") {
     const sid = state.currentSid;
     if (sid !== null) {
@@ -173,6 +177,23 @@ export function App() {
           <TopbarTitle state={state} />
         )}
         <ConnectionStatus status={state.connStatus} />
+        {/* Host-wide, so it lives in the global header rather than in any
+         * session's tabs. Shown only when the daemon has a usage gateway
+         * configured — without one the screen could only ever show an error,
+         * so the feature does not exist for that operator (same posture as the
+         * Terminal tab). */}
+        {state.llmUsageAvailable ? (
+          <button
+            id="app-usage"
+            type="button"
+            aria-label="usage"
+            title="クオータ"
+            aria-current={state.view === "usage" ? "page" : undefined}
+            onClick={() => pushNavigation(usageHref())}
+          >
+            &#9203;
+          </button>
+        ) : null}
         <div class="app-history-controls" aria-label="navigation history">
           <button
             id="app-back"
@@ -245,6 +266,8 @@ export function App() {
           />
         ) : state.unknownPath !== null ? (
           <UnknownPathView pathname={state.unknownPath} />
+        ) : state.view === "usage" ? (
+          <UsageView />
         ) : state.view === "room" ? (
           <RoomView state={state} />
         ) : null}

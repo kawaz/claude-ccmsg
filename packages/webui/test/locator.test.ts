@@ -11,6 +11,7 @@ import {
   statusHref,
   terminalHref,
   timelineHref,
+  usageHref,
 } from "../src/client/locator.ts";
 
 describe("real-path locators", () => {
@@ -21,6 +22,23 @@ describe("real-path locators", () => {
   test("room and message paths round-trip without sharing the session namespace", () => {
     expect(parseUrl(roomHref("r/7"))).toEqual({ view: "room", room: "r/7", mid: null });
     expect(parseUrl(messageHref("r7", 9))).toEqual({ view: "room", room: "r7", mid: 9 });
+  });
+
+  // /usage belongs to the host, not to a session or a room, so it sits at the
+  // root beside /r and /s and survives a reload like any other screen.
+  test("the usage screen has its own reloadable root path", () => {
+    expect(parseUrl(usageHref())).toEqual({ view: "usage" });
+    expect(usageHref()).toBe("/usage");
+  });
+
+  test("the usage path takes no segments below it", () => {
+    expect(parseUrl("/usage/anything")).toEqual({ view: "unknown", pathname: "/usage/anything" });
+  });
+
+  // Sessions and rooms live under /s and /r, so a session literally named
+  // "usage" cannot collide with the screen.
+  test("a session named usage is unaffected", () => {
+    expect(parseUrl(sessionHref("usage"))).toEqual({ view: "session-root", sid: "usage" });
   });
 
   test("a bare session path is a redirect target, not an implicit tab", () => {

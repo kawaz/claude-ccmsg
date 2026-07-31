@@ -21,12 +21,22 @@ export interface DaemonConfig {
    * 絶対 URL のみ受け付け、それ以外は warn + 未設定扱い (= webui 側で
    * Terminal タブ自体を出さない)。 */
   terminal_gateway_url?: string;
+  /** LLM gateway の usage endpoint URL — webui の Usage 画面が `llm_usage` op
+   * 経由でここの JSON を読む (endpoint が CORS ヘッダを返さないため browser
+   * 直 fetch は不可、daemon が proxy する)。terminal_gateway_url と同じく
+   * http:// / https:// の絶対 URL のみ受け付け、それ以外は warn + 未設定扱い
+   * (= webui 側で Usage メニュー自体を出さない)。 */
+  llm_usage_url?: string;
 }
 
-function parseTerminalGatewayUrl(raw: unknown, file: string, log: Log): string | undefined {
+/** Validate one absolute-http(s)-URL config field. Both URL-valued keys
+ * degrade identically — a malformed URL disables just that feature, never the
+ * whole config — so the rule lives in one place and the field name only
+ * shapes the warning text. */
+function parseHttpUrl(raw: unknown, field: string, file: string, log: Log): string | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw !== "string" || raw.trim() === "") {
-    warn(log, file, "terminal_gateway_url must be a non-empty string; ignoring");
+    warn(log, file, `${field} must be a non-empty string; ignoring`);
     return undefined;
   }
   const trimmed = raw.trim();
@@ -34,11 +44,11 @@ function parseTerminalGatewayUrl(raw: unknown, file: string, log: Log): string |
   try {
     url = new URL(trimmed);
   } catch {
-    warn(log, file, `terminal_gateway_url is not a valid URL: ${trimmed}; ignoring`);
+    warn(log, file, `${field} is not a valid URL: ${trimmed}; ignoring`);
     return undefined;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    warn(log, file, `terminal_gateway_url must be http:// or https://: ${trimmed}; ignoring`);
+    warn(log, file, `${field} must be http:// or https://: ${trimmed}; ignoring`);
     return undefined;
   }
   return trimmed;
@@ -223,9 +233,16 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
     parsed.session_launcher === undefined
       ? undefined
       : parseSessionLauncher(parsed.session_launcher, file, log);
-  const terminalGatewayUrl = parseTerminalGatewayUrl(parsed.terminal_gateway_url, file, log);
+  const terminalGatewayUrl = parseHttpUrl(
+    parsed.terminal_gateway_url,
+    "terminal_gateway_url",
+    file,
+    log,
+  );
+  const llmUsageUrl = parseHttpUrl(parsed.llm_usage_url, "llm_usage_url", file, log);
   const cfg: DaemonConfig = {};
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
+  if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;
   return cfg;
 }
