@@ -471,6 +471,14 @@ a {
   background: var(--accent);
 }
 
+/* kawaz r99m1: 選択中 sid が Pinned セクションにも出ている時、status
+ * セクション側 (2 番目に出てくる方) の行に付く弱めの選択装飾。accent の
+ * 薄い tint だけにして文字色は通常のまま (= .active 系の accent-fg 上書き
+ * を一切継承しない別クラス)。「選択中」の主表示は Pinned 側が担う。 */
+.session-row.active-secondary {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .session-row.active .session-main-link,
 .session-row.active .session-repo-ws,
 .session-row.active .session-branch,

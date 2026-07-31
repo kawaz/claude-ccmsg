@@ -50,6 +50,7 @@ function SessionRowItem({
   row,
   currentSid,
   statusBadge,
+  activeSecondary,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -57,6 +58,10 @@ function SessionRowItem({
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
   statusBadge: string | null;
+  /** kawaz r99m1: 同じ sid が Pinned セクションにも出ている時、こちら
+   * (status セクション側 = 2 番目に出てくる方) の選択装飾は主張を弱める。
+   * Pinned 側が正の「選択中」表示を担う。 */
+  activeSecondary: boolean;
 }) {
   const [cwdFull, setCwdFull] = useState(false);
   const { repo, ws: wsLabel } = sessionRowRepoWs(row);
@@ -82,7 +87,13 @@ function SessionRowItem({
 
   return (
     <li
-      class={row.sid === currentSid ? "active session-row" : "session-row"}
+      class={
+        row.sid === currentSid
+          ? activeSecondary
+            ? "active-secondary session-row"
+            : "active session-row"
+          : "session-row"
+      }
       title={titleParts.join("\n")}
     >
       <div
@@ -362,6 +373,9 @@ export function SessionList({
                 key={row.sid}
                 row={row}
                 currentSid={currentSid}
+                // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+                // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+                activeSecondary={pinnedSessions.has(row.sid)}
                 // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
                 // subscribe すると常駐コストが人数分乗るため、SessionView が
                 // 実際に Status/Timeline タブを開いているセッションだけ
