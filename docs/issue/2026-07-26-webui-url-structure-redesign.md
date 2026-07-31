@@ -3,7 +3,7 @@ title: "webui の URL 構造を論理的に再設計する"
 status: open
 category: design
 created: 2026-07-26T19:08:12+09:00
-last_read:
+last_read: 2026-07-31T11:23:59+09:00
 open_entered: 2026-07-26T19:08:12+09:00
 wip_entered:
 blocked_entered:
