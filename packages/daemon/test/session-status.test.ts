@@ -1254,6 +1254,126 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
+  test("transcript 追記後の再取得で、既存の親子関係を保ったまま新しい子が現れる", () => {
+    // status push ごとの再構築は transcript を増分読みする。追記分だけを読んでも
+    // (a) 以前に見た toolUseId が消えない (b) 追記された toolUseId が拾える。
+    // 親を subagent に置くことで、どちらが壊れても子が orphan (root 直下) へ
+    // 抜け落ちる形になり、両方向が判定できる。
+    const dir = fixtureDir();
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("toolu_parent")}\n`);
+      writeMeta(dir, "parent", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_parent",
+        spawnDepth: 0,
+      });
+      writeTranscript(dir, "parent", [agentUse("toolu_first")]);
+      writeMeta(dir, "first", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_first",
+        spawnDepth: 1,
+      });
+      const before = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(
+        before?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
+      ).toEqual(["first"]);
+
+      // parent の transcript が 1 行伸び、その子の meta も現れる (= 実セッションの spawn)
+      fs.appendFileSync(
+        path.join(dir, "subagents", "agent-parent.jsonl"),
+        `${agentUse("toolu_second")}\n`,
+      );
+      writeMeta(dir, "second", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_second",
+        spawnDepth: 1,
+      });
+      const after = readAgentTree(dir, rootFile, createSessionStatusState());
+      // root 直下は parent だけ = どちらの子も orphan に落ちていない
+      expect(after?.agents.map((n) => n.agent_id)).toEqual(["parent"]);
+      expect(after?.agents[0]?.children.map((c) => c.agent_id).sort()).toEqual(["first", "second"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("transcript が truncate されたら増分状態を捨てて読み直す", () => {
+    // 同じ path が短い内容で書き直された場合、旧内容の toolUseId を持ち越すと
+    // 消えたはずの親に子がぶら下がったままになる。親を subagent にすることで
+    // 「持ち越し = parent 配下」「読み直し = orphan で root 直下」と木の形が
+    // 分かれ、size 縮小の検知を実際に判定できる。
+    const dir = fixtureDir();
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("toolu_parent")}\n`);
+      writeMeta(dir, "parent", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_parent",
+        spawnDepth: 0,
+      });
+      writeTranscript(dir, "parent", [agentUse("toolu_long_identifier_aaaa")]);
+      writeMeta(dir, "child", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_long_identifier_aaaa",
+        spawnDepth: 1,
+      });
+      const before = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(
+        before?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
+      ).toEqual(["child"]);
+
+      // parent の transcript を truncate (旧 id はもうどこにも無い)
+      fs.writeFileSync(path.join(dir, "subagents", "agent-parent.jsonl"), "{}\n");
+      const after = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(after?.agents.find((n) => n.agent_id === "parent")?.children).toEqual([]);
+      // 親を失った child は orphan fallback で root 直下に出る
+      expect(after?.agents.map((n) => n.agent_id).sort()).toEqual(["child", "parent"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
+  test("末尾に改行の無い書きかけ行も親解決に使え、行が完成しても重複しない", () => {
+    // transcript は追記途中の行を晒す。改行待ちで捨てると spawn 直後の
+    // 親子関係が UI から消えるため、未終端行も読んだうえで、改行が付いた
+    // 後の再読で二重計上しないことを確認する。親を subagent に置くのは
+    // truncate の test と同じ理由 (親解決の成否が木の形に出る)。
+    const dir = fixtureDir();
+    try {
+      const rootFile = `${dir}.jsonl`;
+      fs.writeFileSync(rootFile, `${agentUse("toolu_parent")}\n`);
+      writeMeta(dir, "parent", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_parent",
+        spawnDepth: 0,
+      });
+      const parentTranscript = path.join(dir, "subagents", "agent-parent.jsonl");
+      fs.writeFileSync(parentTranscript, agentUse("toolu_partial")); // 改行なし
+      writeMeta(dir, "kid", {
+        agentType: "general-purpose",
+        toolUseId: "toolu_partial",
+        spawnDepth: 1,
+      });
+      const partial = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(
+        partial?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
+      ).toEqual(["kid"]);
+
+      fs.appendFileSync(parentTranscript, "\n");
+      const complete = readAgentTree(dir, rootFile, createSessionStatusState());
+      expect(
+        complete?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
+      ).toEqual(["kid"]);
+      expect(complete?.agents.map((n) => n.agent_id)).toEqual(["parent"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(`${dir}.jsonl`, { force: true });
+    }
+  });
+
   test("親 transcript から toolUseId が見つからない孤児は root 直下に fallback する", () => {
     // 想定外に親が消えた/転記されていない場合でも UI から辿れるように、
     // orphan は root 直下 (depth 0 相当) として surface する。

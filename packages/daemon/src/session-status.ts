@@ -1044,43 +1044,122 @@ function parseAgentIdFromFilename(filename: string): string | undefined {
   return agentId.length > 0 ? agentId : undefined;
 }
 
-/** Extract every `id` from `tool_use` blocks whose `name` is `"Agent"` in a
- * .jsonl transcript, returning them as a Set. Used to reverse-map a child
- * meta's `toolUseId` back to its parent transcript (= the file where the
- * Agent tool_use was emitted). Read is bounded by MAX_TRANSCRIPT_SCAN_BYTES
- * to keep snapshot cost predictable when a session accumulates huge
- * transcripts; empirically an Agent tool_use is roughly the first thing a
- * subagent-spawning session writes so the truncation rarely matters, but
- * the bound is documented rather than silent. */
-function readAgentToolUseIds(file: string, out: Set<string>): void {
-  let content: string;
+/** Collect every `id` from `tool_use` blocks whose `name` is `"Agent"` in one
+ * transcript line. */
+function collectAgentToolUseIds(line: string, out: Set<string>): void {
+  // Cheap prefilter: only lines that mention both a tool_use id and the
+  // literal `"name":"Agent"` need JSON parsing.
+  if (!line.includes('"name":"Agent"')) return;
+  if (!line.includes('"type":"tool_use"')) return;
+  let row: unknown;
   try {
-    content = fs.readFileSync(file, "utf-8");
+    row = JSON.parse(line);
   } catch {
     return;
   }
-  // Cheap prefilter: only lines that mention both a tool_use id and the
-  // literal `"name":"Agent"` need JSON parsing.
-  const lines = content.split("\n");
-  for (const line of lines) {
-    if (!line.includes('"name":"Agent"')) continue;
-    if (!line.includes('"type":"tool_use"')) continue;
-    let row: unknown;
-    try {
-      row = JSON.parse(line);
-    } catch {
-      continue;
+  if (!isRecord(row)) return;
+  const message = row.message;
+  if (!isRecord(message) || !Array.isArray(message.content)) return;
+  for (const block of message.content) {
+    if (!isRecord(block) || block.type !== "tool_use") continue;
+    if (block.name !== "Agent") continue;
+    const id = stringValue(block.id);
+    if (id) out.add(id);
+  }
+}
+
+/** Per-file incremental scan state for {@link readAgentToolUseIds}. Retains
+ * only the extracted Agent tool_use ids and the offset up to the last
+ * COMPLETE line consumed, so memory is proportional to the number of agents
+ * a session spawned, not to transcript size. File identity is tracked the
+ * same way transcript.ts's Watch does (ino + birthtime), because an
+ * unlink+recreate can reuse the inode. */
+interface AgentToolUseIdScan {
+  ino: number;
+  birthtimeMs: number;
+  /** Bytes consumed; always sits on a newline boundary. */
+  offset: number;
+  ids: Set<string>;
+}
+
+/** Cap on cached transcripts. Entries are refreshed on access, so eviction
+ * drops the least recently scanned file — a re-scan from offset 0 is correct,
+ * just slower. */
+const AGENT_TOOL_USE_ID_CACHE_MAX_FILES = 512;
+const agentToolUseIdScans = new Map<string, AgentToolUseIdScan>();
+
+/** Read the new tail of `file` into `scan`, advancing `scan.offset` only past
+ * complete lines. A trailing partial line is parsed but not consumed, so a
+ * transcript whose last line lacks a newline still contributes its ids (and
+ * re-contributes them harmlessly on the next call — `ids` is a Set). */
+function scanAgentToolUseIdsFrom(file: string, scan: AgentToolUseIdScan, limit: number): void {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, "r");
+  } catch {
+    return;
+  }
+  let offset = scan.offset;
+  let carry = Buffer.alloc(0);
+  try {
+    while (offset < limit) {
+      const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
+      const chunk = Buffer.allocUnsafe(toRead);
+      const n = fs.readSync(fd, chunk, 0, toRead, offset);
+      if (n === 0) break;
+      offset += n;
+      const data =
+        carry.length === 0 ? chunk.subarray(0, n) : Buffer.concat([carry, chunk.subarray(0, n)]);
+      let start = 0;
+      for (;;) {
+        const newline = data.indexOf(0x0a, start);
+        if (newline < 0) break;
+        collectAgentToolUseIds(data.toString("utf-8", start, newline), scan.ids);
+        start = newline + 1;
+      }
+      scan.offset = offset - (data.length - start);
+      carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
     }
-    if (!isRecord(row)) continue;
-    const message = row.message;
-    if (!isRecord(message) || !Array.isArray(message.content)) continue;
-    for (const block of message.content) {
-      if (!isRecord(block) || block.type !== "tool_use") continue;
-      if (block.name !== "Agent") continue;
-      const id = stringValue(block.id);
-      if (id) out.add(id);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (carry.length > 0) collectAgentToolUseIds(carry.toString("utf-8"), scan.ids);
+}
+
+/** Union into `out` every `id` of an `Agent` tool_use block recorded in a
+ * .jsonl transcript. Used to reverse-map a child meta's `toolUseId` back to
+ * its parent transcript (= the file where the Agent tool_use was emitted).
+ *
+ * Called once per transcript per status push, so it reads incrementally: the
+ * ids found so far are cached per path and only bytes appended since the last
+ * call are parsed. Truncation and file replacement reset the cache (ino /
+ * birthtime / size-shrink checks, mirroring transcript.ts's Watch). */
+function readAgentToolUseIds(file: string, out: Set<string>): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    agentToolUseIdScans.delete(file);
+    return;
+  }
+  let scan = agentToolUseIdScans.get(file);
+  if (scan) {
+    const replaced =
+      scan.ino !== stat.ino ||
+      (scan.birthtimeMs > 0 && stat.birthtimeMs > 0 && scan.birthtimeMs !== stat.birthtimeMs);
+    if (replaced || stat.size < scan.offset) scan = undefined;
+    else agentToolUseIdScans.delete(file); // re-inserted below to refresh recency
+  }
+  if (!scan) {
+    scan = { ino: stat.ino, birthtimeMs: stat.birthtimeMs, offset: 0, ids: new Set() };
+    if (agentToolUseIdScans.size >= AGENT_TOOL_USE_ID_CACHE_MAX_FILES) {
+      const oldest = agentToolUseIdScans.keys().next();
+      if (!oldest.done) agentToolUseIdScans.delete(oldest.value);
     }
   }
+  agentToolUseIdScans.set(file, scan);
+  if (stat.size > scan.offset) scanAgentToolUseIdsFrom(file, scan, stat.size);
+  for (const id of scan.ids) out.add(id);
 }
 
 /** r44 m7: build a `SessionStatusSnapshot.agent_tree` from `<sidDir>/subagents/`.
