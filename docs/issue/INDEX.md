@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-08-02 | design | open | [attachment-file-preview-and-grouping](./2026-08-02-attachment-file-preview-and-grouping.md) | file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け (Read/Edit/Write vs attachments) |
 | 2026-07-31 | task | open | [audit-blocking-io-paths](./2026-07-31-audit-blocking-io-paths.md) | daemon/webui の同期 IO・イベントループ阻害箇所の洗い出しと非同期化仕分け (DR-0029、r99m5 裁定を受けた監査) |
 | 2026-07-31 | bug | open | [path-canonicalization-latent-gaps](./2026-07-31-path-canonicalization-latent-gaps.md) | パス正規化の潜在ギャップ 2 件: symlink 綴りの containment 判定漏れ、peers.cwd が生綴りのまま非対称になっている件 |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
