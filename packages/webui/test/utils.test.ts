@@ -165,6 +165,7 @@ function roomWithMember(m: MemberEvent): RoomState {
     lastMid: 0,
     lastTs: null,
     kind: "normal",
+    history: "loaded",
   };
 }
 
@@ -230,6 +231,7 @@ function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
     lastMid: 0,
     lastTs: null,
     kind: "normal",
+    history: "loaded",
     ...overrides,
   };
 }

@@ -16,7 +16,7 @@ import { useNow } from "../useNow.ts";
 const INVITE_ALREADY_NOTICE_MS = 3000;
 
 export function RoomView({ state }: { state: AppState }) {
-  const { ws } = useApp();
+  const { ws, store } = useApp();
   const room = state.currentRoomId ? state.rooms.get(state.currentRoomId) : undefined;
   const mid = state.currentMid;
   const [dragOver, setDragOver] = useState(false);
@@ -85,6 +85,31 @@ export function RoomView({ state }: { state: AppState }) {
     );
     return () => ids.forEach(clearTimeout);
   }, [room?.id]);
+
+  // Opening a room is what fetches its history: subscribe only carries room
+  // metadata now (kawaz r99 m12), so an unopened room's `timeline` is empty by
+  // design. "idle" is the one status that fetches — "loading"/"loaded" are
+  // already covered, and "error" stays put rather than retrying in a loop
+  // (a reconnect or a room switch back is the retry).
+  useEffect(() => {
+    const id = room?.id;
+    if (!id || room.history !== "idle") return;
+    store.dispatch({ type: "room-history/loading", room: id });
+    void ws
+      .roomHistory(id)
+      .then((res) => {
+        store.dispatch({
+          type: "room-history/loaded",
+          room: id,
+          ...(res.ok ? {} : { error: res.error.msg }),
+        });
+      })
+      // request dropped with the socket: leave the room in "error" so the
+      // reconnect-driven remount fetches again instead of hanging on "loading".
+      .catch(() => {
+        store.dispatch({ type: "room-history/loaded", room: id, error: "disconnected" });
+      });
+  }, [room?.id, room?.history]);
 
   // Switching rooms discards any leftover invite notice from the previous one.
   useEffect(() => {

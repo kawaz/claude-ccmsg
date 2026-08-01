@@ -1605,3 +1605,102 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     expect(before.pinnedSessions.size).toBe(0);
   });
 });
+
+// Subscribe stopped carrying every room's history (kawaz r99 m12), so the
+// store now distinguishes "a room I know of" from "a room I have the events
+// for". These tests pin both halves: what a listed-but-unfetched room does with
+// events that reach it, and what marks it fetched.
+describe("reducer / room history fetch state", () => {
+  const listed = (): AppState =>
+    dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [], last_mid: 2, last_ts: null }],
+    });
+
+  test("a room from rooms/loaded starts unfetched", () => {
+    expect(listed().rooms.get("r1")?.history).toBe("idle");
+  });
+
+  test("an unfetched room takes an event's metadata but not the event itself", () => {
+    // The daemon's recent-replay pushes the last few minutes of msgs to a
+    // subscriber with no cursor. Appending one to an empty timeline would put
+    // it ahead of the older msgs a later room_history fetch delivers.
+    const state = dispatch(listed(), {
+      type: "protocol-event",
+      event: { type: "msg", mid: 3, from: ADMIN_ID, ts: "t3", msg: "recent", r: "r1" },
+    });
+    const room = state.rooms.get("r1");
+    expect(room?.timeline).toEqual([]);
+    expect(room?.msgs.size).toBe(0);
+    // ...but the sidebar's ordering/badge inputs still move.
+    expect(room?.lastMid).toBe(3);
+    expect(room?.lastTs).toBe("t3");
+  });
+
+  test("a title event on an unfetched room still renames it", () => {
+    const state = dispatch(listed(), {
+      type: "protocol-event",
+      event: { type: "title", title: "renamed", ts: "t4", r: "r1" },
+    });
+    expect(state.rooms.get("r1")?.title).toBe("renamed");
+    expect(state.rooms.get("r1")?.timeline).toEqual([]);
+  });
+
+  test("events fold normally once the fetch is in flight and after it lands", () => {
+    // "loading" already folds: the fetched snapshot's own events arrive between
+    // the request and its reply.
+    const loading = dispatch(listed(), { type: "room-history/loading", room: "r1" });
+    const withSnapshot = dispatch(loading, {
+      type: "protocol-event",
+      event: { type: "msg", mid: 1, from: ADMIN_ID, ts: "t1", msg: "old", r: "r1" },
+    });
+    expect(withSnapshot.rooms.get("r1")?.timeline).toHaveLength(1);
+
+    const loaded = dispatch(withSnapshot, { type: "room-history/loaded", room: "r1" });
+    expect(loaded.rooms.get("r1")?.history).toBe("loaded");
+    const live = dispatch(loaded, {
+      type: "protocol-event",
+      event: { type: "msg", mid: 2, from: ADMIN_ID, ts: "t2", msg: "new", r: "r1" },
+    });
+    expect(live.rooms.get("r1")?.timeline).toHaveLength(2);
+  });
+
+  test("a failed fetch is recorded as an error, not as loaded", () => {
+    const state = dispatch(dispatch(listed(), { type: "room-history/loading", room: "r1" }), {
+      type: "room-history/loaded",
+      room: "r1",
+      error: "disconnected",
+    });
+    expect(state.rooms.get("r1")?.history).toBe("error");
+  });
+
+  test("a room the store has never seen folds its introductory snapshot as-is", () => {
+    // create_room / invite deliver the new room's whole snapshot unprompted —
+    // that IS its history, so there is nothing to fetch.
+    const state = dispatch(initialState(), {
+      type: "protocol-event",
+      event: { ...member, r: "r-new" },
+    });
+    const room = state.rooms.get("r-new");
+    expect(room?.history).toBe("loaded");
+    expect(room?.timeline).toHaveLength(1);
+  });
+
+  test("rooms/history-reset drops the named rooms' events, keeping their metadata", () => {
+    const loaded = dispatch(dispatch(listed(), { type: "room-history/loading", room: "r1" }), {
+      type: "room-history/loaded",
+      room: "r1",
+    });
+    const painted = dispatch(loaded, {
+      type: "protocol-event",
+      event: { type: "msg", mid: 1, from: ADMIN_ID, ts: "t1", msg: "old", r: "r1" },
+    });
+    const reset = dispatch(painted, { type: "rooms/history-reset", rooms: ["r1"] });
+    const room = reset.rooms.get("r1");
+    expect(room?.history).toBe("idle");
+    expect(room?.timeline).toEqual([]);
+    expect(room?.msgs.size).toBe(0);
+    // metadata the `op:"rooms"` reply owns survives, so the sidebar row stays put
+    expect(room?.lastMid).toBe(2);
+  });
+});

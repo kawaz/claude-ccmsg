@@ -1039,6 +1039,7 @@ const IDENTITY_OPS = new Set([
   "archive_room",
   "kick",
   "subscribe",
+  "room_history",
   "notify",
   "dir_tree",
   "session_launch",
@@ -1858,6 +1859,23 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       }
       const msgs = readMsgs(room, parseMidSelector(req.mids));
       send(conn, { ok: true, room: room.id, msgs });
+      return;
+    }
+
+    case "room_history": {
+      const room = daemon.rooms.get(req.room);
+      // A room the caller can't see is reported as absent rather than as a
+      // permission failure: room ids are opaque, and "exists but not yours"
+      // would leak that an id is live.
+      if (!room || !subscriberSeesRoom(conn, room)) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      // Same no-cursor join snapshot the `backlog: true` subscribe path builds,
+      // for this one room. The reply goes last so the client can treat it as
+      // the "snapshot complete" sentinel (frames on one connection keep order).
+      sendBacklog(conn, room);
+      send(conn, { ok: true, room: room.id });
       return;
     }
 

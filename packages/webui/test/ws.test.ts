@@ -1189,11 +1189,12 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] })); // rooms
     await tick();
 
-    // 3rd request is subscribe — must not carry `since_seq` since the store is empty.
-    // `backlog: true` opts into the full snapshot for rooms `since_seq` doesn't cover
-    // (issue 2026-07-17-subscribe-no-backlog-default's daemon-default flip).
+    // 3rd request is subscribe — must not carry `since_seq` since the store is empty,
+    // and must not ask for `backlog` at all: room history is fetched per room when
+    // one is opened (`op:"room_history"`), not pushed for every room at connect
+    // time (kawaz r99 m12).
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    expect(subscribeReq).toEqual({ op: "subscribe", backlog: true });
+    expect(subscribeReq).toEqual({ op: "subscribe" });
   });
 
   // Regression guard for the snapshot-order bug: onOpen's own `rooms` reply
@@ -1237,9 +1238,9 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    // Must be the fresh-reload shape (no `since_seq`, `backlog: true`), because the
-    // store was empty at handshake start even though rooms/loaded has since filled it.
-    expect(subscribeReq).toEqual({ op: "subscribe", backlog: true });
+    // Must be the fresh-reload shape (no `since_seq`), because the store was empty
+    // at handshake start even though rooms/loaded has since filled it.
+    expect(subscribeReq).toEqual({ op: "subscribe" });
     // Sanity: state really did get repopulated by rooms/loaded — a getState()
     // read at this point would see a non-empty map, confirming the snapshot
     // must have happened earlier.
@@ -1266,6 +1267,7 @@ describe("createWsClient agents/ping (U1)", () => {
             lastMid: 5,
             lastTs: null,
             kind: "normal" as const,
+            history: "loaded" as const,
           },
         ],
       ]),
@@ -1287,7 +1289,56 @@ describe("createWsClient agents/ping (U1)", () => {
     await tick();
 
     const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
-    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 }, backlog: true });
+    expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
+  });
+
+  test("onOpen resets the history of rooms this connection has no cursor for", async () => {
+    // Subscribe replays nothing for a cursorless room, so whatever events the
+    // store still holds for it end at an unknown gap. Those rooms go back to
+    // "idle" (refetched when opened); a room the cursor covers keeps its
+    // events and takes the delta replay.
+    const actions: Action[] = [];
+    storage["ccmsg.since_seq"] = JSON.stringify({ r1: 5 });
+    const room = (id: string) => ({
+      id,
+      title: undefined,
+      membersById: new Map(),
+      memberOrder: [],
+      msgs: new Map(),
+      timeline: [],
+      lastMid: 5,
+      lastTs: null,
+      kind: "normal" as const,
+      history: "loaded" as const,
+    });
+    const stateWithRooms = {
+      ...initialState(),
+      rooms: new Map([
+        ["r1", room("r1")],
+        ["r2", room("r2")],
+      ]),
+    };
+    const handle = createWsClient(
+      (a) => actions.push(a),
+      () => stateWithRooms,
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+
+    const tick = () => Promise.resolve().then(() => Promise.resolve());
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" }));
+    await tick();
+    ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
+    await tick();
+
+    const reset = actions.filter((a) => a.type === "rooms/history-reset");
+    expect(reset).toEqual([{ type: "rooms/history-reset", rooms: ["r2"] }]);
+    // ...and it was dispatched before subscribe went out, so the replay that
+    // follows lands in rooms whose status already reflects this connection.
+    expect(JSON.parse(ws1.sent[2] ?? "{}")).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
   });
 
   test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {

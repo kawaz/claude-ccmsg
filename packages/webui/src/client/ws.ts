@@ -41,6 +41,7 @@ import type {
   PingResponse,
   PostResponse,
   ReadResponse,
+  RoomHistoryResponse,
   Request,
   Response,
   RoomsResponse,
@@ -136,6 +137,13 @@ export interface WsHandle {
   ): Promise<CreateRoomResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
+  /** Fetch one room's history (`op:"room_history"`). The events themselves come
+   * back on the subscribe stream and fold into the store like any other
+   * delivered event; this promise resolves once they have all arrived, which is
+   * what RoomView's fetch effect flips the room's `history` flag on. Subscribe
+   * no longer carries every room's backlog, so this is how an opened room gets
+   * painted. */
+  roomHistory(room: string): Promise<RoomHistoryResponse | ErrorResponse>;
   /** Add a connected session to an existing room (DR-0011 §1-4: SessionList's
    * drag-a-session-row-onto-the-chat gesture, handled in RoomView's drop
    * zone). Success reaches this room's member list via the broadcast member
@@ -435,23 +443,20 @@ export function createWsClient(
     //
     // Page reload starts from a fresh empty store — the localStorage-carried
     // `since_seq` cursor is stale in the sense that "we've seen up to seq N" no
-    // longer holds against an empty scrollback. Omit `since_seq` so the daemon
-    // replays the full backlog (u1 role is uncapped, see server.ts's
-    // sendBacklog non-since branch) and RoomView paints with real history
-    // instead of only msgs newer than the pre-reload cursor (kawaz 2026-07-14:
-    // "ROOMを選択した時に過去ログが空になる… ユーザ向けには全ログを再送信して復元されるように").
-    // In-page reconnects still send `since_seq` — the store retained its state
-    // across the disconnect, so BBS delta replay is the correct/cheap thing
-    // (packages/cli's reconnect.test.ts contract for daemon-restart transparency).
+    // longer holds against an empty scrollback. Omit `since_seq` so nothing is
+    // silently skipped once history is fetched. In-page reconnects still send
+    // `since_seq` — the store retained its state across the disconnect, so BBS
+    // delta replay is the correct/cheap thing (packages/cli's reconnect.test.ts
+    // contract for daemon-restart transparency).
     //
-    // `backlog: true` on both branches (issue 2026-07-17-subscribe-no-backlog-default):
-    // the daemon's subscribe default became "no replay, just a room_cursors summary"
-    // for any room without a `since_seq` cursor — a CLI-sidecar-shaped default that
-    // would leave RoomView with no history for a room this connection has no cursor
-    // for yet (a fresh reload, or a room created entirely during a dropped in-page
-    // reconnect). The webui always wants the old unconditional snapshot for those,
-    // so it opts back in explicitly; rooms already covered by `since_seq` still take
-    // the cheaper delta-replay path regardless of this flag.
+    // Neither branch sets `backlog: true` (kawaz r99 m12: "ws の接続時に全ルームの
+    // メッセージ履歴を全部送り付けてる… 最低限ルームの参加者情報とかタイトルだけで
+    // 十分。その ROOM を開いたときに取れば良い"). A reload with N rooms used to pull
+    // every room's entire log through the socket before anything painted. Room
+    // metadata for the sidebar comes from the `op:"rooms"` reply above; a room's
+    // events are fetched by RoomView with `op:"room_history"` when it's opened.
+    // Rooms covered by `since_seq` still get their delta replay, so a room already
+    // painted before an in-page reconnect stays caught up.
     const spaHasState = getState().rooms.size > 0;
     try {
       const hello = await send<HelloResponse>({ op: "hello", role: "user" });
@@ -475,11 +480,16 @@ export function createWsClient(
       }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
-      await send(
-        spaHasState
-          ? { op: "subscribe", since_seq: since, backlog: true }
-          : { op: "subscribe", backlog: true },
-      );
+      // Rooms this connection has no cursor for get no delta replay below, so
+      // any events the store still holds for them end at an unknown gap (an
+      // in-page reconnect that outlasted the daemon's recent-replay window).
+      // Reset them to "idle" — the metadata from the `op:"rooms"` reply above
+      // survives, and the history is refetched if and when the room is opened.
+      // Must run before `subscribe`, so the replay that follows lands in rooms
+      // whose status already reflects this connection.
+      const stale = [...getState().rooms.keys()].filter((id) => since[id] === undefined);
+      if (stale.length > 0) dispatch({ type: "rooms/history-reset", rooms: stale });
+      await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
       const peers = await send<PeersResponse>({ op: "peers" });
       if (peers.ok) dispatch({ type: "peers/loaded", peers: peers.peers });
       // U1: initial `claude agents --json` paint + daemon provenance for the
@@ -564,10 +574,10 @@ export function createWsClient(
       return;
     }
     if ("ev" in streamEv && streamEv.ev === "notify") return; // not surfaced in the UI (yet)
-    // Never actually emitted to this client — the webui always subscribes with
-    // `backlog: true` (see onOpen) so every visible room gets a real replay
-    // instead. Guarded here anyway so a protocol drift can't fall through to
-    // the DeliveredEvent cast below and get dispatched as a bogus room event.
+    // Per-room `last_mid` summary for the rooms this subscribe replayed nothing
+    // for — which, since the webui stopped asking for `backlog`, is most of
+    // them. Ignored: the same numbers already came from the `op:"rooms"` reply
+    // in onOpen, and a room's events are fetched on open (`op:"room_history"`).
     if ("ev" in streamEv && streamEv.ev === "room_cursors") return;
     // U1: live push whenever the daemon's merged `claude agents --json` poll
     // result changes (only emitted while >=1 user-role subscriber is
@@ -803,6 +813,7 @@ export function createWsClient(
       }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
+    roomHistory: (room) => send({ op: "room_history", room }),
     invite: (room, sid) => send({ op: "invite", room, sid }),
     fsList: (sid, path) => send({ op: "fs_list", sid, ...(path !== undefined ? { path } : {}) }),
     fsRead: (sid, path) => send({ op: "fs_read", sid, path }),

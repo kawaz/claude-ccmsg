@@ -70,6 +70,7 @@ function makeRoomState(overrides: Partial<RoomState> & { id: string }): RoomStat
     lastTs: overrides.lastTs ?? null,
     archived: overrides.archived,
     kind: overrides.kind ?? "normal",
+    history: overrides.history ?? "loaded",
   };
 }
 

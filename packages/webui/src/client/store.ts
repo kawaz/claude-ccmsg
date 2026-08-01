@@ -47,6 +47,13 @@ export interface RoomState {
    * (hint + broadcast-target picker) and paints the sidebar row with a
    * broadcast badge. Absent = "normal" (default at construction below). */
   kind: RoomKind;
+  /** Whether this room's history has been fetched (`op:"room_history"`).
+   * `rooms/loaded` gives every room its metadata (title, members, last_mid) but
+   * no events, so a room stays "idle" until the user opens it — that's what
+   * keeps a reload from pulling every room's whole log. "loaded" is what stops
+   * RoomView from re-fetching (and duplicating non-msg events in `timeline`,
+   * which has no id to dedup on the way `msgs` does). */
+  history: "idle" | "loading" | "loaded" | "error";
 }
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
@@ -273,6 +280,16 @@ export function initialState(): AppState {
 export type Action =
   | { type: "conn/status"; status: ConnStatus }
   | { type: "rooms/loaded"; rooms: RoomSummary[] }
+  // One room's `op:"room_history"` round trip (RoomView opens a room). The
+  // snapshot events themselves arrive as ordinary delivered events and fold in
+  // through applyProtocolEvent; these two only move the room's `history` flag.
+  // Reconnect-time invalidation: a room this connection holds no `since_seq`
+  // cursor for gets no delta replay, so whatever events the store still has for
+  // it are a snapshot from a dead socket with an unknown gap at the end.
+  // Dropping them back to "idle" makes the next open refetch.
+  | { type: "rooms/history-reset"; rooms: string[] }
+  | { type: "room-history/loading"; room: string }
+  | { type: "room-history/loaded"; room: string; error?: string }
   | { type: "peers/loaded"; peers: PeerInfo[] }
   // Both the one-shot `op:"agents"` reply (initial paint) and the pushed
   // `ev:"agents"` stream event (subsequent changes) fold in here — the
@@ -425,6 +442,7 @@ function newRoom(id: string): RoomState {
     lastMid: 0,
     lastTs: null,
     kind: "normal",
+    history: "idle",
   };
 }
 
@@ -502,29 +520,76 @@ function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
   return { ...state, rooms };
 }
 
+/** Drop the named rooms' fetched events, keeping the metadata the `op:"rooms"`
+ * reply owns (title, members, last_mid — the sidebar keeps painting). Back at
+ * "idle", a room refetches its history the next time it is opened. */
+function forgetRoomHistories(state: AppState, roomIds: string[]): AppState {
+  if (roomIds.length === 0) return state;
+  const rooms = new Map(state.rooms);
+  for (const id of roomIds) {
+    const room = rooms.get(id);
+    if (!room) continue;
+    rooms.set(id, { ...room, timeline: [], msgs: new Map(), history: "idle" });
+  }
+  return { ...state, rooms };
+}
+
+function setRoomHistory(state: AppState, roomId: string, history: RoomState["history"]): AppState {
+  const [room, rooms] = withRoom(state.rooms, roomId);
+  rooms.set(roomId, { ...room, history });
+  return { ...state, rooms };
+}
+
 /** Fold one delivered protocol event (subscribe backlog/live, DR-0003) into room state.
  * Every branch also refreshes `lastTs` from its own event's timestamp (member's
  * `joined_at`, everything else's `ts`) to match daemon storage.ts's `lastTs()`, which
  * takes the last *any* event's ts, not just msg — otherwise a live-subscribed client's
  * room-list order (e.g. after an archive toggle) would only match a post-reload refetch
- * once a msg happened to land afterward. */
+ * once a msg happened to land afterward.
+ *
+ * A known room whose history hasn't been fetched yet takes the metadata half
+ * only: members, title, archived, kind, lastMid, lastTs all update (the sidebar
+ * row has to stay live), but nothing is appended to `timeline`/`msgs`. Such a
+ * room is a sidebar entry built from the `op:"rooms"` reply, and the events
+ * reaching it arrive out of order relative to history it doesn't have yet — the
+ * daemon's recent-replay window pushes the last few minutes of msgs on
+ * subscribe, which would otherwise sit in `timeline` *before* the older msgs a
+ * later `op:"room_history"` appends. Dropping them costs nothing: the fetch
+ * that runs when the room is opened includes them. */
 function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
   const roomId = ev.r;
+  // A room the store has never seen is one the daemon just introduced — a fresh
+  // create_room, or an invite that added this client — and it introduces it by
+  // delivering the room's whole snapshot. That IS the history, so the room is
+  // born "loaded" and folds events normally; only a room already known (and
+  // therefore already listed without its events) waits for an explicit fetch.
+  const known = state.rooms.has(roomId);
   let [room, rooms] = withRoom(state.rooms, roomId);
+  if (!known) room = { ...room, history: "loaded" };
+  // "loading" counts as painted: the history snapshot's own events arrive
+  // between the request and its reply, so waiting for "loaded" would drop the
+  // very events being fetched. The only other events that can land in that
+  // window are live ones the daemon delivered after the request left the client
+  // and before it handled it; a msg among them dedups by mid below, and a
+  // duplicated member/title line in `timeline` is the accepted cost of not
+  // buffering a whole second event queue for a sub-millisecond race.
+  const painted = room.history === "loading" || room.history === "loaded";
+  const withEvent = (r: RoomState, appended: DeliveredEvent): RoomState =>
+    painted ? { ...r, timeline: [...r.timeline, appended] } : r;
   switch (ev.type) {
     case "member":
       room = upsertMember(room, ev);
-      room = { ...room, timeline: [...room.timeline, ev], lastTs: ev.joined_at };
+      room = { ...withEvent(room, ev), lastTs: ev.joined_at };
       break;
     case "leave": {
       const membersById = new Map(room.membersById);
       const m = membersById.get(ev.id);
       if (m) membersById.set(ev.id, { ...m, left: true });
-      room = { ...room, membersById, timeline: [...room.timeline, ev], lastTs: ev.ts };
+      room = { ...withEvent({ ...room, membersById }, ev), lastTs: ev.ts };
       break;
     }
     case "msg":
-      if (!room.msgs.has(ev.mid)) {
+      if (painted && !room.msgs.has(ev.mid)) {
         const msgs = new Map(room.msgs);
         msgs.set(ev.mid, ev);
         room = { ...room, msgs, timeline: [...room.timeline, ev] };
@@ -532,10 +597,10 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
       room = { ...room, lastMid: Math.max(room.lastMid, ev.mid), lastTs: ev.ts };
       break;
     case "title":
-      room = { ...room, title: ev.title, timeline: [...room.timeline, ev], lastTs: ev.ts };
+      room = { ...withEvent(room, ev), title: ev.title, lastTs: ev.ts };
       break;
     case "archive":
-      room = { ...room, archived: ev.archived, timeline: [...room.timeline, ev], lastTs: ev.ts };
+      room = { ...withEvent(room, ev), archived: ev.archived, lastTs: ev.ts };
       break;
     case "kind":
       // DR-0013: KindEvent lands in a fresh broadcast room's initial snapshot
@@ -754,8 +819,14 @@ export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "conn/status":
       return { ...state, connStatus: action.status };
+    case "rooms/history-reset":
+      return forgetRoomHistories(state, action.rooms);
     case "rooms/loaded":
       return { ...applyRoomsLoaded(state, action.rooms), roomsLoaded: true };
+    case "room-history/loading":
+      return setRoomHistory(state, action.room, "loading");
+    case "room-history/loaded":
+      return setRoomHistory(state, action.room, action.error !== undefined ? "error" : "loaded");
     case "peers/loaded":
       return { ...state, peers: action.peers, peersLoaded: true };
     case "agents/loaded":

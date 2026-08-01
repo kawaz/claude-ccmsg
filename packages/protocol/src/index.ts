@@ -860,6 +860,24 @@ export interface ReadRequest {
   mids: string | number[];
 }
 
+/**
+ * "Paint me this room's history" — the room's full join snapshot (present
+ * member state + title/link/kind events + msgs) streamed to the requesting
+ * connection as ordinary delivered events, exactly as the no-cursor
+ * `subscribe` snapshot would have sent them. Unlike `read` (msgs only, by mid
+ * selector) this carries every event type, so a client that renders a mixed
+ * room timeline can paint from it directly.
+ *
+ * Intended for a client that subscribes without `backlog` and fetches history
+ * per room when the user opens one, instead of receiving every room's history
+ * up front. The `{ok:true, room}` reply is sent AFTER the snapshot events, so
+ * it doubles as the "snapshot complete" sentinel.
+ */
+export interface RoomHistoryRequest {
+  op: "room_history";
+  room: string;
+}
+
 export interface RoomsRequest {
   op: "rooms";
 }
@@ -1486,6 +1504,7 @@ export type Request =
   | KickRequest
   | SubscribeRequest
   | ReadRequest
+  | RoomHistoryRequest
   | RoomsRequest
   | PeersRequest
   | NotifyRequest
@@ -1601,6 +1620,12 @@ export interface ReadResponse {
   ok: true;
   room: string;
   msgs: MsgEvent[];
+}
+/** Sent after the room's snapshot events (see RoomHistoryRequest): receiving it
+ * means the history for `room` has been fully delivered on this connection. */
+export interface RoomHistoryResponse {
+  ok: true;
+  room: string;
 }
 export interface RoomSummary {
   id: string;
@@ -2018,6 +2043,7 @@ export type Response =
   | KickResponse
   | SubscribeAck
   | ReadResponse
+  | RoomHistoryResponse
   | RoomsResponse
   | PeersResponse
   | NotifyResponse
