@@ -23,6 +23,9 @@ const PORT = 18962;
 let openStreams: ReadableStreamDefaultController<Uint8Array>[] = [];
 const gateway = Bun.serve({
   port: PORT,
+  // These responses are long-lived SSE streams; without this Bun closes each
+  // one after 10s of quiet and the suite fills with timeout notices.
+  idleTimeout: 0,
   fetch() {
     return new Response(
       new ReadableStream<Uint8Array>({
@@ -292,7 +295,7 @@ describe("ev:llm_requests relay", () => {
   );
 
   test(
-    "a prefix seen under two sessions stops being either session's main",
+    "a prefix seen under two sessions hands main to the session's own series",
     async () => {
       const ctx = await startConfiguredDaemon({
         llm_events_url: `http://127.0.0.1:${PORT}/events`,
@@ -303,18 +306,22 @@ describe("ev:llm_requests relay", () => {
         const ts = Math.floor(Date.now() / 1000);
         // A daemon that starts mid-subagent sees subagent traffic first and
         // has no way yet to know it isn't S5's own series.
-        emit({ ts, session_id: "S5", prefix: "9c31aa02" });
+        emit({ ts: ts - 200, session_id: "S5", prefix: "9c31aa02" });
         const first = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         expect(first.ev.requests[0]?.main).toBe(true);
-        // The same prefix under a second session proves it is a subagent's:
-        // a main series' prompt carries its own cwd and git status and cannot
-        // recur elsewhere. Both sessions must drop it as main.
-        emit({ ts, session_id: "S6", prefix: "9c31aa02" });
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+        emit({ ts, session_id: "S5", prefix: "484eda9c" });
+        await u.readEventUntil<LlmRequestsEv>(
           (e) => e.ev === "llm_requests" && e.requests.length === 2,
         );
-        expect(ev.requests.some((r) => r.main)).toBe(false);
-        expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S5", "S6"]);
+        // The same prefix under a second session proves it is a subagent's: a
+        // main series' prompt carries its own cwd and git status and cannot
+        // recur elsewhere. S5's own series takes main from it.
+        emit({ ts, session_id: "S6", prefix: "9c31aa02" });
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 3,
+        );
+        const s5main = ev.requests.filter((r) => r.session_id === "S5" && r.main);
+        expect(s5main).toEqual([{ ts, session_id: "S5", prefix: "484eda9c", main: true }]);
         u.close();
       } finally {
         await stop(ctx);

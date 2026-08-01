@@ -172,10 +172,9 @@ interface CachedSeries {
  * shows up under a second session. Model names are deliberately not consulted:
  * main and subagent both range over the whole model lineup.
  *
- * A session whose only live series are known subagents' gets no main at all.
- * That is the honest answer: nothing is known about that session's own cache,
- * and inventing a ring from a subagent's window would show a countdown the
- * session's next turn will not benefit from. */
+ * A session whose live series ALL look shared falls back to its most recent
+ * one — see the fallback in `snapshot` for why the sharing signal has to be
+ * given up in that case. */
 export class LlmRequestCache {
   private entries = new Map<string, CachedSeries>();
   /** prefix -> the sessions it has been observed under, capped at the 2 it
@@ -247,12 +246,28 @@ export class LlmRequestCache {
     // makes both the sharing correction and the "main went cold, re-learn"
     // case fall out without any stored election to invalidate.
     const mainKey = new Map<string, CachedSeries>();
+    const fallback = new Map<string, CachedSeries>();
     for (const series of live) {
       if (this.isShared(series.info.prefix)) continue;
       const sid = series.info.session_id;
       const best = mainKey.get(sid);
       if (!best || series.firstSeen < best.firstSeen) mainKey.set(sid, series);
     }
+    // Fallback for a session whose every live series looks shared: show its
+    // most recent one anyway. The sharing rule has a blind spot — two sessions
+    // opened on the same cwd of the same repo produce the same leading system
+    // block, so their real main series share a prefix and disqualify each
+    // other, which would leave both rings dark forever (kawaz r99m32). A
+    // countdown from the session's latest request is more use than none, and
+    // the strict series separation is only given up in this degenerate case,
+    // where there is nothing left to separate.
+    for (const series of live) {
+      const sid = series.info.session_id;
+      if (mainKey.has(sid)) continue;
+      const best = fallback.get(sid);
+      if (!best || series.info.ts > best.info.ts) fallback.set(sid, series);
+    }
+    for (const [sid, series] of fallback) mainKey.set(sid, series);
     return live.map((series) => ({
       ...series.info,
       main: mainKey.get(series.info.session_id) === series,
@@ -327,7 +342,10 @@ export function startLlmEventClient(opts: LlmEventClientOptions): LlmEventClient
       };
     });
 
-  async function readStream(): Promise<void> {
+  /** `onHealthy` fires the first time this connection delivers bytes — see the
+   * reconnect loop for why that, and not the HTTP response, is what counts as
+   * a working subscription. */
+  async function readStream(onHealthy: () => void): Promise<void> {
     const res = await fetchImpl(opts.url, {
       signal: controller.signal,
       headers: { accept: "text/event-stream" },
@@ -340,6 +358,7 @@ export function startLlmEventClient(opts: LlmEventClientOptions): LlmEventClient
     const decoder = new TextDecoder();
     const parser = new SseParser();
     const idleMs = opts.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+    let healthy = false;
     try {
       for (;;) {
         // Race the read against the silence budget. Any byte resets it — the
@@ -361,6 +380,10 @@ export function startLlmEventClient(opts: LlmEventClientOptions): LlmEventClient
           clearTimeout(idleTimer);
         }
         if (chunk.done) return; // upstream closed; the loop below reconnects
+        if (!healthy) {
+          healthy = true;
+          onHealthy();
+        }
         for (const ev of parser.feed(decoder.decode(chunk.value, { stream: true }))) {
           if (ev.event !== "request") continue;
           const info = parseLlmRequestEvent(ev.data);
@@ -376,7 +399,19 @@ export function startLlmEventClient(opts: LlmEventClientOptions): LlmEventClient
     let attempt = 0;
     while (!stopped) {
       try {
-        await readStream();
+        // The reset belongs to a connection that actually carried bytes, not
+        // to one that merely got a 200: a gateway that accepts and instantly
+        // drops would otherwise reset the delay on every attempt and be
+        // hammered once a second forever, which is the exact hot loop the
+        // backoff exists to prevent. Any byte counts — the 20s keepalive
+        // comment is what proves a quiet-but-healthy stream — and a
+        // connection that delivers nothing at all is cut by the idle timeout
+        // and does back off. Without this a daemon that had been up for hours
+        // kept escalating 1s → 2s → 4s across unrelated disconnects (observed
+        // in the production daemon log, kawaz r99m32).
+        await readStream(() => {
+          attempt = 0;
+        });
         // A clean end-of-stream is still a disconnect: reconnect promptly
         // rather than treating it as a failure worth backing off from.
         attempt = 0;

@@ -203,33 +203,46 @@ describe("LlmRequestCache", () => {
       expect(snapshot.map((r) => r.ts)).toEqual([sec(200_000), sec(1_000)]);
     });
 
-    test("is demoted out of main, in both sessions", () => {
+    test("loses main to the session's own series", () => {
       const cache = new LlmRequestCache();
       cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
-      // Until it recurs, session a has no reason to doubt it.
+      cache.record({ ts: sec(1_000), session_id: "a", prefix: MAIN });
+      // Arrival order alone would keep SUB (seen first).
       expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe(SUB);
-      cache.record({ ts: sec(1_000), session_id: "b", prefix: SUB });
-      // Now it is provably a subagent's, and neither session claims it.
-      expect(cache.snapshot(NOW).some((r) => r.main)).toBe(false);
+      // Seeing SUB under a second session proves it is a subagent's, so a's
+      // own series takes over even though it arrived later.
+      cache.record({ ts: sec(190_000), session_id: "b", prefix: SUB });
+      const snapshot = cache.snapshot(NOW);
+      expect(snapshot.filter((r) => r.session_id === "a" && r.main)).toEqual([
+        { ts: sec(1_000), session_id: "a", prefix: MAIN, main: true },
+      ]);
     });
 
-    test("hands main to the session's own series once one appears", () => {
+    // The sharing rule's blind spot: two sessions on the same cwd of the same
+    // repo build the same leading system block, so their real main series
+    // share a prefix. Disqualifying both would leave both rings dark forever.
+    test("still counts as main when it is all the session has", () => {
       const cache = new LlmRequestCache();
-      // Daemon started mid-subagent: the first thing it saw was subagent
-      // traffic, which it took for session a's main series.
       cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
-      cache.record({ ts: sec(190_000), session_id: "b", prefix: SUB });
-      cache.record({ ts: sec(1_000), session_id: "a", prefix: MAIN });
+      cache.record({ ts: sec(1_000), session_id: "b", prefix: SUB });
       const snapshot = cache.snapshot(NOW);
-      // MAIN arrived last, but SUB is disqualified, so MAIN takes the slot
-      // even though the arrival-order rule alone would have kept SUB.
-      expect(snapshot.find((r) => r.main)).toEqual({
-        ts: sec(1_000),
-        session_id: "a",
-        prefix: MAIN,
-        main: true,
-      });
-      expect(snapshot.filter((r) => r.main)).toHaveLength(1);
+      expect(snapshot.every((r) => r.main)).toBe(true);
+      // Each session falls back to its OWN latest request, not the other's.
+      expect(snapshot.find((r) => r.session_id === "a")?.ts).toBe(sec(200_000));
+      expect(snapshot.find((r) => r.session_id === "b")?.ts).toBe(sec(1_000));
+    });
+
+    test("the fallback picks the session's most recent series", () => {
+      const cache = new LlmRequestCache();
+      const other = "11112222";
+      // Both of a's series are shared with b, so neither survives the
+      // sharing filter and the tiebreak is recency, not arrival order.
+      cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
+      cache.record({ ts: sec(1_000), session_id: "a", prefix: other });
+      cache.record({ ts: sec(150_000), session_id: "b", prefix: SUB });
+      cache.record({ ts: sec(150_000), session_id: "b", prefix: other });
+      const mains = cache.snapshot(NOW).filter((r) => r.session_id === "a" && r.main);
+      expect(mains).toEqual([{ ts: sec(1_000), session_id: "a", prefix: other, main: true }]);
     });
   });
 
@@ -291,6 +304,9 @@ let openStreams: ReadableStreamDefaultController<Uint8Array>[] = [];
 let connects = 0;
 const gateway = Bun.serve({
   port: PORT,
+  // These responses are long-lived SSE streams; without this Bun closes each
+  // one after 10s of quiet and the suite fills with timeout notices.
+  idleTimeout: 0,
   fetch(req) {
     const url = new URL(req.url);
     if (url.pathname !== "/events") return new Response("no such endpoint", { status: 404 });
@@ -383,6 +399,45 @@ describe("startLlmEventClient", () => {
         emit({ ts: 2, session_id: "after" });
         await until(got, (g) => g.length === 2);
         expect(got).toEqual(["before", "after"]);
+      } finally {
+        client.stop();
+        cutStreams();
+      }
+    },
+    T,
+  );
+
+  test(
+    "a connection that carried data resets the backoff for the next one",
+    async () => {
+      // Regression (kawaz r99m32): a daemon up for hours kept escalating its
+      // retry delay across unrelated disconnects, because only a clean
+      // end-of-stream reset the counter. Long enough uptime and every
+      // reconnect ends up waiting the 30s ceiling.
+      const asked: number[] = [];
+      openStreams = []; // only this test's connections may satisfy the waits
+      const startConnects = connects;
+      const client = startLlmEventClient({
+        url: `http://127.0.0.1:${PORT}/events`,
+        log: SILENT,
+        onRequest: () => {},
+        delayMs: (attempt) => {
+          asked.push(attempt);
+          return 5;
+        },
+      });
+      try {
+        // Three connect → carry bytes → drop cycles. The fake gateway sends a
+        // comment on connect, so every connection delivers something.
+        for (let i = 0; i < 3; i++) {
+          await until([], () => connects >= startConnects + i + 1);
+          await until(openStreams, (s) => s.length > 0);
+          cutStreams();
+          await until(asked, (a) => a.length > i);
+        }
+        // Every wait was computed for attempt 0. Without the reset these
+        // would climb 0, 1, 2 — the escalation seen in the production log.
+        expect(asked.slice(0, 3)).toEqual([0, 0, 0]);
       } finally {
         client.stop();
         cutStreams();
