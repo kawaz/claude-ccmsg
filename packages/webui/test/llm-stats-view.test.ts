@@ -16,6 +16,7 @@ import {
   axisBucketLabel,
   bucketKey,
   bucketTotals,
+  OTHER_SERIES,
   chartData,
   contextTotals,
   isStatsPeriod,
@@ -458,7 +459,7 @@ describe("chartData", () => {
   });
 
   test("no buckets is an empty chart, not a crash", () => {
-    expect(chartData([])).toEqual({ models: [], bars: [], max: 0, ticks: [0] });
+    expect(chartData([])).toEqual({ models: [], folded: [], bars: [], max: 0, ticks: [0] });
   });
 });
 
@@ -488,5 +489,125 @@ describe("showsLabel", () => {
 
   test("labels every bar when they all fit", () => {
     expect([...Array(5).keys()].every((i) => showsLabel(i, 5))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legend filtering. Selecting models narrows the aggregation itself, not just
+// what is drawn — so every total on screen is the total of what is on screen.
+
+describe("model filtering", () => {
+  const DAYS_2: LlmStatsResponse["days"] = {
+    "2026-07-01": {
+      credentials: {
+        "cred-a": {
+          opus: { requests: 2, input_tokens: 10, usd: 6 },
+          sonnet: { requests: 4, input_tokens: 20, usd: 3 },
+        },
+        "cred-b": { haiku: { requests: 8, usd: 1 } },
+      },
+      // Deliberately higher than the models sum (10): the gateway charges for
+      // something it does not break out, which is why it wins unfiltered.
+      total_usd: 12,
+    },
+  };
+
+  test("no filter keeps the gateway's own authoritative total", () => {
+    expect(windowTotalUsd(DAYS_2)).toBe(12);
+    expect(bucketTotals(DAYS_2, "daily")[0]!.usd).toBe(12);
+  });
+
+  // Under a filter that total covers models the reader excluded, so the sum of
+  // what survived is the only figure matching the screen.
+  test("a filter totals the retained models rather than the gateway's figure", () => {
+    const filter = new Set(["opus"]);
+    expect(windowTotalUsd(DAYS_2, filter)).toBe(6);
+    const bucket = bucketTotals(DAYS_2, "daily", filter)[0]!;
+    expect(bucket.usd).toBe(6);
+    expect(bucket.models.map((m) => m.model)).toEqual(["opus"]);
+  });
+
+  test("selecting several models sums exactly those", () => {
+    expect(windowTotalUsd(DAYS_2, new Set(["opus", "haiku"]))).toBe(7);
+  });
+
+  test("token counters follow the filter, so the context split matches", () => {
+    const bucket = bucketTotals(DAYS_2, "daily", new Set(["sonnet"]))[0]!;
+    expect(bucket.models[0]!.inputTokens).toBe(20);
+    expect(contextTotals(bucket.models)[0]!.tokens).toBe(20);
+  });
+
+  // A credential whose every model was excluded has nothing to report; an
+  // empty row would read as "spent nothing on this key".
+  test("a credential left with no models drops out entirely", () => {
+    const bucket = bucketTotals(DAYS_2, "daily", new Set(["haiku"]))[0]!;
+    expect(bucket.credentials.map((c) => c.credential)).toEqual(["cred-b"]);
+  });
+
+  test("a filter naming nothing present yields an empty, zeroed bucket", () => {
+    const bucket = bucketTotals(DAYS_2, "daily", new Set(["gone"]))[0]!;
+    expect(bucket.usd).toBe(0);
+    expect(bucket.models).toEqual([]);
+    expect(bucket.credentials).toEqual([]);
+  });
+
+  test("daily rollups honour the filter the same way", () => {
+    expect(dailyTotals(DAYS_2, new Set(["opus"]))[0]!.usd).toBe(6);
+    expect(dailyTotals(DAYS_2)[0]!.usd).toBe(12);
+  });
+});
+
+describe("chartData with a reused series order", () => {
+  function bucketOf(key: string, models: Array<[string, number]>) {
+    return {
+      key,
+      usd: models.reduce((sum, [, usd]) => sum + usd, 0),
+      dayCount: 1,
+      credentials: [],
+      models: models.map(([model, usd]) => ({
+        model,
+        usd,
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      })),
+    };
+  }
+
+  // Colour follows the entity: filtering to one model must not promote it to
+  // the first slot and repaint it.
+  test("keeps the legend and the colour order of the unfiltered window", () => {
+    const all = [
+      bucketOf("2026-07-01", [
+        ["dear", 10],
+        ["cheap", 1],
+      ]),
+    ];
+    const legend = chartData(all);
+    expect(legend.models).toEqual(["dear", "cheap"]);
+
+    const filtered = [bucketOf("2026-07-01", [["cheap", 1]])];
+    const data = chartData(filtered, { series: legend.models, folded: legend.folded });
+    expect(data.models).toEqual(["dear", "cheap"]);
+    expect(data.bars[0]!.segments.map((s) => s.model)).toEqual(["cheap"]);
+  });
+
+  test("reports what the folded entry stands for", () => {
+    const models: Array<[string, number]> = Array.from({ length: 10 }, (_, i) => [`m${i}`, 10 - i]);
+    const legend = chartData([bucketOf("2026-07-01", models)]);
+    expect(legend.models.at(-1)).toBe(OTHER_SERIES);
+    // The two that did not get a colour slot.
+    expect(legend.folded.sort()).toEqual(["m8", "m9"]);
+  });
+
+  test("a model absent from a reused legend contributes no segment", () => {
+    const data = chartData([bucketOf("2026-07-01", [["ghost", 5]])], {
+      series: ["dear"],
+      folded: [],
+    });
+    expect(data.models).toEqual(["dear"]);
+    expect(data.bars[0]!.segments).toEqual([]);
   });
 });

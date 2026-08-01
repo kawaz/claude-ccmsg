@@ -489,7 +489,7 @@ export function createWsClient(
           type: "llm-usage/availability",
           available: hello.llm_usage_available === true,
         });
-        // 利用料 endpoint の capability。usage とは独立に設定できるので別
+        // 使用量 endpoint の capability。usage とは独立に設定できるので別
         // dispatch — 片方だけ設定した daemon で、もう片方のセクションを
         // 出さないための判断材料になる。
         dispatch({

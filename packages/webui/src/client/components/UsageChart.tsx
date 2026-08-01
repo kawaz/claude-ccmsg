@@ -38,11 +38,24 @@ function tickLabel(usd: number, max: number): string {
   return formatUsd(usd);
 }
 
-export function UsageChart({ data, caption }: { data: ChartData; caption: string }) {
+export function UsageChart({
+  data,
+  caption,
+  selected,
+  onToggleModel,
+}: {
+  data: ChartData;
+  caption: string;
+  /** Legend entries the reader picked out. Empty means no filter, which reads
+   * the same as every entry being on — so an empty set and a full set are the
+   * same screen, and there is no way to select nothing. */
+  selected: ReadonlySet<string>;
+  onToggleModel: (model: string) => void;
+}) {
   const [hover, setHover] = useState<{ bar: string; segment: ChartSegment } | null>(null);
 
   if (data.bars.length === 0 || data.max <= 0) {
-    return <p class="stats-empty">この期間に表示できる利用料はありません。</p>;
+    return <p class="stats-empty">この期間に表示できる使用量はありません。</p>;
   }
 
   const ceiling = data.ticks[data.ticks.length - 1] ?? data.max;
@@ -54,14 +67,30 @@ export function UsageChart({ data, caption }: { data: ChartData; caption: string
   return (
     <div class="stats-chart">
       {/* Identity is never colour alone: every series is named here, and the
-       * table below carries the same values in text. */}
+       * table below carries the same values in text. Each entry is also the
+       * control that includes or excludes that model — a button so the
+       * keyboard reaches it, and so the pressed state is announced rather
+       * than left to the dimming. */}
       <ul class="stats-legend">
-        {data.models.map((model, index) => (
-          <li key={model}>
-            <span class={`stats-swatch ${seriesClass(index, model, data.models)}`} />
-            {model}
-          </li>
-        ))}
+        {data.models.map((model, index) => {
+          const on = selected.size === 0 || selected.has(model);
+          return (
+            <li key={model}>
+              <button
+                type="button"
+                class={on ? "stats-legend-entry" : "stats-legend-entry stats-legend-off"}
+                aria-pressed={selected.has(model)}
+                title={
+                  selected.has(model) ? `${model} の選択を解除` : `${model} だけを表示 (複数選択可)`
+                }
+                onClick={() => onToggleModel(model)}
+              >
+                <span class={`stats-swatch ${seriesClass(index, model, data.models)}`} />
+                {model}
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {/* Uniform scaling (the default preserveAspectRatio): stretching the
        * viewBox to the container would stretch the axis text with it. */}

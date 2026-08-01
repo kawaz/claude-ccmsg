@@ -421,7 +421,7 @@ function UsageTabs({ state }: { state: AppState }) {
       ? [
           {
             tab: "stats" as const,
-            label: "利用料",
+            label: "使用量",
             href: usageStatsHref(state.usagePeriod, state.usageDays),
           },
         ]

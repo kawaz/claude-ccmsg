@@ -6822,8 +6822,33 @@ button.usage-reset:hover {
 
 .stats-legend li {
   display: flex;
+}
+
+/* The legend entry is the filter control. Styled as text with a swatch, not
+   as a button box — the affordance is the pointer and the dimming, since a
+   row of bordered buttons would compete with the chart it labels. */
+.stats-legend-entry {
+  display: flex;
   align-items: center;
   gap: 0.3rem;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.stats-legend-entry:hover {
+  color: var(--fg);
+}
+
+/* Excluded while some other entry is selected. Dimmed rather than hidden so
+   the entry stays where it was and can be clicked back on; aria-pressed
+   carries the same state for anyone not reading the opacity. */
+.stats-legend-off {
+  opacity: 0.35;
+  text-decoration: line-through;
 }
 
 .stats-swatch {

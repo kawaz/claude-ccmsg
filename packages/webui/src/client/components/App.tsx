@@ -48,7 +48,7 @@ function TopbarTitle({ state }: { state: AppState }) {
   if (state.view === "usage") {
     const parts = [
       ...(state.llmUsageAvailable ? ["クオータ"] : []),
-      ...(state.llmStatsAvailable ? ["利用料"] : []),
+      ...(state.llmStatsAvailable ? ["使用量"] : []),
     ];
     return <h1 class="topbar-title">{parts.length > 0 ? parts.join(" / ") : "クオータ"}</h1>;
   }
@@ -196,7 +196,7 @@ export function App() {
             id="app-usage"
             type="button"
             aria-label="usage"
-            title="クオータ / 利用料"
+            title="クオータ / 使用量"
             aria-current={state.view === "usage" ? "page" : undefined}
             onClick={() => pushNavigation(usageHref())}
           >

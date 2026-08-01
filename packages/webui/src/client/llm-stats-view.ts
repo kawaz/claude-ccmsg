@@ -77,10 +77,13 @@ function sortedModels(byModel: Map<string, ModelTotal>): ModelTotal[] {
 
 /** Sum of every model under every credential. Used as a day's total only when
  * the gateway sent none of its own — see dayTotalUsd. */
-function summedUsd(day: LlmStatsDay): number {
+function summedUsd(day: LlmStatsDay, filter: ModelFilter = null): number {
   let usd = 0;
   for (const models of Object.values(day.credentials)) {
-    for (const usage of Object.values(models)) usd += usage.usd ?? 0;
+    for (const [model, usage] of Object.entries(models)) {
+      if (filter && !filter.has(model)) continue;
+      usd += usage.usd ?? 0;
+    }
   }
   return usd;
 }
@@ -89,22 +92,39 @@ function summedUsd(day: LlmStatsDay): number {
  * number for the day and can legitimately exceed the per-model sum when the
  * gateway charges for something it does not break out by model. Falling back
  * to the sum keeps a day renderable when `total_usd` is missing. */
-export function dayTotalUsd(day: LlmStatsDay): number {
-  return day.total_usd ?? summedUsd(day);
+export function dayTotalUsd(day: LlmStatsDay, filter: ModelFilter = null): number {
+  // With a filter on, the gateway's own total is the wrong number: it covers
+  // every model, including the ones the reader just excluded. Summing the
+  // retained models is the only figure that matches what is on screen.
+  return filter ? summedUsd(day, filter) : (day.total_usd ?? summedUsd(day));
 }
+
+/** Models the reader picked out of the legend, or null for "no filter". A set
+ * rather than a list because membership is all that is ever asked of it, and
+ * null rather than an empty set so "nothing selected" cannot be confused with
+ * "everything deselected" — the first means show all, the second cannot
+ * happen (deselecting the last entry returns to no filter). */
+export type ModelFilter = ReadonlySet<string> | null;
 
 function accumulate(
   day: LlmStatsDay,
   byModel: Map<string, ModelTotal>,
   byCredential: Map<string, { usd: number; models: Map<string, ModelTotal> }>,
+  filter: ModelFilter = null,
 ): void {
   for (const [credential, models] of Object.entries(day.credentials)) {
+    // Created lazily: a credential whose every model was filtered out has
+    // nothing to show, and an empty row would read as "spent nothing here".
     let credentialEntry = byCredential.get(credential);
-    if (!credentialEntry) {
-      credentialEntry = { usd: 0, models: new Map() };
-      byCredential.set(credential, credentialEntry);
-    }
+    const ensureCredential = (): NonNullable<typeof credentialEntry> => {
+      if (!credentialEntry) {
+        credentialEntry = { usd: 0, models: new Map() };
+        byCredential.set(credential, credentialEntry);
+      }
+      return credentialEntry;
+    };
     for (const [model, usage] of Object.entries(models)) {
+      if (filter && !filter.has(model)) continue;
       let total = byModel.get(model);
       if (!total) {
         total = emptyModelTotal(model);
@@ -112,13 +132,14 @@ function accumulate(
       }
       addUsage(total, usage);
 
-      let perCredential = credentialEntry.models.get(model);
+      const entry = ensureCredential();
+      let perCredential = entry.models.get(model);
       if (!perCredential) {
         perCredential = emptyModelTotal(model);
-        credentialEntry.models.set(model, perCredential);
+        entry.models.set(model, perCredential);
       }
       addUsage(perCredential, usage);
-      credentialEntry.usd += usage.usd ?? 0;
+      entry.usd += usage.usd ?? 0;
     }
   }
 }
@@ -141,14 +162,17 @@ function byKeyDescending<T extends { key: string }>(rows: T[]): T[] {
   return rows.sort((a, b) => b.key.localeCompare(a.key));
 }
 
-export function dailyTotals(days: LlmStatsResponse["days"]): PeriodTotal[] {
+export function dailyTotals(
+  days: LlmStatsResponse["days"],
+  filter: ModelFilter = null,
+): PeriodTotal[] {
   const rows = Object.entries(days).map(([date, day]) => {
     const byModel = new Map<string, ModelTotal>();
     const byCredential = new Map<string, { usd: number; models: Map<string, ModelTotal> }>();
-    accumulate(day, byModel, byCredential);
+    accumulate(day, byModel, byCredential, filter);
     return {
       key: date,
-      usd: dayTotalUsd(day),
+      usd: dayTotalUsd(day, filter),
       models: sortedModels(byModel),
       credentials: finishCredentials(byCredential),
     };
@@ -281,7 +305,11 @@ export function contextTotals(models: readonly ModelTotal[]): ContextTotal[] {
   }));
 }
 
-export function bucketTotals(days: LlmStatsResponse["days"], period: StatsPeriod): BucketTotal[] {
+export function bucketTotals(
+  days: LlmStatsResponse["days"],
+  period: StatsPeriod,
+  filter: ModelFilter = null,
+): BucketTotal[] {
   const months = new Map<
     string,
     {
@@ -301,9 +329,9 @@ export function bucketTotals(days: LlmStatsResponse["days"], period: StatsPeriod
     // Summing the per-day totals rather than the per-model figures keeps the
     // bucket consistent with the days it is made of, including whatever
     // `total_usd` covers that the models do not.
-    month.usd += dayTotalUsd(day);
+    month.usd += dayTotalUsd(day, filter);
     month.dates.add(date);
-    accumulate(day, month.byModel, month.byCredential);
+    accumulate(day, month.byModel, month.byCredential, filter);
   }
   const rows = [...months.entries()].map(([key, month]) => ({
     key,
@@ -317,9 +345,9 @@ export function bucketTotals(days: LlmStatsResponse["days"], period: StatsPeriod
 
 /** Spend across the whole requested window — the one number that answers
  * "what did this period cost". */
-export function windowTotalUsd(days: LlmStatsResponse["days"]): number {
+export function windowTotalUsd(days: LlmStatsResponse["days"], filter: ModelFilter = null): number {
   let usd = 0;
-  for (const day of Object.values(days)) usd += dayTotalUsd(day);
+  for (const day of Object.values(days)) usd += dayTotalUsd(day, filter);
   return usd;
 }
 
@@ -412,6 +440,9 @@ export interface ChartData {
    * window, so a model keeps its colour as the reader moves along the axis.
    * Colour follows the entity, never its rank within one bar. */
   models: string[];
+  /** The models OTHER_SERIES stands for, so a reader who selects the folded
+   * entry can be given the real names it covers. Empty when nothing folded. */
+  folded: string[];
   bars: ChartBar[];
   /** Tallest bar's total, which the fractions above are relative to. */
   max: number;
@@ -444,8 +475,18 @@ export function axisTicks(max: number, intervals = 4): number[] {
  * newest-first order and the right choice for each. */
 export function chartData(
   buckets: readonly BucketTotal[],
-  maxSeries = MAX_CHART_SERIES,
+  opts: {
+    maxSeries?: number;
+    /** Series order to reuse instead of ranking these buckets. Passed when the
+     * bars are drawn from a filtered slice but the legend and the colours have
+     * to stay as the unfiltered window established them — otherwise excluding
+     * one model would repaint the survivors. */
+    series?: readonly string[];
+    /** What OTHER_SERIES stands for under a reused series order. */
+    folded?: readonly string[];
+  } = {},
 ): ChartData {
+  const maxSeries = opts.maxSeries ?? MAX_CHART_SERIES;
   const byModel = new Map<string, number>();
   for (const bucket of buckets) {
     for (const model of bucket.models) {
@@ -455,9 +496,12 @@ export function chartData(
   const ranked = [...byModel.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([model]) => model);
+  // Narrowed into a local so the reuse branch keeps its type; `opts.series`
+  // read twice would widen back to possibly-undefined.
+  const reused = opts.series;
+  const folded = new Set(reused ? (opts.folded ?? []) : ranked.slice(maxSeries));
   const named = ranked.slice(0, maxSeries);
-  const folded = new Set(ranked.slice(maxSeries));
-  const models = folded.size > 0 ? [...named, OTHER_SERIES] : named;
+  const models = reused ? [...reused] : folded.size > 0 ? [...named, OTHER_SERIES] : named;
 
   const chronological = [...buckets].sort((a, b) => a.key.localeCompare(b.key));
   const max = chronological.reduce((peak, bucket) => Math.max(peak, bucket.usd), 0);
@@ -466,6 +510,9 @@ export function chartData(
     const usdByModel = new Map<string, number>();
     for (const model of bucket.models) {
       const name = folded.has(model.model) ? OTHER_SERIES : model.model;
+      // Under a reused series order a model may be absent from the legend
+      // entirely (it was filtered out); it contributes no segment.
+      if (!models.includes(name)) continue;
       usdByModel.set(name, (usdByModel.get(name) ?? 0) + model.usd);
     }
     // Stacked in the series order, not in this bar's own order, so a model
@@ -493,7 +540,7 @@ export function chartData(
     };
   });
 
-  return { models, bars, max, ticks: axisTicks(max) };
+  return { models, folded: [...folded], bars, max, ticks: axisTicks(max) };
 }
 
 /** Axis form of a bucket label. Daily keys drop the year ("07-28") and weekly

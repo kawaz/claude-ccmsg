@@ -27,7 +27,7 @@ export interface DaemonConfig {
    * http:// / https:// の絶対 URL のみ受け付け、それ以外は warn + 未設定扱い
    * (= webui 側で Usage メニュー自体を出さない)。 */
   llm_usage_url?: string;
-  /** LLM gateway の stats endpoint URL — webui の Usage 画面の利用料セクション
+  /** LLM gateway の stats endpoint URL — webui の Usage 画面の使用量セクション
    * が `llm_stats` op 経由でここの JSON を読む。llm_usage_url と同じ理由で
    * daemon proxy 経由 (CORS ヘッダ無し)、同じ検証 (http:// / https:// の絶対
    * URL のみ) を通す。集計期間は op の `days` が query parameter として上書き

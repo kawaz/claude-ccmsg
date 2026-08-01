@@ -9,6 +9,7 @@ import {
   CONTEXT_LABEL,
   PERIOD_LABEL,
   STATS_PERIODS,
+  OTHER_SERIES,
   bucketTotals,
   chartData,
   contextTotals,
@@ -219,6 +220,9 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
   const { ws } = useApp();
   const [stats, setStats] = useState<LlmStatsResponse | null>(null);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
+  // Not persisted and not in the URL (kawaz r99m31): a filter is a glance at a
+  // slice, not a place you return to, so a reload starts from everything.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -247,10 +251,35 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
     };
   }, [ws, fetchDays]);
 
-  const buckets = stats ? bucketTotals(stats.days, period) : [];
-  const windowTotal = stats ? windowTotalUsd(stats.days) : 0;
+  // A model that is no longer in the window (the span changed under the
+  // selection) would otherwise filter everything out and leave a blank screen
+  // with no way back, since its legend entry is gone too.
+  useEffect(() => setSelected(new Set()), [period]);
+
+  // The legend is derived from the unfiltered window so every entry stays
+  // visible and toggleable, and so colours do not move when the filter cuts
+  // the field down — colour follows the entity, never its surviving rank.
+  const allBuckets = stats ? bucketTotals(stats.days, period) : [];
+  const legend = chartData(allBuckets);
+  // Legend entries are series names; "その他" stands for the models that did
+  // not get a colour, so selecting it means selecting all of them.
+  const filter =
+    selected.size === 0
+      ? null
+      : new Set(
+          [...selected].flatMap((entry) => (entry === OTHER_SERIES ? legend.folded : [entry])),
+        );
+  const buckets = stats ? bucketTotals(stats.days, period, filter) : [];
+  const windowTotal = stats ? windowTotalUsd(stats.days, filter) : 0;
   const widest = buckets.reduce((peak, bucket) => Math.max(peak, bucket.usd), 0);
-  const chart = chartData(buckets);
+  const chart = chartData(buckets, { series: legend.models, folded: legend.folded });
+
+  const toggleModel = (model: string): void =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (!next.delete(model)) next.add(model);
+      return next;
+    });
 
   return (
     <section id="usage-stats">
@@ -261,7 +290,7 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
       {!stats ? (
         error ? (
           <p class="usage-empty">
-            利用料を取得できません: {error.msg}
+            使用量を取得できません: {error.msg}
             <br />
             daemon config.json の `llm_stats_url` と、その先の gateway を確認してください。
           </p>
@@ -272,7 +301,11 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
         <>
           <UsageChart
             data={chart}
-            caption={`${PERIOD_LABEL[period]}のモデル別利用料 (期間合計 ${formatUsd(windowTotal)})`}
+            caption={`${PERIOD_LABEL[period]}のモデル別使用量 (${
+              filter ? "選択分の" : "期間"
+            }合計 ${formatUsd(windowTotal)})`}
+            selected={selected}
+            onToggleModel={toggleModel}
           />
           <div class="stats-rows">
             {buckets.map((bucket) => (
@@ -280,7 +313,8 @@ export function UsageStats({ period, days }: { period: StatsPeriod; days: number
             ))}
             {buckets.length === 0 ? <p class="stats-empty">データがありません。</p> : null}
             <p class="stats-note">
-              期間全体の合計: <strong>{formatUsd(windowTotal)}</strong>
+              {filter ? "選択したモデルの合計" : "期間全体の合計"}:{" "}
+              <strong>{formatUsd(windowTotal)}</strong>
             </p>
           </div>
         </>

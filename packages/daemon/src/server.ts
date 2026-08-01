@@ -1270,7 +1270,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // endpoint を browser から読めない) — webui は Usage メニューを出すか
       // 否かの判断にしか使わない。
       const llmUsageAvailable = newId.role === "user" && !!daemon.config.llm_usage_url;
-      // 利用料 (llm_stats_url) も同じ扱い。usage とは独立に設定できるので
+      // 使用量 (llm_stats_url) も同じ扱い。usage とは独立に設定できるので
       // capability も独立に返す — 片方だけ設定した環境で、設定していない方の
       // セクションが「押せば必ずエラー」の状態で出るのを防ぐ。
       const llmStatsAvailable = newId.role === "user" && !!daemon.config.llm_stats_url;

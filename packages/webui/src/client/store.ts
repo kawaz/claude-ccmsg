@@ -194,16 +194,16 @@ export interface AppState {
    * いないと手動更新の直後に一瞬出て次の poll で消える。credential 名 → 記録。 */
   llmUsageProbes: Map<string, ProbeRecord>;
   /** hello response の `llm_stats_available`。llmUsageAvailable と同じ役割の
-   * 利用料 endpoint 版で、/usage 画面の利用料セクションはこれが true の時
+   * 使用量 endpoint 版で、/usage 画面の使用量セクションはこれが true の時
    * だけ出す。2 つの endpoint は独立に設定できるので flag も独立。 */
   llmStatsAvailable: boolean;
-  /** /usage のどちらのタブを見ているか。クオータと利用料は問いが違うので
+  /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
   usageTab: "quota" | "stats";
-  /** 利用料タブの集計単位。URL の `/usage/stats/<period>` 由来で、リロード・
+  /** 使用量タブの集計単位。URL の `/usage/stats/<period>` 由来で、リロード・
    * ブックマーク・戻るで同じ単位に戻すため locator に載せている。 */
   usagePeriod: StatsPeriod;
-  /** 利用料タブの取得日数。null = その集計単位の既定値。単位ボタンを押すと
+  /** 使用量タブの取得日数。null = その集計単位の既定値。単位ボタンを押すと
    * 常に null に戻る (= 既定値へのリセット) ので、明示指定はここに残る間だけ
    * 効く。 */
   usageDays: number | null;
