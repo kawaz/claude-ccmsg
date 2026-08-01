@@ -50,6 +50,11 @@ export interface BarProgress {
   /** Milliseconds until the counter resets; null when upstream sent no reset,
    * clamped at 0 for a reset that has already passed (a stale reading). */
   remainingMs: number | null;
+  /** The reset instant itself, for the absolute form of the same figure. Kept
+   * beside `remainingMs` rather than derived from it at render time, since
+   * that derivation would drift by however long the reading has been on
+   * screen. Null whenever `remainingMs` is. */
+  resetAtMs: number | null;
   /** Consumption is meaningfully ahead of elapsed time. */
   overPace: boolean;
   tone: UsageTone;
@@ -116,6 +121,15 @@ export function formatRemaining(ms: number): string {
   return `${hours}h${String(minutes).padStart(2, "0")}m`;
 }
 
+/** The reset instant as a short local wall-clock stamp ("08-02 09:00"). Local
+ * rather than UTC because the reader compares it against their own clock, and
+ * without a year because a quota window never resets more than days out. */
+export function formatResetAt(atMs: number): string {
+  const at = new Date(atMs);
+  const pad = (value: number): string => String(value).padStart(2, "0");
+  return `${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 /** Age of an observation in Japanese, or null while it is fresh enough that
  * saying so adds nothing. */
 export function formatAge(ageMs: number): string | null {
@@ -153,7 +167,8 @@ function paceOf(
 }
 
 export function windowProgress(key: string, window: LlmUsageWindow, nowMs: number): WindowProgress {
-  const remainingMs = window.reset === undefined ? null : Math.max(0, window.reset * 1000 - nowMs);
+  const resetAtMs = window.reset === undefined ? null : window.reset * 1000;
+  const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const { elapsed, overPace } = paceOf(parseWindowDurationMs(key), remainingMs, window.utilization);
   return {
     key,
@@ -161,6 +176,7 @@ export function windowProgress(key: string, window: LlmUsageWindow, nowMs: numbe
     status: window.status,
     elapsed,
     remainingMs,
+    resetAtMs,
     overPace,
     tone: toneFor(window.status, overPace),
   };
@@ -193,8 +209,9 @@ export function severityTone(severity: string): UsageTone {
  * a full bar. */
 export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgress {
   const utilization = limit.percent / 100;
-  const resetsAtMs = limit.resets_at === undefined ? Number.NaN : Date.parse(limit.resets_at);
-  const remainingMs = Number.isNaN(resetsAtMs) ? null : Math.max(0, resetsAtMs - nowMs);
+  const parsed = limit.resets_at === undefined ? Number.NaN : Date.parse(limit.resets_at);
+  const resetAtMs = Number.isNaN(parsed) ? null : parsed;
+  const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const { elapsed, overPace } = paceOf(limitKindDurationMs(limit.kind), remainingMs, utilization);
   const tone = severityTone(limit.severity);
   return {
@@ -202,6 +219,7 @@ export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgres
     utilization,
     elapsed,
     remainingMs,
+    resetAtMs,
     overPace,
     // Upstream's own verdict wins when it says anything is wrong; the pace
     // reading can only raise a "normal" limit to a warning, never talk a

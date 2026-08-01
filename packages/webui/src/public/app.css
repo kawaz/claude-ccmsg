@@ -6433,16 +6433,22 @@ button.session-tab {
    (ragged right edges) and shifted the numbers relative to each other. The
    label column is sized for the longest thing that goes in it, a scoped limit
    like "weekly_scoped (Fable)" rather than just "5h". */
+/* Consumption left of the bar, the period figures right of it. Every column is
+   fixed except the bar, which takes what is left — so the bars share both
+   edges and each figure sits under its own kind on every row. The reset column
+   is sized for the wider of its two forms ("08-02 09:00"), so toggling between
+   them does not move the layout. */
 .usage-window {
   display: grid;
-  grid-template-columns: minmax(0, 11rem) minmax(4rem, 1fr) 2.6rem 3.2rem 4.4rem 2.2rem;
+  grid-template-columns: minmax(0, 11rem) 2.6rem minmax(4rem, 1fr) 4.6rem 5.8rem;
   align-items: center;
   gap: 0.5rem;
 }
 
 /* Right-aligned with equal-width digits, so 42% and 100% end at the same x
    and the eye can run down the column. */
-.usage-figure {
+.usage-figure,
+button.usage-figure {
   font-family: var(--mono, monospace);
   font-size: 0.78rem;
   color: var(--fg-muted);
@@ -6495,6 +6501,20 @@ button.session-tab {
 .usage-utilization {
   font-weight: 600;
   color: var(--fg);
+}
+
+/* A button that reads as the figure it shows, not as a control — the affordance
+   is the pointer and the underline on hover, not a box around the number. */
+button.usage-reset {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button.usage-reset:hover {
+  color: var(--fg);
+  text-decoration: underline;
 }
 
 .usage-utilization.tone-warn {

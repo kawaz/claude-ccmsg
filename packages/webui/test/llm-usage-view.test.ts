@@ -7,6 +7,7 @@ import type { LlmUsageCredential, LlmUsageLimit, LlmUsageSnapshot } from "@ccmsg
 import {
   formatAge,
   formatDurationShort,
+  formatResetAt,
   formatPercent,
   formatRemaining,
   limitKindDurationMs,
@@ -97,6 +98,22 @@ describe("formatDurationShort", () => {
   });
 });
 
+describe("formatResetAt", () => {
+  // Built from local components rather than an ISO string, so the expectation
+  // does not depend on the timezone the tests happen to run in — which is the
+  // whole point of showing this figure in local time.
+  test("reads as a local wall clock, zero-padded", () => {
+    expect(formatResetAt(new Date(2026, 7, 2, 9, 5).getTime())).toBe("08-02 09:05");
+    expect(formatResetAt(new Date(2026, 10, 30, 23, 59).getTime())).toBe("11-30 23:59");
+  });
+
+  // No year: a quota window never resets more than days out, and the column is
+  // sized for what it shows.
+  test("omits the year", () => {
+    expect(formatResetAt(new Date(2027, 0, 1, 0, 0).getTime())).toBe("01-01 00:00");
+  });
+});
+
 describe("formatAge", () => {
   test("stays silent while the reading is fresh", () => {
     expect(formatAge(0)).toBeNull();
@@ -107,6 +124,39 @@ describe("formatAge", () => {
     expect(formatAge(5 * MINUTE)).toBe("5 分前");
     expect(formatAge(3 * HOUR)).toBe("3 時間前");
     expect(formatAge(50 * HOUR)).toBe("2 日前");
+  });
+});
+
+describe("resetAtMs", () => {
+  // The absolute form of the same figure. Carried alongside the remaining time
+  // rather than derived from it at render, since that derivation would drift
+  // by however long the reading has been on screen.
+  test("a window carries its reset instant beside the remaining time", () => {
+    const progress = windowProgress(
+      "5h",
+      { utilization: 0.1, status: "allowed", reset: resetIn(HOUR) },
+      NOW,
+    );
+    expect(progress.resetAtMs).toBe(NOW + HOUR);
+    expect(progress.remainingMs).toBe(HOUR);
+  });
+
+  test("no reset upstream means neither figure", () => {
+    const progress = windowProgress("5h", { utilization: 0.1, status: "allowed" }, NOW);
+    expect(progress.resetAtMs).toBeNull();
+    expect(progress.remainingMs).toBeNull();
+  });
+
+  // The remaining time clamps at zero for a stale reading, but the instant
+  // itself stays in the past — it is when the reset actually was.
+  test("a past reset keeps its real instant while the remainder clamps", () => {
+    const progress = windowProgress(
+      "5h",
+      { utilization: 0.1, status: "allowed", reset: resetIn(-HOUR) },
+      NOW,
+    );
+    expect(progress.resetAtMs).toBe(NOW - HOUR);
+    expect(progress.remainingMs).toBe(0);
   });
 });
 
@@ -367,6 +417,13 @@ describe("limitProgress", () => {
     );
     expect(progress.overPace).toBe(false);
     expect(progress.tone).toBe("bad");
+  });
+
+  test("carries the reset instant for the absolute display", () => {
+    const progress = limitProgress(limit({ resets_at: resetsAtIn(2 * DAY) }), NOW);
+    expect(progress.resetAtMs).toBe(NOW + 2 * DAY);
+    expect(limitProgress(limit(), NOW).resetAtMs).toBeNull();
+    expect(limitProgress(limit({ resets_at: "not a date" }), NOW).resetAtMs).toBeNull();
   });
 
   test("is_active is carried as a marker, absent meaning not active", () => {

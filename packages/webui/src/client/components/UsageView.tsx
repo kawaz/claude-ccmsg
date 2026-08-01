@@ -10,6 +10,7 @@ import type { ErrorResponse, LlmUsageCredential, LlmUsageResponse } from "@ccmsg
 import {
   formatDurationShort,
   formatPercent,
+  formatResetAt,
   formatRemaining,
   limitKindDurationMs,
   limitLabel,
@@ -27,6 +28,7 @@ import {
 } from "../llm-usage-view.ts";
 import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
+import { readStorage, writeStorage } from "../storage.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageStats } from "./UsageStats.tsx";
 import { usageHref, usageStatsHref } from "../locator.ts";
@@ -39,6 +41,16 @@ import { pushNavigation } from "../navigation.ts";
  * dies with the mounted view, so a backgrounded tab on another screen costs
  * the gateway nothing. */
 const REFRESH_MS = 60_000;
+
+/** Whether reset times read as "how long left" or "at what time", and how to
+ * flip. One value for the whole screen (see TrackRow), persisted so the choice
+ * outlives a reload. */
+interface ResetDisplay {
+  absolute: boolean;
+  toggle: () => void;
+}
+
+const RESET_DISPLAY_KEY = "ccmsg.usage.absoluteReset";
 
 /** Glyph from the period's length, carried over from the CLI rendering kawaz
  * asked to reproduce: a short period is a clock, a long one a calendar. Length
@@ -76,56 +88,77 @@ function UsageBar({ progress, label }: { progress: BarProgress; label: string })
 /** One bar row — a quota window or a provider limit. Both carry a label, the
  * same two-track bar and the same figures, so they share a row rather than
  * each growing a near-copy that would drift apart. */
-/** One bar row, laid out as a flat grid so every column — bar, and each of the
- * four figures — starts and ends at the same x on every row. Nesting the
- * figures inside one auto-width cell let a wide row ("100%/67%/02d07h") steal
- * width from the bar, which made the bars' right edges ragged and moved the
- * numbers under each other (kawaz r99m21). A cell with nothing to show still
- * occupies its column. */
+/** One bar row, laid out as a flat grid so every column — bar, and each figure
+ * — starts and ends at the same x on every row. Consumption sits left of the
+ * bar (it is what fills the bar); the period figures sit right of it (they are
+ * what the bar is measured against). A cell with nothing to show still
+ * occupies its column, so a row missing a reset time does not pull the rows
+ * around it out of line. */
 function TrackRow({
   progress,
   label,
   glyph,
   durationMs,
+  reset,
   keyTitle,
   extra,
 }: {
   progress: BarProgress;
   label: string;
   glyph: string;
-  /** Length of the period, for the denominator column. Null when it cannot be
-   * derived (an unfamiliar limit kind), which leaves the cell empty. */
+  /** Length of the period, for the denominator beside the elapsed share. Null
+   * when it cannot be derived (an unfamiliar limit kind). */
   durationMs: number | null;
+  reset: ResetDisplay;
   keyTitle?: string;
   extra?: ComponentChildren;
 }) {
+  // "86%/7d" — how far into the period we are, over how long it is. Empty
+  // when either half is unknown; half of it alone would read as the other.
+  const elapsedText =
+    progress.elapsed === null || durationMs === null
+      ? ""
+      : `${formatPercent(progress.elapsed)}/${formatDurationShort(durationMs)}`;
   return (
     <div class="usage-window">
       <span class="usage-window-key" title={keyTitle}>
         {glyph} {label}
         {extra}
       </span>
-      <UsageBar progress={progress} label={label} />
       <span class={`usage-figure usage-utilization tone-${progress.tone}`}>
         {formatPercent(progress.utilization)}
       </span>
-      <span
-        class="usage-figure usage-elapsed"
-        title="窓の経過率 (この割合を超えていればペース超過)"
-      >
-        {progress.elapsed === null ? "" : `/${formatPercent(progress.elapsed)}`}
+      <UsageBar progress={progress} label={label} />
+      <span class="usage-figure usage-elapsed" title="窓の経過率 / 期間長">
+        {elapsedText}
       </span>
-      <span class="usage-figure usage-reset" title="リセットされるまでの残り時間">
-        {progress.remainingMs === null ? "" : `/${formatRemaining(progress.remainingMs)}`}
-      </span>
-      <span class="usage-figure usage-length" title="この枠の期間長">
-        {durationMs === null ? "" : `/${formatDurationShort(durationMs)}`}
-      </span>
+      {/* A button rather than click-handling text: these are two readings of
+       * one figure, and switching between them is an action the keyboard has
+       * to reach too. Every row switches together — comparing rows is the
+       * point, and half of them in each form would defeat it. */}
+      {progress.remainingMs === null || progress.resetAtMs === null ? (
+        <span class="usage-figure usage-reset" />
+      ) : (
+        <button
+          type="button"
+          class="usage-figure usage-reset"
+          title={
+            reset.absolute
+              ? "リセット時刻 (タップで残り時間に切替)"
+              : "リセットまでの残り時間 (タップで時刻に切替)"
+          }
+          onClick={reset.toggle}
+        >
+          {reset.absolute
+            ? formatResetAt(progress.resetAtMs)
+            : formatRemaining(progress.remainingMs)}
+        </button>
+      )}
     </div>
   );
 }
 
-function WindowRow({ progress }: { progress: WindowProgress }) {
+function WindowRow({ progress, reset }: { progress: WindowProgress; reset: ResetDisplay }) {
   const durationMs = parseWindowDurationMs(progress.key);
   return (
     <TrackRow
@@ -133,12 +166,13 @@ function WindowRow({ progress }: { progress: WindowProgress }) {
       label={progress.key}
       glyph={periodGlyph(durationMs)}
       durationMs={durationMs}
+      reset={reset}
       keyTitle={progress.status}
     />
   );
 }
 
-function LimitRow({ progress }: { progress: LimitProgress }) {
+function LimitRow({ progress, reset }: { progress: LimitProgress; reset: ResetDisplay }) {
   const durationMs = limitKindDurationMs(progress.key);
   return (
     <TrackRow
@@ -146,6 +180,7 @@ function LimitRow({ progress }: { progress: LimitProgress }) {
       label={limitLabel(progress)}
       glyph={periodGlyph(durationMs)}
       durationMs={durationMs}
+      reset={reset}
       keyTitle={`severity: ${progress.severity}`}
       extra={
         // Marked, not toned: "upstream is counting against this one" is a
@@ -164,10 +199,12 @@ function LimitRow({ progress }: { progress: LimitProgress }) {
 function CredentialRow({
   credential,
   retained,
+  reset,
   now,
 }: {
   credential: LlmUsageCredential;
   retained: ProbeRecord | undefined;
+  reset: ResetDisplay;
   now: number;
 }) {
   const snapshot = credential.snapshot;
@@ -197,14 +234,14 @@ function CredentialRow({
       {windows.length > 0 || limits.length > 0 ? (
         <div class="usage-windows">
           {windows.map((progress) => (
-            <WindowRow key={progress.key} progress={progress} />
+            <WindowRow key={progress.key} progress={progress} reset={reset} />
           ))}
           {/* Provider limits below the rolling windows: the windows are the
            * quota every request draws on, the limits are extra ceilings on
            * top of it. Keyed by label because a gateway can report several
            * scoped limits, which share the `weekly_scoped` kind. */}
           {limits.map((progress) => (
-            <LimitRow key={limitLabel(progress)} progress={progress} />
+            <LimitRow key={limitLabel(progress)} progress={progress} reset={reset} />
           ))}
           {/* The observation's own age, not the button press's: a probe that
            * upstream refused returns a reading from before it, and dating
@@ -244,6 +281,17 @@ function QuotaSection({ state }: { state: AppState }) {
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [probing, setProbing] = useState(false);
+  // Shared by every row rather than held per row: the screen is read by
+  // comparing rows, and half of them in each form would defeat that.
+  const [absoluteReset, setAbsoluteReset] = useState(() => readStorage(RESET_DISPLAY_KEY) === "1");
+  const reset: ResetDisplay = {
+    absolute: absoluteReset,
+    toggle: () =>
+      setAbsoluteReset((current) => {
+        writeStorage(RESET_DISPLAY_KEY, current ? "0" : "1");
+        return !current;
+      }),
+  };
   // Both paths await a round trip that can outlive the view (a probe takes
   // seconds), so every state write after the await is gated on still being
   // mounted rather than on a flag captured by one effect run.
@@ -350,6 +398,7 @@ function QuotaSection({ state }: { state: AppState }) {
               key={credential.name}
               credential={credential}
               retained={state.llmUsageProbes.get(credential.name)}
+              reset={reset}
               now={now}
             />
           ))}
