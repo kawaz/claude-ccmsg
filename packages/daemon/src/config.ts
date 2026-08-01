@@ -27,6 +27,12 @@ export interface DaemonConfig {
    * http:// / https:// の絶対 URL のみ受け付け、それ以外は warn + 未設定扱い
    * (= webui 側で Usage メニュー自体を出さない)。 */
   llm_usage_url?: string;
+  /** LLM gateway の stats endpoint URL — webui の Usage 画面の利用料セクション
+   * が `llm_stats` op 経由でここの JSON を読む。llm_usage_url と同じ理由で
+   * daemon proxy 経由 (CORS ヘッダ無し)、同じ検証 (http:// / https:// の絶対
+   * URL のみ) を通す。集計期間は op の `days` が query parameter として上書き
+   * するので、ここには days を付けても付けなくてもよい。 */
+  llm_stats_url?: string;
 }
 
 /** Validate one absolute-http(s)-URL config field. Both URL-valued keys
@@ -240,9 +246,11 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
     log,
   );
   const llmUsageUrl = parseHttpUrl(parsed.llm_usage_url, "llm_usage_url", file, log);
+  const llmStatsUrl = parseHttpUrl(parsed.llm_stats_url, "llm_stats_url", file, log);
   const cfg: DaemonConfig = {};
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
   if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;
+  if (llmStatsUrl) cfg.llm_stats_url = llmStatsUrl;
   return cfg;
 }

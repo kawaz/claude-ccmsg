@@ -6,7 +6,8 @@
 // error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
-import { fetchLlmUsage, parseUsagePayload, type LlmUsageDeps } from "../src/llm-usage.ts";
+import { fetchLlmUsage, parseUsagePayload } from "../src/llm-usage.ts";
+import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
 
 /** The live endpoint's document, trimmed to one credential per support kind. */
 const UPSTREAM = {
@@ -40,7 +41,7 @@ const UPSTREAM = {
   ],
 };
 
-function jsonDeps(body: unknown, init: ResponseInit = {}): LlmUsageDeps {
+function jsonDeps(body: unknown, init: ResponseInit = {}): LlmGatewayDeps {
   return {
     fetch: () => Promise.resolve(new Response(JSON.stringify(body), init)),
   };

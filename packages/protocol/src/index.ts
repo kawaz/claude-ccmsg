@@ -679,6 +679,13 @@ export type LlmUsageResultEvent = {
   request_id: string;
 } & (LlmUsageResponse | ErrorResponse);
 
+/** Completion of a 2-phase `llm_stats` request (see LlmStatsRequest's doc
+ * comment). Same correlation/classification rules as TranslateResultEvent. */
+export type LlmStatsResultEvent = {
+  ev: "llm_stats_result";
+  request_id: string;
+} & (LlmStatsResponse | ErrorResponse);
+
 export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
@@ -695,7 +702,8 @@ export type StreamEvent =
   | SessionKillResultEvent
   | SessionEnvResultEvent
   | SessionSearchResultEvent
-  | LlmUsageResultEvent;
+  | LlmUsageResultEvent
+  | LlmStatsResultEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -1038,6 +1046,27 @@ export interface LlmUsageRequest {
   /** Client-generated correlation id echoed in the ack and the result event
    * (same uniqueness contract as SessionEnvRequest.request_id). */
   request_id: string;
+}
+
+/** Per-day LLM spend, proxied from the gateway named by `<dataDir>/config.json`'s
+ * `llm_stats_url` (user role only, same posture as `llm_usage`: what the host's
+ * credentials cost is an operator's view). The daemon fetches for the same
+ * reason — the gateway serves no CORS headers, and proxying keeps its internal
+ * address out of the browser.
+ *
+ * 2-phase like `llm_usage`: a wide window is a much larger document than the
+ * quota one and the fetch is correspondingly slow. The outcome arrives as
+ * `ev:"llm_stats_result"`. */
+export interface LlmStatsRequest {
+  op: "llm_stats";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionEnvRequest.request_id). */
+  request_id: string;
+  /** How many days back to ask the gateway for, passed through as its `days`
+   * query parameter. Must be an integer in LLM_STATS_DAYS_MIN..MAX; omitted
+   * leaves the gateway's own default in place. Bounded rather than free so a
+   * typo cannot ask the gateway to assemble years of data. */
+  days?: number;
 }
 
 /**
@@ -1514,6 +1543,7 @@ export type Request =
   | SessionEnvRequest
   | SessionLauncherConfigRequest
   | LlmUsageRequest
+  | LlmStatsRequest
   | FsListRequest
   | FsReadRequest
   | FsReadExternalRequest
@@ -1574,6 +1604,11 @@ export interface HelloResponse {
    * and the webui then hides the usage screen entirely rather than showing a
    * menu entry that can only ever error. */
   llm_usage_available?: boolean;
+  /** True when the daemon has a usable `llm_stats_url` configured. Same
+   * posture and same reasons as llm_usage_available, and reported separately
+   * because the two endpoints are configured independently — one can be set
+   * up without the other, and the webui shows only the section it can fill. */
+  llm_stats_available?: boolean;
 }
 export interface PostResponse {
   ok: true;
@@ -1774,6 +1809,48 @@ export interface LlmUsageResponse {
   generated_at?: number;
   generated_at_iso?: string;
   credentials: LlmUsageCredential[];
+}
+
+/** Bounds on LlmStatsRequest.days. One day is the smallest window the gateway
+ * buckets by; a year plus a day is the widest span anyone reads at once, and
+ * capping it keeps both the gateway's work and the proxied document finite. */
+export const LLM_STATS_DAYS_MIN = 1;
+export const LLM_STATS_DAYS_MAX = 366;
+
+/** What one model cost on one day under one credential. Every field is
+ * optional and passed through as sent: the gateway owns which counters it
+ * reports, and a missing one must read as "not reported" rather than as a
+ * zero the UI would then sum. */
+export interface LlmStatsModelUsage {
+  requests?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  /** Spend in USD. The one field the screen is built around. */
+  usd?: number;
+}
+
+/** One day's spend, credential → model → counters. Credential names are
+ * verbatim from upstream, including the literal "-" the gateway uses for
+ * traffic it cannot attribute to a named credential. */
+export interface LlmStatsDay {
+  credentials: Record<string, Record<string, LlmStatsModelUsage>>;
+  /** The gateway's own total for the day. Kept rather than recomputed from
+   * the models so the screen can show the authoritative figure; it can differ
+   * from the sum when the gateway counts something it does not break out. */
+  total_usd?: number;
+}
+
+/** Payload of a completed llm_stats, delivered inside LlmStatsResultEvent.
+ * Keyed by "YYYY-MM-DD" in the gateway's own timezone — the daemon does not
+ * reinterpret the dates, so a day here means whatever the gateway means. */
+export interface LlmStatsResponse {
+  ok: true;
+  /** When the gateway assembled the response (epoch seconds). */
+  generated_at?: number;
+  generated_at_iso?: string;
+  days: Record<string, LlmStatsDay>;
 }
 
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
@@ -2160,5 +2237,9 @@ export const ErrorCode = {
   // the connection, timed out, returned a non-2xx status, or sent a body that
   // is not the expected JSON shape.
   llm_usage_unavailable: "llm_usage_unavailable",
+  // llm_stats: the same two distinctions as llm_usage, for the independently
+  // configured spend endpoint (`llm_stats_url`).
+  llm_stats_not_configured: "llm_stats_not_configured",
+  llm_stats_unavailable: "llm_stats_unavailable",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

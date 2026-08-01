@@ -42,7 +42,16 @@ function loadSidebarWidth(): number {
  * セッションを見ながら「ccmsg リポにいる」と勘違いして会話する事故の温床
  * になる。何も選択していない初期状態だけアプリ名を出す。 */
 function TopbarTitle({ state }: { state: AppState }) {
-  if (state.view === "usage") return <h1 class="topbar-title">クオータ</h1>;
+  // Names only the sections the daemon can actually fill: with one endpoint
+  // configured, a title promising both would advertise a section that is not
+  // on the screen.
+  if (state.view === "usage") {
+    const parts = [
+      ...(state.llmUsageAvailable ? ["クオータ"] : []),
+      ...(state.llmStatsAvailable ? ["利用料"] : []),
+    ];
+    return <h1 class="topbar-title">{parts.length > 0 ? parts.join(" / ") : "クオータ"}</h1>;
+  }
   if (state.view === "session" || state.view === "timeline") {
     const sid = state.currentSid;
     if (sid !== null) {
@@ -182,12 +191,12 @@ export function App() {
          * configured — without one the screen could only ever show an error,
          * so the feature does not exist for that operator (same posture as the
          * Terminal tab). */}
-        {state.llmUsageAvailable ? (
+        {state.llmUsageAvailable || state.llmStatsAvailable ? (
           <button
             id="app-usage"
             type="button"
             aria-label="usage"
-            title="クオータ"
+            title="クオータ / 利用料"
             aria-current={state.view === "usage" ? "page" : undefined}
             onClick={() => pushNavigation(usageHref())}
           >
@@ -267,7 +276,7 @@ export function App() {
         ) : state.unknownPath !== null ? (
           <UnknownPathView pathname={state.unknownPath} />
         ) : state.view === "usage" ? (
-          <UsageView />
+          <UsageView state={state} />
         ) : state.view === "room" ? (
           <RoomView state={state} />
         ) : null}

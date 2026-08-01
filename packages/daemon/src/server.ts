@@ -7,6 +7,8 @@ import {
   DEFAULT_HTTP_BIND,
   DEFAULT_JOIN_BACKLOG,
   ErrorCode,
+  LLM_STATS_DAYS_MAX,
+  LLM_STATS_DAYS_MIN,
   VERSION,
   resolvePaths,
   type ArchiveEvent,
@@ -14,6 +16,7 @@ import {
   type Identity,
   type KindEvent,
   type LeaveEvent,
+  type LlmStatsResponse,
   type LlmUsageResponse,
   type MemberEvent,
   type MsgEvent,
@@ -54,6 +57,7 @@ import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
+import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
 import {
   createSessionErrorsStore,
   sessionErrorEntries,
@@ -1098,6 +1102,7 @@ type TwoPhaseResult =
   | SessionSearchResponse
   | TranslateResponse
   | LlmUsageResponse
+  | LlmStatsResponse
   | ErrorResponse;
 
 function acceptTwoPhase(
@@ -1240,11 +1245,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // endpoint を browser から読めない) — webui は Usage メニューを出すか
       // 否かの判断にしか使わない。
       const llmUsageAvailable = newId.role === "user" && !!daemon.config.llm_usage_url;
+      // 利用料 (llm_stats_url) も同じ扱い。usage とは独立に設定できるので
+      // capability も独立に返す — 片方だけ設定した環境で、設定していない方の
+      // セクションが「押せば必ずエラー」の状態で出るのを防ぐ。
+      const llmStatsAvailable = newId.role === "user" && !!daemon.config.llm_stats_url;
       send(conn, {
         ok: true,
         version: daemon.version,
         ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
+        ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
       });
       return;
     }
@@ -2431,6 +2441,50 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         },
         (e) => {
           daemon.log.error(`op 'llm_usage' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
+    // Same role rationale as "llm_usage": what the host's credentials cost is
+    // an operator's view, not something a session's agent has a use for.
+    case "llm_stats": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'llm_stats' requires user role");
+        return;
+      }
+      const statsUrl = daemon.config.llm_stats_url;
+      if (!statsUrl) {
+        sendErr(conn, ErrorCode.llm_stats_not_configured, "llm stats endpoint is not configured");
+        return;
+      }
+      // Validated before the ack rather than passed through: an out-of-range
+      // window is the client's bug, and answering it as a 2-phase failure
+      // would hide that behind an error that looks like the gateway's.
+      if (req.days !== undefined && !isValidDays(req.days)) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `op 'llm_stats' days must be an integer in ${LLM_STATS_DAYS_MIN}..${LLM_STATS_DAYS_MAX}`,
+        );
+        return;
+      }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "llm_stats",
+        "llm_stats_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      void fetchLlmStats(statsUrl, req.days).then(
+        (result) => {
+          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
+          else complete(result.data);
+        },
+        (e) => {
+          daemon.log.error(`op 'llm_stats' failed: ${String(e)}`);
           complete({ ok: false, error: { code: "internal", msg: String(e) } });
         },
       );

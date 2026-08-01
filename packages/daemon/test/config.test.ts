@@ -384,4 +384,46 @@ describe("loadConfig", () => {
       expect(warnings).toHaveLength(1);
     });
   });
+
+  // llm_stats_url: the spend endpoint, configured independently of the quota
+  // one — an operator can set up either without the other, and the webui shows
+  // only the section whose endpoint exists.
+  describe("llm_stats_url", () => {
+    test("valid https URL is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats" }));
+      expect(loadConfig(file, log).llm_stats_url).toBe("https://gw.example/stats");
+      expect(warnings).toEqual([]);
+    });
+
+    // The operator's likely source is a URL they were reading in a browser,
+    // which already carries a window; the query string has to survive the
+    // config (the op overwrites just the `days` parameter).
+    test("an existing query string is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats?days=30" }));
+      expect(loadConfig(file, log).llm_stats_url).toBe("https://gw.example/stats?days=30");
+    });
+
+    test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
+      for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ llm_stats_url: value }));
+        warnings = [];
+        expect(loadConfig(file, log).llm_stats_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    test("the two llm URL keys degrade independently of each other", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          llm_usage_url: "not a url",
+          llm_stats_url: "https://gw.example/stats",
+        }),
+      );
+      const cfg = loadConfig(file, log);
+      expect(cfg.llm_usage_url).toBeUndefined();
+      expect(cfg.llm_stats_url).toBe("https://gw.example/stats");
+      expect(warnings).toHaveLength(1);
+    });
+  });
 });

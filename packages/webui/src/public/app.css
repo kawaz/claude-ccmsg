@@ -6490,3 +6490,191 @@ button.session-tab {
   font-size: 0.8rem;
   color: var(--danger);
 }
+
+/* ---- /usage: LLM spend ------------------------------------------------- */
+
+#usage-stats {
+  margin-top: 1.5rem;
+}
+
+.stats-subhead {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.stats-period {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.stats-period-preset {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.stats-period-preset:hover {
+  border-color: var(--accent);
+}
+
+.stats-period-preset[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.stats-period-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+
+.stats-period-custom input {
+  width: 4rem;
+  padding: 0.15rem 0.3rem;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.stats-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.stats-period-row > summary {
+  display: grid;
+  grid-template-columns: 7rem auto minmax(3rem, 1fr) 6rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  list-style-position: outside;
+}
+
+.stats-period-row > summary:hover {
+  background: var(--bg-alt);
+}
+
+.stats-period-key {
+  font-family: var(--mono, monospace);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.stats-period-note {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* Spend bars are compared row against row, so they share one track width and
+   are scaled to the widest row rather than to an absolute figure. */
+.stats-period-bar,
+.stats-model-bar {
+  position: relative;
+  display: block;
+  height: 0.6rem;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.stats-period-bar-fill,
+.stats-model-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.stats-period-usd,
+.stats-model-usd {
+  font-family: var(--mono, monospace);
+  font-size: 0.85rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.stats-period-usd {
+  font-weight: 600;
+}
+
+.stats-models {
+  list-style: none;
+  margin: 0.2rem 0 0.5rem;
+  padding: 0 0.4rem 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.stats-model {
+  display: grid;
+  grid-template-columns: 12rem minmax(3rem, 1fr) 6rem auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.stats-model-name {
+  font-family: var(--mono, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-model-counters {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.stats-by-credential {
+  margin: 0 0 0.6rem 1.5rem;
+}
+
+.stats-by-credential > summary {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.stats-credential {
+  margin: 0.3rem 0 0.3rem 0.5rem;
+}
+
+.stats-credential-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.stats-credential-name {
+  font-weight: 600;
+}
+
+.stats-credential-usd {
+  font-family: var(--mono, monospace);
+  color: var(--fg-muted);
+}
+
+.stats-note,
+.stats-empty {
+  margin: 0.4rem 0 0;
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+}

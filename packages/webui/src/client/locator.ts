@@ -1,3 +1,5 @@
+import { LLM_STATS_DAYS_MAX, LLM_STATS_DAYS_MIN } from "@ccmsg/protocol";
+
 export interface AgentRef {
   agentId?: string;
   runId?: string;
@@ -8,9 +10,12 @@ export type SessionTab = "files" | "timeline" | "terminal" | "status" | "rooms";
 
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
-  /** Host-wide LLM credential quota — the one screen that belongs to no
-   * session and no room, so it sits at the URL root next to /r and /s. */
-  | { view: "usage" }
+  /** Host-wide LLM credentials: quota and spend — the one screen that belongs
+   * to no session and no room, so it sits at the URL root next to /r and /s.
+   * `days` is the spend window, null when the URL names none (the daemon's
+   * gateway then picks). It rides the URL so a reload, a bookmark, and the
+   * back button all land on the window that was being read. */
+  | { view: "usage"; days: number | null }
   | {
       view: "session";
       tab?: Exclude<SessionTab, "timeline">;
@@ -51,7 +56,8 @@ export function parseUrl(pathname: string, search = ""): Locator {
 
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] === "usage") {
-    return segments.length === 1 ? { view: "usage" } : { view: "unknown", pathname };
+    if (segments.length !== 1) return { view: "unknown", pathname };
+    return { view: "usage", days: parseUsageDays(search) };
   }
   if (segments[0] === "r" && segments.length >= 2) {
     const room = decodeNonEmpty(segments[1] ?? "");
@@ -128,6 +134,18 @@ export function parseUrl(pathname: string, search = ""): Locator {
   return { view: "unknown", pathname };
 }
 
+/** `?days=N` off the usage URL. Out-of-range and non-numeric both degrade to
+ * null rather than to an unknown path: the screen is still perfectly readable
+ * on the default window, and 404-ing a hand-edited number would throw away a
+ * page the user can otherwise use. */
+function parseUsageDays(search: string): number | null {
+  if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
+  const raw = new URLSearchParams(search).get("days");
+  if (raw === null || !/^\d+$/.test(raw)) return null;
+  const days = Number(raw);
+  return days >= LLM_STATS_DAYS_MIN && days <= LLM_STATS_DAYS_MAX ? days : null;
+}
+
 function sidBase(sid: string): string {
   return `/s/${encodeURIComponent(sid)}`;
 }
@@ -144,8 +162,8 @@ export function roomHref(roomId: string): string {
   return `/r/${encodeURIComponent(roomId)}`;
 }
 
-export function usageHref(): string {
-  return "/usage";
+export function usageHref(days?: number | null): string {
+  return days === undefined || days === null ? "/usage" : `/usage?days=${days}`;
 }
 
 export function sessionHref(sid: string): string {

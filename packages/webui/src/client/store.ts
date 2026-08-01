@@ -186,6 +186,14 @@ export interface AppState {
    * terminal_gateway_url と同じ姿勢)。URL 自体は daemon 側が fetch するので
    * webui には来ない。 */
   llmUsageAvailable: boolean;
+  /** hello response の `llm_stats_available`。llmUsageAvailable と同じ役割の
+   * 利用料 endpoint 版で、/usage 画面の利用料セクションはこれが true の時
+   * だけ出す。2 つの endpoint は独立に設定できるので flag も独立。 */
+  llmStatsAvailable: boolean;
+  /** 利用料セクションの集計期間 (日数)。URL の `?days=N` 由来で、null なら
+   * daemon の gateway 側デフォルトに委ねる。locator に載せているのは
+   * リロード・ブックマーク・戻るで同じ期間に戻すため。 */
+  usageDays: number | null;
   /** which top-level screen the locator currently selects. */
   view: View;
   /** Session tab selected by the real-path locator. */
@@ -259,6 +267,8 @@ export function initialState(): AppState {
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
     llmUsageAvailable: false,
+    llmStatsAvailable: false,
+    usageDays: null,
     view: "room",
     currentTab: null,
     unknownPath: null,
@@ -305,6 +315,7 @@ export type Action =
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
+  | { type: "llm-stats/availability"; available: boolean }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "navigation/missing"; target: MissingTarget | null }
@@ -647,6 +658,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     return {
       ...state,
       view: "usage",
+      usageDays: locator.days,
       currentTab: null,
       unknownPath: null,
       missingTarget: null,
@@ -849,6 +861,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, terminalGatewayUrl: action.url };
     case "llm-usage/availability":
       return { ...state, llmUsageAvailable: action.available };
+    case "llm-stats/availability":
+      return { ...state, llmStatsAvailable: action.available };
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":

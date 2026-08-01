@@ -35,6 +35,7 @@ import type {
   HelloResponse,
   InviteResponse,
   KickResponse,
+  LlmStatsResponse,
   LlmUsageResponse,
   PeersResponse,
   PeersStreamEvent,
@@ -334,6 +335,12 @@ export interface WsHandle {
    * `llm_usage_available` carries, seen here when the config changed under a
    * live connection. */
   llmUsage(): Promise<LlmUsageResponse | ErrorResponse>;
+  /** Per-day LLM spend over the last `days` days, proxied by the daemon from
+   * its configured stats gateway (user role only). 2-phase on the wire (ack +
+   * ev:"llm_stats_result") like llmUsage; `days` omitted leaves the gateway's
+   * own default window. `error.code === "llm_stats_not_configured"` is the
+   * hello capability seen after a config change under a live connection. */
+  llmStats(days?: number): Promise<LlmStatsResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -346,6 +353,7 @@ type TwoPhaseOutcome =
   | SessionLaunchResponse
   | SessionSearchResponse
   | LlmUsageResponse
+  | LlmStatsResponse
   | ErrorResponse;
 
 export function createWsClient(
@@ -477,6 +485,13 @@ export function createWsClient(
           type: "llm-usage/availability",
           available: hello.llm_usage_available === true,
         });
+        // 利用料 endpoint の capability。usage とは独立に設定できるので別
+        // dispatch — 片方だけ設定した daemon で、もう片方のセクションを
+        // 出さないための判断材料になる。
+        dispatch({
+          type: "llm-stats/availability",
+          available: hello.llm_stats_available === true,
+        });
       }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
@@ -547,7 +562,8 @@ export function createWsClient(
           streamEv.ev === "session_kill_result" ||
           streamEv.ev === "session_env_result" ||
           streamEv.ev === "session_search_result" ||
-          streamEv.ev === "llm_usage_result")
+          streamEv.ev === "llm_usage_result" ||
+          streamEv.ev === "llm_stats_result")
       ) {
         const settle = inflight.get(streamEv.request_id);
         if (settle) {
@@ -881,5 +897,11 @@ export function createWsClient(
         session_id: sessionId,
       }),
     llmUsage: () => sendTwoPhase({ op: "llm_usage", request_id: `q${++nextRequestId}` }),
+    llmStats: (days) =>
+      sendTwoPhase({
+        op: "llm_stats",
+        request_id: `q${++nextRequestId}`,
+        ...(days !== undefined ? { days } : {}),
+      }),
   };
 }

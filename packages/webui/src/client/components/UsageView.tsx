@@ -1,7 +1,9 @@
-// /usage — the host's LLM credentials and how much of each quota window is
-// spent. Host-wide rather than per session: the credentials are the daemon
-// machine's, and every session draws on the same pool. The daemon proxies the
-// gateway (no CORS headers there) via the `llm_usage` op.
+// /usage — the host's LLM credentials: how much of each quota window is spent,
+// and what they have cost. Host-wide rather than per session, since the
+// credentials are the daemon machine's and every session draws on the same
+// pool. The daemon proxies the gateway (no CORS headers there) via the
+// `llm_usage` and `llm_stats` ops, which are configured independently — each
+// section appears only when its own endpoint is set up.
 import { useEffect, useState } from "preact/hooks";
 import type { ErrorResponse, LlmUsageCredential, LlmUsageResponse } from "@ccmsg/protocol";
 import {
@@ -12,8 +14,10 @@ import {
   supportDescription,
   type WindowProgress,
 } from "../llm-usage-view.ts";
+import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { ErrorView } from "./ErrorView.tsx";
+import { UsageStats } from "./UsageStats.tsx";
 
 /** Quota moves on the scale of hours; a minute of staleness is invisible to
  * the reader and the gateway's own snapshots lag by more than that anyway.
@@ -121,7 +125,7 @@ function CredentialRow({ credential, now }: { credential: LlmUsageCredential; no
   );
 }
 
-export function UsageView() {
+function QuotaSection() {
   const { ws } = useApp();
   const [usage, setUsage] = useState<LlmUsageResponse | null>(null);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
@@ -159,7 +163,6 @@ export function UsageView() {
     if (error) {
       return (
         <ErrorView
-          fill
           mark="!"
           tone="danger"
           title="クオータを取得できません"
@@ -168,15 +171,11 @@ export function UsageView() {
         />
       );
     }
-    return (
-      <main id="usage-view" class="usage-loading">
-        読み込み中…
-      </main>
-    );
+    return <p class="usage-loading">読み込み中…</p>;
   }
 
   return (
-    <main id="usage-view">
+    <section id="usage-quota">
       <header class="usage-header">
         <h2>クオータ</h2>
         {/* A stale read stays on screen with the failure beside it: the last
@@ -193,6 +192,18 @@ export function UsageView() {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+export function UsageView({ state }: { state: AppState }) {
+  // Each section is gated on its own hello capability: an operator who
+  // configured only one of the two endpoints sees only that one, rather than a
+  // heading over an error the other section could never stop showing.
+  return (
+    <main id="usage-view">
+      {state.llmUsageAvailable ? <QuotaSection /> : null}
+      {state.llmStatsAvailable ? <UsageStats days={state.usageDays} /> : null}
     </main>
   );
 }

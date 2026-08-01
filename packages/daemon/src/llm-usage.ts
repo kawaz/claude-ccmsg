@@ -1,8 +1,7 @@
 // LLM gateway quota proxy (op `llm_usage`).
 //
-// The gateway serves its usage JSON without CORS headers, so the webui cannot
-// read it directly; the daemon fetches on its behalf. Everything here is
-// async IO per DR-0029 — no synchronous read blocks the event loop.
+// Fetch and byte-bounding live in llm-gateway.ts, shared with `llm_stats`;
+// what is here is the shape this endpoint's document has to have.
 import {
   ErrorCode,
   type ErrorCode as ErrorCodeType,
@@ -12,6 +11,14 @@ import {
   type LlmUsageSnapshot,
   type LlmUsageWindow,
 } from "@ccmsg/protocol";
+import {
+  fetchGatewayJson,
+  isRecord,
+  optionalNumber,
+  optionalString,
+  productionGatewayDeps,
+  type LlmGatewayDeps,
+} from "./llm-gateway.ts";
 
 /** Upstream is a small JSON document (a handful of credentials); anything at
  * this size is a misconfigured URL pointing at something else entirely, and
@@ -25,33 +32,6 @@ export const LLM_USAGE_TIMEOUT_MS = 10_000;
 export type LlmUsageResult =
   | { ok: true; data: LlmUsageResponse }
   | { ok: false; code: ErrorCodeType; msg: string };
-
-/** Just the call this module makes, rather than `typeof globalThis.fetch`:
- * the dependency is "fetch this URL", and narrowing it keeps a test stub from
- * having to reproduce the runtime's incidental extras (Bun's `preconnect`). */
-export type UsageFetch = (url: string, init?: RequestInit) => Promise<Response>;
-
-export interface LlmUsageDeps {
-  /** Injected so tests exercise the parsing and the failure branches without
-   * a live gateway. Defaults to the runtime's global fetch. */
-  fetch: UsageFetch;
-}
-
-export const productionUsageDeps: LlmUsageDeps = {
-  fetch: (url, init) => globalThis.fetch(url, init),
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function optionalNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value !== "" ? value : undefined;
-}
 
 /** A sibling key of `observed_at` counts as a quota window only if it carries
  * the two fields the UI needs to draw one. Shape rather than an allowlist of
@@ -147,90 +127,22 @@ export function parseUsagePayload(parsed: unknown): LlmUsageResult {
   };
 }
 
-/** Buffer the body with a hard byte ceiling. `res.text()` would read an
- * unbounded stream into daemon memory before the size could be checked, and
- * content-length is advisory (absent under chunked encoding). */
-async function readBounded(res: Response): Promise<string | null> {
-  const body = res.body;
-  if (!body) return "";
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let size = 0;
-  let text = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > RESPONSE_MAX_BYTES) return null;
-      text += decoder.decode(value, { stream: true });
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return text + decoder.decode();
-}
-
-/** Fetch and normalize the gateway's usage document. Every upstream failure
- * mode collapses to `llm_usage_unavailable` with the cause in `msg`: the
- * caller's recovery ("retry, or go fix the gateway") is the same whether the
- * gateway refused the connection, timed out, or answered with HTML. */
+/** Fetch and normalize the gateway's usage document. */
 export async function fetchLlmUsage(
   url: string,
-  deps: LlmUsageDeps = productionUsageDeps,
+  deps: LlmGatewayDeps = productionGatewayDeps,
   timeoutMs: number = LLM_USAGE_TIMEOUT_MS,
 ): Promise<LlmUsageResult> {
-  let res: Response;
-  try {
-    res = await deps.fetch(url, {
-      signal: AbortSignal.timeout(timeoutMs),
-      headers: { accept: "application/json" },
-    });
-  } catch (e) {
-    const timedOut = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
-    return {
-      ok: false,
+  const res = await fetchGatewayJson(
+    {
+      url,
+      label: "usage",
       code: ErrorCode.llm_usage_unavailable,
-      msg: timedOut
-        ? `usage endpoint did not respond within ${timeoutMs}ms`
-        : `usage endpoint unreachable: ${String(e)}`,
-    };
-  }
-  if (!res.ok) {
-    return {
-      ok: false,
-      code: ErrorCode.llm_usage_unavailable,
-      msg: `usage endpoint returned HTTP ${res.status}`,
-    };
-  }
-
-  let text: string | null;
-  try {
-    text = await readBounded(res);
-  } catch (e) {
-    return {
-      ok: false,
-      code: ErrorCode.llm_usage_unavailable,
-      msg: `usage endpoint response could not be read: ${String(e)}`,
-    };
-  }
-  if (text === null) {
-    return {
-      ok: false,
-      code: ErrorCode.llm_usage_unavailable,
-      msg: `usage endpoint response exceeds ${RESPONSE_MAX_BYTES} bytes`,
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return {
-      ok: false,
-      code: ErrorCode.llm_usage_unavailable,
-      msg: "usage endpoint returned invalid JSON",
-    };
-  }
-  return parseUsagePayload(parsed);
+      maxBytes: RESPONSE_MAX_BYTES,
+      timeoutMs,
+    },
+    deps,
+  );
+  if (!res.ok) return res;
+  return parseUsagePayload(res.parsed);
 }
