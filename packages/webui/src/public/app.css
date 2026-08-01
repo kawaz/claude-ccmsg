@@ -4088,6 +4088,15 @@ button.session-tab {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* fold summary のラベルの後ろに続く従属ラベル (attachment の hook 名 /
+ * ファイルパス等) — ラベル本体より一段弱いトーンで「どれか」を示す。 */
+.tl-fold-trailing {
+  margin-left: 0.6em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--muted, #888);
+  overflow-wrap: anywhere;
+}
+
 .tl-decorated-summary .tl-summary-decoration {
   display: inline-flex;
   align-items: center;

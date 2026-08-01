@@ -322,11 +322,15 @@ function FoldSummary({
   label,
   open = false,
   decoration,
+  trailing,
 }: {
   ts: string | null;
   label: string;
   open?: boolean;
   decoration?: FoldSummaryDecoration;
+  /** Secondary label placed after the main one — which item of this kind the
+   * fold holds (an attachment's hook name / file path). */
+  trailing?: string | null;
 }) {
   const view = foldSummaryView(label, open, decoration);
   return (
@@ -356,6 +360,7 @@ function FoldSummary({
       ) : (
         <span class="tl-fold-label">{view.label}</span>
       )}
+      {trailing ? <span class="tl-fold-trailing">{trailing}</span> : null}
     </summary>
   );
 }
@@ -1672,10 +1677,28 @@ function LineView({
     );
   }
   if (line.kind === "meta") {
+    // attachment 行だけは共通 chrome (`attachment <type>`) + type 別詳細を出す
+    // — 種類が多く、閉じたままでは全部が同じ「attachment」に見えるため。詳細を
+    // 持たない type は従来どおり raw JSON だけになる。
+    const attachment = line.attachment;
     return (
       <ItemRawToggle offset={offset}>
         <details class="tl-line tl-fold">
-          <FoldSummary ts={line.ts} label={line.summary} />
+          <FoldSummary
+            ts={line.ts}
+            label={attachment ? `attachment ${attachment.type}` : line.summary}
+            trailing={attachment?.trailing}
+          />
+          {attachment && attachment.fields.length > 0 ? (
+            <dl class="tl-sysmsg-dl">
+              {attachment.fields.map((f) => (
+                <div class="tl-sysmsg-field" key={f.name}>
+                  <dt>{f.name}</dt>
+                  <dd class={f.name === "event" ? "tl-sysmsg-mono" : undefined}>{f.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
           <pre class="tl-fold-body">{line.raw}</pre>
         </details>
       </ItemRawToggle>

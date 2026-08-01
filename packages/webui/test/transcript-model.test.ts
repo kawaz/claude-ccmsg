@@ -7,6 +7,7 @@
 // coverage.
 import { describe, expect, test } from "bun:test";
 import {
+  attachmentDetail,
   ccmsgDedupKey,
   ccmsgMessageCount,
   ccmsgRenderTargets,
@@ -4051,5 +4052,115 @@ describe("parseSystemMessageFields", () => {
       expect(() => parseSystemMessageFields("system-caveat", "")).not.toThrow();
       expect(parseSystemMessageFields("system-caveat", "")).toEqual({ display: "text", text: "" });
     });
+  });
+});
+
+// attachment 行 (`type:"attachment"`) の type 別詳細化。閉じた fold が全部
+// 「attachment」に見えないよう、共通 chrome (type 名) + type 別の従属ラベル /
+// フィールドを出す。行形状は実 transcript 実測 (2026-08-02) に準拠。
+describe("attachmentDetail", () => {
+  test("hook_success -> hookName が従属ラベル、実行結果がフィールドに展開される", () => {
+    const detail = attachmentDetail(
+      {
+        type: "hook_success",
+        hookName: "gh-monitor",
+        hookEvent: "PostToolUse",
+        command: "hooks/notify.sh",
+        exitCode: 0,
+        durationMs: 12,
+        stdout: "ok",
+        stderr: "",
+        content: "…",
+      },
+      null,
+    );
+    expect(detail.type).toBe("hook_success");
+    expect(detail.trailing).toBe("gh-monitor");
+    expect(detail.fields).toEqual([
+      { name: "event", value: "PostToolUse" },
+      { name: "command", value: "hooks/notify.sh" },
+      { name: "exitCode", value: "0" },
+      { name: "durationMs", value: "12" },
+      { name: "stdout", value: "ok" },
+    ]);
+  });
+
+  // hook_additional_context は command/exitCode を持たない。欠けたフィールドは
+  // 空行を作らず落ちる (空文字の stderr も同様)。
+  test("hook_additional_context -> 存在するフィールドだけが並ぶ", () => {
+    const detail = attachmentDetail(
+      { type: "hook_additional_context", hookName: "ccmsg", hookEvent: "UserPromptSubmit" },
+      null,
+    );
+    expect(detail.trailing).toBe("ccmsg");
+    expect(detail.fields).toEqual([{ name: "event", value: "UserPromptSubmit" }]);
+  });
+
+  test("edited_text_file -> ファイルパスが従属ラベル、cwd 配下なら相対表示", () => {
+    const detail = attachmentDetail(
+      { type: "edited_text_file", filename: "/repo/main/src/a.ts", snippet: "…" },
+      "/repo/main",
+    );
+    expect(detail).toEqual({ type: "edited_text_file", trailing: "src/a.ts", fields: [] });
+  });
+
+  test("cwd 外のファイルは絶対パスのまま", () => {
+    const detail = attachmentDetail(
+      { type: "edited_text_file", filename: "/tmp/x.ts" },
+      "/repo/main",
+    );
+    expect(detail.trailing).toBe("/tmp/x.ts");
+  });
+
+  // 未知 type は spec なしでも type 名だけで成立する (今後 Claude Code が
+  // attachment type を増やしても壊れない、というのが本設計の前提)。
+  test("未知 type -> type 名のみ、従属ラベル・フィールドなし", () => {
+    expect(attachmentDetail({ type: "brand_new_thing", whatever: 1 }, null)).toEqual({
+      type: "brand_new_thing",
+      trailing: null,
+      fields: [],
+    });
+  });
+
+  // spec のない type でもパス項目を持つなら拾う (file 系 attachment が増えた
+  // ときに個別 spec なしで読める形になる)。
+  test("spec のない type でも path 項目があれば従属ラベルになる", () => {
+    expect(
+      attachmentDetail({ type: "future_file_thing", path: "/repo/main/b.ts" }, "/repo/main")
+        .trailing,
+    ).toBe("b.ts");
+  });
+
+  test("attachment が欠落・非オブジェクトでも壊れない", () => {
+    for (const bad of [undefined, null, "x", 3, []]) {
+      expect(attachmentDetail(bad, null)).toEqual({ type: "?", trailing: null, fields: [] });
+    }
+  });
+
+  test("parseTranscriptLine が attachment 行に detail を付ける", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "attachment",
+        timestamp: "2026-08-02T00:00:00.000Z",
+        cwd: "/repo/main",
+        attachment: { type: "edited_text_file", filename: "/repo/main/src/a.ts" },
+      }),
+    );
+    expect(line.kind).toBe("meta");
+    if (line.kind !== "meta") return;
+    expect(line.attachment).toEqual({
+      type: "edited_text_file",
+      trailing: "src/a.ts",
+      fields: [],
+    });
+  });
+
+  // attachment 以外の meta 行は従来どおり detail を持たない (= 描画も従来のまま)。
+  test("attachment 以外の meta 行には detail が付かない", () => {
+    const line = parseTranscriptLine(JSON.stringify({ type: "system", subtype: "info" }));
+    expect(line.kind).toBe("meta");
+    if (line.kind !== "meta") return;
+    expect(line.attachment).toBeUndefined();
+    expect(line.summary).toBe("system: info");
   });
 });

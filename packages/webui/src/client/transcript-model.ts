@@ -151,6 +151,9 @@ export interface MetaLine {
   type: string;
   summary: string;
   raw: string;
+  /** Present only on `type:"attachment"` rows — the shared chrome (type name)
+   * plus whatever the per-type spec could pull out of this attachment. */
+  attachment?: AttachmentDetail;
 }
 
 /** JSON.parse failure, or a parsed value that isn't a JSON object at all
@@ -386,6 +389,97 @@ function summarizeMeta(obj: Record<string, unknown>): string {
   if (typeof obj.subtype === "string") parts.push(obj.subtype);
   if (typeof obj.operation === "string") parts.push(obj.operation);
   return parts.join(": ");
+}
+
+/**
+ * What the Timeline shows for a `type:"attachment"` row: shared chrome (the
+ * attachment's own `type`, always rendered the same way) plus the per-type
+ * extras a spec in `ATTACHMENT_SPECS` could extract. A type with no spec —
+ * including one Claude Code adds after this was written — still gets `type`
+ * and the raw-JSON expand, matching the module's forward-compat rule for
+ * unseen shapes.
+ */
+export interface AttachmentDetail {
+  /** `attachment.type` verbatim, `"?"` when the row carries none. */
+  type: string;
+  /** Short label shown to the right of the closed fold's own label — the one
+   * field that identifies *which* attachment of this type this row is (hook
+   * name, edited file, …). `null` when the type has nothing to name. */
+  trailing: string | null;
+  /** Rows rendered above the raw JSON when the fold is open. Empty for types
+   * whose payload the raw JSON already shows adequately. */
+  fields: SystemMessageField[];
+}
+
+/** Per-type extraction for one attachment payload. `cwd` is the row's own
+ * working directory, used to show in-project paths relative. */
+type AttachmentSpec = (
+  attachment: Record<string, unknown>,
+  cwd: string | null,
+) => { trailing?: string | null; fields?: SystemMessageField[] };
+
+/** Path field names seen across attachment types, in priority order. */
+const ATTACHMENT_PATH_FIELDS = ["filename", "file_path", "filePath", "path", "displayPath"];
+
+/** `path` shortened to a cwd-relative form when it sits under `cwd`. */
+function displayPath(path: string, cwd: string | null): string {
+  if (!cwd) return path;
+  const prefix = cwd.endsWith("/") ? cwd : `${cwd}/`;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+function field(name: string, value: unknown): SystemMessageField | null {
+  if (typeof value === "string") return value === "" ? null : { name, value };
+  if (typeof value === "number" || typeof value === "boolean") {
+    return { name, value: String(value) };
+  }
+  return null;
+}
+
+/** hook_success / hook_additional_context: named by the hook that produced
+ * them, and worth unfolding into the command's own outcome. */
+const hookSpec: AttachmentSpec = (a) => ({
+  trailing: typeof a.hookName === "string" ? a.hookName : null,
+  fields: [
+    field("event", a.hookEvent),
+    field("command", a.command),
+    field("exitCode", a.exitCode),
+    field("durationMs", a.durationMs),
+    field("stdout", a.stdout),
+    field("stderr", a.stderr),
+  ].filter((f): f is SystemMessageField => f !== null),
+});
+
+const ATTACHMENT_SPECS: Record<string, AttachmentSpec> = {
+  hook_success: hookSpec,
+  hook_additional_context: hookSpec,
+};
+
+/**
+ * Classifies one `type:"attachment"` row's payload into its `AttachmentDetail`.
+ * Pure. A type with no entry in `ATTACHMENT_SPECS` still gets its name plus a
+ * path trailing when the payload carries a recognizable path field, so new
+ * file-shaped attachment types read sensibly without a spec.
+ */
+export function attachmentDetail(attachment: unknown, cwd: string | null): AttachmentDetail {
+  if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+    return { type: "?", trailing: null, fields: [] };
+  }
+  const a = attachment as Record<string, unknown>;
+  const type = typeof a.type === "string" && a.type !== "" ? a.type : "?";
+  const spec = ATTACHMENT_SPECS[type];
+  const extracted = spec ? spec(a, cwd) : {};
+  let trailing = extracted.trailing ?? null;
+  if (trailing === null) {
+    for (const name of ATTACHMENT_PATH_FIELDS) {
+      const value = a[name];
+      if (typeof value === "string" && value !== "") {
+        trailing = displayPath(value, cwd);
+        break;
+      }
+    }
+  }
+  return { type, trailing, fields: extracted.fields ?? [] };
 }
 
 /** Joins tool_use segments with matching tool_result segments by id. Result
@@ -2216,6 +2310,11 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
     type: typeof o.type === "string" ? o.type : "?",
     summary: summarizeMeta(o),
     raw,
+    ...(o.type === "attachment"
+      ? {
+          attachment: attachmentDetail(o.attachment, typeof o.cwd === "string" ? o.cwd : null),
+        }
+      : {}),
   };
 }
 
