@@ -83,12 +83,17 @@ export class SseParser {
   }
 }
 
+/** One observed event, before the daemon decides whether its series is the
+ * session's main one — that verdict belongs to the cache (it needs the other
+ * series to make it), not to the parser. */
+export type LlmRequestObservation = Omit<LlmRequestInfo, "main">;
+
 /** Validate one `event: request` payload into the shape the wire type
  * promises. Returns null for anything unusable — including the events the
  * gateway emits for clients that sent no session id, which carry
  * `session_id: null` and cannot be attached to a session row. A malformed
  * event must never take the subscription down, so this never throws. */
-export function parseLlmRequestEvent(data: string): LlmRequestInfo | null {
+export function parseLlmRequestEvent(data: string): LlmRequestObservation | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
@@ -101,7 +106,13 @@ export function parseLlmRequestEvent(data: string): LlmRequestInfo | null {
   const sid = raw.session_id;
   if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
   if (typeof sid !== "string" || sid === "") return null;
-  const info: LlmRequestInfo = { ts, session_id: sid };
+  // A gateway older than v0.13.0 sends no prefix; "" then stands for "this
+  // session has one unnamed series", which is exactly the pre-prefix
+  // behaviour. A non-string prefix is treated the same way rather than
+  // rejecting the event — the timestamp is still usable.
+  const rawPrefix = raw.prefix;
+  const prefix = typeof rawPrefix === "string" ? rawPrefix : "";
+  const info: LlmRequestObservation = { ts, session_id: sid, prefix };
   if (typeof raw.ns === "string" && raw.ns !== "") info.ns = raw.ns;
   if (typeof raw.model === "string" && raw.model !== "") info.model = raw.model;
   if (typeof raw.credential === "string" && raw.credential !== "") info.credential = raw.credential;
@@ -109,49 +120,143 @@ export function parseLlmRequestEvent(data: string): LlmRequestInfo | null {
   return info;
 }
 
-/** Upper bound on remembered sessions. The TTL prune below already keeps this
- * near the number of sessions active in the last five minutes; the cap is the
+/** Upper bound on remembered series. The TTL prune below already keeps this
+ * near the number of series active in the last five minutes; the cap is the
  * guard against a clock-skewed gateway stamping events far in the future,
  * which prune alone would never expire. */
-const MAX_CACHED_SESSIONS = 500;
+const MAX_CACHED_SERIES = 500;
 
-/** Latest request per session, pruned to the prompt cache TTL. The daemon
- * keeps this so a browser that connects (or reloads) mid-window still learns
- * about a countdown that started before it was listening. */
+/** Map key for one conversation series. JSON-encoding the pair sidesteps the
+ * question of which separator can never appear in either half — no join
+ * character means no way for two different pairs to produce one key. */
+function seriesKey(sid: string, prefix: string): string {
+  return JSON.stringify([sid, prefix]);
+}
+
+/** Upper bound on prefixes whose session set is remembered. Sharing is a
+ * property of a prefix, so it stays useful after that series' window closes —
+ * but it can't be kept forever, and the oldest are the least likely to matter.
+ */
+const MAX_TRACKED_PREFIXES = 2000;
+
+interface CachedSeries {
+  info: LlmRequestObservation;
+  /** Order in which this session first used the series; the tiebreak when a
+   * session has several non-subagent series live at once. */
+  firstSeen: number;
+}
+
+/** Latest request per conversation series, pruned to the prompt cache TTL.
+ *
+ * Keyed by (session_id, prefix) rather than session_id: a session's subagents
+ * issue requests under the same sid but their own system prompt, so their
+ * cache entries are separate from the session's own. Folding them together
+ * would restart the session's countdown every time a subagent ran, which is
+ * precisely the thing the ring must not do — the session's own cache keeps
+ * expiring on schedule while a subagent chatters.
+ *
+ * The daemon also decides WHICH series is a session's main one, since that
+ * verdict needs a view across sessions that no single client has. Two signals
+ * decide it, and both are observations rather than declarations — the gateway
+ * reports no such flag:
+ *
+ *  - A prefix seen under more than one session is a subagent's. A main
+ *    series' system prompt carries that session's cwd and git status, so it
+ *    cannot recur elsewhere; subagent prompts have no such session-local
+ *    content and do recur verbatim across sessions.
+ *  - Among what is left, the series seen first for that session wins.
+ *
+ * Both are re-evaluated per snapshot rather than frozen at election time, so
+ * a daemon that started mid-subagent — briefly seeing only subagent traffic
+ * and taking it for the main series — corrects itself as soon as that prefix
+ * shows up under a second session. Model names are deliberately not consulted:
+ * main and subagent both range over the whole model lineup.
+ *
+ * A session whose only live series are known subagents' gets no main at all.
+ * That is the honest answer: nothing is known about that session's own cache,
+ * and inventing a ring from a subagent's window would show a countdown the
+ * session's next turn will not benefit from. */
 export class LlmRequestCache {
-  private entries = new Map<string, LlmRequestInfo>();
+  private entries = new Map<string, CachedSeries>();
+  /** prefix -> the sessions it has been observed under, capped at the 2 it
+   * takes to prove sharing (nothing downstream needs the exact count). The
+   * empty prefix is excluded: it is the placeholder for a pre-v0.13.0
+   * gateway that reports no prefix at all, so it recurs across every session
+   * without meaning anything about subagents. */
+  private sidsByPrefix = new Map<string, Set<string>>();
+  /** Monotonic first-seen counter, the tiebreak among a session's series. */
+  private sequence = 0;
 
-  /** Record one event, keeping the newer of the two when a session already
+  /** Record one event, keeping the newer of the two when the series already
    * had one — events are near-ordered in practice, but a reconnect can
    * deliver an older one after a newer, and the countdown must not go
    * backwards. */
-  record(info: LlmRequestInfo): void {
-    const prev = this.entries.get(info.session_id);
-    if (prev && prev.ts >= info.ts) return;
-    // Delete first so the re-insert moves the sid to the end of the Map's
+  record(info: LlmRequestObservation): void {
+    const key = seriesKey(info.session_id, info.prefix);
+    const prev = this.entries.get(key);
+    if (prev && prev.info.ts >= info.ts) return;
+    this.notePrefixSession(info);
+    // Delete first so the re-insert moves the series to the end of the Map's
     // insertion order, which is what makes the eviction below drop the
-    // least-recently-seen session.
-    this.entries.delete(info.session_id);
-    this.entries.set(info.session_id, info);
-    while (this.entries.size > MAX_CACHED_SESSIONS) {
+    // least-recently-seen one. `firstSeen` survives the re-insert: it orders
+    // series by when the session started using them, not by last activity.
+    this.entries.delete(key);
+    this.entries.set(key, { info, firstSeen: prev?.firstSeen ?? ++this.sequence });
+    while (this.entries.size > MAX_CACHED_SERIES) {
       const oldest = this.entries.keys().next();
       if (oldest.done) break;
       this.entries.delete(oldest.value);
     }
   }
 
-  /** Every session whose cache window is still open, oldest first. Prunes as
-   * it goes, so an expired entry is dropped rather than re-sent forever. */
+  private notePrefixSession(info: LlmRequestObservation): void {
+    if (info.prefix === "") return;
+    let sids = this.sidsByPrefix.get(info.prefix);
+    if (!sids) {
+      sids = new Set();
+      this.sidsByPrefix.set(info.prefix, sids);
+      while (this.sidsByPrefix.size > MAX_TRACKED_PREFIXES) {
+        const oldest = this.sidsByPrefix.keys().next();
+        if (oldest.done) break;
+        this.sidsByPrefix.delete(oldest.value);
+      }
+    }
+    if (sids.size < 2) sids.add(info.session_id);
+  }
+
+  /** True once this prefix has been seen under two different sessions, which
+   * is what makes it a subagent's rather than a session's own. */
+  private isShared(prefix: string): boolean {
+    return (this.sidsByPrefix.get(prefix)?.size ?? 0) > 1;
+  }
+
+  /** Every series whose cache window is still open, each tagged with whether
+   * it is its session's main one. Prunes as it goes, so an expired entry is
+   * dropped rather than re-sent forever. */
   snapshot(now = Date.now()): LlmRequestInfo[] {
-    const out: LlmRequestInfo[] = [];
-    for (const [sid, info] of this.entries) {
-      if (info.ts * 1000 + LLM_PROMPT_CACHE_TTL_MS <= now) {
-        this.entries.delete(sid);
+    const live: CachedSeries[] = [];
+    for (const [key, series] of this.entries) {
+      if (series.info.ts * 1000 + LLM_PROMPT_CACHE_TTL_MS <= now) {
+        this.entries.delete(key);
         continue;
       }
-      out.push(info);
+      live.push(series);
     }
-    return out;
+    // One main per session: the earliest-seen of its series that isn't a
+    // known subagent's. Computed from what is live right now, which is what
+    // makes both the sharing correction and the "main went cold, re-learn"
+    // case fall out without any stored election to invalidate.
+    const mainKey = new Map<string, CachedSeries>();
+    for (const series of live) {
+      if (this.isShared(series.info.prefix)) continue;
+      const sid = series.info.session_id;
+      const best = mainKey.get(sid);
+      if (!best || series.firstSeen < best.firstSeen) mainKey.set(sid, series);
+    }
+    return live.map((series) => ({
+      ...series.info,
+      main: mainKey.get(series.info.session_id) === series,
+    }));
   }
 }
 
@@ -183,7 +288,7 @@ export interface LlmEventClientOptions {
   url: string;
   log: LlmEventsLog;
   /** Called for each attributable request event, in arrival order. */
-  onRequest(info: LlmRequestInfo): void;
+  onRequest(info: LlmRequestObservation): void;
   /** Injected in tests; defaults to the runtime's global fetch. */
   fetch?: GatewayFetch;
   /** Injected in tests to collapse the reconnect wait. */

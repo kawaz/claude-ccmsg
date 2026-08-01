@@ -78,11 +78,13 @@ describe("parseLlmRequestEvent", () => {
         model: "claude-fable-5",
         credential: "claude-zunsystem",
         status: 200,
+        prefix: "484eda9c",
       }),
     );
     expect(info).toEqual({
       ts: 1785564745,
       session_id: "f13ba456",
+      prefix: "484eda9c",
       ns: "personal",
       model: "claude-fable-5",
       credential: "claude-zunsystem",
@@ -100,30 +102,159 @@ describe("parseLlmRequestEvent", () => {
     expect(parseLlmRequestEvent("not json")).toBeNull();
     expect(parseLlmRequestEvent("[1,2]")).toBeNull();
   });
+
+  test("an event from a pre-prefix gateway lands in the unnamed series", () => {
+    // Gateways before v0.13.0 report no prefix. "" keeps them working as one
+    // series per session, which is what ccmsg did before prefixes existed.
+    const info = parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: "s" }));
+    expect(info).toEqual({ ts: 1, session_id: "s", prefix: "" });
+    // A malformed prefix degrades the same way rather than dropping a usable
+    // timestamp on the floor.
+    expect(parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: "s", prefix: 7 }))).toEqual({
+      ts: 1,
+      session_id: "s",
+      prefix: "",
+    });
+  });
 });
 
 describe("LlmRequestCache", () => {
   const NOW = 2_000_000_000_000;
   const sec = (ms: number): number => (NOW - ms) / 1000;
+  /** A session's own series and one of its subagents': same sid, different
+   * system prompt, therefore different cache entries upstream. */
+  const MAIN = "484eda9c";
+  const SUB = "9c31aa02";
 
-  test("keeps the latest request per session", () => {
+  test("keeps the latest request per series", () => {
     const cache = new LlmRequestCache();
-    cache.record({ ts: sec(60_000), session_id: "a" });
-    cache.record({ ts: sec(10_000), session_id: "a" });
-    expect(cache.snapshot(NOW)).toEqual([{ ts: sec(10_000), session_id: "a" }]);
+    cache.record({ ts: sec(60_000), session_id: "a", prefix: MAIN });
+    cache.record({ ts: sec(10_000), session_id: "a", prefix: MAIN });
+    expect(cache.snapshot(NOW)).toEqual([
+      { ts: sec(10_000), session_id: "a", prefix: MAIN, main: true },
+    ]);
   });
 
   test("an out-of-order (older) event never rewinds the countdown", () => {
     const cache = new LlmRequestCache();
-    cache.record({ ts: sec(10_000), session_id: "a" });
-    cache.record({ ts: sec(60_000), session_id: "a" });
-    expect(cache.snapshot(NOW)).toEqual([{ ts: sec(10_000), session_id: "a" }]);
+    cache.record({ ts: sec(10_000), session_id: "a", prefix: MAIN });
+    cache.record({ ts: sec(60_000), session_id: "a", prefix: MAIN });
+    expect(cache.snapshot(NOW)[0]?.ts).toBe(sec(10_000));
+  });
+
+  // The whole point of the (sid, prefix) key: a subagent's traffic must not
+  // touch the session's own window, or the ring would restart every time a
+  // subagent ran while the session itself sat idle.
+  test("a subagent's request is a separate series and leaves main's ts alone", () => {
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(200_000), session_id: "a", prefix: MAIN });
+    cache.record({ ts: sec(1_000), session_id: "a", prefix: SUB });
+    const snapshot = cache.snapshot(NOW);
+    expect(snapshot).toHaveLength(2);
+    expect(snapshot.find((r) => r.main)).toEqual({
+      ts: sec(200_000),
+      session_id: "a",
+      prefix: MAIN,
+      main: true,
+    });
+    expect(snapshot.find((r) => !r.main)?.prefix).toBe(SUB);
+  });
+
+  test("the first series seen for a session becomes its main one", () => {
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(1_000), session_id: "a", prefix: SUB });
+    cache.record({ ts: sec(500), session_id: "a", prefix: MAIN });
+    // With nothing yet distinguishing them, arrival order is the only
+    // evidence available.
+    expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe(SUB);
+  });
+
+  test("a live main is not displaced by later series from the same session", () => {
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(1_000), session_id: "a", prefix: MAIN });
+    for (let i = 0; i < 5; i++) {
+      cache.record({ ts: sec(500 - i), session_id: "a", prefix: SUB });
+    }
+    expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe(MAIN);
+  });
+
+  test("main is re-learned once the incumbent series goes cold", () => {
+    // A session whose system prompt changes gets a new prefix. If main stayed
+    // pinned to the dead one, that session's ring would never move again.
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(LLM_PROMPT_CACHE_TTL_MS + 1_000), session_id: "a", prefix: MAIN });
+    cache.record({ ts: sec(1_000), session_id: "a", prefix: SUB });
+    expect(cache.snapshot(NOW)).toEqual([
+      { ts: sec(1_000), session_id: "a", prefix: SUB, main: true },
+    ]);
+  });
+
+  // Observed upstream: a main series' system prompt carries cwd + git status,
+  // so it cannot appear under a second session — but subagent prompts do,
+  // verbatim. Seeing one prefix under two sessions is therefore proof it is a
+  // subagent's, and it is the signal that corrects a bad early guess.
+  describe("a prefix seen under two sessions", () => {
+    test("keeps each session's window separate", () => {
+      const cache = new LlmRequestCache();
+      cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
+      cache.record({ ts: sec(1_000), session_id: "b", prefix: SUB });
+      const snapshot = cache.snapshot(NOW);
+      expect(snapshot).toHaveLength(2);
+      expect(snapshot.map((r) => r.ts)).toEqual([sec(200_000), sec(1_000)]);
+    });
+
+    test("is demoted out of main, in both sessions", () => {
+      const cache = new LlmRequestCache();
+      cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
+      // Until it recurs, session a has no reason to doubt it.
+      expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe(SUB);
+      cache.record({ ts: sec(1_000), session_id: "b", prefix: SUB });
+      // Now it is provably a subagent's, and neither session claims it.
+      expect(cache.snapshot(NOW).some((r) => r.main)).toBe(false);
+    });
+
+    test("hands main to the session's own series once one appears", () => {
+      const cache = new LlmRequestCache();
+      // Daemon started mid-subagent: the first thing it saw was subagent
+      // traffic, which it took for session a's main series.
+      cache.record({ ts: sec(200_000), session_id: "a", prefix: SUB });
+      cache.record({ ts: sec(190_000), session_id: "b", prefix: SUB });
+      cache.record({ ts: sec(1_000), session_id: "a", prefix: MAIN });
+      const snapshot = cache.snapshot(NOW);
+      // MAIN arrived last, but SUB is disqualified, so MAIN takes the slot
+      // even though the arrival-order rule alone would have kept SUB.
+      expect(snapshot.find((r) => r.main)).toEqual({
+        ts: sec(1_000),
+        session_id: "a",
+        prefix: MAIN,
+        main: true,
+      });
+      expect(snapshot.filter((r) => r.main)).toHaveLength(1);
+    });
+  });
+
+  test("events without a prefix collapse into one series per session", () => {
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(60_000), session_id: "a", prefix: "" });
+    cache.record({ ts: sec(10_000), session_id: "a", prefix: "" });
+    expect(cache.snapshot(NOW)).toEqual([
+      { ts: sec(10_000), session_id: "a", prefix: "", main: true },
+    ]);
+  });
+
+  test("the empty prefix is never treated as shared across sessions", () => {
+    // Every session on a pre-v0.13.0 gateway reports "", so the sharing rule
+    // would disqualify all of them and no session would ever get a ring.
+    const cache = new LlmRequestCache();
+    cache.record({ ts: sec(1_000), session_id: "a", prefix: "" });
+    cache.record({ ts: sec(1_000), session_id: "b", prefix: "" });
+    expect(cache.snapshot(NOW).every((r) => r.main)).toBe(true);
   });
 
   test("snapshot drops entries past the TTL and keeps the rest", () => {
     const cache = new LlmRequestCache();
-    cache.record({ ts: sec(LLM_PROMPT_CACHE_TTL_MS + 1000), session_id: "expired" });
-    cache.record({ ts: sec(LLM_PROMPT_CACHE_TTL_MS - 1000), session_id: "live" });
+    cache.record({ ts: sec(LLM_PROMPT_CACHE_TTL_MS + 1000), session_id: "expired", prefix: MAIN });
+    cache.record({ ts: sec(LLM_PROMPT_CACHE_TTL_MS - 1000), session_id: "live", prefix: MAIN });
     expect(cache.snapshot(NOW).map((r) => r.session_id)).toEqual(["live"]);
     // The expired entry is pruned, not merely filtered: a later snapshot taken
     // at a time when it would look live again must not resurrect it.
@@ -135,10 +266,12 @@ describe("LlmRequestCache", () => {
   test("a clock-skewed future timestamp cannot grow the cache without bound", () => {
     const cache = new LlmRequestCache();
     const future = NOW / 1000 + 86_400;
-    for (let i = 0; i < 600; i++) cache.record({ ts: future, session_id: `s${i}` });
+    for (let i = 0; i < 600; i++) {
+      cache.record({ ts: future, session_id: `s${i}`, prefix: `p${i}` });
+    }
     const snapshot = cache.snapshot(NOW);
     expect(snapshot.length).toBe(500);
-    // Eviction drops the least-recently-seen sessions, so the newest survive.
+    // Eviction drops the least-recently-seen series, so the newest survive.
     expect(snapshot.at(-1)?.session_id).toBe("s599");
   });
 });

@@ -1759,3 +1759,58 @@ describe("llm-usage/probed", () => {
     expect(before.llmUsageProbes.size).toBe(0);
   });
 });
+
+// ev:"llm_requests" carries every live conversation series, main and subagent
+// alike. Only the main one drives a session's prompt-cache ring, and this
+// reducer is where that selection happens — a subagent leaking through would
+// restart the ring on traffic the session itself never issued.
+describe("llm-requests/loaded", () => {
+  const main = {
+    ts: 1785564745,
+    session_id: "s1",
+    prefix: "484eda9c",
+    main: true,
+  };
+  const subagent = {
+    ts: 1785564900,
+    session_id: "s1",
+    prefix: "9c31aa02",
+    main: false,
+  };
+
+  test("keeps the main series and drops the subagent one", () => {
+    const after = dispatch(initialState(), {
+      type: "llm-requests/loaded",
+      requests: [main, subagent],
+    });
+    expect(after.llmRequests.size).toBe(1);
+    // The newer subagent timestamp must NOT be what the session's ring reads.
+    expect(after.llmRequests.get("s1")).toEqual(main);
+  });
+
+  test("indexes several sessions by sid", () => {
+    const other = { ts: 1785564800, session_id: "s2", prefix: "484eda9c", main: true };
+    const after = dispatch(initialState(), {
+      type: "llm-requests/loaded",
+      requests: [main, subagent, other],
+    });
+    expect([...after.llmRequests.keys()].sort()).toEqual(["s1", "s2"]);
+  });
+
+  test("a session with only subagent traffic gets no entry", () => {
+    const after = dispatch(initialState(), {
+      type: "llm-requests/loaded",
+      requests: [subagent],
+    });
+    expect(after.llmRequests.size).toBe(0);
+  });
+
+  test("the set is replaced whole, so an expired window disappears", () => {
+    const loaded = dispatch(initialState(), {
+      type: "llm-requests/loaded",
+      requests: [main],
+    });
+    const after = dispatch(loaded, { type: "llm-requests/loaded", requests: [] });
+    expect(after.llmRequests.size).toBe(0);
+  });
+});

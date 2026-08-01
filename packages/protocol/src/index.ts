@@ -347,13 +347,29 @@ export interface LlmRequestInfo {
   ts: number;
   /** ccmsg sid (`X-Claude-Code-Session-Id`). Never empty. */
   session_id: string;
+  /** Conversation-series id: the gateway's 8-hex digest of the first system
+   * prompt block. A session's subagents travel under the SAME session_id but a
+   * DIFFERENT prefix, and their cache entries are genuinely separate — so a
+   * cache window belongs to (session_id, prefix), never to session_id alone.
+   * Empty string for events from a gateway older than v0.13.0, which reports
+   * no prefix; those collapse to one unnamed series per session, the behaviour
+   * ccmsg had before prefixes existed.
+   *
+   * NOTE: prefixes are not globally unique — two different sessions can share
+   * one (identical leading system block), which is why the pair is the key. */
+  prefix: string;
+  /** True for the session's primary series: the one whose cache window the
+   * session's own turns keep alive, as opposed to a subagent's. The daemon
+   * decides this (first series it sees for the sid, re-learned once that
+   * series goes cold), so every client agrees on which ring to draw. */
+  main: boolean;
   ns?: string;
   model?: string;
   credential?: string;
   status?: number;
 }
 
-/** Push of the most recent LLM request per session (user-role subscribers
+/** Push of the most recent LLM request per conversation series (user-role
  * only, same webui-only posture as ev:"agents"/ev:"peers"). Always the full
  * non-expired set rather than the one request that just arrived: a client
  * that connects mid-window — a browser reload, or a tab opened after the

@@ -252,12 +252,14 @@ export interface AppState {
    * (the daemon sends the full list, never a delta), so a recovered session
    * simply stops appearing. */
   sessionErrors: Map<string, SessionApiError>;
-  /** Most recent LLM gateway request per sid, relayed by the daemon
-   * (ev:"llm_requests") and read by the prompt-cache countdown on session
-   * rows. Replaced whole on every push — the daemon always sends the full
-   * non-expired set — so a session whose window closed simply drops out.
-   * Empty forever on a daemon with no `llm_events_url`, which is what makes
-   * the countdown absent rather than stuck at 0:00. */
+  /** Most recent LLM gateway request per sid **for that session's main
+   * conversation series**, relayed by the daemon (ev:"llm_requests") and read
+   * by the prompt-cache ring. Subagent series (same sid, different prefix)
+   * are dropped by the reducer — see there for why. Replaced whole on every
+   * push — the daemon always sends the full non-expired set — so a session
+   * whose window closed simply drops out. Empty forever on a daemon with no
+   * `llm_events_url`, which is what makes the ring absent rather than stuck
+   * at zero. */
   llmRequests: Map<string, LlmRequestInfo>;
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
@@ -884,7 +886,13 @@ export function reducer(state: AppState, action: Action): AppState {
     case "llm-requests/loaded":
       return {
         ...state,
-        llmRequests: new Map(action.requests.map((r) => [r.session_id, r])),
+        // Only the session's main series: a subagent runs under the same sid
+        // with its own system prompt, so its cache window is a different one
+        // and must not move the session's ring. Keeping just the main entry
+        // also keeps this map one-per-sid, which is how every reader indexes
+        // it. Nothing displays subagent series today; showing them would be a
+        // reducer change, not a protocol one (the daemon sends them already).
+        llmRequests: new Map(action.requests.filter((r) => r.main).map((r) => [r.session_id, r])),
       };
     case "daemon-info/loaded":
       return {

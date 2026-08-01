@@ -113,7 +113,14 @@ async function userSubscriber(ctx: DaemonCtx): Promise<TestClient> {
 
 interface LlmRequestsEv {
   ev: "llm_requests";
-  requests: { ts: number; session_id: string; model?: string; status?: number }[];
+  requests: {
+    ts: number;
+    session_id: string;
+    prefix: string;
+    main: boolean;
+    model?: string;
+    status?: number;
+  }[];
 }
 
 /** Wait until THIS test's daemon has established its subscription, so an
@@ -165,10 +172,17 @@ describe("ev:llm_requests relay", () => {
         const u = await userSubscriber(ctx);
         await untilGatewayConnected();
         const ts = Math.floor(Date.now() / 1000);
-        emit({ ts, session_id: "S1", model: "claude-fable-5", status: 200 });
+        emit({ ts, session_id: "S1", model: "claude-fable-5", status: 200, prefix: "484eda9c" });
         const { ev } = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         expect(ev.requests).toEqual([
-          { ts, session_id: "S1", model: "claude-fable-5", status: 200 },
+          {
+            ts,
+            session_id: "S1",
+            prefix: "484eda9c",
+            main: true,
+            model: "claude-fable-5",
+            status: 200,
+          },
         ]);
         u.close();
       } finally {
@@ -188,7 +202,7 @@ describe("ev:llm_requests relay", () => {
         const first = await userSubscriber(ctx);
         await untilGatewayConnected();
         const ts = Math.floor(Date.now() / 1000);
-        emit({ ts, session_id: "S2" });
+        emit({ ts, session_id: "S2", prefix: "484eda9c" });
         // Wait for the daemon to have recorded it (observed via the live push
         // to the connection that was already listening).
         await first.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
@@ -197,7 +211,7 @@ describe("ev:llm_requests relay", () => {
         // The reload case: a brand-new connection subscribing mid-window.
         const second = await userSubscriber(ctx);
         const { ev } = await second.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        expect(ev.requests).toEqual([{ ts, session_id: "S2" }]);
+        expect(ev.requests).toEqual([{ ts, session_id: "S2", prefix: "484eda9c", main: true }]);
         second.close();
       } finally {
         await stop(ctx);
@@ -225,7 +239,7 @@ describe("ev:llm_requests relay", () => {
         });
         await s.request({ op: "subscribe" });
         await untilGatewayConnected();
-        emit({ ts: Math.floor(Date.now() / 1000), session_id: "S3" });
+        emit({ ts: Math.floor(Date.now() / 1000), session_id: "S3", prefix: "484eda9c" });
         // The user connection receiving the push is the ordering anchor: the
         // daemon writes both sends in one synchronous loop, so once the user
         // side has it, a session-side copy would already be on the socket.
@@ -238,6 +252,70 @@ describe("ev:llm_requests relay", () => {
         marker.close();
         u.close();
         s.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a subagent's request arrives as a separate, non-main series",
+    async () => {
+      const ctx = await startConfiguredDaemon({
+        llm_events_url: `http://127.0.0.1:${PORT}/events`,
+      });
+      try {
+        const u = await userSubscriber(ctx);
+        await untilGatewayConnected();
+        const mainTs = Math.floor(Date.now() / 1000) - 240;
+        emit({ ts: mainTs, session_id: "S4", prefix: "484eda9c" });
+        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        // Same session id, different system prompt: a subagent. The session's
+        // own window must survive it untouched — that is what keeps the ring
+        // counting down while a subagent chatters.
+        const subTs = Math.floor(Date.now() / 1000);
+        emit({ ts: subTs, session_id: "S4", prefix: "9c31aa02" });
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 2,
+        );
+        const main = ev.requests.find((r) => r.main);
+        const sub = ev.requests.find((r) => !r.main);
+        expect(main).toEqual({ ts: mainTs, session_id: "S4", prefix: "484eda9c", main: true });
+        expect(sub).toEqual({ ts: subTs, session_id: "S4", prefix: "9c31aa02", main: false });
+        u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a prefix seen under two sessions stops being either session's main",
+    async () => {
+      const ctx = await startConfiguredDaemon({
+        llm_events_url: `http://127.0.0.1:${PORT}/events`,
+      });
+      try {
+        const u = await userSubscriber(ctx);
+        await untilGatewayConnected();
+        const ts = Math.floor(Date.now() / 1000);
+        // A daemon that starts mid-subagent sees subagent traffic first and
+        // has no way yet to know it isn't S5's own series.
+        emit({ ts, session_id: "S5", prefix: "9c31aa02" });
+        const first = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        expect(first.ev.requests[0]?.main).toBe(true);
+        // The same prefix under a second session proves it is a subagent's:
+        // a main series' prompt carries its own cwd and git status and cannot
+        // recur elsewhere. Both sessions must drop it as main.
+        emit({ ts, session_id: "S6", prefix: "9c31aa02" });
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 2,
+        );
+        expect(ev.requests.some((r) => r.main)).toBe(false);
+        expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S5", "S6"]);
+        u.close();
       } finally {
         await stop(ctx);
       }
