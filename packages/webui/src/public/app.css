@@ -4119,6 +4119,10 @@ button.session-tab {
 .tl-fold:not([open]) > .tl-task-notification-summary .tl-summary-decoration {
   background: var(--bg-alt);
   border: 1px dashed var(--border);
+  /* kawaz r99m37: この 2 種はチップ背景が地の色とほぼ同化して見えないため、
+   * チップの左 padding が「余計な先頭スペース」に見える。テキスト開始位置を
+   * 非チップ行の tl-fold-label と揃える (チップはその分左へ張り出す)。 */
+  margin-left: -0.35rem;
 }
 
 /* idle 通知 (kawaz r46m6: 「でしゃばらせるな」) — Timeline の第 1 層に
