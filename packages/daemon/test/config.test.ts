@@ -426,4 +426,38 @@ describe("loadConfig", () => {
       expect(warnings).toHaveLength(1);
     });
   });
+
+  // llm_events_url: the gateway's SSE request stream the daemon subscribes to
+  // for the webui's prompt-cache countdown. Same validation, and the same
+  // "a bad value disables only this feature" degradation.
+  describe("llm_events_url", () => {
+    test("valid http URL is retained", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_events_url: "http://127.0.0.1:8402/ev" }));
+      expect(loadConfig(file, log).llm_events_url).toBe("http://127.0.0.1:8402/ev");
+      expect(warnings).toEqual([]);
+    });
+
+    test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
+      for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ llm_events_url: value }));
+        warnings = [];
+        expect(loadConfig(file, log).llm_events_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    test("a bad events URL leaves the other llm endpoints working", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          llm_events_url: "not a url",
+          llm_usage_url: "https://gw.example/usage",
+        }),
+      );
+      const cfg = loadConfig(file, log);
+      expect(cfg.llm_events_url).toBeUndefined();
+      expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
+      expect(warnings).toHaveLength(1);
+    });
+  });
 });

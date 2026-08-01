@@ -33,6 +33,12 @@ export interface DaemonConfig {
    * URL のみ) を通す。集計期間は op の `days` が query parameter として上書き
    * するので、ここには days を付けても付けなくてもよい。 */
   llm_stats_url?: string;
+  /** LLM gateway の request event stream (SSE) の URL — daemon が常駐で購読し、
+   * セッションごとの prompt cache カウントダウンを webui へ中継する
+   * (llm-events.ts)。上の 2 つと同じ検証 (http:// / https:// の絶対 URL のみ)
+   * を通し、未設定 / 不正なら購読自体を行わない (= webui にタイマーが出ない
+   * だけで他機能に影響しない)。 */
+  llm_events_url?: string;
 }
 
 /** Validate one absolute-http(s)-URL config field. Both URL-valued keys
@@ -247,10 +253,12 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
   );
   const llmUsageUrl = parseHttpUrl(parsed.llm_usage_url, "llm_usage_url", file, log);
   const llmStatsUrl = parseHttpUrl(parsed.llm_stats_url, "llm_stats_url", file, log);
+  const llmEventsUrl = parseHttpUrl(parsed.llm_events_url, "llm_events_url", file, log);
   const cfg: DaemonConfig = {};
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
   if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;
   if (llmStatsUrl) cfg.llm_stats_url = llmStatsUrl;
+  if (llmEventsUrl) cfg.llm_events_url = llmEventsUrl;
   return cfg;
 }

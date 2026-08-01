@@ -20,6 +20,7 @@ import {
   type SessionRow,
 } from "../utils.ts";
 import { Avatar } from "../avatar.tsx";
+import { useCacheRing } from "../useCacheRing.ts";
 
 const TICK_MS = 10_000;
 
@@ -50,6 +51,7 @@ function SessionRowItem({
   row,
   currentSid,
   statusBadge,
+  cacheTs,
   activeSecondary,
 }: {
   row: SessionRow;
@@ -58,12 +60,18 @@ function SessionRowItem({
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
   statusBadge: string | null;
+  /** この sid の最後の LLM リクエスト時刻 (epoch 秒) — アイコンに巻く prompt
+   * cache リング (5 分で消える) の起点。null = 直近 5 分にリクエスト無し、
+   * または daemon が gateway の event stream を購読していない (どちらもリング
+   * 非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
+  cacheTs: number | null;
   /** kawaz r99m1: 同じ sid が Pinned セクションにも出ている時、こちら
    * (status セクション側 = 2 番目に出てくる方) の選択装飾は主張を弱める。
    * Pinned 側が正の「選択中」表示を担う。 */
   activeSecondary: boolean;
 }) {
   const [cwdFull, setCwdFull] = useState(false);
+  const ring = useCacheRing(cacheTs);
   const { repo, ws: wsLabel } = sessionRowRepoWs(row);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
@@ -118,7 +126,16 @@ function SessionRowItem({
           href={sessionHref(row.sid)}
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
-          <Avatar seed={row.sid} size={16} />
+          {/* prompt cache が生きている間だけアイコンに緑リングが巻かれ、
+           * 5 分かけて時計回りに消える (app.css の .cache-ring)。ラッパーは
+           * リングの有無に関わらず常設する: 条件付きで包むと Avatar が
+           * remount され、リング開始のたびに再描画が走る。 */}
+          <span
+            class={ring ? `session-avatar-ring ${ring.class}` : "session-avatar-ring"}
+            style={ring?.style}
+          >
+            <Avatar seed={row.sid} size={16} />
+          </span>
           {/* 1 行目は repo のみ (kawaz r17 mid=29: 横幅が狭く ws まで入れると
            * 詰まる)。ws は 2 行目に単独で置く (kawaz r55 mid=20)。repo 無し行
            * (agent-only 等) は従来通り ws/cwd 末尾の fallback をここに出す。 */}
@@ -345,7 +362,8 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, sessionErrors, pinnedSessions } = useStoreState(store);
+  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions } =
+    useStoreState(store);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [
@@ -386,6 +404,9 @@ export function SessionList({
                 statusBadge={
                   row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
                 }
+                // statusBadge と違い全行に出す: prompt cache は daemon 側で
+                // 全 sid 分まとめて届くので、購読の有無に左右されない。
+                cacheTs={llmRequests.get(row.sid)?.ts ?? null}
               />
             ))}
           </ul>

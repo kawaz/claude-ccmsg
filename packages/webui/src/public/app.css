@@ -6913,3 +6913,122 @@ button.usage-reset:hover {
   font-weight: 600;
   color: var(--fg-muted);
 }
+
+/* prompt cache の残り時間リング (kawaz r99m25-m29)。ev:"llm_requests" で
+ * 届いたリクエスト時刻を起点に、緑の輪が 0 時の位置から時計回りに欠けて
+ * いき、5 分で消える (半分経過なら左半分が残る)。
+ *
+ * JS の毎秒 tick は使わない: 登録済みカスタムプロパティ --cache-ring-angle
+ * を 0→360deg へ 1 本の linear アニメーションで回し、途中から始めたい分は
+ * 負の animation-delay (--cache-ring-delay) で巻き戻す。以後のフレームは
+ * ブラウザが持つので、セッションが何個あっても JS の負荷は 0。
+ *
+ * 新しいリクエストで巻き直すのは cache-ring-a / cache-ring-b の名前交替。
+ * 同名の再宣言では走行中のアニメーションは止まらず、要素の remount は
+ * 入力中の caret を飛ばすため、名前を変えるのが唯一の非破壊な再起動。
+ * @property は Safari 16.4+ / Chrome で安定なのでフォールバックは持たない。 */
+@property --cache-ring-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* 消えた側 (transparent) を先に置き、残りを緑で塗る。角度が増えるほど
+ * 0 時から時計回りに透明が広がる = 緑が減る。 */
+@keyframes cache-ring-a {
+  from {
+    --cache-ring-angle: 0deg;
+  }
+  to {
+    --cache-ring-angle: 360deg;
+  }
+}
+
+@keyframes cache-ring-b {
+  from {
+    --cache-ring-angle: 0deg;
+  }
+  to {
+    --cache-ring-angle: 360deg;
+  }
+}
+
+/* このクラスは「アニメーションを回す」だけを担い、リングの塗りは使う側が
+ * 置く。塗りまで持たせると、FAB のように自分の背景を持つ要素に付けた瞬間
+ * background 一括指定がその背景を消してしまう (実機で FAB が白抜きになるのを
+ * 確認)。塗る場所も要素ごとに違う (ラッパーは自分自身、FAB は ::before)。 */
+.cache-ring {
+  --cache-ring-color: #3ecf6d;
+  animation-name: cache-ring-a;
+  animation-duration: var(--cache-ring-duration, 300s);
+  animation-timing-function: linear;
+  animation-delay: var(--cache-ring-delay, 0s);
+  animation-fill-mode: forwards;
+}
+
+.cache-ring.cache-ring-b {
+  animation-name: cache-ring-b;
+}
+
+/* SESSIONS 行のアイコン (kawaz r99m29: 行に要素は足さず、アイコンの
+ * ボーダーで示す)。ラッパーの padding がリング幅、Avatar 自身の不透明な
+ * 背景が内側を塗り潰すので mask は要らない。リングが無い時は padding 分
+ * だけの透明な余白 = 行の見た目は従来どおり。 */
+.session-avatar-ring {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  /* Avatar 自身の角丸 (3px) + padding 2px。円 (50%) にすると内接円から
+   * はみ出た角が輪を隠し、リングが四隅にしか見えない (実機確認済み)。
+   * 外側 5px / 内側 3px で枠幅が全周 2px に揃う。 */
+  border-radius: 5px;
+}
+
+.session-avatar-ring.cache-ring {
+  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
+}
+
+/* FAB のリングは ::before に描いて本体の背後へ回す。FAB 本体は position:
+ * fixed + drag 用の inline style を持つので包めず、また下書き時の跳ね
+ * (composer-fab-draft) が本体の animation を占有しているため、リングは
+ * 別レイヤに置く必要がある。inset の負値がそのままリング幅。 */
+.one-on-one-fab.cache-ring::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
+  /* 内側を刳り抜いて円グラフを輪にする。FAB は position:fixed + z-index を
+   * 持つため自前の stacking context を作り、::before を z-index:-1 にしても
+   * 本体の背景より前に描かれる (実機でボタン面が緑のパイに塗り潰されるのを
+   * 確認)。包めない要素なので、ここだけは mask で輪にする。 */
+  mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 0);
+  animation: inherit;
+  pointer-events: none;
+}
+
+/* 展開中の入力欄。textarea 自身の背景が内側を塗り潰すので、ラッパーの
+ * padding がそのままボーダー幅になる (角丸にも素直に沿う)。 */
+.one-on-one-textarea-ring {
+  display: flex;
+  padding: 2px;
+  border-radius: 0.5rem;
+}
+
+.one-on-one-textarea-ring.cache-ring {
+  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
+}
+
+.one-on-one-textarea-ring > .one-on-one-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 動きは止めるが残量表示としての意味は残す (delay で決まった開始角度の
+   * まま静止する)。 */
+  .cache-ring,
+  .one-on-one-fab.cache-ring::before {
+    animation-play-state: paused;
+  }
+}

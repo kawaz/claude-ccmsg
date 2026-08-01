@@ -92,6 +92,7 @@ import {
   stopAgentsPoller,
   type AgentsPoller,
 } from "./agents.ts";
+import { LlmRequestCache, startLlmEventClient, type LlmEventClient } from "./llm-events.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
@@ -198,6 +199,13 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** Latest LLM gateway request per sid, for the webui's prompt-cache
+   * countdown (llm-events.ts). Populated only while `llm_events_url` is
+   * configured; otherwise it stays empty and no ev:"llm_requests" is ever
+   * sent. */
+  llmRequests: LlmRequestCache;
+  /** The resident gateway SSE subscription, or null when unconfigured. */
+  llmEvents: LlmEventClient | null;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -596,6 +604,23 @@ function peersCompareKey(daemon: Daemon): string {
       .filter((s) => s.conns.size > 0)
       .map((s) => ({ ...s.meta, connected_at: s.connectedAt })),
   );
+}
+
+/** Push the current prompt-cache snapshot to one connection. Sent as the full
+ * per-sid set (not just the request that arrived) so this same call serves
+ * both the live update and a fresh subscriber's catch-up — see
+ * LlmRequestsStreamEvent for why the catch-up matters. */
+function sendLlmRequests(daemon: Daemon, conn: Conn): void {
+  send(conn, { ev: "llm_requests", requests: daemon.llmRequests.snapshot() });
+}
+
+/** Relay one gateway request event to every user-role subscriber (webui-only,
+ * same posture as ev:"peers"). Unconditional: unlike peers, each event moves a
+ * countdown's start instant, so there is no "unchanged" case to suppress. */
+function broadcastLlmRequests(daemon: Daemon): void {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") sendLlmRequests(daemon, sub);
+  }
 }
 
 /** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for
@@ -1857,6 +1882,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // this conn may be the first user subscriber, which is what makes the
         // per-peer api_error watches worth holding.
         syncSessionErrors(daemon);
+        // Catch-up for the windows that opened before this tab connected. Sent
+        // only when something is live: an empty push would make a daemon with
+        // no gateway configured look like one whose sessions all went cold.
+        if (daemon.llmRequests.snapshot().length > 0) sendLlmRequests(daemon, conn);
       }
       return;
     }
@@ -2756,6 +2785,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
   stopAgentsPoller(daemon.agentsPoller);
+  daemon.llmEvents?.stop();
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
@@ -2897,7 +2927,23 @@ export function startDaemon(opts: StartOptions = {}): void {
     sessionErrorsSnapshot: "",
     translator: createTranslateService(),
     peersSnapshot: "",
+    llmRequests: new LlmRequestCache(),
+    llmEvents: null,
   };
+
+  // Resident from startup when configured (see llm-events.ts for why it does
+  // not wait for a subscriber). The client reconnects on its own, so a gateway
+  // that is down right now costs nothing but a retry log line.
+  if (config.llm_events_url) {
+    daemon.llmEvents = startLlmEventClient({
+      url: config.llm_events_url,
+      log,
+      onRequest(info) {
+        daemon.llmRequests.record(info);
+        broadcastLlmRequests(daemon);
+      },
+    });
+  }
 
   interface UdsConnState {
     conn: Conn;

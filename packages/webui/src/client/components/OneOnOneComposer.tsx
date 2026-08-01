@@ -40,6 +40,7 @@ import { uploadAttachment } from "./composer-upload.ts";
 import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
 import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
+import { useCacheRing } from "../useCacheRing.ts";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -177,6 +178,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const fabDrag = useDraggable();
   const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
   const { onFabRef, onPanelRef } = useFabPanelPositionLink({ open, fabDrag, panelDrag });
+  // このセッションの prompt cache が生きている間だけ、FAB (閉じている時) と
+  // textarea (開いている時) に緑リングが巻かれ、5 分かけて時計回りに消える
+  // (kawaz r99m25-m27)。宛先が sid で一意に決まる 1on1 composer だからこそ
+  // 「今送るとキャッシュに乗るか」を送信 UI そのものに出せる。
+  const cacheRing = useCacheRing(state.llmRequests.get(sid)?.ts ?? null);
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
@@ -451,12 +457,19 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
     return (
       <button
         type="button"
-        class={"one-on-one-fab" + (hasDraft ? " composer-fab-draft" : "")}
+        class={
+          "one-on-one-fab" +
+          (hasDraft ? " composer-fab-draft" : "") +
+          (cacheRing ? ` ${cacheRing.class}` : "")
+        }
         title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
         onClick={openPanel}
         ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
-        style={fabDrag.style}
+        // リングの起点 (負 delay) は fab 自身の drag 位置と同じ style に載る。
+        // 下書き中の跳ねアニメーションは FAB 本体、リングは ::before なので
+        // 併発しても互いを打ち消さない (既存装飾を優先、リングは背面)。
+        style={{ ...fabDrag.style, ...cacheRing?.style }}
       >
         +
       </button>
@@ -505,31 +518,43 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           ✕
         </button>
       </header>
-      <textarea
-        ref={textareaRef}
-        class="one-on-one-textarea"
-        placeholder="この session に priv... (⌘+Enter で送信)"
-        value={text}
-        onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
-        // kawaz r26 mid=20: close 前に必ず発火する blur でカーソル位置を保存
-        onBlur={(e) => {
-          const el = e.currentTarget as HTMLTextAreaElement;
-          lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
-        }}
-        onKeyDown={(e) => {
-          // ⌘/Ctrl+Enter 送信 (kawaz r20、2026-07-15): 通常 Composer と同じ
-          // shouldSendOnKeyDown 判定 (素の Enter / IME 確定は改行のまま)。
-          // 1on1 panel には従来この配線が無く「送信できない」と報告された。
-          if (!shouldSendOnKeyDown(e)) return;
-          e.preventDefault();
-          void handleSubmit();
-        }}
-        onPaste={onPaste}
-        onDragOver={onDragOver}
-        onDrop={onDrop}
-        disabled={sending}
-        rows={4}
-      />
+      {/* 入力欄のボーダーを cache リングにする (kawaz r99m26: 展開中は FAB が
+       * 消えるので装飾の置き場が textarea になる)。角丸に沿わせるため
+       * border-image ではなく「ラッパー背景に conic + textarea 自身の背景で
+       * 内側を塗り潰す」方式。ラッパーは常設: リングの有無で包み方を変えると
+       * textarea が remount され、入力中の caret とフォーカスが飛ぶ。 */}
+      <div
+        class={
+          cacheRing ? `one-on-one-textarea-ring ${cacheRing.class}` : "one-on-one-textarea-ring"
+        }
+        style={cacheRing?.style}
+      >
+        <textarea
+          ref={textareaRef}
+          class="one-on-one-textarea"
+          placeholder="この session に priv... (⌘+Enter で送信)"
+          value={text}
+          onInput={(e) => setText((e.currentTarget as HTMLTextAreaElement).value)}
+          // kawaz r26 mid=20: close 前に必ず発火する blur でカーソル位置を保存
+          onBlur={(e) => {
+            const el = e.currentTarget as HTMLTextAreaElement;
+            lastCursorRef.current = { start: el.selectionStart, end: el.selectionEnd };
+          }}
+          onKeyDown={(e) => {
+            // ⌘/Ctrl+Enter 送信 (kawaz r20、2026-07-15): 通常 Composer と同じ
+            // shouldSendOnKeyDown 判定 (素の Enter / IME 確定は改行のまま)。
+            // 1on1 panel には従来この配線が無く「送信できない」と報告された。
+            if (!shouldSendOnKeyDown(e)) return;
+            e.preventDefault();
+            void handleSubmit();
+          }}
+          onPaste={onPaste}
+          onDragOver={onDragOver}
+          onDrop={onDrop}
+          disabled={sending}
+          rows={4}
+        />
+      </div>
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}
       <div class="one-on-one-actions">

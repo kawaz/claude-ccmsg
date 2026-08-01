@@ -12,6 +12,7 @@ import {
   type DeliveredEvent,
   type FsEntry,
   type FsReadResponse,
+  type LlmRequestInfo,
   type MemberEvent,
   type PeerInfo,
   type RoomKind,
@@ -251,6 +252,13 @@ export interface AppState {
    * (the daemon sends the full list, never a delta), so a recovered session
    * simply stops appearing. */
   sessionErrors: Map<string, SessionApiError>;
+  /** Most recent LLM gateway request per sid, relayed by the daemon
+   * (ev:"llm_requests") and read by the prompt-cache countdown on session
+   * rows. Replaced whole on every push — the daemon always sends the full
+   * non-expired set — so a session whose window closed simply drops out.
+   * Empty forever on a daemon with no `llm_events_url`, which is what makes
+   * the countdown absent rather than stuck at 0:00. */
+  llmRequests: Map<string, LlmRequestInfo>;
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
@@ -295,6 +303,7 @@ export function initialState(): AppState {
     sessionTrees: new Map(),
     sessionStatuses: new Map(),
     sessionErrors: new Map(),
+    llmRequests: new Map(),
     pinnedSessions: new Map(),
     mentionTo: new Set(),
     connStatus: "connecting",
@@ -326,6 +335,9 @@ export type Action =
   // is the one place that turns it into the by-sid Map the sidebar looks rows
   // up in, so ws.ts stays a verbatim relay.
   | { type: "session-errors/loaded"; errors: SessionErrorEntry[] }
+  // Full replacement, same as session-errors/loaded: the daemon sends the
+  // whole non-expired set on both the live push and the subscribe catch-up.
+  | { type: "llm-requests/loaded"; requests: LlmRequestInfo[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
@@ -868,6 +880,11 @@ export function reducer(state: AppState, action: Action): AppState {
         sessionErrors: new Map(
           action.errors.map((e) => [e.sid, { text: e.text, timestamp: e.timestamp }]),
         ),
+      };
+    case "llm-requests/loaded":
+      return {
+        ...state,
+        llmRequests: new Map(action.requests.map((r) => [r.session_id, r])),
       };
     case "daemon-info/loaded":
       return {

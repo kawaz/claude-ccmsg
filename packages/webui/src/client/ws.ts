@@ -35,6 +35,7 @@ import type {
   HelloResponse,
   InviteResponse,
   KickResponse,
+  LlmRequestsStreamEvent,
   LlmStatsResponse,
   LlmUsageResponse,
   PeersResponse,
@@ -628,6 +629,17 @@ export function createWsClient(
     // 2026-07-12-peers-live-update-protocol).
     if ("ev" in streamEv && streamEv.ev === "peers") {
       dispatch({ type: "peers/loaded", peers: (streamEv as PeersStreamEvent).peers });
+      return;
+    }
+    // Prompt-cache windows the daemon is tracking from the LLM gateway's
+    // event stream — the full non-expired set, both on connect (catch-up for
+    // windows that opened before this tab existed) and on every new request.
+    // One reducer path for "replace the set", same shape as ev:"peers" above.
+    if ("ev" in streamEv && streamEv.ev === "llm_requests") {
+      dispatch({
+        type: "llm-requests/loaded",
+        requests: (streamEv as LlmRequestsStreamEvent).requests,
+      });
       return;
     }
     // Live-tail push for a session's transcript (DR-0009 addendum,

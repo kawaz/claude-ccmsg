@@ -327,6 +327,46 @@ export interface TranscriptStreamEvent {
   size: number;
 }
 
+/** How long an upstream prompt cache entry stays warm after a request. The
+ * daemon prunes its per-sid cache with it and the webui counts down to it, so
+ * both sides must agree on the same deadline. */
+export const LLM_PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** One upstream LLM request as the gateway observed it (its
+ * `event: request` SSE payload, minus the fields ccmsg has no use for).
+ * `session_id` is the Claude Code session id the gateway read off the
+ * request header, which is the same identifier ccmsg keys sessions by — that
+ * shared key is what lets a browser tab put a countdown on a session row.
+ * Requests the gateway could not attribute to a session are dropped by the
+ * daemon and never appear here. */
+export interface LlmRequestInfo {
+  /** Epoch SECONDS (not ms — the gateway's unit, kept verbatim so the two
+   * sides never disagree about a converted value) at which the upstream
+   * response headers arrived. This is the instant the prompt cache TTL starts
+   * running, not when the request was sent. */
+  ts: number;
+  /** ccmsg sid (`X-Claude-Code-Session-Id`). Never empty. */
+  session_id: string;
+  ns?: string;
+  model?: string;
+  credential?: string;
+  status?: number;
+}
+
+/** Push of the most recent LLM request per session (user-role subscribers
+ * only, same webui-only posture as ev:"agents"/ev:"peers"). Always the full
+ * non-expired set rather than the one request that just arrived: a client
+ * that connects mid-window — a browser reload, or a tab opened after the
+ * session's request was already in flight — still needs the countdown that
+ * started before it was listening, and one snapshot shape serves both the
+ * subscribe-time catch-up and the live update. Entries past
+ * LLM_PROMPT_CACHE_TTL_MS are pruned before sending, so an empty list is a
+ * legitimate "no session has a warm cache". */
+export interface LlmRequestsStreamEvent {
+  ev: "llm_requests";
+  requests: LlmRequestInfo[];
+}
+
 /** DR-0020 Phase 1: folded current status of a session's transcript. */
 export interface SessionTodo {
   id: string;
@@ -697,6 +737,7 @@ export type StreamEvent =
   | TranscriptStreamEvent
   | SessionStatusStreamEvent
   | SessionErrorsStreamEvent
+  | LlmRequestsStreamEvent
   | TranslateResultEvent
   | SessionLaunchResultEvent
   | SessionKillResultEvent
