@@ -1,4 +1,5 @@
-import { isStatsPeriod, type StatsPeriod } from "./llm-stats-view.ts";
+import { isStatsPeriod, periodDays, type StatsPeriod } from "./llm-stats-view.ts";
+import { LLM_STATS_DAYS_MAX, LLM_STATS_DAYS_MIN } from "@ccmsg/protocol";
 
 export interface AgentRef {
   agentId?: string;
@@ -16,7 +17,7 @@ export type Locator =
    * what it cost), and the spend tab's span rides the URL too so a reload, a
    * bookmark and the back button all land on what was being read. */
   | { view: "usage"; tab: "quota" }
-  | { view: "usage"; tab: "stats"; period: StatsPeriod }
+  | { view: "usage"; tab: "stats"; period: StatsPeriod; days: number | null }
   | {
       view: "session";
       tab?: Exclude<SessionTab, "timeline">;
@@ -61,10 +62,9 @@ export function parseUrl(pathname: string, search = ""): Locator {
     if (segments[1] !== "stats" || segments.length > 3) return { view: "unknown", pathname };
     // `/usage/stats` with no span names the default rather than 404ing: it is
     // the URL someone types or trims by hand, and it has an obvious meaning.
-    if (segments.length === 2) return { view: "usage", tab: "stats", period: DEFAULT_STATS_PERIOD };
-    const period = segments[2] ?? "";
+    const period = segments.length === 2 ? DEFAULT_STATS_PERIOD : (segments[2] ?? "");
     return isStatsPeriod(period)
-      ? { view: "usage", tab: "stats", period }
+      ? { view: "usage", tab: "stats", period, days: parseStatsDays(search, period) }
       : { view: "unknown", pathname };
   }
   if (segments[0] === "r" && segments.length >= 2) {
@@ -142,6 +142,20 @@ export function parseUrl(pathname: string, search = ""): Locator {
   return { view: "unknown", pathname };
 }
 
+/** `?days=N` off the spend URL — present only when the reader typed a window
+ * other than the span's own. Out-of-range, non-numeric and "same as the
+ * default" all collapse to null: the first two because 404-ing a hand-edited
+ * number would throw away a page that reads fine on the default, the third so
+ * one window has one URL rather than two that render identically. */
+function parseStatsDays(search: string, period: StatsPeriod): number | null {
+  if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
+  const raw = new URLSearchParams(search).get("days");
+  if (raw === null || !/^\d+$/.test(raw)) return null;
+  const days = Number(raw);
+  if (days < LLM_STATS_DAYS_MIN || days > LLM_STATS_DAYS_MAX) return null;
+  return days === periodDays(period) ? null : days;
+}
+
 function sidBase(sid: string): string {
   return `/s/${encodeURIComponent(sid)}`;
 }
@@ -167,9 +181,17 @@ export function usageHref(): string {
 }
 
 /** Always spells the span out, even the default one, so what is on screen and
- * what is in the address bar cannot disagree after a reload. */
-export function usageStatsHref(period: StatsPeriod = DEFAULT_STATS_PERIOD): string {
-  return `/usage/stats/${period}`;
+ * what is in the address bar cannot disagree after a reload. `days` appears
+ * only when it differs from the span's own window — the bare URL is what
+ * picking a span produces, and that is also what resets it. */
+export function usageStatsHref(
+  period: StatsPeriod = DEFAULT_STATS_PERIOD,
+  days?: number | null,
+): string {
+  const base = `/usage/stats/${period}`;
+  return days === undefined || days === null || days === periodDays(period)
+    ? base
+    : `${base}?days=${days}`;
 }
 
 export function sessionHref(sid: string): string {

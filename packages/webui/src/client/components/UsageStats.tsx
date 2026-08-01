@@ -4,6 +4,7 @@
 // way is this going", the table answers "what exactly was it".
 import { useEffect, useState } from "preact/hooks";
 import type { ErrorResponse, LlmStatsResponse } from "@ccmsg/protocol";
+import { LLM_STATS_DAYS_MAX, LLM_STATS_DAYS_MIN } from "@ccmsg/protocol";
 import {
   CONTEXT_LABEL,
   PERIOD_LABEL,
@@ -36,8 +37,29 @@ import { UsageChart } from "./UsageChart.tsx";
  * be worth reading without asking for a year of data every minute. */
 const REFRESH_MS = 5 * 60_000;
 
-/** One row above everything it scopes, never inside a chart card. */
-function PeriodPicker({ period }: { period: StatsPeriod }) {
+/** One row above everything it scopes, never inside a chart card. The span
+ * buttons pick both the bucket size and its own window; the field beside them
+ * overrides just the window, and picking any span — including the one already
+ * selected — puts it back to that span's default. */
+function PeriodPicker({ period, days }: { period: StatsPeriod; days: number }) {
+  // Seeded from the URL, then owned by the field: typing "1" on the way to
+  // "120" must not refetch a one-day window on the first keystroke.
+  const [draft, setDraft] = useState(String(days));
+  useEffect(() => setDraft(String(days)), [days]);
+
+  const submit = (): void => {
+    if (!/^\d+$/.test(draft.trim())) {
+      setDraft(String(days));
+      return;
+    }
+    const value = Number(draft);
+    if (value < LLM_STATS_DAYS_MIN || value > LLM_STATS_DAYS_MAX) {
+      setDraft(String(days));
+      return;
+    }
+    if (value !== days) pushNavigation(usageStatsHref(period, value));
+  };
+
   return (
     <div class="stats-period" role="group" aria-label="集計単位">
       {STATS_PERIODS.map((candidate) => (
@@ -46,13 +68,32 @@ function PeriodPicker({ period }: { period: StatsPeriod }) {
           type="button"
           class="stats-period-preset"
           aria-pressed={period === candidate}
+          // No "already selected" guard: pressing the current span is how a
+          // hand-typed window is reset, so it has to navigate whenever the
+          // target URL differs from where we are.
           onClick={() => {
-            if (period !== candidate) pushNavigation(usageStatsHref(candidate));
+            const target = usageStatsHref(candidate);
+            if (target !== `${location.pathname}${location.search}`) pushNavigation(target);
           }}
         >
           {PERIOD_LABEL[candidate]}
         </button>
       ))}
+      <label class="stats-period-custom">
+        <input
+          type="number"
+          min={LLM_STATS_DAYS_MIN}
+          max={LLM_STATS_DAYS_MAX}
+          value={draft}
+          aria-label={`取得日数 (${LLM_STATS_DAYS_MIN}〜${LLM_STATS_DAYS_MAX})`}
+          onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          onBlur={submit}
+        />
+        <span>日</span>
+      </label>
     </div>
   );
 }
@@ -172,7 +213,9 @@ function BucketRow({ bucket, widest }: { bucket: BucketTotal; widest: number }) 
   );
 }
 
-export function UsageStats({ period }: { period: StatsPeriod }) {
+export function UsageStats({ period, days }: { period: StatsPeriod; days: number | null }) {
+  // Shadowing the global `window` here would be a trap for the next reader.
+  const fetchDays = days ?? periodDays(period);
   const { ws } = useApp();
   const [stats, setStats] = useState<LlmStatsResponse | null>(null);
   const [error, setError] = useState<ErrorResponse["error"] | null>(null);
@@ -184,7 +227,7 @@ export function UsageStats({ period }: { period: StatsPeriod }) {
     setStats(null);
     async function load(): Promise<void> {
       try {
-        const res = await ws.llmStats(periodDays(period));
+        const res = await ws.llmStats(fetchDays);
         if (cancelled) return;
         if (res.ok) {
           setStats(res);
@@ -202,7 +245,7 @@ export function UsageStats({ period }: { period: StatsPeriod }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [ws, period]);
+  }, [ws, fetchDays]);
 
   const buckets = stats ? bucketTotals(stats.days, period) : [];
   const windowTotal = stats ? windowTotalUsd(stats.days) : 0;
@@ -212,7 +255,7 @@ export function UsageStats({ period }: { period: StatsPeriod }) {
   return (
     <section id="usage-stats">
       <header class="usage-header">
-        <PeriodPicker period={period} />
+        <PeriodPicker period={period} days={fetchDays} />
         {error ? <span class="usage-stale">更新できていません: {error.msg}</span> : null}
       </header>
       {!stats ? (

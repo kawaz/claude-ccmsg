@@ -41,6 +41,7 @@ describe("real-path locators", () => {
         view: "usage",
         tab: "stats",
         period,
+        days: null,
       });
     }
   });
@@ -48,8 +49,58 @@ describe("real-path locators", () => {
   // The URL someone trims by hand has an obvious meaning, so it gets the
   // default span rather than a 404.
   test("the spend tab with no span named opens on the default", () => {
-    expect(parseUrl("/usage/stats")).toEqual({ view: "usage", tab: "stats", period: "daily" });
+    expect(parseUrl("/usage/stats")).toEqual({
+      view: "usage",
+      tab: "stats",
+      period: "daily",
+      days: null,
+    });
     expect(usageStatsHref()).toBe("/usage/stats/daily");
+  });
+
+  // A hand-typed window rides the URL so a reload keeps it; picking a span
+  // produces the bare URL, which is also what resets the window.
+  test("a window other than the span's own round-trips as a query", () => {
+    expect(usageStatsHref("daily", 9999)).toBe("/usage/stats/daily?days=9999");
+    expect(parseUrl("/usage/stats/daily", "?days=9999")).toEqual({
+      view: "usage",
+      tab: "stats",
+      period: "daily",
+      days: 9999,
+    });
+  });
+
+  // One window, one URL: `?days=32` on the daily span renders identically to
+  // the bare URL, so it is not a second address for the same page.
+  test("a window equal to the span's own default is not spelled out", () => {
+    expect(usageStatsHref("daily", 32)).toBe("/usage/stats/daily");
+    expect(usageStatsHref("yearly", 36_524)).toBe("/usage/stats/yearly");
+    expect(parseUrl("/usage/stats/daily", "?days=32")).toEqual({
+      view: "usage",
+      tab: "stats",
+      period: "daily",
+      days: null,
+    });
+  });
+
+  // 404-ing a hand-edited number would throw away a page that reads perfectly
+  // well on the span's default.
+  test("an unusable window falls back to the span's default", () => {
+    for (const search of [
+      "?days=0",
+      "?days=36525",
+      "?days=abc",
+      "?days=1.5",
+      "?days=",
+      "?days=%zz",
+    ]) {
+      expect(parseUrl("/usage/stats/weekly", search)).toEqual({
+        view: "usage",
+        tab: "stats",
+        period: "weekly",
+        days: null,
+      });
+    }
   });
 
   // An unknown span is a structurally invalid path, unlike a trimmed one:

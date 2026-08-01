@@ -354,7 +354,13 @@ function UsageTabs({ state }: { state: AppState }) {
       ? [{ tab: "quota" as const, label: "クオータ", href: usageHref() }]
       : []),
     ...(state.llmStatsAvailable
-      ? [{ tab: "stats" as const, label: "利用料", href: usageStatsHref(state.usagePeriod) }]
+      ? [
+          {
+            tab: "stats" as const,
+            label: "利用料",
+            href: usageStatsHref(state.usagePeriod, state.usageDays),
+          },
+        ]
       : []),
   ];
   // A single tab is not a choice; showing one lone tab strip would be chrome
@@ -388,7 +394,7 @@ export function UsageView({ state }: { state: AppState }) {
     <main id="usage-view">
       <UsageTabs state={state} />
       {showStats ? (
-        <UsageStats period={state.usagePeriod} />
+        <UsageStats period={state.usagePeriod} days={state.usageDays} />
       ) : state.llmUsageAvailable ? (
         <QuotaSection state={state} />
       ) : (

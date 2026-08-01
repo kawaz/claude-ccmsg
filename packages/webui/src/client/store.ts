@@ -202,6 +202,10 @@ export interface AppState {
   /** 利用料タブの集計単位。URL の `/usage/stats/<period>` 由来で、リロード・
    * ブックマーク・戻るで同じ単位に戻すため locator に載せている。 */
   usagePeriod: StatsPeriod;
+  /** 利用料タブの取得日数。null = その集計単位の既定値。単位ボタンを押すと
+   * 常に null に戻る (= 既定値へのリセット) ので、明示指定はここに残る間だけ
+   * 効く。 */
+  usageDays: number | null;
   /** which top-level screen the locator currently selects. */
   view: View;
   /** Session tab selected by the real-path locator. */
@@ -279,6 +283,7 @@ export function initialState(): AppState {
     llmStatsAvailable: false,
     usageTab: "quota",
     usagePeriod: DEFAULT_STATS_PERIOD,
+    usageDays: null,
     view: "room",
     currentTab: null,
     unknownPath: null,
@@ -672,7 +677,7 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       usageTab: locator.tab,
       // The span survives a hop to the quota tab and back, so returning to
       // spend lands on what was being read rather than resetting.
-      ...(locator.tab === "stats" ? { usagePeriod: locator.period } : {}),
+      ...(locator.tab === "stats" ? { usagePeriod: locator.period, usageDays: locator.days } : {}),
       currentTab: null,
       unknownPath: null,
       missingTarget: null,
