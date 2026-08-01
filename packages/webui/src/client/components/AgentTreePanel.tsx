@@ -548,10 +548,9 @@ export function AgentTreePanel({
               class={"agent-tree-row" + (onMain ? " agent-tree-row-current" : "")}
               aria-current={onMain ? "true" : undefined}
             >
-              <span class="agent-tree-caret agent-tree-caret-empty" aria-hidden="true" />
-              {/* state を持たない行なので dot は描かず、幅だけ揃えて
-               * agent 行とラベル位置を合わせる。 */}
-              <span class="status-teammate-dot" aria-hidden="true" />
+              {/* kawaz r99m36: main はグループ見出しと同レベルの単独行なので
+               * caret/dot のスペーサを置かず左端に揃える (agent 行との整列
+               * ではなく見出しとの整列が正)。 */}
               <a class="agent-tree-label" href={timelineHref(sid)} title="このセッション自身の TL">
                 main
               </a>
