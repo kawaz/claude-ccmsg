@@ -83,6 +83,26 @@ export function parseWindowDurationMs(key: string): number | null {
   return amount * unit;
 }
 
+/** A period's length as the compact form its own key uses ("5h", "7d"), for
+ * the denominator beside a remaining time. Windows already carry this in
+ * their key; limits do not, so it is derived from the duration and both end
+ * up spelled the same way. Null length renders as nothing — the column still
+ * takes its width so the rows stay aligned. */
+export function formatDurationShort(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms <= 0) return "";
+  // Days, hours, minutes — deliberately no weeks: upstream's own key for the
+  // long window is "7d", and a denominator reading "/1w" beside a row labelled
+  // "7d" would look like a different period.
+  for (const [unit, size] of [
+    ["d", UNIT_MS.d!],
+    ["h", UNIT_MS.h!],
+    ["m", UNIT_MS.m!],
+  ] as const) {
+    if (ms % size === 0) return `${ms / size}${unit}`;
+  }
+  return `${Math.round(ms / UNIT_MS.m!)}m`;
+}
+
 /** "1h29m" under a day, "02d02h" at or above one — the CLI's format, which
  * keeps the two magnitudes visually distinct at a glance. */
 export function formatRemaining(ms: number): string {

@@ -6427,15 +6427,28 @@ button.session-tab {
 /* One grid so every credential's bars start and end at the same x — the
    screen is read by comparing rows against each other, which only works if
    the tracks line up. */
-/* The label column is sized for the longest thing that goes in it — a scoped
-   limit like "weekly_scoped (Fable)", not just "5h". Fixed rather than
-   content-sized so the bars still start at the same x across credentials,
-   which is what makes the rows comparable. */
+/* Every column is fixed except the bar, which takes what is left — so the
+   bars share both edges and each figure sits under its own kind on every row.
+   An auto-width figures cell instead let a wide row steal width from the bar
+   (ragged right edges) and shifted the numbers relative to each other. The
+   label column is sized for the longest thing that goes in it, a scoped limit
+   like "weekly_scoped (Fable)" rather than just "5h". */
 .usage-window {
   display: grid;
-  grid-template-columns: minmax(0, 11rem) minmax(4rem, 1fr) auto;
+  grid-template-columns: minmax(0, 11rem) minmax(4rem, 1fr) 2.6rem 3.2rem 4.4rem 2.2rem;
   align-items: center;
   gap: 0.5rem;
+}
+
+/* Right-aligned with equal-width digits, so 42% and 100% end at the same x
+   and the eye can run down the column. */
+.usage-figure {
+  font-family: var(--mono, monospace);
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .usage-window-key {
@@ -6477,13 +6490,6 @@ button.session-tab {
 
 .usage-bar.tone-bad .usage-bar-fill {
   background: var(--danger);
-}
-
-.usage-window-figures {
-  font-family: var(--mono, monospace);
-  font-size: 0.78rem;
-  color: var(--fg-muted);
-  white-space: nowrap;
 }
 
 .usage-utilization {

@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import type { LlmUsageCredential, LlmUsageLimit, LlmUsageSnapshot } from "@ccmsg/protocol";
 import {
   formatAge,
+  formatDurationShort,
   formatPercent,
   formatRemaining,
   limitKindDurationMs,
@@ -62,6 +63,37 @@ describe("formatRemaining", () => {
   // ran backwards; the row still has to render.
   test("clamps a reset that is already in the past", () => {
     expect(formatRemaining(-5 * HOUR)).toBe("0h00m");
+  });
+});
+
+describe("formatDurationShort", () => {
+  // The denominator column spells a limit's period the same way a window's own
+  // key does, so "/5h" beside a limit reads like "/5h" beside the 5h window.
+  test("spells a period the way a window key would", () => {
+    expect(formatDurationShort(5 * HOUR)).toBe("5h");
+    expect(formatDurationShort(7 * 24 * HOUR)).toBe("7d");
+    expect(formatDurationShort(30 * MINUTE)).toBe("30m");
+  });
+
+  // No week unit on purpose: upstream's key for the long window is "7d", and a
+  // denominator reading "/1w" beside a row labelled "7d" would look like a
+  // different period.
+  test("never reaches for weeks, so 7 days stays 7 days", () => {
+    expect(formatDurationShort(7 * 24 * HOUR)).toBe("7d");
+    expect(formatDurationShort(14 * 24 * HOUR)).toBe("14d");
+    expect(formatDurationShort(24 * HOUR)).toBe("1d");
+  });
+
+  test("falls back to minutes for a length no unit divides evenly", () => {
+    expect(formatDurationShort(90 * 1000)).toBe("2m");
+  });
+
+  // An unfamiliar limit kind has no derivable period; the cell renders empty
+  // and still holds its column so the rows stay aligned.
+  test("an unknown length renders as nothing", () => {
+    expect(formatDurationShort(null)).toBe("");
+    expect(formatDurationShort(0)).toBe("");
+    expect(formatDurationShort(Number.NaN)).toBe("");
   });
 });
 

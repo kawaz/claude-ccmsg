@@ -8,6 +8,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { ErrorResponse, LlmUsageCredential, LlmUsageResponse } from "@ccmsg/protocol";
 import {
+  formatDurationShort,
   formatPercent,
   formatRemaining,
   limitKindDurationMs,
@@ -75,16 +76,26 @@ function UsageBar({ progress, label }: { progress: BarProgress; label: string })
 /** One bar row — a quota window or a provider limit. Both carry a label, the
  * same two-track bar and the same figures, so they share a row rather than
  * each growing a near-copy that would drift apart. */
+/** One bar row, laid out as a flat grid so every column — bar, and each of the
+ * four figures — starts and ends at the same x on every row. Nesting the
+ * figures inside one auto-width cell let a wide row ("100%/67%/02d07h") steal
+ * width from the bar, which made the bars' right edges ragged and moved the
+ * numbers under each other (kawaz r99m21). A cell with nothing to show still
+ * occupies its column. */
 function TrackRow({
   progress,
   label,
   glyph,
+  durationMs,
   keyTitle,
   extra,
 }: {
   progress: BarProgress;
   label: string;
   glyph: string;
+  /** Length of the period, for the denominator column. Null when it cannot be
+   * derived (an unfamiliar limit kind), which leaves the cell empty. */
+  durationMs: number | null;
   keyTitle?: string;
   extra?: ComponentChildren;
 }) {
@@ -95,42 +106,46 @@ function TrackRow({
         {extra}
       </span>
       <UsageBar progress={progress} label={label} />
-      <span class="usage-window-figures">
-        <span class={`usage-utilization tone-${progress.tone}`}>
-          {formatPercent(progress.utilization)}
-        </span>
-        {progress.elapsed === null ? null : (
-          <span class="usage-elapsed" title="窓の経過率 (この割合を超えていればペース超過)">
-            /{formatPercent(progress.elapsed)}
-          </span>
-        )}
-        {progress.remainingMs === null ? null : (
-          <span class="usage-reset" title="リセットされるまでの残り時間">
-            /{formatRemaining(progress.remainingMs)}
-          </span>
-        )}
+      <span class={`usage-figure usage-utilization tone-${progress.tone}`}>
+        {formatPercent(progress.utilization)}
+      </span>
+      <span
+        class="usage-figure usage-elapsed"
+        title="窓の経過率 (この割合を超えていればペース超過)"
+      >
+        {progress.elapsed === null ? "" : `/${formatPercent(progress.elapsed)}`}
+      </span>
+      <span class="usage-figure usage-reset" title="リセットされるまでの残り時間">
+        {progress.remainingMs === null ? "" : `/${formatRemaining(progress.remainingMs)}`}
+      </span>
+      <span class="usage-figure usage-length" title="この枠の期間長">
+        {durationMs === null ? "" : `/${formatDurationShort(durationMs)}`}
       </span>
     </div>
   );
 }
 
 function WindowRow({ progress }: { progress: WindowProgress }) {
+  const durationMs = parseWindowDurationMs(progress.key);
   return (
     <TrackRow
       progress={progress}
       label={progress.key}
-      glyph={periodGlyph(parseWindowDurationMs(progress.key))}
+      glyph={periodGlyph(durationMs)}
+      durationMs={durationMs}
       keyTitle={progress.status}
     />
   );
 }
 
 function LimitRow({ progress }: { progress: LimitProgress }) {
+  const durationMs = limitKindDurationMs(progress.key);
   return (
     <TrackRow
       progress={progress}
       label={limitLabel(progress)}
-      glyph={periodGlyph(limitKindDurationMs(progress.key))}
+      glyph={periodGlyph(durationMs)}
+      durationMs={durationMs}
       keyTitle={`severity: ${progress.severity}`}
       extra={
         // Marked, not toned: "upstream is counting against this one" is a
