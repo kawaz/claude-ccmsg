@@ -1,4 +1,4 @@
-import { LLM_STATS_DAYS_MAX, LLM_STATS_DAYS_MIN } from "@ccmsg/protocol";
+import { isStatsPeriod, type StatsPeriod } from "./llm-stats-view.ts";
 
 export interface AgentRef {
   agentId?: string;
@@ -10,12 +10,13 @@ export type SessionTab = "files" | "timeline" | "terminal" | "status" | "rooms";
 
 export type Locator =
   | { view: "room"; room: string | null; mid: number | null }
-  /** Host-wide LLM credentials: quota and spend — the one screen that belongs
-   * to no session and no room, so it sits at the URL root next to /r and /s.
-   * `days` is the spend window, null when the URL names none (the daemon's
-   * gateway then picks). It rides the URL so a reload, a bookmark, and the
-   * back button all land on the window that was being read. */
-  | { view: "usage"; days: number | null }
+  /** Host-wide LLM credentials — the one screen that belongs to no session and
+   * no room, so it sits at the URL root next to /r and /s. Quota and spend are
+   * separate tabs because they answer different questions (what is left vs
+   * what it cost), and the spend tab's span rides the URL too so a reload, a
+   * bookmark and the back button all land on what was being read. */
+  | { view: "usage"; tab: "quota" }
+  | { view: "usage"; tab: "stats"; period: StatsPeriod }
   | {
       view: "session";
       tab?: Exclude<SessionTab, "timeline">;
@@ -56,8 +57,15 @@ export function parseUrl(pathname: string, search = ""): Locator {
 
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] === "usage") {
-    if (segments.length !== 1) return { view: "unknown", pathname };
-    return { view: "usage", days: parseUsageDays(search) };
+    if (segments.length === 1) return { view: "usage", tab: "quota" };
+    if (segments[1] !== "stats" || segments.length > 3) return { view: "unknown", pathname };
+    // `/usage/stats` with no span names the default rather than 404ing: it is
+    // the URL someone types or trims by hand, and it has an obvious meaning.
+    if (segments.length === 2) return { view: "usage", tab: "stats", period: DEFAULT_STATS_PERIOD };
+    const period = segments[2] ?? "";
+    return isStatsPeriod(period)
+      ? { view: "usage", tab: "stats", period }
+      : { view: "unknown", pathname };
   }
   if (segments[0] === "r" && segments.length >= 2) {
     const room = decodeNonEmpty(segments[1] ?? "");
@@ -134,18 +142,6 @@ export function parseUrl(pathname: string, search = ""): Locator {
   return { view: "unknown", pathname };
 }
 
-/** `?days=N` off the usage URL. Out-of-range and non-numeric both degrade to
- * null rather than to an unknown path: the screen is still perfectly readable
- * on the default window, and 404-ing a hand-edited number would throw away a
- * page the user can otherwise use. */
-function parseUsageDays(search: string): number | null {
-  if (/%(?![0-9a-fA-F]{2})/.test(search)) return null;
-  const raw = new URLSearchParams(search).get("days");
-  if (raw === null || !/^\d+$/.test(raw)) return null;
-  const days = Number(raw);
-  return days >= LLM_STATS_DAYS_MIN && days <= LLM_STATS_DAYS_MAX ? days : null;
-}
-
 function sidBase(sid: string): string {
   return `/s/${encodeURIComponent(sid)}`;
 }
@@ -162,8 +158,18 @@ export function roomHref(roomId: string): string {
   return `/r/${encodeURIComponent(roomId)}`;
 }
 
-export function usageHref(days?: number | null): string {
-  return days === undefined || days === null ? "/usage" : `/usage?days=${days}`;
+/** The span the spend tab opens on when the URL names none: a month of days,
+ * the finest view and the one a spend question usually starts from. */
+export const DEFAULT_STATS_PERIOD: StatsPeriod = "daily";
+
+export function usageHref(): string {
+  return "/usage";
+}
+
+/** Always spells the span out, even the default one, so what is on screen and
+ * what is in the address bar cannot disagree after a reload. */
+export function usageStatsHref(period: StatsPeriod = DEFAULT_STATS_PERIOD): string {
+  return `/usage/stats/${period}`;
 }
 
 export function sessionHref(sid: string): string {

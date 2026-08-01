@@ -22,8 +22,9 @@ import {
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
-import type { AgentRef, Locator, SessionTab } from "./locator.ts";
+import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
+import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
 
@@ -195,10 +196,12 @@ export interface AppState {
    * 利用料 endpoint 版で、/usage 画面の利用料セクションはこれが true の時
    * だけ出す。2 つの endpoint は独立に設定できるので flag も独立。 */
   llmStatsAvailable: boolean;
-  /** 利用料セクションの集計期間 (日数)。URL の `?days=N` 由来で、null なら
-   * daemon の gateway 側デフォルトに委ねる。locator に載せているのは
-   * リロード・ブックマーク・戻るで同じ期間に戻すため。 */
-  usageDays: number | null;
+  /** /usage のどちらのタブを見ているか。クオータと利用料は問いが違うので
+   * 画面を分けてある。 */
+  usageTab: "quota" | "stats";
+  /** 利用料タブの集計単位。URL の `/usage/stats/<period>` 由来で、リロード・
+   * ブックマーク・戻るで同じ単位に戻すため locator に載せている。 */
+  usagePeriod: StatsPeriod;
   /** which top-level screen the locator currently selects. */
   view: View;
   /** Session tab selected by the real-path locator. */
@@ -274,7 +277,8 @@ export function initialState(): AppState {
     llmUsageAvailable: false,
     llmUsageProbes: new Map(),
     llmStatsAvailable: false,
-    usageDays: null,
+    usageTab: "quota",
+    usagePeriod: DEFAULT_STATS_PERIOD,
     view: "room",
     currentTab: null,
     unknownPath: null,
@@ -665,7 +669,10 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     return {
       ...state,
       view: "usage",
-      usageDays: locator.days,
+      usageTab: locator.tab,
+      // The span survives a hop to the quota tab and back, so returning to
+      // spend lands on what was being read rather than resetting.
+      ...(locator.tab === "stats" ? { usagePeriod: locator.period } : {}),
       currentTab: null,
       unknownPath: null,
       missingTarget: null,

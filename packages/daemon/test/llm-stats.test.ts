@@ -83,12 +83,14 @@ describe("isValidDays", () => {
   test("accepts the bounds and what lies between them", () => {
     expect(isValidDays(1)).toBe(true);
     expect(isValidDays(30)).toBe(true);
-    expect(isValidDays(366)).toBe(true);
+    expect(isValidDays(397)).toBe(true);
+    // The webui's widest view asks for exactly this; it has to pass.
+    expect(isValidDays(36_524)).toBe(true);
   });
 
   test("rejects out-of-range, fractional and non-numeric windows", () => {
     expect(isValidDays(0)).toBe(false);
-    expect(isValidDays(367)).toBe(false);
+    expect(isValidDays(36_525)).toBe(false);
     expect(isValidDays(1.5)).toBe(false);
     expect(isValidDays(Number.NaN)).toBe(false);
     expect(isValidDays("30")).toBe(false);

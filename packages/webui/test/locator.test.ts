@@ -12,6 +12,7 @@ import {
   terminalHref,
   timelineHref,
   usageHref,
+  usageStatsHref,
 } from "../src/client/locator.ts";
 
 describe("real-path locators", () => {
@@ -26,34 +27,40 @@ describe("real-path locators", () => {
 
   // /usage belongs to the host, not to a session or a room, so it sits at the
   // root beside /r and /s and survives a reload like any other screen.
-  test("the usage screen has its own reloadable root path", () => {
-    expect(parseUrl(usageHref())).toEqual({ view: "usage", days: null });
+  test("the quota tab is the usage root", () => {
+    expect(parseUrl(usageHref())).toEqual({ view: "usage", tab: "quota" });
     expect(usageHref()).toBe("/usage");
   });
 
-  // The spend window rides the URL so a reload, a bookmark and the back
-  // button all land on the period that was being read.
-  test("the spend window round-trips through the URL", () => {
-    expect(usageHref(90)).toBe("/usage?days=90");
-    expect(parseUrl("/usage", "?days=90")).toEqual({ view: "usage", days: 90 });
-  });
-
-  // A hand-edited window degrades to the default rather than 404-ing a page
-  // that is otherwise perfectly readable.
-  test("an unusable window falls back to the default period", () => {
-    for (const search of [
-      "?days=0",
-      "?days=367",
-      "?days=abc",
-      "?days=1.5",
-      "?days=",
-      "?days=%zz",
-    ]) {
-      expect(parseUrl("/usage", search)).toEqual({ view: "usage", days: null });
+  // Quota and spend answer different questions, so each is its own reloadable
+  // URL rather than a toggle that a refresh forgets.
+  test("the spend tab and its span round-trip through the URL", () => {
+    for (const period of ["daily", "weekly", "monthly", "yearly"] as const) {
+      expect(usageStatsHref(period)).toBe(`/usage/stats/${period}`);
+      expect(parseUrl(usageStatsHref(period))).toEqual({
+        view: "usage",
+        tab: "stats",
+        period,
+      });
     }
   });
 
-  test("the usage path takes no segments below it", () => {
+  // The URL someone trims by hand has an obvious meaning, so it gets the
+  // default span rather than a 404.
+  test("the spend tab with no span named opens on the default", () => {
+    expect(parseUrl("/usage/stats")).toEqual({ view: "usage", tab: "stats", period: "daily" });
+    expect(usageStatsHref()).toBe("/usage/stats/daily");
+  });
+
+  // An unknown span is a structurally invalid path, unlike a trimmed one:
+  // there is no sensible reading of "/usage/stats/hourly".
+  test("an unrecognised span is an unknown path", () => {
+    for (const path of ["/usage/stats/hourly", "/usage/stats/daily/extra", "/usage/other"]) {
+      expect(parseUrl(path)).toEqual({ view: "unknown", pathname: path });
+    }
+  });
+
+  test("the usage path takes no unrecognised segments below it", () => {
     expect(parseUrl("/usage/anything")).toEqual({ view: "unknown", pathname: "/usage/anything" });
   });
 

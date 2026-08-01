@@ -1072,8 +1072,9 @@ export interface LlmStatsRequest {
   request_id: string;
   /** How many days back to ask the gateway for, passed through as its `days`
    * query parameter. Must be an integer in LLM_STATS_DAYS_MIN..MAX; omitted
-   * leaves the gateway's own default in place. Bounded rather than free so a
-   * typo cannot ask the gateway to assemble years of data. */
+   * leaves the gateway's own default in place. The gateway clamps a request
+   * wider than its own history, so asking for more than it holds is the
+   * supported way to say "everything you have". */
   days?: number;
 }
 
@@ -1859,10 +1860,12 @@ export interface LlmUsageResponse {
 }
 
 /** Bounds on LlmStatsRequest.days. One day is the smallest window the gateway
- * buckets by; a year plus a day is the widest span anyone reads at once, and
- * capping it keeps both the gateway's work and the proxied document finite. */
+ * buckets by. The ceiling is a sanity bound rather than a real span — a
+ * century of days: the gateway clamps any request to what it actually holds,
+ * and the UI's widest view ("yearly") deliberately asks for more than that to
+ * mean "everything". It exists only so a typo cannot ask for an absurd number. */
 export const LLM_STATS_DAYS_MIN = 1;
-export const LLM_STATS_DAYS_MAX = 366;
+export const LLM_STATS_DAYS_MAX = 36_524;
 
 /** What one model cost on one day under one credential. Every field is
  * optional and passed through as sent: the gateway owns which counters it

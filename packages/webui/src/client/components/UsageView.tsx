@@ -28,6 +28,8 @@ import type { AppState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageStats } from "./UsageStats.tsx";
+import { usageHref, usageStatsHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 
 /** Quota moves on the scale of hours; a minute of staleness is invisible to
  * the reader and the gateway's own snapshots lag by more than that anyway.
@@ -342,14 +344,56 @@ function QuotaSection({ state }: { state: AppState }) {
   );
 }
 
+/** Quota and spend answer different questions — what is left to use, versus
+ * what has been spent — so they are tabs rather than two sections of one long
+ * page. Each tab appears only when its own endpoint is configured: an operator
+ * who set up one of the two sees one tab, not a heading over an error. */
+function UsageTabs({ state }: { state: AppState }) {
+  const tabs: Array<{ tab: "quota" | "stats"; label: string; href: string }> = [
+    ...(state.llmUsageAvailable
+      ? [{ tab: "quota" as const, label: "クオータ", href: usageHref() }]
+      : []),
+    ...(state.llmStatsAvailable
+      ? [{ tab: "stats" as const, label: "利用料", href: usageStatsHref(state.usagePeriod) }]
+      : []),
+  ];
+  // A single tab is not a choice; showing one lone tab strip would be chrome
+  // with nothing to switch between.
+  if (tabs.length < 2) return null;
+  return (
+    <nav class="usage-tabs" aria-label="usage sections">
+      {tabs.map((entry) => (
+        <button
+          key={entry.tab}
+          type="button"
+          aria-current={state.usageTab === entry.tab ? "page" : undefined}
+          onClick={() => {
+            if (state.usageTab !== entry.tab) pushNavigation(entry.href);
+          }}
+        >
+          {entry.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 export function UsageView({ state }: { state: AppState }) {
-  // Each section is gated on its own hello capability: an operator who
-  // configured only one of the two endpoints sees only that one, rather than a
-  // heading over an error the other section could never stop showing.
+  // The URL can name a tab whose endpoint is not configured (a bookmark that
+  // outlived a config change), so what is shown falls back to whichever tab
+  // this daemon can actually fill.
+  const showStats =
+    state.llmStatsAvailable && (state.usageTab === "stats" || !state.llmUsageAvailable);
   return (
     <main id="usage-view">
-      {state.llmUsageAvailable ? <QuotaSection state={state} /> : null}
-      {state.llmStatsAvailable ? <UsageStats days={state.usageDays} /> : null}
+      <UsageTabs state={state} />
+      {showStats ? (
+        <UsageStats period={state.usagePeriod} />
+      ) : state.llmUsageAvailable ? (
+        <QuotaSection state={state} />
+      ) : (
+        <p class="usage-empty">この daemon には LLM gateway が設定されていません。</p>
+      )}
     </main>
   );
 }

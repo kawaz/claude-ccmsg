@@ -124,7 +124,7 @@ describe("llm_stats op", () => {
   // whoever debugs it to the wrong machine.
   test("refuses an out-of-range window without reaching the gateway", async () => {
     const before = received.length;
-    for (const days of [0, 367, 1.5, "30"]) {
+    for (const days of [0, 36_525, 1.5, "30"]) {
       const [reply] = await requestFrames(
         daemonWith(URL_OK),
         USER,

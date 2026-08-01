@@ -8,11 +8,20 @@ import {
   credentialLabel,
   dailyTotals,
   dayTotalUsd,
-  formatMonth,
+  formatBucket,
+  formatShare,
   formatTokens,
   formatUsd,
-  monthKey,
-  monthlyTotals,
+  axisTicks,
+  axisBucketLabel,
+  bucketKey,
+  bucketTotals,
+  chartData,
+  contextTotals,
+  isStatsPeriod,
+  niceCeiling,
+  periodDays,
+  showsLabel,
   shareOf,
   windowTotalUsd,
 } from "../src/client/llm-stats-view.ts";
@@ -93,42 +102,89 @@ describe("dailyTotals", () => {
   });
 });
 
-describe("monthlyTotals", () => {
-  const months = monthlyTotals(DAYS);
+describe("bucketTotals", () => {
+  const months = bucketTotals(DAYS, "monthly");
 
-  test("groups days by month, newest first, with the covered day count", () => {
+  test("groups days into buckets, newest first, with the covered day count", () => {
     expect(months.map((m) => [m.key, m.usd, m.dayCount])).toEqual([
       ["2026-07", 4, 1],
       ["2026-06", 4, 1],
     ]);
   });
 
-  test("merges a model that appears on several days of the month", () => {
-    const july = monthlyTotals({
-      "2026-07-01": { credentials: { c: { m: { requests: 1, usd: 1 } } }, total_usd: 1 },
-      "2026-07-02": { credentials: { c: { m: { requests: 2, usd: 3 } } }, total_usd: 3 },
-    });
+  test("daily buckets are the gateway's own days", () => {
+    expect(bucketTotals(DAYS, "daily").map((b) => b.key)).toEqual(["2026-07-01", "2026-06-30"]);
+  });
+
+  // The two days straddle a month boundary but fall in the same ISO week
+  // (2026-06-30 is a Tuesday, 2026-07-01 the Wednesday after it) — the case a
+  // naive "slice the month off the key" grouping would get wrong.
+  test("weekly buckets follow the ISO week across a month boundary", () => {
+    const weeks = bucketTotals(DAYS, "weekly");
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0]!.usd).toBe(8);
+    expect(weeks[0]!.dayCount).toBe(2);
+  });
+
+  test("yearly buckets collapse to the calendar year", () => {
+    expect(bucketTotals(DAYS, "yearly").map((b) => [b.key, b.usd])).toEqual([["2026", 8]]);
+  });
+
+  test("merges a model that appears on several days of the bucket", () => {
+    const july = bucketTotals(
+      {
+        "2026-07-01": { credentials: { c: { m: { requests: 1, usd: 1 } } }, total_usd: 1 },
+        "2026-07-02": { credentials: { c: { m: { requests: 2, usd: 3 } } }, total_usd: 3 },
+      },
+      "monthly",
+    );
     expect(july).toHaveLength(1);
     expect(july[0]!.dayCount).toBe(2);
     expect(july[0]!.usd).toBe(4);
     expect(july[0]!.models).toEqual([expect.objectContaining({ model: "m", usd: 4, requests: 3 })]);
   });
 
-  test("an empty window rolls up to no months rather than to one empty one", () => {
-    expect(monthlyTotals({})).toEqual([]);
+  test("an empty window rolls up to no buckets rather than to one empty one", () => {
+    expect(bucketTotals({}, "monthly")).toEqual([]);
   });
 });
 
-describe("monthKey", () => {
-  test("takes the month off a YYYY-MM-DD key", () => {
-    expect(monthKey("2026-07-31")).toBe("2026-07");
+describe("bucketKey", () => {
+  test("takes the span's key off a YYYY-MM-DD date", () => {
+    expect(bucketKey("2026-07-31", "daily")).toBe("2026-07-31");
+    expect(bucketKey("2026-07-31", "monthly")).toBe("2026-07");
+    expect(bucketKey("2026-07-31", "yearly")).toBe("2026");
+    expect(bucketKey("2026-07-31", "weekly")).toBe("2026-W31");
   });
 
-  // Spend that happened under a key the gateway formats differently must stay
-  // visible; folding it into a neighbouring month would misstate that month.
-  test("gives an unrecognised key its own bucket", () => {
-    expect(monthKey("week-31")).toBe("week-31");
-    expect(monthlyTotals({ "week-31": { credentials: {}, total_usd: 2 } })[0]!.key).toBe("week-31");
+  // The ISO week-year is not the calendar year at the turn. 2026 runs to
+  // W53, and that week reaches into January: 2027-01-03 is a Sunday still
+  // inside 2026-W53. Taking the year from the date string instead of from the
+  // ISO calculation would file those days under 2027 and split one week's
+  // spend across two buckets every new year.
+  test("the ISO week-year wins over the calendar year at the boundary", () => {
+    expect(bucketKey("2026-12-28", "weekly")).toBe("2026-W53");
+    expect(bucketKey("2026-12-31", "weekly")).toBe("2026-W53");
+    expect(bucketKey("2027-01-03", "weekly")).toBe("2026-W53");
+    expect(bucketKey("2027-01-04", "weekly")).toBe("2027-W01");
+  });
+
+  test("weeks run Monday to Sunday", () => {
+    // 2026-07-27 is a Monday; the Sunday that closes that week is 2026-08-02.
+    expect(bucketKey("2026-07-27", "weekly")).toBe("2026-W31");
+    expect(bucketKey("2026-08-02", "weekly")).toBe("2026-W31");
+    expect(bucketKey("2026-08-03", "weekly")).toBe("2026-W32");
+  });
+
+  // Spend under a key the gateway formats differently must stay visible;
+  // folding it into a neighbouring bucket would misstate that bucket.
+  test("gives an unrecognised key its own bucket in every span", () => {
+    for (const period of ["daily", "weekly", "monthly", "yearly"] as const) {
+      expect(bucketKey("week-31", period)).toBe("week-31");
+    }
+    expect(bucketTotals({ "week-31": { credentials: {}, total_usd: 2 } }, "monthly")[0]!.key).toBe(
+      "week-31",
+    );
   });
 });
 
@@ -173,6 +229,25 @@ describe("formatTokens", () => {
   });
 });
 
+describe("formatShare", () => {
+  test("rounds to whole percent", () => {
+    expect(formatShare(0.335)).toBe("34%");
+    expect(formatShare(1)).toBe("100%");
+    expect(formatShare(0)).toBe("0%");
+  });
+
+  // 300M input tokens beside a cache-read column 400x its size is still 300M
+  // tokens; "0%" would read as "none".
+  test("floors a nonzero share that would round away", () => {
+    expect(formatShare(0.002)).toBe("<1%");
+    expect(formatShare(0.999)).toBe(">99%");
+  });
+
+  test("a non-finite share degrades instead of printing NaN", () => {
+    expect(formatShare(Number.NaN)).toBe("-");
+  });
+});
+
 describe("shareOf", () => {
   test("is a fraction of the total", () => {
     expect(shareOf(25, 100)).toBe(0.25);
@@ -196,8 +271,222 @@ describe("labels", () => {
     expect(credentialLabel("claude-a")).toBe("claude-a");
   });
 
-  test("month keys read as months", () => {
-    expect(formatMonth("2026-07")).toBe("2026年7月");
-    expect(formatMonth("week-31")).toBe("week-31");
+  test("bucket keys read as the span they name", () => {
+    expect(formatBucket("2026-07-31")).toBe("2026-07-31");
+    expect(formatBucket("2026-07")).toBe("2026年7月");
+    expect(formatBucket("2026-W31")).toBe("2026年 第31週");
+    expect(formatBucket("2026")).toBe("2026年");
+    expect(formatBucket("week-31")).toBe("week-31");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Context kinds and chart geometry.
+
+describe("periods", () => {
+  // The counts are wider than the span they draw so the oldest bucket on
+  // screen is whole; "yearly" asks for a century of days on purpose, since the
+  // gateway clamps and that is what "everything" means here.
+  test("each span asks for enough history to fill itself", () => {
+    expect(periodDays("daily")).toBe(32);
+    expect(periodDays("weekly")).toBe(96);
+    expect(periodDays("monthly")).toBe(397);
+    expect(periodDays("yearly")).toBe(36_524);
+  });
+
+  test("only the four spans are spans", () => {
+    expect(isStatsPeriod("daily")).toBe(true);
+    expect(isStatsPeriod("yearly")).toBe(true);
+    expect(isStatsPeriod("hourly")).toBe(false);
+    expect(isStatsPeriod("")).toBe(false);
+  });
+});
+
+describe("contextTotals", () => {
+  const models = [
+    {
+      model: "a",
+      usd: 1,
+      requests: 1,
+      inputTokens: 100,
+      outputTokens: 200,
+      cacheCreationTokens: 300,
+      cacheReadTokens: 400,
+    },
+    {
+      model: "b",
+      usd: 1,
+      requests: 1,
+      inputTokens: 100,
+      outputTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+    },
+  ];
+
+  test("sums each counter across models, in a fixed order", () => {
+    expect(contextTotals(models).map((entry) => [entry.kind, entry.tokens])).toEqual([
+      ["input", 200],
+      ["output", 200],
+      ["cacheCreation", 300],
+      ["cacheRead", 400],
+    ]);
+  });
+
+  test("shares are of total tokens and add up to one", () => {
+    const totals = contextTotals(models);
+    expect(totals[0]!.share).toBeCloseTo(200 / 1100, 10);
+    expect(totals.reduce((sum, entry) => sum + entry.share, 0)).toBeCloseTo(1, 10);
+  });
+
+  // A bucket with spend but no reported tokens must not divide by zero.
+  test("a bucket with no tokens shares out as zero, not NaN", () => {
+    const totals = contextTotals([
+      {
+        model: "a",
+        usd: 5,
+        requests: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      },
+    ]);
+    expect(totals.every((entry) => entry.share === 0)).toBe(true);
+  });
+});
+
+describe("niceCeiling / axisTicks", () => {
+  test("rounds up to a number a reader can do arithmetic with", () => {
+    expect(niceCeiling(0.7)).toBe(1);
+    expect(niceCeiling(37)).toBe(50);
+    expect(niceCeiling(1548)).toBe(2000);
+    expect(niceCeiling(2000)).toBe(2000);
+  });
+
+  test("an empty or unusable range has no scale to draw", () => {
+    expect(niceCeiling(0)).toBe(0);
+    expect(niceCeiling(Number.NaN)).toBe(0);
+    expect(axisTicks(0)).toEqual([0]);
+  });
+
+  test("ticks run from zero to the ceiling in even steps", () => {
+    expect(axisTicks(37)).toEqual([0, 12.5, 25, 37.5, 50]);
+  });
+});
+
+describe("chartData", () => {
+  function bucket(key: string, models: Array<[string, number]>) {
+    return {
+      key,
+      usd: models.reduce((sum, [, usd]) => sum + usd, 0),
+      dayCount: 1,
+      credentials: [],
+      models: models.map(([model, usd]) => ({
+        model,
+        usd,
+        requests: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+      })),
+    };
+  }
+
+  // The table reads newest-first; the chart reads left to right in time. Each
+  // is right for its own form, so the chart re-sorts rather than inheriting.
+  test("bars run oldest first, whatever order the buckets arrive in", () => {
+    const data = chartData([bucket("2026-07-02", [["a", 1]]), bucket("2026-07-01", [["a", 2]])]);
+    expect(data.bars.map((bar) => bar.key)).toEqual(["2026-07-01", "2026-07-02"]);
+    expect(data.bars.map((bar) => bar.axisLabel)).toEqual(["07-01", "07-02"]);
+  });
+
+  // Colour follows the entity, not its rank inside one bar — otherwise a model
+  // changes colour as the reader moves along the axis.
+  test("series order is total spend across the window, and stacking follows it", () => {
+    const data = chartData([
+      bucket("2026-07-01", [
+        ["cheap", 1],
+        ["dear", 10],
+      ]),
+      bucket("2026-07-02", [
+        ["cheap", 5],
+        ["dear", 1],
+      ]),
+    ]);
+    expect(data.models).toEqual(["dear", "cheap"]);
+    expect(data.bars[1]!.segments.map((s) => s.model)).toEqual(["dear", "cheap"]);
+  });
+
+  test("segments stack from the baseline as fractions of the tallest bar", () => {
+    const data = chartData([
+      bucket("2026-07-01", [
+        ["a", 3],
+        ["b", 1],
+      ]),
+    ]);
+    expect(data.max).toBe(4);
+    expect(data.bars[0]!.segments).toEqual([
+      { model: "a", usd: 3, start: 0, end: 0.75 },
+      { model: "b", usd: 1, start: 0.75, end: 1 },
+    ]);
+  });
+
+  // A ninth series is never a generated hue: the palette is eight slots, and
+  // the tail folds into one named bucket instead.
+  test("models past the palette fold into one 'other' series", () => {
+    const models: Array<[string, number]> = Array.from({ length: 10 }, (_, i) => [`m${i}`, 10 - i]);
+    const data = chartData([bucket("2026-07-01", models)]);
+    expect(data.models).toHaveLength(9);
+    expect(data.models[8]).toBe("その他");
+    const other = data.bars[0]!.segments.find((s) => s.model === "その他");
+    // m8 (2) + m9 (1): the two that did not get a slot.
+    expect(other?.usd).toBe(3);
+  });
+
+  test("a model absent from a bucket contributes no segment", () => {
+    const data = chartData([bucket("2026-07-01", [["a", 1]]), bucket("2026-07-02", [["b", 1]])]);
+    expect(data.bars[0]!.segments.map((s) => s.model)).toEqual(["a"]);
+    expect(data.bars[1]!.segments.map((s) => s.model)).toEqual(["b"]);
+  });
+
+  test("an all-zero window produces no geometry rather than NaN fractions", () => {
+    const data = chartData([bucket("2026-07-01", [["a", 0]])]);
+    expect(data.max).toBe(0);
+    expect(data.bars[0]!.segments).toEqual([]);
+  });
+
+  test("no buckets is an empty chart, not a crash", () => {
+    expect(chartData([])).toEqual({ models: [], bars: [], max: 0, ticks: [0] });
+  });
+});
+
+describe("axisBucketLabel", () => {
+  // The year repeats under every tick of a one-month window and says nothing
+  // the window does not already say; the hover and the table keep it.
+  test("drops the repeated year from dense spans", () => {
+    expect(axisBucketLabel("2026-07-28")).toBe("07-28");
+    expect(axisBucketLabel("2026-W31")).toBe("W31");
+  });
+
+  test("leaves sparse spans at their full label", () => {
+    expect(axisBucketLabel("2026-07")).toBe("2026年7月");
+    expect(axisBucketLabel("2026")).toBe("2026年");
+    expect(axisBucketLabel("week-31")).toBe("week-31");
+  });
+});
+
+describe("showsLabel", () => {
+  // A month of daily bars cannot carry 32 labels; the newest is always one of
+  // the ones that survives, since it is the bar being read.
+  test("thins labels but always keeps the newest bar", () => {
+    expect(showsLabel(31, 32)).toBe(true);
+    expect(showsLabel(0, 32)).toBe(false);
+    expect([...Array(32).keys()].filter((i) => showsLabel(i, 32))).toHaveLength(8);
+  });
+
+  test("labels every bar when they all fit", () => {
+    expect([...Array(5).keys()].every((i) => showsLabel(i, 5))).toBe(true);
   });
 });

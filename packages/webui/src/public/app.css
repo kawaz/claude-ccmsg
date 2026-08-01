@@ -6545,24 +6545,6 @@ button.session-tab {
   color: var(--bg);
 }
 
-.stats-period-custom {
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
-  font-size: 0.8rem;
-  color: var(--fg-muted);
-}
-
-.stats-period-custom input {
-  width: 4rem;
-  padding: 0.15rem 0.3rem;
-  font-size: 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  color: var(--fg);
-}
-
 .stats-rows {
   display: flex;
   flex-direction: column;
@@ -6719,5 +6701,180 @@ button.session-tab {
 .usage-probe-age {
   margin-top: 0.15rem;
   font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+
+/* ---- /usage: tabs and spend chart -------------------------------------- */
+
+.usage-tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.75rem;
+}
+
+.usage-tabs button {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.85rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.usage-tabs button:hover {
+  color: var(--fg);
+}
+
+.usage-tabs button[aria-current="page"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Categorical slots from the validated data-viz palette, in fixed order and
+   never cycled — a model keeps its slot as the reader moves along the axis.
+   Four of the light steps sit below 3:1 on this surface; the table under the
+   chart carries every value in text, which is the relief that permits them. */
+.stats-chart {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+  --series-other: #898781;
+  margin-bottom: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Selected for the dark surface, not an automatic flip of the light steps. */
+  .stats-chart {
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --series-other: #898781;
+  }
+}
+
+/* Height follows the viewBox aspect so the scaling stays uniform; the box
+   already includes the axis band, so nothing is cropped. */
+.stats-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.stats-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.85rem;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  font-size: 0.75rem;
+  /* Text wears text tokens; the swatch beside it carries the identity. */
+  color: var(--fg-muted);
+}
+
+.stats-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.stats-swatch {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 2px;
+  flex: none;
+}
+
+.stats-swatch.series-1,
+.stats-bar.series-1 {
+  fill: var(--series-1);
+  background: var(--series-1);
+}
+.stats-swatch.series-2,
+.stats-bar.series-2 {
+  fill: var(--series-2);
+  background: var(--series-2);
+}
+.stats-swatch.series-3,
+.stats-bar.series-3 {
+  fill: var(--series-3);
+  background: var(--series-3);
+}
+.stats-swatch.series-4,
+.stats-bar.series-4 {
+  fill: var(--series-4);
+  background: var(--series-4);
+}
+.stats-swatch.series-5,
+.stats-bar.series-5 {
+  fill: var(--series-5);
+  background: var(--series-5);
+}
+.stats-swatch.series-6,
+.stats-bar.series-6 {
+  fill: var(--series-6);
+  background: var(--series-6);
+}
+.stats-swatch.series-7,
+.stats-bar.series-7 {
+  fill: var(--series-7);
+  background: var(--series-7);
+}
+.stats-swatch.series-8,
+.stats-bar.series-8 {
+  fill: var(--series-8);
+  background: var(--series-8);
+}
+.stats-swatch.series-other,
+.stats-bar.series-other {
+  fill: var(--series-other);
+  background: var(--series-other);
+}
+
+.stats-bar {
+  cursor: pointer;
+}
+
+.stats-bar:hover {
+  opacity: 0.75;
+}
+
+/* Recessive hairline, solid: a dashed rule would read as a threshold. */
+.stats-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.stats-axis-label {
+  fill: var(--fg-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-hover {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  min-height: 1.2em;
+}
+
+.stats-breakdown-head {
+  margin: 0.5rem 0 0.1rem 1.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--fg-muted);
 }
