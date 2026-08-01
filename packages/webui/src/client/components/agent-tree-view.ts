@@ -1,7 +1,11 @@
 // AgentTreePanel の描画から切り出した純関数 (リンク先の組み立てと dot 色語彙の
 // 正規化)。JSX を含まないので bun test から直接叩ける
 // (timeline-item-markdown.ts と同じ分離)。
-import type { AgentTreeNode, AgentTreeWorkflowGroup } from "@ccmsg/protocol";
+import type {
+  AgentTreeNode,
+  AgentTreeWorkflowGroup,
+  AgentTreeWorkflowPhase,
+} from "@ccmsg/protocol";
 import { agentTimelineHref } from "../locator.ts";
 
 /** ツリー 1 ノードの TL リンク先。workflow member の transcript は
@@ -47,4 +51,66 @@ export function dotProps(state: string): { class: string; style?: string } {
  * live/完了 振り分けが食い違わないよう 1 箇所に置く。 */
 export function isRunLive(run: AgentTreeWorkflowGroup): boolean {
   return run.total === 0 || run.done < run.total;
+}
+
+export function isErrorState(state: string): boolean {
+  return DOT_ERROR_STATES.has(state);
+}
+
+/** member 1 行の実効 state を返す解決関数。workflow member は drilldown 由来の
+ * state (done/running/error/…) が node.state より正確なので、呼び出し側が
+ * drillLookup を閉じ込めた resolver を渡す (行表示側と同じ優先順位)。 */
+export type NodeStateResolver = (node: AgentTreeNode) => string;
+
+/** 子孫を含む error 数。祖先行 (phase / run / セクション見出し) に「畳んだ
+ * ままでも異常が分かる」表示を出すための集計 (kawaz r99 m34)。 */
+export function countNodeErrors(nodes: AgentTreeNode[], resolveState: NodeStateResolver): number {
+  let n = 0;
+  for (const node of nodes) {
+    if (isErrorState(resolveState(node))) n++;
+    n += countNodeErrors(node.children, resolveState);
+  }
+  return n;
+}
+
+export function countPhaseErrors(
+  phase: AgentTreeWorkflowPhase,
+  resolveState: NodeStateResolver,
+): number {
+  return countNodeErrors(phase.members, resolveState);
+}
+
+/** run 配下 (全 phase + phase 未確定 bucket) の error 数。 */
+export function countRunErrors(
+  run: AgentTreeWorkflowGroup,
+  resolveState: NodeStateResolver,
+): number {
+  let n = countNodeErrors(run.unassigned, resolveState);
+  for (const phase of run.phases) n += countPhaseErrors(phase, resolveState);
+  return n;
+}
+
+export function countRunsErrors(
+  runs: AgentTreeWorkflowGroup[],
+  resolveState: NodeStateResolver,
+): number {
+  return runs.reduce((n, run) => n + countRunErrors(run, resolveState), 0);
+}
+
+/** run 行の dot。
+ *
+ * Design rationale: 走行状態 (live/完了) と異常有無は直交する軸なので、error を
+ * dot 色で塗り潰すと「走っているのか止まったのか」が読めなくなる。完了 run は
+ * 走行状態の情報量が無いので danger 色に倒し、live run は live 色を保ったまま
+ * danger の halo を重ねて両方読めるようにする (kawaz r99 m34 の受け入れ条件
+ *「畳んだ状態で異常が分かる」を満たしつつ live 表示を壊さない)。 */
+export function runDotProps(
+  run: AgentTreeWorkflowGroup,
+  errorCount: number,
+): { class: string; style?: string } {
+  const live = isRunLive(run);
+  if (errorCount === 0) return dotProps(live ? "running" : "done");
+  if (!live) return dotProps("error");
+  const base = dotProps("running");
+  return { ...base, class: `${base.class} status-teammate-dot-error-halo` };
 }

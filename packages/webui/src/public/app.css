@@ -6181,6 +6181,30 @@ button.session-tab {
   flex: 1 1 auto;
 }
 
+/* 子孫の error を畳んだ祖先行に伝える表示 (phase 行 / run 行 / セクション見出し)。
+ * 色だけに頼らず ⚠ + 件数を出す。 */
+.agent-tree-error-badge {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.6em;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  white-space: nowrap;
+}
+
+.agent-tree-has-error > .agent-tree-workflow-run-row > .agent-tree-workflow-run-id,
+.agent-tree-has-error > .agent-tree-phase-row > .agent-tree-phase-title {
+  color: var(--danger);
+}
+
+/* live のまま error を併記するための halo。dot 自体は live 色を保つ。 */
+.status-teammate-dot-error-halo {
+  text-shadow: 0 0 0.35em var(--danger);
+}
+
 .agent-tree-workflow-run-progress,
 .agent-tree-phase-progress {
   font-variant-numeric: tabular-nums;

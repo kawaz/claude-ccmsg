@@ -26,7 +26,16 @@ import type {
 import { createContext } from "preact";
 import { useContext, useState } from "preact/hooks";
 import { timelineHref, type AgentRef } from "../locator.ts";
-import { agentNodeHref, dotProps, isRunLive } from "./agent-tree-view.ts";
+import {
+  agentNodeHref,
+  countPhaseErrors,
+  countRunErrors,
+  countRunsErrors,
+  dotProps,
+  isRunLive,
+  runDotProps,
+  type NodeStateResolver,
+} from "./agent-tree-view.ts";
 import {
   buildWorkflowDrilldown,
   canonicalModelId,
@@ -290,6 +299,24 @@ function StandardGroup({
   );
 }
 
+/** member 行の state 表示と同じ優先順位 (drilldown 由来 → node.state) を
+ * 祖先行の error 集計にも使うための resolver。 */
+function makeStateResolver(
+  drillLookup: Map<string, WorkflowDrilldownAgentView> | undefined,
+): NodeStateResolver {
+  return (node) => drillLookup?.get(node.agent_id)?.state ?? node.state;
+}
+
+/** 子孫に error がいることを畳んだ祖先行で示すバッジ (kawaz r99 m34)。 */
+function ErrorBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span class="agent-tree-error-badge" title={`配下に error の agent が ${count} 件`}>
+      ⚠ {count}
+    </span>
+  );
+}
+
 function WorkflowPhaseRow({
   sid,
   phase,
@@ -307,7 +334,11 @@ function WorkflowPhaseRow({
   // として淡色表示 (index + title、TUI の「3 Finalize」形式)。members が居るが
   // 未 done は running 側なので dim にしない (done < total は進行中)。
   const isEmpty = phase.members.length === 0 && phase.total === 0;
-  const cls = "agent-tree-phase" + (isEmpty ? " agent-tree-phase-empty" : "");
+  const errorCount = countPhaseErrors(phase, makeStateResolver(drillLookup));
+  const cls =
+    "agent-tree-phase" +
+    (isEmpty ? " agent-tree-phase-empty" : "") +
+    (errorCount > 0 ? " agent-tree-has-error" : "");
   return (
     <li class={cls}>
       <div class="agent-tree-phase-row">
@@ -326,6 +357,7 @@ function WorkflowPhaseRow({
         )}
         <span class="agent-tree-phase-index">{phase.index}</span>
         <span class="agent-tree-phase-title">{phase.title}</span>
+        <ErrorBadge count={errorCount} />
         {isEmpty ? null : (
           <span class="agent-tree-phase-progress">
             {/* kawaz r46 mid=27: 全完了は頭に ✓ */}
@@ -364,9 +396,9 @@ function WorkflowRunRow({
   const [open, setOpen] = useState(false);
   // run 単位の走行状態。判定は WorkflowsGroup の live/完了 振り分けと同じ式で、
   // 畳んだ run 行だけを見ても走行中か完了かが分かるようにする。
-  const runState = isRunLive(run) ? "running" : "done";
+  const errorCount = countRunErrors(run, makeStateResolver(drillLookup));
   return (
-    <li class="agent-tree-workflow-run">
+    <li class={"agent-tree-workflow-run" + (errorCount > 0 ? " agent-tree-has-error" : "")}>
       <div class="agent-tree-workflow-run-row">
         <button
           type="button"
@@ -377,12 +409,13 @@ function WorkflowRunRow({
         >
           {open ? "▽" : "▶"}
         </button>
-        <span {...dotProps(runState)} aria-hidden="true">
+        <span {...runDotProps(run, errorCount)} aria-hidden="true">
           ●
         </span>
         <span class="agent-tree-workflow-run-id" title={run.workflow_id}>
           {run.workflow_id}
         </span>
+        <ErrorBadge count={errorCount} />
         <span class="agent-tree-workflow-run-progress">
           {/* kawaz r46 mid=27: 全完了は頭に ✓ */}
           {run.done >= run.total && run.total > 0 ? "✓ " : ""}
@@ -449,6 +482,7 @@ function WorkflowsGroup({
           {" "}
           ({liveRuns.length} live / {runs.length})
         </span>
+        <ErrorBadge count={countRunsErrors(runs, makeStateResolver(drillLookup))} />
       </h3>
       {liveRuns.length > 0 ? (
         <ul class="agent-tree-root">
@@ -467,6 +501,9 @@ function WorkflowsGroup({
           >
             {showCompleted ? "▽" : "▶"} 完了 ({completedRuns.length})
           </button>
+          {/* 完了 run はデフォルト非表示なので、error を含む run があることは
+              トグルの隣に出さないと畳んだ状態で気づけない。 */}
+          <ErrorBadge count={countRunsErrors(completedRuns, makeStateResolver(drillLookup))} />
           {showCompleted ? (
             <ul class="agent-tree-root agent-tree-completed-list">
               {completedRuns.map((r) => (

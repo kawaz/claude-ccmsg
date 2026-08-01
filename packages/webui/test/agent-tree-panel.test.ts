@@ -1,6 +1,20 @@
-import type { AgentTreeNode } from "@ccmsg/protocol";
+import type {
+  AgentTreeNode,
+  AgentTreeWorkflowGroup,
+  AgentTreeWorkflowPhase,
+} from "@ccmsg/protocol";
 import { describe, expect, test } from "bun:test";
-import { agentNodeHref, dotProps, isRunLive } from "../src/client/components/agent-tree-view.ts";
+import {
+  agentNodeHref,
+  countNodeErrors,
+  countPhaseErrors,
+  countRunErrors,
+  countRunsErrors,
+  dotProps,
+  isRunLive,
+  runDotProps,
+  type NodeStateResolver,
+} from "../src/client/components/agent-tree-view.ts";
 
 function node(over: Partial<AgentTreeNode> & Pick<AgentTreeNode, "agent_id">): AgentTreeNode {
   return {
@@ -106,5 +120,101 @@ describe("isRunLive (run 行 dot と live/完了 振り分けの共有判定)", 
     expect(
       isRunLive({ workflow_id: "wf_a1b2c3d4-e5f", done: 0, total: 0, phases: [], unassigned: [] }),
     ).toBe(true);
+  });
+});
+
+// kawaz r99 m34: 「ワークスペースの一部がエラーしてても、フォルド全て開くまで
+// 分からない」。error は最下層 member 行にしか出ていなかったので、祖先行
+// (phase / run / セクション) に伝播させる集計を純関数として検証する。
+describe("error の祖先伝播 (畳んだ行から異常が分かる)", () => {
+  // 行表示と同じ優先順位 (workflow drilldown 由来の state → node.state)。
+  const byDrill = (drill: Record<string, string>): NodeStateResolver => {
+    return (n) => drill[n.agent_id] ?? n.state;
+  };
+  const plain: NodeStateResolver = (n) => n.state;
+
+  const phase = (index: number, members: AgentTreeNode[]): AgentTreeWorkflowPhase => ({
+    index,
+    title: `phase ${index}`,
+    done: 0,
+    total: members.length,
+    members,
+  });
+  const run = (over: Partial<AgentTreeWorkflowGroup> = {}): AgentTreeWorkflowGroup => ({
+    workflow_id: "wf_e1deb606-05d",
+    done: 3,
+    total: 4,
+    phases: [],
+    unassigned: [],
+    ...over,
+  });
+
+  test("error / failed を数え、それ以外は数えない", () => {
+    const nodes = [
+      node({ agent_id: "a1", state: "error" }),
+      node({ agent_id: "a2", state: "failed" }),
+      node({ agent_id: "a3", state: "running" }),
+      node({ agent_id: "a4", state: "done" }),
+    ];
+    expect(countNodeErrors(nodes, plain)).toBe(2);
+  });
+
+  test("孫以下の error も数える (children を再帰)", () => {
+    const nodes = [
+      node({
+        agent_id: "parent",
+        state: "running",
+        children: [node({ agent_id: "child", state: "error" })],
+      }),
+    ];
+    expect(countNodeErrors(nodes, plain)).toBe(1);
+  });
+
+  // member 行の state は drilldown 由来が優先 (node.state は fold 由来で
+  // error を持たない)。集計が node.state だけを見ると 0 件になってしまう。
+  test("drilldown 由来の state で判定する", () => {
+    const members = [node({ agent_id: "a1", state: "stopped" })];
+    expect(countPhaseErrors(phase(2, members), plain)).toBe(0);
+    expect(countPhaseErrors(phase(2, members), byDrill({ a1: "error" }))).toBe(1);
+  });
+
+  test("run は全 phase と phase 未確定 bucket を合算する", () => {
+    const r = run({
+      phases: [
+        phase(1, [node({ agent_id: "a1", state: "done" })]),
+        phase(2, [node({ agent_id: "a2", state: "error" })]),
+      ],
+      unassigned: [node({ agent_id: "a3", state: "error" })],
+    });
+    expect(countRunErrors(r, plain)).toBe(2);
+    expect(countRunsErrors([r, run()], plain)).toBe(2);
+  });
+
+  test("error が無ければ 0 (バッジ非表示の条件)", () => {
+    expect(
+      countRunErrors(run({ phases: [phase(1, [node({ agent_id: "a1", state: "done" })])] }), plain),
+    ).toBe(0);
+  });
+});
+
+describe("runDotProps (live と error の 2 軸を両方読ませる)", () => {
+  const live = { workflow_id: "wf_x", done: 3, total: 4, phases: [], unassigned: [] };
+  const finished = { workflow_id: "wf_x", done: 4, total: 4, phases: [], unassigned: [] };
+
+  test("error 無しは従来通り live / 完了 の色分けのみ", () => {
+    expect(runDotProps(live, 0)).toEqual(dotProps("running"));
+    expect(runDotProps(finished, 0)).toEqual(dotProps("done"));
+  });
+
+  // 走行中の緑を error 色で塗り潰すと「走っているのか止まったのか」が読めなく
+  // なるので、live 色 + halo で両方出す。
+  test("live + error は live 色を保ったまま halo を足す", () => {
+    const props = runDotProps(live, 1);
+    expect(props.class).toContain("status-teammate-dot-active");
+    expect(props.class).toContain("status-teammate-dot-error-halo");
+  });
+
+  test("完了 run の error は danger 色そのもの", () => {
+    expect(runDotProps(finished, 1)).toEqual(dotProps("error"));
   });
 });
