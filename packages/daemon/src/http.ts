@@ -7,6 +7,7 @@ import { handleFsServe } from "./fs-serve.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
+import { handleWebhookRequest } from "./webhook.ts";
 
 export interface HttpFallback {
   (req: Request): Response | Promise<Response>;
@@ -199,6 +200,18 @@ export function startHttpListener(
       }
       if (url.pathname.startsWith("/attachment/") && req.method === "GET") {
         return handleAttachmentServe(url.pathname.slice("/attachment/".length));
+      }
+      // Inbound webhooks (webhook.ts). Authorization is per-source and lives
+      // in that module — the source-IP and Origin checks above are about
+      // browsers, and a producer posting from another host with a valid token
+      // is a legitimate caller the moment CCMSG_HTTP_ALLOW admits it.
+      if (url.pathname.startsWith("/webhook/") && req.method === "POST") {
+        return await handleWebhookRequest(
+          req,
+          url.pathname.slice("/webhook/".length),
+          daemon.webhooks,
+          daemon.log,
+        );
       }
       // Image serve for the FileViewer (see fs-serve.ts). Same trust boundary
       // (source-IP + Origin already checked above); per-request authorization

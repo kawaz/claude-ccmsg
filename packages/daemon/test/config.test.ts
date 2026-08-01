@@ -427,36 +427,81 @@ describe("loadConfig", () => {
     });
   });
 
-  // llm_events_url: the gateway's SSE request stream the daemon subscribes to
-  // for the webui's prompt-cache countdown. Same validation, and the same
-  // "a bad value disables only this feature" degradation.
-  describe("llm_events_url", () => {
-    test("valid http URL is retained", () => {
-      fs.writeFileSync(file, JSON.stringify({ llm_events_url: "http://127.0.0.1:8402/ev" }));
-      expect(loadConfig(file, log).llm_events_url).toBe("http://127.0.0.1:8402/ev");
+  // llm_events_url named the SSE stream the daemon used to subscribe to. The
+  // gateway now posts to ccmsg instead, so the key is dead — but a config
+  // still carrying it must say so rather than silently doing nothing.
+  describe("llm_events_url (retired)", () => {
+    test("is ignored with a warning pointing at its replacement", () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_events_url: "http://127.0.0.1:8402/events" }));
+      const cfg = loadConfig(file, log);
+      expect(cfg).toEqual({});
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("webhooks");
+    });
+  });
+
+  // webhooks: which producers may POST to /webhook/<source>, and where each
+  // one's bearer token is kept. The token itself is deliberately not a config
+  // value — see the DaemonConfig doc comment.
+  describe("webhooks", () => {
+    test("a source with a token file is retained, with ~ expanded", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({ webhooks: { "llm-gateway": { token_file: "~/secrets/gw.token" } } }),
+      );
+      const cfg = loadConfig(file, log);
+      expect(cfg.webhooks?.["llm-gateway"]?.token_file).toBe(
+        path.join(os.homedir(), "secrets/gw.token"),
+      );
       expect(warnings).toEqual([]);
     });
 
-    test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
-      for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
-        fs.writeFileSync(file, JSON.stringify({ llm_events_url: value }));
+    test("several sources coexist", () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          webhooks: {
+            "llm-gateway": { token_file: "/tmp/a.token" },
+            "some-other": { token_file: "/tmp/b.token" },
+          },
+        }),
+      );
+      expect(Object.keys(loadConfig(file, log).webhooks ?? {}).sort()).toEqual([
+        "llm-gateway",
+        "some-other",
+      ]);
+    });
+
+    test("a source name that could not be a path segment is dropped", () => {
+      // The name selects a config entry from a URL path, so anything that
+      // could express traversal or case tricks must not survive parsing.
+      for (const source of ["../etc", "Llm-Gateway", "llm gateway", "a".repeat(65), ""]) {
+        fs.writeFileSync(file, JSON.stringify({ webhooks: { [source]: { token_file: "/t" } } }));
         warnings = [];
-        expect(loadConfig(file, log).llm_events_url).toBeUndefined();
+        expect(loadConfig(file, log).webhooks).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
 
-    test("a bad events URL leaves the other llm endpoints working", () => {
+    test("an entry without a usable token_file is dropped, leaving the others", () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          llm_events_url: "not a url",
-          llm_usage_url: "https://gw.example/usage",
+          webhooks: {
+            "llm-gateway": { token_file: "/tmp/a.token" },
+            broken: { token_file: "  " },
+            "also-broken": {},
+          },
         }),
       );
       const cfg = loadConfig(file, log);
-      expect(cfg.llm_events_url).toBeUndefined();
-      expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
+      expect(Object.keys(cfg.webhooks ?? {})).toEqual(["llm-gateway"]);
+      expect(warnings).toHaveLength(2);
+    });
+
+    test("a non-object webhooks value degrades to unset with a warning", () => {
+      fs.writeFileSync(file, JSON.stringify({ webhooks: "llm-gateway" }));
+      expect(loadConfig(file, log).webhooks).toBeUndefined();
       expect(warnings).toHaveLength(1);
     });
   });

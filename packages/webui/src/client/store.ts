@@ -257,9 +257,9 @@ export interface AppState {
    * by the prompt-cache ring. Subagent series (same sid, different prefix)
    * are dropped by the reducer — see there for why. Replaced whole on every
    * push — the daemon always sends the full non-expired set — so a session
-   * whose window closed simply drops out. Empty forever on a daemon with no
-   * `llm_events_url`, which is what makes the ring absent rather than stuck
-   * at zero. */
+   * whose window closed simply drops out. Empty forever on a daemon the
+   * gateway does not post to, which is what makes the ring absent rather than
+   * stuck at zero. */
   llmRequests: Map<string, LlmRequestInfo>;
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates

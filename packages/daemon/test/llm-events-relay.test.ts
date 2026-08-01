@@ -1,14 +1,12 @@
-// ev:"llm_requests" relay: a daemon configured with `llm_events_url`
-// subscribes to the gateway's SSE stream at startup and forwards each
-// attributable request to user-role subscribers, plus a catch-up snapshot to
-// whoever subscribes after the fact (the browser-reload case the whole
-// snapshot shape exists for). Driven against a real daemon process and a real
-// (fake) gateway, because the wiring under test is exactly the startup path a
-// stubbed Daemon object would skip.
+// End-to-end: the LLM gateway POSTs request events to a real daemon's
+// /webhook/llm-gateway, and user-role subscribers see them as
+// ev:"llm_requests". Driven against a real daemon process rather than a
+// stubbed Daemon because the wiring under test is the startup path — config →
+// token file → registered source → cache → broadcast — that a stub would skip.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   connect,
   spawnDaemonProc,
@@ -18,67 +16,34 @@ import {
 } from "./helpers.ts";
 
 const T = 15000;
-const PORT = 18962;
+const TOKEN = "test-webhook-token";
 
-let openStreams: ReadableStreamDefaultController<Uint8Array>[] = [];
-const gateway = Bun.serve({
-  port: PORT,
-  // These responses are long-lived SSE streams; without this Bun closes each
-  // one after 10s of quiet and the suite fills with timeout notices.
-  idleTimeout: 0,
-  fetch() {
-    return new Response(
-      new ReadableStream<Uint8Array>({
-        start(controller) {
-          openStreams.push(controller);
-          controller.enqueue(new TextEncoder().encode(": hello\n\n"));
-        },
-      }),
-      { headers: { "content-type": "text/event-stream" } },
-    );
-  },
-});
-afterAll(() => {
-  for (const c of openStreams) {
-    try {
-      c.close();
-    } catch {
-      // already closed
-    }
-  }
-  void gateway.stop(true);
-});
-
-/** Publish to every stream still open, dropping the ones that aren't: each
- * test shuts its daemon down, which cancels that daemon's subscription, and a
- * cancelled stream's controller stays in the list until it is written to. */
-function emit(payload: unknown): void {
-  const frame = new TextEncoder().encode(`event: request\ndata: ${JSON.stringify(payload)}\n\n`);
-  openStreams = openStreams.filter((c) => {
-    try {
-      c.enqueue(frame);
-      return true;
-    } catch {
-      return false;
-    }
-  });
+interface Ctx extends DaemonCtx {
+  /** Base URL of this daemon's HTTP listener, e.g. http://127.0.0.1:53412 */
+  http: string;
 }
 
-/** startTestDaemon, but with `config.json` written before the spawn — the
- * daemon reads its config once at startup, so the file has to exist first.
- * (Not folded into helpers.ts: that file is shared with every other suite.) */
-async function startConfiguredDaemon(config: Record<string, unknown>): Promise<DaemonCtx> {
-  // Only this daemon's stream may satisfy untilGatewayConnected/emit below.
-  openStreams = [];
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-llmev-"));
+/** A daemon with an HTTP listener, a token file, and `webhooks` configured to
+ * accept it. Config and token are written before the spawn: both are read once
+ * at startup. */
+async function startWebhookDaemon(options: { configured?: boolean } = {}): Promise<Ctx> {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-wh-"));
   const stateDir = path.join(base, "s");
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
+  const tokenFile = path.join(base, "webhook.token");
+  fs.writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
+  const config =
+    options.configured === false ? {} : { webhooks: { "llm-gateway": { token_file: tokenFile } } };
   fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify(config));
-  const proc = spawnDaemonProc(stateDir, dataDir);
+  const proc = spawnDaemonProc(stateDir, dataDir, { CCMSG_HTTP_BIND: "127.0.0.1:0" });
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
+  const c = await connect(sock);
+  await c.request({ op: "hello", role: "user" });
+  const pong = await c.request<{ http: string[] }>({ op: "ping" });
+  c.close();
   return {
     base,
     stateDir,
@@ -87,10 +52,11 @@ async function startConfiguredDaemon(config: Record<string, unknown>): Promise<D
     sock,
     proc,
     env: { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir },
+    http: `http://${pong.http[0]}`,
   };
 }
 
-async function stop(ctx: DaemonCtx): Promise<void> {
+async function stop(ctx: Ctx): Promise<void> {
   try {
     const c = await connect(ctx.sock);
     await c.request({ op: "shutdown" });
@@ -107,7 +73,23 @@ async function stop(ctx: DaemonCtx): Promise<void> {
   fs.rmSync(ctx.base, { recursive: true, force: true });
 }
 
-async function userSubscriber(ctx: DaemonCtx): Promise<TestClient> {
+/** POST as the gateway does. Returns the status so tests can assert on it. */
+async function postEvents(
+  ctx: Ctx,
+  payload: unknown,
+  token: string | null = TOKEN,
+): Promise<number> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token !== null) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${ctx.http}/webhook/llm-gateway`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+  });
+  return res.status;
+}
+
+async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.request({ op: "hello", role: "user" });
   await c.request({ op: "subscribe" });
@@ -126,26 +108,11 @@ interface LlmRequestsEv {
   }[];
 }
 
-/** Wait until THIS test's daemon has established its subscription, so an
- * emit() can't be published into a stream nobody is reading yet. Callers reset
- * `openStreams` first (see startConfiguredDaemon) so a controller left over
- * from an earlier test can't satisfy the wait. */
-function untilGatewayConnected(): Promise<void> {
-  return new Promise((resolve) => {
-    const check = (): void => {
-      if (openStreams.length > 0) resolve();
-      else setTimeout(check, 5);
-    };
-    check();
-  });
-}
-
 /** Connect a session that exists only to post a marker msg (peers-push.test.ts's
- * postMarkerVia pattern): the room is created BY the poster so it is a member
- * of it, with `members` naming whoever has to be able to read the marker. A
- * msg from another connection is delivered with its body, whereas a self-post
- * comes back bodyless — which is why the anchor can't just be a self-post. */
-async function markerSession(ctx: DaemonCtx, members: string[]): Promise<[TestClient, string]> {
+ * pattern): the room is created BY the poster so it is a member of it. A msg
+ * from another connection is delivered with its body, whereas a self-post comes
+ * back bodyless — which is why the anchor can't be a self-post. */
+async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, string]> {
   const c = await connect(ctx.sock);
   await c.request({ op: "hello", role: "session", sid: "MARK", repo: "r", ws: "w", cwd: "/tmp" });
   const { room } = await c.request<{ room: string }>({ op: "create_room", members });
@@ -164,18 +131,22 @@ async function seenBeforeMarker(
   return seen;
 }
 
-describe("ev:llm_requests relay", () => {
+describe("webhook → ev:llm_requests", () => {
   test(
-    "a gateway request event reaches a user-role subscriber",
+    "a posted event reaches a user-role subscriber",
     async () => {
-      const ctx = await startConfiguredDaemon({
-        llm_events_url: `http://127.0.0.1:${PORT}/events`,
-      });
+      const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        await untilGatewayConnected();
         const ts = Math.floor(Date.now() / 1000);
-        emit({ ts, session_id: "S1", model: "claude-fable-5", status: 200, prefix: "484eda9c" });
+        const status = await postEvents(ctx, {
+          ts,
+          session_id: "S1",
+          prefix: "484eda9c",
+          model: "claude-fable-5",
+          status: 200,
+        });
+        expect(status).toBe(204);
         const { ev } = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         expect(ev.requests).toEqual([
           {
@@ -196,25 +167,132 @@ describe("ev:llm_requests relay", () => {
   );
 
   test(
+    "a batch is folded and pushed as one snapshot",
+    async () => {
+      const ctx = await startWebhookDaemon();
+      try {
+        const u = await userSubscriber(ctx);
+        const ts = Math.floor(Date.now() / 1000);
+        expect(
+          await postEvents(ctx, [
+            { ts, session_id: "S2", prefix: "484eda9c" },
+            { ts, session_id: "S3", prefix: "aa11bb22" },
+          ]),
+        ).toBe(204);
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 2,
+        );
+        expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S2", "S3"]);
+        u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a redelivered event does not move the window",
+    async () => {
+      // Both gateway processes may report the same call; neither knows about
+      // the other, so the daemon has to absorb the duplicate.
+      const ctx = await startWebhookDaemon();
+      try {
+        const u = await userSubscriber(ctx);
+        const ts = Math.floor(Date.now() / 1000) - 100;
+        await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
+        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
+        // The duplicate is dropped by the cache, so its ts is unchanged. Anchor
+        // on a later, genuinely new event to prove the assertion isn't just
+        // reading the first push again.
+        await postEvents(ctx, { ts: ts + 50, session_id: "S5", prefix: "aa11bb22" });
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 2,
+        );
+        expect(ev.requests.find((r) => r.session_id === "S4")?.ts).toBe(ts);
+        u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "unusable events are dropped without failing the delivery",
+    async () => {
+      const ctx = await startWebhookDaemon();
+      try {
+        const u = await userSubscriber(ctx);
+        const ts = Math.floor(Date.now() / 1000);
+        // session_id: null is the gateway's own shape for a client that sent
+        // no session header — the most common event ccmsg cannot place.
+        expect(
+          await postEvents(ctx, [
+            { ts, session_id: null, prefix: "484eda9c" },
+            { ts, session_id: "S6", prefix: "484eda9c" },
+            { nonsense: true },
+          ]),
+        ).toBe(204);
+        const { ev } = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        expect(ev.requests).toHaveLength(1);
+        expect(ev.requests[0]?.session_id).toBe("S6");
+        u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a subagent's request arrives as a separate, non-main series",
+    async () => {
+      const ctx = await startWebhookDaemon();
+      try {
+        const u = await userSubscriber(ctx);
+        const mainTs = Math.floor(Date.now() / 1000) - 240;
+        await postEvents(ctx, { ts: mainTs, session_id: "S7", prefix: "484eda9c" });
+        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        // Same session id, different system prompt: a subagent. The session's
+        // own window must survive it untouched — that is what keeps the ring
+        // counting down while a subagent chatters.
+        const subTs = Math.floor(Date.now() / 1000);
+        await postEvents(ctx, { ts: subTs, session_id: "S7", prefix: "9c31aa02" });
+        const { ev } = await u.readEventUntil<LlmRequestsEv>(
+          (e) => e.ev === "llm_requests" && e.requests.length === 2,
+        );
+        expect(ev.requests.find((r) => r.main)).toEqual({
+          ts: mainTs,
+          session_id: "S7",
+          prefix: "484eda9c",
+          main: true,
+        });
+        expect(ev.requests.find((r) => !r.main)?.prefix).toBe("9c31aa02");
+        u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "a later subscriber gets the window that opened before it connected",
     async () => {
-      const ctx = await startConfiguredDaemon({
-        llm_events_url: `http://127.0.0.1:${PORT}/events`,
-      });
+      const ctx = await startWebhookDaemon();
       try {
         const first = await userSubscriber(ctx);
-        await untilGatewayConnected();
         const ts = Math.floor(Date.now() / 1000);
-        emit({ ts, session_id: "S2", prefix: "484eda9c" });
-        // Wait for the daemon to have recorded it (observed via the live push
-        // to the connection that was already listening).
+        await postEvents(ctx, { ts, session_id: "S8", prefix: "484eda9c" });
         await first.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         first.close();
 
         // The reload case: a brand-new connection subscribing mid-window.
         const second = await userSubscriber(ctx);
         const { ev } = await second.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        expect(ev.requests).toEqual([{ ts, session_id: "S2", prefix: "484eda9c", main: true }]);
+        expect(ev.requests).toEqual([{ ts, session_id: "S8", prefix: "484eda9c", main: true }]);
         second.close();
       } finally {
         await stop(ctx);
@@ -226,30 +304,29 @@ describe("ev:llm_requests relay", () => {
   test(
     "session-role subscribers never receive it (webui-only, like ev:peers)",
     async () => {
-      const ctx = await startConfiguredDaemon({
-        llm_events_url: `http://127.0.0.1:${PORT}/events`,
-      });
+      const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
         const s = await connect(ctx.sock);
         await s.request({
           op: "hello",
           role: "session",
-          sid: "S3",
+          sid: "S9",
           repo: "r",
           ws: "w",
           cwd: "/tmp",
         });
         await s.request({ op: "subscribe" });
-        await untilGatewayConnected();
-        emit({ ts: Math.floor(Date.now() / 1000), session_id: "S3", prefix: "484eda9c" });
+        await postEvents(ctx, {
+          ts: Math.floor(Date.now() / 1000),
+          session_id: "S9",
+          prefix: "484eda9c",
+        });
         // The user connection receiving the push is the ordering anchor: the
         // daemon writes both sends in one synchronous loop, so once the user
         // side has it, a session-side copy would already be on the socket.
         await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        // Anchor read on the session side: everything it received up to a msg
-        // it can see, which must include no llm_requests push.
-        const [marker, room] = await markerSession(ctx, ["S3"]);
+        const [marker, room] = await markerSession(ctx, ["S9"]);
         const seen = await seenBeforeMarker(marker, s, room);
         expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);
         marker.close();
@@ -263,86 +340,42 @@ describe("ev:llm_requests relay", () => {
   );
 
   test(
-    "a subagent's request arrives as a separate, non-main series",
+    "a bad token is rejected and nothing reaches the WS",
     async () => {
-      const ctx = await startConfiguredDaemon({
-        llm_events_url: `http://127.0.0.1:${PORT}/events`,
-      });
+      const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        await untilGatewayConnected();
-        const mainTs = Math.floor(Date.now() / 1000) - 240;
-        emit({ ts: mainTs, session_id: "S4", prefix: "484eda9c" });
-        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        // Same session id, different system prompt: a subagent. The session's
-        // own window must survive it untouched — that is what keeps the ring
-        // counting down while a subagent chatters.
-        const subTs = Math.floor(Date.now() / 1000);
-        emit({ ts: subTs, session_id: "S4", prefix: "9c31aa02" });
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 2,
-        );
-        const main = ev.requests.find((r) => r.main);
-        const sub = ev.requests.find((r) => !r.main);
-        expect(main).toEqual({ ts: mainTs, session_id: "S4", prefix: "484eda9c", main: true });
-        expect(sub).toEqual({ ts: subTs, session_id: "S4", prefix: "9c31aa02", main: false });
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "a prefix seen under two sessions hands main to the session's own series",
-    async () => {
-      const ctx = await startConfiguredDaemon({
-        llm_events_url: `http://127.0.0.1:${PORT}/events`,
-      });
-      try {
-        const u = await userSubscriber(ctx);
-        await untilGatewayConnected();
-        const ts = Math.floor(Date.now() / 1000);
-        // A daemon that starts mid-subagent sees subagent traffic first and
-        // has no way yet to know it isn't S5's own series.
-        emit({ ts: ts - 200, session_id: "S5", prefix: "9c31aa02" });
-        const first = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        expect(first.ev.requests[0]?.main).toBe(true);
-        emit({ ts, session_id: "S5", prefix: "484eda9c" });
-        await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 2,
-        );
-        // The same prefix under a second session proves it is a subagent's: a
-        // main series' prompt carries its own cwd and git status and cannot
-        // recur elsewhere. S5's own series takes main from it.
-        emit({ ts, session_id: "S6", prefix: "9c31aa02" });
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 3,
-        );
-        const s5main = ev.requests.filter((r) => r.session_id === "S5" && r.main);
-        expect(s5main).toEqual([{ ts, session_id: "S5", prefix: "484eda9c", main: true }]);
-        u.close();
-      } finally {
-        await stop(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "with no llm_events_url configured, subscribing pushes nothing",
-    async () => {
-      const ctx = await startConfiguredDaemon({});
-      try {
-        const u = await userSubscriber(ctx);
-        // An unconfigured daemon must not emit an empty snapshot: the webui
-        // reads "no event at all" as "this feature isn't set up".
+        expect(
+          await postEvents(
+            ctx,
+            { ts: Math.floor(Date.now() / 1000), session_id: "SA", prefix: "484eda9c" },
+            "wrong-token",
+          ),
+        ).toBe(401);
         const [marker, room] = await markerSession(ctx, []);
         const seen = await seenBeforeMarker(marker, u, room);
         expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);
         marker.close();
         u.close();
+      } finally {
+        await stop(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "with no webhooks configured the endpoint does not exist",
+    async () => {
+      const ctx = await startWebhookDaemon({ configured: false });
+      try {
+        expect(
+          await postEvents(ctx, {
+            ts: Math.floor(Date.now() / 1000),
+            session_id: "SB",
+            prefix: "484eda9c",
+          }),
+        ).toBe(404);
       } finally {
         await stop(ctx);
       }

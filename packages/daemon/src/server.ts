@@ -92,7 +92,8 @@ import {
   stopAgentsPoller,
   type AgentsPoller,
 } from "./agents.ts";
-import { LlmRequestCache, startLlmEventClient, type LlmEventClient } from "./llm-events.ts";
+import { LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
+import { type WebhookSource } from "./webhook.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
@@ -199,13 +200,16 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
-  /** Latest LLM gateway request per sid, for the webui's prompt-cache
-   * countdown (llm-events.ts). Populated only while `llm_events_url` is
-   * configured; otherwise it stays empty and no ev:"llm_requests" is ever
-   * sent. */
+  /** Latest LLM gateway request per conversation series, for the webui's
+   * prompt-cache ring (llm-events.ts). Filled by the gateway posting to
+   * `/webhook/llm-gateway`; with no such webhook configured it stays empty and
+   * no ev:"llm_requests" is ever sent. */
   llmRequests: LlmRequestCache;
-  /** The resident gateway SSE subscription, or null when unconfigured. */
-  llmEvents: LlmEventClient | null;
+  /** Producers allowed to POST to `/webhook/<source>`, keyed by that path
+   * segment (webhook.ts). Built at startup from config + token files, so a
+   * source whose token could not be read simply isn't here — and its route
+   * 404s. */
+  webhooks: Map<string, WebhookSource>;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -621,6 +625,70 @@ function broadcastLlmRequests(daemon: Daemon): void {
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") sendLlmRequests(daemon, sub);
   }
+}
+
+/** Fold a posted batch of gateway request events into the cache and push the
+ * result. Called from the webhook handler; exported for the tests that drive
+ * the fold without an HTTP layer.
+ *
+ * Out-of-order and duplicate deliveries need no special handling here: two
+ * gateway processes (stable and unstable) may both report the same call, and
+ * the cache already ignores an event that is not newer than what that series
+ * holds. One broadcast per batch, not per event — a batch is one observation
+ * of the world as far as a subscriber is concerned. */
+export function recordLlmRequests(daemon: Daemon, items: unknown[], log: Logger): void {
+  let accepted = 0;
+  let dropped = 0;
+  for (const item of items) {
+    const info = parseLlmRequestEvent(item);
+    if (!info) {
+      dropped += 1;
+      continue;
+    }
+    daemon.llmRequests.record(info);
+    accepted += 1;
+  }
+  if (dropped > 0) {
+    // Not an error for the sender to retry — an event with no usable session
+    // id or timestamp is one ccmsg can never place, however many times it
+    // arrives. Logged so a gateway change that breaks the schema is visible.
+    log.info(`webhook llm-gateway: dropped ${dropped} unusable event(s)`);
+  }
+  if (accepted > 0) broadcastLlmRequests(daemon);
+}
+
+/** Read each configured webhook's token and pair it with its handler. A source
+ * whose token file cannot be read is left out entirely rather than registered
+ * with an empty token — an unreadable secret must fail closed (404), never
+ * open. */
+function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSource> {
+  const sources = new Map<string, WebhookSource>();
+  const configured = daemon.config.webhooks;
+  if (!configured) return sources;
+  for (const [source, entry] of Object.entries(configured)) {
+    let token: string;
+    try {
+      token = fs.readFileSync(entry.token_file, "utf-8").trim();
+    } catch (e) {
+      log.error(`webhook ${source}: token file unreadable (${String(e)}); endpoint disabled`);
+      continue;
+    }
+    if (token === "") {
+      log.error(`webhook ${source}: token file is empty; endpoint disabled`);
+      continue;
+    }
+    if (source !== "llm-gateway") {
+      // Configured but nothing here knows what to do with its payloads.
+      log.error(`webhook ${source}: no handler for this source; endpoint disabled`);
+      continue;
+    }
+    sources.set(source, {
+      token,
+      handle: (items) => recordLlmRequests(daemon, items, log),
+    });
+    log.info(`webhook ${source}: enabled`);
+  }
+  return sources;
 }
 
 /** Push ev:"peers" (user-role subscribers only, DR-0009-agents' precedent for
@@ -2785,7 +2853,6 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
   stopAgentsPoller(daemon.agentsPoller);
-  daemon.llmEvents?.stop();
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
@@ -2928,22 +2995,10 @@ export function startDaemon(opts: StartOptions = {}): void {
     translator: createTranslateService(),
     peersSnapshot: "",
     llmRequests: new LlmRequestCache(),
-    llmEvents: null,
+    webhooks: new Map(),
   };
 
-  // Resident from startup when configured (see llm-events.ts for why it does
-  // not wait for a subscriber). The client reconnects on its own, so a gateway
-  // that is down right now costs nothing but a retry log line.
-  if (config.llm_events_url) {
-    daemon.llmEvents = startLlmEventClient({
-      url: config.llm_events_url,
-      log,
-      onRequest(info) {
-        daemon.llmRequests.record(info);
-        broadcastLlmRequests(daemon);
-      },
-    });
-  }
+  daemon.webhooks = buildWebhookSources(daemon, log);
 
   interface UdsConnState {
     conn: Conn;

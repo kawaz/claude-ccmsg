@@ -1,86 +1,22 @@
-// SSE parsing, the per-session cache, and the reconnect loop of the gateway
-// request-event subscription (llm-events.ts). The transport is exercised
-// against a local fake gateway rather than a stubbed stream: the failure this
-// feature is most likely to hit in practice is "the gateway went away and came
-// back", which only a real connect/close cycle reproduces.
-import { afterAll, describe, expect, test } from "bun:test";
+// Validation of the request events the LLM gateway posts, and the per-series
+// cache they feed (llm-events.ts). The transport that carries them in is
+// webhook.ts's concern and is tested there.
+import { describe, expect, test } from "bun:test";
 import { LLM_PROMPT_CACHE_TTL_MS } from "@ccmsg/protocol";
-import {
-  LlmRequestCache,
-  SseParser,
-  backoffDelayMs,
-  parseLlmRequestEvent,
-  startLlmEventClient,
-} from "../src/llm-events.ts";
-
-const T = 15000;
-const SILENT = { info() {}, error() {} };
-
-describe("SseParser", () => {
-  test("dispatches one event per blank line, with event and data", () => {
-    const p = new SseParser();
-    expect(p.feed('event: request\ndata: {"a":1}\n\n')).toEqual([
-      { event: "request", data: '{"a":1}' },
-    ]);
-  });
-
-  test("a frame split across chunks dispatches once, whole", () => {
-    const p = new SseParser();
-    // Split mid-field name, mid-value, and just before the dispatching blank
-    // line — the three boundaries a real socket read can land on.
-    expect(p.feed("eve")).toEqual([]);
-    expect(p.feed('nt: request\ndata: {"ts":1,')).toEqual([]);
-    expect(p.feed('"session_id":"s"}\n')).toEqual([]);
-    expect(p.feed("\n")).toEqual([{ event: "request", data: '{"ts":1,"session_id":"s"}' }]);
-  });
-
-  test("multiple events in one chunk come back in order", () => {
-    const p = new SseParser();
-    const events = p.feed("event: request\ndata: 1\n\nevent: request\ndata: 2\n\n");
-    expect(events.map((e) => e.data)).toEqual(["1", "2"]);
-  });
-
-  test("comment lines (the gateway's keepalive) yield nothing", () => {
-    const p = new SseParser();
-    expect(p.feed(": keepalive\n\n")).toEqual([]);
-    // ...and do not disturb a following real event.
-    expect(p.feed(": ping\nevent: request\ndata: x\n\n")).toEqual([
-      { event: "request", data: "x" },
-    ]);
-  });
-
-  test("CRLF terminators parse like LF", () => {
-    const p = new SseParser();
-    expect(p.feed("event: request\r\ndata: x\r\n\r\n")).toEqual([{ event: "request", data: "x" }]);
-  });
-
-  test("multi-line data joins with newlines, and event defaults to message", () => {
-    const p = new SseParser();
-    expect(p.feed("data: a\ndata: b\n\n")).toEqual([{ event: "message", data: "a\nb" }]);
-  });
-
-  test("a value with no leading space keeps every character after the colon", () => {
-    const p = new SseParser();
-    expect(p.feed('event:request\ndata:{"k":"v"}\n\n')).toEqual([
-      { event: "request", data: '{"k":"v"}' },
-    ]);
-  });
-});
+import { LlmRequestCache, parseLlmRequestEvent } from "../src/llm-events.ts";
 
 describe("parseLlmRequestEvent", () => {
   test("keeps the fields the countdown and its tooltip need", () => {
-    const info = parseLlmRequestEvent(
-      JSON.stringify({
-        ts: 1785564745,
-        ts_iso: "2026-08-01T06:12:25Z",
-        session_id: "f13ba456",
-        ns: "personal",
-        model: "claude-fable-5",
-        credential: "claude-zunsystem",
-        status: 200,
-        prefix: "484eda9c",
-      }),
-    );
+    const info = parseLlmRequestEvent({
+      ts: 1785564745,
+      ts_iso: "2026-08-01T06:12:25Z",
+      session_id: "f13ba456",
+      ns: "personal",
+      model: "claude-fable-5",
+      credential: "claude-zunsystem",
+      status: 200,
+      prefix: "484eda9c",
+    });
     expect(info).toEqual({
       ts: 1785564745,
       session_id: "f13ba456",
@@ -95,22 +31,24 @@ describe("parseLlmRequestEvent", () => {
   test("drops what cannot be attached to a session row or placed in time", () => {
     // session_id: null is the gateway's own shape for a client that sent no
     // session header — the single most common event this must ignore.
-    expect(parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: null }))).toBeNull();
-    expect(parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: "" }))).toBeNull();
-    expect(parseLlmRequestEvent(JSON.stringify({ session_id: "s" }))).toBeNull();
-    expect(parseLlmRequestEvent(JSON.stringify({ ts: "now", session_id: "s" }))).toBeNull();
-    expect(parseLlmRequestEvent("not json")).toBeNull();
-    expect(parseLlmRequestEvent("[1,2]")).toBeNull();
+    expect(parseLlmRequestEvent({ ts: 1, session_id: null })).toBeNull();
+    expect(parseLlmRequestEvent({ ts: 1, session_id: "" })).toBeNull();
+    expect(parseLlmRequestEvent({ session_id: "s" })).toBeNull();
+    expect(parseLlmRequestEvent({ ts: "now", session_id: "s" })).toBeNull();
+    // A posted batch can contain anything at all once a producer has a bug.
+    expect(parseLlmRequestEvent("not an object")).toBeNull();
+    expect(parseLlmRequestEvent([1, 2])).toBeNull();
+    expect(parseLlmRequestEvent(null)).toBeNull();
   });
 
   test("an event from a pre-prefix gateway lands in the unnamed series", () => {
     // Gateways before v0.13.0 report no prefix. "" keeps them working as one
     // series per session, which is what ccmsg did before prefixes existed.
-    const info = parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: "s" }));
+    const info = parseLlmRequestEvent({ ts: 1, session_id: "s" });
     expect(info).toEqual({ ts: 1, session_id: "s", prefix: "" });
     // A malformed prefix degrades the same way rather than dropping a usable
     // timestamp on the floor.
-    expect(parseLlmRequestEvent(JSON.stringify({ ts: 1, session_id: "s", prefix: 7 }))).toEqual({
+    expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: 7 })).toEqual({
       ts: 1,
       session_id: "s",
       prefix: "",
@@ -276,6 +214,19 @@ describe("LlmRequestCache", () => {
     ]);
   });
 
+  // Both gateway processes (stable and unstable) may report the same call, so
+  // the same event can arrive twice and nothing upstream dedups it. This rule
+  // is what makes the redelivery harmless.
+  test("a redelivered event changes nothing", () => {
+    const cache = new LlmRequestCache();
+    const event = { ts: sec(10_000), session_id: "a", prefix: MAIN };
+    cache.record(event);
+    cache.record({ ...event });
+    expect(cache.snapshot(NOW)).toEqual([
+      { ts: sec(10_000), session_id: "a", prefix: MAIN, main: true },
+    ]);
+  });
+
   test("a clock-skewed future timestamp cannot grow the cache without bound", () => {
     const cache = new LlmRequestCache();
     const future = NOW / 1000 + 86_400;
@@ -287,216 +238,4 @@ describe("LlmRequestCache", () => {
     // Eviction drops the least-recently-seen series, so the newest survive.
     expect(snapshot.at(-1)?.session_id).toBe("s599");
   });
-});
-
-describe("backoffDelayMs", () => {
-  test("doubles from 1s and stops at 30s", () => {
-    expect([0, 1, 2, 3, 4, 5, 6].map(backoffDelayMs)).toEqual([
-      1000, 2000, 4000, 8000, 16000, 30000, 30000,
-    ]);
-  });
-});
-
-// A fake gateway whose stream can be cut on demand, so the reconnect path is
-// driven by an actual dropped connection.
-const PORT = 18961;
-let openStreams: ReadableStreamDefaultController<Uint8Array>[] = [];
-let connects = 0;
-const gateway = Bun.serve({
-  port: PORT,
-  // These responses are long-lived SSE streams; without this Bun closes each
-  // one after 10s of quiet and the suite fills with timeout notices.
-  idleTimeout: 0,
-  fetch(req) {
-    const url = new URL(req.url);
-    if (url.pathname !== "/events") return new Response("no such endpoint", { status: 404 });
-    connects += 1;
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        openStreams.push(controller);
-        controller.enqueue(new TextEncoder().encode(": hello\n\n"));
-      },
-    });
-    return new Response(stream, { headers: { "content-type": "text/event-stream" } });
-  },
-});
-afterAll(() => {
-  void gateway.stop(true);
-});
-
-function emit(payload: unknown): void {
-  const frame = `event: request\ndata: ${JSON.stringify(payload)}\n\n`;
-  for (const c of openStreams) c.enqueue(new TextEncoder().encode(frame));
-}
-
-function cutStreams(): void {
-  for (const c of openStreams) {
-    try {
-      c.close();
-    } catch {
-      // already closed
-    }
-  }
-  openStreams = [];
-}
-
-/** Resolve once `pred` holds, driven by the client's own callback — no sleep
- * guessing at how long a delivery takes. */
-function until<T>(received: T[], pred: (items: T[]) => boolean): Promise<void> {
-  return new Promise((resolve) => {
-    const check = (): void => {
-      if (pred(received)) resolve();
-      else setTimeout(check, 5);
-    };
-    check();
-  });
-}
-
-describe("startLlmEventClient", () => {
-  test(
-    "delivers request events from a live stream",
-    async () => {
-      const got: string[] = [];
-      const client = startLlmEventClient({
-        url: `http://127.0.0.1:${PORT}/events`,
-        log: SILENT,
-        onRequest: (info) => got.push(info.session_id),
-      });
-      try {
-        await until(openStreams, (s) => s.length > 0);
-        emit({ ts: 1, session_id: "a" });
-        emit({ ts: 2, session_id: null }); // unattributable: dropped, not delivered
-        emit({ ts: 3, session_id: "b" });
-        await until(got, (g) => g.length === 2);
-        expect(got).toEqual(["a", "b"]);
-      } finally {
-        client.stop();
-        cutStreams();
-      }
-    },
-    T,
-  );
-
-  test(
-    "reconnects after the gateway drops the stream",
-    async () => {
-      const got: string[] = [];
-      const before = connects;
-      const client = startLlmEventClient({
-        url: `http://127.0.0.1:${PORT}/events`,
-        log: SILENT,
-        onRequest: (info) => got.push(info.session_id),
-        // Collapse the wait: the schedule itself is covered by the
-        // backoffDelayMs test, and this one is about the loop resuming.
-        delayMs: () => 5,
-      });
-      try {
-        await until(openStreams, (s) => s.length > 0);
-        emit({ ts: 1, session_id: "before" });
-        await until(got, (g) => g.length === 1);
-        cutStreams();
-        await until([], () => connects >= before + 2);
-        emit({ ts: 2, session_id: "after" });
-        await until(got, (g) => g.length === 2);
-        expect(got).toEqual(["before", "after"]);
-      } finally {
-        client.stop();
-        cutStreams();
-      }
-    },
-    T,
-  );
-
-  test(
-    "a connection that carried data resets the backoff for the next one",
-    async () => {
-      // Regression (kawaz r99m32): a daemon up for hours kept escalating its
-      // retry delay across unrelated disconnects, because only a clean
-      // end-of-stream reset the counter. Long enough uptime and every
-      // reconnect ends up waiting the 30s ceiling.
-      const asked: number[] = [];
-      openStreams = []; // only this test's connections may satisfy the waits
-      const startConnects = connects;
-      const client = startLlmEventClient({
-        url: `http://127.0.0.1:${PORT}/events`,
-        log: SILENT,
-        onRequest: () => {},
-        delayMs: (attempt) => {
-          asked.push(attempt);
-          return 5;
-        },
-      });
-      try {
-        // Three connect → carry bytes → drop cycles. The fake gateway sends a
-        // comment on connect, so every connection delivers something.
-        for (let i = 0; i < 3; i++) {
-          await until([], () => connects >= startConnects + i + 1);
-          await until(openStreams, (s) => s.length > 0);
-          cutStreams();
-          await until(asked, (a) => a.length > i);
-        }
-        // Every wait was computed for attempt 0. Without the reset these
-        // would climb 0, 1, 2 — the escalation seen in the production log.
-        expect(asked.slice(0, 3)).toEqual([0, 0, 0]);
-      } finally {
-        client.stop();
-        cutStreams();
-      }
-    },
-    T,
-  );
-
-  test(
-    "silence past the idle budget is treated as a dead connection and reconnected",
-    async () => {
-      // The gateway keepalives every 20s, so 40s of nothing means the socket
-      // is gone — and a half-open socket never raises an error on its own,
-      // which is why this timeout is the only thing that would ever notice.
-      const got: string[] = [];
-      const errors: string[] = [];
-      const before = connects;
-      const client = startLlmEventClient({
-        url: `http://127.0.0.1:${PORT}/events`,
-        log: { info() {}, error: (m) => errors.push(m) },
-        onRequest: (info) => got.push(info.session_id),
-        delayMs: () => 5,
-        // The fake gateway holds its stream open and silent after the initial
-        // comment, which is precisely the half-open case, at test speed.
-        idleTimeoutMs: 60,
-      });
-      try {
-        await until([], () => connects >= before + 2);
-        expect(errors.some((e) => e.includes("no data for 60ms"))).toBe(true);
-        // The reconnected stream is live: an event on it still gets through.
-        emit({ ts: 1, session_id: "after-idle" });
-        await until(got, (g) => g.includes("after-idle"));
-      } finally {
-        client.stop();
-        cutStreams();
-      }
-    },
-    T,
-  );
-
-  test(
-    "an unreachable gateway retries instead of throwing, and stop() ends it",
-    async () => {
-      const errors: string[] = [];
-      const client = startLlmEventClient({
-        url: `http://127.0.0.1:${PORT}/typo`, // 404s: same loop as a refused connection
-        log: { info() {}, error: (m) => errors.push(m) },
-        onRequest: () => {},
-        delayMs: () => 5,
-      });
-      await until(errors, (e) => e.length >= 2);
-      expect(errors[0]).toContain("HTTP 404");
-      client.stop();
-      const seen = errors.length;
-      // stop() must actually end the loop: no further retry lines after a
-      // window several retry intervals wide.
-      await new Promise((r) => setTimeout(r, 100));
-      expect(errors.length).toBe(seen);
-    },
-    T,
-  );
 });

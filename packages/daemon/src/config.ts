@@ -33,12 +33,18 @@ export interface DaemonConfig {
    * URL のみ) を通す。集計期間は op の `days` が query parameter として上書き
    * するので、ここには days を付けても付けなくてもよい。 */
   llm_stats_url?: string;
-  /** LLM gateway の request event stream (SSE) の URL — daemon が常駐で購読し、
-   * セッションごとの prompt cache カウントダウンを webui へ中継する
-   * (llm-events.ts)。上の 2 つと同じ検証 (http:// / https:// の絶対 URL のみ)
-   * を通し、未設定 / 不正なら購読自体を行わない (= webui にタイマーが出ない
-   * だけで他機能に影響しない)。 */
-  llm_events_url?: string;
+  /** 外部プロデューサからの `POST /webhook/<source>` 受け口 (webhook.ts)。
+   * source 名 (`[a-z0-9-]{1,64}`) → その source 専用の bearer token を置いた
+   * ファイルパス。token 値をここに直書きしないのは、config.json が token より
+   * 緩い権限で置かれがちなため — 秘密はファイル側 (mode 600) に置き、config は
+   * その在り処だけを持つ。未設定の source は 404 (= 存在しない) 扱い。 */
+  webhooks?: Record<string, WebhookSourceConfig>;
+}
+
+export interface WebhookSourceConfig {
+  /** bearer token を格納したファイル。先頭の `~` は展開し、読めた内容は
+   * trim して使う (エディタが付ける改行で認証が落ちるのを避ける)。 */
+  token_file: string;
 }
 
 /** Validate one absolute-http(s)-URL config field. Both URL-valued keys
@@ -68,6 +74,38 @@ function parseHttpUrl(raw: unknown, field: string, file: string, log: Log): stri
 
 interface Log {
   warn(msg: string): void;
+}
+
+/** source 名 → token ファイルの対応表を読む。source ごとに独立に degrade する
+ * (壊れた 1 件で他の webhook まで無効にしない)。source 名を狭く縛るのは、この
+ * 名前が URL path segment とそのまま対応するため。 */
+function parseWebhooks(
+  raw: unknown,
+  file: string,
+  log: Log,
+): Record<string, WebhookSourceConfig> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isObject(raw)) {
+    warn(log, file, "webhooks must be a JSON object; ignoring");
+    return undefined;
+  }
+  const out: Record<string, WebhookSourceConfig> = {};
+  for (const [source, value] of Object.entries(raw)) {
+    if (!/^[a-z0-9-]{1,64}$/.test(source)) {
+      warn(log, file, `webhooks: invalid source name ${JSON.stringify(source)}; ignoring`);
+      continue;
+    }
+    if (
+      !isObject(value) ||
+      typeof value.token_file !== "string" ||
+      value.token_file.trim() === ""
+    ) {
+      warn(log, file, `webhooks.${source}: token_file must be a non-empty string; ignoring`);
+      continue;
+    }
+    out[source] = { token_file: expandRoot(value.token_file.trim()) };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -253,12 +291,18 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
   );
   const llmUsageUrl = parseHttpUrl(parsed.llm_usage_url, "llm_usage_url", file, log);
   const llmStatsUrl = parseHttpUrl(parsed.llm_stats_url, "llm_stats_url", file, log);
-  const llmEventsUrl = parseHttpUrl(parsed.llm_events_url, "llm_events_url", file, log);
+  if (parsed.llm_events_url !== undefined) {
+    // 旧: daemon が gateway の SSE を購読する方式。gateway が stable/unstable の
+    // 2 プロセスで走るため 1 本の購読では掴んだ側のイベントしか見えず、向きを
+    // 逆にした (gateway → daemon の webhook)。移行を促すため無視 + warn。
+    warn(log, file, "llm_events_url is no longer used; configure `webhooks` instead (ignored)");
+  }
+  const webhooks = parseWebhooks(parsed.webhooks, file, log);
   const cfg: DaemonConfig = {};
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
   if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;
   if (llmStatsUrl) cfg.llm_stats_url = llmStatsUrl;
-  if (llmEventsUrl) cfg.llm_events_url = llmEventsUrl;
+  if (webhooks) cfg.webhooks = webhooks;
   return cfg;
 }
