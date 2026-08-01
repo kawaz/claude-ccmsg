@@ -19,6 +19,7 @@ import {
   selectedRoomId,
   selectedSid,
 } from "../src/client/store.ts";
+import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
@@ -1702,5 +1703,59 @@ describe("reducer / room history fetch state", () => {
     expect(room?.msgs.size).toBe(0);
     // metadata the `op:"rooms"` reply owns survives, so the sidebar row stays put
     expect(room?.lastMid).toBe(2);
+  });
+});
+
+// Retained probe results. The gateway's cached document carries no limits, so
+// what a `?refresh=true` probe found has to survive in the store or the screen
+// loses it at the next poll.
+describe("llm-usage/probed", () => {
+  const record: ProbeRecord = {
+    limits: [{ kind: "weekly_all", percent: 100, severity: "critical" }],
+  };
+  const failed: ProbeRecord = { limits: [], probeError: "429" };
+
+  test("records what a probe found, keyed by credential", () => {
+    const state = dispatch(initialState(), {
+      type: "llm-usage/probed",
+      records: new Map([["a", record]]),
+    });
+    expect(state.llmUsageProbes.get("a")).toEqual(record);
+  });
+
+  // A probe that failed for one credential still answered for the others, so
+  // the ones it did not mention keep what they had.
+  test("merges rather than replacing, leaving untouched credentials alone", () => {
+    const first = dispatch(initialState(), {
+      type: "llm-usage/probed",
+      records: new Map([
+        ["a", record],
+        ["b", failed],
+      ]),
+    });
+    const second = dispatch(first, {
+      type: "llm-usage/probed",
+      records: new Map([["b", record]]),
+    });
+    expect(second.llmUsageProbes.get("a")).toEqual(record);
+    expect(second.llmUsageProbes.get("b")).toEqual(record);
+  });
+
+  // Every cached read produces an empty record set; treating that as "the
+  // limits are gone" is exactly the bug retention exists to prevent.
+  test("an empty result set leaves the state untouched", () => {
+    const probed = dispatch(initialState(), {
+      type: "llm-usage/probed",
+      records: new Map([["a", record]]),
+    });
+    const after = dispatch(probed, { type: "llm-usage/probed", records: new Map() });
+    expect(after).toBe(probed);
+    expect(after.llmUsageProbes.get("a")).toEqual(record);
+  });
+
+  test("does not mutate the previous state's map", () => {
+    const before = initialState();
+    dispatch(before, { type: "llm-usage/probed", records: new Map([["a", record]]) });
+    expect(before.llmUsageProbes.size).toBe(0);
   });
 });

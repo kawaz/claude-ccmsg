@@ -18,6 +18,7 @@ import {
   optionalNumber,
   optionalString,
   productionGatewayDeps,
+  withQueryParam,
   type LlmGatewayDeps,
 } from "./llm-gateway.ts";
 
@@ -44,15 +45,10 @@ export function isValidDays(days: unknown): days is number {
   );
 }
 
-/** Put `days` on the configured URL. `set` rather than `append` so a
- * configured URL that already carries a default window (the operator pasted
- * `...?days=30`) is overridden by the caller's choice instead of sending two
- * conflicting values. */
+/** Put `days` on the configured URL, leaving it alone when the caller named
+ * no window (the gateway then picks its own). */
 export function statsUrlWithDays(base: string, days?: number): string {
-  if (days === undefined) return base;
-  const url = new URL(base);
-  url.searchParams.set("days", String(days));
-  return url.toString();
+  return days === undefined ? base : withQueryParam(base, "days", String(days));
 }
 
 /** Counters for one model. Non-numeric fields are dropped rather than

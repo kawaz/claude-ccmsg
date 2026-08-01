@@ -3,13 +3,20 @@
 // key ("5h") and the reset timestamp, and the pace warning is only as
 // trustworthy as that reconstruction.
 import { describe, expect, test } from "bun:test";
-import type { LlmUsageSnapshot } from "@ccmsg/protocol";
+import type { LlmUsageCredential, LlmUsageLimit, LlmUsageSnapshot } from "@ccmsg/protocol";
 import {
   formatAge,
   formatPercent,
   formatRemaining,
+  limitKindDurationMs,
+  limitLabel,
+  limitProgress,
   parseWindowDurationMs,
+  probeRecordOf,
+  probeView,
+  severityTone,
   snapshotAge,
+  sortedLimits,
   sortedWindows,
   supportDescription,
   windowProgress,
@@ -226,5 +233,257 @@ describe("supportDescription", () => {
     expect(supportDescription("not_applicable")).toContain("クオータの概念がない");
     expect(supportDescription("upstream_dependent")).toContain("上流");
     expect(supportDescription("something_new")).toContain("不明");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Provider limits. These arrive beside the quota windows in a different unit
+// (0..100, not 0..1) with their own verdict vocabulary, and get normalized
+// onto the same bar — so the unit conversion and the verdict mapping are the
+// two things worth pinning.
+
+const DAY = 24 * HOUR;
+
+/** RFC3339 instant `ms` from NOW, the way upstream sends resets_at. */
+function resetsAtIn(ms: number): string {
+  return new Date(NOW + ms).toISOString();
+}
+
+function limit(over: Partial<LlmUsageLimit> = {}): LlmUsageLimit {
+  return { kind: "weekly_all", percent: 50, severity: "normal", ...over };
+}
+
+describe("limitKindDurationMs", () => {
+  test("knows the periods upstream names", () => {
+    expect(limitKindDurationMs("session")).toBe(5 * HOUR);
+    expect(limitKindDurationMs("weekly_all")).toBe(7 * DAY);
+    expect(limitKindDurationMs("weekly_scoped")).toBe(7 * DAY);
+  });
+
+  // A kind the gateway adds later must render as consumption alone rather
+  // than against a guessed clock.
+  test("declines to guess an unfamiliar kind", () => {
+    expect(limitKindDurationMs("monthly_all")).toBeNull();
+    expect(limitKindDurationMs("")).toBeNull();
+  });
+});
+
+describe("severityTone", () => {
+  test("maps upstream's words onto the screen's three tones", () => {
+    expect(severityTone("normal")).toBe("ok");
+    expect(severityTone("warning")).toBe("warn");
+    expect(severityTone("critical")).toBe("bad");
+  });
+
+  // Colouring an unrecognised severity red would invent a problem the reading
+  // does not state.
+  test("an unknown severity is not alarming", () => {
+    expect(severityTone("catastrophic")).toBe("ok");
+  });
+});
+
+describe("limitProgress", () => {
+  // The unit trap: percent is 0..100 while every bar here is drawn from a
+  // 0..1 fraction. Getting this wrong renders a 47% limit as a full bar.
+  test("converts percent to the fraction the bars are drawn from", () => {
+    expect(limitProgress(limit({ percent: 47 }), NOW).utilization).toBeCloseTo(0.47, 10);
+    expect(limitProgress(limit({ percent: 100 }), NOW).utilization).toBe(1);
+    expect(limitProgress(limit({ percent: 0 }), NOW).utilization).toBe(0);
+  });
+
+  test("derives the elapsed fraction from resets_at and the kind's period", () => {
+    // Two days left of a seven-day period: five sevenths elapsed.
+    const progress = limitProgress(
+      limit({ kind: "weekly_all", resets_at: resetsAtIn(2 * DAY) }),
+      NOW,
+    );
+    expect(progress.remainingMs).toBe(2 * DAY);
+    expect(progress.elapsed).toBeCloseTo(5 / 7, 10);
+  });
+
+  test("without resets_at there is no clock to compare against", () => {
+    const progress = limitProgress(limit(), NOW);
+    expect(progress.remainingMs).toBeNull();
+    expect(progress.elapsed).toBeNull();
+    expect(progress.overPace).toBe(false);
+  });
+
+  test("an unparseable resets_at degrades like a missing one", () => {
+    expect(limitProgress(limit({ resets_at: "not a date" }), NOW).remainingMs).toBeNull();
+  });
+
+  // A stale reading whose reset has already passed must not show negative
+  // time remaining.
+  test("a reset already in the past clamps to zero", () => {
+    expect(limitProgress(limit({ resets_at: resetsAtIn(-HOUR) }), NOW).remainingMs).toBe(0);
+  });
+
+  test("consumption well ahead of the clock raises a normal limit to a warning", () => {
+    // One day into a seven-day period, 80% spent.
+    const progress = limitProgress(limit({ percent: 80, resets_at: resetsAtIn(6 * DAY) }), NOW);
+    expect(progress.elapsed).toBeCloseTo(1 / 7, 10);
+    expect(progress.overPace).toBe(true);
+    expect(progress.tone).toBe("warn");
+  });
+
+  // Upstream's own verdict is the stronger statement; a pace reading can lift
+  // a normal limit but must never talk a critical one down.
+  test("the pace reading cannot soften upstream's verdict", () => {
+    const progress = limitProgress(
+      limit({ percent: 10, severity: "critical", resets_at: resetsAtIn(DAY) }),
+      NOW,
+    );
+    expect(progress.overPace).toBe(false);
+    expect(progress.tone).toBe("bad");
+  });
+
+  test("is_active is carried as a marker, absent meaning not active", () => {
+    expect(limitProgress(limit({ is_active: true }), NOW).isActive).toBe(true);
+    expect(limitProgress(limit(), NOW).isActive).toBe(false);
+  });
+
+  test("severity and model are passed through untranslated", () => {
+    const progress = limitProgress(
+      limit({ kind: "weekly_scoped", severity: "warning", model: "Fable" }),
+      NOW,
+    );
+    expect(progress.key).toBe("weekly_scoped");
+    expect(progress.severity).toBe("warning");
+    expect(progress.model).toBe("Fable");
+  });
+});
+
+describe("sortedLimits", () => {
+  test("shortest period first, unknown kinds last", () => {
+    const rows = sortedLimits(
+      [limit({ kind: "monthly_all" }), limit({ kind: "weekly_all" }), limit({ kind: "session" })],
+      NOW,
+    );
+    expect(rows.map((row) => row.key)).toEqual(["session", "weekly_all", "monthly_all"]);
+  });
+
+  // Several scoped limits share one kind; keeping upstream's order groups
+  // them with the total they are carved out of.
+  test("ties keep upstream's order", () => {
+    const rows = sortedLimits(
+      [
+        limit({ kind: "weekly_scoped", model: "Fable" }),
+        limit({ kind: "weekly_scoped", model: "Opus" }),
+      ],
+      NOW,
+    );
+    expect(rows.map((row) => row.model)).toEqual(["Fable", "Opus"]);
+  });
+
+  test("no limits is a normal state, not an error", () => {
+    expect(sortedLimits([], NOW)).toEqual([]);
+  });
+});
+
+describe("limitLabel", () => {
+  test("names the model a scoped limit applies to", () => {
+    expect(limitLabel(limitProgress(limit({ kind: "weekly_scoped", model: "Fable" }), NOW))).toBe(
+      "weekly_scoped (Fable)",
+    );
+  });
+
+  // Upstream's vocabulary is not translated — these are the words the
+  // gateway's own output uses.
+  test("an unscoped limit is its kind verbatim", () => {
+    expect(limitLabel(limitProgress(limit({ kind: "weekly_all" }), NOW))).toBe("weekly_all");
+    expect(limitLabel(limitProgress(limit({ kind: "brand_new_kind" }), NOW))).toBe(
+      "brand_new_kind",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retaining what a probe found. Only a `?refresh=true` response carries limits
+// and probe_error; every automatic read is served from the gateway's cache and
+// says nothing about either. Without retention the limits would appear for one
+// tick after the manual refresh and vanish at the next poll.
+
+const MINUTE_MS = 60_000;
+
+function credential(over: Partial<LlmUsageCredential> = {}): LlmUsageCredential {
+  return { name: "c", support: "observed", ...over };
+}
+
+const LIMITS: LlmUsageLimit[] = [{ kind: "weekly_all", percent: 100, severity: "critical" }];
+
+describe("probeRecordOf", () => {
+  test("captures limits with the observation time that dates them", () => {
+    expect(
+      probeRecordOf(
+        credential({ limits: LIMITS, snapshot: { windows: {}, observed_at: NOW / 1000 } }),
+      ),
+    ).toEqual({ limits: LIMITS, observedAt: NOW / 1000 });
+  });
+
+  test("captures a probe failure even with no limits to go with it", () => {
+    expect(probeRecordOf(credential({ probe_error: "429" }))).toEqual({
+      limits: [],
+      probeError: "429",
+    });
+  });
+
+  // The shape of every cached read: nothing to retain, and nothing that
+  // should overwrite what an earlier probe found.
+  test("a response with neither field yields no record", () => {
+    expect(probeRecordOf(credential())).toBeNull();
+    expect(probeRecordOf(credential({ limits: [] }))).toBeNull();
+    expect(probeRecordOf(credential({ snapshot: { windows: {} } }))).toBeNull();
+  });
+});
+
+describe("probeView", () => {
+  test("a response carrying its own limits is shown as current", () => {
+    const view = probeView(credential({ limits: LIMITS }), undefined, NOW);
+    expect(view.limits).toEqual(LIMITS);
+    expect(view.retainedAge).toBeNull();
+  });
+
+  // The case the whole mechanism exists for: the poll that follows a manual
+  // refresh must not blank the limits it just fetched.
+  test("a cached response falls back to the last probe, dated", () => {
+    const view = probeView(
+      credential(),
+      { limits: LIMITS, observedAt: (NOW - 20 * MINUTE_MS) / 1000 },
+      NOW,
+    );
+    expect(view.limits).toEqual(LIMITS);
+    expect(view.retainedAge).toBe("20 分前");
+  });
+
+  test("a retained probe failure survives the cached reads after it", () => {
+    const view = probeView(
+      credential(),
+      { limits: [], probeError: "429", observedAt: (NOW - 2 * 60 * MINUTE_MS) / 1000 },
+      NOW,
+    );
+    expect(view.probeError).toBe("429");
+    expect(view.retainedAge).toBe("2 時間前");
+  });
+
+  // A live reading must never be labelled with someone else's timestamp.
+  test("a live response is not dated by the retained record it replaces", () => {
+    const view = probeView(
+      credential({ limits: LIMITS }),
+      { limits: [], probeError: "old", observedAt: (NOW - 60 * MINUTE_MS) / 1000 },
+      NOW,
+    );
+    expect(view.probeError).toBeNull();
+    expect(view.retainedAge).toBeNull();
+  });
+
+  test("a probe too recent to date is labelled as just now", () => {
+    expect(
+      probeView(credential(), { limits: LIMITS, observedAt: NOW / 1000 }, NOW).retainedAge,
+    ).toBe("直前");
+  });
+
+  test("nothing probed yet shows nothing, without an age on the emptiness", () => {
+    const view = probeView(credential(), undefined, NOW);
+    expect(view).toEqual({ limits: [], probeError: null, retainedAge: null });
   });
 });

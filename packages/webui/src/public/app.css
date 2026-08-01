@@ -6418,9 +6418,13 @@ button.session-tab {
 /* One grid so every credential's bars start and end at the same x — the
    screen is read by comparing rows against each other, which only works if
    the tracks line up. */
+/* The label column is sized for the longest thing that goes in it — a scoped
+   limit like "weekly_scoped (Fable)", not just "5h". Fixed rather than
+   content-sized so the bars still start at the same x across credentials,
+   which is what makes the rows comparable. */
 .usage-window {
   display: grid;
-  grid-template-columns: 4.5rem minmax(4rem, 1fr) auto;
+  grid-template-columns: minmax(0, 11rem) minmax(4rem, 1fr) auto;
   align-items: center;
   gap: 0.5rem;
 }
@@ -6429,6 +6433,8 @@ button.session-tab {
   font-size: 0.8rem;
   color: var(--fg-muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .usage-bar {
@@ -6439,9 +6445,21 @@ button.session-tab {
   overflow: hidden;
 }
 
+/* Consumption occupies the top half of the track, the period's elapsed
+   fraction the bottom half. Two stacked tracks rather than one bar with a
+   marker: the reading is "has the top run past the bottom", and that
+   comparison is easier to make between two edges than against a tick. */
 .usage-bar-fill {
-  height: 100%;
+  height: 50%;
   background: var(--accent);
+}
+
+.usage-bar-elapsed {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 50%;
+  background: royalblue;
 }
 
 .usage-bar.tone-warn .usage-bar-fill {
@@ -6450,19 +6468,6 @@ button.session-tab {
 
 .usage-bar.tone-bad .usage-bar-fill {
   background: var(--danger);
-}
-
-/* Where the clock has got to. Drawn over the fill rather than beside it so
-   "the bar has passed the mark" is the visual form of "spending faster than
-   the window elapses". */
-.usage-bar-pace {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: var(--fg);
-  opacity: 0.65;
 }
 
 .usage-window-figures {
@@ -6485,10 +6490,20 @@ button.session-tab {
   color: var(--danger);
 }
 
-.usage-overage {
+.usage-overage,
+.usage-probe-error {
   margin-top: 0.4rem;
   font-size: 0.8rem;
   color: var(--danger);
+}
+
+/* Sits with the label rather than in the figures: it qualifies which limit
+   this is, not how full it is. */
+.usage-limit-active {
+  margin-left: 0.25rem;
+  font-size: 0.6rem;
+  color: var(--accent);
+  vertical-align: middle;
 }
 
 /* ---- /usage: LLM spend ------------------------------------------------- */
@@ -6676,5 +6691,33 @@ button.session-tab {
 .stats-empty {
   margin: 0.4rem 0 0;
   font-size: 0.82rem;
+  color: var(--fg-muted);
+}
+
+/* The probe button. Understated rather than primary: it is the rarely-used
+   path (the readings beside it refresh on their own) and it spends upstream
+   rate limit, so it should not read as the thing to click by default. */
+#usage-probe {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-alt);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+#usage-probe:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+#usage-probe:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.usage-probe-age {
+  margin-top: 0.15rem;
+  font-size: 0.72rem;
   color: var(--fg-muted);
 }

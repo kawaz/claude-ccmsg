@@ -1046,6 +1046,14 @@ export interface LlmUsageRequest {
   /** Client-generated correlation id echoed in the ack and the result event
    * (same uniqueness contract as SessionEnvRequest.request_id). */
   request_id: string;
+  /** Ask the gateway to probe upstream instead of answering from its cache,
+   * passed through as `?refresh=true`. Only a probe response carries
+   * `LlmUsageCredential.limits` and `probe_error` — the cached document has
+   * neither. It is also the only request that can spend upstream rate limit
+   * (an account already limited answers the probe with a 429, which arrives
+   * as that credential's `probe_error`), so this is for an explicit user
+   * action and never for polling. */
+  refresh?: boolean;
 }
 
 /** Per-day LLM spend, proxied from the gateway named by `<dataDir>/config.json`'s
@@ -1787,6 +1795,36 @@ export interface LlmUsageSnapshot {
   windows: Record<string, LlmUsageWindow>;
 }
 
+/** One named limit the upstream provider enforces on a credential, beside the
+ * rolling quota windows. Upstream's vocabulary is passed through untranslated
+ * (the gateway owns these words): `kind` is "session" / "weekly_all" /
+ * "weekly_scoped" today and may grow, and a `weekly_scoped` entry names the
+ * model family it applies to. */
+export interface LlmUsageLimit {
+  /** Which limit this is. A string rather than a union for LlmUsageWindow.status's
+   * reason — the set is the gateway's to grow, and an unknown kind must reach
+   * the UI as itself rather than be flattened into a wrong one. */
+  kind: string;
+  /** Consumed share of the limit as a PERCENTAGE, 0..100 — deliberately not
+   * the same unit as LlmUsageWindow.utilization (0..1). Kept as upstream sends
+   * it so the wire stays a faithful copy of the gateway's document; the webui
+   * normalizes at the presentation boundary. */
+  percent: number;
+  /** Upstream's own verdict: "normal" / "warning" / "critical" today. String
+   * for `kind`'s reason. */
+  severity: string;
+  /** RFC3339 instant the limit's counter resets. Absent for a limit with no
+   * scheduled reset. */
+  resets_at?: string;
+  /** Model family the limit is scoped to, as a display name ("Fable").
+   * Present on `weekly_scoped` entries. */
+  model?: string;
+  /** True when upstream is currently counting against this limit. NOT a
+   * statement that the limit is blocking anything — an inactive limit can sit
+   * at 0% and an active one at 47% "normal". */
+  is_active?: boolean;
+}
+
 export interface LlmUsageCredential {
   name: string;
   /** Credential kind, e.g. "claude_oauth" / "claude_bedrock" / "relay". */
@@ -1798,6 +1836,15 @@ export interface LlmUsageCredential {
   support: string;
   /** Present when `support` is "observed"; absent otherwise. */
   snapshot?: LlmUsageSnapshot;
+  /** Provider-enforced limits beside the quota windows, in upstream's order.
+   * Absent when the gateway reports none — which is every credential on a
+   * gateway too old to send them, so the UI must read absence as "nothing to
+   * show" rather than as an error. */
+  limits?: LlmUsageLimit[];
+  /** Why the gateway could not refresh this credential's reading. Present
+   * only on failure; whatever `snapshot` holds alongside it is the last good
+   * observation, and its `observed_at` says how old that is. */
+  probe_error?: string;
 }
 
 /** Payload of a completed llm_usage, delivered inside LlmUsageResultEvent.

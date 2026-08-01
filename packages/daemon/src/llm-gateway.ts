@@ -102,6 +102,17 @@ export async function fetchGatewayJson(
   }
 }
 
+/** Put one query parameter on a configured URL. `set` rather than `append` so
+ * a configured URL that already carries the parameter (the operator pasted the
+ * one they were reading in a browser) is overridden by the caller's value
+ * instead of sending two conflicting ones. Throws on a URL that cannot be
+ * parsed, which the callers turn into their own unavailable error. */
+export function withQueryParam(base: string, key: string, value: string): string {
+  const url = new URL(base);
+  url.searchParams.set(key, value);
+  return url.toString();
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

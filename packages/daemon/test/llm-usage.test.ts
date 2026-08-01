@@ -6,7 +6,7 @@
 // error rather than as a crash or a half-parsed body.
 import { describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
-import { fetchLlmUsage, parseUsagePayload } from "../src/llm-usage.ts";
+import { fetchLlmUsage, parseUsagePayload, usageUrlWithRefresh } from "../src/llm-usage.ts";
 import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
 
 /** The live endpoint's document, trimmed to one credential per support kind. */
@@ -140,14 +140,14 @@ describe("parseUsagePayload", () => {
 
 describe("fetchLlmUsage", () => {
   test("returns the parsed document on success", async () => {
-    const result = await fetchLlmUsage("https://gw.example/usage", jsonDeps(UPSTREAM));
+    const result = await fetchLlmUsage("https://gw.example/usage", false, jsonDeps(UPSTREAM));
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.credentials).toHaveLength(3);
   });
 
   test("requests the configured URL", async () => {
     const seen: string[] = [];
-    await fetchLlmUsage("https://gw.example/llm-gateway/usage", {
+    await fetchLlmUsage("https://gw.example/llm-gateway/usage", false, {
       fetch: (url) => {
         seen.push(url);
         return Promise.resolve(new Response(JSON.stringify(UPSTREAM)));
@@ -157,7 +157,11 @@ describe("fetchLlmUsage", () => {
   });
 
   test("reports a non-2xx status", async () => {
-    const result = await fetchLlmUsage("https://gw.example/usage", jsonDeps({}, { status: 502 }));
+    const result = await fetchLlmUsage(
+      "https://gw.example/usage",
+      false,
+      jsonDeps({}, { status: 502 }),
+    );
     expect(result).toEqual({
       ok: false,
       code: ErrorCode.llm_usage_unavailable,
@@ -166,7 +170,7 @@ describe("fetchLlmUsage", () => {
   });
 
   test("reports a body that is not JSON", async () => {
-    const result = await fetchLlmUsage("https://gw.example/usage", {
+    const result = await fetchLlmUsage("https://gw.example/usage", false, {
       fetch: () => Promise.resolve(new Response("<html>login</html>")),
     });
     expect(result).toEqual({
@@ -177,7 +181,7 @@ describe("fetchLlmUsage", () => {
   });
 
   test("reports an unreachable gateway instead of throwing", async () => {
-    const result = await fetchLlmUsage("https://gw.example/usage", {
+    const result = await fetchLlmUsage("https://gw.example/usage", false, {
       fetch: () => Promise.reject(new TypeError("Unable to connect")),
     });
     expect(result.ok).toBe(false);
@@ -193,6 +197,7 @@ describe("fetchLlmUsage", () => {
   test("reports a timeout when the gateway never answers", async () => {
     const result = await fetchLlmUsage(
       "https://gw.example/usage",
+      false,
       { fetch: (_url, init) => hangUntilAborted(init?.signal ?? null) },
       20,
     );
@@ -210,7 +215,7 @@ describe("fetchLlmUsage", () => {
         controller.enqueue(chunk);
       },
     });
-    const result = await fetchLlmUsage("https://gw.example/usage", {
+    const result = await fetchLlmUsage("https://gw.example/usage", false, {
       fetch: () => Promise.resolve(new Response(body)),
     });
     expect(result.ok).toBe(false);
@@ -229,3 +234,170 @@ function hangUntilAborted(signal: AbortSignal | null): Promise<Response> {
     signal.addEventListener("abort", () => reject(signal.reason), { once: true });
   });
 }
+
+// Provider limits and probe failures (llm-gateway v0.10.0). Same shape-based
+// posture as the quota windows: upstream owns the vocabulary, an entry that
+// cannot be drawn is dropped, and absence is a normal state rather than an
+// error — every credential on an older gateway sends none.
+describe("parseUsagePayload limits", () => {
+  function withCredential(over: Record<string, unknown>) {
+    return unwrap(parseUsagePayload({ credentials: [{ name: "c", support: "observed", ...over }] }))
+      .credentials[0];
+  }
+
+  test("passes through a limits array in upstream's order and vocabulary", () => {
+    const credential = withCredential({
+      limits: [
+        { kind: "session", percent: 0.0, severity: "normal", is_active: false },
+        {
+          kind: "weekly_all",
+          percent: 100.0,
+          severity: "critical",
+          resets_at: "2026-08-02T08:59:59.688201+00:00",
+          is_active: true,
+        },
+        {
+          kind: "weekly_scoped",
+          percent: 80.0,
+          severity: "warning",
+          resets_at: "2026-08-02T08:59:59.688429+00:00",
+          model: "Fable",
+          is_active: false,
+        },
+      ],
+    });
+    expect(credential?.limits).toEqual([
+      { kind: "session", percent: 0, severity: "normal", is_active: false },
+      {
+        kind: "weekly_all",
+        percent: 100,
+        severity: "critical",
+        resets_at: "2026-08-02T08:59:59.688201+00:00",
+        is_active: true,
+      },
+      {
+        kind: "weekly_scoped",
+        percent: 80,
+        severity: "warning",
+        resets_at: "2026-08-02T08:59:59.688429+00:00",
+        model: "Fable",
+        is_active: false,
+      },
+    ]);
+  });
+
+  // A kind the gateway adds later has to reach the UI as itself; flattening
+  // it into a known one would misreport which ceiling is being hit.
+  test("an unfamiliar kind survives untouched", () => {
+    const credential = withCredential({
+      limits: [{ kind: "monthly_all", percent: 12.5, severity: "brand_new" }],
+    });
+    expect(credential?.limits).toEqual([
+      { kind: "monthly_all", percent: 12.5, severity: "brand_new" },
+    ]);
+  });
+
+  test("an entry without the two fields a bar needs is dropped, the rest survive", () => {
+    const credential = withCredential({
+      limits: [
+        { percent: 10, severity: "normal" },
+        { kind: "session", severity: "normal" },
+        "nonsense",
+        null,
+        { kind: "weekly_all", percent: 40, severity: "normal" },
+      ],
+    });
+    expect(credential?.limits).toEqual([{ kind: "weekly_all", percent: 40, severity: "normal" }]);
+  });
+
+  test("a missing severity degrades to unknown rather than claiming health", () => {
+    const credential = withCredential({ limits: [{ kind: "session", percent: 5 }] });
+    expect(credential?.limits?.[0]?.severity).toBe("unknown");
+  });
+
+  // The common case on a gateway that does not send the field at all.
+  test("absent or unusable limits leave the key off entirely", () => {
+    expect(withCredential({})?.limits).toBeUndefined();
+    expect(withCredential({ limits: [] })?.limits).toBeUndefined();
+    expect(withCredential({ limits: "nope" })?.limits).toBeUndefined();
+    expect(withCredential({ limits: [{ kind: "session" }] })?.limits).toBeUndefined();
+  });
+
+  test("probe_error is carried alongside whatever reading survives", () => {
+    const credential = withCredential({
+      probe_error: "429 from upstream",
+      snapshot: { observed_at: 1785449700, "5h": { utilization: 0.2, status: "allowed" } },
+    });
+    expect(credential?.probe_error).toBe("429 from upstream");
+    expect(credential?.snapshot?.windows["5h"]?.utilization).toBe(0.2);
+  });
+
+  test("an empty or non-string probe_error is treated as no failure", () => {
+    expect(withCredential({ probe_error: "" })?.probe_error).toBeUndefined();
+    expect(withCredential({ probe_error: 500 })?.probe_error).toBeUndefined();
+    expect(withCredential({})?.probe_error).toBeUndefined();
+  });
+});
+
+// The refresh flag. Only a probe response carries limits and probe_error, and
+// a probe can spend upstream rate limit — so which request gets the flag is a
+// correctness question, not a convenience one.
+describe("usageUrlWithRefresh", () => {
+  test("asks for a probe only when told to", () => {
+    expect(usageUrlWithRefresh("https://gw.example/usage", true)).toBe(
+      "https://gw.example/usage?refresh=true",
+    );
+    expect(usageUrlWithRefresh("https://gw.example/usage", false)).toBe("https://gw.example/usage");
+    expect(usageUrlWithRefresh("https://gw.example/usage")).toBe("https://gw.example/usage");
+  });
+
+  test("keeps other query parameters and overrides a preset refresh", () => {
+    expect(usageUrlWithRefresh("https://gw.example/usage?tz=UTC", true)).toBe(
+      "https://gw.example/usage?tz=UTC&refresh=true",
+    );
+    expect(usageUrlWithRefresh("https://gw.example/usage?refresh=false", true)).toBe(
+      "https://gw.example/usage?refresh=true",
+    );
+  });
+});
+
+describe("fetchLlmUsage refresh", () => {
+  function recordingDeps(body: unknown) {
+    const seen: string[] = [];
+    return {
+      seen,
+      deps: {
+        fetch: (url: string) => {
+          seen.push(url);
+          return Promise.resolve(new Response(JSON.stringify(body)));
+        },
+      },
+    };
+  }
+
+  test("a refresh reaches the gateway as ?refresh=true", async () => {
+    const { seen, deps } = recordingDeps(UPSTREAM);
+    await fetchLlmUsage("https://gw.example/usage", true, deps);
+    expect(seen).toEqual(["https://gw.example/usage?refresh=true"]);
+  });
+
+  // The polling path must never probe: it would spend upstream rate limit on
+  // every tick of a screen nobody is looking at.
+  test("a plain read leaves the URL untouched", async () => {
+    const { seen, deps } = recordingDeps(UPSTREAM);
+    await fetchLlmUsage("https://gw.example/usage", false, deps);
+    expect(seen).toEqual(["https://gw.example/usage"]);
+  });
+
+  test("a URL that cannot carry the flag fails without a request", async () => {
+    let called = false;
+    const result = await fetchLlmUsage("not-a-url", true, {
+      fetch: () => {
+        called = true;
+        return Promise.resolve(new Response("{}"));
+      },
+    });
+    expect(called).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+});

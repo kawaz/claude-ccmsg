@@ -2434,7 +2434,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         req.request_id,
       );
       if (!complete) return;
-      void fetchLlmUsage(usageUrl).then(
+      // `refresh` reaches upstream as a real probe and can spend rate limit,
+      // so it is passed through only when the client asked for it explicitly
+      // (the webui's manual button, never its polling).
+      void fetchLlmUsage(usageUrl, req.refresh === true).then(
         (result) => {
           if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
           else complete(result.data);

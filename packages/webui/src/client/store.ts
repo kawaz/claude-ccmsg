@@ -23,6 +23,7 @@ import {
   type TranscriptReadResponse,
 } from "@ccmsg/protocol";
 import type { AgentRef, Locator, SessionTab } from "./locator.ts";
+import type { ProbeRecord } from "./llm-usage-view.ts";
 
 export { ADMIN_ID };
 
@@ -186,6 +187,10 @@ export interface AppState {
    * terminal_gateway_url と同じ姿勢)。URL 自体は daemon 側が fetch するので
    * webui には来ない。 */
   llmUsageAvailable: boolean;
+  /** 直近の probe (`llm_usage` の refresh) が credential 毎に返した limits と
+   * probe_error。gateway の cached 応答にはこの 2 つが乗らないので、保持して
+   * いないと手動更新の直後に一瞬出て次の poll で消える。credential 名 → 記録。 */
+  llmUsageProbes: Map<string, ProbeRecord>;
   /** hello response の `llm_stats_available`。llmUsageAvailable と同じ役割の
    * 利用料 endpoint 版で、/usage 画面の利用料セクションはこれが true の時
    * だけ出す。2 つの endpoint は独立に設定できるので flag も独立。 */
@@ -267,6 +272,7 @@ export function initialState(): AppState {
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
     llmUsageAvailable: false,
+    llmUsageProbes: new Map(),
     llmStatsAvailable: false,
     usageDays: null,
     view: "room",
@@ -316,6 +322,7 @@ export type Action =
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
   | { type: "llm-stats/availability"; available: boolean }
+  | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
   | { type: "navigation/missing"; target: MissingTarget | null }
@@ -863,6 +870,15 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, llmUsageAvailable: action.available };
     case "llm-stats/availability":
       return { ...state, llmStatsAvailable: action.available };
+    // Merged rather than replaced: a probe that failed for one credential
+    // still answered for the others, and dropping the ones it did not mention
+    // would lose readings the failure says nothing about.
+    case "llm-usage/probed": {
+      if (action.records.size === 0) return state;
+      const llmUsageProbes = new Map(state.llmUsageProbes);
+      for (const [name, record] of action.records) llmUsageProbes.set(name, record);
+      return { ...state, llmUsageProbes };
+    }
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":

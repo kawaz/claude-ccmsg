@@ -333,8 +333,11 @@ export interface WsHandle {
    * one Promise like the others. `error.code === "llm_usage_not_configured"`
    * means the daemon has no gateway URL — the same signal hello's
    * `llm_usage_available` carries, seen here when the config changed under a
-   * live connection. */
-  llmUsage(): Promise<LlmUsageResponse | ErrorResponse>;
+   * live connection. `refresh` makes the gateway probe upstream instead of
+   * answering from its cache — the only response that carries `limits` and
+   * `probe_error`, and the only one that can spend upstream rate limit, so it
+   * belongs to an explicit user action and never to polling. */
+  llmUsage(opts?: { refresh?: boolean }): Promise<LlmUsageResponse | ErrorResponse>;
   /** Per-day LLM spend over the last `days` days, proxied by the daemon from
    * its configured stats gateway (user role only). 2-phase on the wire (ack +
    * ev:"llm_stats_result") like llmUsage; `days` omitted leaves the gateway's
@@ -896,7 +899,12 @@ export function createWsClient(
         request_id: `q${++nextRequestId}`,
         session_id: sessionId,
       }),
-    llmUsage: () => sendTwoPhase({ op: "llm_usage", request_id: `q${++nextRequestId}` }),
+    llmUsage: (opts) =>
+      sendTwoPhase({
+        op: "llm_usage",
+        request_id: `q${++nextRequestId}`,
+        ...(opts?.refresh ? { refresh: true } : {}),
+      }),
     llmStats: (days) =>
       sendTwoPhase({
         op: "llm_stats",

@@ -23,14 +23,33 @@ const USAGE_BODY = {
   ],
 };
 
+/** Every `refresh` the gateway was actually asked for, newest last — recorded
+ * server-side because the daemon normalizes the document and would not carry
+ * an echo back. */
+const received: (string | null)[] = [];
+
 /** Routes: /usage answers the document, anything else 404s (the failure path
- * a mistyped `llm_usage_url` produces in practice). */
+ * a mistyped `llm_usage_url` produces in practice). Like the real gateway,
+ * `limits` are served only to a probe. */
 const gateway = Bun.serve({
   port: GATEWAY_PORT,
   fetch(req) {
-    return new URL(req.url).pathname === "/usage"
-      ? Response.json(USAGE_BODY)
-      : new Response("no such endpoint", { status: 404 });
+    const url = new URL(req.url);
+    if (url.pathname !== "/usage") return new Response("no such endpoint", { status: 404 });
+    const refresh = url.searchParams.get("refresh");
+    received.push(refresh);
+    if (refresh !== "true") return Response.json(USAGE_BODY);
+    return Response.json({
+      ...USAGE_BODY,
+      credentials: USAGE_BODY.credentials.map((credential) =>
+        credential.name === "oauth"
+          ? {
+              ...credential,
+              limits: [{ kind: "weekly_all", percent: 100, severity: "critical" }],
+            }
+          : credential,
+      ),
+    });
   },
 });
 afterAll(() => {
@@ -116,6 +135,40 @@ describe("llm_usage op", () => {
     );
     expect(reply?.ok).toBe(false);
     expect(reply?.error.code).toBe(ErrorCode.llm_usage_not_configured);
+  });
+
+  // Only a probe response carries limits, so the flag has to reach the
+  // gateway — and must not be sent when the client did not ask for one.
+  test("passes a refresh through to the gateway and surfaces its limits", async () => {
+    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const [, event] = await requestFrames(
+      daemon,
+      USER,
+      { op: "llm_usage", request_id: "r1", refresh: true },
+      2,
+    );
+    expect(received.at(-1)).toBe("true");
+    expect(event?.ok).toBe(true);
+    expect(event?.credentials[1].limits).toEqual([
+      { kind: "weekly_all", percent: 100, severity: "critical" },
+    ]);
+  });
+
+  test("a request without the flag reads the cache and gets no limits", async () => {
+    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    const [, event] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r2" }, 2);
+    expect(received.at(-1)).toBeNull();
+    expect(event?.credentials[1].limits).toBeUndefined();
+  });
+
+  // Anything other than an explicit `true` is a plain read: a probe spends
+  // upstream rate limit, so it must never happen by accident.
+  test("a non-true refresh value does not trigger a probe", async () => {
+    const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
+    for (const refresh of ["true", 1, null]) {
+      await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r3", refresh }, 2);
+      expect(received.at(-1)).toBeNull();
+    }
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
