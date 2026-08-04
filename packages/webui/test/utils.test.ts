@@ -37,6 +37,7 @@ import {
   parsePinnedSessions,
   peerSortButtonLabel,
   resolveInboxFilename,
+  documentTitleFor,
   resolveSessionTopbar,
   sessionBadges,
   sessionLabel,
@@ -932,6 +933,66 @@ describe("resolveSessionTopbar", () => {
       ws: "",
       cwd: null,
     });
+  });
+});
+
+describe("documentTitleFor", () => {
+  // Nothing selected: keeps the plain app name (matches index.html's
+  // <title> and TopbarTitle's own "何も選択していない" fallback).
+  test("falls back to the bare app name when nothing is selected", () => {
+    expect(documentTitleFor(initialState())).toBe("ccmsg");
+  });
+
+  // Identifying label leads, app name trails (kawaz r99 mid=39) — a browser
+  // tab only shows the leading characters, so the session identity has to
+  // come first to tell tabs apart at a glance.
+  test("puts '<repo> ▸ <ws>' before the app name for a selected session", () => {
+    const state: AppState = {
+      ...initialState(),
+      view: "session",
+      currentSid: "s1",
+      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main" })],
+    };
+    expect(documentTitleFor(state)).toBe("kawaz/claude-ccmsg ▸ main - ccmsg");
+  });
+
+  // Same label derivation as resolveSessionTopbar/TopbarTitle's fallback
+  // chain, so the tab title never disagrees with the topbar itself.
+  test("falls back to sid short form when a selected session has no repo/ws/cwd", () => {
+    const state: AppState = {
+      ...initialState(),
+      view: "session",
+      currentSid: "0123456789abcdef",
+    };
+    expect(documentTitleFor(state)).toBe("01234567 - ccmsg");
+  });
+
+  test("uses the room's title for a selected room", () => {
+    const state: AppState = {
+      ...initialState(),
+      view: "room",
+      currentRoomId: "r1",
+      rooms: new Map([["r1", makeRoom({ id: "r1", title: "planning" })]]),
+    };
+    expect(documentTitleFor(state)).toBe("planning - ccmsg");
+  });
+
+  // Non-session views (usage, or a 404 detour) have no single identifying
+  // label to promote, so the tab reverts to the plain app name.
+  test("falls back to the bare app name on the usage view", () => {
+    const state: AppState = { ...initialState(), view: "usage" };
+    expect(documentTitleFor(state)).toBe("ccmsg");
+  });
+
+  test("falls back to the bare app name when unknownPath is set even with a currentSid", () => {
+    const state: AppState = {
+      ...initialState(),
+      view: "session",
+      currentSid: "s1",
+      peers: [peer({ sid: "s1", repo: "kawaz/claude-ccmsg", ws: "main" })],
+      unknownPath: "/bogus",
+    };
+    expect(documentTitleFor(state)).toBe("ccmsg");
   });
 });
 

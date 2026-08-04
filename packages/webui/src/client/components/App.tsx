@@ -3,7 +3,7 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState, MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { lastPathSegment, resolveSessionTopbar } from "../utils.ts";
+import { documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
@@ -168,6 +168,12 @@ export function App() {
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
+  // Tab title tracks the selected session/room (kawaz r99 mid=39): opening
+  // several sessions in separate tabs otherwise leaves every tab reading the
+  // fixed "ccmsg" title, indistinguishable until clicked.
+  useEffect(() => {
+    document.title = documentTitleFor(state);
+  }, [state]);
 
   return (
     <div id="app">

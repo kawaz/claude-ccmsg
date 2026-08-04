@@ -1165,3 +1165,40 @@ export function editorLineCount(value: string): number {
 export function isUnknownAppPath(pathname: string): boolean {
   return parseUrl(pathname).view === "unknown";
 }
+
+// --- document.title (browser tab label) --- //
+
+/** Base app name, also the title when nothing is selected (matches
+ * `<title>` in index.html and the topbar's own "何も選択していない" fallback,
+ * see TopbarTitle in App.tsx). */
+const DOCUMENT_TITLE_BASE = "ccmsg";
+
+/** Browser tab title for the current app state. The identifying part comes
+ * first and the app name last (`"<repo ▸ ws> - ccmsg"`) because a browser
+ * tab only ever shows the leading characters of its title — with multiple
+ * ccmsg tabs open (one per session), a fixed leading "ccmsg" made every tab
+ * look identical until hovered. Session/room labels reuse the exact fallback
+ * chains `TopbarTitle`/`resolveSessionTopbar` already use, so the tab title
+ * can never disagree with what's shown in the topbar itself. Any other view
+ * (usage, or nothing selected) keeps the plain app name — there's no single
+ * identifying label to promote for those. */
+export function documentTitleFor(state: AppState): string {
+  if (state.missingTarget === null && state.unknownPath === null) {
+    if (state.view === "session" || state.view === "timeline") {
+      const sid = state.currentSid;
+      if (sid !== null) {
+        const { repo, ws, cwd } = resolveSessionTopbar(state, sid);
+        const label =
+          repo && ws
+            ? `${repo} ▸ ${ws}`
+            : repo || ws || (cwd ? lastPathSegment(cwd) : "") || sid.slice(0, 8);
+        return `${label} - ${DOCUMENT_TITLE_BASE}`;
+      }
+    } else if (state.currentRoomId !== null) {
+      const room = state.rooms.get(state.currentRoomId);
+      const label = room?.title || state.currentRoomId;
+      return `${label} - ${DOCUMENT_TITLE_BASE}`;
+    }
+  }
+  return DOCUMENT_TITLE_BASE;
+}
