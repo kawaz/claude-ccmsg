@@ -21,18 +21,7 @@
 
 ## 裁定待ち
 
-### 👺SBX: DR-0030 (sandbox origin 配信) の Open questions
-
-詳細は [DR-0030 §9](./decisions/DR-0030-sandbox-origin-serving.md)。各項の先頭が統括推し。
-
-- [ ] Q1a: sandbox リスナは 127.0.0.1:8643 固定、config 未設定なら起動しない (推し) / Q1b: env 化もする
-- [ ] Q2a: grant 寿命 30 分固定、sliding なし (推し。リロードで再 mint 可能なので) / Q2b: 別案
-- [ ] Q3a: grant scope は親ディレクトリ subtree (推し。単一ファイルだと発端の HTML が CSS/JS 崩れで目的未達。認可は毎リクエスト再評価なので読める範囲は広がらない、短寿命 + tailnet 限定) / Q3b: 単一ファイル (Phase 2 で subtree)
-- [ ] Q4a: gid は (sid, scopeRoot) で再利用 (推し。リロード・キャッシュ実用性、寿命は exp が縛る) / Q4b: mint ごと新規
-- [ ] Q5a: canddy へ「秘密をホスト名ラベルに置くと DNS QNAME / TLS SNI に漏れる」の issue を上げる (推し、統括が起票) / Q5b: 上げない
-- [ ] Q6: TL 長大出力の実体方式は Phase 2 で判断 (保留で OK なら チェック)
-- [ ] Q7a: canddy 側 Caddyfile のコメント解除は canddy セッション or kawaz にお願いし、ccmsg docs に runbook 転記 (推し) / Q7b: 別案
-- [ ] P3: 既存の穴 — /attachment が same-origin で text/html を返している (DR-0030 Phase 3)。対応方針の裁定は別途 (急ぐなら「HTML だけ octet-stream に落とす」の即応も可能)
+(なし)
 
 ## 確認待ち
 

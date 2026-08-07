@@ -33,4 +33,4 @@
 | [DR-0027](./DR-0027-tl-ccmsg-canonical-lookup.md) | Accepted | TL の ccmsg を daemon 一次情報で完全復元 + AI 発 post/reply の TL 表示 |
 | [DR-0028](./DR-0028-session-kill.md) | Proposed | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) |
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
-| [DR-0030](./DR-0030-sandbox-origin-serving.md) | Proposed | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
+| [DR-0030](./DR-0030-sandbox-origin-serving.md) | Accepted | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
