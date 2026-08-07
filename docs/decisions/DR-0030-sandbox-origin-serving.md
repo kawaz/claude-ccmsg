@@ -195,7 +195,10 @@ sandbox ハンドラは 1 リクエストごとに次を全て通す。1 つで�
    (403 でなく 404 なのは gid の存在自体を漏らさないため)
 3. `exp` 超過なら 410 Gone
 4. `<relpath>` を grant の `scopeRoot` に結合し、**`fsResolveForServe(sid, 結合パス, kind)`
-   を再実行**する
+   を再実行**し、さらに**返った realpath が mint 時の scope root 配下 (external は
+   完全一致) であることを最終ベルトとして検査**する。`fsResolveForServe` が見るのは
+   セッションの containment root であって grant の subtree ではないため、この
+   ベルトが無いと `../` で grant 外 (だがセッションは読める) ファイルへ登れる
 
 4 が本 DR の認可設計の核心 (§5)。grant は「どの origin か・いつまでか・どの範囲か」を
 足すだけで、**読める範囲を一切広げない**。
@@ -286,7 +289,9 @@ form-action 'none'; base-uri 'none'
 
 `connect-src 'self'` が最重要 — これが無いとプレビュー内 JS が tailnet 全域
 (`100.64.0.0/10`) を fetch で舐められる。`frame-ancestors` の値は
-§7 の config から組み立てる (ハードコードしない)。
+**既存の許可 origin 集合** (env `CCMSG_HTTP_ALLOW_ORIGIN` + origins-file +
+tailscale 自動追加 + bind の self-origin) からリクエストごとに組み立てる
+(ハードコードせず、apps 側 origin の正本を二重に持たない。空なら `'none'`)。
 
 ### 6.2 download モード (`?dl=1`)
 

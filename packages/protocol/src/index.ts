@@ -1414,6 +1414,47 @@ export interface FsEditRequest {
 }
 
 /**
+ * Mint a capability URL on the sandbox origin (DR-0030 §4.1). The webui calls
+ * this when the user asks to open a file as HTML or download it raw; the reply
+ * is a URL on a different eTLD+1 that serves the file with its real MIME type,
+ * which the same-origin `/fs-serve` deliberately refuses to do.
+ *
+ * The grant does not widen anything. The daemon runs `fsResolveForServe` here
+ * at mint time AND again on every request the URL produces, so this op can
+ * only fail the way the corresponding read op would (`path_forbidden` /
+ * `not_found`) and can never reach a file the caller could not already read.
+ *
+ * Scope is the file's parent directory for `contained` / `workspace` — an HTML
+ * page's relative CSS/JS has to resolve — and the single file for `external`,
+ * whose authorization is an exact-match allowlist (§4.1.1). Re-minting the
+ * same scope returns the same `gid` and `token` with a later `exp` (§4.1.2),
+ * so an already-open preview tab keeps working.
+ *
+ * User role only: this is a viewer feature, like the other absolute-path fs ops.
+ */
+export interface SandboxGrantRequest {
+  op: "sandbox_grant";
+  sid: string;
+  /** relative when kind="contained", absolute when kind="external"/"workspace"
+   * — the same path contract as the matching read op. */
+  path: string;
+  kind: "contained" | "external" | "workspace";
+}
+
+/**
+ * Drop a grant early (DR-0030 §4.3). The webui fires this when a preview tab
+ * closes. Best-effort by design: `exp` is what actually bounds a grant's life,
+ * so an unknown or already-expired gid is still `ok:true` — there is nothing
+ * for the caller to do differently either way, and reporting "no such gid"
+ * would turn revoke into an existence oracle.
+ */
+export interface SandboxRevokeRequest {
+  op: "sandbox_revoke";
+  /** The `gid` a previous `sandbox_grant` returned. */
+  gid: string;
+}
+
+/**
  * Session transcript access (DR-0009 / DR-0021): read a slice of a connected
  * session's hello-validated transcript, or a historical UUID resolved by the
  * daemon below detected config dirs. There is NO client-supplied path, so no
@@ -1621,6 +1662,8 @@ export type Request =
   | FsEditRequest
   | FsStatBatchRequest
   | FsFindRequest
+  | SandboxGrantRequest
+  | SandboxRevokeRequest
   | TranscriptReadRequest
   | SessionSearchRequest
   | AgentsRequest
@@ -1675,6 +1718,14 @@ export interface HelloResponse {
    * because the two endpoints are configured independently — one can be set
    * up without the other, and the webui shows only the section it can fill. */
   llm_stats_available?: boolean;
+  /** True when the daemon has a usable `sandbox_origin_template` configured
+   * (DR-0030 §7.1), user-role hellos only. Same posture as the two flags
+   * above: the template itself stays server-side (the client only ever
+   * receives whole URLs from `sandbox_grant`), and an unconfigured daemon —
+   * one with no canddy sandbox domain in front of it — makes the webui hide
+   * the "HTML として開く" / "生ダウンロード" buttons entirely rather than
+   * offer a button that can only fail. */
+  sandbox_available?: boolean;
 }
 export interface PostResponse {
   ok: true;
@@ -2065,6 +2116,25 @@ export interface FsEditResponse {
    * so a subsequent edit in the same viewer session doesn't need a full refetch. */
   mtime: string;
 }
+export interface SandboxGrantResponse {
+  ok: true;
+  /** Origin-separation key, non-secret: it rides in a DNS label and therefore
+   * leaks to every recursive resolver on the way (DR-0030 §3.3). Pass it back
+   * to `sandbox_revoke`. */
+  gid: string;
+  /** The capability. Secret, and the only thing that authorizes a request —
+   * echoed here because the client needs it to build sibling URLs (a download
+   * link next to a preview link) without a second mint. */
+  token: string;
+  /** Ready-to-open URL for the granted file, preview mode. Append `?dl=1` for
+   * the download mode (DR-0030 §6.2). */
+  url: string;
+  /** Epoch ms the grant expires at (30 minutes from this mint). */
+  exp: number;
+}
+export interface SandboxRevokeResponse {
+  ok: true;
+}
 export interface SessionSearchMatch {
   role: "user" | "agent";
   text: string;
@@ -2242,6 +2312,8 @@ export type Response =
   | FsEditResponse
   | FsStatBatchResponse
   | FsFindResponse
+  | SandboxGrantResponse
+  | SandboxRevokeResponse
   | TranscriptReadResponse
   | AgentsResponse
   | TranscriptSubscribeResponse
@@ -2348,5 +2420,12 @@ export const ErrorCode = {
   // configured spend endpoint (`llm_stats_url`).
   llm_stats_not_configured: "llm_stats_not_configured",
   llm_stats_unavailable: "llm_stats_unavailable",
+  // sandbox_grant: `<dataDir>/config.json` has no usable
+  // `sandbox_origin_template`, so there is no origin to mint a URL on
+  // (DR-0030 §7.1). Same "operator never set this up" role
+  // llm_usage_not_configured plays — hello's `sandbox_available` normally
+  // keeps the webui from asking at all, and this covers the window where the
+  // config changed under a live connection.
+  sandbox_not_configured: "sandbox_not_configured",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

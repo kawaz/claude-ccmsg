@@ -6,6 +6,7 @@ import { handleAttachmentServe, handleAttachmentUpload } from "./attachment.ts";
 import { handleFsServe } from "./fs-serve.ts";
 import { isAllowed, type Cidr } from "./ip-allowlist.ts";
 import type { OriginsFile } from "./origins-file.ts";
+import { handleSandboxRequest, sandboxGidFromHost } from "./sandbox.ts";
 import { handleRequest, removeConn, type Conn, type Daemon } from "./server.ts";
 import { handleWebhookRequest } from "./webhook.ts";
 
@@ -151,6 +152,32 @@ function isAllowedOrigin(
   return extraOrigins.has(origin);
 }
 
+/**
+ * Origins a sandbox preview may be framed by, for the CSP `frame-ancestors`
+ * DR-0030 §6.1 requires to come from config rather than a literal. The apps-
+ * side webui origin is exactly the set this daemon already trusts to talk to
+ * it — env `CCMSG_HTTP_ALLOW_ORIGIN`, the persisted `origins add` file, the
+ * tailscale auto-allow additions, plus its own bind origin — so that set is
+ * the config, and no second place to name the same host is introduced.
+ *
+ * Computed per request because two of those sources mutate after startup
+ * (tailscale auto-allow writes into `extraOrigins`; `ccmsg origins add` writes
+ * the file the listener re-reads). An empty set yields `'none'` at the call
+ * site, which is the right default: nothing is allowed to frame it.
+ */
+function frameAncestorsFor(
+  srv: { hostname?: string; port?: number },
+  extraOrigins: Set<string>,
+  originsFile?: OriginsFile,
+): string[] {
+  const out = new Set<string>(extraOrigins);
+  for (const o of originsFile?.get() ?? []) out.add(o);
+  if (srv.hostname !== undefined && srv.port !== undefined) {
+    out.add(`http://${srv.hostname}:${srv.port}`);
+  }
+  return [...out];
+}
+
 export function startHttpListener(
   daemon: Daemon,
   bindSpec: string,
@@ -172,6 +199,37 @@ export function startHttpListener(
       const remote = srv.requestIP(req);
       if (remote === null || !isAllowed(remote.address, allow)) {
         return new Response("Forbidden", { status: 403 });
+      }
+      // Sandbox origin branch (DR-0030 §3.2). Placed between the source-IP
+      // belt and the Origin check, and it RETURNS UNCONDITIONALLY: a request
+      // whose Host names the sandbox domain is consumed here and can never
+      // fall through to /ws, /attachment, /webhook, /fs-serve or the webui
+      // fallback below, whatever its path happens to be. That structural
+      // property — not a second listener on a second port — is what keeps the
+      // control plane unreachable from the untrusted origin, and it is the one
+      // invariant this file must preserve: keep this above the Origin check
+      // and above the route table, and keep the branch returning.
+      //
+      // It sits above the Origin check rather than inside it because a
+      // cross-site sandbox request either sends no Origin (top-level
+      // navigation) or one that can never be on the allowlist; running it
+      // through step 3 would 403 the feature out of existence. Adding a
+      // sandbox exemption *inside* isAllowedOrigin would be the dangerous
+      // shape — that exemption would then also apply to /ws. Authorization for
+      // this branch is the URL capability token, checked in handleSandbox.
+      const sandboxGid = sandboxGidFromHost(daemon.sandboxOrigin, req.headers.get("Host"));
+      if (sandboxGid !== null) {
+        return await handleSandboxRequest(
+          {
+            grants: daemon.sandboxGrants,
+            origin: daemon.sandboxOrigin,
+            sessions: daemon.sessions,
+            statusStore: daemon.sessionStatus,
+            frameAncestors: () => frameAncestorsFor(srv, extraOrigins, originsFile),
+          },
+          sandboxGid,
+          req,
+        );
       }
       // Origin check (see isAllowedOrigin doc comment above) — the actual trust
       // boundary for browser clients, source-IP allowlisting can't express it.

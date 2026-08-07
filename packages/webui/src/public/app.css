@@ -7094,3 +7094,22 @@ button.usage-reset:hover {
     animation-play-state: paused;
   }
 }
+
+/* DR-0030: FileViewer の sandbox origin 導線 (「HTML として開く」/
+ * 「生ダウンロード」)。viewer-header の他ボタンと同じ控えめな見た目にして、
+ * 別 origin へ飛ぶという性質は button の title で説明する。daemon が
+ * sandbox_origin_template 未設定なら要素自体が描画されない。 */
+.viewer-sandbox-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 0.4rem;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.viewer-sandbox-btn:hover {
+  color: var(--fg);
+}

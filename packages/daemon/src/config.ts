@@ -39,6 +39,14 @@ export interface DaemonConfig {
    * 緩い権限で置かれがちなため — 秘密はファイル側 (mode 600) に置き、config は
    * その在り処だけを持つ。未設定の source は 404 (= 存在しない) 扱い。 */
   webhooks?: Record<string, WebhookSourceConfig>;
+  /** 非信頼コンテンツを配信する sandbox origin の URL テンプレート (DR-0030
+   * §7.1)。`{gid}` を **ホスト名部分に** 含む http:// / https:// の絶対 URL
+   * のみ受け付ける (例:
+   * `https://ccmsg-files-{gid}.host.example`)。`{gid}` が path にあっても
+   * 全 grant が同一 origin に載って origin 分離が成立しないので不正扱い。
+   * 未設定 / 不正なら warn + 未設定扱い = sandbox 配信そのものが無効になり、
+   * webui は導線を出さない (押せば必ず失敗するボタンを置かない)。 */
+  sandbox_origin_template?: string;
 }
 
 export interface WebhookSourceConfig {
@@ -74,6 +82,26 @@ function parseHttpUrl(raw: unknown, field: string, file: string, log: Log): stri
 
 interface Log {
   warn(msg: string): void;
+}
+
+/** sandbox origin テンプレートの検証 (DR-0030 §7.1)。URL としての妥当性は
+ * parseHttpUrl と共通だが、追加で「`{gid}` がホスト名部分にちょうど 1 個ある」
+ * ことを要求する — grant ごとに origin が分かれることが本機能の前提なので、
+ * これを満たさないテンプレートは無効化する方が「効いていないのに動いている
+ * ように見える」より安全。 */
+function parseSandboxOriginTemplate(raw: unknown, file: string, log: Log): string | undefined {
+  const value = parseHttpUrl(raw, "sandbox_origin_template", file, log);
+  if (value === undefined) return undefined;
+  const host = new URL(value).hostname;
+  if (host.split("{gid}").length !== 2) {
+    warn(
+      log,
+      file,
+      `sandbox_origin_template must contain exactly one {gid} in its hostname: ${value}; ignoring`,
+    );
+    return undefined;
+  }
+  return value;
 }
 
 /** source 名 → token ファイルの対応表を読む。source ごとに独立に degrade する
@@ -298,7 +326,13 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
     warn(log, file, "llm_events_url is no longer used; configure `webhooks` instead (ignored)");
   }
   const webhooks = parseWebhooks(parsed.webhooks, file, log);
+  const sandboxOriginTemplate = parseSandboxOriginTemplate(
+    parsed.sandbox_origin_template,
+    file,
+    log,
+  );
   const cfg: DaemonConfig = {};
+  if (sandboxOriginTemplate) cfg.sandbox_origin_template = sandboxOriginTemplate;
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
   if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;

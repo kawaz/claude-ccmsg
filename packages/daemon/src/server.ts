@@ -96,6 +96,14 @@ import { LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
 import { type WebhookSource } from "./webhook.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
+import {
+  compileSandboxOrigin,
+  createSandboxGrants,
+  mintSandboxGrant,
+  revokeSandboxGrant,
+  type SandboxGrants,
+  type SandboxOrigin,
+} from "./sandbox.ts";
 import { parseAllowList, type Cidr } from "./ip-allowlist.ts";
 import { createOriginsFile } from "./origins-file.ts";
 import { fetchTailscaleServeOrigins } from "./tailscale-origin.ts";
@@ -193,6 +201,14 @@ export interface Daemon {
   /** sessionErrorEntries() as of the last `ev:"session_errors"` broadcast —
    * same "don't push an unchanged list" guard as peersSnapshot. */
   sessionErrorsSnapshot: string;
+  /** Live capability grants for the sandbox origin (DR-0030 §4.1). Memory
+   * only — a restart is the intended way to invalidate every outstanding
+   * preview URL. */
+  sandboxGrants: SandboxGrants;
+  /** `config.sandbox_origin_template` compiled into a host matcher, or null
+   * when unconfigured/malformed — which is also what turns the whole sandbox
+   * surface off (no hello capability, no mint, no Host branch). */
+  sandboxOrigin: SandboxOrigin | null;
   /** Persistent macOS Translation.framework helper (DR-0023). */
   translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
@@ -1342,12 +1358,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // capability も独立に返す — 片方だけ設定した環境で、設定していない方の
       // セクションが「押せば必ずエラー」の状態で出るのを防ぐ。
       const llmStatsAvailable = newId.role === "user" && !!daemon.config.llm_stats_url;
+      // sandbox origin (DR-0030 §7.1) も同じ流儀。template 自体は返さない —
+      // client が触るのは sandbox_grant が組み立てた完成 URL だけなので、
+      // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
+      // ドメインが前段に無い環境) では webui が導線を一切出さない。
+      const sandboxAvailable = newId.role === "user" && daemon.sandboxOrigin !== null;
       send(conn, {
         ok: true,
         version: daemon.version,
         ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
         ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
+        ...(sandboxAvailable ? { sandbox_available: true } : {}),
       });
       return;
     }
@@ -2449,6 +2471,50 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "sandbox_grant": {
+      // user-role only (DR-0030 §4.1), for the same reason every absolute-path
+      // fs op is: this is a viewer affordance. A session (AI) reads files
+      // through fs_read and has no browser to open a preview in.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'sandbox_grant' requires user role");
+        return;
+      }
+      const result = await mintSandboxGrant(
+        daemon.sandboxGrants,
+        daemon.sandboxOrigin,
+        daemon.sessions,
+        daemon.sessionStatus,
+        req.sid,
+        req.path,
+        req.kind,
+      );
+      if (!result.ok) {
+        sendErr(conn, result.code, result.msg);
+        return;
+      }
+      send(conn, {
+        ok: true,
+        gid: result.grant.gid,
+        token: result.grant.token,
+        url: result.url,
+        exp: result.grant.exp,
+      });
+      return;
+    }
+
+    case "sandbox_revoke": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'sandbox_revoke' requires user role");
+        return;
+      }
+      // Unconditionally ok: see SandboxRevokeRequest's doc comment — an
+      // unknown gid is indistinguishable from one that just expired, and
+      // neither is something the caller can act on.
+      revokeSandboxGrant(daemon.sandboxGrants, req.gid);
+      send(conn, { ok: true });
+      return;
+    }
+
     case "transcript_read": {
       const wantsAgent =
         req.agent_id !== undefined || req.run_id !== undefined || req.teammate !== undefined;
@@ -2992,6 +3058,8 @@ export function startDaemon(opts: StartOptions = {}): void {
     sessionStatus: createSessionStatusStore(),
     sessionErrors: createSessionErrorsStore(),
     sessionErrorsSnapshot: "",
+    sandboxGrants: createSandboxGrants(),
+    sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
     translator: createTranslateService(),
     peersSnapshot: "",
     llmRequests: new LlmRequestCache(),

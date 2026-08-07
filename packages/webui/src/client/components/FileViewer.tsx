@@ -638,6 +638,85 @@ function TextFileEditor({
   );
 }
 
+function isHtmlPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith(".html") || lower.endsWith(".htm");
+}
+
+/**
+ * Sandbox-origin affordances (DR-0030 §7.2): render an HTML file as HTML, or
+ * download any file raw. Both need a MIME type the same-origin `/fs-serve`
+ * deliberately refuses to emit, so both go through a `sandbox_grant` URL on a
+ * different eTLD+1 and open in a new tab — the separate tab makes "this is
+ * untrusted content on another origin" visible, which an iframe would hide.
+ *
+ * Renders nothing at all unless hello reported `sandbox_available`: a daemon
+ * with no sandbox domain in front of it would fail every click, and the house
+ * rule is to omit the control rather than show one that can only error.
+ *
+ * The tab is opened synchronously on the click and its location is filled in
+ * once the grant resolves — a `window.open` after the await is what popup
+ * blockers exist to stop.
+ */
+function SandboxActions({
+  sid,
+  path,
+  kind,
+}: {
+  sid: string;
+  path: string;
+  kind: "contained" | "external" | "workspace";
+}): JSX.Element | null {
+  const { store, ws } = useApp();
+  const available = useStoreState(store).sandboxAvailable;
+  const [error, setError] = useState<string | null>(null);
+  if (!available) return null;
+
+  const open = (download: boolean) => {
+    const tab = window.open("", "_blank", "noopener,noreferrer");
+    setError(null);
+    ws.sandboxGrant(sid, path, kind)
+      .then((res) => {
+        if (!res.ok) {
+          tab?.close();
+          setError(errorMessage(res));
+          return;
+        }
+        const url = download ? `${res.url}?dl=1` : res.url;
+        if (tab) tab.location.href = url;
+        else window.open(url, "_blank", "noopener,noreferrer"); // popup blocked: try anyway
+      })
+      .catch((err) => {
+        tab?.close();
+        setError(errorMessage(err));
+      });
+  };
+
+  return (
+    <>
+      {isHtmlPath(path) ? (
+        <button
+          type="button"
+          class="viewer-sandbox-btn"
+          title="別 origin の新しいタブで HTML として表示する"
+          onClick={() => open(false)}
+        >
+          HTML として開く
+        </button>
+      ) : null}
+      <button
+        type="button"
+        class="viewer-sandbox-btn"
+        title="別 origin 経由でこのファイルをそのままダウンロードする"
+        onClick={() => open(true)}
+      >
+        生ダウンロード
+      </button>
+      {error ? <span class="viewer-banner">{error}</span> : null}
+    </>
+  );
+}
+
 export function FileViewer({
   sid,
   tree,
@@ -1143,19 +1222,24 @@ export function FileViewer({
   // the base64 blow-up a data: URL would need. SVG is deliberately rendered
   // through <img src> (not inline in the DOM) so SVG-embedded <script> stays
   // inert (browsers do not execute scripts inside SVG loaded as an image).
+  // Which authorization surface this path belongs to — the same three-way
+  // choice the read/edit paths make, hoisted so the sandbox affordances in
+  // every branch's header agree with it.
+  const viewerKind = isWorkspaceFilePath(path, workspaceFolders)
+    ? "workspace"
+    : isExternalFilePath(path)
+      ? "external"
+      : "contained";
   const imageMode = isImagePath(path);
   if (imageMode) {
-    const kind = isWorkspaceFilePath(path, workspaceFolders)
-      ? "workspace"
-      : isExternalFilePath(path)
-        ? "external"
-        : "contained";
+    const kind = viewerKind;
     const src = `/fs-serve?sid=${encodeURIComponent(sid)}&path=${encodeURIComponent(path)}&kind=${kind}`;
     return (
       <div class="file-viewer">
         <header class="viewer-header">
           <span class="viewer-path">{path}</span>
           <span class="viewer-banner">画像 ({res.size.toLocaleString()} bytes)</span>
+          <SandboxActions sid={sid} path={path} kind={kind} />
           <RefetchButton />
         </header>
         <div class="viewer-image-wrap">
@@ -1178,6 +1262,7 @@ export function FileViewer({
       <div class="file-viewer">
         <header class="viewer-header">
           <span class="viewer-path">{path}</span>
+          <SandboxActions sid={sid} path={path} kind={viewerKind} />
           <RefetchButton />
         </header>
         <p class="viewer-binary">バイナリファイル ({res.size.toLocaleString()} bytes)</p>
@@ -1190,13 +1275,7 @@ export function FileViewer({
       <TextFileEditor
         sid={sid}
         path={path}
-        kind={
-          isWorkspaceFilePath(path, workspaceFolders)
-            ? "workspace"
-            : isExternalFilePath(path)
-              ? "external"
-              : "contained"
-        }
+        kind={viewerKind}
         initialContent={res.content}
         expectedMtime={res.mtime}
         expectedSize={res.size}
@@ -1280,6 +1359,7 @@ export function FileViewer({
             編集
           </button>
         ) : null}
+        <SandboxActions sid={sid} path={path} kind={viewerKind} />
         <RefetchButton />
       </header>
       {showPreview ? (

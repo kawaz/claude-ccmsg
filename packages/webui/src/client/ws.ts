@@ -29,6 +29,8 @@ import type {
   FsFindResponse,
   FsListResponse,
   FsEditResponse,
+  SandboxGrantResponse,
+  SandboxRevokeResponse,
   FsReadResponse,
   FsStatBatchResponse,
   FsWriteResponse,
@@ -223,6 +225,20 @@ export interface WsHandle {
     expectedMtime: string,
     expectedSize: number,
   ): Promise<FsEditResponse | ErrorResponse>;
+  /** Mint a capability URL on the sandbox origin (DR-0030) for one file, so it
+   * can be opened with its real MIME type — `text/html` renders, binaries
+   * download — which the same-origin `/fs-serve` refuses to serve. The reply's
+   * `url` is preview mode; append `?dl=1` for the download mode. Only worth
+   * calling when hello reported `sandbox_available`; otherwise the daemon
+   * answers `sandbox_not_configured`. */
+  sandboxGrant(
+    sid: string,
+    path: string,
+    kind: "contained" | "external" | "workspace",
+  ): Promise<SandboxGrantResponse | ErrorResponse>;
+  /** Drop a grant early. Best-effort — the grant's 30-minute expiry is what
+   * actually bounds its life, so a failure here needs no handling. */
+  sandboxRevoke(gid: string): Promise<SandboxRevokeResponse | ErrorResponse>;
   /** Read a slice of a connected session's transcript jsonl (DR-0009
    * transcript_read). `before` omitted = tail of the file; pass the previous
    * reply's `start` to page older. */
@@ -495,6 +511,13 @@ export function createWsClient(
         dispatch({
           type: "llm-stats/availability",
           available: hello.llm_stats_available === true,
+        });
+        // sandbox origin (DR-0030) の capability。同じ理由で省略時は false へ
+        // 明示的に落とす — daemon の設定が消えた後に古い capability が残ると、
+        // FileViewer の「HTML として開く」が必ず失敗するボタンになる。
+        dispatch({
+          type: "sandbox/availability",
+          available: hello.sandbox_available === true,
         });
       }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
@@ -866,6 +889,8 @@ export function createWsClient(
     fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),
     fsEdit: (sid, path, kind, content, expected_mtime, expected_size) =>
       send({ op: "fs_edit", sid, path, kind, content, expected_mtime, expected_size }),
+    sandboxGrant: (sid, path, kind) => send({ op: "sandbox_grant", sid, path, kind }),
+    sandboxRevoke: (gid) => send({ op: "sandbox_revoke", gid }),
     transcriptRead: (sid, opts) =>
       send({
         op: "transcript_read",
