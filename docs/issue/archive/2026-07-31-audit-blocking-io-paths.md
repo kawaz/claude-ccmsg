@@ -1,6 +1,6 @@
 ---
 title: daemon/webui の同期 IO・イベントループ阻害の洗い出し (詰まり体感の根治)
-status: wip
+status: resolved
 category: task
 created: 2026-07-31T11:18:12+09:00
 last_read: 2026-08-12T08:23:19+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T08:24:03+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T08:40:54+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["finding/2026-08-12-blocking-io-audit-full","done:34項目仕分け完了","done:high4件=fsRead/fsWrite実装済み(v0.100.3)","done:snapshot経路はissue/session-status-snapshot-sync-ioへ","done:webui cross-lineはissue/timeline-crossline-incrementalへ","done:残medium/lowはissue/remaining-sync-io-medium-lowへ","done:受け入れ条件4つ全て充足"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -41,11 +41,11 @@ kawaz の裁定 (r99m5): 「IO を伴うイベントやメッセージは全て�
 
 ## 受け入れ条件
 
-- [ ] daemon の op ハンドラ / イベント処理経路を通読し、同期 fs API (`readFileSync` 等) やイベントループを
+- [x] daemon の op ハンドラ / イベント処理経路を通読し、同期 fs API (`readFileSync` 等) やイベントループを
       塞ぐ重い同期処理を全て列挙した一覧がある
-- [ ] webui のイベントハンドラ / レンダリング経路を通読し、同様の一覧がある (Timeline DOM 規模は除外)
-- [ ] 各項目が「非同期化する」/「性質上同期で問題ない (理由明記)」に仕分けされている
-- [ ] 非同期化が必要な項目それぞれについて、修正 issue 化または実装が完了している
+- [x] webui のイベントハンドラ / レンダリング経路を通読し、同様の一覧がある (Timeline DOM 規模は除外)
+- [x] 各項目が「非同期化する」/「性質上同期で問題ない (理由明記)」に仕分けされている
+- [x] 非同期化が必要な項目それぞれについて、修正 issue 化または実装が完了している
 
 ## TODO
 
