@@ -6,7 +6,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 |---|---|---|---|---|
 | 2026-08-12 | task | open | [statuspanel-fold-normalization](./2026-08-12-statuspanel-fold-normalization.md) | StatusPanel の details 4 箇所 (完了/ENV/pending/completed) を Fold コンポーネントへ統一する。ENV 箇所は onToggle 用 prop 追加が要る |
 | 2026-08-02 | design | open | [attachment-file-preview-and-grouping](./2026-08-02-attachment-file-preview-and-grouping.md) | file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け (Read/Edit/Write vs attachments) |
-| 2026-07-31 | task | open | [audit-blocking-io-paths](./2026-07-31-audit-blocking-io-paths.md) | daemon/webui の同期 IO・イベントループ阻害箇所の洗い出しと非同期化仕分け (DR-0029、r99m5 裁定を受けた監査) |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
 | 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
 | 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
@@ -17,5 +16,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-24 | design | open | [ipad-voice-notify-webrtc-audio](./2026-07-24-ipad-voice-notify-webrtc-audio.md) | iPad webapp で別アプリ使用中でも音声で気づける通知を、WebRTC audio track + server-side TTS で実現する構想。DataChannel transport 構想との統合検討含む |
 | 2026-07-22 | design | open | [broadcast-room-membership-topic](./2026-07-22-broadcast-room-membership-topic.md) | broadcast room の membership を「初回 join のみ記録・leave を書かない monotone 集合」の topic 化に変更する設計検討。DR-0013 §2.2 再解釈が要るため kawaz 裁定待ち |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
+| 2026-07-31 | task | wip | [audit-blocking-io-paths](./2026-07-31-audit-blocking-io-paths.md) | daemon/webui の同期 IO・イベントループ阻害箇所の洗い出しと非同期化仕分け (DR-0029、r99m5 裁定を受けた監査) |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
 | 2026-07-09 | design | wip | [webui-workspace-roadmap](./2026-07-09-webui-workspace-roadmap.md) | webui を workspace UI に育てる長期 roadmap (セッションリスト/ルームリスト+チャット/ファイルツリー+コードビューア、並列進行) |

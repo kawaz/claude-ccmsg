@@ -1,11 +1,11 @@
 ---
 title: daemon/webui の同期 IO・イベントループ阻害の洗い出し (詰まり体感の根治)
-status: open
+status: wip
 category: task
 created: 2026-07-31T11:18:12+09:00
 last_read: 2026-08-12T08:23:19+09:00
 open_entered: 2026-07-31T11:18:12+09:00
-wip_entered:
+wip_entered: 2026-08-12T08:24:03+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -18,6 +18,10 @@ origin: 自リポ TODO
 ---
 
 # daemon/webui の同期 IO・イベントループ阻害の洗い出し (詰まり体感の根治)
+
+## 進捗
+
+監査実施 (2026-08-12)。daemon/webui の同期 IO 洗い出し + 仕分けを worker に委譲、結果は findings に追記予定。
 
 ## 概要
 
