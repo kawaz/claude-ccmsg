@@ -439,7 +439,9 @@ function UsageTabs({ state }: { state: AppState }) {
         <button
           key={entry.tab}
           type="button"
-          aria-current={entry.tab !== "catalog" && state.usageTab === entry.tab ? "page" : undefined}
+          aria-current={
+            entry.tab !== "catalog" && state.usageTab === entry.tab ? "page" : undefined
+          }
           onClick={() => {
             if (entry.tab === "catalog" || state.usageTab !== entry.tab) {
               pushNavigation(entry.href);
