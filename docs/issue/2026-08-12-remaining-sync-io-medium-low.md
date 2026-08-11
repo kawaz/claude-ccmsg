@@ -1,11 +1,11 @@
 ---
 title: daemon の残存同期 IO (medium/low) の解消
-status: open
+status: wip
 category: task
 created: 2026-08-12T08:39:53+09:00
 last_read:
 open_entered: 2026-08-12T08:39:53+09:00
-wip_entered:
+wip_entered: 2026-08-12T08:47:38+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -44,6 +44,8 @@ high として個別対応済み (fsRead/fsWrite v0.100.3、snapshot 経路は
 ## TODO
 
 <!-- wip 時のみ -->
+
+着手 (2026-08-12)。findings の表を正本に機械的 fs.promises 化を worker へ委譲。
 
 - [ ] findings の表を再確認し、対象項目を洗い出す
 - [ ] virtual-sessions の同期スキャンを fs.promises 化
