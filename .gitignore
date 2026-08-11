@@ -33,3 +33,6 @@ logs/
 
 # playwright-cli の action ログ (page snapshot yaml / screenshot png)
 .playwright-cli/
+
+# VS Code workspace (ローカル絶対パスを含む個人ファイル)
+ccmsg.code-workspace
