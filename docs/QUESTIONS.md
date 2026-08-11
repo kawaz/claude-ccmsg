@@ -25,9 +25,4 @@
 
 ## 確認待ち
 
-### TRIAGE-C1: 実装済みらしき要望 issue 2 件の close 可否
-
-[kawaz-agents-status](issue/2026-07-27-kawaz-agents-status.md) と [kawaz-req1](issue/2026-07-27-kawaz-req1.md) (実質同一要望) は実装済みと判定: sort は name/idle/connected に刷新済み ([Sidebar.tsx:22](../packages/webui/src/client/components/Sidebar.tsx))、status 別セクション化 (busy/idle/done/offline) も実装済み ([SessionList.tsx:349](../packages/webui/src/client/components/SessionList.tsx))。ただし要望文言 (created/recent/inactive) と実装語彙が完全一致ではない。
-
-- [ ] a: 現状で満足 → 両 issue close
-- [ ] b: 不足あり (不足点をチャットで一言)
+(なし)
