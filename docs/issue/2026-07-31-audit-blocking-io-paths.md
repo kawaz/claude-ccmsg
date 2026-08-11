@@ -3,7 +3,7 @@ title: daemon/webui の同期 IO・イベントループ阻害の洗い出し (�
 status: open
 category: task
 created: 2026-07-31T11:18:12+09:00
-last_read:
+last_read: 2026-08-12T08:23:19+09:00
 open_entered: 2026-07-31T11:18:12+09:00
 wip_entered:
 blocked_entered:
