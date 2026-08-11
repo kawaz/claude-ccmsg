@@ -1,11 +1,11 @@
 ---
 title: パス正規化の潜在ギャップ 2 件 (symlink 綴り / peers.cwd の生綴り)
-status: open
+status: wip
 category: bug
 created: 2026-07-31T23:47:03+09:00
 last_read: 2026-08-12T08:12:55+09:00
 open_entered: 2026-07-31T23:47:03+09:00
-wip_entered:
+wip_entered: 2026-08-12T08:13:35+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -32,6 +32,10 @@ C32d 403 修正 (v0.88.3) の調査中に worker が実測で発見した潜在�
 
 C32d (403 応答の調査・修正、v0.88.3) の過程で worker が周辺コードを読んだ際に発見。
 関連: DR-0008 / DR-0024。`docs/findings/2026-07-31-blocking-io-audit.md` とは別件。
+
+## 進捗
+
+修正着手 (2026-08-12)。受け入れ条件どおり daemon 側 realpath 統一の方向で実装。
 
 ## 受け入れ条件
 
