@@ -1,10 +1,9 @@
-// DR-0018 §2.1: pure form-state helpers for SessionCreator.tsx (default
+// DR-0018 §2.1: pure form-state helpers for SessionCreator.tsx (params-driven
 // construction, run-button validity gate, wire-request projection).
 import { describe, expect, test } from "bun:test";
-import type { SessionLauncherConfigTemplate } from "@ccmsg/protocol";
+import type { LauncherParam, SessionLauncherConfigTemplate } from "@ccmsg/protocol";
 import {
   buildSessionLaunchRequest,
-  commandUsesVar,
   commitCwdInput,
   plainTemplate,
   forkSourceDefaults,
@@ -12,10 +11,10 @@ import {
   initialTemplate,
   launcherEffortFromTranscript,
   launcherModelFromTranscript,
-  usesForkPoint,
+  paramWidget,
   selectSessionCreatorTemplate,
-  DEFAULT_SESSION_CREATOR_EFFORT,
-  DEFAULT_SESSION_CREATOR_MODEL,
+  sessionCreatorCwd,
+  templateDeclares,
   initialCwdPickerMode,
   initialSessionCreatorForm,
   sessionCreatorFormValid,
@@ -24,93 +23,125 @@ import {
   type SessionCreatorForm,
 } from "../src/client/session-creator.ts";
 
-/** One configured recipe, as session_launcher_config projects it. */
+/** One configured recipe, as session_launcher_config projects it. `params` is
+ * written as a name→default object for readability and kept in that order — the
+ * wire form is the ordered array the form renders from. */
 function template(
   name: string,
   command: string,
-  defaultPrompt = "",
+  params: Record<string, string> = {},
 ): SessionLauncherConfigTemplate {
-  return { name, command, default_prompt: defaultPrompt };
+  const declared: LauncherParam[] = Object.entries(params).map(([n, d]) => ({
+    name: n,
+    default: d,
+  }));
+  return { name, command, params: declared };
 }
 
-const PLAIN = template("default", "run-launch", "hello");
-const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"');
+const PLAIN = template("default", "run-launch", {
+  CWD: "",
+  MODEL: "fable",
+  EFFORT: "middle",
+  PROMPT: "hello",
+});
+const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"', {
+  CWD: "",
+  MODEL: "fable",
+  EFFORT: "middle",
+  PROMPT: "",
+  RESUME_SID: "",
+  RESUME_AT: "",
+});
 
 describe("initialSessionCreatorForm", () => {
-  test("defaults model to fable and effort to middle, cwd empty", () => {
-    const form = initialSessionCreatorForm([PLAIN]);
-    expect(form).toEqual({
-      cwd: "",
-      model: DEFAULT_SESSION_CREATOR_MODEL,
-      effort: DEFAULT_SESSION_CREATOR_EFFORT,
-      prompt: "hello",
+  test("seeds every declared parameter from its configured default", () => {
+    expect(initialSessionCreatorForm([PLAIN])).toEqual({
       template: "default",
       command: "run-launch",
-      resumeSid: "",
-      resumeAt: "",
+      params: { CWD: "", MODEL: "fable", EFFORT: "middle", PROMPT: "hello" },
     });
-    expect(form.model).toBe("fable");
-    expect(form.effort).toBe("middle");
   });
 
-  test("carries the template's default_prompt verbatim, including empty string", () => {
-    expect(initialSessionCreatorForm([template("t", "cmd", "")]).prompt).toBe("");
-    expect(initialSessionCreatorForm([template("t", "cmd", "multi\nline\n")]).prompt).toBe(
-      "multi\nline\n",
+  // The declaration is the only source of fields: a recipe that declares two
+  // parameters gets two, whatever the command text happens to mention.
+  test("undeclared variables get no value, even when the command reads them", () => {
+    const form = initialSessionCreatorForm([template("t", 'run "$MODEL" "$PROMPT"', { CWD: "" })]);
+    expect(form.params).toEqual({ CWD: "" });
+  });
+
+  test("a parameter this webui has never heard of is seeded like any other", () => {
+    const form = initialSessionCreatorForm([
+      template("t", 'run "$BRANCH"', { CWD: "", BRANCH: "main" }),
+    ]);
+    expect(form.params).toEqual({ CWD: "", BRANCH: "main" });
+  });
+
+  test("carries a default verbatim, including empty and multi-line strings", () => {
+    expect(initialSessionCreatorForm([template("t", "cmd", { PROMPT: "" })]).params.PROMPT).toBe(
+      "",
     );
+    expect(
+      initialSessionCreatorForm([template("t", "cmd", { PROMPT: "multi\nline\n" })]).params.PROMPT,
+    ).toBe("multi\nline\n");
   });
 
-  // The command template is a shell body with `$CWD`/`$MODEL`/`$EFFORT`/
-  // `$PROMPT` refs — the daemon never substitutes them, and neither does the
-  // form. The user should see exactly what the daemon will run.
+  // The command template is a shell body with `$CWD`/`$MODEL`/… refs — the
+  // daemon never substitutes them, and neither does the form. The user should
+  // see exactly what the daemon will run.
   test("carries the template's command verbatim, including $VAR refs and newlines", () => {
     const cmd = 'claude --model "$MODEL" --effort "$EFFORT"\n"$PROMPT"';
-    expect(initialSessionCreatorForm([template("t", cmd, "p")]).command).toBe(cmd);
+    expect(initialSessionCreatorForm([template("t", cmd)]).command).toBe(cmd);
   });
 
-  // A fork opens on a recipe that actually consumes the fork point, whatever
+  // A fork opens on a recipe that actually declares the fork point, whatever
   // its position in the list, and carries the fork values into the form.
   test("a fork prefill opens on the fork recipe with the fork point filled in", () => {
     const form = initialSessionCreatorForm([PLAIN, FORK], { resumeSid: "sid-1", resumeAt: "u-9" });
-    expect(form).toMatchObject({
-      template: "fork",
-      command: FORK.command,
-      resumeSid: "sid-1",
-      resumeAt: "u-9",
-    });
+    expect(form).toMatchObject({ template: "fork", command: FORK.command });
+    expect(form.params).toMatchObject({ RESUME_SID: "sid-1", RESUME_AT: "u-9" });
   });
 
   // With no fork-capable recipe configured the form still opens (on the
-  // default) carrying the fork point — SessionCreator warns that the command
-  // will not act on it rather than dropping the request silently.
-  test("a fork prefill falls back to the default recipe when none consumes $RESUME_AT", () => {
+  // default); the fork values have nowhere to go and are dropped rather than
+  // riding along invisibly in a request nothing would read.
+  test("a fork prefill falls back to the default recipe, dropping undeclared fork values", () => {
     const form = initialSessionCreatorForm([PLAIN], { resumeSid: "sid-1", resumeAt: "u-9" });
-    expect(form).toMatchObject({ template: "default", resumeAt: "u-9" });
+    expect(form.template).toBe("default");
+    expect(form.params).not.toHaveProperty("RESUME_AT");
   });
 
-  // Fork-source defaults win over the plain defaults, field by field.
+  // Fork-source defaults win over the declared defaults, parameter by parameter.
   test("applies the fork source's cwd/model/effort when given", () => {
     const form = initialSessionCreatorForm(
       [PLAIN, FORK],
       { resumeSid: "s", resumeAt: "u" },
       {
-        cwd: "/repos/app",
-        model: "opus",
-        effort: "high",
+        CWD: "/repos/app",
+        MODEL: "opus",
+        EFFORT: "high",
       },
     );
-    expect(form).toMatchObject({ cwd: "/repos/app", model: "opus", effort: "high" });
+    expect(form.params).toMatchObject({ CWD: "/repos/app", MODEL: "opus", EFFORT: "high" });
   });
 
-  // A partial inheritance leaves the untouched fields exactly where a plain
-  // open leaves them.
-  test("fields absent from the defaults keep the plain defaults", () => {
-    const form = initialSessionCreatorForm([PLAIN], null, { model: "sonnet" });
-    expect(form).toMatchObject({
-      cwd: "",
-      model: "sonnet",
-      effort: DEFAULT_SESSION_CREATOR_EFFORT,
-    });
+  // A partial inheritance leaves the untouched parameters at their declared
+  // defaults.
+  test("parameters absent from the defaults keep their declared defaults", () => {
+    const form = initialSessionCreatorForm([PLAIN], null, { MODEL: "sonnet" });
+    expect(form.params).toMatchObject({ CWD: "", MODEL: "sonnet", EFFORT: "middle" });
+  });
+});
+
+describe("paramWidget", () => {
+  // Names the form knows get a purpose-built control; anything else is still
+  // offered, as a plain text input.
+  test("known names map to their control, everything else to a text input", () => {
+    expect(paramWidget("CWD")).toBe("cwd");
+    expect(paramWidget("MODEL")).toBe("model");
+    expect(paramWidget("EFFORT")).toBe("effort");
+    expect(paramWidget("PROMPT")).toBe("prompt");
+    expect(paramWidget("RESUME_SID")).toBe("text");
+    expect(paramWidget("BRANCH")).toBe("text");
   });
 });
 
@@ -119,12 +150,12 @@ describe("forkSourceDefaults", () => {
 
   test("takes cwd from the source when it sits under a configured root", () => {
     expect(forkSourceDefaults({ cwd: "/repos/app/main" }, ROOTS)).toEqual({
-      cwd: "/repos/app/main",
+      CWD: "/repos/app/main",
     });
     // The root itself is a legal pick, and a root written with a trailing
     // slash matches the same paths as one without.
-    expect(forkSourceDefaults({ cwd: "/repos" }, ROOTS)).toEqual({ cwd: "/repos" });
-    expect(forkSourceDefaults({ cwd: "/srv/work/x" }, ROOTS)).toEqual({ cwd: "/srv/work/x" });
+    expect(forkSourceDefaults({ cwd: "/repos" }, ROOTS)).toEqual({ CWD: "/repos" });
+    expect(forkSourceDefaults({ cwd: "/srv/work/x" }, ROOTS)).toEqual({ CWD: "/srv/work/x" });
   });
 
   // Seeding a cwd the daemon would refuse would leave the user pressing 実行
@@ -143,8 +174,8 @@ describe("forkSourceDefaults", () => {
 
   test("maps model and effort into the form's vocabulary", () => {
     expect(forkSourceDefaults({ model: "claude-fable-5[1m]", effort: "medium" }, ROOTS)).toEqual({
-      model: "fable",
-      effort: "middle",
+      MODEL: "fable",
+      EFFORT: "middle",
     });
   });
 });
@@ -165,7 +196,7 @@ describe("launcherModelFromTranscript", () => {
   });
 
   // Synthetic harness rows and families with no dropdown entry have no honest
-  // answer — the caller keeps the plain default rather than guessing.
+  // answer — the caller keeps the declared default rather than guessing.
   test("unknown values map to nothing", () => {
     expect(launcherModelFromTranscript("<synthetic>")).toBeUndefined();
     expect(launcherModelFromTranscript("claude-haiku-4-5-20251001")).toBeUndefined();
@@ -189,26 +220,15 @@ describe("launcherEffortFromTranscript", () => {
 });
 
 describe("forkTemplate / initialTemplate", () => {
-  // Fork capability is read off the command text: a recipe that never expands
-  // the fork point cannot fork regardless of its name.
-  test("picks the first recipe whose command reads the fork point", () => {
+  // Fork capability is read off the declaration: a recipe that never takes the
+  // fork point cannot fork regardless of its name or its command text.
+  test("picks the first recipe declaring the fork point", () => {
     expect(forkTemplate([PLAIN, FORK])?.name).toBe("fork");
     expect(forkTemplate([template("fork", "run --plain")])).toBeUndefined();
-    expect(forkTemplate([template("braced", 'run "${RESUME_AT}"')])?.name).toBe("braced");
-  });
-
-  // `$RESUME_ATTEMPT` is a different variable; the word boundary keeps it from
-  // reading as fork support.
-  test("a longer variable name that merely starts with RESUME_AT does not count", () => {
-    expect(forkTemplate([template("t", 'run "$RESUME_ATTEMPT"')])).toBeUndefined();
-  });
-
-  // The form asks the same question about the command actually about to run
-  // (possibly hand-edited, or a plain recipe the user switched to after
-  // asking for a fork), so the predicate is exposed on its own.
-  test("usesForkPoint answers for one command text", () => {
-    expect(usesForkPoint('run "$RESUME_AT"')).toBe(true);
-    expect(usesForkPoint("run --plain")).toBe(false);
+    // Reading `$RESUME_AT` without declaring it is not fork support — the
+    // launcher shell would not define the variable at all.
+    expect(forkTemplate([template("t", 'run "$RESUME_AT"')])).toBeUndefined();
+    expect(templateDeclares(FORK, "RESUME_AT")).toBe(true);
   });
 
   test("without a prefill the first plain (non-fork) recipe is chosen", () => {
@@ -227,38 +247,34 @@ describe("forkTemplate / initialTemplate", () => {
   });
 });
 
-describe("commandUsesVar", () => {
-  // Which inputs the form offers: a variable the command never reads has no
-  // input, so this answers per-variable what usesForkPoint answers for the
-  // fork point specifically.
-  test("matches $VAR and ${VAR}, with a word boundary", () => {
-    expect(commandUsesVar('run --resume "$RESUME_SID"', "RESUME_SID")).toBe(true);
-    expect(commandUsesVar('run --resume "${RESUME_SID}"', "RESUME_SID")).toBe(true);
-    expect(commandUsesVar('run "$RESUME_SIDECAR"', "RESUME_SID")).toBe(false);
-    expect(commandUsesVar(PLAIN.command, "RESUME_SID")).toBe(false);
-    expect(commandUsesVar(FORK.command, "RESUME_AT")).toBe(true);
-  });
-});
-
 describe("selectSessionCreatorTemplate", () => {
-  // Prompt and command belong to the recipe, so they follow the switch; the
-  // user's own picks (cwd/model/effort and the fork point) survive it.
-  test("switching a template replaces prompt and command, keeping user picks", () => {
+  // The command belongs to the recipe, so it follows the switch. Parameters
+  // restart from the new declaration except where the user had moved a value
+  // away from the old recipe's default.
+  test("switching a template replaces the command and keeps the user's edits", () => {
     const start = initialSessionCreatorForm([PLAIN, FORK], { resumeSid: "s", resumeAt: "u" });
-    const switched = selectSessionCreatorTemplate(
-      { ...start, cwd: "/repo", model: "opus" },
-      [PLAIN, FORK],
-      "default",
-    );
-    expect(switched).toMatchObject({
-      template: "default",
-      prompt: "hello",
-      command: "run-launch",
-      cwd: "/repo",
-      model: "opus",
-      resumeSid: "s",
-      resumeAt: "u",
+    const edited = {
+      ...start,
+      params: { ...start.params, CWD: "/repo", MODEL: "opus" },
+    };
+    const switched = selectSessionCreatorTemplate(edited, [PLAIN, FORK], "default");
+    expect(switched).toMatchObject({ template: "default", command: "run-launch" });
+    expect(switched.params).toEqual({
+      CWD: "/repo",
+      MODEL: "opus",
+      // Untouched in the fork recipe, so the plain recipe's own default wins.
+      EFFORT: "middle",
+      PROMPT: "hello",
     });
+    // The fork values have no home in the plain recipe and are dropped.
+    expect(switched.params).not.toHaveProperty("RESUME_SID");
+  });
+
+  test("an untouched value takes the new recipe's default", () => {
+    const a = template("a", "cmd-a", { CWD: "", PROMPT: "from-a" });
+    const b = template("b", "cmd-b", { CWD: "", PROMPT: "from-b" });
+    const start = initialSessionCreatorForm([a, b]);
+    expect(selectSessionCreatorTemplate(start, [a, b], "b").params.PROMPT).toBe("from-b");
   });
 
   test("an unknown name leaves the form untouched", () => {
@@ -290,42 +306,44 @@ const DEFAULT_COMMAND = PLAIN.command;
 
 function form(overrides: Partial<SessionCreatorForm> = {}): SessionCreatorForm {
   return {
-    cwd: "/repo",
-    model: "fable",
-    effort: "middle",
-    prompt: "hi",
     template: PLAIN.name,
     command: DEFAULT_COMMAND,
-    resumeSid: "",
-    resumeAt: "",
     ...overrides,
+    params: {
+      CWD: "/repo",
+      MODEL: "fable",
+      EFFORT: "middle",
+      PROMPT: "hi",
+      ...overrides.params,
+    },
   };
 }
 
 describe("sessionCreatorFormValid", () => {
   test("valid once cwd is non-blank", () => {
-    expect(sessionCreatorFormValid(form({ cwd: "/repo" }))).toBe(true);
+    expect(sessionCreatorFormValid(form())).toBe(true);
+    expect(sessionCreatorCwd(form())).toBe("/repo");
   });
 
   test("invalid with an empty cwd", () => {
-    expect(sessionCreatorFormValid(form({ cwd: "" }))).toBe(false);
+    expect(sessionCreatorFormValid(form({ params: { CWD: "" } }))).toBe(false);
   });
 
   test("invalid with a whitespace-only cwd", () => {
-    expect(sessionCreatorFormValid(form({ cwd: "   " }))).toBe(false);
+    expect(sessionCreatorFormValid(form({ params: { CWD: "   " } }))).toBe(false);
   });
 
-  // Prompt is deliberately not part of the gate — an empty prompt is still a
-  // launchable `claude` invocation (see the doc comment in session-creator.ts).
+  // Other parameters are deliberately not part of the gate — an empty prompt is
+  // still a launchable `claude` invocation (see session-creator.ts).
   test("valid with an empty prompt, as long as cwd is set", () => {
-    expect(sessionCreatorFormValid(form({ cwd: "/repo", prompt: "" }))).toBe(true);
+    expect(sessionCreatorFormValid(form({ params: { PROMPT: "" } }))).toBe(true);
   });
 });
 
 // issue 2026-07-17-session-creator-cwd-picker-unify: pure mode-transition
 // helpers for CwdPicker's editing/confirmed toggle.
 describe("initialCwdPickerMode", () => {
-  test("editing when cwd is empty (initialSessionCreatorForm's default)", () => {
+  test("editing when cwd is empty", () => {
     expect(initialCwdPickerMode("")).toBe("editing");
   });
 
@@ -333,7 +351,7 @@ describe("initialCwdPickerMode", () => {
     expect(initialCwdPickerMode("   ")).toBe("editing");
   });
 
-  test("confirmed when a cwd is already set (future default-cwd source)", () => {
+  test("confirmed when a cwd is already set (fork inheritance, declared default)", () => {
     expect(initialCwdPickerMode("/repo")).toBe("confirmed");
   });
 });
@@ -357,42 +375,37 @@ describe("commitCwdInput", () => {
 
 describe("buildSessionLaunchRequest", () => {
   test("null when the form isn't launchable (empty cwd)", () => {
-    expect(buildSessionLaunchRequest(form({ cwd: "" }), [PLAIN])).toBeNull();
+    expect(buildSessionLaunchRequest(form({ params: { CWD: "" } }), [PLAIN])).toBeNull();
   });
 
-  test("trims cwd and carries model/effort/prompt through unchanged", () => {
+  // CWD leaves as the request's own field (the daemon containment-checks it and
+  // spawns there); every other parameter travels in `params`, untouched.
+  test("trims cwd out into its own field and carries the rest as params", () => {
     expect(
       buildSessionLaunchRequest(
-        form({ cwd: "  /repo/ws  ", model: "gpt-5.6-sol", effort: "high", prompt: "go" }),
+        form({
+          params: { CWD: "  /repo/ws  ", MODEL: "gpt-5.6-sol", EFFORT: "high", PROMPT: "go" },
+        }),
         [PLAIN],
       ),
     ).toEqual({
       cwd: "/repo/ws",
-      model: "gpt-5.6-sol",
-      effort: "high",
-      prompt: "go",
+      params: { MODEL: "gpt-5.6-sol", EFFORT: "high", PROMPT: "go" },
       template: "default",
     });
   });
 
-  test("prompt is passed through verbatim, including leading/trailing whitespace", () => {
-    const req = buildSessionLaunchRequest(form({ prompt: "  keep this spacing  " }), [PLAIN]);
-    expect(req?.prompt).toBe("  keep this spacing  ");
+  test("values are passed through verbatim, including leading/trailing whitespace", () => {
+    const req = buildSessionLaunchRequest(form({ params: { PROMPT: "  keep spacing  " } }), [
+      PLAIN,
+    ]);
+    expect(req?.params.PROMPT).toBe("  keep spacing  ");
   });
 
-  // No-edit case: command unchanged from the daemon-configured template, so
-  // the wire request stays identical to the pre-addendum shape (no `command`
-  // field). Keeps the common path bit-identical when the user only edited
-  // cwd/model/effort/prompt.
+  // No-edit case: command unchanged from the daemon-configured template, so no
+  // `command` field rides along and the daemon runs its own recipe.
   test("omits command when it matches the daemon default verbatim", () => {
     const req = buildSessionLaunchRequest(form({ command: DEFAULT_COMMAND }), [PLAIN]);
-    expect(req).toEqual({
-      cwd: "/repo",
-      model: "fable",
-      effort: "middle",
-      prompt: "hi",
-      template: "default",
-    });
     expect(req).not.toHaveProperty("command");
   });
 
@@ -402,9 +415,7 @@ describe("buildSessionLaunchRequest", () => {
   test("sends command override when it differs from the default, verbatim", () => {
     expect(buildSessionLaunchRequest(form({ command: "custom --run" }), [PLAIN])).toEqual({
       cwd: "/repo",
-      model: "fable",
-      effort: "middle",
-      prompt: "hi",
+      params: { MODEL: "fable", EFFORT: "middle", PROMPT: "hi" },
       template: "default",
       command: "custom --run",
     });
@@ -422,27 +433,27 @@ describe("buildSessionLaunchRequest", () => {
     expect(req?.command).toBe(`${DEFAULT_COMMAND}\n`);
   });
 
-  // Fork values ride along as their own wire fields; empty ones are omitted
-  // rather than sent blank (the daemon rejects a present-but-empty resume).
-  test("carries the fork point when present and omits it when empty", () => {
-    expect(
-      buildSessionLaunchRequest(
-        form({ template: "fork", command: FORK.command, resumeSid: "s-1", resumeAt: "u-1" }),
-        [PLAIN, FORK],
-      ),
-    ).toMatchObject({ template: "fork", resume_sid: "s-1", resume_at: "u-1" });
-    const plain = buildSessionLaunchRequest(form(), [PLAIN]);
-    expect(plain).not.toHaveProperty("resume_sid");
-    expect(plain).not.toHaveProperty("resume_at");
+  test("carries the fork values as ordinary params", () => {
+    const req = buildSessionLaunchRequest(
+      form({
+        template: "fork",
+        command: FORK.command,
+        params: { RESUME_SID: "s-1", RESUME_AT: "u-1" },
+      }),
+      [PLAIN, FORK],
+    );
+    expect(req).toMatchObject({ template: "fork" });
+    expect(req?.params).toMatchObject({ RESUME_SID: "s-1", RESUME_AT: "u-1" });
+    expect(buildSessionLaunchRequest(form(), [PLAIN])?.params).not.toHaveProperty("RESUME_AT");
   });
 
   // The command baseline is the SELECTED recipe, so an unedited fork command
   // is still a no-override launch even though it differs from the default one.
   test("the no-override comparison follows the selected template", () => {
-    const req = buildSessionLaunchRequest(
-      form({ template: "fork", command: FORK.command, resumeAt: "u-1" }),
-      [PLAIN, FORK],
-    );
+    const req = buildSessionLaunchRequest(form({ template: "fork", command: FORK.command }), [
+      PLAIN,
+      FORK,
+    ]);
     expect(req).not.toHaveProperty("command");
   });
 });
