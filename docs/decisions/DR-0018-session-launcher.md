@@ -136,6 +136,27 @@ LN-Q2 の env 渡しは受け渡し手段として良かったが、env であ�
 - prologue は固定の識別子だけで構成され、request の値を shell source に埋め込む
   ことは一切ない (= injection 面は従来どおり config 筆者の quote 責務に閉じる)
 
+**Addendum 2026-08-12 (kawaz r119m6): テンプレ params 宣言化 — §3.1 の
+トップレベル `command`/`default_prompt` と固定 4 変数語彙を supersede**:
+launcher がテンプレ構造なのに既定値がテンプレの外にあり、webui は「command が
+変数を使うか」の推測で入力欄を出し分けるねじれがあった。テンプレを完結した宣言に
+改める:
+
+- テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値
+  (string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言
+  された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された
+  入力欄だけを宣言順に描画する (widget は変数名で選ぶ: CWD=picker、
+  MODEL/EFFORT=select、PROMPT=textarea、未知名=プレーン input)
+- `CWD` のみ wire の独立フィールド (realpath 封じ込め + spawn cwd と daemon
+  自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
+- wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は
+  `params: Record<string, string>` に一本化。未宣言の変数名は invalid_args
+  (黙って捨てない)。carrier は `ccmsg_new_session_param_<NAME>` に改名
+  (変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
+- 旧形式 (トップレベル command/default_prompt + 部分上書き templates) は
+  読み込み時に新形式へ正規化して deprecation 警告を 1 行出す。実行系は
+  正規化後の 1 経路のみ
+
 ### 3.2 protocol (新 op)
 
 新 request/response 型を `packages/protocol/src/index.ts` に追加:
