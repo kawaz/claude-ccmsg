@@ -1,6 +1,6 @@
 ---
 title: webui のデザインシステム / コンポーネントカタログ導入
-status: wip
+status: resolved
 category: design
 created: 2026-07-30T21:41:57+09:00
 last_read: 2026-08-12T02:17:03+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T02:18:20+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T03:36:01+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0031","implemented","v0.99.0 で実装完了 (トークン --space-1..17 / --font-size-3xs..4xl、/catalog 14 セクション、usage タブ導線、Fold/Tabs 正規化)"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -57,6 +57,3 @@ kawaz r76m76, 2026-07-30:
 - [ ] デザイントークンの棚卸しと規約化
 - [ ] 主要コンポーネントのカタログ化 (エラービュー・バブル・fold・dot 等の状態別表示)
 
-## 解決時の記録先
-
-- 設計判断を伴う: decisions/DR-NNNN
