@@ -1,6 +1,6 @@
 ---
 title: worker が作った TODO が Status パネルにも dump にも出ない
-status: wip
+status: resolved
 category: bug
 created: 2026-07-27T10:26:21+09:00
 last_read: 2026-08-12T07:56:09+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T07:57:17+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T08:12:41+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0020","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
