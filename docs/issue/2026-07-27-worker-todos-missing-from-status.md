@@ -3,7 +3,7 @@ title: worker が作った TODO が Status パネルにも dump にも出ない
 status: open
 category: bug
 created: 2026-07-27T10:26:21+09:00
-last_read: 2026-07-28T19:16:00+09:00
+last_read: 2026-08-12T07:56:09+09:00
 open_entered: 2026-07-27T10:26:21+09:00
 wip_entered:
 blocked_entered:
