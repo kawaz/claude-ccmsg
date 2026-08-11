@@ -5,6 +5,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
 | 2026-08-12 | bug | open | [session-status-snapshot-sync-io](./2026-08-12-session-status-snapshot-sync-io.md) | snapshot() 経路の同期 IO 根治。readAgentTree / discoverWorkspaceFolders が push ごとに readdirSync/readFileSync/statSync を実行 |
+| 2026-08-12 | design | open | [timeline-crossline-incremental](./2026-08-12-timeline-crossline-incremental.md) | Timeline cross-line 処理 (pairQueuedTurns/offsets/groupTimelineLines 等) が live-tail 毎行で全行走査、store.ts lines 連結も O(N)。virtual-scroll とは独立コスト |
 | 2026-08-12 | task | open | [statuspanel-fold-normalization](./2026-08-12-statuspanel-fold-normalization.md) | StatusPanel の details 4 箇所 (完了/ENV/pending/completed) を Fold コンポーネントへ統一する。ENV 箇所は onToggle 用 prop 追加が要る |
 | 2026-08-02 | design | open | [attachment-file-preview-and-grouping](./2026-08-02-attachment-file-preview-and-grouping.md) | file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け (Read/Edit/Write vs attachments) |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
