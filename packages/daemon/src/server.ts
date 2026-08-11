@@ -2336,7 +2336,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "fs_read": {
-      const result = fsRead(daemon.sessions, req.sid, req.path, {
+      const result = await fsRead(daemon.sessions, req.sid, req.path, {
         allowVirtual: conn.identity?.role === "user",
       });
       if (!result.ok) {
@@ -2459,7 +2459,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'fs_write' requires user role");
         return;
       }
-      const result = fsWrite(daemon.sessions, req.sid, req.path, req.content);
+      const result = await fsWrite(daemon.sessions, req.sid, req.path, req.content);
       if (!result.ok) {
         sendErr(conn, result.code, result.msg);
         return;

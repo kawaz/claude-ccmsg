@@ -135,25 +135,25 @@ describe("virtual session lookup boundary", () => {
     expect(listed.ok).toBe(true);
     if (listed.ok) expect(listed.data.entries.map((entry) => entry.name)).toEqual(["inside.txt"]);
 
-    const inside = fsRead(emptySessions, sid(), "inside.txt", {
+    const inside = await fsRead(emptySessions, sid(), "inside.txt", {
       allowVirtual: true,
       configDirs: [config],
     });
     expect(inside.ok).toBe(true);
     if (inside.ok) expect(inside.data.content).toBe("inside");
 
-    const write = fsWrite(emptySessions, sid(), "docs/inbox/new.md", "no");
+    const write = await fsWrite(emptySessions, sid(), "docs/inbox/new.md", "no");
     expect(write.ok).toBe(false);
     if (!write.ok) expect(write.code).toBe("session_not_found");
 
-    const escape = fsRead(emptySessions, sid(), "../outside.txt", {
+    const escape = await fsRead(emptySessions, sid(), "../outside.txt", {
       allowVirtual: true,
       configDirs: [config],
     });
     expect(escape.ok).toBe(false);
     if (!escape.ok) expect(escape.code).toBe("path_forbidden");
 
-    const malicious = fsRead(emptySessions, "../../../etc/passwd", "x", {
+    const malicious = await fsRead(emptySessions, "../../../etc/passwd", "x", {
       allowVirtual: true,
       configDirs: [config],
     });

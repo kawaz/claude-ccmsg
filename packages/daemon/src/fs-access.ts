@@ -395,15 +395,15 @@ export async function fsList(
  * authorization. DR-0024 intentionally reuses the byte cap/binary contract but
  * not fs_read's containment grant: fs_read_external reaches this helper only
  * after an exact transcript allowlist match and a fresh realpath check. */
-function readRegularFile(
+async function readRegularFile(
   sid: string,
   realPath: string,
   responsePath: string,
   requestPath: string,
-): FsAccessResult<Omit<FsReadResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(realPath);
+    stat = await fs.promises.lstat(realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${requestPath}` };
   }
@@ -414,16 +414,16 @@ function readRegularFile(
   const size = stat.size;
   const toRead = Math.min(size, FS_READ_MAX_BYTES);
   const buf = Buffer.alloc(toRead);
-  const fd = fs.openSync(realPath, "r");
+  const handle = await fs.promises.open(realPath, "r");
   let readTotal = 0;
   try {
     while (readTotal < toRead) {
-      const n = fs.readSync(fd, buf, readTotal, toRead - readTotal, readTotal);
-      if (n === 0) break; // file shrank concurrently; stop rather than loop forever
-      readTotal += n;
+      const { bytesRead } = await handle.read(buf, readTotal, toRead - readTotal, readTotal);
+      if (bytesRead === 0) break; // file shrank concurrently; stop rather than loop forever
+      readTotal += bytesRead;
     }
   } finally {
-    fs.closeSync(fd);
+    await handle.close();
   }
   const content = buf.subarray(0, readTotal);
 
@@ -453,12 +453,12 @@ function readRegularFile(
   };
 }
 
-export function fsRead(
+export async function fsRead(
   sessions: SessionLookup,
   sid: string,
   reqPath: string,
   opts: FsAccessOptions = {},
-): FsAccessResult<Omit<FsReadResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
   const rootResult = resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
@@ -469,7 +469,12 @@ export function fsRead(
 
   const resolved = resolveContained(root, reqPath);
   if (!resolved.ok) return resolved;
-  return readRegularFile(sid, resolved.realPath, path.relative(root, resolved.realPath), reqPath);
+  return await readRegularFile(
+    sid,
+    resolved.realPath,
+    path.relative(root, resolved.realPath),
+    reqPath,
+  );
 }
 
 /** DR-0024 external-file authorization. The request must name one absolute path
@@ -506,7 +511,7 @@ export async function fsReadExternal(
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
   }
 
-  return readRegularFile(sid, canonical, reqPath, reqPath);
+  return await readRegularFile(sid, canonical, reqPath, reqPath);
 }
 
 // --- fs_list_workspace / fs_read_workspace (DR-0026) ------------------
@@ -654,7 +659,7 @@ export async function fsReadWorkspace(
   if (!allow.ok) return allow;
   const resolved = resolveWorkspaceContained(allow.folders, reqPath);
   if (!resolved.ok) return resolved;
-  return readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
+  return await readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
 }
 
 // --- fs_find root authorization ----------------------------------------
@@ -859,12 +864,12 @@ export async function fsStatBatch(
 
 // --- fs_write ----------------------------------------------------------
 
-export function fsWrite(
+export async function fsWrite(
   sessions: SessionLookup,
   sid: string,
   reqPath: string,
   content: string,
-): FsAccessResult<Omit<FsWriteResponse, "ok">> {
+): Promise<FsAccessResult<Omit<FsWriteResponse, "ok">>> {
   const rootResult = resolveRoot(sessions, sid);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
@@ -884,7 +889,7 @@ export function fsWrite(
   }
   let cwd: string;
   try {
-    cwd = fs.realpathSync(declaredCwd);
+    cwd = await fs.promises.realpath(declaredCwd);
   } catch {
     return {
       ok: false,
@@ -930,7 +935,7 @@ export function fsWrite(
 
   const rootRelPath = path.relative(root, resolved.realPath);
   try {
-    fs.lstatSync(resolved.realPath);
+    await fs.promises.lstat(resolved.realPath);
     return { ok: false, code: ErrorCode.file_exists, msg: `path already exists: ${rootRelPath}` };
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
@@ -944,7 +949,7 @@ export function fsWrite(
   }
 
   try {
-    fs.mkdirSync(path.dirname(resolved.realPath), { recursive: true });
+    await fs.promises.mkdir(path.dirname(resolved.realPath), { recursive: true });
   } catch {
     return {
       ok: false,
@@ -969,7 +974,7 @@ export function fsWrite(
   }
 
   try {
-    fs.writeFileSync(rechecked.realPath, content, { encoding: "utf-8", flag: "wx" });
+    await fs.promises.writeFile(rechecked.realPath, content, { encoding: "utf-8", flag: "wx" });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EEXIST") {
@@ -1088,7 +1093,7 @@ export async function fsEdit(
   }
 
   try {
-    fs.writeFileSync(realPath, content, { encoding: "utf-8", flag: "w" });
+    await fs.promises.writeFile(realPath, content, { encoding: "utf-8", flag: "w" });
   } catch {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot write path: ${reqPath}` };
   }
