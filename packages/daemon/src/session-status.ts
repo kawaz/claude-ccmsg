@@ -1298,6 +1298,10 @@ export function readAgentTree(
   } catch {
     return undefined;
   }
+  // readdir の列挙順は filesystem 依存 (ext4 はハッシュ順、APFS は挿入順に
+  // 見えることが多い)。agent の並びはそのまま Status / dump の表示順になる
+  // ので、名前順に固定して環境差を出さない。
+  entries.sort((a, b) => a.name.localeCompare(b.name));
 
   // (a) subagents/ 直下: teammate / 単発 subagent / それらの子孫
   const metas: AgentMetaFile[] = [];
@@ -1315,6 +1319,7 @@ export function readAgentTree(
   } catch {
     // workflows/ 不在は空扱い (通常セッション)
   }
+  runDirEntries.sort((a, b) => a.name.localeCompare(b.name));
   for (const runEntry of runDirEntries) {
     if (!runEntry.isDirectory()) continue;
     // RUN_ID_RE と同型の緩い基本判定 (path.join 前に traversal 文字を弾く)。
@@ -1326,6 +1331,7 @@ export function readAgentTree(
     } catch {
       continue;
     }
+    members.sort((a, b) => a.name.localeCompare(b.name));
     const runMetas: AgentMetaFile[] = [];
     for (const m of members) {
       if (!m.isFile()) continue;
