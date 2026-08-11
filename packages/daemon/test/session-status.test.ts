@@ -117,6 +117,21 @@ function taskNotification(
   });
 }
 
+/** Shape copied verbatim from an observed row (Claude Code 2.1.x): the harness
+ * wraps the shared task store in an `attachment` row whose `content` items carry
+ * camelCase `blockedBy` and an `itemCount` mirror of the array length. */
+function taskReminder(content: unknown[]): string {
+  return JSON.stringify({
+    parentUuid: "p1",
+    isSidechain: false,
+    attachment: { type: "task_reminder", content, itemCount: content.length },
+    type: "attachment",
+    uuid: "a1",
+    timestamp: END,
+    userType: "external",
+  });
+}
+
 function apply(lines: string[], externalRoot?: string): SessionStatusSnapshot {
   const state = createSessionStatusState(externalRoot ? fs.realpathSync(externalRoot) : undefined);
   for (const line of lines) {
@@ -750,6 +765,106 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     )) {
       if (isSessionStatusCandidate(line)) expect(foldLine(state, line)).toBe(false);
     }
+  });
+
+  test("task_reminder attachment は worker のタスクを upsert し、空 content でも既存を消さない", () => {
+    // 実 transcript 契約 (2026-08-12 実測、Claude Code 2.1.x): worker の TaskCreate は
+    // subagents/*.jsonl に書かれ main には出ない。main に届くのはこの attachment だけ。
+    // content は「全ストアの snapshot ではない」— 実測ではバッチが全部 completed に
+    // なると空になり、それ以前の task は content から消えるが store には残る。よって
+    // fold は upsert 専用で、空 content を「タスク無し」と解釈して削除してはならない。
+    const state = createSessionStatusState();
+    for (const line of todoCreate("1", "Main task")) {
+      if (isSessionStatusCandidate(line)) foldLine(state, line);
+    }
+    const reminder = taskReminder([
+      { id: "1", subject: "Main task", status: "in_progress", blocks: [], blockedBy: [] },
+      {
+        id: "2",
+        subject: "Worker task",
+        description: "worker が作った",
+        activeForm: "作業中",
+        status: "pending",
+        owner: "w-impl",
+        blocks: [],
+        blockedBy: ["1"],
+      },
+    ]);
+    expect(isSessionStatusCandidate(reminder)).toBe(true);
+    expect(foldLine(state, reminder)).toBe(true);
+    expect(snapshot(state).todos).toEqual([
+      { id: "1", subject: "Main task", status: "in_progress" },
+      { id: "2", subject: "Worker task", status: "pending", owner: "w-impl", blocked_by: ["1"] },
+    ]);
+    // 同内容の再注入は状態変化なし (= push を発生させない)。
+    expect(foldLine(state, reminder)).toBe(false);
+    // 空 content は「バッチ完了」の合図であって削除指示ではない。
+    expect(foldLine(state, taskReminder([]))).toBe(false);
+    expect(snapshot(state).todos).toHaveLength(2);
+  });
+
+  test("task_reminder の blockedBy / blocks は merge でなく置換する", () => {
+    // TaskUpdate は addBlockedBy の「足す」形だが attachment は両方向の完全な list を
+    // 持つ (実測: addBlockedBy しか呼ばれていない task に逆向きの blocks が入る)。
+    // よって attachment 側は権威として置換し、空配列は field ごと落とす。
+    const state = createSessionStatusState();
+    for (const line of [
+      ...todoCreate("1", "First task"),
+      ...todoUpdate(
+        "tu1",
+        "1",
+        { addBlockedBy: ["7", "8"] },
+        { success: true, taskId: "1", updatedFields: ["addBlockedBy"] },
+      ),
+    ]) {
+      if (isSessionStatusCandidate(line)) foldLine(state, line);
+    }
+    foldLine(
+      state,
+      taskReminder([
+        { id: "1", subject: "First task", status: "pending", blocks: ["3"], blockedBy: [] },
+      ]),
+    );
+    expect(snapshot(state).todos).toEqual([
+      { id: "1", subject: "First task", status: "pending", blocks: ["3"] },
+    ]);
+  });
+
+  test("task_reminder は TaskUpdate status:'deleted' の削除を取り消さない", () => {
+    // 削除は TaskUpdate の専権。実 attachment に deleted task は現れないので、
+    // 「消したのに reminder で復活」は起きてはならない経路。
+    const state = createSessionStatusState();
+    for (const line of [
+      ...todoCreate("1", "First task"),
+      ...todoUpdate(
+        "tu-del",
+        "1",
+        { status: "deleted" },
+        { success: true, taskId: "1", updatedFields: ["deleted"] },
+      ),
+    ]) {
+      if (isSessionStatusCandidate(line)) foldLine(state, line);
+    }
+    expect(snapshot(state).todos).toEqual([]);
+    // 削除後に届いた古い reminder は「まだ生きている」と主張しうるが、実 harness は
+    // deleted を content に載せない。載っていない以上、状態は空のまま。
+    expect(foldLine(state, taskReminder([]))).toBe(false);
+    expect(snapshot(state).todos).toEqual([]);
+  });
+
+  test("task_reminder の壊れた content / item は無視する", () => {
+    const state = createSessionStatusState();
+    expect(
+      foldLine(state, JSON.stringify({ type: "attachment", attachment: { type: "other" } })),
+    ).toBe(false);
+    expect(
+      foldLine(
+        state,
+        JSON.stringify({ type: "attachment", attachment: { type: "task_reminder" } }),
+      ),
+    ).toBe(false);
+    expect(foldLine(state, taskReminder(["x", { subject: "id なし" }] as unknown[]))).toBe(false);
+    expect(snapshot(state).todos).toEqual([]);
   });
 
   test("TaskCreate が無い TaskUpdate は unknown placeholder を作って状態を保持する", () => {

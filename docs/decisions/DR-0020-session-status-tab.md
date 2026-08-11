@@ -86,3 +86,31 @@ jsonl を grep 相当で絞り込み → jsonl parse → strict フィルタで 
   同じ位置づけ)。
 - 転送形: `SessionContextUsage.effort?` を追加、`SessionTeammate.model?` を追加。
   いずれも optional なので旧クライアント互換。
+
+## Addendum 2026-08-12: subagent の TODO を task_reminder attachment から取る
+
+§ 2.1 の「TaskCreate / TaskUpdate の tool call から再生 (TUI 同等)」は「1 セッション =
+1 transcript jsonl に全部載っている」を暗黙の前提にしていたが、subagent (worker) の
+TaskCreate / TaskUpdate は `<sidDir>/subagents/*.jsonl` に書かれ、main の jsonl には
+現れない。タスクストアは main / worker で共有 (実測: id は単一カウンタ、双方向に
+TaskGet できる) なので、TUI は worker 分も含めて表示する = 従来の fold は「TUI 同等」を
+満たしていなかった。
+
+- **データ源**: main の transcript に harness が注入する
+  `{"type":"attachment","attachment":{"type":"task_reminder","content":[...]}}` 行。
+  item は `{id, subject, description, activeForm, status, owner, blocks, blockedBy}`。
+  worker のタスクが main 側に現れる唯一の経路。
+- **適用は upsert のみ、削除はしない**: content は全ストアの snapshot ではない
+  (実測: 直近バッチだけが載り、そのバッチが全部 completed になると空になる。それ以前の
+  タスクは content から消えても id は生きたまま)。空 content を「タスク無し」と解釈すると
+  tool_use fold が正しく記録したタスクを消すため、削除は `TaskUpdate status:"deleted"` の
+  専権のままとする (deleted は attachment に載らないので競合しない)。
+- **blockedBy / blocks は置換**: TaskUpdate は `addBlockedBy` の「足す」形だが attachment は
+  両方向の完全な list を持つ (addBlockedBy しか呼ばれていないタスクに逆向きの `blocks` が
+  入る)。attachment 側を権威として置換する。
+- **subagents/*.jsonl の全走査は採らない**: agent 数に比例した走査コストを毎 fold 払う
+  必要がある一方、attachment だけで受け入れ条件 (worker タスクが Status / dump に出る) を
+  満たせることを実 transcript で確認した。
+- **既知の限界**: attachment は生成から注入までに遅延があり、直後の tool_use が進めた
+  status を一瞬巻き戻して見せうる。次の reminder か次の TaskUpdate が後勝ちで正すため
+  収束する。

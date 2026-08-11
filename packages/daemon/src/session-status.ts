@@ -39,6 +39,10 @@ const MAX_PENDING_TOOL_USES = 1000;
 const PREFILTER = [
   '"name":"TaskCreate"',
   '"name":"TaskUpdate"',
+  // Shared task-store snapshots injected into the main transcript. These are
+  // the only place a subagent's TaskCreate/TaskUpdate becomes visible to the
+  // session we fold (the tool_use rows themselves land in subagents/*.jsonl).
+  '"type":"task_reminder"',
   '"name":"TaskStop"',
   '"name":"Workflow"',
   '"name":"Monitor"',
@@ -421,6 +425,13 @@ function foldAssistant(state: SessionStatusState, row: Record<string, unknown>):
  * させる (Array.prototype.sort の同値要素の順序保証を利用する必要はない、id は
  * ユニークだから)。空配列は undefined に落として snapshot の subject/status と
  * 同じく「無い時は field 自体を出さない」不変条件を維持する。 */
+function compareTaskIds(a: string, b: string): number {
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function mergeTaskIdList(
   current: string[] | undefined,
   add: unknown,
@@ -437,13 +448,7 @@ function mergeTaskIdList(
     }
   }
   if (!changed) return { list: current, changed: false };
-  const merged = [...set].sort((a, b) => {
-    const na = Number(a);
-    const nb = Number(b);
-    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
-    return a < b ? -1 : a > b ? 1 : 0;
-  });
-  return { list: merged, changed: true };
+  return { list: [...set].sort(compareTaskIds), changed: true };
 }
 
 function taskIdListEquals(a: string[] | undefined, b: string[] | undefined): boolean {
@@ -505,6 +510,79 @@ function applyTodoUpdate(
   }
   state.todos.set(taskId, next);
   return true;
+}
+
+/** Full task-id list straight from a task_reminder item. Unlike the TaskUpdate
+ * path this one is authoritative (the harness writes both directions, including
+ * the `blocks` back-edges `addBlockedBy` never states), so it replaces rather
+ * than merges. Anything but a non-empty string array collapses to undefined,
+ * matching the "no field when empty" invariant snapshot relies on. */
+function taskIdListFrom(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return ids.length > 0 ? [...new Set(ids)].sort(compareTaskIds) : undefined;
+}
+
+/** DR-0020 addendum: a subagent's TaskCreate / TaskUpdate lands in
+ * `subagents/*.jsonl`, which this fold never reads — so folding tool_use rows
+ * alone loses every task a worker owns, while the TUI (reading the shared
+ * store) shows them. The one place the shared store surfaces in the main
+ * transcript is the `task_reminder` attachment the harness injects, carrying
+ * `{id, subject, status, owner, blocks, blockedBy}` per task.
+ *
+ * Applied as an **upsert, never a removal**, because the attachment is not a
+ * snapshot of the whole store: observed transcripts show its content narrowing
+ * to the most recent batch and going empty once that batch is fully completed,
+ * while earlier tasks stay addressable (ids keep climbing, `TaskGet` still
+ * resolves them). Treating `content: []` as "no tasks" would therefore erase
+ * tasks the tool_use fold recorded correctly. Removal stays the exclusive job
+ * of `TaskUpdate status:"deleted"`, which the attachment can never contradict —
+ * deleted tasks simply never appear in it.
+ *
+ * A reminder is built slightly before it is injected, so it can restate a
+ * status a newer tool_use row already advanced. The staleness is bounded by the
+ * next reminder or the next TaskUpdate for that id, both of which win by
+ * arriving later in the file. */
+function foldTaskReminder(state: SessionStatusState, attachment: Record<string, unknown>): boolean {
+  const content = attachment.content;
+  if (!Array.isArray(content)) return false;
+  let changed = false;
+  for (const item of content) {
+    if (!isRecord(item)) continue;
+    const id = stringValue(item.id);
+    if (!id) continue;
+    const current = state.todos.get(id);
+    const next: SessionTodo = {
+      id,
+      subject: stringValue(item.subject) ?? current?.subject ?? "(unknown)",
+      status: stringValue(item.status) ?? current?.status ?? "pending",
+    };
+    const owner = stringValue(item.owner) ?? current?.owner;
+    if (owner !== undefined) next.owner = owner;
+    const blockedBy = taskIdListFrom(item.blockedBy);
+    if (blockedBy) next.blocked_by = blockedBy;
+    const blocks = taskIdListFrom(item.blocks);
+    if (blocks) next.blocks = blocks;
+    if (
+      current &&
+      current.status === next.status &&
+      current.subject === next.subject &&
+      current.owner === next.owner &&
+      taskIdListEquals(current.blocked_by, next.blocked_by) &&
+      taskIdListEquals(current.blocks, next.blocks)
+    ) {
+      continue;
+    }
+    state.todos.set(id, next);
+    changed = true;
+  }
+  return changed;
+}
+
+function foldAttachment(state: SessionStatusState, row: Record<string, unknown>): boolean {
+  const attachment = row.attachment;
+  if (!isRecord(attachment) || attachment.type !== "task_reminder") return false;
+  return foldTaskReminder(state, attachment);
 }
 
 function applyTaskStop(
@@ -885,6 +963,7 @@ export function foldLine(state: SessionStatusState, line: string): boolean {
   if (row.type === "assistant") return foldAssistant(state, row);
   if (row.type === "user") return foldUser(state, row);
   if (row.type === "queue-operation") return foldNotification(state, row);
+  if (row.type === "attachment") return foldAttachment(state, row);
   return false;
 }
 
