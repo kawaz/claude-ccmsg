@@ -1,10 +1,10 @@
 # checkpoint / rewind と ccmsg 受信メッセージ
 
-対象: Claude Code v2.1.224 (実測)。ccmsg 受信メッセージが `/rewind` の選択肢に出ない問題の原因特定と、取りうる対策の比較。
+対象: Claude Code v2.1.224 (実測)。ccmsg 受信メッセージが `/rewind` の選択肢に出ない問題の原因特定と、任意地点へ rewind する手段。
 
 ## 判明した事実
 
-### 1. rewind メニューに載る条件は、実装上の述語で確定している
+### 1. rewind メニューに載る条件は実装上の述語で確定している
 
 `/rewind` メニューの一覧は、セッションの message 配列を述語 `K6e` で filter した結果そのもの
 (バンドル内 `...e.filter(K6e)...` が rewind メニュー component の一覧ソース)。`K6e` の実体:
@@ -26,8 +26,6 @@ function $je(e){
 }
 ```
 
-つまり rewind の選択肢になるのは **`type:"user"` かつ tool_result でなく `isMeta` でなく、`origin` が無いか `origin.kind === "human"`** のレコードだけ。
-
 重要な非対称: 判定は「`origin` が human であること」ではなく **「`origin` があるなら human でなければ落とす」**。
 `origin` が付いていないレコードは通る。
 
@@ -44,95 +42,135 @@ function $je(e){
 | `queued` | `human` | false | 1 | kawaz の queue 投入 |
 
 `task-notification` 288 件の本文はすべて `<event>{"type":"msg",...}` 形式 = ccmsg subscribe ストリームの実配送。
-teammate 経路は `origin.kind:"peer"` かつ `isMeta:true` で **二重に**除外される。
+teammate 経路は `origin.kind:"peer"` かつ `isMeta:true` で二重に除外される。
 
-**このセッションで rewind 選択肢になるのは 4 件だけ** (3946 行のうち)。kawaz の体感「選択肢が乏しく、下手すると先頭まで戻るしかない」はこの数字そのもの。
+**このセッションで rewind 選択肢になるのは 4 件だけ** (3946 行のうち)。kawaz の体感はこの数字そのもの。
 
-### 3. 配送経路の `origin` は Claude Code コアが決めるので、plugin 側から human 化できない
+### 3. 配送経路の `origin` はコアが決めるので、plugin 側から human 化できない
 
-`origin` は配送チャネルごとにコアが分類して付与する (`{kind:"human"}` / `{kind:"peer",...}` / `{kind:"task-notification"}`)。
-human に分類される外部経路は `client_platform` の allowlist 判定を通った bridge 経由の inbound (Slack / claude.ai 系) のみで、
+`origin` は配送チャネルごとにコアが分類して付与する。human に分類される外部経路は
+`client_platform` の allowlist 判定を通った bridge 経由の inbound (Slack / claude.ai 系) のみで、
 allowlist 外は `demoting unwrapped inbound message to peer origin` の warn を出して peer に降格される。
 ローカル plugin / Monitor stdout からこの分類を選ぶ手段は無い。
 
-### 4. `-p` / SDK 経由の user turn は `origin` が付かない = rewind 対象になる
+### 4. `--resume-session-at=<uuid>` = 任意地点 rewind の native 手段 (これが本命)
 
-隔離セッションの実測: `claude -p` で投入した turn は `promptSource:"sdk"`, **`origin: null`**。
-`K6e` の `if(e.origin && ...)` を素通りするので rewind 対象。
-つまり除外の原因は「人間が打っていないこと」ではなく **配送経路が `origin` を付けること**。
+`claude --help` に出ない**非公開オプション**が実在する: `--resume-session-at=`, `--resume-drops-turn=`
+(`--fork-session` は help 掲載あり)。
 
-### 5. jsonl を切り詰めて別 sid にコピーして resume する手術は成立する (実測)
+実装:
 
-隔離環境 (`CLAUDE_CONFIG_DIR=/tmp/rewind-lab/config`) で ALPHA / BRAVO / CHARLIE の 3 turn セッションを作り、
-CHARLIE の user turn 直前 (18 行目) で切り詰めて別 sid のファイル名でコピーし resume した結果:
+```js
+if(t.resumeSessionAt){
+  let u = c.messages.findIndex((d)=>d.uuid === t.resumeSessionAt);
+  if(u < 0) return grr(`No message found with message.uuid of: ${t.resumeSessionAt}`), exit(1);
+  if(t.resumeDropsTurn !== void 0){ /* 破棄範囲の帰属チェック、NG なら refuse */ }
+  c.messages = c.messages.slice(0, u+1);
+}
+```
 
-| 対象 | 「今までの codeword を全部挙げて」への応答 |
+つまり **セッションを読み込んだ後、メモリ上の message 配列を指定 uuid まで (その uuid を含む) で切る**。
+**jsonl ファイルには一切手を触れない**。`--fork-session` と併用すれば新 sid のセッションになる。
+
+実測 (隔離環境、ALPHA/BRAVO/CHARLIE の 3 turn セッション):
+
+| `--resume-session-at` に渡した uuid | 「今までの codeword を全部」への応答 |
 |---|---|
-| 切り詰めコピー (別 sid) | `ALPHA, BRAVO` |
-| 元セッション (対照) | `ALPHA, BRAVO, CHARLIE` |
+| assistant "ok1" の uuid | `ALPHA` |
+| assistant "ok2" の uuid | `ALPHA, BRAVO` |
+| (指定なし = 通常 resume) | `ALPHA, BRAVO, CHARLIE` |
+| 存在しない uuid | `No message found with message.uuid of: ...` で exit 1 |
 
-付随して確定したこと:
+`--fork-session` 併用時、**元セッションのファイルは md5 一致で無変更**。新しい sid のファイルが 1 本増える。
 
-- **レコード内の `sessionId` を書き換える必要は無い**。resume は**ファイル名**の sid で解決する。
-  書き換えずにコピーしたファイルでも正常に resume でき、以後の追記だけが新 sid を持つ (= 1 ファイル内で新旧 sid が混在するが動作に影響なし)。
-- **元セッションのファイルは一切変更されない**。追記は resume 時に指定した sid のファイルにだけ行われる。
-- parentUuid チェーンの手当ては不要だった。末尾を落とすだけの切り詰めなら親子関係は自然に保たれる。
-- 切り詰め位置は user turn の直前で取る。ただし 1 つの turn は `queue-operation` × 2 → `user` → `attachment` → `assistant` … の並びなので、
-  その turn の `queue-operation` も含めて落とす (= 直前の `last-prompt` / `mode` レコードまでを残す) のが安全。
+### 5. fork は履歴を「コピー」する (参照ではない) ので、fork ファイルは自己完結する
 
-### 6. 会話のみの rewind になる (ファイル状態は戻らない)
+fork で生成されたファイルは、**先祖レコードを uuid と timestamp を保ったまま複製し、`sessionId` だけ新 sid に書き換えたもの**。
+ファイル横断の uuid 解決はしていない。
 
-切り詰めコピーには `file-history-snapshot` / `file-history-delta` が含まれない (= その時点までのスナップショット参照しか持たない)。
-コード復元は成立せず、**「Restore conversation」相当**になる。
-なお公式仕様上も、サブエージェント (background) の編集と bash 由来の変更はそもそも checkpoint に追跡されない。
+- 実 fork 3 本 (`5b537ed3` / `6b50a9d5` / `6f4f4c8f`) は先頭 33 レコードの uuid 列が**順序込みで完全一致**し、`first_ts` も同一。
+  それぞれ fork 地点から独立に伸びて 46 / 46 / 121 uuid になっている。
+- 隔離実測でも、ok1 地点で fork したファイル (15 行) は `ALPHA` を含み `BRAVO` / `CHARLIE` を含まない。
+
+したがって **「切り詰めると履歴が消える」心配は当たらない**。fork は元ファイルを読み取るだけで、
+新ファイルに切り詰め済みのコピーを作る。元は無傷のまま残る。
+
+なお `last-prompt` + `leafUuid` のヘッダだけを持つ手製ファイルは resume できない
+(`No conversation found with session ID: ...`)。実体のメッセージレコードが要る。
+
+### 6. 切る位置は「戻したい user turn の 1 つ手前」
+
+`slice(0, u+1)` は **指定 uuid を含む**。実測で、CHARLIE の user レコードの uuid を渡すと
+その prompt が未応答のまま残り、モデルがまず `ok3` と答えてから次の質問に答えた (結果 `ALPHA, BRAVO, CHARLIE`)。
+
+「msg X の直前に戻す」なら、渡すのは **X の 1 つ前の assistant レコードの uuid**。X 自身の uuid ではない。
+
+### 7. `--fork-session` を付けない場合は同一ファイル内で分岐する (破壊はしない)
+
+使い捨てコピーで実測: `--resume-session-at` のみ (fork なし) だと応答は正しく切り詰まる (`ALPHA, BRAVO`) が、
+新しい turn は**同じファイルに追記**され、32 行 → 41 行になった。**CHARLIE のレコードは消えずに残る**。
+つまりファイルが枝分かれした DAG になり、有効な leaf が新しい枝へ移る。非破壊だが、
+1 ファイルに複数の枝が同居するので、外部から読む側 (ccmsg webui 等) は leaf 追跡が要る。
+
+**webui から使うなら `--fork-session` 併用が明確に安全**。
+
+### 8. コード状態は戻らない前提でよい
+
+公式仕様上、bash 由来の変更とサブエージェント (background) の編集は checkpoint に追跡されない。
 ccmsg の作業実体は大半がサブエージェント編集なので、**コード復元は元々期待できない**。
+実 fork ファイルには `file-history-snapshot` が 23 件コピーされていたので fork がコード履歴を引き継ぐ余地はあるが、
+そこは未検証 (下記)。
 
 ## 実用的な示唆
 
+### 推奨実装: native の `--resume-session-at` + `--fork-session`
+
+jsonl の手術は不要。webui の「この msg 時点へ会話 rewind」は次の 1 コマンドで足りる:
+
+```bash
+claude --resume <元sid> --resume-session-at=<戻したい地点のuuid> --fork-session
+```
+
+- 渡す uuid は「戻したい msg の 1 つ前の assistant レコード」(事実 6)
+- 元セッションのファイルは無変更 (事実 4)
+- 新 sid のセッションが切り詰め済みの履歴コピーを持って起動する (事実 5)
+- `--resume-drops-turn=<turnId>` を足すと、破棄範囲が宣言した turn に帰属しない時に refuse する安全弁になる (任意)
+
 ### 選択肢の比較
 
-| | A: 受信を checkpoint 経路に乗せる | B: webui に「この msg 時点へ会話 rewind」 | C: 現状維持 + 運用回避 |
+| | A: 受信を checkpoint 経路に乗せる | B: `--resume-session-at` + `--fork-session` | C: 現状維持 + 運用回避 |
 |---|---|---|---|
-| 実現可能性 | **不可**。`origin` の付与はコアが配送経路で決め、plugin から human を選べない (事実 3) | **可能**。切り詰め + 別 sid resume は実測で成立 (事実 5) | 自明 |
-| 復元範囲 | 会話 + コード | 会話のみ (事実 6) | — |
-| 主な副作用 | (仮に実現しても) 受信のたびに user turn が増え、TL がノイズ化し checkpoint 100 個上限を通知で食い潰す | 元セッションは無傷、新 sid に分岐するので破壊性が無い | 選択肢が実質 4 個のまま |
-| コスト/文脈への影響 | 受信ごとに turn 境界が増える = キャッシュ再利用が切れて課金・レイテンシとも悪化 | 手術自体は追加課金なし。resume 後は通常どおり | なし |
+| 実現可能性 | **不可**。origin 付与はコアが配送経路で決める (事実 3) | **可能**。native 機能、実測済み (事実 4) | 自明 |
+| ファイル操作 | — | **不要** | — |
+| 元セッションへの影響 | — | 無変更 (md5 一致で確認) | — |
+| 復元範囲 | 会話 + コード | 会話 (コードは事実 8 の前提で期待しない) | — |
+| 主なリスク | 受信ごとに turn が増えて checkpoint 100 個上限を通知で食い潰し、cache も切れる | **非公開オプション**なので将来のバージョンで消える/変わる可能性 | 選択肢が実質 4 個のまま |
 
 ### 推し: B
 
-理由は 3 つ。
+A は原理的に閉じている上、仮に開いても副作用 (通知で checkpoint 上限を食う / turn 境界が増えて prompt cache が切れる) が利得を上回る。
+B は native 機能で、ファイルを一切触らないので破壊性が無く、実測で期待どおり動く。
 
-1. **A は原理的に閉じている**。`origin` の分類はコアの配送経路判定で、plugin が介入できる場所が無い。
-   仮にコアが変わって可能になったとしても、副作用 (通知で checkpoint 上限を食う / turn 境界が増えて cache が切れる) が利得を上回る。
-2. **B は破壊性が無い**。別 sid のファイル名にコピーして resume するだけで、元セッションのファイルには一切書き込まない (事実 5)。
-   失敗しても元が残るので、やり直しが常に効く。
-3. **「会話のみ」という限界は実質的な損失にならない**。ccmsg の作業実体はサブエージェント編集で、
-   そもそも公式仕様上 checkpoint に追跡されない (事実 6)。コード復元は A を採っても得られない。
-
-### B を作る場合の実装メモ (実測に基づく)
-
-- 切り詰め位置は「この msg を配送した `type:"user"` レコードの直前」。同 turn の `queue-operation` も落とす。
-- コピー先は新規 uuid のファイル名。**レコード内の `sessionId` は書き換えなくてよい**。
-- 起動は `claude --resume <新sid>`。`--fork-session` は元セッション全体を複製するだけで切り詰めはしないので、
-  切り詰めが要る本用途では代替にならない (併用の必要もない)。
-- UI 上は「コードは戻らない / 会話だけが戻る」ことを明示する。
+**唯一の懸念は B が非公開オプションであること**。`claude --help` に出ないため、バージョン更新で挙動が変わる可能性がある。
+実装するなら起動時に 1 度だけ生存確認 (既知 uuid で dry-run し、
+`No message found with message.uuid of:` 以外のエラーが出ないか) を入れて、失敗時は機能を無効化する形が安全。
 
 ## 検証の詳細
 
 ### 何をどう観測したか
 
-**実装述語の抽出**: `claude` は単一バイナリ (`~/.local/share/claude/versions/2.1.224`、265MB、bun compile) だが JS バンドルを内包しているので、
-`rg -a` でバイナリ直接 grep して該当関数を復元した。
-rewind メニュー component の `e.filter(K6e)` を起点に `K6e` / `$je` / `Pye` の定義を取り、
-さらに `{kind:"human"}` / `{kind:"task-notification"}` / `{kind:"peer"}` の代入箇所から `origin` 分類ロジックを確認した。
-これは「rewind メニューに何が出るか」を TUI 越しの代理観測ではなく**実装の一次情報**で確定させたもの。
-
-**実セッションの分布**: ccmsg の実セッション jsonl 1 本 (3946 行) を `jq` で集計。
-`promptSource` は文字列、`origin` はオブジェクトという型の非対称があるため、最初 `.promptSource.kind` で取ろうとして失敗している (この点は途中で訂正済み)。
+**実装の抽出**: `claude` は単一バイナリ (`~/.local/share/claude/versions/2.1.224`、265MB、bun compile) だが
+JS バンドルを内包しているので `rg -a` でバイナリを直接 grep して該当関数を復元した。
+rewind メニュー component の `e.filter(K6e)` を起点に述語を取り、
+`--fork-session` 周辺の文字列テーブルから `--resume-session-at=` / `--resume-drops-turn=` を発見して
+`resumeSessionAt` の実装ブロックまで辿った。
+これは TUI 越しの代理観測ではなく**実装の一次情報**。
 
 **隔離実験**: `CLAUDE_CONFIG_DIR=/tmp/rewind-lab/config`、cwd `/tmp/rewind-lab/work`、
 `--safe-mode --model haiku --max-budget-usd 0.5` で plugin ロードを止めてコストを抑えた。
-本物のセッション・本番 daemon には触れていない。3 turn 構築 → 切り詰め → 別 sid resume → 対照との比較、の順で実施。
+ALPHA / BRAVO / CHARLIE を 1 turn ずつ覚えさせた 3 turn セッションを作り、
+どの地点まで記憶が残るかで切り詰め位置を判定した。本物のセッション・本番 daemon には触れていない。
+`--fork-session` を付けない検証だけは使い捨てコピーに対して行い、元ファイルには適用していない。
 
 ### 検証マトリクス
 
@@ -143,19 +181,22 @@ rewind メニュー component の `e.filter(K6e)` を起点に `K6e` / `$je` / `
 | 3 | teammate 受信の `origin` | 同上 | `peer` + `isMeta:true` (二重除外) |
 | 4 | 通常プロンプトの `origin` | 同上 | `typed`/`queued` + `human` = 4 件のみ |
 | 5 | `-p`/SDK turn の `origin` | 隔離実測 | `origin: null` → rewind 対象になる |
-| 6 | 切り詰め + 別 sid resume | 隔離実測 | 成立 (`ALPHA, BRAVO` vs 対照 `ALPHA, BRAVO, CHARLIE`) |
-| 7 | `sessionId` 書き換えの要否 | 隔離実測 (書き換え有/無の 2 通り) | **不要**。ファイル名で解決 |
-| 8 | 元セッションへの副作用 | resume 前後の行数・内容比較 | 無し |
+| 6 | `--resume-session-at` の切り詰め | 隔離実測 (3 地点) | ok1→`ALPHA` / ok2→`ALPHA, BRAVO` / 無指定→全部 |
+| 7 | 元ファイルへの副作用 (fork 併用) | md5 比較 | **無変更** |
+| 8 | 存在しない uuid | 隔離実測 | `No message found with message.uuid of:` で exit 1 |
+| 9 | fork = コピーか参照か | 実 fork 3 本の uuid 列比較 + 隔離実測 | **コピー**。先頭 33 uuid が順序込み一致、fork ファイルは自己完結 |
+| 10 | user レコード uuid を指定 | 隔離実測 | その prompt を含むので再応答が起きる (1 つ前を指定すべき) |
+| 11 | `--fork-session` 無し | 使い捨てコピーで実測 | 同一ファイルに追記して分岐。旧レコードは残る (非破壊) |
+| 12 | ヘッダのみの手製 fork ファイル | 隔離実測 | `No conversation found` で不成立。実メッセージが必要 |
 
 ### 未検証
 
-- **対話 TUI の `/rewind` メニュー表示そのもの**は自動化できないため直接見ていない。
-  事実 1 は実装述語からの確定であって、画面の目視確認ではない。ただし述語はメニュー一覧の生成元そのものなので、
-  表示と乖離する余地は無いと判断している。
-- **稼働中セッションの jsonl を同 sid のまま切り詰めた場合の挙動**は試していない (危険なため意図的に回避)。
-  別 sid コピーで用が足りるので試す必要が無い、という判断。
-- 切り詰め位置を `assistant` の途中など turn 境界以外に取った場合の耐性は未確認。
-  実装するなら turn 境界に限定するのが安全。
+- **対話 TUI の `/rewind` メニュー表示そのもの**は自動化できないため目視していない。
+  事実 1 は実装述語からの確定であって画面確認ではない (述語はメニュー生成元なので乖離余地は無いと判断)。
+- **`--resume-drops-turn` の実挙動**。実装ブロックとエラー文言は読んだが、実際に渡して refuse させる検証はしていない。
+- **fork がコード履歴 (`file-history-snapshot`) を実用的に引き継ぐか**。実 fork ファイルに 23 件コピーされている事実は
+  確認したが、fork 先で `/rewind` のコード復元が機能するかは未確認。事実 8 のとおり ccmsg 用途では期待していないので優先度は低い。
+- **非公開オプションの安定性**。v2.1.224 でのみ確認。過去/将来バージョンでの存在は未確認。
 
 ### 後片付け
 
