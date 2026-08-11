@@ -3,7 +3,7 @@ title: webui のデザインシステム / コンポーネントカタログ導�
 status: open
 category: design
 created: 2026-07-30T21:41:57+09:00
-last_read:
+last_read: 2026-08-12T02:17:03+09:00
 open_entered: 2026-07-30T21:41:57+09:00
 wip_entered:
 blocked_entered:
