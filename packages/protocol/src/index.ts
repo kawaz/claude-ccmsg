@@ -52,14 +52,40 @@ export const FS_READ_MAX_BYTES = 512 * 1024;
 export const DEFAULT_DIR_TREE_DEPTH = 2;
 export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
 
-/** Parsed normal form of `<dataDir>/config.json`'s `session_launcher` key
- * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
- * built-in choice so launch never falls through to an implicit `sh -c`. */
-export interface SessionLauncherConfig {
-  root_dirs: string[];
+/** Name given to the implicit single template a flat (pre-templates)
+ * `session_launcher` config parses into. */
+export const DEFAULT_LAUNCHER_TEMPLATE_NAME = "default";
+
+/** One named launch recipe in the parsed normal form of `session_launcher`.
+ * Every field is fully resolved at parse time (a template that omits
+ * `command`/`default_prompt`/`shell` inherits the launcher-level value), so
+ * nothing downstream has to re-apply fallbacks.
+ *
+ * `command` is a shell program, not an argv: the template vocabulary is the
+ * shell variables `$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT` plus (for fork
+ * recipes) `$RESUME_SID` / `$RESUME_AT`, which the launcher shell defines
+ * from the request before running this text. The daemon never substitutes
+ * anything into it. */
+export interface SessionLauncherTemplate {
+  /** Non-empty, unique within one launcher config. Shown verbatim in the
+   * webui's template picker and named by SessionLaunchRequest.template. */
+  name: string;
+  command: string;
   default_prompt: string;
   shell: "bash" | "zsh";
-  command: string;
+}
+
+/** Parsed normal form of `<dataDir>/config.json`'s `session_launcher` key
+ * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
+ * built-in choice so launch never falls through to an implicit `sh -c`.
+ *
+ * `templates` is always non-empty — a config that yields no usable template
+ * disables the launcher entirely (same posture as a missing `command` before
+ * templates existed). The flat single-command form stays valid and parses to
+ * exactly one template; `templates[0]` is the launcher's default recipe. */
+export interface SessionLauncherConfig {
+  root_dirs: string[];
+  templates: SessionLauncherTemplate[];
   timeout_seconds: number;
   dir_tree_depth: number;
   /** DR-0018 §3.1 addendum 2026-07-18: wildcard patterns naming environment
@@ -71,7 +97,7 @@ export interface SessionLauncherConfig {
    * any substring of a key name (no separator semantics); everything else is
    * literal, case-sensitive. Absent/empty = no cleaning (previous behavior).
    * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
-   * shell turns into $CWD/$MODEL/$EFFORT/$PROMPT) are layered on AFTER
+   * shell turns into the template variables) are layered on AFTER
    * cleaning, so they can never be removed by a pattern. */
   clean_env?: string[];
   /** DR-0018 §3.1 addendum 2026-07-18 (2nd): wildcard patterns naming
@@ -1011,6 +1037,24 @@ export interface SessionLaunchRequest {
    * path as the config value, and sees the same $CWD/$MODEL/$EFFORT/$PROMPT
    * shell variables. */
   command?: string;
+  /** Which configured template to launch with, by `SessionLauncherTemplate.name`.
+   * Absent = the launcher's default recipe (`templates[0]`). An unknown name is
+   * rejected as invalid_args rather than silently falling back — a client that
+   * asks for a recipe it can't get should say so, not launch something else.
+   * The chosen template supplies `shell` (and `command`, unless the request
+   * overrides it). */
+  template?: string;
+  /** Fork/resume source session UUID, surfaced to the command as `$RESUME_SID`.
+   * Absent = the variable is defined but empty, which is what makes one
+   * template text usable for both fresh and fork launches. Never interpolated
+   * into shell text (it travels as an environment carrier like every other
+   * launch value), so it cannot inject shell syntax. */
+  resume_sid?: string;
+  /** Fork point: the transcript record uuid to resume *at*, surfaced as
+   * `$RESUME_AT` (Claude Code's `--resume-session-at`, which truncates the
+   * loaded message array after that record). Same empty-when-absent and
+   * no-interpolation contract as resume_sid. */
+  resume_at?: string;
 }
 
 /** Terminate the OS process behind a Claude Code session (DR-0028, user role
@@ -1726,6 +1770,15 @@ export interface HelloResponse {
    * the "HTML として開く" / "生ダウンロード" buttons entirely rather than
    * offer a button that can only fail. */
   sandbox_available?: boolean;
+  /** True when this host's `claude` accepts `--resume-session-at` (the
+   * undocumented option a fork launch needs to cut the resumed conversation at
+   * a chosen record), user-role hellos only. Probed once at daemon startup by
+   * running a launch that is guaranteed to fail at session lookup and reading
+   * whether the option itself was rejected — see fork-probe.ts. Absent means
+   * either an unsupported `claude` or one that could not be run at all, and
+   * the webui then hides every fork affordance instead of offering a button
+   * whose launch would die on an unknown option. */
+  fork_available?: boolean;
 }
 export interface PostResponse {
   ok: true;
@@ -2024,17 +2077,26 @@ export interface RequestAcceptedResponse {
   request_id: string;
 }
 /** session_launcher_config reply — see its request doc comment above.
- * `command` is the administrator-configured shell command template verbatim
- * (no variable substitution — $CWD/$MODEL/$EFFORT/$PROMPT stay literal); the
- * webui surfaces it as an editable textarea per DR-0018 §3.2 addendum
+ * `templates` is the configured recipe list in config order, each carrying its
+ * shell command template verbatim (no variable substitution — $CWD/$MODEL/
+ * $EFFORT/$PROMPT/$RESUME_SID/$RESUME_AT stay literal); the webui surfaces the
+ * chosen template's command as an editable textarea per DR-0018 §3.2 addendum
  * 2026-07-17, and sends the edited value back via SessionLaunchRequest.command
- * override. Same one-shot read as root_dirs/default_prompt — a re-fetch is
- * only useful across a daemon config reload + restart. */
+ * override. `templates[0]` is the default recipe the form opens on. Same
+ * one-shot read as root_dirs — a re-fetch is only useful across a daemon
+ * config reload + restart. */
 export interface SessionLauncherConfigResponse {
   ok: true;
   root_dirs: string[];
-  default_prompt: string;
+  templates: SessionLauncherConfigTemplate[];
+}
+
+/** One template as seen by a client: the parsed template minus `shell`, which
+ * is a daemon-side execution detail the form has no use for. */
+export interface SessionLauncherConfigTemplate {
+  name: string;
   command: string;
+  default_prompt: string;
 }
 /** One directory entry from fs_list. `type:"symlink"` is reported as-is for
  * links whose target stays inside the root (out-of-root links are listed but

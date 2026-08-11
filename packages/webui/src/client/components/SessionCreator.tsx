@@ -14,7 +14,7 @@
 // stdout/stderr/exit_code/timed_out render once and nothing here polls,
 // subscribes, or remembers past launches.
 import { useEffect, useState } from "preact/hooks";
-import type { SessionLaunchResponse } from "@ccmsg/protocol";
+import type { SessionLauncherConfigTemplate, SessionLaunchResponse } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { errorMessage } from "../utils.ts";
 import {
@@ -22,11 +22,14 @@ import {
   commitCwdInput,
   initialCwdPickerMode,
   initialSessionCreatorForm,
+  selectSessionCreatorTemplate,
+  usesForkPoint,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
   type CwdPickerMode,
   type SessionCreatorForm,
+  type SessionCreatorPrefill,
 } from "../session-creator.ts";
 import { CwdTree } from "./CwdTree.tsx";
 
@@ -37,12 +40,11 @@ type LauncherProbe =
   | {
       status: "ready";
       rootDirs: string[];
-      defaultPrompt: string;
-      /** Raw shell command template from session_launcher.command (verbatim,
-       * no variable substitution). Used both as the textarea's initial value
-       * and as the "default" button's restore target — DR-0018 §3.2 addendum
-       * 2026-07-17. */
-      defaultCommand: string;
+      /** Configured launch recipes in config order. Each carries its raw shell
+       * command (verbatim, no variable substitution) and prompt, which are the
+       * textarea initial values and the "default" buttons' restore targets —
+       * DR-0018 §3.2 addendum 2026-07-17. */
+      templates: SessionLauncherConfigTemplate[];
     };
 
 type LaunchState =
@@ -160,7 +162,26 @@ function LaunchResultPanel({ state }: { state: LaunchState }) {
   );
 }
 
-export function SessionCreator({ onClose }: { onClose: () => void }) {
+/** The template the form is currently on — the "default" buttons restore from
+ * it, so a template switch also switches what "default" means. */
+function selectedTemplate(
+  templates: SessionLauncherConfigTemplate[],
+  form: SessionCreatorForm,
+): SessionLauncherConfigTemplate | undefined {
+  return templates.find((t) => t.name === form.template);
+}
+
+export function SessionCreator({
+  onClose,
+  prefill,
+}: {
+  onClose: () => void;
+  /** Fork request from the Timeline's action panel, or null for a plain
+   * "+ New" open. Read once when the config arrives (the form is seeded from
+   * it); the Sidebar clears the request as it hands it over, so re-forking the
+   * same turn re-opens the form rather than being deduplicated away. */
+  prefill: SessionCreatorPrefill | null;
+}) {
   const { ws } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
   const [form, setForm] = useState<SessionCreatorForm | null>(null);
@@ -174,13 +195,8 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
       .then((res) => {
         if (cancelled) return;
         if (res.ok) {
-          setProbe({
-            status: "ready",
-            rootDirs: res.root_dirs,
-            defaultPrompt: res.default_prompt,
-            defaultCommand: res.command,
-          });
-          const initialForm = initialSessionCreatorForm(res.default_prompt, res.command);
+          setProbe({ status: "ready", rootDirs: res.root_dirs, templates: res.templates });
+          const initialForm = initialSessionCreatorForm(res.templates, prefill);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
         } else if (res.error.code === "launcher_not_configured") {
@@ -195,13 +211,15 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, [ws]);
+    // `prefill` は「開いた瞬間の起動元」なので依存に入れない — 開いている間に
+    // 別 turn の fork 要求が来ても、それは Sidebar がパネルを開き直す扱い。
+  }, [ws, prefill]);
 
   async function run(e: Event): Promise<void> {
     e.preventDefault();
     if (!form) return;
     if (probe.status !== "ready") return;
-    const req = buildSessionLaunchRequest(form, probe.defaultCommand);
+    const req = buildSessionLaunchRequest(form, probe.templates);
     if (!req) return;
     setLaunch({ status: "running" });
     try {
@@ -235,6 +253,48 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
         </div>
       ) : form ? (
         <form class="session-creator-form" onSubmit={(e) => void run(e)}>
+          {probe.templates.length > 1 ? (
+            <label class="session-creator-field">
+              <span class="session-creator-label">template</span>
+              <select
+                value={form.template}
+                onChange={(e) =>
+                  setForm(
+                    selectSessionCreatorTemplate(
+                      form,
+                      probe.templates,
+                      (e.target as HTMLSelectElement).value,
+                    ),
+                  )
+                }
+              >
+                {probe.templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {form.resumeAt === "" ? null : (
+            <div class="session-creator-field">
+              <span class="session-creator-label">fork 元</span>
+              <p class="session-creator-fork-source">
+                <span class="session-creator-fork-sid" title={form.resumeSid}>
+                  {form.resumeSid}
+                </span>
+                <span class="session-creator-fork-at" title={form.resumeAt}>
+                  @{form.resumeAt}
+                </span>
+              </p>
+              {usesForkPoint(form.command) ? null : (
+                <p class="session-creator-error">
+                  この command は $RESUME_AT を使っていません。このままでは fork
+                  ではなく通常起動になります。
+                </p>
+              )}
+            </div>
+          )}
           <div class="session-creator-field">
             <span class="session-creator-label">cwd</span>
             <CwdPicker
@@ -277,7 +337,12 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 class="session-creator-default-btn"
-                onClick={() => setForm({ ...form, prompt: probe.defaultPrompt })}
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    prompt: selectedTemplate(probe.templates, form)?.default_prompt ?? "",
+                  })
+                }
               >
                 default
               </button>
@@ -294,7 +359,12 @@ export function SessionCreator({ onClose }: { onClose: () => void }) {
               <button
                 type="button"
                 class="session-creator-default-btn"
-                onClick={() => setForm({ ...form, command: probe.defaultCommand })}
+                onClick={() =>
+                  setForm({
+                    ...form,
+                    command: selectedTemplate(probe.templates, form)?.command ?? "",
+                  })
+                }
               >
                 default
               </button>

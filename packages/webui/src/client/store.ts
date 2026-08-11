@@ -25,6 +25,7 @@ import {
 } from "@ccmsg/protocol";
 import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
+import type { SessionCreatorPrefill } from "./session-creator.ts";
 import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
@@ -202,6 +203,17 @@ export interface AppState {
    * 「HTML として開く」/「生ダウンロード」はこの時のみ出す。未設定環境 (=
    * 前段に sandbox ドメインが無い) では押せば必ず失敗するので導線ごと隠す。 */
   sandboxAvailable: boolean;
+  /** hello response の `fork_available`。この host の `claude` が
+   * `--resume-session-at` を受け付ける時だけ true になり、Timeline の
+   * 「ここから fork」導線はこの時のみ出す (受け付けない claude では fork 起動が
+   * unknown option で必ず死ぬので、押せば必ず失敗するボタンを置かない —
+   * sandboxAvailable と同じ姿勢)。 */
+  forkAvailable: boolean;
+  /** Timeline の fork アクションが SessionCreator に渡す起動元 (resume 対象の
+   * sid と fork 地点 uuid)。非 null = 「この内容で新規セッションフォームを
+   * 開け」の要求で、Sidebar がパネルを開き SessionCreator が初期値に使う。
+   * フォームを閉じる / 起動し終えたら null に戻す (要求は 1 回きり)。 */
+  sessionCreatorPrefill: SessionCreatorPrefill | null;
   /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
   usageTab: "quota" | "stats";
@@ -297,6 +309,8 @@ export function initialState(): AppState {
     llmUsageProbes: new Map(),
     llmStatsAvailable: false,
     sandboxAvailable: false,
+    forkAvailable: false,
+    sessionCreatorPrefill: null,
     usageTab: "quota",
     usagePeriod: DEFAULT_STATS_PERIOD,
     usageDays: null,
@@ -352,6 +366,11 @@ export type Action =
   | { type: "llm-usage/availability"; available: boolean }
   | { type: "llm-stats/availability"; available: boolean }
   | { type: "sandbox/availability"; available: boolean }
+  | { type: "fork/availability"; available: boolean }
+  // null = 要求の取り下げ (フォームを閉じた / 起動した)。同じ turn を 2 度
+  // fork する時に同じ値をもう一度 dispatch できるよう、値の異同では判断せず
+  // 明示的に set / clear する。
+  | { type: "session-creator/prefill"; prefill: SessionCreatorPrefill | null }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
@@ -916,6 +935,10 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, llmStatsAvailable: action.available };
     case "sandbox/availability":
       return { ...state, sandboxAvailable: action.available };
+    case "fork/availability":
+      return { ...state, forkAvailable: action.available };
+    case "session-creator/prefill":
+      return { ...state, sessionCreatorPrefill: action.prefill };
     // Merged rather than replaced: a probe that failed for one credential
     // still answered for the others, and dropping the ones it did not mention
     // would lose readings the failure says nothing about.

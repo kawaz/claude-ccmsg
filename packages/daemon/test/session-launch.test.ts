@@ -17,12 +17,16 @@ import {
 function config(root: string, shell: "bash" | "zsh" = "bash"): SessionLauncherConfig {
   return {
     root_dirs: [root],
-    default_prompt: "",
-    shell,
-    command: 'launch "$PROMPT"',
+    templates: [{ name: "default", command: 'launch "$PROMPT"', default_prompt: "", shell }],
     timeout_seconds: 10,
     dir_tree_depth: 2,
   };
+}
+
+/** Swap the single template's command — each execution test pins the exact
+ * script the launcher shell must run. */
+function withCommand(cfg: SessionLauncherConfig, command: string): SessionLauncherConfig {
+  return { ...cfg, templates: [{ ...cfg.templates[0]!, command }] };
 }
 
 function request(cwd: string, prompt = "do the work"): SessionLaunchRequest {
@@ -67,7 +71,7 @@ describe("session launch validation", () => {
   // environment strings; no template substitution or value rewriting occurs.
   // They ride in the `ccmsg_new_session_*` carriers, which the shell prologue
   // converts back to the template vocabulary ($CWD/$MODEL/$EFFORT/$PROMPT).
-  test("a valid request returns the four carrier variables unchanged", () => {
+  test("a valid request returns every carrier variable unchanged", () => {
     const req = request(cwd);
     const result = validateSessionLaunch(config(root), req);
     expect(result.ok).toBe(true);
@@ -78,6 +82,10 @@ describe("session launch validation", () => {
       ccmsg_new_session_model: req.model,
       ccmsg_new_session_effort: req.effort,
       ccmsg_new_session_prompt: req.prompt,
+      // Defined-but-empty on a non-fork launch: a template that mentions
+      // $RESUME_AT must not abort under `set -u` when nothing is being forked.
+      ccmsg_new_session_resume_sid: "",
+      ccmsg_new_session_resume_at: "",
     });
     expect(result.cwd).toBe(fs.realpathSync(cwd));
     expect(result.shellArgv).toEqual([
@@ -99,6 +107,8 @@ describe("session launch validation", () => {
         'unset -v MODEL; MODEL="$ccmsg_new_session_model"; unset -v ccmsg_new_session_model',
         'unset -v EFFORT; EFFORT="$ccmsg_new_session_effort"; unset -v ccmsg_new_session_effort',
         'unset -v PROMPT; PROMPT="$ccmsg_new_session_prompt"; unset -v ccmsg_new_session_prompt',
+        'unset -v RESUME_SID; RESUME_SID="$ccmsg_new_session_resume_sid"; unset -v ccmsg_new_session_resume_sid',
+        'unset -v RESUME_AT; RESUME_AT="$ccmsg_new_session_resume_at"; unset -v ccmsg_new_session_resume_at',
       ].join("\n"),
     );
   });
@@ -205,11 +215,90 @@ describe("session launch validation", () => {
     });
   });
 
+  // Template selection picks the whole recipe — its command and its shell —
+  // and an absent `template` keeps launching the default (first) one.
+  test("template selects the named recipe's command and shell", () => {
+    const cfg: SessionLauncherConfig = {
+      ...config(root),
+      templates: [
+        { name: "default", command: "run-default", default_prompt: "", shell: "bash" },
+        { name: "fork", command: 'run --resume "$RESUME_SID"', default_prompt: "", shell: "zsh" },
+      ],
+    };
+
+    const chosen = validateSessionLaunch(cfg, { ...request(cwd), template: "fork" });
+    expect(chosen.ok).toBe(true);
+    if (!chosen.ok) return;
+    expect(chosen.shellArgv).toEqual([
+      "zsh",
+      "-e",
+      "-u",
+      "-o",
+      "pipefail",
+      "-c",
+      launchShellProgram('run --resume "$RESUME_SID"'),
+    ]);
+
+    const fallback = validateSessionLaunch(cfg, request(cwd));
+    expect(fallback.ok).toBe(true);
+    if (!fallback.ok) return;
+    expect(fallback.shellArgv.at(-1)).toBe(launchShellProgram("run-default"));
+  });
+
+  // A name that isn't configured is an error rather than a fallback: launching
+  // some other recipe than the one asked for would run the wrong command
+  // silently (the webui's picker only ever sends names it was given, so this
+  // fires on a stale form after a config edit).
+  test("an unknown template name is invalid_args", () => {
+    expect(
+      validateSessionLaunch(config(root), { ...request(cwd), template: "no-such" }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  // Fork carriers: present values pass through verbatim (they are never
+  // interpolated into shell text), and an empty string is rejected rather than
+  // silently launching a fork with no fork point.
+  test("resume_sid and resume_at reach the carriers verbatim", () => {
+    const result = validateSessionLaunch(config(root), {
+      ...request(cwd),
+      resume_sid: "11111111-2222-3333-4444-555555555555",
+      resume_at: "66666666-7777-8888-9999-000000000000",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      env: {
+        ccmsg_new_session_resume_sid: "11111111-2222-3333-4444-555555555555",
+        ccmsg_new_session_resume_at: "66666666-7777-8888-9999-000000000000",
+      },
+    });
+    for (const field of ["resume_sid", "resume_at"] as const) {
+      expect(validateSessionLaunch(config(root), { ...request(cwd), [field]: "" })).toMatchObject({
+        ok: false,
+        code: "invalid_args",
+      });
+    }
+  });
+
+  // The launched command sees the fork values as ordinary shell variables, and
+  // sees them empty (not unset) on a plain launch — a fork template running
+  // under `set -u` must not abort when nothing is being resumed.
+  test("a non-fork launch defines the resume variables as empty", async () => {
+    const cfg = withCommand(config(root), `printf 'sid=[%s] at=[%s]' "$RESUME_SID" "$RESUME_AT"`);
+    expect(await execute(cfg, request(cwd))).toMatchObject({
+      ok: true,
+      exit_code: 0,
+      stdout: "sid=[] at=[]",
+    });
+    expect(
+      await execute(cfg, { ...request(cwd), resume_sid: "sid-1", resume_at: "uuid-1" }),
+    ).toMatchObject({ ok: true, exit_code: 0, stdout: "sid=[sid-1] at=[uuid-1]" });
+  });
+
   // Executing an overridden command proves end-to-end that the shell reaches
   // the override branch (not just shellArgv construction) and that env still
   // flows through the same way — a smoke test for the daemon-side wiring.
   test("executes with the overridden command and same env vars", async () => {
-    const cfg = { ...config(root), command: "echo config-value" };
+    const cfg = withCommand(config(root), "echo config-value");
     const req = { ...request(cwd, "prompt-value"), command: 'echo "override:$PROMPT"' };
     expect(await execute(cfg, req)).toEqual({
       ok: true,
@@ -233,12 +322,11 @@ describe("session launch validation", () => {
   // A successful child receives the validated real cwd and all four opaque
   // request values through env; stdout and stderr remain separate response fields.
   test("executes in the validated cwd with env and captures both output streams", async () => {
-    const cfg = {
-      ...config(root),
-      command:
-        `printf 'cwd=%s\\npwd=%s\\nmodel=%s\\neffort=%s\\nprompt=%s' ` +
+    const cfg = withCommand(
+      config(root),
+      `printf 'cwd=%s\\npwd=%s\\nmodel=%s\\neffort=%s\\nprompt=%s' ` +
         `"$CWD" "$PWD" "$MODEL" "$EFFORT" "$PROMPT"; printf 'stderr-value' >&2`,
-    };
+    );
     const req = {
       ...request(cwd, 'hello $HOME "quoted"'),
       model: "model/x",
@@ -265,13 +353,12 @@ describe("session launch validation", () => {
   // session must not hand $PROMPT down to every command it later runs. `env`
   // is executed in a grandchild, i.e. exactly what the launched session sees.
   test("no launch variable reaches a grandchild process environment", async () => {
-    const cfg = {
-      ...config(root),
-      command:
-        "residue=$(bash -c env | " +
+    const cfg = withCommand(
+      config(root),
+      "residue=$(bash -c env | " +
         "grep -E '^(CWD|MODEL|EFFORT|PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
         `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
-    };
+    );
 
     expect(await execute(cfg, request(cwd, "secret prompt"))).toMatchObject({
       ok: true,
@@ -286,7 +373,7 @@ describe("session launch validation", () => {
   // a trailing newline, and leading/trailing whitespace.
   test("quoting-hostile prompt text arrives at the command verbatim", async () => {
     const prompt = `  'single' "double" $(id) \`tick\` \\back $HOME\nsecond line\n`;
-    const cfg = { ...config(root), command: `printf '[%s]' "$PROMPT"` };
+    const cfg = withCommand(config(root), `printf '[%s]' "$PROMPT"`);
 
     expect(await execute(cfg, request(cwd, prompt))).toMatchObject({
       ok: true,
@@ -303,12 +390,11 @@ describe("session launch validation", () => {
   test("a stale same-named variable in the daemon env is replaced, not inherited", async () => {
     process.env.PROMPT = "stale-from-daemon";
     try {
-      const cfg = {
-        ...config(root),
-        command:
-          "leaked=$(bash -c env | grep -E '^PROMPT=' || true); " +
+      const cfg = withCommand(
+        config(root),
+        "leaked=$(bash -c env | grep -E '^PROMPT=' || true); " +
           `printf 'prompt=[%s] leaked=[%s]' "$PROMPT" "$leaked"`,
-      };
+      );
       expect(await execute(cfg, request(cwd, "fresh"))).toMatchObject({
         ok: true,
         exit_code: 0,
@@ -325,13 +411,12 @@ describe("session launch validation", () => {
   // Skipped where zsh is not installed (CI's ubuntu runner ships without it);
   // the bash-side coverage above runs everywhere.
   test.skipIf(Bun.which("zsh") === null)("the prologue behaves identically under zsh", async () => {
-    const cfg = {
-      ...config(root, "zsh"),
-      command:
-        "residue=$(zsh -c env | " +
+    const cfg = withCommand(
+      config(root, "zsh"),
+      "residue=$(zsh -c env | " +
         "grep -E '^(PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
         `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
-    };
+    );
 
     expect(await execute(cfg, request(cwd, "zsh prompt"))).toMatchObject({
       ok: true,
@@ -343,10 +428,7 @@ describe("session launch validation", () => {
   // A normal non-zero exit is a completed launch, not a daemon protocol error;
   // its exact code and both output streams are returned to the webui.
   test("returns a normal non-zero exit code", async () => {
-    const cfg = {
-      ...config(root),
-      command: "printf 'partial-out'; printf 'partial-err' >&2; exit 7",
-    };
+    const cfg = withCommand(config(root), "printf 'partial-out'; printf 'partial-err' >&2; exit 7");
 
     expect(await execute(cfg, request(cwd))).toEqual({
       ok: true,
@@ -362,11 +444,12 @@ describe("session launch validation", () => {
   // proving signal termination maps to a null exit code and timed_out=true.
   test("times out with SIGTERM and reports signal termination", async () => {
     const cfg = {
-      ...config(root),
-      timeout_seconds: 0.05,
-      command:
+      ...withCommand(
+        config(root),
         "trap 'printf term-received >&2; trap - TERM; kill -TERM $$' TERM; " +
-        "printf ready; while :; do :; done",
+          "printf ready; while :; do :; done",
+      ),
+      timeout_seconds: 0.05,
     };
 
     expect(await execute(cfg, request(cwd))).toEqual({
@@ -383,9 +466,11 @@ describe("session launch validation", () => {
   // fallback sent SIGKILL rather than leaving an untracked process behind.
   test("escalates to SIGKILL when the child ignores SIGTERM", async () => {
     const cfg = {
-      ...config(root),
+      ...withCommand(
+        config(root),
+        "trap 'printf term-ignored >&2' TERM; printf ready; while :; do :; done",
+      ),
       timeout_seconds: 0.05,
-      command: "trap 'printf term-ignored >&2' TERM; printf ready; while :; do :; done",
     };
 
     expect(await execute(cfg, request(cwd))).toEqual({
@@ -405,10 +490,7 @@ describe("session launch validation", () => {
   // deliberately does NOT manage or kill the survivor (DR-0018 §2.3 "プロセス
   // 管理はしない"): detaching a long-lived session is the feature.
   test("returns promptly when a detached grandchild keeps the pipes open", async () => {
-    const cfg = {
-      ...config(root),
-      command: "printf launched; sleep 30 & exit 0",
-    };
+    const cfg = withCommand(config(root), "printf launched; sleep 30 & exit 0");
 
     const started = Date.now();
     const result = await execute(cfg, request(cwd));
@@ -660,9 +742,15 @@ describe("clean_env end-to-end launch", () => {
     try {
       const cfg: SessionLauncherConfig = {
         root_dirs: [root],
-        default_prompt: "",
-        shell: "bash",
-        command: 'printf "clean=%s keep=%s" "${CCMSG_TEST_CLEAN_ME:-absent}" "$CCMSG_TEST_KEEP_ME"',
+        templates: [
+          {
+            name: "default",
+            command:
+              'printf "clean=%s keep=%s" "${CCMSG_TEST_CLEAN_ME:-absent}" "$CCMSG_TEST_KEEP_ME"',
+            default_prompt: "",
+            shell: "bash",
+          },
+        ],
         timeout_seconds: 10,
         dir_tree_depth: 2,
         clean_env: ["CCMSG_TEST_CLEAN_*"],
@@ -685,10 +773,15 @@ describe("clean_env end-to-end launch", () => {
     try {
       const cfg: SessionLauncherConfig = {
         root_dirs: [root],
-        default_prompt: "",
-        shell: "bash",
-        command:
-          'printf "cfg=%s sess=%s" "${CCMSG_TEST_KE_CONFIG:-absent}" "${CCMSG_TEST_KE_SESSION:-absent}"',
+        templates: [
+          {
+            name: "default",
+            command:
+              'printf "cfg=%s sess=%s" "${CCMSG_TEST_KE_CONFIG:-absent}" "${CCMSG_TEST_KE_SESSION:-absent}"',
+            default_prompt: "",
+            shell: "bash",
+          },
+        ],
         timeout_seconds: 10,
         dir_tree_depth: 2,
         clean_env: ["CCMSG_TEST_KE_*"],

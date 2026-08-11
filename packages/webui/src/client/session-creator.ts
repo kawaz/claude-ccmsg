@@ -3,7 +3,7 @@
 // in-view-search.ts — the form model and its wire-request projection are
 // exercised in isolation by session-creator.test.ts, and neither reads
 // AppState nor does I/O (that's SessionCreator.tsx's job, per DR-0005 §1).
-import type { SessionLaunchRequest } from "@ccmsg/protocol";
+import type { SessionLauncherConfigTemplate, SessionLaunchRequest } from "@ccmsg/protocol";
 
 /** DR-0018 §2.1 fixed dropdown options — the DR explicitly scopes "コマンド
  * テンプレの UI 編集" out (§2.3), so these lists are hardcoded here rather
@@ -27,29 +27,105 @@ export interface SessionCreatorForm {
   model: string;
   effort: string;
   prompt: string;
+  /** Which configured template the form is on, by name. Sent as
+   * SessionLaunchRequest.template; also decides which `command`/`default_prompt`
+   * the "default" buttons restore. */
+  template: string;
   /** User-editable shell command template (DR-0018 §3.2 addendum 2026-07-17).
-   * Initialized to the daemon-configured template verbatim (no variable
-   * substitution — $CWD/$MODEL/$EFFORT/$PROMPT stay literal); the "default"
-   * button restores that value. Sent as SessionLaunchRequest.command only
-   * when it differs from the initial template (see buildSessionLaunchRequest),
-   * so the common no-edit case keeps the wire request identical to before. */
+   * Initialized to the selected template's command verbatim (no variable
+   * substitution — $CWD/$MODEL/$EFFORT/$PROMPT/$RESUME_SID/$RESUME_AT stay
+   * literal); the "default" button restores that value. Sent as
+   * SessionLaunchRequest.command only when it differs from the selected
+   * template's command (see buildSessionLaunchRequest), so the common no-edit
+   * case keeps the wire request identical to before. */
   command: string;
+  /** Fork source session id and fork point record uuid, empty on a plain
+   * launch. Both reach the command as `$RESUME_SID` / `$RESUME_AT`; the form
+   * never builds a `claude` argv itself, so what a fork actually does is
+   * whatever the chosen template's command says. */
+  resumeSid: string;
+  resumeAt: string;
 }
 
-/** Initial form state once `default_prompt` / `command` are known
+/** What the Timeline's "ここから fork" action hands to the form: the session to
+ * resume and the record to resume at (see forkPointUuid in fork-point.ts for
+ * how the record is chosen). */
+export interface SessionCreatorPrefill {
+  resumeSid: string;
+  resumeAt: string;
+}
+
+/** The template the form opens on: for a fork, the first recipe that actually
+ * uses the fork point (see `forkTemplate`); otherwise the configured default.
+ * Falls back to the default template when a fork was requested but no recipe
+ * consumes `$RESUME_AT` — SessionCreator warns in that case rather than
+ * silently launching a non-fork command. */
+export function initialTemplate(
+  templates: SessionLauncherConfigTemplate[],
+  prefill: SessionCreatorPrefill | null,
+): SessionLauncherConfigTemplate | undefined {
+  if (prefill) return forkTemplate(templates) ?? templates[0];
+  return templates[0];
+}
+
+/** Which configured recipe is a fork recipe: the first whose command reads the
+ * fork point. Derived from the command text rather than from a naming
+ * convention or an extra config flag — a template that never expands
+ * `$RESUME_AT` cannot fork no matter what it is called, and one that does
+ * needs no declaration. Both `$RESUME_AT` and `${RESUME_AT}` count. */
+export function forkTemplate(
+  templates: SessionLauncherConfigTemplate[],
+): SessionLauncherConfigTemplate | undefined {
+  return templates.find((t) => usesForkPoint(t.command));
+}
+
+/** Whether a command text reads the fork point. Also answers the question the
+ * form asks about the command the user is actually about to run — which may be
+ * an edited one, or a template they switched to after asking for a fork. */
+export function usesForkPoint(command: string): boolean {
+  return /\$\{?RESUME_AT\b/.test(command);
+}
+
+/** Initial form state once the template list is known
  * (session_launcher_config response) — `cwd` starts empty; the run button
  * stays disabled until the CwdTree picker sets one (see
- * `sessionCreatorFormValid`). */
+ * `sessionCreatorFormValid`). An empty template list cannot happen (the daemon
+ * disables the launcher instead), so the fields fall back to empty strings
+ * only to keep this total. */
 export function initialSessionCreatorForm(
-  defaultPrompt: string,
-  defaultCommand: string,
+  templates: SessionLauncherConfigTemplate[],
+  prefill: SessionCreatorPrefill | null = null,
 ): SessionCreatorForm {
+  const template = initialTemplate(templates, prefill);
   return {
     cwd: "",
     model: DEFAULT_SESSION_CREATOR_MODEL,
     effort: DEFAULT_SESSION_CREATOR_EFFORT,
-    prompt: defaultPrompt,
-    command: defaultCommand,
+    prompt: template?.default_prompt ?? "",
+    template: template?.name ?? "",
+    command: template?.command ?? "",
+    resumeSid: prefill?.resumeSid ?? "",
+    resumeAt: prefill?.resumeAt ?? "",
+  };
+}
+
+/** Switch the form to another configured template. Prompt and command follow
+ * the new recipe wholesale: they are that recipe's text, so keeping the old
+ * recipe's edits would leave the form showing a command the chosen template
+ * never had. cwd/model/effort and the fork point are the user's own picks and
+ * survive the switch. Unknown names leave the form untouched. */
+export function selectSessionCreatorTemplate(
+  form: SessionCreatorForm,
+  templates: SessionLauncherConfigTemplate[],
+  name: string,
+): SessionCreatorForm {
+  const template = templates.find((t) => t.name === name);
+  if (!template) return form;
+  return {
+    ...form,
+    template: template.name,
+    prompt: template.default_prompt,
+    command: template.command,
   };
 }
 
@@ -97,24 +173,30 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
  * isn't launchable yet (mirrors sessionCreatorFormValid) so callers can't
  * accidentally fire a request with an empty cwd.
  *
- * `defaultCommand` is the daemon-configured template. When the form's
- * `command` matches it verbatim, the override field is omitted so the wire
- * request stays identical to the pre-addendum shape (no-edit case). Any
- * difference — including whitespace-only changes the user made deliberately —
- * is sent as-is. Empty command isn't special-cased here (an empty template
- * runs nothing meaningful): the daemon rejects it with invalid_args so the
- * user sees the error rather than a silent fallback to the config value. */
+ * The selected template's command is the comparison baseline: when the form's
+ * `command` matches it verbatim, the override field is omitted so the daemon
+ * runs the configured recipe (no-edit case). Any difference — including
+ * whitespace-only changes the user made deliberately — is sent as-is. Empty
+ * command isn't special-cased here (an empty template runs nothing
+ * meaningful): the daemon rejects it with invalid_args so the user sees the
+ * error rather than a silent fallback to the config value. Empty resume
+ * fields are omitted rather than sent blank, for the same reason — the daemon
+ * rejects a present-but-empty one. */
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
-  defaultCommand: string,
+  templates: SessionLauncherConfigTemplate[],
 ): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
   if (!sessionCreatorFormValid(form)) return null;
-  const base = {
+  const selected = templates.find((t) => t.name === form.template);
+  const req: Omit<SessionLaunchRequest, "op" | "request_id"> = {
     cwd: form.cwd.trim(),
     model: form.model,
     effort: form.effort,
     prompt: form.prompt,
+    ...(form.template === "" ? {} : { template: form.template }),
+    ...(form.resumeSid === "" ? {} : { resume_sid: form.resumeSid }),
+    ...(form.resumeAt === "" ? {} : { resume_at: form.resumeAt }),
   };
-  if (form.command === defaultCommand) return base;
-  return { ...base, command: form.command };
+  if (form.command === selected?.command) return req;
+  return { ...req, command: form.command };
 }

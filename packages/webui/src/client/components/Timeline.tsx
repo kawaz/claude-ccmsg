@@ -106,6 +106,7 @@ import {
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
+import { forkActionState, type ForkActionState } from "../fork-point.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
@@ -2578,6 +2579,49 @@ function topBelowToolbar(container: HTMLElement, target: HTMLElement): number {
   return target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
 }
 
+/** 右端フロートパネルのタブ。設定 (常時 ON/OFF の切替) と、選択中の項目に
+ * 対して「今これをする」アクションは性質が違うので同居させず切り替える
+ * (常時両方出すと邪魔、kawaz r99m43)。 */
+const SIDE_PANEL_TABS = [
+  { id: "auto-open", label: "auto open" },
+  { id: "actions", label: "アクション" },
+] as const;
+
+type SidePanelTabId = (typeof SIDE_PANEL_TABS)[number]["id"];
+
+/** アクションタブの中身。今は fork 1 個だが、アクションが増えても
+ * 「選択中 turn に対する操作」がここに並ぶ形は変わらない。 */
+function ForkAction({
+  state,
+  available,
+  onFork,
+}: {
+  state: ForkActionState;
+  /** hello の `fork_available`。この host の claude が `--resume-session-at` を
+   * 受け付けない時はボタン自体を出さない (押せば必ず unknown option で死ぬ)。 */
+  available: boolean;
+  onFork: (resumeAt: string) => void;
+}) {
+  if (!available) {
+    return <p class="tl-float-note">この claude は fork (--resume-session-at) に未対応です。</p>;
+  }
+  if (state.kind === "no-selection") {
+    return <p class="tl-float-note">fork 元にする turn を選択してください。</p>;
+  }
+  if (state.kind === "no-fork-point") {
+    return (
+      <p class="tl-float-note">
+        この turn より前が読み込まれていません。older を読み込むと fork できます。
+      </p>
+    );
+  }
+  return (
+    <button type="button" class="tl-float-action" onClick={() => onFork(state.resumeAt)}>
+      ここから fork
+    </button>
+  );
+}
+
 export function Timeline({
   sid,
   timeline,
@@ -2688,6 +2732,7 @@ export function Timeline({
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
   const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
+  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTabId>("auto-open");
   // パネル外 click で自動収納 (kawaz r38 mid=66)。useFabPopup と同じ理由で
   // click イベント (tap 完了) のみ — mousedown/touchstart はスクロール目的の
   // タッチでも閉じてしまう。open 中だけ listener を張る。
@@ -3295,6 +3340,12 @@ export function Timeline({
     setUserNavActivated(false);
   }, [sid, agent?.agentId, agent?.runId, agent?.teammate]);
   const selectedUserTurnKey = userNavActivated ? userTurnKeys[currentUserIdx - 1] : undefined;
+  // 選択中 turn に対して側面パネルの「アクション」タブが出せるもの。👤 nav の
+  // 選択をそのまま入力に使う (選択モデルを 2 つ持たない)。
+  const forkAction = useMemo(
+    () => forkActionState(selectedUserTurnKey, parsed, offsets),
+    [selectedUserTurnKey, parsed, offsets],
+  );
 
   useEffect(
     () => () => {
@@ -3922,49 +3973,82 @@ export function Timeline({
                     <button
                       type="button"
                       class="tl-auto-open-handle"
-                      aria-label={
-                        autoOpenPanelOpen ? "auto open 設定を閉じる" : "auto open 設定を開く"
-                      }
+                      aria-label={autoOpenPanelOpen ? "パネルを閉じる" : "パネルを開く"}
                       aria-expanded={autoOpenPanelOpen}
                       onClick={() => setAutoOpenPanelOpen((open) => !open)}
                     >
                       {autoOpenPanelOpen ? "›" : "‹"}
                     </button>
-                    <fieldset class="tl-auto-open" aria-label="自動オープンする Timeline カテゴリ">
-                      <legend>auto open</legend>
-                      {(["U", "R", "C", "T", "A"] as const).map((category) => {
-                        const fixed = category === "U" || category === "R";
-                        // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
-                        // U/R は境界要素なので常に表示 (fixed)。
-                        const settingKey =
-                          category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
-                        return (
-                          <label
-                            key={category}
-                            title={fixed ? "常に表示" : `${category} を自動オープン`}
+                    <div class="tl-float-body">
+                      <div class="tl-float-tabs" role="tablist">
+                        {SIDE_PANEL_TABS.map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            role="tab"
+                            class="tl-float-tab"
+                            aria-selected={sidePanelTab === tab.id}
+                            onClick={() => setSidePanelTab(tab.id)}
                           >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                      {sidePanelTab === "actions" ? (
+                        <div class="tl-float-actions" role="tabpanel">
+                          <ForkAction
+                            state={forkAction}
+                            available={appState.forkAvailable}
+                            onFork={(resumeAt) =>
+                              store.dispatch({
+                                type: "session-creator/prefill",
+                                prefill: { resumeSid: sid, resumeAt },
+                              })
+                            }
+                          />
+                        </div>
+                      ) : (
+                        <fieldset
+                          class="tl-auto-open"
+                          role="tabpanel"
+                          aria-label="自動オープンする Timeline カテゴリ"
+                        >
+                          <legend>auto open</legend>
+                          {(["U", "R", "C", "T", "A"] as const).map((category) => {
+                            const fixed = category === "U" || category === "R";
+                            // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
+                            // U/R は境界要素なので常に表示 (fixed)。
+                            const settingKey =
+                              category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
+                            return (
+                              <label
+                                key={category}
+                                title={fixed ? "常に表示" : `${category} を自動オープン`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={fixed ? true : autoOpenSettings[settingKey]}
+                                  disabled={fixed}
+                                  onChange={() => {
+                                    if (!fixed) toggleAutoOpen(settingKey);
+                                  }}
+                                />
+                                {category}
+                              </label>
+                            );
+                          })}
+                          <span class="tl-auto-open-separator" aria-hidden="true" />
+                          <label title="C/T/A を含む外側の fold を自動オープン">
                             <input
                               type="checkbox"
-                              checked={fixed ? true : autoOpenSettings[settingKey]}
-                              disabled={fixed}
-                              onChange={() => {
-                                if (!fixed) toggleAutoOpen(settingKey);
-                              }}
+                              checked={autoOpenSettings.items}
+                              onChange={() => toggleAutoOpen("items")}
                             />
-                            {category}
+                            N items
                           </label>
-                        );
-                      })}
-                      <span class="tl-auto-open-separator" aria-hidden="true" />
-                      <label title="C/T/A を含む外側の fold を自動オープン">
-                        <input
-                          type="checkbox"
-                          checked={autoOpenSettings.items}
-                          onChange={() => toggleAutoOpen("items")}
-                        />
-                        N items
-                      </label>
-                    </fieldset>
+                        </fieldset>
+                      )}
+                    </div>
                   </div>
                   <div class="tl-bottom-controls">
                     {miniLines.length > 0 ? (

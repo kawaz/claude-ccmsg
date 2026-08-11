@@ -1814,3 +1814,25 @@ describe("llm-requests/loaded", () => {
     expect(after.llmRequests.size).toBe(0);
   });
 });
+
+// Timeline の fork アクション → Sidebar の受け渡し。1 回きりの要求なので
+// 「立てる」「消す」の両方が要る (消せないと、パネルを開き直すたびに古い
+// fork 元が蘇る)。
+describe("session-creator/prefill", () => {
+  test("holds the fork request until it is explicitly cleared", () => {
+    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const set = dispatch(initialState(), { type: "session-creator/prefill", prefill });
+    expect(set.sessionCreatorPrefill).toEqual(prefill);
+    expect(
+      dispatch(set, { type: "session-creator/prefill", prefill: null }).sessionCreatorPrefill,
+    ).toBeNull();
+  });
+
+  // hello 由来の capability。probe が終わるまで daemon は false を返すので、
+  // 再接続で true に変わる経路がそのまま「後から有効になる」経路になる。
+  test("fork availability follows the latest hello", () => {
+    const on = dispatch(initialState(), { type: "fork/availability", available: true });
+    expect(on.forkAvailable).toBe(true);
+    expect(dispatch(on, { type: "fork/availability", available: false }).forkAvailable).toBe(false);
+  });
+});

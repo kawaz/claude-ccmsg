@@ -70,14 +70,21 @@ export function shellArgv(shell: "bash" | "zsh", command: string): string[] {
 
 /** Template-visible shell variable name -> the transport environment variable
  * that carries its value into the launcher shell. The template vocabulary
- * (`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`, DR-0018 §3.1) is unchanged; only
- * the transport is renamed to a lowercase `ccmsg_new_session_*` namespace that
- * the shell erases from its environment before running the command. */
+ * (`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`, DR-0018 §3.1, plus `$RESUME_SID`
+ * / `$RESUME_AT` for fork recipes) is a fixed set; only the transport is
+ * renamed to a lowercase `ccmsg_new_session_*` namespace that the shell erases
+ * from its environment before running the command.
+ *
+ * Every variable is always defined, empty when the request omits it — a
+ * template referencing `$RESUME_AT` under `set -u` must not abort on a plain
+ * (non-fork) launch. */
 const LAUNCH_VARS = {
   CWD: "ccmsg_new_session_cwd",
   MODEL: "ccmsg_new_session_model",
   EFFORT: "ccmsg_new_session_effort",
   PROMPT: "ccmsg_new_session_prompt",
+  RESUME_SID: "ccmsg_new_session_resume_sid",
+  RESUME_AT: "ccmsg_new_session_resume_at",
 } as const;
 
 /** Shell prologue that moves each launch value out of the environment and into
@@ -160,7 +167,33 @@ export function validateSessionLaunch(
       };
     }
   }
-  const command = req.command ?? cfg.command;
+  // Template selection: absent = the launcher's default recipe (templates[0],
+  // which for a flat config is the only one). An unknown name is an error
+  // rather than a fallback — launching a different recipe than the one the
+  // client asked for would run the wrong command silently.
+  const template =
+    req.template === undefined
+      ? cfg.templates[0]
+      : cfg.templates.find((t) => t.name === req.template);
+  if (!template) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: `session_launch template not found: ${String(req.template)}`,
+    };
+  }
+  for (const field of ["resume_sid", "resume_at"] as const) {
+    const value = req[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string" || value === "") {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: `session_launch ${field} must be a non-empty string when present`,
+      };
+    }
+  }
+  const command = req.command ?? template.command;
 
   // Model and effort intentionally remain opaque strings: the UI may offer a
   // curated dropdown, but daemon enums would couple every new launcher choice
@@ -171,12 +204,14 @@ export function validateSessionLaunch(
     [LAUNCH_VARS.MODEL]: req.model,
     [LAUNCH_VARS.EFFORT]: req.effort,
     [LAUNCH_VARS.PROMPT]: req.prompt,
+    [LAUNCH_VARS.RESUME_SID]: req.resume_sid ?? "",
+    [LAUNCH_VARS.RESUME_AT]: req.resume_at ?? "",
   };
   return {
     ok: true,
     cwd: cwd.data.realPath,
     env,
-    shellArgv: shellArgv(cfg.shell, launchShellProgram(command)),
+    shellArgv: shellArgv(template.shell, launchShellProgram(command)),
     cleanEnv: cfg.clean_env ?? [],
     keepEnv: cfg.keep_env ?? [],
   };

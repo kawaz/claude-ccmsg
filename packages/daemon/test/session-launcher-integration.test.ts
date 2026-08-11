@@ -242,7 +242,7 @@ describe("session launcher wire ops", () => {
   // anything — session_launcher_config is the read-only projection that fills
   // that gap (see its protocol doc comment).
   test(
-    "user role receives root_dirs and default_prompt",
+    "user role receives root_dirs and the template list",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-integration-"));
@@ -279,16 +279,21 @@ describe("session launcher wire ops", () => {
         const response = await client.request<{
           ok: true;
           root_dirs: string[];
-          default_prompt: string;
-          command: string;
+          templates: { name: string; command: string; default_prompt: string }[];
         }>({ op: "session_launcher_config" });
         expect(response.ok).toBe(true);
         // DR-0018 §3.2 addendum 2026-07-17: the raw command template is part
         // of the read-only projection (webui uses it as SessionCreator's
-        // textarea initial value + "default" button target).
+        // textarea initial value + "default" button target). A flat config
+        // projects to exactly one implicitly-named template.
         expect(response).toMatchObject({
-          default_prompt: "hello default",
-          command: "printf configured",
+          templates: [
+            {
+              name: "default",
+              default_prompt: "hello default",
+              command: "printf configured",
+            },
+          ],
         });
         if (response.ok) expect(response.root_dirs).toEqual([path.resolve(root)]);
       } finally {

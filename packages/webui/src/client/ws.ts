@@ -519,6 +519,13 @@ export function createWsClient(
           type: "sandbox/availability",
           available: hello.sandbox_available === true,
         });
+        // fork (--resume-session-at) の capability も同じ扱い。daemon は起動時
+        // probe が終わるまで false を返すので、reconnect の度に読み直す本経路
+        // がそのまま「後から true になる」経路にもなる。
+        dispatch({
+          type: "fork/availability",
+          available: hello.fork_available === true,
+        });
       }
       const rooms = await send<RoomsResponse>({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });

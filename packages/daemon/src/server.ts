@@ -53,6 +53,7 @@ import {
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
+import { probeForkSupport } from "./fork-probe.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
@@ -209,6 +210,11 @@ export interface Daemon {
    * when unconfigured/malformed — which is also what turns the whole sandbox
    * surface off (no hello capability, no mint, no Host branch). */
   sandboxOrigin: SandboxOrigin | null;
+  /** Whether this host's `claude` accepts `--resume-session-at` (fork-probe.ts).
+   * Starts false and is filled in by the startup probe; false therefore covers
+   * both "unsupported" and "not answered yet", which are the same thing to a
+   * client deciding whether to offer a fork button. */
+  forkAvailable: boolean;
   /** Persistent macOS Translation.framework helper (DR-0023). */
   translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
@@ -1363,6 +1369,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
       // ドメインが前段に無い環境) では webui が導線を一切出さない。
       const sandboxAvailable = newId.role === "user" && daemon.sandboxOrigin !== null;
+      // fork も同じ流儀の capability。`--resume-session-at` を受け付けない
+      // claude では fork 起動が unknown option で必ず死ぬので、webui 側の
+      // 導線ごと出さないための判断材料だけを渡す。
+      const forkAvailable = newId.role === "user" && daemon.forkAvailable;
       send(conn, {
         ok: true,
         version: daemon.version,
@@ -1370,6 +1380,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
         ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
+        ...(forkAvailable ? { fork_available: true } : {}),
       });
       return;
     }
@@ -2070,8 +2081,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       send(conn, {
         ok: true,
         root_dirs: launcher.root_dirs,
-        default_prompt: launcher.default_prompt,
-        command: launcher.command,
+        // `shell` は daemon 側の実行詳細なので落とす — form が使うのは名前・
+        // command テンプレ・prompt 初期値の 3 つだけ。
+        templates: launcher.templates.map(({ name, command, default_prompt }) => ({
+          name,
+          command,
+          default_prompt,
+        })),
       });
       return;
     }
@@ -3060,6 +3076,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     sessionErrorsSnapshot: "",
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
+    forkAvailable: false,
     translator: createTranslateService(),
     peersSnapshot: "",
     llmRequests: new LlmRequestCache(),
@@ -3203,6 +3220,18 @@ export function startDaemon(opts: StartOptions = {}): void {
       log,
     }).then((origins) => {
       for (const origin of origins) httpAllowOrigin.add(origin);
+    });
+  }
+
+  // Fork capability probe (fork-probe.ts): best-effort and async like the
+  // tailscale lookup above — a hello arriving before it settles simply reports
+  // no fork support, and the next hello (the webui re-hellos on every
+  // reconnect) carries the real answer. Only worth running where launches can
+  // happen at all, so an unconfigured launcher skips spawning `claude`.
+  if (daemon.config.session_launcher) {
+    void probeForkSupport().then((result) => {
+      daemon.forkAvailable = result.available;
+      log.info(`fork support: ${result.available ? "yes" : "no"} (${result.detail})`);
     });
   }
 

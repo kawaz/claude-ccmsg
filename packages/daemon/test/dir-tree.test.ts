@@ -10,9 +10,7 @@ import { dirTree, matchesAllTokens, tokenizeFilter } from "../src/dir-tree.ts";
 function config(root: string, depth = 2): SessionLauncherConfig {
   return {
     root_dirs: [root],
-    default_prompt: "",
-    shell: "bash",
-    command: "run",
+    templates: [{ name: "default", command: "run", default_prompt: "", shell: "bash" }],
     timeout_seconds: 10,
     dir_tree_depth: depth,
   };

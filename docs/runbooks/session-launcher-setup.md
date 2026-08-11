@@ -52,12 +52,48 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
      上の `command` 例は `${...:t1}` (zsh の modifier 展開) を使うため `"zsh"`
      必須 — bash では `bad substitution` になる。bash 互換の command を書くなら
      `"bash"` で良い
-   - `command`: 実行するコマンド。`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`
-     の 4 変数が渡される (文字列置換ではなく変数渡し、quote は書き手の責務)。
-     この 4 つは **export されていないシェル変数** — command が起動する
-     プロセス (= claude セッションとその子孫) には引き継がれない
+   - `command`: 実行するコマンド。`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT` /
+     `$RESUME_SID` / `$RESUME_AT` の 6 変数が渡される (文字列置換ではなく
+     変数渡し、quote は書き手の責務)。この 6 つは **export されていない
+     シェル変数** — command が起動するプロセス (= claude セッションとその
+     子孫) には引き継がれない。fork 起動でない時 `$RESUME_SID` /
+     `$RESUME_AT` は空文字 (未定義ではないので `set -u` で落ちない)
    - `timeout_seconds`: 省略時 10。超過で SIGTERM → 少し待って SIGKILL
    - `dir_tree_depth`: cwd ツリーの初期一括ロード深さ。省略時 2
+   - `templates`: 名前付きの起動レシピ一覧 (省略可、下記「複数テンプレート」)
+
+### 複数テンプレート (fork 等の起動形を並べる)
+
+`templates` を書くと SessionCreator に template ドロップダウンが出る。各
+エントリは `command` / `default_prompt` / `shell` を省略でき、省略分は
+`session_launcher` 直下の値を継承する。`templates[0]` がフォームの初期選択。
+
+```json
+   {
+     "session_launcher": {
+       "root_dirs": ["~/.local/share/repos/github.com/kawaz/"],
+       "shell": "zsh",
+       "default_prompt": "ccmsg subscribe起動",
+       "command": "direnv exec \"$CWD\" hyoui run --dettach -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
+       "templates": [
+         { "name": "new" },
+         {
+           "name": "fork",
+           "default_prompt": "",
+           "command": "direnv exec \"$CWD\" hyoui run --dettach -- claude --model \"$MODEL\" --effort \"$EFFORT\" --resume \"$RESUME_SID\" --resume-session-at=\"$RESUME_AT\" --fork-session \"$PROMPT\""
+         }
+       ]
+     }
+   }
+```
+
+- 個別エントリが壊れていても (name が空 / 重複 / command がどこにもない)
+  そのエントリだけ warn して無視し、残りは生きる。全滅すると launcher 無効
+- **fork テンプレの判定は command の中身**: `$RESUME_AT` を参照している
+  最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
+- `--resume-session-at` は `claude --help` に出ない非公開オプション。daemon
+  は起動時に 1 度だけ「この claude が受け付けるか」を実測し、受け付けない
+  ホストでは webui の fork 導線を出さない (`fork_available`)
 
 2. **daemon を再起動する**
 

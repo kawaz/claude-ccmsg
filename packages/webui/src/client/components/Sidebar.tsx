@@ -1,4 +1,4 @@
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -6,6 +6,7 @@ import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } fro
 import { readStorage, writeStorage } from "../storage.ts";
 import { RoomCreator } from "./RoomCreator.tsx";
 import { RoomList } from "./RoomList.tsx";
+import type { SessionCreatorPrefill } from "../session-creator.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
@@ -139,11 +140,24 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
  * cross-section exclusivity trivial instead of needing each boolean setter
  * to know about the other two). */
 export function Sidebar({ state }: { state: AppState }) {
+  const { store } = useApp();
   const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
   const [activePanel, setActivePanel] = useState<SidebarPanel | null>(null);
   const togglePanel = (panel: SidebarPanel) =>
     setActivePanel((cur) => (cur === panel ? null : panel));
   const closePanel = () => setActivePanel(null);
+  // Timeline の「ここから fork」は state 越しに届く (Timeline と Sidebar は
+  // 兄弟なので props では渡せない)。要求が来たら creator パネルを開き、その
+  // 値を SessionCreator に手渡してから store 側の要求を消す — 消さないと、
+  // パネルを閉じて開き直した時に古い fork 元が蘇る。手渡した値はこの
+  // コンポーネントが持つので、消しても開いているフォームには影響しない。
+  const [handedPrefill, setHandedPrefill] = useState<SessionCreatorPrefill | null>(null);
+  useEffect(() => {
+    if (!state.sessionCreatorPrefill) return;
+    setHandedPrefill(state.sessionCreatorPrefill);
+    setActivePanel("session-creator");
+    store.dispatch({ type: "session-creator/prefill", prefill: null });
+  }, [state.sessionCreatorPrefill, store]);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
@@ -174,7 +188,7 @@ export function Sidebar({ state }: { state: AppState }) {
           <PeersRefreshButton />
         </h2>
         {activePanel === "session-creator" ? (
-          <SessionCreator onClose={closePanel} />
+          <SessionCreator onClose={closePanel} prefill={handedPrefill} />
         ) : activePanel === "session-search" ? (
           <SessionSearchPanel onClose={closePanel} />
         ) : (

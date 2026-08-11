@@ -72,9 +72,14 @@ describe("loadConfig", () => {
     expect(loadConfig(file, log)).toEqual({
       session_launcher: {
         root_dirs: [path.resolve(root)],
-        default_prompt: "start here",
-        shell: "zsh",
-        command: 'claude --model "$MODEL" "$PROMPT"',
+        templates: [
+          {
+            name: "default",
+            command: 'claude --model "$MODEL" "$PROMPT"',
+            default_prompt: "start here",
+            shell: "zsh",
+          },
+        ],
         timeout_seconds: 25,
         dir_tree_depth: 3,
         clean_env: ["CLAUDE_*", "AI_AGENT"],
@@ -121,9 +126,107 @@ describe("loadConfig", () => {
         }),
       );
       warnings = [];
-      expect(loadConfig(file, log).session_launcher?.shell).toBe("bash");
+      expect(loadConfig(file, log).session_launcher?.templates[0]?.shell).toBe("bash");
       expect(warnings).toHaveLength(warningCount);
     }
+  });
+
+  // Named templates: each entry may state only what differs from the
+  // launcher-level values, and the parsed form is fully resolved so nothing
+  // downstream re-applies the inheritance.
+  test("templates inherit the launcher-level command, prompt and shell", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          command: "run $PROMPT",
+          default_prompt: "shared",
+          shell: "zsh",
+          templates: [
+            { name: "plain" },
+            {
+              name: "fork",
+              command: 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"',
+              default_prompt: "",
+              shell: "bash",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+      { name: "plain", command: "run $PROMPT", default_prompt: "shared", shell: "zsh" },
+      {
+        name: "fork",
+        command: 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"',
+        default_prompt: "",
+        shell: "bash",
+      },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  // A template list is authoritative: with every command named inside it, the
+  // launcher-level command has nothing left to do and may be absent.
+  test("templates alone are enough — no launcher-level command required", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "only", command: "run" }],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+      { name: "only", command: "run", default_prompt: "", shell: "bash" },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  // One unusable recipe must not take the usable ones down with it — the same
+  // entry-level degradation the env pattern lists use. Each rejected entry
+  // gets its own warning so the user knows which line to repair.
+  test("a broken template entry is skipped while its siblings survive", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [
+            "not-an-object",
+            { name: "", command: "run" },
+            { name: "good", command: "run" },
+            { name: "good", command: "shadow" },
+            { name: "commandless" },
+          ],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+      { name: "good", command: "run", default_prompt: "", shell: "bash" },
+    ]);
+    expect(warnings).toHaveLength(4);
+  });
+
+  // With no usable recipe left there is nothing to launch, so the launcher
+  // disables itself exactly as a missing command used to.
+  test("templates that all fail to parse disable session_launcher", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "commandless" }],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher).toBeUndefined();
   });
 
   // Containment cannot be defined without at least one root, so absent, empty,

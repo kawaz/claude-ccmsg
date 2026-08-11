@@ -10,7 +10,9 @@ import * as path from "node:path";
 import {
   DEFAULT_DIR_TREE_DEPTH,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
+  DEFAULT_LAUNCHER_TEMPLATE_NAME,
   type SessionLauncherConfig,
+  type SessionLauncherTemplate,
 } from "@ccmsg/protocol";
 
 export interface DaemonConfig {
@@ -188,6 +190,97 @@ function parseEnvPatternList(
   return patterns;
 }
 
+/** Parse `shell`, shared by the launcher level and each template (a template
+ * that omits it inherits the launcher-level value, which itself defaults to
+ * bash). An unrecognized value degrades to the inherited default rather than
+ * disabling anything — the wrong shell name is a repairable typo, and falling
+ * through to an implicit `sh -c` is exactly what the fixed enum prevents. */
+function parseShell(
+  raw: unknown,
+  fallback: "bash" | "zsh",
+  field: string,
+  file: string,
+  log: Log,
+): "bash" | "zsh" {
+  if (raw === undefined) return fallback;
+  if (raw === "bash" || raw === "zsh") return raw;
+  warn(log, file, `session_launcher.${field} must be 'bash' or 'zsh'; using ${fallback}`);
+  return fallback;
+}
+
+/** Parse `session_launcher.templates` (named launch recipes). Each entry may
+ * omit `command` / `default_prompt` / `shell` to inherit the launcher-level
+ * value, and the result is fully resolved so nothing downstream re-applies
+ * fallbacks. A broken entry (not an object, blank/duplicate name, no command
+ * from either level) is warned about and skipped on its own — one unusable
+ * recipe must not take the other recipes down with it, same defensive posture
+ * as the env-pattern lists. */
+function parseLauncherTemplates(
+  raw: unknown,
+  inherited: { command: string | undefined; defaultPrompt: string; shell: "bash" | "zsh" },
+  file: string,
+  log: Log,
+): SessionLauncherTemplate[] {
+  const templates: SessionLauncherTemplate[] = [];
+  if (raw === undefined) return templates;
+  if (!Array.isArray(raw)) {
+    warn(log, file, "session_launcher.templates must be an array; ignoring");
+    return templates;
+  }
+  const names = new Set<string>();
+  for (const entry of raw) {
+    if (!isObject(entry)) {
+      warn(log, file, "session_launcher.templates entries must be objects; entry ignored");
+      continue;
+    }
+    if (typeof entry.name !== "string" || entry.name === "") {
+      warn(log, file, "session_launcher.templates entry needs a non-empty name; entry ignored");
+      continue;
+    }
+    const name = entry.name;
+    if (names.has(name)) {
+      warn(log, file, `session_launcher.templates has a duplicate name: ${name}; entry ignored`);
+      continue;
+    }
+    let command = inherited.command;
+    if (entry.command !== undefined) {
+      if (typeof entry.command === "string" && entry.command !== "") command = entry.command;
+      else
+        warn(
+          log,
+          file,
+          `session_launcher.templates[${name}].command must be a non-empty string; using the launcher-level command`,
+        );
+    }
+    if (command === undefined) {
+      warn(
+        log,
+        file,
+        `session_launcher.templates[${name}] has no command and session_launcher.command is unset; entry ignored`,
+      );
+      continue;
+    }
+    let defaultPrompt = inherited.defaultPrompt;
+    if (entry.default_prompt !== undefined) {
+      if (typeof entry.default_prompt === "string") defaultPrompt = entry.default_prompt;
+      else
+        warn(
+          log,
+          file,
+          `session_launcher.templates[${name}].default_prompt must be a string; using the launcher-level prompt`,
+        );
+    }
+    names.add(name);
+    templates.push({
+      name,
+      command,
+      default_prompt: defaultPrompt,
+      shell: parseShell(entry.shell, inherited.shell, `templates[${name}].shell`, file, log),
+    });
+  }
+  return templates;
+}
+
 function parseSessionLauncher(
   raw: unknown,
   file: string,
@@ -234,21 +327,37 @@ function parseSessionLauncher(
     return undefined;
   }
 
-  if (typeof raw.command !== "string" || raw.command === "") {
-    warn(log, file, "session_launcher.command must be a non-empty string; launcher disabled");
-    return undefined;
+  // The launcher-level command is the flat single-recipe form AND the value
+  // templates inherit when they omit their own. It is therefore only required
+  // when `templates` doesn't supply one — a config that names every command
+  // inside its templates has nothing to put here.
+  let command: string | undefined;
+  if (raw.command !== undefined) {
+    if (typeof raw.command === "string" && raw.command !== "") command = raw.command;
+    else warn(log, file, "session_launcher.command must be a non-empty string; ignoring");
   }
 
-  let shell: SessionLauncherConfig["shell"] = "bash";
-  if (raw.shell !== undefined) {
-    if (raw.shell === "bash" || raw.shell === "zsh") shell = raw.shell;
-    else warn(log, file, "session_launcher.shell must be 'bash' or 'zsh'; using bash");
-  }
+  const shell = parseShell(raw.shell, "bash", "shell", file, log);
 
   let defaultPrompt = "";
   if (raw.default_prompt !== undefined) {
     if (typeof raw.default_prompt === "string") defaultPrompt = raw.default_prompt;
     else warn(log, file, "session_launcher.default_prompt must be a string; using empty string");
+  }
+
+  // Flat form (no `templates` key) = one implicit recipe built from the
+  // launcher-level fields, so every pre-templates config keeps launching
+  // exactly as before. With `templates` present the list is authoritative and
+  // the launcher-level command is only the inheritance source.
+  const templates =
+    raw.templates === undefined
+      ? command === undefined
+        ? []
+        : [{ name: DEFAULT_LAUNCHER_TEMPLATE_NAME, command, default_prompt: defaultPrompt, shell }]
+      : parseLauncherTemplates(raw.templates, { command, defaultPrompt, shell }, file, log);
+  if (templates.length === 0) {
+    warn(log, file, "session_launcher has no usable command template; launcher disabled");
+    return undefined;
   }
 
   // clean_env / keep_env (DR-0018 §3.1 addendum 2026-07-18): wildcard
@@ -264,9 +373,7 @@ function parseSessionLauncher(
     root_dirs: rootDirs,
     clean_env: cleanEnv,
     keep_env: keepEnv,
-    default_prompt: defaultPrompt,
-    shell,
-    command: raw.command,
+    templates,
     timeout_seconds: positiveNumber(
       raw.timeout_seconds,
       DEFAULT_LAUNCH_TIMEOUT_SECONDS,
