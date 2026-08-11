@@ -180,9 +180,9 @@ export function isSameSessionTabChange(current: Locator, target: Locator): boole
 
 export function initialLocatorReady(state: AppState, locator: Locator): boolean {
   // Readiness here means "the registry that could prove this URL names
-  // nothing has arrived". /usage names no session and no room, so there is
-  // nothing to wait for and nothing missingTarget could ever report.
-  if (locator.view === "usage") return true;
+  // nothing has arrived". /usage and /catalog name no session and no room, so
+  // there is nothing to wait for and nothing missingTarget could ever report.
+  if (locator.view === "usage" || locator.view === "catalog") return true;
   return locator.view === "room" ? state.roomsLoaded : state.peersLoaded && state.agentsLoaded;
 }
 

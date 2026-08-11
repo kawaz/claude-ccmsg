@@ -12,6 +12,7 @@ import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
+import { CatalogView } from "./CatalogView.tsx";
 import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -51,6 +52,9 @@ function TopbarTitle({ state }: { state: AppState }) {
       ...(state.llmStatsAvailable ? ["使用量"] : []),
     ];
     return <h1 class="topbar-title">{parts.length > 0 ? parts.join(" / ") : "クオータ"}</h1>;
+  }
+  if (state.view === "catalog") {
+    return <h1 class="topbar-title">コンポーネントカタログ</h1>;
   }
   if (state.view === "session" || state.view === "timeline") {
     const sid = state.currentSid;
@@ -283,6 +287,8 @@ export function App() {
           <UnknownPathView pathname={state.unknownPath} />
         ) : state.view === "usage" ? (
           <UsageView state={state} />
+        ) : state.view === "catalog" ? (
+          <CatalogView />
         ) : state.view === "room" ? (
           <RoomView state={state} />
         ) : null}

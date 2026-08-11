@@ -7262,3 +7262,229 @@ button.usage-reset:hover {
 .viewer-sandbox-btn:hover {
   color: var(--fg);
 }
+
+/* ============================================================
+ * /catalog — 共有部品の見本帳 (CatalogView.tsx)
+ *
+ * この画面自身がトークンの利用例になるので、生値は
+ * docs/design/design-tokens.md の例外 (ヘアライン / 一点物の寸法) だけに絞る。
+ * 見本の周りは徹底して静か: 目立つのは台の上に載っている部品であって、
+ * 台ではない。
+ * ============================================================ */
+
+#catalog-view {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-11) var(--space-13);
+}
+
+.catalog-title {
+  margin: 0;
+  font-size: var(--font-size-3xl);
+}
+
+.catalog-lead {
+  /* 一点物: 説明文の 1 行を読みやすい字数で折り返すための上限。 */
+  max-width: 42rem;
+  margin: var(--space-8) 0 0;
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+.catalog-index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-9);
+  margin-top: var(--space-11);
+  padding-top: var(--space-9);
+  border-top: 1px solid var(--border);
+}
+
+.catalog-index-link {
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.catalog-index-link:hover,
+.catalog-index-link:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.catalog-section {
+  margin-top: var(--space-16);
+  /* #catalog-view が scroll コンテナなので、目次から飛んだ見出しが上端に
+   * 貼り付かないよう余白を確保する。 */
+  scroll-margin-top: var(--space-13);
+}
+
+.catalog-section-title {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+}
+
+.catalog-section-note {
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+/* 見本 1 件 = 「名前 (gutter)」+「実物 (台)」。名前と実物が必ず並ぶことが
+ * この画面の構造そのもので、片方だけの見本は作らない。 */
+.catalog-specimen {
+  margin-top: var(--space-12);
+}
+
+.catalog-specimen-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-8);
+  margin-bottom: var(--space-6);
+}
+
+.catalog-specimen-name {
+  padding: var(--space-1) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  background: var(--bg-alt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-2xs);
+  color: var(--fg);
+}
+
+.catalog-specimen-note {
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+}
+
+.catalog-specimen-stage {
+  padding: var(--space-11);
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--bg);
+  /* 幅の広い見本 (コードブロック等) は台の中で横スクロールさせ、画面全体を
+   * 横に伸ばさない。 */
+  overflow-x: auto;
+}
+
+.catalog-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-9);
+}
+
+.catalog-caption {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-3xs);
+  color: var(--fg-muted);
+}
+
+.catalog-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-9) var(--space-13);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.catalog-swatch-chip {
+  /* 一点物: 色が判別できる最小の面積。スケールに載せる意味がない。 */
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+}
+
+.catalog-swatch-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+}
+
+/* 余白・文字サイズのスケール。棒の長さと見本の字面は style 属性で
+ * var(--space-N) / var(--font-size-*) を直接当てているので、値が表の数字と
+ * ずれたらこの画面上で食い違いとして見える。 */
+.catalog-scale {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-scale-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-9);
+}
+
+.catalog-scale-name {
+  /* 一点物: 最長のトークン名 (--font-size-3xs) が折り返さない幅。 */
+  flex: 0 0 8.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+}
+
+/* 一点物: 最大段 (--space-17 = 3rem) がちょうど収まる幅。全行が同じ起点と
+ * 同じ終点を持つので、段の差がそのまま棒の長さの差として読める。 */
+.catalog-space-track {
+  flex: 0 0 3rem;
+  display: flex;
+  align-items: center;
+}
+
+.catalog-scale-bar {
+  flex: 0 0 auto;
+  height: 0.7rem;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.catalog-type-sample {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg);
+}
+
+.catalog-scale-value {
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.catalog-avatar-cell,
+.catalog-icon-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.catalog-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-13);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}

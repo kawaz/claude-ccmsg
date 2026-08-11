@@ -63,7 +63,7 @@ export interface RoomState {
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
 
-export type View = "room" | "session" | "timeline" | "usage";
+export type View = "room" | "session" | "timeline" | "usage" | "catalog";
 
 /** A URL that named a session or room which is not there. */
 export type MissingTarget = { kind: "session" | "room"; id: string };
@@ -714,6 +714,21 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     return { ...state, unknownPath: locator.pathname, sidebarOpen: false };
   }
   if (locator.view === "session-root") return state;
+  if (locator.view === "catalog") {
+    // Same detour posture as the usage screen: the selection is left alone so
+    // the sidebar still shows where the reader came from and back returns to a
+    // live view.
+    return {
+      ...state,
+      view: "catalog",
+      currentTab: null,
+      unknownPath: null,
+      missingTarget: null,
+      currentAgent: null,
+      mentionTo: new Set(),
+      sidebarOpen: false,
+    };
+  }
   if (locator.view === "usage") {
     // Leaves currentSid/currentRoomId alone: the usage screen is a detour, and
     // keeping the selection means the sidebar still shows where the user came

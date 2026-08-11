@@ -17,6 +17,12 @@ export type Locator =
    * what it cost), and the spend tab's span rides the URL too so a reload, a
    * bookmark and the back button all land on what was being read. */
   | { view: "usage"; tab: "quota" }
+  /** The component catalog — every shared part of this UI rendered in its real
+   * CSS, on the same host as the app it documents. It belongs to no session and
+   * no room for the same reason /usage does, and it deliberately reads nothing
+   * from the daemon: a catalog that needed live data could not be opened to
+   * diagnose a UI that is broken because the data is wrong. */
+  | { view: "catalog" }
   | { view: "usage"; tab: "stats"; period: StatsPeriod; days: number | null }
   | {
       view: "session";
@@ -57,6 +63,9 @@ export function parseUrl(pathname: string, search = ""): Locator {
   }
 
   const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] === "catalog") {
+    return segments.length === 1 ? { view: "catalog" } : { view: "unknown", pathname };
+  }
   if (segments[0] === "usage") {
     if (segments.length === 1) return { view: "usage", tab: "quota" };
     if (segments[1] !== "stats" || segments.length > 3) return { view: "unknown", pathname };
@@ -178,6 +187,10 @@ export const DEFAULT_STATS_PERIOD: StatsPeriod = "daily";
 
 export function usageHref(): string {
   return "/usage";
+}
+
+export function catalogHref(): string {
+  return "/catalog";
 }
 
 /** Always spells the span out, even the default one, so what is on screen and
