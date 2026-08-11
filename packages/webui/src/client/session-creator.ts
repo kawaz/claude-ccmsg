@@ -86,21 +86,99 @@ export function usesForkPoint(command: string): boolean {
   return /\$\{?RESUME_AT\b/.test(command);
 }
 
+/** What the form can inherit from the session a fork resumes: where it ran and
+ * what it ran as. Assembled by SessionCreator.tsx from AppState — `cwd` from
+ * the fork source's `peers` row, `model`/`effort` from its
+ * `sessionStatuses` context observation (the latest main-context assistant
+ * row) — and reduced to form values by `forkSourceDefaults`. Every field is
+ * optional because each source can be absent independently: a fork of a
+ * session that has since disconnected has no peer row, and a transcript from
+ * an older CC version carries no `effort`. */
+export interface ForkSourceInfo {
+  cwd?: string;
+  /** Raw `message.model`, e.g. "claude-fable-5[1m]" / "gpt-5.6-sol". */
+  model?: string;
+  /** Raw transcript `effort`, e.g. "medium". */
+  effort?: string;
+}
+
+/** The dropdown option a raw transcript model maps to, or undefined when none
+ * does. The launch form's models are families ("fable", "opus", "gpt-5.6-sol")
+ * while a transcript records the concrete model the API answered as, so the
+ * `[1m]` launch suffix is dropped and a `claude-<family>-<version...>` id is
+ * reduced to its family. Ids that already are an option (the gpt-5.6-* ones,
+ * and bare "opus"-style values) match directly. Anything else — "<synthetic>"
+ * rows, a family with no option such as haiku — has no honest answer. */
+export function launcherModelFromTranscript(raw: string): string | undefined {
+  const model = raw.replace(/\[[^\]]*\]$/, "");
+  const options: readonly string[] = SESSION_CREATOR_MODELS;
+  if (options.includes(model)) return model;
+  const family = /^claude-([a-z0-9.]+)-/.exec(model)?.[1];
+  if (family && options.includes(family)) return family;
+  return undefined;
+}
+
+/** The dropdown option a raw transcript effort maps to, or undefined. The two
+ * vocabularies agree except at the middle rung, which the transcript spells
+ * "medium" and the form "middle". */
+export function launcherEffortFromTranscript(raw: string): string | undefined {
+  const effort = raw === "medium" ? "middle" : raw;
+  const options: readonly string[] = SESSION_CREATOR_EFFORTS;
+  return options.includes(effort) ? effort : undefined;
+}
+
+/** Whether a path may be offered as a prefilled cwd: absolute and lexically
+ * inside a configured launcher root. Purely lexical on purpose — the daemon
+ * re-checks by realpath at launch (launcher-paths.ts), and the webui has no
+ * way to resolve symlinks, so this only avoids seeding a value the daemon is
+ * certain to reject. */
+export function cwdWithinRoots(cwd: string, rootDirs: string[]): boolean {
+  if (!cwd.startsWith("/")) return false;
+  return rootDirs.some(
+    (root) => cwd === root || cwd.startsWith(root.endsWith("/") ? root : `${root}/`),
+  );
+}
+
+/** The form fields a fork inherits from its source, as a partial form. Values
+ * that cannot be established honestly are simply absent, so
+ * `initialSessionCreatorForm` keeps its own defaults for them: an unmappable
+ * model or effort leaves the form exactly where a non-fork open leaves it, and
+ * a cwd outside the configured roots stays empty so the user picks one rather
+ * than pressing 実行 on a path the daemon will refuse. */
+export function forkSourceDefaults(
+  info: ForkSourceInfo | null,
+  rootDirs: string[],
+): Partial<Pick<SessionCreatorForm, "cwd" | "model" | "effort">> {
+  if (!info) return {};
+  const cwd = info.cwd?.trim();
+  const model = info.model === undefined ? undefined : launcherModelFromTranscript(info.model);
+  const effort = info.effort === undefined ? undefined : launcherEffortFromTranscript(info.effort);
+  return {
+    ...(cwd && cwdWithinRoots(cwd, rootDirs) ? { cwd } : {}),
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  };
+}
+
 /** Initial form state once the template list is known
  * (session_launcher_config response) — `cwd` starts empty; the run button
  * stays disabled until the CwdTree picker sets one (see
  * `sessionCreatorFormValid`). An empty template list cannot happen (the daemon
  * disables the launcher instead), so the fields fall back to empty strings
- * only to keep this total. */
+ * only to keep this total.
+ *
+ * `defaults` is what a fork inherits from its source (`forkSourceDefaults`);
+ * on a plain open it is empty and every field keeps the values below. */
 export function initialSessionCreatorForm(
   templates: SessionLauncherConfigTemplate[],
   prefill: SessionCreatorPrefill | null = null,
+  defaults: Partial<Pick<SessionCreatorForm, "cwd" | "model" | "effort">> = {},
 ): SessionCreatorForm {
   const template = initialTemplate(templates, prefill);
   return {
-    cwd: "",
-    model: DEFAULT_SESSION_CREATOR_MODEL,
-    effort: DEFAULT_SESSION_CREATOR_EFFORT,
+    cwd: defaults.cwd ?? "",
+    model: defaults.model ?? DEFAULT_SESSION_CREATOR_MODEL,
+    effort: defaults.effort ?? DEFAULT_SESSION_CREATOR_EFFORT,
     prompt: template?.default_prompt ?? "",
     template: template?.name ?? "",
     command: template?.command ?? "",

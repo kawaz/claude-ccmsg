@@ -5,8 +5,11 @@ import type { SessionLauncherConfigTemplate } from "@ccmsg/protocol";
 import {
   buildSessionLaunchRequest,
   commitCwdInput,
+  forkSourceDefaults,
   forkTemplate,
   initialTemplate,
+  launcherEffortFromTranscript,
+  launcherModelFromTranscript,
   usesForkPoint,
   selectSessionCreatorTemplate,
   DEFAULT_SESSION_CREATOR_EFFORT,
@@ -81,6 +84,105 @@ describe("initialSessionCreatorForm", () => {
   test("a fork prefill falls back to the default recipe when none consumes $RESUME_AT", () => {
     const form = initialSessionCreatorForm([PLAIN], { resumeSid: "sid-1", resumeAt: "u-9" });
     expect(form).toMatchObject({ template: "default", resumeAt: "u-9" });
+  });
+
+  // Fork-source defaults win over the plain defaults, field by field.
+  test("applies the fork source's cwd/model/effort when given", () => {
+    const form = initialSessionCreatorForm(
+      [PLAIN, FORK],
+      { resumeSid: "s", resumeAt: "u" },
+      {
+        cwd: "/repos/app",
+        model: "opus",
+        effort: "high",
+      },
+    );
+    expect(form).toMatchObject({ cwd: "/repos/app", model: "opus", effort: "high" });
+  });
+
+  // A partial inheritance leaves the untouched fields exactly where a plain
+  // open leaves them.
+  test("fields absent from the defaults keep the plain defaults", () => {
+    const form = initialSessionCreatorForm([PLAIN], null, { model: "sonnet" });
+    expect(form).toMatchObject({
+      cwd: "",
+      model: "sonnet",
+      effort: DEFAULT_SESSION_CREATOR_EFFORT,
+    });
+  });
+});
+
+describe("forkSourceDefaults", () => {
+  const ROOTS = ["/repos", "/srv/work/"];
+
+  test("takes cwd from the source when it sits under a configured root", () => {
+    expect(forkSourceDefaults({ cwd: "/repos/app/main" }, ROOTS)).toEqual({
+      cwd: "/repos/app/main",
+    });
+    // The root itself is a legal pick, and a root written with a trailing
+    // slash matches the same paths as one without.
+    expect(forkSourceDefaults({ cwd: "/repos" }, ROOTS)).toEqual({ cwd: "/repos" });
+    expect(forkSourceDefaults({ cwd: "/srv/work/x" }, ROOTS)).toEqual({ cwd: "/srv/work/x" });
+  });
+
+  // Seeding a cwd the daemon would refuse would leave the user pressing 実行
+  // on a path that cannot launch; an empty picker is the honest state.
+  test("drops a cwd outside the configured roots, including sibling-prefix paths", () => {
+    expect(forkSourceDefaults({ cwd: "/elsewhere/app" }, ROOTS)).toEqual({});
+    expect(forkSourceDefaults({ cwd: "/repos-other/app" }, ROOTS)).toEqual({});
+    expect(forkSourceDefaults({ cwd: "relative/path" }, ROOTS)).toEqual({});
+    expect(forkSourceDefaults({ cwd: "   " }, ROOTS)).toEqual({});
+  });
+
+  test("nothing is inherited when the fork source could not be identified", () => {
+    expect(forkSourceDefaults(null, ROOTS)).toEqual({});
+    expect(forkSourceDefaults({}, ROOTS)).toEqual({});
+  });
+
+  test("maps model and effort into the form's vocabulary", () => {
+    expect(forkSourceDefaults({ model: "claude-fable-5[1m]", effort: "medium" }, ROOTS)).toEqual({
+      model: "fable",
+      effort: "middle",
+    });
+  });
+});
+
+describe("launcherModelFromTranscript", () => {
+  // The form offers families; a transcript records the concrete model, with a
+  // launch-only [1m] suffix on long-context sessions.
+  test("reduces a claude model id to its family, suffix included", () => {
+    expect(launcherModelFromTranscript("claude-fable-5")).toBe("fable");
+    expect(launcherModelFromTranscript("claude-opus-5[1m]")).toBe("opus");
+    expect(launcherModelFromTranscript("claude-sonnet-5")).toBe("sonnet");
+    expect(launcherModelFromTranscript("claude-opus-4-7")).toBe("opus");
+  });
+
+  test("ids that already are an option pass through", () => {
+    expect(launcherModelFromTranscript("gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(launcherModelFromTranscript("opus")).toBe("opus");
+  });
+
+  // Synthetic harness rows and families with no dropdown entry have no honest
+  // answer — the caller keeps the plain default rather than guessing.
+  test("unknown values map to nothing", () => {
+    expect(launcherModelFromTranscript("<synthetic>")).toBeUndefined();
+    expect(launcherModelFromTranscript("claude-haiku-4-5-20251001")).toBeUndefined();
+    expect(launcherModelFromTranscript("")).toBeUndefined();
+  });
+});
+
+describe("launcherEffortFromTranscript", () => {
+  // The vocabularies agree except at the middle rung.
+  test("renames medium to middle and passes the rest through", () => {
+    expect(launcherEffortFromTranscript("medium")).toBe("middle");
+    for (const effort of SESSION_CREATOR_EFFORTS) {
+      expect(launcherEffortFromTranscript(effort)).toBe(effort);
+    }
+  });
+
+  test("unknown values map to nothing", () => {
+    expect(launcherEffortFromTranscript("ultra")).toBeUndefined();
+    expect(launcherEffortFromTranscript("")).toBeUndefined();
   });
 });
 

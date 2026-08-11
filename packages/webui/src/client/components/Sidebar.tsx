@@ -6,7 +6,13 @@ import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } fro
 import { readStorage, writeStorage } from "../storage.ts";
 import { RoomCreator } from "./RoomCreator.tsx";
 import { RoomList } from "./RoomList.tsx";
-import type { SessionCreatorPrefill } from "../session-creator.ts";
+import {
+  openForkCreator,
+  sessionCreatorPrefill,
+  toggleSidebarPanel,
+  type SidebarPanelKind,
+  type SidebarPanelState,
+} from "../sidebar-panel.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
@@ -92,11 +98,6 @@ function CreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: () =
   );
 }
 
-/** Which sidebar-internal panel (if any) is currently swapped in, across
- * *both* the ROOMS and SESSIONS sections — see the doc comment on `Sidebar`
- * below for why this one union replaces three independent booleans. */
-type SidebarPanel = "room-creator" | "session-creator" | "session-search";
-
 /** ROOMS section "+ 新規" affordance (issue 2026-07-17-rooms-sidebar-new-
  * button.md), the room-creation counterpart to CreatorToggleButton above —
  * same chromeless toggle-button family, symmetric with SESSIONS's "+ 新規"
@@ -142,20 +143,18 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
 export function Sidebar({ state }: { state: AppState }) {
   const { store } = useApp();
   const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
-  const [activePanel, setActivePanel] = useState<SidebarPanel | null>(null);
-  const togglePanel = (panel: SidebarPanel) =>
-    setActivePanel((cur) => (cur === panel ? null : panel));
+  const [activePanel, setActivePanel] = useState<SidebarPanelState>(null);
+  const togglePanel = (panel: SidebarPanelKind) =>
+    setActivePanel((cur) => toggleSidebarPanel(cur, panel));
   const closePanel = () => setActivePanel(null);
   // Timeline の「ここから fork」は state 越しに届く (Timeline と Sidebar は
-  // 兄弟なので props では渡せない)。要求が来たら creator パネルを開き、その
-  // 値を SessionCreator に手渡してから store 側の要求を消す — 消さないと、
-  // パネルを閉じて開き直した時に古い fork 元が蘇る。手渡した値はこの
-  // コンポーネントが持つので、消しても開いているフォームには影響しない。
-  const [handedPrefill, setHandedPrefill] = useState<SessionCreatorPrefill | null>(null);
+  // 兄弟なので props では渡せない)。要求が来たら creator パネルをその値ごと
+  // 開き、store 側の要求は消す — 消さないと、パネルを閉じて開き直した時に
+  // 古い fork 元が蘇る。開いたパネルが値を持つので、消しても表示中の
+  // フォームには影響しない。
   useEffect(() => {
     if (!state.sessionCreatorPrefill) return;
-    setHandedPrefill(state.sessionCreatorPrefill);
-    setActivePanel("session-creator");
+    setActivePanel(openForkCreator(state.sessionCreatorPrefill));
     store.dispatch({ type: "session-creator/prefill", prefill: null });
   }, [state.sessionCreatorPrefill, store]);
   // Sorting only ever depends on the peers array reference and the chosen
@@ -170,11 +169,11 @@ export function Sidebar({ state }: { state: AppState }) {
         <h2>
           Sessions{" "}
           <CreatorToggleButton
-            open={activePanel === "session-creator"}
+            open={activePanel?.kind === "session-creator"}
             onToggle={() => togglePanel("session-creator")}
           />{" "}
           <SearchToggleButton
-            open={activePanel === "session-search"}
+            open={activePanel?.kind === "session-search"}
             onToggle={() => togglePanel("session-search")}
           />{" "}
           <PeersSortButton
@@ -187,9 +186,9 @@ export function Sidebar({ state }: { state: AppState }) {
           />{" "}
           <PeersRefreshButton />
         </h2>
-        {activePanel === "session-creator" ? (
-          <SessionCreator onClose={closePanel} prefill={handedPrefill} />
-        ) : activePanel === "session-search" ? (
+        {activePanel?.kind === "session-creator" ? (
+          <SessionCreator onClose={closePanel} prefill={sessionCreatorPrefill(activePanel)} />
+        ) : activePanel?.kind === "session-search" ? (
           <SessionSearchPanel onClose={closePanel} />
         ) : (
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
@@ -200,11 +199,11 @@ export function Sidebar({ state }: { state: AppState }) {
         <h2>
           Rooms{" "}
           <RoomCreatorToggleButton
-            open={activePanel === "room-creator"}
+            open={activePanel?.kind === "room-creator"}
             onToggle={() => togglePanel("room-creator")}
           />
         </h2>
-        {activePanel === "room-creator" ? (
+        {activePanel?.kind === "room-creator" ? (
           <RoomCreator peers={sortedPeers} onClose={closePanel} />
         ) : (
           <RoomList state={state} />

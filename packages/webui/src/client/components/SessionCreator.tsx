@@ -20,6 +20,7 @@ import { errorMessage } from "../utils.ts";
 import {
   buildSessionLaunchRequest,
   commitCwdInput,
+  forkSourceDefaults,
   initialCwdPickerMode,
   initialSessionCreatorForm,
   selectSessionCreatorTemplate,
@@ -28,10 +29,30 @@ import {
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
   type CwdPickerMode,
+  type ForkSourceInfo,
   type SessionCreatorForm,
   type SessionCreatorPrefill,
 } from "../session-creator.ts";
+import type { AppState } from "../store.ts";
 import { CwdTree } from "./CwdTree.tsx";
+
+/** What the fork source session can tell the form about itself, read out of
+ * AppState at the moment the form is seeded (kawaz r115 m6: "model/effort/cwd
+ * も自動入力されるべき"). Two independent sources, because no single one has
+ * all three: `peers` is the daemon's live registration and carries the cwd the
+ * session actually runs in, while `sessionStatuses` carries the transcript's
+ * latest main-context model/effort observation. The status entry exists
+ * because forking is only reachable from that session's Timeline, which
+ * subscribes it (DR-0020 §2.1) — when either source is missing the form simply
+ * falls back to its usual defaults. */
+function forkSourceInfo(state: AppState, sid: string): ForkSourceInfo {
+  const context = state.sessionStatuses.get(sid)?.context;
+  return {
+    cwd: state.peers.find((p) => p.sid === sid)?.cwd,
+    model: context?.model,
+    effort: context?.effort,
+  };
+}
 
 type LauncherProbe =
   | { status: "loading" }
@@ -182,7 +203,7 @@ export function SessionCreator({
    * same turn re-opens the form rather than being deduplicated away. */
   prefill: SessionCreatorPrefill | null;
 }) {
-  const { ws } = useApp();
+  const { ws, store } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
   const [form, setForm] = useState<SessionCreatorForm | null>(null);
   const [cwdPickerMode, setCwdPickerMode] = useState<CwdPickerMode>("editing");
@@ -196,7 +217,13 @@ export function SessionCreator({
         if (cancelled) return;
         if (res.ok) {
           setProbe({ status: "ready", rootDirs: res.root_dirs, templates: res.templates });
-          const initialForm = initialSessionCreatorForm(res.templates, prefill);
+          // 起動元の値は「フォームを開いた瞬間の状態」で足りるので購読せず
+          // getState() で 1 回だけ読む (以後の peers/status 更新でフォームを
+          // 上書きしたら、ユーザの編集を奪うことになる)。
+          const defaults = prefill
+            ? forkSourceDefaults(forkSourceInfo(store.getState(), prefill.resumeSid), res.root_dirs)
+            : {};
+          const initialForm = initialSessionCreatorForm(res.templates, prefill, defaults);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
         } else if (res.error.code === "launcher_not_configured") {
@@ -213,7 +240,7 @@ export function SessionCreator({
     };
     // `prefill` は「開いた瞬間の起動元」なので依存に入れない — 開いている間に
     // 別 turn の fork 要求が来ても、それは Sidebar がパネルを開き直す扱い。
-  }, [ws, prefill]);
+  }, [ws, store, prefill]);
 
   async function run(e: Event): Promise<void> {
     e.preventDefault();
