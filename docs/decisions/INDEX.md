@@ -34,3 +34,4 @@
 | [DR-0028](./DR-0028-session-kill.md) | Proposed | session_kill (完了セッションのプロセス停止、Status タブ危険色ボタン) |
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
 | [DR-0030](./DR-0030-sandbox-origin-serving.md) | Accepted | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
+| [DR-0031](./DR-0031-webui-design-tokens-and-catalog.md) | Accepted | webui デザイントークンと自作コンポーネントカタログ |
