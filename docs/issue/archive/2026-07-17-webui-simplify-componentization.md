@@ -1,6 +1,6 @@
 ---
 title: webui の場当たり改修で重複したパターンのコンポーネント化・simplify 棚卸し
-status: idea
+status: resolved
 category: task
 created: 2026-07-17T09:17:47+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T03:34:06+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:カタログ作業(v0.99.0)に吸収して実施済み - localStorage/FAB先行解消、details折りたたみをFoldへ6箇所、タブUIをTabsへ6箇所正規化、MemberChip presentational分離。残るStatusPanelのdetails4箇所は別issueで追跡"]
 blocked_by:
 origin: kawaz r26 mid=77
 ---
