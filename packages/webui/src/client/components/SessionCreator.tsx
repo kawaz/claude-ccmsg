@@ -303,24 +303,43 @@ export function SessionCreator({
               </select>
             </label>
           ) : null}
-          {form.resumeAt === "" ? null : (
-            <div class="session-creator-field">
-              <span class="session-creator-label">fork 元</span>
-              <p class="session-creator-fork-source">
-                <span class="session-creator-fork-sid" title={form.resumeSid}>
-                  {form.resumeSid}
-                </span>
-                <span class="session-creator-fork-at" title={form.resumeAt}>
-                  @{form.resumeAt}
-                </span>
-              </p>
-              {usesForkPoint(form.command) ? null : (
-                <p class="session-creator-error">
-                  この command は $RESUME_AT を使っていません。このままでは fork
-                  ではなく通常起動になります。
-                </p>
-              )}
-            </div>
+          {/* fork の 2 値は cwd/model/prompt と同じ、ただの編集可能な入力
+           * (kawaz r115 m7:「仮にそこを正確でない値に変えたとしても単に
+           * コマンドの実行に失敗するだけで、失敗含めて修正する自由を取り上げる
+           * 理由がありません」)。だから読み取り専用表示にせず、fork 由来かどうか
+           * で出し分けもしない — 手で埋めれば通常オープンからでも fork できる。
+           * 値の正しさは検査せず、駄目な uuid は claude の起動失敗として
+           * そのまま stderr に出る。 */}
+          <label class="session-creator-field">
+            <span class="session-creator-label">resume_sid</span>
+            <input
+              type="text"
+              class="session-creator-resume-input"
+              value={form.resumeSid}
+              placeholder="fork 元セッションの sid ($RESUME_SID)"
+              onInput={(e) => setForm({ ...form, resumeSid: (e.target as HTMLInputElement).value })}
+            />
+          </label>
+          <label class="session-creator-field">
+            <span class="session-creator-label">resume_at</span>
+            <input
+              type="text"
+              class="session-creator-resume-input"
+              value={form.resumeAt}
+              placeholder="再開地点レコードの uuid ($RESUME_AT)"
+              onInput={(e) => setForm({ ...form, resumeAt: (e.target as HTMLInputElement).value })}
+            />
+            <span class="session-creator-hint">
+              このレコード「まで」が新セッションの記憶に残ります (指定した本人は残る)。
+              会話に載っているレコードなら種類を問わず指定できますが (turn 途中の tool_use
+              も可)、会話に無い uuid は起動時に No message found で失敗します。
+            </span>
+          </label>
+          {form.resumeAt === "" || usesForkPoint(form.command) ? null : (
+            <p class="session-creator-error">
+              この command は $RESUME_AT を使っていません。このままでは fork
+              ではなく通常起動になります。
+            </p>
           )}
           <div class="session-creator-field">
             <span class="session-creator-label">cwd</span>

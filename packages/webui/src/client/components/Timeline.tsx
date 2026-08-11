@@ -111,7 +111,7 @@ import {
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
-import { forkActionState, type ForkActionState } from "../fork-point.ts";
+import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
 import {
   defaultTimelineAutoOpen,
@@ -2614,7 +2614,7 @@ const SIDE_PANEL_TABS = [
 type SidePanelTabId = (typeof SIDE_PANEL_TABS)[number]["id"];
 
 /** アクションタブの中身。今は fork 1 個だが、アクションが増えても
- * 「選択中 turn に対する操作」がここに並ぶ形は変わらない。 */
+ * 「選択中の項目に対する操作」がここに並ぶ形は変わらない。 */
 function ForkAction({
   state,
   available,
@@ -2630,19 +2630,40 @@ function ForkAction({
     return <p class="tl-float-note">この claude は fork (--resume-session-at) に未対応です。</p>;
   }
   if (state.kind === "no-selection") {
-    return <p class="tl-float-note">fork 元にする turn を選択してください。</p>;
+    return <p class="tl-float-note">fork 地点にする項目をクリックして選択してください。</p>;
   }
-  if (state.kind === "no-fork-point") {
+  if (state.kind === "off-chain") {
     return (
       <p class="tl-float-note">
-        この turn より前が読み込まれていません。older を読み込むと fork できます。
+        この項目は放棄された分岐上にあります。resume が読み込む会話に含まれないので fork
+        地点にできません。
       </p>
     );
   }
+  // 選択項目を「残す」か「消す」かは同じ強さの 2 択なので、片方を既定にして
+  // もう片方をオプション扱いにせず、2 つのボタンとして並べる (kawaz r115 m9)。
+  // ボタン名がそのまま境界の説明になっていて、どちらを押すと何が残るかを
+  // 読む前に分かる。
   return (
-    <button type="button" class="tl-float-action" onClick={() => onFork(state.resumeAt)}>
-      ここから fork
-    </button>
+    <div class="tl-float-fork">
+      <button type="button" class="tl-float-action" onClick={() => onFork(state.resumeAt)}>
+        この項目まで残して fork
+      </button>
+      {state.resumeAtBefore === undefined ? null : (
+        <button
+          type="button"
+          class="tl-float-action"
+          onClick={() => onFork(state.resumeAtBefore as string)}
+        >
+          この項目から消して fork
+        </button>
+      )}
+      <p class="tl-float-note">
+        {state.resumeAtBefore === undefined
+          ? "この項目の直前が読み込まれていないので、消す側は選べません。older を読み込むと選べます。"
+          : "「まで残す」= この項目までが新セッションの記憶に残ります。「から消す」= この項目以降の記憶が消えます。"}
+      </p>
+    </div>
   );
 }
 
@@ -3402,11 +3423,16 @@ export function Timeline({
     setUserNavActivated(false);
   }, [sid, agent?.agentId, agent?.runId, agent?.teammate]);
   const selectedUserTurnKey = userNavActivated ? userTurnKeys[currentUserIdx - 1] : undefined;
-  // 選択中 turn に対して側面パネルの「アクション」タブが出せるもの。👤 nav の
-  // 選択をそのまま入力に使う (選択モデルを 2 つ持たない)。
+  // 側面パネルの「アクション」タブが選択中の項目に対して出せるもの。項目
+  // クリックで付く位置選択 (`/timeline/<uuid>`) をそのまま入力に使う —
+  // 選択モデルを 2 つ持たないのは 👤 nav に相乗りしていた時と同じ姿勢で、
+  // 対象が user turn から「uuid を持つ全項目」に広がっただけ (kawaz r115 m7)。
+  // 放棄された分岐上のレコードは resume が読み込まないので fork 地点にできない
+  // (実測: `No message found`)。表示はするが fork だけ出さないための判定材料。
+  const chain = useMemo(() => liveChain(parsed), [parsed]);
   const forkAction = useMemo(
-    () => forkActionState(selectedUserTurnKey, parsed, offsets),
-    [selectedUserTurnKey, parsed, offsets],
+    () => forkActionState(currentPosition, chain),
+    [currentPosition, chain],
   );
 
   useEffect(

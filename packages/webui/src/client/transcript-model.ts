@@ -117,6 +117,15 @@ export interface TurnLine {
   ts: string | null;
   /** Stable JSONL row identifier used by Timeline position URLs. */
   uuid?: string;
+  /** The row this one was written as a continuation of. A transcript is a tree,
+   * not a list: resuming a session without `--fork-session` appends a new
+   * branch to the same file, leaving the rows after the resume point on an
+   * abandoned branch that stays in the file and is still rendered. Only the
+   * chain ending at the last row is the conversation `claude --resume`
+   * reconstructs, which is what makes this field worth carrying — see
+   * `liveChainUuids` in fork-point.ts. Absent on a session's first row
+   * (`parentUuid: null` on the wire) and on rows that carry no link. */
+  parentUuid?: string;
   role: "user" | "assistant";
   segments: Segment[];
   /** classifyUserMessage's verdict for a role:"user" line — which pattern of
@@ -148,6 +157,11 @@ export interface MetaLine {
   ts: string | null;
   /** Stable JSONL row identifier used by Timeline position URLs. */
   uuid?: string;
+  /** Same link as TurnLine.parentUuid. Carried on meta rows too because the
+   * chain `liveChainUuids` walks runs through them — an attachment sitting
+   * between two turns is part of the conversation's parent chain, and dropping
+   * its link would cut the walk short at the first attachment. */
+  parentUuid?: string;
   type: string;
   summary: string;
   raw: string;
@@ -2261,6 +2275,8 @@ export function parseTranscriptLine(raw: string): ParsedLine {
 function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedLine {
   const ts = typeof o.timestamp === "string" ? o.timestamp : null;
   const uuid = typeof o.uuid === "string" && o.uuid !== "" ? o.uuid : undefined;
+  const parentUuid =
+    typeof o.parentUuid === "string" && o.parentUuid !== "" ? o.parentUuid : undefined;
   if (o.type === "user" || o.type === "assistant") {
     const role = o.type;
     const message = o.message as Record<string, unknown> | undefined;
@@ -2271,6 +2287,7 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
       kind: "turn",
       ts,
       ...(uuid ? { uuid } : {}),
+      ...(parentUuid ? { parentUuid } : {}),
       role,
       segments,
       userMessageKind,
@@ -2297,6 +2314,7 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
       kind: "turn",
       ts,
       ...(uuid ? { uuid } : {}),
+      ...(parentUuid ? { parentUuid } : {}),
       role: "user",
       segments: [{ kind: "text", role: "user", text: content }],
       userMessageKind,
@@ -2307,6 +2325,7 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
     kind: "meta",
     ts,
     ...(uuid ? { uuid } : {}),
+    ...(parentUuid ? { parentUuid } : {}),
     type: typeof o.type === "string" ? o.type : "?",
     summary: summarizeMeta(o),
     raw,
@@ -2412,6 +2431,7 @@ export function pairQueuedTurns(
       kind: "meta",
       ts: line.ts,
       ...(line.uuid ? { uuid: line.uuid } : {}),
+      ...(line.parentUuid ? { parentUuid: line.parentUuid } : {}),
       type: "queue-operation",
       summary: "queue-operation: enqueue",
       raw: raws[index]!,

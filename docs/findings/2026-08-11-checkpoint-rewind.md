@@ -121,6 +121,52 @@ ccmsg の作業実体は大半がサブエージェント編集なので、**コ
 実 fork ファイルには `file-history-snapshot` が 23 件コピーされていたので fork がコード履歴を引き継ぐ余地はあるが、
 そこは未検証 (下記)。
 
+### 9. `--resume-session-at` の成否を決めるのはレコードの種類ではなく「生きた枝に載っているか」
+
+「どの uuid なら動くのか、ダメなパターンはあるのか」を隔離環境で実測した (v2.1.227、haiku、
+tool 使用を含む 2 turn + subagent 1 回のセッション)。判定は起動できただけでなく
+**resume 後に 1 発話が正常に返ったか**まで。
+
+| 指定した uuid のレコード | 結果 |
+|---|---|
+| user プロンプト (`promptSource:"sdk"`) | ✅ 応答あり |
+| `attachment` (user 直後 / tool_result 直後の 2 箇所) | ✅ 応答あり |
+| assistant (`thinking` のみの行、2 箇所) | ✅ 応答あり |
+| **assistant (`tool_use`。対応する tool_result より前で切る、2 箇所)** | ✅ 応答あり |
+| user (`tool_result`、3 箇所。並列 tool の途中を含む) | ✅ 応答あり |
+| assistant (最終 `text`、2 箇所) | ✅ 応答あり |
+| user (`isMeta:true`。skill 注入の実レコード、2 箇所) | ✅ 応答あり |
+| **放棄された分岐上のレコード** | ❌ `No message found with message.uuid of:` |
+| subagent transcript (`subagents/agent-*.jsonl`) のレコード | ❌ 同上 |
+| 存在しない uuid | ❌ 同上 |
+
+**種類は一切関係ない。** 最有力の失敗候補だった「tool_use と tool_result の間で切る」ケースも
+普通に成功する。fork ファイルを見ると **dangling な tool_use をそのまま残したまま**次の user
+発話が続いており (合成 tool_result は挿入されていない)、それでも API 呼び出しは通っている。
+
+効いているのは 1 つだけ: **`c.messages` に載っているか**。`c.messages` は
+ファイルの全行ではなく **最終行から `parentUuid` を遡って再構成した鎖**なので、
+
+- `--fork-session` なしの resume で枝分かれしたファイル (事実 7) の**旧枝側**のレコードは、
+  ファイルに残っていて webui にも描画されるのに **resume では読み込まれない = 指定すると必ず失敗する**
+- 別ファイルである subagent transcript のレコードも当然載らない
+
+実測手順: 使い捨てコピーに対し `--fork-session` なしで途中 resume して枝を作り
+(旧枝の末尾レコードは残存)、その旧枝の uuid を `--resume-session-at` に渡すと失敗した。
+一方その直前の共通祖先は成功する。
+
+なお **手で追記したレコードも同様に失敗する**。injection 実験で、`parentUuid` の鎖に
+繋がない (= 次の行の `parentUuid` を書き換えない) と `isMeta` の値に関係なく
+`No message found` になった。「isMeta だから落ちた」と誤読しかけたが、
+`isMeta:false` の対照実験も同じく落ちたので原因は鎖の断絶。実レコードでの `isMeta:true` は
+上表のとおり成功する。
+
+#### webui への含意
+
+fork 地点として提示してよいのは **生きた鎖の上のレコードだけ**。種類で絞る必要は無い
+(assistant / thinking / tool_use / tool_result / attachment / isMeta すべて可)。
+webui は最終行から `parentUuid` を遡って鎖を求め、そこに無い項目には fork 導線を出さない。
+
 ## 実用的な示唆
 
 ### 推奨実装: native の `--resume-session-at` + `--fork-session`
@@ -188,9 +234,17 @@ ALPHA / BRAVO / CHARLIE を 1 turn ずつ覚えさせた 3 turn セッション�
 | 10 | user レコード uuid を指定 | 隔離実測 | その prompt を含むので再応答が起きる (1 つ前を指定すべき) |
 | 11 | `--fork-session` 無し | 使い捨てコピーで実測 | 同一ファイルに追記して分岐。旧レコードは残る (非破壊) |
 | 12 | ヘッダのみの手製 fork ファイル | 隔離実測 | `No conversation found` で不成立。実メッセージが必要 |
+| 13 | uuid の種類別 成否 (7 種) | 隔離実測 (v2.1.227、各セル resume 後の応答まで確認) | **全種類成功**。tool_use 途中切りも可 (事実 9) |
+| 14 | 放棄された分岐上の uuid | 使い捨てコピーで枝を作って実測 | **失敗** (`No message found`)。webui から到達しうる唯一の失敗 |
+| 15 | subagent transcript の uuid | 隔離実測 | 失敗 (別ファイル = `c.messages` に無い) |
+| 16 | 鎖に繋がない手製レコード | 隔離実測 (isMeta true/false 両方) | 両方失敗 = 原因は isMeta ではなく `parentUuid` の断絶 |
 
 ### 未検証
 
+- **壊れた uuid を渡した時の claude 本体のエラー文言**は `No message found ...` のみ確認。
+  それ以外の壊れ方 (uuid 形式が不正 等) は試していない。
+- **turn 途中切りが会話品質に与える影響**。API 呼び出しが通って応答が返ることは確認したが、
+  dangling tool_use を含む履歴でモデルの応答が劣化しないかは評価していない。
 - **対話 TUI の `/rewind` メニュー表示そのもの**は自動化できないため目視していない。
   事実 1 は実装述語からの確定であって画面確認ではない (述語はメニュー生成元なので乖離余地は無いと判断)。
 - **`--resume-drops-turn` の実挙動**。実装ブロックとエラー文言は読んだが、実際に渡して refuse させる検証はしていない。

@@ -48,8 +48,9 @@ export interface SessionCreatorForm {
 }
 
 /** What the Timeline's "ここから fork" action hands to the form: the session to
- * resume and the record to resume at (see forkPointUuid in fork-point.ts for
- * how the record is chosen). */
+ * resume and the record to resume at (the selected item's own uuid — see
+ * fork-point.ts). Both land in editable fields, so this is a starting point
+ * rather than a fixed choice. */
 export interface SessionCreatorPrefill {
   resumeSid: string;
   resumeAt: string;
