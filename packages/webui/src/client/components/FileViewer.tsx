@@ -70,6 +70,7 @@ import {
 } from "../rendered-text-search.ts";
 import { loopNextIndex, loopPrevIndex, parseSearchQuery } from "../in-view-search.ts";
 import { SearchBar } from "./SearchBar.tsx";
+import { Tabs } from "./Tabs.tsx";
 
 function splitLines(content: string): string[] {
   const lines = content === "" ? [] : content.split("\n");
@@ -1323,26 +1324,17 @@ export function FileViewer({
          * of a future issue, and shipping raw innerHTML in the same
          * origin as the daemon UI is not acceptable). */}
         {markdownEligible ? (
-          <div class="viewer-mode-toggle" role="tablist" aria-label="表示モード">
-            <button
-              type="button"
-              class={"viewer-mode-btn" + (viewMode === "code" ? " active" : "")}
-              role="tab"
-              aria-selected={viewMode === "code"}
-              onClick={() => selectViewMode("code")}
-            >
-              コード
-            </button>
-            <button
-              type="button"
-              class={"viewer-mode-btn" + (viewMode === "preview" ? " active" : "")}
-              role="tab"
-              aria-selected={viewMode === "preview"}
-              onClick={() => selectViewMode("preview")}
-            >
-              プレビュー
-            </button>
-          </div>
+          <Tabs
+            class="viewer-mode-toggle"
+            tabClass="viewer-mode-btn"
+            label="表示モード"
+            selected={viewMode}
+            onSelect={selectViewMode}
+            items={[
+              { id: "code", label: "コード" },
+              { id: "preview", label: "プレビュー" },
+            ]}
+          />
         ) : null}
         {/* 「編集」: 現在のテキスト内容を textarea で開いて fs_edit で上書きする。
          * truncated (先頭 512KB のみ取得済) の時はテールが手元にないので隠す

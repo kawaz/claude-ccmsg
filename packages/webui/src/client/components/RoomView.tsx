@@ -10,6 +10,7 @@ import { RoomComposerFab } from "./RoomComposerFab.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
 import { useNow } from "../useNow.ts";
+import { memberLabel } from "../utils.ts";
 
 // DR-0011 §1-4: "already a member" is a soft notice, auto-dismissed — it's
 // not a failure, just feedback that the drop didn't need to do anything.
@@ -134,6 +135,16 @@ export function RoomView({ state }: { state: AppState }) {
     .map((id) => room.membersById.get(id))
     .filter((m): m is NonNullable<typeof m> => m !== undefined && !m.left);
 
+  // The two things a member chip can do (DR-0012). MemberChip itself draws
+  // only — the mention toggle and the kick send live here, where the room and
+  // the store are already in hand. The confirm is the same guard StatusPanel's
+  // KillZone puts in front of its own irreversible action.
+  const toggleMention = (id: string): void => store.dispatch({ type: "mention/toggle", id });
+  const confirmKick = (id: string): void => {
+    if (!window.confirm(`${memberLabel(id, room)} を room から強制退出させますか?`)) return;
+    void ws.kick(room.id, id);
+  };
+
   // Drop handler for SessionList's drag-a-session-row gesture. Success needs
   // no local state update: the invite lands in this room's member list via
   // the broadcast member event on the subscribe stream, which the reducer
@@ -207,6 +218,8 @@ export function RoomView({ state }: { state: AppState }) {
             room={room}
             selected={state.mentionTo.has(ADMIN_ID)}
             peers={state.peers}
+            onSelect={toggleMention}
+            onKick={confirmKick}
           />
           {activeMembers.map((m) => (
             <MemberChip
@@ -215,6 +228,8 @@ export function RoomView({ state }: { state: AppState }) {
               room={room}
               selected={state.mentionTo.has(m.id)}
               peers={state.peers}
+              onSelect={toggleMention}
+              onKick={confirmKick}
             />
           ))}
         </div>

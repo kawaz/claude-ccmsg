@@ -16,11 +16,12 @@ import { pushNavigation } from "../navigation.ts";
 import { relTime, splitRoomsByArchived } from "../utils.ts";
 import { roomsForSession, roomsForSids, sameCwdSids } from "../rooms-filter.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
+import { Fold } from "./Fold.tsx";
 
 function RoomRow({ room }: { room: RoomState }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
   // アーカイブ済みは .room-archived で opacity を下げて視覚的に区別
-  // (kawaz r15 mid=14、2026-07-14)。sidebar 側 RoomList は details 折り畳み
+  // (kawaz r15 mid=14、2026-07-14)。sidebar 側 RoomList は Fold 折り畳み
   // で「隠す」区別のみだったが、session Rooms タブは開いた状態で archived
   // 行も見えるので、行そのものに淡色化を効かせて active と一目で分かるように。
   return (
@@ -38,7 +39,7 @@ function RoomRow({ room }: { room: RoomState }) {
 /** DR-0012 と同じ「active を上、archived を折り畳みで下」を SessionRooms の
  * 各セクションにも適用 (kawaz r15 mid=14、2026-07-14)。既存 sidebar
  * RoomList と同じ splitRoomsByArchived を使い、archived が 0 件のときは
- * <details> 自体を出さない (共通ケースは変化なし)。 */
+ * <Fold> 自体を出さない (共通ケースは変化なし)。 */
 function RoomListWithArchive({ rooms }: { rooms: RoomState[] }) {
   const { active, archived } = splitRoomsByArchived(rooms);
   return (
@@ -49,14 +50,13 @@ function RoomListWithArchive({ rooms }: { rooms: RoomState[] }) {
         ))}
       </ul>
       {archived.length > 0 && (
-        <details class="session-rooms-archived">
-          <summary>アーカイブ ({archived.length})</summary>
+        <Fold class="session-rooms-archived" summary={`アーカイブ (${archived.length})`}>
           <ul class="session-rooms-list">
             {archived.map((room) => (
               <RoomRow key={room.id} room={room} />
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
     </>
   );

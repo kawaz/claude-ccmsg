@@ -21,6 +21,8 @@ import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { FileTypeIcon, type FileIconKind } from "./FileIcon.tsx";
 import { MemberChip } from "./MemberChip.tsx";
+import { Fold } from "./Fold.tsx";
+import { Tabs } from "./Tabs.tsx";
 
 interface SectionDef {
   id: string;
@@ -43,6 +45,8 @@ const SECTIONS: SectionDef[] = [
     note: "seed から色を決める identicon と、User 固定アイコン。",
   },
   { id: "chip", title: "メンバーチップ", note: "ルーム参加者。接続状態と選択状態を持つ。" },
+  { id: "fold", title: "折り畳み", note: "見出しで畳める区画。開閉は browser 側が持つ。" },
+  { id: "tabs", title: "タブ", note: "排他的な表示切替。行ごとにクラスが違う。" },
   { id: "status", title: "接続ステータス", note: "daemon との WebSocket の状態、全 4 種。" },
   { id: "badge", title: "バッジ・ドット", note: "行内の小さな状態表示。" },
   {
@@ -322,20 +326,170 @@ const CATALOG_PEERS: PeerInfo[] = [
   },
 ];
 
+/** Both of a chip's actions are injected, so the specimens hand it handlers
+ * that do nothing: clicking one here mentions nobody and kicks nobody. That is
+ * the point of the split — a catalog whose chips could kick a real member
+ * would be a hazard to open. */
+const NO_OP = (): void => {};
+
 function ChipSection() {
   return (
     <>
       <Specimen name="<MemberChip />" note="接続中 / 未接続 / User (u1)">
         <div class="catalog-row">
-          <MemberChip id="a1" room={CATALOG_ROOM} selected={false} peers={CATALOG_PEERS} />
-          <MemberChip id="a2" room={CATALOG_ROOM} selected={false} peers={CATALOG_PEERS} />
-          <MemberChip id={ADMIN_ID} room={CATALOG_ROOM} selected={false} peers={CATALOG_PEERS} />
+          <MemberChip
+            id="a1"
+            room={CATALOG_ROOM}
+            selected={false}
+            peers={CATALOG_PEERS}
+            onSelect={NO_OP}
+            onKick={NO_OP}
+          />
+          <MemberChip
+            id="a2"
+            room={CATALOG_ROOM}
+            selected={false}
+            peers={CATALOG_PEERS}
+            onSelect={NO_OP}
+            onKick={NO_OP}
+          />
+          <MemberChip
+            id={ADMIN_ID}
+            room={CATALOG_ROOM}
+            selected={false}
+            peers={CATALOG_PEERS}
+            onSelect={NO_OP}
+            onKick={NO_OP}
+          />
         </div>
       </Specimen>
       <Specimen name="selected" note="メンション先に選ばれている状態">
         <div class="catalog-row">
-          <MemberChip id="a1" room={CATALOG_ROOM} selected peers={CATALOG_PEERS} />
+          <MemberChip
+            id="a1"
+            room={CATALOG_ROOM}
+            selected
+            peers={CATALOG_PEERS}
+            onSelect={NO_OP}
+            onKick={NO_OP}
+          />
         </div>
+      </Specimen>
+    </>
+  );
+}
+
+/** Both states of the same component, side by side — which is the one thing
+ * the real screens cannot show you, since a `<details>` on a live screen is
+ * whichever way the reader last left it. */
+function FoldSection() {
+  return (
+    <>
+      <Specimen name="<Fold open />" note="初期状態で開いている">
+        <Fold
+          open
+          class="session-section"
+          summaryClass="session-section-summary"
+          summary="Pinned (2)"
+        >
+          <ul class="session-section-list">
+            <li class="session-row">claude-ccmsg/main</li>
+            <li class="session-row">claude-ccmsg/review</li>
+          </ul>
+        </Fold>
+      </Specimen>
+      <Specimen name="<Fold />" note="初期状態で閉じている。見出しだけが残る">
+        <Fold class="session-section" summaryClass="session-section-summary" summary="Done (2)">
+          <ul class="session-section-list">
+            <li class="session-row">開くとここが見える</li>
+          </ul>
+        </Fold>
+      </Specimen>
+      <Specimen name="summary={<>…</>}" note="見出しに数値や棒を並べる版 (/usage)">
+        <Fold
+          class="stats-period-row"
+          summary={
+            <>
+              <span class="stats-period-key">2026-08</span>
+              <span class="stats-period-note">12 日分</span>
+              <span class="stats-period-bar">
+                <span class="stats-period-bar-fill" style={{ width: "62%" }} />
+              </span>
+              <span class="stats-period-usd">$12.34</span>
+            </>
+          }
+        >
+          <p class="stats-empty">この期間の内訳はありません。</p>
+        </Fold>
+      </Specimen>
+    </>
+  );
+}
+
+/** The three rows are one component with three sets of classes. Seeing them
+ * stacked is what makes that visible — and what makes a fourth spelling
+ * obviously the wrong move. */
+function TabsSection() {
+  return (
+    <>
+      <Specimen name=".session-tab" note="セッションの Files/Timeline/…。href を持つ = リンク">
+        <div class="session-tabs">
+          <Tabs
+            class="session-tabs-list"
+            tabClass="session-tab"
+            label="セッションの表示 (見本)"
+            selected="timeline"
+            items={[
+              { id: "files", label: "Files", href: "#" },
+              { id: "timeline", label: "Timeline", href: "#" },
+              { id: "status", label: "Status", href: "#" },
+            ]}
+          />
+        </div>
+      </Specimen>
+      <Specimen name="disabled" note="そのセッションに無い表示。押せない">
+        <div class="session-tabs">
+          <Tabs
+            class="session-tabs-list"
+            tabClass="session-tab"
+            label="セッションの表示 (無効タブの見本)"
+            selected="files"
+            items={[
+              { id: "files", label: "Files", href: "#" },
+              {
+                id: "timeline",
+                label: "Timeline",
+                disabled: true,
+                title: "このセッションは transcript を申告していません",
+              },
+            ]}
+          />
+        </div>
+      </Specimen>
+      <Specimen name=".tl-thinking-tab" note="Timeline 内の小さな切替。href を持たない = ボタン">
+        <Tabs
+          class="tl-thinking-tabs"
+          tabClass="tl-thinking-tab"
+          label="本文の言語 (見本)"
+          selected="original"
+          items={[
+            { id: "original", label: "original" },
+            { id: "ja-host", label: "ja(host)" },
+            { id: "ja-browser", label: "ja(browser)" },
+          ]}
+        />
+      </Specimen>
+      <Specimen name=".viewer-mode-btn" note="ファイルビューアのコード/プレビュー">
+        <Tabs
+          class="viewer-mode-toggle"
+          tabClass="viewer-mode-btn"
+          label="表示モード (見本)"
+          selected="preview"
+          items={[
+            { id: "code", label: "コード" },
+            { id: "preview", label: "プレビュー" },
+          ]}
+        />
       </Specimen>
     </>
   );
@@ -383,7 +537,7 @@ function BubbleSection() {
       <Specimen name=".tl-bubble-right" note="ユーザのプロンプト。右寄せ・緑系">
         <div class="catalog-bubbles">
           <div class="tl-bubble tl-bubble-right">
-            <div class="tl-bubble-body tl-bubble-body-user">
+            <div class="tl-bubble-body">
               locator に /catalog を足したい。既存の usage の分岐が近い。
             </div>
             <span class="tl-bubble-time">12:04</span>
@@ -540,6 +694,8 @@ const SECTION_BODIES: Record<string, () => ComponentChildren> = {
   type: TypeSection,
   avatar: AvatarSection,
   chip: ChipSection,
+  fold: FoldSection,
+  tabs: TabsSection,
   status: StatusSection,
   badge: BadgeSection,
   bubble: BubbleSection,

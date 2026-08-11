@@ -1,7 +1,6 @@
 import type { PeerInfo } from "@ccmsg/protocol";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
-import { useApp } from "../context.ts";
 import { timelineHref } from "../locator.ts";
 import { isMemberConnected, memberLabel } from "../utils.ts";
 import { Avatar, UserAvatar } from "../avatar.tsx";
@@ -14,19 +13,31 @@ import { Avatar, UserAvatar } from "../avatar.tsx";
  * this component). The User (u1, `id === ADMIN_ID`) never gets an offline
  * treatment or a kick button — it's not backed by a `peers` row at all, and
  * kick is scoped to agent members only (DR-0012 §1: "エージェント同士が互い
- * を蹴れる設計は事故源"; the ✕ button IS the admin-only kick surface). */
+ * を蹴れる設計は事故源"; the ✕ button IS the admin-only kick surface).
+ *
+ * Presentation only: everything it draws comes from its props, and both of its
+ * actions are handed in (`onSelect`, `onKick`) rather than reached for through
+ * the app context — the same division of labor StatusPanel's KillZone uses.
+ * The confirm prompt lives with the caller for the same reason: a chip
+ * rendered outside a live room (the catalog) must be able to be a picture of a
+ * chip and nothing more. */
 export function MemberChip({
   id,
   room,
   selected,
   peers,
+  onSelect,
+  onKick,
 }: {
   id: string;
   room: RoomState | undefined;
   selected: boolean;
   peers: PeerInfo[];
+  /** The chip body was clicked — in the room view, toggles the mention. */
+  onSelect: (id: string) => void;
+  /** The ✕ was clicked. Confirm and send from the caller. */
+  onKick: (id: string) => void;
 }) {
-  const { store, ws } = useApp();
   const member = room?.membersById.get(id);
   const isAdmin = id === ADMIN_ID;
   const offline = !isAdmin && !!member && !isMemberConnected(member, peers);
@@ -40,9 +51,7 @@ export function MemberChip({
 
   function handleKick(e: MouseEvent): void {
     e.stopPropagation(); // ✕ クリックが親 <button> の mention/toggle を巻き込まないように
-    if (!room) return;
-    if (!window.confirm(`${memberLabel(id, room)} を room から強制退出させますか?`)) return;
-    void ws.kick(room.id, id);
+    onKick(id);
   }
 
   return (
@@ -51,7 +60,7 @@ export function MemberChip({
         type="button"
         class={classes.join(" ")}
         title={isAdmin ? "User (u1)" : offline ? `${id} (未接続)` : id}
-        onClick={() => store.dispatch({ type: "mention/toggle", id })}
+        onClick={() => onSelect(id)}
       >
         {isAdmin ? <UserAvatar size={16} /> : <Avatar seed={avatarSeed} size={16} />}
         {memberLabel(id, room)}

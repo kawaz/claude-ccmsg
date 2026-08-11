@@ -2185,6 +2185,14 @@ a.composer-attachment-label:hover {
    * 十分に領域を区切れる。 */
 }
 
+/* The tabs proper. Nested inside .session-tabs rather than being it, so the
+ * Pin button beside them stays outside role="tablist" while keeping its
+ * `margin-left: auto` against the full width of the bar. */
+.session-tabs-list {
+  display: flex;
+  gap: var(--space-4);
+}
+
 .session-tabs::after {
   content: "";
   position: absolute;

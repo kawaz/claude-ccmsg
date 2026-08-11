@@ -31,6 +31,7 @@ import { usageStatsHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { UsageChart } from "./UsageChart.tsx";
+import { Fold } from "./Fold.tsx";
 
 /** Spend is settled history plus a partial current bucket; it does not move on
  * the scale that quota does, and a wide span is an expensive document for the
@@ -164,23 +165,25 @@ function CredentialBlock({ credential, total }: { credential: CredentialTotal; t
 }
 
 /** One bucket. Collapsed it is a total with a bar; opened it is the model
- * breakdown, then the context kinds, then the same split per credential.
- * `<details>` rather than component state so the browser owns the disclosure —
- * keyboard, find-in-page and the open set surviving a re-render come free. */
+ * breakdown, then the context kinds, then the same split per credential. */
 function BucketRow({ bucket, widest }: { bucket: BucketTotal; widest: number }) {
   return (
-    <details class="stats-period-row">
-      <summary>
-        <span class="stats-period-key">{formatBucket(bucket.key)}</span>
-        <span class="stats-period-note">{bucket.dayCount} 日分</span>
-        <span class="stats-period-bar">
-          <span
-            class="stats-period-bar-fill"
-            style={{ width: `${shareOf(bucket.usd, widest) * 100}%` }}
-          />
-        </span>
-        <span class="stats-period-usd">{formatUsd(bucket.usd)}</span>
-      </summary>
+    <Fold
+      class="stats-period-row"
+      summary={
+        <>
+          <span class="stats-period-key">{formatBucket(bucket.key)}</span>
+          <span class="stats-period-note">{bucket.dayCount} 日分</span>
+          <span class="stats-period-bar">
+            <span
+              class="stats-period-bar-fill"
+              style={{ width: `${shareOf(bucket.usd, widest) * 100}%` }}
+            />
+          </span>
+          <span class="stats-period-usd">{formatUsd(bucket.usd)}</span>
+        </>
+      }
+    >
       {bucket.models.length === 0 ? (
         <p class="stats-empty">この期間の内訳はありません。</p>
       ) : (
@@ -197,8 +200,7 @@ function BucketRow({ bucket, widest }: { bucket: BucketTotal; widest: number }) 
            * "which model" and "what kind of context" both come before
            * "on whose key". */}
           {bucket.credentials.length > 1 ? (
-            <details class="stats-by-credential">
-              <summary>クレデンシャル別</summary>
+            <Fold class="stats-by-credential" summary="クレデンシャル別">
               {bucket.credentials.map((credential) => (
                 <CredentialBlock
                   key={credential.credential}
@@ -206,11 +208,11 @@ function BucketRow({ bucket, widest }: { bucket: BucketTotal; widest: number }) 
                   total={bucket.usd}
                 />
               ))}
-            </details>
+            </Fold>
           ) : null}
         </>
       )}
-    </details>
+    </Fold>
   );
 }
 

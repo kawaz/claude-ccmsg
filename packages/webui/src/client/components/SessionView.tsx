@@ -27,6 +27,34 @@ import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
+import { Tabs, type TabItem } from "./Tabs.tsx";
+
+/** Terminal appears only for sessions that have one — an always-present but
+ * dead Terminal tab would invite clicks that do nothing. Timeline instead
+ * stays and goes disabled, because a session without a transcript is the
+ * unusual case and saying so is more useful than hiding it. */
+function sessionTabItems(
+  sid: string,
+  hasTranscript: boolean,
+  hasTerminal: boolean,
+): TabItem<SessionTab>[] {
+  return [
+    { id: "files", label: "Files", href: filesHref(sid) },
+    hasTranscript
+      ? { id: "timeline", label: "Timeline", href: timelineHref(sid) }
+      : {
+          id: "timeline",
+          label: "Timeline",
+          disabled: true,
+          title: "このセッションは transcript を申告していません",
+        },
+    ...(hasTerminal
+      ? [{ id: "terminal", label: "Terminal", href: terminalHref(sid) } as TabItem<SessionTab>]
+      : []),
+    { id: "status", label: "Status", href: statusHref(sid) },
+    { id: "rooms", label: "Rooms", href: sessionRoomsHref(sid) },
+  ];
+}
 
 const EMPTY_TREE: SessionTreeState = {
   dirs: new Map(),
@@ -238,40 +266,27 @@ export function SessionView({
   return (
     <main ref={rootRef} class="session-view" hidden={!active} data-session-id={sid}>
       <div class="session-tabs">
-        <a class={"session-tab" + (tab === "files" ? " active" : "")} href={filesHref(sid)}>
-          Files
-        </a>
-        {hasTranscript ? (
-          <a class={"session-tab" + (tab === "timeline" ? " active" : "")} href={timelineHref(sid)}>
-            Timeline
-          </a>
-        ) : (
-          <span class="session-tab disabled" title="このセッションは transcript を申告していません">
-            Timeline
-          </span>
-        )}
-        {/* kawaz r46 mid=9,11: Terminal は Timeline の右隣 (類似ビュー同士を
-         * 隣接させる。Rooms の隣は変、の指摘)。 */}
-        {hasTerminal ? (
-          <a class={"session-tab" + (tab === "terminal" ? " active" : "")} href={terminalHref(sid)}>
-            Terminal
-          </a>
-        ) : null}
-        {/* kawaz r26 mid=66: Rooms は一番右 (Files / Timeline / Status / Rooms) */}
-        {/* kawaz r38 mid=7: Status タブはサブエージェント TL 閲覧中 (= state.
-         * currentAgent が付いた状態) でも押せるようにする。押した時は親セッション
-         * (= sid) の Status タブへ遷移するため、locator を `sessionHref(sid)` に
-         * 動かして currentAgent を null に落とし、同時に localTab を "status"
-         * に切り替える。<button> のままだと locator が動かず、currentAgent が
-         * 残っている限り上の tab 判定 (`state.currentAgent ? "timeline" : ...`)
-         * が "timeline" を強制するため Status に切り替わらない。Files/Timeline
-         * の <a> と同じ導線に揃えて accessibility も統一する。 */}
-        <a class={"session-tab" + (tab === "status" ? " active" : "")} href={statusHref(sid)}>
-          Status
-        </a>
-        <a class={"session-tab" + (tab === "rooms" ? " active" : "")} href={sessionRoomsHref(sid)}>
-          Rooms
-        </a>
+        {/* Every tab is a location (`#s<sid>...`), so they are links — a tab
+         * you can middle-click into a second window is worth more here than
+         * one that only flips state. Timeline stays present-but-disabled when
+         * the session declares no transcript: its absence would silently
+         * change the shape of the row between sessions.
+         *
+         * Order (kawaz r46 mid=9,11 / r26 mid=66): Terminal sits next to
+         * Timeline (similar views adjacent, "Rooms の隣は変"), Rooms last.
+         *
+         * kawaz r38 mid=7: Status stays a link even while a sub-agent TL is
+         * open (= state.currentAgent set) — navigating to `statusHref(sid)`
+         * clears currentAgent, which a <button> could not do; the tab
+         * resolution above (`state.currentAgent ? "timeline" : ...`) would
+         * keep forcing "timeline" otherwise. */}
+        <Tabs
+          class="session-tabs-list"
+          tabClass="session-tab"
+          label="セッションの表示"
+          selected={tab}
+          items={sessionTabItems(sid, hasTranscript, hasTerminal)}
+        />
         <button
           type="button"
           class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}

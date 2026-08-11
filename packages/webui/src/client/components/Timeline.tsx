@@ -123,6 +123,7 @@ import { SearchBar } from "./SearchBar.tsx";
 import { CodeBlock } from "./CodeBlock.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { InlineDiffViewer, InlineFileViewer } from "./InlineFileViewer.tsx";
+import { Tabs } from "./Tabs.tsx";
 
 /**
  * In-view search context threaded down to every SegmentView (DR-0022 §3 —
@@ -1136,33 +1137,32 @@ function ThinkingSegment({
         <div class="tl-thinking-body">
           {hasTranslationTab ? (
             <div class="tl-thinking-toolbar">
-              <div class="tl-thinking-tabs">
-                <button
-                  type="button"
-                  class={"tl-thinking-tab" + (tab === "original" ? " active" : "")}
-                  onClick={() => changeTab("original")}
-                >
-                  original
-                </button>
-                {translationAvailability.host ? (
-                  <button
-                    type="button"
-                    class={"tl-thinking-tab" + (tab === "ja-host" ? " active" : "")}
-                    onClick={selectHost}
-                  >
-                    ja(host)
-                  </button>
-                ) : null}
-                {translationAvailability.browser ? (
-                  <button
-                    type="button"
-                    class={"tl-thinking-tab" + (tab === "ja-browser" ? " active" : "")}
-                    onClick={selectBrowser}
-                  >
-                    ja(browser)
-                  </button>
-                ) : null}
-              </div>
+              {/* Only the offered translators get a tab — each one is a
+               * separate capability of the host/browser (see
+               * translationAvailability), so an unavailable one has no view to
+               * show. Selection routes through the same per-tab handlers as
+               * before: host and browser kick off a translation, original
+               * just switches back. */}
+              <Tabs
+                class="tl-thinking-tabs"
+                tabClass="tl-thinking-tab"
+                label="本文の言語"
+                selected={tab}
+                onSelect={(id) => {
+                  if (id === "ja-host") selectHost();
+                  else if (id === "ja-browser") selectBrowser();
+                  else changeTab("original");
+                }}
+                items={[
+                  { id: "original", label: "original" },
+                  ...(translationAvailability.host
+                    ? [{ id: "ja-host" as ThinkingTab, label: "ja(host)" }]
+                    : []),
+                  ...(translationAvailability.browser
+                    ? [{ id: "ja-browser" as ThinkingTab, label: "ja(browser)" }]
+                    : []),
+                ]}
+              />
             </div>
           ) : null}
           <LinkedMarkdownView
@@ -1445,22 +1445,17 @@ function SystemMessageBody({
 
   return (
     <div class="tl-sysmsg">
-      <div class="tl-thinking-tabs">
-        <button
-          type="button"
-          class={"tl-thinking-tab" + (tab === "rich" ? " active" : "")}
-          onClick={() => setTab("rich")}
-        >
-          rich
-        </button>
-        <button
-          type="button"
-          class={"tl-thinking-tab" + (tab === "raw" ? " active" : "")}
-          onClick={() => setTab("raw")}
-        >
-          raw
-        </button>
-      </div>
+      <Tabs
+        class="tl-thinking-tabs"
+        tabClass="tl-thinking-tab"
+        label="システムメッセージの表示"
+        selected={tab}
+        onSelect={setTab}
+        items={[
+          { id: "rich", label: "rich" },
+          { id: "raw", label: "raw" },
+        ]}
+      />
       {tab === "rich" ? (
         <SystemMessageRichView rich={rich} />
       ) : (
@@ -2029,7 +2024,7 @@ function UserPromptBubble({
       ref={(el) => registerUserTurnRef(navKey, el)}
       onClick={() => onUserTurnClick(navKey)}
     >
-      <div class="tl-bubble-body tl-bubble-body-user">
+      <div class="tl-bubble-body">
         {line.segments.length === 0 ? (
           <span class="tl-empty-turn">(空)</span>
         ) : (
@@ -2327,7 +2322,7 @@ function CcmsgBubble({
       }
       onClick={isUser && navKey !== undefined ? () => onUserTurnClick(navKey) : undefined}
     >
-      <div class={isUser ? "tl-bubble-body tl-bubble-body-user" : "tl-bubble-body"}>
+      <div class="tl-bubble-body">
         <div class="tl-bubble-from">
           {isUser ? (
             <>
@@ -2366,22 +2361,17 @@ function CcmsgBubble({
           {message.room}
           {message.mid === undefined ? null : `m${message.mid}`}
         </div>
-        <div class="tl-thinking-tabs">
-          <button
-            type="button"
-            class={"tl-thinking-tab" + (tab === "msg" ? " active" : "")}
-            onClick={() => setTab("msg")}
-          >
-            msg
-          </button>
-          <button
-            type="button"
-            class={"tl-thinking-tab" + (tab === "raw" ? " active" : "")}
-            onClick={() => setTab("raw")}
-          >
-            raw
-          </button>
-        </div>
+        <Tabs
+          class="tl-thinking-tabs"
+          tabClass="tl-thinking-tab"
+          label="ccmsg メッセージの表示"
+          selected={tab}
+          onSelect={setTab}
+          items={[
+            { id: "msg", label: "msg" },
+            { id: "raw", label: "raw" },
+          ]}
+        />
         {tab === "msg" ? (
           // tl-ccmsg-msg: chat 様式の本文なので単一改行を行分けとして見せる
           // (CSS の white-space: pre-wrap、kawaz r17 mid=13)。markdown AST は
@@ -4110,20 +4100,14 @@ export function Timeline({
                       {autoOpenPanelOpen ? "›" : "‹"}
                     </button>
                     <div class="tl-float-body">
-                      <div class="tl-float-tabs" role="tablist">
-                        {SIDE_PANEL_TABS.map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            role="tab"
-                            class="tl-float-tab"
-                            aria-selected={sidePanelTab === tab.id}
-                            onClick={() => setSidePanelTab(tab.id)}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
+                      <Tabs
+                        class="tl-float-tabs"
+                        tabClass="tl-float-tab"
+                        label="サイドパネル"
+                        selected={sidePanelTab}
+                        onSelect={setSidePanelTab}
+                        items={SIDE_PANEL_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
+                      />
                       {sidePanelTab === "actions" ? (
                         <div class="tl-float-actions" role="tabpanel">
                           <ForkAction

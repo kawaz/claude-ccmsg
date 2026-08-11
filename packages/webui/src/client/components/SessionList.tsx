@@ -21,6 +21,7 @@ import {
 } from "../utils.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
+import { Fold } from "./Fold.tsx";
 
 const TICK_MS = 10_000;
 
@@ -154,7 +155,7 @@ function SessionRowItem({
         ) : null}
         {/* U3: busy/idle/done/offline no longer render per-row (kawaz: "busy
          * 表示邪魔") — that status now only shows via the row's section
-         * heading (see SessionList's <details>). "bg" is a separate axis
+         * heading (see SessionList's <Fold>). "bg" is a separate axis
          * (kind, not status) and stays on the row itself. */}
         {badges
           .filter((b) => b === "bg")
@@ -302,8 +303,12 @@ function PinnedSessionsSection({
   if (pins.length === 0) return null;
   const connectedSids = new Set(peers.map((p) => p.sid));
   return (
-    <details open class="session-section pinned-section">
-      <summary class="session-section-summary">Pinned ({pins.length})</summary>
+    <Fold
+      open
+      class="session-section pinned-section"
+      summaryClass="session-section-summary"
+      summary={`Pinned (${pins.length})`}
+    >
       <ul class="session-section-list">
         {pins.map((hit) => (
           <PinnedSessionRow
@@ -315,11 +320,11 @@ function PinnedSessionsSection({
           />
         ))}
       </ul>
-    </details>
+    </Fold>
   );
 }
 
-/** Extra class for a status section's `<details>`, for the two sections that
+/** Extra class for a status section's `<Fold>`, for the two sections that
  * need the reader's attention:
  * - `waiting`: ユーザ対応を促す強調 (warn 色 + 跳ねアニメーション、
  *   composer-fab-draft と同系。kawaz r46 mid=42)
@@ -350,7 +355,7 @@ function sectionClass(key: string): string {
  * 切ってフォルディングもできるように"; extended 2026-07-16 to cover any
  * `claude agents` status, not just busy/idle/done — see sessionStatus's doc
  * comment): the merged rows are further split into per-status sections
- * (groupSessionsBySection), each its own `<details open>` so a section can be
+ * (groupSessionsBySection), each its own `<Fold open>` so a section can be
  * collapsed — sort order (name/created/recent) still applies *within* each
  * section, unchanged from before this task. */
 export function SessionList({
@@ -381,10 +386,13 @@ export function SessionList({
         currentSid={currentSid}
       />
       {sections.map((section) => (
-        <details key={section.key} open class={sectionClass(section.key)}>
-          <summary class="session-section-summary">
-            {section.label} ({section.rows.length})
-          </summary>
+        <Fold
+          key={section.key}
+          open
+          class={sectionClass(section.key)}
+          summaryClass="session-section-summary"
+          summary={`${section.label} (${section.rows.length})`}
+        >
           <ul class="session-section-list">
             {section.rows.map((row) => (
               <SessionRowItem
@@ -410,7 +418,7 @@ export function SessionList({
               />
             ))}
           </ul>
-        </details>
+        </Fold>
       ))}
     </div>
   );

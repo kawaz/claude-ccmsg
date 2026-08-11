@@ -8,6 +8,7 @@ import {
   splitRoomsByKind,
   splitRoomsByLiveness,
 } from "../utils.ts";
+import { Fold } from "./Fold.tsx";
 
 function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
   const memberCount = [...room.membersById.values()].filter((m) => !m.left).length;
@@ -38,18 +39,18 @@ function RoomRow({ room, active }: { room: RoomState; active: boolean }) {
 /** Room list layout (top → bottom):
  * 1. Flat `#room-list` at top — broadcast rooms only (kawaz r55m30:
  *    broadcast は常にセクション群の一番上、折り畳まないで直置き)。
- * 2. `<details id="room-list-normal" open>` "Active (N)" — 生存中の参加
+ * 2. `<Fold id="room-list-normal" open>` "Active (N)" — 生存中の参加
  *    エージェントが 2 名以上いる通常 room (非アーカイブ・非1on1・非
  *    broadcast)。デフォルト open で今までの見え方を維持しつつユーザが畳める
  *    ようにする (kawaz r55m30)。セクション名は ROOMS 直下で「ルーム」と
  *    名乗っても情報がないため Active に (kawaz r76m51)。
- * 3. `<details id="room-list-inactive">` "Inactive (N)" (default-closed,
+ * 3. `<Fold id="room-list-inactive">` "Inactive (N)" (default-closed,
  *    kawaz r76m51) — 生存中の参加エージェントが 0〜1 名の通常 room。
- * 4. `<details id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
- * 5. `<details id="room-list-archived">` "アーカイブ (N)" (default-closed,
+ * 4. `<Fold id="room-list-1on1">` "1on1 (N)" (default-closed, mid=61)。
+ * 5. `<Fold id="room-list-archived">` "アーカイブ (N)" (default-closed,
  *    DR-0012)。
- * Rooms in any `<details>` stay reachable (click through like any other
- * room). Each `<details>` (と broadcast の flat `<ul>`) は自グループが空
+ * Rooms in any `<Fold>` stay reachable (click through like any other
+ * room). Each `<Fold>` (と broadcast の flat `<ul>`) は自グループが空
  * のとき丸ごと省略される。An archived 1on1 room lands in the アーカイブ
  * group, not duplicated — `splitRoomsByArchived` runs first, then
  * `splitRoomsByKind` only sees what's left, then broadcast は `flat` から
@@ -76,44 +77,40 @@ export function RoomList({ state }: { state: AppState }) {
         </ul>
       )}
       {normal.length > 0 && (
-        <details id="room-list-normal" open>
-          <summary>Active ({normal.length})</summary>
+        <Fold id="room-list-normal" open summary={`Active (${normal.length})`}>
           <ul>
             {normal.map((room) => (
               <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
       {inactive.length > 0 && (
-        <details id="room-list-inactive">
-          <summary>Inactive ({inactive.length})</summary>
+        <Fold id="room-list-inactive" summary={`Inactive (${inactive.length})`}>
           <ul>
             {inactive.map((room) => (
               <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
       {oneOnOne.length > 0 && (
-        <details id="room-list-1on1">
-          <summary>1on1 ({oneOnOne.length})</summary>
+        <Fold id="room-list-1on1" summary={`1on1 (${oneOnOne.length})`}>
           <ul>
             {oneOnOne.map((room) => (
               <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
       {archived.length > 0 && (
-        <details id="room-list-archived">
-          <summary>アーカイブ ({archived.length})</summary>
+        <Fold id="room-list-archived" summary={`アーカイブ (${archived.length})`}>
           <ul>
             {archived.map((room) => (
               <RoomRow key={room.id} room={room} active={room.id === currentRoomId} />
             ))}
           </ul>
-        </details>
+        </Fold>
       )}
     </>
   );
