@@ -8,7 +8,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-31 | task | open | [audit-blocking-io-paths](./2026-07-31-audit-blocking-io-paths.md) | daemon/webui の同期 IO・イベントループ阻害箇所の洗い出しと非同期化仕分け (DR-0029、r99m5 裁定を受けた監査) |
 | 2026-07-31 | bug | open | [path-canonicalization-latent-gaps](./2026-07-31-path-canonicalization-latent-gaps.md) | パス正規化の潜在ギャップ 2 件: symlink 綴りの containment 判定漏れ、peers.cwd が生綴りのまま非対称になっている件 |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
-| 2026-07-30 | design | open | [webui-component-catalog-design-system](./2026-07-30-webui-component-catalog-design-system.md) | webui のコンポーネント・画面デザインが場当たり的で一貫性を欠く。デザインシステム / コンポーネントカタログ導入の方向裁定 (自作カタログ/Ladle/Storybook) |
 | 2026-07-17 | task | idea | [webui-simplify-componentization](./2026-07-17-webui-simplify-componentization.md) | webui の場当たり改修で重複したパターン (localStorage load/save、FAB+popup、fs_list dispatch、details 折りたたみ、タブ切替) のコンポーネント化・simplify 棚卸し。機能実装キューが捌けた後に着手 |
 | 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
 | 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
@@ -23,5 +22,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 | 2026-07-16 | request | open | [kawaz-agents-status](./kawaz-agents-status.md) | claude agents --json を見るとbusyの他に status:"inactive" などもあるはずだがサイドバー |
 | 2026-07-16 | request | open | [kawaz-req1](./kawaz-req1.md) | claude agents --jsonを見るとbusyの他に status:"inactive" などもあるが、現在サイドバーのSESSIONSでは bysy… |
 | 2026-07-12 | design | open | [passkey-signed-post-antispoofing](./2026-07-12-passkey-signed-post-antispoofing.md) | Passkey 署名を post に添付し daemon 検証する、なりすまし対策強化案 |
+| 2026-07-30 | design | wip | [webui-component-catalog-design-system](./2026-07-30-webui-component-catalog-design-system.md) | webui のコンポーネント・画面デザインが場当たり的で一貫性を欠く。デザインシステム / コンポーネントカタログ導入の方向裁定 (自作カタログ/Ladle/Storybook) |
 | 2026-07-12 | bug | wip | [bun-test-flaky-fullsuite-parallel](./2026-07-12-bun-test-flaky-fullsuite-parallel.md) | bun test フルスイート並列実行時に稀に 1 件 fail する flaky の追跡 (tailscale origin 系 2 モード根治、他候補調査中) |
 | 2026-07-09 | design | wip | [webui-workspace-roadmap](./2026-07-09-webui-workspace-roadmap.md) | webui を workspace UI に育てる長期 roadmap (セッションリスト/ルームリスト+チャット/ファイルツリー+コードビューア、並列進行) |
