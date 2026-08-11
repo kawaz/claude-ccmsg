@@ -748,7 +748,10 @@ function loadSessionContext(
   };
 }
 
-export function dumpSession(session: string, options: SessionDumpOptions): SessionDump {
+export async function dumpSession(
+  session: string,
+  options: SessionDumpOptions,
+): Promise<SessionDump> {
   const since = parseBound(options.since, "since");
   const until = parseBound(options.until, "until");
   if (since !== undefined && until !== undefined && since > until) {
@@ -757,7 +760,7 @@ export function dumpSession(session: string, options: SessionDumpOptions): Sessi
   if (options.agent !== undefined && options.noAgent === true) {
     throw new Error("--agent and --no-agent contradict each other: pick one");
   }
-  const resolved = resolveVirtualTranscript(session, options.configDirs);
+  const resolved = await resolveVirtualTranscript(session, options.configDirs);
   if (!resolved) throw new Error(`session transcript not found: ${session}`);
   const rows = parseTranscript(resolved.file);
   const bundle = loadStatusBundle(resolved.file);

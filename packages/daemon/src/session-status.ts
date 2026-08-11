@@ -16,7 +16,7 @@ import {
   type SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import {
-  resolveTranscript,
+  resolveConnectedTranscript,
   subscribeTranscriptLines,
   unsubscribeTranscriptLines,
   type SessionLookup as TranscriptSessionLookup,
@@ -142,13 +142,16 @@ function tokenValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-function resolveExternalRoot(sessions: SessionStatusLookup, sid: string): string | undefined {
+async function resolveExternalRoot(
+  sessions: SessionStatusLookup,
+  sid: string,
+): Promise<string | undefined> {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) return undefined;
   const base = entry.meta.repo_root ?? entry.meta.cwd;
   if (!base || !path.isAbsolute(base)) return undefined;
   try {
-    return fs.realpathSync(base);
+    return await fs.promises.realpath(base);
   } catch {
     return undefined;
   }
@@ -159,13 +162,16 @@ function resolveExternalRoot(sessions: SessionStatusLookup, sid: string): string
  * `.code-workspace` sits in a specific worktree's checkout, and its siblings
  * should not inherit its allowlist. Returns undefined the same way
  * resolveExternalRoot does when the session lacks a usable cwd. */
-function resolveWorkspaceAnchor(sessions: SessionStatusLookup, sid: string): string | undefined {
+async function resolveWorkspaceAnchor(
+  sessions: SessionStatusLookup,
+  sid: string,
+): Promise<string | undefined> {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) return undefined;
   const cwd = entry.meta.cwd;
   if (!cwd || !path.isAbsolute(cwd)) return undefined;
   try {
-    return fs.realpathSync(cwd);
+    return await fs.promises.realpath(cwd);
   } catch {
     return undefined;
   }
@@ -1752,10 +1758,10 @@ export async function getSessionStatus(
   sessions: SessionStatusLookup,
   sid: string,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = resolveTranscript(sessions, sid);
+  const resolved = resolveConnectedTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
-  const root = resolveExternalRoot(sessions, sid);
-  const cwd = resolveWorkspaceAnchor(sessions, sid);
+  const root = await resolveExternalRoot(sessions, sid);
+  const cwd = await resolveWorkspaceAnchor(sessions, sid);
   // Serve the live fold only while it still describes both the current
   // transcript and the root used to classify DR-0024 external files.
   const live = store.sessions.get(sid);
@@ -1797,10 +1803,10 @@ export async function subscribeSessionStatus(
   conn: TailConn,
   log: TailLog,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = resolveTranscript(sessions, sid);
+  const resolved = resolveConnectedTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
-  const root = resolveExternalRoot(sessions, sid);
-  const cwd = resolveWorkspaceAnchor(sessions, sid);
+  const root = await resolveExternalRoot(sessions, sid);
+  const cwd = await resolveWorkspaceAnchor(sessions, sid);
   const existing = store.sessions.get(sid);
   if (existing && existing.file === resolved.file && existing.root === root) {
     existing.statusConns.add(conn);

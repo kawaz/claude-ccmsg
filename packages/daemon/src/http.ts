@@ -165,13 +165,13 @@ function isAllowedOrigin(
  * the file the listener re-reads). An empty set yields `'none'` at the call
  * site, which is the right default: nothing is allowed to frame it.
  */
-function frameAncestorsFor(
+async function frameAncestorsFor(
   srv: { hostname?: string; port?: number },
   extraOrigins: Set<string>,
   originsFile?: OriginsFile,
-): string[] {
+): Promise<string[]> {
   const out = new Set<string>(extraOrigins);
-  for (const o of originsFile?.get() ?? []) out.add(o);
+  for (const o of (await originsFile?.get()) ?? []) out.add(o);
   if (srv.hostname !== undefined && srv.port !== undefined) {
     out.add(`http://${srv.hostname}:${srv.port}`);
   }
@@ -239,7 +239,7 @@ export function startHttpListener(
       const origin = req.headers.get("Origin");
       if (
         !isAllowedOrigin(origin, srv, extraOrigins) &&
-        !(origin !== null && originsFile?.get().has(origin))
+        !(origin !== null && (await originsFile?.get())?.has(origin))
       ) {
         return new Response("Forbidden", { status: 403 });
       }

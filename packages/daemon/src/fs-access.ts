@@ -74,7 +74,10 @@ export interface SessionLookup extends SessionStatusLookup {
  *     home; it's also realpath'd before comparison so a symlinked home
  *     doesn't slip past the ancestor check.
  */
-export function validateRepoRoot(cwd: unknown, repoRootCandidate: unknown): string | undefined {
+export async function validateRepoRoot(
+  cwd: unknown,
+  repoRootCandidate: unknown,
+): Promise<string | undefined> {
   if (typeof repoRootCandidate !== "string" || repoRootCandidate === "") return undefined;
   if (!path.isAbsolute(repoRootCandidate)) return undefined;
   if (typeof cwd !== "string" || cwd === "" || !path.isAbsolute(cwd)) return undefined;
@@ -82,8 +85,8 @@ export function validateRepoRoot(cwd: unknown, repoRootCandidate: unknown): stri
   let realRoot: string;
   let realCwd: string;
   try {
-    realRoot = fs.realpathSync(repoRootCandidate);
-    realCwd = fs.realpathSync(cwd);
+    realRoot = await fs.promises.realpath(repoRootCandidate);
+    realCwd = await fs.promises.realpath(cwd);
   } catch {
     return undefined;
   }
@@ -91,7 +94,7 @@ export function validateRepoRoot(cwd: unknown, repoRootCandidate: unknown): stri
   if (realRoot === "/") return undefined;
   let home: string;
   try {
-    home = fs.realpathSync(os.homedir());
+    home = await fs.promises.realpath(os.homedir());
   } catch {
     home = "";
   }
@@ -132,14 +135,14 @@ export interface FsAccessOptions {
  *  workspaces/worktrees — else its plain `cwd`, exactly as before that
  *  addendum. Historical user-role reads may fall back to the cwd-derived virtual
  *  root; connected sessions retain the existing contract unchanged. */
-function resolveRoot(
+async function resolveRoot(
   sessions: SessionLookup,
   sid: string,
   opts: FsAccessOptions = {},
-): RootOk | RootErr {
+): Promise<RootOk | RootErr> {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) {
-    if (opts.allowVirtual) return resolveVirtualRoot(sid, opts.configDirs);
+    if (opts.allowVirtual) return await resolveVirtualRoot(sid, opts.configDirs);
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
   }
   const base = entry.meta.repo_root ?? entry.meta.cwd;
@@ -151,7 +154,7 @@ function resolveRoot(
     };
   }
   try {
-    return { ok: true, root: fs.realpathSync(base) };
+    return { ok: true, root: await fs.promises.realpath(base) };
   } catch {
     return {
       ok: false,
@@ -224,7 +227,7 @@ interface ContainedErr {
  *     paths reachable only through a forbidden symlink.
  *
  * Known limitation (TOCTOU): the realpath walk above and the later
- * `fs.openSync`/`fs.lstatSync` on the resolved path are not atomic — a
+ * `open`/`lstat` on the resolved path are not atomic — a
  * symlink somewhere in the chain could be repointed between the check and
  * the open. This is only exploitable by a process sharing the daemon's own
  * UID with write access to the containment path, and such a process could
@@ -233,12 +236,12 @@ interface ContainedErr {
  * enforce (DR-0008): it doesn't let anyone reach further than they could
  * already reach on their own.
  */
-function resolveContained(
+async function resolveContained(
   root: string,
   reqPath: string,
   allowMissing = false,
   requestBase = root,
-): ContainedOk | ContainedErr {
+): Promise<ContainedOk | ContainedErr> {
   if (path.isAbsolute(reqPath)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path must be relative: ${reqPath}` };
   }
@@ -262,7 +265,7 @@ function resolveContained(
   for (;;) {
     let real: string;
     try {
-      real = fs.realpathSync(cursor);
+      real = await fs.promises.realpath(cursor);
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") {
@@ -359,7 +362,7 @@ export async function fsList(
   reqPath: string | undefined,
   opts: FsAccessOptions = {},
 ): Promise<FsAccessResult<Omit<FsListResponse, "ok">>> {
-  const rootResult = resolveRoot(sessions, sid, opts);
+  const rootResult = await resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
@@ -367,7 +370,7 @@ export async function fsList(
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_list path must be a string" };
   }
 
-  const resolved = resolveContained(root, reqPath ?? "");
+  const resolved = await resolveContained(root, reqPath ?? "");
   if (!resolved.ok) return resolved;
 
   let dirStat: fs.Stats;
@@ -459,7 +462,7 @@ export async function fsRead(
   reqPath: string,
   opts: FsAccessOptions = {},
 ): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
-  const rootResult = resolveRoot(sessions, sid, opts);
+  const rootResult = await resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
@@ -467,7 +470,7 @@ export async function fsRead(
     return { ok: false, code: ErrorCode.invalid_args, msg: "fs_read requires path" };
   }
 
-  const resolved = resolveContained(root, reqPath);
+  const resolved = await resolveContained(root, reqPath);
   if (!resolved.ok) return resolved;
   return await readRegularFile(
     sid,
@@ -534,10 +537,10 @@ export async function fsReadExternal(
  *    leaf; otherwise it's still path_forbidden, so a nonexistent leaf under
  *    a forbidden directory can't be probed via "does this exist" oracles).
  *  - other realpath errors (EACCES, ENOTDIR mid-chain) → path_forbidden */
-function resolveWorkspaceContained(
+async function resolveWorkspaceContained(
   allowlist: readonly string[],
   reqPath: unknown,
-): ContainedOk | ContainedErr {
+): Promise<ContainedOk | ContainedErr> {
   if (typeof reqPath !== "string" || reqPath === "") {
     return { ok: false, code: ErrorCode.invalid_args, msg: "workspace path must be a string" };
   }
@@ -565,7 +568,7 @@ function resolveWorkspaceContained(
   for (;;) {
     let real: string;
     try {
-      real = fs.realpathSync(cursor);
+      real = await fs.promises.realpath(cursor);
     } catch (e) {
       const err = e as NodeJS.ErrnoException;
       if (err.code !== "ENOENT") {
@@ -620,7 +623,7 @@ export async function fsListWorkspace(
 ): Promise<FsAccessResult<Omit<FsListResponse, "ok">>> {
   const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
   if (!allow.ok) return allow;
-  const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+  const resolved = await resolveWorkspaceContained(allow.folders, reqPath);
   if (!resolved.ok) return resolved;
 
   let dirStat: fs.Stats;
@@ -657,7 +660,7 @@ export async function fsReadWorkspace(
 ): Promise<FsAccessResult<Omit<FsReadResponse, "ok">>> {
   const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
   if (!allow.ok) return allow;
-  const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+  const resolved = await resolveWorkspaceContained(allow.folders, reqPath);
   if (!resolved.ok) return resolved;
   return await readRegularFile(sid, resolved.realPath, resolved.realPath, reqPath);
 }
@@ -697,7 +700,7 @@ export async function resolveFindRoot(
     }
     const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
-    const resolved = resolveWorkspaceContained(allow.folders, reqRoot);
+    const resolved = await resolveWorkspaceContained(allow.folders, reqRoot);
     if (!resolved.ok) return resolved;
     return {
       ok: true,
@@ -705,9 +708,9 @@ export async function resolveFindRoot(
     };
   }
 
-  const rootResult = resolveRoot(sessions, sid, opts);
+  const rootResult = await resolveRoot(sessions, sid, opts);
   if (!rootResult.ok) return rootResult;
-  const resolved = resolveContained(rootResult.root, reqRoot ?? "");
+  const resolved = await resolveContained(rootResult.root, reqRoot ?? "");
   if (!resolved.ok) return resolved;
   return { ok: true, data: { realPath: resolved.realPath, containmentRoot: rootResult.root } };
 }
@@ -729,12 +732,12 @@ export async function fsResolveForServe(
 ): Promise<FsAccessResult<{ realPath: string; size: number }>> {
   let realPath: string;
   if (kind === "contained") {
-    const rootResult = resolveRoot(sessions, sid);
+    const rootResult = await resolveRoot(sessions, sid);
     if (!rootResult.ok) return rootResult;
     if (typeof reqPath !== "string" || reqPath === "") {
       return { ok: false, code: ErrorCode.invalid_args, msg: "fs_serve requires path" };
     }
-    const resolved = resolveContained(rootResult.root, reqPath);
+    const resolved = await resolveContained(rootResult.root, reqPath);
     if (!resolved.ok) return resolved;
     realPath = resolved.realPath;
   } else if (kind === "external") {
@@ -755,14 +758,14 @@ export async function fsResolveForServe(
   } else {
     const allow = await getWorkspaceAllowlist(sessions, statusStore, sid);
     if (!allow.ok) return allow;
-    const resolved = resolveWorkspaceContained(allow.folders, reqPath);
+    const resolved = await resolveWorkspaceContained(allow.folders, reqPath);
     if (!resolved.ok) return resolved;
     realPath = resolved.realPath;
   }
 
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(realPath);
+    stat = await fs.promises.lstat(realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
   }
@@ -815,7 +818,7 @@ export async function fsStatBatch(
   // rebase the client's absolute input to a root-relative path (fs_read /
   // resolveContained refuse absolute strings by contract, so we must produce
   // a relative candidate before calling into that surface).
-  const rootRes = resolveRoot(sessions, sid);
+  const rootRes = await resolveRoot(sessions, sid);
   const containmentRoot = rootRes.ok ? rootRes.root : null;
 
   const results: (FsStatEntry | null)[] = await Promise.all(
@@ -870,7 +873,7 @@ export async function fsWrite(
   reqPath: string,
   content: string,
 ): Promise<FsAccessResult<Omit<FsWriteResponse, "ok">>> {
-  const rootResult = resolveRoot(sessions, sid);
+  const rootResult = await resolveRoot(sessions, sid);
   if (!rootResult.ok) return rootResult;
   const root = rootResult.root;
 
@@ -915,7 +918,7 @@ export async function fsWrite(
 
   // Permit a missing leaf only after the nearest existing ancestor has passed
   // the same lexical + realpath containment checks fs_list/fs_read use.
-  const resolved = resolveContained(root, reqPath, true, cwd);
+  const resolved = await resolveContained(root, reqPath, true, cwd);
   if (!resolved.ok) return resolved;
 
   // Policy check (DR-0019 § 3.1): judge the realpath-resolved location relative
@@ -963,7 +966,7 @@ export async function fsWrite(
   // policy is re-applied on the re-resolved location for the same reason —
   // both checks must hold for the path actually opened, not just the one
   // inspected before mkdir.
-  const rechecked = resolveContained(root, reqPath, true, cwd);
+  const rechecked = await resolveContained(root, reqPath, true, cwd);
   if (!rechecked.ok) return rechecked;
   if (!path.relative(cwd, rechecked.realPath).startsWith(inboxPrefix)) {
     return {
@@ -1050,7 +1053,7 @@ export async function fsEdit(
 
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(realPath);
+    stat = await fs.promises.lstat(realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
   }
@@ -1075,11 +1078,11 @@ export async function fsEdit(
   // (mtime, size) — extremely unlikely but the check is nearly free.
   const sniff = Buffer.alloc(Math.min(stat.size, 8192));
   if (sniff.length > 0) {
-    const fd = fs.openSync(realPath, "r");
+    const handle = await fs.promises.open(realPath, "r");
     try {
-      fs.readSync(fd, sniff, 0, sniff.length, 0);
+      await handle.read(sniff, 0, sniff.length, 0);
     } finally {
-      fs.closeSync(fd);
+      await handle.close();
     }
     for (let i = 0; i < sniff.length; i++) {
       if (sniff[i] === 0) {
@@ -1100,7 +1103,7 @@ export async function fsEdit(
 
   let after: fs.Stats;
   try {
-    after = fs.lstatSync(realPath);
+    after = await fs.promises.lstat(realPath);
   } catch {
     // The write succeeded but we can't stat the result — treat as write failure
     // rather than lie about the new mtime.
@@ -1170,10 +1173,10 @@ export async function fsCreate(
   let realPath: string;
   let echoPath: string;
   if (kind === "contained") {
-    const rootResult = resolveRoot(sessions, sid);
+    const rootResult = await resolveRoot(sessions, sid);
     if (!rootResult.ok) return rootResult;
     const root = rootResult.root;
-    const resolved = resolveContained(root, reqPath, true, root);
+    const resolved = await resolveContained(root, reqPath, true, root);
     if (!resolved.ok) return resolved;
     realPath = resolved.realPath;
     echoPath = path.relative(root, realPath);
@@ -1205,7 +1208,7 @@ export async function fsCreate(
     let ancestorReal: string | null = null;
     for (;;) {
       try {
-        ancestorReal = fs.realpathSync(cursor);
+        ancestorReal = await fs.promises.realpath(cursor);
         break;
       } catch (e) {
         const err = e as NodeJS.ErrnoException;
@@ -1247,7 +1250,7 @@ export async function fsCreate(
   const parentDir = path.dirname(realPath);
   let parentStat: fs.Stats;
   try {
-    parentStat = fs.lstatSync(parentDir);
+    parentStat = await fs.promises.lstat(parentDir);
   } catch {
     return {
       ok: false,
@@ -1264,7 +1267,7 @@ export async function fsCreate(
   }
 
   try {
-    fs.writeFileSync(realPath, content, { encoding: "utf-8", flag: "wx" });
+    await fs.promises.writeFile(realPath, content, { encoding: "utf-8", flag: "wx" });
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     if (err.code === "EEXIST") {
@@ -1308,7 +1311,7 @@ export async function fsDelete(
   // symlink swap between the two steps and never unlink through a link.
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(realPath);
+    stat = await fs.promises.lstat(realPath);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `not found: ${reqPath}` };
   }
@@ -1327,7 +1330,7 @@ export async function fsDelete(
   }
 
   try {
-    fs.unlinkSync(realPath);
+    await fs.promises.unlink(realPath);
   } catch {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `cannot delete path: ${reqPath}` };
   }

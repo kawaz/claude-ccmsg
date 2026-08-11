@@ -312,7 +312,7 @@ export interface SandboxServeDeps {
    * §6.1. Read per request (rather than captured) because the daemon's allowed
    * origin set grows at runtime — tailscale auto-allow and `ccmsg origins add`
    * both mutate it after startup. */
-  frameAncestors: () => string[];
+  frameAncestors: () => Promise<string[]>;
 }
 
 /** Headers canddy also sets for the whole sandbox site. Repeated here so a
@@ -453,7 +453,7 @@ export async function handleSandboxRequest(
   } else {
     headers["content-type"] = mimeForExtension(path.extname(fileName));
     headers["content-disposition"] = "inline";
-    headers["content-security-policy"] = previewCsp(deps.frameAncestors());
+    headers["content-security-policy"] = previewCsp(await deps.frameAncestors());
   }
 
   if (req.method === "HEAD") return new Response(null, { headers });

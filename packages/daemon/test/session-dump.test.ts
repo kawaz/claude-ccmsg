@@ -22,12 +22,23 @@ function fixture(): { configDir: string; dataDir: string; transcript: string } {
   return { configDir, dataDir, transcript: path.join(projectDir, `${SID}.jsonl`) };
 }
 
+/** Await a dumpSession call expected to reject and hand back its Error, so the
+ * rejection assertions read like the sync `toThrow` ones they replaced. */
+async function rejection(p: Promise<unknown>): Promise<Error> {
+  try {
+    await p;
+  } catch (e) {
+    return e as Error;
+  }
+  throw new Error("expected dumpSession to throw");
+}
+
 function row(timestamp: string, type: string, content: unknown, extra = {}): string {
   return JSON.stringify({ timestamp, type, message: { role: type, content }, ...extra });
 }
 
 describe("dumpSession", () => {
-  test("extracts normalized conversation entries and hydrates canonical ccmsg messages", () => {
+  test("extracts normalized conversation entries and hydrates canonical ccmsg messages", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       path.join(dataDir, "rooms", "r9.jsonl"),
@@ -136,7 +147,7 @@ describe("dumpSession", () => {
     ];
     fs.writeFileSync(transcript, lines.join("\n") + "\n");
 
-    const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const dump = await dumpSession(SID, { dataDir, configDirs: [configDir] });
     const { entries } = dump;
     expect(dump.header).toMatchObject({
       session: SID,
@@ -185,7 +196,7 @@ describe("dumpSession", () => {
   // Claude Code records some task lifecycle notices as type:user with plain
   // text. promptSource:"system" is authoritative even when no body wrapper is
   // available, while the adjacent typed/human row remains a real user entry.
-  test("excludes plain-text system promptSource rows from user entries", () => {
+  test("excludes plain-text system promptSource rows from user entries", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       transcript,
@@ -207,13 +218,13 @@ describe("dumpSession", () => {
       ].join("\n") + "\n",
     );
 
-    const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const dump = await dumpSession(SID, { dataDir, configDirs: [configDir] });
     expect(dump.entries.filter((entry) => entry.kind === "user")).toEqual([
       expect.objectContaining({ text: "human prompt" }),
     ]);
   });
 
-  test("applies inclusive timezone-aware since and until bounds", () => {
+  test("applies inclusive timezone-aware since and until bounds", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       transcript,
@@ -224,7 +235,7 @@ describe("dumpSession", () => {
         row("2026-07-19T18:47:54Z", "assistant", [{ type: "text", text: "after" }]),
       ].join("\n") + "\n",
     );
-    const dump = dumpSession(SID, {
+    const dump = await dumpSession(SID, {
       dataDir,
       configDirs: [configDir],
       since: "2026-07-20T03:47:52+09:00",
@@ -240,27 +251,35 @@ describe("dumpSession", () => {
     ]);
   });
 
-  test("rejects timezone-less timestamps and reversed ranges", () => {
+  test("rejects timezone-less timestamps and reversed ranges", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(transcript, row("2026-07-20T00:00:00Z", "user", "hello") + "\n");
-    expect(() =>
-      dumpSession(SID, { dataDir, configDirs: [configDir], since: "2026-07-20T00:00:00" }),
-    ).toThrow("with timezone");
-    expect(() =>
-      dumpSession(SID, {
-        dataDir,
-        configDirs: [configDir],
-        since: "2026-07-20T00:00:01Z",
-        until: "2026-07-20T00:00:00Z",
-      }),
-    ).toThrow("must not be later");
+    expect(
+      (
+        await rejection(
+          dumpSession(SID, { dataDir, configDirs: [configDir], since: "2026-07-20T00:00:00" }),
+        )
+      ).message,
+    ).toContain("with timezone");
+    expect(
+      (
+        await rejection(
+          dumpSession(SID, {
+            dataDir,
+            configDirs: [configDir],
+            since: "2026-07-20T00:00:01Z",
+            until: "2026-07-20T00:00:00Z",
+          }),
+        )
+      ).message,
+    ).toContain("must not be later");
   });
 
   // A dump is a self-contained handoff: current agent/workflow identities, possibly-alive
   // process-local work, and only rooms where the session is still a member must be
   // recoverable without consulting the live daemon. Terminal notification and CronDelete
   // rows remove false liveness candidates; text inside summary/result cannot forge status.
-  test("includes folded handoff state and excludes completed background work", () => {
+  test("includes folded handoff state and excludes completed background work", async () => {
     const { configDir, dataDir, transcript } = fixture();
     const sidDir = transcript.slice(0, -".jsonl".length);
     const subagentsDir = path.join(sidDir, "subagents");
@@ -538,7 +557,7 @@ describe("dumpSession", () => {
         .join("\n") + "\n",
     );
 
-    const { context } = dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const { context } = await dumpSession(SID, { dataDir, configDirs: [configDir] });
     expect(context.kind).toBe("session-context");
     expect(context.note).toContain("only when rewind or context clearing preserved");
     expect(context.agents).toEqual([
@@ -614,7 +633,7 @@ describe("dumpSession", () => {
     ]);
   });
 
-  test("emits thinking blocks as their own kind (kawaz r38 mid=40)", () => {
+  test("emits thinking blocks as their own kind (kawaz r38 mid=40)", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       transcript,
@@ -625,7 +644,7 @@ describe("dumpSession", () => {
         ]),
       ].join("\n") + "\n",
     );
-    const { entries } = dumpSession(SID, { configDirs: [configDir], dataDir });
+    const { entries } = await dumpSession(SID, { configDirs: [configDir], dataDir });
     expect(entries.map((e) => e.kind)).toEqual(["thinking", "assistant"]);
     const thinking = entries[0]!;
     expect(thinking.text).toBe("internal reasoning");
@@ -637,7 +656,7 @@ describe("dumpSession", () => {
   // is journal generation (thinking is the payload, agent machinery is not).
   // Cross-session ccmsg traffic survives both — it is correspondence, not
   // machinery — so a journal keeps what the session actually said to peers.
-  test("--no-thinking and --no-agent trim opposite halves of the dump", () => {
+  test("--no-thinking and --no-agent trim opposite halves of the dump", async () => {
     const { configDir, dataDir, transcript } = fixture();
     fs.writeFileSync(
       path.join(dataDir, "rooms", "r9.jsonl"),
@@ -694,7 +713,7 @@ describe("dumpSession", () => {
     );
 
     const base = { configDirs: [configDir], dataDir };
-    expect(dumpSession(SID, base).entries.map((e) => e.kind)).toEqual([
+    expect((await dumpSession(SID, base)).entries.map((e) => e.kind)).toEqual([
       "user",
       "thinking",
       "assistant",
@@ -703,15 +722,10 @@ describe("dumpSession", () => {
       "ccmsg-received",
       "peer-message",
     ]);
-    expect(dumpSession(SID, { ...base, noThinking: true }).entries.map((e) => e.kind)).toEqual([
-      "user",
-      "assistant",
-      "agent-spawn",
-      "agent-send",
-      "ccmsg-received",
-      "peer-message",
-    ]);
-    const journal = dumpSession(SID, { ...base, noAgent: true });
+    expect(
+      (await dumpSession(SID, { ...base, noThinking: true })).entries.map((e) => e.kind),
+    ).toEqual(["user", "assistant", "agent-spawn", "agent-send", "ccmsg-received", "peer-message"]);
+    const journal = await dumpSession(SID, { ...base, noAgent: true });
     expect(journal.entries.map((e) => e.kind)).toEqual([
       "user",
       "thinking",
@@ -788,9 +802,9 @@ describe("dumpSession", () => {
       return f;
     }
 
-    test("expands agents the range involves and folds the rest to one line", () => {
+    test("expands agents the range involves and folds the rest to one line", async () => {
       const { configDir, dataDir } = agentFixture();
-      const dump = dumpSession(SID, {
+      const dump = await dumpSession(SID, {
         dataDir,
         configDirs: [configDir],
         since: "2026-07-20T01:00:00Z",
@@ -807,9 +821,9 @@ describe("dumpSession", () => {
       expect(dump.header.agent_detail).toContain("--agent");
     });
 
-    test("keeps every agent expanded when the range covers them all", () => {
+    test("keeps every agent expanded when the range covers them all", async () => {
       const { configDir, dataDir } = agentFixture();
-      const dump = dumpSession(SID, { dataDir, configDirs: [configDir] });
+      const dump = await dumpSession(SID, { dataDir, configDirs: [configDir] });
       expect(dump.context.agents?.map((a) => a.name ?? a.agent_id)).toEqual([
         "a3333333333333333",
         "early",
@@ -820,17 +834,17 @@ describe("dumpSession", () => {
       expect(dump.header.agent_detail).toBeUndefined();
     });
 
-    test("--agent expands one agent regardless of the range, by name or id prefix", () => {
+    test("--agent expands one agent regardless of the range, by name or id prefix", async () => {
       const { configDir, dataDir } = agentFixture();
       const base = { dataDir, configDirs: [configDir] };
-      const byName = dumpSession(SID, { ...base, agent: "early" });
+      const byName = await dumpSession(SID, { ...base, agent: "early" });
       // The read-back of a folded agent is issued without the --since that
       // folded it, so the whole exchange comes back — and only that exchange.
       expect(byName.entries.map((e) => e.text)).toEqual(["early prompt", "early instruction"]);
       expect(byName.context.agents?.map((a) => a.name)).toEqual(["early"]);
       // --agent narrows alongside --since rather than overriding it, and the
       // selected agent stays expanded even when the range holds none of it.
-      const ranged = dumpSession(SID, {
+      const ranged = await dumpSession(SID, {
         ...base,
         agent: "early",
         since: "2026-07-20T01:00:00Z",
@@ -842,22 +856,26 @@ describe("dumpSession", () => {
       expect(byName.context.agents_past).toBeUndefined();
       // A nameless background subagent is reachable by its id prefix, and its
       // entries only carry the spawning tool_use_id.
-      const byPrefix = dumpSession(SID, { ...base, agent: "a333" });
+      const byPrefix = await dumpSession(SID, { ...base, agent: "a333" });
       expect(byPrefix.entries.map((e) => e.meta.description)).toEqual(["bg job"]);
       expect(byPrefix.context.agents?.map((a) => a.agent_id)).toEqual(["a3333333333333333"]);
     });
 
-    test("--agent rejects unknown and ambiguous selectors, and --no-agent", () => {
+    test("--agent rejects unknown and ambiguous selectors, and --no-agent", async () => {
       const { configDir, dataDir } = agentFixture();
       const base = { dataDir, configDirs: [configDir] };
-      expect(() => dumpSession(SID, { ...base, agent: "nobody" })).toThrow("no agent matches");
-      expect(() => dumpSession(SID, { ...base, agent: "a" })).toThrow("use more characters");
-      expect(() => dumpSession(SID, { ...base, agent: "early", noAgent: true })).toThrow(
-        "contradict each other",
+      expect((await rejection(dumpSession(SID, { ...base, agent: "nobody" }))).message).toContain(
+        "no agent matches",
       );
+      expect((await rejection(dumpSession(SID, { ...base, agent: "a" }))).message).toContain(
+        "use more characters",
+      );
+      expect(
+        (await rejection(dumpSession(SID, { ...base, agent: "early", noAgent: true }))).message,
+      ).toContain("contradict each other");
     });
 
-    test("--agent returns every round of a repeatedly delegated name", () => {
+    test("--agent returns every round of a repeatedly delegated name", async () => {
       const { configDir, dataDir, transcript } = fixture();
       const subagentsDir = path.join(transcript.slice(0, -".jsonl".length), "subagents");
       fs.mkdirSync(subagentsDir, { recursive: true });
@@ -891,7 +909,7 @@ describe("dumpSession", () => {
       // Re-delegating the same job spawns a fresh agent per round under one
       // name. "Show me the retry work" means all the rounds, so the shared name
       // selects them all rather than demanding a choice between opaque ids.
-      const dump = dumpSession(SID, { dataDir, configDirs: [configDir], agent: "retry" });
+      const dump = await dumpSession(SID, { dataDir, configDirs: [configDir], agent: "retry" });
       expect(dump.entries.map((e) => e.text)).toEqual(["round one", "round two"]);
       expect(dump.context.agents?.map((a) => a.agent_id)).toEqual([
         "aretry-111111111111",

@@ -1340,7 +1340,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // the daemon. Unresolvable cwd keeps its literal spelling (fail-open,
         // same as before) and resolveRoot rejects it later as it always did.
         const cwd = await realpathOrSelf(req.cwd ?? "");
-        const repoRoot = validateRepoRoot(cwd, req.repo_root);
+        const repoRoot = await validateRepoRoot(cwd, req.repo_root);
         newId = {
           role: "session",
           sid: req.sid,
@@ -2301,7 +2301,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       if (!complete) return;
       // Same resolver transcript_read uses, so a historical sid is answerable
       // and no path ever comes from the client.
-      const resolved = resolveTranscript(daemon.sessions, req.sid, {
+      const resolved = await resolveTranscript(daemon.sessions, req.sid, {
         allowVirtual: true,
       });
       if (!resolved.ok) {
@@ -2603,7 +2603,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      const result = transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes, {
+      const result = await transcriptRead(daemon.sessions, req.sid, req.before, req.max_bytes, {
         allowVirtual: conn.identity?.role === "user",
         agentId: req.agent_id,
         runId: req.run_id,

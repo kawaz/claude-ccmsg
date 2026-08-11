@@ -15,7 +15,7 @@
 import type { SessionApiError, SessionErrorEntry } from "@ccmsg/protocol";
 import { classifyApiErrorRow, scanTranscriptLines } from "./session-status.ts";
 import {
-  resolveTranscript,
+  resolveConnectedTranscript,
   subscribeTranscriptLines,
   unsubscribeTranscriptLines,
   type SessionLookup,
@@ -182,7 +182,7 @@ export function syncSessionErrorWatches(
   // Deleting the entry the iterator is currently on is well-defined for Map,
   // so this walks the live map rather than a copy.
   for (const [sid, watch] of store.watches) {
-    const resolved = resolveTranscript(sessions, sid);
+    const resolved = resolveConnectedTranscript(sessions, sid);
     const stillValid = wanted.has(sid) && resolved.ok && resolved.file === watch.file;
     if (stillValid) continue;
     unsubscribeTranscriptLines(transcriptTail, sid, watch.listener);
@@ -191,7 +191,7 @@ export function syncSessionErrorWatches(
 
   for (const sid of wanted) {
     if (store.watches.has(sid)) continue;
-    const resolved = resolveTranscript(sessions, sid);
+    const resolved = resolveConnectedTranscript(sessions, sid);
     if (!resolved.ok) continue;
     const watch: ErrorWatch = {
       file: resolved.file,

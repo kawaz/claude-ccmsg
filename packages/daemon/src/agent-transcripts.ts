@@ -24,7 +24,7 @@
 // - We still verify that the sibling directory sits under a detected
 //   `<configDir>/projects/` — otherwise a hypothetical caller that fed us a
 //   crafted session path could redirect us anywhere on disk.
-// - `lstatSync` (not `statSync`) fails a symlink-swap attempt: a malicious
+// - `lstat` (not `stat`) fails a symlink-swap attempt: a malicious
 //   symlink under `subagents/` reports `isFile() === false` on the link's
 //   own inode and is treated as `not_found`.
 
@@ -79,10 +79,10 @@ function isInsideProjectsDir(realSidDir: string): boolean {
  * `resolveTranscript` (hello-validated or virtual-resolver-validated), so
  * its basename is guaranteed to be a real sid.
  */
-export function resolveAgentTranscript(
+export async function resolveAgentTranscript(
   sessionTranscriptFile: string,
   opts: AgentTranscriptOptions,
-): AgentTranscriptResolveResult {
+): Promise<AgentTranscriptResolveResult> {
   const { agentId, runId, teammate } = opts;
   if (agentId !== undefined && teammate !== undefined) {
     return {
@@ -128,7 +128,7 @@ export function resolveAgentTranscript(
   const sidDirLexical = sessionTranscriptFile.slice(0, -".jsonl".length);
   let realSidDir: string;
   try {
-    realSidDir = fs.realpathSync(sidDirLexical);
+    realSidDir = await fs.promises.realpath(sidDirLexical);
   } catch {
     return {
       ok: false,
@@ -145,7 +145,7 @@ export function resolveAgentTranscript(
   }
 
   if (teammate !== undefined) {
-    return resolveTeammate(realSidDir, teammate);
+    return await resolveTeammate(realSidDir, teammate);
   }
   // agentId is defined here (mutual exclusion above).
   const agentBasename = `agent-${agentId}.jsonl`;
@@ -153,16 +153,16 @@ export function resolveAgentTranscript(
     runId !== undefined
       ? path.join(realSidDir, "subagents", "workflows", runId, agentBasename)
       : path.join(realSidDir, "subagents", agentBasename);
-  return lstatIsFileOrNotFound(candidate);
+  return await lstatIsFileOrNotFound(candidate);
 }
 
-function lstatIsFileOrNotFound(file: string): AgentTranscriptResolveResult {
+async function lstatIsFileOrNotFound(file: string): Promise<AgentTranscriptResolveResult> {
   let stat: fs.Stats;
   try {
-    // lstatSync so a symlink under subagents/ is rejected (isFile() checks
+    // lstat so a symlink under subagents/ is rejected (isFile() checks
     // the link's own inode, not its target) — otherwise a swap could point
     // outside projects/.
-    stat = fs.lstatSync(file);
+    stat = await fs.promises.lstat(file);
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `agent transcript not found` };
   }
@@ -177,11 +177,14 @@ interface TeammateCandidate {
   mtimeMs: number;
 }
 
-function resolveTeammate(realSidDir: string, teammate: string): AgentTranscriptResolveResult {
+async function resolveTeammate(
+  realSidDir: string,
+  teammate: string,
+): Promise<AgentTranscriptResolveResult> {
   const subagentsDir = path.join(realSidDir, "subagents");
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
+    entries = await fs.promises.readdir(subagentsDir, { withFileTypes: true });
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `no subagents directory` };
   }
@@ -192,7 +195,7 @@ function resolveTeammate(realSidDir: string, teammate: string): AgentTranscriptR
     const metaPath = path.join(subagentsDir, entry.name);
     let raw: string;
     try {
-      raw = fs.readFileSync(metaPath, "utf-8");
+      raw = await fs.promises.readFile(metaPath, "utf-8");
     } catch {
       continue;
     }
@@ -210,7 +213,7 @@ function resolveTeammate(realSidDir: string, teammate: string): AgentTranscriptR
     const jsonlPath = path.join(subagentsDir, jsonlName);
     let stat: fs.Stats;
     try {
-      stat = fs.lstatSync(jsonlPath);
+      stat = await fs.promises.lstat(jsonlPath);
     } catch {
       continue;
     }

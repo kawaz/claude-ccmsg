@@ -16,18 +16,19 @@
 import * as fs from "node:fs";
 
 export interface OriginsFile {
-  /** current allowed origins; do not mutate (replaced wholesale on reload). */
-  get(): Set<string>;
+  /** current allowed origins; do not mutate (replaced wholesale on reload).
+   * Async per DR-0029: every caller sits on the HTTP/WS request path. */
+  get(): Promise<Set<string>>;
 }
 
 export function createOriginsFile(file: string, log: { warn(msg: string): void }): OriginsFile {
   let cached = new Set<string>();
   let cachedMtimeMs: number | null = null; // null = never successfully statted
 
-  function reload(): void {
+  async function reload(): Promise<void> {
     let stat: fs.Stats;
     try {
-      stat = fs.statSync(file);
+      stat = await fs.promises.stat(file);
     } catch {
       // missing file = no extra origins (the common case until first `origins add`)
       cached = new Set();
@@ -36,7 +37,7 @@ export function createOriginsFile(file: string, log: { warn(msg: string): void }
     }
     if (cachedMtimeMs !== null && stat.mtimeMs === cachedMtimeMs) return;
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+      const parsed: unknown = JSON.parse(await fs.promises.readFile(file, "utf8"));
       if (!Array.isArray(parsed)) throw new Error("not a JSON array");
       cached = new Set(parsed.filter((v): v is string => typeof v === "string"));
       cachedMtimeMs = stat.mtimeMs;
@@ -48,8 +49,8 @@ export function createOriginsFile(file: string, log: { warn(msg: string): void }
   }
 
   return {
-    get() {
-      reload();
+    async get() {
+      await reload();
       return cached;
     },
   };

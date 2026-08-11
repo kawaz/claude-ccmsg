@@ -50,30 +50,30 @@ afterEach(() => {
 describe("virtual session lookup boundary", () => {
   // Guarantees the only client-controlled path segment is a complete UUID. Every
   // traversal-like or suffix-extended value is rejected before filesystem lookup.
-  test("malicious and malformed sid values fail strict UUID validation", () => {
+  test("malicious and malformed sid values fail strict UUID validation", async () => {
     for (const value of ["../../../etc/passwd", "a/../b", "", `${sid()}junk`]) {
       expect(isValidSid(value)).toBe(false);
-      expect(resolveVirtualTranscript(value, [fixtureRoot()])).toBeUndefined();
+      expect(await resolveVirtualTranscript(value, [fixtureRoot()])).toBeUndefined();
     }
   });
 
   // Guarantees lookup is physically scoped to projects/<project>/<sid>.jsonl;
   // the same basename directly under config_dir is never considered.
-  test("lookup ignores a transcript outside projects child directories", () => {
+  test("lookup ignores a transcript outside projects child directories", async () => {
     const config = fixtureRoot();
     fs.writeFileSync(path.join(config, `${sid()}.jsonl`), "{}\n");
-    expect(resolveVirtualTranscript(sid(), [config])).toBeUndefined();
+    expect(await resolveVirtualTranscript(sid(), [config])).toBeUndefined();
   });
 
   // Guarantees known-layout cwd derives the repository container while an
   // arbitrary layout keeps the cwd itself as the narrow containment root.
-  test("cwd restoration derives known repo root and preserves unknown layout", () => {
+  test("cwd restoration derives known repo root and preserves unknown layout", async () => {
     const config = fixtureRoot();
     const known = path.join(fixtureRoot(), "repos", "github.com", "owner", "repo", "main");
     fs.mkdirSync(known, { recursive: true });
     transcript(config, sid(1), known);
 
-    const resolvedKnown = resolveVirtualRoot(sid(1), [config]);
+    const resolvedKnown = await resolveVirtualRoot(sid(1), [config]);
     expect(resolvedKnown).toEqual({
       ok: true,
       root: fs.realpathSync(path.join(known, "..")),
@@ -84,7 +84,7 @@ describe("virtual session lookup boundary", () => {
     const unknown = path.join(fixtureRoot(), "arbitrary", "working-copy");
     fs.mkdirSync(unknown, { recursive: true });
     transcript(config2, sid(2), unknown);
-    const resolvedUnknown = resolveVirtualRoot(sid(2), [config2]);
+    const resolvedUnknown = await resolveVirtualRoot(sid(2), [config2]);
     expect(resolvedUnknown).toEqual({ ok: true, root: fs.realpathSync(unknown), cwd: unknown });
     expect(deriveRepoLocation(unknown).repo).toBeNull();
   });
@@ -92,11 +92,11 @@ describe("virtual session lookup boundary", () => {
   // Guarantees a hostile or degenerate transcript cwd cannot mint a wide
   // containment root: a cwd of "/" (filesystem root) or $HOME (ancestor of
   // every project) is refused outright instead of granting fs browsing there.
-  test("filesystem root and home cwd are rejected as containment roots", () => {
+  test("filesystem root and home cwd are rejected as containment roots", async () => {
     for (const cwd of [path.parse(os.homedir()).root, os.homedir()]) {
       const config = fixtureRoot();
       transcript(config, sid(), cwd);
-      const result = resolveVirtualRoot(sid(), [config]);
+      const result = await resolveVirtualRoot(sid(), [config]);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.code).toBe("path_forbidden");
     }
@@ -104,12 +104,12 @@ describe("virtual session lookup boundary", () => {
 
   // Guarantees a stale historical cwd produces an explicit not_found carrying
   // that cwd instead of silently widening or substituting another directory.
-  test("missing cwd returns an explicit not_found error", () => {
+  test("missing cwd returns an explicit not_found error", async () => {
     const config = fixtureRoot();
     const missing = path.join(fixtureRoot(), "already-gone");
     transcript(config, sid(), missing);
 
-    const result = resolveVirtualRoot(sid(), [config]);
+    const result = await resolveVirtualRoot(sid(), [config]);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe("not_found");
@@ -163,7 +163,7 @@ describe("virtual session lookup boundary", () => {
 
   // Guarantees SS-Q1=a without changing the legacy default: an unregistered sid
   // is readable only when the caller explicitly enables virtual resolution.
-  test("unconnected transcript_read uses opt-in virtual fallback", () => {
+  test("unconnected transcript_read uses opt-in virtual fallback", async () => {
     const config = fixtureRoot();
     const cwd = path.join(fixtureRoot(), "project");
     fs.mkdirSync(cwd);
@@ -174,16 +174,37 @@ describe("virtual session lookup boundary", () => {
       },
     ]);
 
-    const legacy = transcriptRead(emptySessions, sid(), undefined, undefined);
+    const legacy = await transcriptRead(emptySessions, sid(), undefined, undefined);
     expect(legacy.ok).toBe(false);
     if (!legacy.ok) expect(legacy.code).toBe("session_not_found");
 
-    const virtual = transcriptRead(emptySessions, sid(), undefined, undefined, {
+    const virtual = await transcriptRead(emptySessions, sid(), undefined, undefined, {
       allowVirtual: true,
       configDirs: [config],
     });
     expect(virtual.ok).toBe(true);
     if (virtual.ok) expect(virtual.data.lines).toHaveLength(2);
+  });
+
+  // Guarantees the fallback is keyed on "not connected", not on "no file to
+  // read": a connected session that never announced a transcript_path keeps
+  // its own not_found even under allowVirtual, so a live session can never be
+  // answered from a same-sid historical transcript.
+  test("connected session without transcript_path never falls back to virtual", async () => {
+    const config = fixtureRoot();
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    transcript(config, sid(), cwd);
+
+    const sessions = new Map([
+      [sid(), { meta: { transcript_path: undefined }, conns: { size: 1 } }],
+    ]);
+    const result = await transcriptRead(sessions, sid(), undefined, undefined, {
+      allowVirtual: true,
+      configDirs: [config],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("not_found");
   });
 });
 

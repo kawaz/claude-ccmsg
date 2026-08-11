@@ -2593,10 +2593,10 @@ describe("validateRepoRoot decision table", () => {
   // (a) repo_root candidate 自体が実在しないパス: fs.realpathSync が ENOENT で
   // 例外を投げ、catch で undefined に丸める (存在確認できない container を
   // 「container として widen する」のは無意味なので不採用)。
-  test("repo_root candidate が実在しないパスなら不採用", () => {
+  test("repo_root candidate が実在しないパスなら不採用", async () => {
     const cwd = path.join(dir, "main");
     fs.mkdirSync(cwd);
-    const got = validateRepoRoot(cwd, path.join(dir, "does-not-exist"));
+    const got = await validateRepoRoot(cwd, path.join(dir, "does-not-exist"));
     expect(got).toBeUndefined();
   });
 
@@ -2605,29 +2605,29 @@ describe("validateRepoRoot decision table", () => {
   // 確認できないので不採用 (fail-open: hello 自体は成功し、呼び出し元
   // resolveRoot は cwd をそのまま使う従来経路にフォールバックする — 検証する
   // のは validateRepoRoot 単体の戻り値であって resolveRoot の縮退動作ではない)。
-  test("cwd が実在しないパスなら不採用", () => {
-    const got = validateRepoRoot(path.join(dir, "no-such-cwd"), dir);
+  test("cwd が実在しないパスなら不採用", async () => {
+    const got = await validateRepoRoot(path.join(dir, "no-such-cwd"), dir);
     expect(got).toBeUndefined();
   });
 
   // cwd が空文字の場合も同様に不採用 (typeof/空文字ガードで即座に弾かれる、
   // realpath すら呼ばれない経路)。
-  test("cwd が空文字なら不採用", () => {
-    const got = validateRepoRoot("", dir);
+  test("cwd が空文字なら不採用", async () => {
+    const got = await validateRepoRoot("", dir);
     expect(got).toBeUndefined();
   });
 
   // (c) repo_root candidate 自体が symlink: realpath で解決された実体パスが
   // 採用され、cwd (の実体) がその配下にあれば通る。symlink 越しに指定しても
   // containment root は実体パスに正規化される。
-  test("repo_root candidate が symlink でも realpath 正規化されて採用される", () => {
+  test("repo_root candidate が symlink でも realpath 正規化されて採用される", async () => {
     const container = path.join(dir, "container");
     const cwd = path.join(container, "main");
     fs.mkdirSync(cwd, { recursive: true });
     const link = path.join(dir, "container-link");
     fs.symlinkSync(container, link);
 
-    const got = validateRepoRoot(cwd, link);
+    const got = await validateRepoRoot(cwd, link);
     expect(got).toBe(fs.realpathSync(container));
   });
 
@@ -2637,12 +2637,12 @@ describe("validateRepoRoot decision table", () => {
   // 指定するケースを想定した運用 knob。DR-0008 は「$HOME / "/" 自体を除く
   // strict ancestor なら widen 先として許容する」設計であり、階層数そのもの
   // には上限を設けていない — 意図的な許容であって見落としではない)。
-  test("cwd の直接の親より深い ancestor でも strict ancestor なら採用される", () => {
+  test("cwd の直接の親より深い ancestor でも strict ancestor なら採用される", async () => {
     const shallow = path.join(dir, "repos"); // ~/.local/share/repos 相当
     const cwd = path.join(shallow, "github.com", "kawaz", "claude-ccmsg", "main");
     fs.mkdirSync(cwd, { recursive: true });
 
-    const got = validateRepoRoot(cwd, shallow);
+    const got = await validateRepoRoot(cwd, shallow);
     expect(got).toBe(fs.realpathSync(shallow));
   });
 });

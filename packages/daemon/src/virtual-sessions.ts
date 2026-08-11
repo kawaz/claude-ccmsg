@@ -24,17 +24,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * grew a second watch/invalidation subsystem. The bounded `readdir + stat` lookup is both
  * current and safer than interpolating the sid into a glob pattern.
  */
-export function resolveVirtualTranscript(
+export async function resolveVirtualTranscript(
   sid: string,
   configDirs: readonly string[] = detectConfigDirs(),
-): { file: string; configDir: string } | undefined {
+): Promise<{ file: string; configDir: string } | undefined> {
   if (!isValidSid(sid)) return undefined;
 
   for (const configDir of [...configDirs].sort()) {
     const projects = path.join(configDir, "projects");
     let projectEntries: fs.Dirent[];
     try {
-      projectEntries = fs.readdirSync(projects, { withFileTypes: true });
+      projectEntries = await fs.promises.readdir(projects, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -45,7 +45,7 @@ export function resolveVirtualTranscript(
       if (!entry.isDirectory()) continue;
       const file = path.join(projects, entry.name, `${sid}.jsonl`);
       try {
-        if (fs.lstatSync(file).isFile()) return { file, configDir };
+        if ((await fs.promises.lstat(file)).isFile()) return { file, configDir };
       } catch {
         // Missing in this project directory (the normal case), or raced away.
       }
@@ -55,16 +55,19 @@ export function resolveVirtualTranscript(
 }
 
 /** Scan at most the transcript head budget and return the first absolute top-level cwd. */
-export function scanTranscriptCwd(file: string, maxBytes = CWD_SCAN_MAX_BYTES): string | undefined {
+export async function scanTranscriptCwd(
+  file: string,
+  maxBytes = CWD_SCAN_MAX_BYTES,
+): Promise<string | undefined> {
   let size: number;
   try {
-    size = Math.min(fs.statSync(file).size, maxBytes);
+    size = Math.min((await fs.promises.stat(file)).size, maxBytes);
   } catch {
     return undefined;
   }
-  let fd: number;
+  let handle: fs.promises.FileHandle;
   try {
-    fd = fs.openSync(file, "r");
+    handle = await fs.promises.open(file, "r");
   } catch {
     return undefined;
   }
@@ -87,7 +90,7 @@ export function scanTranscriptCwd(file: string, maxBytes = CWD_SCAN_MAX_BYTES): 
     while (offset < size) {
       const toRead = Math.min(SCAN_CHUNK_BYTES, size - offset);
       const chunk = Buffer.allocUnsafe(toRead);
-      const read = fs.readSync(fd, chunk, 0, toRead, offset);
+      const { bytesRead: read } = await handle.read(chunk, 0, toRead, offset);
       if (read === 0) break;
       offset += read;
       const data =
@@ -107,7 +110,7 @@ export function scanTranscriptCwd(file: string, maxBytes = CWD_SCAN_MAX_BYTES): 
     if (carry.length > 0 && offset < maxBytes) return inspect(carry.toString("utf-8"));
     return undefined;
   } finally {
-    fs.closeSync(fd);
+    await handle.close();
   }
 }
 
@@ -151,15 +154,15 @@ export type VirtualRootResult =
   | { ok: true; root: string; cwd: string }
   | { ok: false; code: ErrorCodeType; msg: string };
 
-export function resolveVirtualRoot(
+export async function resolveVirtualRoot(
   sid: string,
   configDirs: readonly string[] = detectConfigDirs(),
-): VirtualRootResult {
-  const transcript = resolveVirtualTranscript(sid, configDirs);
+): Promise<VirtualRootResult> {
+  const transcript = await resolveVirtualTranscript(sid, configDirs);
   if (!transcript) {
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not found: ${sid}` };
   }
-  const cwd = scanTranscriptCwd(transcript.file);
+  const cwd = await scanTranscriptCwd(transcript.file);
   if (!cwd) {
     return { ok: false, code: ErrorCode.not_found, msg: `session has no usable cwd: ${sid}` };
   }
@@ -171,8 +174,8 @@ export function resolveVirtualRoot(
   let root: string;
   let realCwd: string;
   try {
-    root = fs.realpathSync(candidate);
-    realCwd = fs.realpathSync(cwd);
+    root = await fs.promises.realpath(candidate);
+    realCwd = await fs.promises.realpath(cwd);
   } catch {
     return {
       ok: false,
@@ -183,7 +186,7 @@ export function resolveVirtualRoot(
 
   let home = "";
   try {
-    home = fs.realpathSync(os.homedir());
+    home = await fs.promises.realpath(os.homedir());
   } catch {
     // If HOME itself cannot be resolved, the root/cwd checks below still fail closed.
   }

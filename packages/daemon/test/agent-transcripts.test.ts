@@ -24,7 +24,7 @@ function buildFixture(): {
 }
 
 describe("resolveAgentTranscript (DR-0025)", () => {
-  test("regex 定義: RUN_ID_RE / AGENT_ID_RE の期待する形を通し、外れは弾く", () => {
+  test("regex 定義: RUN_ID_RE / AGENT_ID_RE の期待する形を通し、外れは弾く", async () => {
     expect(RUN_ID_RE.test("wf_abcdef01-234")).toBe(true);
     expect(RUN_ID_RE.test("wf_ABCDEF01-234")).toBe(false);
     expect(RUN_ID_RE.test("../etc/passwd")).toBe(false);
@@ -37,7 +37,7 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     expect(AGENT_ID_RE.test("a" + "x".repeat(200))).toBe(false); // too long
   });
 
-  test("workflow agent の transcript を解決する (agent_id + run_id)", () => {
+  test("workflow agent の transcript を解決する (agent_id + run_id)", async () => {
     const { transcriptFile, sidDir } = buildFixture();
     const runId = "wf_01234567-abc";
     const agentId = "a1111111111111111";
@@ -45,22 +45,22 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     fs.mkdirSync(runDir, { recursive: true });
     const jsonl = path.join(runDir, `agent-${agentId}.jsonl`);
     fs.writeFileSync(jsonl, "{}");
-    const r = resolveAgentTranscript(transcriptFile, { agentId, runId });
+    const r = await resolveAgentTranscript(transcriptFile, { agentId, runId });
     expect(r.ok).toBe(true);
     if (r.ok) expect(fs.realpathSync(r.file)).toBe(fs.realpathSync(jsonl));
   });
 
-  test("直下 subagent を解決する (agent_id のみ)", () => {
+  test("直下 subagent を解決する (agent_id のみ)", async () => {
     const { transcriptFile, sidDir } = buildFixture();
     const agentId = "a2222222222222222";
     const jsonl = path.join(sidDir, "subagents", `agent-${agentId}.jsonl`);
     fs.writeFileSync(jsonl, "{}");
-    const r = resolveAgentTranscript(transcriptFile, { agentId });
+    const r = await resolveAgentTranscript(transcriptFile, { agentId });
     expect(r.ok).toBe(true);
     if (r.ok) expect(fs.realpathSync(r.file)).toBe(fs.realpathSync(jsonl));
   });
 
-  test("teammate は name → meta.json 走査で解決する", () => {
+  test("teammate は name → meta.json 走査で解決する", async () => {
     const { transcriptFile, sidDir } = buildFixture();
     const agentId = "amyname-1234567890abcdef";
     const jsonl = path.join(sidDir, "subagents", `agent-${agentId}.jsonl`);
@@ -70,31 +70,31 @@ describe("resolveAgentTranscript (DR-0025)", () => {
       meta,
       JSON.stringify({ taskKind: "in_process_teammate", name: "myname", agentType: "sonnet5" }),
     );
-    const r = resolveAgentTranscript(transcriptFile, { teammate: "myname" });
+    const r = await resolveAgentTranscript(transcriptFile, { teammate: "myname" });
     expect(r.ok).toBe(true);
     if (r.ok) expect(fs.realpathSync(r.file)).toBe(fs.realpathSync(jsonl));
   });
 
-  test("teammate: taskKind が違う meta / name 不一致は not_found", () => {
+  test("teammate: taskKind が違う meta / name 不一致は not_found", async () => {
     const { transcriptFile, sidDir } = buildFixture();
     fs.writeFileSync(
       path.join(sidDir, "subagents", "agent-aother-1234567890abcdef.meta.json"),
       JSON.stringify({ taskKind: "general", name: "myname" }),
     );
-    const r = resolveAgentTranscript(transcriptFile, { teammate: "myname" });
+    const r = await resolveAgentTranscript(transcriptFile, { teammate: "myname" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.not_found);
   });
 
-  test("敵対 agent_id / run_id は invalid_args", () => {
+  test("敵対 agent_id / run_id は invalid_args", async () => {
     const { transcriptFile } = buildFixture();
     for (const bad of ["../etc/passwd", "a/..", "a", "", "a" + "x".repeat(200), "a1234.tsx"]) {
-      const r = resolveAgentTranscript(transcriptFile, { agentId: bad });
+      const r = await resolveAgentTranscript(transcriptFile, { agentId: bad });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
     }
     for (const bad of ["../", "wf_..", "wf_ABCDEF01-234", ""]) {
-      const r = resolveAgentTranscript(transcriptFile, {
+      const r = await resolveAgentTranscript(transcriptFile, {
         agentId: "a1234567890abcdef",
         runId: bad,
       });
@@ -103,9 +103,9 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     }
   });
 
-  test("agent_id と teammate 同時指定は invalid_args", () => {
+  test("agent_id と teammate 同時指定は invalid_args", async () => {
     const { transcriptFile } = buildFixture();
-    const r = resolveAgentTranscript(transcriptFile, {
+    const r = await resolveAgentTranscript(transcriptFile, {
       agentId: "a1234567890abcdef",
       teammate: "n",
     });
@@ -113,34 +113,34 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
   });
 
-  test("run_id 単体 (agent_id なし) は invalid_args", () => {
+  test("run_id 単体 (agent_id なし) は invalid_args", async () => {
     const { transcriptFile } = buildFixture();
-    const r = resolveAgentTranscript(transcriptFile, { runId: "wf_01234567-abc" });
+    const r = await resolveAgentTranscript(transcriptFile, { runId: "wf_01234567-abc" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
   });
 
-  test("teammate name の regex 違反は invalid_args", () => {
+  test("teammate name の regex 違反は invalid_args", async () => {
     const { transcriptFile } = buildFixture();
     for (const bad of ["", "n/../", "a".repeat(100)]) {
-      const r = resolveAgentTranscript(transcriptFile, { teammate: bad });
+      const r = await resolveAgentTranscript(transcriptFile, { teammate: bad });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
     }
   });
 
-  test("symlink 差し替えは lstat で not_found", () => {
+  test("symlink 差し替えは lstat で not_found", async () => {
     const { transcriptFile, sidDir } = buildFixture();
     const agentId = "a3333333333333333";
     const jsonl = path.join(sidDir, "subagents", `agent-${agentId}.jsonl`);
     // Symlink pointing outside — resolver uses lstatSync so isFile() → false.
     fs.symlinkSync("/etc/hosts", jsonl);
-    const r = resolveAgentTranscript(transcriptFile, { agentId });
+    const r = await resolveAgentTranscript(transcriptFile, { agentId });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.not_found);
   });
 
-  test("projects/ 外の session path は path_forbidden", () => {
+  test("projects/ 外の session path は path_forbidden", async () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "outside-"));
     const sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const transcriptFile = path.join(outside, `${sid}.jsonl`);
@@ -149,14 +149,14 @@ describe("resolveAgentTranscript (DR-0025)", () => {
     fs.mkdirSync(path.join(sidDir, "subagents"), { recursive: true });
     const jsonl = path.join(sidDir, "subagents", `agent-a1234567890abcdef.jsonl`);
     fs.writeFileSync(jsonl, "{}");
-    const r = resolveAgentTranscript(transcriptFile, { agentId: "a1234567890abcdef" });
+    const r = await resolveAgentTranscript(transcriptFile, { agentId: "a1234567890abcdef" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.path_forbidden);
   });
 
-  test("agent_id / teammate が両方無いのは invalid_args", () => {
+  test("agent_id / teammate が両方無いのは invalid_args", async () => {
     const { transcriptFile } = buildFixture();
-    const r = resolveAgentTranscript(transcriptFile, {});
+    const r = await resolveAgentTranscript(transcriptFile, {});
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe(ErrorCode.invalid_args);
   });

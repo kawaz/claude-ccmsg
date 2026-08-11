@@ -62,17 +62,21 @@ export interface TranscriptResolveOptions {
   configDirs?: readonly string[];
 }
 
-export function resolveTranscript(
+export type TranscriptResolveResult =
+  | { ok: true; file: string }
+  | { ok: false; code: ErrorCode; msg: string };
+
+/** Connected-session resolution: pure in-memory, so callers that must not
+ * yield — the tail Watch lifecycle and the session-errors watch sync, both of
+ * which run inside fs.watch/poll callbacks — keep their re-entrancy-free
+ * shape. Callers that also want the historical fallback use
+ * {@link resolveTranscript}, which touches disk and is therefore async. */
+export function resolveConnectedTranscript(
   sessions: SessionLookup,
   sid: string,
-  opts: TranscriptResolveOptions = {},
-): { ok: true; file: string } | { ok: false; code: ErrorCode; msg: string } {
+): TranscriptResolveResult {
   const entry = sessions.get(sid);
   if (!entry || entry.conns.size === 0) {
-    if (opts.allowVirtual) {
-      const virtual = resolveVirtualTranscript(sid, opts.configDirs);
-      if (virtual) return { ok: true, file: virtual.file };
-    }
     return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
   }
   const file = entry.meta.transcript_path;
@@ -80,6 +84,19 @@ export function resolveTranscript(
     return { ok: false, code: ErrorCode.not_found, msg: `session has no transcript: ${sid}` };
   }
   return { ok: true, file };
+}
+
+export async function resolveTranscript(
+  sessions: SessionLookup,
+  sid: string,
+  opts: TranscriptResolveOptions = {},
+): Promise<TranscriptResolveResult> {
+  const connected = resolveConnectedTranscript(sessions, sid);
+  if (connected.ok || !opts.allowVirtual) return connected;
+  if (connected.code !== ErrorCode.session_not_found) return connected;
+  const virtual = await resolveVirtualTranscript(sid, opts.configDirs);
+  if (virtual) return { ok: true, file: virtual.file };
+  return connected;
 }
 
 function readWindow(fd: number, rawStart: number, rawEnd: number): Buffer {
@@ -205,14 +222,14 @@ export interface TranscriptReadAgentOptions {
   teammate?: string;
 }
 
-export function transcriptRead(
+export async function transcriptRead(
   sessions: SessionLookup,
   sid: string,
   before: number | undefined,
   maxBytes: number | undefined,
   opts: TranscriptResolveOptions & TranscriptReadAgentOptions = {},
-): TranscriptResult<Omit<TranscriptReadResponse, "ok">> {
-  const resolved = resolveTranscript(sessions, sid, opts);
+): Promise<TranscriptResult<Omit<TranscriptReadResponse, "ok">>> {
+  const resolved = await resolveTranscript(sessions, sid, opts);
   if (!resolved.ok) return resolved;
   // DR-0025 Phase 1: if the caller asked for an agent/teammate transcript,
   // swap the session's own file for the resolved sibling before the byte-
@@ -222,7 +239,7 @@ export function transcriptRead(
     opts.agentId !== undefined || opts.runId !== undefined || opts.teammate !== undefined;
   let readFile = resolved.file;
   if (wantsAgent) {
-    const agent = resolveAgentTranscript(resolved.file, {
+    const agent = await resolveAgentTranscript(resolved.file, {
       agentId: opts.agentId,
       runId: opts.runId,
       teammate: opts.teammate,
@@ -666,7 +683,7 @@ function getOrCreateWatch(
   sid: string,
   log: TailLog,
 ): TranscriptResult<Watch> {
-  const resolved = resolveTranscript(sessions, sid);
+  const resolved = resolveConnectedTranscript(sessions, sid);
   if (!resolved.ok) return resolved;
 
   let watch = store.watches.get(sid);

@@ -797,7 +797,7 @@ async function main(): Promise<void> {
       if (format !== "jsonl" && format !== "text") {
         throw new Error(`--format must be 'jsonl' or 'text' (got '${format}')\n  usage: ${usage}`);
       }
-      const dump = dumpSession(sid, {
+      const dump = await dumpSession(sid, {
         dataDir: resolvePaths().dataDir,
         ...(str(opts, "since") ? { since: str(opts, "since") } : {}),
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
