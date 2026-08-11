@@ -4,7 +4,9 @@ import { describe, expect, test } from "bun:test";
 import type { SessionLauncherConfigTemplate } from "@ccmsg/protocol";
 import {
   buildSessionLaunchRequest,
+  commandUsesVar,
   commitCwdInput,
+  plainTemplate,
   forkSourceDefaults,
   forkTemplate,
   initialTemplate,
@@ -209,8 +211,32 @@ describe("forkTemplate / initialTemplate", () => {
     expect(usesForkPoint("run --plain")).toBe(false);
   });
 
-  test("without a prefill the default (first) recipe is chosen", () => {
+  test("without a prefill the first plain (non-fork) recipe is chosen", () => {
     expect(initialTemplate([PLAIN, FORK], null)?.name).toBe("default");
+    // Config order must not decide it: "+ 新規" asked for a new session, so a
+    // fork recipe listed first is skipped rather than opened (kawaz r119 m1).
+    expect(initialTemplate([FORK, PLAIN], null)?.name).toBe("default");
+    expect(plainTemplate([FORK, PLAIN])?.name).toBe("default");
+  });
+
+  // Neither kind is guaranteed to exist in a config; each falls back to the
+  // first recipe rather than leaving the form with no template at all.
+  test("a config with only fork recipes still opens on something", () => {
+    expect(initialTemplate([FORK], null)?.name).toBe("fork");
+    expect(plainTemplate([FORK])).toBeUndefined();
+  });
+});
+
+describe("commandUsesVar", () => {
+  // Which inputs the form offers: a variable the command never reads has no
+  // input, so this answers per-variable what usesForkPoint answers for the
+  // fork point specifically.
+  test("matches $VAR and ${VAR}, with a word boundary", () => {
+    expect(commandUsesVar('run --resume "$RESUME_SID"', "RESUME_SID")).toBe(true);
+    expect(commandUsesVar('run --resume "${RESUME_SID}"', "RESUME_SID")).toBe(true);
+    expect(commandUsesVar('run "$RESUME_SIDECAR"', "RESUME_SID")).toBe(false);
+    expect(commandUsesVar(PLAIN.command, "RESUME_SID")).toBe(false);
+    expect(commandUsesVar(FORK.command, "RESUME_AT")).toBe(true);
   });
 });
 

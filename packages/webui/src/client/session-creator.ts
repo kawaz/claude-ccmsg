@@ -56,17 +56,27 @@ export interface SessionCreatorPrefill {
   resumeAt: string;
 }
 
-/** The template the form opens on: for a fork, the first recipe that actually
- * uses the fork point (see `forkTemplate`); otherwise the configured default.
- * Falls back to the default template when a fork was requested but no recipe
- * consumes `$RESUME_AT` — SessionCreator warns in that case rather than
- * silently launching a non-fork command. */
+/** The template the form opens on, decided by how the form was opened rather
+ * than by config order: a fork opens on the first recipe that uses the fork
+ * point (`forkTemplate`), a plain "+ 新規" on the first that does not
+ * (`plainTemplate`). Both fall back to `templates[0]` when the config has no
+ * recipe of the asked-for kind. */
 export function initialTemplate(
   templates: SessionLauncherConfigTemplate[],
   prefill: SessionCreatorPrefill | null,
 ): SessionLauncherConfigTemplate | undefined {
   if (prefill) return forkTemplate(templates) ?? templates[0];
-  return templates[0];
+  return plainTemplate(templates) ?? templates[0];
+}
+
+/** Which configured recipe is a plain-launch recipe: the first whose command
+ * does *not* read the fork point. Derived the same way `forkTemplate` is, and
+ * for the same reason — a recipe that expands `$RESUME_AT` needs a fork source
+ * to mean anything, so it is never what "+ 新規" asked for. */
+export function plainTemplate(
+  templates: SessionLauncherConfigTemplate[],
+): SessionLauncherConfigTemplate | undefined {
+  return templates.find((t) => !usesForkPoint(t.command));
 }
 
 /** Which configured recipe is a fork recipe: the first whose command reads the
@@ -80,11 +90,20 @@ export function forkTemplate(
   return templates.find((t) => usesForkPoint(t.command));
 }
 
-/** Whether a command text reads the fork point. Also answers the question the
- * form asks about the command the user is actually about to run — which may be
- * an edited one, or a template they switched to after asking for a fork. */
+/** Whether a command text reads a given launch variable, in either the `$VAR`
+ * or `${VAR}` spelling. This is what decides whether the form offers an input
+ * for that variable at all: a field the command about to run cannot read is
+ * one the user has no reason to see, so it is simply not rendered. Matches on
+ * the command the user is actually about to run — an edited one, or a template
+ * switched to after asking for a fork — not on the configured text. */
+export function commandUsesVar(command: string, name: string): boolean {
+  return new RegExp(`\\$\\{?${name}\\b`).test(command);
+}
+
+/** Whether a command text reads the fork point — the launch variable that
+ * distinguishes a fork recipe from a plain one. */
 export function usesForkPoint(command: string): boolean {
-  return /\$\{?RESUME_AT\b/.test(command);
+  return commandUsesVar(command, "RESUME_AT");
 }
 
 /** What the form can inherit from the session a fork resumes: where it ran and
