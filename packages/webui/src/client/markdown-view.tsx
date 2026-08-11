@@ -805,6 +805,70 @@ function protectNonHeadingHashes(source: string): { source: string; marker?: str
   return marker ? { source: protectedSource, marker } : { source };
 }
 
+// An empty header cell — `| | Anthropic Messages API | OpenAI Responses API |`,
+// the usual shape of a comparison table whose first column holds row labels —
+// makes @mizchi/markdown reject the whole block, so it renders as a paragraph
+// of raw pipes (kawaz r99m41). Measured surface: a header cell that is empty or
+// whitespace-only kills the table at any column index, with or without spaces
+// around the pipes, at top level and inside a blockquote; empty cells in *body*
+// rows parse fine. GFM allows all of these, so fill the offending header cells
+// with a private-use marker that `restoreProtectedText` turns back into an
+// empty string — the rendered cell stays empty, with no visible filler.
+//
+// A header line is one whose next line is a delimiter row. The detection may
+// over-fire (inside fenced code, or on a pipe line the parser ultimately does
+// not accept as a table): that is harmless by construction, because a marker
+// that does not end up in a table cell is restored to "" and the text reads
+// exactly as it did before — the same reasoning `protectNonHeadingHashes`
+// above relies on.
+function protectEmptyTableHeaderCells(source: string): { source: string; marker?: string } {
+  if (!source.includes("|")) return { source };
+  // Container prefixes the parser strips before looking at the row: blockquote
+  // markers and indentation short of an indented code block.
+  const PREFIX = /^((?:[ \t]{0,3}>)*[ \t]{0,3})(.*)$/;
+  const DELIMITER_ROW = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+  const lines = source.split("\n");
+  let marker: string | undefined;
+  for (let i = 0; i + 1 < lines.length; i += 1) {
+    const header = PREFIX.exec(lines[i]!)!;
+    const delimiter = PREFIX.exec(lines[i + 1]!)!;
+    if (!header[2]!.includes("|")) continue;
+    if (!DELIMITER_ROW.test(delimiter[2]!)) continue;
+    marker ??= unusedPrivateUseMarker(source);
+    lines[i] = header[1]! + fillEmptyHeaderCells(header[2]!, marker);
+  }
+  return marker ? { source: lines.join("\n"), marker } : { source };
+}
+
+/** Replace every empty (or whitespace-only) cell of one table header row with
+ * `marker`. The leading/trailing fields around the row's outer pipes are row
+ * delimiters rather than cells, so they are left alone. */
+function fillEmptyHeaderCells(row: string, marker: string): string {
+  const fields: string[] = [];
+  let current = "";
+  for (let i = 0; i < row.length; i += 1) {
+    const char = row[i]!;
+    if (char === "\\" && i + 1 < row.length) {
+      current += char + row[i + 1]!;
+      i += 1;
+      continue;
+    }
+    if (char === "|") {
+      fields.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  fields.push(current);
+  const first = row.trimStart().startsWith("|") ? 1 : 0;
+  const last = fields.length - (row.trimEnd().endsWith("|") ? 2 : 1);
+  for (let i = first; i <= last; i += 1) {
+    if (fields[i]!.trim() === "") fields[i] = fields[i]! + marker;
+  }
+  return fields.join("|");
+}
+
 function restoreProtectedText(value: unknown, marker: string, replacement: string): void {
   if (Array.isArray(value)) {
     for (const item of value) restoreProtectedText(item, marker, replacement);
@@ -1057,7 +1121,9 @@ export function parseMarkdownSource(source: string): Root {
   const protectedHashes = protectNonHeadingHashes(source);
   const protectedUnderscores = protectIntrawordUnderscores(protectedHashes.source);
   const protectedAngles = protectTagLikeAngleBrackets(protectedUnderscores.source);
-  const root = parse(protectedAngles.source);
+  const protectedCells = protectEmptyTableHeaderCells(protectedAngles.source);
+  const root = parse(protectedCells.source);
+  if (protectedCells.marker) restoreProtectedText(root, protectedCells.marker, "");
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
   if (protectedUnderscores.marker) restoreProtectedText(root, protectedUnderscores.marker, "_");

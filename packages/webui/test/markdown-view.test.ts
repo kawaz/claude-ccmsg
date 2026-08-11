@@ -1501,3 +1501,155 @@ describe("renderRestrictedMarkdown / link targets", () => {
     expect((a[0]!.props as { href?: string }).href).toBe("https://example.com");
   });
 });
+
+describe("parseMarkdownSource / empty table header cells", () => {
+  function tableNodes(source: string): { align: unknown; rows: string[][] }[] {
+    const out: { align: unknown; rows: string[][] }[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const child of node) walk(child);
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+      const typed = node as { type?: string; align?: unknown; children?: unknown };
+      if (typed.type === "table") {
+        out.push({
+          align: typed.align,
+          rows: (typed.children as { children: unknown[] }[]).map((row) =>
+            row.children.map((cell) =>
+              flattenText(
+                renderMarkdownAst({
+                  type: "root",
+                  children: [{ type: "paragraph", children: (cell as { children: [] }).children }],
+                } as unknown as Root),
+              ),
+            ),
+          ),
+        });
+        return;
+      }
+      walk(typed.children);
+    };
+    walk(parseMarkdownSource(source).children);
+    return out;
+  }
+
+  // kawaz r99m41: a comparison table whose first column holds row labels starts
+  // with an empty header cell, and the whole block rendered as raw pipe text.
+  test("comparison table with an empty leading header cell parses as a table", () => {
+    const [table, ...rest] = tableNodes(
+      [
+        "## 比較",
+        "",
+        "| | Anthropic Messages API | OpenAI Responses API |",
+        "|---|---|---|",
+        "| 名前 | messages | responses |",
+      ].join("\n"),
+    );
+    expect(rest).toHaveLength(0);
+    expect(table?.rows).toEqual([
+      ["", "Anthropic Messages API", "OpenAI Responses API"],
+      ["名前", "messages", "responses"],
+    ]);
+  });
+
+  // Measured failure surface of @mizchi/markdown (see protectEmptyTableHeaderCells):
+  // an empty or whitespace-only *header* cell breaks the table at any column
+  // index, with or without padding spaces, and inside a blockquote; body-row
+  // empty cells were always fine and must stay that way.
+  test("every measured empty-header-cell shape parses as a table with the cell empty", () => {
+    const cases: [string, string, string[][]][] = [
+      [
+        "col 0",
+        "| | A | B |",
+        [
+          ["", "A", "B"],
+          ["x", "1", "2"],
+        ],
+      ],
+      [
+        "col 1",
+        "| h | | B |",
+        [
+          ["h", "", "B"],
+          ["x", "1", "2"],
+        ],
+      ],
+      [
+        "col 2",
+        "| h | A | |",
+        [
+          ["h", "A", ""],
+          ["x", "1", "2"],
+        ],
+      ],
+      [
+        "no padding spaces",
+        "|| A | B |",
+        [
+          ["", "A", "B"],
+          ["x", "1", "2"],
+        ],
+      ],
+      [
+        "tab-only cell",
+        "|\t| A | B |",
+        [
+          ["", "A", "B"],
+          ["x", "1", "2"],
+        ],
+      ],
+      [
+        "all cells empty",
+        "| | | |",
+        [
+          ["", "", ""],
+          ["x", "1", "2"],
+        ],
+      ],
+    ];
+    for (const [name, header, expected] of cases) {
+      const tables = tableNodes(`${header}\n|---|---|---|\n| x | 1 | 2 |`);
+      expect(tables, name).toHaveLength(1);
+      expect(tables[0]?.rows, name).toEqual(expected);
+    }
+  });
+
+  test("empty header cells parse inside a blockquote and with no body row", () => {
+    expect(tableNodes("> | | A |\n> |---|---|\n> | x | 1 |")[0]?.rows).toEqual([
+      ["", "A"],
+      ["x", "1"],
+    ]);
+    expect(tableNodes("| | A |\n|---|---|")[0]?.rows).toEqual([["", "A"]]);
+  });
+
+  test("empty body cells and alignment markers keep working", () => {
+    const [table] = tableNodes("| | A | B |\n|:--|:-:|--:|\n| | 1 | |");
+    expect(table?.rows).toEqual([
+      ["", "A", "B"],
+      ["", "1", ""],
+    ]);
+    expect(table?.align).toEqual(["left", "center", "right"]);
+  });
+
+  // Pipe lines that are not tables must survive byte-for-byte: the marker is
+  // only ever restored to "", so text keeps reading exactly as authored.
+  test("pipes inside fenced code and non-table prose are untouched", () => {
+    const fenced = ["```", "| | A | B |", "|---|---|---|", "| x | 1 | 2 |", "```"].join("\n");
+    expect(tableNodes(fenced)).toHaveLength(0);
+    const code = parseMarkdownSource(fenced).children[0] as { type: string; value: string };
+    expect(code.type).toBe("code");
+    expect(code.value).toBe("| | A | B |\n|---|---|---|\n| x | 1 | 2 |\n");
+
+    const prose = "a | b | c\nnot a delimiter row";
+    expect(tableNodes(prose)).toHaveLength(0);
+    expect(flattenText(renderMarkdownAst(parseMarkdownSource(prose)))).toBe(
+      "a | b | c\nnot a delimiter row",
+    );
+  });
+
+  test("escaped pipes in a header row do not shift cell boundaries", () => {
+    const [table] = tableNodes("| a\\|b | | B |\n|---|---|---|\n| x | 1 | 2 |");
+    expect(table?.rows[0]).toEqual(["a|b", "", "B"]);
+  });
+});
