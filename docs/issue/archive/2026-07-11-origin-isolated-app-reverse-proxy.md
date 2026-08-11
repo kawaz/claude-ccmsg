@@ -1,6 +1,6 @@
 ---
 title: 自己所有ドメイン + wildcard ACME の app リバースプロキシ構想 (docroot ごとの origin 分離で JS 実行可能な file serving)
-status: idea
+status: discarded
 category: design
 created: 2026-07-11T19:33:01+09:00
 last_read:
@@ -8,9 +8,9 @@ open_entered:
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-08-12T02:28:45+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["superseded-by:sandbox-origin-raw-content-serving","dr/DR-0030"]
 pending_reason:
 close_reason:
 blocked_by:
