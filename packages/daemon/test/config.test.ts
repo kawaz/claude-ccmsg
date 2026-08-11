@@ -58,9 +58,14 @@ describe("loadConfig", () => {
       JSON.stringify({
         session_launcher: {
           root_dirs: [root],
-          default_prompt: "start here",
           shell: "zsh",
-          command: 'claude --model "$MODEL" "$PROMPT"',
+          templates: [
+            {
+              name: "new",
+              command: 'claude --model "$MODEL" "$PROMPT"',
+              params: { CWD: "", MODEL: "fable", PROMPT: "start here" },
+            },
+          ],
           timeout_seconds: 25,
           dir_tree_depth: 3,
           clean_env: ["CLAUDE_*", "AI_AGENT"],
@@ -74,9 +79,15 @@ describe("loadConfig", () => {
         root_dirs: [path.resolve(root)],
         templates: [
           {
-            name: "default",
+            name: "new",
             command: 'claude --model "$MODEL" "$PROMPT"',
-            default_prompt: "start here",
+            // Declaration order is the form's field order, so it is preserved
+            // as written rather than normalized into some canonical order.
+            params: [
+              { name: "CWD", default: "" },
+              { name: "MODEL", default: "fable" },
+              { name: "PROMPT", default: "start here" },
+            ],
             shell: "zsh",
           },
         ],
@@ -89,6 +100,120 @@ describe("loadConfig", () => {
     expect(warnings).toEqual([]);
   });
 
+  // Every recipe needs a directory to run in, so a declaration that forgot CWD
+  // gets it first rather than producing a form with no way to pick one.
+  test("a params declaration without CWD gets it prepended", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "t", command: "run", params: { PROMPT: "hi" } }],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates[0]?.params).toEqual([
+      { name: "CWD", default: "" },
+      { name: "PROMPT", default: "hi" },
+    ]);
+    expect(warnings).toEqual([]);
+  });
+
+  // A parameter name reaches the launcher shell as a variable assignment, so
+  // anything that is not an identifier would be a syntax error at launch;
+  // rejecting it here costs one input instead of the whole launch. A
+  // non-string default is the same class of repairable typo.
+  test("a parameter with a bad name or a non-string default is skipped", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [
+            {
+              name: "t",
+              command: "run",
+              params: { "not an ident": "", "1ST": "", MODEL: 7, PROMPT: "" },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates[0]?.params).toEqual([
+      { name: "CWD", default: "" },
+      { name: "PROMPT", default: "" },
+    ]);
+    expect(warnings).toHaveLength(3);
+  });
+
+  // The pre-`params` form still launches: its parameter list is re-derived from
+  // the variables each command actually reads, which is the same set the webui
+  // used to infer at render time. One warning points at the current form.
+  test("a legacy config is normalized into params, with a deprecation warning", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          default_prompt: "shared",
+          command: 'claude --model "$MODEL" --effort "$EFFORT" "$PROMPT"',
+          templates: [
+            { name: "new" },
+            {
+              name: "fork",
+              default_prompt: "",
+              command: 'claude --resume "$RESUME_SID" --resume-session-at="$RESUME_AT" "$PROMPT"',
+            },
+          ],
+        },
+      }),
+    );
+
+    const templates = loadConfig(file, log).session_launcher?.templates;
+    expect(templates?.[0]?.params).toEqual([
+      { name: "CWD", default: "" },
+      { name: "MODEL", default: "fable" },
+      { name: "EFFORT", default: "middle" },
+      { name: "PROMPT", default: "shared" },
+    ]);
+    // The fork recipe reads the resume pair and overrode the prompt to empty;
+    // it never mentions $MODEL, so no model input is implied for it.
+    expect(templates?.[1]?.params).toEqual([
+      { name: "CWD", default: "" },
+      { name: "PROMPT", default: "" },
+      { name: "RESUME_SID", default: "" },
+      { name: "RESUME_AT", default: "" },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("params");
+  });
+
+  // The flat (pre-templates) form goes through the same normalization: one
+  // implicit recipe, its parameters read off its command.
+  test("the flat single-command form normalizes to one declared recipe", () => {
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session_launcher: { root_dirs: [dir], command: 'run "$PROMPT"', default_prompt: "hi" },
+      }),
+    );
+
+    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+      {
+        name: "default",
+        command: 'run "$PROMPT"',
+        params: [
+          { name: "CWD", default: "" },
+          { name: "PROMPT", default: "hi" },
+        ],
+        shell: "bash",
+      },
+    ]);
+    expect(warnings).toHaveLength(1);
+  });
+
   // DR-0018's user-facing examples use ~/..., so the parser expands it against
   // the daemon user's actual home before absolute-path normalization.
   test("a ~/ root expands to the daemon user's home", () => {
@@ -97,7 +222,7 @@ describe("loadConfig", () => {
       JSON.stringify({
         session_launcher: {
           root_dirs: ["~/launcher-root"],
-          command: "run",
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
         },
       }),
     );
@@ -120,7 +245,7 @@ describe("loadConfig", () => {
         JSON.stringify({
           session_launcher: {
             root_dirs: [dir],
-            command: "run",
+            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
             ...(shell === undefined ? {} : { shell }),
           },
         }),
@@ -131,24 +256,22 @@ describe("loadConfig", () => {
     }
   });
 
-  // Named templates: each entry may state only what differs from the
-  // launcher-level values, and the parsed form is fully resolved so nothing
-  // downstream re-applies the inheritance.
-  test("templates inherit the launcher-level command, prompt and shell", () => {
+  // Each entry may state only what differs from the launcher-level `shell`,
+  // and the parsed form is fully resolved so nothing downstream re-applies the
+  // inheritance.
+  test("templates inherit the launcher-level shell", () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
-          command: "run $PROMPT",
-          default_prompt: "shared",
           shell: "zsh",
           templates: [
-            { name: "plain" },
+            { name: "plain", command: "run $PROMPT", params: { PROMPT: "shared" } },
             {
               name: "fork",
-              command: 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"',
-              default_prompt: "",
+              command: 'run --resume "$RESUME_SID"',
+              params: { RESUME_SID: "" },
               shell: "bash",
             },
           ],
@@ -157,32 +280,24 @@ describe("loadConfig", () => {
     );
 
     expect(loadConfig(file, log).session_launcher?.templates).toEqual([
-      { name: "plain", command: "run $PROMPT", default_prompt: "shared", shell: "zsh" },
+      {
+        name: "plain",
+        command: "run $PROMPT",
+        params: [
+          { name: "CWD", default: "" },
+          { name: "PROMPT", default: "shared" },
+        ],
+        shell: "zsh",
+      },
       {
         name: "fork",
-        command: 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"',
-        default_prompt: "",
+        command: 'run --resume "$RESUME_SID"',
+        params: [
+          { name: "CWD", default: "" },
+          { name: "RESUME_SID", default: "" },
+        ],
         shell: "bash",
       },
-    ]);
-    expect(warnings).toEqual([]);
-  });
-
-  // A template list is authoritative: with every command named inside it, the
-  // launcher-level command has nothing left to do and may be absent.
-  test("templates alone are enough — no launcher-level command required", () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: {
-          root_dirs: [dir],
-          templates: [{ name: "only", command: "run" }],
-        },
-      }),
-    );
-
-    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
-      { name: "only", command: "run", default_prompt: "", shell: "bash" },
     ]);
     expect(warnings).toEqual([]);
   });
@@ -198,17 +313,17 @@ describe("loadConfig", () => {
           root_dirs: [dir],
           templates: [
             "not-an-object",
-            { name: "", command: "run" },
-            { name: "good", command: "run" },
-            { name: "good", command: "shadow" },
-            { name: "commandless" },
+            { name: "", command: "run", params: {} },
+            { name: "good", command: "run", params: {} },
+            { name: "good", command: "shadow", params: {} },
+            { name: "commandless", params: {} },
           ],
         },
       }),
     );
 
     expect(loadConfig(file, log).session_launcher?.templates).toEqual([
-      { name: "good", command: "run", default_prompt: "", shell: "bash" },
+      { name: "good", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
     ]);
     expect(warnings).toHaveLength(4);
   });
@@ -238,7 +353,7 @@ describe("loadConfig", () => {
         JSON.stringify({
           session_launcher: {
             ...(root_dirs === undefined ? {} : { root_dirs }),
-            command: "run",
+            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
           },
         }),
       );
@@ -265,7 +380,7 @@ describe("loadConfig", () => {
         JSON.stringify({
           session_launcher: {
             root_dirs: [dir],
-            command: "run",
+            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
             timeout_seconds: invalid,
             dir_tree_depth: invalid,
           },
@@ -287,7 +402,7 @@ describe("loadConfig", () => {
       JSON.stringify({
         session_launcher: {
           root_dirs: ["relative/root", dir],
-          command: "run",
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
         },
       }),
     );
@@ -302,7 +417,12 @@ describe("loadConfig", () => {
   test("absent clean_env parses to an empty list without warning", () => {
     fs.writeFileSync(
       file,
-      JSON.stringify({ session_launcher: { root_dirs: [dir], command: "run" } }),
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+        },
+      }),
     );
     expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
     expect(warnings).toEqual([]);
@@ -315,7 +435,11 @@ describe("loadConfig", () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
-        session_launcher: { root_dirs: [dir], command: "run", clean_env: "CLAUDE_*" },
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+          clean_env: "CLAUDE_*",
+        },
       }),
     );
     expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
@@ -331,7 +455,7 @@ describe("loadConfig", () => {
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
-          command: "run",
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
           clean_env: ["CLAUDE_*", "", 42, "AI_AGENT"],
         },
       }),
@@ -346,7 +470,12 @@ describe("loadConfig", () => {
   test("absent keep_env parses to an empty list without warning", () => {
     fs.writeFileSync(
       file,
-      JSON.stringify({ session_launcher: { root_dirs: [dir], command: "run" } }),
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+        },
+      }),
     );
     expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
     expect(warnings).toEqual([]);
@@ -362,7 +491,11 @@ describe("loadConfig", () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
-        session_launcher: { root_dirs: [dir], command: "run", keep_env: "CLAUDE_CONFIG_DIR" },
+        session_launcher: {
+          root_dirs: [dir],
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+          keep_env: "CLAUDE_CONFIG_DIR",
+        },
       }),
     );
     expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
@@ -377,7 +510,7 @@ describe("loadConfig", () => {
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
-          command: "run",
+          templates: [{ name: "default", command: "run", params: { CWD: "" } }],
           keep_env: ["CLAUDE_CONFIG_DIR", "", 42, "CLAUDE_CODE_ENTRYPOINT"],
         },
       }),
@@ -436,7 +569,10 @@ describe("loadConfig", () => {
       fs.writeFileSync(
         file,
         JSON.stringify({
-          session_launcher: { root_dirs: [dir], command: "run" },
+          session_launcher: {
+            root_dirs: [dir],
+            templates: [{ name: "default", command: "run", params: { CWD: "" } }],
+          },
           terminal_gateway_url: "https://gw.example",
         }),
       );

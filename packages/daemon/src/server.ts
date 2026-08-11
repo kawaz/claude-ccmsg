@@ -2090,11 +2090,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         ok: true,
         root_dirs: launcher.root_dirs,
         // `shell` は daemon 側の実行詳細なので落とす — form が使うのは名前・
-        // command テンプレ・prompt 初期値の 3 つだけ。
-        templates: launcher.templates.map(({ name, command, default_prompt }) => ({
+        // command テンプレ・params 宣言の 3 つだけ。
+        templates: launcher.templates.map(({ name, command, params }) => ({
           name,
           command,
-          default_prompt,
+          params,
         })),
       });
       return;

@@ -3,12 +3,21 @@
 // in-view-search.ts — the form model and its wire-request projection are
 // exercised in isolation by session-creator.test.ts, and neither reads
 // AppState nor does I/O (that's SessionCreator.tsx's job, per DR-0005 §1).
-import type { SessionLauncherConfigTemplate, SessionLaunchRequest } from "@ccmsg/protocol";
+//
+// The form is entirely driven by the selected template's `params` declaration:
+// which inputs exist, in what order, and what they start as all come from
+// config. Nothing here reads the command text to guess at fields.
+import {
+  LAUNCHER_CWD_PARAM,
+  type LauncherParam,
+  type SessionLauncherConfigTemplate,
+  type SessionLaunchRequest,
+} from "@ccmsg/protocol";
 
 /** DR-0018 §2.1 fixed dropdown options — the DR explicitly scopes "コマンド
  * テンプレの UI 編集" out (§2.3), so these lists are hardcoded here rather
- * than sourced from config; only `root_dirs`/`default_prompt` come from the
- * daemon (session_launcher_config). */
+ * than sourced from config. They decide what the MODEL / EFFORT widgets offer;
+ * whether those inputs appear at all is the template's `params` declaration. */
 export const SESSION_CREATOR_MODELS = [
   "sonnet",
   "opus",
@@ -19,32 +28,43 @@ export const SESSION_CREATOR_MODELS = [
 ] as const;
 export const SESSION_CREATOR_EFFORTS = ["low", "middle", "high", "xhigh"] as const;
 
-export const DEFAULT_SESSION_CREATOR_MODEL = "fable";
-export const DEFAULT_SESSION_CREATOR_EFFORT = "middle";
+/** Parameter names the fork flow seeds: the source session and the record to
+ * resume at. A template that declares neither simply cannot be forked into. */
+export const RESUME_SID_PARAM = "RESUME_SID";
+export const RESUME_AT_PARAM = "RESUME_AT";
+
+/** Which input a declared parameter gets. Chosen by name, because a name is
+ * all the form knows about a parameter it did not invent: the four it
+ * recognizes have a better control than a text box, and anything else — a
+ * parameter this webui has never heard of — gets a plain one rather than not
+ * being offered at all. */
+export type ParamWidget = "cwd" | "model" | "effort" | "prompt" | "text";
+
+export function paramWidget(name: string): ParamWidget {
+  if (name === LAUNCHER_CWD_PARAM) return "cwd";
+  if (name === "MODEL") return "model";
+  if (name === "EFFORT") return "effort";
+  if (name === "PROMPT") return "prompt";
+  return "text";
+}
 
 export interface SessionCreatorForm {
-  cwd: string;
-  model: string;
-  effort: string;
-  prompt: string;
   /** Which configured template the form is on, by name. Sent as
-   * SessionLaunchRequest.template; also decides which `command`/`default_prompt`
-   * the "default" buttons restore. */
+   * SessionLaunchRequest.template; also decides which parameters the form
+   * shows and what the "default" buttons restore. */
   template: string;
   /** User-editable shell command template (DR-0018 §3.2 addendum 2026-07-17).
    * Initialized to the selected template's command verbatim (no variable
-   * substitution — $CWD/$MODEL/$EFFORT/$PROMPT/$RESUME_SID/$RESUME_AT stay
-   * literal); the "default" button restores that value. Sent as
-   * SessionLaunchRequest.command only when it differs from the selected
-   * template's command (see buildSessionLaunchRequest), so the common no-edit
-   * case keeps the wire request identical to before. */
+   * substitution — `$CWD` and the rest stay literal); the "default" button
+   * restores that value. Sent as SessionLaunchRequest.command only when it
+   * differs from the selected template's command (see
+   * buildSessionLaunchRequest), so the common no-edit case keeps the wire
+   * request identical to a plain configured launch. */
   command: string;
-  /** Fork source session id and fork point record uuid, empty on a plain
-   * launch. Both reach the command as `$RESUME_SID` / `$RESUME_AT`; the form
-   * never builds a `claude` argv itself, so what a fork actually does is
-   * whatever the chosen template's command says. */
-  resumeSid: string;
-  resumeAt: string;
+  /** Current value per declared parameter name, seeded from the declaration's
+   * defaults. Keyed rather than positional so a template switch can carry the
+   * user's edits across by name. */
+  params: Record<string, string>;
 }
 
 /** What the Timeline's "ここから fork" action hands to the form: the session to
@@ -56,8 +76,14 @@ export interface SessionCreatorPrefill {
   resumeAt: string;
 }
 
+/** Whether a template declares a given parameter — the single question that
+ * decides both "does this recipe fork?" and "does this input exist?". */
+export function templateDeclares(template: SessionLauncherConfigTemplate, name: string): boolean {
+  return template.params.some((p) => p.name === name);
+}
+
 /** The template the form opens on, decided by how the form was opened rather
- * than by config order: a fork opens on the first recipe that uses the fork
+ * than by config order: a fork opens on the first recipe that takes a fork
  * point (`forkTemplate`), a plain "+ 新規" on the first that does not
  * (`plainTemplate`). Both fall back to `templates[0]` when the config has no
  * recipe of the asked-for kind. */
@@ -69,41 +95,22 @@ export function initialTemplate(
   return plainTemplate(templates) ?? templates[0];
 }
 
-/** Which configured recipe is a plain-launch recipe: the first whose command
- * does *not* read the fork point. Derived the same way `forkTemplate` is, and
- * for the same reason — a recipe that expands `$RESUME_AT` needs a fork source
+/** Which configured recipe is a plain-launch recipe: the first that does not
+ * declare the fork point. A recipe asking for a fork point needs a fork source
  * to mean anything, so it is never what "+ 新規" asked for. */
 export function plainTemplate(
   templates: SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
-  return templates.find((t) => !usesForkPoint(t.command));
+  return templates.find((t) => !templateDeclares(t, RESUME_AT_PARAM));
 }
 
-/** Which configured recipe is a fork recipe: the first whose command reads the
- * fork point. Derived from the command text rather than from a naming
- * convention or an extra config flag — a template that never expands
- * `$RESUME_AT` cannot fork no matter what it is called, and one that does
- * needs no declaration. Both `$RESUME_AT` and `${RESUME_AT}` count. */
+/** Which configured recipe is a fork recipe: the first that declares the fork
+ * point. Read from the declaration rather than from a naming convention or the
+ * command text — the config says what a recipe takes. */
 export function forkTemplate(
   templates: SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
-  return templates.find((t) => usesForkPoint(t.command));
-}
-
-/** Whether a command text reads a given launch variable, in either the `$VAR`
- * or `${VAR}` spelling. This is what decides whether the form offers an input
- * for that variable at all: a field the command about to run cannot read is
- * one the user has no reason to see, so it is simply not rendered. Matches on
- * the command the user is actually about to run — an edited one, or a template
- * switched to after asking for a fork — not on the configured text. */
-export function commandUsesVar(command: string, name: string): boolean {
-  return new RegExp(`\\$\\{?${name}\\b`).test(command);
-}
-
-/** Whether a command text reads the fork point — the launch variable that
- * distinguishes a fork recipe from a plain one. */
-export function usesForkPoint(command: string): boolean {
-  return commandUsesVar(command, "RESUME_AT");
+  return templates.find((t) => templateDeclares(t, RESUME_AT_PARAM));
 }
 
 /** What the form can inherit from the session a fork resumes: where it ran and
@@ -159,59 +166,79 @@ export function cwdWithinRoots(cwd: string, rootDirs: string[]): boolean {
   );
 }
 
-/** The form fields a fork inherits from its source, as a partial form. Values
- * that cannot be established honestly are simply absent, so
- * `initialSessionCreatorForm` keeps its own defaults for them: an unmappable
- * model or effort leaves the form exactly where a non-fork open leaves it, and
- * a cwd outside the configured roots stays empty so the user picks one rather
- * than pressing 実行 on a path the daemon will refuse. */
+/** Seed values a fork inherits from its source, as parameter values. Values
+ * that cannot be established honestly are simply absent, so the declared
+ * defaults survive: an unmappable model or effort leaves the form exactly
+ * where a non-fork open leaves it, and a cwd outside the configured roots
+ * stays at its default so the user picks one rather than pressing 実行 on a
+ * path the daemon will refuse. */
 export function forkSourceDefaults(
   info: ForkSourceInfo | null,
   rootDirs: string[],
-): Partial<Pick<SessionCreatorForm, "cwd" | "model" | "effort">> {
+): Record<string, string> {
   if (!info) return {};
   const cwd = info.cwd?.trim();
   const model = info.model === undefined ? undefined : launcherModelFromTranscript(info.model);
   const effort = info.effort === undefined ? undefined : launcherEffortFromTranscript(info.effort);
   return {
-    ...(cwd && cwdWithinRoots(cwd, rootDirs) ? { cwd } : {}),
-    ...(model ? { model } : {}),
-    ...(effort ? { effort } : {}),
+    ...(cwd && cwdWithinRoots(cwd, rootDirs) ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
+    ...(model ? { MODEL: model } : {}),
+    ...(effort ? { EFFORT: effort } : {}),
   };
+}
+
+/** Declared defaults as a value map, overlaid with whatever seed values apply
+ * to parameters this template actually declares. A seed for an undeclared
+ * parameter is dropped rather than carried invisibly — the request may only
+ * carry declared values, and an input the user cannot see should not decide
+ * anything. */
+function paramValues(
+  params: LauncherParam[],
+  seed: Record<string, string> = {},
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const { name, default: value } of params) {
+    values[name] = seed[name] ?? value;
+  }
+  return values;
 }
 
 /** Initial form state once the template list is known
- * (session_launcher_config response) — `cwd` starts empty; the run button
- * stays disabled until the CwdTree picker sets one (see
- * `sessionCreatorFormValid`). An empty template list cannot happen (the daemon
- * disables the launcher instead), so the fields fall back to empty strings
+ * (session_launcher_config response). An empty template list cannot happen
+ * (the daemon disables the launcher instead), so the fields fall back to empty
  * only to keep this total.
  *
  * `defaults` is what a fork inherits from its source (`forkSourceDefaults`);
- * on a plain open it is empty and every field keeps the values below. */
+ * on a plain open it is empty and every parameter keeps its declared default.
+ * The fork point itself is seeded the same way, so a template that does not
+ * declare RESUME_* simply ignores it. */
 export function initialSessionCreatorForm(
   templates: SessionLauncherConfigTemplate[],
   prefill: SessionCreatorPrefill | null = null,
-  defaults: Partial<Pick<SessionCreatorForm, "cwd" | "model" | "effort">> = {},
+  defaults: Record<string, string> = {},
 ): SessionCreatorForm {
   const template = initialTemplate(templates, prefill);
+  const seed = {
+    ...defaults,
+    ...(prefill
+      ? { [RESUME_SID_PARAM]: prefill.resumeSid, [RESUME_AT_PARAM]: prefill.resumeAt }
+      : {}),
+  };
   return {
-    cwd: defaults.cwd ?? "",
-    model: defaults.model ?? DEFAULT_SESSION_CREATOR_MODEL,
-    effort: defaults.effort ?? DEFAULT_SESSION_CREATOR_EFFORT,
-    prompt: template?.default_prompt ?? "",
     template: template?.name ?? "",
     command: template?.command ?? "",
-    resumeSid: prefill?.resumeSid ?? "",
-    resumeAt: prefill?.resumeAt ?? "",
+    params: paramValues(template?.params ?? [], seed),
   };
 }
 
-/** Switch the form to another configured template. Prompt and command follow
- * the new recipe wholesale: they are that recipe's text, so keeping the old
- * recipe's edits would leave the form showing a command the chosen template
- * never had. cwd/model/effort and the fork point are the user's own picks and
- * survive the switch. Unknown names leave the form untouched. */
+/** Switch the form to another configured template. The command follows the new
+ * recipe wholesale — it is that recipe's text, so keeping the old one's edits
+ * would leave the form showing a command the chosen template never had.
+ * Parameters restart from the new declaration, except that a value the user
+ * moved away from the old recipe's default carries over when the new recipe
+ * declares the same name: a picked cwd or a typed prompt is the user's work and
+ * survives, while an untouched field takes the new recipe's default. Unknown
+ * names leave the form untouched. */
 export function selectSessionCreatorTemplate(
   form: SessionCreatorForm,
   templates: SessionLauncherConfigTemplate[],
@@ -219,11 +246,16 @@ export function selectSessionCreatorTemplate(
 ): SessionCreatorForm {
   const template = templates.find((t) => t.name === name);
   if (!template) return form;
+  const previous = templates.find((t) => t.name === form.template);
+  const edited: Record<string, string> = {};
+  for (const { name: param, default: previousDefault } of previous?.params ?? []) {
+    const value = form.params[param];
+    if (value !== undefined && value !== previousDefault) edited[param] = value;
+  }
   return {
-    ...form,
     template: template.name,
-    prompt: template.default_prompt,
     command: template.command,
+    params: paramValues(template.params, edited),
   };
 }
 
@@ -236,10 +268,8 @@ export function selectSessionCreatorTemplate(
 export type CwdPickerMode = "editing" | "confirmed";
 
 /** Initial mode once the form is constructed: "confirmed" only when a cwd is
- * already set. `initialSessionCreatorForm`'s cwd always starts `""` today (no
- * default-cwd source exists yet), so this resolves to "editing" in practice —
- * kept as a pure function anyway so a future default-cwd source lands in
- * "confirmed" mode for free, and so the branch is unit-testable. */
+ * already set — which happens when a fork inherits its source's directory, or
+ * when the template declares a default CWD. */
 export function initialCwdPickerMode(cwd: string): CwdPickerMode {
   return cwd.trim() === "" ? "editing" : "confirmed";
 }
@@ -255,14 +285,21 @@ export function commitCwdInput(value: string): { cwd: string; mode: CwdPickerMod
   return { cwd: trimmed, mode: "confirmed" };
 }
 
+/** The form's current working directory: the CWD parameter's value. Every
+ * template declares it (the daemon adds it when config omits it), so this is
+ * only total-by-construction for a form built from a template list. */
+export function sessionCreatorCwd(form: SessionCreatorForm): string {
+  return form.params[LAUNCHER_CWD_PARAM] ?? "";
+}
+
 /** Run button gate: `session_launch` requires a real `cwd` (dir_tree picks
  * only ever produce non-empty absolute paths, but the field is free-typeable
  * too — DR-0018 doesn't forbid typing a path directly, it just describes the
- * click-to-pick affordance). Prompt may legitimately be empty (an agent
- * launched with no prompt is still a valid `claude` invocation), so it's not
- * part of this gate. */
+ * click-to-pick affordance). Other parameters may legitimately be empty (an
+ * agent launched with no prompt is still a valid `claude` invocation), so
+ * nothing else is part of this gate. */
 export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
-  return form.cwd.trim() !== "";
+  return sessionCreatorCwd(form).trim() !== "";
 }
 
 /** Builds the wire `session_launch` request body (op and the 2-phase
@@ -271,29 +308,29 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
  * isn't launchable yet (mirrors sessionCreatorFormValid) so callers can't
  * accidentally fire a request with an empty cwd.
  *
- * The selected template's command is the comparison baseline: when the form's
+ * CWD travels as the request's own `cwd` (the daemon containment-checks it and
+ * spawns there); every other declared parameter travels in `params`. The
+ * selected template's command is the comparison baseline: when the form's
  * `command` matches it verbatim, the override field is omitted so the daemon
  * runs the configured recipe (no-edit case). Any difference — including
  * whitespace-only changes the user made deliberately — is sent as-is. Empty
  * command isn't special-cased here (an empty template runs nothing
  * meaningful): the daemon rejects it with invalid_args so the user sees the
- * error rather than a silent fallback to the config value. Empty resume
- * fields are omitted rather than sent blank, for the same reason — the daemon
- * rejects a present-but-empty one. */
+ * error rather than a silent fallback to the config value. */
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
   templates: SessionLauncherConfigTemplate[],
 ): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
   if (!sessionCreatorFormValid(form)) return null;
   const selected = templates.find((t) => t.name === form.template);
+  const params: Record<string, string> = {};
+  for (const [name, value] of Object.entries(form.params)) {
+    if (name !== LAUNCHER_CWD_PARAM) params[name] = value;
+  }
   const req: Omit<SessionLaunchRequest, "op" | "request_id"> = {
-    cwd: form.cwd.trim(),
-    model: form.model,
-    effort: form.effort,
-    prompt: form.prompt,
+    cwd: sessionCreatorCwd(form).trim(),
+    params,
     ...(form.template === "" ? {} : { template: form.template }),
-    ...(form.resumeSid === "" ? {} : { resume_sid: form.resumeSid }),
-    ...(form.resumeAt === "" ? {} : { resume_at: form.resumeAt }),
   };
   if (form.command === selected?.command) return req;
   return { ...req, command: form.command };

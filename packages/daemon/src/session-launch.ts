@@ -3,6 +3,7 @@
 // with bounded output capture and two-stage timeout termination.
 import {
   ErrorCode,
+  LAUNCHER_CWD_PARAM,
   type SessionLaunchRequest,
   type SessionLauncherConfig,
   type SessionLaunchResponse,
@@ -68,30 +69,20 @@ export function shellArgv(shell: "bash" | "zsh", command: string): string[] {
   return ["zsh", "-e", "-u", "-o", "pipefail", "-c", command];
 }
 
-/** Template-visible shell variable name -> the transport environment variable
- * that carries its value into the launcher shell. The template vocabulary
- * (`$CWD` / `$MODEL` / `$EFFORT` / `$PROMPT`, DR-0018 §3.1, plus `$RESUME_SID`
- * / `$RESUME_AT` for fork recipes) is a fixed set; only the transport is
- * renamed to a lowercase `ccmsg_new_session_*` namespace that the shell erases
- * from its environment before running the command.
- *
- * Every variable is always defined, empty when the request omits it — a
- * template referencing `$RESUME_AT` under `set -u` must not abort on a plain
- * (non-fork) launch. */
-const LAUNCH_VARS = {
-  CWD: "ccmsg_new_session_cwd",
-  MODEL: "ccmsg_new_session_model",
-  EFFORT: "ccmsg_new_session_effort",
-  PROMPT: "ccmsg_new_session_prompt",
-  RESUME_SID: "ccmsg_new_session_resume_sid",
-  RESUME_AT: "ccmsg_new_session_resume_at",
-} as const;
+/** The transport environment variable that carries one parameter's value into
+ * the launcher shell. Parameter names are shell identifiers (config.ts checks),
+ * so the carrier is one too; the lowercase `ccmsg_new_session_param_` namespace
+ * is what the shell erases from its environment before running the command, and
+ * the prefix makes the mapping injective (no two parameters share a carrier). */
+export function launchVarCarrier(name: string): string {
+  return `ccmsg_new_session_param_${name}`;
+}
 
 /** Shell prologue that moves each launch value out of the environment and into
  * a plain (non-exported) shell variable, so nothing the command starts — the
- * claude session and its whole process tree — inherits it. Per variable:
+ * claude session and its whole process tree — inherits it. Per parameter:
  *
- *   unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd
+ *   unset -v CWD; CWD="$ccmsg_new_session_param_CWD"; unset -v ccmsg_new_session_param_CWD
  *
  * The leading `unset -v` matters twice: it drops any same-named variable the
  * daemon itself inherited (which would otherwise survive as a stale export,
@@ -103,17 +94,25 @@ const LAUNCH_VARS = {
  * child shell and re-exporting them would put the values right back into the
  * environment we are trying to keep clean.
  *
- * Only fixed identifiers appear here; no request value is ever interpolated
- * into shell text, so the prologue cannot be injected through. */
-export const launchPrecode: string = Object.entries(LAUNCH_VARS)
-  .map(([name, carrier]) => `unset -v ${name}; ${name}="$${carrier}"; unset -v ${carrier}`)
-  .join("\n");
+ * Exactly the template's declared parameters are defined, each always defined
+ * (empty rather than absent when neither request nor default supplies a value)
+ * so a `set -u` command never aborts on a parameter the user left blank. Only
+ * validated identifiers appear here; no request value is ever interpolated into
+ * shell text, so the prologue cannot be injected through. */
+export function launchPrecode(paramNames: string[]): string {
+  return paramNames
+    .map((name) => {
+      const carrier = launchVarCarrier(name);
+      return `unset -v ${name}; ${name}="$${carrier}"; unset -v ${carrier}`;
+    })
+    .join("\n");
+}
 
 /** Join prologue and command with a newline rather than `;` so a command that
  * opens with a comment or a shell keyword parses exactly as the administrator
  * wrote it. Exported for tests. */
-export function launchShellProgram(command: string): string {
-  return `${launchPrecode}\n${command}`;
+export function launchShellProgram(paramNames: string[], command: string): string {
+  return `${launchPrecode(paramNames)}\n${command}`;
 }
 
 export function validateSessionLaunch(
@@ -130,27 +129,6 @@ export function validateSessionLaunch(
 
   const cwd = containedInRoots(cfg.root_dirs, req.cwd, "session_launch cwd");
   if (!cwd.ok) return cwd;
-  if (typeof req.model !== "string" || req.model === "") {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "session_launch model must be non-empty",
-    };
-  }
-  if (typeof req.effort !== "string" || req.effort === "") {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "session_launch effort must be non-empty",
-    };
-  }
-  if (typeof req.prompt !== "string") {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "session_launch prompt must be a string",
-    };
-  }
   // DR-0018 §3.2 addendum (2026-07-17): user role may override the shell
   // command template. Absent = use config's command verbatim (previous
   // behavior). Present but empty = invalid_args (an empty template runs
@@ -182,39 +160,74 @@ export function validateSessionLaunch(
       msg: `session_launch template not found: ${String(req.template)}`,
     };
   }
-  for (const field of ["resume_sid", "resume_at"] as const) {
-    const value = req[field];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value === "") {
+  // Parameter values stay opaque strings: the UI may offer a curated dropdown
+  // for MODEL or EFFORT, but daemon enums would couple every new launcher
+  // choice to a daemon release, and a template is free to declare parameters
+  // the daemon has never heard of. Values may be empty (a prompt-less launch is
+  // a valid `claude` invocation). What IS checked is that every value belongs
+  // to a parameter this template declares — a value nothing will read means
+  // the client and the config disagree about what the form is.
+  const params = req.params ?? {};
+  if (!isPlainObject(params)) {
+    return {
+      ok: false,
+      code: ErrorCode.invalid_args,
+      msg: "session_launch params must be an object",
+    };
+  }
+  const declared = new Map(template.params.map((p) => [p.name, p.default]));
+  for (const [name, value] of Object.entries(params)) {
+    if (name === LAUNCHER_CWD_PARAM) {
       return {
         ok: false,
         code: ErrorCode.invalid_args,
-        msg: `session_launch ${field} must be a non-empty string when present`,
+        msg: `session_launch ${LAUNCHER_CWD_PARAM} belongs in the request's cwd field, not params`,
+      };
+    }
+    if (!declared.has(name)) {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: `session_launch params has an undeclared parameter for template ${template.name}: ${name}`,
+      };
+    }
+    if (typeof value !== "string") {
+      return {
+        ok: false,
+        code: ErrorCode.invalid_args,
+        msg: `session_launch params.${name} must be a string`,
       };
     }
   }
   const command = req.command ?? template.command;
 
-  // Model and effort intentionally remain opaque strings: the UI may offer a
-  // curated dropdown, but daemon enums would couple every new launcher choice
-  // to a daemon release. Prompt is allowed to be empty because the DR defines
-  // no non-empty constraint. None of the values is substituted or interpreted.
-  const env = {
-    [LAUNCH_VARS.CWD]: cwd.data.realPath,
-    [LAUNCH_VARS.MODEL]: req.model,
-    [LAUNCH_VARS.EFFORT]: req.effort,
-    [LAUNCH_VARS.PROMPT]: req.prompt,
-    [LAUNCH_VARS.RESUME_SID]: req.resume_sid ?? "",
-    [LAUNCH_VARS.RESUME_AT]: req.resume_at ?? "",
-  };
+  // One carrier per declared parameter, in declaration order: the request's
+  // value when it sent one, the configured default otherwise. CWD is the
+  // containment-checked realpath rather than anything the request said about
+  // it, so the command and the spawn always see the same directory.
+  const env: Record<string, string> = {};
+  for (const { name, default: fallback } of template.params) {
+    const value = name === LAUNCHER_CWD_PARAM ? cwd.data.realPath : (params[name] ?? fallback);
+    env[launchVarCarrier(name)] = value;
+  }
   return {
     ok: true,
     cwd: cwd.data.realPath,
     env,
-    shellArgv: shellArgv(template.shell, launchShellProgram(command)),
+    shellArgv: shellArgv(
+      template.shell,
+      launchShellProgram(
+        template.params.map((p) => p.name),
+        command,
+      ),
+    ),
     cleanEnv: cfg.clean_env ?? [],
     keepEnv: cfg.keep_env ?? [],
   };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Compile one clean_env wildcard pattern (DR-0018 §3.1 addendum 2026-07-18)

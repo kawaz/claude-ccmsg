@@ -30,7 +30,13 @@ async function startConfiguredDaemon(
       session_launcher: {
         root_dirs: [root],
         shell: "bash",
-        command,
+        templates: [
+          {
+            name: "default",
+            command,
+            params: { CWD: "", MODEL: "", EFFORT: "", PROMPT: "" },
+          },
+        ],
       },
     }),
   );
@@ -61,7 +67,7 @@ describe("session launcher wire ops", () => {
 
         for (const req of [
           { op: "dir_tree", roots: [root] },
-          { op: "session_launch", cwd: root, model: "m", effort: "e", prompt: "p" },
+          { op: "session_launch", cwd: root, params: { PROMPT: "p" } },
           { op: "session_launcher_config" },
         ]) {
           const response = await client.request<{ ok: false; error: { code: string } }>(req);
@@ -96,9 +102,7 @@ describe("session launcher wire ops", () => {
           op: "session_launch",
           request_id: "launch-1",
           cwd: root,
-          model: "wire-model",
-          effort: "wire-effort",
-          prompt: "wire-prompt",
+          params: { MODEL: "wire-model", EFFORT: "wire-effort", PROMPT: "wire-prompt" },
         });
         expect(ack).toEqual({ ok: true, accepted: true, request_id: "launch-1" });
 
@@ -134,9 +138,7 @@ describe("session launcher wire ops", () => {
         const response = await client.request<{ ok: false; error: { code: string } }>({
           op: "session_launch",
           cwd: root,
-          model: "m",
-          effort: "e",
-          prompt: "p",
+          params: { PROMPT: "p" },
         });
         expect(response.ok).toBe(false);
         expect(response.error.code).toBe("invalid_args");
@@ -168,9 +170,7 @@ describe("session launcher wire ops", () => {
           op: "session_launch",
           request_id: "slow-launch",
           cwd: root,
-          model: "m",
-          effort: "e",
-          prompt: "p",
+          params: { PROMPT: "p" },
         });
         client.write({ op: "ping" });
 
@@ -238,8 +238,8 @@ describe("session launcher wire ops", () => {
   );
 
   // The webui's SessionCreator/CwdTree need root_dirs (initial dir_tree fetch)
-  // and default_prompt (the "default" button) before the user has picked
-  // anything — session_launcher_config is the read-only projection that fills
+  // and the templates' parameter declarations (which ARE the form) before the
+  // user has picked anything — session_launcher_config is the read-only projection that fills
   // that gap (see its protocol doc comment).
   test(
     "user role receives root_dirs and the template list",
@@ -255,9 +255,14 @@ describe("session launcher wire ops", () => {
         JSON.stringify({
           session_launcher: {
             root_dirs: [root],
-            default_prompt: "hello default",
             shell: "bash",
-            command: "printf configured",
+            templates: [
+              {
+                name: "new",
+                command: "printf configured",
+                params: { CWD: "", PROMPT: "hello default" },
+              },
+            ],
           },
         }),
       );
@@ -279,19 +284,26 @@ describe("session launcher wire ops", () => {
         const response = await client.request<{
           ok: true;
           root_dirs: string[];
-          templates: { name: string; command: string; default_prompt: string }[];
+          templates: {
+            name: string;
+            command: string;
+            params: { name: string; default: string }[];
+          }[];
         }>({ op: "session_launcher_config" });
         expect(response.ok).toBe(true);
         // DR-0018 §3.2 addendum 2026-07-17: the raw command template is part
         // of the read-only projection (webui uses it as SessionCreator's
-        // textarea initial value + "default" button target). A flat config
-        // projects to exactly one implicitly-named template.
+        // textarea initial value + "default" button target), alongside the
+        // parameter declaration the form renders from.
         expect(response).toMatchObject({
           templates: [
             {
-              name: "default",
-              default_prompt: "hello default",
+              name: "new",
               command: "printf configured",
+              params: [
+                { name: "CWD", default: "" },
+                { name: "PROMPT", default: "hello default" },
+              ],
             },
           ],
         });

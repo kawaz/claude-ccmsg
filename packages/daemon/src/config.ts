@@ -11,6 +11,8 @@ import {
   DEFAULT_DIR_TREE_DEPTH,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
   DEFAULT_LAUNCHER_TEMPLATE_NAME,
+  LAUNCHER_CWD_PARAM,
+  type LauncherParam,
   type SessionLauncherConfig,
   type SessionLauncherTemplate,
 } from "@ccmsg/protocol";
@@ -208,13 +210,98 @@ function parseShell(
   return fallback;
 }
 
+/** A parameter name has to be a shell identifier: the launcher shell defines it
+ * with a fixed prologue (`NAME="$carrier"`), so anything else would be a syntax
+ * error at launch instead of a config error at startup. */
+const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Legacy vocabulary of the pre-`params` config, in the order the form used to
+ * render it. Normalizing an old config re-derives its parameter list by asking
+ * which of these its command reads (`$VAR` / `${VAR}`), which is exactly the
+ * rule the webui used to apply to the command text at render time — so an
+ * un-migrated config keeps the form it had. Defaults match the values the form
+ * itself used to seed those fields with. */
+const LEGACY_PARAM_DEFAULTS: ReadonlyArray<{ name: string; default: string }> = [
+  { name: "CWD", default: "" },
+  { name: "MODEL", default: "fable" },
+  { name: "EFFORT", default: "middle" },
+  { name: "PROMPT", default: "" },
+  { name: "RESUME_SID", default: "" },
+  { name: "RESUME_AT", default: "" },
+];
+
+function commandReadsVar(command: string, name: string): boolean {
+  return new RegExp(`\\$\\{?${name}\\b`).test(command);
+}
+
+/** The parameter list an old-form template implies: every legacy variable its
+ * command actually reads, with PROMPT seeded from the inherited
+ * `default_prompt`. CWD is added by `parseLauncherParams`' caller regardless,
+ * so a command that never mentions `$CWD` still launches somewhere. */
+function legacyParams(command: string, defaultPrompt: string): LauncherParam[] {
+  return LEGACY_PARAM_DEFAULTS.filter((p) => commandReadsVar(command, p.name)).map((p) => ({
+    name: p.name,
+    default: p.name === "PROMPT" ? defaultPrompt : p.default,
+  }));
+}
+
+/** Parse one template's `params` declaration: an object mapping parameter name
+ * to its default value, whose key order is the order the form renders. Broken
+ * entries degrade individually (bad name or non-string default → warn + skip)
+ * for the same reason a broken template does — one typo should cost one input,
+ * not the whole launcher. */
+function parseLauncherParams(
+  raw: unknown,
+  templateName: string,
+  file: string,
+  log: Log,
+): LauncherParam[] {
+  const params: LauncherParam[] = [];
+  if (!isObject(raw)) {
+    warn(
+      log,
+      file,
+      `session_launcher.templates[${templateName}].params must be a JSON object; ignoring`,
+    );
+    return params;
+  }
+  for (const [name, value] of Object.entries(raw)) {
+    if (!PARAM_NAME_RE.test(name)) {
+      warn(
+        log,
+        file,
+        `session_launcher.templates[${templateName}].params: ${JSON.stringify(name)} is not a shell identifier; entry ignored`,
+      );
+      continue;
+    }
+    if (typeof value !== "string") {
+      warn(
+        log,
+        file,
+        `session_launcher.templates[${templateName}].params.${name} default must be a string; entry ignored`,
+      );
+      continue;
+    }
+    params.push({ name, default: value });
+  }
+  return params;
+}
+
+/** Every template needs CWD (it is where the process runs), so a declaration
+ * that omits it gets it first — the form then always has its directory picker
+ * and the daemon always has a path to containment-check. */
+function withCwdParam(params: LauncherParam[]): LauncherParam[] {
+  if (params.some((p) => p.name === LAUNCHER_CWD_PARAM)) return params;
+  return [{ name: LAUNCHER_CWD_PARAM, default: "" }, ...params];
+}
+
 /** Parse `session_launcher.templates` (named launch recipes). Each entry may
- * omit `command` / `default_prompt` / `shell` to inherit the launcher-level
- * value, and the result is fully resolved so nothing downstream re-applies
- * fallbacks. A broken entry (not an object, blank/duplicate name, no command
- * from either level) is warned about and skipped on its own — one unusable
- * recipe must not take the other recipes down with it, same defensive posture
- * as the env-pattern lists. */
+ * omit `command` / `params` / `shell`; the first two then come from the legacy
+ * launcher-level fields (see `legacyParams`) and the last inherits. The result
+ * is fully resolved so nothing downstream re-applies fallbacks. A broken entry
+ * (not an object, blank/duplicate name, no command from either level) is warned
+ * about and skipped on its own — one unusable recipe must not take the other
+ * recipes down with it, same defensive posture as the env-pattern lists. */
 function parseLauncherTemplates(
   raw: unknown,
   inherited: { command: string | undefined; defaultPrompt: string; shell: "bash" | "zsh" },
@@ -274,11 +361,38 @@ function parseLauncherTemplates(
     templates.push({
       name,
       command,
-      default_prompt: defaultPrompt,
+      params: withCwdParam(
+        entry.params === undefined
+          ? legacyParams(command, defaultPrompt)
+          : parseLauncherParams(entry.params, name, file, log),
+      ),
       shell: parseShell(entry.shell, inherited.shell, `templates[${name}].shell`, file, log),
     });
   }
   return templates;
+}
+
+/** Tell the administrator once, at startup, that their launcher config is in
+ * the pre-`params` form and what the current form looks like. The config still
+ * works (it was normalized above, and only the normalized shape exists past
+ * this point), so this is a nudge rather than a failure — but a config whose
+ * inputs are inferred from command text cannot express "declare an input the
+ * command doesn't mention yet", which is the whole point of `params`. */
+function warnIfLegacyForm(raw: Record<string, unknown>, file: string, log: Log): void {
+  const templates = Array.isArray(raw.templates) ? raw.templates : [];
+  const legacy =
+    raw.command !== undefined ||
+    raw.default_prompt !== undefined ||
+    raw.templates === undefined ||
+    templates.some((t) => isObject(t) && t.params === undefined);
+  if (!legacy) return;
+  warn(
+    log,
+    file,
+    "session_launcher uses the deprecated pre-`params` form (top-level command/default_prompt, or templates without `params`); " +
+      'declare each recipe fully instead, e.g. "templates": [{"name": "new", "command": "…$CWD…$MODEL…$PROMPT…", ' +
+      '"params": {"CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": ""}}]',
+  );
 }
 
 function parseSessionLauncher(
@@ -349,16 +463,24 @@ function parseSessionLauncher(
   // launcher-level fields, so every pre-templates config keeps launching
   // exactly as before. With `templates` present the list is authoritative and
   // the launcher-level command is only the inheritance source.
-  const templates =
+  const templates: SessionLauncherTemplate[] =
     raw.templates === undefined
       ? command === undefined
         ? []
-        : [{ name: DEFAULT_LAUNCHER_TEMPLATE_NAME, command, default_prompt: defaultPrompt, shell }]
+        : [
+            {
+              name: DEFAULT_LAUNCHER_TEMPLATE_NAME,
+              command,
+              params: withCwdParam(legacyParams(command, defaultPrompt)),
+              shell,
+            },
+          ]
       : parseLauncherTemplates(raw.templates, { command, defaultPrompt, shell }, file, log);
   if (templates.length === 0) {
     warn(log, file, "session_launcher has no usable command template; launcher disabled");
     return undefined;
   }
+  warnIfLegacyForm(raw, file, log);
 
   // clean_env / keep_env (DR-0018 §3.1 addendum 2026-07-18): wildcard
   // patterns of env keys to strip before launch, and the allowlist that

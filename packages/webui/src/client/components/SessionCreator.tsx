@@ -14,18 +14,22 @@
 // stdout/stderr/exit_code/timed_out render once and nothing here polls,
 // subscribes, or remembers past launches.
 import { useEffect, useState } from "preact/hooks";
-import type { SessionLauncherConfigTemplate, SessionLaunchResponse } from "@ccmsg/protocol";
+import type {
+  LauncherParam,
+  SessionLauncherConfigTemplate,
+  SessionLaunchResponse,
+} from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { errorMessage } from "../utils.ts";
 import {
   buildSessionLaunchRequest,
-  commandUsesVar,
   commitCwdInput,
   forkSourceDefaults,
   initialCwdPickerMode,
   initialSessionCreatorForm,
+  paramWidget,
   selectSessionCreatorTemplate,
-  usesForkPoint,
+  sessionCreatorCwd,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
@@ -157,6 +161,122 @@ function CwdPicker({
   );
 }
 
+/** Extra guidance under a parameter's input, keyed by name. Only the fork point
+ * has any: what a record uuid means for the resulting session is not something
+ * the field name can say, and getting it wrong fails at launch rather than
+ * visibly. Parameters the webui doesn't know get no hint — the config author
+ * named them and knows what they are. */
+const PARAM_HINTS: Record<string, string> = {
+  RESUME_AT:
+    "このレコード「まで」が新セッションの記憶に残ります (指定した本人は残る)。会話に載っているレコードなら種類を問わず指定できますが (turn 途中の tool_use も可)、会話に無い uuid は起動時に No message found で失敗します。",
+};
+
+/** One declared parameter's input. Which control appears is decided by the
+ * parameter's name (`paramWidget`) and nothing else — a template that declares
+ * MODEL gets the model dropdown, one that declares something this webui has
+ * never heard of gets a text box, and one that declares neither shows neither.
+ *
+ * The fork values are plain editable inputs like every other parameter (kawaz
+ * r115 m7:「仮にそこを正確でない値に変えたとしても単にコマンドの実行に失敗する
+ * だけで、失敗含めて修正する自由を取り上げる理由がありません」), so nothing here
+ * validates a value — a bad uuid surfaces as claude's own launch failure on
+ * stderr. */
+function ParamField({
+  param,
+  value,
+  onChange,
+  rootDirs,
+  cwdMode,
+  setCwdMode,
+}: {
+  param: LauncherParam;
+  value: string;
+  onChange: (value: string) => void;
+  rootDirs: string[];
+  cwdMode: CwdPickerMode;
+  setCwdMode: (mode: CwdPickerMode) => void;
+}) {
+  const widget = paramWidget(param.name);
+  const label = <span class="session-creator-label">{param.name.toLowerCase()}</span>;
+  const hint = PARAM_HINTS[param.name];
+
+  if (widget === "cwd") {
+    return (
+      <div class="session-creator-field">
+        {label}
+        <CwdPicker
+          cwd={value}
+          mode={cwdMode}
+          setMode={setCwdMode}
+          rootDirs={rootDirs}
+          onCwdChange={onChange}
+        />
+      </div>
+    );
+  }
+
+  if (widget === "model" || widget === "effort") {
+    const options: readonly string[] =
+      widget === "model" ? SESSION_CREATOR_MODELS : SESSION_CREATOR_EFFORTS;
+    return (
+      <label class="session-creator-field">
+        {label}
+        <select value={value} onChange={(e) => onChange((e.target as HTMLSelectElement).value)}>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
+  const restore = (
+    <button
+      type="button"
+      class="session-creator-default-btn"
+      onClick={() => onChange(param.default)}
+    >
+      default
+    </button>
+  );
+
+  if (widget === "prompt") {
+    return (
+      <label class="session-creator-field">
+        <div class="session-creator-prompt-head">
+          {label}
+          {restore}
+        </div>
+        <textarea
+          class="session-creator-prompt"
+          value={value}
+          onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
+        />
+        {hint ? <span class="session-creator-hint">{hint}</span> : null}
+      </label>
+    );
+  }
+
+  return (
+    <label class="session-creator-field">
+      <div class="session-creator-prompt-head">
+        {label}
+        {restore}
+      </div>
+      <input
+        type="text"
+        class="session-creator-resume-input"
+        value={value}
+        placeholder={`$${param.name}`}
+        onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+      />
+      {hint ? <span class="session-creator-hint">{hint}</span> : null}
+    </label>
+  );
+}
+
 function LaunchResultPanel({ state }: { state: LaunchState }) {
   if (state.status === "idle") return null;
   if (state.status === "running") return <p class="session-creator-status">実行中…</p>;
@@ -226,7 +346,7 @@ export function SessionCreator({
             : {};
           const initialForm = initialSessionCreatorForm(res.templates, prefill, defaults);
           setForm(initialForm);
-          setCwdPickerMode(initialCwdPickerMode(initialForm.cwd));
+          setCwdPickerMode(initialCwdPickerMode(sessionCreatorCwd(initialForm)));
         } else if (res.error.code === "launcher_not_configured") {
           setProbe({ status: "unconfigured" });
         } else {
@@ -304,105 +424,22 @@ export function SessionCreator({
               </select>
             </label>
           ) : null}
-          {/* fork の 2 値は cwd/model/prompt と同じ、ただの編集可能な入力
-           * (kawaz r115 m7:「仮にそこを正確でない値に変えたとしても単に
-           * コマンドの実行に失敗するだけで、失敗含めて修正する自由を取り上げる
-           * 理由がありません」)。だから読み取り専用表示にせず、値の正しさも
-           * 検査しない — 駄目な uuid は claude の起動失敗として stderr に出る。
-           * 出し分けの基準は fork 由来かどうかではなく、いま実行しようとして
-           * いる command がその変数を読むかどうか (kawaz r119 m1)。読まない
-           * command に対する入力欄は埋めても何も起きないので出さない。 */}
-          {commandUsesVar(form.command, "RESUME_SID") ? (
-            <label class="session-creator-field">
-              <span class="session-creator-label">resume_sid</span>
-              <input
-                type="text"
-                class="session-creator-resume-input"
-                value={form.resumeSid}
-                placeholder="fork 元セッションの sid ($RESUME_SID)"
-                onInput={(e) =>
-                  setForm({ ...form, resumeSid: (e.target as HTMLInputElement).value })
-                }
-              />
-            </label>
-          ) : null}
-          {usesForkPoint(form.command) ? (
-            <label class="session-creator-field">
-              <span class="session-creator-label">resume_at</span>
-              <input
-                type="text"
-                class="session-creator-resume-input"
-                value={form.resumeAt}
-                placeholder="再開地点レコードの uuid ($RESUME_AT)"
-                onInput={(e) =>
-                  setForm({ ...form, resumeAt: (e.target as HTMLInputElement).value })
-                }
-              />
-              <span class="session-creator-hint">
-                このレコード「まで」が新セッションの記憶に残ります (指定した本人は残る)。
-                会話に載っているレコードなら種類を問わず指定できますが (turn 途中の tool_use
-                も可)、会話に無い uuid は起動時に No message found で失敗します。
-              </span>
-            </label>
-          ) : null}
-          <div class="session-creator-field">
-            <span class="session-creator-label">cwd</span>
-            <CwdPicker
-              cwd={form.cwd}
-              mode={cwdPickerMode}
-              setMode={setCwdPickerMode}
+          {/* 入力欄の唯一の根拠は選択中テンプレの params 宣言 (kawaz r119 m6)。
+           * 宣言順にそのまま並べる — どの変数を受け取るかは config が決めることで、
+           * webui が command 文字列から推測する筋合いのものではない。 */}
+          {(selectedTemplate(probe.templates, form)?.params ?? []).map((param) => (
+            <ParamField
+              key={param.name}
+              param={param}
+              value={form.params[param.name] ?? ""}
+              onChange={(value) =>
+                setForm({ ...form, params: { ...form.params, [param.name]: value } })
+              }
               rootDirs={probe.rootDirs}
-              onCwdChange={(cwd) => setForm({ ...form, cwd })}
+              cwdMode={cwdPickerMode}
+              setCwdMode={setCwdPickerMode}
             />
-          </div>
-          <label class="session-creator-field">
-            <span class="session-creator-label">model</span>
-            <select
-              value={form.model}
-              onChange={(e) => setForm({ ...form, model: (e.target as HTMLSelectElement).value })}
-            >
-              {SESSION_CREATOR_MODELS.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class="session-creator-field">
-            <span class="session-creator-label">effort</span>
-            <select
-              value={form.effort}
-              onChange={(e) => setForm({ ...form, effort: (e.target as HTMLSelectElement).value })}
-            >
-              {SESSION_CREATOR_EFFORTS.map((eff) => (
-                <option key={eff} value={eff}>
-                  {eff}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label class="session-creator-field">
-            <div class="session-creator-prompt-head">
-              <span class="session-creator-label">prompt</span>
-              <button
-                type="button"
-                class="session-creator-default-btn"
-                onClick={() =>
-                  setForm({
-                    ...form,
-                    prompt: selectedTemplate(probe.templates, form)?.default_prompt ?? "",
-                  })
-                }
-              >
-                default
-              </button>
-            </div>
-            <textarea
-              class="session-creator-prompt"
-              value={form.prompt}
-              onInput={(e) => setForm({ ...form, prompt: (e.target as HTMLTextAreaElement).value })}
-            />
-          </label>
+          ))}
           <label class="session-creator-field">
             <div class="session-creator-prompt-head">
               <span class="session-creator-label">command</span>

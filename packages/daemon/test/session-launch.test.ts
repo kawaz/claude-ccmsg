@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { SessionLaunchRequest, SessionLauncherConfig } from "@ccmsg/protocol";
+import type { LauncherParam, SessionLaunchRequest, SessionLauncherConfig } from "@ccmsg/protocol";
 import {
   buildLaunchEnv,
   executeSessionLaunch,
@@ -14,10 +14,20 @@ import {
   validateSessionLaunch,
 } from "../src/session-launch.ts";
 
+/** The parameter set these tests declare on their templates — the legacy
+ * vocabulary, which config.ts also derives when normalizing an old config. */
+const LAUNCH_PARAM_NAMES = ["CWD", "MODEL", "EFFORT", "PROMPT", "RESUME_SID", "RESUME_AT"];
+const LAUNCH_PARAMS: LauncherParam[] = LAUNCH_PARAM_NAMES.map((name) => ({ name, default: "" }));
+
+/** The shell program for a command under the standard parameter set. */
+function program(command: string): string {
+  return launchShellProgram(LAUNCH_PARAM_NAMES, command);
+}
+
 function config(root: string, shell: "bash" | "zsh" = "bash"): SessionLauncherConfig {
   return {
     root_dirs: [root],
-    templates: [{ name: "default", command: 'launch "$PROMPT"', default_prompt: "", shell }],
+    templates: [{ name: "default", command: 'launch "$PROMPT"', params: LAUNCH_PARAMS, shell }],
     timeout_seconds: 10,
     dir_tree_depth: 2,
   };
@@ -36,9 +46,7 @@ function request(cwd: string, prompt = "do the work"): SessionLaunchRequest {
     // units under test here) never read it, only server.ts's ack/event do.
     request_id: "test-request",
     cwd,
-    model: "opaque-model",
-    effort: "opaque-effort",
-    prompt,
+    params: { MODEL: "opaque-model", EFFORT: "opaque-effort", PROMPT: prompt },
   };
 }
 
@@ -67,10 +75,10 @@ describe("session launch validation", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  // The four request values cross the daemon/command boundary only as opaque
+  // Request values cross the daemon/command boundary only as opaque
   // environment strings; no template substitution or value rewriting occurs.
-  // They ride in the `ccmsg_new_session_*` carriers, which the shell prologue
-  // converts back to the template vocabulary ($CWD/$MODEL/$EFFORT/$PROMPT).
+  // They ride in the `ccmsg_new_session_param_*` carriers, which the shell
+  // prologue converts back to the declared parameter names.
   test("a valid request returns every carrier variable unchanged", () => {
     const req = request(cwd);
     const result = validateSessionLaunch(config(root), req);
@@ -78,14 +86,15 @@ describe("session launch validation", () => {
     if (!result.ok) return;
 
     expect(result.env).toEqual({
-      ccmsg_new_session_cwd: fs.realpathSync(cwd),
-      ccmsg_new_session_model: req.model,
-      ccmsg_new_session_effort: req.effort,
-      ccmsg_new_session_prompt: req.prompt,
-      // Defined-but-empty on a non-fork launch: a template that mentions
-      // $RESUME_AT must not abort under `set -u` when nothing is being forked.
-      ccmsg_new_session_resume_sid: "",
-      ccmsg_new_session_resume_at: "",
+      ccmsg_new_session_param_CWD: fs.realpathSync(cwd),
+      ccmsg_new_session_param_MODEL: "opaque-model",
+      ccmsg_new_session_param_EFFORT: "opaque-effort",
+      ccmsg_new_session_param_PROMPT: "do the work",
+      // A declared parameter the request left out is defined-but-empty (its
+      // default), so a template mentioning $RESUME_AT does not abort under
+      // `set -u` when nothing is being forked.
+      ccmsg_new_session_param_RESUME_SID: "",
+      ccmsg_new_session_param_RESUME_AT: "",
     });
     expect(result.cwd).toBe(fs.realpathSync(cwd));
     expect(result.shellArgv).toEqual([
@@ -94,21 +103,23 @@ describe("session launch validation", () => {
       "-o",
       "pipefail",
       "-c",
-      launchShellProgram('launch "$PROMPT"'),
+      program('launch "$PROMPT"'),
     ]);
   });
 
-  // The prologue is fixed text over fixed identifiers: no request value is
-  // interpolated into shell source, so a hostile prompt cannot reach it.
+  // The prologue is fixed text over config-validated identifiers: no request
+  // value is interpolated into shell source, so a hostile prompt cannot reach
+  // it. Exactly the declared parameters appear — the shell defines nothing a
+  // template did not ask for.
   test("the prologue moves every carrier into a plain variable and unsets it", () => {
-    expect(launchPrecode).toBe(
+    expect(launchPrecode(LAUNCH_PARAM_NAMES)).toBe(
       [
-        'unset -v CWD; CWD="$ccmsg_new_session_cwd"; unset -v ccmsg_new_session_cwd',
-        'unset -v MODEL; MODEL="$ccmsg_new_session_model"; unset -v ccmsg_new_session_model',
-        'unset -v EFFORT; EFFORT="$ccmsg_new_session_effort"; unset -v ccmsg_new_session_effort',
-        'unset -v PROMPT; PROMPT="$ccmsg_new_session_prompt"; unset -v ccmsg_new_session_prompt',
-        'unset -v RESUME_SID; RESUME_SID="$ccmsg_new_session_resume_sid"; unset -v ccmsg_new_session_resume_sid',
-        'unset -v RESUME_AT; RESUME_AT="$ccmsg_new_session_resume_at"; unset -v ccmsg_new_session_resume_at',
+        'unset -v CWD; CWD="$ccmsg_new_session_param_CWD"; unset -v ccmsg_new_session_param_CWD',
+        'unset -v MODEL; MODEL="$ccmsg_new_session_param_MODEL"; unset -v ccmsg_new_session_param_MODEL',
+        'unset -v EFFORT; EFFORT="$ccmsg_new_session_param_EFFORT"; unset -v ccmsg_new_session_param_EFFORT',
+        'unset -v PROMPT; PROMPT="$ccmsg_new_session_param_PROMPT"; unset -v ccmsg_new_session_param_PROMPT',
+        'unset -v RESUME_SID; RESUME_SID="$ccmsg_new_session_param_RESUME_SID"; unset -v ccmsg_new_session_param_RESUME_SID',
+        'unset -v RESUME_AT; RESUME_AT="$ccmsg_new_session_param_RESUME_AT"; unset -v ccmsg_new_session_param_RESUME_AT',
       ].join("\n"),
     );
   });
@@ -116,8 +127,8 @@ describe("session launch validation", () => {
   // Newline, not `;`: a template opening with a comment or a shell keyword must
   // parse exactly as the administrator wrote it.
   test("the command is appended on its own line after the prologue", () => {
-    expect(launchShellProgram("# leading comment\nrun")).toBe(
-      `${launchPrecode}\n# leading comment\nrun`,
+    expect(program("# leading comment\nrun")).toBe(
+      `${launchPrecode(LAUNCH_PARAM_NAMES)}\n# leading comment\nrun`,
     );
   });
 
@@ -151,21 +162,67 @@ describe("session launch validation", () => {
     });
   });
 
-  // model and effort must name a selection, while prompt is allowed to be empty.
-  // Wrong wire types are rejected at the daemon boundary rather than reaching spawn.
-  test("model and effort reject empty values while prompt accepts empty string", () => {
-    expect(validateSessionLaunch(config(root), { ...request(cwd), model: "" })).toMatchObject({
-      ok: false,
-      code: "invalid_args",
-    });
-    expect(validateSessionLaunch(config(root), { ...request(cwd), effort: "" })).toMatchObject({
-      ok: false,
-      code: "invalid_args",
-    });
+  // Parameter values are opaque to the daemon: any of them may be empty (the
+  // template author decides what an empty value means), and a value the
+  // request omits falls back to the configured default.
+  test("any declared parameter may be empty, and omitted ones take their default", () => {
     expect(validateSessionLaunch(config(root), request(cwd, ""))).toMatchObject({
       ok: true,
-      env: { ccmsg_new_session_prompt: "" },
+      env: { ccmsg_new_session_param_PROMPT: "" },
     });
+    const cfg: SessionLauncherConfig = {
+      ...config(root),
+      templates: [
+        {
+          name: "default",
+          command: "run",
+          params: [
+            { name: "CWD", default: "" },
+            { name: "MODEL", default: "fable" },
+          ],
+          shell: "bash",
+        },
+      ],
+    };
+    expect(validateSessionLaunch(cfg, { ...request(cwd), params: {} })).toMatchObject({
+      ok: true,
+      env: { ccmsg_new_session_param_MODEL: "fable" },
+    });
+  });
+
+  // A value for a parameter the template does not declare would reach nothing:
+  // the shell only defines declared names. Saying so beats dropping it, since
+  // the client and the config then disagree about what the form is.
+  test("an undeclared parameter is invalid_args", () => {
+    const cfg: SessionLauncherConfig = {
+      ...config(root),
+      templates: [
+        { name: "default", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
+      ],
+    };
+    expect(
+      validateSessionLaunch(cfg, { ...request(cwd), params: { BRANCH: "main" } }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  // CWD is the containment-checked spawn directory, so its value comes from
+  // the request's own `cwd` field. Sending it as a parameter too would be two
+  // sources for one value; the boundary refuses rather than picking a winner.
+  test("CWD sent as a parameter is invalid_args", () => {
+    expect(
+      validateSessionLaunch(config(root), { ...request(cwd), params: { CWD: "/elsewhere" } }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
+  });
+
+  // Wrong wire types are rejected at the daemon boundary rather than reaching
+  // spawn (where a non-string would stringify into something nobody asked for).
+  test("a non-string parameter value is invalid_args", () => {
+    expect(
+      validateSessionLaunch(config(root), {
+        ...request(cwd),
+        params: { MODEL: 7 as unknown as string },
+      }),
+    ).toMatchObject({ ok: false, code: "invalid_args" });
   });
 
   // DR-0018 §3.2 addendum 2026-07-17: user role may override the command
@@ -178,14 +235,7 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), { ...request(cwd), command: override });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.shellArgv).toEqual([
-      "bash",
-      "-eu",
-      "-o",
-      "pipefail",
-      "-c",
-      launchShellProgram(override),
-    ]);
+    expect(result.shellArgv).toEqual(["bash", "-eu", "-o", "pipefail", "-c", program(override)]);
   });
 
   // Absent override falls through to the config template (previous behavior)
@@ -200,7 +250,7 @@ describe("session launch validation", () => {
       "-o",
       "pipefail",
       "-c",
-      launchShellProgram('launch "$PROMPT"'),
+      program('launch "$PROMPT"'),
     ]);
   });
 
@@ -221,8 +271,13 @@ describe("session launch validation", () => {
     const cfg: SessionLauncherConfig = {
       ...config(root),
       templates: [
-        { name: "default", command: "run-default", default_prompt: "", shell: "bash" },
-        { name: "fork", command: 'run --resume "$RESUME_SID"', default_prompt: "", shell: "zsh" },
+        { name: "default", command: "run-default", params: LAUNCH_PARAMS, shell: "bash" },
+        {
+          name: "fork",
+          command: 'run --resume "$RESUME_SID"',
+          params: LAUNCH_PARAMS,
+          shell: "zsh",
+        },
       ],
     };
 
@@ -236,13 +291,13 @@ describe("session launch validation", () => {
       "-o",
       "pipefail",
       "-c",
-      launchShellProgram('run --resume "$RESUME_SID"'),
+      program('run --resume "$RESUME_SID"'),
     ]);
 
     const fallback = validateSessionLaunch(cfg, request(cwd));
     expect(fallback.ok).toBe(true);
     if (!fallback.ok) return;
-    expect(fallback.shellArgv.at(-1)).toBe(launchShellProgram("run-default"));
+    expect(fallback.shellArgv.at(-1)).toBe(program("run-default"));
   });
 
   // A name that isn't configured is an error rather than a fallback: launching
@@ -255,28 +310,23 @@ describe("session launch validation", () => {
     ).toMatchObject({ ok: false, code: "invalid_args" });
   });
 
-  // Fork carriers: present values pass through verbatim (they are never
-  // interpolated into shell text), and an empty string is rejected rather than
-  // silently launching a fork with no fork point.
-  test("resume_sid and resume_at reach the carriers verbatim", () => {
+  // The fork values are ordinary declared parameters — nothing about them is
+  // special-cased — so they pass through verbatim like every other value.
+  test("the fork parameters reach the carriers verbatim", () => {
     const result = validateSessionLaunch(config(root), {
       ...request(cwd),
-      resume_sid: "11111111-2222-3333-4444-555555555555",
-      resume_at: "66666666-7777-8888-9999-000000000000",
+      params: {
+        RESUME_SID: "11111111-2222-3333-4444-555555555555",
+        RESUME_AT: "66666666-7777-8888-9999-000000000000",
+      },
     });
     expect(result).toMatchObject({
       ok: true,
       env: {
-        ccmsg_new_session_resume_sid: "11111111-2222-3333-4444-555555555555",
-        ccmsg_new_session_resume_at: "66666666-7777-8888-9999-000000000000",
+        ccmsg_new_session_param_RESUME_SID: "11111111-2222-3333-4444-555555555555",
+        ccmsg_new_session_param_RESUME_AT: "66666666-7777-8888-9999-000000000000",
       },
     });
-    for (const field of ["resume_sid", "resume_at"] as const) {
-      expect(validateSessionLaunch(config(root), { ...request(cwd), [field]: "" })).toMatchObject({
-        ok: false,
-        code: "invalid_args",
-      });
-    }
   });
 
   // The launched command sees the fork values as ordinary shell variables, and
@@ -290,7 +340,10 @@ describe("session launch validation", () => {
       stdout: "sid=[] at=[]",
     });
     expect(
-      await execute(cfg, { ...request(cwd), resume_sid: "sid-1", resume_at: "uuid-1" }),
+      await execute(cfg, {
+        ...request(cwd),
+        params: { RESUME_SID: "sid-1", RESUME_AT: "uuid-1" },
+      }),
     ).toMatchObject({ ok: true, exit_code: 0, stdout: "sid=[sid-1] at=[uuid-1]" });
   });
 
@@ -316,11 +369,11 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), request(cwd, prompt));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.env.ccmsg_new_session_prompt).toBe(prompt);
+    expect(result.env.ccmsg_new_session_param_PROMPT).toBe(prompt);
   });
 
-  // A successful child receives the validated real cwd and all four opaque
-  // request values through env; stdout and stderr remain separate response fields.
+  // A successful child receives the validated real cwd and every declared
+  // parameter through env; stdout and stderr remain separate response fields.
   test("executes in the validated cwd with env and captures both output streams", async () => {
     const cfg = withCommand(
       config(root),
@@ -328,9 +381,8 @@ describe("session launch validation", () => {
         `"$CWD" "$PWD" "$MODEL" "$EFFORT" "$PROMPT"; printf 'stderr-value' >&2`,
     );
     const req = {
-      ...request(cwd, 'hello $HOME "quoted"'),
-      model: "model/x",
-      effort: "xhigh",
+      ...request(cwd),
+      params: { MODEL: "model/x", EFFORT: "xhigh", PROMPT: 'hello $HOME "quoted"' },
     };
 
     expect(await execute(cfg, req)).toEqual({
@@ -356,7 +408,7 @@ describe("session launch validation", () => {
     const cfg = withCommand(
       config(root),
       "residue=$(bash -c env | " +
-        "grep -E '^(CWD|MODEL|EFFORT|PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
+        "grep -E '^(CWD|MODEL|EFFORT|PROMPT|ccmsg_new_session_param_[A-Z_]+)=' || true); " +
         `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
     );
 
@@ -414,7 +466,7 @@ describe("session launch validation", () => {
     const cfg = withCommand(
       config(root, "zsh"),
       "residue=$(zsh -c env | " +
-        "grep -E '^(PROMPT|ccmsg_new_session_[a-z]+)=' || true); " +
+        "grep -E '^(PROMPT|ccmsg_new_session_param_[A-Z_]+)=' || true); " +
         `printf 'residue=[%s] prompt=[%s]' "$residue" "$PROMPT"`,
     );
 
@@ -516,10 +568,10 @@ describe("session launch validation", () => {
 // layering rule (launch env always wins over the cleaned base).
 describe("clean_env pattern matching", () => {
   const launch = {
-    ccmsg_new_session_cwd: "/w",
-    ccmsg_new_session_model: "m",
-    ccmsg_new_session_effort: "e",
-    ccmsg_new_session_prompt: "p",
+    ccmsg_new_session_param_CWD: "/w",
+    ccmsg_new_session_param_MODEL: "m",
+    ccmsg_new_session_param_EFFORT: "e",
+    ccmsg_new_session_param_PROMPT: "p",
   };
 
   // Trailing-* prefix pattern removes every key sharing the prefix, while an
@@ -626,9 +678,9 @@ describe("clean_env pattern matching", () => {
   // command's contract of always receiving CWD/MODEL/EFFORT/PROMPT holds
   // regardless of what the administrator lists.
   test("launch env wins even when a pattern names a carrier", () => {
-    const base = { ccmsg_new_session_cwd: "/stale-from-daemon", PATH: "/bin" };
-    const env = buildLaunchEnv(base, ["ccmsg_new_session_*"], launch);
-    expect(env.ccmsg_new_session_cwd).toBe("/w");
+    const base = { ccmsg_new_session_param_CWD: "/stale-from-daemon", PATH: "/bin" };
+    const env = buildLaunchEnv(base, ["ccmsg_new_session_param_*"], launch);
+    expect(env.ccmsg_new_session_param_CWD).toBe("/w");
   });
 });
 
@@ -639,10 +691,10 @@ describe("clean_env pattern matching", () => {
 // launch entirely. Precedence contract: keep wins over clean.
 describe("keep_env allowlist", () => {
   const launch = {
-    ccmsg_new_session_cwd: "/w",
-    ccmsg_new_session_model: "m",
-    ccmsg_new_session_effort: "e",
-    ccmsg_new_session_prompt: "p",
+    ccmsg_new_session_param_CWD: "/w",
+    ccmsg_new_session_param_MODEL: "m",
+    ccmsg_new_session_param_EFFORT: "e",
+    ccmsg_new_session_param_PROMPT: "p",
   };
 
   // The core precedence rule and the motivating incident in one case: a key
@@ -711,9 +763,11 @@ describe("keep_env allowlist", () => {
   // stale carrier from the daemon env is overwritten by this launch's value —
   // the launched command's four-variable contract stays absolute.
   test("launch env still wins over a kept key", () => {
-    const base = { ccmsg_new_session_cwd: "/stale-from-daemon" };
-    const env = buildLaunchEnv(base, ["ccmsg_new_session_cwd"], launch, ["ccmsg_new_session_cwd"]);
-    expect(env.ccmsg_new_session_cwd).toBe("/w");
+    const base = { ccmsg_new_session_param_CWD: "/stale-from-daemon" };
+    const env = buildLaunchEnv(base, ["ccmsg_new_session_param_CWD"], launch, [
+      "ccmsg_new_session_param_CWD",
+    ]);
+    expect(env.ccmsg_new_session_param_CWD).toBe("/w");
   });
 });
 
@@ -747,7 +801,7 @@ describe("clean_env end-to-end launch", () => {
             name: "default",
             command:
               'printf "clean=%s keep=%s" "${CCMSG_TEST_CLEAN_ME:-absent}" "$CCMSG_TEST_KEEP_ME"',
-            default_prompt: "",
+            params: LAUNCH_PARAMS,
             shell: "bash",
           },
         ],
@@ -778,7 +832,7 @@ describe("clean_env end-to-end launch", () => {
             name: "default",
             command:
               'printf "cfg=%s sess=%s" "${CCMSG_TEST_KE_CONFIG:-absent}" "${CCMSG_TEST_KE_SESSION:-absent}"',
-            default_prompt: "",
+            params: LAUNCH_PARAMS,
             shell: "bash",
           },
         ],
