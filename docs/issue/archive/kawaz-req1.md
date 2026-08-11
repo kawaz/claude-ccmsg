@@ -1,6 +1,6 @@
 ---
 title: kawaz-req1
-status: open
+status: resolved
 category: request
 created: 2026-07-16T13:41:44+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T02:40:15+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: 実装済み確認 (kawaz TRIAGE-C1=a 裁定)。Sidebar.tsx PeerSortKey が name/idle/connected に刷新済み、status セクション化は kawaz-agents-status と同実装"]
 blocked_by:
 origin:
 ---
