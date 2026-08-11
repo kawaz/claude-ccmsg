@@ -6042,6 +6042,14 @@ button.session-tab {
   display: flex;
   align-items: center;
   gap: var(--space-7);
+  /* ホスト (.tl-toolbar / .viewer-header) も flex-wrap するが、その折り返しは
+   * 「子要素の単位」でしか起きない。search-bar 自身が折り返せないと開いた
+   * エディタが 1 個の幅広アイテムになり、スマホ幅では後続のツールバー
+   * ボタンごと viewport の外へ押し出されて操作不能になる。自分の中で
+   * 折り返し、かつホスト幅を超えないようにして押し出しを断つ。 */
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .search-bar-toggle {
@@ -6060,6 +6068,11 @@ button.session-tab {
   display: flex;
   align-items: flex-start;
   gap: var(--space-6);
+  /* 入力欄 + トグル群 (Aa .* / 👤🤖💬 / 📁) は横一列だと 400px を超える。
+   * 狭幅ではトグル群単位で折り返す。 */
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .search-bar-query {
