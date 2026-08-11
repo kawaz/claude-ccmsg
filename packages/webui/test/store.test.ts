@@ -1815,17 +1815,58 @@ describe("llm-requests/loaded", () => {
   });
 });
 
-// Timeline の fork アクション → Sidebar の受け渡し。1 回きりの要求なので
-// 「立てる」「消す」の両方が要る (消せないと、パネルを開き直すたびに古い
-// fork 元が蘇る)。
-describe("session-creator/prefill", () => {
-  test("holds the fork request until it is explicitly cleared", () => {
-    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
-    const set = dispatch(initialState(), { type: "session-creator/prefill", prefill });
-    expect(set.sessionCreatorPrefill).toEqual(prefill);
+// フォームパネルの開閉。描画先が幅で変わる (デスクトップ = FormPane、スマホ =
+// サイドバー内) ため状態は store が持ち、遷移そのものは sidebar-panel.ts の
+// 純関数が決める (その排他の網羅は sidebar-panel.test.ts)。
+describe("panel/toggled, panel/closed", () => {
+  test("押した panel が開き、もう一度押すと閉じる", () => {
+    const opened = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
+    expect(opened.activePanel).toEqual({ kind: "session-search" });
     expect(
-      dispatch(set, { type: "session-creator/prefill", prefill: null }).sessionCreatorPrefill,
+      dispatch(opened, { type: "panel/toggled", kind: "session-search" }).activePanel,
     ).toBeNull();
+  });
+
+  test("別の panel を押すと入れ替わる (section をまたいでも 1 つだけ)", () => {
+    const search = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
+    const room = dispatch(search, { type: "panel/toggled", kind: "room-creator" });
+    expect(room.activePanel).toEqual({ kind: "room-creator" });
+  });
+
+  test("フォームの閉じるボタンはどの panel でも閉じる", () => {
+    const opened = dispatch(initialState(), { type: "panel/toggled", kind: "session-creator" });
+    expect(dispatch(opened, { type: "panel/closed" }).activePanel).toBeNull();
+  });
+});
+
+// Timeline の「ここから fork」は launcher をその fork 元ごと開く要求そのもの。
+// 中継用のフィールドを別に持たないので、「要求を消し忘れて古い fork 元が
+// 蘇る」経路自体が無い。
+describe("session-creator/prefill", () => {
+  test("fork 要求は launcher を fork 元ごと開く", () => {
+    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
+    expect(forked.activePanel).toEqual({ kind: "session-creator", prefill });
+  });
+
+  test("fork 要求は開いていた別 panel を置き換える", () => {
+    const searching = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
+    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    expect(dispatch(searching, { type: "session-creator/prefill", prefill }).activePanel).toEqual({
+      kind: "session-creator",
+      prefill,
+    });
+  });
+
+  // fork で開いた launcher を閉じて「+ 新規」で開き直すと、前の fork 元
+  // (と、そこから入る cwd/model/effort) は引き継がない。
+  test("閉じて開き直した launcher は fork 元を引き継がない", () => {
+    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
+    const closed = dispatch(forked, { type: "panel/closed" });
+    expect(
+      dispatch(closed, { type: "panel/toggled", kind: "session-creator" }).activePanel,
+    ).toEqual({ kind: "session-creator", prefill: null });
   });
 
   // hello 由来の capability。probe が終わるまで daemon は false を返すので、

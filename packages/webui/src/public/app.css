@@ -288,6 +288,37 @@ a {
   touch-action: none;
 }
 
+/* デスクトップのフォームパネル (FormPane.tsx、D-Q1 裁定 = b)。新規セッション
+ * / セッション検索をサイドバー (実効幅 264px) から main ペイン側へ出した先。
+ * 幅は inline style (px、localStorage 永続) が持ち、#form-pane-splitter で
+ * ドラッグできる — サイドバーと同じ扱い。 */
+#form-pane {
+  flex-shrink: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-alt);
+  padding: var(--space-11);
+}
+
+/* このペインでは cwd ツリーを低くする。フォーム全体 (末尾の実行ボタンまで)
+ * がペインに収まり、スクロールするのはツリーだけ = 入れ子のスクローラが
+ * 同時に動かない (fork テンプレートは項目が多く、14rem のままだと外側の
+ * ペインも一緒にスクロールする)。 */
+#form-pane .cwd-tree {
+  max-height: 10rem;
+}
+
+/* #sidebar-splitter と同じ見た目・当たり判定 (境界線の役も兼ねる)。 */
+#form-pane-splitter {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--border);
+  background-clip: content-box;
+  padding: 0 2px;
+  touch-action: none;
+}
+
 #sidebar h2 {
   font-size: var(--font-size-sm);
   text-transform: uppercase;
@@ -1129,13 +1160,16 @@ a {
   gap: var(--space-7);
 }
 
+/* 確定した cwd は末尾まで見せる (折り返す)。省略記号で 1 行に収めると、
+ * worktree を識別する末尾がちょうど隠れる — 同じリポの複数 worktree が
+ * 区別できないという実測 (docs/findings/2026-08-12-form-ux-width-survey.md)。
+ * 折り返し位置はパスの途中でも構わない: どこで折れても全部読める方が、
+ * 1 行に収まって読めないより良い。 */
 .session-creator-cwd-value {
   flex: 1;
   min-width: 0;
   font-size: var(--font-size-md);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .session-creator-cwd-edit {
@@ -4974,6 +5008,9 @@ button.session-tab {
   color: var(--fg);
 }
 
+/* サイドバーが overlay に切り替わる境界。この 720px は JS 側の
+ * useNarrowLayout.ts (フォームをサイドバー内と main ペインのどちらに描くかの
+ * 判定) と同じ値で、片方だけ動かすとフォームがどちらにも出ない幅ができる。 */
 @media (max-width: 720px) {
   #menu-toggle {
     display: block;

@@ -27,6 +27,12 @@ import {
 import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
 import type { SessionCreatorPrefill } from "./session-creator.ts";
+import {
+  openForkCreator,
+  toggleSidebarPanel,
+  type SidebarPanelKind,
+  type SidebarPanelState,
+} from "./sidebar-panel.ts";
 import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
@@ -215,11 +221,14 @@ export interface AppState {
    * unknown option で必ず死ぬので、押せば必ず失敗するボタンを置かない —
    * sandboxAvailable と同じ姿勢)。 */
   forkAvailable: boolean;
-  /** Timeline の fork アクションが SessionCreator に渡す起動元 (resume 対象の
-   * sid と fork 地点 uuid)。非 null = 「この内容で新規セッションフォームを
-   * 開け」の要求で、Sidebar がパネルを開き SessionCreator が初期値に使う。
-   * フォームを閉じる / 起動し終えたら null に戻す (要求は 1 回きり)。 */
-  sessionCreatorPrefill: SessionCreatorPrefill | null;
+  /** 開いているフォームパネル (新規セッション / セッション検索 / 新規 Room)
+   * と、開いた時に渡された値。3 つは排他 (sidebar-panel.ts)。
+   *
+   * ここに置くのは、描画先が幅で変わるため: デスクトップは main ペインの
+   * FormPane、スマホはサイドバー内インライン置換 — トグルボタンを持つ
+   * Sidebar と、パネルを描く App は兄弟なので props では渡せない。URL には
+   * 載せない (D-Q1 裁定でページ化は退けられた)。 */
+  activePanel: SidebarPanelState;
   /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
   usageTab: "quota" | "stats";
@@ -316,7 +325,7 @@ export function initialState(): AppState {
     llmStatsAvailable: false,
     sandboxAvailable: false,
     forkAvailable: false,
-    sessionCreatorPrefill: null,
+    activePanel: null,
     usageTab: "quota",
     usagePeriod: DEFAULT_STATS_PERIOD,
     usageDays: null,
@@ -376,7 +385,12 @@ export type Action =
   // null = 要求の取り下げ (フォームを閉じた / 起動した)。同じ turn を 2 度
   // fork する時に同じ値をもう一度 dispatch できるよう、値の異同では判断せず
   // 明示的に set / clear する。
-  | { type: "session-creator/prefill"; prefill: SessionCreatorPrefill | null }
+  // Timeline の「ここから fork」: launcher をその fork 元ごと開く。
+  | { type: "session-creator/prefill"; prefill: SessionCreatorPrefill }
+  // フォームパネルのトグル (押した panel が開く / 開いていれば閉じる) と、
+  // フォーム側からの明示的な閉じる操作。
+  | { type: "panel/toggled"; kind: SidebarPanelKind }
+  | { type: "panel/closed" }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   | { type: "protocol-event"; event: DeliveredEvent }
   | { type: "locator/changed"; locator: Locator }
@@ -959,8 +973,16 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, sandboxAvailable: action.available };
     case "fork/availability":
       return { ...state, forkAvailable: action.available };
+    // fork 要求は「launcher をこの値で開け」そのもの — 中継用のフィールドを
+    // 別に置いて Sidebar 側の effect でパネルに移し替えると、要求とパネルが
+    // 二重に状態を持ち、消し忘れれば古い fork 元が蘇る (sidebar-panel.ts の
+    // prefill を union の中に置いた理由と同じ)。
     case "session-creator/prefill":
-      return { ...state, sessionCreatorPrefill: action.prefill };
+      return { ...state, activePanel: openForkCreator(action.prefill) };
+    case "panel/toggled":
+      return { ...state, activePanel: toggleSidebarPanel(state.activePanel, action.kind) };
+    case "panel/closed":
+      return { ...state, activePanel: null };
     // Merged rather than replaced: a probe that failed for one credential
     // still answered for the others, and dropping the ones it did not mention
     // would lose readings the failure says nothing about.
