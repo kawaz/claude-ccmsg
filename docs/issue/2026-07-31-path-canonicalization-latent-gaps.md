@@ -3,7 +3,7 @@ title: パス正規化の潜在ギャップ 2 件 (symlink 綴り / peers.cwd �
 status: open
 category: bug
 created: 2026-07-31T23:47:03+09:00
-last_read:
+last_read: 2026-08-12T08:12:55+09:00
 open_entered: 2026-07-31T23:47:03+09:00
 wip_entered:
 blocked_entered:
