@@ -30,6 +30,7 @@ import {
   type SessionKillResponse,
   type SessionLaunchResponse,
   type SessionSearchResponse,
+  type ForkOriginResponse,
   type StorageEvent,
   type TitleEvent,
   type TranslateResponse,
@@ -54,6 +55,7 @@ import {
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { probeForkSupport } from "./fork-probe.ts";
+import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
@@ -78,6 +80,7 @@ import {
 } from "./session-status.ts";
 import {
   createTranscriptTailStore,
+  resolveTranscript,
   stopAllTailWatches,
   transcriptRead,
   transcriptSubscribe,
@@ -215,6 +218,9 @@ export interface Daemon {
    * both "unsupported" and "not answered yet", which are the same thing to a
    * client deciding whether to offer a fork button. */
   forkAvailable: boolean;
+  /** Memoized fork-seam resolutions (fork-origin.ts), keyed by transcript
+   * identity so a live session's appends don't re-trigger the sweep. */
+  forkOrigins: ReturnType<typeof createForkOriginCache>;
   /** Persistent macOS Translation.framework helper (DR-0023). */
   translator: TranslateService;
   /** peersCompareKey() as of the last `ev:"peers"` broadcast (issue 2026-07-12-
@@ -1179,6 +1185,7 @@ const IDENTITY_OPS = new Set([
   "fs_find",
   "transcript_read",
   "session_search",
+  "fork_origin",
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
@@ -1215,6 +1222,7 @@ type TwoPhaseResult =
   | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
+  | ForkOriginResponse
   | TranslateResponse
   | LlmUsageResponse
   | LlmStatsResponse
@@ -2267,6 +2275,43 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "fork_origin": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'fork_origin' requires user role");
+        return;
+      }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "fork_origin",
+        "fork_origin_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      // Same resolver transcript_read uses, so a historical sid is answerable
+      // and no path ever comes from the client.
+      const resolved = resolveTranscript(daemon.sessions, req.sid, {
+        allowVirtual: true,
+      });
+      if (!resolved.ok) {
+        complete({ ok: false, error: { code: resolved.code, msg: resolved.msg } });
+        return;
+      }
+      // Reading whole sibling transcripts is slow on the first ask for a
+      // session, so the outcome travels on the result event; later asks are
+      // served from the memo.
+      void daemon.forkOrigins.resolve(resolved.file, daemon.log).then(
+        (origin) => {
+          complete({ ok: true, origin });
+        },
+        (e) => {
+          daemon.log.error(`op 'fork_origin' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
     case "fs_list": {
       const result = await fsList(daemon.sessions, req.sid, req.path, {
         allowVirtual: conn.identity?.role === "user",
@@ -3077,6 +3122,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
     forkAvailable: false,
+    forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
     llmRequests: new LlmRequestCache(),

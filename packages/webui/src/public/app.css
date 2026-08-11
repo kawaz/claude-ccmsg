@@ -4904,6 +4904,37 @@ button.session-tab {
   padding: 1rem;
 }
 
+/* Fork seam: history above was copied from the ancestor session, below is this
+ * session's own. Same labelled-hairline register as .tree-section-label, which
+ * is the house form for "a break in the list" — solid and recessive, since a
+ * heavier rule would read as a warning rather than a landmark. */
+.tl-fork-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+.tl-fork-divider::before,
+.tl-fork-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.tl-fork-divider-label {
+  flex: 0 0 auto;
+  letter-spacing: 0.02em;
+}
+.tl-fork-divider-label a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.tl-fork-divider-label a:hover {
+  color: var(--fg);
+}
+
 @media (max-width: 720px) {
   #menu-toggle {
     display: block;

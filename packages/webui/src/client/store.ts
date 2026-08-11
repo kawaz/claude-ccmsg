@@ -19,6 +19,7 @@ import {
   type RoomSummary,
   type SessionApiError,
   type SessionErrorEntry,
+  type ForkOrigin,
   type SessionSearchHit,
   type SessionStatusSnapshot,
   type TranscriptReadResponse,
@@ -151,6 +152,11 @@ export interface SessionTreeState {
   /** Ephemeral metadata for a historical result that was opened without being
    * pinned. Persisted pins keep their own copy in AppState.pinnedSessions. */
   searchHit?: SessionSearchHit;
+  /** Where this session's copied fork history ends, from the `fork_origin` op.
+   * Absent = never asked (or still in flight); `null` = asked, and there is no
+   * seam to draw. The seam cannot move while a session runs — appends land
+   * after it — so this is resolved once per visit and never refreshed. */
+  forkOrigin?: ForkOrigin | null;
 }
 
 /** Provenance of the running daemon (U1 footer), from a `ping` reply's
@@ -411,6 +417,7 @@ export type Action =
       size?: number;
     }
   | { type: "timeline/loading"; sid: string }
+  | { type: "timeline/fork-origin"; sid: string; origin: ForkOrigin | null }
   | {
       type: "timeline/search-changed";
       sid: string;
@@ -1049,6 +1056,11 @@ export function reducer(state: AppState, action: Action): AppState {
         searchHit: action.hit,
         timelineSearch: action.search,
       });
+      return { ...state, sessionTrees };
+    }
+    case "timeline/fork-origin": {
+      const [tree, sessionTrees] = withSessionTree(state.sessionTrees, action.sid);
+      sessionTrees.set(action.sid, { ...tree, forkOrigin: action.origin });
       return { ...state, sessionTrees };
     }
     case "timeline/loading": {

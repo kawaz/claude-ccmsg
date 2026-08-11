@@ -754,6 +754,13 @@ export type SessionSearchResultEvent = {
   request_id: string;
 } & (SessionSearchResponse | ErrorResponse);
 
+/** Completion of a 2-phase `fork_origin` request (see ForkOriginRequest's doc
+ * comment). Same correlation/classification rules as TranslateResultEvent. */
+export type ForkOriginResultEvent = {
+  ev: "fork_origin_result";
+  request_id: string;
+} & (ForkOriginResponse | ErrorResponse);
+
 /** Completion of a 2-phase `llm_usage` request (see LlmUsageRequest's doc
  * comment). Same correlation/classification rules as TranslateResultEvent. */
 export type LlmUsageResultEvent = {
@@ -785,6 +792,7 @@ export type StreamEvent =
   | SessionKillResultEvent
   | SessionEnvResultEvent
   | SessionSearchResultEvent
+  | ForkOriginResultEvent
   | LlmUsageResultEvent
   | LlmStatsResultEvent;
 
@@ -1562,6 +1570,27 @@ export interface SessionSearchRequest {
   mtime_within?: string;
 }
 
+/**
+ * Ask where a forked session stopped being a copy of its ancestor (user role
+ * only). `claude --fork-session` duplicates the ancestor's records into the new
+ * file preserving each `uuid`, rewriting only `sessionId`
+ * (docs/findings/2026-08-11-checkpoint-rewind.md §5) — so nothing inside the
+ * file marks the seam, and answering needs the sibling transcripts the daemon
+ * can already enumerate. There is no client-supplied path: the sid resolves
+ * through the same historical resolver transcript_read uses, and only its own
+ * project directory is scanned.
+ */
+export interface ForkOriginRequest {
+  op: "fork_origin";
+  sid: string;
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (2-phase reply, same rationale as SessionSearchRequest: resolving reads
+   * whole sibling transcripts the first time, which is slow enough that a
+   * deferred arrival-order reply would stall every later reply on the same
+   * connection). */
+  request_id: string;
+}
+
 /** One-shot fetch of the latest `claude agents --json` poll result (user role
  * only). The webui uses this for the initial paint; subsequent changes arrive
  * as `ev:"agents"` stream events. */
@@ -1710,6 +1739,7 @@ export type Request =
   | SandboxRevokeRequest
   | TranscriptReadRequest
   | SessionSearchRequest
+  | ForkOriginRequest
   | AgentsRequest
   | TranscriptSubscribeRequest
   | TranscriptUnsubscribeRequest
@@ -2223,6 +2253,26 @@ export interface SessionSearchResponse {
   ok: true;
   hits: SessionSearchHit[];
   truncated: boolean;
+}
+
+/** Where a fork's copied history ends, when the session is a fork whose
+ * ancestor transcript still exists. */
+export interface ForkOrigin {
+  /** The ancestor the copied records came from. */
+  sid: string;
+  /** uuid of the last copied record: the seam sits immediately after it. */
+  boundary_uuid: string;
+  /** How many records were copied — how far into the file the seam is, for a
+   * client that wants to say so without holding the whole window. */
+  copied: number;
+}
+
+/** `origin` is null both when the session is not a fork and when it is one
+ * whose ancestor file is gone: neither case has a seam a viewer could place,
+ * and the difference is not observable from what remains on disk. */
+export interface ForkOriginResponse {
+  ok: true;
+  origin: ForkOrigin | null;
 }
 
 /** One row of `claude agents --json` output, annotated with which

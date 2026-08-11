@@ -12,11 +12,11 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import type { PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
-import { agentTimelineHref, fileHref, parseUrl, timelineHref } from "../locator.ts";
+import { agentTimelineHref, fileHref, parseUrl, sessionHref, timelineHref } from "../locator.ts";
 import { rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -112,6 +112,7 @@ import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, type ForkActionState } from "../fork-point.ts";
+import { forkDividerGroupIndex } from "../fork-divider.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
@@ -2511,6 +2512,24 @@ function RawLineRow({ row }: { row: RawTranscriptRow }) {
   );
 }
 
+/** The seam in a forked session: everything above it was copied from the
+ * ancestor when the fork was taken, everything below is this session's own.
+ * A labelled hairline in the sidebar's `.tree-section-label` register — the
+ * point is to be findable while scrolling past, not to announce itself. */
+function ForkDivider({ origin }: { origin: ForkOrigin }) {
+  return (
+    <div class="tl-fork-divider">
+      <span class="tl-fork-divider-label">
+        {"ここから fork ("}
+        <a href={sessionHref(origin.sid)} title={origin.sid}>
+          {`元: ${origin.sid.slice(0, 8)}`}
+        </a>
+        {")"}
+      </span>
+    </div>
+  );
+}
+
 /** Timeline の raw モード本体 (kawaz r55 m68)。rich 側の fold / 集約を一切
  * 通さず、キャッシュ済みの行をファイル順にそのまま並べる。データは rich 側と
  * 同じ `timeline.lines` — raw 表示のために daemon へ追加取得はしない。 */
@@ -2784,6 +2803,27 @@ export function Timeline({
     };
   }, [active, sid, connStatus, agentActive]);
 
+  // Ask once per session where its copied fork history ends. An agent
+  // transcript is never a fork of anything (only whole sessions fork), and the
+  // seam cannot move as the session appends, so there is nothing to refresh:
+  // the store keeping the answer (incl. `null` = no seam) is what stops this
+  // from re-asking on every visit.
+  const forkOrigin = appState.sessionTrees.get(sid)?.forkOrigin;
+  useEffect(() => {
+    if (!active || agentActive) return;
+    if (connStatus !== "connected") return;
+    if (forkOrigin !== undefined) return;
+    void ws
+      .forkOrigin(sid)
+      .then((res) => {
+        if (!res.ok) return;
+        store.dispatch({ type: "timeline/fork-origin", sid, origin: res.origin });
+      })
+      // A seam is decoration: a failed resolve leaves the Timeline as it was,
+      // and the next visit retries.
+      .catch(() => {});
+  }, [active, agentActive, sid, connStatus, forkOrigin !== undefined]);
+
   // Build the transcriptRead opts once so every call site below stays in sync.
   const agentOpts = useMemo(() => {
     if (!agent) return undefined;
@@ -2984,6 +3024,12 @@ export function Timeline({
         g.kind === "entry" && g.line.kind === "turn" ? classifyBoundaryLine(g.line) : null,
       ),
     [groups],
+  );
+  // Null whenever the seam is outside the loaded window, so paging older is
+  // what makes the divider appear rather than anything here.
+  const forkDividerIndex = useMemo(
+    () => forkDividerGroupIndex(groups, forkOrigin?.boundary_uuid),
+    [groups, forkOrigin?.boundary_uuid],
   );
   // 同一 ccmsg event (room + ts + from、DR-0027 以降は room + mid) が transcript
   // の複数箇所から抽出される場合 (queue-operation enqueue と task-notification
@@ -3863,155 +3909,164 @@ export function Timeline({
                       {parsed.length === 0 ? (
                         <p class="tl-empty">(空の transcript)</p>
                       ) : (
-                        groups.map((group, i) => {
-                          if (group.kind === "fold") {
-                            return (
-                              <FoldGroup
-                                key={group.entries[0]!.offset}
-                                entries={group.entries}
-                                translationAvailability={translationAvailability}
-                                searchCtx={searchCtx}
-                              />
-                            );
-                          }
-                          const { line, offset } = group;
-                          // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                          // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                          // fold group に送るので groups の "entry" 側には来ない) —
-                          // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                          // 実データ上も自明に成り立つ。
-                          if (line.kind !== "turn") return null;
-                          // boundaries[i] は上の useMemo で groups と同じ index で
-                          // 計算済み (render のたびの再分類を避けるため)。
-                          const boundary = boundaries[i]!;
-                          if (boundary === null) return null;
-                          switch (boundary.kind) {
-                            case "user-prompt":
+                        groups
+                          .map((group, i) => {
+                            if (group.kind === "fold") {
                               return (
-                                <ItemRawToggle
-                                  key={offset}
-                                  offset={offset}
-                                  uuid={line.uuid}
-                                  selectedPosition={currentPosition === line.uuid}
-                                  onSelectPosition={selectPosition}
-                                >
-                                  <UserPromptBubble
-                                    line={line}
-                                    offsetKey={offset}
-                                    navKey={`user:${offset}`}
-                                    registerUserTurnRef={registerUserTurnRef}
-                                    translationAvailability={translationAvailability}
-                                    now={now}
-                                    searchCtx={searchCtx}
-                                    onUserTurnClick={onUserTurnClick}
-                                    selected={selectedUserTurnKey === `user:${offset}`}
-                                  />
-                                </ItemRawToggle>
+                                <FoldGroup
+                                  key={group.entries[0]!.offset}
+                                  entries={group.entries}
+                                  translationAvailability={translationAvailability}
+                                  searchCtx={searchCtx}
+                                />
                               );
-                            case "assistant-response":
-                              return (
-                                <ItemRawToggle
-                                  key={offset}
-                                  offset={offset}
-                                  uuid={line.uuid}
-                                  selectedPosition={currentPosition === line.uuid}
-                                  onSelectPosition={selectPosition}
-                                >
-                                  <AssistantBubble
-                                    line={line}
-                                    offset={offset}
-                                    translationAvailability={translationAvailability}
-                                    now={now}
-                                    searchCtx={searchCtx}
-                                  />
-                                </ItemRawToggle>
-                              );
-                            case "api-error":
-                              return (
-                                <ItemRawToggle
-                                  key={offset}
-                                  offset={offset}
-                                  uuid={line.uuid}
-                                  selectedPosition={currentPosition === line.uuid}
-                                  onSelectPosition={selectPosition}
-                                >
-                                  <ApiErrorNotice line={line} />
-                                </ItemRawToggle>
-                              );
-                            case "bash-command":
-                              return (
-                                <ItemRawToggle
-                                  key={offset}
-                                  offset={offset}
-                                  uuid={line.uuid}
-                                  selectedPosition={currentPosition === line.uuid}
-                                  onSelectPosition={selectPosition}
-                                >
-                                  <BashRunCard
-                                    command={boundary.segment.command}
-                                    output={boundary.segment.output}
-                                    ts={line.ts}
-                                  />
-                                </ItemRawToggle>
-                              );
-                            case "bash-command-output":
-                              return (
-                                <ItemRawToggle
-                                  key={offset}
-                                  offset={offset}
-                                  uuid={line.uuid}
-                                  selectedPosition={currentPosition === line.uuid}
-                                  onSelectPosition={selectPosition}
-                                >
-                                  <BashRunCard
-                                    command={null}
-                                    output={boundary.segment}
-                                    ts={line.ts}
-                                  />
-                                </ItemRawToggle>
-                              );
-                            case "ccmsg": {
-                              // raw タブ用の「この行に何が書いてあったか」:
-                              // extractCcmsgMessages が読むのと同じ text segment 結合
-                              // (subscribe / teammate-message wrapper の原文はそこにある)。
-                              const rawText = line.segments
-                                .filter(
-                                  (s): s is Extract<Segment, { kind: "text" }> => s.kind === "text",
-                                )
-                                .map((s) => s.text)
-                                .join("\n");
-                              return boundary.messages
-                                .map((m, j) => {
-                                  if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
-                                  const navKey = `ccmsg:${offset}:${j}`;
-                                  return (
-                                    <ItemRawToggle
-                                      key={`${offset}-${j}`}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <CcmsgBubble
-                                        message={m}
-                                        rawText={rawText}
-                                        now={now}
-                                        searchKey={ccmsgUnitKey(offset, j)}
-                                        searchCtx={searchCtx}
-                                        navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
-                                        registerUserTurnRef={registerUserTurnRef}
-                                        onUserTurnClick={onUserTurnClick}
-                                        selected={selectedUserTurnKey === navKey}
-                                        room={appState.rooms.get(m.room)}
-                                        peers={appState.peers}
-                                      />
-                                    </ItemRawToggle>
-                                  );
-                                })
-                                .filter((n) => n !== null);
                             }
-                          }
-                        })
+                            const { line, offset } = group;
+                            // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                            // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                            // fold group に送るので groups の "entry" 側には来ない) —
+                            // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                            // 実データ上も自明に成り立つ。
+                            if (line.kind !== "turn") return null;
+                            // boundaries[i] は上の useMemo で groups と同じ index で
+                            // 計算済み (render のたびの再分類を避けるため)。
+                            const boundary = boundaries[i]!;
+                            if (boundary === null) return null;
+                            switch (boundary.kind) {
+                              case "user-prompt":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <UserPromptBubble
+                                      line={line}
+                                      offsetKey={offset}
+                                      navKey={`user:${offset}`}
+                                      registerUserTurnRef={registerUserTurnRef}
+                                      translationAvailability={translationAvailability}
+                                      now={now}
+                                      searchCtx={searchCtx}
+                                      onUserTurnClick={onUserTurnClick}
+                                      selected={selectedUserTurnKey === `user:${offset}`}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "assistant-response":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <AssistantBubble
+                                      line={line}
+                                      offset={offset}
+                                      translationAvailability={translationAvailability}
+                                      now={now}
+                                      searchCtx={searchCtx}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "api-error":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <ApiErrorNotice line={line} />
+                                  </ItemRawToggle>
+                                );
+                              case "bash-command":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <BashRunCard
+                                      command={boundary.segment.command}
+                                      output={boundary.segment.output}
+                                      ts={line.ts}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "bash-command-output":
+                                return (
+                                  <ItemRawToggle
+                                    key={offset}
+                                    offset={offset}
+                                    uuid={line.uuid}
+                                    selectedPosition={currentPosition === line.uuid}
+                                    onSelectPosition={selectPosition}
+                                  >
+                                    <BashRunCard
+                                      command={null}
+                                      output={boundary.segment}
+                                      ts={line.ts}
+                                    />
+                                  </ItemRawToggle>
+                                );
+                              case "ccmsg": {
+                                // raw タブ用の「この行に何が書いてあったか」:
+                                // extractCcmsgMessages が読むのと同じ text segment 結合
+                                // (subscribe / teammate-message wrapper の原文はそこにある)。
+                                const rawText = line.segments
+                                  .filter(
+                                    (s): s is Extract<Segment, { kind: "text" }> =>
+                                      s.kind === "text",
+                                  )
+                                  .map((s) => s.text)
+                                  .join("\n");
+                                return boundary.messages
+                                  .map((m, j) => {
+                                    if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j))) return null;
+                                    const navKey = `ccmsg:${offset}:${j}`;
+                                    return (
+                                      <ItemRawToggle
+                                        key={`${offset}-${j}`}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <CcmsgBubble
+                                          message={m}
+                                          rawText={rawText}
+                                          now={now}
+                                          searchKey={ccmsgUnitKey(offset, j)}
+                                          searchCtx={searchCtx}
+                                          navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
+                                          registerUserTurnRef={registerUserTurnRef}
+                                          onUserTurnClick={onUserTurnClick}
+                                          selected={selectedUserTurnKey === navKey}
+                                          room={appState.rooms.get(m.room)}
+                                          peers={appState.peers}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  })
+                                  .filter((n) => n !== null);
+                              }
+                            }
+                          })
+                          // Index-aligned with `groups`, so the seam splices in
+                          // ahead of the first group of forked-off history.
+                          .flatMap((node, i) =>
+                            i === forkDividerIndex
+                              ? [<ForkDivider key="fork-divider" origin={forkOrigin!} />, node]
+                              : node,
+                          )
                       )}
                     </div>
                   )}

@@ -57,6 +57,7 @@ import type {
   SessionLaunchResponse,
   SessionLauncherConfigResponse,
   SessionSearchRequest,
+  ForkOriginResponse,
   SessionSearchResponse,
   SessionStatusResponse,
   SessionStatusStreamEvent,
@@ -295,6 +296,10 @@ export interface WsHandle {
   sessionSearch(
     params: Omit<SessionSearchRequest, "op" | "request_id">,
   ): Promise<SessionSearchResponse | ErrorResponse>;
+  /** Ask where `sid`'s copied fork history ends (user role only). 2-phase for
+   * the same reason as sessionSearch: the first ask for a session reads whole
+   * sibling transcripts. `origin: null` means there is no seam to draw. */
+  forkOrigin(sid: string): Promise<ForkOriginResponse | ErrorResponse>;
   /** Round trip to the daemon, carrying provenance (exe/script/version, U1
    * footer) alongside the existing liveness fields. Called once in onOpen's
    * handshake, not polled — provenance only changes across a daemon restart,
@@ -372,6 +377,7 @@ type TwoPhaseOutcome =
   | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
+  | ForkOriginResponse
   | LlmUsageResponse
   | LlmStatsResponse
   | ErrorResponse;
@@ -596,6 +602,7 @@ export function createWsClient(
           streamEv.ev === "session_kill_result" ||
           streamEv.ev === "session_env_result" ||
           streamEv.ev === "session_search_result" ||
+          streamEv.ev === "fork_origin_result" ||
           streamEv.ev === "llm_usage_result" ||
           streamEv.ev === "llm_stats_result")
       ) {
@@ -917,6 +924,8 @@ export function createWsClient(
     sessionErrors: () => send({ op: "session_errors" }),
     sessionSearch: (params) =>
       sendTwoPhase({ op: "session_search", request_id: `q${++nextRequestId}`, ...params }),
+    forkOrigin: (sid) =>
+      sendTwoPhase({ op: "fork_origin", request_id: `q${++nextRequestId}`, sid }),
     ping: () => send({ op: "ping" }),
     translate: (texts) =>
       sendTwoPhase({ op: "translate", request_id: `q${++nextRequestId}`, texts }),
