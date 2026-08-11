@@ -1,11 +1,11 @@
 ---
 title: worker が作った TODO が Status パネルにも dump にも出ない
-status: open
+status: wip
 category: bug
 created: 2026-07-27T10:26:21+09:00
 last_read: 2026-08-12T07:56:09+09:00
 open_entered: 2026-07-27T10:26:21+09:00
-wip_entered:
+wip_entered: 2026-08-12T07:57:17+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -68,6 +68,9 @@ tool call から task id → {subject, status, owner} を再生。pending / in_p
    走査対象が増えないので安い。ただし attachment の注入タイミングが Claude Code 側の都合に
    依存する (実測では main が TaskList を叩いた前後に出ているが規則は未特定)
 2. subagents/*.jsonl も走査する: 情報源として確実だが agent 数に比例して走査コストが増える
+
+方向 1 (attachment fold) を主線に実装開始 (2026-08-12)。方向 2 (subagents 走査) は
+DR-0029 のまとめ処理承認が要るため、1 で受け入れ条件を満たせない場合に再判断。
 
 ### 関連コード
 
