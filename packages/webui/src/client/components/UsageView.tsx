@@ -31,7 +31,7 @@ import { useApp } from "../context.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageStats } from "./UsageStats.tsx";
-import { usageHref, usageStatsHref } from "../locator.ts";
+import { catalogHref, usageHref, usageStatsHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 
 /** Quota moves on the scale of hours; a minute of staleness is invisible to
@@ -413,7 +413,7 @@ function QuotaSection({ state }: { state: AppState }) {
  * page. Each tab appears only when its own endpoint is configured: an operator
  * who set up one of the two sees one tab, not a heading over an error. */
 function UsageTabs({ state }: { state: AppState }) {
-  const tabs: Array<{ tab: "quota" | "stats"; label: string; href: string }> = [
+  const tabs: Array<{ tab: "quota" | "stats" | "catalog"; label: string; href: string }> = [
     ...(state.llmUsageAvailable
       ? [{ tab: "quota" as const, label: "クオータ", href: usageHref() }]
       : []),
@@ -426,6 +426,9 @@ function UsageTabs({ state }: { state: AppState }) {
           },
         ]
       : []),
+    // The catalog rides this strip rather than the topbar: it is host-wide
+    // chrome the same way quota is, and needs no icon of its own (kawaz r119m7).
+    { tab: "catalog" as const, label: "カタログ", href: catalogHref() },
   ];
   // A single tab is not a choice; showing one lone tab strip would be chrome
   // with nothing to switch between.
@@ -436,9 +439,11 @@ function UsageTabs({ state }: { state: AppState }) {
         <button
           key={entry.tab}
           type="button"
-          aria-current={state.usageTab === entry.tab ? "page" : undefined}
+          aria-current={entry.tab !== "catalog" && state.usageTab === entry.tab ? "page" : undefined}
           onClick={() => {
-            if (state.usageTab !== entry.tab) pushNavigation(entry.href);
+            if (entry.tab === "catalog" || state.usageTab !== entry.tab) {
+              pushNavigation(entry.href);
+            }
           }}
         >
           {entry.label}
