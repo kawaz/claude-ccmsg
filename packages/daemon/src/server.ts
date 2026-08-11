@@ -50,6 +50,7 @@ import {
   fsReadWorkspace,
   fsStatBatch,
   fsWrite,
+  realpathOrSelf,
   validateRepoRoot,
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
@@ -1328,7 +1329,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           return;
         }
         const transcriptPath = validateTranscriptPath(req.sid, req.transcript_path);
-        const cwd = req.cwd ?? "";
+        // A session names its own cwd, so the spelling is whatever its shell
+        // had (`/tmp/x` where the real directory is `/private/tmp/x`).
+        // `repo_root` is realpath'd by validateRepoRoot before adoption, and
+        // every containment check downstream compares against realpath'd
+        // roots — so canonicalize cwd at adoption too, and the two halves of
+        // `repo_root ?? cwd` stop disagreeing about how a path is spelled.
+        // This matters most for sessions that never announce a repo_root:
+        // there the raw cwd *is* the containment root the webui hands back to
+        // the daemon. Unresolvable cwd keeps its literal spelling (fail-open,
+        // same as before) and resolveRoot rejects it later as it always did.
+        const cwd = await realpathOrSelf(req.cwd ?? "");
         const repoRoot = validateRepoRoot(cwd, req.repo_root);
         newId = {
           role: "session",

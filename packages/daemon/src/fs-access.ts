@@ -161,6 +161,22 @@ function resolveRoot(
   }
 }
 
+/** realpath, or the input unchanged when it cannot be resolved (missing path,
+ *  permission denied). Every containment root in this module is realpath'd, so
+ *  anything compared against one — an fs_stat_batch input, a session's
+ *  self-declared cwd — has to be canonicalized the same way or a spelling that
+ *  goes through a symlink (`/tmp` -> `/private/tmp` on macOS) fails a compare
+ *  it should have passed. Falling back to the literal spelling keeps the
+ *  unresolvable case behaving exactly as it did before canonicalization.
+ *  Async per DR-0029: both callers sit on a request path. */
+export async function realpathOrSelf(p: string): Promise<string> {
+  try {
+    return await fs.promises.realpath(p);
+  } catch {
+    return p;
+  }
+}
+
 // --- containment ---------------------------------------------------------
 
 interface ContainedOk {
@@ -806,12 +822,18 @@ export async function fsStatBatch(
       //    → rebase to a root-relative string and hand off to the same
       //    resolver fs_read uses. Skip when the input equals the root itself
       //    (that's a directory, never a file).
+      //    The containment root is realpath-resolved (resolveRoot), so the
+      //    input must be too before the prefix compare — otherwise a spelling
+      //    that reaches the root through a symlink (`/tmp/...` on macOS, where
+      //    `/tmp` -> `/private/tmp`) fails the string compare and the path
+      //    silently degrades to `null` even though fs_read would serve it.
       if (containmentRoot) {
         const prefix = containmentRoot.endsWith(path.sep)
           ? containmentRoot
           : containmentRoot + path.sep;
-        if (normalized.startsWith(prefix)) {
-          const rel = normalized.slice(prefix.length);
+        const canonical = await realpathOrSelf(normalized);
+        if (canonical.startsWith(prefix)) {
+          const rel = canonical.slice(prefix.length);
           if (rel !== "") {
             const r = await fsResolveForServe(sessions, statusStore, sid, rel, "contained");
             if (r.ok) return { kind: "contained", path: rel };

@@ -2882,6 +2882,56 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
   );
 
   test(
+    "symlink 綴りの絶対パスも contained になる (containment root は realpath 済み)",
+    async () => {
+      // A session's cwd spelling comes from its shell, so it can reach the
+      // real directory through a symlink (`/tmp` -> `/private/tmp` on macOS).
+      // The containment root is realpath-resolved, so the probe input has to
+      // be too — otherwise the string compare fails and a perfectly readable
+      // file degrades to `null` (no FileViewer link) for every session whose
+      // cwd is spelled that way.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      try {
+        const real = path.join(parent, "real");
+        fs.mkdirSync(real);
+        fs.writeFileSync(path.join(real, "note.md"), "note");
+        const link = path.join(parent, "link");
+        fs.symlinkSync(real, link);
+
+        const session = await connect(ctx.sock);
+        await session.request({
+          op: "hello",
+          role: "session",
+          sid: "A",
+          repo: "r",
+          ws: "w",
+          cwd: link,
+        });
+        const user = await userAt(ctx);
+        const res = await user.request<{
+          ok: true;
+          results: ({ kind: string; path: string } | null)[];
+        }>({
+          op: "fs_stat_batch",
+          sid: "A",
+          paths: [path.join(link, "note.md"), path.join(real, "note.md")],
+        });
+        // Both spellings answer contained, and both report the same root-relative
+        // path — the response never carries the symlinked spelling onward.
+        expect(res.results).toEqual([
+          { kind: "contained", path: "note.md" },
+          { kind: "contained", path: "note.md" },
+        ]);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
     "invalid_args: non-array or oversized paths list",
     async () => {
       // Whole-request contract violations still fail the batch — the caller
@@ -2909,6 +2959,80 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+});
+
+// hello 時の cwd 正規化: peers が配る cwd は realpath 済み。repo_root だけが
+// 正規化され cwd は生綴りのまま、という非対称を無くすための保証
+// (webui は repo_root 未申告セッションで cwd をそのまま containment root
+// として daemon に投げ返すため、綴りがずれると同種の 403 が再発する)。
+describe("session cwd canonicalization (hello)", () => {
+  test(
+    "repo_root 未申告でも peers.cwd は realpath 済み、その綴りで fs_read が通る",
+    async () => {
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      try {
+        const real = path.join(parent, "real");
+        fs.mkdirSync(real);
+        fs.writeFileSync(path.join(real, "note.md"), "note");
+        const link = path.join(parent, "link");
+        fs.symlinkSync(real, link);
+
+        const session = await sessionAt(ctx, "A", link);
+        const peers = await session.request<{
+          ok: true;
+          peers: { sid: string; cwd: string; repo_root?: string }[];
+        }>({ op: "peers" });
+        const self = peers.peers.find((p) => p.sid === "A")!;
+        expect(self.repo_root).toBeUndefined();
+        expect(self.cwd).toBe(real);
+
+        // The advertised cwd is the client's containment root here, so it must
+        // be the same spelling the daemon checks against.
+        const read = await session.request<{ ok: true; content: string }>({
+          op: "fs_read",
+          sid: "A",
+          path: "note.md",
+        });
+        expect(read.content).toBe("note");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
+  test(
+    "symlink 綴りの cwd でも repo_root (container) は採用される",
+    async () => {
+      // validateRepoRoot's strict-ancestor check already realpath'd both
+      // sides, so adoption was never the broken half — this pins that
+      // canonicalizing cwd earlier doesn't regress it.
+      const ctx = await startTestDaemon();
+      const parent = fs.realpathSync(mkfixture());
+      try {
+        const container = path.join(parent, "container");
+        const main = path.join(container, "main");
+        fs.mkdirSync(main, { recursive: true });
+        const link = path.join(parent, "link-to-main");
+        fs.symlinkSync(main, link);
+
+        const session = await sessionAtWithRoot(ctx, "A", link, container);
+        const peers = await session.request<{
+          ok: true;
+          peers: { sid: string; cwd: string; repo_root?: string }[];
+        }>({ op: "peers" });
+        const self = peers.peers.find((p) => p.sid === "A")!;
+        expect(self.cwd).toBe(main);
+        expect(self.repo_root).toBe(container);
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(parent, { recursive: true, force: true });
       }
     },
     T,
