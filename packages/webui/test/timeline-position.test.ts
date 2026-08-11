@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   positionLandingKey,
   shouldLandOnPosition,
+  shouldReturnToHead,
   togglePosition,
 } from "../src/client/components/timeline-position.ts";
 
@@ -39,6 +40,27 @@ describe("shouldLandOnPosition (kawaz r76 m71: pin 位置への着地は遷移�
   // 組み合わせで別 TL のキーが衝突しうるので、境界を保つことを固定する。
   test("キーは sid と position の境界を保つ", () => {
     expect(positionLandingKey("s1", "u-1")).not.toBe(positionLandingKey("s1 u", "-1"));
+  });
+});
+
+describe("shouldReturnToHead (kawaz r115 m4: 最下部が見えていても選択できる)", () => {
+  // 本 feature の存在理由。/head 表示中に画面内のバルーンをクリックすると、
+  // pin が立った直後に「最下部付近だ」と検知されて head へ戻され、実質
+  // 選択できなかった。pin 直後 (= ユーザはまだスクロールしていない) は戻さない。
+  test("pin 直後 (ユーザ未スクロール) は head に戻さない", () => {
+    expect(shouldReturnToHead("u-1", false)).toBe(false);
+  });
+
+  // 従来の「最下部まで降りたら末尾追従に復帰」は残す。判定材料はユーザ自身の
+  // スクロール操作 (wheel / touch / キー / スクロールバー) があったかどうか。
+  test("pin 後にユーザがスクロールして最下部へ来たら head に戻す", () => {
+    expect(shouldReturnToHead("u-1", true)).toBe(true);
+  });
+
+  // もともと head なら「戻す」対象の pin が無い (URL を書き換える必要もない)。
+  test("既に head なら戻す対象がない", () => {
+    expect(shouldReturnToHead("head", true)).toBe(false);
+    expect(shouldReturnToHead("head", false)).toBe(false);
   });
 });
 

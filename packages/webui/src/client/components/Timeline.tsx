@@ -28,7 +28,12 @@ import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../ut
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
-import { positionLandingKey, shouldLandOnPosition, togglePosition } from "./timeline-position.ts";
+import {
+  positionLandingKey,
+  shouldLandOnPosition,
+  shouldReturnToHead,
+  togglePosition,
+} from "./timeline-position.ts";
 import {
   agentCommunicationCount,
   ccmsgMessageCount,
@@ -2678,10 +2683,21 @@ export function Timeline({
   // 「今だと msgid を外す方法が無い」)。head に戻しても**その場ではスクロール
   // しない** — 末尾ジャンプは「Timeline タブが再表示された」時だけの挙動で、
   // 選択解除は URL と装飾を外すだけ。
+  // 画面内のバルーンをクリックした選択では **スクロールしない** (kawaz r115 m4:
+  // 「クリックした瞬間に勝手に一番上へ寄せられると、ダブルクリックの単語選択が
+  // できないし、2 クリック目が別の場所に当たって事故る」)。着地スクロールは
+  // 「外から その位置へ来た」時 (直リンク / 戻る・進む) の挙動なので、クリック
+  // 発の遷移は着地済みとして先にマークしておき、下の着地 effect を空振りさせる。
+  const landedPositionRef = useRef<string | null>(null);
+  // pin を張ってからユーザ自身がスクロールしたか (wheel / touch / キー)。
+  // 最下部検知で pin を外してよいかの判定に使う (shouldReturnToHead)。
+  const userScrolledSincePinRef = useRef(false);
   const selectPosition = useCallback(
     (uuid: string) => {
       if (agent && (agent.agentId || agent.teammate)) return;
       const next = togglePosition(currentPosition, uuid);
+      landedPositionRef.current = next === "head" ? null : positionLandingKey(sid, next);
+      userScrolledSincePinRef.current = false;
       rememberTimelinePosition(sid, next);
       replaceNavigation(timelineHref(sid, next));
     },
@@ -3369,8 +3385,18 @@ export function Timeline({
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     isNearBottomRef.current = distance < NEAR_BOTTOM_PX;
     if (isNearBottomRef.current) {
+      // pin 中は「ユーザが自分でスクロールして最下部に来た」時だけ head に戻す。
+      // pin 直後 (= 画面内クリックでの選択) にここを通すと、選択した瞬間に URL と
+      // 装飾が剥がされて **最下部が見えている間はメッセージを選べない** (kawaz
+      // r115 m4)。この effect は currentPosition の変化でも再実行されるので、
+      // scroll イベントが 1 度も来ていなくてもここへ来る。
+      if (currentPosition !== "head") {
+        if (!shouldReturnToHead(currentPosition, userScrolledSincePinRef.current)) return;
+        rememberTimelinePosition(sid, "head");
+        replaceNavigation(timelineHref(sid));
+        return;
+      }
       rememberTimelinePosition(sid, "head");
-      if (currentPosition !== "head") replaceNavigation(timelineHref(sid));
       return;
     }
     const viewportTop = el.getBoundingClientRect().top;
@@ -3404,9 +3430,28 @@ export function Timeline({
         ticking = false;
       });
     };
+    // ユーザ自身のスクロール操作だけを拾う (programmatic scroll はこれらの
+    // イベントを発火しない — settledScroll の中断判定と同じ考え方)。pin 中の
+    // 「最下部まで自分で降りてきたら head に戻す」判定に使う。
+    const onUserScrollIntent = () => {
+      userScrolledSincePinRef.current = true;
+    };
     container.addEventListener("scroll", onScroll, { passive: true });
+    container.addEventListener("wheel", onUserScrollIntent, { passive: true });
+    container.addEventListener("touchmove", onUserScrollIntent, { passive: true });
+    container.addEventListener("keydown", onUserScrollIntent);
+    // スクロールバーのドラッグは wheel も touch も出さないので mousedown で拾う。
+    // バルーンのクリックでも発火するが、click は mousedown の後なので
+    // selectPosition のリセットが最後に効く (pin 直後は false のまま)。
+    container.addEventListener("mousedown", onUserScrollIntent);
     checkNearBottom();
-    return () => container.removeEventListener("scroll", onScroll);
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("wheel", onUserScrollIntent);
+      container.removeEventListener("touchmove", onUserScrollIntent);
+      container.removeEventListener("keydown", onUserScrollIntent);
+      container.removeEventListener("mousedown", onUserScrollIntent);
+    };
   }, [userTurnKeys, checkNearBottom]);
 
   // セッション切替時、前セッションの「どこまで読んだか (byte end)」を引き
@@ -3500,8 +3545,9 @@ export function Timeline({
   // に装飾を付与する程度の意味」)。この effect は tail 追記や markdown /
   // highlight 差し替えによる `parsed` の変化でも走るので、着地済みのキーを
   // ref に覚えて再スクロールを止める — さもないと pin したまま上を読んでいる
-  // 最中に TL が更新されるたび pin 位置へ引き戻される。
-  const landedPositionRef = useRef<string | null>(null);
+  // 最中に TL が更新されるたび pin 位置へ引き戻される。着地キーの ref は
+  // selectPosition (クリック選択で先に着地済みとマークする側) と共有するため
+  // 上で宣言している。
   useEffect(() => {
     // head に戻った (= 選択解除 / 末尾追いつき) 時点で着地履歴を捨てる。同じ
     // uuid を選び直したら、それは新しい遷移なので改めて着地させる。
@@ -3519,6 +3565,9 @@ export function Timeline({
     const key = positionLandingKey(sid, currentPosition);
     if (!shouldLandOnPosition(landedPositionRef.current, key)) return;
     landedPositionRef.current = key;
+    // 外から来た pin (直リンク / 戻る・進む)。着地スクロールはユーザ操作では
+    // ないので、ここを起点に「自分でスクロールしたか」を数え直す。
+    userScrolledSincePinRef.current = false;
     // 着地は「対象が TL 表示領域の一番上 (toolbar 直下)」(kawaz r76 m47) —
     // 画面中央ではなく先頭に置く。scrollIntoView({block:"center"}) では
     // sticky toolbar を考慮できず、そもそも中央になってしまうので、👤 nav
