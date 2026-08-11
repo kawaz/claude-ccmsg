@@ -32,9 +32,11 @@ status push (transcript 1 行ごと、`fs.watch` コールバック内) で毎�
 
 `2026-08-12-blocking-io-audit-full` findings の続き。非同期化 + mtime ベースキャッシュ (`origins-file.ts` の型を踏襲) が自然な解だが、キャッシュ導入が DR-0029 の「まとめ処理は kawaz 承認必須」に当たるかの確認を先に行うこと。
 
+DR-0029 確認済み (2026-08-12): 「まとめ処理」= 時間窓集約・複数ジョブの運命共同体化を指す (§まとめ処理節)。mtime ベースキャッシュはメモ化であり束ねも遅延もしないため承認不要と判断。実装は remaining-sync-io-medium-low (同一ファイル session-status.ts を触る) の完了後に直列で着手する。
+
 ## 受け入れ条件
 
-- [ ] DR-0029 の「まとめ処理は kawaz 承認必須」への該当有無を確認し、必要なら承認を得る
+- [x] DR-0029 の「まとめ処理は kawaz 承認必須」への該当有無を確認し、必要なら承認を得る
 - [ ] `readAgentTree` / `discoverWorkspaceFolders` の同期 IO (readdirSync/readFileSync/statSync) を非同期化
 - [ ] mtime ベースキャッシュ導入で push ごとの再走査コストを削減
 
