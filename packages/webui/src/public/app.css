@@ -32,6 +32,41 @@
   --danger: #dc2626;
   --warn: #b45309;
 
+  /* Spacing scale — padding / margin / gap はこの段だけを参照する
+   * (規約と例外は docs/design/design-tokens.md が正本)。
+   * 段の値は既存 UI の実測分布から起こしてあり、密な小段 (1〜11) が
+   * リスト行やバッジ、大きい段 (12〜17) がパネルや画面余白に対応する。 */
+  --space-1: 0.1rem;
+  --space-2: 0.15rem;
+  --space-3: 0.2rem;
+  --space-4: 0.25rem;
+  --space-5: 0.3rem;
+  --space-6: 0.35rem;
+  --space-7: 0.4rem;
+  --space-8: 0.5rem;
+  --space-9: 0.6rem;
+  --space-10: 0.7rem;
+  --space-11: 0.75rem;
+  --space-12: 0.9rem;
+  --space-13: 1rem;
+  --space-14: 1.25rem;
+  --space-15: 1.5rem;
+  --space-16: 2rem;
+  --space-17: 3rem;
+
+  /* Type scale — font-size はこの段だけを参照する。本文・UI ラベルは
+   * 3xs〜lg に集中し、xl 以上は見出し / 空状態のタイトル用。 */
+  --font-size-3xs: 0.6rem;
+  --font-size-2xs: 0.65rem;
+  --font-size-xs: 0.7rem;
+  --font-size-sm: 0.75rem;
+  --font-size-md: 0.8rem;
+  --font-size-lg: 0.85rem;
+  --font-size-xl: 0.9rem;
+  --font-size-2xl: 1rem;
+  --font-size-3xl: 1.15rem;
+  --font-size-4xl: 1.25rem;
+
   /* In-view search (DR-0022) — one background/foreground pair per query
    * word, cycled by SEARCH_PALETTE_SIZE (in-view-search.ts). */
   --search-color-1: #ffea00;
@@ -128,8 +163,8 @@ a {
 #topbar {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-11);
+  padding: var(--space-8) var(--space-11);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   /* iOS Safari のダブルタップズームと 300ms tap delay を防止 (kawaz r17 mid=60、2026-07-15)。 */
@@ -137,14 +172,14 @@ a {
 }
 
 #topbar h1 {
-  font-size: 1rem;
+  font-size: var(--font-size-2xl);
   margin: 0;
   flex: 1;
   /* TopbarTitle: avatar + テキストの横並び。長い room title / repo 名は
    * 1 行のまま ellipsis で切る (スマホ幅で topbar が縦に膨れないように)。 */
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -158,7 +193,7 @@ a {
   display: none;
   background: none;
   border: none;
-  font-size: 1.25rem;
+  font-size: var(--font-size-4xl);
   color: var(--fg);
   cursor: pointer;
 }
@@ -170,7 +205,7 @@ a {
 .app-history-controls {
   display: flex;
   align-items: center;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 #app-back,
@@ -179,10 +214,10 @@ a {
 #app-usage {
   background: none;
   border: none;
-  font-size: 1.15rem;
+  font-size: var(--font-size-3xl);
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 0 0.25rem;
+  padding: 0 var(--space-4);
   line-height: 1;
 }
 
@@ -204,8 +239,8 @@ a {
 }
 
 .status {
-  font-size: 0.8rem;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-2) var(--space-8);
   border-radius: 999px;
 }
 .status-ok {
@@ -239,7 +274,7 @@ a {
    * 現象の根治)。長い行は下の #rooms-panel / #sessions-panel が個別に
    * 横スクロールを担う。 */
   overflow-x: hidden;
-  padding: 0.5rem;
+  padding: var(--space-8);
 }
 
 /* sidebar 右のドラッグ splitter (desktop のみ、PaneSplitter)。従来の
@@ -254,14 +289,14 @@ a {
 }
 
 #sidebar h2 {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--fg-muted);
-  margin: 1rem 0 0.25rem;
+  margin: var(--space-13) 0 var(--space-4);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 #peers-refresh {
@@ -269,7 +304,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
 }
 
 #peers-sort {
@@ -278,9 +313,9 @@ a {
   border-radius: 999px;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   line-height: 1;
-  padding: 0.15rem 0.4rem;
+  padding: var(--space-2) var(--space-7);
 }
 
 /* DR-0021 Phase 2: Sidebar's SESSIONS-heading search toggle (Sidebar.tsx's
@@ -293,7 +328,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   line-height: 1;
 }
 
@@ -340,14 +375,14 @@ a {
  * is a plain div now (was the <ul> before this task), the list-reset above
  * applies to each section's own .session-section-list <ul> instead. */
 .session-section + .session-section {
-  margin-top: 0.4rem;
+  margin-top: var(--space-7);
 }
 
 .session-section-summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   color: var(--fg-muted);
 }
 
@@ -396,8 +431,8 @@ a {
 /* 行内に出す停止理由。"API Error: 500 {...}" のような長い JSON が来るので
  * 必ず 1 行に省略する (全文は行の title 属性)。 */
 .session-error-text {
-  padding-left: 1.3rem;
-  font-size: 0.72rem;
+  padding-left: var(--space-14);
+  font-size: var(--font-size-xs);
   color: var(--danger);
   white-space: nowrap;
   overflow: hidden;
@@ -414,7 +449,7 @@ a {
 #room-list-archived li a,
 #room-list-1on1 li a {
   display: block;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   border-radius: 0.4rem;
   text-decoration: none;
   color: var(--fg);
@@ -440,8 +475,8 @@ a {
 #room-list-inactive,
 #room-list-archived,
 #room-list-1on1 {
-  margin-top: 0.5rem;
-  font-size: 0.8rem;
+  margin-top: var(--space-8);
+  font-size: var(--font-size-md);
 }
 
 /* kawaz r55 mid=22: 開閉トグル (▶/▽ の details marker) を表示する。以前は
@@ -453,7 +488,7 @@ a {
 #room-list-archived summary,
 #room-list-1on1 summary {
   cursor: pointer;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   color: var(--fg-muted);
 }
 
@@ -477,7 +512,7 @@ a {
  * cwd), instead of the previous single-line `<a>` — see SessionList.tsx's
  * SessionRowItem. */
 .session-row {
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.4rem;
 }
 
@@ -533,13 +568,13 @@ a {
 .session-line1 {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 .session-main-link {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   flex: 1;
   min-width: 0;
   text-decoration: none;
@@ -551,22 +586,22 @@ a {
 }
 
 .session-repo-ws {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   white-space: nowrap;
 }
 
 .session-branch {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  margin-left: 0.35rem;
+  margin-left: var(--space-6);
 }
 
 .session-badge {
   flex-shrink: 0;
-  font-size: 0.6rem;
+  font-size: var(--font-size-3xs);
   line-height: 1;
-  padding: 0.15rem 0.35rem;
+  padding: var(--space-2) var(--space-6);
   border-radius: 999px;
   white-space: nowrap;
 }
@@ -606,17 +641,17 @@ a {
 
 .session-idle {
   flex-shrink: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   color: var(--fg-muted);
   opacity: 0.65;
   white-space: nowrap;
 }
 
 .session-line2 {
-  padding-left: 1.3rem;
+  padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
+  gap: var(--space-7);
   min-width: 0;
 }
 
@@ -624,7 +659,7 @@ a {
  * r55 mid=20 で 2 行目単独に。sid/cwd より価値が高い情報なので少し大きめ
  * (0.75rem)、色も fg (accent 背景でも読める) に格上げ。長い名前は ellipsis。 */
 .session-line2-ws {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -636,7 +671,7 @@ a {
   background: none;
   border: none;
   padding: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
@@ -653,12 +688,12 @@ a {
  * 折り返し表示 (session-cwd-full)。sid ボタンだけは stopPropagation で
  * cwd 折り返しトグルと分離。 */
 .session-line3 {
-  padding-left: 1.3rem;
+  padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
+  gap: var(--space-7);
   min-width: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   opacity: 0.7;
   cursor: pointer;
@@ -699,9 +734,9 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 0 0.2rem;
+  padding: 0 var(--space-3);
 }
 
 .pinned-unpin-btn:hover {
@@ -716,13 +751,13 @@ a {
 .room-title {
   display: block;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   white-space: nowrap;
 }
 
 .room-meta {
   display: block;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   opacity: 0.75;
 }
 
@@ -735,15 +770,15 @@ a {
 .room-kind-badge {
   display: inline-block;
   flex-shrink: 0;
-  font-size: 0.6rem;
+  font-size: var(--font-size-3xs);
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.05em;
-  padding: 0.15rem 0.35rem;
+  padding: var(--space-2) var(--space-6);
   border-radius: 999px;
   background: var(--accent);
   color: var(--accent-fg);
-  margin-right: 0.25rem;
+  margin-right: var(--space-4);
   vertical-align: 0.05em;
 }
 
@@ -761,7 +796,7 @@ a {
 #session-search-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .session-search-header {
@@ -772,7 +807,7 @@ a {
 
 .session-search-header h3 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 .session-search-close {
@@ -780,7 +815,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
 }
 
@@ -791,15 +826,15 @@ a {
 .session-search-form {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .session-search-form input[type="text"],
 .session-search-query {
   width: 100%;
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.35rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -809,7 +844,7 @@ a {
 .session-search-query-row {
   display: flex;
   align-items: flex-start;
-  gap: 0.35rem;
+  gap: var(--space-6);
 }
 
 .session-search-query {
@@ -824,16 +859,16 @@ a {
 .session-search-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  font-size: 0.75rem;
+  gap: var(--space-11);
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
 .session-search-toggle {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   cursor: pointer;
 }
@@ -841,16 +876,16 @@ a {
 .session-search-config-dirs {
   border: 1px solid var(--border);
   border-radius: 0.35rem;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .session-search-config-dirs legend {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  padding: 0 0.2rem;
+  padding: 0 var(--space-3);
 }
 
 .session-search-config-dirs .session-search-toggle {
@@ -858,7 +893,7 @@ a {
 }
 
 .session-search-mtime {
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .session-search-mtime input {
@@ -871,8 +906,8 @@ a {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -883,14 +918,14 @@ a {
 
 .session-search-error {
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   margin: 0;
 }
 
 .session-search-empty,
 .session-search-truncated {
   color: var(--fg-muted);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   margin: 0;
 }
 
@@ -900,7 +935,7 @@ a {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 /* Block-style result row (DR-0021 §2.3): the whole block is one click target
@@ -912,7 +947,7 @@ a {
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 0.4rem;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   background: var(--bg-alt);
   cursor: pointer;
 }
@@ -925,52 +960,52 @@ a {
 .session-search-hit-head {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
+  gap: var(--space-6);
+  font-size: var(--font-size-md);
   font-weight: 600;
 }
 
 .session-search-hit-ws {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   font-weight: 400;
   color: var(--fg-muted);
 }
 
 .session-search-hit-sid {
   margin-left: auto;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
 }
 
 .session-search-hit-pinned {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
 }
 
 .session-search-hit-meta {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  margin-top: 0.15rem;
+  margin-top: var(--space-2);
 }
 
 .session-search-hit-matches {
-  margin-top: 0.35rem;
+  margin-top: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .session-search-match {
   display: flex;
   align-items: baseline;
-  gap: 0.35rem;
-  font-size: 0.75rem;
+  gap: var(--space-6);
+  font-size: var(--font-size-sm);
 }
 
 .session-search-match-badge {
   flex-shrink: 0;
-  font-size: 0.6rem;
+  font-size: var(--font-size-3xs);
   font-weight: 700;
   line-height: 1.3;
   width: 1.1rem;
@@ -1000,7 +1035,7 @@ a {
 #session-creator-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .session-creator-header {
@@ -1011,7 +1046,7 @@ a {
 
 .session-creator-header h3 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 .session-creator-close {
@@ -1019,7 +1054,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
 }
 
@@ -1028,27 +1063,27 @@ a {
 }
 
 .session-creator-guidance {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .session-creator-form {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-9);
 }
 
 .session-creator-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .session-creator-label {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1059,8 +1094,8 @@ a {
 .session-creator-prompt {
   width: 100%;
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.35rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -1076,12 +1111,12 @@ a {
  * 目視で分かるように。入力自体の枠は .session-creator-field input と共通。 */
 .session-creator-resume-input {
   font-family: ui-monospace, monospace;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
 }
 
 /* 入力の下に添える淡色の但し書き (エラーではないので error 色は使わない)。 */
 .session-creator-hint {
-  font-size: 0.68rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -1091,13 +1126,13 @@ a {
 .session-creator-cwd-confirmed {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .session-creator-cwd-value {
   flex: 1;
   min-width: 0;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1110,9 +1145,9 @@ a {
   border-radius: 999px;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 0.2rem 0.4rem;
+  padding: var(--space-3) var(--space-7);
 }
 
 .session-creator-cwd-edit:hover {
@@ -1131,9 +1166,9 @@ a {
   border-radius: 999px;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   line-height: 1;
-  padding: 0.15rem 0.4rem;
+  padding: var(--space-2) var(--space-7);
 }
 
 .session-creator-default-btn:hover {
@@ -1146,8 +1181,8 @@ a {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -1157,14 +1192,14 @@ a {
 }
 
 .session-creator-status {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   margin: 0;
 }
 
 .session-creator-error {
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   margin: 0;
 }
 
@@ -1174,20 +1209,20 @@ a {
 .session-creator-result {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-5);
   border-top: 1px solid var(--border);
-  padding-top: 0.5rem;
+  padding-top: var(--space-8);
 }
 
 .session-creator-result-summary {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
 .session-creator-result-label {
   margin: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1195,13 +1230,13 @@ a {
 
 .session-creator-result-body {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   background: var(--bg-secondary, var(--bg));
   border: 1px solid var(--border);
   border-radius: 0.35rem;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   max-height: 12rem;
   overflow-y: auto;
 }
@@ -1213,7 +1248,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   line-height: 1;
 }
 
@@ -1229,7 +1264,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   line-height: 1;
 }
 
@@ -1244,7 +1279,7 @@ a {
 #room-creator-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .room-creator-header {
@@ -1255,7 +1290,7 @@ a {
 
 .room-creator-header h3 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 .room-creator-close {
@@ -1263,7 +1298,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
 }
 
@@ -1274,17 +1309,17 @@ a {
 .room-creator-form {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: var(--space-9);
 }
 
 .room-creator-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .room-creator-label {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1293,8 +1328,8 @@ a {
 .room-creator-field input[type="text"] {
   width: 100%;
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.35rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -1304,7 +1339,7 @@ a {
 .room-creator-members {
   border: 1px solid var(--border);
   border-radius: 0.35rem;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   margin: 0;
 }
 
@@ -1316,14 +1351,14 @@ a {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--space-2);
 }
 
 .room-creator-member {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.8rem;
+  gap: var(--space-7);
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -1336,11 +1371,11 @@ a {
 
 .room-creator-member-sid {
   color: var(--fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
 }
 
 .room-creator-empty {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   margin: 0;
 }
@@ -1351,8 +1386,8 @@ a {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -1363,7 +1398,7 @@ a {
 
 .room-creator-error {
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   margin: 0;
 }
 
@@ -1377,12 +1412,12 @@ a {
 .cwd-tree {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-5);
   max-height: 14rem;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 0.35rem;
-  padding: 0.3rem;
+  padding: var(--space-5);
 }
 
 .cwd-tree-root,
@@ -1395,7 +1430,7 @@ a {
 .cwd-tree-row-line {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .cwd-tree-row {
@@ -1403,7 +1438,7 @@ a {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   background: none;
   border: none;
   color: var(--fg);
@@ -1412,10 +1447,10 @@ a {
   /* r46 m38: モバイル (Apple HIG 44pt 目安) のタッチターゲット確保のため
    * base の font/padding を一段上げる。desktop でも視認性が上がる方向で悪影響
    * は無いと判断。coarse pointer では下の @media で min-height 44px を追加。 */
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1.4;
   text-align: left;
-  padding: 0.3rem 0.4rem;
+  padding: var(--space-5) var(--space-7);
   border-radius: 0.3rem;
   overflow-wrap: anywhere;
 }
@@ -1439,9 +1474,9 @@ a {
   color: var(--fg-muted);
   cursor: pointer;
   /* r46 m38: 上と同じくタッチ用に一段拡大。 */
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   line-height: 1;
-  padding: 0.3rem 0.7rem;
+  padding: var(--space-5) var(--space-10);
 }
 
 .cwd-tree-select:hover {
@@ -1456,9 +1491,9 @@ a {
 .cwd-tree-loading,
 .cwd-tree-error,
 .cwd-tree-empty {
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  padding: 0.1rem 0.3rem;
+  padding: var(--space-1) var(--space-5);
 }
 
 .cwd-tree-error {
@@ -1472,14 +1507,14 @@ a {
 @media (pointer: coarse) {
   .cwd-tree-row {
     min-height: 44px;
-    padding: 0.55rem 0.4rem;
-    font-size: 0.9rem;
+    padding: var(--space-9) var(--space-7);
+    font-size: var(--font-size-xl);
   }
   .cwd-tree-select {
     min-height: 44px;
     min-width: 3.5rem;
-    padding: 0.55rem 0.9rem;
-    font-size: 0.8rem;
+    padding: var(--space-9) var(--space-12);
+    font-size: var(--font-size-md);
   }
 }
 
@@ -1493,7 +1528,7 @@ a {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  padding: 0.75rem 1rem;
+  padding: var(--space-11) var(--space-13);
 }
 
 #empty-state {
@@ -1501,17 +1536,17 @@ a {
 }
 
 .room-header h2 {
-  margin: 0 0 0.4rem;
+  margin: 0 0 var(--space-7);
 }
 
 .room-title {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .room-title h2 {
-  margin: 0 0 0.4rem;
+  margin: 0 0 var(--space-7);
 }
 
 .room-title-edit-btn {
@@ -1519,8 +1554,8 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.85rem;
-  padding: 0 0.2rem 0.4rem;
+  font-size: var(--font-size-lg);
+  padding: 0 var(--space-3) var(--space-7);
   line-height: 1;
 }
 
@@ -1532,17 +1567,17 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.4rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-7);
 }
 
 .room-title-edit input {
   font: inherit;
-  font-size: 1.1rem;
+  font-size: var(--font-size-3xl);
   font-weight: 600;
   width: 100%;
   max-width: 24rem;
-  padding: 0.2rem 0.4rem;
+  padding: var(--space-3) var(--space-7);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -1558,8 +1593,8 @@ a {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.85rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-lg);
   cursor: pointer;
 }
 
@@ -1569,8 +1604,8 @@ a {
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   color: var(--fg-muted);
-  padding: 0.3rem 0.75rem;
-  font-size: 0.85rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-lg);
   cursor: pointer;
 }
 
@@ -1591,8 +1626,8 @@ a {
 .room-title-edit-error {
   display: block;
   width: 100%;
-  margin-top: 0.2rem;
-  font-size: 0.85rem;
+  margin-top: var(--space-3);
+  font-size: var(--font-size-lg);
   color: var(--danger);
 }
 
@@ -1600,8 +1635,8 @@ a {
 .room-invite-error,
 .room-invite-notice {
   display: block;
-  margin-top: 0.3rem;
-  font-size: 0.85rem;
+  margin-top: var(--space-5);
+  font-size: var(--font-size-lg);
 }
 
 .room-invite-error {
@@ -1618,7 +1653,7 @@ a {
 .room-header-top {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .room-header-top .room-title {
@@ -1633,8 +1668,8 @@ a {
   border-radius: 0.4rem;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-8);
   line-height: 1.6;
 }
 
@@ -1668,8 +1703,8 @@ a {
 .member-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
+  gap: var(--space-6);
+  margin-bottom: var(--space-11);
 }
 
 .chip {
@@ -1677,14 +1712,14 @@ a {
   background: var(--bg-alt);
   color: var(--fg);
   border-radius: 999px;
-  padding: 0.15rem 0.6rem;
-  font-size: 0.75rem;
+  padding: var(--space-2) var(--space-9);
+  font-size: var(--font-size-sm);
   cursor: pointer;
   /* avatar と名前の間隔 (Avatar 自身の margin は廃止 — AvatarLabel 導入に
    * 伴い、間隔は常にコンテナの gap で管理する方針、kawaz 2026-07-15)。 */
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .chip-user {
@@ -1712,7 +1747,7 @@ a {
 .chip-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 0.1rem;
+  gap: var(--space-1);
 }
 
 /* DR-0012 kick button (admin User only, see MemberChip.tsx — never rendered
@@ -1725,9 +1760,9 @@ a {
   border: none;
   color: var(--danger);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   line-height: 1;
-  padding: 0.15rem 0.25rem;
+  padding: var(--space-2) var(--space-4);
   border-radius: 999px;
 }
 
@@ -1754,9 +1789,9 @@ a {
  * same @media (hover: none) always-on fallback for touch devices. */
 .chip-timeline-link {
   opacity: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   line-height: 1;
-  padding: 0.15rem 0.25rem;
+  padding: var(--space-2) var(--space-4);
   border-radius: 999px;
   color: var(--accent);
   text-decoration: none;
@@ -1782,7 +1817,7 @@ a {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
   /* 最下部に composer パネル高相当の空き (kawaz r17 mid=24,25、2026-07-15):
    * floating composer がスマホで末尾メッセージを隠す問題の room 側。
    * .tl-lines の padding-bottom と同じ意図のただの余白。 */
@@ -1791,7 +1826,7 @@ a {
 
 .msg {
   border-radius: 0.5rem;
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-7) var(--space-9);
   background: var(--bg-alt);
   max-width: 90%;
 }
@@ -1837,10 +1872,10 @@ a {
 .msg-meta {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.7rem;
+  gap: var(--space-8);
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  margin-bottom: 0.15rem;
+  margin-bottom: var(--space-2);
 }
 
 /* アイコン + 名前ラベルの一体コンポーネント (avatar.tsx AvatarLabel、kawaz
@@ -1849,7 +1884,7 @@ a {
 .avatar-label {
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -1884,13 +1919,13 @@ a {
 .msg-body {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
 }
 
 .event {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
-  padding: 0.15rem 0;
+  padding: var(--space-2) 0;
 }
 
 .event-link a {
@@ -1900,17 +1935,17 @@ a {
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-6);
   border-top: 1px solid var(--border);
-  padding-top: 0.5rem;
-  margin-top: 0.75rem;
+  padding-top: var(--space-8);
+  margin-top: var(--space-11);
   position: sticky;
   bottom: 0;
   background: var(--bg);
 }
 
 .composer-mention {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
@@ -1928,7 +1963,7 @@ a {
    * min-height で下限を保証、上限は JS の COMPOSER_MAX_HEIGHT_REM (10 行)。 */
   min-height: 7rem;
   font: inherit;
-  padding: 0.4rem;
+  padding: var(--space-7);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -1940,19 +1975,19 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .composer-attach-buttons {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 .composer-attach-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.35rem;
   cursor: pointer;
   color: var(--fg-muted);
@@ -1992,7 +2027,7 @@ a {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.4rem 1rem;
+  padding: var(--space-7) var(--space-13);
   cursor: pointer;
 }
 
@@ -2013,8 +2048,8 @@ a {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 0.35rem;
-  font-size: 0.75rem;
+  gap: var(--space-6);
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
@@ -2036,7 +2071,7 @@ a {
 .composer-attachment-label {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.7rem;
+  padding: var(--space-4) var(--space-10);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2061,9 +2096,9 @@ a.composer-attachment-label:hover {
   border-radius: 0;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 0.25rem 0.6rem;
+  padding: var(--space-4) var(--space-9);
   min-width: 2rem;
-  font-size: 0.95rem;
+  font-size: var(--font-size-xl);
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -2082,15 +2117,15 @@ a.composer-attachment-label:hover {
  * 主戦場)。ラベル側も同時に拡大して pill の高さを揃える。 */
 @media (pointer: coarse) {
   .composer-attachment-label {
-    padding: 0.55rem 0.85rem;
+    padding: var(--space-9) var(--space-12);
     min-height: 44px;
-    font-size: 0.85rem;
+    font-size: var(--font-size-lg);
   }
   .composer-attachment-remove {
-    padding: 0.55rem 0.9rem;
+    padding: var(--space-9) var(--space-12);
     min-height: 44px;
     min-width: 44px;
-    font-size: 1.15rem;
+    font-size: var(--font-size-3xl);
   }
 }
 
@@ -2136,8 +2171,8 @@ a.composer-attachment-label:hover {
 
 .session-tabs {
   display: flex;
-  gap: 0.25rem;
-  padding: 0.4rem 0.75rem 0;
+  gap: var(--space-4);
+  padding: var(--space-7) var(--space-11) 0;
   background: var(--bg-alt);
   flex-shrink: 0;
   position: relative;
@@ -2163,8 +2198,8 @@ a.composer-attachment-label:hover {
 
 .session-tab {
   display: inline-block;
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-5) var(--space-11);
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   text-decoration: none;
   border-bottom: 2px solid transparent;
@@ -2190,7 +2225,7 @@ button.session-tab {
   border: none;
   border-bottom: 2px solid transparent;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -2198,8 +2233,8 @@ button.session-tab {
   margin-left: auto;
   align-self: center;
   font: inherit;
-  font-size: 0.75rem;
-  padding: 0.2rem 0.55rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-3) var(--space-9);
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   background: var(--bg);
@@ -2217,28 +2252,28 @@ button.session-tab {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 0.75rem 1rem;
+  padding: var(--space-11) var(--space-13);
 }
 
 .session-rooms-section {
-  margin-bottom: 1.25rem;
+  margin-bottom: var(--space-14);
 }
 
 .session-rooms-section h3 {
-  margin: 0 0 0.4rem;
-  font-size: 0.85rem;
+  margin: 0 0 var(--space-7);
+  font-size: var(--font-size-lg);
   color: var(--fg-muted);
 }
 
 .session-rooms-list {
   list-style: none;
-  margin: 0 0 0.5rem;
+  margin: 0 0 var(--space-8);
   padding: 0;
 }
 
 .session-rooms-list li a {
   display: block;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   border-radius: 0.4rem;
   text-decoration: none;
   color: var(--fg);
@@ -2251,12 +2286,12 @@ button.session-tab {
 /* SessionRooms tab のアーカイブ節 (kawaz r15 mid=14、2026-07-14)。sidebar
  * RoomList と同じ「アーカイブ (N)」の折り畳み <details> 見出し慣習を踏襲。 */
 .session-rooms-archived {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
+  margin-top: var(--space-8);
+  font-size: var(--font-size-lg);
 }
 .session-rooms-archived summary {
   cursor: pointer;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   color: var(--fg-muted);
   list-style: none;
 }
@@ -2279,8 +2314,8 @@ button.session-tab {
   border-radius: 0.4rem;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 0.4rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-7) var(--space-11);
+  font-size: var(--font-size-md);
 }
 
 .new-room-btn:hover {
@@ -2292,14 +2327,14 @@ button.session-tab {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: var(--space-6);
 }
 
 .new-room-form input {
   font: inherit;
   width: 100%;
   max-width: 24rem;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -2402,8 +2437,8 @@ button.session-tab {
   flex: 1 1 auto;
   overflow-y: auto;
   border-right: 1px solid var(--border);
-  padding: 0.5rem 0;
-  font-size: 0.85rem;
+  padding: var(--space-8) 0;
+  font-size: var(--font-size-lg);
 }
 
 .tree-root,
@@ -2424,7 +2459,7 @@ button.session-tab {
   display: block;
   width: max-content;
   min-width: 100%;
-  padding: 0.2rem 0.75rem;
+  padding: var(--space-3) var(--space-11);
   border: none;
   background: none;
   color: var(--fg);
@@ -2478,7 +2513,7 @@ button.session-tab {
   display: block;
   width: max-content;
   min-width: 100%;
-  padding: 0.2rem 0.75rem;
+  padding: var(--space-3) var(--space-11);
   color: var(--fg-muted);
   opacity: 0.6;
   white-space: nowrap;
@@ -2486,8 +2521,8 @@ button.session-tab {
 
 .tree-loading,
 .tree-error {
-  padding: 0.2rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-3) var(--space-11);
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
@@ -2527,7 +2562,7 @@ button.session-tab {
   border: none;
   background: none;
   color: var(--fg-muted);
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -2552,10 +2587,10 @@ button.session-tab {
 .tree-section-label {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.25rem 0;
-  padding: 0.1rem 0.75rem;
-  font-size: 0.75rem;
+  gap: var(--space-8);
+  margin: var(--space-4) 0;
+  padding: var(--space-1) var(--space-11);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--fg-muted);
@@ -2577,8 +2612,8 @@ button.session-tab {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0 0.5rem 0 0;
+  gap: var(--space-8);
+  padding: 0 var(--space-8) 0 0;
 }
 
 .tree-header-spacer {
@@ -2591,8 +2626,8 @@ button.session-tab {
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   color: var(--fg-muted);
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-8);
   cursor: pointer;
 }
 
@@ -2605,7 +2640,7 @@ button.session-tab {
  * (containment root + workspace folder + プロジェクト外) を対象にする
  * ことを見た目でも示す。 */
 .tree-search {
-  padding: 0.25rem 0.5rem 0.35rem 0.5rem;
+  padding: var(--space-4) var(--space-8) var(--space-6) var(--space-8);
 }
 
 .tree-search-input {
@@ -2615,8 +2650,8 @@ button.session-tab {
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   color: var(--fg);
-  font-size: 0.8rem;
-  padding: 0.25rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-4) var(--space-8);
 }
 
 .tree-search-input:focus {
@@ -2629,9 +2664,9 @@ button.session-tab {
 .tree-search-option {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.25rem;
-  font-size: 0.75rem;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   cursor: pointer;
 }
@@ -2680,8 +2715,8 @@ button.session-tab {
   display: inline-flex;
   min-width: 100%;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.2rem 0.75rem;
+  gap: var(--space-7);
+  padding: var(--space-3) var(--space-11);
   color: var(--fg);
   text-decoration: none;
 }
@@ -2696,8 +2731,8 @@ button.session-tab {
 
 .file-search-empty,
 .file-search-truncated {
-  padding: 0.2rem 0.75rem;
-  font-size: 0.8rem;
+  padding: var(--space-3) var(--space-11);
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
@@ -2714,7 +2749,7 @@ button.session-tab {
   border: none;
   background: none;
   color: var(--fg-muted);
-  font-size: 1rem;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -2739,9 +2774,9 @@ button.session-tab {
 .tree-new-file-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding-top: 0.15rem;
-  padding-bottom: 0.15rem;
+  gap: var(--space-7);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
 }
 
 .tree-new-file-input {
@@ -2751,8 +2786,8 @@ button.session-tab {
   border: 1px solid var(--border);
   border-radius: 0.25rem;
   color: var(--fg);
-  font-size: 0.85rem;
-  padding: 0.1rem 0.35rem;
+  font-size: var(--font-size-lg);
+  padding: var(--space-1) var(--space-6);
 }
 
 .tree-new-file-input:focus {
@@ -2762,7 +2797,7 @@ button.session-tab {
 
 .tree-new-file-error {
   color: var(--danger);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 /* Per-FileNode delete affordance (kawaz r46 m25). Only rendered while the row
@@ -2780,7 +2815,7 @@ button.session-tab {
   border: none;
   background: none;
   color: var(--fg-muted);
-  font-size: 1rem;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -2821,8 +2856,8 @@ button.session-tab {
   flex: 1 1 auto;
   min-width: 0;
   font: inherit;
-  font-size: 0.85rem;
-  padding: 0.35rem 0.5rem;
+  font-size: var(--font-size-lg);
+  padding: var(--space-6) var(--space-8);
   border-radius: 0.35rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -2832,13 +2867,13 @@ button.session-tab {
 .memo-editor-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .memo-editor-actions button {
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.75rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-5) var(--space-11);
   border-radius: 0.35rem;
   cursor: pointer;
 }
@@ -2862,10 +2897,10 @@ button.session-tab {
 
 .memo-editor-error {
   margin: 0;
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-8) var(--space-11);
   border-bottom: 1px solid var(--border);
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 
 /* 行番号ガター + textarea を横並びにする flex ラッパ。閲覧側の .viewer-body /
@@ -2884,13 +2919,13 @@ button.session-tab {
 .memo-editor-lineno {
   flex: 0 0 auto;
   min-width: 3.5em;
-  padding: 0.75rem 0.5rem 12rem 0.75rem;
+  padding: var(--space-11) var(--space-8) 12rem var(--space-11);
   overflow: hidden;
   color: var(--fg-muted);
   text-align: right;
   user-select: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   line-height: 1.5;
   box-sizing: content-box;
 }
@@ -2900,7 +2935,7 @@ button.session-tab {
   min-width: 0;
   resize: none;
   border: 0;
-  padding: 0.75rem;
+  padding: var(--space-11);
   /* .viewer-body / .tl-lines と同じ意図の末尾余白: floating composer
    * (FAB/panel) がファイル末尾側の入力中コードを隠し、下を見ながら書けない。
    * textarea のスクロール領域は padding を含むため、末尾までスクロールすれば
@@ -2911,7 +2946,7 @@ button.session-tab {
   /* 閲覧側 .viewer-body と合わせる (kawaz r46 mid=23): 編集中も同じ等幅・
    * 同じ文字サイズで、コード見た目のまま編集できる。 */
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   line-height: 1.5;
   white-space: pre;
   overflow: auto;
@@ -2928,14 +2963,14 @@ button.session-tab {
 .viewer-mode-toggle {
   margin-left: auto;
   display: flex;
-  gap: 0.15rem;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .viewer-mode-btn {
   font: inherit;
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-8);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -2954,10 +2989,10 @@ button.session-tab {
  * container only needs padding + scrolling. Keeps the preview visually
  * distinct from the code viewer's monospace gutter. */
 .viewer-preview {
-  padding: 0.75rem 1rem;
+  padding: var(--space-11) var(--space-13);
   overflow: auto;
   scroll-behavior: smooth;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   line-height: 1.5;
   /* .viewer-body / .memo-editor-body と同じ意図の末尾余白 (kawaz r46 mid=43):
    * floating composer がプレビュー末尾を隠して見ながら書けない。 */
@@ -2971,7 +3006,7 @@ button.session-tab {
   list-style: none;
   display: flex;
   align-items: baseline;
-  gap: 0.4rem;
+  gap: var(--space-7);
   margin-left: -1.1rem;
 }
 
@@ -2980,7 +3015,7 @@ button.session-tab {
   /* Tap target on touch without inflating the visual box (kawaz uses this
    * from a phone to answer arbitration files). */
   margin: 0;
-  padding: 0.35rem;
+  padding: var(--space-6);
   accent-color: var(--accent);
 }
 
@@ -3031,26 +3066,26 @@ button.session-tab {
 .md-task-error {
   display: flex;
   align-items: flex-start;
-  gap: 0.4rem;
-  margin-top: 0.25rem;
+  gap: var(--space-7);
+  margin-top: var(--space-4);
   color: var(--danger);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   line-height: 1.45;
 }
 
 .md-task-error-dismiss {
   flex: none;
-  padding: 0 0.3rem;
+  padding: 0 var(--space-5);
   border: none;
   background: none;
   color: inherit;
-  font-size: 1rem;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   cursor: pointer;
 }
 
 .md-toc {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--space-11);
   border: 1px solid var(--border);
   border-radius: 0.45rem;
   background: var(--bg-alt);
@@ -3060,7 +3095,7 @@ button.session-tab {
 .md-toc summary {
   min-height: 2.25rem;
   box-sizing: border-box;
-  padding: 0.4rem 0.65rem;
+  padding: var(--space-7) var(--space-10);
   cursor: pointer;
   font-weight: 650;
   color: var(--accent);
@@ -3076,19 +3111,19 @@ button.session-tab {
 .md-toc ol {
   list-style: none;
   margin: 0;
-  padding: 0.35rem 0.5rem 0.45rem;
+  padding: var(--space-6) var(--space-8) var(--space-8);
 }
 
 .md-toc li {
   margin: 0;
-  padding-left: min(calc(var(--md-toc-depth) * 1rem), 4rem);
+  padding-left: min(calc(var(--md-toc-depth) * var(--space-13)), 4rem);
 }
 
 .md-toc a {
   display: flex;
-  gap: 0.45rem;
+  gap: var(--space-8);
   min-width: 0;
-  padding: 0.2rem 0.25rem;
+  padding: var(--space-3) var(--space-4);
   border-radius: 0.25rem;
   color: var(--fg);
   text-decoration: none;
@@ -3118,26 +3153,26 @@ button.session-tab {
 
 @media (max-width: 720px) {
   .viewer-preview {
-    padding-inline: 0.65rem;
+    padding-inline: var(--space-10);
   }
 
   .md-toc li {
-    padding-left: min(calc(var(--md-toc-depth) * 0.65rem), 2.6rem);
+    padding-left: min(calc(var(--md-toc-depth) * var(--space-10)), 2.6rem);
   }
 
   .md-toc a {
-    padding-block: 0.3rem;
+    padding-block: var(--space-5);
   }
 }
 
 .viewer-header {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-11);
+  padding: var(--space-8) var(--space-11);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   position: sticky;
   top: 0;
 }
@@ -3157,8 +3192,8 @@ button.session-tab {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 0 0.25rem;
-  font-size: 1rem;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-2xl);
   line-height: 1;
 }
 .viewer-refetch:hover {
@@ -3173,7 +3208,7 @@ button.session-tab {
 .viewer-loading,
 .viewer-empty-file {
   color: var(--fg-muted);
-  padding: 1rem;
+  padding: var(--space-13);
 }
 
 /* Failure states (kawaz r76 m76) — the single look for every "you are
@@ -3192,8 +3227,8 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
-  padding: 3rem 1.5rem;
+  gap: var(--space-7);
+  padding: var(--space-17) var(--space-15);
   text-align: center;
   color: var(--fg-muted);
 }
@@ -3223,7 +3258,7 @@ button.session-tab {
 
 .errorview-title {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--font-size-2xl);
   color: var(--fg);
 }
 
@@ -3231,21 +3266,21 @@ button.session-tab {
   margin: 0;
   max-width: 100%;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   /* A long path must wrap rather than widen the pane. */
   overflow-wrap: anywhere;
 }
 
 .errorview-hint {
-  margin: 0.4rem 0 0;
-  font-size: 0.85rem;
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-lg);
 }
 
 .errorview-action {
-  margin-top: 0.9rem;
+  margin-top: var(--space-12);
   font: inherit;
-  font-size: 0.85rem;
-  padding: 0.3rem 0.9rem;
+  font-size: var(--font-size-lg);
+  padding: var(--space-5) var(--space-12);
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   background: var(--bg);
@@ -3265,8 +3300,8 @@ button.session-tab {
  * candidate and a confident one — but presented as a link, never a redirect,
  * since being moved somewhere unasked is harder to follow than the error. */
 .errorview-suggest {
-  margin: 0.9rem 0 0;
-  padding: 0.6rem 0.9rem;
+  margin: var(--space-12) 0 0;
+  padding: var(--space-9) var(--space-12);
   border: 1px solid var(--border);
   border-radius: 0.45rem;
   background: var(--bg-alt);
@@ -3275,26 +3310,26 @@ button.session-tab {
 }
 
 .errorview-suggest-label {
-  margin: 0 0 0.3rem;
-  font-size: 0.8rem;
+  margin: 0 0 var(--space-5);
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
 .errorview-suggest-item {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   overflow-wrap: anywhere;
 }
 
 .errorview-suggest-note {
-  margin: 0.35rem 0 0;
-  font-size: 0.75rem;
+  margin: var(--space-6) 0 0;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
 .viewer-binary {
   color: var(--fg-muted);
-  padding: 1rem;
+  padding: var(--space-13);
 }
 
 /* Image preview for FileViewer (png/jpeg/gif/webp/svg/avif/…). The wrapper
@@ -3302,7 +3337,7 @@ button.session-tab {
  * screenshot fits without stretching the pane, and centered so portrait /
  * square shots don't hug one edge. */
 .viewer-image-wrap {
-  padding: 1rem;
+  padding: var(--space-13);
   overflow: auto;
   text-align: center;
 }
@@ -3329,7 +3364,7 @@ button.session-tab {
 .viewer-body {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   overflow-x: auto;
   /* .tl-lines と同じ意図の末尾余白 (kawaz r26 mid=16): floating composer
    * (FAB/panel) がファイル末尾側のコードを隠し、コードを見ながらメッセージが
@@ -3339,7 +3374,7 @@ button.session-tab {
 
 .viewer-line {
   display: flex;
-  padding: 0 0.75rem;
+  padding: 0 var(--space-11);
 }
 
 .viewer-line:hover {
@@ -3413,8 +3448,8 @@ button.session-tab {
   /* スマホ幅でボタンが収まらないときは行を折り返す (ボタン内で文字を
    * 折り返して縦長に潰れるのを防ぐ — kawaz r17 mid=1、2026-07-14)。 */
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0 0.75rem 0.5rem;
+  gap: var(--space-8);
+  padding: 0 var(--space-11) var(--space-8);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   position: sticky;
@@ -3429,8 +3464,8 @@ button.session-tab {
 
 .tl-toolbar button {
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.25rem 0.7rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-4) var(--space-10);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -3453,12 +3488,12 @@ button.session-tab {
 .tl-user-nav {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   margin-left: auto;
 }
 
 .tl-user-nav-count {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -3467,8 +3502,8 @@ button.session-tab {
 .tl-lines {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.5rem 0.75rem;
+  gap: var(--space-5);
+  padding: var(--space-8) var(--space-11);
   /* 横長 pre の幅がここまで伝播してページ横スクロールになるのを遮断
    * (kawaz r17 mid=33)。overflow-x:hidden は親 .timeline-view で担う
    * (mid=53 の scroll 死亡 bug の根本原因はここに overflow-x:hidden を
@@ -3485,13 +3520,13 @@ button.session-tab {
  * 通常表示 (rich パース結果) と切替可能な toggle で、rich 表示が壊れて
  * いても元データを確認できるフォールバック用途。 */
 .tl-raw-lines {
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .tl-raw {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-3);
   /* 行番号 gutter と本文が親幅を食い合わないよう、flex item の既定
    * min-width:auto を切る (長大な base64 行が gutter を押し出さない)。 */
   min-width: 0;
@@ -3499,9 +3534,9 @@ button.session-tab {
 
 .tl-raw-row {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-8);
   align-items: flex-start;
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-6) var(--space-8);
   border-radius: 0.4rem;
   background: var(--bg-alt);
   min-width: 0;
@@ -3515,7 +3550,7 @@ button.session-tab {
   align-items: flex-end;
   flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   line-height: 1.3;
   color: var(--fg-muted);
   user-select: none;
@@ -3539,10 +3574,10 @@ button.session-tab {
 }
 
 .tl-raw-more {
-  margin-top: 0.2rem;
+  margin-top: var(--space-3);
   font: inherit;
-  font-size: 0.7rem;
-  padding: 0.1rem 0.5rem;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-8);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -3555,8 +3590,8 @@ button.session-tab {
  * 同じなので、raw 表示だけ別の意匠を持たせる理由がない。 */
 .tl-raw-mode {
   display: flex;
-  gap: 0.25rem;
-  margin-bottom: 0.3rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 
 .tl-raw-mode .tl-thinking-tab:disabled {
@@ -3567,8 +3602,8 @@ button.session-tab {
 /* pretty 化できなかった行の理由書き (壊れた行 / 上限超過)。本文が raw に
  * 落ちていることの説明なので、行本体より小さく淡く。 */
 .tl-raw-note {
-  margin: 0 0 0.2rem;
-  font-size: 0.7rem;
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -3611,9 +3646,9 @@ button.session-tab {
   right: 0;
   z-index: 1;
   font: inherit;
-  font-size: 0.6rem;
+  font-size: var(--font-size-3xs);
   line-height: 1;
-  padding: 0.1rem 0.3rem;
+  padding: var(--space-1) var(--space-5);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -3645,13 +3680,13 @@ button.session-tab {
 /* jsonl 展開中の行は、全体 raw 表示の .tl-raw-row と同じ体裁のまま、
  * トグルボタンと重ならないよう右肩を空ける。 */
 .tl-item-raw-on > .tl-raw-row {
-  padding-right: 3rem;
+  padding-right: var(--space-17);
 }
 
 .tl-line {
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   border-radius: 0.4rem;
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-6) var(--space-8);
   /* 👤 nav の scrollIntoView({block:"start"}) 先が sticky な tl-toolbar
    * (padding 0.5rem + wrap 可能な button 群、実測でおおよそ 2.5-3.5rem)
    * の下に出るように余白を確保する (kawaz r17 mid=54: TL 上部の位置に
@@ -3675,17 +3710,17 @@ button.session-tab {
 }
 
 .tl-time {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  margin-right: 0.5rem;
+  margin-right: var(--space-8);
   font-variant-numeric: tabular-nums;
 }
 
 .tl-segments {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  margin-top: 0.2rem;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
 }
 
 .tl-text {
@@ -3733,7 +3768,7 @@ button.session-tab {
 
 .tl-bubble-body {
   border-radius: 0.7rem 0.7rem 0.7rem 0.15rem;
-  padding: 0.3rem 0.55rem;
+  padding: var(--space-5) var(--space-9);
   width: fit-content;
   background: var(--bg-alt);
 }
@@ -3799,13 +3834,13 @@ button.session-tab {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.4rem;
+  gap: var(--space-7);
   border-left: 3px solid var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 .tl-api-error-label {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--danger);
 }
@@ -3820,20 +3855,20 @@ button.session-tab {
 }
 
 .tl-bubble-time {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
-  margin-top: 0.15rem;
+  margin-top: var(--space-2);
   font-variant-numeric: tabular-nums;
 }
 
 .tl-bubble-from {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--fg-muted);
-  margin-bottom: 0.2rem;
+  margin-bottom: var(--space-3);
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-4);
 }
 
 /* --- Markdown rendering (DR-0010): assistant text segments only, walked
@@ -3848,7 +3883,7 @@ button.session-tab {
 }
 
 .md p {
-  margin: 0.2rem 0;
+  margin: var(--space-3) 0;
 }
 
 .md h1,
@@ -3857,34 +3892,34 @@ button.session-tab {
 .md h4,
 .md h5,
 .md h6 {
-  margin: 0.4rem 0 0.2rem;
+  margin: var(--space-7) 0 var(--space-3);
   color: var(--accent);
   line-height: 1.3;
 }
 .md h1 {
-  font-size: 1.2rem;
+  font-size: var(--font-size-4xl);
   font-weight: 750;
 }
 .md h2 {
-  font-size: 1.12rem;
+  font-size: var(--font-size-3xl);
   font-weight: 700;
 }
 .md h3 {
-  font-size: 1.05rem;
+  font-size: var(--font-size-2xl);
   font-weight: 650;
 }
 .md h4 {
-  font-size: 1rem;
+  font-size: var(--font-size-2xl);
   font-weight: 650;
   color: color-mix(in srgb, var(--accent) 85%, var(--fg));
 }
 .md h5 {
-  font-size: 0.95rem;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: color-mix(in srgb, var(--accent) 70%, var(--fg));
 }
 .md h6 {
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   font-weight: 600;
   color: color-mix(in srgb, var(--accent) 55%, var(--fg));
 }
@@ -3894,7 +3929,7 @@ button.session-tab {
 }
 .viewer-preview .md h1,
 .viewer-preview .md h2 {
-  padding-bottom: 0.15rem;
+  padding-bottom: var(--space-2);
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 .viewer-preview .md h1 {
@@ -3954,16 +3989,16 @@ button.session-tab {
 
 .md ul,
 .md ol {
-  margin: 0.2rem 0;
-  padding-left: 1.3rem;
+  margin: var(--space-3) 0;
+  padding-left: var(--space-14);
 }
 .md li {
-  margin: 0.1rem 0;
+  margin: var(--space-1) 0;
 }
 
 .md blockquote {
-  margin: 0.3rem 0;
-  padding: 0.15rem 0.6rem;
+  margin: var(--space-5) 0;
+  padding: var(--space-2) var(--space-9);
   border-left: 3px solid var(--border);
   color: var(--fg-muted);
 }
@@ -3972,15 +4007,15 @@ button.session-tab {
  * HTML (markdown-view.tsx の foldDetailsBlocks 参照)。RoomList 等の既存折り畳み
  * と同じく marker はデフォルトのまま活かす。 */
 .md-details {
-  margin: 0.3rem 0;
-  padding: 0.1rem 0.5rem;
+  margin: var(--space-5) 0;
+  padding: var(--space-1) var(--space-8);
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   background: var(--bg-alt);
 }
 
 .md-details > summary {
-  padding: 0.2rem 0;
+  padding: var(--space-3) 0;
   cursor: pointer;
   font-weight: 600;
   /* 本文と同じ色にする (kawaz r55m85): accent はリンク色なので、クリックで
@@ -3990,12 +4025,12 @@ button.session-tab {
 }
 
 .md-details[open] > summary {
-  margin-bottom: 0.15rem;
+  margin-bottom: var(--space-2);
   border-bottom: 1px solid var(--border);
 }
 
 .md-details > :last-child {
-  margin-bottom: 0.2rem;
+  margin-bottom: var(--space-3);
 }
 
 .md a {
@@ -4021,18 +4056,18 @@ button.session-tab {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
   background: var(--bg-alt);
-  padding: 0.05rem 0.3rem;
+  padding: 0.05rem var(--space-5);
   border-radius: 0.25rem;
 }
 
 .md-code {
-  margin: 0.3rem 0;
-  padding: 0.5rem 0.6rem;
+  margin: var(--space-5) 0;
+  padding: var(--space-8) var(--space-9);
   background: var(--bg-alt);
   border-radius: 0.4rem;
   overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 .md-code code {
   white-space: pre;
@@ -4040,13 +4075,13 @@ button.session-tab {
 
 .md table {
   border-collapse: collapse;
-  margin: 0.3rem 0;
-  font-size: 0.85rem;
+  margin: var(--space-5) 0;
+  font-size: var(--font-size-lg);
 }
 .md th,
 .md td {
   border: 1px solid var(--border);
-  padding: 0.2rem 0.5rem;
+  padding: var(--space-3) var(--space-8);
   text-align: left;
 }
 .md th {
@@ -4074,7 +4109,7 @@ button.session-tab {
 .tl-fold summary,
 .tl-fold-group summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   list-style: none;
 }
@@ -4113,9 +4148,9 @@ button.session-tab {
 .tl-decorated-summary .tl-summary-decoration {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   border-radius: 0.4rem;
-  padding: 0 0.35rem;
+  padding: 0 var(--space-6);
 }
 
 .tl-thinking:not([open]) > .tl-thinking-summary .tl-summary-decoration {
@@ -4152,7 +4187,7 @@ button.session-tab {
 }
 .tl-agent-idle-label {
   display: inline-flex;
-  gap: 0.35rem;
+  gap: var(--space-6);
   align-items: baseline;
 }
 .tl-agent-idle-kind {
@@ -4162,7 +4197,7 @@ button.session-tab {
   opacity: 0.85;
 }
 .tl-agent-idle-body {
-  margin: 0.15rem 0 0.15rem 1.2rem;
+  margin: var(--space-2) 0 var(--space-2) var(--space-14);
   color: var(--muted, #888);
   font-size: 0.85em;
   opacity: 0.8;
@@ -4176,7 +4211,7 @@ button.session-tab {
   height: 1.05rem;
   border: 1px solid;
   border-radius: 0.35rem;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   font-weight: 800;
   line-height: 1;
 }
@@ -4194,7 +4229,7 @@ button.session-tab {
 }
 
 .tl-decorated-summary .tl-agent-identity {
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .tl-decorated-summary .tl-agent-identity strong {
@@ -4202,9 +4237,9 @@ button.session-tab {
 }
 
 .tl-fold-body {
-  margin: 0.25rem 0 0;
+  margin: var(--space-4) 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
@@ -4219,18 +4254,18 @@ button.session-tab {
 
 .tl-file-tool-path {
   display: block;
-  padding: 0.45rem 0.7rem;
+  padding: var(--space-8) var(--space-10);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
   color: var(--accent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   overflow-wrap: anywhere;
 }
 
 .tl-inline-file-viewer > .viewer-mode-toggle {
   justify-content: flex-end;
-  padding: 0.4rem 0.6rem;
+  padding: var(--space-7) var(--space-9);
   border-bottom: 1px solid var(--border);
 }
 
@@ -4242,7 +4277,7 @@ button.session-tab {
 
 .tl-inline-preview {
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--space-11);
   max-height: 28rem;
   overflow: auto;
   white-space: pre-wrap;
@@ -4250,22 +4285,22 @@ button.session-tab {
 
 .tl-file-tool-unavailable {
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--space-11);
   color: var(--fg-muted);
 }
 
 .tl-file-tool-error {
   margin: 0;
-  padding: 0.75rem;
+  padding: var(--space-11);
   color: var(--danger);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .tl-file-tool-image {
-  padding: 0.75rem;
+  padding: var(--space-11);
   max-height: 28rem;
   overflow: auto;
 }
@@ -4282,7 +4317,7 @@ button.session-tab {
   max-height: 28rem;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 
 .tl-diff-line {
@@ -4318,7 +4353,7 @@ button.session-tab {
 
 .tl-diff-raw h4 {
   margin: 0;
-  padding: 0.35rem 0.7rem;
+  padding: var(--space-6) var(--space-10);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
 }
@@ -4326,10 +4361,10 @@ button.session-tab {
 .tl-bash-description,
 .tl-bash-result-status,
 .tl-bash-output-label {
-  padding: 0.4rem 0.7rem;
+  padding: var(--space-7) var(--space-10);
   background: var(--bg-alt);
   color: var(--fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
 }
 
 .tl-bash-command {
@@ -4338,7 +4373,7 @@ button.session-tab {
 
 .tl-bash-command .md-code {
   margin: 0;
-  padding: 0.65rem 0.7rem;
+  padding: var(--space-10) var(--space-10);
   border-radius: 0;
 }
 
@@ -4347,11 +4382,11 @@ button.session-tab {
   max-width: 100%;
   box-sizing: border-box;
   margin: 0;
-  padding: 0.65rem 0.7rem;
+  padding: var(--space-10) var(--space-10);
   overflow-x: auto;
   white-space: pre;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 
 .tl-bash-output,
@@ -4375,9 +4410,9 @@ button.session-tab {
 /* thinking の markdown 本文 (tl-fold-body の等幅 JSON 表示は流用しない) —
  * 薄い色で他セグメントと区別する既存の見た目を維持。 */
 .tl-thinking-body {
-  margin-top: 0.25rem;
+  margin-top: var(--space-4);
   color: var(--fg-muted);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   /* thinking にも「通常出力に次ぐ」メッセージ枠を当てる (kawaz r17 mid=40):
    * アシスタント出力 (assistant-bubble、実線 + 濃い背景) と同系統の色で、
    * 破線 + 薄い背景により格の違いを見せる。フォントサイズは従来の小ささを
@@ -4385,7 +4420,7 @@ button.session-tab {
   background: var(--assistant-bubble-bg);
   border: 1px dashed var(--assistant-bubble-border);
   border-radius: 0.5rem;
-  padding: 0.35rem 0.5rem;
+  padding: var(--space-6) var(--space-8);
   /* 左寄せメッセージの慣習に合わせた右側余白 (kawaz r20、2026-07-15):
    * .tl-bubble の max-width: 85% と同じ「左の発話」シグナル。 */
   max-width: 85%;
@@ -4395,7 +4430,7 @@ button.session-tab {
 .tl-thinking-toolbar {
   display: flex;
   align-items: center;
-  margin-bottom: 0.3rem;
+  margin-bottom: var(--space-5);
 }
 
 .tl-thinking-toolbar > .tl-thinking-tabs {
@@ -4405,17 +4440,17 @@ button.session-tab {
 /* thinking / system-message / ccmsg の小さなタブ列。 */
 .tl-thinking-tabs {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-4);
   /* tl-thinking-body の中に置く (kawaz r17 mid=64、2026-07-15): 枠外に
    * 出すとどの thinking セグメントに属するかが視覚的に切れるうえ、fold
    * ガイドの縦線に乗ってしまう。body の上部に配置して 1 枠にまとめる。 */
-  margin-bottom: 0.3rem;
+  margin-bottom: var(--space-5);
 }
 
 .tl-thinking-tab {
   font: inherit;
-  font-size: 0.7rem;
-  padding: 0.1rem 0.5rem;
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-8);
   border-radius: 0.3rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -4430,8 +4465,8 @@ button.session-tab {
 }
 
 .tl-thinking-translating {
-  margin: 0.25rem 0 0;
-  font-size: 0.7rem;
+  margin: var(--space-4) 0 0;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -4457,12 +4492,12 @@ button.session-tab {
  * ように読める。u1 発を含む行は今も boundary = トップレベルなので、そちらでは
  * 従来どおり左端から離れる。 */
 .tl-ccmsg-fold:not(.tl-fold-group *) {
-  margin-left: 1.5rem;
+  margin-left: var(--space-15);
   max-width: calc(100% - 1.5rem);
 }
 
 .tl-ccmsg-fold > summary {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
@@ -4474,7 +4509,7 @@ button.session-tab {
 }
 
 .tl-ccmsg-summary-body {
-  gap: 0.35rem;
+  gap: var(--space-6);
 }
 
 .tl-ccmsg-summary-body[style*="--member-hue"] {
@@ -4495,7 +4530,7 @@ button.session-tab {
 .tl-ccmsg-summary-loc {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 .tl-ccmsg-summary-preview {
@@ -4511,9 +4546,9 @@ button.session-tab {
  * .tl-bubble-ccmsg-peer が既に hue 背景 / 角丸 / padding を持っているので、
  * ここでは字の格だけ整える。 */
 .tl-ccmsg-body {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
-  margin-top: 0.25rem;
+  margin-top: var(--space-4);
 }
 
 /* nav 選択時の outline は fold の外郭に軽く。 */
@@ -4555,13 +4590,13 @@ button.session-tab {
 /* AgentCard の header 行は `.tl-bubble-from` を継承しつつ、name/model と
  * badge を両端に振り分ける (badge 側は `margin-left:auto`)。 */
 .tl-agent-card-head {
-  gap: 0.6rem;
+  gap: var(--space-9);
   flex-wrap: wrap;
 }
 
 .tl-agent-identity {
   min-width: 0;
-  gap: 0.3rem;
+  gap: var(--space-5);
   color: var(--fg);
 }
 
@@ -4584,7 +4619,7 @@ button.session-tab {
  * SendMessage / peer-message はデータを持たないので undefined = 非表示。 */
 .tl-agent-model-inline {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.66rem;
+  font-size: var(--font-size-2xs);
   color: var(--fg-muted);
   opacity: 0.85;
 }
@@ -4592,15 +4627,15 @@ button.session-tab {
 .tl-agent-badge {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 0.05rem 0.35rem;
+  padding: 0.05rem var(--space-6);
   border: 1px solid var(--agent-comm-border);
   border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: var(--font-size-2xs);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .tl-agent-title {
-  margin-top: 0.3rem;
+  margin-top: var(--space-5);
   color: var(--fg);
   font-weight: 600;
 }
@@ -4612,7 +4647,7 @@ button.session-tab {
  * 改行を pre-wrap で保つ (SendMessage の message にはハードラップされた
  * プロンプト整形が多く、改行が消えると読めなくなる)。 */
 .tl-agent-md {
-  margin-top: 0.25rem;
+  margin-top: var(--space-4);
 }
 .tl-agent-md .md p {
   white-space: pre-wrap;
@@ -4646,7 +4681,7 @@ button.session-tab {
  * .tl-thinking-tab を再利用する (Timeline.tsx)、以下は rich 側の中身の
  * レイアウトのみを追加する。 */
 .tl-sysmsg-fields {
-  margin-top: 0.3rem;
+  margin-top: var(--space-5);
 }
 
 /* task-notification の各フィールド (summary/task-id/event/output-file 等) を
@@ -4656,7 +4691,7 @@ button.session-tab {
 .tl-sysmsg-dl {
   display: grid;
   grid-template-columns: max-content 1fr;
-  gap: 0.15rem 0.6rem;
+  gap: var(--space-2) var(--space-9);
   margin: 0;
 }
 
@@ -4666,14 +4701,14 @@ button.session-tab {
 
 .tl-sysmsg-field dt {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   white-space: nowrap;
 }
 
 .tl-sysmsg-field dd {
   margin: 0;
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -4682,7 +4717,7 @@ button.session-tab {
  * は monospace で」) — JSON/イベントログを読みやすくする。 */
 .tl-sysmsg-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
 }
 
 /* slash-command-invocation のチップ表示 (kawaz spec: 「"/model" + args を
@@ -4690,21 +4725,21 @@ button.session-tab {
 .tl-sysmsg-chip-row {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.3rem;
+  gap: var(--space-7);
+  margin-top: var(--space-5);
   flex-wrap: wrap;
 }
 
 .tl-sysmsg-chip {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
-  padding: 0.1rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-1) var(--space-8);
   border-radius: 0.3rem;
   background: var(--bg-alt);
 }
 
 .tl-sysmsg-chip-detail {
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
@@ -4728,15 +4763,15 @@ button.session-tab {
 .tl-bashrun-head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.7rem;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-10);
   border-bottom: 1px solid var(--border);
   background: var(--bg-alt);
 }
 
 .tl-bashrun-badge {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent);
 }
@@ -4750,13 +4785,13 @@ button.session-tab {
   max-width: 100%;
   box-sizing: border-box;
   margin: 0;
-  padding: 0.65rem 0.7rem;
+  padding: var(--space-10) var(--space-10);
   border-top: 1px solid var(--border);
   max-height: 24rem;
   overflow: auto;
   white-space: pre;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
 }
 
 .tl-bashrun-out.is-error {
@@ -4765,21 +4800,21 @@ button.session-tab {
 }
 
 .tl-bashrun-persisted-note {
-  padding: 0.4rem 0.7rem;
+  padding: var(--space-7) var(--space-10);
   border-top: 1px solid var(--border);
   background: var(--bg-alt);
   color: var(--fg-muted);
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .tl-bashrun-persisted-link {
   display: block;
-  padding: 0 0.7rem 0.4rem;
+  padding: 0 var(--space-10) var(--space-7);
   background: var(--bg-alt);
   color: var(--accent);
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   font-weight: 600;
 }
 
@@ -4790,12 +4825,12 @@ button.session-tab {
  * 要素と同じ薄いトーンに揃える (▶/▼ マーカーは上の .tl-fold と共通定義)。 */
 .tl-fold-group {
   color: var(--fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 .tl-fold-group-body {
   display: flex;
-  margin-top: 0.3rem;
+  margin-top: var(--space-5);
 }
 
 /* 展開 fold の左端縦線ガイド (kawaz r17 mid=45、2026-07-15): クリックで
@@ -4806,7 +4841,7 @@ button.session-tab {
   align-items: stretch;
   /* ガイドは全展開部 (fold group / items / thinking / tool_use / ...) に
    * 付くためネストでインデントが積む — 幅と gap は最小限 (kawaz r17 mid=49)。 */
-  gap: 0.25rem;
+  gap: var(--space-4);
   min-width: 0;
 }
 
@@ -4841,14 +4876,14 @@ button.session-tab {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 /* thinking 間の tool 群サブ fold (kawaz r17 mid=45)。summary は fold group
  * の等幅トーンに合わせる。 */
 .tl-items-subfold > summary {
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
@@ -4860,7 +4895,7 @@ button.session-tab {
   background: var(--assistant-bubble-bg);
   border: 1px dashed var(--assistant-bubble-border);
   border-radius: 0.4rem;
-  padding: 0 0.35rem;
+  padding: 0 var(--space-6);
 }
 
 /* 「N agent messages」部の装飾 (kawaz r38 mid=21): agent 通信カード
@@ -4868,7 +4903,7 @@ button.session-tab {
 .tl-summary-agent-messages {
   border: 1px dashed var(--agent-comm-border);
   border-radius: 0.4rem;
-  padding: 0 0.35rem;
+  padding: 0 var(--space-6);
 }
 
 /* 「N items」部も同系の装飾 (kawaz r76 m104): 種別ごとの色は持たない
@@ -4876,7 +4911,7 @@ button.session-tab {
 .tl-summary-items {
   border: 1px dashed var(--border);
   border-radius: 0.4rem;
-  padding: 0 0.35rem;
+  padding: 0 var(--space-6);
 }
 
 .tl-broken {
@@ -4887,7 +4922,7 @@ button.session-tab {
   margin: 0;
   color: var(--danger);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;
@@ -4897,7 +4932,7 @@ button.session-tab {
 .tl-loading,
 .tl-empty-turn {
   color: var(--fg-muted);
-  padding: 1rem;
+  padding: var(--space-13);
 }
 
 /* Fork seam: history above was copied from the ancestor session, below is this
@@ -4907,9 +4942,9 @@ button.session-tab {
 .tl-fork-divider {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.75rem 0;
-  font-size: 0.75rem;
+  gap: var(--space-8);
+  margin: var(--space-11) 0;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 .tl-fork-divider::before,
@@ -5017,8 +5052,8 @@ button.session-tab {
  * blank bar before the first successful ping. */
 #app-footer {
   flex-shrink: 0;
-  padding: 0.15rem 0.75rem;
-  font-size: 0.65rem;
+  padding: var(--space-2) var(--space-11);
+  font-size: var(--font-size-2xs);
   color: var(--fg-muted);
   opacity: 0.6;
   border-top: 1px solid var(--border);
@@ -5125,10 +5160,10 @@ button.session-tab {
   border: 1px solid var(--border);
   border-radius: 0.6rem;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  padding: 0.6rem;
+  padding: var(--space-9);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
   z-index: var(--z-composer);
   /* kawaz r46 mid=47: 「テキストエリア外の黒枠内」全体をドラッグハンドルに
    * する。touch-action: none をパネル面に敷き、入力系の子 (textarea 等) だけ
@@ -5175,7 +5210,7 @@ button.session-tab {
   border: 1px solid var(--border);
   border-radius: 0.6rem;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  padding: 0.6rem;
+  padding: var(--space-9);
   z-index: var(--z-composer);
 }
 
@@ -5198,7 +5233,7 @@ button.session-tab {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   color: var(--fg-muted);
   /* kawaz r46 mid=46,47: パネルのドラッグハンドル面。FAB と同じく
    * touch-action: none が無いと touch drag が pan に奪われて掴めない。
@@ -5231,9 +5266,9 @@ button.session-tab {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
-  padding: 0.35rem;
+  padding: var(--space-6);
   border-radius: 0.25rem;
   /* 宛先ラベル (1on1 ヘッダ) が長い時に潰されないよう縮小を禁じる。 */
   flex: none;
@@ -5247,7 +5282,7 @@ button.session-tab {
 .one-on-one-panel-header code {
   color: var(--fg);
   background: var(--bg-alt);
-  padding: 0 0.25rem;
+  padding: 0 var(--space-4);
   border-radius: 0.2rem;
 }
 
@@ -5257,7 +5292,7 @@ button.session-tab {
 .one-on-one-target {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -5267,7 +5302,7 @@ button.session-tab {
   white-space: nowrap;
   /* 名前側の箱 (背景 + padding) は AvatarLabel の gap の外側に足されない
    * よう左 padding を絞る — 視覚上の間隔は .avatar-label の gap が正。 */
-  padding-left: 0.15rem;
+  padding-left: var(--space-2);
 }
 
 .one-on-one-textarea {
@@ -5277,7 +5312,7 @@ button.session-tab {
    * さらに広げられる。 */
   min-height: 7rem;
   font: inherit;
-  padding: 0.4rem;
+  padding: var(--space-7);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -5286,7 +5321,7 @@ button.session-tab {
 
 .one-on-one-error {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: #d0324c;
 }
 
@@ -5294,7 +5329,7 @@ button.session-tab {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .one-on-one-send {
@@ -5302,7 +5337,7 @@ button.session-tab {
   color: var(--accent-fg);
   border: none;
   border-radius: 0.4rem;
-  padding: 0.4rem 1.2rem;
+  padding: var(--space-7) var(--space-14);
   cursor: pointer;
   font: inherit;
 }
@@ -5318,24 +5353,24 @@ button.session-tab {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.75rem;
+  padding: var(--space-11);
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-13);
 }
 
 .status-loading,
 .status-empty {
   color: var(--fg-muted);
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 .status-meta {
   margin: 0;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.35rem 0.75rem;
-  font-size: 1rem;
+  gap: var(--space-6) var(--space-11);
+  font-size: var(--font-size-2xl);
 }
 
 .status-meta dt {
@@ -5353,7 +5388,7 @@ button.session-tab {
 .status-meta-value {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .status-meta-value > span {
@@ -5365,11 +5400,11 @@ button.session-tab {
   flex: none;
   border: 1px solid var(--border);
   border-radius: 0.25rem;
-  padding: 0.1rem 0.4rem;
+  padding: var(--space-1) var(--space-7);
   background: transparent;
   color: var(--fg-muted);
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -5386,8 +5421,8 @@ button.session-tab {
 }
 
 .status-section-title {
-  margin: 0 0 0.4rem;
-  font-size: 0.75rem;
+  margin: 0 0 var(--space-7);
+  font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--fg-muted);
@@ -5399,18 +5434,18 @@ button.session-tab {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 .status-row,
 .status-todo {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
+  gap: var(--space-8);
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 
 /* 走行中 background / in_progress TODO の強調 (DR-0020 §2.1「走行中強調、
@@ -5477,13 +5512,13 @@ button.session-tab {
 
 .status-row-time {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
 .status-owner {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -5507,17 +5542,17 @@ button.session-tab {
 .status-todo-id {
   flex-shrink: 0;
   font-family: var(--font-mono, monospace);
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 .status-todo-blocked {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--warn, #ba5);
 }
 
 .status-done {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
 }
 
 .status-done summary {
@@ -5526,17 +5561,17 @@ button.session-tab {
 }
 
 .status-done .status-list {
-  margin-top: 0.3rem;
+  margin-top: var(--space-5);
 }
 
 /* DR-0025 Phase 2: agent-timeline header */
 .tl-agent-header {
   display: flex;
-  gap: 0.5rem;
-  padding: 0.3rem 0.6rem;
+  gap: var(--space-8);
+  padding: var(--space-5) var(--space-9);
   background: var(--bg-alt, #eef);
   border-bottom: 1px solid var(--border, #ccd);
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   align-items: baseline;
 }
 .tl-agent-header-back {
@@ -5546,7 +5581,7 @@ button.session-tab {
 /* Background row の TL リンク: 行の右端に寄せる。 */
 .status-row-tl {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   margin-left: auto;
 }
 
@@ -5556,7 +5591,7 @@ button.session-tab {
  * which is also what keeps a screen share from surfacing secrets by accident. */
 .status-env-summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--fg-muted);
@@ -5566,16 +5601,16 @@ button.session-tab {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.4rem 0 0.3rem;
+  gap: var(--space-8);
+  margin: var(--space-7) 0 var(--space-5);
 }
 
 .status-env-search {
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   flex: 1 1 16rem;
   min-width: 0;
-  padding: 0.25rem 0.4rem;
+  padding: var(--space-4) var(--space-7);
   border: 1px solid var(--border);
   border-radius: 0.3rem;
   background: var(--bg);
@@ -5585,23 +5620,23 @@ button.session-tab {
 .status-env-split {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.75rem;
+  gap: var(--space-4);
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   white-space: nowrap;
   cursor: pointer;
 }
 
 .status-env-count {
-  margin: 0 0 0.3rem;
-  font-size: 0.7rem;
+  margin: 0 0 var(--space-5);
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .status-env-error {
-  margin: 0.4rem 0 0;
-  font-size: 0.8rem;
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-md);
   color: var(--err, #c55);
 }
 
@@ -5613,7 +5648,7 @@ button.session-tab {
   overflow-x: auto;
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
 }
 
 .status-env-table th {
@@ -5621,12 +5656,12 @@ button.session-tab {
   font-weight: 600;
   color: var(--fg-muted);
   border-bottom: 1px solid var(--border);
-  padding: 0.2rem 0.5rem 0.2rem 0;
+  padding: var(--space-3) var(--space-8) var(--space-3) 0;
 }
 
 .status-env-table td {
   vertical-align: top;
-  padding: 0.2rem 0.5rem 0.2rem 0;
+  padding: var(--space-3) var(--space-8) var(--space-3) 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -5679,19 +5714,19 @@ button.session-tab {
  * chrome) but stays always-visible — hover-reveal would hide the one control
  * this zone exists for. */
 .status-kill-zone {
-  margin-top: 2rem;
-  padding-top: 0.6rem;
+  margin-top: var(--space-16);
+  padding-top: var(--space-9);
   border-top: 1px solid var(--danger);
 }
 
 .status-kill-button {
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--danger);
   background: none;
   border: 1px solid var(--danger);
   border-radius: 0.3rem;
-  padding: 0.25rem 0.7rem;
+  padding: var(--space-4) var(--space-10);
   cursor: pointer;
 }
 
@@ -5711,8 +5746,8 @@ button.session-tab {
 }
 
 .status-kill-result {
-  margin: 0.4rem 0 0;
-  font-size: 0.75rem;
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
@@ -5761,7 +5796,7 @@ button.session-tab {
   background: color-mix(in srgb, var(--fg) 18%, var(--bg-alt));
   color: var(--fg);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   line-height: 1;
   cursor: pointer;
   touch-action: manipulation;
@@ -5786,12 +5821,12 @@ button.session-tab {
 
 .tl-float-tab {
   flex: 1 1 auto;
-  padding: 0.2rem 0.5rem;
+  padding: var(--space-3) var(--space-8);
   border: 0;
   background: transparent;
   color: var(--fg-muted);
   font: inherit;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -5802,7 +5837,7 @@ button.session-tab {
 }
 
 .tl-float-actions {
-  padding: 0.35rem 0.55rem 0.45rem;
+  padding: var(--space-6) var(--space-9) var(--space-8);
   border: 1px solid var(--border);
   border-radius: 0 0 0 0.5rem;
   background: var(--bg-alt);
@@ -5813,7 +5848,7 @@ button.session-tab {
   max-width: 16rem;
   margin: 0;
   color: var(--fg-muted);
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
 }
 
 /* 「まで残す」「から消す」の 2 ボタンと、その境界を説明する 1 行。縦積みなのは
@@ -5822,17 +5857,17 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 .tl-float-action {
-  padding: 0.25rem 0.6rem;
+  padding: var(--space-4) var(--space-9);
   border: 1px solid var(--border);
   border-radius: 0.35rem;
   background: var(--bg);
   color: var(--fg);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -5840,16 +5875,16 @@ button.session-tab {
 .tl-auto-open {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: var(--space-10);
   width: fit-content;
   margin: 0;
-  padding: 0.25rem 0.55rem 0.3rem;
+  padding: var(--space-4) var(--space-9) var(--space-5);
   border: 1px solid var(--border);
   /* 上はタブ帯と接するので角を丸めない (丸めるとタブとの間に隙間が見える)。 */
   border-radius: 0 0 0 0.5rem;
   background: var(--bg-alt);
   color: var(--fg-muted);
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
@@ -5858,18 +5893,18 @@ button.session-tab {
  * その padding-bottom 12rem の余白帯の位置に負 margin で引き上げる。末尾まで
  * スクロールしたときだけ見える。 */
 .tl-bottom-controls {
-  margin: -1rem 0.75rem 1rem;
+  margin: -1rem var(--space-11) var(--space-13);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .tl-auto-open legend {
   /* fieldset 標準の legend は枠線上に半分はみ出し、背後のテキストと重なると
    * 読めない (kawaz r38 mid=64) — float で通常フローに落として枠内配置に。 */
   float: left;
-  padding: 0 0.25rem 0 0;
-  font-size: 0.65rem;
+  padding: 0 var(--space-4) 0 0;
+  font-size: var(--font-size-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   align-self: center;
@@ -5878,7 +5913,7 @@ button.session-tab {
 .tl-auto-open label {
   display: inline-flex;
   align-items: center;
-  gap: 0.2rem;
+  gap: var(--space-3);
   cursor: pointer;
   font-family: ui-monospace, monospace;
 }
@@ -5902,14 +5937,14 @@ button.session-tab {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.1rem;
+  gap: var(--space-1);
   width: 100%;
-  padding: 0.35rem 0.75rem;
+  padding: var(--space-6) var(--space-11);
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   background: var(--bg-alt);
   font: inherit;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg);
   cursor: pointer;
   text-align: left;
@@ -5950,7 +5985,7 @@ button.session-tab {
 
 .session-status-badge {
   flex-shrink: 0;
-  font-size: 0.65rem;
+  font-size: var(--font-size-2xs);
   font-family: ui-monospace, monospace;
   color: var(--accent);
   white-space: nowrap;
@@ -5998,14 +6033,14 @@ button.session-tab {
 .search-bar {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-7);
 }
 
 .search-bar-toggle {
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
   line-height: 1;
-  padding: 0.25rem 0.5rem;
+  padding: var(--space-4) var(--space-8);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -6016,17 +6051,17 @@ button.session-tab {
 .search-bar-editor {
   display: flex;
   align-items: flex-start;
-  gap: 0.35rem;
+  gap: var(--space-6);
 }
 
 .search-bar-query {
   font: inherit;
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   min-width: 10rem;
   max-width: 16rem;
   min-height: 2rem;
   max-height: 6rem;
-  padding: 0.3rem 0.5rem;
+  padding: var(--space-5) var(--space-8);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -6036,13 +6071,13 @@ button.session-tab {
 
 .search-bar-toggles {
   display: flex;
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .search-bar-toggle-btn {
   font: inherit;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-4) var(--space-8);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -6057,7 +6092,7 @@ button.session-tab {
 }
 
 .search-bar-error {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--danger);
   align-self: center;
 }
@@ -6066,15 +6101,15 @@ button.session-tab {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 .search-bar-chip {
   display: inline-block;
   max-width: 14ch;
   overflow: hidden;
-  font-size: 0.75rem;
-  padding: 0.1rem 0.5rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-8);
   border: 1px solid color-mix(in srgb, var(--chip-color, var(--border)) 45%, var(--border));
   border-radius: 999px;
   background: color-mix(in srgb, var(--chip-color, var(--bg-alt)) 25%, var(--bg-alt));
@@ -6090,7 +6125,7 @@ button.session-tab {
 }
 
 .search-bar-count {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -6098,8 +6133,8 @@ button.session-tab {
 
 .search-bar-chips button {
   font: inherit;
-  font-size: 0.8rem;
-  padding: 0.15rem 0.5rem;
+  font-size: var(--font-size-md);
+  padding: var(--space-2) var(--space-8);
   border-radius: 0.4rem;
   border: 1px solid var(--border);
   background: var(--bg);
@@ -6179,9 +6214,9 @@ button.session-tab {
 .room-creator-kind {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  margin-right: 0.75rem;
-  font-size: 0.85rem;
+  gap: var(--space-5);
+  margin-right: var(--space-11);
+  font-size: var(--font-size-lg);
 }
 
 /* r46 m3: セッションツリーパネル (Sidebar 下段 section)。ノードは 1 行 =
@@ -6196,18 +6231,18 @@ button.session-tab {
 }
 
 .agent-tree-children {
-  padding-left: 0.85rem;
+  padding-left: var(--space-12);
 }
 
 .agent-tree-node {
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 .agent-tree-row {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0;
+  gap: var(--space-5);
+  padding: var(--space-1) 0;
 }
 
 .agent-tree-caret {
@@ -6220,7 +6255,7 @@ button.session-tab {
   border: 0;
   padding: 0;
   color: var(--fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   line-height: 1;
   cursor: pointer;
 }
@@ -6248,22 +6283,22 @@ button.session-tab {
 .agent-tree-panel {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-11);
 }
 
 /* セッション自身の行 (ツリー先頭)。グループヘッダを持たない単独行なので、
  * 続く Teammates グループとの間に同じ間隔を空ける。 */
 .agent-tree-self {
-  margin-bottom: 0.45rem;
+  margin-bottom: var(--space-8);
 }
 
 .agent-tree-group-header {
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--fg-muted);
-  margin: 0 0 0.2rem 0;
+  margin: 0 0 var(--space-3) 0;
   padding: 0;
 }
 
@@ -6274,15 +6309,15 @@ button.session-tab {
 }
 
 .agent-tree-completed {
-  margin-top: 0.15rem;
+  margin-top: var(--space-2);
 }
 
 .agent-tree-completed-toggle {
   background: none;
   border: 0;
-  padding: 0.1rem 0;
+  padding: var(--space-1) 0;
   color: var(--fg-muted);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   cursor: pointer;
 }
 
@@ -6294,13 +6329,13 @@ button.session-tab {
 .agent-tree-phase-row {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0;
+  gap: var(--space-5);
+  padding: var(--space-1) 0;
 }
 
 .agent-tree-workflow-run-id {
   font-family: var(--font-mono, monospace);
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6312,10 +6347,10 @@ button.session-tab {
  * 色だけに頼らず ⚠ + 件数を出す。 */
 .agent-tree-error-badge {
   flex: 0 0 auto;
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  padding: 0.05rem 0.25rem;
+  padding: 0.05rem var(--space-4);
   border-radius: 0.6em;
   color: var(--danger);
   border: 1px solid var(--danger);
@@ -6335,7 +6370,7 @@ button.session-tab {
 .agent-tree-workflow-run-progress,
 .agent-tree-phase-progress {
   font-variant-numeric: tabular-nums;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   flex: 0 0 auto;
 }
@@ -6354,7 +6389,7 @@ button.session-tab {
  * 骨格を示す (TUI 側 /workflows の未着手行と同じ役割)。 */
 .agent-tree-phase-index {
   font-variant-numeric: tabular-nums;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   color: var(--fg-muted);
   flex: 0 0 auto;
 }
@@ -6384,7 +6419,7 @@ button.session-tab {
 .agent-tree-model,
 .agent-tree-tokens,
 .agent-tree-state-note {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   flex: 0 0 auto;
   white-space: nowrap;
@@ -6405,8 +6440,8 @@ button.session-tab {
   /* kawaz r46 mid=18: ノード名は折り返さず右スクロールで見せる */
   overflow-x: auto;
   border-right: 1px solid var(--border);
-  padding: 0.5rem 0.75rem;
-  font-size: 0.85rem;
+  padding: var(--space-8) var(--space-11);
+  font-size: var(--font-size-lg);
   background: var(--bg-alt);
 }
 
@@ -6461,8 +6496,8 @@ button.session-tab {
   position: absolute;
   right: 0.5rem;
   bottom: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.75rem;
+  padding: var(--space-4) var(--space-8);
+  font-size: var(--font-size-sm);
   background: var(--bg-alt);
   color: var(--fg-muted);
   border: 1px solid var(--border);
@@ -6475,25 +6510,25 @@ button.session-tab {
 }
 
 .terminal-pane-config {
-  padding: 1rem;
+  padding: var(--space-13);
   overflow: auto;
 }
 .terminal-config-form {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
   max-width: 32rem;
 }
 .terminal-config-form input {
   width: 100%;
-  padding: 0.4rem 0.5rem;
+  padding: var(--space-7) var(--space-8);
   font: inherit;
   box-sizing: border-box;
 }
 .terminal-config-error {
   color: var(--fg-error, #c33);
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
 }
 
 /* ---- /usage: host-wide LLM credential quota ---------------------------- */
@@ -6502,31 +6537,31 @@ button.session-tab {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 0.75rem 1rem;
+  padding: var(--space-11) var(--space-13);
 }
 
 .usage-header {
   display: flex;
   align-items: baseline;
-  gap: 0.75rem;
+  gap: var(--space-11);
   flex-wrap: wrap;
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-11);
 }
 
 .usage-header h2 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--font-size-2xl);
 }
 
 .usage-stale {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--danger);
 }
 
 .usage-loading,
 .usage-empty {
   color: var(--fg-muted);
-  font-size: 0.9rem;
+  font-size: var(--font-size-xl);
 }
 
 .usage-list {
@@ -6535,22 +6570,22 @@ button.session-tab {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: var(--space-12);
 }
 
 .usage-credential {
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0.6rem 0.75rem;
+  padding: var(--space-9) var(--space-11);
   background: var(--bg-alt);
 }
 
 .usage-credential-head {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: var(--space-8);
   flex-wrap: wrap;
-  margin-bottom: 0.4rem;
+  margin-bottom: var(--space-7);
 }
 
 .usage-credential-name {
@@ -6559,20 +6594,20 @@ button.session-tab {
 
 .usage-credential-type,
 .usage-age {
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
 .usage-support {
   font-family: var(--mono, monospace);
-  font-size: 0.82rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
 .usage-windows {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: var(--space-6);
 }
 
 /* One grid so every credential's bars start and end at the same x — the
@@ -6593,7 +6628,7 @@ button.session-tab {
   display: grid;
   grid-template-columns: minmax(0, 11rem) 2.6rem minmax(4rem, 1fr) 4.6rem 5.8rem;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 /* Right-aligned with equal-width digits, so 42% and 100% end at the same x
@@ -6601,7 +6636,7 @@ button.session-tab {
 .usage-figure,
 button.usage-figure {
   font-family: var(--mono, monospace);
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   text-align: right;
   white-space: nowrap;
@@ -6609,7 +6644,7 @@ button.usage-figure {
 }
 
 .usage-window-key {
-  font-size: 0.8rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -6678,16 +6713,16 @@ button.usage-reset:hover {
 
 .usage-overage,
 .usage-probe-error {
-  margin-top: 0.4rem;
-  font-size: 0.8rem;
+  margin-top: var(--space-7);
+  font-size: var(--font-size-md);
   color: var(--danger);
 }
 
 /* Sits with the label rather than in the figures: it qualifies which limit
    this is, not how full it is. */
 .usage-limit-active {
-  margin-left: 0.25rem;
-  font-size: 0.6rem;
+  margin-left: var(--space-4);
+  font-size: var(--font-size-3xs);
   color: var(--accent);
   vertical-align: middle;
 }
@@ -6695,12 +6730,12 @@ button.usage-reset:hover {
 /* ---- /usage: LLM spend ------------------------------------------------- */
 
 #usage-stats {
-  margin-top: 1.5rem;
+  margin-top: var(--space-15);
 }
 
 .stats-subhead {
-  margin: 1rem 0 0.5rem;
-  font-size: 0.9rem;
+  margin: var(--space-13) 0 var(--space-8);
+  font-size: var(--font-size-xl);
   color: var(--fg-muted);
   font-weight: 600;
 }
@@ -6708,12 +6743,12 @@ button.usage-reset:hover {
 .stats-period {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
 }
 
 .stats-period-preset {
-  padding: 0.15rem 0.5rem;
-  font-size: 0.8rem;
+  padding: var(--space-2) var(--space-8);
+  font-size: var(--font-size-md);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-alt);
@@ -6734,15 +6769,15 @@ button.usage-reset:hover {
 .stats-rows {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-3);
 }
 
 .stats-period-row > summary {
   display: grid;
   grid-template-columns: 7rem auto minmax(3rem, 1fr) 6rem;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.4rem;
+  gap: var(--space-8);
+  padding: var(--space-4) var(--space-7);
   border-radius: 4px;
   cursor: pointer;
   list-style-position: outside;
@@ -6754,12 +6789,12 @@ button.usage-reset:hover {
 
 .stats-period-key {
   font-family: var(--mono, monospace);
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   white-space: nowrap;
 }
 
 .stats-period-note {
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   white-space: nowrap;
 }
@@ -6786,7 +6821,7 @@ button.usage-reset:hover {
 .stats-period-usd,
 .stats-model-usd {
   font-family: var(--mono, monospace);
-  font-size: 0.85rem;
+  font-size: var(--font-size-lg);
   text-align: right;
   white-space: nowrap;
 }
@@ -6797,19 +6832,19 @@ button.usage-reset:hover {
 
 .stats-models {
   list-style: none;
-  margin: 0.2rem 0 0.5rem;
-  padding: 0 0.4rem 0 1.5rem;
+  margin: var(--space-3) 0 var(--space-8);
+  padding: 0 var(--space-7) 0 var(--space-15);
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: var(--space-2);
 }
 
 .stats-model {
   display: grid;
   grid-template-columns: 12rem minmax(3rem, 1fr) 6rem auto;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
+  gap: var(--space-8);
+  font-size: var(--font-size-md);
 }
 
 .stats-model-name {
@@ -6820,30 +6855,30 @@ button.usage-reset:hover {
 }
 
 .stats-model-counters {
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
   white-space: nowrap;
 }
 
 .stats-by-credential {
-  margin: 0 0 0.6rem 1.5rem;
+  margin: 0 0 var(--space-9) var(--space-15);
 }
 
 .stats-by-credential > summary {
-  font-size: 0.78rem;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   cursor: pointer;
 }
 
 .stats-credential {
-  margin: 0.3rem 0 0.3rem 0.5rem;
+  margin: var(--space-5) 0 var(--space-5) var(--space-8);
 }
 
 .stats-credential-head {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  font-size: 0.8rem;
+  gap: var(--space-8);
+  font-size: var(--font-size-md);
 }
 
 .stats-credential-name {
@@ -6857,8 +6892,8 @@ button.usage-reset:hover {
 
 .stats-note,
 .stats-empty {
-  margin: 0.4rem 0 0;
-  font-size: 0.82rem;
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
 }
 
@@ -6866,8 +6901,8 @@ button.usage-reset:hover {
    path (the readings beside it refresh on their own) and it spends upstream
    rate limit, so it should not read as the thing to click by default. */
 #usage-probe {
-  padding: 0.15rem 0.6rem;
-  font-size: 0.78rem;
+  padding: var(--space-2) var(--space-9);
+  font-size: var(--font-size-md);
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-alt);
@@ -6885,8 +6920,8 @@ button.usage-reset:hover {
 }
 
 .usage-probe-age {
-  margin-top: 0.15rem;
-  font-size: 0.72rem;
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
   color: var(--fg-muted);
 }
 
@@ -6894,14 +6929,14 @@ button.usage-reset:hover {
 
 .usage-tabs {
   display: flex;
-  gap: 0.25rem;
+  gap: var(--space-4);
   border-bottom: 1px solid var(--border);
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-11);
 }
 
 .usage-tabs button {
-  padding: 0.35rem 0.9rem;
-  font-size: 0.85rem;
+  padding: var(--space-6) var(--space-12);
+  font-size: var(--font-size-lg);
   border: none;
   border-bottom: 2px solid transparent;
   background: none;
@@ -6933,7 +6968,7 @@ button.usage-reset:hover {
   --series-7: #4a3aa7;
   --series-8: #e34948;
   --series-other: #898781;
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-13);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -6963,10 +6998,10 @@ button.usage-reset:hover {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.15rem 0.85rem;
-  margin: 0 0 0.4rem;
+  gap: var(--space-2) var(--space-12);
+  margin: 0 0 var(--space-7);
   padding: 0;
-  font-size: 0.75rem;
+  font-size: var(--font-size-sm);
   /* Text wears text tokens; the swatch beside it carries the identity. */
   color: var(--fg-muted);
 }
@@ -6981,7 +7016,7 @@ button.usage-reset:hover {
 .stats-legend-entry {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-5);
   border: none;
   background: none;
   padding: 0;
@@ -7077,15 +7112,15 @@ button.usage-reset:hover {
 }
 
 .stats-hover {
-  margin: 0.2rem 0 0;
-  font-size: 0.78rem;
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-md);
   color: var(--fg-muted);
   min-height: 1.2em;
 }
 
 .stats-breakdown-head {
-  margin: 0.5rem 0 0.1rem 1.5rem;
-  font-size: 0.75rem;
+  margin: var(--space-8) 0 var(--space-1) var(--space-15);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--fg-muted);
 }
@@ -7219,8 +7254,8 @@ button.usage-reset:hover {
   border-radius: 3px;
   color: var(--fg-muted);
   cursor: pointer;
-  padding: 0 0.4rem;
-  font-size: 0.8rem;
+  padding: 0 var(--space-7);
+  font-size: var(--font-size-md);
   line-height: 1.6;
   white-space: nowrap;
 }
