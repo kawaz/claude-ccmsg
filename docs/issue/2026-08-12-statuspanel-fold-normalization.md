@@ -1,11 +1,11 @@
 ---
 title: StatusPanel の details 4 箇所を Fold へ寄せる
-status: open
+status: wip
 category: task
 created: 2026-08-12T03:34:56+09:00
 last_read:
 open_entered: 2026-08-12T03:34:56+09:00
-wip_entered:
+wip_entered: 2026-08-12T15:08:22+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -35,3 +35,5 @@ W3 の Fold 正規化 (v0.99.0) で SessionList / RoomList / SessionRooms / Usag
 ## TODO
 
 <!-- wip 時のみ -->
+
+着手 (2026-08-12)。
