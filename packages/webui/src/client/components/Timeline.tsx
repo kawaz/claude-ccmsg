@@ -3,6 +3,7 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { createContext, type ComponentChildren } from "preact";
+import { memo } from "preact/compat";
 import {
   useCallback,
   useContext,
@@ -23,6 +24,7 @@ import { useStoreState } from "../useStore.ts";
 import { activeTraceCollector } from "../trace.ts";
 import { setBounded } from "../bounded-map.ts";
 import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-map.ts";
+import { crossLineIncrementally, emptyCrossLineCache } from "../incremental-cross-line.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
@@ -43,18 +45,14 @@ import {
   extractCcmsgMessages,
   foldGroupLabel,
   foldGroupNeedsOuterFold,
-  groupTimelineLines,
   isApiErrorLine,
   isSearchableSegment,
   itemRawSourceOffsets,
   splitFoldSubgroups,
   userNavTargets,
-  byteOffsetsFromLengths,
-  pairQueuedTurns,
   parseSystemMessageFields,
   parseTranscriptLine,
   rawTranscriptRowsFrom,
-  resolveToolResults,
   utf8ByteLength,
   truncateRawLine,
   type BashCommandOutput,
@@ -1775,6 +1773,20 @@ function LineView({
   );
 }
 
+// LineView, ItemsSubFold and FoldGroup (each memoized right where it is
+// defined) render the fold side of the timeline, which is 73-96% of every
+// entry in a real transcript — and a live tail re-rendered the whole of it
+// once per appended line, because Preact recurses into every child of a
+// re-rendered parent whether or not its props moved. Memoizing them narrows
+// the re-render to the groups that actually changed: 2360 -> 3 fold-side
+// component renders per appended line, measured on a 2180-line window.
+//
+// This only pays off because incremental-cross-line.ts hands back the *same*
+// `entries` array for an unchanged group. Two other props have to hold still
+// for the same reason, and are memoized in Timeline() below for it:
+// `translationAvailability` and `searchCtx`.
+const MemoLineView = memo(LineView);
+
 // Tools folding (kawaz spec): the run of thinking/tool_use/tool_result/meta
 // entries between a user prompt and the assistant's next user-facing final
 // response, collapsed into one <details> — default-collapsed via the native
@@ -1833,7 +1845,7 @@ function FoldGroup({
       <div class="tl-guided-content">
         {subgroups.map((subgroup) =>
           subgroup.kind === "direct" ? (
-            <LineView
+            <MemoLineView
               key={subgroup.entry.offset}
               line={subgroup.entry.line}
               offset={subgroup.entry.offset}
@@ -1842,7 +1854,7 @@ function FoldGroup({
               searchCtx={searchCtx}
             />
           ) : (
-            <ItemsSubFold
+            <MemoItemsSubFold
               key={subgroup.entries[0]!.offset}
               entries={subgroup.entries}
               translationAvailability={translationAvailability}
@@ -1903,7 +1915,7 @@ function FoldGroup({
         <div class="tl-guided-content">
           {subgroups.map((sg) =>
             sg.kind === "direct" ? (
-              <LineView
+              <MemoLineView
                 key={sg.entry.offset}
                 line={sg.entry.line}
                 offset={sg.entry.offset}
@@ -1912,7 +1924,7 @@ function FoldGroup({
                 searchCtx={searchCtx}
               />
             ) : (
-              <ItemsSubFold
+              <MemoItemsSubFold
                 key={sg.entries[0]!.offset}
                 entries={sg.entries}
                 translationAvailability={translationAvailability}
@@ -1926,6 +1938,8 @@ function FoldGroup({
     </details>
   );
 }
+
+const MemoFoldGroup = memo(FoldGroup);
 
 /** FoldGroup 展開時の thinking 間 tool 群サブ fold (kawaz r17 mid=45)。
  * 既定は閉。こちらにも縦線クリック閉じを付ける (ネスト側の「| |」相当)。 */
@@ -1947,7 +1961,7 @@ function ItemsSubFold({
   if (entries.length === 1) {
     const { offset, line } = entries[0]!;
     return (
-      <LineView
+      <MemoLineView
         line={line}
         offset={offset}
         translationAvailability={translationAvailability}
@@ -1968,7 +1982,7 @@ function ItemsSubFold({
         <FoldGuide />
         <div class="tl-guided-content">
           {entries.map(({ offset, line }) => (
-            <LineView
+            <MemoLineView
               key={offset}
               line={line}
               offset={offset}
@@ -1982,6 +1996,8 @@ function ItemsSubFold({
     </details>
   );
 }
+
+const MemoItemsSubFold = memo(ItemsSubFold);
 
 // --- 境界行の吹き出し表示 (kawaz spec: 「timeline のユーザプロンプトと
 // エージェントアウトプットは ROOM のチャットに寄せた表現にしたい」) ---
@@ -3008,24 +3024,30 @@ export function Timeline({
     );
     return byteLengthCacheRef.current.values;
   }, [timeline.lines]);
-  // The two passes that need the whole window (queue-operation pairing,
-  // tool_use/tool_result joining) run over the per-line results — they read
-  // neighbouring lines, so they can't be folded into the per-line cache.
-  const parsed = useMemo(
-    () => resolveToolResults(pairQueuedTurns(perLine, timeline.lines)),
-    [perLine, timeline.lines],
-  );
-  // Absolute byte offsets, one per cached line — stable Preact keys across a
-  // "load older" prepend (see transcript-model.ts's lineByteOffsets doc).
-  const offsets = useMemo(
-    () => byteOffsetsFromLengths(timeline.start, byteLengths),
-    [timeline.start, byteLengths],
-  );
-  // Tools folding (kawaz spec): boundary lines (user prompts / assistant
-  // user-facing final responses) stay standalone entries, everything between
-  // them collapses into one fold group — see transcript-model.ts's
-  // groupTimelineLines doc comment.
-  const groups = useMemo(() => groupTimelineLines(parsed, offsets), [parsed, offsets]);
+  // The passes that need the whole window (queue-operation pairing,
+  // tool_use/tool_result joining, tools folding) run over the per-line results
+  // — they read neighbouring lines, so they can't be folded into the per-line
+  // cache. They stay whole-window here too; what is incremental is the
+  // *identity* of their output, so a live-tail append leaves the FoldGroup of
+  // every untouched group holding the same `entries` array as before and
+  // Preact can skip it. See incremental-cross-line.ts.
+  //
+  // `offsets` are absolute byte offsets, one per cached line — stable Preact
+  // keys across a "load older" prepend (see transcript-model.ts's
+  // lineByteOffsets doc). `groups` is the tools folding (kawaz spec):
+  // boundary lines (user prompts / assistant user-facing final responses)
+  // stay standalone entries, everything between them collapses into one fold
+  // group — see transcript-model.ts's groupTimelineLines doc comment.
+  const crossLineCacheRef = useRef(emptyCrossLineCache());
+  const { parsed, offsets, groups } = useMemo(() => {
+    crossLineCacheRef.current = crossLineIncrementally(crossLineCacheRef.current, {
+      start: timeline.start,
+      raws: timeline.lines,
+      perLine,
+      byteLengths,
+    });
+    return crossLineCacheRef.current;
+  }, [timeline.start, timeline.lines, perLine, byteLengths]);
   // groups.map (render 本体) が毎レンダー classifyBoundaryLine を呼び直すのを
   // 避けるため、groups が変わった時だけ計算しメモ化する (index を groups と
   // 揃え、entry 以外は使わないので null のまま)。
@@ -3051,10 +3073,17 @@ export function Timeline({
   // render 中に共有 Set を mutate すると fold の開閉のような子局所 re-render で
   // 判定が変わってしまう。
   const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
-  const visibleCcmsgKeys = useMemo(
-    () => new Set(ccmsgTargets.map((target) => target.key)),
-    [ccmsgTargets],
-  );
+  // Carried over whenever the set of visible bubbles is unchanged: this rides
+  // in a context value, so a fresh Set per appended line would re-render every
+  // ccmsg bubble on the page even though nothing about them moved.
+  const visibleCcmsgKeysRef = useRef<ReadonlySet<string>>(new Set());
+  const visibleCcmsgKeys = useMemo(() => {
+    const next = new Set(ccmsgTargets.map((target) => target.key));
+    const previous = visibleCcmsgKeysRef.current;
+    if (previous.size === next.size && [...next].every((key) => previous.has(key))) return previous;
+    visibleCcmsgKeysRef.current = next;
+    return next;
+  }, [ccmsgTargets]);
 
   // --- "👤 N/M" user-turn nav (kawaz spec): toolbar buttons to jump to the
   // top/bottom of the loaded transcript and to the previous/next user-text
@@ -3172,13 +3201,19 @@ export function Timeline({
     return map;
   }, [rawRows]);
   const itemRawSources = useMemo(() => itemRawSourceOffsets(parsed, offsets), [parsed, offsets]);
-  const getItemRawRows = useCallback(
-    (offset: number) =>
-      (itemRawSources.get(offset) ?? [])
-        .map((o) => rawRowByOffset.get(o))
-        .filter((row): row is RawTranscriptRow => row !== undefined),
-    [itemRawSources, rawRowByOffset],
-  );
+  // Read through a ref rather than closed over, so the identity of this
+  // callback — and with it the ItemRawContext value every timeline item
+  // subscribes to — survives a live-tail append. The lookup tables it reads
+  // are rebuilt on every append, but nothing reads them until someone toggles
+  // an item to jsonl, and by then the ref holds the current pair.
+  const itemRawLookupRef = useRef({ itemRawSources, rawRowByOffset });
+  itemRawLookupRef.current = { itemRawSources, rawRowByOffset };
+  const getItemRawRows = useCallback((offset: number) => {
+    const { itemRawSources: sources, rawRowByOffset: rows } = itemRawLookupRef.current;
+    return (sources.get(offset) ?? [])
+      .map((o) => rows.get(o))
+      .filter((row): row is RawTranscriptRow => row !== undefined);
+  }, []);
 
   // Flat, document-order list of every search "unit" currently loaded — a
   // human/assistant Segment gated through `isSearchableSegment` (DR-0022 §3,
@@ -3794,12 +3829,13 @@ export function Timeline({
   // groups.map) と fold-group 側が **同一の可視 key 集合** (visibleCcmsgKeys、
   // 上の分類フェーズで確定) を参照する。どちらの経路も読むだけなので、
   // fold の開閉が何度起きても判定は変わらない。
-  const ccmsgRenderValue: CcmsgRenderCtxValue = {
-    now,
-    rooms: appState.rooms,
-    peers: appState.peers,
-    visibleCcmsgKeys,
-  };
+  // Memoized because a context value is the one prop `memo` can't intercept:
+  // a new object here re-renders every ccmsg bubble in the transcript, past
+  // the memoized fold groups that would otherwise have been skipped.
+  const ccmsgRenderValue = useMemo<CcmsgRenderCtxValue>(
+    () => ({ now, rooms: appState.rooms, peers: appState.peers, visibleCcmsgKeys }),
+    [now, appState.rooms, appState.peers, visibleCcmsgKeys],
+  );
   return (
     <FileToolSidContext.Provider value={sid}>
       <SessionFilePathCtxContext.Provider value={sessionFilePathCtx}>
@@ -3929,7 +3965,7 @@ export function Timeline({
                           .map((group, i) => {
                             if (group.kind === "fold") {
                               return (
-                                <FoldGroup
+                                <MemoFoldGroup
                                   key={group.entries[0]!.offset}
                                   entries={group.entries}
                                   translationAvailability={translationAvailability}
