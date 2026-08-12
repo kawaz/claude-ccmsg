@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   attachmentDetail,
+  parseNumberedSnippet,
   ccmsgDedupKey,
   ccmsgMessageCount,
   ccmsgRenderTargets,
@@ -4101,7 +4102,68 @@ describe("attachmentDetail", () => {
       { type: "edited_text_file", filename: "/repo/main/src/a.ts", snippet: "…" },
       "/repo/main",
     );
-    expect(detail).toEqual({ type: "edited_text_file", trailing: "src/a.ts", fields: [] });
+    expect(detail.type).toBe("edited_text_file");
+    expect(detail.trailing).toBe("src/a.ts");
+    expect(detail.fields).toEqual([]);
+  });
+
+  // kawaz r99 m35: file 系 attachment は Read カードと同じプレビューを出す。
+  // snippet は行番号付きなので、番号を剥がして startLine に移す (剥がさないと
+  // ビューアの行番号と本文中の番号が二重に出る)。
+  test("edited_text_file -> 行番号付き snippet を本文 + startLine に分解する", () => {
+    const detail = attachmentDetail(
+      {
+        type: "edited_text_file",
+        filename: "/tmp/a.ts",
+        snippet: "21\tconst a = 1;\n22\tconst b = 2;",
+      },
+      null,
+    );
+    expect(detail.file).toEqual({
+      path: "/tmp/a.ts",
+      content: "const a = 1;\nconst b = 2;",
+      startLine: 21,
+    });
+  });
+
+  // 番号として解釈できない snippet は本文をそのまま出す (列を 1 つ失うより
+  // 素のまま見せる方が安全)。
+  test("edited_text_file -> 番号形でない snippet はそのまま 1 行目から表示", () => {
+    const detail = attachmentDetail(
+      { type: "edited_text_file", filename: "/tmp/a.ts", snippet: "no numbers here" },
+      null,
+    );
+    expect(detail.file).toEqual({ path: "/tmp/a.ts", content: "no numbers here", startLine: 1 });
+  });
+
+  test("file -> content.file.content をそのままプレビューに使う", () => {
+    const detail = attachmentDetail(
+      {
+        type: "file",
+        filename: "/tmp/b.sh",
+        content: {
+          type: "text",
+          file: { filePath: "/tmp/b.sh", content: "#!/bin/sh\n", startLine: 1 },
+        },
+      },
+      null,
+    );
+    expect(detail.file).toEqual({ path: "/tmp/b.sh", content: "#!/bin/sh\n", startLine: 1 });
+  });
+
+  // 画像の file attachment には text body が無い。プレビューを出さず従来どおり
+  // raw JSON に落ちる。
+  test("file -> テキスト本文が無ければプレビューを出さない", () => {
+    const detail = attachmentDetail(
+      {
+        type: "file",
+        filename: "/tmp/c.png",
+        content: { type: "image", source: { data: "…", media_type: "image/png" } },
+      },
+      null,
+    );
+    expect(detail.file).toBeUndefined();
+    expect(detail.trailing).toBe("/tmp/c.png");
   });
 
   test("cwd 外のファイルは絶対パスのまま", () => {
@@ -4129,6 +4191,19 @@ describe("attachmentDetail", () => {
       attachmentDetail({ type: "future_file_thing", path: "/repo/main/b.ts" }, "/repo/main")
         .trailing,
     ).toBe("b.ts");
+  });
+
+  test("parseNumberedSnippet: 番号が連続しない / 一部行に番号が無いなら剥がさない", () => {
+    // 部分一致で剥がすと、本文の先頭が数字+タブだった行だけ列が欠けたり、
+    // 行番号が実ファイルとずれたまま表示されたりする。全行揃った時だけ採る。
+    expect(parseNumberedSnippet("1\ta\n3\tb")).toBeNull();
+    expect(parseNumberedSnippet("1\ta\nb")).toBeNull();
+    expect(parseNumberedSnippet("")).toBeNull();
+    expect(parseNumberedSnippet("0\ta")).toBeNull();
+    // 末尾の改行は本文側の空行であって番号の抜けではない。
+    expect(parseNumberedSnippet("7\ta\n8\tb\n")).toEqual({ content: "a\nb\n", startLine: 7 });
+    // 本文にタブが含まれていても、剥がすのは先頭の 1 個だけ。
+    expect(parseNumberedSnippet("1\ta\tb")).toEqual({ content: "a\tb", startLine: 1 });
   });
 
   test("attachment が欠落・非オブジェクトでも壊れない", () => {

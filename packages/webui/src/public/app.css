@@ -2648,6 +2648,16 @@ button.session-tab {
   flex: 0 0 auto;
 }
 
+/* プロジェクト外セクション内の由来別グループ見出し (kawaz r99 m35)。
+ * セクション見出し (.tree-section-label) の下に付く従属ラベルなので、
+ * 区切り線を持たず 1 段小さい字で、同じ縦リズムに収める。 */
+.tree-section-sublabel {
+  margin: var(--space-4) 0 var(--space-1);
+  padding: 0 var(--space-11);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
 /* docs/inbox メモ作成 (DR-0019 Phase W2): 「+ メモ」ボタンを右寄せで置く
  * flex 行。左側は spacer (.tree-header-spacer) が埋める。 */
 .tree-header {
@@ -4839,6 +4849,24 @@ button.session-tab {
 .tl-bashrun-out.is-error {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* attachment が抱えたファイル本文のプレビュー (kawaz r99 m35)。Read カードの
+ * インラインビューアをそのまま使い、その上にパス 1 行 (Files へのリンク) を置く。 */
+.tl-attachment-file {
+  padding: var(--space-5) var(--space-10) var(--space-7);
+}
+
+.tl-attachment-file-path {
+  display: block;
+  margin-bottom: var(--space-5);
+  color: var(--fg-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+a.tl-attachment-file-path {
+  color: var(--accent);
 }
 
 .tl-bashrun-persisted-note {

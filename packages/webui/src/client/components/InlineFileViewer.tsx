@@ -3,7 +3,7 @@ import { MarkdownView } from "../markdown-view.tsx";
 import { lineDiff, splitFileLines } from "../inline-file-model.ts";
 import { isMarkdownPath } from "../utils.ts";
 
-function CodeBody({ content }: { content: string }) {
+function CodeBody({ content, startLine = 1 }: { content: string; startLine?: number }) {
   const contentLines = splitFileLines(content);
   return contentLines.length === 0 ? (
     <p class="viewer-empty-file">(空のファイル)</p>
@@ -11,7 +11,7 @@ function CodeBody({ content }: { content: string }) {
     <pre class="viewer-body tl-inline-file-body">
       {contentLines.map((line, index) => (
         <div class="viewer-line" key={index}>
-          <span class="viewer-lineno">{index + 1}</span>
+          <span class="viewer-lineno">{startLine + index}</span>
           <span class="viewer-text">{line}</span>
         </div>
       ))}
@@ -19,7 +19,18 @@ function CodeBody({ content }: { content: string }) {
   );
 }
 
-export function InlineFileViewer({ path, content }: { path: string; content: string }) {
+export function InlineFileViewer({
+  path,
+  content,
+  startLine = 1,
+}: {
+  path: string;
+  content: string;
+  /** Line number of `content`'s first line. Defaults to 1 for a whole-file
+   * body; an attachment snippet starts partway into its file and passes the
+   * real number so the gutter names the file's lines, not the excerpt's. */
+  startLine?: number;
+}) {
   const [mode, setMode] = useState<"code" | "preview">("code");
   return (
     <div class="tl-inline-file-viewer">
@@ -40,7 +51,7 @@ export function InlineFileViewer({ path, content }: { path: string; content: str
         </button>
       </div>
       {mode === "code" ? (
-        <CodeBody content={content} />
+        <CodeBody content={content} startLine={startLine} />
       ) : isMarkdownPath(path) ? (
         <div class="viewer-preview">
           <MarkdownView source={content} />

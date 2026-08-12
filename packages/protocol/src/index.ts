@@ -654,6 +654,19 @@ export interface AgentTreeWorkflowPhase {
   members: AgentTreeNode[];
 }
 
+/** Which kind of transcript record named a DR-0024 external file. The webui
+ * groups the "プロジェクト外" section by it; authorization ignores it (every
+ * origin grants the same exact-path read). `tool` covers the file tools
+ * (Read/Write/Edit/MultiEdit/NotebookEdit) and the `! <cmd>` persisted-output
+ * sidecar; `attachment` covers file-shaped attachment rows. A path named by
+ * both is reported as `tool`, whichever came first. */
+export type ExternalFileOrigin = "tool" | "attachment";
+
+export interface ExternalFile {
+  path: string;
+  origin: ExternalFileOrigin;
+}
+
 export interface SessionStatusSnapshot {
   todos: SessionTodo[];
   workflows: SessionWorkflowStatus[];
@@ -667,11 +680,12 @@ export interface SessionStatusSnapshot {
    * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
    * そのまま返す。 */
   agent_tree?: AgentTreeGroups;
-  /** DR-0024: absolute paths outside the session's containment root that its
-   * transcript records as file-tool inputs. Existing targets are realpaths;
-   * missing/deleted targets retain a normalized lexical path. This is exactly
-   * the allowlist accepted by fs_read_external. */
-  external_files?: string[];
+  /** DR-0024: absolute paths outside the session's containment root that the
+   * transcript names. Existing targets are realpaths; missing/deleted targets
+   * retain a normalized lexical path. This is exactly the allowlist accepted by
+   * fs_read_external — one list, so an allowlist consumer cannot honour one
+   * origin and forget another. */
+  external_files?: ExternalFile[];
   /** DR-0026: VS Code `.code-workspace` folders discovered directly under the
    * session's cwd. Each `path` is a realpath-resolved absolute directory —
    * the same absolute prefix accepted by fs_list_workspace / fs_read_workspace

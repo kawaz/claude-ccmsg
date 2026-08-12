@@ -508,7 +508,7 @@ export async function fsReadExternal(
 
   const status = await getSessionStatus(statusStore, sessions, sid);
   if (!status.ok) return status;
-  const allowlist = new Set(status.data.external_files ?? []);
+  const allowlist = new Set((status.data.external_files ?? []).map((e) => e.path));
   const canonical = canonicalizeExternalPath(reqPath);
   if (!allowlist.has(canonical)) {
     return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };
@@ -750,7 +750,7 @@ export async function fsResolveForServe(
     }
     const status = await getSessionStatus(statusStore, sessions, sid);
     if (!status.ok) return status;
-    const allowlist = new Set(status.data.external_files ?? []);
+    const allowlist = new Set((status.data.external_files ?? []).map((e) => e.path));
     realPath = canonicalizeExternalPath(reqPath);
     if (!allowlist.has(realPath)) {
       return { ok: false, code: ErrorCode.path_forbidden, msg: `path not allowed: ${reqPath}` };

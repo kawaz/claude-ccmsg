@@ -1714,7 +1714,11 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual(files.map((file) => fs.realpathSync(file)).sort());
+      expect(result.external_files).toEqual(
+        files
+          .map((file) => ({ path: fs.realpathSync(file), origin: "tool" as const }))
+          .sort((a, b) => (a.path < b.path ? -1 : 1)),
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1772,7 +1776,9 @@ describe("session status external file fold (DR-0024)", () => {
         ],
         root,
       );
-      expect(result.external_files).toEqual([fs.realpathSync(outsideFile)]);
+      expect(result.external_files).toEqual([
+        { path: fs.realpathSync(outsideFile), origin: "tool" },
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1805,7 +1811,9 @@ describe("session status external file fold (DR-0024)", () => {
         root,
       );
       expect(result.external_files).toEqual(
-        [path.join(realOutside, "a.md"), path.join(realOutside, "b.md")].sort(),
+        [path.join(realOutside, "a.md"), path.join(realOutside, "b.md")]
+          .sort()
+          .map((path) => ({ path, origin: "tool" })),
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1830,7 +1838,9 @@ describe("session status external file fold (DR-0024)", () => {
         [toolUse("w1", "Write", { file_path: lexicalTarget, content: "x" })],
         root,
       );
-      expect(result.external_files).toEqual([path.join(fs.realpathSync(realDir), "report.md")]);
+      expect(result.external_files).toEqual([
+        { path: path.join(fs.realpathSync(realDir), "report.md"), origin: "tool" },
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1858,7 +1868,7 @@ describe("session status external file fold (DR-0024)", () => {
       fs.mkdirSync(path.dirname(sidecar));
       fs.writeFileSync(sidecar, "x".repeat(64));
       const result = await apply([persistedOutputRow(sidecar)], root);
-      expect(result.external_files).toEqual([fs.realpathSync(sidecar)]);
+      expect(result.external_files).toEqual([{ path: fs.realpathSync(sidecar), origin: "tool" }]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
@@ -1901,6 +1911,130 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 });
+
+describe("session_status / attachment 由来の external file (kawaz r99 m35)", () => {
+  test("file 系 attachment が名指すファイルを origin=attachment で allowlist に加える", async () => {
+    // fixture は実測 transcript の形: edited_text_file は filename + 行番号付き
+    // snippet、file (@ 参照) は filename + content.file.content。どちらも
+    // tool_use を経由しないので、attachment 行だけから path を採れることを固定する。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const edited = path.join(outside, "edited.md");
+      const mentioned = path.join(outside, "mentioned.md");
+      fs.writeFileSync(edited, "a");
+      fs.writeFileSync(mentioned, "b");
+      const result = await apply([editedTextFileRow(edited), mentionedFileRow(mentioned)], root);
+      expect(result.external_files).toEqual(
+        [fs.realpathSync(edited), fs.realpathSync(mentioned)]
+          .sort()
+          .map((path) => ({ path, origin: "attachment" })),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("同じファイルを tool も attachment も名指したら origin は tool (順序不問)", async () => {
+    // 由来は表示専用のグループ分けにしか使わないが、Files のツリーで 1 つの
+    // ファイルが 2 つの見出しに出ないよう、どちらが先に来ても tool に寄せる。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const file = path.join(outside, "both.md");
+      fs.writeFileSync(file, "x");
+      const expected = [{ path: fs.realpathSync(file), origin: "tool" as const }];
+      const attachmentFirst = await apply(
+        [editedTextFileRow(file), toolUse("r1", "Read", { file_path: file })],
+        root,
+      );
+      const toolFirst = await apply(
+        [toolUse("r1", "Read", { file_path: file }), editedTextFileRow(file)],
+        root,
+      );
+      expect(attachmentFirst.external_files).toEqual(expected);
+      expect(toolFirst.external_files).toEqual(expected);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("containment root 内の attachment は allowlist に入らない", async () => {
+    // 外部読み出しの認可面なので、プロジェクト内のファイルを混ぜない
+    // (tool 由来と同じ判定を通ることの確認)。
+    const root = fixtureDir();
+    try {
+      const inside = path.join(root, "inside.md");
+      fs.writeFileSync(inside, "x");
+      const result = await apply([editedTextFileRow(inside)], root);
+      expect(result.external_files).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("path を持たない / 未知の attachment type からは採らない", async () => {
+    // ATTACHMENT_PATH_FIELD は明示テーブル。未知 type の path らしき field を
+    // 総なめして認可面を勝手に広げないことを固定する。
+    const root = fixtureDir();
+    const outside = fixtureDir();
+    try {
+      const file = path.join(outside, "hook.md");
+      fs.writeFileSync(file, "x");
+      const unknownType = JSON.stringify({
+        type: "attachment",
+        timestamp: START,
+        attachment: { type: "some_future_type", filename: file, file_path: file },
+      });
+      const noPath = JSON.stringify({
+        type: "attachment",
+        timestamp: START,
+        attachment: { type: "edited_text_file", snippet: "1\tx" },
+      });
+      const result = await apply([unknownType, noPath], root);
+      expect(result.external_files).toEqual([]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("attachment fixture は scan の文字列 prefilter を通過する", async () => {
+    // これらの行は file_path も notebook_path も持たないため、専用の prefilter
+    // 項目が無いと全量/逐次 scan の入口で捨てられ fold まで届かない。
+    expect(isSessionStatusCandidate(editedTextFileRow("/tmp/x/a.md"))).toBe(true);
+    expect(isSessionStatusCandidate(mentionedFileRow("/tmp/x/b.md"))).toBe(true);
+  });
+});
+
+/** `type:"attachment"` row for a file the user's editor saved — numbered
+ * snippet, as observed in real transcripts. */
+function editedTextFileRow(filename: string): string {
+  return JSON.stringify({
+    type: "attachment",
+    timestamp: START,
+    attachment: { type: "edited_text_file", filename, snippet: "1\tfirst\n2\tsecond" },
+  });
+}
+
+/** `type:"attachment"` row for an @-mentioned file, carrying the same
+ * `file.content` shape a Read tool_result does. */
+function mentionedFileRow(filename: string): string {
+  return JSON.stringify({
+    type: "attachment",
+    timestamp: START,
+    attachment: {
+      type: "file",
+      filename,
+      content: {
+        type: "text",
+        file: { filePath: filename, content: "body\n", numLines: 1, startLine: 1, totalLines: 1 },
+      },
+    },
+  });
+}
 
 /** A `type: "user"` row whose `message.content` is the plain string Claude Code
  * writes for a `! <cmd>` result (not the tool_result block array). */
@@ -2179,7 +2313,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         const pushed = await user.readEventUntil<StatusEvent>(
           (event) => event.ev === "session_status" && event.external_files?.length === 1,
         );
-        expect(pushed.ev.external_files).toEqual([fs.realpathSync(external)]);
+        expect(pushed.ev.external_files).toEqual([
+          { path: fs.realpathSync(external), origin: "tool" },
+        ]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });
@@ -2223,7 +2359,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           op: "session_status_subscribe",
           sid,
         });
-        expect(rebuilt.external_files).toEqual([fs.realpathSync(touched)]);
+        expect(rebuilt.external_files).toEqual([
+          { path: fs.realpathSync(touched), origin: "tool" },
+        ]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(rootA, { recursive: true, force: true });

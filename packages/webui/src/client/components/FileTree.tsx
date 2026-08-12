@@ -6,7 +6,7 @@
 // never start with `/`, so external favorites/selections cannot collide. This
 // file owns the fs_list round trip; the reducer only stores what it's told
 // (DR-0005 §1: effects in components, not the reducer).
-import type { FsEntry, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
+import type { ExternalFile, FsEntry, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { fileIconKind, FileTypeIcon } from "./FileIcon.tsx";
 import { FileSearchPanel } from "./FileSearchPanel.tsx";
@@ -23,6 +23,7 @@ import {
   favoritesStorageKey,
   isWorkspaceFilePath,
   parseFavorites,
+  groupExternalFiles,
   sortExternalFiles,
   sortFavorites,
   toggleFavorite,
@@ -531,6 +532,49 @@ function favoriteEntryKind(
   return { kind: "file", symlink: false };
 }
 
+/** One origin group of the プロジェクト外 section. DR-0024: external paths
+ * render at depth 0 with the full absolute path as both label and locator key.
+ * FavoriteToggle shares the same flat string set as project rows; the `/`
+ * prefix guarantees no collision, and a starred external file therefore also
+ * appears in the favorites section through favoriteEntryKind's file fallback. */
+function ExternalFileGroup({
+  label,
+  paths,
+  sid,
+  tree,
+  fav,
+}: {
+  label: string;
+  paths: readonly string[];
+  sid: string;
+  tree: SessionTreeState;
+  fav: FavContext | null;
+}) {
+  if (paths.length === 0) return null;
+  return (
+    <>
+      <p class="tree-section-sublabel">{label}</p>
+      <ul class="tree-root tree-external">
+        {paths.map((externalPath) => (
+          <FileNode
+            key={externalPath}
+            sid={sid}
+            path={externalPath}
+            name={externalPath}
+            depth={0}
+            selected={tree.selectedPath === externalPath}
+            symlink={false}
+            fav={fav}
+            // DR-0024 external files live outside fs_delete's authorization
+            // surfaces (contained | workspace) — no delete affordance.
+            del={null}
+          />
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function FileTree({
   sid,
   tree,
@@ -541,8 +585,9 @@ export function FileTree({
 }: {
   sid: string;
   tree: SessionTreeState;
-  /** DR-0024 allowlisted absolute paths from the live session_status fold. */
-  externalFiles: readonly string[];
+  /** DR-0024 allowlisted absolute paths from the live session_status fold,
+   * each tagged with the kind of transcript record that named it. */
+  externalFiles: readonly ExternalFile[];
   /** DR-0026 allowlisted absolute folder roots from the live session_status
    * fold. Each becomes a root-level DirNode in the ワークスペース section
    * (rendered between お気に入り and プロジェクト). Empty array = the
@@ -593,7 +638,8 @@ export function FileTree({
     ? { favorites: new Set(favorites), onToggle: onToggleFavorite }
     : null;
   const sortedFavorites = sortFavorites(favorites);
-  const sortedExternalFiles = sortExternalFiles(externalFiles);
+  const externalGroups = groupExternalFiles(externalFiles);
+  const externalCount = externalGroups.tool.length + externalGroups.attachment.length;
 
   // New-file creation state (kawaz r46 mid=24): kept here so at most one
   // DirNode hosts the inline input at a time — sharing a single `activePath`
@@ -897,7 +943,7 @@ export function FileTree({
           respectGitignore={respectGitignore}
           treeRoot={rootPath}
           workspaceFolders={workspaceFolders}
-          externalFiles={externalFiles}
+          externalFiles={sortExternalFiles(externalFiles)}
           fav={fav}
         />
       ) : (
@@ -967,7 +1013,7 @@ export function FileTree({
            * fs_list_workspace routing keys off the same path via loadDir's
            * DR-0026 branch. Suppressed when no workspace folders were published
            * (either no .code-workspace file, or the session hasn't subscribed
-           * to session_status yet — same posture as sortedExternalFiles). */}
+           * to session_status yet — same posture as the プロジェクト外 section). */}
           {workspaceFolders.length > 0 ? (
             <>
               <p class="tree-section-label">ワークスペース</p>
@@ -990,9 +1036,7 @@ export function FileTree({
               </ul>
             </>
           ) : null}
-          {sortedFavorites.length > 0 ||
-          workspaceFolders.length > 0 ||
-          sortedExternalFiles.length > 0 ? (
+          {sortedFavorites.length > 0 || workspaceFolders.length > 0 || externalCount > 0 ? (
             <p class="tree-section-label">プロジェクト</p>
           ) : null}
           {rootError ? (
@@ -1018,31 +1062,28 @@ export function FileTree({
               />
             </ul>
           )}
-          {sortedExternalFiles.length > 0 ? (
+          {externalCount > 0 ? (
             <>
               <p class="tree-section-label">プロジェクト外</p>
-              <ul class="tree-root tree-external">
-                {/* DR-0024: external paths render at depth 0 with the full absolute
-                 * path as both label and locator key. FavoriteToggle shares the
-                 * same flat string set as project rows; `/` prefix guarantees no
-                 * collision, and a starred external file therefore also appears in
-                 * the favorites section through favoriteEntryKind's file fallback. */}
-                {sortedExternalFiles.map((externalPath) => (
-                  <FileNode
-                    key={externalPath}
-                    sid={sid}
-                    path={externalPath}
-                    name={externalPath}
-                    depth={0}
-                    selected={tree.selectedPath === externalPath}
-                    symlink={false}
-                    fav={fav}
-                    // DR-0024 external files live outside fs_delete's authorization
-                    // surfaces (contained | workspace) — no delete affordance.
-                    del={null}
-                  />
-                ))}
-              </ul>
+              {/* Grouped by what named the file (kawaz r99 m35): a path the
+               * session read or wrote is something it worked on, while an
+               * attachment is something it was handed, and one flat list of
+               * absolute paths made the two indistinguishable. A group with no
+               * files is omitted entirely rather than shown empty. */}
+              <ExternalFileGroup
+                label="Read/Edit/Write"
+                paths={externalGroups.tool}
+                sid={sid}
+                tree={tree}
+                fav={fav}
+              />
+              <ExternalFileGroup
+                label="attachments"
+                paths={externalGroups.attachment}
+                sid={sid}
+                tree={tree}
+                fav={fav}
+              />
             </>
           ) : null}
         </>

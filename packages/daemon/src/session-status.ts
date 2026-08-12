@@ -7,6 +7,7 @@ import {
   type AgentTreeNode,
   type AgentTreeWorkflowGroup,
   type AgentTreeWorkflowPhase,
+  type ExternalFileOrigin,
   type SessionApiError,
   type SessionBackgroundStatus,
   type SessionContextUsage,
@@ -73,6 +74,11 @@ const PREFILTER = [
   // allowlist. These rows carry no tool input, so no `file_path` key admits
   // them.
   "<persisted-output>",
+  // File-shaped attachment rows (ATTACHMENT_PATH_FIELD). Their path lives in
+  // `filename`, not the `file_path` key that admits tool rows, so each type
+  // this fold reads needs its own marker here.
+  '"type":"edited_text_file"',
+  '"type":"file"',
 ] as const;
 
 export function isSessionStatusCandidate(line: string): boolean {
@@ -110,9 +116,12 @@ export interface SessionStatusState {
    * file collection fail-closed when the session root cannot be resolved. */
   externalRoot?: string;
   /** Exact read allowlist shared with SessionStatusSnapshot.external_files and
-   * fs_read_external. Every value is a `canonicalizeExternalPath` result, and
-   * requests are compared against it after the same canonicalization. */
-  externalFiles: Set<string>;
+   * fs_read_external. Every key is a `canonicalizeExternalPath` result, and
+   * requests are compared against it after the same canonicalization. The
+   * value is display-only provenance (see ExternalFileOrigin); `tool` wins
+   * when both kinds of record name one path, so the reported origin does not
+   * depend on which row the fold saw first. */
+  externalFiles: Map<string, ExternalFileOrigin>;
   /** Latest-turn API error, or undefined while the session looks healthy.
    * Set by an `isApiErrorMessage` assistant row, cleared by the next real
    * assistant row (see classifyApiErrorRow). */
@@ -127,7 +136,7 @@ export function createSessionStatusState(externalRoot?: string): SessionStatusSt
     teammates: new Map(),
     pendingToolUse: new Map(),
     externalRoot,
-    externalFiles: new Set(),
+    externalFiles: new Map(),
   };
 }
 
@@ -205,7 +214,7 @@ function foldExternalFile(
         ? input.file_path
         : undefined;
   if (typeof rawPath !== "string") return false;
-  return addExternalFile(state, rawPath);
+  return addExternalFile(state, rawPath, "tool");
 }
 
 /** Spelling used for every DR-0024 external_files entry, and the spelling a
@@ -251,15 +260,20 @@ export function canonicalizeExternalPath(absPath: string): string {
  * when it falls outside the containment root. Shared by every fold that grants
  * external reads so they agree on normalization and on the fail-closed
  * behaviour when the session root is unresolvable. */
-function addExternalFile(state: SessionStatusState, rawPath: string): boolean {
+function addExternalFile(
+  state: SessionStatusState,
+  rawPath: string,
+  origin: ExternalFileOrigin,
+): boolean {
   if (!state.externalRoot) return false;
   if (rawPath === "" || !path.isAbsolute(rawPath)) return false;
 
   const canonical = canonicalizeExternalPath(rawPath);
   if (isInsideRoot(state.externalRoot, canonical)) return false;
-  const sizeBefore = state.externalFiles.size;
-  state.externalFiles.add(canonical);
-  return state.externalFiles.size !== sizeBefore;
+  const current = state.externalFiles.get(canonical);
+  if (current === origin || current === "tool") return false;
+  state.externalFiles.set(canonical, origin);
+  return true;
 }
 
 function addPendingToolUse(
@@ -586,10 +600,37 @@ function foldTaskReminder(state: SessionStatusState, attachment: Record<string, 
   return changed;
 }
 
+/** Attachment types whose payload names a file the session was shown, mapped to
+ * the field holding its absolute path. The list is explicit rather than "any
+ * payload field that looks like a path": external_files is an authorization
+ * surface, so a future attachment type widens it only once someone has looked
+ * at its shape. A type absent here still renders in the timeline (the webui
+ * falls back to a generic path trailing); it just cannot be opened from Files.
+ * Same grant shape as every other DR-0024 entry — one exact path the transcript
+ * itself named. */
+const ATTACHMENT_PATH_FIELD: Record<string, string> = {
+  edited_text_file: "filename",
+  file: "filename",
+};
+
+function foldAttachmentFile(
+  state: SessionStatusState,
+  attachment: Record<string, unknown>,
+): boolean {
+  const type = stringValue(attachment.type);
+  if (!type) return false;
+  const fieldName = ATTACHMENT_PATH_FIELD[type];
+  if (!fieldName) return false;
+  const rawPath = stringValue(attachment[fieldName]);
+  if (rawPath === undefined) return false;
+  return addExternalFile(state, rawPath, "attachment");
+}
+
 function foldAttachment(state: SessionStatusState, row: Record<string, unknown>): boolean {
   const attachment = row.attachment;
-  if (!isRecord(attachment) || attachment.type !== "task_reminder") return false;
-  return foldTaskReminder(state, attachment);
+  if (!isRecord(attachment)) return false;
+  if (attachment.type === "task_reminder") return foldTaskReminder(state, attachment);
+  return foldAttachmentFile(state, attachment);
 }
 
 function applyTaskStop(
@@ -876,7 +917,7 @@ function foldPersistedOutput(state: SessionStatusState, content: string): boolea
   if (note === undefined) return false;
   const sidecar = note.match(PERSISTED_PATH_RE)?.[1];
   if (sidecar === undefined) return false;
-  return addExternalFile(state, sidecar);
+  return addExternalFile(state, sidecar, "tool");
 }
 
 function foldUser(state: SessionStatusState, row: Record<string, unknown>): boolean {
@@ -1032,7 +1073,9 @@ export async function snapshot(
       const model = models?.get(teammate.name);
       return { ...teammate, ...(model ? { model } : {}) };
     }),
-    external_files: [...state.externalFiles].sort(),
+    external_files: [...state.externalFiles]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([path, origin]) => ({ path, origin })),
     ...(state.apiError ? { api_error: { ...state.apiError } } : {}),
     ...(agentTree &&
     (agentTree.teammates.length > 0 ||

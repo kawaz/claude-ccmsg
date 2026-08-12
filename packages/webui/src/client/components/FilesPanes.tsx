@@ -11,7 +11,7 @@
 // per kawaz (no demand for hiding the viewer; the twin ◀/▶ affordance
 // read as noise).
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
+import type { ExternalFile, PeerInfo, WorkspaceFolder } from "@ccmsg/protocol";
 import type { SessionTreeState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { fileHref } from "../locator.ts";
@@ -51,8 +51,9 @@ export function FilesPanes({
   sid: string;
   tree: SessionTreeState;
   peer: PeerInfo | undefined;
-  /** DR-0024 transcript-derived absolute paths, already allowlisted by daemon. */
-  externalFiles: readonly string[];
+  /** DR-0024 transcript-derived absolute paths, already allowlisted by daemon,
+   * each carrying the origin the tree groups them by. */
+  externalFiles: readonly ExternalFile[];
   /** DR-0026 `.code-workspace` folders published on session_status; drives
    * both the FileTree "ワークスペース" section and FileViewer's fs_read_workspace
    * routing (an absolute path inside any allowlisted folder uses workspace ops

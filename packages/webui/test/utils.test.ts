@@ -48,6 +48,7 @@ import {
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
+  groupExternalFiles,
   sortExternalFiles,
   sortFavorites,
   sortPeers,
@@ -1447,10 +1448,55 @@ describe("external file view helpers (DR-0024)", () => {
     // FileTree hides the section for [], while locally-constructed snapshots are
     // normalized deterministically even if they contain duplicates/relpaths.
     expect(sortExternalFiles([])).toEqual([]);
-    expect(sortExternalFiles(["/z.md", "project.md", "/a.md", "/z.md"])).toEqual([
-      "/a.md",
-      "/z.md",
-    ]);
+    expect(
+      sortExternalFiles([
+        { path: "/z.md", origin: "tool" },
+        { path: "project.md", origin: "tool" },
+        { path: "/a.md", origin: "attachment" },
+        { path: "/z.md", origin: "tool" },
+      ]),
+    ).toEqual(["/a.md", "/z.md"]);
+  });
+
+  // kawaz r99 m35: プロジェクト外セクションは由来別に 2 グループへ分かれる。
+  test("由来別グループ: tool / attachment に分かれ、各グループ内はパス順", () => {
+    expect(
+      groupExternalFiles([
+        { path: "/z-attach.md", origin: "attachment" },
+        { path: "/b-tool.md", origin: "tool" },
+        { path: "/a-attach.md", origin: "attachment" },
+        { path: "/a-tool.md", origin: "tool" },
+      ]),
+    ).toEqual({
+      tool: ["/a-tool.md", "/b-tool.md"],
+      attachment: ["/a-attach.md", "/z-attach.md"],
+    });
+  });
+
+  test("由来別グループ: 両方が名指したパスは tool 側にだけ出る (順序不問)", () => {
+    // 1 つのファイルが 2 つの見出しに出ると、★ を付けた時にどちらの行の状態
+    // なのかが読めなくなる。
+    const both = { tool: ["/both.md"], attachment: [] };
+    expect(
+      groupExternalFiles([
+        { path: "/both.md", origin: "attachment" },
+        { path: "/both.md", origin: "tool" },
+      ]),
+    ).toEqual(both);
+    expect(
+      groupExternalFiles([
+        { path: "/both.md", origin: "tool" },
+        { path: "/both.md", origin: "attachment" },
+      ]),
+    ).toEqual(both);
+  });
+
+  test("由来別グループ: 相対パスは弾かれ、空リストは両グループ空", () => {
+    expect(groupExternalFiles([])).toEqual({ tool: [], attachment: [] });
+    expect(groupExternalFiles([{ path: "project.md", origin: "tool" }])).toEqual({
+      tool: [],
+      attachment: [],
+    });
   });
 });
 

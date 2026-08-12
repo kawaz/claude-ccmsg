@@ -423,6 +423,26 @@ export interface AttachmentDetail {
   /** Rows rendered above the raw JSON when the fold is open. Empty for types
    * whose payload the raw JSON already shows adequately. */
   fields: SystemMessageField[];
+  /** File body carried by the attachment itself, for the types that embed one
+   * (kawaz r99 m35: read these like a Read card rather than as raw JSON).
+   * Absent when the payload has no text body — an image `file` attachment, or
+   * any type this module has no file shape for. */
+  file?: AttachmentFile;
+}
+
+/** One attachment's embedded file preview. `content` is the raw text as the
+ * file has it (line numbers, where the payload carries them, are stripped into
+ * `startLine`), so it renders through the same InlineFileViewer a Read card
+ * uses. */
+export interface AttachmentFile {
+  /** Absolute path as the attachment spelled it — the spelling the daemon's
+   * external_files allowlist also records, so the timeline can link it. */
+  path: string;
+  content: string;
+  /** 1-based line number of `content`'s first line. An edited-file snippet
+   * starts wherever the edit was, so numbering it from 1 would misname every
+   * line. */
+  startLine: number;
 }
 
 /** Per-type extraction for one attachment payload. `cwd` is the row's own
@@ -430,7 +450,7 @@ export interface AttachmentDetail {
 type AttachmentSpec = (
   attachment: Record<string, unknown>,
   cwd: string | null,
-) => { trailing?: string | null; fields?: SystemMessageField[] };
+) => { trailing?: string | null; fields?: SystemMessageField[]; file?: AttachmentFile };
 
 /** Path field names seen across attachment types, in priority order. */
 const ATTACHMENT_PATH_FIELDS = ["filename", "file_path", "filePath", "path", "displayPath"];
@@ -464,9 +484,73 @@ const hookSpec: AttachmentSpec = (a) => ({
   ].filter((f): f is SystemMessageField => f !== null),
 });
 
+/**
+ * Splits a `"12\tconst x = 1"`-numbered listing into its text and the line
+ * number it starts at. Returns null unless *every* line carries the prefix and
+ * the numbers run consecutively — a body whose own first characters happen to
+ * look like a number then stays verbatim rather than losing a column of text,
+ * and a partial match cannot silently shift the numbering.
+ */
+export function parseNumberedSnippet(
+  snippet: string,
+): { content: string; startLine: number } | null {
+  if (snippet === "") return null;
+  const lines = snippet.split("\n");
+  const texts: string[] = [];
+  let startLine = 0;
+  for (const [index, line] of lines.entries()) {
+    // A trailing newline leaves an empty final element; it is the text's own
+    // trailing blank, not a missing line number.
+    if (index === lines.length - 1 && line === "") {
+      texts.push("");
+      break;
+    }
+    const match = /^(\d+)\t([\s\S]*)$/.exec(line);
+    if (!match) return null;
+    const n = Number(match[1]);
+    if (index === 0) startLine = n;
+    else if (n !== startLine + index) return null;
+    texts.push(match[2]);
+  }
+  if (startLine < 1) return null;
+  return { content: texts.join("\n"), startLine };
+}
+
+/** edited_text_file: the user's editor saved a file and the harness showed the
+ * model a numbered snippet around the edit. */
+const editedTextFileSpec: AttachmentSpec = (a) => {
+  const path = typeof a.filename === "string" ? a.filename : "";
+  const snippet = typeof a.snippet === "string" ? a.snippet : "";
+  if (path === "" || snippet === "") return {};
+  const parsed = parseNumberedSnippet(snippet);
+  return {
+    file: parsed
+      ? { path, content: parsed.content, startLine: parsed.startLine }
+      : { path, content: snippet, startLine: 1 },
+  };
+};
+
+/** file: an @-mentioned file, carrying the same `file.content` shape a Read
+ * tool_result does. An image payload has no text body and keeps the raw-JSON
+ * rendering. */
+const fileSpec: AttachmentSpec = (a) => {
+  const path = typeof a.filename === "string" ? a.filename : "";
+  const content = isRecordValue(a.content) ? a.content : null;
+  const file = content && isRecordValue(content.file) ? content.file : null;
+  if (path === "" || !file || typeof file.content !== "string") return {};
+  const startLine = typeof file.startLine === "number" && file.startLine >= 1 ? file.startLine : 1;
+  return { file: { path, content: file.content, startLine } };
+};
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 const ATTACHMENT_SPECS: Record<string, AttachmentSpec> = {
   hook_success: hookSpec,
   hook_additional_context: hookSpec,
+  edited_text_file: editedTextFileSpec,
+  file: fileSpec,
 };
 
 /**
@@ -493,7 +577,12 @@ export function attachmentDetail(attachment: unknown, cwd: string | null): Attac
       }
     }
   }
-  return { type, trailing, fields: extracted.fields ?? [] };
+  return {
+    type,
+    trailing,
+    fields: extracted.fields ?? [],
+    ...(extracted.file ? { file: extracted.file } : {}),
+  };
 }
 
 /** Joins tool_use segments with matching tool_result segments by id. Result

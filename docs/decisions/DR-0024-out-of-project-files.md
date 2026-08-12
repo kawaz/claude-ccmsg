@@ -74,6 +74,25 @@ transcript の `<persisted-output>` スタブ本文の `Full output saved to:` �
 webui は無変更。バッシュカードの「全文を別タブで開く」リンクは元から実在プローブ
 で gate されているため、allowlist 化により自然に点灯する。
 
+## 4.2 Addendum: file 系 attachment と由来別グループ (kawaz r99 m35)
+
+TL が file 系 attachment (`edited_text_file` / `file`) の本文を Read カード同様に
+プレビューし、そのパスから Files を開けるようにする。そのため attachment 行が
+名指す絶対パスも allowlist に加える。
+
+**信頼形状は § 3.1 / § 4.1 と同一**: transcript 自身が名指した絶対パスを 1 件、
+完全一致で付与する。対象 attachment type と path フィールドは**明示テーブル**
+(`ATTACHMENT_PATH_FIELD`) で持つ — 未知 type の path らしき field を総なめすると
+認可面が中身を見ないまま広がるため。テーブルに無い type は TL には出るが Files
+から開けないだけ。
+
+`external_files` は `{ path, origin }` の配列になる。`origin` は **表示専用**
+(webui の「プロジェクト外」を `Read/Edit/Write` / `attachments` にグループ分け
+する) で、認可は origin を見ない。両方が同じパスを名指したら `tool` を採る
+(1 ファイルが 2 見出しに出ないため、到着順に依らない)。allowlist を 2 本の
+フィールドに割らないのは、消費側が片方の union を忘れると「TL に出るのに
+Files で 403」になるため。
+
 ## 5. 関連
 
 - kawaz r26 mid=99 (仕様全文)

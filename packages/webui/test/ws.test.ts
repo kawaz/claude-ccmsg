@@ -1597,7 +1597,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
             spawned_at: "2026-07-17T00:00:00.000Z",
           },
         ],
-        external_files: ["/external/shared.md"],
+        external_files: [{ path: "/external/shared.md", origin: "tool" }],
       }),
     );
 
@@ -1629,7 +1629,7 @@ describe("createWsClient session_status push (DR-0020)", () => {
               spawned_at: "2026-07-17T00:00:00.000Z",
             },
           ],
-          external_files: ["/external/shared.md"],
+          external_files: [{ path: "/external/shared.md", origin: "tool" }],
         },
       },
     ]);

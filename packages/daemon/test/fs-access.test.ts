@@ -71,6 +71,14 @@ async function sessionAtWithTranscript(
   return { session, transcript };
 }
 
+function externalAttachmentRow(filePath: string): string {
+  return JSON.stringify({
+    type: "attachment",
+    timestamp: "2026-07-17T00:00:00.000Z",
+    attachment: { type: "edited_text_file", filename: filePath, snippet: "1\tedited" },
+  });
+}
+
 function externalToolUse(id: string, name: string, filePath: string): string {
   const key = name === "NotebookEdit" ? "notebook_path" : "file_path";
   return JSON.stringify({
@@ -629,6 +637,37 @@ describe("fs_list / fs_read", () => {
 });
 
 describe("fs_read_external (DR-0024)", () => {
+  test(
+    "an attachment-named file is readable through the same allowlist",
+    async () => {
+      // kawaz r99 m35: the timeline previews file attachments, and the path it
+      // links must open in Files. Authorization does not branch on origin — an
+      // attachment entry is the same exact-path grant a Read entry is.
+      const ctx = await startTestDaemon();
+      const root = mkfixture();
+      const outside = mkfixture();
+      try {
+        const target = path.join(outside, "attached.txt");
+        fs.writeFileSync(target, "attached content");
+        const canonicalTarget = fs.realpathSync(target);
+        await sessionAtWithTranscript(ctx, "A", root, [externalAttachmentRow(target)]);
+        const user = await userAt(ctx);
+        const res = await user.request<{ ok: true; path: string; content: string }>({
+          op: "fs_read_external",
+          sid: "A",
+          path: canonicalTarget,
+        });
+        expect(res.path).toBe(canonicalTarget);
+        expect(res.content).toBe("attached content");
+      } finally {
+        await stopTestDaemon(ctx);
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    },
+    T,
+  );
+
   test(
     "allowlist exact entry is readable and returns the requested absolute path",
     async () => {

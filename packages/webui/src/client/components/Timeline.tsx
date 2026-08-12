@@ -56,6 +56,7 @@ import {
   rawTranscriptRowsFrom,
   utf8ByteLength,
   truncateRawLine,
+  type AttachmentFile,
   type BashCommandOutput,
   type CcmsgMessage,
   type FileToolResult,
@@ -653,6 +654,46 @@ function BashUseFold({
         </div>
       </div>
     </details>
+  );
+}
+
+/**
+ * The file body an attachment carried, drawn like a Read card's (kawaz r99
+ * m35) — before this, an edited-file or @-mentioned-file row showed only raw
+ * JSON with the text as one escaped string.
+ *
+ * The content comes from the transcript row itself, so the preview works for a
+ * file that has since changed or been deleted; the *path* above it links into
+ * Files only when the same existence probe the persisted-output link uses says
+ * the file is still there. The daemon allowlists these paths for external
+ * reads (DR-0024), so an existing file's link resolves rather than 403s.
+ */
+function AttachmentFileView({ file }: { file: AttachmentFile }) {
+  const ctx = useContext(SessionFilePathCtxContext);
+  useFilePathCacheTick();
+  useEffect(() => {
+    if (ctx) enqueueFilePathProbe(ctx.sid, file.path);
+  }, [file.path, ctx?.sid]);
+  const stat = ctx ? getFilePathStatus(ctx.sid, file.path) : undefined;
+  const href =
+    ctx && stat && stat !== "pending"
+      ? hrefFromStatEntry(
+          ctx.sid,
+          { path: viewerPathForAbsolute(file.path, ctx.containmentRoot) },
+          { path: file.path },
+        )
+      : null;
+  return (
+    <div class="tl-attachment-file">
+      {href ? (
+        <a class="tl-attachment-file-path" href={href}>
+          {file.path}
+        </a>
+      ) : (
+        <div class="tl-attachment-file-path">{file.path}</div>
+      )}
+      <InlineFileViewer path={file.path} content={file.content} startLine={file.startLine} />
+    </div>
   );
 }
 
@@ -1710,6 +1751,7 @@ function LineView({
               ))}
             </dl>
           ) : null}
+          {attachment?.file ? <AttachmentFileView file={attachment.file} /> : null}
           <pre class="tl-fold-body">{line.raw}</pre>
         </details>
       </ItemRawToggle>
