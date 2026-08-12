@@ -1,11 +1,11 @@
 ---
 title: 📁 OFF の [N/M] が thinking/items 単体の details 開閉を拾わない
-status: open
+status: wip
 category: bug
 created: 2026-08-12T14:17:09+09:00
 last_read:
 open_entered: 2026-08-12T14:17:09+09:00
-wip_entered:
+wip_entered: 2026-08-12T14:19:23+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -36,6 +36,8 @@ details 開閉イベントを拾っていないためと見られる。
 - 可視判定を FoldOpenStore ベースに寄せる (D2 の fold 状態持ち上げの延長)
 
 小粒の修正と見込まれる。
+
+着手 (2026-08-12)。
 
 ## 受け入れ条件
 
