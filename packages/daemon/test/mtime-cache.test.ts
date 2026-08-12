@@ -72,8 +72,11 @@ describe("createMtimeCache", () => {
   });
 
   test("re-reads when the file is replaced with an identical mtime and size", async () => {
-    // unlink + recreate: the replacement is a different inode, which is the
-    // only signal left when the writer preserved both mtime and length.
+    // Replace by renaming a coexisting file over the original: the two files
+    // exist at once, so they are guaranteed distinct inodes — unlike
+    // unlink+recreate, where ext4 happily reuses the freed inode number and
+    // the test would pass or fail by filesystem mood. The inode is the only
+    // signal left when the writer preserved both mtime and length.
     const dir = fixture();
     const file = path.join(dir, "a.json");
     writeAt(file, "one", 1_000);
@@ -81,8 +84,9 @@ describe("createMtimeCache", () => {
     const load = async () => fs.readFileSync(file, "utf-8");
 
     expect(await cache.get(file, load)).toBe("one");
-    fs.rmSync(file);
-    writeAt(file, "two", 1_000);
+    const replacement = path.join(dir, "a.json.next");
+    writeAt(replacement, "two", 1_000);
+    fs.renameSync(replacement, file);
     expect(await cache.get(file, load)).toBe("two");
   });
 
