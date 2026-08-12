@@ -2417,6 +2417,12 @@ export interface PingResponse {
   http: string[];
   /** active source-IP allowlist entries (CIDR/IP strings, DR-0004 §3 addendum). */
   httpAllow: string[];
+  /** The daemon's current view of the host link, which decides whether a
+   * recovery can wake sessions stopped on an API error: `"off"` when no
+   * network watch is running, `"unknown"` before its first probe settles,
+   * otherwise the last probed state. Diagnostic only — nothing on the wire
+   * depends on it. */
+  network: "off" | "unknown" | "online" | "offline";
 }
 export interface ShutdownResponse {
   ok: true;

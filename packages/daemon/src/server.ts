@@ -20,6 +20,7 @@ import {
   type LlmUsageResponse,
   type MemberEvent,
   type MsgEvent,
+  type PingResponse,
   type NotifyFrom,
   type Paths,
   type PeerInfo,
@@ -797,6 +798,15 @@ function syncSessionErrors(daemon: Daemon): void {
   );
 }
 
+/** The link state `ping` reports: whether a recovery could wake anything, and
+ * what the daemon currently believes about the host's connectivity. */
+function networkState(daemon: Daemon): PingResponse["network"] {
+  const watch = daemon.networkWatch;
+  if (!watch?.enabled) return "off";
+  if (watch.online === undefined) return "unknown";
+  return watch.online ? "online" : "offline";
+}
+
 /** Poke every session that is stopped on an API error, once per stall, after
  * the host comes back online. Delivery is the session's own subscribe stream,
  * so a session with no live subscribe simply is not woken — there is nothing
@@ -1461,6 +1471,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         script: Bun.main,
         http: daemon.httpListeners.map((l) => l.address),
         httpAllow: daemon.httpAllow,
+        network: networkState(daemon),
       });
       return;
     }
