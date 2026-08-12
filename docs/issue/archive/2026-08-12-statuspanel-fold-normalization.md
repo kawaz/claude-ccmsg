@@ -1,6 +1,6 @@
 ---
 title: StatusPanel の details 4 箇所を Fold へ寄せる
-status: wip
+status: resolved
 category: task
 created: 2026-08-12T03:34:56+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T15:08:22+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T15:15:25+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.102.3 で実装。StatusPanel の details 4 箇所 (完了/ENV/pending/completed) を Fold へ置換、Fold に optional onToggle prop を追加 (既存 6 利用箇所は挙動不変)。クラス名・summary・open・key は現状維持"]
 blocked_by:
 origin: 自リポ TODO
 ---
