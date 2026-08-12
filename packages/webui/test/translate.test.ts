@@ -9,6 +9,9 @@ import {
   _resetTranslatorStateForTest,
   hasCachedHostThinkingText,
   hasTranslatorApi,
+  getTranslationRevision,
+  subscribeTranslationRegistry,
+  translatedTextOf,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
 } from "../src/client/translate.ts";
@@ -391,5 +394,65 @@ describe("translateThinkingTextOnHost", () => {
     expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
     expect(await translateThinkingTextOnHost("same", request)).toBe("成功");
     expect(calls).toBe(2);
+  });
+});
+
+// 段落訳のレジストリ: TL 検索が「原文の綴りでも訳文の綴りでも同じ thinking を
+// 数に入れる」ために、翻訳経路の成功結果をここへ溜める。Timeline は
+// translatedTextOf で unit の 2 つ目の綴りを作り、revision の変化で
+// 訳の到着を再計算の合図として受け取る。
+describe("translation registry", () => {
+  test("has nothing to offer before any translation has landed", () => {
+    expect(translatedTextOf("First.\n\nSecond.")).toBe(null);
+    expect(getTranslationRevision()).toBe(0);
+  });
+
+  test("rebuilds a whole thinking from the paragraphs translated so far", async () => {
+    installMockTranslator();
+    await translateThinkingTextInBrowser("First.");
+
+    // 訳の届いた段落だけ差し替わり、まだの段落は原文のまま残る (途中経過でも
+    // 「訳された分は訳文クエリで拾える」)。
+    expect(translatedTextOf("First.\n\nSecond.")).toBe("[ja]First.\n\nSecond.");
+
+    await translateThinkingTextInBrowser("Second.");
+    expect(translatedTextOf("First.\n\nSecond.")).toBe("[ja]First.\n\n[ja]Second.");
+  });
+
+  test("collects the host route's results too", async () => {
+    await translateThinkingTextOnHost("Hello.", makeEchoRequest());
+    expect(translatedTextOf("Hello.")).toBe("[ja]Hello.");
+  });
+
+  // 原文と同じ文字列しか得られなかった段落 (日本語段落の skip、翻訳失敗の
+  // 原文 fallback) は綴りを増やさないので登録しない。
+  test("ignores paragraphs whose translation is the original", async () => {
+    installMockTranslator();
+    await translateThinkingTextInBrowser("日本語の段落。");
+    expect(translatedTextOf("日本語の段落。")).toBe(null);
+
+    _resetTranslatorStateForTest();
+    installMockTranslator({ createShouldFail: true });
+    await translateThinkingTextInBrowser("Untranslatable.");
+    expect(translatedTextOf("Untranslatable.")).toBe(null);
+  });
+
+  test("notifies subscribers once per newly registered paragraph", async () => {
+    installMockTranslator();
+    let notified = 0;
+    const unsubscribe = subscribeTranslationRegistry(() => notified++);
+
+    await translateThinkingTextInBrowser("First.\n\nSecond.");
+    expect(notified).toBe(2);
+    expect(getTranslationRevision()).toBe(2);
+
+    // 同じ段落の再翻訳は綴りを増やさないので、再計算の合図も出さない。
+    await translateThinkingTextInBrowser("First.");
+    expect(notified).toBe(2);
+
+    unsubscribe();
+    await translateThinkingTextInBrowser("Third.");
+    expect(notified).toBe(2);
+    expect(getTranslationRevision()).toBe(3);
   });
 });

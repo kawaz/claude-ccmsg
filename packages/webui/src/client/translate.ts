@@ -105,6 +105,7 @@ async function translateParagraph(paragraph: string): Promise<string> {
     const translator = await getTranslator();
     const result = await translator.translate(paragraph);
     setBounded(paragraphCache, paragraph, result, PARAGRAPH_CACHE_MAX_ENTRIES);
+    registerParagraphTranslation(paragraph, result);
     return result;
   } catch {
     return paragraph;
@@ -119,6 +120,54 @@ export async function translateThinkingTextInBrowser(text: string): Promise<stri
   const paragraphs = text.split("\n\n");
   const translated = await Promise.all(paragraphs.map(translateParagraph));
   return translated.join("\n\n");
+}
+
+// --- 段落訳のレジストリ (TL 検索が原文/訳文の双方を見るための共有面) ---
+//
+// thinking の描画は訳文に差し替わるのに対し、検索 unit の text は原文なので、
+// 「訳文の綴りで打ったクエリが数に入らない」「原文クエリで数に入るが画面上の
+// 訳文には装飾が付かない」というずれが出る。訳文はここに段落単位で溜まり、
+// Timeline が unit の検索テキストへ原文と並べて足す。段落単位なのは翻訳経路
+// (browser/host) が段落単位でキャッシュしているのと同じ理由 — 同じ段落は
+// thinking をまたいで共有できる。
+const paragraphTranslations = new Map<string, string>();
+let translationRevision = 0;
+const translationListeners = new Set<() => void>();
+
+function registerParagraphTranslation(original: string, translated: string): void {
+  // 訳が原文と同一の段落 (skip 判定を通ったもの、翻訳失敗の fallback) は
+  // 何も足さないので登録しない。
+  if (translated === original) return;
+  if (paragraphTranslations.get(original) === translated) return;
+  setBounded(paragraphTranslations, original, translated, PARAGRAPH_CACHE_MAX_ENTRIES);
+  translationRevision++;
+  for (const listener of translationListeners) listener();
+}
+
+/** 訳の到着を購読する (返り値で unsubscribe)。useSyncExternalStore 用。 */
+export function subscribeTranslationRegistry(listener: () => void): () => void {
+  translationListeners.add(listener);
+  return () => {
+    translationListeners.delete(listener);
+  };
+}
+
+/** 登録済みの訳が増えるたびに進むカウンタ (useSyncExternalStore の snapshot)。 */
+export function getTranslationRevision(): number {
+  return translationRevision;
+}
+
+/** 既に得られている訳で `text` (原文) を組み立てる。1 段落も訳が無ければ null。
+ * 一部の段落だけ訳が届いている途中でも、その分を反映した文字列を返す。 */
+export function translatedTextOf(text: string): string | null {
+  let hit = false;
+  const mapped = text.split("\n\n").map((paragraph) => {
+    const translated = paragraphTranslations.get(paragraph);
+    if (translated === undefined) return paragraph;
+    hit = true;
+    return translated;
+  });
+  return hit ? mapped.join("\n\n") : null;
 }
 
 export type HostTranslateRequest = (texts: string[]) => Promise<TranslateResponse | ErrorResponse>;
@@ -209,7 +258,10 @@ function translateParagraphOnHost(
     // 1 要素で送っているので結果も 1 要素。item error / 結果欠落 (helper 破損)
     // はどちらもこの段落の原文 fallback。
     const result = response.results[0];
-    if (result?.ok) return settle(result.text, true);
+    if (result?.ok) {
+      registerParagraphTranslation(paragraph, result.text);
+      return settle(result.text, true);
+    }
     return settle(paragraph, false);
   };
 
@@ -239,6 +291,9 @@ export function _resetTranslatorStateForTest(): void {
   translatorPromise = null;
   paragraphCache.clear();
   hostTextCache.clear();
+  paragraphTranslations.clear();
+  translationRevision = 0;
+  translationListeners.clear();
   pendingHostCount = 0;
   pendingListeners.clear();
 }

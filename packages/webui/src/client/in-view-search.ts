@@ -66,12 +66,74 @@ export function unitMatchesQuery(text: string, words: readonly SearchWord[]): bo
 }
 
 /** One searchable unit as the model sees it: the stable key its rendered
- * counterpart registers under, plus the text that decides whether it matches.
- * Carrying the text here is what keeps "M" independent of what is mounted —
- * the render layer's job is decoration, not counting. */
+ * counterpart registers under, plus the texts that decide whether it matches.
+ * Carrying the texts here is what keeps "M" independent of what is mounted —
+ * the render layer's job is decoration, not counting.
+ *
+ * `texts` holds every spelling of the same content the reader could plausibly
+ * be searching for, and a unit qualifies when any one of them satisfies the
+ * query. Usually that is a single string; a thinking segment whose display has
+ * been swapped for its Japanese translation carries both, so either spelling
+ * counts (the alternative — counting only the transcript's original — makes a
+ * query typed off the screen find nothing). AND terms must still be satisfied
+ * within one text: a term from the original and a term from the translation do
+ * not combine into a match. */
 export interface SearchUnit {
   readonly key: string;
-  readonly text: string;
+  readonly texts: readonly string[];
+}
+
+/** Whether any of the unit's spellings satisfies the query. */
+export function unitMatches(unit: SearchUnit, words: readonly SearchWord[]): boolean {
+  return unit.texts.some((text) => unitMatchesQuery(text, words));
+}
+
+/** Whitespace carries no query meaning here and does not survive markdown
+ * rendering intact (a paragraph's newlines become element boundaries), so
+ * comparing rendered text to source text is only meaningful without it. */
+function condensed(text: string): string {
+  return text.replace(/\s+/g, "");
+}
+
+/** Long enough that finding it in the rendered text means the passage really
+ * is the one on screen, rather than a stray character coincidence. */
+const SHOWN_PARAGRAPH_MIN_LENGTH = 8;
+
+/** Whether the rendered text carries one of the unit's alternate spellings —
+ * i.e. what the reader is looking at is that substituted text, not merely the
+ * unit's summary line above a collapsed body. Paragraph-wise because a
+ * translation lands one paragraph at a time, so a half-translated block is
+ * still legitimately "shown". */
+function showsAlternateSpelling(unit: SearchUnit, visibleText: string): boolean {
+  const visible = condensed(visibleText);
+  return unit.texts.slice(1).some((text) =>
+    text.split("\n\n").some((paragraph) => {
+      const needle = condensed(paragraph);
+      return needle.length >= SHOWN_PARAGRAPH_MIN_LENGTH && visible.includes(needle);
+    }),
+  );
+}
+
+/**
+ * The 📁-off ("only what is on screen") verdict for one mounted unit, given
+ * the text a reader can actually see inside it.
+ *
+ * The visible text is the question being asked, so it stays the primary input,
+ * and a unit with a single spelling is decided by it alone — exactly as
+ * before. A unit that renders a substituted spelling (a translated thinking
+ * segment) is the exception: what is on screen is the translation, so a query
+ * in the original finds nothing there even though the reader is looking
+ * straight at the passage it names. Once the rendered text shows that
+ * substituted spelling, both of the unit's spellings answer for it.
+ */
+export function unitMatchesOnScreen(
+  unit: SearchUnit,
+  visibleText: string,
+  words: readonly SearchWord[],
+): boolean {
+  if (unitMatchesQuery(visibleText, words)) return true;
+  if (unit.texts.length <= 1) return false;
+  return showsAlternateSpelling(unit, visibleText) && unitMatches(unit, words);
 }
 
 /**
@@ -90,7 +152,7 @@ export function matchingUnitKeysOf(
   if (words.length === 0) return [];
   const keys: string[] = [];
   for (const unit of units) {
-    if (unitMatchesQuery(unit.text, words)) keys.push(unit.key);
+    if (unitMatches(unit, words)) keys.push(unit.key);
   }
   return keys;
 }

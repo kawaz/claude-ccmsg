@@ -3,7 +3,7 @@
 // component-effect division of labor as FileTree/FileViewer for
 // fs_list/fs_read) — the reducer only stores what it's told.
 import { createContext, type ComponentChildren } from "preact";
-import { memo } from "preact/compat";
+import { memo, useSyncExternalStore } from "preact/compat";
 import {
   useCallback,
   useContext,
@@ -87,7 +87,10 @@ import {
   isTranslationSkippedText,
   hasCachedHostThinkingText,
   hasTranslatorApi,
+  getTranslationRevision,
   subscribePendingHostTranslation,
+  subscribeTranslationRegistry,
+  translatedTextOf,
   translateThinkingTextInBrowser,
   translateThinkingTextOnHost,
   type HostTranslateRequest,
@@ -100,7 +103,7 @@ import {
   parseSearchClosedFolds,
   parseSearchQuery,
   serializeSearchClosedFolds,
-  unitMatchesQuery,
+  unitMatchesOnScreen,
   type SearchUnit,
   type SearchWord,
 } from "../in-view-search.ts";
@@ -3311,6 +3314,15 @@ export function Timeline({
   // highlight and no DOM ref to scroll to (↑/↓ would advance the number and
   // visibly do nothing) — the count side excludes exactly what the render
   // side excludes.
+  // 訳が 1 段落届くたびに進む counter。thinking の検索テキストは訳の到着で
+  // 増える (原文だけ -> 原文 + 訳) ので、これを searchUnits の入力にして
+  // 「訳が来たら M が増える方向で再計算される」を成立させる。unit の key は
+  // 訳と無関係なので、再計算しても D0 の identity は保たれる。
+  const translationRevision = useSyncExternalStore(
+    subscribeTranslationRegistry,
+    getTranslationRevision,
+  );
+
   const searchUnits = useMemo(() => {
     const units: SearchUnit[] = [];
     const targets = { user: targetUser, ai: targetAI, ccmsg: targetCcmsg };
@@ -3324,7 +3336,15 @@ export function Timeline({
       if (isApiErrorLine(line)) return;
       line.segments.forEach((seg, i) => {
         if (!isSearchableSegment(seg, targets)) return;
-        units.push({ key: `${offset}-${i}`, text: segmentSearchText(seg) });
+        const text = segmentSearchText(seg);
+        // thinking は表示が訳文へ差し替わりうる唯一の unit なので、届いて
+        // いる訳をもう 1 つの綴りとして持たせる (原文クエリ・訳文クエリの
+        // どちらでも数に入る)。
+        const translated = seg.kind === "thinking" ? translatedTextOf(text) : null;
+        units.push({
+          key: `${offset}-${i}`,
+          texts: translated === null ? [text] : [text, translated],
+        });
       });
     };
     for (const group of groups) {
@@ -3345,11 +3365,11 @@ export function Timeline({
     // remainder is not counted (and gets no highlight either way).
     if (targetCcmsg) {
       for (const target of ccmsgTargets) {
-        units.push({ key: target.key, text: target.message.msg });
+        units.push({ key: target.key, texts: [target.message.msg] });
       }
     }
     return units;
-  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg]);
+  }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg, translationRevision]);
 
   // Unit key -> the line it came from, so a match inside a not-yet-mounted
   // fold can be reached: the key alone says nothing about where it lives, and
@@ -3402,14 +3422,24 @@ export function Timeline({
   const [onScreenMatchingKeys, setOnScreenMatchingKeys] = useState<string[]>([]);
   useEffect(() => {
     if (searchClosedFolds) return;
+    const unitByKey = new Map(searchUnits.map((unit) => [unit.key, unit]));
     const next = modelMatchingKeys.filter((key) => {
       const el = searchUnitRefs.current.get(key);
-      return el !== undefined && unitMatchesQuery(visibleRenderedText(el), parsedSearch.words);
+      const unit = unitByKey.get(key);
+      if (el === undefined || unit === undefined) return false;
+      return unitMatchesOnScreen(unit, visibleRenderedText(el), parsedSearch.words);
     });
     setOnScreenMatchingKeys((current) =>
       current.length === next.length && current.every((key, i) => key === next[i]) ? current : next,
     );
-  }, [modelMatchingKeys, parsedSearch, searchClosedFolds, foldRevision, foldMountRevision]);
+  }, [
+    searchUnits,
+    modelMatchingKeys,
+    parsedSearch,
+    searchClosedFolds,
+    foldRevision,
+    foldMountRevision,
+  ]);
 
   const matchingUnitKeys = searchClosedFolds ? modelMatchingKeys : onScreenMatchingKeys;
 

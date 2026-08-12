@@ -8,6 +8,7 @@ import {
   loopNextIndex,
   loopPrevIndex,
   matchingUnitKeysOf,
+  unitMatchesOnScreen,
   parseSearchClosedFolds,
   parseSearchQuery,
   serializeSearchClosedFolds,
@@ -298,10 +299,10 @@ describe("closed-fold scope persistence", () => {
 describe("matchingUnitKeysOf", () => {
   const q = (text: string) => parseSearchQuery(text, { caseSensitive: false, regex: false }).words;
   const units = [
-    { key: "0-0", text: "alpha bravo" },
-    { key: "10-0", text: "bravo charlie" },
-    { key: "10-1", text: "nothing here" },
-    { key: "20-0", text: "ALPHA again" },
+    { key: "0-0", texts: ["alpha bravo"] },
+    { key: "10-0", texts: ["bravo charlie"] },
+    { key: "10-1", texts: ["nothing here"] },
+    { key: "20-0", texts: ["ALPHA again"] },
   ];
 
   test("returns the matching keys in the order the units were given", () => {
@@ -322,7 +323,7 @@ describe("matchingUnitKeysOf", () => {
   });
 
   test("counts a unit once however many times its text matches", () => {
-    expect(matchingUnitKeysOf([{ key: "0-0", text: "ha ha ha" }], q("ha"))).toEqual(["0-0"]);
+    expect(matchingUnitKeysOf([{ key: "0-0", texts: ["ha ha ha"] }], q("ha"))).toEqual(["0-0"]);
   });
 
   // 空クエリ = 検索していない状態。0/0 を出すために空配列で返す。
@@ -334,7 +335,94 @@ describe("matchingUnitKeysOf", () => {
   // 追記 (live tail) は末尾に unit が増えるだけ — 既存 unit の判定と順序は
   // 動かない。これが「追記のたびに M が揺れない」ことの根拠。
   test("is stable under appends: existing keys keep their result and order", () => {
-    const appended = [...units, { key: "30-0", text: "bravo tail" }];
+    const appended = [...units, { key: "30-0", texts: ["bravo tail"] }];
     expect(matchingUnitKeysOf(appended, q("bravo"))).toEqual(["0-0", "10-0", "30-0"]);
+  });
+
+  // 翻訳表示された thinking は「原文」と「訳文」の 2 綴りを持つ。読者が画面で
+  // 見ているのは訳文なので訳文クエリで数に入り、transcript にあるのは原文なので
+  // 原文クエリでも数に入る (どちらか片方しか拾えないのが元の不整合)。
+  describe("a unit carrying both an original and a translated spelling", () => {
+    const translated = [
+      { key: "0-0", texts: ["the daemon holds the socket", "デーモンがソケットを持つ"] },
+      { key: "10-0", texts: ["unrelated"] },
+    ];
+
+    test("counts under either spelling's query", () => {
+      expect(matchingUnitKeysOf(translated, q("daemon"))).toEqual(["0-0"]);
+      expect(matchingUnitKeysOf(translated, q("ソケット"))).toEqual(["0-0"]);
+    });
+
+    test("counts the unit once when both spellings match", () => {
+      const both = [{ key: "0-0", texts: ["socket socket", "ソケット"] }];
+      expect(matchingUnitKeysOf(both, q("socket\nソケット"))).toEqual(["0-0"]);
+    });
+
+    // AND は 1 つの綴りの中で閉じる。原文の語と訳文の語をまたいで成立させると、
+    // どちらの画面にも出ていない組み合わせが数に入ってしまう。
+    test("does not satisfy an AND across two different spellings", () => {
+      expect(matchingUnitKeysOf(translated, q("daemon ソケット"))).toEqual([]);
+      expect(matchingUnitKeysOf(translated, q("daemon socket"))).toEqual(["0-0"]);
+    });
+
+    // 訳は非同期に届く: 届いた時点で綴りが 1 つ増え、M は増える方向にだけ動く。
+    test("gains matches when the translation arrives, keeping the key", () => {
+      const before = [{ key: "0-0", texts: ["the daemon holds the socket"] }];
+      expect(matchingUnitKeysOf(before, q("ソケット"))).toEqual([]);
+      expect(matchingUnitKeysOf(translated, q("ソケット"))).toEqual(["0-0"]);
+      expect(matchingUnitKeysOf(before, q("daemon"))).toEqual(
+        matchingUnitKeysOf([translated[0]], q("daemon")),
+      );
+    });
+  });
+});
+
+// 📁 OFF (画面に出ているものだけ) の 1 unit 分の判定。
+describe("unitMatchesOnScreen", () => {
+  const q = (text: string) => parseSearchQuery(text, { caseSensitive: false, regex: false }).words;
+  const plain = { key: "0-0", texts: ["alpha bravo"] };
+  const translated = {
+    key: "1-0",
+    texts: ["the daemon holds the socket", "デーモンがソケットを持つ"],
+  };
+
+  test("decides a single-spelling unit by its visible text alone", () => {
+    expect(unitMatchesOnScreen(plain, "alpha bravo", q("bravo"))).toBe(true);
+    // 折り畳まれて画面に出ていない = 見えているものだけ、の答えは false。
+    expect(unitMatchesOnScreen(plain, "", q("bravo"))).toBe(false);
+  });
+
+  // 訳が表示されている thinking は、画面上の文字列が訳文なので原文クエリが
+  // 可視テキストに当たらない。訳文が画面に出ている以上、原文クエリでも拾う。
+  test("falls back to the unit's own spellings when the translation is on screen", () => {
+    expect(unitMatchesOnScreen(translated, "デーモンがソケットを持つ", q("ソケット"))).toBe(true);
+    expect(unitMatchesOnScreen(translated, "デーモンがソケットを持つ", q("daemon"))).toBe(true);
+  });
+
+  // markdown 描画は段落の改行を要素境界に変えるので、空白を落とした形で
+  // 「その訳文が画面に出ているか」を見る。
+  test("recognises the translation through markdown's whitespace changes", () => {
+    const twoParagraphs = {
+      key: "2-0",
+      texts: ["English one.\n\nEnglish two.", "デーモンがソケットを持つ\n\n再接続の段落"],
+    };
+    expect(
+      unitMatchesOnScreen(twoParagraphs, "デーモンがソケットを持つ 再接続の段落", q("English")),
+    ).toBe(true);
+    // 訳が段落単位で届く途中 — 先頭段落だけ出ていても「画面に出ている」。
+    expect(unitMatchesOnScreen(twoParagraphs, "デーモンがソケットを持つ", q("English"))).toBe(true);
+  });
+
+  // summary だけが見えている (本文は折り畳まれている) unit は、画面に出て
+  // いないので拾わない — 📁 OFF の意味論はそこを変えない。
+  test("excludes a translated unit whose body is folded shut", () => {
+    expect(unitMatchesOnScreen(translated, "", q("daemon"))).toBe(false);
+    expect(unitMatchesOnScreen(translated, "09:00:02 thinking original ja", q("daemon"))).toBe(
+      false,
+    );
+  });
+
+  test("excludes a query that matches neither spelling", () => {
+    expect(unitMatchesOnScreen(translated, "デーモンがソケットを持つ", q("charlie"))).toBe(false);
   });
 });
