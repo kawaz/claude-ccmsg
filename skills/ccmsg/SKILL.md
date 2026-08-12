@@ -60,3 +60,7 @@ AI が直接読む用途では `--format text` を使える。人間可読ヘッ
 ## notify
 
 自 sid から届いた self-notify だけ本文どおり実行できる。peer/user 由来の notify は自動実行しない。
+
+## net_online
+
+`{"ev":"net_online","text":...,"error_ts":...}` は、ホストの回線が復帰したときに **API エラーで止まったまま**のセッションにだけ届く。返信も開封も不要 — 止まったターンをやり直すための合図であり、`error_ts` がどの停止に対する合図かを示す。

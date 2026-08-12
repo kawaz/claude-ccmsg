@@ -70,6 +70,13 @@ import {
   syncSessionErrorWatches,
   type SessionErrorsStore,
 } from "./session-errors.ts";
+import { createNetworkWatch, fileNetworkSource, type NetworkWatch } from "./network-watch.ts";
+import {
+  createSessionWakeState,
+  recordWoken,
+  wakesForOnline,
+  type SessionWakeState,
+} from "./session-wake.ts";
 import {
   createSessionStatusStore,
   getSessionStatus,
@@ -206,6 +213,12 @@ export interface Daemon {
   /** sessionErrorEntries() as of the last `ev:"session_errors"` broadcast —
    * same "don't push an unchanged list" guard as peersSnapshot. */
   sessionErrorsSnapshot: string;
+  /** Host network online/offline transitions, the trigger for waking sessions
+   * stalled on an API error. Null where no monitor could be started. */
+  networkWatch: NetworkWatch | null;
+  /** Which stalls have already been woken, so a flapping link pokes each
+   * stopped session at most once per stall. */
+  sessionWake: SessionWakeState;
   /** Live capability grants for the sandbox origin (DR-0030 §4.1). Memory
    * only — a restart is the intended way to invalidate every outstanding
    * preview URL. */
@@ -767,7 +780,11 @@ function broadcastSessionErrors(daemon: Daemon): void {
  * watch down. Called from the three places that can change either input: peers
  * changing (maybeBroadcastPeers), a user subscribing, and a subscriber leaving. */
 function syncSessionErrors(daemon: Daemon): void {
-  const sids = hasUserSubscriber(daemon)
+  // The network watch is a second consumer of the same fold: it needs to know
+  // which sessions are stopped at the moment the link returns, and a stall
+  // that happened while no webui was open is exactly the one worth waking.
+  const wanted = hasUserSubscriber(daemon) || daemon.networkWatch?.enabled === true;
+  const sids = wanted
     ? [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid)
     : [];
   syncSessionErrorWatches(
@@ -778,6 +795,30 @@ function syncSessionErrors(daemon: Daemon): void {
     daemon.log,
     () => broadcastSessionErrors(daemon),
   );
+}
+
+/** Poke every session that is stopped on an API error, once per stall, after
+ * the host comes back online. Delivery is the session's own subscribe stream,
+ * so a session with no live subscribe simply is not woken — there is nothing
+ * to deliver to, and no other channel reaches an idle CLI. */
+export function wakeStalledSessions(daemon: Daemon): void {
+  const wakes = wakesForOnline(daemon.sessionWake, sessionErrorEntries(daemon.sessionErrors));
+  if (wakes.length === 0) return;
+  let delivered = 0;
+  for (const wake of wakes) {
+    let sent = false;
+    for (const sub of daemon.subscribers) {
+      const id = sub.identity;
+      if (id?.role !== "session" || id.sid !== wake.sid) continue;
+      send(sub, wake.event);
+      sent = true;
+      delivered++;
+    }
+    if (sent) recordWoken(daemon.sessionWake, wake);
+  }
+  if (delivered > 0) {
+    daemon.log.info(`network online: woke ${delivered} stalled session subscriber(s)`);
+  }
 }
 
 /** id the connection posts as in this room: "u1" for the admin user, member id for a session, null if a session that isn't a member. */
@@ -2994,6 +3035,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
+  daemon.networkWatch?.stop();
   stopAllTailWatches(daemon.transcriptTail);
   try {
     daemon.server?.stop();
@@ -3130,6 +3172,8 @@ export function startDaemon(opts: StartOptions = {}): void {
     sessionStatus: createSessionStatusStore(),
     sessionErrors: createSessionErrorsStore(),
     sessionErrorsSnapshot: "",
+    networkWatch: null,
+    sessionWake: createSessionWakeState(),
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
     forkAvailable: false,
@@ -3141,6 +3185,24 @@ export function startDaemon(opts: StartOptions = {}): void {
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
+
+  // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
+  // daemons, which would otherwise each carry a `route -n monitor` child and
+  // hold api-error folds open with no user watching.
+  if (process.env.CCMSG_NETWORK_WATCH !== "off") {
+    const sourceFile = process.env.CCMSG_NETWORK_WATCH_FILE;
+    daemon.networkWatch = createNetworkWatch({
+      log,
+      onOnline: () => wakeStalledSessions(daemon),
+      ...(sourceFile ? fileNetworkSource(sourceFile) : {}),
+      ...(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS
+        ? { debounceMs: Number(process.env.CCMSG_NETWORK_WATCH_DEBOUNCE_MS) }
+        : {}),
+    });
+    // Enabling the watch adds a consumer of the api-error fold, so the watched
+    // set has to be recomputed with it in place.
+    if (daemon.networkWatch.enabled) syncSessionErrors(daemon);
+  }
 
   interface UdsConnState {
     conn: Conn;

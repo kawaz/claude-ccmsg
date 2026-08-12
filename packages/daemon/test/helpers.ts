@@ -41,6 +41,9 @@ export function spawnDaemonProc(
       // Pin integration subprocesses to this working copy rather than PATH's install.
       CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",
+      // No route-monitor child and no api-error folds per test daemon; tests
+      // that exercise the wake drive createNetworkWatch directly.
+      CCMSG_NETWORK_WATCH: "off",
       ...extraEnv,
     },
   });
@@ -75,6 +78,7 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
     CCMSG_DATA_DIR: dataDir,
     CCMSG_NO_SELF_EXEC: "1",
     CCMSG_HTTP_BIND: "off",
+    CCMSG_NETWORK_WATCH: "off",
     ...extraEnv,
   };
   const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
@@ -185,6 +189,22 @@ export class TestClient {
     if (buffered !== undefined) return JSON.parse(buffered) as T;
     const line = await this.readLine();
     return line === null ? null : (JSON.parse(line) as T);
+  }
+  /** Events already delivered to this socket, without waiting for more — for
+   * asserting that a push was *not* addressed to this client. Only meaningful
+   * after something else has ordered the stream past the moment in question
+   * (e.g. a request round-trip). */
+  async pendingEvents<T = any>(): Promise<T[]> {
+    const events: T[] = [];
+    for (;;) {
+      const buffered = this.eventBacklog.shift();
+      if (buffered !== undefined) {
+        events.push(JSON.parse(buffered) as T);
+        continue;
+      }
+      if (this.lines.length === 0) return events;
+      events.push(JSON.parse(this.lines.shift()!) as T);
+    }
   }
   /** Read events until pred matches (skipping backlog). Relies on the expected event
    *  actually arriving; if it never does, the bun test timeout fails the test. */

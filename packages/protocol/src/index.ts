@@ -734,6 +734,21 @@ export interface SessionErrorsStreamEvent {
   errors: SessionErrorEntry[];
 }
 
+/** Sent to a single session whose last turn stopped on a harness API error,
+ * when the host's network comes back. It carries no room and no seq: the point
+ * is the delivery itself, which reaches the session's `subscribe` stream and
+ * re-prompts it — the same effect as a human typing one character into the
+ * stalled session. Sessions that are not stopped on an error never receive it,
+ * and one recovery produces at most one of these per stopped session. */
+export interface NetworkOnlineStreamEvent {
+  ev: "net_online";
+  /** Why the session is being woken and what to do, in one line. */
+  text: string;
+  /** Timestamp of the API-error row this wake is for, so a session (or a log
+   * reader) can tell which stall it answers. */
+  error_ts: string;
+}
+
 /** Completion of a 2-phase `translate` request (see TranslateRequest's doc
  * comment for why the reply is split). Pushed to the requesting connection
  * only, correlated by the client-generated `request_id` from the request.
