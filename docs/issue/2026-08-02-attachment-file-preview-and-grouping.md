@@ -1,11 +1,11 @@
 ---
 title: file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け
-status: open
+status: wip
 category: design
 created: 2026-08-02T08:51:22+09:00
 last_read: 2026-08-12T13:20:30+09:00
 open_entered: 2026-08-02T08:51:22+09:00
-wip_entered:
+wip_entered: 2026-08-12T13:21:13+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -20,6 +20,8 @@ origin: 自リポ TODO
 # file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け
 
 ## 概要
+
+実装着手 (2026-08-12)。
 
 kawaz r99m35 の後半要望 (前半の type 表示は v0.95.0 で出荷済み)。
 
