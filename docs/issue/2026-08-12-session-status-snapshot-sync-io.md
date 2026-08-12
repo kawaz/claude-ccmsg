@@ -1,11 +1,11 @@
 ---
 title: session-status-snapshot-sync-io
-status: open
+status: wip
 category: bug
 created: 2026-08-12T08:30:19+09:00
 last_read:
 open_entered: 2026-08-12T08:30:19+09:00
-wip_entered:
+wip_entered: 2026-08-12T09:03:46+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -43,3 +43,5 @@ DR-0029 確認済み (2026-08-12): 「まとめ処理」= 時間窓集約・複�
 ## TODO
 
 <!-- wip 時のみ -->
+
+実装着手 (2026-08-12、v0.100.5 の直列後続)。
