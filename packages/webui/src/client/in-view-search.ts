@@ -65,6 +65,36 @@ export function unitMatchesQuery(text: string, words: readonly SearchWord[]): bo
   );
 }
 
+/** One searchable unit as the model sees it: the stable key its rendered
+ * counterpart registers under, plus the text that decides whether it matches.
+ * Carrying the text here is what keeps "M" independent of what is mounted —
+ * the render layer's job is decoration, not counting. */
+export interface SearchUnit {
+  readonly key: string;
+  readonly text: string;
+}
+
+/**
+ * Keys of every unit matching `words`, in the order given. This is the "M" in
+ * "[N/M]" and the sequence ↑/↓ walks, computed without consulting the DOM:
+ * a unit counts because the transcript contains it, not because it happens to
+ * be mounted or its fold happens to be open.
+ *
+ * Returns an empty list for an absent or wholly invalid query so callers can
+ * render the counter unconditionally.
+ */
+export function matchingUnitKeysOf(
+  units: readonly SearchUnit[],
+  words: readonly SearchWord[],
+): string[] {
+  if (words.length === 0) return [];
+  const keys: string[] = [];
+  for (const unit of units) {
+    if (unitMatchesQuery(unit.text, words)) keys.push(unit.key);
+  }
+  return keys;
+}
+
 export interface HighlightRange {
   start: number;
   end: number;

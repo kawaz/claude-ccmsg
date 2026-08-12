@@ -7,6 +7,7 @@ import {
   collectHighlightRanges,
   loopNextIndex,
   loopPrevIndex,
+  matchingUnitKeysOf,
   parseSearchClosedFolds,
   parseSearchQuery,
   serializeSearchClosedFolds,
@@ -287,5 +288,53 @@ describe("closed-fold scope persistence", () => {
   test("round-trips through the serialized form", () => {
     expect(parseSearchClosedFolds(serializeSearchClosedFolds(true))).toBe(true);
     expect(parseSearchClosedFolds(serializeSearchClosedFolds(false))).toBe(false);
+  });
+});
+
+// matchingUnitKeysOf (D1): the "M" in "[N/M]" and the sequence ↑/↓ walks,
+// decided from unit text alone. The point of the function is that nothing it
+// returns can depend on what is mounted or which folds are open — the DOM is
+// not an input.
+describe("matchingUnitKeysOf", () => {
+  const q = (text: string) => parseSearchQuery(text, { caseSensitive: false, regex: false }).words;
+  const units = [
+    { key: "0-0", text: "alpha bravo" },
+    { key: "10-0", text: "bravo charlie" },
+    { key: "10-1", text: "nothing here" },
+    { key: "20-0", text: "ALPHA again" },
+  ];
+
+  test("returns the matching keys in the order the units were given", () => {
+    expect(matchingUnitKeysOf(units, q("bravo"))).toEqual(["0-0", "10-0"]);
+  });
+
+  // 大小無視 (既定) は unitMatchesQuery 側の規約をそのまま引き継ぐ。
+  test("carries the query's case sensitivity through", () => {
+    expect(matchingUnitKeysOf(units, q("alpha"))).toEqual(["0-0", "20-0"]);
+    const cs = parseSearchQuery("alpha", { caseSensitive: true, regex: false }).words;
+    expect(matchingUnitKeysOf(units, cs)).toEqual(["0-0"]);
+  });
+
+  // AND (同一行の複数語) / OR (複数行) も 1 unit ずつ評価される。
+  test("applies AND within a line and OR across lines", () => {
+    expect(matchingUnitKeysOf(units, q("bravo charlie"))).toEqual(["10-0"]);
+    expect(matchingUnitKeysOf(units, q("charlie\nagain"))).toEqual(["10-0", "20-0"]);
+  });
+
+  test("counts a unit once however many times its text matches", () => {
+    expect(matchingUnitKeysOf([{ key: "0-0", text: "ha ha ha" }], q("ha"))).toEqual(["0-0"]);
+  });
+
+  // 空クエリ = 検索していない状態。0/0 を出すために空配列で返す。
+  test("matches nothing when the query is empty", () => {
+    expect(matchingUnitKeysOf(units, q(""))).toEqual([]);
+    expect(matchingUnitKeysOf([], q("alpha"))).toEqual([]);
+  });
+
+  // 追記 (live tail) は末尾に unit が増えるだけ — 既存 unit の判定と順序は
+  // 動かない。これが「追記のたびに M が揺れない」ことの根拠。
+  test("is stable under appends: existing keys keep their result and order", () => {
+    const appended = [...units, { key: "30-0", text: "bravo tail" }];
+    expect(matchingUnitKeysOf(appended, q("bravo"))).toEqual(["0-0", "10-0", "30-0"]);
   });
 });

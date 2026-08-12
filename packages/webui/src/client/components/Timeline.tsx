@@ -47,6 +47,7 @@ import {
   foldGroupNeedsOuterFold,
   isApiErrorLine,
   isSearchableSegment,
+  segmentSearchText,
   itemRawSourceOffsets,
   splitFoldSubgroups,
   userNavTargets,
@@ -78,6 +79,7 @@ import {
   highlightRenderedText,
   removeRenderedTextHighlights,
   setRenderedTextCurrent,
+  visibleRenderedText,
 } from "../rendered-text-search.ts";
 import {
   getPendingHostTranslationCount,
@@ -93,9 +95,12 @@ import {
   CLOSED_FOLD_SCOPE_KEY,
   loopNextIndex,
   loopPrevIndex,
+  matchingUnitKeysOf,
   parseSearchClosedFolds,
   parseSearchQuery,
   serializeSearchClosedFolds,
+  unitMatchesQuery,
+  type SearchUnit,
   type SearchWord,
 } from "../in-view-search.ts";
 import { readStorage, writeStorage } from "../storage.ts";
@@ -263,26 +268,6 @@ function ItemRawToggle({
       )}
     </div>
   );
-}
-
-/** Renders `text` as plain (non-markdown) content, splitting it into
- * highlighted pieces when `ctx` has an active query and this unit is a match
- * — used for tool_use/tool_result/unknown-segment `<pre>` bodies and user
- * (non-markdown) text segments. Assistant text/thinking go through
- * MarkdownView's own `highlightWords` prop instead (mdast text nodes need
- * the same splitting, but from inside the AST walk — see markdown-view.tsx). */
-function HighlightedPlainText({
-  text,
-  ctx,
-  unitKey,
-}: {
-  text: string;
-  ctx: TLSearchCtx | undefined;
-  unitKey: string;
-}) {
-  void ctx;
-  void unitKey;
-  return <>{text}</>;
 }
 
 // Live tail 自動スクロール追従 (U2 kawaz spec: 「ユーザが最下部付近を見ている
@@ -1224,7 +1209,7 @@ function SegmentView({
             {segment.role === "assistant" ? (
               <AssistantMarkdownText source={segment.text} />
             ) : (
-              <HighlightedPlainText text={segment.text} ctx={searchCtx} unitKey={searchKey} />
+              segment.text
             )}
           </div>
         );
@@ -1244,13 +1229,7 @@ function SegmentView({
             <FoldSummary ts={ts} label={"tool_use: " + segment.name} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">
-                <HighlightedPlainText
-                  text={JSON.stringify(segment.input, null, 2)}
-                  ctx={searchCtx}
-                  unitKey={searchKey}
-                />
-              </pre>
+              <pre class="tl-fold-body">{JSON.stringify(segment.input, null, 2)}</pre>
             </div>
           </details>
         );
@@ -1274,9 +1253,7 @@ function SegmentView({
             <FoldSummary ts={ts} label={"tool_result" + (segment.isError ? " (error)" : "")} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">
-                <HighlightedPlainText text={segment.text} ctx={searchCtx} unitKey={searchKey} />
-              </pre>
+              <pre class="tl-fold-body">{segment.text}</pre>
             </div>
           </details>
         );
@@ -1286,13 +1263,7 @@ function SegmentView({
             <FoldSummary ts={ts} label={segment.type} />
             <div class="tl-guided">
               <FoldGuide />
-              <pre class="tl-fold-body">
-                <HighlightedPlainText
-                  text={JSON.stringify(segment.raw, null, 2)}
-                  ctx={searchCtx}
-                  unitKey={searchKey}
-                />
-              </pre>
+              <pre class="tl-fold-body">{JSON.stringify(segment.raw, null, 2)}</pre>
             </div>
           </details>
         );
@@ -3228,7 +3199,7 @@ export function Timeline({
   // visibly do nothing) — the count side excludes exactly what the render
   // side excludes.
   const searchUnits = useMemo(() => {
-    const units: { key: string }[] = [];
+    const units: SearchUnit[] = [];
     const targets = { user: targetUser, ai: targetAI, ccmsg: targetCcmsg };
     const pushLine = (offset: number, line: ParsedLine) => {
       if (line.kind !== "turn") return;
@@ -3240,7 +3211,7 @@ export function Timeline({
       if (isApiErrorLine(line)) return;
       line.segments.forEach((seg, i) => {
         if (!isSearchableSegment(seg, targets)) return;
-        units.push({ key: `${offset}-${i}` });
+        units.push({ key: `${offset}-${i}`, text: segmentSearchText(seg) });
       });
     };
     for (const group of groups) {
@@ -3254,8 +3225,15 @@ export function Timeline({
     // fold group 内 = peer 発) を分類フェーズの確定結果から document 順に拾う。
     // render 側と同じ key 集合を使うので、💬 toggle の [N/M] と実 DOM 数が
     // 乖離しない (dedup で落ちた message が幽霊マッチとして数に残らない)。
+    // A bubble whose body was truncated on the wire renders the full message
+    // CcmsgBubble fetches on mount, so its rendered text can outrun `msg`.
+    // Counting the extracted body keeps the unit's membership decidable from
+    // the transcript alone; a match that exists only in the lazily-fetched
+    // remainder is not counted (and gets no highlight either way).
     if (targetCcmsg) {
-      for (const target of ccmsgTargets) units.push({ key: target.key });
+      for (const target of ccmsgTargets) {
+        units.push({ key: target.key, text: target.message.msg });
+      }
     }
     return units;
   }, [groups, ccmsgTargets, targetUser, targetAI, targetCcmsg]);
@@ -3266,7 +3244,42 @@ export function Timeline({
   // revealAndScroll expands ancestors on nav, so "M" reflects everything
   // loaded; off, only text that is actually on screen counts and "M" moves as
   // folds are opened and closed.
-  const [matchingUnitKeys, setMatchingUnitKeys] = useState<string[]>([]);
+  //
+  // With the toggle on this is a pure function of the transcript and the
+  // query: a unit counts because its text matches, not because it is mounted
+  // or its fold is open. That is what keeps "M" still while the reader
+  // navigates — ↑/↓ expands folds on its way to a match, and a DOM-derived
+  // count used to drop a unit each time one opened (measured 2026-08-12:
+  // "1/9" walked down to "5/7" over four ↓ presses, because the match effect
+  // re-ran against the half-rendered fold and cached `matched: false`).
+  //
+  // With the toggle off "on screen" is the question being asked, so the
+  // answer legitimately depends on the DOM; that branch filters the model's
+  // set down by re-matching each mounted unit's *visible* text.
+  const searchUnitRefs = useRef(new Map<string, HTMLElement>());
+  const registerSearchUnitRef = useCallback((key: string, el: HTMLElement | null) => {
+    if (el) searchUnitRefs.current.set(key, el);
+    else searchUnitRefs.current.delete(key);
+  }, []);
+
+  const modelMatchingKeys = useMemo(
+    () => (parsedSearch.hasError ? [] : matchingUnitKeysOf(searchUnits, parsedSearch.words)),
+    [searchUnits, parsedSearch],
+  );
+
+  const [onScreenMatchingKeys, setOnScreenMatchingKeys] = useState<string[]>([]);
+  useEffect(() => {
+    if (searchClosedFolds) return;
+    const next = modelMatchingKeys.filter((key) => {
+      const el = searchUnitRefs.current.get(key);
+      return el !== undefined && unitMatchesQuery(visibleRenderedText(el), parsedSearch.words);
+    });
+    setOnScreenMatchingKeys((current) =>
+      current.length === next.length && current.every((key, i) => key === next[i]) ? current : next,
+    );
+  }, [modelMatchingKeys, parsedSearch, searchClosedFolds, foldRevision]);
+
+  const matchingUnitKeys = searchClosedFolds ? modelMatchingKeys : onScreenMatchingKeys;
 
   const [searchCurrentIndex, setSearchCurrentIndex] = useState(0);
   // A fresh search (query edit, mode/scope toggle flip, or session switch)
@@ -3290,14 +3303,16 @@ export function Timeline({
     });
   }, [matchingUnitKeys.length]);
 
-  const searchUnitRefs = useRef(new Map<string, HTMLElement>());
-  const registerSearchUnitRef = useCallback((key: string, el: HTMLElement | null) => {
-    if (el) searchUnitRefs.current.set(key, el);
-    else searchUnitRefs.current.delete(key);
-  }, []);
-
+  // Decoration only (DR-0022 §3). This paints the CSS Custom Highlight ranges
+  // over whatever is mounted and wires each unit's click-to-select; it no
+  // longer decides who is a match. `highlightRenderedText`'s boolean return is
+  // deliberately ignored — a unit that is mounted but momentarily unpainted
+  // (a fold mid-open, markdown still rendering) must not change "M", and the
+  // ranges catch up on their own: rendered-text-search re-collects on every
+  // `toggle` event.
   useEffect(() => {
-    const orderedKeys: string[] = [];
+    const currentKey =
+      searchCurrentIndex > 0 ? matchingUnitKeys[searchCurrentIndex - 1] : undefined;
     for (const unit of searchUnits) {
       const el = searchUnitRefs.current.get(unit.key);
       if (!el) continue;
@@ -3305,27 +3320,17 @@ export function Timeline({
         removeRenderedTextHighlights(el);
         continue;
       }
-      const matched = highlightRenderedText(
+      highlightRenderedText(
         el,
         parsedSearch.words,
         () => {
-          const position = orderedKeys.indexOf(unit.key);
+          const position = matchingUnitKeys.indexOf(unit.key);
           if (position >= 0) setSearchCurrentIndex(position + 1);
         },
         searchClosedFolds,
       );
-      if (matched) orderedKeys.push(unit.key);
+      setRenderedTextCurrent(el, unit.key === currentKey);
     }
-    const currentKey = searchCurrentIndex > 0 ? orderedKeys[searchCurrentIndex - 1] : undefined;
-    for (const unit of searchUnits) {
-      const el = searchUnitRefs.current.get(unit.key);
-      if (el) setRenderedTextCurrent(el, unit.key === currentKey);
-    }
-    setMatchingUnitKeys((current) =>
-      current.length === orderedKeys.length && current.every((key, i) => key === orderedKeys[i])
-        ? current
-        : orderedKeys,
-    );
     return () => {
       for (const el of searchUnitRefs.current.values()) removeRenderedTextHighlights(el);
     };

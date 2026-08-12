@@ -219,6 +219,27 @@ function collectRootRanges(
   return { matched: result.matched, byColor, all };
 }
 
+/**
+ * The text below `root` a reader can actually see: anything inside a collapsed
+ * `<details>` (bar its own summary) is left out. This is what the Timeline's
+ * 📁-off search scope means by "only what is on screen" — the counting side
+ * feeds it to the same pure matcher the model side uses, so the two scopes
+ * differ in their input text and nothing else.
+ *
+ * Only the 📁-off scope needs this. With the toggle on (the default) the match
+ * set is decided from the transcript and never consults the DOM at all.
+ */
+export function visibleRenderedText(root: HTMLElement): string {
+  const doc = root.ownerDocument;
+  const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const walker = doc.createTreeWalker(root, showText);
+  let out = "";
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (isTextNodeVisible(node as Text)) out += (node as Text).data;
+  }
+  return out;
+}
+
 function scheduleRootRefresh(doc: Document): void {
   if (scheduledRefreshDocuments.has(doc)) return;
   scheduledRefreshDocuments.add(doc);
