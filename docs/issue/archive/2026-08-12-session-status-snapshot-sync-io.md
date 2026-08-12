@@ -1,6 +1,6 @@
 ---
 title: session-status-snapshot-sync-io
-status: wip
+status: resolved
 category: bug
 created: 2026-08-12T08:30:19+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T09:03:46+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T09:26:51+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.100.6で実装。mtime-cache(三点一致gate)+snapshot経路の非同期化+pushChain直列化。実測で定常状態のファイルオープン系0回。canonicalizeExternalPathはfold再設計案件として残件記録済み"]
 blocked_by:
 origin: 自リポ TODO
 ---
