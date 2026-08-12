@@ -14,8 +14,6 @@
 // rather than reaching for a remote host: the daemon has no business
 // originating outbound traffic to decide this, and a default route is what the
 // stalled session needs back.
-import * as fs from "node:fs";
-import * as path from "node:path";
 import type { Subprocess } from "bun";
 
 export interface NetworkWatchLog {
@@ -123,10 +121,16 @@ export function startRouteMonitor(onEvent: () => void, log: NetworkWatchLog): Mo
 }
 
 /** `CCMSG_NETWORK_WATCH_FILE`: drive the watch from a file instead of the
- * routing socket — writing `online` / `offline` into it is a link coming up or
- * going down. It exists so a daemon *process* can be tested against real
- * transitions (the in-process seams cover the rest); it is not part of the
- * wire protocol and normal runs never set it. */
+ * routing socket — the file holds `online` / `offline`, and SIGUSR2 plays the
+ * routing message that says "look again". It exists so a daemon *process* can
+ * be tested against real transitions (the in-process seams cover the rest); it
+ * is not part of the wire protocol and normal runs never set it.
+ *
+ * The nudge is a signal rather than a file watch because a test must not
+ * inherit the delivery characteristics of whatever filesystem it runs on: a
+ * watcher that coalesces or drops a change (observed on macOS CI) turns into a
+ * test that waits forever for a transition that was never noticed. A signal is
+ * delivered by the kernel to a known pid. */
 export function fileNetworkSource(
   file: string,
 ): Pick<NetworkWatchOptions, "probeOnline" | "startMonitor"> {
@@ -139,10 +143,8 @@ export function fileNetworkSource(
       }
     },
     startMonitor: (onEvent) => {
-      const watcher = fs.watch(path.dirname(file), (_event, name) => {
-        if (name === null || name === path.basename(file)) onEvent();
-      });
-      return () => watcher.close();
+      process.on("SIGUSR2", onEvent);
+      return () => process.off("SIGUSR2", onEvent);
     },
   };
 }

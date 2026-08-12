@@ -41,6 +41,9 @@ function assistantLine(text: string): string {
 }
 
 const DEBOUNCE_MS = 20;
+/** Barrier budget, well inside the test timeout so a stuck barrier reports
+ * *which* condition never arrived instead of killing the whole test. */
+const BARRIER_TIMEOUT_MS = 8_000;
 
 interface Fixture {
   ctx: DaemonCtx;
@@ -52,10 +55,8 @@ interface Fixture {
    *
    * Waiting on the observation rather than on a fixed delay is what makes two
    * writes two transitions instead of one coalesced burst, and it is the only
-   * form that holds on a loaded CI box: how long a filesystem watcher takes to
-   * deliver a change is not something a test can assume (fs.watch on macOS
-   * coalesces through FSEvents). The daemon's own view is readable via `ping`,
-   * so the test asks it. */
+   * form that holds on a loaded CI box. The daemon's own view is readable via
+   * `ping`, so the test asks it. */
   setLink(state: "online" | "offline"): Promise<void>;
   /** Return once the daemon's api-error fold reports `sid` stopped at
    * `timestamp` — the input the wake reads, built asynchronously from the
@@ -76,6 +77,11 @@ async function startFixture(): Promise<Fixture> {
   });
   const observer = await connect(ctx.sock);
   await observer.hello({ role: "user" });
+  // The seam signals ctx.proc directly, so a daemon that lives in some other
+  // process would silently never see a transition. Fail on that here instead.
+  const hello = await observer.request<{ pid: number; network: string }>({ op: "ping" });
+  expect(hello.pid).toBe(ctx.proc.pid);
+  expect(hello.network).toBe("offline");
   return {
     ctx,
     dir,
@@ -83,25 +89,37 @@ async function startFixture(): Promise<Fixture> {
     close: () => observer.close(),
     setLink: async (state) => {
       fs.writeFileSync(linkFile, state);
-      for (;;) {
+      // SIGUSR2 is the seam's routing message; sending it after the write
+      // means the probe cannot read a stale state. Signal the pid directly —
+      // Bun's Subprocess.kill(signal) terminates the child instead of
+      // delivering it (verified against this daemon).
+      process.kill(ctx.proc.pid, "SIGUSR2");
+      await waitFor(`daemon to observe the link as ${state}`, async () => {
         const pong = await observer.request<{ network: string }>({ op: "ping" });
-        if (pong.network === state) return;
-        // The watcher has not delivered the change yet. The bun test timeout
-        // is the bound; a watcher that never delivers fails the test rather
-        // than being papered over by a longer sleep.
-        await Bun.sleep(DEBOUNCE_MS);
-      }
+        return pong.network === state;
+      });
     },
     waitStall: async (sid, timestamp) => {
-      for (;;) {
+      await waitFor(`${sid} to be reported stopped at ${timestamp}`, async () => {
         const res = await observer.request<{ errors: { sid: string; timestamp: string }[] }>({
           op: "session_errors",
         });
-        if (res.errors.some((e) => e.sid === sid && e.timestamp === timestamp)) return;
-        await Bun.sleep(DEBOUNCE_MS);
-      }
+        return res.errors.some((e) => e.sid === sid && e.timestamp === timestamp);
+      });
     },
   };
+}
+
+/** Wait for a condition the daemon reports over the wire, failing with what it
+ * was waiting for rather than as a bare test timeout — a barrier that gives up
+ * silently is what turned the first CI failure into a guessing game. */
+async function waitFor(what: string, ready: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + BARRIER_TIMEOUT_MS;
+  for (;;) {
+    if (await ready()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(DEBOUNCE_MS);
+  }
 }
 
 describe("network online wake", () => {
