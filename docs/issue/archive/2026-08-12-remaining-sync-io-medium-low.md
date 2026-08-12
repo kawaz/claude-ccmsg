@@ -1,6 +1,6 @@
 ---
 title: daemon の残存同期 IO (medium/low) の解消
-status: wip
+status: resolved
 category: task
 created: 2026-08-12T08:39:53+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T08:47:38+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T09:03:33+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.100.5 で virtual-sessions/agent-transcripts/fs-access/origins-file/session-status/transcript の残存同期IOをfs.promises化 (transcriptはwatchコールバック用の同期経路を分離し再入ガード不要設計を維持)","readAgentToolUseIdsはsession-status-snapshot-sync-ioの管轄へ移管","canonicalizeExternalPathはfold再設計案件として同issueで扱う"]
 blocked_by:
 origin: 自リポ TODO
 ---
