@@ -1,11 +1,11 @@
 ---
 title: 翻訳済み thinking と TL 検索の不整合
-status: open
+status: wip
 category: design
 created: 2026-08-12T10:40:33+09:00
 last_read:
 open_entered: 2026-08-12T10:40:33+09:00
-wip_entered:
+wip_entered: 2026-08-12T13:48:56+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -51,3 +51,7 @@ D2 (fold 状態の持ち上げ) 後に扱うと、📁 OFF のモデル化と併
 ## TODO
 
 <!-- wip 時のみ -->
+
+着手 (2026-08-12)。統括方針: SearchUnit の検索対象テキストに原文と翻訳の両方を
+含める (どちらの綴りのクエリでも計数にヒット)。装飾は表示中テキストにマッチする
+分が自然に付く。
