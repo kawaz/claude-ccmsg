@@ -1,6 +1,6 @@
 ---
 title: Timeline の仮想スクロール (windowing) 導入
-status: open
+status: resolved
 category: design
 created: 2026-07-29T15:12:58+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T12:28:26+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: D0〜D2 (v0.100.8〜v0.100.10) で根治。閉fold遅延マウント+identity差分化+memoでDOM 11,995→2,428要素(-80%)、1行追記のfold側再レンダー2,362→3","discarded: 案A(自作windowing)は残ノード2,811では工数・回帰リスク(高さ推定・スクロールアンカ・検索/nav のモデル化)に見合わないため見送り(findings 2026-08-12-timeline-windowing-design の判断手順どおり再実測してから判断)","finding/2026-08-12-timeline-windowing-design"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -50,6 +50,3 @@ Timeline.tsx (3,679 行) は fold グループ / in-view 検索 / ユーザ発�
 - [ ] fold グループ / in-view 検索 / ユーザ発言ナビ / スクロール位置復元 /
       uuid 位置アンカーとの整合方針が決まる
 
-## 解決時の記録先
-
-- 設計判断を伴う: decisions/DR-NNNN
