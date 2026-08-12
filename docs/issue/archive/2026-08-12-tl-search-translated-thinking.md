@@ -1,6 +1,6 @@
 ---
 title: 翻訳済み thinking と TL 検索の不整合
-status: wip
+status: resolved
 category: design
 created: 2026-08-12T10:40:33+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T13:48:56+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T14:17:02+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.102.1 で実装。SearchUnit.texts (複数綴り、いずれかで M に計数、AND は綴り内で閉じる) + 訳 registry の購読で非同期到着にも追従。実測: 原文/訳文どちらのクエリでも 1/1、訳到着で 0/0→1/1"]
 blocked_by:
 origin: 自リポ TODO
 ---
