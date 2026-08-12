@@ -1,6 +1,6 @@
 ---
 title: Timeline cross-line 処理の差分化
-status: wip
+status: resolved
 category: design
 created: 2026-08-12T08:30:32+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T09:33:15+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T10:11:34+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.100.8 (D0) で実装。incremental-cross-line による identity 保存 + fold 側 memo 化で 1 行追記あたりの fold 側再レンダー 2,362 → 3 (実測、描画結果不変)。store.ts の O(N) コピーは findings の判断どおり据え置き (残る場合は D2 後の再実測で判断)"]
 blocked_by:
 origin: 自リポ TODO
 ---
