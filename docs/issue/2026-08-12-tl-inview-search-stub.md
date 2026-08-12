@@ -1,11 +1,11 @@
 ---
 title: TL の in-view search 実態調査 — HighlightedPlainText がスタブ
-status: open
+status: wip
 category: bug
 created: 2026-08-12T10:09:22+09:00
 last_read: 2026-08-12T10:12:31+09:00
 open_entered: 2026-08-12T10:09:22+09:00
-wip_entered:
+wip_entered: 2026-08-12T10:13:34+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
@@ -36,4 +36,4 @@ D1 (検索マッチのモデル化、findings 2026-08-12-timeline-windowing-desi
 
 <!-- wip 時のみ -->
 
-- [ ] {次に手を付けるサブタスク}
+- [ ] D1 worker が実態マトリクス確定 → モデル化 + 修理を実施中 (2026-08-12)。
