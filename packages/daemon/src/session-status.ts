@@ -29,6 +29,7 @@ import {
 import { RUN_ID_RE } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 import { discoverWorkspaceFolders } from "./workspace-folders.ts";
+import { createMtimeCache } from "./mtime-cache.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
@@ -984,7 +985,7 @@ export function foldLine(state: SessionStatusState, line: string): boolean {
  * bounded (workflow count × O(small json + short journal)) and only pays
  * on push, which the DR calls out as "sufficient granularity".
  */
-export function snapshot(
+export async function snapshot(
   state: SessionStatusState,
   sidDir?: string,
   /** DR-0026: absolute realpath of the session cwd used to detect
@@ -992,39 +993,45 @@ export function snapshot(
    * unresolvable cwd) suppresses the workspace_folders field entirely rather
    * than publishing a spurious empty allowlist. */
   cwd?: string,
-): SessionStatusSnapshot {
+): Promise<SessionStatusSnapshot> {
   // r44 m7: agent_tree lookup shares the same "read at snapshot time" fold
   // pattern as readTeammateModels — meta.json / subagent transcripts are
   // written by the harness outside the transcript stream we fold, so a
   // per-line fold would miss late-appearing files. Skip entirely when we
   // don't know sidDir (constructed snapshots in tests).
-  const agentTree = sidDir ? readAgentTree(sidDir, `${sidDir}.jsonl`, state) : undefined;
+  const agentTree = sidDir ? await readAgentTree(sidDir, `${sidDir}.jsonl`, state) : undefined;
+  const workflows: SessionWorkflowStatus[] = [];
+  for (const workflow of state.workflows.values()) {
+    const copy: SessionWorkflowStatus = { ...workflow };
+    if (sidDir && copy.run_id && RUN_ID_RE.test(copy.run_id)) {
+      const drilldown = await readWorkflowDrilldown(sidDir, copy.run_id);
+      if (drilldown) {
+        if (drilldown.phases) copy.phases = drilldown.phases;
+        if (drilldown.agents) copy.agents = drilldown.agents;
+      }
+    }
+    workflows.push(copy);
+  }
+  // Teammate model comes from meta.json at snapshot time (see
+  // readTeammateModels). The scan only runs when there is at least one
+  // teammate to annotate — an fs readdir per push would otherwise be paid
+  // by every teamless session.
+  const models = sidDir && state.teammates.size > 0 ? await readTeammateModels(sidDir) : undefined;
+  // DR-0026: discovered inline at snapshot time — the workspace file is
+  // hand-edited out of band and there is no transcript event to fold on.
+  // Read cost is bounded (cwd top level only). Omit the field entirely when
+  // nothing is found so older clients (no workspace_folders field) render
+  // exactly the same shape as before this DR.
+  const workspaceFolders = cwd ? await discoverWorkspaceFolders(cwd) : [];
   return {
     todos: [...state.todos.values()].map((todo) => ({ ...todo })),
-    workflows: [...state.workflows.values()].map((workflow) => {
-      const copy: SessionWorkflowStatus = { ...workflow };
-      if (sidDir && copy.run_id && RUN_ID_RE.test(copy.run_id)) {
-        const drilldown = readWorkflowDrilldown(sidDir, copy.run_id);
-        if (drilldown) {
-          if (drilldown.phases) copy.phases = drilldown.phases;
-          if (drilldown.agents) copy.agents = drilldown.agents;
-        }
-      }
-      return copy;
-    }),
+    workflows,
     background: [...state.background.values()].map((task) => ({ ...task })),
     ...(state.context ? { context: { ...state.context } } : {}),
-    // Teammate model comes from meta.json at snapshot time (see
-    // readTeammateModels). The scan only runs when there is at least one
-    // teammate to annotate — an fs readdir per push would otherwise be paid
-    // by every teamless session.
-    teammates: (() => {
-      const models = sidDir && state.teammates.size > 0 ? readTeammateModels(sidDir) : undefined;
-      return [...state.teammates.values()].map((teammate) => {
-        const model = models?.get(teammate.name);
-        return { ...teammate, ...(model ? { model } : {}) };
-      });
-    })(),
+    teammates: [...state.teammates.values()].map((teammate) => {
+      const model = models?.get(teammate.name);
+      return { ...teammate, ...(model ? { model } : {}) };
+    }),
     external_files: [...state.externalFiles].sort(),
     ...(state.apiError ? { api_error: { ...state.apiError } } : {}),
     ...(agentTree &&
@@ -1033,18 +1040,45 @@ export function snapshot(
       agentTree.workflows.length > 0)
       ? { agent_tree: agentTree }
       : {}),
-    // DR-0026: discovered inline at snapshot time — the workspace file is
-    // hand-edited out of band and there is no transcript event to fold on.
-    // Read cost is bounded (cwd top level only). Omit entirely when nothing
-    // is found so older clients (no workspace_folders field) render exactly
-    // the same shape as before this DR.
-    ...(cwd
-      ? (() => {
-          const folders = discoverWorkspaceFolders(cwd);
-          return folders.length > 0 ? { workspace_folders: folders } : {};
-        })()
-      : {}),
+    ...(workspaceFolders.length > 0 ? { workspace_folders: workspaceFolders } : {}),
   };
+}
+
+/** Directory listings behind `subagents/`, memoized on each directory's own
+ * mtime — which moves whenever an agent's meta.json or transcript is created
+ * or removed, the only changes that alter the listing. Entries come back
+ * sorted by name: readdir's order is filesystem-dependent (ext4 hashes, APFS
+ * looks insertion-ordered) and that order reaches the Status / dump display,
+ * so it is pinned here rather than at each use. The returned array is shared
+ * with the cache — callers must not mutate it. */
+const dirEntriesByPath = createMtimeCache<fs.Dirent[] | undefined>(128);
+
+async function readDirEntries(dir: string): Promise<fs.Dirent[] | undefined> {
+  return dirEntriesByPath.get(dir, async () => {
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch {
+      return undefined;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    return entries;
+  });
+}
+
+/** Parsed `agent-*.meta.json` bodies, memoized on the file's mtime. A meta is
+ * written when its agent spawns and is not rewritten afterwards, so this is a
+ * hit on essentially every push after the first. `mtimeMs` rides along because
+ * two callers need it (teammate same-name tie-break, transcript-less agent
+ * liveness) and it cannot have changed on a hit. */
+const metaJsonByPath = createMtimeCache<{ value: unknown; mtimeMs: number }>(1024);
+
+async function readJson(file: string): Promise<unknown> {
+  try {
+    return JSON.parse(await fs.promises.readFile(file, "utf-8"));
+  } catch {
+    return undefined;
+  }
 }
 
 /** DR-0020 addendum 2026-07-18: teammate model lookup. Scans
@@ -1056,28 +1090,22 @@ export function snapshot(
  * files. Same-name duplicates resolve to the meta.json with the newest
  * mtime (matching agent-transcripts.ts resolveTeammate). All fs/JSON errors
  * degrade to an absent entry. */
-export function readTeammateModels(sidDir: string): Map<string, string> {
+export async function readTeammateModels(sidDir: string): Promise<Map<string, string>> {
   const models = new Map<string, string>();
   const mtimes = new Map<string, number>();
   const subagentsDir = path.join(sidDir, "subagents");
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
-  } catch {
-    return models;
-  }
+  const entries = await readDirEntries(subagentsDir);
+  if (!entries) return models;
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (!entry.name.startsWith("agent-") || !entry.name.endsWith(".meta.json")) continue;
     const metaPath = path.join(subagentsDir, entry.name);
-    let value: unknown;
-    let mtimeMs: number;
-    try {
-      value = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-      mtimeMs = fs.statSync(metaPath).mtimeMs;
-    } catch {
-      continue;
-    }
+    const cached = await metaJsonByPath.get(metaPath, async (stat) => ({
+      value: await readJson(metaPath),
+      mtimeMs: stat.mtimeMs,
+    }));
+    if (!cached) continue;
+    const { value, mtimeMs } = cached;
     if (!isRecord(value) || value.taskKind !== "in_process_teammate") continue;
     const name = stringValue(value.name);
     const model = stringValue(value.model);
@@ -1178,10 +1206,14 @@ const agentToolUseIdScans = new Map<string, AgentToolUseIdScan>();
  * complete lines. A trailing partial line is parsed but not consumed, so a
  * transcript whose last line lacks a newline still contributes its ids (and
  * re-contributes them harmlessly on the next call — `ids` is a Set). */
-function scanAgentToolUseIdsFrom(file: string, scan: AgentToolUseIdScan, limit: number): void {
-  let fd: number;
+async function scanAgentToolUseIdsFrom(
+  file: string,
+  scan: AgentToolUseIdScan,
+  limit: number,
+): Promise<void> {
+  let fd: fs.promises.FileHandle;
   try {
-    fd = fs.openSync(file, "r");
+    fd = await fs.promises.open(file, "r");
   } catch {
     return;
   }
@@ -1191,7 +1223,7 @@ function scanAgentToolUseIdsFrom(file: string, scan: AgentToolUseIdScan, limit: 
     while (offset < limit) {
       const toRead = Math.min(SCAN_CHUNK_BYTES, limit - offset);
       const chunk = Buffer.allocUnsafe(toRead);
-      const n = fs.readSync(fd, chunk, 0, toRead, offset);
+      const { bytesRead: n } = await fd.read(chunk, 0, toRead, offset);
       if (n === 0) break;
       offset += n;
       const data =
@@ -1207,7 +1239,7 @@ function scanAgentToolUseIdsFrom(file: string, scan: AgentToolUseIdScan, limit: 
       carry = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
     }
   } finally {
-    fs.closeSync(fd);
+    await fd.close();
   }
   if (carry.length > 0) collectAgentToolUseIds(carry.toString("utf-8"), scan.ids);
 }
@@ -1220,10 +1252,10 @@ function scanAgentToolUseIdsFrom(file: string, scan: AgentToolUseIdScan, limit: 
  * ids found so far are cached per path and only bytes appended since the last
  * call are parsed. Truncation and file replacement reset the cache (ino /
  * birthtime / size-shrink checks, mirroring transcript.ts's Watch). */
-function readAgentToolUseIds(file: string, out: Set<string>): void {
+async function readAgentToolUseIds(file: string, out: Set<string>): Promise<void> {
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(file);
+    stat = await fs.promises.stat(file);
   } catch {
     agentToolUseIdScans.delete(file);
     return;
@@ -1244,7 +1276,7 @@ function readAgentToolUseIds(file: string, out: Set<string>): void {
     }
   }
   agentToolUseIdScans.set(file, scan);
-  if (stat.size > scan.offset) scanAgentToolUseIdsFrom(file, scan, stat.size);
+  if (stat.size > scan.offset) await scanAgentToolUseIdsFrom(file, scan, stat.size);
   for (const id of scan.ids) out.add(id);
 }
 
@@ -1291,57 +1323,39 @@ function readAgentToolUseIds(file: string, out: Set<string>): void {
  * "stopped" once its mtime falls outside the window. The UI shows this as
  * an educated guess, not authoritative status.
  */
-export function readAgentTree(
+export async function readAgentTree(
   sidDir: string,
   rootTranscriptPath: string,
   state: SessionStatusState,
   nowMs: number = Date.now(),
-): AgentTreeGroups | undefined {
+): Promise<AgentTreeGroups | undefined> {
   const subagentsDir = path.join(sidDir, "subagents");
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(subagentsDir, { withFileTypes: true });
-  } catch {
-    return undefined;
-  }
-  // readdir の列挙順は filesystem 依存 (ext4 はハッシュ順、APFS は挿入順に
-  // 見えることが多い)。agent の並びはそのまま Status / dump の表示順になる
-  // ので、名前順に固定して環境差を出さない。
-  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const entries = await readDirEntries(subagentsDir);
+  if (!entries) return undefined;
 
   // (a) subagents/ 直下: teammate / 単発 subagent / それらの子孫
   const metas: AgentMetaFile[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
-    const meta = loadAgentMeta(subagentsDir, entry.name);
+    const meta = await loadAgentMeta(subagentsDir, entry.name);
     if (meta) metas.push(meta);
   }
   // (b) subagents/workflows/<runId>/: workflow メンバー。run 単位でまとめる。
   const workflowsDir = path.join(subagentsDir, "workflows");
   const workflowMembersByRun = new Map<string, AgentMetaFile[]>();
-  let runDirEntries: fs.Dirent[] = [];
-  try {
-    runDirEntries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-  } catch {
-    // workflows/ 不在は空扱い (通常セッション)
-  }
-  runDirEntries.sort((a, b) => a.name.localeCompare(b.name));
+  // workflows/ 不在は空扱い (通常セッション)
+  const runDirEntries = (await readDirEntries(workflowsDir)) ?? [];
   for (const runEntry of runDirEntries) {
     if (!runEntry.isDirectory()) continue;
     // RUN_ID_RE と同型の緩い基本判定 (path.join 前に traversal 文字を弾く)。
     if (!/^wf_[0-9a-f]{8}-[0-9a-f]{3}$/.test(runEntry.name)) continue;
     const runDir = path.join(workflowsDir, runEntry.name);
-    let members: fs.Dirent[];
-    try {
-      members = fs.readdirSync(runDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    members.sort((a, b) => a.name.localeCompare(b.name));
+    const members = await readDirEntries(runDir);
+    if (!members) continue;
     const runMetas: AgentMetaFile[] = [];
     for (const m of members) {
       if (!m.isFile()) continue;
-      const meta = loadAgentMeta(runDir, m.name);
+      const meta = await loadAgentMeta(runDir, m.name);
       if (meta) runMetas.push(meta);
     }
     if (runMetas.length > 0) workflowMembersByRun.set(runEntry.name, runMetas);
@@ -1355,11 +1369,11 @@ export function readAgentTree(
   // subagent case). agent-teams teammates carry no toolUseId and attach
   // directly to root via the else-branch below.
   const rootAgentIds = new Set<string>();
-  readAgentToolUseIds(rootTranscriptPath, rootAgentIds);
+  await readAgentToolUseIds(rootTranscriptPath, rootAgentIds);
   const subagentIdMaps = new Map<string, Set<string>>();
   for (const m of metas) {
     const ids = new Set<string>();
-    readAgentToolUseIds(m.transcriptPath, ids);
+    await readAgentToolUseIds(m.transcriptPath, ids);
     subagentIdMaps.set(m.agentId, ids);
   }
 
@@ -1438,7 +1452,7 @@ export function readAgentTree(
   // meta.json から生成 (last_activity_ms は agent-<id>.jsonl mtime)。
   const workflowGroups: AgentTreeWorkflowGroup[] = [];
   for (const [runId, runMetas] of workflowMembersByRun) {
-    const drilldown = readWorkflowDrilldown(sidDir, runId);
+    const drilldown = await readWorkflowDrilldown(sidDir, runId);
     const drillByAgent = new Map<
       string,
       { state: string; phase_index?: number; phase_title?: string }
@@ -1552,29 +1566,26 @@ export function readAgentTree(
  * ヘルパ。JSON parse エラー / 型不一致は undefined を返し呼び出し側で skip。
  * mtime は transcript (`agent-<agentId>.jsonl`) を優先、無ければ meta.json
  * 自身。 */
-function loadAgentMeta(dir: string, fileName: string): AgentMetaFile | undefined {
+async function loadAgentMeta(dir: string, fileName: string): Promise<AgentMetaFile | undefined> {
   const agentId = parseAgentIdFromFilename(fileName);
   if (!agentId) return undefined;
   const metaPath = path.join(dir, fileName);
   const transcriptPath = path.join(dir, `agent-${agentId}.jsonl`);
-  let meta: unknown;
+  const cached = await metaJsonByPath.get(metaPath, async (stat) => ({
+    value: await readJson(metaPath),
+    mtimeMs: stat.mtimeMs,
+  }));
+  if (!cached || !isRecord(cached.value)) return undefined;
+  // The transcript's mtime is the agent's liveness clock, so it is statted
+  // every time — it moves on every line the agent writes, which is exactly
+  // what a cache would have to invalidate on anyway.
+  let mtimeMs: number;
   try {
-    meta = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+    mtimeMs = (await fs.promises.stat(transcriptPath)).mtimeMs;
   } catch {
-    return undefined;
+    mtimeMs = cached.mtimeMs;
   }
-  if (!isRecord(meta)) return undefined;
-  let mtimeMs = 0;
-  try {
-    mtimeMs = fs.statSync(transcriptPath).mtimeMs;
-  } catch {
-    try {
-      mtimeMs = fs.statSync(metaPath).mtimeMs;
-    } catch {
-      mtimeMs = 0;
-    }
-  }
-  return { agentId, metaPath, transcriptPath, mtimeMs, meta };
+  return { agentId, metaPath, transcriptPath, mtimeMs, meta: cached.value };
 }
 
 /** r46 m8: meta.json + kind + state から `AgentTreeNode` を組む共通ヘルパ。
@@ -1688,6 +1699,11 @@ interface LiveSessionStatus {
    * was superseded by a later reset and drops its result instead of publishing
    * a fold of bytes that have since been replaced. */
   scanGen: number;
+  /** Tail of the serialized push queue for this session (see pushSnapshot).
+   * Building a snapshot reads the filesystem, so a push cannot complete inside
+   * the fs.watch callback that triggered it; chaining keeps concurrent pushes
+   * from writing to a subscriber out of order. */
+  pushChain: Promise<void>;
   /** Lines delivered by the tail while a scan was in flight. The Watch resets
    * its own offset to the scanned size first, so these are strictly the bytes
    * after the scanned window and fold in order once the scan lands. */
@@ -1727,7 +1743,7 @@ function startRefold(sid: string, live: LiveSessionStatus, size: number, log: Ta
     live.state = state;
     live.ready = undefined;
     drainPendingLines(live);
-    pushSnapshot(sid, live);
+    pushSnapshot(sid, live, log);
   })().catch((e: unknown) => {
     // Only the publish half can land here (the scan has its own catch); leave
     // `ready` cleared so readers aren't stuck waiting on a fold that failed.
@@ -1744,13 +1760,36 @@ export function createSessionStatusStore(): SessionStatusStore {
   return { sessions: new Map() };
 }
 
-function statusEventLine(sid: string, live: LiveSessionStatus): string {
-  return `${JSON.stringify({ ev: "session_status", sid, ...snapshot(live.state, live.sidDir, live.cwd) })}\n`;
+async function statusEventLine(sid: string, live: LiveSessionStatus): Promise<string> {
+  const data = await snapshot(live.state, live.sidDir, live.cwd);
+  return `${JSON.stringify({ ev: "session_status", sid, ...data })}\n`;
 }
 
-function pushSnapshot(sid: string, live: LiveSessionStatus): void {
-  const line = statusEventLine(sid, live);
-  for (const conn of live.statusConns) conn.write(line);
+/** Publish the current fold to every subscriber of `sid`.
+ *
+ * Callers are fs.watch callbacks and the refold completion, neither of which
+ * can await: they must return before the snapshot's filesystem reads finish.
+ * Each push is therefore queued behind the previous one for the same session,
+ * so two lines arriving back to back can never have their writes interleave or
+ * land reversed. This is ordering only — every push still builds and delivers
+ * its own snapshot, nothing is coalesced into a window or made to wait on
+ * another session (DR-0029). A push that lands after a later fold simply
+ * publishes the newer state, which is what a subscriber wants anyway. */
+function pushSnapshot(sid: string, live: LiveSessionStatus, log?: TailLog): void {
+  live.pushChain = live.pushChain.then(async () => {
+    // The session may have been dropped (unsubscribe, re-hello onto another
+    // file) while this push waited its turn; publishing then would describe a
+    // fold nobody is following.
+    if (live.statusConns.size === 0) return;
+    try {
+      const line = await statusEventLine(sid, live);
+      for (const conn of live.statusConns) conn.write(line);
+    } catch (e: unknown) {
+      // One unreadable snapshot must not break the chain for later pushes, and
+      // an unhandled rejection here would take the daemon down.
+      log?.error(`session_status push failed sid=${sid}: ${String(e)}`);
+    }
+  });
 }
 
 export async function getSessionStatus(
@@ -1784,7 +1823,7 @@ export async function getSessionStatus(
     if (store.sessions.get(sid) !== live) {
       return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
     }
-    return { ok: true, data: snapshot(live.state, live.sidDir, live.cwd) };
+    return { ok: true, data: await snapshot(live.state, live.sidDir, live.cwd) };
   }
   const state = createSessionStatusState(root);
   try {
@@ -1792,7 +1831,7 @@ export async function getSessionStatus(
   } catch {
     return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
   }
-  return { ok: true, data: snapshot(state, deriveSidDir(resolved.file), cwd) };
+  return { ok: true, data: await snapshot(state, deriveSidDir(resolved.file), cwd) };
 }
 
 export async function subscribeSessionStatus(
@@ -1821,7 +1860,7 @@ export async function subscribeSessionStatus(
     if (store.sessions.get(sid) !== existing) {
       return { ok: false, code: ErrorCode.not_found, msg: `transcript not found: ${sid}` };
     }
-    return { ok: true, data: snapshot(existing.state, existing.sidDir, existing.cwd) };
+    return { ok: true, data: await snapshot(existing.state, existing.sidDir, existing.cwd) };
   }
   const carriedConns = new Set<TailConn>([conn]);
   if (existing) {
@@ -1846,6 +1885,7 @@ export async function subscribeSessionStatus(
     state: createSessionStatusState(root),
     statusConns: carriedConns,
     scanGen: 0,
+    pushChain: Promise.resolve(),
     pendingLines: [],
     listener(payload) {
       if (payload.lines.length === 0) {
@@ -1867,7 +1907,7 @@ export async function subscribeSessionStatus(
       for (const line of payload.lines) {
         if (isSessionStatusCandidate(line) && foldLine(live.state, line)) changed = true;
       }
-      if (changed) pushSnapshot(sid, live);
+      if (changed) pushSnapshot(sid, live, log);
     },
   };
   const subscribed = subscribeTranscriptLines(transcriptTail, sessions, sid, live.listener, log);
@@ -1904,10 +1944,10 @@ export async function subscribeSessionStatus(
     // push they would keep rendering it until the new file happens to change.
     // (Only the old conns — the newly-subscribing conn gets the snapshot in
     // its op response.)
-    const line = statusEventLine(sid, live);
+    const line = await statusEventLine(sid, live);
     for (const c of existing.statusConns) c.write(line);
   }
-  return { ok: true, data: snapshot(live.state, live.sidDir, live.cwd) };
+  return { ok: true, data: await snapshot(live.state, live.sidDir, live.cwd) };
 }
 
 export function unsubscribeSessionStatus(

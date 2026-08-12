@@ -27,6 +27,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { WorkflowAgentStatus, WorkflowPhaseStatus } from "@ccmsg/protocol";
 import { RUN_ID_RE } from "./agent-transcripts.ts";
+import { createMtimeCache } from "./mtime-cache.ts";
+
+/** Parsed JSON per path, revalidated by that path's mtime. A completed run's
+ * state json never changes again, and a running workflow's journal only grows
+ * when a member starts or finishes — both are re-read far less often than the
+ * once-per-transcript-line rate at which snapshots ask for them. */
+const jsonByPath = createMtimeCache<unknown>(256);
+const journalEntriesByPath = createMtimeCache<Map<string, JournalEntry>>(128);
 
 export interface WorkflowDrilldownResult {
   phases?: WorkflowPhaseStatus[];
@@ -52,14 +60,14 @@ function numberField(row: Record<string, unknown>, key: string): number | undefi
  * writes it back into `path.join` so verifying twice costs nothing and keeps
  * this function safe to invoke from any future caller.
  */
-export function readWorkflowDrilldown(
+export async function readWorkflowDrilldown(
   sidDir: string,
   runId: string,
-): WorkflowDrilldownResult | undefined {
+): Promise<WorkflowDrilldownResult | undefined> {
   if (!RUN_ID_RE.test(runId)) return undefined;
 
   const stateJsonPath = path.join(sidDir, "workflows", `${runId}.json`);
-  const stateJson = tryReadJson(stateJsonPath);
+  const stateJson = await tryReadJson(stateJsonPath);
   if (stateJson !== undefined) {
     return foldFromStateJson(stateJson);
   }
@@ -68,18 +76,14 @@ export function readWorkflowDrilldown(
   return foldFromJournal(journalPath, runDir);
 }
 
-function tryReadJson(file: string): unknown {
-  let raw: string;
-  try {
-    raw = fs.readFileSync(file, "utf-8");
-  } catch {
-    return undefined;
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
+async function tryReadJson(file: string): Promise<unknown> {
+  return jsonByPath.get(file, async () => {
+    try {
+      return JSON.parse(await fs.promises.readFile(file, "utf-8"));
+    } catch {
+      return undefined;
+    }
+  });
 }
 
 function foldFromStateJson(value: unknown): WorkflowDrilldownResult | undefined {
@@ -178,18 +182,45 @@ function maybe<K extends string, V>(key: K, value: V | undefined): Partial<Recor
  * `{"type":"started","agentId":"..."}` and `{"type":"result","agentId":"...","result":"..."}`.
  * A `result` row supersedes any earlier `started` row for the same agentId.
  */
-function foldFromJournal(journalPath: string, runDir: string): WorkflowDrilldownResult | undefined {
+async function foldFromJournal(
+  journalPath: string,
+  runDir: string,
+): Promise<WorkflowDrilldownResult | undefined> {
+  // The journal fold is memoized on the journal's own mtime; the per-agent
+  // meta lookups below are not folded into it, because a member's meta.json
+  // can land after the `started` row that announced it and would otherwise
+  // stay invisible until the journal next grew.
+  const byAgent = await journalEntriesByPath.get(journalPath, () => parseJournal(journalPath));
+  if (!byAgent || byAgent.size === 0) return undefined;
+  const agents: WorkflowAgentStatus[] = [];
+  for (const [agentId, entry] of byAgent) {
+    const meta = await tryReadJson(path.join(runDir, `agent-${agentId}.meta.json`));
+    const agentType = isRecord(meta) ? stringField(meta, "agentType") : undefined;
+    agents.push({
+      agent_id: agentId,
+      state: entry.state,
+      ...(agentType ? { agent_type: agentType } : {}),
+      ...(entry.resultPreview ? { result_preview: entry.resultPreview } : {}),
+    });
+  }
+  return { agents };
+}
+
+interface JournalEntry {
+  state: "running" | "done";
+  resultPreview?: string;
+}
+
+/** Fold `journal.jsonl` into agentId → state. An unreadable file yields an
+ * empty map, which the caller reports as "no drilldown". */
+async function parseJournal(journalPath: string): Promise<Map<string, JournalEntry>> {
+  const byAgent = new Map<string, JournalEntry>();
   let raw: string;
   try {
-    raw = fs.readFileSync(journalPath, "utf-8");
+    raw = await fs.promises.readFile(journalPath, "utf-8");
   } catch {
-    return undefined;
+    return byAgent;
   }
-  interface JournalEntry {
-    state: "running" | "done";
-    resultPreview?: string;
-  }
-  const byAgent = new Map<string, JournalEntry>();
   for (const line of raw.split("\n")) {
     if (line.length === 0) continue;
     let row: unknown;
@@ -213,17 +244,5 @@ function foldFromJournal(journalPath: string, runDir: string): WorkflowDrilldown
       });
     }
   }
-  if (byAgent.size === 0) return undefined;
-  const agents: WorkflowAgentStatus[] = [];
-  for (const [agentId, entry] of byAgent) {
-    const meta = tryReadJson(path.join(runDir, `agent-${agentId}.meta.json`));
-    const agentType = isRecord(meta) ? stringField(meta, "agentType") : undefined;
-    agents.push({
-      agent_id: agentId,
-      state: entry.state,
-      ...(agentType ? { agent_type: agentType } : {}),
-      ...(entry.resultPreview ? { result_preview: entry.resultPreview } : {}),
-    });
-  }
-  return { agents };
+  return byAgent;
 }

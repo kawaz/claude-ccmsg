@@ -132,12 +132,12 @@ function taskReminder(content: unknown[]): string {
   });
 }
 
-function apply(lines: string[], externalRoot?: string): SessionStatusSnapshot {
+async function apply(lines: string[], externalRoot?: string): Promise<SessionStatusSnapshot> {
   const state = createSessionStatusState(externalRoot ? fs.realpathSync(externalRoot) : undefined);
   for (const line of lines) {
     if (isSessionStatusCandidate(line)) foldLine(state, line);
   }
-  return snapshot(state);
+  return await snapshot(state);
 }
 
 function todoCreate(id = "1", subject = "First task"): string[] {
@@ -218,9 +218,11 @@ interface ErrorLite {
 }
 
 describe("session status fold (DR-0020 Phase 1)", () => {
-  test("直近 assistant usage の 3 入力トークン値を合算し model/timestamp と保存する", () => {
+  test("直近 assistant usage の 3 入力トークン値を合算し model/timestamp と保存する", async () => {
     // 実 transcript の usage shape を最小化した fixture で、出力 token を含めず main context だけを測る。
-    const result = apply([assistantUsage({ input: 2, cacheRead: 617_281, cacheCreation: 2_588 })]);
+    const result = await apply([
+      assistantUsage({ input: 2, cacheRead: 617_281, cacheCreation: 2_588 }),
+    ]);
     expect(result.context).toEqual({
       tokens: 619_871,
       model: "claude-fable-5",
@@ -228,9 +230,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     });
   });
 
-  test("compaction 後に usage 合算が減っても直近値へ上書き追従する", () => {
+  test("compaction 後に usage 合算が減っても直近値へ上書き追従する", async () => {
     // context は累積最大値ではなく現在値なので、832384 から 147736 への減少を保持する。
-    const result = apply([
+    const result = await apply([
       assistantUsage({ input: 4, cacheRead: 830_000, cacheCreation: 2_380 }),
       assistantUsage({ input: 2, cacheRead: 145_000, cacheCreation: 2_734 }, { timestamp: END }),
     ]);
@@ -238,9 +240,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.context?.timestamp).toBe(END);
   });
 
-  test("synthetic assistant 行は直前の context 観測値を上書きしない", () => {
+  test("synthetic assistant 行は直前の context 観測値を上書きしない", async () => {
     // <synthetic> は usage 全ゼロの harness 行であり、メインモデルの context として採用しない。
-    const result = apply([
+    const result = await apply([
       assistantUsage({ input: 1, cacheRead: 99_999, cacheCreation: 0 }),
       assistantUsage(
         { input: 0, cacheRead: 0, cacheCreation: 0 },
@@ -251,7 +253,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.context?.model).toBe("claude-fable-5");
   });
 
-  test("usage 無しまたは record でない assistant 行を例外なく無視する", () => {
+  test("usage 無しまたは record でない assistant 行を例外なく無視する", async () => {
     // status fold は通常テキスト行や壊れた usage shape が混じっても直前値を保持する。
     const state = createSessionStatusState();
     const accepted = assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 1 });
@@ -269,12 +271,12 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]) {
       expect(foldLine(state, line)).toBe(false);
     }
-    expect(snapshot(state).context?.tokens).toBe(3);
+    expect((await snapshot(state)).context?.tokens).toBe(3);
   });
 
-  test("isSidechain:true の assistant usage はメイン context に採用しない", () => {
+  test("isSidechain:true の assistant usage はメイン context に採用しない", async () => {
     // サブエージェントの大きい usage が main session の使用率へ混入しない境界を保証する。
-    const result = apply([
+    const result = await apply([
       assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
       assistantUsage(
         { input: 2, cacheRead: 500_000, cacheCreation: 0 },
@@ -284,7 +286,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.context?.tokens).toBe(100);
   });
 
-  test("同じ tokens/model の assistant 行は status 変化なしとして push を抑止する", () => {
+  test("同じ tokens/model の assistant 行は status 変化なしとして push を抑止する", async () => {
     // timestamp だけ違う再記録は表示値を変えないため foldLine=false とし、不要な snapshot push を出さない。
     const state = createSessionStatusState();
     expect(foldLine(state, assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }))).toBe(
@@ -298,10 +300,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ).toBe(false);
   });
 
-  test("top-level effort 付き assistant 行の effort を context に透過する", () => {
+  test("top-level effort 付き assistant 行の effort を context に透過する", async () => {
     // effort は assistant 行の top-level フィールド (message 配下ではない) を
     // そのまま context へ載せる、という透過契約を保証する (DR-0020 addendum 2026-07-18)。
-    const result = apply([
+    const result = await apply([
       assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "low" }),
     ]);
     expect(result.context).toEqual({
@@ -312,10 +314,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     });
   });
 
-  test("effort 無し assistant 行 (旧 CC) では context.effort を absent にする", () => {
+  test("effort 無し assistant 行 (旧 CC) では context.effort を absent にする", async () => {
     // CC ≤2.1.211 実測で effort フィールドは存在しない。旧 transcript との互換
     // 境界として、欠落時は undefined を捏造せずフィールド自体を出さない。
-    const result = apply([assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 })]);
+    const result = await apply([assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 })]);
     expect(result.context).toEqual({
       tokens: 100,
       model: "claude-fable-5",
@@ -324,7 +326,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect("effort" in (result.context ?? {})).toBe(false);
   });
 
-  test("effort だけが変わった後続行も変更として検知し値を更新する", () => {
+  test("effort だけが変わった後続行も変更として検知し値を更新する", async () => {
     // tokens/model が同一でも effort 切替 (low→high) は表示に効くため、
     // foldLine=true で push を発火させ最新値へ追従する。
     const state = createSessionStatusState();
@@ -343,10 +345,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         ),
       ),
     ).toBe(true);
-    expect(snapshot(state).context?.effort).toBe("high");
+    expect((await snapshot(state)).context?.effort).toBe("high");
   });
 
-  test("tokens 同一でも model 切替は変更として検知し最新 model が勝つ", () => {
+  test("tokens 同一でも model 切替は変更として検知し最新 model が勝つ", async () => {
     // /model 切替直後は usage 合算が同値のまま model だけ変わり得る。切替を
     // push し、context.model は常に「最後に観測した assistant 行」の値になる。
     const state = createSessionStatusState();
@@ -365,10 +367,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         ),
       ),
     ).toBe(true);
-    expect(snapshot(state).context?.model).toBe("claude-opus-4-7");
+    expect((await snapshot(state)).context?.model).toBe("claude-opus-4-7");
   });
 
-  test('effort:"" は absent へ正規化し、同一行の再出現で push を再発火しない', () => {
+  test('effort:"" は absent へ正規化し、同一行の再出現で push を再発火しない', async () => {
     // 空文字 effort を生のまま比較すると「保存形 = absent vs 比較値 = ""」が
     // 毎行不一致になり push が無限再発火する。"" は absent と同義に潰す。
     const state = createSessionStatusState();
@@ -378,7 +380,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }, { effort: "" }),
       ),
     ).toBe(true);
-    expect("effort" in (snapshot(state).context ?? {})).toBe(false);
+    expect("effort" in ((await snapshot(state)).context ?? {})).toBe(false);
     expect(
       foldLine(
         state,
@@ -390,9 +392,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ).toBe(false);
   });
 
-  test("name 付き Agent spawn の teammate_spawned result を teammate として記録する", () => {
+  test("name 付き Agent spawn の teammate_spawned result を teammate として記録する", async () => {
     // foreground Agent でも input.name + teammate_spawned result の組が teams spawn である実契約を固定する。
-    const result = apply([
+    const result = await apply([
       toolUse("team-spawn", "Agent", {
         subagent_type: "codex-sol-worker",
         name: "m2-fixer",
@@ -421,9 +423,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("background Agent result は従来の background に入り teammates へ混入しない", () => {
+  test("background Agent result は従来の background に入り teammates へ混入しない", async () => {
     // run_in_background + agentId は agent-teams ではないため、既存 background correlation を保つ。
-    const result = apply([
+    const result = await apply([
       toolUse("background-agent", "Agent", {
         description: "research",
         prompt: "inspect",
@@ -446,9 +448,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates).toEqual([]);
   });
 
-  test("SendMessage 成功 result は宛先 teammate の最終送信時刻を更新する", () => {
+  test("SendMessage 成功 result は宛先 teammate の最終送信時刻を更新する", async () => {
     // spawn を観測していない宛先も名前で突合し、送信成功が確定した result 時刻だけを記録する。
-    const result = apply([
+    const result = await apply([
       toolUse("send", "SendMessage", {
         to: "kuu-cli-q8",
         summary: "done",
@@ -471,9 +473,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("SendMessage 失敗 result は teammate 状態を更新しない", () => {
+  test("SendMessage 失敗 result は teammate 状態を更新しない", async () => {
     // tool_result error または success!==true は送信成功の証拠にならないため両方とも捨てる。
-    const result = apply([
+    const result = await apply([
       toolUse("send-error", "SendMessage", { to: "worker-a", message: "x" }),
       toolResult("send-error", { success: true }, END, { is_error: true }),
       toolUse("send-false", "SendMessage", { to: "worker-b", message: "x" }),
@@ -482,9 +484,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates).toEqual([]);
   });
 
-  test("単一 teammate-message relay を spawn 無し teammate の active 受信として記録する", () => {
+  test("単一 teammate-message relay を spawn 無し teammate の active 受信として記録する", async () => {
     // summary 属性が無い実形でも teammate_id と本文を抽出し、relay 時刻を最終受信にする。
-    const result = apply([
+    const result = await apply([
       teammateRelay(
         '<teammate-message teammate_id="kuu-cli-q8" color="cyan">実装完了</teammate-message>',
       ),
@@ -500,9 +502,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("1 user 行に連結された複数 teammate-message relay を全件抽出する", () => {
+  test("1 user 行に連結された複数 teammate-message relay を全件抽出する", async () => {
     // relay は 1 行 1 件とは限らない実観測に合わせ、global regex で両 teammate を更新する。
-    const result = apply([
+    const result = await apply([
       teammateRelay(
         '<teammate-message teammate_id="a" color="cyan">A</teammate-message>\n' +
           '<teammate-message teammate_id="b" color="green">B</teammate-message>',
@@ -511,9 +513,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates!.map((teammate) => teammate.name)).toEqual(["a", "b"]);
   });
 
-  test("idle_notification relay は teammate の推定状態を idle にする", () => {
+  test("idle_notification relay は teammate の推定状態を idle にする", async () => {
     // idle は TUI 内部状態ではなく teammate 自身から届いた JSON 通知の最後の観測として表示する。
-    const result = apply([
+    const result = await apply([
       teammateRelay(
         '<teammate-message teammate_id="worker" color="cyan">' +
           '{"type":"idle_notification","from":"worker","timestamp":"2026-07-17T00:00:00Z","idleReason":"available"}' +
@@ -523,9 +525,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates?.[0]?.state).toBe("idle");
   });
 
-  test("同名 teammate の re-spawn は 1 entry の metadata を後勝ち更新し送受信時刻を保持する", () => {
+  test("同名 teammate の re-spawn は 1 entry の metadata を後勝ち更新し送受信時刻を保持する", async () => {
     // Agent tool の name は latest-wins で再利用されるため、Map key は name とし活動履歴を連続扱いする。
-    const result = apply([
+    const result = await apply([
       toolUse("spawn-1", "Agent", {
         name: "worker",
         subagent_type: "first-worker",
@@ -573,10 +575,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     });
   });
 
-  test("teammate_id=system の lifecycle relay を teammate として列挙しない", () => {
+  test("teammate_id=system の lifecycle relay を teammate として列挙しない", async () => {
     // 実観測: teammate_terminated 等は <teammate-message teammate_id="system"> で届く。
     // system は teammate 名ではなくライフサイクル通知の送り主ラベルなので一覧から除外する。
-    const result = apply([
+    const result = await apply([
       teammateRelay(
         '<teammate-message teammate_id="system">' +
           '{"type":"teammate_terminated","message":"worker has shut down."}' +
@@ -586,11 +588,11 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates).toEqual([]);
   });
 
-  test("TaskStop の in_process_teammate result は該当 teammate を stopped に遷移させる", () => {
+  test("TaskStop の in_process_teammate result は該当 teammate を stopped に遷移させる", async () => {
     // 実観測 (kuu 2026-07-17): TaskStop input.task_id は teammate 名、result は
     // {task_type:"in_process_teammate", task_id:"<内部id>"}。停止後に idle/active の
     // 推定が残り続けると「最後に観測した活動」表示として誤導するため stopped を立てる。
-    const result = apply([
+    const result = await apply([
       toolUse("spawn", "Agent", { name: "worker", subagent_type: "x", prompt: "p" }),
       toolResult("spawn", { status: "teammate_spawned", name: "worker", agent_type: "x" }),
       toolUse("stop", "TaskStop", { task_id: "worker" }),
@@ -607,18 +609,18 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.workflows).toEqual([]);
   });
 
-  test("未観測 teammate への TaskStop は stopped-only entry を作らない", () => {
+  test("未観測 teammate への TaskStop は stopped-only entry を作らない", async () => {
     // spawn が transcript 外 (rotate 等) の場合、存在の証拠が無い名前を一覧へ足さない。
-    const result = apply([
+    const result = await apply([
       toolUse("stop", "TaskStop", { task_id: "ghost" }),
       toolResult("stop", { task_id: "t9", task_type: "in_process_teammate", message: "ok" }),
     ]);
     expect(result.teammates).toEqual([]);
   });
 
-  test("ccmsg peer 用 agent-message tag は teams relay として扱わない", () => {
+  test("ccmsg peer 用 agent-message tag は teams relay として扱わない", async () => {
     // <agent-message> は別プロトコルなので teammate-message と誤突合しないスコープ境界を固定する。
-    const result = apply([
+    const result = await apply([
       JSON.stringify({
         type: "user",
         timestamp: END,
@@ -631,7 +633,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.teammates).toEqual([]);
   });
 
-  test("context と teams の実 fixture は全て文字列 prefilter を通過する", () => {
+  test("context と teams の実 fixture は全て文字列 prefilter を通過する", async () => {
     // parse 前 grep 相当で落ちると fold テストが直接呼べても実 scan では届かないため、入口を別途保証する。
     const fixtures = [
       assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
@@ -644,9 +646,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     for (const fixture of fixtures) expect(isSessionStatusCandidate(fixture)).toBe(true);
   });
 
-  test("TaskCreate の result id を採用し、TaskUpdate の状態遷移を最終状態まで再生する", () => {
+  test("TaskCreate の result id を採用し、TaskUpdate の状態遷移を最終状態まで再生する", async () => {
     // TaskCreate input に id が無い実 transcript 契約を凍結し、result 側 id で TODO を同定する。
-    const result = apply([
+    const result = await apply([
       ...todoCreate(),
       ...todoUpdate("tu1", "1", { status: "in_progress" }),
       ...todoUpdate("tu2", "1", { status: "completed" }),
@@ -654,11 +656,11 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos).toEqual([{ id: "1", subject: "First task", status: "completed" }]);
   });
 
-  test("TaskUpdate は owner/subject を反映し、description だけの update は状態を変えない", () => {
+  test("TaskUpdate は owner/subject を反映し、description だけの update は状態を変えない", async () => {
     // owner/subject は Status 表示対象だが description は表示対象外という境界を保証する。
     // addBlockedBy は r38 mid=4 で表示対象になったため、この test の対象外へ移した (下の
     // 「addBlockedBy / addBlocks を fold する」test が正本)。
-    const result = apply([
+    const result = await apply([
       ...todoCreate(),
       ...todoUpdate("tu1", "1", { status: "in_progress", owner: "worker-a" }),
       ...todoUpdate(
@@ -677,7 +679,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("TaskUpdate は addBlockedBy / addBlocks を merge + dedup + 数値順で fold する (r38 mid=4)", () => {
+  test("TaskUpdate は addBlockedBy / addBlocks を merge + dedup + 数値順で fold する (r38 mid=4)", async () => {
     // 実 TaskUpdate input は既存 list に足す形 (`addBlockedBy: ["3","6","5"]`)。fold は
     // 既存 set に merge、重複は無視、表示側の視認性のため数値 ID を数値順に並べる。
     // 空配列 / 重複だけの追加は状態変化なし (= push を発生させない)。
@@ -693,7 +695,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]) {
       if (isSessionStatusCandidate(line)) foldLine(state, line);
     }
-    expect(snapshot(state).todos).toEqual([
+    expect((await snapshot(state)).todos).toEqual([
       { id: "1", subject: "First task", status: "pending", blocked_by: ["3", "5", "6"] },
     ]);
     // 既に含まれる ID を追加しても change なし。
@@ -714,7 +716,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     )) {
       if (isSessionStatusCandidate(line)) foldLine(state, line);
     }
-    expect(snapshot(state).todos).toEqual([
+    expect((await snapshot(state)).todos).toEqual([
       {
         id: "1",
         subject: "First task",
@@ -734,7 +736,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     }
   });
 
-  test("TaskUpdate status:deleted は TODO をリストから取り除く", () => {
+  test("TaskUpdate status:deleted は TODO をリストから取り除く", async () => {
     // TUI の todo リストは deleted task を表示しない。folded 現在状態も「deleted のまま
     // 残る」のではなく削除で追随する (DR-0020 § 2.1 の TUI 同等)。実 result 形は
     // {success:true, updatedFields:["deleted"], statusChange:{to:"deleted"}} (実 transcript 観測)。
@@ -755,7 +757,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]) {
       if (isSessionStatusCandidate(line)) foldLine(state, line);
     }
-    expect(snapshot(state).todos).toEqual([]);
+    expect((await snapshot(state)).todos).toEqual([]);
     // 既に存在しない task の deleted は状態変化なし (= push を発生させない)。
     for (const line of todoUpdate(
       "tu-del2",
@@ -767,7 +769,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     }
   });
 
-  test("task_reminder attachment は worker のタスクを upsert し、空 content でも既存を消さない", () => {
+  test("task_reminder attachment は worker のタスクを upsert し、空 content でも既存を消さない", async () => {
     // 実 transcript 契約 (2026-08-12 実測、Claude Code 2.1.x): worker の TaskCreate は
     // subagents/*.jsonl に書かれ main には出ない。main に届くのはこの attachment だけ。
     // content は「全ストアの snapshot ではない」— 実測ではバッチが全部 completed に
@@ -792,7 +794,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
     expect(isSessionStatusCandidate(reminder)).toBe(true);
     expect(foldLine(state, reminder)).toBe(true);
-    expect(snapshot(state).todos).toEqual([
+    expect((await snapshot(state)).todos).toEqual([
       { id: "1", subject: "Main task", status: "in_progress" },
       { id: "2", subject: "Worker task", status: "pending", owner: "w-impl", blocked_by: ["1"] },
     ]);
@@ -800,10 +802,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(foldLine(state, reminder)).toBe(false);
     // 空 content は「バッチ完了」の合図であって削除指示ではない。
     expect(foldLine(state, taskReminder([]))).toBe(false);
-    expect(snapshot(state).todos).toHaveLength(2);
+    expect((await snapshot(state)).todos).toHaveLength(2);
   });
 
-  test("task_reminder の blockedBy / blocks は merge でなく置換する", () => {
+  test("task_reminder の blockedBy / blocks は merge でなく置換する", async () => {
     // TaskUpdate は addBlockedBy の「足す」形だが attachment は両方向の完全な list を
     // 持つ (実測: addBlockedBy しか呼ばれていない task に逆向きの blocks が入る)。
     // よって attachment 側は権威として置換し、空配列は field ごと落とす。
@@ -825,12 +827,12 @@ describe("session status fold (DR-0020 Phase 1)", () => {
         { id: "1", subject: "First task", status: "pending", blocks: ["3"], blockedBy: [] },
       ]),
     );
-    expect(snapshot(state).todos).toEqual([
+    expect((await snapshot(state)).todos).toEqual([
       { id: "1", subject: "First task", status: "pending", blocks: ["3"] },
     ]);
   });
 
-  test("task_reminder は TaskUpdate status:'deleted' の削除を取り消さない", () => {
+  test("task_reminder は TaskUpdate status:'deleted' の削除を取り消さない", async () => {
     // 削除は TaskUpdate の専権。実 attachment に deleted task は現れないので、
     // 「消したのに reminder で復活」は起きてはならない経路。
     const state = createSessionStatusState();
@@ -845,14 +847,14 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]) {
       if (isSessionStatusCandidate(line)) foldLine(state, line);
     }
-    expect(snapshot(state).todos).toEqual([]);
+    expect((await snapshot(state)).todos).toEqual([]);
     // 削除後に届いた古い reminder は「まだ生きている」と主張しうるが、実 harness は
     // deleted を content に載せない。載っていない以上、状態は空のまま。
     expect(foldLine(state, taskReminder([]))).toBe(false);
-    expect(snapshot(state).todos).toEqual([]);
+    expect((await snapshot(state)).todos).toEqual([]);
   });
 
-  test("task_reminder の壊れた content / item は無視する", () => {
+  test("task_reminder の壊れた content / item は無視する", async () => {
     const state = createSessionStatusState();
     expect(
       foldLine(state, JSON.stringify({ type: "attachment", attachment: { type: "other" } })),
@@ -864,19 +866,19 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       ),
     ).toBe(false);
     expect(foldLine(state, taskReminder(["x", { subject: "id なし" }] as unknown[]))).toBe(false);
-    expect(snapshot(state).todos).toEqual([]);
+    expect((await snapshot(state)).todos).toEqual([]);
   });
 
-  test("TaskCreate が無い TaskUpdate は unknown placeholder を作って状態を保持する", () => {
+  test("TaskCreate が無い TaskUpdate は unknown placeholder を作って状態を保持する", async () => {
     // 実 transcript にも存在する途中開始 task を落とさず、id/status を可視化する。
-    const result = apply(todoUpdate("tu-orphan", "6", { status: "completed" }));
+    const result = await apply(todoUpdate("tu-orphan", "6", { status: "completed" }));
     expect(result.todos).toEqual([{ id: "6", subject: "(unknown)", status: "completed" }]);
   });
 
-  test("状態遷移の巻き戻り (completed → in_progress) は後勝ちで反映する", () => {
+  test("状態遷移の巻き戻り (completed → in_progress) は後勝ちで反映する", async () => {
     // fold は transcript の出現順 = 実際の操作順。completed 後の再オープン
     // (やり直し) は上書きが正で、「completed に一度なったら固定」ではない。
-    const result = apply([
+    const result = await apply([
       ...todoCreate(),
       ...todoUpdate("tu1", "1", { status: "completed" }),
       ...todoUpdate("tu2", "1", { status: "in_progress" }),
@@ -884,10 +886,10 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos).toEqual([{ id: "1", subject: "First task", status: "in_progress" }]);
   });
 
-  test("同一 id の TaskCreate 再出現は後勝ちで subject/status を初期化する", () => {
+  test("同一 id の TaskCreate 再出現は後勝ちで subject/status を初期化する", async () => {
     // 実 harness は id を単調採番するので通常起きないが、fold は「最後のイベントが真」
     // の単純規則で防御する (以前の owner/status を引きずらない)。
-    const result = apply([
+    const result = await apply([
       ...todoCreate("1", "Old subject"),
       ...todoUpdate("tu1", "1", { status: "in_progress", owner: "worker-a" }),
       ...todoCreate("1", "Recreated"),
@@ -895,11 +897,11 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos).toEqual([{ id: "1", subject: "Recreated", status: "pending" }]);
   });
 
-  test("起動記録の無い task-id への通知は幽霊エントリを作らない", () => {
+  test("起動記録の無い task-id への通知は幽霊エントリを作らない", async () => {
     // subscribe 前の全量 scan が必ず [0, size) を読むため、起動が transcript に無い
     // 通知は「このセッション外のタスク」(例: 別経路の注入)。workflows/background の
     // どちらにも entry を作らず黙って捨てる。
-    const result = apply([taskNotification("ghost-task", "completed")]);
+    const result = await apply([taskNotification("ghost-task", "completed")]);
     expect(result).toEqual({
       todos: [],
       workflows: [],
@@ -909,9 +911,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     });
   });
 
-  test("TaskUpdate は success:true の result と突合できた場合だけ反映する", () => {
+  test("TaskUpdate は success:true の result と突合できた場合だけ反映する", async () => {
     // 失敗または null result の input を先行反映せず、確定済み状態を保持する。
-    const result = apply([
+    const result = await apply([
       ...todoCreate(),
       toolUse("bad1", "TaskUpdate", { taskId: "1", status: "completed" }),
       toolResult("bad1", { success: false, taskId: "1", updatedFields: ["status"], error: "no" }),
@@ -921,9 +923,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.todos[0]?.status).toBe("pending");
   });
 
-  test("Workflow は result taskId/name で起動し enqueue terminal 通知で完了する", () => {
+  test("Workflow は result taskId/name で起動し enqueue terminal 通知で完了する", async () => {
     // Workflow tool_use と task-notification は tool/result 由来 taskId で突合される。
-    const result = apply([
+    const result = await apply([
       toolUse("wf-tool", "Workflow", { script: "export const meta = {}" }),
       toolResult("wf-tool", {
         status: "async_launched",
@@ -951,8 +953,8 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("Workflow の runId は wf_XXXXXXXX-XXX 形式のみ run_id に採用する (DR-0025)", () => {
-    const good = apply([
+  test("Workflow の runId は wf_XXXXXXXX-XXX 形式のみ run_id に採用する (DR-0025)", async () => {
+    const good = await apply([
       toolUse("wf-tool", "Workflow", { script: "" }),
       toolResult("wf-tool", {
         status: "async_launched",
@@ -970,7 +972,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       "../etc/passwd",
       "",
     ]) {
-      const bad = apply([
+      const bad = await apply([
         toolUse("wf-tool", "Workflow", { script: "" }),
         toolResult("wf-tool", {
           status: "async_launched",
@@ -983,7 +985,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     }
   });
 
-  test("queue-operation は enqueue の外側 status だけを terminal として扱う", () => {
+  test("queue-operation は enqueue の外側 status だけを terminal として扱う", async () => {
     // remove/dequeue の重複と status 無し途中通知、および event 内の偽タグを全て無視する。
     const base = [
       ...monitorStart(),
@@ -1012,15 +1014,15 @@ describe("session status fold (DR-0020 Phase 1)", () => {
           "<event>line</event>\n</task-notification>",
       }),
     ];
-    expect(apply(base).background[0]?.status).toBe("running");
+    expect((await apply(base)).background[0]?.status).toBe("running");
   });
 
-  test("Monitor/Bash/Agent background は実 result id で起動し、同期 Agent は完了扱いで含める", () => {
+  test("Monitor/Bash/Agent background は実 result id で起動し、同期 Agent は完了扱いで含める", async () => {
     // r44 m6: 3 種の background correlation id が通知 task-id と一致する。
     // 同期 Agent (run_in_background なし) も subagent 可視化のため background に
     // 載せ、tool_result が返った時点で status=completed / ended_at=END を確定する
     // (async のように後続 task-notification は来ないため fold 側で決める)。
-    const result = apply([
+    const result = await apply([
       ...monitorStart("b-monitor", "mon"),
       toolUse("bash", "Bash", {
         command: "bun run server",
@@ -1088,9 +1090,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     ]);
   });
 
-  test("TaskStop の成功 result は対応する background を stopped にする", () => {
+  test("TaskStop の成功 result は対応する background を stopped にする", async () => {
     // snake_case task_id と実観測 TaskStop result shape の突合を保証する。
-    const result = apply([
+    const result = await apply([
       ...monitorStart(),
       toolUse("stop", "TaskStop", { task_id: "b1" }),
       toolResult("stop", {
@@ -1103,9 +1105,9 @@ describe("session status fold (DR-0020 Phase 1)", () => {
     expect(result.background[0]).toMatchObject({ task_id: "b1", status: "stopped", ended_at: END });
   });
 
-  test("壊れた JSON と strict shape 不一致を飛ばして後続イベントを再生する", () => {
+  test("壊れた JSON と strict shape 不一致を飛ばして後続イベントを再生する", async () => {
     // 1 行の破損や content 非配列が全 transcript scan を停止させない。
-    const result = apply([
+    const result = await apply([
       "{broken-json",
       JSON.stringify({ type: "assistant", timestamp: START, message: { content: "not-array" } }),
       ...todoCreate(),
@@ -1129,7 +1131,7 @@ describe("session status fold (DR-0020 Phase 1)", () => {
       );
       const state = createSessionStatusState();
       await scanTranscript(file, state);
-      expect(snapshot(state).todos[0]?.status).toBe("completed");
+      expect((await snapshot(state)).todos[0]?.status).toBe("completed");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1145,7 +1147,7 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
     if (mtimeMs !== undefined) fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
   }
 
-  test("readTeammateModels は in_process_teammate の name→model を引き、対象外を無視する", () => {
+  test("readTeammateModels は in_process_teammate の name→model を引き、対象外を無視する", async () => {
     // 走査の受理・拒否輪郭: taskKind 一致 + name/model 揃いだけを採用し、
     // taskKind 不一致 (通常 subagent) と壊れ JSON は例外なくスキップする。
     const dir = fixtureDir();
@@ -1161,7 +1163,7 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
         model: "claude-sonnet-5",
       });
       writeMeta(dir, "agent-a3-broken.meta.json", "{not json");
-      const models = readTeammateModels(dir);
+      const models = await readTeammateModels(dir);
       expect(models.get("worker")).toBe("claude-fable-5[1m]");
       expect(models.size).toBe(1);
     } finally {
@@ -1169,7 +1171,7 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
     }
   });
 
-  test("同名 teammate の複数 meta は mtime 最新の model を採用する", () => {
+  test("同名 teammate の複数 meta は mtime 最新の model を採用する", async () => {
     // Agent tool の name は latest-wins で再利用されるため、resolveTeammate と
     // 同じ「mtime 最新優先」で現在の spawn に対応する model を返す。
     const dir = fixtureDir();
@@ -1186,23 +1188,49 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
         { taskKind: "in_process_teammate", name: "worker", model: "claude-fable-5" },
         2_000_000,
       );
-      expect(readTeammateModels(dir).get("worker")).toBe("claude-fable-5");
+      expect((await readTeammateModels(dir)).get("worker")).toBe("claude-fable-5");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("subagents ディレクトリ不在では空 map を返す", () => {
+  test("meta.json が書き換わったら次の呼び出しで読み直す", async () => {
+    // meta の parse 結果はファイルの mtime で memo 化されている。同名 teammate
+    // の再 spawn で meta が上書きされるケースがあるので、内容の変化が次の
+    // snapshot に必ず出ることを固定する。
+    const dir = fixtureDir();
+    try {
+      writeMeta(
+        dir,
+        "agent-a1-worker.meta.json",
+        { taskKind: "in_process_teammate", name: "worker", model: "claude-sonnet-5" },
+        1_000_000,
+      );
+      expect((await readTeammateModels(dir)).get("worker")).toBe("claude-sonnet-5");
+
+      writeMeta(
+        dir,
+        "agent-a1-worker.meta.json",
+        { taskKind: "in_process_teammate", name: "worker", model: "claude-fable-5" },
+        2_000_000,
+      );
+      expect((await readTeammateModels(dir)).get("worker")).toBe("claude-fable-5");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("subagents ディレクトリ不在では空 map を返す", async () => {
     // spawn 前 / teammate 無しセッションの snapshot でも fs エラーで落ちない境界。
     const dir = fixtureDir();
     try {
-      expect(readTeammateModels(dir).size).toBe(0);
+      expect((await readTeammateModels(dir)).size).toBe(0);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  test("snapshot は meta.json のある teammate に model を付与し、無い teammate は absent のまま", () => {
+  test("snapshot は meta.json のある teammate に model を付与し、無い teammate は absent のまま", async () => {
     // fold 状態には model を持たず snapshot 時 FS read で補完する方針の保証:
     // meta が見つかった teammate だけ model が付き、見つからない teammate は
     // フィールド自体が出ない (undefined を捏造しない)。
@@ -1222,7 +1250,7 @@ describe("teammate model from meta.json (DR-0020 addendum 2026-07-18)", () => {
       ]) {
         foldLine(state, line);
       }
-      const result = snapshot(state, dir);
+      const result = await snapshot(state, dir);
       const worker = result.teammates?.find((t) => t.name === "worker");
       const ghost = result.teammates?.find((t) => t.name === "ghost");
       expect(worker?.model).toBe("claude-fable-5[1m]");
@@ -1259,7 +1287,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     });
   }
 
-  test("depth 0 teammate + depth 0/1/2 subagent の親子関係を toolUseId で解決する", () => {
+  test("depth 0 teammate + depth 0/1/2 subagent の親子関係を toolUseId で解決する", async () => {
     // meta.json 3 世代 (root → depth0 subagent → depth1 grandchild) を並べて、
     // toolUseId 逆引きで親子関係が組み上がることを確認する。teammate は
     // toolUseId 無しで root 直下に付く。
@@ -1306,7 +1334,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
       fs.writeFileSync(actualRoot, `${agentUse("toolu_d0")}\n`);
 
       const state = createSessionStatusState();
-      const tree = readAgentTree(dir, actualRoot, state);
+      const tree = await readAgentTree(dir, actualRoot, state);
       expect(tree).toBeDefined();
       // teammate は teammates グループ、subagent tree は agents グループへ
       // 分離される (r46 m8)。
@@ -1330,7 +1358,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("depth cap は MAX_AGENT_TREE_DEPTH (5) を超える子孫を切り捨てる", () => {
+  test("depth cap は MAX_AGENT_TREE_DEPTH (5) を超える子孫を切り捨てる", async () => {
     // depth 0..6 の直列に並べて、depth ≤ 5 だけが tree に残ることを確認する。
     const dir = fixtureDir();
     try {
@@ -1352,7 +1380,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
         });
       }
       const state = createSessionStatusState();
-      const tree = readAgentTree(dir, rootFile, state);
+      const tree = await readAgentTree(dir, rootFile, state);
       // walk deepest chain
       let node = tree?.agents.find((n) => n.agent_id === "a0");
       let depth = 0;
@@ -1369,7 +1397,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("transcript 追記後の再取得で、既存の親子関係を保ったまま新しい子が現れる", () => {
+  test("transcript 追記後の再取得で、既存の親子関係を保ったまま新しい子が現れる", async () => {
     // status push ごとの再構築は transcript を増分読みする。追記分だけを読んでも
     // (a) 以前に見た toolUseId が消えない (b) 追記された toolUseId が拾える。
     // 親を subagent に置くことで、どちらが壊れても子が orphan (root 直下) へ
@@ -1389,7 +1417,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_first",
         spawnDepth: 1,
       });
-      const before = readAgentTree(dir, rootFile, createSessionStatusState());
+      const before = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(
         before?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
       ).toEqual(["first"]);
@@ -1404,7 +1432,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_second",
         spawnDepth: 1,
       });
-      const after = readAgentTree(dir, rootFile, createSessionStatusState());
+      const after = await readAgentTree(dir, rootFile, createSessionStatusState());
       // root 直下は parent だけ = どちらの子も orphan に落ちていない
       expect(after?.agents.map((n) => n.agent_id)).toEqual(["parent"]);
       expect(after?.agents[0]?.children.map((c) => c.agent_id).sort()).toEqual(["first", "second"]);
@@ -1414,7 +1442,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("transcript が truncate されたら増分状態を捨てて読み直す", () => {
+  test("transcript が truncate されたら増分状態を捨てて読み直す", async () => {
     // 同じ path が短い内容で書き直された場合、旧内容の toolUseId を持ち越すと
     // 消えたはずの親に子がぶら下がったままになる。親を subagent にすることで
     // 「持ち越し = parent 配下」「読み直し = orphan で root 直下」と木の形が
@@ -1434,14 +1462,14 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_long_identifier_aaaa",
         spawnDepth: 1,
       });
-      const before = readAgentTree(dir, rootFile, createSessionStatusState());
+      const before = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(
         before?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
       ).toEqual(["child"]);
 
       // parent の transcript を truncate (旧 id はもうどこにも無い)
       fs.writeFileSync(path.join(dir, "subagents", "agent-parent.jsonl"), "{}\n");
-      const after = readAgentTree(dir, rootFile, createSessionStatusState());
+      const after = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(after?.agents.find((n) => n.agent_id === "parent")?.children).toEqual([]);
       // 親を失った child は orphan fallback で root 直下に出る
       expect(after?.agents.map((n) => n.agent_id).sort()).toEqual(["child", "parent"]);
@@ -1451,7 +1479,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("末尾に改行の無い書きかけ行も親解決に使え、行が完成しても重複しない", () => {
+  test("末尾に改行の無い書きかけ行も親解決に使え、行が完成しても重複しない", async () => {
     // transcript は追記途中の行を晒す。改行待ちで捨てると spawn 直後の
     // 親子関係が UI から消えるため、未終端行も読んだうえで、改行が付いた
     // 後の再読で二重計上しないことを確認する。親を subagent に置くのは
@@ -1472,13 +1500,13 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_partial",
         spawnDepth: 1,
       });
-      const partial = readAgentTree(dir, rootFile, createSessionStatusState());
+      const partial = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(
         partial?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
       ).toEqual(["kid"]);
 
       fs.appendFileSync(parentTranscript, "\n");
-      const complete = readAgentTree(dir, rootFile, createSessionStatusState());
+      const complete = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(
         complete?.agents.find((n) => n.agent_id === "parent")?.children.map((c) => c.agent_id),
       ).toEqual(["kid"]);
@@ -1489,7 +1517,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("親 transcript から toolUseId が見つからない孤児は root 直下に fallback する", () => {
+  test("親 transcript から toolUseId が見つからない孤児は root 直下に fallback する", async () => {
     // 想定外に親が消えた/転記されていない場合でも UI から辿れるように、
     // orphan は root 直下 (depth 0 相当) として surface する。
     const dir = fixtureDir();
@@ -1501,7 +1529,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
         toolUseId: "toolu_unknown",
         spawnDepth: 1,
       });
-      const tree = readAgentTree(dir, rootFile, createSessionStatusState());
+      const tree = await readAgentTree(dir, rootFile, createSessionStatusState());
       expect(tree?.agents.map((n) => n.agent_id)).toEqual(["orphan"]);
       expect(tree?.teammates).toEqual([]);
       expect(tree?.workflows).toEqual([]);
@@ -1511,7 +1539,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("workflow メンバーは workflows グループに run 単位でネストされ、state.json 由来のフェーズ木で並ぶ (r46 m12)", () => {
+  test("workflow メンバーは workflows グループに run 単位でネストされ、state.json 由来のフェーズ木で並ぶ (r46 m12)", async () => {
     // 2 phase / 3 member の workflow を用意し、state.json (workflowProgress
     // の workflow_phase + workflow_agent) からフェーズ + 進捗が組み上がる
     // ことを確認する。member node は subagents/workflows/<runId>/ の meta.json
@@ -1565,7 +1593,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
           ],
         }),
       );
-      const tree = readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+      const tree = await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
       expect(tree).toBeDefined();
       expect(tree?.workflows.length).toBe(1);
       const wf = tree?.workflows[0];
@@ -1590,7 +1618,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("state.json 未 landing の run 中 workflow は journal.jsonl から member state を復元し unassigned に落ちる (r46 m12)", () => {
+  test("state.json 未 landing の run 中 workflow は journal.jsonl から member state を復元し unassigned に落ちる (r46 m12)", async () => {
     // state.json (workflows/<runId>.json) 不在 = 現在進行中の run。journal.jsonl
     // の started/result 行から member 状態を "running" / "done" に振り分け、
     // フェーズ情報は取れないため unassigned bucket に流す (phases: [])。
@@ -1616,7 +1644,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
           "",
         ].join("\n"),
       );
-      const tree = readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
+      const tree = await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState());
       const wf = tree?.workflows[0];
       expect(wf?.workflow_id).toBe(runId);
       expect(wf?.phases).toEqual([]);
@@ -1632,11 +1660,11 @@ describe("agent tree from meta.json (r44 m7)", () => {
     }
   });
 
-  test("subagents ディレクトリ不在では undefined を返す", () => {
+  test("subagents ディレクトリ不在では undefined を返す", async () => {
     // spawn 前 / 個人セッションで snapshot に agent_tree フィールドを載せない条件。
     const dir = fixtureDir();
     try {
-      expect(readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState())).toBeUndefined();
+      expect(await readAgentTree(dir, `${dir}.jsonl`, createSessionStatusState())).toBeUndefined();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -1644,7 +1672,7 @@ describe("agent tree from meta.json (r44 m7)", () => {
 });
 
 describe("session status external file fold (DR-0024)", () => {
-  test("各 file tool の実 input 形から root 外の canonical path を抽出する", () => {
+  test("各 file tool の実 input 形から root 外の canonical path を抽出する", async () => {
     // file_path の存在だけを採り、Read の paging keys・Write の実在する余剰 keys・
     // Edit の replace_all を schema 厳密一致で拒否しない。NotebookEdit/MultiEdit は
     // 実 transcript 未観測のためツール定義どおりの path key を固定する。
@@ -1661,7 +1689,7 @@ describe("session status external file fold (DR-0024)", () => {
         "multi",
       ].map((name) => path.join(outside, name));
       for (const file of files) fs.writeFileSync(file, nameOf(file));
-      const result = apply(
+      const result = await apply(
         [
           toolUse("read-a", "Read", { file_path: files[0] }),
           toolUse("read-b", "Read", { file_path: files[1], offset: 366, limit: 10 }),
@@ -1693,12 +1721,12 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("壊れた input・相対/空/非 string path を黙って skip する", () => {
+  test("壊れた input・相対/空/非 string path を黙って skip する", async () => {
     // __unparsedToolInput.raw は不正 JSON の保存形なので再 parse せず、直接 string の
     // absolute path だけを allowlist 候補にする防御境界を保証する。
     const root = fixtureDir();
     try {
-      const result = apply(
+      const result = await apply(
         [
           toolUse("broken", "Read", {
             __unparsedToolInput: { raw: '{"file_path":"/tmp/x", 200}', len: 34 },
@@ -1716,7 +1744,7 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("root containment は realpath で判定し root 自身/直下/深部を除外する", () => {
+  test("root containment は realpath で判定し root 自身/直下/深部を除外する", async () => {
     // lexical 位置ではなく実体を判定する: root 外 link→root 内は除外し、root 内
     // link→root 外は canonical external path として採る。
     const root = fixtureDir();
@@ -1734,7 +1762,7 @@ describe("session status external file fold (DR-0024)", () => {
       fs.symlinkSync(inside, outsideLinkToInside);
       fs.symlinkSync(outsideFile, insideLinkToOutside);
 
-      const result = apply(
+      const result = await apply(
         [
           toolUse("root", "Read", { file_path: root }),
           toolUse("inside", "Read", { file_path: inside }),
@@ -1751,7 +1779,7 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("未存在 path は最近傍実在祖先の realpath + 残り lexical で canonical 化し、重複除去して sort する", () => {
+  test("未存在 path は最近傍実在祖先の realpath + 残り lexical で canonical 化し、重複除去して sort する", async () => {
     // Write 前/削除後でも一覧から消さず、同じ target の複数 call は 1 件に畳む。
     // 祖先を realpath してから残りを継ぐのは、symlink 経由の lexical 綴り
     // (macOS の /tmp, /var 等) のまま保持すると、ファイル作成後の
@@ -1764,7 +1792,7 @@ describe("session status external file fold (DR-0024)", () => {
       const first = path.join(outside, "z", "..", "a.md");
       const duplicate = path.join(outside, "a.md");
       const second = path.join(outside, "b.md");
-      const result = apply(
+      const result = await apply(
         [
           toolUse("missing-a", "Write", { file_path: first, content: "a" }),
           toolUse("missing-a-again", "Read", { file_path: duplicate }),
@@ -1785,7 +1813,7 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("未存在 path が symlink 祖先経由でも、作成後に fs_read_external と一致する canonical 値になる", () => {
+  test("未存在 path が symlink 祖先経由でも、作成後に fs_read_external と一致する canonical 値になる", async () => {
     // 実測 repro (live-symlink-prefix-bug): Write の tool_use は file 作成前に
     // transcript へ載る。lexical link/report.md のまま allowlist に入ると、
     // 作成後の読み出し realpath (real/report.md) と一致せず path_forbidden に
@@ -1798,7 +1826,7 @@ describe("session status external file fold (DR-0024)", () => {
       const linkDir = path.join(outside, "link");
       fs.symlinkSync(realDir, linkDir);
       const lexicalTarget = path.join(linkDir, "report.md"); // not created yet
-      const result = apply(
+      const result = await apply(
         [toolUse("w1", "Write", { file_path: lexicalTarget, content: "x" })],
         root,
       );
@@ -1809,7 +1837,7 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("file path fixture は scan の文字列 prefilter を通過する", () => {
+  test("file path fixture は scan の文字列 prefilter を通過する", async () => {
     // foldLine 直呼びだけでなく全量/逐次 scan の JSON.parse 前入口にも届くことを固定する。
     expect(isSessionStatusCandidate(toolUse("read", "Read", { file_path: "/tmp/x" }))).toBe(true);
     expect(
@@ -1817,7 +1845,7 @@ describe("session status external file fold (DR-0024)", () => {
     ).toBe(true);
   });
 
-  test("`! <cmd>` の persisted-output スタブが名指すサイドカーを allowlist に加える", () => {
+  test("`! <cmd>` の persisted-output スタブが名指すサイドカーを allowlist に加える", async () => {
     // fixture は実測 transcript
     // (~/.claude-personal/projects/-private-tmp-bashout-probe, CC 2.1.220) の
     // 行そのままの形: type=user かつ message.content が配列でなく string で、
@@ -1829,7 +1857,7 @@ describe("session status external file fold (DR-0024)", () => {
       const sidecar = path.join(outside, "tool-results", "bv1juwnqq.txt");
       fs.mkdirSync(path.dirname(sidecar));
       fs.writeFileSync(sidecar, "x".repeat(64));
-      const result = apply([persistedOutputRow(sidecar)], root);
+      const result = await apply([persistedOutputRow(sidecar)], root);
       expect(result.external_files).toEqual([fs.realpathSync(sidecar)]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1837,13 +1865,13 @@ describe("session status external file fold (DR-0024)", () => {
     }
   });
 
-  test("persisted-output fixture は scan の文字列 prefilter を通過する", () => {
+  test("persisted-output fixture は scan の文字列 prefilter を通過する", async () => {
     // これらの行には file_path も notebook_path も無いため、専用の prefilter
     // 項目が無いと全量/逐次 scan の入口で捨てられ fold まで届かない。
     expect(isSessionStatusCandidate(persistedOutputRow("/tmp/x/tool-results/a.txt"))).toBe(true);
   });
 
-  test("スタブ形でない `! <cmd>` 出力からは path を採らない", () => {
+  test("スタブ形でない `! <cmd>` 出力からは path を採らない", async () => {
     // 巨大出力でない通常実行の stdout は素通しで載るので、その中に現れた
     // persisted-output らしき断片で任意 path が allowlist に入らないことを固定
     // する。採用条件は「stdout 全体がスタブであること」。
@@ -1863,7 +1891,10 @@ describe("session status external file fold (DR-0024)", () => {
         "<bash-stdout><persisted-output>\n" +
         "Output too large (1.0MB). Full output saved to: tool-results/a.txt\n\n" +
         "Preview (first 2KB):\nzz\n</persisted-output></bash-stdout>";
-      const result = apply([forged, noPreviewMarker, noPath, relative].map(userTextRow), root);
+      const result = await apply(
+        [forged, noPreviewMarker, noPath, relative].map(userTextRow),
+        root,
+      );
       expect(result.external_files).toEqual([]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1937,39 +1968,39 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
     "API Error: Fable 5's safeguards flagged this message (https://www.anthropic.com/legal/aup).",
   ];
 
-  test("観測済みのエラー文言をすべて api_error として拾う", () => {
+  test("観測済みのエラー文言をすべて api_error として拾う", async () => {
     for (const text of OBSERVED_TEXTS) {
-      expect(apply([apiErrorRow(text)]).api_error).toEqual({ text, timestamp: START });
+      expect((await apply([apiErrorRow(text)])).api_error).toEqual({ text, timestamp: START });
     }
   });
 
-  test("エラーが無ければ api_error は snapshot に現れない", () => {
-    expect(apply([assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 })]).api_error).toBe(
-      undefined,
-    );
+  test("エラーが無ければ api_error は snapshot に現れない", async () => {
+    expect(
+      (await apply([assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 })])).api_error,
+    ).toBe(undefined);
   });
 
-  test("エラー後に本物の assistant 応答が続けば解除される", () => {
+  test("エラー後に本物の assistant 応答が続けば解除される", async () => {
     // kawaz 裁定の核心: 「過去に 1 度でもエラーがあったら error」ではなく
     // 「最後の turn がエラーで終わっているか」。復帰したセッションは通常表示に戻る。
-    const result = apply([
+    const result = await apply([
       apiErrorRow("API Error: Unable to connect to API (ConnectionRefused)"),
       assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 }, { timestamp: END }),
     ]);
     expect(result.api_error).toBe(undefined);
   });
 
-  test("リトライ連発では最後のエラーが残る", () => {
+  test("リトライ連発では最後のエラーが残る", async () => {
     // 実データでは 1 回の停止に対し数行のエラーが連続して書かれる。ユーザが実際に
     // 詰まっている最新のものを表示する。
-    const result = apply([
+    const result = await apply([
       apiErrorRow("API Error: Unable to connect to API (FailedToOpenSocket)"),
       apiErrorRow("Prompt is too long", { timestamp: END }),
     ]);
     expect(result.api_error).toEqual({ text: "Prompt is too long", timestamp: END });
   });
 
-  test("isApiErrorMessage:false の synthetic 行はエラーを立ても消しもしない", () => {
+  test("isApiErrorMessage:false の synthetic 行はエラーを立ても消しもしない", async () => {
     // harness が書く "No response requested." 等。エージェントの発話ではないので
     // 直前のエラーを解除してはいけない。
     const state = createSessionStatusState();
@@ -1977,33 +2008,33 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
     expect(
       foldLine(state, apiErrorRow("No response requested.", { isApiErrorMessage: false })),
     ).toBe(false);
-    expect(snapshot(state).api_error?.text).toBe("Prompt is too long");
+    expect((await snapshot(state)).api_error?.text).toBe("Prompt is too long");
   });
 
-  test("sidechain (サブエージェント) のエラーはメインの状態にしない", () => {
+  test("sidechain (サブエージェント) のエラーはメインの状態にしない", async () => {
     // subagent の transcript は同じ file に混ざるが、サブエージェントが落ちても
     // メインコンテキストは止まっていない。
-    expect(apply([apiErrorRow("Prompt is too long", { isSidechain: true })]).api_error).toBe(
-      undefined,
-    );
+    expect(
+      (await apply([apiErrorRow("Prompt is too long", { isSidechain: true })])).api_error,
+    ).toBe(undefined);
   });
 
-  test("sidechain の正常応答はメインのエラーを解除しない", () => {
+  test("sidechain の正常応答はメインのエラーを解除しない", async () => {
     // 解除側も同じ境界を守らないと、走行中の subagent が親のエラーを消してしまう。
-    const result = apply([
+    const result = await apply([
       apiErrorRow("Prompt is too long"),
       assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 }, { isSidechain: true }),
     ]);
     expect(result.api_error?.text).toBe("Prompt is too long");
   });
 
-  test("同一エラーの再観測では foldLine=false (無駄な push を出さない)", () => {
+  test("同一エラーの再観測では foldLine=false (無駄な push を出さない)", async () => {
     const state = createSessionStatusState();
     expect(foldLine(state, apiErrorRow("Prompt is too long"))).toBe(true);
     expect(foldLine(state, apiErrorRow("Prompt is too long"))).toBe(false);
   });
 
-  test("解除は状態が立っている時だけ変化として報告する", () => {
+  test("解除は状態が立っている時だけ変化として報告する", async () => {
     const state = createSessionStatusState();
     const healthy = assistantUsage({ input: 1, cacheRead: 1, cacheCreation: 0 });
     foldLine(state, healthy);
@@ -2011,9 +2042,9 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
     expect(foldLine(state, healthy)).toBe(false);
   });
 
-  test("エラー行は context 使用量を汚染しない", () => {
+  test("エラー行は context 使用量を汚染しない", async () => {
     // synthetic の usage 全ゼロを main context として採用しない既存境界と共存する。
-    const result = apply([
+    const result = await apply([
       assistantUsage({ input: 2, cacheRead: 98, cacheCreation: 0 }),
       apiErrorRow("Prompt is too long", { timestamp: END }),
     ]);
@@ -2021,7 +2052,7 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
     expect(result.api_error?.text).toBe("Prompt is too long");
   });
 
-  test("prefilter がエラー行と解除行の両方を通す", () => {
+  test("prefilter がエラー行と解除行の両方を通す", async () => {
     // fold は候補行しか見ないので、prefilter を抜ける行が両方向とも必要。
     expect(isSessionStatusCandidate(apiErrorRow("Prompt is too long"))).toBe(true);
     expect(
@@ -2029,7 +2060,7 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
     ).toBe(true);
   });
 
-  test("テキストブロックが無いエラー行は無視する (表示すべき理由が無い)", () => {
+  test("テキストブロックが無いエラー行は無視する (表示すべき理由が無い)", async () => {
     const line = JSON.stringify({
       type: "assistant",
       isSidechain: false,
@@ -2037,7 +2068,7 @@ describe("api_error fold (最終 turn が harness の API エラーで終わっ�
       message: { model: "<synthetic>", content: [] },
       isApiErrorMessage: true,
     });
-    expect(apply([line]).api_error).toBe(undefined);
+    expect((await apply([line])).api_error).toBe(undefined);
   });
 });
 
@@ -2478,7 +2509,7 @@ describe("session_status event loop yielding (DR-0029)", () => {
       // 明け渡していれば chunk 境界ごとに最低 1 turn 回る。
       expect(ticks).toBeGreaterThanOrEqual(3);
       // yield を挟んでも最終行まで読めている。
-      expect(snapshot(state).todos[0]?.status).toBe("completed");
+      expect((await snapshot(state)).todos[0]?.status).toBe("completed");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

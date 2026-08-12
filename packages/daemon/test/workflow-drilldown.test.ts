@@ -14,7 +14,7 @@ function tmpSidDir(): string {
 const RUN_ID = "wf_abcdef01-234";
 
 describe("readWorkflowDrilldown (DR-0025)", () => {
-  test("state json あり: workflow_phase + workflow_agent を phases/agents に写像する", () => {
+  test("state json あり: workflow_phase + workflow_agent を phases/agents に写像する", async () => {
     const sidDir = tmpSidDir();
     fs.mkdirSync(path.join(sidDir, "workflows"), { recursive: true });
     const stateJson = {
@@ -72,7 +72,7 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
     };
     fs.writeFileSync(path.join(sidDir, "workflows", `${RUN_ID}.json`), JSON.stringify(stateJson));
 
-    const result = readWorkflowDrilldown(sidDir, RUN_ID);
+    const result = await readWorkflowDrilldown(sidDir, RUN_ID);
     expect(result).toBeDefined();
     expect(result?.phases).toEqual([
       { title: "Plan", done: 1, total: 1 },
@@ -100,7 +100,7 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
     expect(verify?.result_preview).toBeUndefined();
   });
 
-  test("state json なし: journal.jsonl から started/result を running/done として畳む", () => {
+  test("state json なし: journal.jsonl から started/result を running/done として畳む", async () => {
     const sidDir = tmpSidDir();
     const runDir = path.join(sidDir, "subagents", "workflows", RUN_ID);
     fs.mkdirSync(runDir, { recursive: true });
@@ -124,7 +124,7 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
     );
     // Agent 2 has no meta — should still fold as running.
 
-    const result = readWorkflowDrilldown(sidDir, RUN_ID);
+    const result = await readWorkflowDrilldown(sidDir, RUN_ID);
     expect(result).toBeDefined();
     expect(result?.phases).toBeUndefined();
     const agents = result?.agents ?? [];
@@ -138,20 +138,20 @@ describe("readWorkflowDrilldown (DR-0025)", () => {
     expect(a2?.agent_type).toBeUndefined();
   });
 
-  test("dir 不在 / 壊れ JSON は undefined を返し throw しない", () => {
+  test("dir 不在 / 壊れ JSON は undefined を返し throw しない", async () => {
     const sidDir = tmpSidDir();
-    expect(readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+    expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
 
     fs.mkdirSync(path.join(sidDir, "workflows"), { recursive: true });
     fs.writeFileSync(path.join(sidDir, "workflows", `${RUN_ID}.json`), "{not json");
     // Broken json + no journal → undefined.
-    expect(readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
+    expect(await readWorkflowDrilldown(sidDir, RUN_ID)).toBeUndefined();
   });
 
-  test("invalid runId は undefined (defense in depth)", () => {
+  test("invalid runId は undefined (defense in depth)", async () => {
     const sidDir = tmpSidDir();
     for (const bad of ["../etc", "wf_ZZZZZZZZ-123", "wf_ABCDEF01-234", ""]) {
-      expect(readWorkflowDrilldown(sidDir, bad)).toBeUndefined();
+      expect(await readWorkflowDrilldown(sidDir, bad)).toBeUndefined();
     }
   });
 });

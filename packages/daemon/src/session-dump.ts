@@ -515,7 +515,7 @@ interface ContextAgentRecord {
 
 function loadContextAgents(
   sidDir: string,
-  status: ReturnType<typeof snapshot>,
+  status: Awaited<ReturnType<typeof snapshot>>,
   notificationStates: ReadonlyMap<string, string>,
 ): ContextAgentRecord[] {
   const subagentsDir = path.join(sidDir, "subagents");
@@ -681,18 +681,18 @@ function loadContextRooms(dataDir: string, session: string): SessionContextRoom[
 }
 
 interface SessionStatusBundle {
-  status: ReturnType<typeof snapshot>;
+  status: Awaited<ReturnType<typeof snapshot>>;
   notificationStates: ReadonlyMap<string, string>;
   agents: ContextAgentRecord[];
 }
 
-function loadStatusBundle(transcriptFile: string): SessionStatusBundle {
+async function loadStatusBundle(transcriptFile: string): Promise<SessionStatusBundle> {
   const state = createSessionStatusState();
   for (const { row } of parseTranscript(transcriptFile)) foldLine(state, JSON.stringify(row));
   const sidDir = transcriptFile.endsWith(".jsonl")
     ? transcriptFile.slice(0, -".jsonl".length)
     : undefined;
-  const status = snapshot(state, sidDir);
+  const status = await snapshot(state, sidDir);
   const notificationStates = loadTaskNotificationStates(transcriptFile);
   return {
     status,
@@ -763,7 +763,7 @@ export async function dumpSession(
   const resolved = await resolveVirtualTranscript(session, options.configDirs);
   if (!resolved) throw new Error(`session transcript not found: ${session}`);
   const rows = parseTranscript(resolved.file);
-  const bundle = loadStatusBundle(resolved.file);
+  const bundle = await loadStatusBundle(resolved.file);
   const selectedTokens =
     options.agent === undefined
       ? undefined
