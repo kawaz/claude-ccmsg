@@ -131,4 +131,16 @@ describe("Fold", () => {
     expect(props(Fold({ summary: "s", children: null, open: true })).open).toBe(true);
     expect(props(Fold({ summary: "s", children: null })).open).toBeUndefined();
   });
+
+  test("onToggle is wired to the native toggle event and is optional", () => {
+    const seen: string[] = [];
+    const fold = Fold({
+      summary: "s",
+      children: null,
+      onToggle: () => seen.push("toggled"),
+    });
+    (props(fold).onToggle as () => void)();
+    expect(seen).toEqual(["toggled"]);
+    expect(props(Fold({ summary: "s", children: null })).onToggle).toBeUndefined();
+  });
 });

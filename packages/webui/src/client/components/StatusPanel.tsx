@@ -32,6 +32,7 @@ import { agentTimelineHref } from "../locator.ts";
 import { formatClockTime, resolveSessionTopbar } from "../utils.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { Fold } from "./Fold.tsx";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
  * 追加しうる) は default で pending と同じ空マーカー扱い、独自分岐は生やさない
@@ -160,10 +161,9 @@ function Section<T>({
         <p class="status-empty">{emptyRunningText}</p>
       )}
       {done.length > 0 ? (
-        <details class="status-done">
-          <summary>完了 ({done.length})</summary>
+        <Fold class="status-done" summary={`完了 (${done.length})`}>
           <ul class="status-list">{done.map((item) => renderRow(item, false))}</ul>
-        </details>
+        </Fold>
       ) : null}
     </section>
   );
@@ -366,8 +366,13 @@ function EnvPanel({
   const rows = state.kind === "loaded" ? filterEnvRows(state.rows, query) : [];
   return (
     <section class="status-section">
-      <details class="status-env" key={sid} onToggle={handleToggle}>
-        <summary class="status-env-summary">ENV</summary>
+      <Fold
+        class="status-env"
+        summaryClass="status-env-summary"
+        key={sid}
+        summary="ENV"
+        onToggle={handleToggle}
+      >
         {state.kind === "loading" ? <p class="status-empty">読み込み中…</p> : null}
         {state.kind === "error" ? <p class="status-env-error">{state.msg}</p> : null}
         {state.kind === "loaded" ? (
@@ -422,7 +427,7 @@ function EnvPanel({
             )}
           </>
         ) : null}
-      </details>
+      </Fold>
     </section>
   );
 }
@@ -539,24 +544,22 @@ export function StatusPanel({
               <p class="status-empty">in_progress の TODO なし</p>
             )}
             {sections.todos.pending.length > 0 ? (
-              <details class="status-done" open>
-                <summary>pending ({sections.todos.pending.length})</summary>
+              <Fold class="status-done" open summary={`pending (${sections.todos.pending.length})`}>
                 <ul class="status-list">
                   {sections.todos.pending.map((t) => (
                     <TodoRow key={t.id} todo={t} />
                   ))}
                 </ul>
-              </details>
+              </Fold>
             ) : null}
             {sections.todos.completed.length > 0 ? (
-              <details class="status-done">
-                <summary>completed ({sections.todos.completed.length})</summary>
+              <Fold class="status-done" summary={`completed (${sections.todos.completed.length})`}>
                 <ul class="status-list">
                   {sections.todos.completed.map((t) => (
                     <TodoRow key={t.id} todo={t} />
                   ))}
                 </ul>
-              </details>
+              </Fold>
             ) : null}
           </section>
         </>

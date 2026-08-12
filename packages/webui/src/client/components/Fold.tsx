@@ -9,7 +9,7 @@
 // had, so this is a structural union (one `<details>`/`<summary>` shape) and
 // not a visual one. `summary` takes children rather than a string because the
 // usage rows put a bar and two numbers in theirs.
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, JSX } from "preact";
 
 export function Fold({
   id,
@@ -17,6 +17,7 @@ export function Fold({
   summary,
   summaryClass,
   open,
+  onToggle,
   children,
 }: {
   id?: string;
@@ -25,10 +26,13 @@ export function Fold({
   summaryClass?: string;
   /** Open on first render. The browser owns it from then on. */
   open?: boolean;
+  /** Fires on every open/close, mirroring the native `<details>` event
+   * (StatusPanel's ENV fold uses this to lazy-load on first open). */
+  onToggle?: (e: JSX.TargetedEvent<HTMLDetailsElement, Event>) => void;
   children: ComponentChildren;
 }) {
   return (
-    <details id={id} class={className} open={open}>
+    <details id={id} class={className} open={open} onToggle={onToggle}>
       <summary class={summaryClass}>{summary}</summary>
       {children}
     </details>
