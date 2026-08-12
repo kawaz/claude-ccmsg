@@ -1,6 +1,6 @@
 ---
 title: TL の in-view search 実態調査 — HighlightedPlainText がスタブ
-status: wip
+status: resolved
 category: bug
 created: 2026-08-12T10:09:22+09:00
 last_read: 2026-08-12T10:12:31+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T10:13:34+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T10:40:21+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.100.9 (D1) で根治。スタブは CSS Custom Highlight 移行 (ae2e3a1) の残骸で無害・削除済み。真因は ja 翻訳による描画テキスト差し替えで M が DOM から脱落・焼き付く件、マッチ計数を SearchUnit + matchingUnitKeysOf のモデル側純関数に分離して解消 (実測: ↓×6 で M 不変 9)","derived-issue: tl-search-translated-thinking"]
 blocked_by:
 origin: 自リポ TODO
 ---
