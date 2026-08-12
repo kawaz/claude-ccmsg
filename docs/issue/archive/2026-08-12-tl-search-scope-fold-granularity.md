@@ -1,6 +1,6 @@
 ---
 title: 📁 OFF の [N/M] が thinking/items 単体の details 開閉を拾わない
-status: wip
+status: resolved
 category: bug
 created: 2026-08-12T14:17:09+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T14:19:23+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T15:06:32+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.102.2 で解決。当初診断(details 開閉が非反映)は誤報で実測では正しく再計算されていた。実在したのは同族の別バグ(thinking の original/ja タブ切替が fold を動かさず再計算 trigger が無い件)で、notifyDisplayChange を追加して修正、ハイライト再塗りの同じ穴も解消"]
 blocked_by:
 origin: w-search-i18n
 ---
