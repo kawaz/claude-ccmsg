@@ -1,6 +1,6 @@
 ---
 title: ネットワーク online/offline 変化で停止セッションを起こす
-status: open
+status: resolved
 category: request
 created: 2026-08-12T12:22:23+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T12:48:59+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.101.0 で実装 (kawaz r119m10 の最小設計どおり)。route monitor による event-driven 検知 + scutil ローカル probe、offline→online 遷移で session-errors の api-error fold が立っているセッションの subscribe stream に ev:net_online を 1 回配信。実 daemon 統合テストで対象限定・1 回性・再停止時の再通知を実測確認。本番 daemon は v0.101.0 自動 upgrade 済みで次の復旧から有効"]
 blocked_by:
 origin: 自リポ TODO
 ---

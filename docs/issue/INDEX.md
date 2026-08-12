@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-08-12 | request | open | [wake-sessions-on-network-online](./2026-08-12-wake-sessions-on-network-online.md) | ネットワーク online/offline 変化で停止セッションを起こす。API エラー停止セッションの検知・自動再開の設計検討 |
 | 2026-08-12 | design | open | [tl-search-translated-thinking](./2026-08-12-tl-search-translated-thinking.md) | ja 自動翻訳が thinking の描画テキストを差し替え、TL 検索 (📁 OFF / ハイライト) とずれる不整合の設計判断 |
 | 2026-08-12 | task | open | [statuspanel-fold-normalization](./2026-08-12-statuspanel-fold-normalization.md) | StatusPanel の details 4 箇所 (完了/ENV/pending/completed) を Fold コンポーネントへ統一する。ENV 箇所は onToggle 用 prop 追加が要る |
 | 2026-08-02 | design | open | [attachment-file-preview-and-grouping](./2026-08-02-attachment-file-preview-and-grouping.md) | file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け (Read/Edit/Write vs attachments) |
