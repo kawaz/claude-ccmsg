@@ -1,6 +1,6 @@
 ---
 title: file 系 attachment のプレビュー表示 + プロジェクト外ファイルのグループ分け
-status: wip
+status: resolved
 category: design
 created: 2026-08-02T08:51:22+09:00
 last_read: 2026-08-12T13:20:30+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-08-12T13:21:13+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-12T13:46:56+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0024","implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -35,6 +35,10 @@ fs-access の external allowlist (DR-0008/DR-0024) と session-status の allowl
 
 ## 受け入れ条件
 
-- [ ] file 系 attachment を開いた時に Read カード同様のプレビューが表示される
-- [ ] プレビュー対象がプロジェクト外の場合も allowlist 経由で正しく閲覧できる
-- [ ] Files ツリーのプロジェクト外セクションが由来別 (Read/Edit/Write vs attachments) にグループ分けされる
+- [x] file 系 attachment を開いた時に Read カード同様のプレビューが表示される
+- [x] プレビュー対象がプロジェクト外の場合も allowlist 経由で正しく閲覧できる
+- [x] Files ツリーのプロジェクト外セクションが由来別 (Read/Edit/Write vs attachments) にグループ分けされる
+
+## 解決
+
+v0.102.0 で実装。受け入れ条件 3 つとも実測クリア: attachment カードのプレビュー (実 startLine 対応)、external allowlist 経由の閲覧 (明示テーブル制、認可 1 本)、Files プロジェクト外の由来別 2 グループ。DR-0024 に addendum。
