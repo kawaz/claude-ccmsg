@@ -148,6 +148,12 @@ interface TLSearchCtx {
   words: SearchWord[];
   /** DOM ref registration for rendered-text matching and ↑/↓ navigation. */
   registerRef: (key: string, el: HTMLElement | null) => void;
+  /** A mounted unit swapped the text it displays without any fold opening or
+   * closing — a thinking segment moving between its original and its ja tab.
+   * The 📁-off match set and the highlight ranges are both read off the
+   * rendered text, so that swap has to invalidate them the same way a `toggle`
+   * does; nothing else fires when only the body changes. */
+  notifyDisplayChange: () => void;
 }
 
 /**
@@ -1029,12 +1035,17 @@ function ThinkingSegment({
   // 利用可能な ja タブ選択がデフォルト」。fold 外からは false で渡る。
   foldGroupOpen,
   mdSearch,
+  onDisplayChange,
 }: {
   text: string;
   ts: string | null;
   translationAvailability: TranslationAvailability;
   foldGroupOpen: boolean;
   mdSearch: { words: SearchWord[]; onMatchClick: () => void } | undefined;
+  /** Called after the body switches to a different spelling (tab change, or a
+   * translation replacing the text already on screen). Undefined when no query
+   * is live, since nothing is reading the rendered text then. */
+  onDisplayChange?: (() => void) | undefined;
 }) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
   const [tab, setTab] = useState<ThinkingTab>("original");
@@ -1148,6 +1159,16 @@ function ThinkingSegment({
       : tab === "ja-browser" && browserText !== null
         ? browserText
         : text;
+
+  // The first body a segment renders needs no notification: whoever reads the
+  // rendered text already re-runs when a unit mounts. Only a later swap of the
+  // same segment's body is invisible to them.
+  const displayedTextRef = useRef(bodyText);
+  useEffect(() => {
+    if (displayedTextRef.current === bodyText) return;
+    displayedTextRef.current = bodyText;
+    onDisplayChange?.();
+  }, [bodyText, onDisplayChange]);
 
   const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
   const translating =
@@ -1305,6 +1326,7 @@ function SegmentView({
             translationAvailability={translationAvailability}
             foldGroupOpen={foldGroupOpen}
             mdSearch={undefined}
+            onDisplayChange={searchCtx?.notifyDisplayChange}
           />
         );
       case "tool-use":
@@ -3245,6 +3267,15 @@ export function Timeline({
   // (highlightRenderedText over every unit) on each toggle would be pure
   // waste — expanding a big fold group fires one `toggle` per nested fold.
   const [foldRevision, setFoldRevision] = useState(0);
+  // The other half of the same invalidation: a mounted unit can change the text
+  // it shows with nothing folding. A thinking segment switching to its ja tab
+  // leaves the 📁-off verdict standing on text that is no longer on screen
+  // (measured 2026-08-12: a ja-only query stayed "1/1" after the segment went
+  // back to its original, until a fold toggle forced the recount), and leaves
+  // the highlight ranges painted over the old spelling. Armed regardless of the
+  // 📁 toggle: the highlight pass reads the rendered text in either scope.
+  const [displayRevision, setDisplayRevision] = useState(0);
+  const notifyDisplayChange = useCallback(() => setDisplayRevision((n) => n + 1), []);
   const searchIsLive = parsedSearch.words.length > 0 && !parsedSearch.hasError;
   useEffect(() => {
     if (searchClosedFolds || !searchIsLive) return;
@@ -3439,6 +3470,7 @@ export function Timeline({
     searchClosedFolds,
     foldRevision,
     foldMountRevision,
+    displayRevision,
   ]);
 
   const matchingUnitKeys = searchClosedFolds ? modelMatchingKeys : onScreenMatchingKeys;
@@ -3511,6 +3543,7 @@ export function Timeline({
     searchClosedFolds,
     foldRevision,
     foldMountRevision,
+    displayRevision,
   ]);
 
   // Auto-expand every ancestor <details> (fold group / items sub-fold /
@@ -3619,8 +3652,12 @@ export function Timeline({
 
   const searchCtx: TLSearchCtx | undefined = useMemo(() => {
     if (parsedSearch.words.length === 0) return undefined;
-    return { words: parsedSearch.words, registerRef: registerSearchUnitRef };
-  }, [parsedSearch.words, registerSearchUnitRef]);
+    return {
+      words: parsedSearch.words,
+      registerRef: registerSearchUnitRef,
+      notifyDisplayChange,
+    };
+  }, [parsedSearch.words, registerSearchUnitRef, notifyDisplayChange]);
 
   // "👤 N/M" nav の N (kawaz r17 mid=54, 2026-07-15): 以前はスクロール位置から
   // 推定していたが「変な挙動しかしないゴミ」と判定され仕様変更 — リロード /
