@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { dumpSession } from "../src/session-dump.ts";
+import { compareContextAgents, dumpSession, type ContextAgentRecord } from "../src/session-dump.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const roots: string[] = [];
@@ -916,5 +916,60 @@ describe("dumpSession", () => {
         "aretry-222222222222",
       ]);
     });
+  });
+});
+
+describe("agent roster ordering", () => {
+  // The roster is built by walking `subagents/`, so its input order is whatever
+  // readdir yields — insertion order on APFS, hash order on ext4. The sort has
+  // to impose a total order on top of that; a comparator that can return 0 for
+  // two distinct agents leaves them in filesystem order, which is how the
+  // repeatedly-delegated-name dump came out one way on macOS and the other way
+  // on Linux CI. These assertions are on the comparator itself so they fire on
+  // every platform rather than only on the one whose readdir happens to
+  // disagree with the expectation.
+  function record(agentId: string, name?: string): ContextAgentRecord {
+    return {
+      agent: { agent_id: agentId, kind: "teammate", state: "unknown", ...(name ? { name } : {}) },
+      tokens: [agentId],
+    };
+  }
+
+  test("agents sharing a name are ordered by id, never left equal", () => {
+    const first = record("aretry-111111111111", "retry");
+    const second = record("aretry-222222222222", "retry");
+    expect(compareContextAgents(first, second)).toBeLessThan(0);
+    expect(compareContextAgents(second, first)).toBeGreaterThan(0);
+  });
+
+  test("distinct agents never compare equal, whichever fields they share", () => {
+    // A comparator returning 0 hands the decision back to the filesystem, so
+    // the contract is "0 only for the very same agent".
+    const agents = [
+      record("a111", "retry"),
+      record("a222", "retry"),
+      record("a333"),
+      record("a444", "other"),
+    ];
+    for (const a of agents) {
+      for (const b of agents) {
+        if (a === b) expect(compareContextAgents(a, b)).toBe(0);
+        else expect(compareContextAgents(a, b)).not.toBe(0);
+      }
+    }
+  });
+
+  test("sorting is independent of the order the roster arrived in", () => {
+    const agents = [
+      record("a333"),
+      record("aretry-222222222222", "retry"),
+      record("a444", "other"),
+      record("aretry-111111111111", "retry"),
+    ];
+    const ids = (input: ContextAgentRecord[]) =>
+      [...input].sort(compareContextAgents).map((r) => r.agent.agent_id);
+    const expected = ["a333", "a444", "aretry-111111111111", "aretry-222222222222"];
+    expect(ids(agents)).toEqual(expected);
+    expect(ids([...agents].reverse())).toEqual(expected);
   });
 });

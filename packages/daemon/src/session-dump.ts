@@ -507,7 +507,7 @@ function loadContextSchedules(
   return [...schedules.values()].sort((a, b) => a.task_id.localeCompare(b.task_id, "en"));
 }
 
-interface ContextAgentRecord {
+export interface ContextAgentRecord {
   agent: SessionContextAgent;
   /** Every token a dump entry can use to name this agent (see `agentTokens`). */
   tokens: string[];
@@ -572,8 +572,22 @@ function loadContextAgents(
       ],
     });
   }
-  return agents.sort((a, b) =>
-    (a.agent.name ?? a.agent.agent_id).localeCompare(b.agent.name ?? b.agent.agent_id, "en"),
+  return agents.sort(compareContextAgents);
+}
+
+/** Order the dump's agent roster: by display name, then by agent id.
+ *
+ * The id tiebreak is what makes the order a total one. Re-delegating a job
+ * spawns a fresh agent per round under a single name, so same-name agents are
+ * routine rather than exceptional — and comparing only the name leaves them
+ * equal, at which point a stable sort just republishes whatever `readdir`
+ * handed over. That order is a filesystem property (insertion-ordered on APFS,
+ * hash-ordered on ext4), so without this tiebreak one session dumps its retry
+ * rounds in one order on macOS and the reverse on Linux. */
+export function compareContextAgents(a: ContextAgentRecord, b: ContextAgentRecord): number {
+  return (
+    (a.agent.name ?? a.agent.agent_id).localeCompare(b.agent.name ?? b.agent.agent_id, "en") ||
+    a.agent.agent_id.localeCompare(b.agent.agent_id, "en")
   );
 }
 
