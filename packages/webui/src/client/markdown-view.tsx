@@ -1,15 +1,20 @@
 /** @jsxImportSource preact */
 // mdast -> preact JSX renderer for assistant text segments in Timeline.tsx
-// (DR-0010). `@mizchi/markdown`'s `parse()` returns a standard mdast tree;
-// this module walks it into JSX by hand rather than through the library's
-// `toHtml()`/`toHtmlLiteral()` (both proven to pass a `javascript:` link URL
-// straight into the HTML string unescaped — see the DR) and never uses
+// (DR-0010). `mdast-util-from-markdown` (micromark) returns a standard mdast tree;
+// this module walks it into JSX by hand rather than through any
+// mdast-to-HTML-string stage, and never uses
 // `innerHTML`/`dangerouslySetInnerHTML` — every renderable value reaches the
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
 import { h, type VNode } from "preact";
 import { useMemo } from "preact/hooks";
-import { parse } from "@mizchi/markdown";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmTaskListItemFromMarkdown } from "mdast-util-gfm-task-list-item";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
+import { gfmTable } from "micromark-extension-gfm-table";
+import { gfmTaskListItem } from "micromark-extension-gfm-task-list-item";
 import type {
   Blockquote,
   Code,
@@ -294,9 +299,9 @@ function renderChildren(
 // DR-0010's required-coverage set (heading/paragraph/list/listItem/code/
 // inlineCode/blockquote/table family/link/image/strong/emphasis/del/break/
 // thematicBreak/html/text). Anything else — a future CommonMark/GFM addition,
-// or an mdast extension this app never opted into (e.g. wikiLink, which
-// `@mizchi/markdown` only emits when `MarkdownOptions.wikilinks` is passed,
-// and this app never passes it) — falls through to the `default` case below,
+// or an mdast extension this app never opted into (e.g. wikiLink, which needs
+// its own micromark/mdast extension pair this app never registers) — falls
+// through to the `default` case below,
 // which recurses into `children` if present so text content isn't silently
 // dropped, or renders nothing if the node has none.
 function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode | string {
@@ -690,21 +695,6 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
   }
 }
 
-// CommonMark 0.31.2 defines whitespace as Unicode Zs plus tab/LF/FF/CR,
-// and punctuation as Unicode P or S. An underscore run surrounded by
-// characters in neither class is intraword and cannot open or close `_`/`__`
-// emphasis. @mizchi/markdown does not implement that restriction.
-const COMMONMARK_WHITESPACE_RE = /^(?:\p{Zs}|[\t\n\f\r])$/u;
-const COMMONMARK_PUNCTUATION_RE = /^[\p{P}\p{S}]$/u;
-
-function isCommonMarkWordContent(char: string | undefined): boolean {
-  return (
-    char !== undefined &&
-    !COMMONMARK_WHITESPACE_RE.test(char) &&
-    !COMMONMARK_PUNCTUATION_RE.test(char)
-  );
-}
-
 function unusedPrivateUseMarker(source: string): string {
   const used = new Set(source);
   const ranges: readonly [number, number][] = [
@@ -723,30 +713,20 @@ function unusedPrivateUseMarker(source: string): string {
   return fallback;
 }
 
-function protectIntrawordUnderscores(source: string): { source: string; marker?: string } {
-  if (!source.includes("_")) return { source };
-  const chars = Array.from(source);
-  let marker: string | undefined;
-  for (let start = 0; start < chars.length; start += 1) {
-    if (chars[start] !== "_") continue;
-    let end = start + 1;
-    while (chars[end] === "_") end += 1;
-    if (isCommonMarkWordContent(chars[start - 1]) && isCommonMarkWordContent(chars[end])) {
-      marker ??= unusedPrivateUseMarker(source);
-      chars.fill(marker, start, end);
-    }
-    start = end - 1;
-  }
-  return marker ? { source: chars.join(""), marker } : { source };
-}
-
-// The parser turns a bare `<WORD>` into an autolink and drops its brackets, so
-// prose like `<確認項目>` or `<v0.73.31>` silently became a link (kawaz r55m83).
-// Protect every `<…>` that is NOT a valid CommonMark autolink — those are only
-// `<scheme:rest>` (scheme = letter + [A-Za-z0-9+.-]{1,31}) and `<user@host>`,
-// both of which stay available to the parser. Everything else, including the
-// HTML-name shapes this function originally guarded (`<div>`, `<FILE>`), is
-// stashed behind private-use markers and restored as plain text afterwards.
+// Every `<…>` that is NOT a valid CommonMark autolink is stashed behind
+// private-use markers and restored as plain text after parsing. Autolinks —
+// `<scheme:rest>` (scheme = letter + [A-Za-z0-9+.-]{1,31}) and `<user@host>` —
+// stay available to the parser.
+//
+// Design rationale: this keeps the renderer's "no raw HTML" policy (DR-0010) a
+// property of the *source* rather than of node handling, which matters because
+// CommonMark's HTML-block rule is greedy: a line starting with a tag-shaped
+// token swallows every following line until a blank one into a single `html`
+// node, so `<確認項目> の **意味**` would lose its emphasis and render as raw
+// text (kawaz r55m83 is the same class of surprise, seen through a different
+// parser). Protecting pre-parse also lets the `<details>` fold below match on
+// `text` nodes, where inline and fenced code are already claimed by their own
+// node kinds.
 function protectTagLikeAngleBrackets(source: string): {
   source: string;
   openMarker?: string;
@@ -773,102 +753,8 @@ function protectTagLikeAngleBrackets(source: string): {
   };
 }
 
-// A `#` run that is not a valid ATX heading opener — `#1 を commit しました`,
-// `####### seven` — makes @mizchi/markdown drop the whole block instead of
-// falling back to a paragraph, so an assistant turn opening with `#1 …` renders
-// as an empty bubble (kawaz r99m7: 「からっぽの紫色のバルーン」). CommonMark
-// requires 1-6 hashes followed by a space, a tab, or the end of the line;
-// anything else is ordinary paragraph text. Stash the offending run behind a
-// private-use marker so the parser sees plain text, and restore it afterwards.
-//
-// Runs on every line, including fenced-code and indented-code content: the
-// substitution is invisible there (code text is verbatim and
-// `restoreProtectedText` walks `code.value` too), so tracking block context
-// would add a second, drift-prone parser for no observable difference.
-function protectNonHeadingHashes(source: string): { source: string; marker?: string } {
-  if (!source.includes("#")) return { source };
-  // Container prefixes the parser strips before looking for a heading:
-  // blockquote markers and one list-item marker. Four or more leading spaces
-  // is an indented code block, where `#` is already inert — hence `{0,3}`.
-  const BLOCK_START = /^((?:[ \t]{0,3}>)*[ \t]{0,3}(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)?)(#+)(.*)$/gm;
-  let marker: string | undefined;
-  const protectedSource = source.replace(
-    BLOCK_START,
-    (match, prefix: string, hashes: string, rest: string) => {
-      if (hashes.length <= 6 && (rest === "" || rest.startsWith(" ") || rest.startsWith("\t"))) {
-        return match;
-      }
-      marker ??= unusedPrivateUseMarker(source);
-      return `${prefix}${marker.repeat(hashes.length)}${rest}`;
-    },
-  );
-  return marker ? { source: protectedSource, marker } : { source };
-}
-
-// An empty header cell — `| | Anthropic Messages API | OpenAI Responses API |`,
-// the usual shape of a comparison table whose first column holds row labels —
-// makes @mizchi/markdown reject the whole block, so it renders as a paragraph
-// of raw pipes (kawaz r99m41). Measured surface: a header cell that is empty or
-// whitespace-only kills the table at any column index, with or without spaces
-// around the pipes, at top level and inside a blockquote; empty cells in *body*
-// rows parse fine. GFM allows all of these, so fill the offending header cells
-// with a private-use marker that `restoreProtectedText` turns back into an
-// empty string — the rendered cell stays empty, with no visible filler.
-//
-// A header line is one whose next line is a delimiter row. The detection may
-// over-fire (inside fenced code, or on a pipe line the parser ultimately does
-// not accept as a table): that is harmless by construction, because a marker
-// that does not end up in a table cell is restored to "" and the text reads
-// exactly as it did before — the same reasoning `protectNonHeadingHashes`
-// above relies on.
-function protectEmptyTableHeaderCells(source: string): { source: string; marker?: string } {
-  if (!source.includes("|")) return { source };
-  // Container prefixes the parser strips before looking at the row: blockquote
-  // markers and indentation short of an indented code block.
-  const PREFIX = /^((?:[ \t]{0,3}>)*[ \t]{0,3})(.*)$/;
-  const DELIMITER_ROW = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
-  const lines = source.split("\n");
-  let marker: string | undefined;
-  for (let i = 0; i + 1 < lines.length; i += 1) {
-    const header = PREFIX.exec(lines[i]!)!;
-    const delimiter = PREFIX.exec(lines[i + 1]!)!;
-    if (!header[2]!.includes("|")) continue;
-    if (!DELIMITER_ROW.test(delimiter[2]!)) continue;
-    marker ??= unusedPrivateUseMarker(source);
-    lines[i] = header[1]! + fillEmptyHeaderCells(header[2]!, marker);
-  }
-  return marker ? { source: lines.join("\n"), marker } : { source };
-}
-
-/** Replace every empty (or whitespace-only) cell of one table header row with
- * `marker`. The leading/trailing fields around the row's outer pipes are row
- * delimiters rather than cells, so they are left alone. */
-function fillEmptyHeaderCells(row: string, marker: string): string {
-  const fields: string[] = [];
-  let current = "";
-  for (let i = 0; i < row.length; i += 1) {
-    const char = row[i]!;
-    if (char === "\\" && i + 1 < row.length) {
-      current += char + row[i + 1]!;
-      i += 1;
-      continue;
-    }
-    if (char === "|") {
-      fields.push(current);
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-  fields.push(current);
-  const first = row.trimStart().startsWith("|") ? 1 : 0;
-  const last = fields.length - (row.trimEnd().endsWith("|") ? 2 : 1);
-  for (let i = first; i <= last; i += 1) {
-    if (fields[i]!.trim() === "") fields[i] = fields[i]! + marker;
-  }
-  return fields.join("|");
-}
-
+/** Undo one `protect*` substitution everywhere in the tree: every string field
+ * of every node, so protected text inside `code.value` is restored too. */
 function restoreProtectedText(value: unknown, marker: string, replacement: string): void {
   if (Array.isArray(value)) {
     for (const item of value) restoreProtectedText(item, marker, replacement);
@@ -898,7 +784,7 @@ function restoreProtectedText(value: unknown, marker: string, replacement: strin
 //
 // The matching runs on the mdast tree rather than the raw source because
 // `protectTagLikeAngleBrackets` (above) rewrites every tag-shaped token before
-// `parse()` sees it, so `<details>` never arrives as an mdast `html` node —
+// the parser sees it, so `<details>` never arrives as an mdast `html` node —
 // it lands as literal `text`. Working post-parse also means fenced code and
 // inline code are already claimed by their own nodes, so a `<details>` inside
 // a ```html fence is a `code` node and can't be mistaken for a real tag.
@@ -1118,16 +1004,17 @@ function foldInsideContainer(node: AnyNode): AnyNode {
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
  * parser-level compatibility fixes are exercised without a DOM. */
 export function parseMarkdownSource(source: string): Root {
-  const protectedHashes = protectNonHeadingHashes(source);
-  const protectedUnderscores = protectIntrawordUnderscores(protectedHashes.source);
-  const protectedAngles = protectTagLikeAngleBrackets(protectedUnderscores.source);
-  const protectedCells = protectEmptyTableHeaderCells(protectedAngles.source);
-  const root = parse(protectedCells.source);
-  if (protectedCells.marker) restoreProtectedText(root, protectedCells.marker, "");
+  const protectedAngles = protectTagLikeAngleBrackets(source);
+  const root = fromMarkdown(protectedAngles.source, {
+    extensions: [gfmTable(), gfmStrikethrough(), gfmTaskListItem()],
+    mdastExtensions: [
+      gfmTableFromMarkdown(),
+      gfmStrikethroughFromMarkdown(),
+      gfmTaskListItemFromMarkdown(),
+    ],
+  });
   if (protectedAngles.openMarker) restoreProtectedText(root, protectedAngles.openMarker, "<");
   if (protectedAngles.closeMarker) restoreProtectedText(root, protectedAngles.closeMarker, ">");
-  if (protectedUnderscores.marker) restoreProtectedText(root, protectedUnderscores.marker, "_");
-  if (protectedHashes.marker) restoreProtectedText(root, protectedHashes.marker, "#");
   return root;
 }
 

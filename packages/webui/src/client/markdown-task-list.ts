@@ -2,12 +2,11 @@
  * preview checkbox interaction).
  *
  * The preview renders from mdast, but a click has to write back to the file,
- * and mdast cannot say which source characters to touch: `@mizchi/markdown`
- * reports `position.start.offset` in **code points**, not UTF-16 units (a
- * document containing an astral char — `👺`, which QUESTIONS.md uses for
- * every arbitration marker — shifts every later offset), and list items
- * inside a blockquote come back with `offset: 0`. Both were confirmed against
- * the real parser, so offsets are unusable as write coordinates here.
+ * and the write reads that file fresh — so the tree the user clicked describes
+ * a source that may already have moved. `position.start.offset` names a
+ * character in the *rendered* source, which is exactly the coordinate that
+ * goes stale, so it cannot be the write coordinate no matter how accurate it
+ * is.
  *
  * So a click is turned into a **content anchor** (`anchorTaskLine`): the full
  * source text of the clicked item's line, plus the ordinal ("the Nth task

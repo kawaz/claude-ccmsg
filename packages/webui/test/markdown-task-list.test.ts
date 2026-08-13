@@ -49,8 +49,8 @@ describe("findTaskLines", () => {
     expect(findTaskLines(source)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
-  // The shapes the parser itself declines (verified against @mizchi/markdown):
-  // counting any of them would shift every later ordinal by one.
+  // The shapes CommonMark/GFM itself declines as task items: counting any of
+  // them would shift every later ordinal by one.
   test("ignores non-task list items and near-miss shapes", () => {
     const source = [
       "- plain item",
@@ -450,9 +450,9 @@ describe("ordinal agreement with the renderer", () => {
     });
   }
 
-  // Astral characters shift @mizchi/markdown's code-point offsets away from
-  // JS string indices, which is why ordinals (not positions) are the write
-  // coordinate. QUESTIONS.md marks every arbitration heading with 👺.
+  // Ordinals (not positions) are the write coordinate, so astral characters —
+  // QUESTIONS.md marks every arbitration heading with 👺 — must not disturb the
+  // mapping between a scanned task and its parsed counterpart.
   test("astral characters do not disturb ordinals", () => {
     const source = "👺👺 XX-Q1\n\n- [ ] a\n- [x] b\n";
     expect(scanTaskStates(source)).toEqual(parsedStates(source));

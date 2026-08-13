@@ -39,8 +39,8 @@ async function bundleClient(): Promise<ClientBundle> {
     target: "browser",
     tsconfig: CLIENT_TSCONFIG.pathname,
     // Serve-time build ships to a real browser, so minify like a production
-    // bundle: with @mizchi/markdown's unminified 456KB parser on board this is
-    // the difference between ~74KB and ~40KB gzip for the whole app.js.
+    // bundle: for the whole app.js this is the difference between ~1.3MB and
+    // ~276KB gzip.
     minify: true,
     throw: false,
   });
@@ -59,9 +59,9 @@ async function bundleClient(): Promise<ClientBundle> {
 // `/assets/app.js` request, then kept in memory for the process lifetime (no
 // dist/ committed or generated on disk). Process-level (vs per-app) matters
 // beyond economy: test suites create many app instances, and concurrent
-// Bun.build runs over the large @mizchi/markdown parser have been observed to
-// fail flakily on Linux with EBADF/"Unexpected reading file" — one shared
-// build removes that surface. A build failure is surfaced as a 500 with the
+// Bun.build runs over the client graph have been observed to fail flakily on
+// Linux with EBADF/"Unexpected reading file" — one shared build removes that
+// surface. A build failure is surfaced as a 500 with the
 // error text — never a silent fallback to stale or missing content — and is
 // not cached, so the next request retries the build.
 let bundlePromise: Promise<ClientBundle> | null = null;

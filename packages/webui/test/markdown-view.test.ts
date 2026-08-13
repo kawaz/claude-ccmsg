@@ -3,8 +3,8 @@
 // allowlist that keeps it from ever emitting an executable `href`.
 //
 // Test strategy: `renderMarkdownAst` takes a hand-constructed mdast `Root` —
-// not markdown source run through `parse()` — so the walker's behavior is
-// pinned independently of `@mizchi/markdown`'s parsing quirks (mirrors
+// not markdown source run through the parser — so the walker's behavior is
+// pinned independently of the parser in use (mirrors
 // transcript-model.test.ts's "pure fold, testable without DOM" split, see
 // that file's doc comment). The walker returns Preact `VNode`s directly (no
 // renderToString dependency is available in this repo, see markdown-view.tsx
@@ -14,7 +14,6 @@
 import { describe, expect, test } from "bun:test";
 import type { VNode } from "preact";
 import type { Root } from "mdast";
-import { parse } from "@mizchi/markdown";
 import {
   attachmentUrlFromPath,
   extractMarkdownHeadings,
@@ -206,12 +205,11 @@ describe("renderMarkdownAst / XSS defenses", () => {
     expect(dangerous).toHaveLength(0);
   });
 
-  // Confirms the real-world reason isSafeUrl is required at all: the
-  // library's own parse() passes a javascript: URL straight through into
-  // the mdast tree unchanged (it doesn't sanitize), so the walker is the
-  // only defense layer (DR-0010).
-  test("parse() itself passes a javascript: URL through unsanitized (regression pin for why isSafeUrl exists)", () => {
-    const root = parse("[click](javascript:alert(1))");
+  // Confirms the real-world reason isSafeUrl is required at all: the parser
+  // passes a javascript: URL straight through into the mdast tree unchanged
+  // (it doesn't sanitize), so the walker is the only defense layer (DR-0010).
+  test("the parser passes a javascript: URL through unsanitized (regression pin for why isSafeUrl exists)", () => {
+    const root = parseMarkdownSource("[click](javascript:alert(1))");
     const paragraph = root.children[0];
     expect(paragraph?.type).toBe("paragraph");
     if (paragraph?.type !== "paragraph") return;
@@ -331,7 +329,7 @@ describe("parseMarkdownSource / angle-bracket tag-like text", () => {
     const fenced = renderSource("```txt\n<script>\n```");
     const blocks = collect(fenced, (n) => n.type === CodeBlock);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]!.props).toMatchObject({ lang: "txt", code: "<script>\n" });
+    expect(blocks[0]!.props).toMatchObject({ lang: "txt", code: "<script>" });
   });
 
   // CommonMark URL/email autolinks are not tag-like prose and remain links;
@@ -408,12 +406,12 @@ describe("parseMarkdownSource / non-heading hash runs", () => {
     expect(collect(renderSource("#"), (n) => n.type === "h1")).toHaveLength(1);
   });
 
-  // The protection marker must not leak into code text, which is verbatim and
-  // never had the parsing problem in the first place.
-  test("protected hashes are restored inside fenced and indented code", () => {
+  // Code text is verbatim: a `#` run inside it is inert and must reach the
+  // renderer byte-for-byte.
+  test("hash runs inside fenced and indented code are verbatim", () => {
     const codeValues = (source: string) =>
       parseMarkdownSource(source).children.map((n) => (n as { value?: string }).value);
-    expect(codeValues("```\n#1 code\n```")).toEqual(["#1 code\n"]);
+    expect(codeValues("```\n#1 code\n```")).toEqual(["#1 code"]);
     expect(codeValues("    #1 indented")).toEqual(["#1 indented"]);
   });
 });
@@ -1553,10 +1551,9 @@ describe("parseMarkdownSource / empty table header cells", () => {
     ]);
   });
 
-  // Measured failure surface of @mizchi/markdown (see protectEmptyTableHeaderCells):
-  // an empty or whitespace-only *header* cell breaks the table at any column
-  // index, with or without padding spaces, and inside a blockquote; body-row
-  // empty cells were always fine and must stay that way.
+  // GFM allows an empty or whitespace-only header cell at any column index,
+  // with or without padding spaces, and inside a blockquote — the usual shape
+  // of a comparison table whose first column holds row labels (kawaz r99m41).
   test("every measured empty-header-cell shape parses as a table with the cell empty", () => {
     const cases: [string, string, string[][]][] = [
       [
@@ -1632,14 +1629,13 @@ describe("parseMarkdownSource / empty table header cells", () => {
     expect(table?.align).toEqual(["left", "center", "right"]);
   });
 
-  // Pipe lines that are not tables must survive byte-for-byte: the marker is
-  // only ever restored to "", so text keeps reading exactly as authored.
+  // Pipe lines that are not tables must survive byte-for-byte.
   test("pipes inside fenced code and non-table prose are untouched", () => {
     const fenced = ["```", "| | A | B |", "|---|---|---|", "| x | 1 | 2 |", "```"].join("\n");
     expect(tableNodes(fenced)).toHaveLength(0);
     const code = parseMarkdownSource(fenced).children[0] as { type: string; value: string };
     expect(code.type).toBe("code");
-    expect(code.value).toBe("| | A | B |\n|---|---|---|\n| x | 1 | 2 |\n");
+    expect(code.value).toBe("| | A | B |\n|---|---|---|\n| x | 1 | 2 |");
 
     const prose = "a | b | c\nnot a delimiter row";
     expect(tableNodes(prose)).toHaveLength(0);
@@ -1651,5 +1647,114 @@ describe("parseMarkdownSource / empty table header cells", () => {
   test("escaped pipes in a header row do not shift cell boundaries", () => {
     const [table] = tableNodes("| a\\|b | | B |\n|---|---|---|\n| x | 1 | 2 |");
     expect(table?.rows[0]).toEqual(["a|b", "", "B"]);
+  });
+});
+
+// CommonMark conformance pins (w-md-bug's measured comparison, recorded in
+// docs/findings/2026-08-13-markdown-parser-comparison.md).
+//
+// Each case below is a construct the previous parser got wrong in a way a
+// reader would notice — a continuation line escaping its bullet, a list item
+// vanishing, emphasis swallowing its neighbours. They are pinned as AST shape
+// rather than rendered output because the shape is what the walker consumes,
+// and because a wrong shape is what made the rendered output wrong.
+describe("parseMarkdownSource / CommonMark conformance", () => {
+  const skeleton = (node: unknown): string => {
+    const n = node as { type: string; children?: unknown[] };
+    return n.children ? `${n.type}(${n.children.map(skeleton).join(",")})` : n.type;
+  };
+  const shape = (source: string) => parseMarkdownSource(source).children.map(skeleton).join(",");
+
+  // A continuation line indented under a bullet belongs to that item; it must
+  // not break out into a sibling paragraph.
+  test("an indented continuation line stays inside its list item", () => {
+    expect(shape("- a\n  more\n- b\n")).toBe(
+      "list(listItem(paragraph(text)),listItem(paragraph(text)))",
+    );
+    const list = parseMarkdownSource("- a\n  more\n- b\n").children[0];
+    expect(list?.type).toBe("list");
+    if (list?.type !== "list") return;
+    const paragraph = list.children[0]?.children[0];
+    expect(paragraph?.type).toBe("paragraph");
+    if (paragraph?.type !== "paragraph") return;
+    const text = paragraph.children[0];
+    expect(text?.type).toBe("text");
+    if (text?.type !== "text") return;
+    expect(text.value).toBe("a\nmore");
+  });
+
+  // Inline code inside strong emphasis must appear once, as one inlineCode
+  // child — not duplicated around the span.
+  test("inline code inside strong emphasis is not duplicated", () => {
+    expect(shape("**x `c` y**\n")).toBe("paragraph(strong(text,inlineCode,text))");
+  });
+
+  // A blank line inside the first item makes the list loose; the *following*
+  // item must survive that.
+  test("a loose first item does not swallow the item after it", () => {
+    expect(shape("- a\n\n  cont\n- b\n")).toBe(
+      "list(listItem(paragraph(text),paragraph(text)),listItem(paragraph(text)))",
+    );
+  });
+
+  // Link reference definitions: the reference resolves and the definition is
+  // its own node rather than being flattened into the paragraph's text.
+  test("link reference definitions parse as linkReference + definition", () => {
+    expect(shape('See [foo].\n\n[foo]: https://example.com "T"\n')).toBe(
+      "paragraph(text,linkReference(text),text),definition",
+    );
+  });
+
+  // Inline HTML is literal text here (protectTagLikeAngleBrackets, DR-0010) —
+  // the point of this pin is that it is never a `link`, which is what would
+  // put an unintended anchor in the middle of a sentence.
+  test("inline HTML is literal text, never a link", () => {
+    expect(shape("a <b>bold</b> c\n")).toBe("paragraph(text)");
+    const vnode = renderMarkdownAst(parseMarkdownSource("a <b>bold</b> c\n"));
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("a <b>bold</b> c");
+  });
+
+  // `**` nested inside `*` nests as strong-within-emphasis, with the
+  // surrounding text kept as siblings.
+  test("strong nested inside emphasis keeps both and its surrounding text", () => {
+    expect(shape("*outer **inner** rest*\n")).toBe("paragraph(emphasis(text,strong(text),text))");
+  });
+
+  // Tabs are expanded to CommonMark's tab stops: a tab-indented continuation
+  // line stays in the item, and two tabs after the bullet is indented code.
+  test("tab indentation follows CommonMark tab stops", () => {
+    expect(shape("- foo\n\tbar\n")).toBe("list(listItem(paragraph(text)))");
+    expect(shape("-\t\tfoo\n")).toBe("list(listItem(code))");
+  });
+
+  // `position.start.offset` is a document-absolute UTF-16 index. Both halves
+  // matter: astral characters (QUESTIONS.md marks every arbitration heading
+  // with 👺) must not shift it, and a list item inside a blockquote must not
+  // report an offset relative to its container.
+  test("position offsets are document-absolute UTF-16 indices", () => {
+    const itemOffsets = (source: string): number[] => {
+      const out: number[] = [];
+      const walk = (node: unknown): void => {
+        const n = node as {
+          type?: string;
+          position?: { start?: { offset?: number } };
+          children?: unknown[];
+        };
+        if (n.type === "listItem" && n.position?.start?.offset !== undefined) {
+          out.push(n.position.start.offset);
+        }
+        for (const child of n.children ?? []) walk(child);
+      };
+      walk(parseMarkdownSource(source));
+      return out;
+    };
+    const astral = "👺👺 X\n\n- [ ] a\n- [x] b\n";
+    expect(itemOffsets(astral)).toEqual([8, 16]);
+    expect(astral.slice(8, 13)).toBe("- [ ]");
+
+    const quoted = "> - [ ] g\n> - [x] h\n";
+    expect(itemOffsets(quoted)).toEqual([2, 12]);
+    expect(quoted.slice(2, 7)).toBe("- [ ]");
   });
 });
