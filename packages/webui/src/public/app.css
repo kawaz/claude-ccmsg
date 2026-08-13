@@ -46,6 +46,26 @@
    * とき (body 直下 = --bg の上) の既定値。 */
   --md-surface: var(--bg);
 
+  /* コード (inline / ブロック) の色味。面から --fg 方向へ離すだけでは「同じ色が
+   * 少し濃いだけ」にしかならず、リンク色 (--accent) へ寄せても地の吹き出しが
+   * 青系・紫系なので同系統に見える (kawaz r119 m19/m22)。この UI の面はすべて
+   * 無彩色か寒色 (白 / 緑 / 青 / 紫) なので、暖色を 1 つ立てればどの面の上でも
+   * 「別系統の色が載っている」と一目で分かる。
+   *
+   * Design rationale: 面と混ぜる (color-mix) のではなく、面から明度だけを
+   * 受け取って色相を差し替える (`oklch(from …)`) — 混色では面の色相が残り、
+   * 補色に近い面 (青い吹き出し × 暖色) では彩度が打ち消し合って灰色になる。
+   * 実測: 青い吹き出しのダーク面で暖色を 22% 混ぜても 32% 混ぜても地は
+   * 青灰色のまま (明るくなるだけ)。色相を絶対値で与えれば、任意の
+   * `--member-hue` の吹き出しの上でも同じだけ「コードの色」に見える。
+   * 面からの距離は明度 (--md-code-l-shift) が持つので、相対の原則は保つ。 */
+  --md-code-hue: 55;
+  /* 面より暗い側へずらす (ライト)。ダークでは光の側へ振る。inline code の罫は
+   * この 2.4 倍、面積の広いブロックコードは 0.4 倍と、同じ 1 つの値で連動する。 */
+  --md-code-l-shift: -0.09;
+  /* inline code の文字。--md-code-hue と同じ色相の実体で、地から浮く濃さの側。 */
+  --md-code-accent: #c2410c;
+
   /* 行間 — markdown 本文の縦の密度。文書として読むプレビューが --md-leading、
    * 会話として流し読む Timeline が --md-leading-tight。段落間隔はこれより
    * 広くなければ段落の切れ目が行の切れ目に埋もれる (下の .md 参照)。 */
@@ -138,6 +158,9 @@
     --warn: #fbbf24;
     /* 暗い地では太字が明るく滲んで見える分、濃さの差は光の側に振る。 */
     --fg-strong: #ffffff;
+    /* 暗い面ではコードの地を光の側へずらす (色相と比率はライトと共通)。 */
+    --md-code-l-shift: 0.1;
+    --md-code-accent: #fdba74;
 
     /* High-chroma search colors must read as highlights against the dark UI. */
     --search-color-1: #fff200;
@@ -4153,11 +4176,17 @@ button.session-tab {
 
 /* 引用は面から薄く沈めた帯 + 太い左罫で「地の文ではない」と示す。色は面から
  * の距離で持つので、白地のプレビューでも吹き出しの中でも同じだけ浮く。 */
+/* 導出した色に名前を付けてから使うのは、/catalog の「色の内訳」がこの custom
+ * property の計算値 (= var() が解決された後の導出式そのもの) を読んで表示する
+ * ため — 式を tsx 側に書き写さずに済み、二重管理が起きない
+ * (CatalogMdColors.tsx 参照)。 */
 .md blockquote {
+  --md-quote-bg: color-mix(in oklab, var(--md-surface), var(--fg) 4%);
+  --md-quote-rule: color-mix(in oklab, var(--md-surface), var(--fg) 28%);
   margin: var(--space-10) 0;
   padding: var(--space-2) var(--space-9);
-  background: color-mix(in oklab, var(--md-surface), var(--fg) 4%);
-  border-left: 3px solid color-mix(in oklab, var(--md-surface), var(--fg) 28%);
+  background: var(--md-quote-bg);
+  border-left: 3px solid var(--md-quote-rule);
   border-radius: 0 0.25rem 0.25rem 0;
   color: var(--fg-muted);
 }
@@ -4172,20 +4201,23 @@ button.session-tab {
  * 上余白より広く取る。既定の inset border は 2 色の溝になってテーマに乗らない
  * ため、1 本の罫として引き直す。 */
 .md hr {
+  --md-hr-rule: color-mix(in oklab, var(--md-surface), var(--fg) 22%);
   margin: var(--space-15) 0;
   border: none;
-  border-top: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 22%);
+  border-top: 1px solid var(--md-hr-rule);
 }
 
 /* kawaz r55 m77: `<details>`/`<summary>` は markdown 中で唯一構造として解釈する
  * HTML (markdown-view.tsx の foldDetailsBlocks 参照)。RoomList 等の既存折り畳み
  * と同じく marker はデフォルトのまま活かす。 */
 .md-details {
+  --md-details-bg: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
+  --md-details-rule: color-mix(in oklab, var(--md-surface), var(--fg) 20%);
   margin: var(--space-5) 0;
   padding: var(--space-1) var(--space-8);
-  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
+  border: 1px solid var(--md-details-rule);
   border-radius: 0.35rem;
-  background: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
+  background: var(--md-details-bg);
 }
 /* 畳んだ中身はこのパネルの上に載る (子に宣言する理由は blockquote と同じ)。 */
 .md-details > * {
@@ -4204,7 +4236,7 @@ button.session-tab {
 
 .md-details[open] > summary {
   margin-bottom: var(--space-2);
-  border-bottom: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
+  border-bottom: 1px solid var(--md-details-rule);
 }
 
 .md-details > :last-child {
@@ -4234,32 +4266,40 @@ button.session-tab {
   text-underline-offset: 0.15em;
 }
 
-/* 絶対色 (--bg-alt / --border) で敷いていた頃は、白地のプレビューの上で地の
- * 文とほぼ同じ色になり「何も強調されていない」状態だった (kawaz r119 m16/m17)
- * — 吹き出しの中でだけ効いて見えていたのは、吹き出しの色と偶然差があった
- * ため。地 / 罫 / 文字の 3 つとも面からの距離で持ち、どの面でも同じだけ
- * 浮かせる。罫が範囲を確定させ、地と文字の濃さが「ここは記号列だ」を示す。 */
+/* 地 / 罫 / 文字の 3 つとも面を基準に決め、どの面でも同じだけ浮かせる。罫が
+ * 範囲を確定させ、地の色相が「ここは記号列だ」を示す (色相を絶対値で与える
+ * 理由は :root の --md-code-hue のコメント)。彩度 0.06 は、4 面 × 2 テーマの
+ * どれでも「面とは別系統の色」に見える下限と、本文の中で騒がしくならない
+ * 上限の間から取った値。罫はチップの範囲を示すぶん濃く (明度差 2.4 倍 /
+ * 彩度 2 倍)。 */
 .md-inline-code {
+  --md-inline-code-bg: oklch(
+    from var(--md-surface) calc(l + var(--md-code-l-shift)) 0.06 var(--md-code-hue)
+  );
+  --md-inline-code-rule: oklch(
+    from var(--md-surface) calc(l + var(--md-code-l-shift) * 2.4) 0.12 var(--md-code-hue)
+  );
+  --md-inline-code-fg: color-mix(in oklab, var(--fg-strong), var(--md-code-accent) 30%);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
-  /* 明度差だけでは「同じ色が少し濃いだけ」に見えて記号列として立たない
-   * (kawaz r119 m19 — surface 相対化の初版が明度のみの導出で失敗した点)。
-   * 面からの距離 (相対) は保ちつつ、fg でなく accent 側へ混ぜて色相の
-   * 手掛かりを持たせる。文字も accent 寄りに振って「押せるリンク」とは
-   * 罫と地の有無で区別する。 */
-  background: color-mix(in oklab, var(--md-surface), var(--accent) 14%);
-  border: 1px solid color-mix(in oklab, var(--md-surface), var(--accent) 40%);
-  color: color-mix(in oklab, var(--fg-strong), var(--accent) 35%);
+  background: var(--md-inline-code-bg);
+  border: 1px solid var(--md-inline-code-rule);
+  color: var(--md-inline-code-fg);
   padding: 0.05rem var(--space-5);
   border-radius: 0.25rem;
 }
 
 /* ブロックコードは Shiki が字の色だけを塗る (.shiki-tok) — 地は持たないので
- * inline code と同じ導出で敷く。面積が広い分、同じ濃さだと重いので浅く。 */
+ * inline code と同じ導出で敷く。面積が広い分、同じ濃さだと重いので明度差も
+ * 彩度も浅く。色相を同じ値から取るのは、chip とブロックが「同じコードの
+ * 仲間」だと地の色で分かるようにするため。 */
 .md-code {
+  --md-block-code-bg: oklch(
+    from var(--md-surface) calc(l + var(--md-code-l-shift) * 0.4) 0.025 var(--md-code-hue)
+  );
   margin: var(--space-10) 0;
   padding: var(--space-8) var(--space-9);
-  background: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
+  background: var(--md-block-code-bg);
   border-radius: 0.4rem;
   overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -4284,7 +4324,8 @@ button.session-tab {
 }
 .md th,
 .md td {
-  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
+  --md-table-rule: color-mix(in oklab, var(--md-surface), var(--fg) 20%);
+  border: 1px solid var(--md-table-rule);
   padding: var(--space-6) var(--space-9);
   text-align: left;
 }
@@ -4294,7 +4335,8 @@ button.session-tab {
   --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
 }
 .md th {
-  background: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
+  --md-table-head-bg: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
+  background: var(--md-table-head-bg);
   color: var(--fg-strong);
   font-weight: 700;
 }
@@ -4368,11 +4410,16 @@ button.session-tab {
  * 「引用である」ことは地色と左の罫が示す。Timeline の引用が --fg-muted の
  * ままなのは、あちらでは他所の文の再掲だから。 */
 .viewer-preview .md blockquote {
+  /* 左罫だけは面からの距離ではなく accent 寄りに振る (文書の中の引用は
+   * 「読み飛ばす対象ではない」ので、範囲を示す罫を強く出す)。地は他の面と
+   * 同じ導出のまま — 絶対色 (--bg-alt) で敷いていた頃は、白地では地の文と
+   * ほぼ同色になっていた。 */
+  --md-quote-rule: color-mix(in srgb, var(--accent) 45%, var(--border));
   margin: var(--space-13) 0;
   padding: var(--space-8) var(--space-13);
-  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-left: 3px solid var(--md-quote-rule);
   border-radius: 0 0.3rem 0.3rem 0;
-  background: var(--bg-alt);
+  background: var(--md-quote-bg);
   color: inherit;
 }
 
@@ -7717,6 +7764,84 @@ button.usage-reset:hover {
   overflow: visible;
   padding: 0;
   padding-bottom: 0;
+}
+
+/* 色の内訳は「実物」と「実物から読んだ数字」を必ず並べて置く (数字だけの表は
+ * どの絵を測ったのか確かめようがない)。狭い画面では縦に積み、広い画面では
+ * 見本を左に固定幅で置いて表を隣に流す。 */
+.catalog-md-colors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-13);
+}
+
+.catalog-md-colors > :first-child {
+  /* 一点物: 見本の中の表や引用が折り返さずに収まる最小幅。 */
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.catalog-color-table {
+  flex: 3 1 28rem;
+  min-width: 0;
+  border-collapse: collapse;
+  font-size: var(--font-size-2xs);
+}
+
+.catalog-color-table th,
+.catalog-color-table td {
+  border: 1px solid var(--border);
+  padding: var(--space-4) var(--space-8);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.catalog-color-table th {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.catalog-color-prop,
+.catalog-color-formula,
+.catalog-color-value,
+.catalog-color-computed {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-3xs);
+  color: var(--fg-muted);
+}
+
+/* 16 進が主で、混色した色空間のままの計算値が従 (桁は多いが、これが
+ * getComputedStyle の実際の返り値であることに意味がある)。 */
+.catalog-color-values {
+  display: flex;
+  flex-direction: column;
+}
+
+.catalog-color-value {
+  color: var(--fg);
+}
+
+.catalog-color-computed {
+  overflow-wrap: anywhere;
+  opacity: 0.7;
+}
+
+/* 式は長いので、折り返しても表の列幅を壊さないようにする。 */
+.catalog-color-formula {
+  overflow-wrap: anywhere;
+}
+
+.catalog-color-resolved {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+/* 表の中の swatch は行の高さに収める (色見本の 1.6rem では行が膨らむ)。 */
+.catalog-color-resolved .catalog-swatch-chip {
+  width: 1rem;
+  height: 1rem;
 }
 
 .catalog-row {

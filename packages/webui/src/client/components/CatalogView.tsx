@@ -21,6 +21,7 @@ import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { FileTypeIcon, type FileIconKind } from "./FileIcon.tsx";
 import { MarkdownView } from "../markdown-view.tsx";
+import { MdAllSection, MdColorSection } from "./CatalogMdColors.tsx";
 import { MemberChip } from "./MemberChip.tsx";
 import { Fold } from "./Fold.tsx";
 import { Tabs } from "./Tabs.tsx";
@@ -60,6 +61,16 @@ const SECTIONS: SectionDef[] = [
     id: "markdown",
     title: "Markdown 本文",
     note: "ファイルプレビューの組版。段落・見出し・強調の縦リズムを 1 枚で見る。",
+  },
+  {
+    id: "md-all",
+    title: "Markdown 全装飾",
+    note: "renderer が出す装飾の全種類を、面ごとに 1 通りずつ。",
+  },
+  {
+    id: "md-color",
+    title: "md 装飾カラーの内訳",
+    note: "各装飾の混色式と、その面での解決値。どちらも実物から実行時に読む。",
   },
   {
     id: "code",
@@ -800,6 +811,8 @@ const SECTION_BODIES: Record<string, () => ComponentChildren> = {
   bubble: BubbleSection,
   file: FileIconSection,
   markdown: MarkdownSection,
+  "md-all": MdAllSection,
+  "md-color": MdColorSection,
   code: CodeSection,
   form: FormSection,
   error: ErrorSection,
