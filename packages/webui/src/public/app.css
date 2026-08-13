@@ -3975,6 +3975,17 @@ button.session-tab {
   margin: var(--space-10) 0;
 }
 
+/* 見出しの階層 (kawaz r119 m14「見出しに関しても雑さが拭えない」)。
+ *
+ * 旧: 全レベルが accent 一色 + サイズ差だけ。2 つ壊れていた —
+ *   1. 見出しがリンクと同じ色になり、リンクの色が「押せる」の印でなくなる
+ *   2. 色が同じでサイズだけが違うと、単独で現れた見出しが何段目か分からない
+ *      (前後の見出しと並べて比べないと判定できない = 拾い読みで効かない)
+ *
+ * 新: 色は本文の最も強い色 (--fg-strong) に統一して accent をリンクへ返し、
+ * 階層は **サイズ・上の余白・罫** の 3 つで出す。3 つとも「上ほど強い」で
+ * 揃うので、1 個だけ見えている状態でも段が読める。h5/h6 は本文とサイズが
+ * 並ぶので、そこだけ濃さを落として「これ以上は細目」であることを示す。 */
 .md h1,
 .md h2,
 .md h3,
@@ -3982,44 +3993,46 @@ button.session-tab {
 .md h5,
 .md h6 {
   margin: var(--space-13) 0 var(--space-5);
-  color: var(--accent);
+  color: var(--fg-strong);
   line-height: 1.3;
+  font-weight: 700;
 }
 .md h1 {
   font-size: var(--font-size-4xl);
+  /* 見出しの最上段だけは太さも一段上げる (750 は system-ui が実際に持つ段)。 */
   font-weight: 750;
 }
 .md h2 {
   font-size: var(--font-size-3xl);
-  font-weight: 700;
 }
 .md h3 {
   font-size: var(--font-size-2xl);
-  font-weight: 650;
 }
 .md h4 {
-  font-size: var(--font-size-2xl);
-  font-weight: 650;
-  color: color-mix(in srgb, var(--accent) 85%, var(--fg));
-}
-.md h5 {
   font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: color-mix(in srgb, var(--accent) 70%, var(--fg));
 }
+/* 本文とサイズが並ぶ段。太さだけでは本文中の強調と見分けが付かないので、
+ * 濃さを落として「見出しではあるが本文より前に出ない」側に振る。 */
+.md h5,
 .md h6 {
   font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: color-mix(in srgb, var(--accent) 55%, var(--fg));
+  color: var(--fg-muted);
 }
 
 .viewer-preview .md {
   counter-reset: md-h1 md-h2 md-h3 md-h4 md-h5 md-h6;
 }
-.viewer-preview .md h1,
+/* 罫は「段の強さ」の 3 つ目の手掛かり。h1 は文書の題なので地の色に近い太い
+ * 罫で 1 本、h2 は節の頭なので細いヘアライン、h3 以下は罫を持たない —
+ * 「罫の有無と太さ」だけで上 2 段が判別できる。accent を混ぜないのは、
+ * 見出しから色を外した趣旨 (リンクの色を返す) を罫で崩さないため。 */
+.viewer-preview .md h1 {
+  padding-bottom: var(--space-6);
+  border-bottom: 2px solid color-mix(in srgb, var(--fg) 45%, var(--border));
+}
 .viewer-preview .md h2 {
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
 }
 .viewer-preview .md h1 {
   counter-increment: md-h1;
@@ -4259,19 +4272,33 @@ button.session-tab {
   margin: var(--space-12) 0;
 }
 
+/* サイズと上余白を同じ向きに効かせる: 段が 1 つ下がるごとに文字は小さく、
+ * 上の空きは狭くなる。下の余白は全段ほぼ一定 — 見出しは直後の本文に付いて
+ * いるので、離すのは上だけでよい。 */
 .viewer-preview .md h1 {
-  font-size: 1.75em;
+  font-size: 1.9em;
   margin: var(--space-16) 0 var(--space-11);
 }
 .viewer-preview .md h2 {
-  font-size: 1.4em;
-  margin: var(--space-15) 0 var(--space-10);
+  font-size: 1.5em;
+  margin: var(--space-16) 0 var(--space-9);
 }
 .viewer-preview .md h3 {
-  font-size: 1.15em;
-  margin: var(--space-14) 0 var(--space-8);
+  font-size: 1.3em;
+  margin: var(--space-15) 0 var(--space-8);
 }
-.viewer-preview .md h4,
+.viewer-preview .md h4 {
+  font-size: 1.12em;
+  margin: var(--space-14) 0 var(--space-7);
+}
+
+/* 大きい文字は既定の字送りが緩く見える (字送りは本文サイズを基準に設計されて
+ * いるため)。上 2 段だけわずかに詰めると、ただ本文を拡大しただけの見た目から
+ * 「組んである見出し」に変わる。3 段目以降は本文に近いサイズなので触らない。 */
+.viewer-preview .md h1,
+.viewer-preview .md h2 {
+  letter-spacing: -0.01em;
+}
 .viewer-preview .md h5,
 .viewer-preview .md h6 {
   font-size: 1em;
