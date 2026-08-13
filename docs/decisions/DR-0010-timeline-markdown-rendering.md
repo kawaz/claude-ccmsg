@@ -81,10 +81,11 @@ Timeline.tsx の `SegmentView` で `segment.role === "assistant"` の場合の�
 
 ## Addendum 2026-08-13 (kawaz r119m12): パーサを mdast-util-from-markdown へ差し替え — §上記の `@mizchi/markdown` 採用を supersede
 
-`@mizchi/markdown` 0.6.5 に実バグ 8 種を実測確認した (リスト継続行が list 外へ脱出 /
-strong 内 inline 後のテキスト重複 / リスト項目消失 / link reference 非対応 / inline HTML
-を link として誤生成 / ネスト emphasis 不発 / tab インデント非対応 / position が
-コードポイント単位かつ入れ子でリセットされる破損)。週次 DL 42 の実質単独メンテで
+`@mizchi/markdown` 0.6.5 に実バグ 7 種を実測確認した (リスト継続行が list を分断 —
+継続行が list 外へ脱出し後続 bullet が別 list になる / strong 内 inline 後のテキスト
+重複 / link reference 非対応 — definition が AST から消失 / inline HTML を link として
+誤生成 / ネスト emphasis 不発 / tab インデント非対応 — `\tcode` が先頭文字を食う /
+position がコードポイント単位かつ入れ子でリセットされる破損)。週次 DL 42 の実質単独メンテで
 ワークアラウンド蓄積のコストが上回るため、パーサのみ差し替える:
 
 - **`mdast-util-from-markdown` + micromark/mdast の GFM 個別拡張 (table /

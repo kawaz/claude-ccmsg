@@ -1650,14 +1650,14 @@ describe("parseMarkdownSource / empty table header cells", () => {
   });
 });
 
-// CommonMark conformance pins (w-md-bug's measured comparison, recorded in
+// CommonMark conformance pins (see
 // docs/findings/2026-08-13-markdown-parser-comparison.md).
 //
-// Each case below is a construct the previous parser got wrong in a way a
-// reader would notice — a continuation line escaping its bullet, a list item
-// vanishing, emphasis swallowing its neighbours. They are pinned as AST shape
-// rather than rendered output because the shape is what the walker consumes,
-// and because a wrong shape is what made the rendered output wrong.
+// Each case below is a construct a previous parser got wrong in a way a reader
+// would notice — a continuation line escaping its bullet, emphasis swallowing
+// its neighbours, a tab eating the characters after it. They are pinned as AST
+// shape rather than rendered output because the shape is what the walker
+// consumes, and because a wrong shape is what made the rendered output wrong.
 describe("parseMarkdownSource / CommonMark conformance", () => {
   const skeleton = (node: unknown): string => {
     const n = node as { type: string; children?: unknown[] };
@@ -1689,12 +1689,20 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
     expect(shape("**x `c` y**\n")).toBe("paragraph(strong(text,inlineCode,text))");
   });
 
-  // A blank line inside the first item makes the list loose; the *following*
-  // item must survive that.
-  test("a loose first item does not swallow the item after it", () => {
+  // A blank line before the continuation makes the item loose (two paragraphs
+  // in one item). The whole run must stay one list: splitting it at the
+  // continuation leaves the later bullets in a second list, which restarts
+  // numbering and breaks the spacing between them.
+  test("a loose continuation keeps the list in one piece", () => {
     expect(shape("- a\n\n  cont\n- b\n")).toBe(
       "list(listItem(paragraph(text),paragraph(text)),listItem(paragraph(text)))",
     );
+  });
+
+  // An empty leading bullet is a list item with no children, not a paragraph
+  // of the bullet character followed by a separate list.
+  test("an empty leading bullet stays part of its list", () => {
+    expect(shape("-\n- b\n")).toBe("list(listItem(),listItem(paragraph(text)))");
   });
 
   // Link reference definitions: the reference resolves and the definition is
@@ -1703,6 +1711,16 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
     expect(shape('See [foo].\n\n[foo]: https://example.com "T"\n')).toBe(
       "paragraph(text,linkReference(text),text),definition",
     );
+    // All three reference forms, because the definition node carries the URL:
+    // losing it strips the destination out of the tree entirely, and the
+    // shortcut form is the one a parser is most likely to not recognize.
+    for (const source of [
+      "[a][r]\n\n[r]: https://ex.com\n",
+      "[r][]\n\n[r]: https://ex.com\n",
+      "[r]\n\n[r]: https://ex.com\n",
+    ]) {
+      expect(shape(source)).toBe("paragraph(linkReference(text)),definition");
+    }
   });
 
   // Inline HTML is literal text here (protectTagLikeAngleBrackets, DR-0010) —
@@ -1717,8 +1735,9 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
 
   // `**` nested inside `*` nests as strong-within-emphasis, with the
   // surrounding text kept as siblings.
-  test("strong nested inside emphasis keeps both and its surrounding text", () => {
+  test("emphasis nests in both directions and keeps its surrounding text", () => {
     expect(shape("*outer **inner** rest*\n")).toBe("paragraph(emphasis(text,strong(text),text))");
+    expect(shape("**x *e* y**\n")).toBe("paragraph(strong(text,emphasis(text),text))");
   });
 
   // Tabs are expanded to CommonMark's tab stops: a tab-indented continuation
@@ -1726,6 +1745,43 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
   test("tab indentation follows CommonMark tab stops", () => {
     expect(shape("- foo\n\tbar\n")).toBe("list(listItem(paragraph(text)))");
     expect(shape("-\t\tfoo\n")).toBe("list(listItem(code))");
+    // A tab-indented code block keeps every character after the tab: a tab
+    // stop is a width, not a count of characters to drop.
+    const code = parseMarkdownSource("\tcode\n").children[0];
+    expect(code?.type).toBe("code");
+    if (code?.type !== "code") return;
+    expect(code.value).toBe("code");
+  });
+
+  // Constructs that must keep rendering exactly as they always have. These are
+  // the other half of a parser swap: the conformance pins above prove the
+  // breakage is gone, these prove nothing else moved with it.
+  test("everyday constructs are unchanged", () => {
+    expect(shape("- a\n- b\n")).toBe("list(listItem(paragraph(text)),listItem(paragraph(text)))");
+    expect(shape("1. a\n2. b\n")).toBe("list(listItem(paragraph(text)),listItem(paragraph(text)))");
+    expect(shape("- a\n  - b\n")).toBe(
+      "list(listItem(paragraph(text),list(listItem(paragraph(text)))))",
+    );
+    expect(shape("- [x] done\n- [ ] todo\n")).toBe(
+      "list(listItem(paragraph(text)),listItem(paragraph(text)))",
+    );
+    expect(shape("| a | b |\n| - | - |\n| 1 | 2 |\n")).toBe(
+      "table(tableRow(tableCell(text),tableCell(text)),tableRow(tableCell(text),tableCell(text)))",
+    );
+    expect(shape("~~x~~\n")).toBe("paragraph(delete(text))");
+    expect(shape("a  \nb\n")).toBe("paragraph(text,break,text)");
+    expect(shape("a\n===\n")).toBe("heading(text)");
+    expect(shape("> a\n> b\n")).toBe("blockquote(paragraph(text))");
+  });
+
+  // A bare URL in prose stays prose. GFM's autolink-literal extension would
+  // turn it into a link, which is a behavior change for message bodies full of
+  // pasted URLs — so this app registers table/strikethrough/task-list only.
+  // If this starts failing, the GFM extension set grew.
+  test("a bare URL in prose is not autolinked", () => {
+    expect(shape("see https://ex.com x\n")).toBe("paragraph(text)");
+    const vnode = renderMarkdownAst(parseMarkdownSource("see https://ex.com x\n"));
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
   });
 
   // `position.start.offset` is a document-absolute UTF-16 index. Both halves
