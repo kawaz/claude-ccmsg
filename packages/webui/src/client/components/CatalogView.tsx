@@ -20,6 +20,7 @@ import { CodeBlock } from "./CodeBlock.tsx";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { FileTypeIcon, type FileIconKind } from "./FileIcon.tsx";
+import { MarkdownView } from "../markdown-view.tsx";
 import { MemberChip } from "./MemberChip.tsx";
 import { Fold } from "./Fold.tsx";
 import { Tabs } from "./Tabs.tsx";
@@ -55,6 +56,11 @@ const SECTIONS: SectionDef[] = [
     note: "Timeline の発話者別スタイル。既存クラスの見本。",
   },
   { id: "file", title: "ファイルアイコン", note: "FileTree / 検索結果のエントリ種別、全 7 種。" },
+  {
+    id: "markdown",
+    title: "Markdown 本文",
+    note: "ファイルプレビューの組版。段落・見出し・強調の縦リズムを 1 枚で見る。",
+  },
   {
     id: "code",
     title: "コードブロック",
@@ -148,6 +154,66 @@ const FILE_ICON_KINDS: FileIconKind[] = [
 const CODE_SAMPLE = `export function catalogHref(): string {
   return "/catalog";
 }`;
+
+/** 読み物としての markdown を測るための見本。要素を 1 個ずつ並べた一覧では
+ * 「詰まって見える」「強調が効いていない」は出てこない — 段落が連続し、その
+ * 間に見出しやリストが挟まる普通の文書の形にして初めて縦のリズムが見える。
+ * 実ファイルのプレビューと同じ `.viewer-preview .md` で組む。 */
+const MARKDOWN_SAMPLE = `# 組版の見本
+
+この段落は本文の基準になる。行間・字送り・1 行の長さは、**この長さの文章を続けて読んだときに目が迷わないか**で決まる。要素見本を 1 個ずつ並べても分からないのはここで、段落が 2 つ以上続いて初めて行間と段落間の差が効く。
+
+段落が変わったことは、行が変わったことより強く見えなければならない。段落間隔が行間と同じだと、文章はひと塊の壁になる。逆に開けすぎると、今度は段落同士が無関係な断片に見えてしまう。
+
+## 見出しの間隔
+
+見出しは直後の本文のものなので、上の余白が下の余白より広い。狭いと前の節にくっついて見え、どこで話題が変わったのか分からなくなる。
+
+### 強調と用語
+
+本文中の \`--space-9\` のようなトークン名は等幅で出す。**強調は本文より強く見える**必要があり、[リンク](/catalog)は色で分かる。強調とリンクと等幅が同じ段落に同居しても、それぞれ別の役割として読めるのが目標。
+
+- 箇条書きの 1 行目。折り返すくらいの長さがあるときに、2 行目が行頭記号ではなく 1 行目の文字に揃うと読みやすい
+- **項目名** — 説明が続く形。項目名が本文と同じ濃さだと箇条書きは平坦になる
+  - 入れ子の項目。親との段差は階層の唯一の手掛かり
+  - もう 1 つの入れ子
+- 3 つ目の項目
+
+1. 順序に意味がある場合は番号付き
+2. 番号と本文の間隔も縦のリズムに乗せる
+
+- [x] チェックリストの行頭は、箇条書きの行頭記号と同じ位置に揃う
+- [ ] 未チェックの項目
+
+> 引用は本文と地を変え、左の罫で範囲を示す。引用の中でも段落の間隔は保たれる。
+
+| 要素 | 決めるもの | 効き方 |
+| --- | --- | --- |
+| 行間 | 行と行の距離 | 1 段落の中の密度 |
+| 段落間隔 | 段落と段落の距離 | 話の切れ目 |
+| 強調 | 太さと濃さ | 本文からの浮き上がり |
+
+\`\`\`ts
+export function catalogHref(): string {
+  return "/catalog";
+}
+\`\`\`
+
+---
+
+最後の段落。区切り線の前後も、他のブロックと同じ間隔の規則に従う。`;
+
+/** 会話の中の markdown。文書見本と同じ要素を、Timeline に実際に出る分量で。 */
+const MARKDOWN_BUBBLE_SAMPLE = `プレビューと同じ規則で組んであるが、値は詰めてある。**段落の切れ目**は行の切れ目より広く、それでも 1 発言が縦に伸びすぎない範囲に収まる。
+
+行が続いてもここが段落の変わり目だと分かる。
+
+### 見出し
+
+- 箇条書きも同じ縦のリズムに乗る
+- \`--space-10\` のようなトークン名は等幅
+
+> 引用は地の色を落とす。他所の文の再掲だから。`;
 
 function Section({ def, children }: { def: SectionDef; children: ComponentChildren }) {
   return (
@@ -606,6 +672,31 @@ function FileIconSection() {
   );
 }
 
+/** `.viewer-preview` ごと借りるのは、プレビューの組版が容器側のクラスにも
+ * 乗っているため — `.md` だけを裸で置くと、実画面と違うものを見本と呼ぶことに
+ * なる。容器のスクロールと末尾余白だけを `.catalog-md-stage` で外す。 */
+function MarkdownSection() {
+  return (
+    <>
+      <Specimen name=".viewer-preview .md" note="ファイルプレビューの本文組版">
+        <div class="viewer-preview catalog-md-stage">
+          <MarkdownView source={MARKDOWN_SAMPLE} />
+        </div>
+      </Specimen>
+      {/* 同じ markdown を容器なしで置くと、Timeline の密度がそのまま出る。
+       * 2 つを並べて初めて「同じ比 / 違う値」という関係が見える。 */}
+      <Specimen name=".md" note="Timeline の吹き出しの中。同じ規則を詰めた値で">
+        <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
+          <div class="tl-bubble-body">
+            <MarkdownView source={MARKDOWN_BUBBLE_SAMPLE} />
+          </div>
+          <span class="tl-bubble-time">12:05</span>
+        </div>
+      </Specimen>
+    </>
+  );
+}
+
 function CodeSection() {
   return (
     <>
@@ -700,6 +791,7 @@ const SECTION_BODIES: Record<string, () => ComponentChildren> = {
   badge: BadgeSection,
   bubble: BubbleSection,
   file: FileIconSection,
+  markdown: MarkdownSection,
   code: CodeSection,
   form: FormSection,
   error: ErrorSection,
