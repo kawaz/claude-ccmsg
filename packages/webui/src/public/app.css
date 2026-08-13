@@ -36,6 +36,16 @@
    * (kawaz r119 m13「bold って人には微妙な違いでしかなくわかりにくい」)。 */
   --fg-strong: #000000;
 
+  /* markdown 装飾が基準にする「いま自分が載っている面の色」。inline code の
+   * 地や blockquote の罫のような装飾は、絶対色で持つと面ごとに効き方が変わる —
+   * 白地のプレビューで --bg-alt を敷いても地の文とほぼ同じ色にしかならず、
+   * 何も強調されない (kawaz r119 m16/m17)。面から --fg 方向へ何 % 離すか、
+   * という距離で持てばどの面でも同じだけ浮く。
+   * 宣言する責務は md を載せる容器の側にあり、宣言は容器の background の隣に
+   * 置く (規約は docs/design/design-tokens.md)。ここは容器が背景を持たない
+   * とき (body 直下 = --bg の上) の既定値。 */
+  --md-surface: var(--bg);
+
   /* 行間 — markdown 本文の縦の密度。文書として読むプレビューが --md-leading、
    * 会話として流し読む Timeline が --md-leading-tight。段落間隔はこれより
    * 広くなければ段落の切れ目が行の切れ目に埋もれる (下の .md 参照)。 */
@@ -1874,6 +1884,7 @@ a {
   border-radius: 0.5rem;
   padding: var(--space-7) var(--space-9);
   background: var(--bg-alt);
+  --md-surface: var(--bg-alt);
   max-width: 90%;
 }
 
@@ -1892,12 +1903,14 @@ a {
  * テーマカラーは oklch (r56m13: 「テーマカラーは oklab / グラデは oklch」)。 */
 .msg[style*="--member-hue"] {
   background: oklch(0.96 0.03 var(--member-hue));
+  --md-surface: oklch(0.96 0.03 var(--member-hue));
   border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
   border-top: 1px solid oklch(0.65 0.15 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .msg[style*="--member-hue"] {
     background: oklch(0.24 0.025 var(--member-hue));
+    --md-surface: oklch(0.24 0.025 var(--member-hue));
     border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
     border-top: 1px solid oklch(0.65 0.12 var(--member-hue));
   }
@@ -1913,6 +1926,7 @@ a {
 .msg-user {
   align-self: flex-end;
   background: var(--user-bubble-bg);
+  --md-surface: var(--user-bubble-bg);
 }
 
 .msg-meta {
@@ -3844,6 +3858,7 @@ button.session-tab {
   padding: var(--space-5) var(--space-9);
   width: fit-content;
   background: var(--bg-alt);
+  --md-surface: var(--bg-alt);
 }
 
 /* ccmsg msg 本文 (CcmsgBubble の msg タブ) はチャット様式: 段落内の単一
@@ -3871,6 +3886,7 @@ button.session-tab {
 .tl-bubble-right .tl-bubble-body {
   border-radius: 0.7rem 0.7rem 0.15rem 0.7rem;
   background: var(--user-bubble-bg);
+  --md-surface: var(--user-bubble-bg);
 }
 
 /* 👤 nav を操作した後、現在の index が指す user bubble を示す。outline は
@@ -3887,6 +3903,7 @@ button.session-tab {
 
 .tl-bubble-peer .tl-bubble-body {
   background: var(--peer-bubble-bg);
+  --md-surface: var(--peer-bubble-bg);
 }
 
 /* セッション主 (メインコンテキスト) のアシスタント出力 (kawaz r17 mid=28):
@@ -3896,6 +3913,7 @@ button.session-tab {
 .tl-bubble-assistant .tl-bubble-body {
   background: var(--assistant-bubble-bg);
   border: 1px solid var(--assistant-bubble-border);
+  --md-surface: var(--assistant-bubble-bg);
 }
 
 /* Claude Code が turn の中断 (context 溢れ / API エラー / usage 上限 / 未
@@ -4133,11 +4151,21 @@ button.session-tab {
   margin-block: var(--space-5);
 }
 
+/* 引用は面から薄く沈めた帯 + 太い左罫で「地の文ではない」と示す。色は面から
+ * の距離で持つので、白地のプレビューでも吹き出しの中でも同じだけ浮く。 */
 .md blockquote {
   margin: var(--space-10) 0;
   padding: var(--space-2) var(--space-9);
-  border-left: 3px solid var(--border);
+  background: color-mix(in oklab, var(--md-surface), var(--fg) 4%);
+  border-left: 3px solid color-mix(in oklab, var(--md-surface), var(--fg) 28%);
+  border-radius: 0 0.25rem 0.25rem 0;
   color: var(--fg-muted);
+}
+/* 帯の中はもう地の色ではない — 中に入る code / 表はこの色を基準に測る。
+ * 宣言先が子なのは、`--md-surface` を自分自身の値から作り直すと custom
+ * property の循環参照になって値ごと無効になるため (親の値は子から見える)。 */
+.md blockquote > * {
+  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 4%);
 }
 
 /* 区切り線は「話題がここで変わる」の最も強い合図なので、前後の余白は見出しの
@@ -4146,7 +4174,7 @@ button.session-tab {
 .md hr {
   margin: var(--space-15) 0;
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 22%);
 }
 
 /* kawaz r55 m77: `<details>`/`<summary>` は markdown 中で唯一構造として解釈する
@@ -4155,9 +4183,13 @@ button.session-tab {
 .md-details {
   margin: var(--space-5) 0;
   padding: var(--space-1) var(--space-8);
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
   border-radius: 0.35rem;
-  background: var(--bg-alt);
+  background: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
+}
+/* 畳んだ中身はこのパネルの上に載る (子に宣言する理由は blockquote と同じ)。 */
+.md-details > * {
+  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
 }
 
 .md-details > summary {
@@ -4172,7 +4204,7 @@ button.session-tab {
 
 .md-details[open] > summary {
   margin-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
 }
 
 .md-details > :last-child {
@@ -4202,21 +4234,27 @@ button.session-tab {
   text-underline-offset: 0.15em;
 }
 
-/* 地色 (--bg-alt) だけだと明度差が小さく、本文の中でどこからどこまでが
- * コードなのか輪郭が出ない — 罫を 1 本足して範囲を確定させる。 */
+/* 絶対色 (--bg-alt / --border) で敷いていた頃は、白地のプレビューの上で地の
+ * 文とほぼ同じ色になり「何も強調されていない」状態だった (kawaz r119 m16/m17)
+ * — 吹き出しの中でだけ効いて見えていたのは、吹き出しの色と偶然差があった
+ * ため。地 / 罫 / 文字の 3 つとも面からの距離で持ち、どの面でも同じだけ
+ * 浮かせる。罫が範囲を確定させ、地と文字の濃さが「ここは記号列だ」を示す。 */
 .md-inline-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
-  background: var(--bg-alt);
-  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--md-surface), var(--fg) 9%);
+  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 24%);
+  color: var(--fg-strong);
   padding: 0.05rem var(--space-5);
   border-radius: 0.25rem;
 }
 
+/* ブロックコードは Shiki が字の色だけを塗る (.shiki-tok) — 地は持たないので
+ * inline code と同じ導出で敷く。面積が広い分、同じ濃さだと重いので浅く。 */
 .md-code {
   margin: var(--space-10) 0;
   padding: var(--space-8) var(--space-9);
-  background: var(--bg-alt);
+  background: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
   border-radius: 0.4rem;
   overflow-x: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -4241,14 +4279,17 @@ button.session-tab {
 }
 .md th,
 .md td {
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 20%);
   padding: var(--space-6) var(--space-9);
   text-align: left;
 }
 /* 見出し行は地色だけでなく濃さでも列の見出しだと分かるようにする (本文の
  * 強調と同じ手当て)。 */
+.md th > * {
+  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
+}
 .md th {
-  background: var(--bg-alt);
+  background: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
   color: var(--fg-strong);
   font-weight: 700;
 }
@@ -4670,6 +4711,7 @@ button.session-tab {
    * 破線 + 薄い背景により格の違いを見せる。フォントサイズは従来の小ささを
    * 維持。 */
   background: var(--assistant-bubble-bg);
+  --md-surface: var(--assistant-bubble-bg);
   border: 1px dashed var(--assistant-bubble-border);
   border-radius: 0.5rem;
   padding: var(--space-6) var(--space-8);
@@ -4822,12 +4864,14 @@ button.session-tab {
  * ROOM 側 `.msg` と同方式・同トークン (oklch)。詳細はそちらのコメント参照。 */
 .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
   background: oklch(0.96 0.03 var(--member-hue));
+  --md-surface: oklch(0.96 0.03 var(--member-hue));
   border-left: 3px solid oklch(0.65 0.15 var(--member-hue));
   border-top: 1px solid oklch(0.65 0.15 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-ccmsg-peer[style*="--member-hue"] .tl-bubble-body {
     background: oklch(0.24 0.025 var(--member-hue));
+    --md-surface: oklch(0.24 0.025 var(--member-hue));
     border-left: 3px solid oklch(0.65 0.12 var(--member-hue));
     border-top: 1px solid oklch(0.65 0.12 var(--member-hue));
   }
@@ -4912,10 +4956,12 @@ button.session-tab {
  * 薄背景のみで識別する (CcmsgBubble = ルームメッセージ側は現状維持)。 */
 .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
   background: oklch(0.96 0.03 var(--member-hue));
+  --md-surface: oklch(0.96 0.03 var(--member-hue));
 }
 @media (prefers-color-scheme: dark) {
   .tl-bubble-agent[style*="--member-hue"] .tl-bubble-body {
     background: oklch(0.24 0.025 var(--member-hue));
+    --md-surface: oklch(0.24 0.025 var(--member-hue));
   }
 }
 
@@ -7646,11 +7692,14 @@ button.usage-reset:hover {
   color: var(--fg-muted);
 }
 
+/* 見本の台は素の md プレビューと同じ地の上に立つ (--md-surface はここでも
+ * 台の background の隣で宣言する — 台の色を変えたら装飾もついて来る)。 */
 .catalog-specimen-stage {
   padding: var(--space-11);
   border: 1px solid var(--border);
   border-radius: 0.4rem;
   background: var(--bg);
+  --md-surface: var(--bg);
   /* 幅の広い見本 (コードブロック等) は台の中で横スクロールさせ、画面全体を
    * 横に伸ばさない。 */
   overflow-x: auto;
