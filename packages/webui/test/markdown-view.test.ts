@@ -503,6 +503,12 @@ describe("renderMarkdownAst / structural coverage", () => {
     expect(flattenText(vnode)).toBe("x = 1");
   });
 
+  // kawaz r119 m15: a bold run naming a real file linkifies exactly like an
+  // inline-code path — same linker, so the same "shape + daemon-confirmed"
+  // gate. The <strong> stays inside the <a> so the text still reads as
+  // emphasis when the link is declined or the reader ignores it.
+  describeStrongLinkTests();
+
   // Headings 1-6 map to their own <hN> tag (depth is clamped defensively,
   // though mdast's Heading.depth type is already 1|2|...|6).
   test("heading depth maps to the matching h1..h6 tag", () => {
@@ -1814,3 +1820,77 @@ describe("parseMarkdownSource / CommonMark conformance", () => {
     expect(quoted.slice(2, 7)).toBe("- [ ]");
   });
 });
+
+// Grouped as a function so the linkify cases sit next to the other inline-node
+// tests above without splitting that describe block's flow.
+function describeStrongLinkTests(): void {
+  const strongRoot = (value: string): Root => ({
+    type: "root",
+    children: [
+      { type: "paragraph", children: [{ type: "strong", children: [{ type: "text", value }] }] },
+    ],
+  });
+  const linker = (token: string) => (token === "docs/x.md" ? "#/file/S1/docs/x.md" : null);
+
+  test("a path-shaped strong the linker accepts renders as <a><strong>", () => {
+    const vnode = renderMarkdownAst(strongRoot("docs/x.md"), undefined, undefined, {
+      filePathLinker: linker,
+    });
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.props).toMatchObject({
+      href: "#/file/S1/docs/x.md",
+      class: "md-strong-file-link",
+    });
+    expect(collect(links[0]!, (n) => n.type === "strong")).toHaveLength(1);
+    expect(flattenText(vnode)).toBe("docs/x.md");
+  });
+
+  test("ordinary emphasis stays a plain <strong>", () => {
+    const vnode = renderMarkdownAst(strongRoot("重要"), undefined, undefined, {
+      filePathLinker: linker,
+    });
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(1);
+  });
+
+  test("a path the linker declines (unknown/pending) stays a plain <strong>", () => {
+    const vnode = renderMarkdownAst(strongRoot("docs/missing.md"), undefined, undefined, {
+      filePathLinker: linker,
+    });
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(1);
+  });
+
+  test("without a linker (restricted / no sender) strong is untouched", () => {
+    const vnode = renderMarkdownAst(strongRoot("docs/x.md"));
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(collect(vnode, (n) => n.type === "strong")).toHaveLength(1);
+  });
+
+  test("strong with mixed children is not linkified as a whole", () => {
+    // `**docs/x.md `c`**` — multiple children, so the structural guard
+    // declines and the inline-code case keeps handling its own token.
+    const root: Root = {
+      type: "root",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            {
+              type: "strong",
+              children: [
+                { type: "text", value: "docs/x.md" },
+                { type: "inlineCode", value: "docs/x.md" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const vnode = renderMarkdownAst(root, undefined, undefined, { filePathLinker: linker });
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links).toHaveLength(1);
+    expect(links[0]!.props).toMatchObject({ class: "md-inline-code-file-link" });
+  });
+}

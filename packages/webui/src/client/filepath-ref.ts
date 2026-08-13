@@ -425,6 +425,22 @@ export function hrefFromStatEntry(
  * MarkdownView already parses inside its `useMemo` — doing it a second time
  * up front for the extraction pass would double the per-message parse cost. */
 export function extractInlineCodeTokens(source: string): string[] {
+  return extractTokens(source, /`([^`]+)`/g);
+}
+
+/** Same scan for `**bold**` runs (kawaz r119 m15): agents write paths bold as
+ * often as they write them in backticks, and a reader clicking one expects
+ * the same FileViewer jump. Only runs with no `*` inside are taken, which is
+ * the mdast shape the renderer also requires (a single `text` child) — a
+ * bold span containing further inline markup is left to the inline-code path.
+ * Ordinary emphasis is filtered downstream by the same `parseFilePathRef` +
+ * daemon-existence pair inline code goes through, so prose like `**注意**`
+ * never reaches a probe. */
+export function extractStrongTokens(source: string): string[] {
+  return extractTokens(source, /\*\*([^*]+)\*\*/g);
+}
+
+function extractTokens(source: string, inlineRe: RegExp): string[] {
   const tokens: string[] = [];
   const lines = source.split("\n");
   let inFence = false;
@@ -434,7 +450,6 @@ export function extractInlineCodeTokens(source: string): string[] {
   // slightly larger region than the spec would, which for our purpose (avoid
   // linkifying code samples) is fine.
   const fenceRe = /^ {0,3}(?:`{3,}|~{3,})/;
-  const inlineRe = /`([^`]+)`/g;
   for (const line of lines) {
     if (fenceRe.test(line)) {
       inFence = !inFence;

@@ -13,8 +13,8 @@
  *      trigger a re-render (the monotonic tick threads into the linker's
  *      identity to bust MarkdownView's useMemo).
  *   3. `makeFilePathLinker` — build the per-token linker MarkdownView calls
- *      on every inline-code token, returning a `FileViewer` href only when
- *      the daemon confirmed a real file.
+ *      on every inline-code token and every path-shaped bold run, returning
+ *      a `FileViewer` href only when the daemon confirmed a real file.
  *
  * The `LinkedMarkdownView` component packs the three into one call site so
  * consumers just pass `source` + `ctx` (+ optional highlight props). When
@@ -29,6 +29,7 @@ import { useEffect, useState } from "preact/hooks";
 import {
   containmentRootOf,
   extractInlineCodeTokens,
+  extractStrongTokens,
   hrefFromStatEntry,
   parseFilePathRef,
   refLinkTarget,
@@ -46,7 +47,7 @@ import { MarkdownView, type FilePathLinker, type MarkdownPathLinker } from "./ma
 import type { SearchWord } from "./in-view-search.ts";
 
 /** Build the per-message linker MarkdownView calls on every inline-code
- * token. See module doc for the semantics of `pending`/missing/declined. */
+ * token and every single-text `**bold**` run. See module doc for the semantics of `pending`/missing/declined. */
 export function makeFilePathLinker(
   ctx: FilePathResolveCtx | undefined,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- `_cacheTick` forces closure identity to change on cache updates so MarkdownView's useMemo re-runs
@@ -111,7 +112,7 @@ export function useFilePathProbeEnqueue(
 ): void {
   useEffect(() => {
     if (!ctx || !source) return;
-    for (const token of extractInlineCodeTokens(source)) {
+    for (const token of [...extractInlineCodeTokens(source), ...extractStrongTokens(source)]) {
       const ref = parseFilePathRef(token);
       if (!ref) continue;
       const abs = refToAbsolutePath(ref, ctx);
@@ -161,8 +162,9 @@ export function LinkedMarkdownView({
 }) {
   const probeTarget = restricted ? undefined : probeSource === undefined ? source : probeSource;
   const probeCtx = restricted ? undefined : ctx;
-  // Only inline code is probed. Markdown link targets are declared, not
-  // guessed, so they link without asking (see `makeMarkdownPathLinker`).
+  // Only guessed references (inline code, bold runs) are probed. Markdown
+  // link targets are declared, not guessed, so they link without asking (see
+  // `makeMarkdownPathLinker`).
   useFilePathProbeEnqueue(probeTarget, probeCtx);
   const cacheTick = useFilePathCacheTick();
   const linker = restricted ? undefined : makeFilePathLinker(ctx, cacheTick);

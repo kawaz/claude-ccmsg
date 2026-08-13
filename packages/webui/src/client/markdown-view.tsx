@@ -356,8 +356,29 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       ) as VNode;
     }
 
-    case "strong":
-      return <strong key={key}>{renderChildren((node as Strong).children, key, ctx)}</strong>;
+    case "strong": {
+      const strong = node as Strong;
+      // kawaz r119 m15: a bold path gets the same FileViewer link an
+      // inline-code path gets — agents write `**docs/x.md**` and
+      // `` `docs/x.md` `` interchangeably, and only one of them being
+      // clickable reads as a bug. Same linker, so the same guards apply:
+      // path shape + a daemon-confirmed file, which is what keeps ordinary
+      // emphasis (`**重要**`, `**Note**`) from turning into links. The extra
+      // condition here is structural — exactly one `text` child — so a bold
+      // span carrying further inline markup keeps its existing rendering
+      // (any inline code inside still linkifies through its own case).
+      const only = strong.children.length === 1 ? strong.children[0] : undefined;
+      const href =
+        only?.type === "text" && ctx.filePathLinker
+          ? ctx.filePathLinker((only as Text).value)
+          : null;
+      if (!href) return <strong key={key}>{renderChildren(strong.children, key, ctx)}</strong>;
+      return (
+        <a key={key} class="md-strong-file-link" href={href}>
+          <strong>{renderChildren(strong.children, key, ctx)}</strong>
+        </a>
+      );
+    }
 
     case "emphasis":
       return <em key={key}>{renderChildren((node as Emphasis).children, key, ctx)}</em>;

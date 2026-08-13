@@ -12,6 +12,7 @@ import {
   refToAbsolutePath,
   hrefFromStatEntry,
   extractInlineCodeTokens,
+  extractStrongTokens,
   previewFilePathCtx,
   alternateLinkReading,
   isRecoverableLinkError,
@@ -217,6 +218,30 @@ describe("extractInlineCodeTokens", () => {
   test("skips tilde-fenced blocks too", () => {
     const src = ["`kept.ts`", "~~~", "`inside.ts`", "~~~", "`kept2.ts`"].join("\n");
     expect(extractInlineCodeTokens(src)).toEqual(["kept.ts", "kept2.ts"]);
+  });
+});
+
+// kawaz r119 m15: bold runs feed the same probe queue as inline code, so a
+// `**docs/x.md**` written by an agent is confirmed and linked like its
+// backtick-quoted twin. Prose emphasis lands here too; it is `parseFilePathRef`
+// + the daemon probe (not this scan) that decline it.
+describe("extractStrongTokens", () => {
+  test("collects bold runs across a message", () => {
+    const src = "See **packages/a.ts:1** and **docs/x.md**.\nAlso **strong words**.";
+    expect(extractStrongTokens(src)).toEqual(["packages/a.ts:1", "docs/x.md", "strong words"]);
+  });
+  test("skips fenced code block contents", () => {
+    const src = [
+      "Prose **outside.ts** ok.",
+      "```",
+      "**not/a/real.ts**",
+      "```",
+      "After **after.md**.",
+    ].join("\n");
+    expect(extractStrongTokens(src)).toEqual(["outside.ts", "after.md"]);
+  });
+  test("ignores single-asterisk emphasis and nested-markup runs", () => {
+    expect(extractStrongTokens("*em* and **a *b* c** here")).toEqual([]);
   });
 });
 
