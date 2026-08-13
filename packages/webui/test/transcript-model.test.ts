@@ -850,6 +850,33 @@ describe("parseTranscriptLine / assistant turns", () => {
     });
   });
 
+  // API の display:"omitted" (thinking:"" + signature) と redacted_thinking は
+  // 「思考は起きたが本文が無い」同じ状況。signature は本文の暗号化コピーで
+  // 表示に使えないので、segment には持ち込まず reason だけを残す。
+  test("a body-less thinking block becomes thinking-hidden and drops the signature", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "t",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "", signature: "CAISugIKiAEIEBgC" },
+            { type: "thinking", thinking: "   \n  ", signature: "sig" },
+            { type: "redacted_thinking", data: "EncryptedBlob" },
+          ],
+        },
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.segments).toEqual([
+      { kind: "thinking-hidden", reason: "omitted" },
+      { kind: "thinking-hidden", reason: "omitted" },
+      { kind: "thinking-hidden", reason: "redacted" },
+    ]);
+  });
+
   test("text + thinking + tool_use blocks fold to matching segments in order", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
@@ -1281,6 +1308,14 @@ describe("isSearchableSegment", () => {
     expect(isSearchableSegment(seg, { ...ALL_OFF, ai: true })).toBe(true);
     expect(isSearchableSegment(seg, { ...ALL_ON, ai: false })).toBe(false);
   });
+
+  // 本文が無い = どのクエリにも当たらないので、ai を on にしても数えない
+  // (highlight も scroll 先も無い ghost match になるため)。
+  test("a body-less thinking segment is never searchable", () => {
+    const seg: Segment = { kind: "thinking-hidden", reason: "omitted" };
+    expect(isSearchableSegment(seg, ALL_ON)).toBe(false);
+    expect(segmentSearchText(seg)).toBe("");
+  });
 });
 
 // ccmsgDedupKey (kawaz r15 mid=21 dedup, extended by r26 mid=97 search unit
@@ -1580,6 +1615,18 @@ describe("foldGroupLabel", () => {
   test("every entry is thinking-only -> 'N thinking' (no '+ 0 items')", () => {
     const entries = [entry(0, assistantThinking("a")), entry(1, assistantThinking("b"))];
     expect(foldGroupLabel(entries)).toBe("2 thinking");
+  });
+
+  // 本文の無い thinking も「思考した」事実としては同じなので thinking と
+  // して数える (items に落とすと fold の内訳が実態とずれる)。
+  test("a body-less thinking entry counts as thinking", () => {
+    const hidden: ParsedLine = {
+      kind: "turn",
+      ts: null,
+      role: "assistant",
+      segments: [{ kind: "thinking-hidden", reason: "omitted" }],
+    };
+    expect(foldGroupLabel([entry(0, assistantThinking("a")), entry(1, hidden)])).toBe("2 thinking");
   });
 
   // Mixed: one thinking + one non-thinking -> "1 thinking + 1 items".

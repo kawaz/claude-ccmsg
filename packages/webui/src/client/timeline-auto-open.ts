@@ -37,6 +37,7 @@ export function toggleTimelineAutoOpen(
 export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | null {
   switch (segment.kind) {
     case "thinking":
+    case "thinking-hidden":
       return "T";
     case "agent-send":
     case "agent-spawn":

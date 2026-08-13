@@ -64,6 +64,8 @@ describe("segmentAutoOpenCategory", () => {
   // 操作で勝手に開閉されない。
   test("thinking is T, agent spawn/send are A, ordinary tools are uncategorized", () => {
     expect(segmentAutoOpenCategory({ kind: "thinking", text: "inspect" })).toBe("T");
+    // 本文が無くても fold は thinking と同じ枠なので、T の開閉に追従する。
+    expect(segmentAutoOpenCategory({ kind: "thinking-hidden", reason: "redacted" })).toBe("T");
     expect(
       segmentAutoOpenCategory({
         kind: "agent-send",

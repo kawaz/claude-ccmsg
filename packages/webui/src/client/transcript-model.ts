@@ -49,6 +49,13 @@ export type FileToolResult =
 export type Segment =
   | { kind: "text"; role: "user" | "assistant"; text: string }
   | { kind: "thinking"; text: string }
+  // 思考は起きたが本文が transcript に無い block。`omitted` は API の
+  // `display:"omitted"` (thinking:"" + signature — signature は本文の
+  // 暗号化コピーなので復号できず、表示にも使えない)、`redacted` は
+  // `redacted_thinking` (本文が `data` に墨消し済みで入る)。本文が無い以上
+  // 翻訳も検索もできないため、text を持つ `thinking` とは別 variant にして
+  // 各 switch に扱いを明示させる。
+  | { kind: "thinking-hidden"; reason: "omitted" | "redacted" }
   | { kind: "tool-use"; name: string; input: unknown }
   | {
       kind: "file-read";
@@ -351,8 +358,14 @@ function parseSegments(
     switch (b.type) {
       case "text":
         return { kind: "text", role, text: typeof b.text === "string" ? b.text : "" };
-      case "thinking":
-        return { kind: "thinking", text: typeof b.thinking === "string" ? b.thinking : "" };
+      case "thinking": {
+        const text = typeof b.thinking === "string" ? b.thinking : "";
+        return text.trim()
+          ? { kind: "thinking", text }
+          : { kind: "thinking-hidden", reason: "omitted" };
+      }
+      case "redacted_thinking":
+        return { kind: "thinking-hidden", reason: "redacted" };
       case "tool_use": {
         const name = typeof b.name === "string" ? b.name : "?";
         const toolUseId = typeof b.id === "string" ? b.id : "";
@@ -996,6 +1009,8 @@ export function segmentSearchText(segment: Segment): string {
     case "thinking":
     case "tool-result":
       return segment.text;
+    case "thinking-hidden":
+      return "";
     case "tool-use":
       return JSON.stringify(segment.input, null, 2);
     case "file-read":
@@ -1062,6 +1077,10 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
       return segment.role === "user" ? targets.user : targets.ai;
     case "thinking":
       return targets.ai;
+    // 本文が無いので綴りが存在しない = どのクエリにも当たらない。数えると
+    // highlight も scroll 先も無い ghost match になる。
+    case "thinking-hidden":
+      return false;
     case "tool-use":
     case "file-read":
     case "file-write":
@@ -1344,7 +1363,10 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
  * not sink into an items sub-fold. */
 export function isThinkingEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
-  return line.kind === "turn" && line.segments.some((s) => s.kind === "thinking");
+  return (
+    line.kind === "turn" &&
+    line.segments.some((s) => s.kind === "thinking" || s.kind === "thinking-hidden")
+  );
 }
 
 /** Outgoing agent communication segments: SendMessage and Agent calls. */

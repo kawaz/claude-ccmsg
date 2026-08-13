@@ -4772,6 +4772,13 @@ button.session-tab {
   max-width: 85%;
 }
 
+/* 本文の無い thinking のプレースホルダ。thinking 本文より一段弱い扱い。 */
+.tl-thinking-hidden-note {
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  opacity: 0.75;
+}
+
 /* thinking 翻訳比較タブ (DR-0023)。 */
 .tl-thinking-toolbar {
   display: flex;

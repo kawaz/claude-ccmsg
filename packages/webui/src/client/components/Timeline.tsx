@@ -1026,6 +1026,45 @@ function enqueueViewportTranslation(element: Element, start: () => void): () => 
   return () => pendingViewportTranslations.delete(element);
 }
 
+/** 本文の無い thinking (thinking-hidden)。thinking が起きた事実は TL の
+ * 流れとして意味を持つので通常 thinking と同じ fold で並べ、中身は理由を
+ * 示す 1 行に置き換える。閉じたままでも中身が無いと分かるよう summary に
+ * 印を付ける。翻訳・検索の対象にはならない (綴りが存在しない)。 */
+function HiddenThinkingSegment({
+  reason,
+  ts,
+}: {
+  reason: "omitted" | "redacted";
+  ts: string | null;
+}) {
+  const [detailsOpen, setDetailsOpen] = useCategoryOpen("thinking");
+  const note =
+    reason === "omitted"
+      ? "思考内容は非公開 — model が本文を返さない設定で動作"
+      : "安全性により墨消しされた思考 — 本文は復元できない";
+  return (
+    <details
+      class="tl-fold tl-thinking"
+      open={detailsOpen}
+      onToggle={(e) => setDetailsOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <FoldSummary
+        ts={ts}
+        label="thinking"
+        open={detailsOpen}
+        decoration={{ kind: "thinking" }}
+        trailing={reason === "omitted" ? "(非公開)" : "(墨消し)"}
+      />
+      <div class="tl-guided">
+        <FoldGuide />
+        <div class="tl-thinking-body">
+          <div class="tl-thinking-hidden-note">({note})</div>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function ThinkingSegment({
   text,
   ts,
@@ -1329,6 +1368,8 @@ function SegmentView({
             onDisplayChange={searchCtx?.notifyDisplayChange}
           />
         );
+      case "thinking-hidden":
+        return <HiddenThinkingSegment reason={segment.reason} ts={ts} />;
       case "tool-use":
         return (
           <details class="tl-fold">
@@ -1900,7 +1941,10 @@ function FoldGroup({
     () =>
       entries.filter(
         ({ line }) =>
-          line.kind === "turn" && line.segments.some((segment) => segment.kind === "thinking"),
+          line.kind === "turn" &&
+          line.segments.some(
+            (segment) => segment.kind === "thinking" || segment.kind === "thinking-hidden",
+          ),
       ).length,
     [entries],
   );
