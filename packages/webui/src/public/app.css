@@ -4242,9 +4242,14 @@ button.session-tab {
 .md-inline-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
-  background: color-mix(in oklab, var(--md-surface), var(--fg) 9%);
-  border: 1px solid color-mix(in oklab, var(--md-surface), var(--fg) 24%);
-  color: var(--fg-strong);
+  /* 明度差だけでは「同じ色が少し濃いだけ」に見えて記号列として立たない
+   * (kawaz r119 m19 — surface 相対化の初版が明度のみの導出で失敗した点)。
+   * 面からの距離 (相対) は保ちつつ、fg でなく accent 側へ混ぜて色相の
+   * 手掛かりを持たせる。文字も accent 寄りに振って「押せるリンク」とは
+   * 罫と地の有無で区別する。 */
+  background: color-mix(in oklab, var(--md-surface), var(--accent) 14%);
+  border: 1px solid color-mix(in oklab, var(--md-surface), var(--accent) 40%);
+  color: color-mix(in oklab, var(--fg-strong), var(--accent) 35%);
   padding: 0.05rem var(--space-5);
   border-radius: 0.25rem;
 }
