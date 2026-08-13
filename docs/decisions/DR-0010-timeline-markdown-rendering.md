@@ -78,3 +78,27 @@ Timeline.tsx の `SegmentView` で `segment.role === "assistant"` の場合の�
 
 1. dogfood: 実際の assistant transcript (コードブロック・テーブル・リンクを含むもの) で表示を確認 (kawaz)
 2. bundle サイズが実運用上問題になった場合、markdown レンダリングパスの dynamic import 化を検討 (未着手、DR 化は問題が顕在化してから)
+
+## Addendum 2026-08-13 (kawaz r119m12): パーサを mdast-util-from-markdown へ差し替え — §上記の `@mizchi/markdown` 採用を supersede
+
+`@mizchi/markdown` 0.6.5 に実バグ 8 種を実測確認した (リスト継続行が list 外へ脱出 /
+strong 内 inline 後のテキスト重複 / リスト項目消失 / link reference 非対応 / inline HTML
+を link として誤生成 / ネスト emphasis 不発 / tab インデント非対応 / position が
+コードポイント単位かつ入れ子でリセットされる破損)。週次 DL 42 の実質単独メンテで
+ワークアラウンド蓄積のコストが上回るため、パーサのみ差し替える:
+
+- **`mdast-util-from-markdown` + micromark/mdast の GFM 個別拡張 (table /
+  strikethrough / task-list-item)** を採用。`parse(src): Root` の同型差し替えで、
+  自前 JSX renderer (本 DR の本体) は無改修。比較調査の正本は
+  `docs/findings/2026-08-13-markdown-parser-comparison.md`
+- 本 DR 初版の micromark 不採用理由「mdast への変換を別途組むコストが高い」は
+  実態と不一致だった (`mdast-util-from-markdown` が公式の mdast 変換)
+- GFM 集約パッケージ (`mdast-util-gfm`) は autolink literal 拡張が引く
+  `unist-util-visit-parents` の self-reference subpath export を bun 1.3.13 が
+  解決できないため不採用 (個別拡張なら回避できる。unified 系を今後足す時も同じ壁に
+  当たる)。autolink literal / footnote は旧パーサにも無かった挙動なので非搭載のまま
+- ソース前処理 protect* は 4 → 1 に削減。残る `protectTagLikeAngleBrackets` は
+  旧パーサのバグ回避ではなく CommonMark の HTML ブロックの貪欲さ (タグ形状行が
+  後続を空行まで飲む) + no-raw-HTML ポリシーへの対策として存続
+- サイズ実測: 実バンドル gzip +5.5KB (270.5 → 276.1KB)。§コスト節の +40.7KB gz は
+  mizchi 導入時の値であり、本差し替え後の合計は上記が正
