@@ -43,6 +43,11 @@ export interface BarProgress {
   key: string;
   /** Consumed share, 0..1. Limits arrive as 0..100 and are divided here. */
   utilization: number;
+  /** Length of the period in milliseconds, null when it is unknown. Resolved
+   * once here so the elapsed fraction, the sort order and the denominator
+   * beside the row are all the same number — deriving it again at render time
+   * is how the three drift apart. */
+  durationMs: number | null;
   /** Fraction of the period already elapsed, 0..1. null when the period's
    * length or reset time is unknown, in which case there is nothing to
    * compare the utilization against and no pace verdict is offered. */
@@ -166,14 +171,36 @@ function paceOf(
   return { elapsed, overPace: elapsed !== null && utilization > elapsed + PACE_MARGIN };
 }
 
+/** Upstream's own `window_seconds` in milliseconds, or null when it is absent
+ * or not a usable length. Providers that report it are the authority on their
+ * own period — a key like "primary" names a slot whose length differs between
+ * them, so no amount of parsing the key can settle it. */
+function statedDurationMs(windowSeconds: number | undefined): number | null {
+  if (windowSeconds === undefined) return null;
+  if (!Number.isFinite(windowSeconds) || windowSeconds <= 0) return null;
+  return windowSeconds * 1000;
+}
+
+/** A window's period: what upstream states, else what its key spells out. */
+export function windowDurationMs(key: string, window: LlmUsageWindow): number | null {
+  return statedDurationMs(window.window_seconds) ?? parseWindowDurationMs(key);
+}
+
+/** A limit's period: what upstream states, else what its kind implies. */
+export function limitDurationMs(limit: LlmUsageLimit): number | null {
+  return statedDurationMs(limit.window_seconds) ?? limitKindDurationMs(limit.kind);
+}
+
 export function windowProgress(key: string, window: LlmUsageWindow, nowMs: number): WindowProgress {
   const resetAtMs = window.reset === undefined ? null : window.reset * 1000;
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
-  const { elapsed, overPace } = paceOf(parseWindowDurationMs(key), remainingMs, window.utilization);
+  const durationMs = windowDurationMs(key, window);
+  const { elapsed, overPace } = paceOf(durationMs, remainingMs, window.utilization);
   return {
     key,
     utilization: window.utilization,
     status: window.status,
+    durationMs,
     elapsed,
     remainingMs,
     resetAtMs,
@@ -212,11 +239,13 @@ export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgres
   const parsed = limit.resets_at === undefined ? Number.NaN : Date.parse(limit.resets_at);
   const resetAtMs = Number.isNaN(parsed) ? null : parsed;
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
-  const { elapsed, overPace } = paceOf(limitKindDurationMs(limit.kind), remainingMs, utilization);
+  const durationMs = limitDurationMs(limit);
+  const { elapsed, overPace } = paceOf(durationMs, remainingMs, utilization);
   const tone = severityTone(limit.severity);
   return {
     key: limit.kind,
     utilization,
+    durationMs,
     elapsed,
     remainingMs,
     resetAtMs,
@@ -238,8 +267,8 @@ export function sortedLimits(limits: readonly LlmUsageLimit[], nowMs: number): L
   return limits
     .map((limit, index) => ({ limit, index }))
     .sort((a, b) => {
-      const da = limitKindDurationMs(a.limit.kind);
-      const db = limitKindDurationMs(b.limit.kind);
+      const da = limitDurationMs(a.limit);
+      const db = limitDurationMs(b.limit);
       if (da === db) return a.index - b.index;
       if (da === null) return 1;
       if (db === null) return -1;
@@ -261,9 +290,9 @@ export function limitLabel(progress: LimitProgress): string {
  * and appending them keeps the known windows in a stable position. */
 export function sortedWindows(snapshot: LlmUsageSnapshot, nowMs: number): WindowProgress[] {
   return Object.entries(snapshot.windows)
-    .sort(([a], [b]) => {
-      const da = parseWindowDurationMs(a);
-      const db = parseWindowDurationMs(b);
+    .sort(([a, wa], [b, wb]) => {
+      const da = windowDurationMs(a, wa);
+      const db = windowDurationMs(b, wb);
       if (da === null && db === null) return a.localeCompare(b);
       if (da === null) return 1;
       if (db === null) return -1;

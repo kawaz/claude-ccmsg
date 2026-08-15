@@ -12,9 +12,7 @@ import {
   formatPercent,
   formatResetAt,
   formatRemaining,
-  limitKindDurationMs,
   limitLabel,
-  parseWindowDurationMs,
   probeRecordOf,
   probeView,
   snapshotAge,
@@ -98,7 +96,6 @@ function TrackRow({
   progress,
   label,
   glyph,
-  durationMs,
   reset,
   keyTitle,
   extra,
@@ -106,9 +103,6 @@ function TrackRow({
   progress: BarProgress;
   label: string;
   glyph: string;
-  /** Length of the period, for the denominator beside the elapsed share. Null
-   * when it cannot be derived (an unfamiliar limit kind). */
-  durationMs: number | null;
   reset: ResetDisplay;
   keyTitle?: string;
   extra?: ComponentChildren;
@@ -116,9 +110,9 @@ function TrackRow({
   // "86%/7d" — how far into the period we are, over how long it is. Empty
   // when either half is unknown; half of it alone would read as the other.
   const elapsedText =
-    progress.elapsed === null || durationMs === null
+    progress.elapsed === null || progress.durationMs === null
       ? ""
-      : `${formatPercent(progress.elapsed)}/${formatDurationShort(durationMs)}`;
+      : `${formatPercent(progress.elapsed)}/${formatDurationShort(progress.durationMs)}`;
   return (
     <div class="usage-window">
       <span class="usage-window-key" title={keyTitle}>
@@ -159,13 +153,11 @@ function TrackRow({
 }
 
 function WindowRow({ progress, reset }: { progress: WindowProgress; reset: ResetDisplay }) {
-  const durationMs = parseWindowDurationMs(progress.key);
   return (
     <TrackRow
       progress={progress}
       label={progress.key}
-      glyph={periodGlyph(durationMs)}
-      durationMs={durationMs}
+      glyph={periodGlyph(progress.durationMs)}
       reset={reset}
       keyTitle={progress.status}
     />
@@ -173,13 +165,11 @@ function WindowRow({ progress, reset }: { progress: WindowProgress; reset: Reset
 }
 
 function LimitRow({ progress, reset }: { progress: LimitProgress; reset: ResetDisplay }) {
-  const durationMs = limitKindDurationMs(progress.key);
   return (
     <TrackRow
       progress={progress}
       label={limitLabel(progress)}
-      glyph={periodGlyph(durationMs)}
-      durationMs={durationMs}
+      glyph={periodGlyph(progress.durationMs)}
       reset={reset}
       keyTitle={`severity: ${progress.severity}`}
       extra={

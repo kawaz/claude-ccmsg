@@ -2012,6 +2012,12 @@ export interface LlmUsageWindow {
   /** Epoch seconds at which the window's counter resets. */
   reset?: number;
   reset_iso?: string;
+  /** Length of the window's period in seconds (18000 for a 5h window, 604800
+   * for a 7d one). Upstream states the period itself here rather than leaving
+   * it to be read out of the key, because a key like "primary" names a slot
+   * whose length differs between providers. Absent when the provider does not
+   * report one, which means unknown — not a licence to guess. */
+  window_seconds?: number;
 }
 
 /** Extra-credit spending state, which is per credential rather than per
@@ -2065,6 +2071,10 @@ export interface LlmUsageLimit {
    * statement that the limit is blocking anything — an inactive limit can sit
    * at 0% and an active one at 47% "normal". */
   is_active?: boolean;
+  /** Length of the limit's period in seconds, stated by the provider instead
+   * of being inferred from `kind`. Absent when the provider does not report
+   * one, which means unknown — not a licence to guess. */
+  window_seconds?: number;
 }
 
 export interface LlmUsageCredential {

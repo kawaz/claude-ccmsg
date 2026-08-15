@@ -401,3 +401,51 @@ describe("fetchLlmUsage refresh", () => {
     expect(result.ok).toBe(false);
   });
 });
+
+// The period a window or limit covers, stated by the provider rather than
+// inferred downstream from a key like "primary" that means a different length
+// for each of them.
+describe("parseUsagePayload window_seconds", () => {
+  function credential(over: Record<string, unknown>) {
+    return unwrap(parseUsagePayload({ credentials: [{ name: "c", support: "observed", ...over }] }))
+      .credentials[0];
+  }
+
+  test("passes a window's stated period through", () => {
+    const windows = credential({
+      snapshot: {
+        primary: { utilization: 0.5, status: "allowed", window_seconds: 604800 },
+        secondary: { utilization: 0.1, status: "allowed", window_seconds: 18000 },
+      },
+    })?.snapshot?.windows;
+    expect(windows?.primary?.window_seconds).toBe(604800);
+    expect(windows?.secondary?.window_seconds).toBe(18000);
+  });
+
+  test("passes a limit's stated period through", () => {
+    expect(
+      credential({ limits: [{ kind: "monthly_all", percent: 12.5, window_seconds: 2592000 }] })
+        ?.limits?.[0]?.window_seconds,
+    ).toBe(2592000);
+  });
+
+  // A gateway too old to send the field is the common case, and an absent key
+  // has to stay absent: a zero would read as a period of no length.
+  test("leaves the key off entirely when upstream sends none", () => {
+    const c = credential({
+      snapshot: { "5h": { utilization: 0.5, status: "allowed" } },
+      limits: [{ kind: "session", percent: 1, severity: "normal" }],
+    });
+    expect(c?.snapshot?.windows["5h"]).not.toHaveProperty("window_seconds");
+    expect(c?.limits?.[0]).not.toHaveProperty("window_seconds");
+  });
+
+  test("a non-numeric period is dropped rather than carried as junk", () => {
+    const c = credential({
+      snapshot: { "5h": { utilization: 0.5, status: "allowed", window_seconds: "604800" } },
+      limits: [{ kind: "session", percent: 1, severity: "normal", window_seconds: null }],
+    });
+    expect(c?.snapshot?.windows["5h"]).not.toHaveProperty("window_seconds");
+    expect(c?.limits?.[0]).not.toHaveProperty("window_seconds");
+  });
+});

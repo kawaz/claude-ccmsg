@@ -53,11 +53,13 @@ function parseWindow(value: unknown): LlmUsageWindow | null {
   if (utilization === undefined || status === undefined) return null;
   const reset = optionalNumber(value.reset);
   const resetIso = optionalString(value.reset_iso);
+  const windowSeconds = optionalNumber(value.window_seconds);
   return {
     utilization,
     status,
     ...(reset !== undefined ? { reset } : {}),
     ...(resetIso !== undefined ? { reset_iso: resetIso } : {}),
+    ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
   };
 }
 
@@ -99,12 +101,14 @@ function parseLimit(value: unknown): LlmUsageLimit | null {
   if (kind === undefined || percent === undefined) return null;
   const resetsAt = optionalString(value.resets_at);
   const model = optionalString(value.model);
+  const windowSeconds = optionalNumber(value.window_seconds);
   return {
     kind,
     percent,
     severity: optionalString(value.severity) ?? "unknown",
     ...(resetsAt !== undefined ? { resets_at: resetsAt } : {}),
     ...(model !== undefined ? { model } : {}),
+    ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
     ...(typeof value.is_active === "boolean" ? { is_active: value.is_active } : {}),
   };
 }

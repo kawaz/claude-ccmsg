@@ -576,3 +576,108 @@ describe("probeView", () => {
     expect(view).toEqual({ limits: [], probeError: null, retainedAge: null });
   });
 });
+
+// Upstream states the period itself in `window_seconds`, which is the only way
+// a slot named "primary" can be placed on a scale at all — the name means a
+// different length for each provider. The key and the kind are what is left
+// when the provider says nothing.
+describe("window_seconds", () => {
+  const snapshot = (windows: LlmUsageSnapshot["windows"]): LlmUsageSnapshot => ({ windows });
+
+  test("places a window whose key spells out no period", () => {
+    const progress = windowProgress(
+      "primary",
+      {
+        utilization: 0.5,
+        status: "allowed",
+        reset: resetIn(2 * DAY),
+        window_seconds: 7 * 24 * 3600,
+      },
+      NOW,
+    );
+    expect(progress.durationMs).toBe(7 * DAY);
+    expect(progress.elapsed).toBeCloseTo(5 / 7, 10);
+  });
+
+  test("falls back to the key when upstream states no period", () => {
+    const progress = windowProgress(
+      "5h",
+      { utilization: 0.1, status: "allowed", reset: resetIn(HOUR) },
+      NOW,
+    );
+    expect(progress.durationMs).toBe(5 * HOUR);
+    expect(progress.elapsed).toBeCloseTo(0.8, 10);
+  });
+
+  // The provider is the authority on its own period; a key that says otherwise
+  // is a label, not a measurement.
+  test("outranks the key when the two disagree", () => {
+    const progress = windowProgress(
+      "5h",
+      {
+        utilization: 0.5,
+        status: "allowed",
+        reset: resetIn(2 * DAY),
+        window_seconds: 7 * 24 * 3600,
+      },
+      NOW,
+    );
+    expect(progress.durationMs).toBe(7 * DAY);
+    expect(progress.elapsed).toBeCloseTo(5 / 7, 10);
+  });
+
+  // An unusable figure is no figure: rather than draw a bar against a zero or
+  // negative period, fall back to what the key can settle.
+  test("an unusable period is treated as absent", () => {
+    expect(
+      windowProgress("5h", { utilization: 0.1, status: "allowed", window_seconds: 0 }, NOW)
+        .durationMs,
+    ).toBe(5 * HOUR);
+    expect(
+      windowProgress("primary", { utilization: 0.1, status: "allowed", window_seconds: -1 }, NOW)
+        .durationMs,
+    ).toBeNull();
+  });
+
+  test("sorts windows by the stated period rather than by their keys", () => {
+    const keys = sortedWindows(
+      snapshot({
+        primary: { utilization: 0.1, status: "allowed", window_seconds: 7 * 24 * 3600 },
+        secondary: { utilization: 0.2, status: "allowed", window_seconds: 5 * 3600 },
+      }),
+      NOW,
+    ).map((w) => w.key);
+    expect(keys).toEqual(["secondary", "primary"]);
+  });
+
+  test("places a limit whose kind implies no period", () => {
+    const progress = limitProgress(
+      limit({ kind: "monthly_all", resets_at: resetsAtIn(2 * DAY), window_seconds: 7 * 24 * 3600 }),
+      NOW,
+    );
+    expect(progress.durationMs).toBe(7 * DAY);
+    expect(progress.elapsed).toBeCloseTo(5 / 7, 10);
+  });
+
+  test("outranks the limit kind when the two disagree", () => {
+    const progress = limitProgress(
+      limit({ kind: "session", resets_at: resetsAtIn(2 * DAY), window_seconds: 7 * 24 * 3600 }),
+      NOW,
+    );
+    expect(progress.durationMs).toBe(7 * DAY);
+    expect(progress.elapsed).toBeCloseTo(5 / 7, 10);
+  });
+
+  test("falls back to the kind when a limit states no period", () => {
+    expect(limitProgress(limit({ kind: "weekly_all" }), NOW).durationMs).toBe(7 * DAY);
+    expect(limitProgress(limit({ kind: "monthly_all" }), NOW).durationMs).toBeNull();
+  });
+
+  test("sorts limits by the stated period rather than by their kinds", () => {
+    const kinds = sortedLimits(
+      [limit({ kind: "weekly_all" }), limit({ kind: "monthly_all", window_seconds: 3600 })],
+      NOW,
+    ).map((l) => l.key);
+    expect(kinds).toEqual(["monthly_all", "weekly_all"]);
+  });
+});
