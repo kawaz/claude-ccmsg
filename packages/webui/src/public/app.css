@@ -6262,6 +6262,22 @@ a.tl-attachment-file-path {
   border-top: 1px solid var(--border);
 }
 
+/* 「何を除くか」の 2 択。ボタンの前に置いて、押す前に効くものだと分かる位置に。 */
+.tl-float-dump-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--font-size-2xs);
+}
+
+.tl-float-dump-opts label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+
 /* 出力先の絶対パスはコピーして別セッションに渡すためのものなので、折り返して
  * 全体を見せる (省略すると渡せない)。 */
 .tl-float-dump-path {

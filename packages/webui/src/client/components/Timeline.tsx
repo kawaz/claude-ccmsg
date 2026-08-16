@@ -121,6 +121,7 @@ import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary
 import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
+import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
 import {
   defaultTimelineAutoOpen,
@@ -2757,13 +2758,37 @@ type DumpActionState =
   | { kind: "done"; path: string; entries: number }
   | { kind: "error"; msg: string };
 
-/** セッション全体に対するアクション。fork は「選択中の項目」に対する操作
- * だが、こちらは選択に依存しない (セッション 1 本がそのまま単位)。 */
-function DumpFileAction({ sid }: { sid: string }) {
+/** dump をファイルに書き出すアクション。無選択ならセッション全体、項目を
+ * 選択中ならその record 以降 (選択自身を含む) を切り出す。fork と違い
+ * off-chain の record も正当な起点 (session-dump-action.ts 参照)。 */
+function DumpFileAction({ sid, position }: { sid: string; position: string }) {
   const { ws } = useApp();
   const [state, setState] = useState<DumpActionState>({ kind: "idle" });
+  // 既定はどちらも OFF = 全部入り。dump の第一用途が「記憶の引き継ぎ」で、
+  // 削るかどうかは渡す相手次第なので、削る側を明示操作にする。
+  const [noThinking, setNoThinking] = useState(false);
+  const [noAgent, setNoAgent] = useState(false);
+  const scoped = isScopedDump(position);
   return (
     <div class="tl-float-dump">
+      <div class="tl-float-dump-opts">
+        <label>
+          <input
+            type="checkbox"
+            checked={noThinking}
+            onChange={(e) => setNoThinking((e.target as HTMLInputElement).checked)}
+          />
+          thinking を除く
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={noAgent}
+            onChange={(e) => setNoAgent((e.target as HTMLInputElement).checked)}
+          />
+          agent 機構を除く
+        </label>
+      </div>
       <button
         type="button"
         class="tl-float-action"
@@ -2771,7 +2796,7 @@ function DumpFileAction({ sid }: { sid: string }) {
         onClick={() => {
           setState({ kind: "running" });
           void ws
-            .sessionDumpFile({ sid })
+            .sessionDumpFile(sessionDumpRequest({ sid, position, noThinking, noAgent }))
             .then((res) => {
               if (!res.ok) {
                 setState({ kind: "error", msg: res.error.msg });
@@ -2782,7 +2807,11 @@ function DumpFileAction({ sid }: { sid: string }) {
             .catch((e: unknown) => setState({ kind: "error", msg: String(e) }));
         }}
       >
-        {state.kind === "running" ? "dump 出力中…" : "dump をファイル出力"}
+        {state.kind === "running"
+          ? "dump 出力中…"
+          : scoped
+            ? "この項目以降を dump"
+            : "セッション全体を dump"}
       </button>
       {state.kind === "done" ? (
         <button
@@ -2804,7 +2833,9 @@ function DumpFileAction({ sid }: { sid: string }) {
           ? `${state.entries} 件を JSONL で書き出しました。パスをクリックでコピーできます。`
           : state.kind === "error"
             ? `dump に失敗しました: ${state.msg}`
-            : "このセッションの dump (todos / agents / rooms + 会話) を daemon ホストの dumps/ に JSONL で書き出し、絶対パスを表示します。"}
+            : scoped
+              ? "選択中の項目を含め、それ以降を daemon ホストの dumps/ に JSONL で書き出します。選択を解除するとセッション全体になります。"
+              : "セッション全体 (todos / agents / rooms + 会話) を daemon ホストの dumps/ に JSONL で書き出します。項目を選択すると、そこ以降だけを切り出せます。"}
       </p>
     </div>
   );
@@ -4519,7 +4550,7 @@ export function Timeline({
                                 })
                               }
                             />
-                            <DumpFileAction sid={sid} />
+                            <DumpFileAction sid={sid} position={currentPosition} />
                           </div>
                         ) : (
                           <fieldset
