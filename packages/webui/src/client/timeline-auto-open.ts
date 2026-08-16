@@ -34,6 +34,47 @@ export function toggleTimelineAutoOpen(
   return { ...settings, [key]: !settings[key] };
 }
 
+/** localStorage key for a Timeline's auto-open toggle state, namespaced per
+ * session and (for a subagent drilldown) per agent — mirrors
+ * `favoritesStorageKey` / `ccmsg.1on1.<sid>` in utils.ts/OneOnOneComposer.tsx
+ * (`ccmsg.<feature>.<scope>` convention). The parent Timeline passes
+ * `agentKey: undefined`; a drilldown Timeline passes the agent's
+ * `agentId ?? runId ?? teammate` so each subagent remembers its own toggle
+ * state independent of the parent session and of sibling agents. */
+export function timelineAutoOpenStorageKey(sid: string, agentKey: string | undefined): string {
+  return agentKey ? `ccmsg.tl.autoOpen.${sid}/${agentKey}` : `ccmsg.tl.autoOpen.${sid}`;
+}
+
+/** Parses a raw `localStorage.getItem(timelineAutoOpenStorageKey(...))`
+ * result, tolerating anything a prior schema version / manual edit / storage
+ * corruption could have left behind: absent key, non-JSON, non-object JSON,
+ * or an object missing/mistyping any of the four boolean fields all fall
+ * back to `fallback` (the timeline's default settings) rather than throwing
+ * or partially applying a corrupt value — same posture as `parseFavorites`
+ * in utils.ts. */
+export function parseTimelineAutoOpenSettings(
+  raw: string | null,
+  fallback: TimelineAutoOpenSettings,
+): TimelineAutoOpenSettings {
+  if (raw === null) return fallback;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== "object" || parsed === null) return fallback;
+  const candidate = parsed as Record<string, unknown>;
+  const keys: (keyof TimelineAutoOpenSettings)[] = ["thinking", "ccmsg", "agent", "items"];
+  if (!keys.every((key) => typeof candidate[key] === "boolean")) return fallback;
+  return {
+    thinking: candidate.thinking as boolean,
+    ccmsg: candidate.ccmsg as boolean,
+    agent: candidate.agent as boolean,
+    items: candidate.items as boolean,
+  };
+}
+
 export function segmentAutoOpenCategory(segment: Segment): "T" | "A" | null {
   switch (segment.kind) {
     case "thinking":

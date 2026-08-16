@@ -125,6 +125,8 @@ import { forkDividerGroupIndex } from "../fork-divider.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
+  parseTimelineAutoOpenSettings,
+  timelineAutoOpenStorageKey,
   toggleTimelineAutoOpen,
   type TimelineAutoOpenSettings,
 } from "../timeline-auto-open.ts";
@@ -2917,8 +2919,17 @@ export function Timeline({
   // active so we don't tail the wrong file (which would race back stale
   // lines and confuse the byte-cache).
   const agentActive = !!(agent && (agent.agentId || agent.teammate));
+  // agentKey identifies *which* subagent this drilldown Timeline belongs to,
+  // for the per-agent auto-open storage key below — agentId is the primary
+  // identity, runId/teammate are fallbacks for refs that only carry those
+  // (mirrors the `...(agent.teammate ? { teammate: ... } : {})` subscribe
+  // payload a few lines down, which prefers the same fields).
+  const agentKey = agent?.agentId ?? agent?.runId ?? agent?.teammate;
   const [autoOpenSettings, setAutoOpenSettings] = useState(() =>
-    defaultTimelineAutoOpen(agentActive),
+    parseTimelineAutoOpenSettings(
+      readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
+      defaultTimelineAutoOpen(agentActive),
+    ),
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
   const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
@@ -2938,13 +2949,25 @@ export function Timeline({
     return () => document.removeEventListener("click", onClick);
   }, [autoOpenPanelOpen]);
   useEffect(() => {
-    setAutoOpenSettings(defaultTimelineAutoOpen(agentActive));
+    setAutoOpenSettings(
+      parseTimelineAutoOpenSettings(
+        readStorage(timelineAutoOpenStorageKey(sid, agentKey)),
+        defaultTimelineAutoOpen(agentActive),
+      ),
+    );
     setAutoOpenRevision((revision) => revision + 1);
-  }, [sid, agent?.agentId, agent?.runId, agent?.teammate]);
-  const toggleAutoOpen = useCallback((key: keyof TimelineAutoOpenSettings) => {
-    setAutoOpenSettings((current) => toggleTimelineAutoOpen(current, key));
-    setAutoOpenRevision((revision) => revision + 1);
-  }, []);
+  }, [sid, agentKey, agentActive]);
+  const toggleAutoOpen = useCallback(
+    (key: keyof TimelineAutoOpenSettings) => {
+      setAutoOpenSettings((current) => {
+        const next = toggleTimelineAutoOpen(current, key);
+        writeStorage(timelineAutoOpenStorageKey(sid, agentKey), JSON.stringify(next));
+        return next;
+      });
+      setAutoOpenRevision((revision) => revision + 1);
+    },
+    [sid, agentKey],
+  );
   const autoOpenContext = useMemo<TimelineAutoOpenContextValue>(
     () => ({ settings: autoOpenSettings, revision: autoOpenRevision }),
     [autoOpenSettings, autoOpenRevision],

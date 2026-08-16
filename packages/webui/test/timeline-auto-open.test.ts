@@ -3,7 +3,9 @@ import {
   autoOpenCategoriesForLine,
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
+  parseTimelineAutoOpenSettings,
   segmentAutoOpenCategory,
+  timelineAutoOpenStorageKey,
   toggleTimelineAutoOpen,
 } from "../src/client/timeline-auto-open.ts";
 import { parseTranscriptLine, type TimelineEntry } from "../src/client/transcript-model.ts";
@@ -56,6 +58,56 @@ describe("defaultTimelineAutoOpen", () => {
       agent: false,
       items: false,
     });
+  });
+});
+
+describe("timelineAutoOpenStorageKey", () => {
+  // 親 TL は sid のみ、drilldown は sid + agent の複合キーで独立に保存される。
+  test("parent Timeline omits the agent segment while a drilldown includes it", () => {
+    expect(timelineAutoOpenStorageKey("sess-1", undefined)).toBe("ccmsg.tl.autoOpen.sess-1");
+    expect(timelineAutoOpenStorageKey("sess-1", "worker-a")).toBe(
+      "ccmsg.tl.autoOpen.sess-1/worker-a",
+    );
+  });
+
+  // 別 agent は別 key = 独立した保存領域を持つ。
+  test("different agents on the same session get different keys", () => {
+    expect(timelineAutoOpenStorageKey("sess-1", "worker-a")).not.toBe(
+      timelineAutoOpenStorageKey("sess-1", "worker-b"),
+    );
+  });
+});
+
+describe("parseTimelineAutoOpenSettings", () => {
+  const fallback = defaultTimelineAutoOpen(false);
+
+  // 保存値なし (初回訪問) は fallback (= defaultTimelineAutoOpen の結果) を使う。
+  test("missing key falls back to the given default", () => {
+    expect(parseTimelineAutoOpenSettings(null, fallback)).toEqual(fallback);
+  });
+
+  // 保存済みの妥当な JSON はそのまま復元される。
+  test("valid stored JSON is restored as-is", () => {
+    const stored = { thinking: false, ccmsg: true, agent: true, items: false };
+    expect(parseTimelineAutoOpenSettings(JSON.stringify(stored), fallback)).toEqual(stored);
+  });
+
+  // 壊れた JSON / 型不一致 / 欠損フィールドはすべて fallback に安全側 degrade する
+  // (parseFavorites と同じ posture — 1 箇所の壊れが全体をクラッシュさせない)。
+  test("corrupt or malformed stored values fall back to the given default", () => {
+    expect(parseTimelineAutoOpenSettings("not json", fallback)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("42", fallback)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("null", fallback)).toEqual(fallback);
+    expect(parseTimelineAutoOpenSettings("[]", fallback)).toEqual(fallback);
+    expect(
+      parseTimelineAutoOpenSettings(JSON.stringify({ thinking: true, ccmsg: true }), fallback),
+    ).toEqual(fallback);
+    expect(
+      parseTimelineAutoOpenSettings(
+        JSON.stringify({ thinking: "yes", ccmsg: true, agent: true, items: true }),
+        fallback,
+      ),
+    ).toEqual(fallback);
   });
 });
 
