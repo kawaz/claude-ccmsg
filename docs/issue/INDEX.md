@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-08-16 | bug | open | [timeline-float-panel-blocks-record-click](./2026-08-16-timeline-float-panel-blocks-record-click.md) | timeline のフロートパネル(アクションパネル)を開いた状態だと項目に重なりクリック選択ができない |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
 | 2026-07-14 | design | idea | [dr-0009-transcript-read-after-param](./2026-07-14-dr-0009-transcript-read-after-param.md) | DR-0009 transcript_read が before のみで after (差分取得) を持たず、TLR-Q1=b 実装が全 tail 再取得経路になった件。after 追加 + append merge 化の検討 |
 | 2026-07-14 | task | idea | [webui-component-render-test-infrastructure](./2026-07-14-webui-component-render-test-infrastructure.md) | webui/test が pure helper + reducer 型のみで fab/panel の open-close 遷移や effect の DOM 挙動を単体テスト化できない、render テスト基盤 (testing-library/preact 等) 導入検討 |
