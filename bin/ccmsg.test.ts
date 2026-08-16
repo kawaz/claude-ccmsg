@@ -371,3 +371,44 @@ describe("bin/ccmsg __ccmsg_ensure_deps", () => {
     }
   });
 });
+
+describe("bin/ccmsg deps self-heal from a PATH symlink", () => {
+  // PATH には versioned cache への symlink を置く運用 (DR-0007)。ensure_deps の
+  // root は resolve_symlink 済みの実体パスから導出するので、symlink 経由の起動
+  // でも install は実体 cache root で走る — その合成を launcher 全体で固定する。
+  test("symlink 起動でも実体 cache root に install が走る", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-symheal-"));
+    try {
+      const root = path.join(base, "cache", "ccmsg", "9.9.9");
+      fs.mkdirSync(path.join(root, "bin"), { recursive: true });
+      fs.mkdirSync(path.join(root, "packages", "cli", "src"), { recursive: true });
+      fs.writeFileSync(path.join(root, "packages", "cli", "src", "index.ts"), "");
+      fs.writeFileSync(path.join(root, "bun.lock"), "{}");
+      const dest = path.join(root, "bin", "ccmsg");
+      linkLauncher(dest);
+      const stubBin = path.join(base, "stubbin");
+      fs.mkdirSync(stubBin);
+      const log = path.join(base, "bun.log");
+      writeMockBin(
+        path.join(stubBin, "bun"),
+        `#!/usr/bin/env bash\nif [ "$1" = "install" ]; then echo "$PWD $*" >> "${log}"; fi\nexit 0\n`,
+      );
+      const linkDir = path.join(base, "linkdir");
+      fs.mkdirSync(linkDir);
+      const link = path.join(linkDir, "ccmsg");
+      fs.symlinkSync(dest, link);
+      const proc = Bun.spawnSync({
+        cmd: [link, "status"],
+        env: { PATH: `${stubBin}:/usr/bin:/bin`, CCMSG_NO_SELF_EXEC: "1" },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      expect(proc.exitCode).toBe(0);
+      const recorded = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "";
+      // resolve_symlink は物理パス (pwd -P) を返すので realpath で比較する
+      expect(recorded).toBe(`${fs.realpathSync(root)} install --frozen-lockfile`);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
