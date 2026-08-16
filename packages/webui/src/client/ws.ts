@@ -58,6 +58,8 @@ import type {
   SessionLauncherConfigResponse,
   SessionSearchRequest,
   ForkOriginResponse,
+  SessionDumpFileRequest,
+  SessionDumpFileResponse,
   SessionSearchResponse,
   SessionStatusResponse,
   SessionStatusStreamEvent,
@@ -300,6 +302,13 @@ export interface WsHandle {
    * the same reason as sessionSearch: the first ask for a session reads whole
    * sibling transcripts. `origin: null` means there is no seam to draw. */
   forkOrigin(sid: string): Promise<ForkOriginResponse | ErrorResponse>;
+  /** Write `sid`'s dump to a file on the daemon host and answer where it
+   * landed (user role only). 2-phase for the same reason as sessionSearch:
+   * dumping reads the whole transcript plus its agent transcripts. `params`
+   * excludes `op`/`request_id`, same convention as sessionSearch. */
+  sessionDumpFile(
+    params: Omit<SessionDumpFileRequest, "op" | "request_id">,
+  ): Promise<SessionDumpFileResponse | ErrorResponse>;
   /** Round trip to the daemon, carrying provenance (exe/script/version, U1
    * footer) alongside the existing liveness fields. Called once in onOpen's
    * handshake, not polled — provenance only changes across a daemon restart,
@@ -378,6 +387,7 @@ type TwoPhaseOutcome =
   | SessionLaunchResponse
   | SessionSearchResponse
   | ForkOriginResponse
+  | SessionDumpFileResponse
   | LlmUsageResponse
   | LlmStatsResponse
   | ErrorResponse;
@@ -603,6 +613,7 @@ export function createWsClient(
           streamEv.ev === "session_env_result" ||
           streamEv.ev === "session_search_result" ||
           streamEv.ev === "fork_origin_result" ||
+          streamEv.ev === "session_dump_file_result" ||
           streamEv.ev === "llm_usage_result" ||
           streamEv.ev === "llm_stats_result")
       ) {
@@ -926,6 +937,8 @@ export function createWsClient(
       sendTwoPhase({ op: "session_search", request_id: `q${++nextRequestId}`, ...params }),
     forkOrigin: (sid) =>
       sendTwoPhase({ op: "fork_origin", request_id: `q${++nextRequestId}`, sid }),
+    sessionDumpFile: (params) =>
+      sendTwoPhase({ op: "session_dump_file", request_id: `q${++nextRequestId}`, ...params }),
     ping: () => send({ op: "ping" }),
     translate: (texts) =>
       sendTwoPhase({ op: "translate", request_id: `q${++nextRequestId}`, texts }),

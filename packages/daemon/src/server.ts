@@ -32,6 +32,7 @@ import {
   type SessionLaunchResponse,
   type SessionSearchResponse,
   type ForkOriginResponse,
+  type SessionDumpFileResponse,
   type StorageEvent,
   type TitleEvent,
   type TranslateResponse,
@@ -61,6 +62,7 @@ import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
+import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
 import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
 import {
@@ -1238,6 +1240,7 @@ const IDENTITY_OPS = new Set([
   "transcript_read",
   "session_search",
   "fork_origin",
+  "session_dump_file",
   "agents",
   "transcript_subscribe",
   "transcript_unsubscribe",
@@ -1275,6 +1278,7 @@ type TwoPhaseResult =
   | SessionLaunchResponse
   | SessionSearchResponse
   | ForkOriginResponse
+  | SessionDumpFileResponse
   | TranslateResponse
   | LlmUsageResponse
   | LlmStatsResponse
@@ -2372,6 +2376,55 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           complete({ ok: false, error: { code: "internal", msg: String(e) } });
         },
       );
+      return;
+    }
+
+    case "session_dump_file": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_dump_file' requires user role");
+        return;
+      }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_dump_file",
+        "session_dump_file_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      // Same resolver transcript_read and fork_origin use, so a connected or a
+      // historical sid is answerable and no path ever comes from the client.
+      const dumpTarget = await resolveTranscript(daemon.sessions, req.sid, {
+        allowVirtual: true,
+      });
+      if (!dumpTarget.ok) {
+        complete({ ok: false, error: { code: dumpTarget.code, msg: dumpTarget.msg } });
+        return;
+      }
+      // Dumping reads the whole transcript plus every agent transcript beside
+      // it, so the outcome travels on the result event. The destination is the
+      // daemon's own dumps/ — nothing here is client-named.
+      void dumpSession(req.sid, {
+        dataDir: daemon.paths.dataDir,
+        transcriptFile: dumpTarget.file,
+        ...(req.since !== undefined ? { since: req.since } : {}),
+        ...(req.until !== undefined ? { until: req.until } : {}),
+        ...(req.no_thinking === true ? { noThinking: true } : {}),
+        ...(req.no_agent === true ? { noAgent: true } : {}),
+      })
+        .then((dump) => {
+          const file = writeSessionDumpFile(dump, { dir: daemon.paths.dumps });
+          complete({
+            ok: true,
+            path: file,
+            entries: dump.entries.length,
+            bytes: fs.statSync(file).size,
+          });
+        })
+        .catch((e: unknown) => {
+          daemon.log.error(`op 'session_dump_file' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        });
       return;
     }
 

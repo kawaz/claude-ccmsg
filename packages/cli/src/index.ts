@@ -5,7 +5,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { VERSION, resolvePaths, type Identity, type SessionTodo } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
-import { dumpSession, type SessionDump, type SessionDumpEntry } from "@ccmsg/daemon/session-dump";
+import {
+  dumpSession,
+  formatJsonlDump,
+  writeSessionDumpFile,
+  type SessionDump,
+  type SessionDumpEntry,
+} from "@ccmsg/daemon/session-dump";
 import {
   Client,
   connectIfRunning,
@@ -544,7 +550,9 @@ Commands:
                                text (--format text). --since/--until accept
                                timezone-qualified ISO 8601. Agents the dumped range never
                                involves fold to one line each (--agent expands one);
-                               --no-thinking / --no-agent trim further
+                               --no-thinking / --no-agent trim further. --out writes the
+                               jsonl to a file and prints only its path (bare --out
+                               auto-names it under <data>/dumps/)
   leave <room>                 Leave a room
   rooms                        List active rooms (id / title / members / last_mid;
                                archived rooms are omitted — use --all to include)
@@ -576,6 +584,11 @@ Command Options:
                                dump: inclusive ISO 8601 lower bound with timezone
   --until <timestamp>          dump: inclusive ISO 8601 upper bound with timezone
   --format <format>            dump: 'jsonl' (default) or 'text'
+  --out [path]                 dump: write the jsonl to a file and print only its
+                               path. Bare --out auto-names it
+                               <data>/dumps/<sid>-<YYYYMMDD-HHmmss>.jsonl.
+                               Conflicts with --format text (stdout is the
+                               human-reading form)
   --no-thinking                dump: drop assistant thinking entries (recovery use —
                                conclusions already reached the transcript)
   --no-agent                   dump: drop the agents/workflows context and the
@@ -608,7 +621,7 @@ Notes:
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
-  CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl)
+  CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl, dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection
                                (CCMSG_SID wins; both are ignored for --as-session)
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
@@ -789,7 +802,7 @@ async function main(): Promise<void> {
     }
     case "dump": {
       const usage =
-        "ccmsg dump <session-id> [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
+        "ccmsg dump <session-id> [--out [path]] [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
       const sid = requireArg(args[0], "session-id", usage);
       if (args[1] !== undefined)
         throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);
@@ -797,20 +810,38 @@ async function main(): Promise<void> {
       if (format !== "jsonl" && format !== "text") {
         throw new Error(`--format must be 'jsonl' or 'text' (got '${format}')\n  usage: ${usage}`);
       }
+      // `--out` (bare) auto-names inside the daemon's dumps/, `--out <path>`
+      // names the file. The file is always JSONL — it exists to be read back
+      // by another session, and `--format text` is the human-reading form that
+      // stdout already serves. Refusing the combination beats silently
+      // ignoring one of the two flags.
+      const out = opts.out;
+      if (out !== undefined && format === "text") {
+        throw new Error(`--out writes JSONL; drop --format text\n  usage: ${usage}`);
+      }
+      const paths = resolvePaths();
       const dump = await dumpSession(sid, {
-        dataDir: resolvePaths().dataDir,
+        dataDir: paths.dataDir,
         ...(str(opts, "since") ? { since: str(opts, "since") } : {}),
         ...(str(opts, "until") ? { until: str(opts, "until") } : {}),
         ...(opts["no-thinking"] === true ? { noThinking: true } : {}),
         ...(opts["no-agent"] === true ? { noAgent: true } : {}),
         ...(str(opts, "agent") ? { agent: str(opts, "agent") } : {}),
       });
+      if (out !== undefined) {
+        const file = writeSessionDumpFile(
+          dump,
+          typeof out === "string" ? { file: out } : { dir: paths.dumps },
+        );
+        // Path only: the caller's next move is to hand this to something else,
+        // so anything beside it would have to be stripped back off.
+        process.stdout.write(`${file}\n`);
+        return;
+      }
       if (format === "text") {
         process.stdout.write(formatTextDump(dump));
       } else {
-        process.stdout.write(`${JSON.stringify(dump.header)}\n`);
-        process.stdout.write(`${JSON.stringify(dump.context)}\n`);
-        for (const entry of dump.entries) process.stdout.write(`${JSON.stringify(entry)}\n`);
+        process.stdout.write(formatJsonlDump(dump));
       }
       return;
     }

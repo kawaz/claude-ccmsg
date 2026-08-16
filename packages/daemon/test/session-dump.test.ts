@@ -2,7 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { compareContextAgents, dumpSession, type ContextAgentRecord } from "../src/session-dump.ts";
+import {
+  compareContextAgents,
+  dumpSession,
+  formatJsonlDump,
+  writeSessionDumpFile,
+  type ContextAgentRecord,
+  type SessionDump,
+} from "../src/session-dump.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const roots: string[] = [];
@@ -971,5 +978,62 @@ describe("agent roster ordering", () => {
     const expected = ["a333", "a444", "aretry-111111111111", "aretry-222222222222"];
     expect(ids(agents)).toEqual(expected);
     expect(ids([...agents].reverse())).toEqual(expected);
+  });
+});
+
+describe("dump file output", () => {
+  /** Minimum shape the writers care about: the session name they build the
+   * file name from, and enough entries to see one line per entry. */
+  function dump(): SessionDump {
+    return {
+      header: {
+        session: SID,
+        since: "2026-07-20T00:00:00.000Z",
+        until: null,
+        generated: "2026-07-20T01:00:00.000Z",
+        format: "ccmsg-session-dump-v2",
+      },
+      context: {
+        kind: "session-context",
+        note: "n",
+        todos: [],
+        background: [],
+        schedules: [],
+        rooms: [],
+      },
+      entries: [
+        { t: 0, kind: "user", from: null, to: null, text: "a", meta: {} },
+        { t: 1, kind: "assistant", from: null, to: null, text: "b", meta: {} },
+      ] as unknown as SessionDump["entries"],
+    };
+  }
+
+  test("serializes header, context, then one line per entry", () => {
+    const lines = formatJsonlDump(dump()).split("\n");
+    // trailing newline leaves an empty final element: 2 + 2 entries + "".
+    expect(lines.length).toBe(5);
+    expect(lines[4]).toBe("");
+    expect(JSON.parse(lines[0]!).format).toBe("ccmsg-session-dump-v2");
+    expect(JSON.parse(lines[1]!).kind).toBe("session-context");
+    expect(lines.slice(2, 4).map((l) => JSON.parse(l).text)).toEqual(["a", "b"]);
+  });
+
+  test("auto-names inside a directory by sid and local wall-clock", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-dump-out-"));
+    roots.push(root);
+    const dir = path.join(root, "dumps");
+    const at = new Date(2026, 6, 20, 9, 5, 3);
+    const file = writeSessionDumpFile(dump(), { dir, at });
+    expect(file).toBe(path.join(dir, `${SID}-20260720-090503.jsonl`));
+    // The directory is created on demand: a fresh data dir has no dumps/ yet.
+    expect(fs.readFileSync(file, "utf8")).toBe(formatJsonlDump(dump()));
+  });
+
+  test("writes an explicit path as given, resolved to an absolute one", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-dump-out-"));
+    roots.push(root);
+    const file = writeSessionDumpFile(dump(), { file: path.join(root, "nested", "mine.jsonl") });
+    expect(file).toBe(path.join(root, "nested", "mine.jsonl"));
+    expect(fs.existsSync(file)).toBe(true);
   });
 });

@@ -812,6 +812,14 @@ export type ForkOriginResultEvent = {
   request_id: string;
 } & (ForkOriginResponse | ErrorResponse);
 
+/** Completion of a 2-phase `session_dump_file` request (see
+ * SessionDumpFileRequest's doc comment). Same correlation/classification rules
+ * as TranslateResultEvent. */
+export type SessionDumpFileResultEvent = {
+  ev: "session_dump_file_result";
+  request_id: string;
+} & (SessionDumpFileResponse | ErrorResponse);
+
 /** Completion of a 2-phase `llm_usage` request (see LlmUsageRequest's doc
  * comment). Same correlation/classification rules as TranslateResultEvent. */
 export type LlmUsageResultEvent = {
@@ -844,6 +852,7 @@ export type StreamEvent =
   | SessionEnvResultEvent
   | SessionSearchResultEvent
   | ForkOriginResultEvent
+  | SessionDumpFileResultEvent
   | LlmUsageResultEvent
   | LlmStatsResultEvent;
 
@@ -1641,6 +1650,34 @@ export interface ForkOriginRequest {
   request_id: string;
 }
 
+/**
+ * Write a session's dump to a file under the daemon's `dumps/` directory and
+ * answer with its absolute path (user role only). The dump itself is what
+ * `ccmsg dump` produces; what this op adds is a durable artifact whose path a
+ * successor session can be handed, instead of a payload that would have to
+ * travel through the browser and back out again. The sid resolves through the
+ * same historical resolver transcript_read uses, and the client never supplies
+ * a path — the destination is the daemon's own data directory.
+ */
+export interface SessionDumpFileRequest {
+  op: "session_dump_file";
+  sid: string;
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (2-phase reply, same rationale as SessionSearchRequest: dumping reads the
+   * whole transcript plus its agent transcripts, which is slow enough that a
+   * deferred arrival-order reply would stall every later reply on the same
+   * connection). */
+  request_id: string;
+  /** ISO-ish lower bound on entry timestamps; same parsing as `ccmsg dump --since`. */
+  since?: string;
+  /** ISO-ish upper bound on entry timestamps; same parsing as `ccmsg dump --until`. */
+  until?: string;
+  /** Drop assistant thinking blocks (`ccmsg dump --no-thinking`). */
+  no_thinking?: boolean;
+  /** Drop in-process agent machinery (`ccmsg dump --no-agent`). */
+  no_agent?: boolean;
+}
+
 /** One-shot fetch of the latest `claude agents --json` poll result (user role
  * only). The webui uses this for the initial paint; subsequent changes arrive
  * as `ev:"agents"` stream events. */
@@ -1790,6 +1827,7 @@ export type Request =
   | TranscriptReadRequest
   | SessionSearchRequest
   | ForkOriginRequest
+  | SessionDumpFileRequest
   | AgentsRequest
   | TranscriptSubscribeRequest
   | TranscriptUnsubscribeRequest
@@ -2334,6 +2372,16 @@ export interface ForkOrigin {
 export interface ForkOriginResponse {
   ok: true;
   origin: ForkOrigin | null;
+}
+
+/** Where a `session_dump_file` dump landed. `entries` and `bytes` let a client
+ * say how much was written without reading the file back. */
+export interface SessionDumpFileResponse {
+  ok: true;
+  /** Absolute path of the written JSONL file, on the daemon host. */
+  path: string;
+  entries: number;
+  bytes: number;
 }
 
 /** One row of `claude agents --json` output, annotated with which

@@ -6250,6 +6250,34 @@ a.tl-attachment-file-path {
   cursor: pointer;
 }
 
+/* セッション単位のアクション。fork の 2 ボタン群とは操作単位が違うので区切り
+ * 線で分ける。 */
+.tl-float-dump {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-5);
+  margin-top: var(--space-7);
+  padding-top: var(--space-7);
+  border-top: 1px solid var(--border);
+}
+
+/* 出力先の絶対パスはコピーして別セッションに渡すためのものなので、折り返して
+ * 全体を見せる (省略すると渡せない)。 */
+.tl-float-dump-path {
+  max-width: 16rem;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-2xs);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
 .tl-auto-open {
   display: flex;
   align-items: center;

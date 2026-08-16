@@ -154,6 +154,13 @@ export interface SessionDumpOptions {
    * overriding them: an explicitly given range silently ignored would be the
    * bigger surprise. */
   agent?: string;
+  /** The transcript to dump, when the caller already resolved `session`
+   * through the daemon's own resolver (`resolveTranscript`, which answers for
+   * connected sessions too). Given this, `dumpSession` skips its historical
+   * lookup rather than repeating a resolution that already succeeded — and
+   * would not necessarily succeed a second time, since the two resolvers see
+   * different sets of sessions. */
+  transcriptFile?: string;
 }
 
 /** `agent-spawn` / `agent-send` / `peer-message` are the three kinds produced by
@@ -774,10 +781,11 @@ export async function dumpSession(
   if (options.agent !== undefined && options.noAgent === true) {
     throw new Error("--agent and --no-agent contradict each other: pick one");
   }
-  const resolved = await resolveVirtualTranscript(session, options.configDirs);
-  if (!resolved) throw new Error(`session transcript not found: ${session}`);
-  const rows = parseTranscript(resolved.file);
-  const bundle = await loadStatusBundle(resolved.file);
+  const file =
+    options.transcriptFile ?? (await resolveVirtualTranscript(session, options.configDirs))?.file;
+  if (file === undefined) throw new Error(`session transcript not found: ${session}`);
+  const rows = parseTranscript(file);
+  const bundle = await loadStatusBundle(file);
   const selectedTokens =
     options.agent === undefined
       ? undefined
@@ -992,7 +1000,7 @@ export async function dumpSession(
   for (const entry of filtered) for (const token of entryAgentTokens(entry)) rangeTokens.add(token);
   const context = loadSessionContext(
     session,
-    resolved.file,
+    file,
     options.dataDir,
     options.noAgent === true,
     bundle,
@@ -1021,4 +1029,40 @@ export async function dumpSession(
       meta: normalizeSessionReference(entry.meta, session) as Record<string, unknown>,
     })),
   };
+}
+
+/** JSONL serialization of a dump: header line, context line, then one line per
+ * entry. The CLI's stdout form and the file written by `writeSessionDumpFile`
+ * are the same bytes, so a consumer never has to know which produced its
+ * input. */
+export function formatJsonlDump(dump: SessionDump): string {
+  const lines = [JSON.stringify(dump.header), JSON.stringify(dump.context)];
+  for (const entry of dump.entries) lines.push(JSON.stringify(entry));
+  return `${lines.join("\n")}\n`;
+}
+
+/** File name of an auto-named dump: sid first so a directory listing groups by
+ * session, local wall-clock second so repeated dumps of one session sort in
+ * the order they were taken. */
+export function sessionDumpFileName(session: string, at: Date = new Date()): string {
+  const p = (n: number, width = 2): string => String(n).padStart(width, "0");
+  const stamp = `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
+  return `${session}-${stamp}.jsonl`;
+}
+
+/** Write `dump` as JSONL and answer where it landed. `target` is either the
+ * directory to auto-name inside (the daemon's `dumps/`) or an explicit file
+ * path from `--out`; both are resolved to an absolute path, since the whole
+ * point of the returned value is to be pasted into another session. */
+export function writeSessionDumpFile(
+  dump: SessionDump,
+  target: { dir: string; at?: Date } | { file: string },
+): string {
+  const file =
+    "file" in target
+      ? path.resolve(target.file)
+      : path.join(path.resolve(target.dir), sessionDumpFileName(dump.header.session, target.at));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, formatJsonlDump(dump));
+  return file;
 }

@@ -2749,8 +2749,69 @@ const SIDE_PANEL_TABS = [
 
 type SidePanelTabId = (typeof SIDE_PANEL_TABS)[number]["id"];
 
-/** アクションタブの中身。今は fork 1 個だが、アクションが増えても
- * 「選択中の項目に対する操作」がここに並ぶ形は変わらない。 */
+/** dump をファイルに書き出すアクションの状態。path は daemon ホスト上の絶対
+ * パスで、次にすることは「別のセッションに渡す」なので表示したまま残す。 */
+type DumpActionState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done"; path: string; entries: number }
+  | { kind: "error"; msg: string };
+
+/** セッション全体に対するアクション。fork は「選択中の項目」に対する操作
+ * だが、こちらは選択に依存しない (セッション 1 本がそのまま単位)。 */
+function DumpFileAction({ sid }: { sid: string }) {
+  const { ws } = useApp();
+  const [state, setState] = useState<DumpActionState>({ kind: "idle" });
+  return (
+    <div class="tl-float-dump">
+      <button
+        type="button"
+        class="tl-float-action"
+        disabled={state.kind === "running"}
+        onClick={() => {
+          setState({ kind: "running" });
+          void ws
+            .sessionDumpFile({ sid })
+            .then((res) => {
+              if (!res.ok) {
+                setState({ kind: "error", msg: res.error.msg });
+                return;
+              }
+              setState({ kind: "done", path: res.path, entries: res.entries });
+            })
+            .catch((e: unknown) => setState({ kind: "error", msg: String(e) }));
+        }}
+      >
+        {state.kind === "running" ? "dump 出力中…" : "dump をファイル出力"}
+      </button>
+      {state.kind === "done" ? (
+        <button
+          type="button"
+          class="tl-float-dump-path"
+          title="クリックでコピー"
+          onClick={() => {
+            void navigator.clipboard?.writeText(state.path).catch(() => {
+              // clipboard unavailable (insecure context, permission denied) —
+              // the path stays selectable on screen.
+            });
+          }}
+        >
+          {state.path}
+        </button>
+      ) : null}
+      <p class="tl-float-note">
+        {state.kind === "done"
+          ? `${state.entries} 件を JSONL で書き出しました。パスをクリックでコピーできます。`
+          : state.kind === "error"
+            ? `dump に失敗しました: ${state.msg}`
+            : "このセッションの dump (todos / agents / rooms + 会話) を daemon ホストの dumps/ に JSONL で書き出し、絶対パスを表示します。"}
+      </p>
+    </div>
+  );
+}
+
+/** アクションタブのうち「選択中の項目」に対する操作 (セッション単位の操作は
+ * DumpFileAction のようにその上下に並ぶ)。 */
 function ForkAction({
   state,
   available,
@@ -4458,6 +4519,7 @@ export function Timeline({
                                 })
                               }
                             />
+                            <DumpFileAction sid={sid} />
                           </div>
                         ) : (
                           <fieldset

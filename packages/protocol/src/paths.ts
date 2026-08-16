@@ -5,6 +5,7 @@
 //            daemon.sock / daemon.lock / daemon.pid / daemon.log
 //   data:  ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //            rooms/<room-id>.jsonl
+//            dumps/<sid>-<YYYYMMDD-HHmmss>.jsonl
 //
 // CCMSG_STATE_DIR / CCMSG_DATA_DIR are direct overrides (tests depend on them).
 import * as os from "node:os";
@@ -30,6 +31,11 @@ export interface Paths {
    * data/ beside allowedOrigins because user configuration must survive daemon
    * restarts; state/ remains disposable runtime state. */
   config: string;
+  /** Session dumps written for a human to hand to another session
+   * (`ccmsg dump --out`, the webui's dump action). Lives in data/ because the
+   * path is meant to be pasted somewhere and read back later, possibly after
+   * a daemon restart. */
+  dumps: string;
 }
 
 function home(): string {
@@ -62,5 +68,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(dataDir, "allowed-origins.json"),
     config: path.join(dataDir, "config.json"),
+    dumps: path.join(dataDir, "dumps"),
   };
 }
