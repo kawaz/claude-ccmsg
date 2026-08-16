@@ -547,8 +547,9 @@ Commands:
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
   dump <session-id>            Export session handoff context (todos, agents, rooms) +
                                conversation entries as compact jsonl (default) or readable
-                               text (--format text). --since/--until accept
-                               timezone-qualified ISO 8601. Agents the dumped range never
+                               text (--format text). --since/--until accept a
+                               timezone-qualified ISO 8601 timestamp or a transcript
+                               record uuid. Agents the dumped range never
                                involves fold to one line each (--agent expands one);
                                --no-thinking / --no-agent trim further. --out writes the
                                jsonl to a file and prints only its path (bare --out
@@ -581,8 +582,11 @@ Command Options:
   --title <text>               create-room / next-room: room title
   --all                        rooms: include archived rooms (default: active only)
   --since <value>              subscribe: per-room last-seen seq JSON, e.g. '{"r7":7}';
-                               dump: inclusive ISO 8601 lower bound with timezone
-  --until <timestamp>          dump: inclusive ISO 8601 upper bound with timezone
+                               dump: inclusive lower bound — an ISO 8601 timestamp with
+                               timezone, or a transcript record uuid. A uuid cuts at that
+                               record itself, so records sharing its timestamp are not
+                               dragged in (the webui shows each record's uuid)
+  --until <timestamp|uuid>     dump: inclusive upper bound, same two forms as --since
   --format <format>            dump: 'jsonl' (default) or 'text'
   --out [path]                 dump: write the jsonl to a file and print only its
                                path. Bare --out auto-names it
@@ -802,7 +806,7 @@ async function main(): Promise<void> {
     }
     case "dump": {
       const usage =
-        "ccmsg dump <session-id> [--out [path]] [--since <timestamp>] [--until <timestamp>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
+        "ccmsg dump <session-id> [--out [path]] [--since <timestamp|uuid>] [--until <timestamp|uuid>] [--format <jsonl|text>] [--no-thinking] [--no-agent] [--agent <id|name>]";
       const sid = requireArg(args[0], "session-id", usage);
       if (args[1] !== undefined)
         throw new Error(`unexpected argument "${args[1]}"\n  usage: ${usage}`);

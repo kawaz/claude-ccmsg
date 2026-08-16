@@ -282,6 +282,110 @@ describe("dumpSession", () => {
     ).toContain("must not be later");
   });
 
+  // The motivating case: several records can carry the same timestamp, so a
+  // clock-based bound cannot express "from this message on". A uuid can.
+  test("cuts at the named record, not at its timestamp", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const uuid = (n: number) => `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee0${n}`;
+    fs.writeFileSync(
+      transcript,
+      [
+        row("2026-07-19T18:47:51Z", "user", "before", { uuid: uuid(1) }),
+        // Same second as the record above: a `--since` timestamp covering one
+        // of these two necessarily covers both.
+        row("2026-07-19T18:47:51Z", "user", "boundary", { uuid: uuid(2) }),
+        row("2026-07-19T18:47:52Z", "assistant", [{ type: "text", text: "upper" }], {
+          uuid: uuid(3),
+        }),
+        row("2026-07-19T18:47:53Z", "assistant", [{ type: "text", text: "after" }], {
+          uuid: uuid(4),
+        }),
+      ].join("\n") + "\n",
+    );
+    const base = { dataDir, configDirs: [configDir] };
+    const dump = await dumpSession(SID, { ...base, since: uuid(2), until: uuid(3) });
+    expect(dump.entries.map((entry) => entry.text)).toEqual(["boundary", "upper"]);
+    // The header still reports the boundary as a time, since that is the scale
+    // the entries' `t` offsets are measured on.
+    expect(dump.header).toMatchObject({
+      since: "2026-07-19T18:47:51.000Z",
+      until: "2026-07-19T18:47:52.000Z",
+    });
+    // The equivalent timestamp bound cannot separate the two 18:47:51 records —
+    // which is what makes the uuid form worth having.
+    const byTime = await dumpSession(SID, { ...base, since: "2026-07-19T18:47:51Z" });
+    expect(byTime.entries.map((entry) => entry.text)).toEqual([
+      "before",
+      "boundary",
+      "upper",
+      "after",
+    ]);
+  });
+
+  test("accepts a uuid bound on one end and a timestamp on the other", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const uuid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee02";
+    fs.writeFileSync(
+      transcript,
+      [
+        row("2026-07-19T18:47:51Z", "user", "before"),
+        row("2026-07-19T18:47:52Z", "user", "lower", { uuid }),
+        row("2026-07-19T18:47:53Z", "assistant", [{ type: "text", text: "upper" }]),
+        row("2026-07-19T18:47:54Z", "assistant", [{ type: "text", text: "after" }]),
+      ].join("\n") + "\n",
+    );
+    const dump = await dumpSession(SID, {
+      dataDir,
+      configDirs: [configDir],
+      since: uuid,
+      until: "2026-07-19T18:47:53Z",
+    });
+    expect(dump.entries.map((entry) => entry.text)).toEqual(["lower", "upper"]);
+  });
+
+  test("refuses a uuid no record in this transcript carries", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    fs.writeFileSync(
+      transcript,
+      row("2026-07-20T00:00:00Z", "user", "hello", {
+        uuid: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee01",
+      }) + "\n",
+    );
+    const message = (
+      await rejection(
+        dumpSession(SID, {
+          dataDir,
+          configDirs: [configDir],
+          since: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        }),
+      )
+    ).message;
+    // Cause and remedy both, since the likely mistake is pasting a uuid that
+    // belongs to a different session.
+    expect(message).toContain("not found in this session's transcript");
+    expect(message).toContain("ISO 8601 timestamp instead");
+  });
+
+  test("rejects a record range whose ends are in transcript order reversed", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const uuid = (n: number) => `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee0${n}`;
+    fs.writeFileSync(
+      transcript,
+      [
+        // Same timestamp on both, so only their positions can order them.
+        row("2026-07-20T00:00:00Z", "user", "first", { uuid: uuid(1) }),
+        row("2026-07-20T00:00:00Z", "user", "second", { uuid: uuid(2) }),
+      ].join("\n") + "\n",
+    );
+    const base = { dataDir, configDirs: [configDir] };
+    expect(
+      (await rejection(dumpSession(SID, { ...base, since: uuid(2), until: uuid(1) }))).message,
+    ).toContain("must not be later");
+    // The same-position pair is a valid one-record range, not a reversed one.
+    const one = await dumpSession(SID, { ...base, since: uuid(2), until: uuid(2) });
+    expect(one.entries.map((entry) => entry.text)).toEqual(["second"]);
+  });
+
   // A dump is a self-contained handoff: current agent/workflow identities, possibly-alive
   // process-local work, and only rooms where the session is still a member must be
   // recoverable without consulting the live daemon. Terminal notification and CronDelete

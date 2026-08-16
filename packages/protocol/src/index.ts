@@ -1668,9 +1668,14 @@ export interface SessionDumpFileRequest {
    * deferred arrival-order reply would stall every later reply on the same
    * connection). */
   request_id: string;
-  /** ISO-ish lower bound on entry timestamps; same parsing as `ccmsg dump --since`. */
+  /** Inclusive lower bound, as either a timezone-qualified ISO 8601 timestamp
+   * or a transcript record `uuid`; same parsing as `ccmsg dump --since`. A
+   * uuid cuts at that record's position rather than its clock, so records
+   * sharing its timestamp stay on their own side of the boundary — which is
+   * why the webui, which shows each record's uuid, can offer an exact "from
+   * this message on". A uuid no record in the session carries is refused. */
   since?: string;
-  /** ISO-ish upper bound on entry timestamps; same parsing as `ccmsg dump --until`. */
+  /** Inclusive upper bound, in the same two forms as `since`. */
   until?: string;
   /** Drop assistant thinking blocks (`ccmsg dump --no-thinking`). */
   no_thinking?: boolean;

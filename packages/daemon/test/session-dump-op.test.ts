@@ -10,6 +10,8 @@ import { ErrorCode } from "@ccmsg/protocol";
 import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
+const RECORD_1 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee01";
+const RECORD_2 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee02";
 const roots: string[] = [];
 
 afterEach(() => {
@@ -31,11 +33,19 @@ function daemonWith(opts: { transcript: boolean }): { daemon: Daemon; dataDir: s
     const file = path.join(root, `${SID}.jsonl`);
     fs.writeFileSync(
       file,
-      `${JSON.stringify({
-        timestamp: "2026-07-20T00:00:00Z",
-        type: "user",
-        message: { role: "user", content: "hello" },
-      })}\n`,
+      [
+        { timestamp: "2026-07-20T00:00:00Z", uuid: RECORD_1, content: "hello" },
+        { timestamp: "2026-07-20T00:00:01Z", uuid: RECORD_2, content: "second" },
+      ]
+        .map((r) =>
+          JSON.stringify({
+            timestamp: r.timestamp,
+            uuid: r.uuid,
+            type: "user",
+            message: { role: "user", content: r.content },
+          }),
+        )
+        .join("\n") + "\n",
     );
     sessions.set(SID, { conns: new Set([{}]), meta: { transcript_path: file } });
   }
@@ -130,6 +140,40 @@ describe("session_dump_file op", () => {
     );
     expect(event?.ok).toBe(false);
     expect(event?.error.code).toBe(ErrorCode.session_not_found);
+  });
+
+  // The wire fields exist so the webui can dump "from this message on" using a
+  // uuid it already displays; a bound that never reached dumpSession would
+  // look identical to a full dump.
+  test("passes a record-uuid bound through to the dump", async () => {
+    const { daemon } = daemonWith({ transcript: true });
+    const [, event] = await requestFrames(
+      daemon,
+      USER,
+      { op: "session_dump_file", request_id: "q5", sid: SID, since: RECORD_2 },
+      2,
+    );
+    expect(event?.ok).toBe(true);
+    expect(event?.entries).toBe(1);
+    const lines = fs.readFileSync(event?.path, "utf8").trimEnd().split("\n");
+    expect(JSON.parse(lines[2]!).text).toBe("second");
+  });
+
+  test("reports a uuid this session never recorded as an error event", async () => {
+    const { daemon } = daemonWith({ transcript: true });
+    const [, event] = await requestFrames(
+      daemon,
+      USER,
+      {
+        op: "session_dump_file",
+        request_id: "q6",
+        sid: SID,
+        since: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      },
+      2,
+    );
+    expect(event?.ok).toBe(false);
+    expect(event?.error.msg).toContain("not found in this session's transcript");
   });
 
   test("requires a request_id, since the outcome only travels on the event", async () => {

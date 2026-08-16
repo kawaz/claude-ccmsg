@@ -155,7 +155,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("read <rNmN[,mN...]");
       expect(help.out).toContain("read <room> <mids>");
       expect(help.out).toContain("dump <session-id>");
-      expect(help.out).toContain("--until <timestamp>");
+      expect(help.out).toContain("--until <timestamp|uuid>");
       expect(help.out).toContain("--format <format>");
       expect(help.out).toContain("--no-thinking");
       expect(help.out).toContain("--no-agent");

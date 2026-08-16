@@ -133,7 +133,12 @@ export interface SessionDump {
 }
 
 export interface SessionDumpOptions {
+  /** Inclusive lower bound, as either a timezone-qualified ISO 8601 timestamp
+   * or a transcript record `uuid`. A uuid cuts at that record's position in
+   * the transcript, so records sharing its timestamp stay on their own side of
+   * the boundary — which a clock-based cut cannot promise. */
   since?: string;
+  /** Inclusive upper bound, in the same two forms as `since`. */
   until?: string;
   dataDir: string;
   configDirs?: readonly string[];
@@ -191,6 +196,9 @@ interface ToolUse {
   index: number;
 }
 
+/** Transcript record `uuid` shape (8-4-4-4-12 hex). A `--since`/`--until` value
+ * in this shape names a record; anything else is read as a timestamp. */
+const RECORD_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ZONED_ISO_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 const TEAMMATE_MESSAGE_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)<\/\1>/g;
@@ -200,16 +208,61 @@ const CCMSG_COMMAND_RE = /(?:^|[\s;&|])(?:[^\s;&|]*\/)?ccmsg\s+(post|reply)\b/;
 const SESSION_CONTEXT_NOTE =
   "IDs and possibly-alive tasks are best-effort hints. They are usable only when rewind or context clearing preserved the original session process; after a process restart they may already be unreachable.";
 
-function parseBound(value: string | undefined, name: "since" | "until"): number | undefined {
+/** What a `--since`/`--until` value was written as. A uuid names one transcript
+ * record, which is the sharper boundary: several records can share a timestamp,
+ * and a range that cuts on time cannot tell them apart. */
+type DumpBound = { kind: "time"; ms: number } | { kind: "record"; uuid: string };
+
+/** A bound placed on the transcript: `ms` is what the header reports and what
+ * entry `t` offsets are measured from, `index` is the transcript row to cut at
+ * and is present only for a uuid bound. */
+interface ResolvedBound {
+  ms: number;
+  index?: number;
+}
+
+function parseBound(value: string | undefined, name: "since" | "until"): DumpBound | undefined {
   if (value === undefined) return undefined;
+  if (RECORD_UUID_RE.test(value)) return { kind: "record", uuid: value };
   if (!ZONED_ISO_RE.test(value)) {
-    throw new Error(`--${name} must be an ISO 8601 timestamp with timezone: ${value}`);
+    throw new Error(
+      `--${name} must be an ISO 8601 timestamp with timezone or a transcript record uuid: ${value}`,
+    );
   }
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) {
     throw new Error(`invalid --${name} timestamp: ${value}`);
   }
-  return parsed;
+  return { kind: "time", ms: parsed };
+}
+
+/** Whether `since` really precedes `until`. Two record bounds compare by
+ * position, which is what they were chosen for: records sharing a timestamp
+ * are still ordered, and comparing their equal `ms` would call a valid range
+ * inverted. Anything else compares by time, the only scale both kinds share. */
+function isOrdered(since: ResolvedBound, until: ResolvedBound): boolean {
+  if (since.index !== undefined && until.index !== undefined) return since.index <= until.index;
+  return since.ms <= until.ms;
+}
+
+/** Place a bound on `rows`. A uuid that names no record in this transcript is
+ * refused rather than silently widened to the whole session: the caller asked
+ * to cut at one specific message, and dumping more than that would quietly
+ * hand a successor session memories it was meant not to have. */
+function resolveBound(
+  bound: DumpBound | undefined,
+  rows: readonly TranscriptRow[],
+  name: "since" | "until",
+): ResolvedBound | undefined {
+  if (bound === undefined) return undefined;
+  if (bound.kind === "time") return { ms: bound.ms };
+  const row = rows.find((item) => item.row.uuid === bound.uuid);
+  if (!row) {
+    throw new Error(
+      `--${name} record uuid not found in this session's transcript: ${bound.uuid} — use a uuid this session recorded (the webui shows each record's uuid), or pass an ISO 8601 timestamp instead`,
+    );
+  }
+  return { ms: Date.parse(row.ts), index: row.index };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -773,11 +826,12 @@ export async function dumpSession(
   session: string,
   options: SessionDumpOptions,
 ): Promise<SessionDump> {
-  const since = parseBound(options.since, "since");
-  const until = parseBound(options.until, "until");
-  if (since !== undefined && until !== undefined && since > until) {
-    throw new Error("--since must not be later than --until");
-  }
+  // Parsed before the transcript is read (a malformed value is the caller's
+  // typo, worth refusing without touching the disk), placed on the records
+  // afterwards — a uuid bound has no meaning until there are records to find
+  // it among.
+  const sinceBound = parseBound(options.since, "since");
+  const untilBound = parseBound(options.until, "until");
   if (options.agent !== undefined && options.noAgent === true) {
     throw new Error("--agent and --no-agent contradict each other: pick one");
   }
@@ -785,6 +839,13 @@ export async function dumpSession(
     options.transcriptFile ?? (await resolveVirtualTranscript(session, options.configDirs))?.file;
   if (file === undefined) throw new Error(`session transcript not found: ${session}`);
   const rows = parseTranscript(file);
+  const sinceAt = resolveBound(sinceBound, rows, "since");
+  const untilAt = resolveBound(untilBound, rows, "until");
+  if (sinceAt !== undefined && untilAt !== undefined && !isOrdered(sinceAt, untilAt)) {
+    throw new Error("--since must not be later than --until");
+  }
+  const since = sinceAt?.ms;
+  const until = untilAt?.ms;
   const bundle = await loadStatusBundle(file);
   const selectedTokens =
     options.agent === undefined
@@ -963,11 +1024,17 @@ export async function dumpSession(
     )
     .filter((entry) => {
       const time = Date.parse(entry.ts);
-      return (
-        Number.isFinite(time) &&
-        (since === undefined || time >= since) &&
-        (until === undefined || time <= until)
-      );
+      if (!Number.isFinite(time)) return false;
+      // A record bound cuts on the transcript position it names (inclusive on
+      // both ends), never on that record's clock: the whole reason to name a
+      // uuid is that the records sharing its timestamp must not come along.
+      const after =
+        sinceAt === undefined ||
+        (sinceAt.index === undefined ? time >= sinceAt.ms : entry._index >= sinceAt.index);
+      const before =
+        untilAt === undefined ||
+        (untilAt.index === undefined ? time <= untilAt.ms : entry._index <= untilAt.index);
+      return after && before;
     })
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts) || a._index - b._index)
     .filter((entry) => {
