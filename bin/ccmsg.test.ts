@@ -297,3 +297,77 @@ describe("bin/ccmsg self-update (DR-0007 §2)", () => {
     }
   }, 30_000);
 });
+
+describe("bin/ccmsg __ccmsg_ensure_deps", () => {
+  // bun stub が呼ばれたら引数と cwd をログに書く。ensure_deps は
+  // `command -v bun` で存在確認してから呼ぶので、stub を PATH に置けば
+  // 「呼んだ/呼ばなかった」と「どこで何を実行したか」の両方を観測できる。
+  function runEnsureDeps(root: string): { code: number; log: string } {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-deps-"));
+    try {
+      const stubBin = path.join(dir, "bin");
+      fs.mkdirSync(stubBin);
+      const log = path.join(dir, "bun.log");
+      fs.writeFileSync(path.join(stubBin, "bun"), `#!/bin/bash\necho "$PWD $*" >> "${log}"\n`, {
+        mode: 0o755,
+      });
+      const proc = Bun.spawnSync({
+        cmd: [
+          "/bin/bash",
+          "-c",
+          'source "$1"; shift; __ccmsg_ensure_deps "$@"',
+          "bash",
+          LAUNCHER,
+          root,
+        ],
+        env: { PATH: `${stubBin}:/usr/bin:/bin` },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      return {
+        code: proc.exitCode ?? -1,
+        log: fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim() : "",
+      };
+    } finally {
+      // log は返却済み文字列に読み込み済みなので dir ごと消してよい
+      setTimeout(() => fs.rmSync(dir, { recursive: true, force: true }), 0);
+    }
+  }
+
+  test("bun.lock が無ければ何もしない", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-root-"));
+    try {
+      const r = runEnsureDeps(root);
+      expect(r.code).toBe(0);
+      expect(r.log).toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("node_modules が既にあれば何もしない", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-root-"));
+    try {
+      fs.writeFileSync(path.join(root, "bun.lock"), "{}");
+      fs.mkdirSync(path.join(root, "node_modules"));
+      const r = runEnsureDeps(root);
+      expect(r.code).toBe(0);
+      expect(r.log).toBe("");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("bun.lock ありで node_modules 欠落なら root で frozen install を走らせる", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-root-"));
+    try {
+      fs.writeFileSync(path.join(root, "bun.lock"), "{}");
+      const r = runEnsureDeps(root);
+      expect(r.code).toBe(0);
+      // stub の $PWD は cd に渡したパスそのまま (realpath 化されない)
+      expect(r.log).toBe(`${root} install --frozen-lockfile`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -164,12 +164,31 @@ __ccmsg_self_update() {
   return 0
 }
 
+# Dependency self-heal: `claude plugin install/update` materializes the plugin
+# cache but never runs a package-manager install, so a fresh cache has no
+# node_modules. The runtime side survives that (bun auto-install resolves from
+# the global cache), but the daemon's serve-time `Bun.build` of the webui
+# client does not — it needs a real node_modules, and a daemon that started
+# without one keeps failing even after a later install because the process
+# caches module resolution. Installing here, before any bun process starts,
+# closes both gaps. Best-effort and silent: a failed install leaves the
+# runtime path no worse than it was.
+__ccmsg_ensure_deps() {
+  local __root="$1"
+  [ -f "$__root/bun.lock" ] || return 0
+  [ -d "$__root/node_modules" ] && return 0
+  command -v bun >/dev/null 2>&1 || return 0
+  (cd "$__root" && bun install --frozen-lockfile >/dev/null 2>&1) || true
+  return 0
+}
+
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   __self="$(__ccmsg_resolve_symlink "${BASH_SOURCE[0]}")"
   __here="$(cd "$(dirname "$__self")" && pwd)"
   __cli="${__here}/../packages/cli/src/index.ts"
 
   __ccmsg_self_update "$__self" 2>/dev/null || true
+  __ccmsg_ensure_deps "${__here}/.." 2>/dev/null || true
   # Startup-only: already-running `subscribe` and daemon processes keep their
   # current code; only a newly launched CLI can converge to the PATH version.
   __ccmsg_self_exec_newer "$__self" "$@" || true

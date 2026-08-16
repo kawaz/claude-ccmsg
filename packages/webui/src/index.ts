@@ -111,10 +111,22 @@ export function createWebuiApp(): WebuiApp {
       return new Response(file, { headers: { "content-type": asset.contentType } });
     }
 
-    const [template, bundle] = await Promise.all([
-      Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
-      getBundle(),
-    ]);
+    let template: string;
+    let bundle: ClientBundle;
+    try {
+      [template, bundle] = await Promise.all([
+        Bun.file(new URL("index.html", PUBLIC_DIR)).text(),
+        getBundle(),
+      ]);
+    } catch (err) {
+      // Same surfacing as /assets/*: a build failure must reach the person
+      // looking at the browser as its own text, not as Hono's bare
+      // "Internal Server Error" — that opaque page is exactly what made a
+      // missing-node_modules cache (plugin installs don't run bun install)
+      // cost a debugging session instead of a glance.
+      const message = err instanceof Error ? err.message : String(err);
+      return c.text(`webui failed to serve the app shell:\n\n${message}`, 500);
+    }
     const shell = template.replace("/assets/app.js", bundle.path);
     const etag = `"${new Bun.CryptoHasher("sha256").update(shell).digest("hex")}"`;
     const headers = {
