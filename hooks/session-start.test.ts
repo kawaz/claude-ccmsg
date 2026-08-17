@@ -411,21 +411,15 @@ describe("detectPathInstallCandidate", () => {
   });
 });
 
-// buildSubscribeCommand: 提示コマンドは CCMSG_SID prefix (+ launcher + subscribe)
-// のみ。transcript_path/repo/ws は (2026-07-11 kawaz 裁定で) コマンドラインへの
-// 埋め込みをやめ、session state file 経由で CLI 側が自分で読むようにした
-// (= writeSessionFile / sessionFilePath 参照)。
+// buildSubscribeCommand: 提示コマンドは launcher + subscribe の裸コマンドのみ。
+// sid は CLAUDE_CODE_SESSION_ID 自動検出に任せる。transcript_path/repo/ws は
+// session state file 経由で CLI 側が自分で読む (= writeSessionFile /
+// sessionFilePath 参照)。
 describe("buildSubscribeCommand", () => {
   const bin = "/opt/ccmsg/bin/ccmsg";
 
-  // session_id 無し (degenerate hook input): prefix なし、裸コマンドのみ。
-  test("session_id が無ければ prefix なしの裸コマンドになる", () => {
-    expect(buildSubscribeCommand(bin, undefined)).toBe(`${bin} subscribe`);
-  });
-
-  // 通常ケース: CCMSG_SID= だけが前置される。
-  test("session_id があれば CCMSG_SID= が前置される", () => {
-    expect(buildSubscribeCommand(bin, "sess-123")).toBe(`CCMSG_SID=sess-123 ${bin} subscribe`);
+  test("裸コマンドになる", () => {
+    expect(buildSubscribeCommand(bin)).toBe(`${bin} subscribe`);
   });
 });
 

@@ -5,14 +5,18 @@
  * Three jobs:
  *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
  *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
- *       hello time. This replaces an earlier approach of embedding these as env
- *       prefixes (CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS) on the suggested
- *       subscribe command: that made every session's *first* turn re-teach the AI
- *       a long, ever-growing command line purely for the daemon's benefit. A state
- *       file the CLI reads on its own keeps the suggested command down to
- *       `CCMSG_SID=<sid> ccmsg subscribe` regardless of how much identity metadata
- *       accumulates (kawaz decision, 2026-07-11).
- *   (b) Tell the AI to hold a `ccmsg subscribe` stream open under the Monitor tool.
+ *       hello time. A state file the CLI reads on its own keeps the suggested
+ *       command a constant bare `ccmsg subscribe` regardless of how much
+ *       identity metadata accumulates (kawaz decision, 2026-07-11) — env
+ *       prefixes on the suggested command would make every session's *first*
+ *       turn re-teach the AI an ever-growing command line purely for the
+ *       daemon's benefit.
+ *   (b) Tell the AI to hold a bare `ccmsg subscribe` stream open under the
+ *       Monitor tool. `CLAUDE_CODE_SESSION_ID` is exported into Bash/Monitor
+ *       subprocesses by Claude Code, so the CLI's own identity auto-detection
+ *       (packages/cli/src/index.ts's resolveIdentity) picks it up without any
+ *       env prefix on the suggested command; CCMSG_SID stays available as an
+ *       explicit override for manual invocation and tests.
  *       That subscribe call is the first client action of this session and it goes
  *       through `ensureDaemon`, which spawns/upgrades the daemon on demand — so no
  *       separate pre-warm from this hook is needed (DR-0002 §5 lazy ensure).
@@ -239,11 +243,12 @@ export function resolveBumpSemverBin(): string {
 
 // --- session state file (transcript_path/cwd/repo/ws handoff to the CLI) ---
 //
-// The suggested subscribe command only ever carries CCMSG_SID (see
-// buildSubscribeCommand below) — everything else identity-related that the CLI's
-// resolveIdentity wants (transcript_path/repo/ws) rides through this file instead,
-// so the command the AI re-types every session stays short regardless of how much
-// metadata accumulates.
+// The suggested subscribe command carries no env prefix at all (see
+// buildSubscribeCommand below): the sid comes from CLAUDE_CODE_SESSION_ID,
+// which the CLI auto-detects, and everything else identity-related that the
+// CLI's resolveIdentity wants (transcript_path/repo/ws) rides through this
+// file instead, so the command the AI re-types every session stays short
+// regardless of how much metadata accumulates.
 
 /** Shape written by this hook / user-prompt-submit.ts, and read by
  *  packages/cli/src/index.ts's resolveIdentity. All fields but `updated_at` are
@@ -313,16 +318,16 @@ export function pruneOldSessionFiles(stateDir: string, now: number = Date.now())
 }
 
 /**
- * Builds the `ccmsg subscribe` command line suggested to the AI. Only carries
- * CCMSG_SID (from `session_id`) — transcript_path/repo/ws used to ride along as
- * further env prefixes (CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS) but that grew
- * the suggested command every time DR-0009-style metadata was added; they're now
- * handed off via the session state file instead (see writeSessionFile) and read
- * by the CLI's own resolveIdentity, so this command stays short.
+ * Builds the `ccmsg subscribe` command line suggested to the AI: a bare
+ * `<bin> subscribe`, no env prefix. The CLI auto-detects the session identity
+ * from `CLAUDE_CODE_SESSION_ID`, which Claude Code exports into Bash/Monitor
+ * subprocesses; transcript_path/repo/ws ride along via the session state file
+ * (see writeSessionFile) and are read by the CLI's own resolveIdentity. This
+ * keeps the suggested command constant regardless of how much identity
+ * metadata accumulates.
  */
-export function buildSubscribeCommand(bin: string, sessionId: string | undefined): string {
-  const sidPrefix = sessionId ? `CCMSG_SID=${sessionId} ` : "";
-  return `${sidPrefix}${bin} subscribe`;
+export function buildSubscribeCommand(bin: string): string {
+  return `${bin} subscribe`;
 }
 
 /** Absolute path to the launcher, robust to a missing CLAUDE_PLUGIN_ROOT. */
@@ -439,12 +444,11 @@ async function main(): Promise<void> {
   // (b) Guide the AI. subscribe is a long-running blocking stream, so it must run
   // under the Monitor tool (persistent), never the Bash tool.
   //
-  // CCMSG_SID must be embedded in the suggested command: CLAUDE_CODE_SESSION_ID
-  // is not reliably exported to the Bash/Monitor subprocess environment, so
-  // without it the subscribe would silently hello as the User (u1) — no peers
-  // entry, no echo suppression. The hook is the one place that reliably knows
-  // session_id.
-  const subscribeCmd = buildSubscribeCommand(bin, input.session_id);
+  // No env prefix needed: CLAUDE_CODE_SESSION_ID is exported into Bash/Monitor
+  // subprocesses, and the CLI's identity auto-detection picks it up on its own
+  // (packages/cli/src/index.ts's resolveIdentity). CCMSG_SID remains available
+  // as an explicit override for manual invocation and tests.
+  const subscribeCmd = buildSubscribeCommand(bin);
   const contextLines = [
     "ccmsg is available: file-backed messaging between Claude Code sessions via a central daemon.",
     `Launcher (use this absolute path, not PATH): ${bin}`,

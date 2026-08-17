@@ -179,16 +179,13 @@ function resolveSessionIdentity(
   // there; --as-session still works everywhere.
   const sidOverride =
     cmd === "notify" ? str(opts, "as-session") : (str(opts, "sid") ?? str(opts, "as-session"));
-  // Env auto-detect: CCMSG_SID first (kawaz's explicit hook prefix, session-
-  // start.ts / user-prompt-submit.ts), then CLAUDE_CODE_SESSION_ID (Claude
-  // Code's own env, present in the parent process but NOT reliably exported
-  // into Monitor/Bash subprocesses — that's the very gap the hook's CCMSG_SID
-  // prefix exists to close). The old CLAUDE_SESSION_ID (never actually set by
-  // Claude Code — inherited from the pre-hook design) is removed to shrink the
-  // "which env do I set?" surface area. `strField` collapses empty strings to
-  // undefined so `CCMSG_SID=""` (a shell/CI env accident) doesn't shadow a
-  // real CLAUDE_CODE_SESSION_ID; same pattern used elsewhere in this function
-  // for CCMSG_TRANSCRIPT_PATH and friends.
+  // Env auto-detect: CCMSG_SID first (an explicit override for manual
+  // invocation / tests), then CLAUDE_CODE_SESSION_ID (Claude Code's own env,
+  // exported into Bash/Monitor subprocesses, so this is the normal path a
+  // hook-suggested bare `ccmsg subscribe` resolves through). `strField`
+  // collapses empty strings to undefined so `CCMSG_SID=""` (a shell/CI env
+  // accident) doesn't shadow a real CLAUDE_CODE_SESSION_ID; same pattern used
+  // elsewhere in this function for CCMSG_TRANSCRIPT_PATH and friends.
   const sid =
     sidOverride ?? strField(process.env.CCMSG_SID) ?? strField(process.env.CLAUDE_CODE_SESSION_ID);
   if (sid) {
@@ -242,11 +239,11 @@ function refuseWriteWithoutSid(cmd: string): never {
   process.stderr.write(
     `ccmsg: '${cmd}' requires a session identity; refusing to post as u1 (User).\n` +
       "  Set one of:\n" +
-      "    CCMSG_SID=<sid>            (the SessionStart / UserPromptSubmit hook prefix)\n" +
       "    CLAUDE_CODE_SESSION_ID=<sid>  (Claude Code's own env; auto-detected when exported)\n" +
+      "    CCMSG_SID=<sid>            (explicit override, manual invocation / tests)\n" +
       "    --as-session <sid>         (explicit override on the command line)\n" +
-      "  From a Claude Code session, prefer the exact command the hook suggested\n" +
-      "  (it already carries CCMSG_SID=).\n",
+      "  From a Claude Code session, CLAUDE_CODE_SESSION_ID is normally already set,\n" +
+      "  so a bare `ccmsg subscribe` (or other command) is enough.\n",
   );
   process.exit(1);
 }
@@ -258,9 +255,10 @@ function refuseWriteWithoutSid(cmd: string): never {
  * downstream). */
 function warnSubscribingAsUser(): void {
   process.stderr.write(
-    "ccmsg subscribe: no session id (CCMSG_SID / CLAUDE_CODE_SESSION_ID unset) — " +
+    "ccmsg subscribe: no session id (CLAUDE_CODE_SESSION_ID / CCMSG_SID unset) — " +
       "subscribing as the User (u1). No peers entry, no echo suppression. " +
-      "For a session sidecar, run: CCMSG_SID=<session_id> ccmsg subscribe\n",
+      "Inside a Claude Code session, CLAUDE_CODE_SESSION_ID is normally already set, " +
+      "so a bare `ccmsg subscribe` is enough; for a manual sidecar, set CCMSG_SID=<session_id>.\n",
   );
 }
 
@@ -626,8 +624,12 @@ Notes:
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl, dumps/*.jsonl)
-  CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection
-                               (CCMSG_SID wins; both are ignored for --as-session)
+  CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
+                               CLAUDE_CODE_SESSION_ID is normally already set
+                               inside a Claude Code session; CCMSG_SID is an
+                               explicit override (wins when both are set,
+                               manual invocation / tests). Both are ignored
+                               for --as-session.
   CCMSG_REPO / CCMSG_WS        Session metadata (repo / workspace) sent in hello
   CCMSG_BRANCH                 Current branch/bookmark of the session's checkout,
                                sent in hello (informational, webui session list)

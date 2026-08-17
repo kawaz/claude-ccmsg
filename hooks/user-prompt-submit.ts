@@ -146,12 +146,13 @@ interface UserPromptSubmitInput {
 
 /**
  * Builds the nag message's suggested command via the same
- * `buildSubscribeCommand` SessionStart uses — just `CCMSG_SID=<sid> ccmsg
- * subscribe`, since transcript_path/repo/ws now ride through the session
- * state file (see session-start.ts) rather than the command line.
+ * `buildSubscribeCommand` SessionStart uses — a bare `<bin> subscribe`, since
+ * the sid comes from CLAUDE_CODE_SESSION_ID auto-detection and
+ * transcript_path/repo/ws ride through the session state file (see
+ * session-start.ts) rather than the command line.
  */
-export function buildNagMessage(bin: string, sessionId: string | undefined): string {
-  const cmd = buildSubscribeCommand(bin, sessionId);
+export function buildNagMessage(bin: string): string {
+  const cmd = buildSubscribeCommand(bin);
   return (
     `[ccmsg] subscribe stream not detected in this session's process tree. ` +
     `Open it with the **Monitor tool** (persistent: true), not Bash: ${cmd}\n`
@@ -253,12 +254,11 @@ async function main(): Promise<void> {
     await exitHook();
   }
 
-  // CCMSG_SID must be embedded: CLAUDE_CODE_SESSION_ID is not reliably exported
-  // to Monitor subprocesses, so a bare `ccmsg subscribe` would hello as the User
-  // (u1) instead of this session (no peers entry, no echo suppression). See
+  // Bare `ccmsg subscribe` is enough: CLAUDE_CODE_SESSION_ID is exported into
+  // Monitor subprocesses, so the CLI auto-detects this session. See
   // session-start.ts / buildSubscribeCommand.
   // stdout is injected into the next turn as a <system-reminder>.
-  await exitHook(buildNagMessage(resolveBin(), sessionId));
+  await exitHook(buildNagMessage(resolveBin()));
 }
 
 /** Wall-clock cap for this hook (see deadline.ts). This one runs before every

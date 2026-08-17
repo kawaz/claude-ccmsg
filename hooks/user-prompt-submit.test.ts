@@ -149,23 +149,14 @@ describe("detectSubscribeInTree", () => {
   });
 });
 
-// buildNagMessage: 提示コマンドは CCMSG_SID prefix のみ (transcript_path/repo/ws
-// はコマンドラインへの埋め込みをやめ session state file 経由に変更、
-// 2026-07-11 kawaz 裁定。session-start.ts の buildSubscribeCommand と同じ)。
+// buildNagMessage: 提示コマンドは env prefix なしの裸コマンド (sid は
+// CLAUDE_CODE_SESSION_ID 自動検出に任せる。transcript_path/repo/ws は
+// session state file 経由。session-start.ts の buildSubscribeCommand と同じ)。
 describe("buildNagMessage", () => {
   const bin = "/opt/ccmsg/bin/ccmsg";
 
-  test("session_id があれば CCMSG_SID= prefix 付きのコマンドになる", () => {
-    const msg = buildNagMessage(bin, "sess-123");
-    expect(msg).toBe(
-      `[ccmsg] subscribe stream not detected in this session's process tree. ` +
-        `Open it with the **Monitor tool** (persistent: true), not Bash: ` +
-        `CCMSG_SID=sess-123 ${bin} subscribe\n`,
-    );
-  });
-
-  test("session_id が無ければ prefix なしの裸コマンドになる", () => {
-    const msg = buildNagMessage(bin, undefined);
+  test("裸コマンドになる", () => {
+    const msg = buildNagMessage(bin);
     expect(msg).toBe(
       `[ccmsg] subscribe stream not detected in this session's process tree. ` +
         `Open it with the **Monitor tool** (persistent: true), not Bash: ${bin} subscribe\n`,
