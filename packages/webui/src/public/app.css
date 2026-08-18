@@ -3529,6 +3529,40 @@ button.session-tab {
   }
 }
 
+/* JSON 文字列トークンのコピー UI (useJsonStringCopy)。ボタンはコード領域
+   (position: relative なホスト) の内側に absolute で 1 個だけ置き、hover 中の
+   トークンへ座標を動かす。transform で「トークンの右上を基準に、上辺の上・
+   右辺の内側」へ寄せる (斜め外側に飛び出さない)。 */
+.json-copy-host {
+  position: relative;
+}
+
+.json-copy-btn {
+  position: absolute;
+  transform: translate(-100%, -100%);
+  /* 「コピー」→「✓」でボタン幅が変わると、右端固定 (translate -100%) のため
+     左辺がカーソルの下から逃げ、hover が外れてボタンごと消える (実測)。
+     両ラベルが収まる幅に固定して geometry を動かさない。 */
+  min-width: 4em;
+  text-align: center;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  padding: 0 var(--space-7);
+  background: var(--bg);
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.json-copy-btn:hover,
+.json-copy-btn.copied {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* --- Timeline view: transcript jsonl (DR-0009) --- */
 
 .timeline-view {

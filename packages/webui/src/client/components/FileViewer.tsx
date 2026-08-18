@@ -48,6 +48,7 @@ import {
   VIEWER_SCROLLER_SELECTOR,
 } from "../viewer-scroll-store.ts";
 import { makeMarkdownPathLinker } from "../filepath-linker.tsx";
+import { useJsonStringCopy } from "../useJsonStringCopy.tsx";
 import {
   MarkdownView,
   extractTaskStates,
@@ -747,6 +748,7 @@ export function FileViewer({
   const path = tree.selectedPath;
   const selectedLineRange = tree.selectedLineRange;
   const selectedLineRef = useRef<HTMLDivElement | null>(null);
+  const jsonCopy = useJsonStringCopy();
   const file = tree.file;
   const res = file?.response;
 
@@ -1380,7 +1382,7 @@ export function FileViewer({
       ) : lines.length === 0 ? (
         <p class="viewer-empty-file">(空のファイル)</p>
       ) : (
-        <pre class="viewer-body">
+        <pre class="viewer-body json-copy-host" {...jsonCopy.hostProps}>
           {lines.map((line, i) => {
             const spans = highlightedLines?.[i];
             const lineNumber = i + 1;
@@ -1414,6 +1416,7 @@ export function FileViewer({
               </div>
             );
           })}
+          {jsonCopy.overlay}
         </pre>
       )}
     </div>

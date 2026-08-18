@@ -11,8 +11,10 @@ import {
   tokenizeLines,
   type HighlightSpan,
 } from "../highlight.ts";
+import { useJsonStringCopy } from "../useJsonStringCopy.tsx";
 
 export function CodeBlock({ code, lang }: { code: string; lang: string | null }) {
+  const jsonCopy = useJsonStringCopy();
   const shjLang = lang ? detectLanguage(`_.${lang.toLowerCase()}`) : null;
   const eligible = isHighlightEligible(shjLang, code, false);
 
@@ -45,7 +47,7 @@ export function CodeBlock({ code, lang }: { code: string; lang: string | null })
   }
 
   return (
-    <pre class="md-code">
+    <pre class="md-code json-copy-host" {...jsonCopy.hostProps}>
       <code>
         {lines.map((spans, i) => (
           <span class="md-code-line" key={i}>
@@ -62,6 +64,7 @@ export function CodeBlock({ code, lang }: { code: string; lang: string | null })
           </span>
         ))}
       </code>
+      {jsonCopy.overlay}
     </pre>
   );
 }
