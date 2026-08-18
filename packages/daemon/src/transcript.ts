@@ -54,6 +54,38 @@ export function validateTranscriptPath(sid: string, transcriptPath: unknown): st
   return transcriptPath;
 }
 
+/**
+ * Hello-time adoption: the announced path when it validates, otherwise the
+ * session's own `<configDir>/projects/<project>/<sid>.jsonl` looked up on disk.
+ *
+ * The fallback exists because the announcement channel has a structural hole:
+ * transcript_path travels through the hook-written session state file, and a
+ * fork/resume launch fires SessionStart (and the launch prompt's
+ * UserPromptSubmit) under the *origin* sid — so the new sid's state file is
+ * never written and its hello carries no transcript_path at all. Such a
+ * session showed up in the webui as Busy with a permanently disabled Timeline.
+ *
+ * Trust-wise this is narrower than the announced path, not wider: nothing here
+ * comes from the client except the sid, the sid must be a complete UUID, and
+ * the only file that can be adopted is the one whose basename is `<sid>.jsonl`
+ * below a detected config dir's `projects/` — the same shape
+ * {@link validateTranscriptPath} pins the announced path to. Not found (the
+ * transcript has not been created yet, or lives outside the scanned dirs)
+ * degrades exactly like a rejected announcement: undefined, hello still fine.
+ */
+export async function adoptTranscriptPath(
+  sid: string,
+  announced: unknown,
+  configDirs?: readonly string[],
+): Promise<string | undefined> {
+  const validated = validateTranscriptPath(sid, announced);
+  if (validated) return validated;
+  // `undefined` falls through to resolveVirtualTranscript's own default
+  // (daemon-detected config dirs); tests pass fixture dirs explicitly.
+  const virtual = await resolveVirtualTranscript(sid, configDirs);
+  return virtual?.file;
+}
+
 export interface TranscriptResolveOptions {
   /** Historical fallback is passed only by user-role transcript_read. Live tail
    * and session-status callers intentionally keep the connected-session contract. */

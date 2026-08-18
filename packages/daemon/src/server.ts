@@ -90,6 +90,7 @@ import {
   type SessionStatusStore,
 } from "./session-status.ts";
 import {
+  adoptTranscriptPath,
   createTranscriptTailStore,
   resolveTranscript,
   stopAllTailWatches,
@@ -97,7 +98,6 @@ import {
   transcriptSubscribe,
   transcriptUnsubscribe,
   transcriptUnsubscribeAll,
-  validateTranscriptPath,
   type TranscriptTailStore,
 } from "./transcript.ts";
 import {
@@ -508,9 +508,10 @@ function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
 function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void {
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
-  // exception (DR-0009 addendum): unlike repo/ws/cwd, it only ever arrives via
-  // the hook-supplied CCMSG_TRANSCRIPT_PATH env prefix (session-start.ts /
-  // user-prompt-submit.ts), and a re-subscribe after the stream died is a
+  // exception (DR-0009 addendum): unlike repo/ws/cwd, it arrives via the
+  // hook-supplied session state file (session-start.ts / user-prompt-submit.ts)
+  // or, when that never got written, adoptTranscriptPath's disk lookup — and a
+  // re-subscribe after the stream died is a
   // common, legitimate path that omits it (e.g. a UserPromptSubmit-suggested
   // `CCMSG_SID=<sid> ccmsg subscribe` typed without the transcript prefix). A
   // hello that omits transcript_path preserves whatever was already adopted
@@ -1383,7 +1384,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");
           return;
         }
-        const transcriptPath = validateTranscriptPath(req.sid, req.transcript_path);
+        // Announced-and-validated path, else the session's own
+        // projects/<sid>.jsonl found on disk — a fork/resume launch never gets
+        // a state file written under its new sid, so its hello announces
+        // nothing (see adoptTranscriptPath).
+        const transcriptPath = await adoptTranscriptPath(req.sid, req.transcript_path);
         // A session names its own cwd, so the spelling is whatever its shell
         // had (`/tmp/x` where the real directory is `/private/tmp/x`).
         // `repo_root` is realpath'd by validateRepoRoot before adoption, and

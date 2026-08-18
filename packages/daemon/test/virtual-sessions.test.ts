@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fsList, fsRead, fsWrite } from "../src/fs-access.ts";
-import { transcriptRead } from "../src/transcript.ts";
+import { adoptTranscriptPath, transcriptRead } from "../src/transcript.ts";
 import {
   deriveRepoLocation,
   isValidSid,
@@ -206,6 +206,78 @@ describe("virtual session lookup boundary", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("not_found");
   });
+});
+
+describe("hello-time transcript adoption", () => {
+  // Guarantees a session that announces nothing (the fork/resume launch shape:
+  // SessionStart fires under the origin sid, so no state file is ever written
+  // for the new one) still gets its own projects/<sid>.jsonl adopted, while a
+  // valid announcement is taken as-is without touching disk.
+  test("announced path wins, absent announcement falls back to the sid's own file", async () => {
+    const config = fixtureRoot();
+    const cwd = path.join(fixtureRoot(), "project");
+    fs.mkdirSync(cwd);
+    const file = transcript(config, sid(), cwd);
+
+    const announced = `/elsewhere/${sid()}.jsonl`;
+    expect(await adoptTranscriptPath(sid(), announced, [config])).toBe(announced);
+    expect(await adoptTranscriptPath(sid(), undefined, [config])).toBe(file);
+    // Announcement rejected by DR-0009 shape validation (another sid's
+    // basename) degrades to the derived file, never to the named one.
+    expect(await adoptTranscriptPath(sid(), `/elsewhere/${sid(2)}.jsonl`, [config])).toBe(file);
+  });
+
+  // Guarantees the fallback adds no lookup surface: the sid is the only
+  // client-controlled input and it must be a complete UUID, and a sid with no
+  // transcript below the scanned dirs stays unadopted (hello still succeeds).
+  test("derivation refuses non-UUID sids and missing files", async () => {
+    const config = fixtureRoot();
+    expect(await adoptTranscriptPath(sid(), undefined, [config])).toBeUndefined();
+    for (const value of ["../../../etc/passwd", "A", `${sid()}junk`]) {
+      expect(await adoptTranscriptPath(value, undefined, [config])).toBeUndefined();
+    }
+  });
+
+  // Guarantees the end-to-end effect the webui gates Timeline on: a connected
+  // session that announced no transcript_path is published in `peers` with the
+  // derived path, so Timeline is enabled and transcript_read serves it.
+  test(
+    "a session hello without transcript_path is published with the derived path",
+    async () => {
+      const home = fixtureRoot();
+      const config = path.join(home, ".claude");
+      fs.mkdirSync(config);
+      const cwd = path.join(fixtureRoot(), "project");
+      fs.mkdirSync(cwd);
+      const file = transcript(config, sid(), cwd);
+
+      const ctx = await startTestDaemon({ HOME: home });
+      try {
+        const session = await connect(ctx.sock);
+        await session.hello({ role: "session", sid: sid(), cwd });
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+
+        const peers = await user.request<{
+          ok: true;
+          peers: { sid: string; transcript_path?: string }[];
+        }>({ op: "peers" });
+        expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
+
+        const read = await user.request<{ ok: true; lines: string[] }>({
+          op: "transcript_read",
+          sid: sid(),
+        });
+        expect(read.ok).toBe(true);
+        expect(read.lines).toHaveLength(1);
+        session.close();
+        user.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 });
 
 describe("session_search wire authorization", () => {
