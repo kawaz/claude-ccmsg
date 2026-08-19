@@ -610,11 +610,10 @@ a {
 
 .session-row.active .session-main-link,
 .session-row.active .session-title,
+.session-row.active .session-line1-repo,
+.session-row.active .session-line1-ws,
 .session-row.active .session-branch,
 .session-row.active .session-sid-btn,
-.session-row.active .session-line2-ws,
-.session-row.active .session-line2-repo,
-.session-row.active .session-line2-at,
 .session-row.active .session-line4,
 .session-row.active .session-rename-btn,
 .session-row.active .session-status-badge,
@@ -670,11 +669,35 @@ a {
   opacity: 0.6;
 }
 
-/* 1 行目の見出し = セッション自身のタイトル (kawaz r135m16)。旧
- * .session-repo-ws の位置を引き継ぐが、repo 名と違って任意長の日本語が入る
- * ので nowrap + ellipsis で 1 行に収める (全文は行の title 属性に出る)。 */
-.session-title {
+/* 1 行目 = repo@ws。行内で唯一の強い文字 (kawaz r135m18)。repo は長い方が
+ * 先に削れてよいので ellipsis を持たせ、ws 側は縮めない — 同じ repo の行を
+ * 見分ける手掛かりが ws なので、そこを削ると行の区別が付かなくなる。 */
+.session-line1-repo {
   font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* `@ws` は @ ごと 1 単位で別色 (kawaz r135m18)。accent 行では下の
+ * .session-row.active 側が accent-fg に上書きする。 */
+.session-line1-ws {
+  flex-shrink: 0;
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* 2 行目 = セッションのタイトル。3 行目以下と同じ弱い文字 (kawaz r135m18)
+ * だが、任意長の日本語が入るので ellipsis で 1 行に収める (全文は行の title
+ * 属性に出る)。 */
+.session-title {
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -738,28 +761,12 @@ a {
   white-space: nowrap;
 }
 
-/* 2 行目: repo@ws。gap を置かないのは "@" が区切り記号そのものだから
- * (gap があると "repo @ ws" と 3 語に見える)。タイトル行より一段小さくして、
- * 見出しが 1 行目であることを崩さない。 */
+/* 2 行目: タイトル + ✎。 */
 .session-line2 {
   padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
-  min-width: 0;
-  font-size: var(--font-size-sm);
-  color: var(--fg);
-}
-
-.session-line2-at {
-  opacity: 0.5;
-}
-
-/* repo と ws のどちらが長くても、行全体ではなくその要素側で ellipsis する。 */
-.session-line2-repo,
-.session-line2-ws {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -777,6 +784,27 @@ a {
 .session-sid-btn:hover {
   opacity: 1;
   text-decoration: underline;
+}
+
+/* コピー成功の一時表示 (kawaz r135m20)。sid 自体は読めたままにしたいので
+ * 差し替えではなく併記し、色は StatusPanel の .copied と同じ accent。 */
+.session-sid-btn.copied {
+  opacity: 1;
+  color: var(--accent);
+}
+
+.session-sid-copied {
+  margin-left: var(--space-6);
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  white-space: nowrap;
+}
+
+.session-row.active .session-sid-btn.copied {
+  color: var(--accent-fg);
 }
 
 /* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら
