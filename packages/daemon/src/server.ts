@@ -29,6 +29,7 @@ import {
   type SessionIdentity,
   type SessionEnvResponse,
   type SessionKillResponse,
+  type SessionRenameResponse,
   type SessionLaunchResponse,
   type SessionSearchResponse,
   type ForkOriginResponse,
@@ -60,6 +61,7 @@ import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts
 import { probeForkSupport } from "./fork-probe.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
+import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
 import { productionEnvDeps, sessionEnv } from "./session-env.ts";
 import { sessionSearch } from "./session-search.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
@@ -1225,6 +1227,7 @@ const IDENTITY_OPS = new Set([
   "dir_tree",
   "session_launch",
   "session_kill",
+  "session_rename",
   "session_launcher_config",
   "leave",
   "invite",
@@ -1276,6 +1279,7 @@ const SET_TITLE_MAX_LEN = 200;
  * `ev:"*_result"` event carries beside its ev/request_id envelope. */
 type TwoPhaseResult =
   | SessionKillResponse
+  | SessionRenameResponse
   | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
@@ -2281,6 +2285,77 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         },
         (e) => {
           daemon.log.error(`op 'session_kill' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
+    case "session_rename": {
+      // user role only, same posture as session_kill: typing into another
+      // session's terminal is at least as strong an action as signalling it,
+      // and a session-role agent must not be able to drive its peers' TUIs.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_rename' requires user role");
+        return;
+      }
+      if (typeof req.session_id !== "string" || req.session_id === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_rename requires a non-empty session_id");
+        return;
+      }
+      // Title validation happens before the ack so a malformed title costs
+      // nothing and reports synchronously — only the delivery attempt (which
+      // spawns hyoui) is worth the 2-phase machinery.
+      const titleCheck = validateRenameTitle(req.title);
+      if (!titleCheck.ok) {
+        sendErr(conn, ErrorCode.invalid_args, titleCheck.msg);
+        return;
+      }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "session_rename",
+        "session_rename_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      void sessionRename(
+        req.session_id,
+        titleCheck.title,
+        productionRenameDeps((sid) => {
+          const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+          return agent?.hyoui_session_id ?? null;
+        }),
+      ).then(
+        (result) => {
+          if (result.ok) {
+            complete({
+              ok: true,
+              hyoui_session_id: result.hyoui_session_id,
+              title: result.title,
+            });
+            return;
+          }
+          if (result.reason === "terminal_unavailable") {
+            complete({
+              ok: false,
+              error: {
+                code: ErrorCode.terminal_unavailable,
+                msg: `session ${req.session_id} has no known terminal (no HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
+              },
+            });
+            return;
+          }
+          complete({
+            ok: false,
+            error: {
+              code: "internal",
+              msg: `sending /rename to the session's terminal failed: ${result.msg}`,
+            },
+          });
+        },
+        (e) => {
+          daemon.log.error(`op 'session_rename' failed: ${String(e)}`);
           complete({ ok: false, error: { code: "internal", msg: String(e) } });
         },
       );

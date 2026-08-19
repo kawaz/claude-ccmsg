@@ -434,6 +434,10 @@ a {
 #session-list {
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  /* The session row's path line measures itself against the VISIBLE list
+     width (100cqi) rather than the row's own max-content width — see
+     .session-line4. */
+  container-type: inline-size;
 }
 
 #room-list > li,
@@ -605,10 +609,14 @@ a {
 }
 
 .session-row.active .session-main-link,
-.session-row.active .session-repo-ws,
+.session-row.active .session-title,
 .session-row.active .session-branch,
 .session-row.active .session-sid-btn,
 .session-row.active .session-line2-ws,
+.session-row.active .session-line2-repo,
+.session-row.active .session-line2-at,
+.session-row.active .session-line4,
+.session-row.active .session-rename-btn,
 .session-row.active .session-status-badge,
 /* --danger (#dc2626) は accent 背景 (#2563eb) の上ではコントラストが取れない
  * ので、選択行では他のテキストと同じ accent-fg に落とす。色の signal は失う
@@ -628,6 +636,7 @@ a {
  * 弱める (0.85 で他のテキストと同じ存在感)。 */
 .session-row.active .session-idle,
 .session-row.active .session-sid-btn,
+.session-row.active .session-line4,
 .session-row.active .session-line3 {
   opacity: 0.85;
 }
@@ -661,9 +670,15 @@ a {
   opacity: 0.6;
 }
 
-.session-repo-ws {
+/* 1 行目の見出し = セッション自身のタイトル (kawaz r135m16)。旧
+ * .session-repo-ws の位置を引き継ぐが、repo 名と違って任意長の日本語が入る
+ * ので nowrap + ellipsis で 1 行に収める (全文は行の title 属性に出る)。 */
+.session-title {
   font-size: var(--font-size-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .session-branch {
@@ -723,20 +738,25 @@ a {
   white-space: nowrap;
 }
 
+/* 2 行目: repo@ws。gap を置かないのは "@" が区切り記号そのものだから
+ * (gap があると "repo @ ws" と 3 語に見える)。タイトル行より一段小さくして、
+ * 見出しが 1 行目であることを崩さない。 */
 .session-line2 {
   padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
-  gap: var(--space-7);
   min-width: 0;
-}
-
-/* ws (workspace/worktree 名) — kawaz r17 mid=29 で sid と同居していたが
- * r55 mid=20 で 2 行目単独に。sid/cwd より価値が高い情報なので少し大きめ
- * (0.75rem)、色も fg (accent 背景でも読める) に格上げ。長い名前は ellipsis。 */
-.session-line2-ws {
   font-size: var(--font-size-sm);
   color: var(--fg);
+}
+
+.session-line2-at {
+  opacity: 0.5;
+}
+
+/* repo と ws のどちらが長くても、行全体ではなくその要素側で ellipsis する。 */
+.session-line2-repo,
+.session-line2-ws {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -759,16 +779,35 @@ a {
   text-decoration: underline;
 }
 
-/* 3 行目: SID8 (session-sid-btn) + cwd (session-cwd)。kawaz r55 mid=20 で
- * 補助情報 2 種を同一行に集約。cwd はデフォルト ellipsis、行クリックで
- * 折り返し表示 (session-cwd-full)。sid ボタンだけは stopPropagation で
- * cwd 折り返しトグルと分離。 */
+/* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら
+ * ない幅では sid ボタン側の ellipsis に任せる。 */
 .session-line3 {
   padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
-  gap: var(--space-7);
   min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  opacity: 0.7;
+}
+
+/* 4 行目: project path。左省略 (右端が常に見える) — direction:rtl が
+ * ellipsis を行頭側に回す唯一の CSS 手段で、その副作用 (中立文字の並べ替え)
+ * は中身の <bdi dir="ltr"> が吸収する (SessionList.tsx のコメント参照)。
+ * クリックで全文折り返し (session-cwd-full)。
+ *
+ * 幅の基準が行ではなくリストの可視幅 (100cqi) なのが肝。行は r46m36 の方針で
+ * width:max-content (= 最長行が幅を決め、リストごと横スクロール) なので、
+ * 行幅を基準にすると (a) path 自身が最長行になって器が中身ちょうどに広がり
+ * 省略が一生起きない、(b) 他の行が長い時は path の右端が可視領域の外に出る、
+ * のどちらかになる。リストの可視幅から行の左右 padding を引いた幅に固定する
+ * ことで、どの行でも path の右端 (= worktree 名) が可視領域に収まる。 */
+.session-line4 {
+  width: calc(100cqi - var(--space-8) * 2);
+  box-sizing: border-box;
+  padding-left: var(--space-14);
+  display: flex;
+  align-items: baseline;
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   opacity: 0.7;
@@ -776,6 +815,8 @@ a {
 }
 
 .session-cwd {
+  direction: rtl;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -783,13 +824,85 @@ a {
   flex: 1;
 }
 
-.session-line3.session-cwd-full {
+.session-line4.session-cwd-full {
   align-items: flex-start;
 }
 
-.session-line3.session-cwd-full .session-cwd {
+/* 折り返し表示中は左省略の出番がないので、rtl も戻して素直に読ませる。 */
+.session-line4.session-cwd-full .session-cwd {
+  direction: ltr;
   white-space: normal;
   word-break: break-all;
+}
+
+/* ✎ (タイトル変更) — hyoui 端末を持つ行にだけ出る。常時は控えめ、行 hover
+ * とフォーカスで前に出す。 */
+.session-rename-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  color: var(--fg-muted);
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.session-row:hover .session-rename-btn,
+.session-rename-btn:focus-visible {
+  opacity: 1;
+}
+
+/* インラインのタイトル編集フォーム。行内に生えるので入力欄が主、ボタンは
+ * 最小限。エラー / 顛末は下に回り込ませる (幅が足りないため)。 */
+.session-rename-edit {
+  padding-left: var(--space-14);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  margin: var(--space-4) 0;
+}
+
+.session-rename-edit input {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.session-rename-save-btn,
+.session-rename-cancel-btn {
+  font-size: var(--font-size-2xs);
+  padding: var(--space-3) var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: 0.35rem;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.session-rename-error {
+  flex: 1 1 100%;
+  font-size: var(--font-size-2xs);
+  color: var(--danger);
+  word-break: break-word;
+}
+
+/* 送信できたことだけを伝える控えめな注記 (タイトル自体は agents poll が
+ * 更新する)。数秒で自分から消える。 */
+.session-rename-note {
+  padding-left: var(--space-14);
+  font-size: var(--font-size-2xs);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* DR-0021 §2.4/§3.2: Pinned-section row extras (SessionList.tsx's

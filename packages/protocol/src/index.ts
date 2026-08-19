@@ -790,6 +790,14 @@ export type SessionKillResultEvent = {
   request_id: string;
 } & (SessionKillResponse | ErrorResponse);
 
+/** Completion of a 2-phase `session_rename` request (see
+ * SessionRenameRequest's doc comment). Same correlation/classification rules
+ * as TranslateResultEvent. */
+export type SessionRenameResultEvent = {
+  ev: "session_rename_result";
+  request_id: string;
+} & (SessionRenameResponse | ErrorResponse);
+
 /** Completion of a 2-phase `session_env` request (see SessionEnvRequest's
  * doc comment). Same correlation/classification rules as TranslateResultEvent. */
 export type SessionEnvResultEvent = {
@@ -849,6 +857,7 @@ export type StreamEvent =
   | TranslateResultEvent
   | SessionLaunchResultEvent
   | SessionKillResultEvent
+  | SessionRenameResultEvent
   | SessionEnvResultEvent
   | SessionSearchResultEvent
   | ForkOriginResultEvent
@@ -1159,6 +1168,53 @@ export interface SessionKillRequest {
    * 押す 2 段動線)。sid→pid 解決と ps 検証は force 時も同じで、pid-reuse ガード
    * だけは絶対に外さない。 */
   force?: boolean;
+}
+
+/** Retitle a running Claude Code session by typing its own `/rename` command
+ * into the terminal that session lives in (user role only, kawaz r135m16).
+ *
+ * There is no API to set a session's title: `claude agents --json` reports
+ * `name` but nothing writes it from outside, and the title kawaz wants to fix
+ * is exactly that `name` (the Sessions list's first line). The one route that
+ * does work is the one kawaz performs by hand today — switch to the session's
+ * terminal and type `/rename <title>`. This op automates that keystroke
+ * delivery through hyoui, the terminal multiplexer the sessions run under:
+ * the daemon already learns each session's `HYOUI_SESSION_ID` per agents poll
+ * (AgentInfo.hyoui_session_id), which is the terminal handle `hyoui input`
+ * needs. A session with no known hyoui terminal is refused with
+ * `terminal_unavailable` rather than guessed at.
+ *
+ * **Best-effort by construction**: success means the keystrokes were handed
+ * to the terminal, NOT that Claude Code accepted the rename — the daemon
+ * cannot see the TUI's reaction. A session sitting in a modal, or a build of
+ * Claude Code without `/rename`, will report `ok` here and simply not be
+ * renamed. The webui says so in its own wording rather than claiming the
+ * title changed; the authoritative title arrives later via the normal agents
+ * poll.
+ *
+ * `title` is embedded into a single hyoui spec argument (`text:/rename
+ * <title>`), and hyoui applies no escape processing — a raw newline in the
+ * value would reach the TUI as a real newline and submit a half-typed
+ * command. Control characters are therefore rejected up front (see
+ * validateRenameTitle in the daemon) instead of being silently stripped.
+ *
+ * 2-phase reply for the same arrival-order reason as session_kill: this
+ * spawns a `hyoui input` child (and hyoui itself serializes against other
+ * input holders), so the outcome arrives as `ev:"session_rename_result"`. */
+export interface SessionRenameRequest {
+  op: "session_rename";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionKillRequest.request_id). */
+  request_id: string;
+  /** The Claude Code session UUID to retitle. The request carries no
+   * hyoui session id for the same reason session_kill carries no pid: the
+   * daemon's own agents-poll resolution is a stronger basis than a
+   * client-asserted terminal handle, and a wrong handle would type a
+   * `/rename` into somebody else's terminal. */
+  session_id: string;
+  /** The new title, as the user typed it. Leading/trailing whitespace is
+   * trimmed; control characters are rejected (invalid_args). */
+  title: string;
 }
 
 /** Read the environment variables of a session's own process (user role
@@ -1812,6 +1868,7 @@ export type Request =
   | DirTreeRequest
   | SessionLaunchRequest
   | SessionKillRequest
+  | SessionRenameRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
   | LlmUsageRequest
@@ -2022,6 +2079,18 @@ export interface SessionLaunchResponse {
 export interface SessionKillResponse {
   ok: true;
   terminated: boolean;
+}
+/** Payload of a completed session_rename, delivered inside
+ * SessionRenameResultEvent. `ok` here means "the `/rename <title>` keystrokes
+ * reached the terminal", not "the session is now called that" — see
+ * SessionRenameRequest for why the daemon cannot know the latter. `title` is
+ * the normalized (trimmed) string actually typed, so a UI can report what it
+ * sent rather than what the user's draft happened to contain, and
+ * `hyoui_session_id` names the terminal it went to. */
+export interface SessionRenameResponse {
+  ok: true;
+  hyoui_session_id: string;
+  title: string;
 }
 /** Payload of a completed session_env, delivered inside SessionEnvResultEvent.
  * `env` is the session process's environment as name→value pairs.
@@ -2659,5 +2728,11 @@ export const ErrorCode = {
   // keeps the webui from asking at all, and this covers the window where the
   // config changed under a live connection.
   sandbox_not_configured: "sandbox_not_configured",
+  // session_rename: the session exists but the daemon knows no terminal to
+  // type into (no HYOUI_SESSION_ID on its process, or the agents poll has not
+  // seen it yet). Kept apart from not_found — "this session cannot be renamed
+  // this way" is a standing property of how the session was started, whereas
+  // not_found would suggest retrying against a session that is simply gone.
+  terminal_unavailable: "terminal_unavailable",
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

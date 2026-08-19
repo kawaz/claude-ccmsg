@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { useApp } from "../context.ts";
@@ -10,10 +10,10 @@ import {
   formatDuration,
   groupSessionsBySection,
   indexAgentsBySid,
+  lastPathSegment,
   offlineAgentRows,
-  sessionRowRepoWs,
+  sessionRowTitle,
   sessionBadges,
-  sessionSearchHitLabel,
   shortSid,
   sortPinnedSessions,
   toSessionRow,
@@ -21,6 +21,7 @@ import {
 } from "../utils.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
+import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { Fold } from "./Fold.tsx";
 
 const TICK_MS = 10_000;
@@ -37,8 +38,128 @@ function useTick(intervalMs: number): void {
   }, [intervalMs]);
 }
 
-/** One row of the Sessions list (U1): three lines (repo/ws + badges + idle,
- * sid, cwd) instead of the previous single-line label. `row` is a merged
+/** How long a rename's outcome note stays on the row before clearing itself.
+ * Not a poll: the note has no state to wait for (the authoritative title
+ * arrives on its own via the agents poll), it just must not become permanent
+ * sidebar furniture. */
+const RENAME_NOTE_MS = 6000;
+
+/** Inline title editor for one session row (kawaz r135m16 §✎). Mirrors
+ * RoomTitle's confirm/cancel contract deliberately — Shift+Enter or [保存] to
+ * confirm, Escape / [キャンセル] / outside click to abort — so the two rename
+ * affordances in this UI behave identically rather than each inventing its
+ * own keyboard rules.
+ *
+ * What it cannot mirror is the outcome: a room's set_title is authoritative
+ * and echoes back on the subscribe stream, whereas this only types
+ * `/rename <title>` into the session's terminal (see SessionRenameRequest).
+ * So a success closes the editor and leaves a "送信した" note rather than
+ * showing the new title — the row's headline keeps reporting what `claude
+ * agents` actually reports until the next poll confirms (or doesn't). */
+function SessionRenameEditor({
+  sid,
+  current,
+  onClose,
+  onSent,
+}: {
+  sid: string;
+  current: string;
+  onClose: () => void;
+  onSent: (title: string) => void;
+}) {
+  const { ws } = useApp();
+  const [draft, setDraft] = useState(current);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Same double-settle guard RoomTitle needs: Escape and the outside-pointer
+  // dismissal can both fire within one frame.
+  const settledRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function cancel(): void {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    onClose();
+  }
+
+  async function confirm(): Promise<void> {
+    if (settledRef.current) return;
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      cancel();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await ws.sessionRename(sid, trimmed);
+      if (!res.ok) {
+        // Keep the editor open with the draft intact so the user can fix a
+        // rejected title (control characters, too long) or retry a failed
+        // send without retyping.
+        setError(res.error.msg);
+        return;
+      }
+      settledRef.current = true;
+      onSent(res.title);
+    } catch {
+      setError("接続エラーのため送信できませんでした");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function onKeyDown(e: KeyboardEvent): void {
+    if (e.isComposing) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancel();
+      return;
+    }
+    if (e.key !== "Enter") return;
+    if (!e.shiftKey) return;
+    e.preventDefault();
+    void confirm();
+  }
+
+  useDismissOnOutsidePointer(containerRef, !saving, cancel);
+
+  return (
+    <div class="session-rename-edit" ref={containerRef}>
+      <input
+        autoFocus
+        type="text"
+        value={draft}
+        disabled={saving}
+        maxLength={200}
+        placeholder="新しいタイトル (Shift+Enter で送信, Escape で中止)"
+        onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+        onKeyDown={onKeyDown}
+      />
+      <button
+        type="button"
+        class="session-rename-save-btn"
+        disabled={saving}
+        onClick={() => void confirm()}
+      >
+        送信
+      </button>
+      <button type="button" class="session-rename-cancel-btn" disabled={saving} onClick={cancel}>
+        キャンセル
+      </button>
+      {error && <span class="session-rename-error">{error}</span>}
+    </div>
+  );
+}
+
+/** One row of the Sessions list (kawaz r135m16 §1): four stacked elements —
+ * title (+ ✎), `repo@ws`, the full session UUID, and the project path — in
+ * descending order of how the reader identifies a session. The title leads
+ * because it is the only part a human chose (see sessionRowTitle); the sid is
+ * printed whole rather than truncated because its whole job here is to be
+ * copied and pasted somewhere else; the path is truncated from the LEFT so
+ * the leaf directory — the part that differs between two worktrees of the
+ * same repo — stays on screen. `row` is a merged
  * SessionRow (see utils.ts's toSessionRow/offlineAgentRows) — either a
  * connected peer (optionally agent-enriched) or an agent-only "ccmsg 未起動"
  * row.
@@ -72,8 +193,26 @@ function SessionRowItem({
   activeSecondary: boolean;
 }) {
   const [cwdFull, setCwdFull] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheTs);
-  const { repo, ws: wsLabel } = sessionRowRepoWs(row);
+  const title = sessionRowTitle(row);
+  // Straight from the row: a session that announced no repo/ws simply has no
+  // second line (kawaz r135m16: 欠けたら欠けたなり). No substitute is invented
+  // here — the one that used to exist borrowed the agent's name, which the
+  // title line above already shows.
+  const repo = row.repo;
+  const wsLabel = row.ws;
+  // ✎ only where the daemon has a terminal to type into (session_rename
+  // answers `terminal_unavailable` otherwise) — offering a button that can
+  // only fail would be worse than not offering it.
+  const hyouiSessionId = row.agent?.hyoui_session_id;
+
+  useEffect(() => {
+    if (renameNote === null) return;
+    const id = setTimeout(() => setRenameNote(null), RENAME_NOTE_MS);
+    return () => clearTimeout(id);
+  }, [renameNote]);
   const badges = sessionBadges(row);
   const liveState = formatAgentLiveState(row.agent);
   const idleMs = row.last_activity_at
@@ -81,6 +220,9 @@ function SessionRowItem({
     : null;
 
   const titleParts = [row.cwd];
+  // The row itself now shows repo@ws but not branch (kawaz r135m16's four
+  // elements have no slot for it); hover keeps it reachable.
+  if (row.branch) titleParts.push(`branch: ${row.branch}`);
   if (row.connected_at) titleParts.push(`connected: ${row.connected_at}`);
   if (row.last_activity_at) titleParts.push(`last activity: ${row.last_activity_at}`);
   if (liveState) titleParts.push(`status: ${liveState}`);
@@ -137,11 +279,25 @@ function SessionRowItem({
           >
             <Avatar seed={row.sid} size={16} />
           </span>
-          {/* 1 行目は repo のみ (kawaz r17 mid=29: 横幅が狭く ws まで入れると
-           * 詰まる)。ws は 2 行目に単独で置く (kawaz r55 mid=20)。repo 無し行
-           * (agent-only 等) は従来通り ws/cwd 末尾の fallback をここに出す。 */}
-          <span class="session-repo-ws">{repo || wsLabel}</span>
+          {/* 1 行目はセッション自身のタイトル (= /rename が設定し claude
+           * agents が name として返す文字列)。repo/ws は 2 行目に降りた
+           * (kawaz r135m16)。 */}
+          <span class="session-title">{title}</span>
         </a>
+        {hyouiSessionId ? (
+          <button
+            type="button"
+            class="session-rename-btn"
+            title="タイトルを変更 (セッションの端末に /rename を送る)"
+            aria-label="タイトルを変更"
+            onClick={() => {
+              setRenameNote(null);
+              setRenaming(true);
+            }}
+          >
+            ✎
+          </button>
+        ) : null}
         {liveState ? (
           <span
             class={
@@ -176,38 +332,60 @@ function SessionRowItem({
        * 1 行に truncate (全文は上の title に入っている)。1 行目の badge 群とは
        * 別の行に置いて statusBadge の並びを崩さない。 */}
       {row.api_error ? <div class="session-error-text">{row.api_error.text}</div> : null}
-      {/* 2 行目: worktree/workspace 名 (branch も併記)。repo 無し行は 1 行目で
-       * 既に wsLabel を出しているので重複させない (kawaz r55 mid=20)。 */}
-      {repo && (wsLabel || row.branch) ? (
+      {renaming ? (
+        <SessionRenameEditor
+          sid={row.sid}
+          current={title}
+          onClose={() => setRenaming(false)}
+          onSent={(sent) => {
+            setRenaming(false);
+            setRenameNote(`/rename を送信: ${sent}`);
+          }}
+        />
+      ) : null}
+      {/* Best-effort の顛末 (SessionRenameRequest 参照): 「送った」までしか
+       * 言えないので、タイトル自体は agents poll が更新するまで元のまま。 */}
+      {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
+      {/* 2 行目: repo@ws。どちらか欠けたら欠けたまま出す (無い側を cwd 等から
+       * 捏造しない)。両方無い行は行ごと出さない。 */}
+      {repo || wsLabel ? (
         <div class="session-line2">
+          {repo ? <span class="session-line2-repo">{repo}</span> : null}
+          {repo && wsLabel ? <span class="session-line2-at">@</span> : null}
           {wsLabel ? <span class="session-line2-ws">{wsLabel}</span> : null}
-          {row.branch && row.branch !== wsLabel ? (
-            <span class="session-branch">{row.branch}</span>
-          ) : null}
         </div>
       ) : null}
-      {/* 3 行目: SID8 + cwd (kawaz r55 mid=20)。sid / cwd はどちらも低優先の
-       * 補助情報として同一行にまとめる。cwd はクリックで折り返し表示切替。 */}
-      <div
-        class={cwdFull ? "session-line3 session-cwd-full" : "session-line3"}
-        onClick={() => setCwdFull((v) => !v)}
-      >
+      {/* 3 行目: セッション UUID 全長 (kawaz r135m16)。短縮しないのは、この行
+       * の用途が「他所に貼るために丸ごとコピーする」ことだから。 */}
+      <div class="session-line3">
         <button
           type="button"
           class="session-sid-btn"
           title={`${row.sid}\nクリックでコピー`}
-          onClick={(e) => {
-            // cwd 折り返し切替 (親 div の onClick) と分離。sid コピーだけを実行。
-            e.stopPropagation();
+          onClick={() => {
             void navigator.clipboard?.writeText(row.sid).catch(() => {
               // clipboard unavailable (insecure context, permission denied) —
-              // the title attribute above still exposes the full sid.
+              // the sid is fully visible in the row itself either way.
             });
           }}
         >
-          {shortSid(row.sid)}
+          {row.sid}
         </button>
-        <span class="session-cwd">{row.cwd}</span>
+      </div>
+      {/* 4 行目: project path。左を省略して右端 (= worktree 名まで) を常時
+       * 見せる。クリックで全文折り返し表示に切替。 */}
+      <div
+        class={cwdFull ? "session-line4 session-cwd-full" : "session-line4"}
+        onClick={() => setCwdFull((v) => !v)}
+        title={row.cwd}
+      >
+        <span class="session-cwd">
+          {/* direction:rtl が ellipsis を行頭側へ回す一方、パスの `/` のような
+           * 中立文字はその方向で並べ替えられてしまう (`/a/b` が `a/b/` に
+           * 見える)。中身を bdi の LTR 分離レベルに閉じ込めると、並べ替えは
+           * 外側の 1 要素だけに効き、パス本文は元の順序のまま残る。 */}
+          <bdi dir="ltr">{row.cwd}</bdi>
+        </span>
       </div>
     </li>
   );
@@ -232,7 +410,10 @@ function PinnedSessionRow({
   connected: boolean;
   onUnpin: () => void;
 }) {
-  const { repo, ws: wsLabel } = sessionSearchHitLabel(hit);
+  // Raw repo/ws for the same reason SessionRowItem uses raw fields: the
+  // label helper's cwd-leaf substitute is what the title line already shows.
+  const repo = hit.repo ?? "";
+  const wsLabel = hit.ws ?? "";
   return (
     <li
       class={hit.sid === currentSid ? "active session-row" : "session-row"}
@@ -241,7 +422,11 @@ function PinnedSessionRow({
       <div class="session-line1">
         <a href={sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
-          <span class="session-repo-ws">{repo || wsLabel}</span>
+          {/* A pinned entry is a search hit, not a live agent row, so there is
+           * no `name` to headline with — the cwd's leaf stands in, on the same
+           * "never repeat line 2" rule sessionRowTitle follows. No ✎ either:
+           * renaming needs a running terminal, which a pin does not imply. */}
+          <span class="session-title">{lastPathSegment(hit.cwd ?? "") || shortSid(hit.sid)}</span>
         </a>
         {!connected ? (
           <span
@@ -255,27 +440,33 @@ function PinnedSessionRow({
           ✕
         </button>
       </div>
-      {/* 2 行目: ws 名 (kawaz r55 mid=20、SessionRowItem と揃える)。 */}
-      {repo && wsLabel ? (
+      {/* 2-4 行目は SessionRowItem と同じ repo@ws / 全長 sid / 左省略 path。 */}
+      {repo || wsLabel ? (
         <div class="session-line2">
-          <span class="session-line2-ws">{wsLabel}</span>
+          {repo ? <span class="session-line2-repo">{repo}</span> : null}
+          {repo && wsLabel ? <span class="session-line2-at">@</span> : null}
+          {wsLabel ? <span class="session-line2-ws">{wsLabel}</span> : null}
         </div>
       ) : null}
-      {/* 3 行目: SID8 + cwd (kawaz r55 mid=20)。 */}
       <div class="session-line3">
         <button
           type="button"
           class="session-sid-btn"
           title={`${hit.sid}\nクリックでコピー`}
-          onClick={(e) => {
-            e.stopPropagation();
+          onClick={() => {
             void navigator.clipboard?.writeText(hit.sid).catch(() => {});
           }}
         >
-          {shortSid(hit.sid)}
+          {hit.sid}
         </button>
-        {hit.cwd ? <span class="session-cwd">{hit.cwd}</span> : null}
       </div>
+      {hit.cwd ? (
+        <div class="session-line4" title={hit.cwd}>
+          <span class="session-cwd">
+            <bdi dir="ltr">{hit.cwd}</bdi>
+          </span>
+        </div>
+      ) : null}
     </li>
   );
 }

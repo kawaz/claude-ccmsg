@@ -517,8 +517,13 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
     .sort((a, b) => b.startedAt - a.startedAt)
     .map((a) => ({
       sid: a.sessionId,
+      // `claude agents --json` carries no VCS metadata, so these rows have no
+      // repo/ws and say so. They used to borrow `a.name` for `ws` to keep the
+      // old single-label first line non-blank; the row now leads with that
+      // name in its own right (sessionRowTitle), and a `ws` holding a session
+      // title would print the title twice under kawaz r135m16's layout.
       repo: "",
-      ws: a.name ?? lastPathSegment(a.cwd),
+      ws: "",
       cwd: a.cwd,
       agent: a,
       connected: false,
@@ -534,7 +539,7 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
  * fallback rather than rendering a blank first line. */
 /** Resolve `{repo, ws, cwd}` for the topbar title of a session sid (kawaz
  * r38 mid=9). Three sources, first non-empty wins — same fallback chain
- * `sessionRowRepoWs` uses for the sidebar, so the topbar can't disagree with
+ * `sessionRowTitle` uses for the sidebar, so the topbar can't disagree with
  * SessionList about what one session's repo/ws pair is:
  *
  * 1. A live peer's hello metadata (the session announced its own
@@ -544,7 +549,7 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
  *    lost the whole worktree name for those rows.
  * 3. An agent-only row (`claude agents --json`, no ccmsg connection): the
  *    upstream carries no VCS metadata, so `agent.name` stands in for ws
- *    (same substitution `sessionRowRepoWs` makes for the sidebar first line).
+ *    (the same substitution the sidebar's own first line makes).
  *
  * `cwd` comes from whichever source produced repo/ws (with a further peer /
  * pinned / agent fallback for the "all three empty" case) so the caller can
@@ -569,9 +574,20 @@ export function resolveSessionTopbar(
   };
 }
 
-export function sessionRowRepoWs(row: SessionRow): { repo: string; ws: string } {
-  if (row.repo || row.ws) return { repo: row.repo, ws: row.ws };
-  return { repo: "", ws: row.agent?.name || lastPathSegment(row.cwd) };
+/** The Sessions-list row's headline (kawaz r135m16 §1): the session's own
+ * title — what `/rename` sets and `claude agents --json` reports as `name`
+ * (e.g. "claude-ccmsg@main 20260812T0215", or whatever the user renamed it
+ * to). That name is the only human-chosen identifier a session has, which is
+ * why it now leads the row instead of repo/ws.
+ *
+ * The fallback chain deliberately skips repo/ws even though they are usually
+ * available: the row's second line already prints `repo@ws`, so falling back
+ * to it here would print the same string twice and make the two lines look
+ * broken rather than informative. A row with no name therefore falls to the
+ * cwd's last segment, and finally to a short sid — never blank, and never a
+ * repeat of the line below. */
+export function sessionRowTitle(row: SessionRow): string {
+  return row.agent?.name || lastPathSegment(row.cwd) || shortSid(row.sid);
 }
 
 /** Primary status of a Sessions-list row — the single source of truth both
@@ -1104,7 +1120,7 @@ export function sessionSearchFormToTimelineSearch(form: SessionSearchForm) {
 }
 
 /** repo/ws label for a search-result row or a pinned-session row (DR-0021
- * §2.3/§2.4) — same fallback chain as `sessionRowRepoWs`/`sessionLabel`:
+ * §2.3/§2.4) — same fallback chain as `sessionRowTitle`/`sessionLabel`:
  * `hit.repo`/`hit.ws` when present, else the cwd's last path segment (a
  * session outside the known `repos/{host}/{owner}/{repo}` layout still needs
  * a non-blank label), finally the sid's short form if even `cwd` is null

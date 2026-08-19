@@ -41,7 +41,7 @@ import {
   resolveSessionTopbar,
   sessionBadges,
   sessionLabel,
-  sessionRowRepoWs,
+  sessionRowTitle,
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   sessionStatus,
@@ -834,20 +834,6 @@ describe("offlineAgentRows", () => {
     expect(rows.length).toBe(1);
     expect(rows[0]?.agent?.config_dir).toBe("/home/.claude-b");
   });
-
-  test("ws falls back to agent.name, then to cwd's last segment", () => {
-    const withName = offlineAgentRows(
-      [],
-      [agent({ sessionId: "s1", name: "my-agent", cwd: "/repos/x/y" })],
-    );
-    expect(withName[0]?.ws).toBe("my-agent");
-
-    const withoutName = offlineAgentRows(
-      [],
-      [agent({ sessionId: "s1", name: undefined, cwd: "/repos/x/y" })],
-    );
-    expect(withoutName[0]?.ws).toBe("y");
-  });
 });
 
 function sessionRow(overrides: Partial<SessionRow>): SessionRow {
@@ -910,8 +896,8 @@ describe("resolveSessionTopbar", () => {
   });
 
   // Agent-only row (`claude agents --json` matched, no ccmsg hello): no VCS
-  // metadata to surface, so agent.name stands in for ws — matches the
-  // fallback sessionRowRepoWs already uses on the sidebar's first line.
+  // metadata to surface, so agent.name stands in for ws in the topbar (the
+  // sidebar row shows that same name as its title instead).
   test("falls back to agent.name as ws when only an agent row matches the sid", () => {
     const state: AppState = {
       ...initialState(),
@@ -997,30 +983,43 @@ describe("documentTitleFor", () => {
   });
 });
 
-describe("sessionRowRepoWs", () => {
-  test("uses repo/ws as-is when the row has either", () => {
-    expect(sessionRowRepoWs(sessionRow({ repo: "claude-ccmsg", ws: "main" }))).toEqual({
+describe("sessionRowTitle", () => {
+  // The session's own name (what /rename sets, reported as claude agents'
+  // `name`) is the headline — it is the only identifier a human chose.
+  test("uses the agent's name when there is one", () => {
+    const row = sessionRow({
       repo: "claude-ccmsg",
       ws: "main",
+      agent: agent({ name: "claude-ccmsg@main 20260812T0215" }),
     });
+    expect(sessionRowTitle(row)).toBe("claude-ccmsg@main 20260812T0215");
   });
 
-  // agents-only rows never carry repo/ws (claude agents --json has no VCS
-  // metadata) — falls back to the matched agent's name.
-  test("falls back to agent.name when repo and ws are both empty", () => {
-    const row = sessionRow({
-      repo: "",
-      ws: "",
-      cwd: "/repos/x/y",
-      connected: false,
-      agent: agent({ name: "my-agent" }),
-    });
-    expect(sessionRowRepoWs(row)).toEqual({ repo: "", ws: "my-agent" });
+  // Deliberately NOT repo/ws: the row's second line already prints those, and
+  // a headline repeating the line below it reads as a rendering bug.
+  test("falls back to the cwd's last segment rather than repeating repo/ws", () => {
+    const row = sessionRow({ repo: "claude-ccmsg", ws: "main", cwd: "/repos/claude-ccmsg/main" });
+    expect(sessionRowTitle(row)).toBe("main");
   });
 
-  test("falls back to cwd's last segment when repo/ws/agent.name are all absent", () => {
-    const row = sessionRow({ repo: "", ws: "", cwd: "/repos/x/y", connected: false });
-    expect(sessionRowRepoWs(row)).toEqual({ repo: "", ws: "y" });
+  test("falls back to a short sid when there is no name and no cwd", () => {
+    const row = sessionRow({ sid: "s1234567890abcdef", repo: "", ws: "", cwd: "" });
+    expect(sessionRowTitle(row)).toBe(shortSid("s1234567890abcdef"));
+  });
+});
+
+describe("offlineAgentRows repo/ws honesty", () => {
+  // `claude agents --json` has no VCS metadata, so an agent-only row carries
+  // none either. It used to borrow the agent's name for `ws`, which the
+  // Sessions row now shows as its title — leaving both would print the same
+  // string on two consecutive lines.
+  test("agent-only rows carry empty repo/ws rather than the agent's name", () => {
+    const rows = offlineAgentRows(
+      [],
+      [agent({ sessionId: "s2", name: "my-agent", cwd: "/repos/x/y" })],
+    );
+    expect(rows[0]?.repo).toBe("");
+    expect(rows[0]?.ws).toBe("");
   });
 });
 

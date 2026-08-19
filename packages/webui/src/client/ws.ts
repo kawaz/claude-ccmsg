@@ -53,6 +53,7 @@ import type {
   SessionErrorsResponse,
   SessionErrorsStreamEvent,
   SessionKillResponse,
+  SessionRenameResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
   SessionLauncherConfigResponse,
@@ -353,6 +354,16 @@ export interface WsHandle {
     sessionId: string,
     opts?: { force?: boolean },
   ): Promise<SessionKillResponse | ErrorResponse>;
+  /** Retitle a session by having the daemon type `/rename <title>` into that
+   * session's own terminal (user role only, kawaz r135m16 — the Sessions
+   * list's pencil button). Best-effort: a successful response means the
+   * keystrokes were delivered, not that the session is now called that, so
+   * callers should report "sent" rather than showing the new title as fact —
+   * the real one arrives with the next agents poll. `error.code ===
+   * "terminal_unavailable"` means the session runs outside hyoui and can only
+   * be renamed by hand. 2-phase on the wire (ack +
+   * ev:"session_rename_result") like sessionKill. */
+  sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is 2-phase on the wire (ack +
@@ -383,6 +394,7 @@ export interface WsHandle {
 type TwoPhaseOutcome =
   | TranslateResponse
   | SessionKillResponse
+  | SessionRenameResponse
   | SessionEnvResponse
   | SessionLaunchResponse
   | SessionSearchResponse
@@ -610,6 +622,7 @@ export function createWsClient(
         (streamEv.ev === "translate_result" ||
           streamEv.ev === "session_launch_result" ||
           streamEv.ev === "session_kill_result" ||
+          streamEv.ev === "session_rename_result" ||
           streamEv.ev === "session_env_result" ||
           streamEv.ev === "session_search_result" ||
           streamEv.ev === "fork_origin_result" ||
@@ -958,6 +971,13 @@ export function createWsClient(
         request_id: `q${++nextRequestId}`,
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
+      }),
+    sessionRename: (sessionId, title) =>
+      sendTwoPhase({
+        op: "session_rename",
+        request_id: `q${++nextRequestId}`,
+        session_id: sessionId,
+        title,
       }),
     sessionEnv: (sessionId) =>
       sendTwoPhase({

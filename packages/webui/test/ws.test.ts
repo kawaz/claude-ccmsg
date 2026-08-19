@@ -820,6 +820,76 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
+  // session_rename is 2-phase like translate. The assertion that matters is
+  // that `session_rename_result` is classified as an EVENT rather than as a
+  // positional reply: an ev the client does not recognize would both leave
+  // this Promise hanging forever and steal the next op's reply slot.
+  test("sessionRename sends the title with a request_id and resolves from the result event", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionRename("sid-1", "新しいタイトル");
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    expect(sent).toEqual({
+      op: "session_rename",
+      request_id: sent.request_id,
+      session_id: "sid-1",
+      title: "新しいタイトル",
+    });
+
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "session_rename_result",
+        request_id: sent.request_id,
+        ok: true,
+        hyoui_session_id: "run-abc",
+        title: "新しいタイトル",
+      }),
+    );
+
+    expect(await req).toEqual({
+      ok: true,
+      hyoui_session_id: "run-abc",
+      title: "新しいタイトル",
+    });
+  });
+
+  // The failure path the row's editor renders inline: a session with no
+  // terminal answers on the same result event, not as a positional reply.
+  test("sessionRename surfaces a terminal_unavailable result event as an error", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionRename("sid-1", "t");
+    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
+    ws1.triggerMessage(
+      JSON.stringify({
+        ev: "session_rename_result",
+        request_id: sent.request_id,
+        ok: false,
+        error: { code: "terminal_unavailable", msg: "no known terminal" },
+      }),
+    );
+
+    const res = await req;
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.code).toBe("terminal_unavailable");
+  });
+
   // THE regression the 2-phase design fixes (kawaz r26 mid=108): while a slow
   // translate is in flight, a later op's positional reply must pair with that
   // later op — the translate ack already consumed translate's positional slot,
