@@ -2346,6 +2346,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
             });
             return;
           }
+          // The browser shows this once and moves on; the log line is what a
+          // later "why did rename fail" investigation has to go on.
+          daemon.log.warn(`op 'session_rename' send failed for ${req.session_id}: ${result.msg}`);
           complete({
             ok: false,
             error: {
