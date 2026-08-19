@@ -15,9 +15,14 @@ interface CliResult {
   code: number;
 }
 
-async function runCli(args: string[], env: Record<string, string>): Promise<CliResult> {
+async function runCli(
+  args: string[],
+  env: Record<string, string>,
+  cwd?: string,
+): Promise<CliResult> {
   const proc = Bun.spawn([process.execPath, CLI, ...args], {
     env: { ...process.env, ...env },
+    ...(cwd ? { cwd } : {}),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -799,8 +804,12 @@ describe("ccmsg CLI end-to-end", () => {
     const sessionsDir = path.join(env.CCMSG_STATE_DIR, "sessions");
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(path.join(sessionsDir, "S1.json"), "{not valid json");
+    // VCS 配下でない cwd で走らせる: repo/ws が空であることが「CLI が未申告」の
+    // 証拠であり続けるため (daemon は申告が空の hello に対し cwd から repo/ws を
+    // 導出するので、リポジトリ内で走らせると導出値が入って区別できなくなる)。
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-novcs-"));
     try {
-      const res = await runCli(["peers"], { ...env, CCMSG_SID: "S1" });
+      const res = await runCli(["peers"], { ...env, CCMSG_SID: "S1" }, outside);
       expect(res.code).toBe(0);
       const peers = JSON.parse(res.out) as {
         peers: { sid: string; repo?: string; ws?: string; transcript_path?: string }[];
@@ -812,6 +821,7 @@ describe("ccmsg CLI end-to-end", () => {
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
+      fs.rmSync(outside, { recursive: true, force: true });
     }
   }, 30000);
 

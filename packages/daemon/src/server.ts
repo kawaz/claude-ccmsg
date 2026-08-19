@@ -89,6 +89,7 @@ import {
   unsubscribeSessionStatus,
   type SessionStatusStore,
 } from "./session-status.ts";
+import { deriveRepoWs } from "./repo-derive.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -1401,11 +1402,22 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // same as before) and resolveRoot rejects it later as it always did.
         const cwd = await realpathOrSelf(req.cwd ?? "");
         const repoRoot = await validateRepoRoot(cwd, req.repo_root);
+        // Announced repo/ws always win; the cwd derivation only fills what the
+        // session could not tell us. A fork/resume launch gets no hook-written
+        // state file (same hole adoptTranscriptPath covers), so it announces
+        // neither and used to show blank columns in the webui's session list.
+        // Fail-open: unresolvable stays "" and hello proceeds regardless.
+        const announcedRepo = req.repo ?? "";
+        const announcedWs = req.ws ?? "";
+        const derived =
+          announcedRepo === "" || announcedWs === ""
+            ? await deriveRepoWs(cwd)
+            : { repo: "", ws: "" };
         newId = {
           role: "session",
           sid: req.sid,
-          repo: req.repo ?? "",
-          ws: req.ws ?? "",
+          repo: announcedRepo !== "" ? announcedRepo : derived.repo,
+          ws: announcedWs !== "" ? announcedWs : derived.ws,
           cwd,
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
