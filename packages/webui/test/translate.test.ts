@@ -127,6 +127,26 @@ describe("translateThinkingTextInBrowser", () => {
     expect(calls.sort()).toEqual(["English text.", "More English."]);
   });
 
+  // kawaz r135m21: 日本語の短い引用が混ざっただけの英文段落は「既に日本語」
+  // ではない。日本語文字と英数文字の比率で判定し、僅かな日本語は翻訳に回す。
+  test("a mostly-English paragraph quoting a little Japanese is still translated", async () => {
+    const { calls } = installMockTranslator();
+    const para =
+      'Since kawaz explicitly asked to close the PR, but they are asking my opinion on recreating it ("作り直したほうが良い?"), I should answer with my assessment first rather than immediately acting.';
+    const result = await translateThinkingTextInBrowser(para);
+    expect(result).toBe(`[ja]${para}`);
+    expect(calls).toEqual([para]);
+  });
+
+  test("a Japanese paragraph dense with Latin identifiers is still skipped", async () => {
+    const { calls } = installMockTranslator();
+    const para =
+      "registerSession の transcript_path は adoptTranscriptPath で採用し、resolveVirtualTranscript にフォールバックする。";
+    const result = await translateThinkingTextInBrowser(para);
+    expect(result).toBe(para);
+    expect(calls).toEqual([]);
+  });
+
   // kawaz spec: 失敗段落は原文 fallback — 一部の翻訳呼び出しが失敗しても
   // 他の段落・全体の結果を壊さない。
   test("a paragraph whose translate() call throws falls back to the original text", async () => {

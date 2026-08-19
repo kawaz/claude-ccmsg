@@ -25,12 +25,29 @@ interface TranslatorStatic {
 }
 
 /** \p{Script=...} は Unicode script property escape — ES2018+ の RegExp `u`
- * フラグで使える。ひらがな/カタカナ/漢字のいずれかを含む段落は「翻訳不要
- * (既に日本語)」と判定する (kawaz 提供ロジック準拠)。 */
-const JAPANESE_CHAR_RE = /\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u;
+ * フラグで使える。ひらがな/カタカナ/漢字を「日本語の文字」として数える。 */
+const JAPANESE_CHAR_RE = /\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/gu;
+const LATIN_ALNUM_RE = /[A-Za-z0-9]/g;
+
+/** 段落を「既に日本語」とみなす日本語文字の比率のしきい値。
+ *
+ * 「日本語を 1 文字でも含めば skip」だと、英文 thinking の中に日本語の短い
+ * 引用 (例: kawaz の発言 "作り直したほうが良い?") が混ざっただけで段落全体が
+ * 翻訳対象から外れてしまう (kawaz r135m21)。日本語文字と英数文字の比率で
+ * 判定し、日本語が僅かなら「日本語引用を含む英文」として翻訳に回す。
+ * 0.15 は両側の実例から選んだ値: 英文中の短い日本語引用は 0.1 を下回り
+ * (上記実例で 0.06)、日本語の技術文は長い識別子だらけでも骨格の かな が
+ * 効いて 0.15 を上回る (識別子 4 連の実例で 0.19)。識別子が極端に支配的な
+ * 日本語 1 文はなお誤訳側に落ち得るが、その場合も原文タブは無傷で残る。 */
+const JAPANESE_RATIO_THRESHOLD = 0.15;
 
 function shouldSkipParagraph(paragraph: string): boolean {
-  return paragraph.trim() === "" || JAPANESE_CHAR_RE.test(paragraph);
+  if (paragraph.trim() === "") return true;
+  const japanese = paragraph.match(JAPANESE_CHAR_RE)?.length ?? 0;
+  if (japanese === 0) return false;
+  const latin = paragraph.match(LATIN_ALNUM_RE)?.length ?? 0;
+  // 日本語のみ (latin 0) は従来どおり skip。混在時は比率で判定。
+  return japanese / (japanese + latin) > JAPANESE_RATIO_THRESHOLD;
 }
 
 /** テキスト全体が翻訳不要 (全段落が skip 対象) か。true なら翻訳タブの
