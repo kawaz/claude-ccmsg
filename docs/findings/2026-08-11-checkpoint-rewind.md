@@ -55,6 +55,12 @@ allowlist 外は `demoting unwrapped inbound message to peer origin` の warn �
 
 ### 4. `--resume-session-at=<uuid>` = 任意地点 rewind の native 手段 (これが本命)
 
+> **Addendum 2026-08-21 (v2.1.237 実測)**: 本節・以降の実測は v2.1.227 時点のもの。
+> v2.1.237 では `--resume-session-at` は **print mode (`-p`) 専用**になり、対話起動では
+> 黙って無視される (指定あり / なしで input tokens 完全一致、バイナリ内説明にも
+> "use with --resume in print mode" と明記)。対話で使うには print bootstrap の二段起動が
+> 必要 (DR-0018 §3.3.1 が現行の正)。
+
 `claude --help` に出ない**非公開オプション**が実在する: `--resume-session-at=`, `--resume-drops-turn=`
 (`--fork-session` は help 掲載あり)。
 

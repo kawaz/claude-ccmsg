@@ -37,7 +37,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
        "templates": [
          {
            "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --dettach -- claude --model \"$MODEL\" --effort \"$EFFORT\" --name \"${$(bump-semver vcs get repository):t1}@$(bump-semver vcs get worktree-name) $(date +%Y%m%dT%H%M)\" \"$PROMPT\"",
+           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" --name \"${$(bump-semver vcs get repository):t1}@$(bump-semver vcs get worktree-name) $(date +%Y%m%dT%H%M)\" \"$PROMPT\"",
            "params": {
              "CWD": "",
              "MODEL": "fable",
@@ -97,12 +97,12 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
        "templates": [
          {
            "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --dettach -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
+           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
            "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "ccmsg subscribe起動" }
          },
          {
            "name": "fork",
-           "command": "direnv exec \"$CWD\" hyoui run --dettach -- claude --model \"$MODEL\" --effort \"$EFFORT\" --resume \"$RESUME_SID\" --resume-session-at=\"$RESUME_AT\" --fork-session \"$PROMPT\"",
+           "command": "fork_args=(--resume \"$RESUME_SID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
            "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "", "RESUME_SID": "", "RESUME_AT": "" }
          }
        ]
@@ -118,6 +118,11 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 - `--resume-session-at` は `claude --help` に出ない非公開オプション。daemon
   は起動時に 1 度だけ「この claude が受け付けるか」を実測し、受け付けない
   ホストでは webui の fork 導線を出さない (`fork_available`)
+- fork テンプレが **二段** なのは `--resume-session-at` が print mode 専用で、
+  対話起動では黙って無視されるため (DR-0018 §3.3.1)。1 段目の
+  `claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、
+  その `session_id` を 2 段目が対話で resume する。`RESUME_AT` が空なら
+  `--resume-session-at` を付けない (空文字は 1 段目のエラーになる)
 
 ### 旧形式 (`params` 以前) からの移行
 
@@ -152,7 +157,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 | 「+ 新規」を押しても未設定の案内のまま | `config.json` の JSON 構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、各 template は非空の `command` を持つ必要がある |
 | cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
 | 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に 宣言した各変数への代入 (`CWD=...; MODEL=...; ...`) を書いた状態で手元で試して構文を確認 |
-| 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--dettach` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |
+| 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--detached` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |
 
 ## 関連
 

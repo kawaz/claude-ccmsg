@@ -189,6 +189,39 @@ launcher がテンプレ構造なのに既定値がテンプレの外にあり�
   4. さらに 500ms 待って exited でなければ SIGKILL
   5. stdout/stderr 収集 → response
 
+### 3.3.1 fork テンプレは二段起動で書く (Addendum 2026-08-21)
+
+`claude` の `--resume-session-at` は **print mode (`-p`) 専用**。対話起動に付けても
+黙って無視され (v2.1.237 バイナリ内の説明文 "use with --resume in print mode" /
+"Ignored outside print mode"、実測でも対話モードは指定あり / なしで input tokens
+完全一致)、fork 地点指定が効かず常に先端 fork になる。したがって webui の
+「ここから fork」を成立させる fork テンプレは **一段で対話 claude を起動できない**。
+
+fork テンプレは次の二段で書く:
+
+1. **切り詰め済みセッションを作る (print)**
+   `claude -p --resume "$RESUME_SID" --fork-session [--resume-session-at "$RESUME_AT"]
+   --output-format json '/exit'` を launcher shell の中で同期実行する。
+   `/exit` は print mode に無いので何も実行されず (実測 `num_turns: 0`,
+   `total_cost_usd: 0`, `duration_api_ms: 0` = API 呼び出しゼロ)、それでも
+   fork 済み transcript は projects ディレクトリに永続化され、stdout JSON の
+   `session_id` が新 sid になる。実測 1.2 秒で、`timeout_seconds` (既定 10) に収まる
+2. **その新 sid を対話で resume する**
+   `claude --resume "$NEW_SID" --model ... --effort ... "$PROMPT"` を通常どおり
+   `hyoui run --detached` 経由で起動する。切り詰めは 1 段目で確定済みなので
+   `--fork-session` も `--resume-session-at` も不要
+
+制約:
+
+- `$RESUME_AT` が空のとき (= 先端 fork) は `--resume-session-at` を **付けない**。
+  空文字を渡すと 1 段目が `No message found with message.uuid of:` で失敗する
+- 1 段目の非零 exit / `session_id` の抽出失敗では **launcher shell を exit 1 で止める**。
+  無指定 fork へフォールバックしない — 先端 fork は「この地点から fork」の意図と真逆で、
+  しかも成功したように見えてしまう。launcher shell は `-e` 付きで起動されるので、
+  1 段目の失敗はそのまま伝播し、stderr が webui の結果パネルに出る
+- `CLAUDE_CONFIG_DIR` は `keep_env` で launcher shell に残す (1 段目が書く transcript と
+  2 段目が読む transcript を同じ projects ディレクトリに揃えるため)
+
 ### 3.4 webui 実装
 
 - **state.view enum** に `"session-creator"` を追加

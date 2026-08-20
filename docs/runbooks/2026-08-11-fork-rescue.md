@@ -35,9 +35,17 @@ webui の fork 機能 (v0.97.0、DR 相当の調査は findings
 ## CLI 直叩き (webui を使わない場合)
 
 ```bash
-claude --resume <元sid> --resume-session-at=<地点uuid> --fork-session
+# 1. 切り詰め済みセッションを作る (print mode、API 呼び出しゼロ)
+NEW_SID=$(claude -p --resume <元sid> --fork-session \
+  --resume-session-at <地点uuid> --output-format json '/exit' | jq -r .session_id)
+# 2. その sid を対話で開く
+claude --resume "$NEW_SID"
 ```
 
 `--resume-session-at` は非公開オプション (daemon が起動時 probe で生存
 確認し、非対応版では webui の fork 導線ごと隠す)。地点 uuid は「戻りたい
 user turn の直前の assistant レコードの uuid」。
+
+**`--resume-session-at` は print mode 専用**で、対話起動 (`claude --resume ...`
+に直接付ける形) では黙って無視されて先端 fork になる。上の二段を守ること
+(理由と実測は DR-0018 §3.3.1)。
