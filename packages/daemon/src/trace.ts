@@ -111,6 +111,17 @@ export class TraceWriter {
     }
   }
 
+  /** Releases the held descriptor after any in-flight batch settles. Safe to
+   * call when nothing is open. The daemon process exit reclaims the
+   * descriptor either way, but callers that create short-lived writers (tests,
+   * tooling) need a deterministic way to release it instead of relying on
+   * GC — Bun 1.4+ treats an unclosed `FileHandle` collected by GC as an
+   * error rather than a silent close. */
+  async close(): Promise<void> {
+    await this.chain;
+    await this.closeHandle();
+  }
+
   private async closeHandle(): Promise<void> {
     const handle = this.handle;
     this.handle = null;

@@ -18,18 +18,26 @@ const readLines = (file: string): Record<string, unknown>[] =>
 describe("TraceWriter", () => {
   let dir: string;
   let file: string;
+  // Each test owns exactly one writer; closing it here (rather than per-test)
+  // keeps the "create it, use it" line the only thing tests need to write.
+  let writer: TraceWriter | undefined;
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-trace-"));
     file = path.join(dir, "trace.jsonl");
+    writer = undefined;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Bun 1.4+ turns an unclosed FileHandle reaped by GC into a hard error,
+    // so the descriptor this test opened must be released before the temp
+    // dir it lives in is removed.
+    await writer?.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
   test("appends one JSON object per line, stamping ts when the caller has none", async () => {
-    const writer = new TraceWriter(file);
+    writer = new TraceWriter(file);
     void writer.write({
       comp: "daemon",
       edge: "in",
@@ -57,7 +65,7 @@ describe("TraceWriter", () => {
   // Browser points are timestamped in the tab; re-stamping them on arrival would
   // erase the very delay (network / event loop) the trace exists to show.
   test("keeps a caller-supplied ts", async () => {
-    const writer = new TraceWriter(file);
+    writer = new TraceWriter(file);
     await writer.write({
       ts: "2026-07-29T00:00:00.000Z",
       comp: "webui",
@@ -73,7 +81,7 @@ describe("TraceWriter", () => {
   // An explicit `ts: undefined` reaches here whenever a caller forwards an
   // optional field, and must still produce a timestamped line.
   test("stamps ts when the caller passes it as undefined", async () => {
-    const writer = new TraceWriter(file);
+    writer = new TraceWriter(file);
     await writer.write({
       ts: undefined,
       comp: "webui",
@@ -89,7 +97,7 @@ describe("TraceWriter", () => {
   // Extra keys are how each boundary carries its own detail (source, mtime_ms,
   // entry_ts...), so they must survive verbatim for jq to filter on.
   test("preserves caller-supplied extra fields", async () => {
-    const writer = new TraceWriter(file);
+    writer = new TraceWriter(file);
     await writer.write({
       comp: "daemon",
       edge: "in",
@@ -106,11 +114,19 @@ describe("TraceWriter", () => {
   });
 
   test("rotates to .1 once the next line would exceed the limit, and keeps writing", async () => {
-    const writer = new TraceWriter(file, 400);
+    const activeWriter = new TraceWriter(file, 400);
+    writer = activeWriter;
     // Awaited per line: rotation is decided per flush, and this test is about
     // which line triggers it, so each line has to be its own flush.
     const write = (sid: string): Promise<void> =>
-      writer.write({ comp: "daemon", edge: "out", kind: "wire_write", sid, start: 0, end: 1 });
+      activeWriter.write({
+        comp: "daemon",
+        edge: "out",
+        kind: "wire_write",
+        sid,
+        start: 0,
+        end: 1,
+      });
 
     await write("first");
     const oneLine = fs.statSync(file).size;
@@ -130,7 +146,7 @@ describe("TraceWriter", () => {
   // Only one generation is kept: a second rotation replaces .1 rather than
   // growing an unbounded chain of trace files in the state dir.
   test("a second rotation replaces the previous .1", async () => {
-    const writer = new TraceWriter(file, 200);
+    writer = new TraceWriter(file, 200);
     for (let i = 0; i < 40; i++) {
       await writer.write({
         comp: "daemon",
@@ -148,7 +164,7 @@ describe("TraceWriter", () => {
   // Tracing is diagnostics: an unwritable path must degrade to no trace, never
   // throw into the delivery path that called it.
   test("swallows write failures", async () => {
-    const writer = new TraceWriter(path.join(dir, "missing-subdir", "trace.jsonl"));
+    writer = new TraceWriter(path.join(dir, "missing-subdir", "trace.jsonl"));
     // The failure surfaces inside the flush, so "does not throw" now means the
     // returned promise resolves rather than rejecting into the delivery path.
     await writer.write({
