@@ -1196,8 +1196,25 @@ a {
   opacity: 0.75;
 }
 
-.session-search-hit-pinned {
+.session-search-hit-pin {
+  flex-shrink: 0;
   font-size: var(--font-size-xs);
+  line-height: 1;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.session-search-hit-pin:hover,
+.session-search-hit-pin:focus-visible {
+  opacity: 1;
+}
+
+.session-search-hit-pin.active {
+  opacity: 1;
 }
 
 .session-search-hit-resume {

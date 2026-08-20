@@ -47,12 +47,14 @@ function SearchResultRow({
   words,
   onSelect,
   onResume,
+  onTogglePin,
 }: {
   hit: SessionSearchHit;
   pinned: boolean;
   words: SearchWord[];
   onSelect: () => void;
   onResume: () => void;
+  onTogglePin: () => void;
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
   return (
@@ -73,11 +75,25 @@ function SearchResultRow({
           <span class="session-search-hit-repo">{repo || ws || shortSid(hit.sid)}</span>
           {repo && ws ? <span class="session-search-hit-ws">{ws}</span> : null}
           <span class="session-search-hit-sid">{shortSid(hit.sid)}</span>
-          {pinned ? (
-            <span class="session-search-hit-pinned" title="pinned 済み">
-              📌
-            </span>
-          ) : null}
+          {/* Sits inside the whole-block click target, so its own click has to
+           * stop there — toggling the pin is a different answer to "what did
+           * the user ask for" than navigating to the Timeline. */}
+          <button
+            type="button"
+            class={"session-search-hit-pin" + (pinned ? " active" : "")}
+            aria-pressed={pinned}
+            aria-label={pinned ? "ピン解除" : "ピン留め"}
+            title={pinned ? "ピン解除" : "ピン留め"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onTogglePin();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
+          >
+            {pinned ? "⭐" : "☆"}
+          </button>
           {/* Sits inside the whole-block click target, so its own click has to
            * stop there — opening the launcher and navigating to the Timeline
            * are two different answers to "what did the user ask for". */}
@@ -336,6 +352,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
                 words={resultWords}
                 onSelect={() => openResult(hit)}
                 onResume={() => resumeResult(hit)}
+                onTogglePin={() => store.dispatch({ type: "pinned/toggled", hit })}
               />
             ))}
           </ul>

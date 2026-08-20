@@ -292,12 +292,13 @@ export function SessionView({
           type="button"
           class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
           aria-pressed={state.pinnedSessions.has(sid)}
+          aria-label={state.pinnedSessions.has(sid) ? "ピン解除" : "ピン留め"}
           title={state.pinnedSessions.has(sid) ? "ピン解除" : "ピン留め"}
           onClick={() =>
             store.dispatch({ type: "pinned/toggled", hit: pinCandidate(state, sid, tree) })
           }
         >
-          {state.pinnedSessions.has(sid) ? "Unpin" : "Pin"}
+          {state.pinnedSessions.has(sid) ? "⭐" : "☆"}
         </button>
       </div>
       {visitedTabs.current.has("files") ? (

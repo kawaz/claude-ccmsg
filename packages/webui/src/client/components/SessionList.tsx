@@ -485,8 +485,14 @@ function PinnedSessionRow({
             仮想
           </span>
         ) : null}
-        <button type="button" class="pinned-unpin-btn" title="ピン解除" onClick={onUnpin}>
-          ✕
+        <button
+          type="button"
+          class="pinned-unpin-btn"
+          aria-label="ピン解除"
+          title="ピン解除"
+          onClick={onUnpin}
+        >
+          ⭐
         </button>
       </div>
       <div class="session-line3">
