@@ -1713,7 +1713,10 @@ export interface ForkOriginRequest {
  * successor session can be handed, instead of a payload that would have to
  * travel through the browser and back out again. The sid resolves through the
  * same historical resolver transcript_read uses, and the client never supplies
- * a path — the destination is the daemon's own data directory.
+ * a path — the destination is the daemon's own data directory. The file is
+ * always written as text (`formatTextDump`'s form), not jsonl: a successor
+ * session is meant to read it directly rather than parse it as structured
+ * data.
  */
 export interface SessionDumpFileRequest {
   op: "session_dump_file";

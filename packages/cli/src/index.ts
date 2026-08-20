@@ -3,14 +3,13 @@
 // conventions). Every command except `daemon run` goes through ensure-daemon.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { VERSION, resolvePaths, type Identity, type SessionTodo } from "@ccmsg/protocol";
+import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
   dumpSession,
   formatJsonlDump,
+  formatTextDump,
   writeSessionDumpFile,
-  type SessionDump,
-  type SessionDumpEntry,
 } from "@ccmsg/daemon/session-dump";
 import {
   Client,
@@ -263,65 +262,6 @@ function warnSubscribingAsUser(): void {
 }
 
 // --- output ----------------------------------------------------------------
-
-function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]): string {
-  if (value === null) return "-";
-  return Array.isArray(value) ? value.join(",") : value;
-}
-
-/** One `SessionTodo` as a single line: `[status] #id subject (owner: X) blocked
- * by: 1,2`. `status` already carries the pending/in_progress/completed
- * distinction, so no separate marker is needed for "in progress". */
-function formatTodoLine(todo: SessionTodo): string {
-  const owner = todo.owner ? ` (owner: ${todo.owner})` : "";
-  const blockedBy =
-    todo.blocked_by && todo.blocked_by.length > 0
-      ? ` blocked by: ${todo.blocked_by.join(",")}`
-      : "";
-  return `[${todo.status}] #${todo.id} ${todo.subject}${owner}${blockedBy}`;
-}
-
-function formatTextDump(dump: SessionDump): string {
-  const { header, context, entries } = dump;
-  // `agents_past` and `todos` are one line per item by design; pretty-printing
-  // either as JSON would spend several lines each and defeat the fold. Both
-  // are lifted out of the context JSON and rendered as the flat lists they
-  // represent.
-  const { kind: _contextKind, agents_past: past, todos, ...contextFields } = context;
-  const lines = [
-    `Session: ${header.session}`,
-    `Since: ${header.since}`,
-    `Until: ${header.until ?? "(end)"}`,
-    `Generated: ${header.generated}`,
-    `Format: ${header.format} text`,
-    ...(header.agent_detail ? [`Agent detail: ${header.agent_detail}`] : []),
-    "Session context:",
-    JSON.stringify(contextFields, null, 2),
-    ...(todos.length > 0
-      ? [`Todos (${todos.length}):`, ...todos.map((todo) => `  ${formatTodoLine(todo)}`)]
-      : []),
-    ...(past && past.length > 0
-      ? [
-          `Agents outside this range (${past.length}):`,
-          ...past.map(
-            (agent) =>
-              `  ${agent.agent_id}${agent.name ? ` ${agent.name}` : ""}${
-                agent.description ? ` — ${agent.description}` : ""
-              }`,
-          ),
-        ]
-      : []),
-    "",
-  ];
-  for (const entry of entries) {
-    lines.push(
-      `[+${entry.t}ms ${entry.kind} ${dumpEndpoint(entry.from)}→${dumpEndpoint(entry.to)}]`,
-      entry.text,
-      "",
-    );
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
-}
 
 function output(res: { ok?: boolean } & Record<string, unknown>): number {
   const line = `${JSON.stringify(res)}\n`;

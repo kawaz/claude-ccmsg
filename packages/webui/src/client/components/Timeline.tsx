@@ -3010,12 +3010,12 @@ function DumpFileAction({ sid, position }: { sid: string; position: string }) {
       ) : null}
       <p class="tl-float-note">
         {state.kind === "done"
-          ? `${state.entries} 件を JSONL で書き出しました。パスをクリックでコピーできます。`
+          ? `${state.entries} 件をテキストで書き出しました。パスをクリックでコピーできます。`
           : state.kind === "error"
             ? `dump に失敗しました: ${state.msg}`
             : scoped
-              ? "選択中の項目を含め、それ以降を daemon ホストの dumps/ に JSONL で書き出します。選択を解除するとセッション全体になります。"
-              : "セッション全体 (todos / agents / rooms + 会話) を daemon ホストの dumps/ に JSONL で書き出します。項目を選択すると、そこ以降だけを切り出せます。"}
+              ? "選択中の項目を含め、それ以降を daemon ホストの dumps/ にテキストで書き出します。選択を解除するとセッション全体になります。"
+              : "セッション全体 (todos / agents / rooms + 会話) を daemon ホストの dumps/ にテキストで書き出します。項目を選択すると、そこ以降だけを切り出せます。"}
       </p>
     </div>
   );

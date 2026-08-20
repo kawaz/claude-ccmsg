@@ -2514,7 +2514,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         ...(req.no_agent === true ? { noAgent: true } : {}),
       })
         .then((dump) => {
-          const file = writeSessionDumpFile(dump, { dir: daemon.paths.dumps });
+          // Written as text, not jsonl: this file is meant to be picked up and
+          // read directly by whatever session inherits it, not parsed as
+          // structured data (kawaz: jsonl invites over-clever reads that burn
+          // context or half-read the handoff).
+          const file = writeSessionDumpFile(dump, { dir: daemon.paths.dumps }, "text");
           complete({
             ok: true,
             path: file,

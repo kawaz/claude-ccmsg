@@ -6,6 +6,7 @@ import {
   compareContextAgents,
   dumpSession,
   formatJsonlDump,
+  formatTextDump,
   writeSessionDumpFile,
   type ContextAgentRecord,
   type SessionDump,
@@ -1139,5 +1140,18 @@ describe("dump file output", () => {
     const file = writeSessionDumpFile(dump(), { file: path.join(root, "nested", "mine.jsonl") });
     expect(file).toBe(path.join(root, "nested", "mine.jsonl"));
     expect(fs.existsSync(file)).toBe(true);
+  });
+
+  // The webui's file dump asks for this form specifically (session_dump_file
+  // op): a successor session reads the file directly, so it must not be
+  // jsonl.
+  test("writes the text form under a .txt extension when asked", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-dump-out-"));
+    roots.push(root);
+    const dir = path.join(root, "dumps");
+    const at = new Date(2026, 6, 20, 9, 5, 3);
+    const file = writeSessionDumpFile(dump(), { dir, at }, "text");
+    expect(file).toBe(path.join(dir, `${SID}-20260720-090503.txt`));
+    expect(fs.readFileSync(file, "utf8")).toBe(formatTextDump(dump()));
   });
 });

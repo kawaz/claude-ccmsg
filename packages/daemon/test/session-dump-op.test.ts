@@ -91,7 +91,7 @@ const SESSION: Conn["identity"] = {
 } as Conn["identity"];
 
 describe("session_dump_file op", () => {
-  test("acks, then answers with the absolute path of the written jsonl", async () => {
+  test("acks, then answers with the absolute path of the written text dump", async () => {
     const { daemon, dataDir } = daemonWith({ transcript: true });
     const [ack, event] = await requestFrames(
       daemon,
@@ -108,10 +108,14 @@ describe("session_dump_file op", () => {
     expect(path.isAbsolute(event?.path)).toBe(true);
     expect(path.dirname(event?.path)).toBe(path.join(dataDir, "dumps"));
     expect(path.basename(event?.path).startsWith(`${SID}-`)).toBe(true);
+    // Text, not jsonl: a successor session reads this file directly instead
+    // of parsing it as structured data.
+    expect(path.basename(event?.path).endsWith(".txt")).toBe(true);
     const written = fs.readFileSync(event?.path, "utf8");
-    expect(JSON.parse(written.split("\n")[0]!).session).toBe(SID);
+    expect(written).toContain(`Session: ${SID}`);
+    expect(written).toContain("[+0ms user user→self]\nhello");
     expect(event?.bytes).toBe(Buffer.byteLength(written));
-    expect(event?.entries).toBe(written.trimEnd().split("\n").length - 2);
+    expect(event?.entries).toBe(2);
   });
 
   // The dump is the whole session's contents; a session-role peer asking for
@@ -155,8 +159,9 @@ describe("session_dump_file op", () => {
     );
     expect(event?.ok).toBe(true);
     expect(event?.entries).toBe(1);
-    const lines = fs.readFileSync(event?.path, "utf8").trimEnd().split("\n");
-    expect(JSON.parse(lines[2]!).text).toBe("second");
+    const written = fs.readFileSync(event?.path, "utf8");
+    expect(written).toContain("second");
+    expect(written).not.toContain("hello");
   });
 
   test("reports a uuid this session never recorded as an error event", async () => {

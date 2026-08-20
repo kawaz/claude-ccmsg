@@ -1099,37 +1099,116 @@ export async function dumpSession(
 }
 
 /** JSONL serialization of a dump: header line, context line, then one line per
- * entry. The CLI's stdout form and the file written by `writeSessionDumpFile`
- * are the same bytes, so a consumer never has to know which produced its
- * input. */
+ * entry. The CLI's stdout form and a `jsonl`-format file written by
+ * `writeSessionDumpFile` are the same bytes, so a consumer never has to know
+ * which produced its input. */
 export function formatJsonlDump(dump: SessionDump): string {
   const lines = [JSON.stringify(dump.header), JSON.stringify(dump.context)];
   for (const entry of dump.entries) lines.push(JSON.stringify(entry));
   return `${lines.join("\n")}\n`;
 }
 
-/** File name of an auto-named dump: sid first so a directory listing groups by
- * session, local wall-clock second so repeated dumps of one session sort in
- * the order they were taken. */
-export function sessionDumpFileName(session: string, at: Date = new Date()): string {
-  const p = (n: number, width = 2): string => String(n).padStart(width, "0");
-  const stamp = `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
-  return `${session}-${stamp}.jsonl`;
+function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]): string {
+  if (value === null) return "-";
+  return Array.isArray(value) ? value.join(",") : value;
 }
 
-/** Write `dump` as JSONL and answer where it landed. `target` is either the
+/** One `SessionTodo` as a single line: `[status] #id subject (owner: X) blocked
+ * by: 1,2`. `status` already carries the pending/in_progress/completed
+ * distinction, so no separate marker is needed for "in progress". */
+function formatTodoLine(todo: SessionTodo): string {
+  const owner = todo.owner ? ` (owner: ${todo.owner})` : "";
+  const blockedBy =
+    todo.blocked_by && todo.blocked_by.length > 0
+      ? ` blocked by: ${todo.blocked_by.join(",")}`
+      : "";
+  return `[${todo.status}] #${todo.id} ${todo.subject}${owner}${blockedBy}`;
+}
+
+/** Human-reading serialization of a dump: the form both `ccmsg dump --format
+ * text` and the webui's file dump write, so a successor session reading it
+ * back never has to parse JSONL to recover its own handoff context (jsonl
+ * invites over-clever parsing attempts and half-read continuations instead —
+ * this is the one true reading form). */
+export function formatTextDump(dump: SessionDump): string {
+  const { header, context, entries } = dump;
+  // `agents_past` and `todos` are one line per item by design; pretty-printing
+  // either as JSON would spend several lines each and defeat the fold. Both
+  // are lifted out of the context JSON and rendered as the flat lists they
+  // represent.
+  const { kind: _contextKind, agents_past: past, todos, ...contextFields } = context;
+  const lines = [
+    `Session: ${header.session}`,
+    `Since: ${header.since}`,
+    `Until: ${header.until ?? "(end)"}`,
+    `Generated: ${header.generated}`,
+    `Format: ${header.format} text`,
+    ...(header.agent_detail ? [`Agent detail: ${header.agent_detail}`] : []),
+    "Session context:",
+    JSON.stringify(contextFields, null, 2),
+    ...(todos.length > 0
+      ? [`Todos (${todos.length}):`, ...todos.map((todo) => `  ${formatTodoLine(todo)}`)]
+      : []),
+    ...(past && past.length > 0
+      ? [
+          `Agents outside this range (${past.length}):`,
+          ...past.map(
+            (agent) =>
+              `  ${agent.agent_id}${agent.name ? ` ${agent.name}` : ""}${
+                agent.description ? ` — ${agent.description}` : ""
+              }`,
+          ),
+        ]
+      : []),
+    "",
+  ];
+  for (const entry of entries) {
+    lines.push(
+      `[+${entry.t}ms ${entry.kind} ${dumpEndpoint(entry.from)}→${dumpEndpoint(entry.to)}]`,
+      entry.text,
+      "",
+    );
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+/** File name of an auto-named dump: sid first so a directory listing groups by
+ * session, local wall-clock second so repeated dumps of one session sort in
+ * the order they were taken. The extension follows `format`, since a `.jsonl`
+ * name on a text file (or vice versa) would mislead whatever opens it next. */
+export function sessionDumpFileName(
+  session: string,
+  at: Date = new Date(),
+  format: SessionDumpFileFormat = "jsonl",
+): string {
+  const p = (n: number, width = 2): string => String(n).padStart(width, "0");
+  const stamp = `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
+  return `${session}-${stamp}.${format === "text" ? "txt" : "jsonl"}`;
+}
+
+/** The two forms `writeSessionDumpFile` can serialize to. `jsonl` is the
+ * read-back-by-tooling form (`ccmsg dump --out`); `text` is
+ * `formatTextDump`'s human-reading form, and what the webui's file dump uses
+ * so a successor session picks the file up and reads it directly. */
+export type SessionDumpFileFormat = "jsonl" | "text";
+
+/** Write `dump` to a file and answer where it landed. `target` is either the
  * directory to auto-name inside (the daemon's `dumps/`) or an explicit file
  * path from `--out`; both are resolved to an absolute path, since the whole
  * point of the returned value is to be pasted into another session. */
 export function writeSessionDumpFile(
   dump: SessionDump,
   target: { dir: string; at?: Date } | { file: string },
+  format: SessionDumpFileFormat = "jsonl",
 ): string {
   const file =
     "file" in target
       ? path.resolve(target.file)
-      : path.join(path.resolve(target.dir), sessionDumpFileName(dump.header.session, target.at));
+      : path.join(
+          path.resolve(target.dir),
+          sessionDumpFileName(dump.header.session, target.at, format),
+        );
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, formatJsonlDump(dump));
+  fs.writeFileSync(file, format === "text" ? formatTextDump(dump) : formatJsonlDump(dump));
   return file;
 }

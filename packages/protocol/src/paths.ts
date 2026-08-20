@@ -5,7 +5,7 @@
 //            daemon.sock / daemon.lock / daemon.pid / daemon.log
 //   data:  ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //            rooms/<room-id>.jsonl
-//            dumps/<sid>-<YYYYMMDD-HHmmss>.jsonl
+//            dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
 //
 // CCMSG_STATE_DIR / CCMSG_DATA_DIR are direct overrides (tests depend on them).
 import * as os from "node:os";
