@@ -175,7 +175,7 @@ describe("loadConfig", () => {
     expect(templates?.[0]?.params).toEqual([
       { name: "CWD", default: "" },
       { name: "MODEL", default: "fable" },
-      { name: "EFFORT", default: "middle" },
+      { name: "EFFORT", default: "medium" },
       { name: "PROMPT", default: "shared" },
     ]);
     // The fork recipe reads the resume pair and overrode the prompt to empty;

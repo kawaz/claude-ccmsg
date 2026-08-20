@@ -722,6 +722,100 @@ describe("session_search result metadata and limits", () => {
   });
 });
 
+// What a hit says a resume of it would run as. Read from the file's end, not
+// from the forward scan that stops as soon as cwd/created_at are known: the
+// answer is a property of the session's latest turn.
+describe("session_search launch context", () => {
+  function agentRun(
+    model: string,
+    effort?: string,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      type: "assistant",
+      message: { role: "assistant", model, content: [{ type: "text", text: "ok" }] },
+      ...(effort === undefined ? {} : { effort }),
+      timestamp: "2026-07-16T01:02:07.000Z",
+      cwd: "/workspace/repos/github.com/owner/project/main",
+      ...extra,
+    };
+  }
+
+  // A session whose model was switched mid-run must resume as what it is now.
+  test("model and effort come from the newest assistant row", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [
+      user("hello"),
+      agentRun("claude-sonnet-5", "low"),
+      user("switch"),
+      agentRun("claude-opus-5[1m]", "high"),
+    ]);
+
+    const result = await search(config, {});
+    expect(result.hits[0]).toMatchObject({ model: "claude-opus-5[1m]", effort: "high" });
+  });
+
+  // A sidechain row is a subagent's turn with its own model, and a
+  // `<synthetic>` row is the harness reporting an error — neither says what
+  // the session itself runs as (same rule as session-status.ts' context fold).
+  test("sidechain and synthetic rows are skipped", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [
+      agentRun("claude-fable-5", "xhigh"),
+      agentRun("claude-haiku-4-5", "low", { isSidechain: true }),
+      agentRun("<synthetic>"),
+    ]);
+
+    const result = await search(config, {});
+    expect(result.hits[0]).toMatchObject({ model: "claude-fable-5", effort: "xhigh" });
+  });
+
+  // `effort` is a row-level field older CC versions never wrote; its absence
+  // must not cost the model too.
+  test("a row without effort still answers the model", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [agentRun("claude-fable-5")]);
+
+    const hit = (await search(config, {})).hits[0]!;
+    expect(hit.model).toBe("claude-fable-5");
+    expect(hit.effort).toBeUndefined();
+  });
+
+  // Nothing to read means nothing is claimed: the launcher then keeps its own
+  // declared defaults rather than being handed a guess.
+  test("a transcript with no assistant row answers neither", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [user("hello"), user("anyone there")]);
+
+    const hit = (await search(config, {})).hits[0]!;
+    expect(hit.model).toBeUndefined();
+    expect(hit.effort).toBeUndefined();
+  });
+
+  // The probe widens its window once (64 KiB → 256 KiB) before giving up, so a
+  // long tool-output tail does not hide the turn that produced it.
+  test("an assistant row past the first window is still found", async () => {
+    const config = configDir();
+    const filler = Array.from({ length: 100 }, () => user("x".repeat(1000)));
+    writeSession(config, sid(1), [agentRun("claude-opus-5", "high"), ...filler]);
+
+    expect((await search(config, {})).hits[0]).toMatchObject({
+      model: "claude-opus-5",
+      effort: "high",
+    });
+  });
+
+  // Past the give-up bound the probe stops rather than re-reading an
+  // arbitrarily large file per hit.
+  test("an assistant row past the give-up bound is not searched for", async () => {
+    const config = configDir();
+    const filler = Array.from({ length: 300 }, () => user("x".repeat(1000)));
+    writeSession(config, sid(1), [agentRun("claude-opus-5", "high"), ...filler]);
+
+    expect((await search(config, {})).hits[0]!.model).toBeUndefined();
+  });
+});
+
 // DR-0029: an IO-bearing request must not monopolize the event loop. The scan
 // walks the transcript in SCAN_CHUNK_BYTES (4 MiB) chunks, so a multi-chunk
 // file is the smallest fixture that can distinguish a per-chunk macrotask yield

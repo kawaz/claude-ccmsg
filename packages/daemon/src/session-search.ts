@@ -265,6 +265,84 @@ export async function listCandidateFiles(params: ListCandidateParams): Promise<C
   return candidates;
 }
 
+/** Windows the launch-context probe reads from a transcript's end, tried in
+ * order. The first covers what a transcript's last records normally are (an
+ * assistant row sits within a few kilobytes of the end unless the session
+ * stopped mid-tool-output); the second is the give-up bound — a session whose
+ * final quarter-megabyte holds no main-context assistant row simply reports
+ * nothing, rather than letting one candidate re-read an arbitrarily large file. */
+const LAUNCH_CONTEXT_WINDOWS = [64 * 1024, 256 * 1024] as const;
+
+/** What a session was last running as, as raw transcript spellings. Absent
+ * fields mean "not established" rather than "default": the launcher only seeds
+ * a field it actually read. */
+export interface SessionLaunchContext {
+  model?: string;
+  effort?: string;
+}
+
+/** The model/effort of the newest main-context assistant record in `file`.
+ *
+ * Read from the end rather than from the forward scan that produces the rest of
+ * a hit: that scan stops as soon as it has cwd/created_at (both live in the
+ * first records), while "what this session runs as" is a property of its latest
+ * turn — a session whose model was switched mid-run must resume as what it is
+ * now, not as what it started as. Sidechain rows are subagent turns with their
+ * own model, and `<synthetic>` rows are the harness reporting an error, so
+ * neither says anything about the session itself (same rule as
+ * session-status.ts' context fold). */
+export async function readSessionLaunchContext(file: string): Promise<SessionLaunchContext> {
+  let size: number;
+  try {
+    size = (await fs.promises.stat(file)).size;
+  } catch {
+    return {};
+  }
+  const handle = await fs.promises.open(file, "r");
+  try {
+    for (const window of LAUNCH_CONTEXT_WINDOWS) {
+      const start = Math.max(0, size - window);
+      const length = size - start;
+      if (length <= 0) return {};
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, start);
+      const text = buffer.toString("utf-8", 0, bytesRead);
+      const lines = text.split("\n");
+      // A window that starts mid-file opens inside a record; that partial line
+      // is unparseable and belongs to the next, wider window.
+      if (start > 0) lines.shift();
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const context = launchContextFromRow(lines[i]!);
+        if (context) return context;
+      }
+      if (start === 0) return {};
+    }
+    return {};
+  } finally {
+    await handle.close();
+  }
+}
+
+/** One transcript line's launch context, or undefined when the line is not a
+ * main-context assistant record. `effort` is a row-level field (not part of
+ * `message`) that CC versions before 2.1.212 never wrote, so a row can name a
+ * model and no effort. */
+function launchContextFromRow(line: string): SessionLaunchContext | undefined {
+  let row: unknown;
+  try {
+    row = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(row) || row.type !== "assistant" || row.isSidechain === true) return undefined;
+  const message = row.message;
+  if (!isRecord(message) || typeof message.model !== "string") return undefined;
+  const model = message.model;
+  if (model === "" || model === "<synthetic>") return undefined;
+  const effort = typeof row.effort === "string" && row.effort !== "" ? row.effort : undefined;
+  return { model, ...(effort ? { effort } : {}) };
+}
+
 interface ScanResult {
   matches: SessionSearchMatch[];
   /** True once some clause had every one of its AND terms matched somewhere in
@@ -751,6 +829,16 @@ export async function sessionSearch(
     }
 
     const location = scan.cwd ? deriveRepoLocation(scan.cwd) : null;
+    // Only a candidate that made it this far is probed: the tail read answers
+    // "what would resuming this session run as", which nothing needs for a
+    // session the response is about to drop.
+    let context: SessionLaunchContext;
+    try {
+      context = await readSessionLaunchContext(candidate.file);
+    } catch (error) {
+      log.error(`session_search: failed reading ${candidate.file} tail: ${String(error)}`);
+      context = {};
+    }
     hits.push({
       sid: candidate.sid,
       config_dir: candidate.configDir,
@@ -763,6 +851,7 @@ export async function sessionSearch(
       size: candidate.stat.size,
       matches,
       title: scan.title,
+      ...context,
     });
     if (hits.length >= SESSION_SEARCH_RESULT_MAX) {
       if (candidateIndex + 1 < candidates.length) truncated = true;

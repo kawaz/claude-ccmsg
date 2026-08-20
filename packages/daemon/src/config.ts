@@ -224,7 +224,7 @@ const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const LEGACY_PARAM_DEFAULTS: ReadonlyArray<{ name: string; default: string }> = [
   { name: "CWD", default: "" },
   { name: "MODEL", default: "fable" },
-  { name: "EFFORT", default: "middle" },
+  { name: "EFFORT", default: "medium" },
   { name: "PROMPT", default: "" },
   { name: "RESUME_SID", default: "" },
   { name: "RESUME_AT", default: "" },

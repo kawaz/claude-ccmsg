@@ -2425,6 +2425,16 @@ export interface SessionSearchHit {
    * establishes `cwd`/`created_at` — a session never renamed, or renamed only
    * after that point, has `null` here rather than a guessed fallback. */
   title: string | null;
+  /** What the session was last running as, read from the newest main-context
+   * assistant record at the end of the file: raw transcript spellings
+   * (`message.model`, e.g. "claude-fable-5[1m]", and the row-level `effort`,
+   * e.g. "medium"), left for the client to map onto its own vocabulary. A
+   * resume relaunches this session, so these are what its next run should
+   * default to. Both are optional and independently absent: a transcript whose
+   * tail carries no such record answers neither, and one written by a CC
+   * version that predates row-level `effort` answers only `model`. */
+  model?: string;
+  effort?: string;
 }
 
 export interface SessionSearchResponse {

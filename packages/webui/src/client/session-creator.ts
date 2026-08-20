@@ -26,7 +26,11 @@ export const SESSION_CREATOR_MODELS = [
   "gpt-5.6-terra",
   "gpt-5.6-sol",
 ] as const;
-export const SESSION_CREATOR_EFFORTS = ["low", "middle", "high", "xhigh"] as const;
+/** The effort levels `claude --effort` accepts, verbatim. An unknown value is
+ * not an error there — the CLI warns on stderr and silently runs at its default
+ * effort — so an option list that drifts from the CLI's costs the user the
+ * setting without telling them. */
+export const SESSION_CREATOR_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /** Parameter names the fork flow seeds: the source session and the record to
  * resume at. A template that declares neither simply cannot be forked into. */
@@ -91,6 +95,13 @@ export interface ResumePrefill {
   kind: "resume";
   cwd: string;
   sessionId: string;
+  /** What the session last ran as, in raw transcript spellings (the search hit
+   * carries both — see SessionSearchHit.model/effort). Resuming a session with
+   * whatever the launcher happens to default to would silently switch it to
+   * another model, so these are mapped onto the form's options the same way a
+   * fork maps its source's. Absent when the search could not establish them. */
+  model?: string;
+  effort?: string;
 }
 
 /** How the launcher was opened with a session already in hand. The two kinds
@@ -181,13 +192,14 @@ export function launcherModelFromTranscript(raw: string): string | undefined {
   return undefined;
 }
 
-/** The dropdown option a raw transcript effort maps to, or undefined. The two
- * vocabularies agree except at the middle rung, which the transcript spells
- * "medium" and the form "middle". */
+/** The dropdown option a raw transcript effort maps to, or undefined when none
+ * does. The transcript records the level the session ran at in the same
+ * vocabulary the CLI takes, so this is a membership check rather than a
+ * translation: a level this form does not offer (a newer CC rung) has no
+ * option to select and leaves the field at its default. */
 export function launcherEffortFromTranscript(raw: string): string | undefined {
-  const effort = raw === "medium" ? "middle" : raw;
   const options: readonly string[] = SESSION_CREATOR_EFFORTS;
-  return options.includes(effort) ? effort : undefined;
+  return options.includes(raw) ? raw : undefined;
 }
 
 /** Whether a path may be offered as a prefilled cwd: absolute and lexically
@@ -214,10 +226,24 @@ export function forkSourceDefaults(
 ): Record<string, string> {
   if (!info) return {};
   const cwd = info.cwd?.trim();
-  const model = info.model === undefined ? undefined : launcherModelFromTranscript(info.model);
-  const effort = info.effort === undefined ? undefined : launcherEffortFromTranscript(info.effort);
   return {
     ...(cwd && cwdWithinRoots(cwd, rootDirs) ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
+    ...launchDefaultsFromTranscript(info),
+  };
+}
+
+/** MODEL / EFFORT seed values for a form opened on an existing session, from
+ * that session's raw transcript spellings. Both openings that continue an
+ * existing session want this — a fork and a resume differ in where they read
+ * the session's values from, not in what "run it as what it is" means. */
+export function launchDefaultsFromTranscript(source: {
+  model?: string;
+  effort?: string;
+}): Record<string, string> {
+  const model = source.model === undefined ? undefined : launcherModelFromTranscript(source.model);
+  const effort =
+    source.effort === undefined ? undefined : launcherEffortFromTranscript(source.effort);
+  return {
     ...(model ? { MODEL: model } : {}),
     ...(effort ? { EFFORT: effort } : {}),
   };
@@ -240,9 +266,10 @@ function paramValues(
 }
 
 /** The parameter values an opening carries with it. A fork brings its fork
- * point; a resume brings the session and, unlike a fork, its own cwd — the
- * search hit knows where the session ran, and a historical session has no live
- * peer row for `forkSourceDefaults` to read one from. A blank cwd is left out
+ * point; a resume brings the session and, unlike a fork, its own cwd and
+ * model/effort — the search hit carries all three, and a historical session has
+ * no live peer row or status entry for `forkSourceDefaults` to read them from.
+ * The session id is placed last so it cannot be displaced. A blank cwd is left out
  * rather than seeded, so a recipe with a declared default CWD keeps it and the
  * picker opens in "editing" mode for the user to choose. */
 function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, string> {
@@ -252,6 +279,7 @@ function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, stri
   }
   return {
     ...(prefill.cwd.trim() === "" ? {} : { [LAUNCHER_CWD_PARAM]: prefill.cwd }),
+    ...launchDefaultsFromTranscript(prefill),
     [SESSION_ID_PARAM]: prefill.sessionId,
   };
 }

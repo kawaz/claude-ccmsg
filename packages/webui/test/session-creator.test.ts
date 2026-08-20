@@ -42,23 +42,29 @@ function template(
 const PLAIN = template("default", "run-launch", {
   CWD: "",
   MODEL: "fable",
-  EFFORT: "middle",
+  EFFORT: "medium",
   PROMPT: "hello",
 });
 const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"', {
   CWD: "",
   MODEL: "fable",
-  EFFORT: "middle",
+  EFFORT: "medium",
   PROMPT: "",
   RESUME_SID: "",
   RESUME_AT: "",
 });
 
-const RESUME = template("resume", 'run --resume "$SESSION_ID"', {
-  CWD: "",
-  PROMPT: "",
-  SESSION_ID: "",
-});
+const RESUME = template(
+  "resume",
+  'run --resume "$SESSION_ID" --model "$MODEL" --effort "$EFFORT"',
+  {
+    CWD: "",
+    SESSION_ID: "",
+    MODEL: "fable",
+    EFFORT: "medium",
+    PROMPT: "",
+  },
+);
 
 const FORK_PREFILL = { kind: "fork", resumeSid: "sid-1", resumeAt: "u-9" } as const;
 const RESUME_PREFILL = { kind: "resume", cwd: "/repos/app", sessionId: "sid-1" } as const;
@@ -68,7 +74,7 @@ describe("initialSessionCreatorForm", () => {
     expect(initialSessionCreatorForm([PLAIN])).toEqual({
       template: "default",
       command: "run-launch",
-      params: { CWD: "", MODEL: "fable", EFFORT: "middle", PROMPT: "hello" },
+      params: { CWD: "", MODEL: "fable", EFFORT: "medium", PROMPT: "hello" },
     });
   });
 
@@ -138,6 +144,41 @@ describe("initialSessionCreatorForm", () => {
     expect(form.params).toMatchObject({ CWD: "/repos/app", SESSION_ID: "sid-1" });
   });
 
+  // Resuming re-enters the session itself, so it has to run as what it already
+  // is: without this the launcher's own default would silently switch a
+  // resumed session's model.
+  test("a resume prefill seeds the session's own model and effort", () => {
+    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+      ...RESUME_PREFILL,
+      model: "claude-opus-5[1m]",
+      effort: "high",
+    });
+    expect(form.params).toMatchObject({ MODEL: "opus", EFFORT: "high" });
+  });
+
+  // Same rule as a fork's: a value with no honest mapping leaves the declared
+  // default alone rather than guessing at one.
+  test("a resume prefill the form cannot map keeps the declared defaults", () => {
+    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+      ...RESUME_PREFILL,
+      model: "<synthetic>",
+      effort: "ultra",
+    });
+    expect(form.params).toMatchObject({ MODEL: "fable", EFFORT: "medium" });
+  });
+
+  // An un-migrated config whose resume recipe takes neither: the seed has
+  // nowhere to land, and the form still shows exactly what it declares.
+  test("a resume recipe declaring no model or effort ignores those seeds", () => {
+    const bare = template("resume", 'run --resume "$SESSION_ID"', { CWD: "", SESSION_ID: "" });
+    const form = initialSessionCreatorForm([bare], {
+      ...RESUME_PREFILL,
+      model: "claude-opus-5",
+      effort: "high",
+    });
+    expect(form.params).toEqual({ CWD: "/repos/app", SESSION_ID: "sid-1" });
+  });
+
   // A hit whose cwd the daemon could not establish opens the form anyway; the
   // declared default survives and the run button gates on the empty cwd.
   test("a resume prefill without a cwd leaves the declared default in place", () => {
@@ -164,7 +205,7 @@ describe("initialSessionCreatorForm", () => {
   // defaults.
   test("parameters absent from the defaults keep their declared defaults", () => {
     const form = initialSessionCreatorForm([PLAIN], null, { MODEL: "sonnet" });
-    expect(form.params).toMatchObject({ CWD: "", MODEL: "sonnet", EFFORT: "middle" });
+    expect(form.params).toMatchObject({ CWD: "", MODEL: "sonnet", EFFORT: "medium" });
   });
 });
 
@@ -211,7 +252,7 @@ describe("forkSourceDefaults", () => {
   test("maps model and effort into the form's vocabulary", () => {
     expect(forkSourceDefaults({ model: "claude-fable-5[1m]", effort: "medium" }, ROOTS)).toEqual({
       MODEL: "fable",
-      EFFORT: "middle",
+      EFFORT: "medium",
     });
   });
 });
@@ -241,9 +282,11 @@ describe("launcherModelFromTranscript", () => {
 });
 
 describe("launcherEffortFromTranscript", () => {
-  // The vocabularies agree except at the middle rung.
-  test("renames medium to middle and passes the rest through", () => {
-    expect(launcherEffortFromTranscript("medium")).toBe("middle");
+  // Transcript and form share the CLI's vocabulary, so every offered level
+  // survives the trip verbatim — a value that came back changed would be a
+  // level `claude --effort` does not accept.
+  test("every offered level passes through", () => {
+    expect(launcherEffortFromTranscript("medium")).toBe("medium");
     for (const effort of SESSION_CREATOR_EFFORTS) {
       expect(launcherEffortFromTranscript(effort)).toBe(effort);
     }
@@ -251,6 +294,7 @@ describe("launcherEffortFromTranscript", () => {
 
   test("unknown values map to nothing", () => {
     expect(launcherEffortFromTranscript("ultra")).toBeUndefined();
+    expect(launcherEffortFromTranscript("middle")).toBeUndefined();
     expect(launcherEffortFromTranscript("")).toBeUndefined();
   });
 });
@@ -324,7 +368,7 @@ describe("selectSessionCreatorTemplate", () => {
       CWD: "/repo",
       MODEL: "opus",
       // Untouched in the fork recipe, so the plain recipe's own default wins.
-      EFFORT: "middle",
+      EFFORT: "medium",
       PROMPT: "hello",
     });
     // The fork values have no home in the plain recipe and are dropped.
@@ -358,8 +402,11 @@ describe("SESSION_CREATOR_MODELS / SESSION_CREATOR_EFFORTS", () => {
     ]);
   });
 
-  test("effort list matches the DR-0018 §2.1 spec, in order", () => {
-    expect(SESSION_CREATOR_EFFORTS).toEqual(["low", "middle", "high", "xhigh"]);
+  // The effort list is the CLI's own, verbatim: `claude --effort` answers an
+  // unrecognized level with a stderr warning and its default effort, so an
+  // option the CLI does not know silently drops the user's choice.
+  test("effort list matches what `claude --effort` accepts, in order", () => {
+    expect(SESSION_CREATOR_EFFORTS).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 });
 
@@ -373,7 +420,7 @@ function form(overrides: Partial<SessionCreatorForm> = {}): SessionCreatorForm {
     params: {
       CWD: "/repo",
       MODEL: "fable",
-      EFFORT: "middle",
+      EFFORT: "medium",
       PROMPT: "hi",
       ...overrides.params,
     },
@@ -476,7 +523,7 @@ describe("buildSessionLaunchRequest", () => {
   test("sends command override when it differs from the default, verbatim", () => {
     expect(buildSessionLaunchRequest(form({ command: "custom --run" }), [PLAIN])).toEqual({
       cwd: "/repo",
-      params: { MODEL: "fable", EFFORT: "middle", PROMPT: "hi" },
+      params: { MODEL: "fable", EFFORT: "medium", PROMPT: "hi" },
       template: "default",
       command: "custom --run",
     });

@@ -237,7 +237,13 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
   function resumeResult(hit: SessionSearchHit): void {
     store.dispatch({
       type: "session-creator/prefill",
-      prefill: { kind: "resume", cwd: hit.cwd ?? "", sessionId: hit.sid },
+      prefill: {
+        kind: "resume",
+        cwd: hit.cwd ?? "",
+        sessionId: hit.sid,
+        ...(hit.model ? { model: hit.model } : {}),
+        ...(hit.effort ? { effort: hit.effort } : {}),
+      },
     });
   }
 

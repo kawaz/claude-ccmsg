@@ -19,7 +19,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
 - ビュー内の設定項目:
   - **cwd**: クリック → ディレクトリツリー展開 → 選択
   - **model**: dropdown (`sonnet` / `opus` / `fable` / `gpt-5.6-luna` / `gpt-5.6-terra` / `gpt-5.6-sol`)、デフォルト `fable`
-  - **effort**: dropdown (`low` / `middle` / `high` / `xhigh`)、デフォルト `middle`
+  - **effort**: dropdown (`claude --effort` が受ける値そのまま: `low` / `medium` / `high` / `xhigh` / `max`)、デフォルト `medium`
   - **プロンプト**: multiline 入力欄 + 「default」ボタン (押すと設定ファイルの default 文字列に戻す)
 - **実行ボタン**: 押したら
   1. 設定ファイルの **コマンドテンプレ**に値を embed
