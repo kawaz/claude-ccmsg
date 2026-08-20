@@ -85,14 +85,14 @@ import {
 import {
   getPendingHostTranslationCount,
   isTranslationSkippedText,
-  hasCachedHostThinkingText,
+  hasCachedHostText,
   hasTranslatorApi,
   getTranslationRevision,
   subscribePendingHostTranslation,
   subscribeTranslationRegistry,
   translatedTextOf,
-  translateThinkingTextInBrowser,
-  translateThinkingTextOnHost,
+  translateTextInBrowser,
+  translateTextOnHost,
   type HostTranslateRequest,
 } from "../translate.ts";
 import {
@@ -991,13 +991,146 @@ function AgentSpawnFold({
 interface TranslationAvailability {
   host: boolean;
   browser: boolean;
-  // translateThinkingTextOnHost が英語段落ごとに 1 op を送るための
+  // translateTextOnHost が英語段落ごとに 1 op を送るための
   // ws.translate ラッパ。複数 thinking・複数段落をまとめず、各 op を独立して
   // 並列実行する (kawaz 裁定 r34 mid=11,13-14、DR-0023 addendum)。
   hostRequest: HostTranslateRequest;
 }
 
-type ThinkingTab = "original" | "ja-host" | "ja-browser";
+type TranslationTab = "original" | "ja-host" | "ja-browser";
+
+/** 翻訳タブ 1 行分の items。availability が false の経路はタブ自体を出さない
+ * (見せる view が無い)。thinking と assistant 応答で同じ並びを使う。 */
+function translationTabItems(
+  availability: TranslationAvailability,
+): { id: TranslationTab; label: string }[] {
+  return [
+    { id: "original", label: "original" },
+    ...(availability.host ? [{ id: "ja-host" as const, label: "ja(host)" }] : []),
+    ...(availability.browser ? [{ id: "ja-browser" as const, label: "ja(browser)" }] : []),
+  ];
+}
+
+/** 選択中の翻訳タブに対応する本文と、翻訳中の進捗ラベルを供給する。
+ *
+ * タブの選択状態は呼び出し側が持つ — thinking は segment ごとに 1 タブ列、
+ * assistant 応答はバブルの hover ツールバー 1 つがその中の text segment 全部
+ * を束ねる、と所有者が違うため。ここが持つのは「この text をこの経路で訳した
+ * 結果」だけで、選択中のタブにまだ訳が無ければその経路の翻訳を起動する。
+ *
+ * 訳文は原文とペアで保持する: text 自体が差し替わった (tail 追記で行が
+ * 読み直された) 時に、前の原文の訳をそのまま出し続けないため。 */
+function useTranslatedText(
+  text: string,
+  availability: TranslationAvailability,
+  tab: TranslationTab,
+  /** 表示中の綴りが差し替わった時に呼ばれる (in-view search の再計算契機)。 */
+  onDisplayChange?: () => void,
+): { bodyText: string; translatingLabel: string | null } {
+  const [host, setHost] = useState<{ source: string; text: string } | null>(null);
+  const [browser, setBrowser] = useState<{ source: string; text: string } | null>(null);
+  // 「今この原文を訳している最中」を原文そのもので表す (boolean だと text が
+  // 変わった時に前の原文の進行中フラグと区別できない)。
+  const [hostPending, setHostPending] = useState<string | null>(null);
+  const [browserPending, setBrowserPending] = useState<string | null>(null);
+
+  const hostText = host !== null && host.source === text ? host.text : null;
+  const browserText = browser !== null && browser.source === text ? browser.text : null;
+  const hostTranslating = hostPending === text;
+  const browserTranslating = browserPending === text;
+
+  useEffect(() => {
+    if (tab === "ja-host") {
+      if (!availability.host || hostText !== null || hostTranslating) return;
+      setHostPending(text);
+      void translateTextOnHost(text, availability.hostRequest)
+        .then((result) => setHost({ source: text, text: result }))
+        // 経路ごと失敗した時は原文へ倒す (タブは選ばれたまま、内容は原文)。
+        .catch(() => setHost({ source: text, text }))
+        .finally(() => setHostPending((pending) => (pending === text ? null : pending)));
+      return;
+    }
+    if (tab === "ja-browser") {
+      if (!availability.browser || browserText !== null || browserTranslating) return;
+      setBrowserPending(text);
+      void translateTextInBrowser(text)
+        .then((result) => setBrowser({ source: text, text: result }))
+        .finally(() => setBrowserPending((pending) => (pending === text ? null : pending)));
+    }
+  }, [
+    tab,
+    text,
+    availability.host,
+    availability.browser,
+    availability.hostRequest,
+    hostText,
+    browserText,
+    hostTranslating,
+    browserTranslating,
+  ]);
+
+  const bodyText =
+    tab === "ja-host" && hostText !== null
+      ? hostText
+      : tab === "ja-browser" && browserText !== null
+        ? browserText
+        : text;
+
+  // The first body a unit renders needs no notification: whoever reads the
+  // rendered text already re-runs when a unit mounts. Only a later swap of the
+  // same unit's body is invisible to them.
+  const displayedTextRef = useRef(bodyText);
+  useEffect(() => {
+    if (displayedTextRef.current === bodyText) return;
+    displayedTextRef.current = bodyText;
+    onDisplayChange?.();
+  }, [bodyText, onDisplayChange]);
+
+  // 訳が入った直後の 1 render (state 更新と pending 解除が別 microtask) で
+  // 「本文は訳文なのに翻訳中」と出さないよう、本文の有無も条件に含める。
+  const translating =
+    (tab === "ja-host" && hostTranslating && hostText === null) ||
+    (tab === "ja-browser" && browserTranslating && browserText === null);
+
+  // 翻訳中の進捗表示 (kawaz r38 m94,95): 「翻訳中… 3s (待ち 5)」の形で、
+  // リクエストを投げてからの経過秒と host 経路の未完了段落数を出す。固まっ
+  // ているのか妥当な待ちなのかの判断材料。
+  const [translationStartedAt, setTranslationStartedAt] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [pendingHostQueue, setPendingHostQueue] = useState(() => getPendingHostTranslationCount());
+  useEffect(() => {
+    if (!translating) {
+      setTranslationStartedAt(null);
+      return;
+    }
+    setTranslationStartedAt(Date.now());
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [translating]);
+  // pending counter は host 段落 request の増減で発火する。translating 中だけ
+  // 購読する (それ以外は表示に使わない) — dormant segment の常時購読で無駄な
+  // re-render を積まないため。
+  useEffect(() => {
+    if (!translating) return;
+    setPendingHostQueue(getPendingHostTranslationCount());
+    return subscribePendingHostTranslation(() =>
+      setPendingHostQueue(getPendingHostTranslationCount()),
+    );
+  }, [translating]);
+  const translatingLabel = (() => {
+    if (!translating) return null;
+    const parts = ["翻訳中…"];
+    if (translationStartedAt !== null) {
+      parts.push(`${Math.max(0, Math.floor((nowMs - translationStartedAt) / 1000))}s`);
+    }
+    // 待ちキューは host 経路のみ意味を持つ (browser は local API、直列でない)。
+    if (tab === "ja-host" && pendingHostQueue > 0) parts.push(`(待ち ${pendingHostQueue})`);
+    return parts.join(" ");
+  })();
+
+  return { bodyText, translatingLabel };
+}
 
 const pendingViewportTranslations = new Map<Element, () => void>();
 let viewportTranslationFrame: number | null = null;
@@ -1090,40 +1223,16 @@ function ThinkingSegment({
   onDisplayChange?: (() => void) | undefined;
 }) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
-  const [tab, setTab] = useState<ThinkingTab>("original");
-  const [hostText, setHostText] = useState<string | null>(null);
-  const [browserText, setBrowserText] = useState<string | null>(null);
-  const [hostTranslating, setHostTranslating] = useState(false);
-  const [browserTranslating, setBrowserTranslating] = useState(false);
+  const [tab, setTab] = useState<TranslationTab>("original");
   const [detailsOpen, setDetailsOpen] = useCategoryOpen("thinking");
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const translationStartedRef = useRef(false);
-
-  const changeTab = useCallback((next: ThinkingTab) => {
-    setTab(next);
-  }, []);
-
-  function selectHost() {
-    if (!translationAvailability.host) return;
-    changeTab("ja-host");
-    if (hostText !== null || hostTranslating) return;
-    setHostTranslating(true);
-    void translateThinkingTextOnHost(text, translationAvailability.hostRequest)
-      .then((result) => setHostText(result))
-      .catch(() => setHostText(text))
-      .finally(() => setHostTranslating(false));
-  }
-
-  function selectBrowser() {
-    if (!translationAvailability.browser) return;
-    changeTab("ja-browser");
-    if (browserText !== null || browserTranslating) return;
-    setBrowserTranslating(true);
-    void translateThinkingTextInBrowser(text).then((result) => {
-      setBrowserText(result);
-      setBrowserTranslating(false);
-    });
-  }
+  const { bodyText, translatingLabel } = useTranslatedText(
+    text,
+    translationAvailability,
+    tab,
+    onDisplayChange,
+  );
 
   // The host route is the default comparison result when both are present: it
   // is the dictionary-like path this feature adds, while browser remains an
@@ -1133,8 +1242,8 @@ function ThinkingSegment({
     // r38 mid=54) — 訳タブを選んでも内容が原文と同一で、確認クリックの
     // 無駄を生むだけ。
     if (isTranslationSkippedText(text)) return;
-    if (translationAvailability.host) selectHost();
-    else if (translationAvailability.browser) selectBrowser();
+    if (translationAvailability.host) setTab("ja-host");
+    else if (translationAvailability.browser) setTab("ja-browser");
   }
 
   useEffect(() => {
@@ -1148,7 +1257,7 @@ function ThinkingSegment({
 
     // Cache hits do not add daemon work, so retain the immediate display behavior
     // even when this thinking is outside the prefetch range.
-    if (translationAvailability.host && hasCachedHostThinkingText(text)) {
+    if (translationAvailability.host && hasCachedHostText(text)) {
       startTranslation();
       return;
     }
@@ -1195,64 +1304,7 @@ function ThinkingSegment({
     if (tab === "ja-host" && !translationAvailability.host) setTab("original");
   }, [tab, translationAvailability.host]);
 
-  const bodyText =
-    tab === "ja-host" && hostText !== null
-      ? hostText
-      : tab === "ja-browser" && browserText !== null
-        ? browserText
-        : text;
-
-  // The first body a segment renders needs no notification: whoever reads the
-  // rendered text already re-runs when a unit mounts. Only a later swap of the
-  // same segment's body is invisible to them.
-  const displayedTextRef = useRef(bodyText);
-  useEffect(() => {
-    if (displayedTextRef.current === bodyText) return;
-    displayedTextRef.current = bodyText;
-    onDisplayChange?.();
-  }, [bodyText, onDisplayChange]);
-
   const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
-  const translating =
-    (tab === "ja-host" && hostTranslating && hostText === null) ||
-    (tab === "ja-browser" && browserTranslating && browserText === null);
-
-  // 翻訳中の進捗表示 (kawaz r38 m94,95): 「翻訳中… 3s (待ち 5)」の形で、
-  // リクエストを投げてからの経過秒と host 経路の未完了段落数を出す。固まっ
-  // ているのか妥当な待ちなのかの判断材料。
-  const [translationStartedAt, setTranslationStartedAt] = useState<number | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const [pendingHostQueue, setPendingHostQueue] = useState(() => getPendingHostTranslationCount());
-  useEffect(() => {
-    if (!translating) {
-      setTranslationStartedAt(null);
-      return;
-    }
-    setTranslationStartedAt(Date.now());
-    setNowMs(Date.now());
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [translating]);
-  // pending counter は host 段落 request の増減で発火する。translating 中だけ
-  // 購読する (それ以外は表示に使わない) — dormant segment の常時購読で無駄な
-  // re-render を積まないため。
-  useEffect(() => {
-    if (!translating) return;
-    setPendingHostQueue(getPendingHostTranslationCount());
-    return subscribePendingHostTranslation(() =>
-      setPendingHostQueue(getPendingHostTranslationCount()),
-    );
-  }, [translating]);
-  const translatingLabel = (() => {
-    if (!translating) return null;
-    const parts = ["翻訳中…"];
-    if (translationStartedAt !== null) {
-      parts.push(`${Math.max(0, Math.floor((nowMs - translationStartedAt) / 1000))}s`);
-    }
-    // 待ちキューは host 経路のみ意味を持つ (browser は local API、直列でない)。
-    if (tab === "ja-host" && pendingHostQueue > 0) parts.push(`(待ち ${pendingHostQueue})`);
-    return parts.join(" ");
-  })();
 
   return (
     <details
@@ -1270,28 +1322,15 @@ function ThinkingSegment({
               {/* Only the offered translators get a tab — each one is a
                * separate capability of the host/browser (see
                * translationAvailability), so an unavailable one has no view to
-               * show. Selection routes through the same per-tab handlers as
-               * before: host and browser kick off a translation, original
-               * just switches back. */}
+               * show. 選択はタブ state を動かすだけで、その経路の翻訳は
+               * useTranslatedText が必要になった時に起動する。 */}
               <Tabs
                 class="tl-thinking-tabs"
                 tabClass="tl-thinking-tab"
                 label="本文の言語"
                 selected={tab}
-                onSelect={(id) => {
-                  if (id === "ja-host") selectHost();
-                  else if (id === "ja-browser") selectBrowser();
-                  else changeTab("original");
-                }}
-                items={[
-                  { id: "original", label: "original" },
-                  ...(translationAvailability.host
-                    ? [{ id: "ja-host" as ThinkingTab, label: "ja(host)" }]
-                    : []),
-                  ...(translationAvailability.browser
-                    ? [{ id: "ja-browser" as ThinkingTab, label: "ja(browser)" }]
-                    : []),
-                ]}
+                onSelect={setTab}
+                items={translationTabItems(translationAvailability)}
               />
             </div>
           ) : null}
@@ -1312,13 +1351,58 @@ function ThinkingSegment({
   );
 }
 
+/** assistant 応答本文の表示モード。バブルの hover ツールバーが 1 つ持ち、
+ * その中の text segment 全部に同じモードが効く。 */
+interface AssistantBodyView {
+  /** 既定は常に "original" — thinking と違い自動で訳へ切り替えない
+   * (kawaz r135m50: 応答本文は常に見えているので、訳は操作起点で足りる)。 */
+  tab: TranslationTab;
+  /** true = markdown を解釈せず原文のまま出す (コピペ用)。 */
+  source: boolean;
+}
+
 /** Assistant markdown text with session-scoped filepath linkification wired
  * (kawaz r46m62). Small wrapper so the useContext hook has a stable
  * top-level call site (JSX inside `SegmentView`'s IIFE is not a component
- * boundary — extracting this keeps the rules-of-hooks contract obvious). */
-function AssistantMarkdownText({ source }: { source: string }) {
+ * boundary — extracting this keeps the rules-of-hooks contract obvious).
+ *
+ * `view` が無い呼び出し (吹き出し外の assistant text) は原文の markdown 表示。 */
+function AssistantMarkdownText({
+  source,
+  view,
+  translationAvailability,
+  onDisplayChange,
+}: {
+  source: string;
+  view: AssistantBodyView | undefined;
+  translationAvailability: TranslationAvailability;
+  onDisplayChange?: (() => void) | undefined;
+}) {
   const filePathCtx = useContext(SessionFilePathCtxContext);
-  return <LinkedMarkdownView source={source} ctx={filePathCtx} />;
+  const { bodyText, translatingLabel } = useTranslatedText(
+    source,
+    translationAvailability,
+    view?.tab ?? "original",
+    onDisplayChange,
+  );
+  return (
+    <>
+      {view?.source === true ? (
+        // source タブは「今表示している綴り」の生テキスト — 訳タブを選んだ
+        // ままなら訳文の markdown ソースが出る (どちらを写したいかは選択済み)。
+        <pre class="tl-bubble-source">{bodyText}</pre>
+      ) : (
+        <LinkedMarkdownView
+          source={bodyText}
+          // 翻訳がかかっても probe 対象は原文に揃える (ThinkingSegment と同じ
+          // 理由: 訳文の inline code は原文と同一)。
+          probeSource={source}
+          ctx={filePathCtx}
+        />
+      )}
+      {translatingLabel ? <p class="tl-thinking-translating">{translatingLabel}</p> : null}
+    </>
+  );
 }
 
 function SegmentView({
@@ -1328,6 +1412,7 @@ function SegmentView({
   foldGroupOpen,
   searchKey,
   searchCtx,
+  assistantView,
 }: {
   segment: Segment;
   translationAvailability: TranslationAvailability;
@@ -1341,6 +1426,9 @@ function SegmentView({
   // DR (MarkdownView without highlightWords, plain <pre> text).
   searchKey: string;
   searchCtx: TLSearchCtx | undefined;
+  /** assistant 吹き出しの hover ツールバーが決める本文の見せ方。吹き出しの
+   * 外 (fold 内の assistant text) には無く、その場合は原文 markdown 表示。 */
+  assistantView?: AssistantBodyView | undefined;
 }) {
   const isMatch = searchCtx !== undefined && searchCtx.words.length > 0;
   // Highlighting is applied after render from this unit's DOM textContent.
@@ -1354,7 +1442,12 @@ function SegmentView({
         return (
           <div class={"tl-text tl-text-" + segment.role}>
             {segment.role === "assistant" ? (
-              <AssistantMarkdownText source={segment.text} />
+              <AssistantMarkdownText
+                source={segment.text}
+                view={assistantView}
+                translationAvailability={translationAvailability}
+                onDisplayChange={searchCtx?.notifyDisplayChange}
+              />
             ) : (
               segment.text
             )}
@@ -2195,19 +2288,76 @@ function UserPromptBubble({
   );
 }
 
+/** assistant バブルのハンバーガーから開く「重い操作」一式に必要なもの。
+ *
+ * fork / dump は URL の選択位置 (`position`) に紐づく操作のままで、バブルの
+ * ツールバーは**その置き場所**を増やすだけ (kawaz 裁定: 不可逆・重い操作は
+ * 明示選択のまま、hover だけで発火させない)。ハンバーガーを開く操作自体が
+ * その明示選択に当たるので、開いた項目をその場で選択位置にする。 */
+interface BubbleActions {
+  sid: string;
+  /** 現在の選択位置 (URL の position、無選択なら "head")。 */
+  position: string;
+  forkAction: ForkActionState;
+  forkAvailable: boolean;
+  onFork: (resumeAt: string) => void;
+  /** この項目を選択位置にする (選択済みなら呼ばない — toggle なので外れる)。 */
+  onSelect: (uuid: string) => void;
+}
+
+function BubbleActionsMenu({ actions }: { actions: BubbleActions }) {
+  return (
+    // 本文クリックは項目選択のトグルなので、メニュー内の余白 / 説明文への
+    // クリックがそこへ伝播すると、開いたばかりのメニューの足元 (選択位置) が
+    // 外れる。メニューの中はメニューの中で完結させる。
+    <div class="tl-msg-menu" onClick={(e) => e.stopPropagation()}>
+      <ForkAction
+        state={actions.forkAction}
+        available={actions.forkAvailable}
+        onFork={actions.onFork}
+      />
+      <DumpFileAction sid={actions.sid} position={actions.position} />
+    </div>
+  );
+}
+
 function AssistantBubble({
   line,
   offset,
   translationAvailability,
   now,
   searchCtx,
+  actions,
 }: {
   line: TurnLine;
   offset: number;
   translationAvailability: TranslationAvailability;
   now: number;
   searchCtx: TLSearchCtx | undefined;
+  /** 重い操作 (fork / dump) の材料。agent TL のように選択位置を表せない
+   * 文脈では undefined で、ハンバーガー自体を出さない。 */
+  actions: BubbleActions | undefined;
 }) {
+  // 既定は常に original (kawaz r135m50)。thinking のような自動選択はしない。
+  const [tab, setTab] = useState<TranslationTab>("original");
+  const [source, setSource] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const hasTranslationTab = translationAvailability.host || translationAvailability.browser;
+
+  // Reconnect can replace a macOS daemon with a non-capable daemon (same guard
+  // as ThinkingSegment): a selected host tab must fall back to original rather
+  // than keep showing text no live route can produce.
+  useEffect(() => {
+    if (tab === "ja-host" && !translationAvailability.host) setTab("original");
+  }, [tab, translationAvailability.host]);
+
+  // メニューは選択位置に紐づいて意味を持つので、選択が他の項目へ移ったら
+  // 畳む (残しても「fork 地点を選んでください」しか出せない)。
+  const selectedHere = actions !== undefined && actions.position === line.uuid;
+  useEffect(() => {
+    if (menuOpen && !selectedHere) setMenuOpen(false);
+  }, [menuOpen, selectedHere]);
+
   return (
     <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
       <div class="tl-bubble-body">
@@ -2220,10 +2370,57 @@ function AssistantBubble({
             foldGroupOpen={false}
             searchKey={`${offset}-${i}`}
             searchCtx={searchCtx}
+            assistantView={{ tab, source }}
           />
         ))}
       </div>
-      {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
+      {/* 時刻と同じ 1 行に置く: ツールバーは通常 opacity 0 なので、行の高さが
+       * hover で動かない (本文の上に重ねると 1 行目の右端を隠す、本文の下に
+       * 出し入れするとレイアウトが跳ねる)。 */}
+      <div class="tl-bubble-footer">
+        {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
+        <div class={`tl-msg-toolbar${menuOpen ? " tl-msg-toolbar-open" : ""}`}>
+          {hasTranslationTab ? (
+            <Tabs
+              class="tl-thinking-tabs"
+              tabClass="tl-thinking-tab"
+              label="本文の言語"
+              selected={tab}
+              onSelect={setTab}
+              items={translationTabItems(translationAvailability)}
+            />
+          ) : null}
+          <Tabs
+            class="tl-thinking-tabs"
+            tabClass="tl-thinking-tab"
+            label="本文の表示形式"
+            selected={source ? "source" : "md"}
+            onSelect={(id) => setSource(id === "source")}
+            items={[
+              { id: "md", label: "md", title: "markdown として表示" },
+              { id: "source", label: "source", title: "markdown の原文を表示 (コピペ用)" },
+            ]}
+          />
+          {actions === undefined ? null : (
+            <button
+              type="button"
+              class="tl-thinking-tab tl-msg-menu-toggle"
+              aria-expanded={menuOpen}
+              aria-label="この項目の操作"
+              title="fork / dump"
+              onClick={() => {
+                const next = !menuOpen;
+                // 開く操作 = この項目を fork/dump の対象に決める明示選択。
+                if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
+                setMenuOpen(next);
+              }}
+            >
+              ☰
+            </button>
+          )}
+        </div>
+      </div>
+      {menuOpen && actions !== undefined ? <BubbleActionsMenu actions={actions} /> : null}
     </div>
   );
 }
@@ -3493,10 +3690,12 @@ export function Timeline({
       line.segments.forEach((seg, i) => {
         if (!isSearchableSegment(seg, targets)) return;
         const text = segmentSearchText(seg);
-        // thinking は表示が訳文へ差し替わりうる唯一の unit なので、届いて
-        // いる訳をもう 1 つの綴りとして持たせる (原文クエリ・訳文クエリの
-        // どちらでも数に入る)。
-        const translated = seg.kind === "thinking" ? translatedTextOf(text) : null;
+        // 翻訳タブを持つ unit (thinking / assistant 応答本文) は表示が訳文へ
+        // 差し替わりうるので、届いている訳をもう 1 つの綴りとして持たせる
+        // (原文クエリ・訳文クエリのどちらでも数に入る)。
+        const translatable =
+          seg.kind === "thinking" || (seg.kind === "text" && seg.role === "assistant");
+        const translated = translatable ? translatedTextOf(text) : null;
         units.push({
           key: `${offset}-${i}`,
           texts: translated === null ? [text] : [text, translated],
@@ -3813,6 +4012,38 @@ export function Timeline({
   const forkAction = useMemo(
     () => forkActionState(currentPosition, chain),
     [currentPosition, chain],
+  );
+  // 同じアクション一式を assistant バブルのハンバーガーからも開ける
+  // (BubbleActions)。側面パネルと材料を共有するので、どちらから開いても
+  // 「選択中の項目に対する fork / dump」という意味は 1 つのまま。
+  // agent TL は位置選択を URL で表せない (selectPosition が no-op) ので
+  // 渡さない = ハンバーガーを出さない。
+  const bubbleActions = useMemo<BubbleActions | undefined>(
+    () =>
+      agent && (agent.agentId || agent.teammate)
+        ? undefined
+        : {
+            sid,
+            position: currentPosition,
+            forkAction,
+            forkAvailable: appState.forkAvailable,
+            onFork: (resumeAt: string) =>
+              store.dispatch({
+                type: "session-creator/prefill",
+                prefill: { kind: "fork", resumeSid: sid, resumeAt },
+              }),
+            onSelect: selectPosition,
+          },
+    [
+      sid,
+      currentPosition,
+      forkAction,
+      appState.forkAvailable,
+      store,
+      selectPosition,
+      agent?.agentId,
+      agent?.teammate,
+    ],
   );
 
   useEffect(
@@ -4361,6 +4592,7 @@ export function Timeline({
                                         translationAvailability={translationAvailability}
                                         now={now}
                                         searchCtx={searchCtx}
+                                        actions={bubbleActions}
                                       />
                                     </ItemRawToggle>
                                   );

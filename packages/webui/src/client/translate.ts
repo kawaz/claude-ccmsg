@@ -1,8 +1,8 @@
 import type { ErrorResponse, TranslateResponse } from "@ccmsg/protocol";
 import { setBounded } from "./bounded-map.ts";
 
-// thinking ブロックの原文 -> 日本語訳を提供する薄いレイヤ (U2: Timeline
-// thinking 翻訳タブ)。Chrome built-in Translator API
+// TL 本文 (thinking ブロック / assistant 応答) の原文 -> 日本語訳を提供する
+// 薄いレイヤ (Timeline の翻訳タブ)。Chrome built-in Translator API
 // (https://developer.chrome.com/docs/ai/translator-api) をグローバル
 // `Translator.create(...)` 経由で使う — バンドルされた翻訳ライブラリではなく
 // ブラウザ内蔵モデルを使うので、対応していないブラウザ/OS では
@@ -130,11 +130,11 @@ async function translateParagraph(paragraph: string): Promise<string> {
   }
 }
 
-/** thinking ブロックのテキストを日本語へ翻訳する。`\n\n` で段落分割して
+/** TL 本文 (thinking / assistant 応答) を日本語へ翻訳する。`\n\n` で段落分割して
  * 段落ごとに translateParagraph を呼び、`\n\n` で再結合する (kawaz spec:
  * 「段落 (\n\n) 分割」) — 段落境界を保つことで markdown 構造 (箇条書き等)
  * を崩さない。 */
-export async function translateThinkingTextInBrowser(text: string): Promise<string> {
+export async function translateTextInBrowser(text: string): Promise<string> {
   const paragraphs = text.split("\n\n");
   const translated = await Promise.all(paragraphs.map(translateParagraph));
   return translated.join("\n\n");
@@ -220,9 +220,9 @@ export function subscribePendingHostTranslation(listener: () => void): () => voi
   };
 }
 
-/** thinking 全体の翻訳対象段落が host cache に揃っているかを返す。可視範囲外でも
+/** テキスト全体の翻訳対象段落が host cache に揃っているかを返す。可視範囲外でも
  * キャッシュ済み結果は daemon request を増やさず即表示できる。 */
-export function hasCachedHostThinkingText(text: string): boolean {
+export function hasCachedHostText(text: string): boolean {
   return text
     .split("\n\n")
     .every((paragraph) => shouldSkipParagraph(paragraph) || hostTextCache.has(paragraph));
@@ -290,9 +290,9 @@ function translateParagraphOnHost(
   return promise;
 }
 
-/** thinking ブロックを `\n\n` で分割し、翻訳対象の各段落を段落ごとの独立した
+/** テキストを `\n\n` で分割し、翻訳対象の各段落を段落ごとの独立した
  * translate op として送る。結果は入力順に `\n\n` で再結合する。 */
-export async function translateThinkingTextOnHost(
+export async function translateTextOnHost(
   text: string,
   request: HostTranslateRequest,
 ): Promise<string> {

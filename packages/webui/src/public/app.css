@@ -4140,6 +4140,79 @@ button.session-tab {
   font-variant-numeric: tabular-nums;
 }
 
+/* assistant 応答の hover ツールバー行。時刻と同じ行に同居させる (kawaz:
+ * 「常時非表示、hover で出現」) — ツールバーは opacity だけで隠すので場所は
+ * 常に確保されており、hover しても行の高さが動かない。本文の上に重ねる案は
+ * 1 行目の右端を隠し、出し入れする案はレイアウトが跳ねるので採らない。 */
+.tl-bubble-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  min-height: 1.4em;
+}
+
+/* 時刻は 1 行のまま (flex 子として縮められると「2026-08-20 15:43:08 · 8h17m」
+ * が 3 行に折れて、ツールバーの有無で吹き出しの高さが変わって見える)。 */
+.tl-bubble-footer > .tl-bubble-time {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* 通常時は不可視。.tl-item-raw-toggle (項目ごとの jsonl トグル) と同じ流儀で
+ * opacity のみを落とす — visibility: hidden にすると tab キーで到達できなく
+ * なるため。 */
+.tl-msg-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.tl-item:hover .tl-msg-toolbar,
+.tl-item:focus-within .tl-msg-toolbar,
+.tl-msg-toolbar-open {
+  opacity: 1;
+}
+
+/* タッチ端末には hover が無いので常時薄く見せる (押せることが判る程度)。
+ * ハンバーガー = 重い操作への唯一の到達経路なので、ここが消えると fork /
+ * dump がタップで開けなくなる。 */
+@media (hover: none) {
+  .tl-msg-toolbar {
+    opacity: 0.45;
+  }
+}
+
+.tl-msg-toolbar .tl-thinking-tabs {
+  margin-bottom: 0;
+}
+
+.tl-msg-menu-toggle {
+  line-height: 1;
+}
+
+/* ハンバーガーで開く重い操作 (fork / dump)。中身は側面パネルと同じ
+ * .tl-float-* のまま — 同じ操作なので見た目も揃える。 */
+.tl-msg-menu {
+  max-width: 100%;
+  margin-top: var(--space-5);
+  padding: var(--space-6) var(--space-9) var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-alt);
+}
+
+/* source タブ (markdown 原文)。コピペが目的なので折り返して全体を見せる。 */
+.tl-bubble-source {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .tl-bubble-from {
   font-size: var(--font-size-sm);
   font-weight: 600;
