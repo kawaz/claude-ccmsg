@@ -327,7 +327,6 @@ export function SessionView({
                   timeline={tree.timeline}
                   search={tree.timelineSearch}
                   sessionStatus={sessionStatus}
-                  onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
                   active={active}
                   visible={active && tab === "timeline"}
@@ -338,7 +337,6 @@ export function SessionView({
                   timeline={tree.timeline}
                   search={tree.timelineSearch}
                   sessionStatus={sessionStatus}
-                  onOpenStatus={() => replaceNavigation(statusHref(sid))}
                   agent={agent}
                   active={active}
                   visible={active && tab === "timeline"}

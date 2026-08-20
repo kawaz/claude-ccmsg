@@ -2883,7 +2883,6 @@ export function Timeline({
   timeline,
   search,
   sessionStatus,
-  onOpenStatus,
   agent,
   active,
   visible,
@@ -2905,10 +2904,6 @@ export function Timeline({
    * いない (subscribe 直後のごく短い間) — パネル自体を隠す (下の
    * miniSummaryLines 呼び出し前にガード)。 */
   sessionStatus: SessionStatusSnapshot | undefined;
-  /** ミニパネルタップで Status タブへ (DR-0020 §2.1「タップで Status タブへ
-   * 遷移」)。SessionView 側のローカルタブ state を差し替えるだけなので、
-   * ここではコールバックとして受け取る。 */
-  onOpenStatus: () => void;
   active: boolean;
   /** Timeline タブが実際に画面に出ているか (`active` はセッション単位なので、
    * Files タブを見ている間も true のまま)。タブ往復では Timeline は unmount
@@ -4551,8 +4546,11 @@ export function Timeline({
                       </div>
                     </div>
                     <div class="tl-bottom-controls">
+                      {/* 非対話 (kawaz r135m37): FAB と重なる位置にあり、
+                       * ボタンだと誤クリックで Status タブへ飛ぶ事故が多い。
+                       * 表示はそのまま残し、クリック導線だけ塞ぐ。 */}
                       {miniLines.length > 0 ? (
-                        <button type="button" class="tl-status-mini" onClick={onOpenStatus}>
+                        <div class="tl-status-mini">
                           {miniLines.map((line) => (
                             <span
                               key={`${line.kind}-${line.text}`}
@@ -4561,7 +4559,7 @@ export function Timeline({
                               {line.text}
                             </span>
                           ))}
-                        </button>
+                        </div>
                       ) : null}
                     </div>
                   </div>

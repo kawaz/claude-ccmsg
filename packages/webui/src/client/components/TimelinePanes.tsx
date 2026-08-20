@@ -38,7 +38,6 @@ export function TimelinePanes({
   timeline,
   search,
   sessionStatus,
-  onOpenStatus,
   agent,
   active,
   visible,
@@ -50,7 +49,6 @@ export function TimelinePanes({
   timeline: TimelineState;
   search: { queryText: string; caseSensitive: boolean; regex: boolean };
   sessionStatus: SessionStatusSnapshot | undefined;
-  onOpenStatus: () => void;
   agent?: AgentRef | null;
   active: boolean;
   /** Timeline タブの可視状態 — そのまま Timeline へ渡すだけ。 */
@@ -95,7 +93,6 @@ export function TimelinePanes({
           timeline={timeline}
           search={search}
           sessionStatus={sessionStatus}
-          onOpenStatus={onOpenStatus}
           agent={agent}
           active={active}
           visible={visible}

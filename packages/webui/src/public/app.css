@@ -6566,8 +6566,11 @@ a.tl-attachment-file-path {
   font: inherit;
   font-size: var(--font-size-sm);
   color: var(--fg);
-  cursor: pointer;
   text-align: left;
+  /* 非対話 (kawaz r135m37): FAB と重なる位置での誤クリック事故防止。表示は
+   * そのまま、クリックだけ下の要素へ完全に通す (button から div へ変更した
+   * 上でのベルト & サスペンダー)。 */
+  pointer-events: none;
 }
 
 .tl-status-mini-line {
