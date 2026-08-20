@@ -613,9 +613,8 @@ a {
 .session-row.active .session-line1-repo,
 .session-row.active .session-line1-ws,
 .session-row.active .session-branch,
-.session-row.active .session-sid-btn,
+.session-row.active .session-sid,
 .session-row.active .session-line4,
-.session-row.active .session-rename-btn,
 .session-row.active .session-status-badge,
 /* --danger (#dc2626) は accent 背景 (#2563eb) の上ではコントラストが取れない
  * ので、選択行では他のテキストと同じ accent-fg に落とす。色の signal は失う
@@ -630,11 +629,11 @@ a {
  * fg-muted + opacity:0.65 でグレーになっているが、accent 背景の上では
  * コントラスト不足で「ほぼ読めない」。他の row 内テキストと同じ accent-fg
  * に上書きし、opacity は 0.85 (完全不透明だと存在感が強すぎるので若干残す)。
- * kawaz r55 mid=19: sid-btn (opacity 0.75) / line3 (opacity 0.7) も同様に
+ * kawaz r55 mid=19: sid (opacity 0.75) / line3 (opacity 0.7) も同様に
  * 非 active の減光が accent 背景では読めなくなるため、active 時は減光を
  * 弱める (0.85 で他のテキストと同じ存在感)。 */
 .session-row.active .session-idle,
-.session-row.active .session-sid-btn,
+.session-row.active .session-sid,
 .session-row.active .session-line4,
 .session-row.active .session-line3 {
   opacity: 0.85;
@@ -761,7 +760,7 @@ a {
   white-space: nowrap;
 }
 
-/* 2 行目: タイトル + ✎。 */
+/* 2 行目: タイトル。 */
 .session-line2 {
   padding-left: var(--space-14);
   display: flex;
@@ -770,25 +769,26 @@ a {
   min-width: 0;
 }
 
-.session-sid-btn {
-  background: none;
-  border: none;
-  padding: 0;
+/* sid は既定では素のテキスト (kawaz r135m41) — カーソルも下線も付けない。
+ * Shift を押している間だけ .armed が付き、その時だけ「押せる」見た目になる。
+ * 実線の下線 = コピー、破線 = タイトル編集 (.session-title.armed) で、二つの
+ * Shift 操作を見た目で区別する。 */
+.session-sid {
   font-size: var(--font-size-2xs);
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
-  cursor: pointer;
 }
 
-.session-sid-btn:hover {
+.session-sid.armed {
   opacity: 1;
+  cursor: pointer;
   text-decoration: underline;
 }
 
 /* コピー成功の一時表示 (kawaz r135m20)。sid 自体は読めたままにしたいので
  * 差し替えではなく併記し、色は StatusPanel の .copied と同じ accent。 */
-.session-sid-btn.copied {
+.session-sid.copied {
   opacity: 1;
   color: var(--accent);
 }
@@ -803,7 +803,7 @@ a {
   white-space: nowrap;
 }
 
-.session-row.active .session-sid-btn.copied {
+.session-row.active .session-sid.copied {
   color: var(--accent-fg);
 }
 
@@ -822,7 +822,6 @@ a {
 /* 4 行目: project path。左省略 (右端が常に見える) — direction:rtl が
  * ellipsis を行頭側に回す唯一の CSS 手段で、その副作用 (中立文字の並べ替え)
  * は中身の <bdi dir="ltr"> が吸収する (SessionList.tsx のコメント参照)。
- * クリックで全文折り返し (session-cwd-full)。
  *
  * 幅の基準が行ではなくリストの可視幅 (100cqi) なのが肝。行は r46m36 の方針で
  * width:max-content (= 最長行が幅を決め、リストごと横スクロール) なので、
@@ -839,7 +838,6 @@ a {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   opacity: 0.7;
-  cursor: pointer;
 }
 
 .session-cwd {
@@ -852,67 +850,36 @@ a {
   flex: 1;
 }
 
-.session-line4.session-cwd-full {
-  align-items: flex-start;
-}
-
-/* 折り返し表示中は左省略の出番がないので、rtl も戻して素直に読ませる。 */
-.session-line4.session-cwd-full .session-cwd {
-  direction: ltr;
-  white-space: normal;
-  word-break: break-all;
-}
-
-/* ✎ (タイトル変更) — hyoui 端末を持つ行にだけ出る。常時は控えめ、行 hover
- * とフォーカスで前に出す。 */
-.session-rename-btn {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  padding: 0 var(--space-4);
-  font-size: var(--font-size-xs);
-  line-height: 1;
-  color: var(--fg-muted);
-  opacity: 0.45;
+/* タイトルも sid と同じ Shift ゲート (kawaz r135m42)。破線の下線で「編集」を
+ * 表し、sid 側の実線 (= コピー) と区別する。 */
+.session-title.armed {
   cursor: pointer;
+  text-decoration: underline dashed;
+  text-underline-offset: 0.2em;
 }
 
-.session-row:hover .session-rename-btn,
-.session-rename-btn:focus-visible {
-  opacity: 1;
-}
-
-/* インラインのタイトル編集フォーム。行内に生えるので入力欄が主、ボタンは
- * 最小限。エラー / 顛末は下に回り込ませる (幅が足りないため)。 */
-.session-rename-edit {
-  padding-left: var(--space-14);
+/* 編集中はタイトルの span がその場で input に入れ替わる。器 (.session-line2
+ * / .session-line1) の高さを変えないよう、input は行の文字サイズのまま最小限
+ * の枠だけを持つ。エラーは幅が足りないので下に回り込ませる。 */
+.session-title-edit {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-5);
-  margin: var(--space-4) 0;
+  flex: 1;
+  min-width: 0;
 }
 
-.session-rename-edit input {
+.session-title-edit input {
   flex: 1 1 100%;
   min-width: 0;
+  font-family: inherit;
   font-size: var(--font-size-sm);
-  padding: var(--space-3) var(--space-5);
-  border: 1px solid var(--border);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--accent);
   border-radius: 0.35rem;
   background: var(--bg);
   color: var(--fg);
-}
-
-.session-rename-save-btn,
-.session-rename-cancel-btn {
-  font-size: var(--font-size-2xs);
-  padding: var(--space-3) var(--space-6);
-  border: 1px solid var(--border);
-  border-radius: 0.35rem;
-  background: var(--bg);
-  color: var(--fg);
-  cursor: pointer;
 }
 
 .session-rename-error {
@@ -6587,10 +6554,6 @@ a.tl-attachment-file-path {
 
 .tl-status-mini-todo::before {
   content: "☐ ";
-  color: var(--fg-muted);
-}
-
-.tl-status-mini-more {
   color: var(--fg-muted);
 }
 

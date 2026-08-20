@@ -173,21 +173,12 @@ export function formatContextUsage(ctx: SessionContextUsage): { text: string; ti
   };
 }
 
-/** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。
- * `kind:"more"` は MINI_SUMMARY_MAX_LINES を超えた workflow/todo の残数を
- * 畳んだ表示専用で実データを持たない。`kind:"context"`/`"teammate"` は
- * workflow/todo の 2 行キャップとは独立の追加行 (下記 miniSummaryLines
- * のコメント参照)。 */
-export type MiniSummaryLineKind = "workflow" | "todo" | "more" | "context" | "teammate";
+/** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
+export type MiniSummaryLineKind = "workflow" | "todo" | "context" | "teammate";
 export interface MiniSummaryLine {
   kind: MiniSummaryLineKind;
   text: string;
 }
-
-/** 走行中 workflow/in_progress todo の要約は「1-2 行」(DR-0020 §2.1) —
- * この上限を超えた分は個別の text を並べず、最終行を残数の "more" 行に
- * 差し替える。 */
-const MINI_SUMMARY_MAX_LINES = 2;
 
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
  * (workflow が status === "running" だけをカウントするのと同じ「厳密一致」
@@ -202,16 +193,18 @@ function formatTeammatesLine(teammates: SessionTeammate[]): string | null {
     .join(", ")} 他 ${active.length - 2} 名`;
 }
 
-/** 走行中 workflow 名 + in_progress TODO の subject を要約した上に、
- * context 消費 (issue 2026-07-17 #1) と活動中 teammates (issue 2026-07-17 #5)
- * を追加行として付与する。workflow/todo がゼロかつ context/teammates も
- * 無ければ空配列 (呼び出し側はこれをパネル非表示の合図にする、DR-0020
- * §2.1 "ゼロ件なら非表示")。workflow を todo より先に並べるのは「今まさに
+/** 走行中 workflow 名 + in_progress TODO を要約した上に、context 消費
+ * (issue 2026-07-17 #1) と活動中 teammates (issue 2026-07-17 #5) を追加行
+ * として付与する。workflow/todo がゼロかつ context/teammates も無ければ
+ * 空配列 (呼び出し側はこれをパネル非表示の合図にする、DR-0020 §2.1
+ * "ゼロ件なら非表示")。workflow を todo より先に並べるのは「今まさに
  * 自走している大きい単位」を目立たせるため。
  *
- * context/teammates は「走行中タスク」ではなく常時/継続観測値という性質が
- * workflow/todo と異なるため、2 行キャップの対象には含めず必ず追加行として
- * 出す (workflow/todo の "more" 集約とは独立)。 */
+ * 走行中のものは件数によらず全件出す (kawaz r135m44: 「小出しにする必要性
+ * ゼロ」) — このパネルの用途は「今このセッションが何を抱えているか」を一目で
+ * 知ることなので、残数に畳んだ時点でその用途を果たさなくなる。todo に
+ * `#{id}` を前置するのも同じ理由で、Status タブの TodoRow と同一表記にして
+ * 両者を突き合わせられるようにしている。 */
 export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLine[] {
   // issue 2026-07-21 (#5): pause→resume の重複を畳んでから数える
   // (Status タブの WORKFLOWS 表示と数値を一致させる)。
@@ -222,15 +215,8 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
       .map((w): MiniSummaryLine => ({ kind: "workflow", text: w.name })),
     ...snapshot.todos
       .filter((t) => t.status === "in_progress")
-      .map((t): MiniSummaryLine => ({ kind: "todo", text: t.subject })),
+      .map((t): MiniSummaryLine => ({ kind: "todo", text: `#${t.id} ${t.subject}` })),
   ];
-  const capped =
-    items.length <= MINI_SUMMARY_MAX_LINES
-      ? items
-      : [
-          ...items.slice(0, MINI_SUMMARY_MAX_LINES - 1),
-          { kind: "more" as const, text: `他 ${items.length - (MINI_SUMMARY_MAX_LINES - 1)} 件` },
-        ];
 
   const extra: MiniSummaryLine[] = [];
   if (snapshot.context) {
@@ -239,7 +225,7 @@ export function miniSummaryLines(snapshot: SessionStatusSnapshot): MiniSummaryLi
   const teammatesLine = formatTeammatesLine(snapshot.teammates ?? []);
   if (teammatesLine !== null) extra.push({ kind: "teammate", text: teammatesLine });
 
-  return [...capped, ...extra];
+  return [...items, ...extra];
 }
 
 /** DR-0025 Phase 2: `StatusPanel` の workflow 行展開に使うプレゼンテーション形。

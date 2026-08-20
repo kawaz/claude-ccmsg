@@ -101,7 +101,7 @@ export function FavoriteToggle({
       aria-label={favorited ? `${path} をお気に入りから外す` : `${path} をお気に入りに追加`}
       title={favorited ? "お気に入りから外す" : "お気に入りに追加"}
     >
-      {favorited ? "★" : "☆"}
+      {favorited ? "⭐" : "☆"}
     </button>
   );
 }

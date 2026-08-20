@@ -116,7 +116,9 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  test("running workflow before in_progress todo, both under the cap", () => {
+  // todo は Status タブの TodoRow と同じ "#{id} {subject}" 表記で出す
+  // (kawaz r135m44: 両者を突き合わせられるように)。
+  test("running workflow before in_progress todo, todo prefixed with its id", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [workflow({ task_id: "w1", status: "running", name: "release" })],
@@ -125,29 +127,37 @@ describe("miniSummaryLines", () => {
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "release" },
-      { kind: "todo", text: "fix bug" },
+      { kind: "todo", text: "#t1 fix bug" },
     ]);
   });
 
-  test("over the 2-line cap collapses the remainder into a 'more' line", () => {
+  // kawaz r135m44: 走行中のものは件数によらず全件出す (残数への畳み込みなし)。
+  test("every running workflow and in_progress todo is listed, however many", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
         todo({ id: "t2", status: "in_progress", subject: "b" }),
+        todo({ id: "t3", status: "in_progress", subject: "c" }),
       ],
-      workflows: [workflow({ task_id: "w1", status: "running", name: "wf" })],
+      workflows: [
+        workflow({ task_id: "w1", status: "running", name: "wf1" }),
+        workflow({ task_id: "w2", status: "running", name: "wf2" }),
+      ],
       background: [],
       teammates: [],
     };
-    const lines = miniSummaryLines(snapshot);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toEqual({ kind: "workflow", text: "wf" });
-    expect(lines[1]).toEqual({ kind: "more", text: "他 2 件" });
+    expect(miniSummaryLines(snapshot)).toEqual([
+      { kind: "workflow", text: "wf1" },
+      { kind: "workflow", text: "wf2" },
+      { kind: "todo", text: "#t1 a" },
+      { kind: "todo", text: "#t2 b" },
+      { kind: "todo", text: "#t3 c" },
+    ]);
   });
 
-  // issue 2026-07-17 #1: context 消費は「今動いているタスク」の 2 行キャップ
-  // とは独立の追加行として必ず出る。
-  test("context usage is appended after the workflow/todo cap, not counted toward it", () => {
+  // issue 2026-07-17 #1: context 消費は「今動いているタスク」とは別枠の
+  // 追加行として、その後ろに必ず出る。
+  test("context usage is appended after the workflow/todo lines", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [todo({ id: "t1", status: "in_progress", subject: "fix bug" })],
       workflows: [],
@@ -156,7 +166,7 @@ describe("miniSummaryLines", () => {
       context: { tokens: 640_000, model: "claude-fable-5", timestamp: "2026-07-17T00:00:00.000Z" },
     };
     expect(miniSummaryLines(snapshot)).toEqual([
-      { kind: "todo", text: "fix bug" },
+      { kind: "todo", text: "#t1 fix bug" },
       { kind: "context", text: "ctx 640k/1M* (64%) · fable-5" },
     ]);
   });
@@ -218,7 +228,7 @@ describe("miniSummaryLines", () => {
     expect(miniSummaryLines(snapshot)).toEqual([]);
   });
 
-  test("workflow/todo cap, context, and teammates all combine in one call", () => {
+  test("workflows, todos, context, and teammates all combine in one call", () => {
     const snapshot: SessionStatusSnapshot = {
       todos: [
         todo({ id: "t1", status: "in_progress", subject: "a" }),
@@ -231,7 +241,8 @@ describe("miniSummaryLines", () => {
     };
     expect(miniSummaryLines(snapshot)).toEqual([
       { kind: "workflow", text: "wf" },
-      { kind: "more", text: "他 2 件" },
+      { kind: "todo", text: "#t1 a" },
+      { kind: "todo", text: "#t2 b" },
       { kind: "context", text: "ctx 522k/1M* (52%) · m" },
       { kind: "teammate", text: "researcher" },
     ]);
