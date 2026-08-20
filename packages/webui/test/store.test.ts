@@ -1489,6 +1489,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
       updated_at: "2026-07-15T00:00:00.000Z",
       size: 1024,
       matches: [],
+      title: null,
     };
   }
 

@@ -2420,6 +2420,11 @@ export interface SessionSearchHit {
   updated_at: string;
   size: number;
   matches: SessionSearchMatch[];
+  /** The session's own title (`/rename`, transcript `custom-title` records),
+   * when one appears within the same early portion of the file that already
+   * establishes `cwd`/`created_at` — a session never renamed, or renamed only
+   * after that point, has `null` here rather than a guessed fallback. */
+  title: string | null;
 }
 
 export interface SessionSearchResponse {

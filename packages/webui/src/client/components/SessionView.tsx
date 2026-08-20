@@ -90,6 +90,7 @@ function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): Ses
     updated_at: peer?.last_activity_at ?? createdAt,
     size: 0,
     matches: [],
+    title: agent?.name ?? null,
   };
 }
 

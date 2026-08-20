@@ -688,6 +688,38 @@ describe("session_search result metadata and limits", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.hits).toEqual([]);
   });
+
+  // `/rename` writes a `custom-title` record; a session never renamed has no
+  // such record at all, and title must degrade to null rather than a guess.
+  test("title is the session's custom-title record, null when never renamed", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [
+      user("hello"),
+      { type: "custom-title", customTitle: "renamed once", sessionId: sid(1) },
+      user("hello again"),
+    ]);
+    writeSession(config, sid(2), [user("no rename here")]);
+
+    const result = await search(config, {});
+    const bySid = new Map(result.hits.map((hit) => [hit.sid, hit.title]));
+    expect(bySid.get(sid(1))).toBe("renamed once");
+    expect(bySid.get(sid(2))).toBeNull();
+  });
+
+  // The value re-affirms on later lines rather than accumulating a rename
+  // history; the first record found already reflects the title as of that
+  // point in the same early window cwd/created_at come from.
+  test("title takes the first custom-title record's value", async () => {
+    const config = configDir();
+    writeSession(config, sid(1), [
+      { type: "custom-title", customTitle: "first title", sessionId: sid(1) },
+      user("hello"),
+      { type: "custom-title", customTitle: "first title", sessionId: sid(1) },
+    ]);
+
+    const result = await search(config, {});
+    expect(result.hits[0]!.title).toBe("first title");
+  });
 });
 
 // DR-0029: an IO-bearing request must not monopolize the event loop. The scan

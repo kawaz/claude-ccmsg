@@ -884,6 +884,7 @@ describe("resolveSessionTopbar", () => {
             updated_at: "2026-07-19T00:00:00Z",
             size: 0,
             matches: [],
+            title: null,
           },
         ],
       ]),
@@ -1871,6 +1872,7 @@ function searchHit(overrides: Partial<SessionSearchHit>): SessionSearchHit {
     updated_at: "2026-07-15T00:00:00.000Z",
     size: 2048,
     matches: [{ role: "user", text: "hello world" }],
+    title: null,
     ...overrides,
   };
 }

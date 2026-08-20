@@ -272,6 +272,7 @@ interface ScanResult {
   queryMatched: boolean;
   cwd: string | null;
   firstTimestamp: string | null;
+  title: string | null;
   bytesRead: number;
   truncated: boolean;
 }
@@ -321,6 +322,13 @@ async function scanCandidateFile(
     clauses.some((clause, clauseIndex) => matchedTerms[clauseIndex]!.size === clause.length);
   let cwd: string | null = null;
   let firstTimestamp: string | null = null;
+  // Best-effort within the same early window that establishes cwd/timestamp
+  // (see the `title` field's doc comment on SessionSearchHit): the stop
+  // condition below deliberately stays keyed on cwd+firstTimestamp only, so a
+  // session with no `custom-title` ever ends the same fast scan a search
+  // without this field already did — title just rides along on whatever gets
+  // read anyway.
+  let title: string | null = null;
   let offset = 0;
   let carry = Buffer.alloc(0);
   const handle = await fs.promises.open(file, "r");
@@ -358,7 +366,13 @@ async function scanCandidateFile(
         }
       });
     }
-    if (cwd !== null && firstTimestamp !== null) return;
+    // title is intentionally excluded from the outer per-chunk stop condition
+    // (see its declaration above) but must still be tried here: this guard
+    // only skips JSON.parse on lines already resident in memory from a chunk
+    // read the outer condition would fetch anyway, so keeping it open for
+    // title costs no extra disk I/O — only a little more CPU on data already
+    // in hand.
+    if (cwd !== null && firstTimestamp !== null && title !== null) return;
     let row: unknown;
     try {
       row = JSON.parse(line);
@@ -370,6 +384,18 @@ async function scanCandidateFile(
     if (firstTimestamp === null && typeof row.timestamp === "string") {
       const parsed = Date.parse(row.timestamp);
       if (Number.isFinite(parsed)) firstTimestamp = new Date(parsed).toISOString();
+    }
+    // `/rename` writes `{"type":"custom-title","customTitle":"...",...}`
+    // records; the same value tends to repeat on later lines (a context
+    // re-affirmation, not a rename-in-place), so the first one found in this
+    // early window already reflects the title as of that point.
+    if (
+      title === null &&
+      row.type === "custom-title" &&
+      typeof row.customTitle === "string" &&
+      row.customTitle !== ""
+    ) {
+      title = row.customTitle;
     }
   };
 
@@ -418,6 +444,7 @@ async function scanCandidateFile(
     queryMatched: clauses.length === 0 || someClauseComplete(),
     cwd,
     firstTimestamp,
+    title,
     bytesRead: offset,
     truncated: offset >= limit && limit < size,
   };
@@ -735,6 +762,7 @@ export async function sessionSearch(
       updated_at: candidate.stat.mtime.toISOString(),
       size: candidate.stat.size,
       matches,
+      title: scan.title,
     });
     if (hits.length >= SESSION_SEARCH_RESULT_MAX) {
       if (candidateIndex + 1 < candidates.length) truncated = true;
