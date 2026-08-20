@@ -59,33 +59,54 @@ export function detectConfigDirs(): string[] {
   return dirs;
 }
 
-/** Extract `HYOUI_SESSION_ID` value from a `ps eww -o command= -p <pid>` output
- *  line (macOS format: command + args followed by space-separated `KEY=VALUE`
- *  env tokens). Returns null when the env var is absent, or when the value
- *  contains characters that shouldn't appear in a session id (we split on
- *  spaces, so a value with an embedded space would look like the next token
- *  starts a new env entry — we defensively bail rather than return a truncated
- *  string). Exported for unit testing without spawning `ps`. */
-export function parseHyouiSessionId(psLine: string): string | null {
-  const marker = " HYOUI_SESSION_ID=";
+/** Extract one `KEY=value` env token from a `ps eww -o command= -p <pid>`
+ *  output line (macOS format: command + args followed by space-separated
+ *  `KEY=VALUE` env tokens). Returns null when the key is absent, or the value
+ *  contains characters that shouldn't appear (we split on spaces, so a value
+ *  with an embedded space would look like the next token starts a new env
+ *  entry — we defensively bail rather than return a truncated string). */
+function parsePsEnvToken(psLine: string, key: string): string | null {
+  const marker = ` ${key}=`;
   const idx = psLine.indexOf(marker);
   if (idx < 0) return null;
   const rest = psLine.slice(idx + marker.length);
-  // env entries are separated by a single space; a session id with no spaces
-  // ends at the next space (or end of string).
+  // env entries are separated by a single space; a value with no spaces ends
+  // at the next space (or end of string).
   const end = rest.indexOf(" ");
   const value = end < 0 ? rest : rest.slice(0, end);
   const trimmed = value.replace(/[\r\n]+$/, "");
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/** Run `ps eww -o command= -p <pid>` and extract HYOUI_SESSION_ID from the
- *  target process's environment. Returns null on any failure (no such pid,
- *  permission denied on other users' processes, timeout, env var absent).
+/** Extract `HYOUI_SESSION_ID` from a `ps eww` line. Exported for unit testing
+ *  without spawning `ps`. */
+export function parseHyouiSessionId(psLine: string): string | null {
+  return parsePsEnvToken(psLine, "HYOUI_SESSION_ID");
+}
+
+/** Extract `HYOUI_NAMESPACE` from a `ps eww` line — the daemon's own env is
+ *  NOT this session's namespace (a session launched under a business overlay
+ *  runs its hyoui wrapper in that overlay's namespace, e.g. "emeradaco",
+ *  while the daemon itself runs under whatever launched it, typically
+ *  "default"). Sending `hyoui input` without this returns a false ENOENT —
+ *  the session id is real, just not visible in the namespace the daemon
+ *  guessed (kawaz r135m40/41, reproduced: `hyoui list` under the daemon's own
+ *  namespace shows nothing for a live emeradaco-namespace session). Exported
+ *  for unit testing without spawning `ps`. */
+export function parseHyouiNamespace(psLine: string): string | null {
+  return parsePsEnvToken(psLine, "HYOUI_NAMESPACE");
+}
+
+/** Run `ps eww -o command= -p <pid>` and extract the hyoui env pair from the
+ *  target process's environment. Returns nulls on any failure (no such pid,
+ *  permission denied on other users' processes, timeout, env vars absent).
  *  Root/sudo is not required — macOS permits reading env for processes owned
  *  by the same uid. */
-async function readHyouiSessionIdForPid(pid: number): Promise<string | null> {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+async function readHyouiEnvForPid(
+  pid: number,
+): Promise<{ sessionId: string | null; namespace: string | null }> {
+  const none = { sessionId: null, namespace: null };
+  if (!Number.isInteger(pid) || pid <= 0) return none;
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   try {
     proc = Bun.spawn(["ps", "eww", "-o", "command=", "-p", String(pid)], {
@@ -95,7 +116,7 @@ async function readHyouiSessionIdForPid(pid: number): Promise<string | null> {
       killSignal: "SIGKILL",
     });
   } catch {
-    return null;
+    return none;
   }
   try {
     const [code, text] = await Promise.all([
@@ -103,22 +124,22 @@ async function readHyouiSessionIdForPid(pid: number): Promise<string | null> {
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ]);
-    if (code !== 0) return null;
-    return parseHyouiSessionId(text);
+    if (code !== 0) return none;
+    return { sessionId: parseHyouiSessionId(text), namespace: parseHyouiNamespace(text) };
   } catch {
-    return null;
+    return none;
   }
 }
 
-/** Module-level pid → HYOUI_SESSION_ID cache. A pid's env doesn't change over
- *  the process's lifetime (execve resets the process image but not while the
+/** Module-level pid → hyoui env cache. A pid's env doesn't change over the
+ *  process's lifetime (execve resets the process image but not while the
  *  same pid keeps running for our purposes), so we only call `ps eww` once
  *  per pid. Entries for pids no longer present in the merged poll result are
  *  pruned to bound memory and to force re-lookup if the same pid number
- *  appears again for a different process later. `null` means "looked up and
- *  the env var wasn't present" — we cache negatives so we don't re-`ps` every
- *  poll for agents that never had the var. */
-const pidHyouiCache = new Map<number, string | null>();
+ *  appears again for a different process later. A cached null field means
+ *  "looked up and the env var wasn't present" — we cache negatives so we
+ *  don't re-`ps` every poll for agents that never had the var. */
+const pidHyouiCache = new Map<number, { sessionId: string | null; namespace: string | null }>();
 
 async function augmentWithHyoui(agents: AgentInfo[]): Promise<AgentInfo[]> {
   // 1) prune entries for pids not in the current poll
@@ -134,16 +155,19 @@ async function augmentWithHyoui(agents: AgentInfo[]): Promise<AgentInfo[]> {
   }
   await Promise.all(
     missing.map(async (pid) => {
-      const value = await readHyouiSessionIdForPid(pid);
-      pidHyouiCache.set(pid, value);
+      pidHyouiCache.set(pid, await readHyouiEnvForPid(pid));
     }),
   );
   // 3) annotate rows
   return agents.map((a) => {
     if (typeof a.pid !== "number") return a;
-    const value = pidHyouiCache.get(a.pid);
-    if (!value) return a;
-    return { ...a, hyoui_session_id: value };
+    const env = pidHyouiCache.get(a.pid);
+    if (!env?.sessionId) return a;
+    return {
+      ...a,
+      hyoui_session_id: env.sessionId,
+      ...(env.namespace ? { hyoui_namespace: env.namespace } : {}),
+    };
   });
 }
 

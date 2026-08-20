@@ -2494,6 +2494,16 @@ export interface AgentInfo {
    *  the same claude sessionId in a new process yields a new pid and thus
    *  the current env, not a stale start-time snapshot. */
   hyoui_session_id?: string;
+  /** Value of the `HYOUI_NAMESPACE` environment variable on the same
+   *  process, read the same way as `hyoui_session_id`. Absent means the
+   *  process never set it, which hyoui itself treats as its "default"
+   *  namespace — NOT the daemon's own `HYOUI_NAMESPACE`, which can differ
+   *  (a session launched under a business overlay's hyoui wrapper runs in
+   *  that overlay's namespace even though the daemon runs under its own).
+   *  A `hyoui input` call that omits this when the session actually has one
+   *  looks in the wrong namespace and reports the session as gone even
+   *  though it is live (kawaz r135m40/41). */
+  hyoui_namespace?: string;
 }
 export interface AgentsResponse {
   ok: true;

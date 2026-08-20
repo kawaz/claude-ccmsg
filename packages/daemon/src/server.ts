@@ -2322,10 +2322,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       void sessionRename(
         req.session_id,
         titleCheck.title,
-        productionRenameDeps((sid) => {
-          const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
-          return agent?.hyoui_session_id ?? null;
-        }),
+        productionRenameDeps(
+          (sid) => {
+            const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+            return agent?.hyoui_session_id ?? null;
+          },
+          (sid) => {
+            const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+            return agent?.hyoui_namespace ?? null;
+          },
+        ),
       ).then(
         (result) => {
           if (result.ok) {

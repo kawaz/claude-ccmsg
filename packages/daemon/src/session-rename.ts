@@ -70,6 +70,13 @@ export interface SessionRenameDeps {
   /** The session's terminal handle (`HYOUI_SESSION_ID`), or null when the
    * daemon has never seen one for this session id. */
   hyouiSessionId(sessionId: string): string | null;
+  /** The session's hyoui namespace (`HYOUI_NAMESPACE`), or null when the
+   * process never set one — hyoui itself then defaults to "default", which
+   * is why null omits `--namespace` rather than passing it explicitly (see
+   * renameCommandArgs). NOT the daemon's own `HYOUI_NAMESPACE`: a session
+   * launched under a business overlay's hyoui wrapper lives in that
+   * overlay's namespace regardless of what the daemon runs under. */
+  hyouiNamespace(sessionId: string): string | null;
   /** Run `hyoui` with the given argv tail. Must reject on spawn failure,
    * non-zero exit, or timeout. */
   runHyoui(args: string[]): Promise<void>;
@@ -81,9 +88,23 @@ export interface SessionRenameDeps {
  * spaces in the title need no handling. `key:Enter` is a second spec rather
  * than a `\r` appended to the text: hyoui delivers specs in order with a PTY
  * drain between them, which keeps the submit from racing the typed line.
- * Exported so a test can assert the command shape without running hyoui. */
-export function renameCommandArgs(hyouiSessionId: string, title: string): string[] {
-  return ["input", hyouiSessionId, `text:/rename ${title}`, "key:Enter"];
+ * `--namespace` goes first (hyoui accepts options before or after the
+ * session id, but this keeps the fixed and variable parts of the argv
+ * visually separate) and is omitted when the session has no namespace of its
+ * own, letting hyoui fall back to its own "default". Exported so a test can
+ * assert the command shape without running hyoui. */
+export function renameCommandArgs(
+  hyouiSessionId: string,
+  title: string,
+  namespace: string | null,
+): string[] {
+  return [
+    "input",
+    ...(namespace ? ["--namespace", namespace] : []),
+    hyouiSessionId,
+    `text:/rename ${title}`,
+    "key:Enter",
+  ];
 }
 
 export type SessionRenameOutcome =
@@ -104,8 +125,9 @@ export async function sessionRename(
 ): Promise<SessionRenameOutcome> {
   const hyouiSessionId = deps.hyouiSessionId(sessionId);
   if (!hyouiSessionId) return { ok: false, reason: "terminal_unavailable" };
+  const namespace = deps.hyouiNamespace(sessionId);
   try {
-    await deps.runHyoui(renameCommandArgs(hyouiSessionId, title));
+    await deps.runHyoui(renameCommandArgs(hyouiSessionId, title, namespace));
   } catch (e) {
     return { ok: false, reason: "send_failed", msg: String(e) };
   }
@@ -141,9 +163,11 @@ async function runHyouiCommand(args: string[], timeoutMs: number): Promise<void>
  * hyoui rejects the latter, which becomes send_failed. */
 export function productionRenameDeps(
   lookupHyouiSessionId: (sessionId: string) => string | null,
+  lookupHyouiNamespace: (sessionId: string) => string | null,
 ): SessionRenameDeps {
   return {
     hyouiSessionId: lookupHyouiSessionId,
+    hyouiNamespace: lookupHyouiNamespace,
     runHyoui: (args) => runHyouiCommand(args, HYOUI_TIMEOUT_MS),
   };
 }

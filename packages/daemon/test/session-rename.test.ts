@@ -9,14 +9,21 @@ import {
 import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
 
 /** Deps that record what was run instead of spawning hyoui. `hyoui` is the
- * terminal handle to hand back for any session id (null = "no terminal"). */
-function fakeDeps(opts: { hyoui: string | null; fail?: string }): SessionRenameDeps & {
+ * terminal handle to hand back for any session id (null = "no terminal"),
+ * `namespace` the hyoui namespace to hand back (null = "unset, hyoui's own
+ * default applies"). */
+function fakeDeps(opts: {
+  hyoui: string | null;
+  namespace?: string | null;
+  fail?: string;
+}): SessionRenameDeps & {
   runs: string[][];
 } {
   const runs: string[][] = [];
   return {
     runs,
     hyouiSessionId: () => opts.hyoui,
+    hyouiNamespace: () => opts.namespace ?? null,
     runHyoui: async (args) => {
       runs.push(args);
       if (opts.fail) throw new Error(opts.fail);
@@ -78,9 +85,26 @@ describe("validateRenameTitle", () => {
 describe("renameCommandArgs", () => {
   // The command shape is the whole contract with hyoui: one `text:` spec
   // carrying the literal line to type, then a separate `key:Enter` to submit.
-  test("builds `input <session> text:/rename <title> key:Enter`", () => {
-    expect(renameCommandArgs("run-abc", "新しい名前")).toEqual([
+  // No namespace of its own = omit `--namespace` and let hyoui apply its own
+  // "default".
+  test("builds `input <session> text:/rename <title> key:Enter` when the session has no namespace", () => {
+    expect(renameCommandArgs("run-abc", "新しい名前", null)).toEqual([
       "input",
+      "run-abc",
+      "text:/rename 新しい名前",
+      "key:Enter",
+    ]);
+  });
+
+  // kawaz r135m40/41: a session launched under a business overlay's hyoui
+  // wrapper lives in that overlay's namespace, not the daemon's own — the
+  // argv must carry it or hyoui looks in the wrong namespace and reports the
+  // (actually live) session as gone.
+  test("includes --namespace before the session id when the session has one", () => {
+    expect(renameCommandArgs("run-abc", "新しい名前", "emeradaco")).toEqual([
+      "input",
+      "--namespace",
+      "emeradaco",
       "run-abc",
       "text:/rename 新しい名前",
       "key:Enter",
@@ -90,7 +114,7 @@ describe("renameCommandArgs", () => {
   // Each element is its own argv entry, so a title with spaces needs no
   // quoting and must not be split.
   test("keeps a multi-word title inside a single spec argument", () => {
-    const args = renameCommandArgs("run-abc", "two words here");
+    const args = renameCommandArgs("run-abc", "two words here", null);
     expect(args).toHaveLength(4);
     expect(args[2]).toBe("text:/rename two words here");
   });
@@ -102,6 +126,18 @@ describe("sessionRename", () => {
     const res = await sessionRename("sid-1", "新タイトル", deps);
     expect(res).toEqual({ ok: true, hyoui_session_id: "run-xyz", title: "新タイトル" });
     expect(deps.runs).toEqual([["input", "run-xyz", "text:/rename 新タイトル", "key:Enter"]]);
+  });
+
+  // The bug this whole namespace plumbing exists to fix: without it, a
+  // business-overlay session's rename fails with a false "no such session"
+  // even though the session is live (kawaz r135m40/41, reproduced by hand).
+  test("carries the session's own namespace into the hyoui command", async () => {
+    const deps = fakeDeps({ hyoui: "run-xyz", namespace: "emeradaco" });
+    const res = await sessionRename("sid-1", "新タイトル", deps);
+    expect(res).toEqual({ ok: true, hyoui_session_id: "run-xyz", title: "新タイトル" });
+    expect(deps.runs).toEqual([
+      ["input", "--namespace", "emeradaco", "run-xyz", "text:/rename 新タイトル", "key:Enter"],
+    ]);
   });
 
   // No terminal = nothing to type into. The important half of this assertion
