@@ -122,6 +122,19 @@ function spawnDaemon(): void {
     stdout: "ignore",
     stderr: "ignore",
     env: process.env,
+    // Without this, the child inherits the spawning process's process group
+    // (verified empirically: Bun.spawn does not setpgid by default). The
+    // daemon is meant to outlive whichever session happened to spawn it —
+    // but a session torn down by its terminal/PTY manager (hyoui, tmux, a
+    // closed terminal window) can have its whole process group signalled,
+    // and the daemon would die along with it despite `unref()` (unref only
+    // keeps Bun's own event loop from waiting on the child, it does nothing
+    // about signal delivery or group membership). `detached: true` makes
+    // the daemon its own process group leader (pgid == pid), so a group
+    // signal aimed at the originating session's terminal never reaches it.
+    // The daemon still exits cleanly on a real SIGTERM/SIGINT sent to it
+    // directly (system shutdown, `daemon stop`) via its own handlers.
+    detached: true,
   });
   proc.unref();
 }
