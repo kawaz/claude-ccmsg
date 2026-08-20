@@ -28,7 +28,7 @@ import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } fr
 import type { ProbeRecord } from "./llm-usage-view.ts";
 import type { SessionCreatorPrefill } from "./session-creator.ts";
 import {
-  openForkCreator,
+  openPrefilledCreator,
   toggleSidebarPanel,
   type SidebarPanelKind,
   type SidebarPanelState,
@@ -385,7 +385,8 @@ export type Action =
   // null = 要求の取り下げ (フォームを閉じた / 起動した)。同じ turn を 2 度
   // fork する時に同じ値をもう一度 dispatch できるよう、値の異同では判断せず
   // 明示的に set / clear する。
-  // Timeline の「ここから fork」: launcher をその fork 元ごと開く。
+  // Timeline の「ここから fork」/ Session Search の「resume」: 選ばれた
+  // セッションごと launcher を開く。
   | { type: "session-creator/prefill"; prefill: SessionCreatorPrefill }
   // フォームパネルのトグル (押した panel が開く / 開いていれば閉じる) と、
   // フォーム側からの明示的な閉じる操作。
@@ -978,7 +979,7 @@ export function reducer(state: AppState, action: Action): AppState {
     // 二重に状態を持ち、消し忘れれば古い fork 元が蘇る (sidebar-panel.ts の
     // prefill を union の中に置いた理由と同じ)。
     case "session-creator/prefill":
-      return { ...state, activePanel: openForkCreator(action.prefill) };
+      return { ...state, activePanel: openPrefilledCreator(action.prefill) };
     case "panel/toggled":
       return { ...state, activePanel: toggleSidebarPanel(state.activePanel, action.kind) };
     case "panel/closed":

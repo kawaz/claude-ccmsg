@@ -1,12 +1,12 @@
 // Sidebar の panel 開閉 (どれが開くか / 開いた launcher が何を持つか)。
 import { describe, expect, test } from "bun:test";
 import {
-  openForkCreator,
+  openPrefilledCreator,
   sessionCreatorPrefill,
   toggleSidebarPanel,
 } from "../src/client/sidebar-panel.ts";
 
-const PREFILL = { resumeSid: "sid-1", resumeAt: "u-9" };
+const PREFILL = { kind: "fork", resumeSid: "sid-1", resumeAt: "u-9" } as const;
 
 describe("toggleSidebarPanel", () => {
   test("何も開いていなければ押した panel が開く", () => {
@@ -39,7 +39,7 @@ describe("toggleSidebarPanel", () => {
       kind: "session-creator",
       prefill: null,
     });
-    const afterFork = openForkCreator(PREFILL);
+    const afterFork = openPrefilledCreator(PREFILL);
     const closed = toggleSidebarPanel(afterFork, "session-creator");
     expect(closed).toBeNull();
     expect(sessionCreatorPrefill(toggleSidebarPanel(closed, "session-creator"))).toBeNull();
@@ -47,15 +47,15 @@ describe("toggleSidebarPanel", () => {
 
   // fork 中に別 panel へ切り替えて launcher に戻る経路でも同じ。
   test("fork の後に別 panel を経由して開き直しても prefill は残らない", () => {
-    const viaSearch = toggleSidebarPanel(openForkCreator(PREFILL), "session-search");
+    const viaSearch = toggleSidebarPanel(openPrefilledCreator(PREFILL), "session-search");
     expect(sessionCreatorPrefill(toggleSidebarPanel(viaSearch, "session-creator"))).toBeNull();
   });
 });
 
-describe("openForkCreator / sessionCreatorPrefill", () => {
+describe("openPrefilledCreator / sessionCreatorPrefill", () => {
   test("fork 要求は launcher を fork 元ごと開く", () => {
-    expect(openForkCreator(PREFILL)).toEqual({ kind: "session-creator", prefill: PREFILL });
-    expect(sessionCreatorPrefill(openForkCreator(PREFILL))).toEqual(PREFILL);
+    expect(openPrefilledCreator(PREFILL)).toEqual({ kind: "session-creator", prefill: PREFILL });
+    expect(sessionCreatorPrefill(openPrefilledCreator(PREFILL))).toEqual(PREFILL);
   });
 
   // launcher 以外が開いている / 何も開いていない時に渡すものは無い。

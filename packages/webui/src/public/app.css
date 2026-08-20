@@ -1200,6 +1200,34 @@ a {
   font-size: var(--font-size-xs);
 }
 
+.session-search-hit-resume {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  font-weight: 400;
+  line-height: 1.4;
+  padding: 0 var(--space-5);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.session-search-hit-resume:hover,
+.session-search-hit-resume:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The session's own title, under the repo/ws/sid line: full text on its own
+ * row rather than squeezed into the head, since a title is free text. */
+.session-search-hit-title {
+  font-size: var(--font-size-sm);
+  color: var(--fg);
+  margin-top: var(--space-2);
+  overflow-wrap: anywhere;
+}
+
 .session-search-hit-meta {
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
@@ -3801,22 +3829,6 @@ button.session-tab {
   padding-bottom: 12rem;
 }
 
-/* raw JSONL 表示モード (r55m68): 各キャッシュ済み行をそのまま等幅表示。
- * 通常表示 (rich パース結果) と切替可能な toggle で、rich 表示が壊れて
- * いても元データを確認できるフォールバック用途。 */
-.tl-raw-lines {
-  gap: var(--space-3);
-}
-
-.tl-raw {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  /* 行番号 gutter と本文が親幅を食い合わないよう、flex item の既定
-   * min-width:auto を切る (長大な base64 行が gutter を押し出さない)。 */
-  min-width: 0;
-}
-
 .tl-raw-row {
   display: flex;
   gap: var(--space-8);
@@ -3904,12 +3916,6 @@ button.session-tab {
 .tl-raw-line > .md-code code {
   white-space: pre-wrap;
   word-break: break-all;
-}
-
-.tl-raw-toggle.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
 }
 
 /* 項目ごとの jsonl トグル (kawaz r55 m89)。ラッパ自体は縦 flex — 項目が

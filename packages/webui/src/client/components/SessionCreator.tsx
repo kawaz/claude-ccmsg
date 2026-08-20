@@ -341,9 +341,13 @@ export function SessionCreator({
           // 起動元の値は「フォームを開いた瞬間の状態」で足りるので購読せず
           // getState() で 1 回だけ読む (以後の peers/status 更新でフォームを
           // 上書きしたら、ユーザの編集を奪うことになる)。
-          const defaults = prefill
-            ? forkSourceDefaults(forkSourceInfo(store.getState(), prefill.resumeSid), res.root_dirs)
-            : {};
+          const defaults =
+            prefill?.kind === "fork"
+              ? forkSourceDefaults(
+                  forkSourceInfo(store.getState(), prefill.resumeSid),
+                  res.root_dirs,
+                )
+              : {};
           const initialForm = initialSessionCreatorForm(res.templates, prefill, defaults);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(sessionCreatorCwd(initialForm)));

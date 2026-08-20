@@ -2,7 +2,7 @@
 // Split out of Sidebar.tsx so the open/close transitions are exercisable
 // without a renderer (DR-0005 §1, same convention as session-creator.ts).
 //
-// The fork prefill lives *inside* the session-creator member rather than
+// The prefill lives *inside* the session-creator member rather than
 // beside the panel union, because it is a property of one particular opening
 // of that panel — "open the launcher on this fork point" — not of the sidebar.
 // Held as two independent pieces of state it outlived its panel: closing the
@@ -35,9 +35,10 @@ export function toggleSidebarPanel(
   return kind === "session-creator" ? { kind, prefill: null } : { kind };
 }
 
-/** The Timeline's "ここから fork" request: open the launcher on this fork
- * point, replacing whatever panel was open. */
-export function openForkCreator(prefill: SessionCreatorPrefill): SidebarPanelState {
+/** Open the launcher on a session the user already chose — the Timeline's
+ * "ここから fork" or a Session Search hit's "resume" — replacing whatever panel
+ * was open. */
+export function openPrefilledCreator(prefill: SessionCreatorPrefill): SidebarPanelState {
   return { kind: "session-creator", prefill };
 }
 

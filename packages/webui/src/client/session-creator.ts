@@ -33,6 +33,12 @@ export const SESSION_CREATOR_EFFORTS = ["low", "middle", "high", "xhigh"] as con
 export const RESUME_SID_PARAM = "RESUME_SID";
 export const RESUME_AT_PARAM = "RESUME_AT";
 
+/** Parameter name the resume flow seeds: the session to continue in place
+ * (`claude --resume <sid>`). Distinct from RESUME_SID_PARAM because the two
+ * flows differ in kind — a fork branches off a chosen record and needs a fork
+ * point, a resume re-enters the session itself at its end. */
+export const SESSION_ID_PARAM = "SESSION_ID";
+
 /** Which input a declared parameter gets. Chosen by name, because a name is
  * all the form knows about a parameter it did not invent: the four it
  * recognizes have a better control than a text box, and anything else — a
@@ -71,10 +77,26 @@ export interface SessionCreatorForm {
  * resume and the record to resume at (the selected item's own uuid — see
  * fork-point.ts). Both land in editable fields, so this is a starting point
  * rather than a fixed choice. */
-export interface SessionCreatorPrefill {
+export interface ForkPrefill {
+  kind: "fork";
   resumeSid: string;
   resumeAt: string;
 }
+
+/** What the Session Search result row's "resume" action hands to the form: the
+ * session to continue and where it ran. Unlike a fork, the cwd is part of the
+ * request rather than inherited from live state — a historical hit has no peer
+ * row to read it from, the search response carries it. */
+export interface ResumePrefill {
+  kind: "resume";
+  cwd: string;
+  sessionId: string;
+}
+
+/** How the launcher was opened with a session already in hand. The two kinds
+ * pick different recipes and seed different parameters, so callers say which
+ * they meant rather than the form guessing from which fields are present. */
+export type SessionCreatorPrefill = ForkPrefill | ResumePrefill;
 
 /** Whether a template declares a given parameter — the single question that
  * decides both "does this recipe fork?" and "does this input exist?". */
@@ -84,24 +106,29 @@ export function templateDeclares(template: SessionLauncherConfigTemplate, name: 
 
 /** The template the form opens on, decided by how the form was opened rather
  * than by config order: a fork opens on the first recipe that takes a fork
- * point (`forkTemplate`), a plain "+ 新規" on the first that does not
- * (`plainTemplate`). Both fall back to `templates[0]` when the config has no
+ * point (`forkTemplate`), a resume on the first that takes a session id
+ * (`resumeTemplate`), a plain "+ 新規" on the first that takes neither
+ * (`plainTemplate`). All fall back to `templates[0]` when the config has no
  * recipe of the asked-for kind. */
 export function initialTemplate(
   templates: SessionLauncherConfigTemplate[],
   prefill: SessionCreatorPrefill | null,
 ): SessionLauncherConfigTemplate | undefined {
-  if (prefill) return forkTemplate(templates) ?? templates[0];
+  if (prefill?.kind === "fork") return forkTemplate(templates) ?? templates[0];
+  if (prefill?.kind === "resume") return resumeTemplate(templates) ?? templates[0];
   return plainTemplate(templates) ?? templates[0];
 }
 
-/** Which configured recipe is a plain-launch recipe: the first that does not
- * declare the fork point. A recipe asking for a fork point needs a fork source
- * to mean anything, so it is never what "+ 新規" asked for. */
+/** Which configured recipe is a plain-launch recipe: the first that declares
+ * neither the fork point nor a session id. Either one needs a session the user
+ * chose elsewhere to mean anything, so such a recipe is never what "+ 新規"
+ * asked for. */
 export function plainTemplate(
   templates: SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
-  return templates.find((t) => !templateDeclares(t, RESUME_AT_PARAM));
+  return templates.find(
+    (t) => !templateDeclares(t, RESUME_AT_PARAM) && !templateDeclares(t, SESSION_ID_PARAM),
+  );
 }
 
 /** Which configured recipe is a fork recipe: the first that declares the fork
@@ -111,6 +138,15 @@ export function forkTemplate(
   templates: SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
   return templates.find((t) => templateDeclares(t, RESUME_AT_PARAM));
+}
+
+/** Which configured recipe resumes a session in place: the first that declares
+ * a session id. Same rule as `forkTemplate` — the declaration decides, not the
+ * recipe's name. */
+export function resumeTemplate(
+  templates: SessionLauncherConfigTemplate[],
+): SessionLauncherConfigTemplate | undefined {
+  return templates.find((t) => templateDeclares(t, SESSION_ID_PARAM));
 }
 
 /** What the form can inherit from the session a fork resumes: where it ran and
@@ -203,6 +239,23 @@ function paramValues(
   return values;
 }
 
+/** The parameter values an opening carries with it. A fork brings its fork
+ * point; a resume brings the session and, unlike a fork, its own cwd — the
+ * search hit knows where the session ran, and a historical session has no live
+ * peer row for `forkSourceDefaults` to read one from. A blank cwd is left out
+ * rather than seeded, so a recipe with a declared default CWD keeps it and the
+ * picker opens in "editing" mode for the user to choose. */
+function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, string> {
+  if (!prefill) return {};
+  if (prefill.kind === "fork") {
+    return { [RESUME_SID_PARAM]: prefill.resumeSid, [RESUME_AT_PARAM]: prefill.resumeAt };
+  }
+  return {
+    ...(prefill.cwd.trim() === "" ? {} : { [LAUNCHER_CWD_PARAM]: prefill.cwd }),
+    [SESSION_ID_PARAM]: prefill.sessionId,
+  };
+}
+
 /** Initial form state once the template list is known
  * (session_launcher_config response). An empty template list cannot happen
  * (the daemon disables the launcher instead), so the fields fall back to empty
@@ -210,8 +263,8 @@ function paramValues(
  *
  * `defaults` is what a fork inherits from its source (`forkSourceDefaults`);
  * on a plain open it is empty and every parameter keeps its declared default.
- * The fork point itself is seeded the same way, so a template that does not
- * declare RESUME_* simply ignores it. */
+ * The prefill's own values are seeded the same way, so a template that does not
+ * declare them simply ignores them. */
 export function initialSessionCreatorForm(
   templates: SessionLauncherConfigTemplate[],
   prefill: SessionCreatorPrefill | null = null,
@@ -220,9 +273,7 @@ export function initialSessionCreatorForm(
   const template = initialTemplate(templates, prefill);
   const seed = {
     ...defaults,
-    ...(prefill
-      ? { [RESUME_SID_PARAM]: prefill.resumeSid, [RESUME_AT_PARAM]: prefill.resumeAt }
-      : {}),
+    ...prefillSeed(prefill),
   };
   return {
     template: template?.name ?? "",

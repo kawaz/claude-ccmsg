@@ -8,6 +8,7 @@ import {
   plainTemplate,
   forkSourceDefaults,
   forkTemplate,
+  resumeTemplate,
   initialTemplate,
   launcherEffortFromTranscript,
   launcherModelFromTranscript,
@@ -53,6 +54,15 @@ const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$
   RESUME_AT: "",
 });
 
+const RESUME = template("resume", 'run --resume "$SESSION_ID"', {
+  CWD: "",
+  PROMPT: "",
+  SESSION_ID: "",
+});
+
+const FORK_PREFILL = { kind: "fork", resumeSid: "sid-1", resumeAt: "u-9" } as const;
+const RESUME_PREFILL = { kind: "resume", cwd: "/repos/app", sessionId: "sid-1" } as const;
+
 describe("initialSessionCreatorForm", () => {
   test("seeds every declared parameter from its configured default", () => {
     expect(initialSessionCreatorForm([PLAIN])).toEqual({
@@ -96,7 +106,7 @@ describe("initialSessionCreatorForm", () => {
   // A fork opens on a recipe that actually declares the fork point, whatever
   // its position in the list, and carries the fork values into the form.
   test("a fork prefill opens on the fork recipe with the fork point filled in", () => {
-    const form = initialSessionCreatorForm([PLAIN, FORK], { resumeSid: "sid-1", resumeAt: "u-9" });
+    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
     expect(form).toMatchObject({ template: "fork", command: FORK.command });
     expect(form.params).toMatchObject({ RESUME_SID: "sid-1", RESUME_AT: "u-9" });
   });
@@ -105,23 +115,49 @@ describe("initialSessionCreatorForm", () => {
   // default); the fork values have nowhere to go and are dropped rather than
   // riding along invisibly in a request nothing would read.
   test("a fork prefill falls back to the default recipe, dropping undeclared fork values", () => {
-    const form = initialSessionCreatorForm([PLAIN], { resumeSid: "sid-1", resumeAt: "u-9" });
+    const form = initialSessionCreatorForm([PLAIN], FORK_PREFILL);
     expect(form.template).toBe("default");
     expect(form.params).not.toHaveProperty("RESUME_AT");
   });
 
   // Fork-source defaults win over the declared defaults, parameter by parameter.
   test("applies the fork source's cwd/model/effort when given", () => {
-    const form = initialSessionCreatorForm(
-      [PLAIN, FORK],
-      { resumeSid: "s", resumeAt: "u" },
-      {
-        CWD: "/repos/app",
-        MODEL: "opus",
-        EFFORT: "high",
-      },
-    );
+    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL, {
+      CWD: "/repos/app",
+      MODEL: "opus",
+      EFFORT: "high",
+    });
     expect(form.params).toMatchObject({ CWD: "/repos/app", MODEL: "opus", EFFORT: "high" });
+  });
+
+  // A resume brings its own cwd (the search hit knows where the session ran —
+  // a historical session has no live peer row to inherit one from).
+  test("a resume prefill opens on the resume recipe with cwd and session id filled in", () => {
+    const form = initialSessionCreatorForm([PLAIN, RESUME], RESUME_PREFILL);
+    expect(form).toMatchObject({ template: "resume", command: RESUME.command });
+    expect(form.params).toMatchObject({ CWD: "/repos/app", SESSION_ID: "sid-1" });
+  });
+
+  // A hit whose cwd the daemon could not establish opens the form anyway; the
+  // declared default survives and the run button gates on the empty cwd.
+  test("a resume prefill without a cwd leaves the declared default in place", () => {
+    const withDefault = template("resume", "run", { CWD: "/repos/fallback", SESSION_ID: "" });
+    const form = initialSessionCreatorForm([withDefault], {
+      kind: "resume",
+      cwd: "",
+      sessionId: "sid-1",
+    });
+    expect(form.params).toEqual({ CWD: "/repos/fallback", SESSION_ID: "sid-1" });
+  });
+
+  // With no resume recipe configured the session id has nowhere to go, exactly
+  // like a fork point does not (the cwd still lands, since every recipe
+  // declares CWD).
+  test("a resume prefill falls back to the default recipe, dropping the session id", () => {
+    const form = initialSessionCreatorForm([PLAIN], RESUME_PREFILL);
+    expect(form.template).toBe("default");
+    expect(form.params).not.toHaveProperty("SESSION_ID");
+    expect(form.params).toMatchObject({ CWD: "/repos/app" });
   });
 
   // A partial inheritance leaves the untouched parameters at their declared
@@ -245,6 +281,31 @@ describe("forkTemplate / initialTemplate", () => {
     expect(initialTemplate([FORK], null)?.name).toBe("fork");
     expect(plainTemplate([FORK])).toBeUndefined();
   });
+
+  // Same rule as the fork point, on the resume recipe's own parameter.
+  test("picks the first recipe declaring a session id", () => {
+    expect(resumeTemplate([PLAIN, RESUME])?.name).toBe("resume");
+    expect(resumeTemplate([PLAIN, FORK])).toBeUndefined();
+    expect(resumeTemplate([template("t", 'run --resume "$SESSION_ID"')])).toBeUndefined();
+  });
+
+  test("a resume prefill opens on the resume recipe whatever the config order", () => {
+    expect(initialTemplate([PLAIN, RESUME], RESUME_PREFILL)?.name).toBe("resume");
+    expect(initialTemplate([RESUME, PLAIN], RESUME_PREFILL)?.name).toBe("resume");
+    // …and a fork prefill still opens on the fork recipe, not this one.
+    expect(initialTemplate([RESUME, FORK], FORK_PREFILL)?.name).toBe("fork");
+  });
+
+  // A resume recipe needs a session the user picked elsewhere, exactly like a
+  // fork recipe needs a fork point, so "+ 新規" skips it too.
+  test("「+ 新規」skips a resume recipe listed first", () => {
+    expect(initialTemplate([RESUME, PLAIN], null)?.name).toBe("default");
+    expect(plainTemplate([RESUME])).toBeUndefined();
+  });
+
+  test("with no resume recipe configured the form still opens", () => {
+    expect(initialTemplate([PLAIN], RESUME_PREFILL)?.name).toBe("default");
+  });
 });
 
 describe("selectSessionCreatorTemplate", () => {
@@ -252,7 +313,7 @@ describe("selectSessionCreatorTemplate", () => {
   // restart from the new declaration except where the user had moved a value
   // away from the old recipe's default.
   test("switching a template replaces the command and keeps the user's edits", () => {
-    const start = initialSessionCreatorForm([PLAIN, FORK], { resumeSid: "s", resumeAt: "u" });
+    const start = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
     const edited = {
       ...start,
       params: { ...start.params, CWD: "/repo", MODEL: "opus" },

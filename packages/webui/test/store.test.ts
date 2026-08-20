@@ -1845,14 +1845,14 @@ describe("panel/toggled, panel/closed", () => {
 // 蘇る」経路自体が無い。
 describe("session-creator/prefill", () => {
   test("fork 要求は launcher を fork 元ごと開く", () => {
-    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const prefill = { kind: "fork" as const, resumeSid: "sid-1", resumeAt: "uuid-1" };
     const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
     expect(forked.activePanel).toEqual({ kind: "session-creator", prefill });
   });
 
   test("fork 要求は開いていた別 panel を置き換える", () => {
     const searching = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
-    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const prefill = { kind: "fork" as const, resumeSid: "sid-1", resumeAt: "uuid-1" };
     expect(dispatch(searching, { type: "session-creator/prefill", prefill }).activePanel).toEqual({
       kind: "session-creator",
       prefill,
@@ -1862,7 +1862,7 @@ describe("session-creator/prefill", () => {
   // fork で開いた launcher を閉じて「+ 新規」で開き直すと、前の fork 元
   // (と、そこから入る cwd/model/effort) は引き継がない。
   test("閉じて開き直した launcher は fork 元を引き継がない", () => {
-    const prefill = { resumeSid: "sid-1", resumeAt: "uuid-1" };
+    const prefill = { kind: "fork" as const, resumeSid: "sid-1", resumeAt: "uuid-1" };
     const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
     const closed = dispatch(forked, { type: "panel/closed" });
     expect(

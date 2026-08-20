@@ -46,11 +46,13 @@ function SearchResultRow({
   pinned,
   words,
   onSelect,
+  onResume,
 }: {
   hit: SessionSearchHit;
   pinned: boolean;
   words: SearchWord[];
   onSelect: () => void;
+  onResume: () => void;
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
   return (
@@ -76,7 +78,30 @@ function SearchResultRow({
               📌
             </span>
           ) : null}
+          {/* Sits inside the whole-block click target, so its own click has to
+           * stop there — opening the launcher and navigating to the Timeline
+           * are two different answers to "what did the user ask for". */}
+          <button
+            type="button"
+            class="session-search-hit-resume"
+            title="このセッションを resume で再開"
+            onClick={(e) => {
+              e.stopPropagation();
+              onResume();
+            }}
+            onKeyDown={(e) => {
+              // The block's own Enter/Space handler would otherwise also fire
+              // from this button's bubbling keydown and navigate away; the
+              // button's native activation still produces the click above.
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
+          >
+            resume
+          </button>
         </div>
+        {/* A session never renamed has no title (protocol: `null` rather than a
+         * guessed fallback), and nothing is shown in its place. */}
+        {hit.title ? <div class="session-search-hit-title">{hit.title}</div> : null}
         <div class="session-search-hit-meta">
           作成 {relTime(hit.created_at)} · 更新 {relTime(hit.updated_at)} · {formatBytes(hit.size)}
         </div>
@@ -186,6 +211,18 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
       search: sessionSearchFormToTimelineSearch(resultForm ?? form),
     });
     pushNavigation(timelineHref(hit.sid));
+  }
+
+  /** Open the launcher on this session rather than viewing it: the form lands
+   * on the resume recipe with the session and its cwd filled in. A hit with no
+   * cwd still opens the form — the cwd picker starts empty and the run button
+   * stays disabled until one is picked, which is the same state a plain open
+   * has. */
+  function resumeResult(hit: SessionSearchHit): void {
+    store.dispatch({
+      type: "session-creator/prefill",
+      prefill: { kind: "resume", cwd: hit.cwd ?? "", sessionId: hit.sid },
+    });
   }
 
   return (
@@ -298,6 +335,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
                 pinned={state.pinnedSessions.has(hit.sid)}
                 words={resultWords}
                 onSelect={() => openResult(hit)}
+                onResume={() => resumeResult(hit)}
               />
             ))}
           </ul>
