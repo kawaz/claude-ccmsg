@@ -6030,6 +6030,15 @@ a.tl-attachment-file-path {
   border-color: var(--accent);
 }
 
+/* A value read from the absence of a variable rather than from its value
+   (HYOUI_NAMESPACE "default"): muted + dotted underline so it reads as
+   derived, while staying selectable/copyable like any other value. */
+.status-meta-inferred {
+  color: var(--fg-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 0.2em;
+}
+
 .status-context-note {
   color: var(--fg-muted);
   font-family: inherit;

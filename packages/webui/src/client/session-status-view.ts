@@ -155,6 +155,28 @@ export function formatAgentLiveState(agent: AgentInfo | undefined): string | nul
   return agent.waitingFor ? `${agent.status} (${agent.waitingFor})` : agent.status;
 }
 
+/** The session's hyoui namespace for the Status tab.
+ *
+ * `hyoui_namespace` is absent both when the session has no hyoui terminal at
+ * all and when it has one that simply never set the variable — and those two
+ * mean different things to a reader: the first has no namespace to speak of,
+ * the second is in what hyoui calls "default" (`AgentInfo.hyoui_namespace`
+ * doc). `hyoui_session_id` is what separates them, since the daemon reads both
+ * from the same `ps eww` line, so a session with a terminal but no namespace
+ * variable is exactly the "default" case.
+ *
+ * `inferred` is returned rather than baked into the text so the caller can
+ * mark it as read-from-absence instead of read-from-the-environment: the value
+ * to type into `hyoui --namespace` is the same either way, but only the
+ * non-inferred one is a string the process actually carries. */
+export function formatHyouiNamespace(
+  agent: AgentInfo | undefined,
+): { text: string; inferred: boolean } | null {
+  if (agent?.hyoui_namespace) return { text: agent.hyoui_namespace, inferred: false };
+  if (agent?.hyoui_session_id) return { text: "default", inferred: true };
+  return null;
+}
+
 export function formatContextUsage(ctx: SessionContextUsage): { text: string; title: string } {
   const limit = estimateContextLimit(ctx.tokens);
   const limitLabel = limit === 1_000_000 ? "1M" : "200k";

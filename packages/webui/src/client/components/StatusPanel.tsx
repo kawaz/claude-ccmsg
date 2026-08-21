@@ -20,7 +20,9 @@ import {
   buildStatusSections,
   formatAgentLiveState,
   formatContextUsage,
+  formatHyouiNamespace,
 } from "../session-status-view.ts";
+import { pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
   filterEnvRows,
   isSensitiveEnvName,
@@ -448,6 +450,15 @@ export function StatusPanel({
   const cwd = resolveSessionTopbar(state, sid).cwd;
   const agent = state.agents.find((candidate) => candidate.sessionId === sid);
   const liveState = formatAgentLiveState(agent);
+  // The session's own title — what `/rename` sets — resolved through the same
+  // live-agent-first rule the pinned rows use, so the tab can't disagree with
+  // the Sessions list about what a session is called. Unlike `sessionRowTitle`
+  // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
+  // below, and repeating one of them under a "TITLE" label would read as a
+  // title the session doesn't have.
+  const pinned = state.pinnedSessions.get(sid);
+  const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
+  const namespace = formatHyouiNamespace(agent);
   if (!snapshot) {
     return (
       <div class="status-view">
@@ -468,6 +479,17 @@ export function StatusPanel({
   return (
     <div class="status-view">
       <dl class="status-meta">
+        <dt>TITLE</dt>
+        <dd class="status-meta-value" title={title || undefined}>
+          {title ? (
+            <>
+              <span>{title}</span>
+              <CopyButton value={title} label="TITLE" />
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
         <dt>CWD</dt>
         <dd class="status-meta-value" title={cwd ?? undefined}>
           <span>{cwd ?? "—"}</span>
@@ -495,6 +517,26 @@ export function StatusPanel({
             <>
               <span>{agent.hyoui_session_id}</span>
               <CopyButton value={agent.hyoui_session_id} label="HYOUI_SESSION_ID" />
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
+        <dt>HYOUI_NAMESPACE</dt>
+        <dd class="status-meta-value">
+          {namespace ? (
+            <>
+              <span
+                class={namespace.inferred ? "status-meta-inferred" : undefined}
+                title={
+                  namespace.inferred
+                    ? "HYOUI_NAMESPACE 未設定 — hyoui はこれを default namespace として扱う"
+                    : undefined
+                }
+              >
+                {namespace.text}
+              </span>
+              <CopyButton value={namespace.text} label="HYOUI_NAMESPACE" />
             </>
           ) : (
             "—"

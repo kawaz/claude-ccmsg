@@ -18,6 +18,7 @@ import {
   estimateContextLimit,
   formatAgentLiveState,
   formatContextUsage,
+  formatHyouiNamespace,
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
@@ -271,6 +272,42 @@ describe("agent live state display", () => {
 
   test("status 未観測なら表示しない", () => {
     expect(formatAgentLiveState(agent)).toBeNull();
+  });
+});
+
+describe("hyoui namespace display", () => {
+  const agent: AgentInfo = {
+    pid: 63828,
+    cwd: "/repo",
+    kind: "interactive",
+    startedAt: 1784456050131,
+    sessionId: "s1",
+    config_dir: "/home/.claude-personal",
+  };
+
+  test("HYOUI_NAMESPACE を観測できたら実測値として表示する", () => {
+    expect(
+      formatHyouiNamespace({ ...agent, hyoui_session_id: "run-xyz", hyoui_namespace: "biz" }),
+    ).toEqual({ text: "biz", inferred: false });
+  });
+
+  test("hyoui 端末はあるが変数が無い場合は default を推定値として表示する", () => {
+    // 変数の欠落 = hyoui の default namespace (AgentInfo.hyoui_namespace の規定)。
+    // inferred で「環境から読んだ値ではない」ことを呼び出し側に伝える。
+    expect(formatHyouiNamespace({ ...agent, hyoui_session_id: "run-xyz" })).toEqual({
+      text: "default",
+      inferred: true,
+    });
+  });
+
+  test("hyoui 端末を持たないセッションは namespace を持たない", () => {
+    // hyoui_session_id が無い = そもそも hyoui 配下ではない。ここで default を
+    // 出すと「hyoui で叩ける」という誤情報になる。
+    expect(formatHyouiNamespace(agent)).toBeNull();
+  });
+
+  test("agent 行そのものが無い (offline) 場合も namespace を持たない", () => {
+    expect(formatHyouiNamespace(undefined)).toBeNull();
   });
 });
 
