@@ -33,7 +33,7 @@ import {
   type SidebarPanelKind,
   type SidebarPanelState,
 } from "./sidebar-panel.ts";
-import { refreshPinsFromPeers } from "./pinned-sessions.ts";
+import { refreshPinsFromAgents, refreshPinsFromPeers } from "./pinned-sessions.ts";
 import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
@@ -298,8 +298,9 @@ export interface AppState {
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
    * (`pinned/hydrated`) and persists it whenever a pin action — or a
-   * `peers/loaded` that repairs a stale record's repo/ws, see
-   * refreshPinsFromPeers — replaces the Map
+   * `peers/loaded` / `agents/loaded` that repairs a stale record's repo/ws /
+   * title, see refreshPinsFromPeers and refreshPinsFromAgents — replaces the
+   * Map
    * (subscribe-driven effect, mirrors ws.ts's since_seq
    * save-on-change; the reducer itself never touches localStorage, DR-0005
    * §1). Search-origin pins carry their jsonl `file`; arbitrary SessionView
@@ -950,7 +951,15 @@ export function reducer(state: AppState, action: Action): AppState {
         pinnedSessions: refreshPinsFromPeers(state.pinnedSessions, action.peers),
       };
     case "agents/loaded":
-      return { ...state, agents: action.agents, agentsLoaded: true };
+      return {
+        ...state,
+        agents: action.agents,
+        agentsLoaded: true,
+        // Same repair as peers/loaded, for the field this stream is the source
+        // of: a session's title (`claude agents --json`'s name, what /rename
+        // sets). See refreshPinsFromAgents.
+        pinnedSessions: refreshPinsFromAgents(state.pinnedSessions, action.agents),
+      };
     case "session-errors/loaded":
       return {
         ...state,

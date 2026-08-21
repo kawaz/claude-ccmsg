@@ -1,6 +1,11 @@
-// Pinned sessions' repo/ws (DR-0021 §2.4/§3.2): the rule for choosing between
-// what a pin stored and what the live session says, and the reducer-side
-// refresh built on it.
+// Pinned sessions' identity fields (DR-0021 §2.4/§3.2): the rule for choosing
+// between what a pin stored and what the live session says, and the
+// reducer-side refreshes built on it.
+//
+// Two fields, two live sources, one rule (live first, stored second, nothing
+// invented): `repo`/`ws` come from a connected session's `PeerInfo`, the title
+// from what `claude agents --json` reports as that session's `name` — the same
+// two sources `SessionRowItem` reads for a status-section row.
 //
 // A pin is a `SessionSearchHit` frozen into localStorage at pin time, so its
 // `repo`/`ws` are only as good as that moment: a session that announced `ws`
@@ -13,7 +18,7 @@
 //
 // Lives outside utils.ts because the reducer (store.ts) applies the refresh,
 // and store.ts cannot import utils.ts — utils.ts imports store.ts.
-import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 
 /** repo/ws for one pinned row, live peer first.
  *
@@ -28,6 +33,19 @@ export function pinnedSessionLabel(
 ): { repo: string; ws: string } {
   if (peer && (peer.repo || peer.ws)) return { repo: peer.repo, ws: peer.ws };
   return { repo: hit.repo ?? "", ws: hit.ws ?? "" };
+}
+
+/** The session's own title for one pinned row, live agent first: what
+ * `/rename` set and `claude agents --json` reports as `name`, else the title
+ * the pin stored (Session Search reads it from the transcript's `custom-title`
+ * records, SessionSearchHit.title).
+ *
+ * Returns "" when neither knows one, rather than a stand-in: the caller has
+ * the row's own fallback chain (cwd leaf, then short sid — `sessionRowTitle`'s
+ * tail), and inventing a label here would put a second, competing copy of it
+ * behind an import this module deliberately does not have. */
+export function pinnedSessionTitle(hit: SessionSearchHit, agent: AgentInfo | undefined): string {
+  return agent?.name || hit.title || "";
 }
 
 /** Folds the live peers list into the stored pins, so a pin's own record —
@@ -59,6 +77,33 @@ export function refreshPinsFromPeers(
     if (repo === (hit.repo ?? "") && ws === (hit.ws ?? "")) continue;
     next ??= new Map(pins);
     next.set(peer.sid, { ...hit, repo, ws });
+  }
+  return next ?? pins;
+}
+
+/** The title counterpart of `refreshPinsFromPeers`, for the same reason and
+ * with the same contract (repair in place, nothing else touched, SAME Map when
+ * nothing changed): a session renamed after it was pinned would otherwise keep
+ * its old title on the pinned row for good, and show it again the moment the
+ * session goes offline.
+ *
+ * It folds `agents` rather than `peers` because that is where a title comes
+ * from — `claude agents --json`'s `name` — and an agent with no name is not a
+ * source: a session that never renamed itself must not blank out the title
+ * Session Search recovered from the transcript. */
+export function refreshPinsFromAgents(
+  pins: Map<string, SessionSearchHit>,
+  agents: readonly AgentInfo[],
+): Map<string, SessionSearchHit> {
+  if (pins.size === 0) return pins;
+  let next: Map<string, SessionSearchHit> | null = null;
+  for (const agent of agents) {
+    const hit = pins.get(agent.sessionId);
+    if (!hit) continue;
+    const title = pinnedSessionTitle(hit, agent);
+    if (title === "" || title === hit.title) continue;
+    next ??= new Map(pins);
+    next.set(agent.sessionId, { ...hit, title });
   }
   return next ?? pins;
 }

@@ -1609,6 +1609,53 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     expect(state.peers).toHaveLength(1);
   });
 
+  // Titles arrive on the agents stream, not with peers: `claude agents --json`
+  // reports what /rename set as the session's `name`. Same repair, same
+  // same-Map contract as peers/loaded.
+  test("agents/loaded writes a renamed session's title into its pin", () => {
+    const pinned = dispatch(initialState(), {
+      type: "pinned/added",
+      hit: { ...hit("a"), title: "古いタイトル" },
+    });
+    const state = dispatch(pinned, {
+      type: "agents/loaded",
+      agents: [
+        {
+          pid: 1,
+          cwd: "/repo",
+          kind: "interactive",
+          startedAt: 1,
+          sessionId: "a",
+          name: "Issue管理",
+          config_dir: "/home/.claude",
+        },
+      ],
+    });
+    expect(state.pinnedSessions.get("a")).toEqual({ ...hit("a"), title: "Issue管理" });
+  });
+
+  test("agents/loaded keeps the same pinnedSessions Map when no title changed", () => {
+    const pinned = dispatch(initialState(), {
+      type: "pinned/added",
+      hit: { ...hit("a"), title: "Issue管理" },
+    });
+    const state = dispatch(pinned, {
+      type: "agents/loaded",
+      agents: [
+        {
+          pid: 1,
+          cwd: "/repo",
+          kind: "interactive",
+          startedAt: 1,
+          sessionId: "a",
+          name: "Issue管理",
+          config_dir: "/home/.claude",
+        },
+      ],
+    });
+    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+  });
+
   // The SessionView header button is one sid-keyed action: absent -> present,
   // then present -> absent, without requiring UI code to choose two reducers.
   test("toggled pins and then unpins the same sid", () => {

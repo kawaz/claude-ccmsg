@@ -5,8 +5,13 @@
 // it. The reducer-side fold is exercised through `peers/loaded` in
 // store.test.ts; these cover the two functions directly.
 import { describe, expect, test } from "bun:test";
-import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
-import { pinnedSessionLabel, refreshPinsFromPeers } from "../src/client/pinned-sessions.ts";
+import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import {
+  pinnedSessionLabel,
+  pinnedSessionTitle,
+  refreshPinsFromAgents,
+  refreshPinsFromPeers,
+} from "../src/client/pinned-sessions.ts";
 
 function hit(overrides: Partial<SessionSearchHit> = {}): SessionSearchHit {
   return {
@@ -31,6 +36,19 @@ function peer(overrides: Partial<PeerInfo> = {}): PeerInfo {
     repo: "kawaz/claude-ccmsg",
     ws: "main",
     cwd: "/repos/claude-ccmsg/main",
+    ...overrides,
+  };
+}
+
+function agent(overrides: Partial<AgentInfo> = {}): AgentInfo {
+  return {
+    pid: 1,
+    cwd: "/repos/claude-ccmsg/main",
+    kind: "interactive",
+    startedAt: 1,
+    sessionId: "s1",
+    name: "Issue管理",
+    config_dir: "/home/.claude",
     ...overrides,
   };
 }
@@ -70,6 +88,64 @@ describe("pinnedSessionLabel", () => {
       repo: "",
       ws: "",
     });
+  });
+});
+
+describe("pinnedSessionTitle", () => {
+  // What `/rename` set is reported by `claude agents --json` as `name`, and a
+  // rename after the pin was made must win over the frozen record.
+  test("prefers the live agent's name over the pin's stored title", () => {
+    expect(pinnedSessionTitle(hit({ title: "古いタイトル" }), agent({ name: "新しい名前" }))).toBe(
+      "新しい名前",
+    );
+  });
+
+  test("falls back to the stored title when the session is not running", () => {
+    expect(pinnedSessionTitle(hit({ title: "Issue管理" }), undefined)).toBe("Issue管理");
+  });
+
+  // A session that never renamed itself reports no name; that is not a reason
+  // to drop a title Session Search recovered from the transcript.
+  test("keeps the stored title when the live agent has no name", () => {
+    expect(pinnedSessionTitle(hit({ title: "Issue管理" }), agent({ name: undefined }))).toBe(
+      "Issue管理",
+    );
+  });
+
+  // No stand-in is produced here — SessionList applies the row's own cwd-leaf
+  // then short-sid fallback, the same tail sessionRowTitle uses.
+  test("returns an empty string when neither source knows a title", () => {
+    expect(pinnedSessionTitle(hit({ title: null }), agent({ name: undefined }))).toBe("");
+  });
+});
+
+describe("refreshPinsFromAgents", () => {
+  test("writes a renamed session's title back into its pin", () => {
+    const stored = hit({ title: "古いタイトル" });
+    const pins = new Map([["s1", stored]]);
+    const next = refreshPinsFromAgents(pins, [agent({ name: "新しい名前" })]);
+    expect(next.get("s1")).toEqual({ ...stored, title: "新しい名前" });
+  });
+
+  test("returns the same Map when the pin's title already matches", () => {
+    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    expect(refreshPinsFromAgents(pins, [agent({ name: "Issue管理" })])).toBe(pins);
+  });
+
+  test("does not blank a stored title from an agent that has no name", () => {
+    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    expect(refreshPinsFromAgents(pins, [agent({ name: undefined })])).toBe(pins);
+  });
+
+  test("fills a pin that stored no title at all", () => {
+    const pins = new Map([["s1", hit({ title: null })]]);
+    expect(refreshPinsFromAgents(pins, [agent()])?.get("s1")?.title).toBe("Issue管理");
+  });
+
+  test("ignores agents whose session is not pinned, and never mutates its input", () => {
+    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    expect(refreshPinsFromAgents(pins, [agent({ sessionId: "s2", name: "別物" })])).toBe(pins);
+    expect(pins.get("s1")?.title).toBe("Issue管理");
   });
 });
 

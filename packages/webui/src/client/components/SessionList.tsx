@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -19,7 +19,7 @@ import {
   toSessionRow,
   type SessionRow,
 } from "../utils.ts";
-import { pinnedSessionLabel } from "../pinned-sessions.ts";
+import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
@@ -510,26 +510,58 @@ function SessionRowItem({
  * NOT a `SessionRowItem` reuse — a pinned entry is a `SessionSearchHit`, not
  * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
  * forcing it through the same merge shape `toSessionRow` builds would need a
- * lot of made-up filler fields. `peer` is this pin's live session when it has
- * one: it both supplies the row's repo/ws (see pinnedSessionLabel — the
- * stored pin is a snapshot and can be staler than the session it names) and
- * decides the badge text (no peer = "仮想", the daemon resolves this sid via
- * allowVirtual, DR-0021 §3.1). Every pin enters through the session root so
- * recent restoration is identical to a live session row. */
+ * lot of made-up filler fields. What it does share is the four-element
+ * layout (`repo@ws` / title / full sid / path, kawaz r135m16) and the two live
+ * sources those elements come from when this pin's session is running: `peer`
+ * supplies repo/ws and decides the badge text (no peer = "仮想", the daemon
+ * resolves this sid via allowVirtual, DR-0021 §3.1), `agent` supplies the
+ * title — see pinnedSessionLabel / pinnedSessionTitle, which fall back to the
+ * pin's own frozen record when the session is not running. Every pin enters
+ * through the session root so recent restoration is identical to a live
+ * session row. */
 function PinnedSessionRow({
   hit,
   currentSid,
   peer,
+  agent,
   onUnpin,
 }: {
   hit: SessionSearchHit;
   currentSid: string | null;
   peer: PeerInfo | undefined;
+  agent: AgentInfo | undefined;
   onUnpin: () => void;
 }) {
-  // No cwd-leaf substitute here, for the same reason SessionRowItem takes raw
-  // fields: it is what the title line below already shows.
+  const [renameNote, setRenameNote] = useState<string | null>(null);
   const { repo, ws: wsLabel } = pinnedSessionLabel(hit, peer);
+  // Same tail as sessionRowTitle: a pin whose session never renamed itself
+  // (and whose transcript held no custom-title for Session Search to read)
+  // still gets a non-blank line rather than a gap where a title goes.
+  const title =
+    pinnedSessionTitle(hit, agent) || lastPathSegment(hit.cwd ?? "") || shortSid(hit.sid);
+  // Editable on exactly the condition SessionRowItem uses — the daemon needs a
+  // hyoui terminal to type `/rename` into, which only a running session has.
+  // An offline pin's title is therefore plain text, not an editor that could
+  // only fail.
+  const titleCell = (
+    <SessionTitle
+      sid={hit.sid}
+      title={title}
+      editable={Boolean(agent?.hyoui_session_id)}
+      onSent={(sent) => setRenameNote(`/rename を送信: ${sent}`)}
+    />
+  );
+  // With no repo/ws to print, the title takes the first line's place instead
+  // of leaving the avatar stranded on a blank one (SessionRowItem's own
+  // hasRepoWs branch, same reasoning).
+  const hasRepoWs = Boolean(repo || wsLabel);
+
+  useEffect(() => {
+    if (renameNote === null) return;
+    const id = setTimeout(() => setRenameNote(null), RENAME_NOTE_MS);
+    return () => clearTimeout(id);
+  }, [renameNote]);
+
   return (
     <li
       class={hit.sid === currentSid ? "active session-row" : "session-row"}
@@ -540,15 +572,7 @@ function PinnedSessionRow({
           <Avatar seed={hit.sid} size={16} />
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
-          {/* A pinned entry is a search hit, not a live agent row, so it has
-           * no `name` for a title line. With repo/ws present there is nothing
-           * left to say — a cwd-leaf stand-in would only repeat the ws — so
-           * that line is dropped, and only a pin without repo/ws falls back
-           * to the stand-in here. Not editable either: renaming needs a
-           * running terminal, which a pin does not imply. */}
-          {repo || wsLabel ? null : (
-            <span class="session-title">{lastPathSegment(hit.cwd ?? "") || shortSid(hit.sid)}</span>
-          )}
+          {hasRepoWs ? null : titleCell}
         </a>
         {peer === undefined ? (
           <span
@@ -568,6 +592,8 @@ function PinnedSessionRow({
           ⭐
         </button>
       </div>
+      {hasRepoWs ? <div class="session-line2">{titleCell}</div> : null}
+      {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
       <div class="session-line3">
         <SessionIdText sid={hit.sid} />
       </div>
@@ -594,10 +620,15 @@ function PinnedSessionRow({
 function PinnedSessionsSection({
   pinnedSessions,
   peers,
+  agentsBySid,
   currentSid,
 }: {
   pinnedSessions: Map<string, SessionSearchHit>;
   peers: PeerInfo[];
+  /** `claude agents --json` rows keyed by sid — the section's source for a
+   * live session's title, indexed once by SessionList for both it and the
+   * status sections below. */
+  agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
 }) {
   const { store } = useApp();
@@ -618,6 +649,7 @@ function PinnedSessionsSection({
             hit={hit}
             currentSid={currentSid}
             peer={peersBySid.get(hit.sid)}
+            agent={agentsBySid.get(hit.sid)}
             onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
           />
         ))}
@@ -685,6 +717,7 @@ export function SessionList({
       <PinnedSessionsSection
         pinnedSessions={pinnedSessions}
         peers={peers}
+        agentsBySid={agentsBySid}
         currentSid={currentSid}
       />
       {sections.map((section) => (
