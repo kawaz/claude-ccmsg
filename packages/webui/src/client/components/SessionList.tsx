@@ -19,6 +19,7 @@ import {
   toSessionRow,
   type SessionRow,
 } from "../utils.ts";
+import { pinnedSessionLabel } from "../pinned-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
@@ -509,25 +510,26 @@ function SessionRowItem({
  * NOT a `SessionRowItem` reuse — a pinned entry is a `SessionSearchHit`, not
  * a `SessionRow` (no `agent`/`connected_at`/`last_activity_at` to show), and
  * forcing it through the same merge shape `toSessionRow` builds would need a
- * lot of made-up filler fields. `connected` only decides the badge text
- * ("仮想" = daemon resolves this sid via allowVirtual with no live peer,
- * DR-0021 §3.1). Every pin enters through the session root so recent restoration
- * is identical to a live session row. */
+ * lot of made-up filler fields. `peer` is this pin's live session when it has
+ * one: it both supplies the row's repo/ws (see pinnedSessionLabel — the
+ * stored pin is a snapshot and can be staler than the session it names) and
+ * decides the badge text (no peer = "仮想", the daemon resolves this sid via
+ * allowVirtual, DR-0021 §3.1). Every pin enters through the session root so
+ * recent restoration is identical to a live session row. */
 function PinnedSessionRow({
   hit,
   currentSid,
-  connected,
+  peer,
   onUnpin,
 }: {
   hit: SessionSearchHit;
   currentSid: string | null;
-  connected: boolean;
+  peer: PeerInfo | undefined;
   onUnpin: () => void;
 }) {
-  // Raw repo/ws for the same reason SessionRowItem uses raw fields: the
-  // label helper's cwd-leaf substitute is what the title line already shows.
-  const repo = hit.repo ?? "";
-  const wsLabel = hit.ws ?? "";
+  // No cwd-leaf substitute here, for the same reason SessionRowItem takes raw
+  // fields: it is what the title line below already shows.
+  const { repo, ws: wsLabel } = pinnedSessionLabel(hit, peer);
   return (
     <li
       class={hit.sid === currentSid ? "active session-row" : "session-row"}
@@ -548,7 +550,7 @@ function PinnedSessionRow({
             <span class="session-title">{lastPathSegment(hit.cwd ?? "") || shortSid(hit.sid)}</span>
           )}
         </a>
-        {!connected ? (
+        {peer === undefined ? (
           <span
             class="session-badge session-badge-offline"
             title="ccmsg 未接続 (daemon の仮想 session 経由で閲覧)"
@@ -600,8 +602,8 @@ function PinnedSessionsSection({
 }) {
   const { store } = useApp();
   const pins = useMemo(() => sortPinnedSessions([...pinnedSessions.values()]), [pinnedSessions]);
+  const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
   if (pins.length === 0) return null;
-  const connectedSids = new Set(peers.map((p) => p.sid));
   return (
     <Fold
       open
@@ -615,7 +617,7 @@ function PinnedSessionsSection({
             key={hit.sid}
             hit={hit}
             currentSid={currentSid}
-            connected={connectedSids.has(hit.sid)}
+            peer={peersBySid.get(hit.sid)}
             onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
           />
         ))}

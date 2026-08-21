@@ -33,6 +33,7 @@ import {
   type SidebarPanelKind,
   type SidebarPanelState,
 } from "./sidebar-panel.ts";
+import { refreshPinsFromPeers } from "./pinned-sessions.ts";
 import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
@@ -296,7 +297,9 @@ export interface AppState {
   /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
-   * (`pinned/hydrated`) and persists it whenever a pin action replaces the Map
+   * (`pinned/hydrated`) and persists it whenever a pin action — or a
+   * `peers/loaded` that repairs a stale record's repo/ws, see
+   * refreshPinsFromPeers — replaces the Map
    * (subscribe-driven effect, mirrors ws.ts's since_seq
    * save-on-change; the reducer itself never touches localStorage, DR-0005
    * §1). Search-origin pins carry their jsonl `file`; arbitrary SessionView
@@ -936,7 +939,16 @@ export function reducer(state: AppState, action: Action): AppState {
     case "room-history/loaded":
       return setRoomHistory(state, action.room, action.error !== undefined ? "error" : "loaded");
     case "peers/loaded":
-      return { ...state, peers: action.peers, peersLoaded: true };
+      return {
+        ...state,
+        peers: action.peers,
+        peersLoaded: true,
+        // A connected session is the authority on its own repo/ws, so this is
+        // where a pin frozen with a worse pair gets repaired — see
+        // refreshPinsFromPeers, which returns the same Map (no persist) when
+        // every pin already agrees with its live peer.
+        pinnedSessions: refreshPinsFromPeers(state.pinnedSessions, action.peers),
+      };
     case "agents/loaded":
       return { ...state, agents: action.agents, agentsLoaded: true };
     case "session-errors/loaded":

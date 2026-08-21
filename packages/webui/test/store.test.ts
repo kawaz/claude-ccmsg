@@ -1534,6 +1534,81 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     expect(dispatch(state, { type: "pinned/removed", sid: "nope" })).toBe(state);
   });
 
+  // A pin is a snapshot of what was known when it was made, and a session that
+  // announced `ws` but no `repo` used to leave one that printed the half pair
+  // for good — including once the session went offline, which is precisely
+  // when a pin is the only record left. A connected session is the authority
+  // on its own repo/ws, so peers/loaded repairs the record.
+  test("peers/loaded fills in a pin whose stored repo/ws is worse than its live peer's", () => {
+    const pinned = dispatch(initialState(), {
+      type: "pinned/added",
+      hit: { ...hit("a"), repo: null, ws: "wip-issue-board" },
+    });
+    const state = dispatch(pinned, {
+      type: "peers/loaded",
+      peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "wip-issue-board", cwd: "/repos/wip" }],
+    });
+    expect(state.pinnedSessions.get("a")).toEqual({
+      ...hit("a"),
+      repo: "kawaz/claude-ccmsg",
+      ws: "wip-issue-board",
+    });
+  });
+
+  // Only repo/ws are repaired: the rest of the record is what the pin captured
+  // (its title, its size, when it was last written), not a re-pin.
+  test("peers/loaded leaves every other field of the pin untouched", () => {
+    const stored = { ...hit("a"), repo: null, ws: null, title: "Issue管理", size: 4242 };
+    const pinned = dispatch(initialState(), { type: "pinned/added", hit: stored });
+    const state = dispatch(pinned, {
+      type: "peers/loaded",
+      peers: [{ sid: "a", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/other" }],
+    });
+    expect(state.pinnedSessions.get("a")).toEqual({
+      ...stored,
+      repo: "kawaz/claude-ccmsg",
+      ws: "main",
+    });
+  });
+
+  // main.tsx writes localStorage whenever this Map's identity changes, and
+  // peers/loaded fires on every connect/disconnect — a rewrite per event that
+  // stores identical bytes is what returning the same Map avoids.
+  test("peers/loaded keeps the same pinnedSessions Map when nothing needs repair", () => {
+    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const state = dispatch(pinned, {
+      type: "peers/loaded",
+      peers: [
+        { sid: "a", repo: "kawaz/claude-ccmsg", ws: "main", cwd: "/repos/claude-ccmsg/main" },
+      ],
+    });
+    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+  });
+
+  // A peer that announced neither (and whose cwd the daemon could not resolve)
+  // is not a better source: replacing the pair with two empty strings would
+  // erase a label the pin legitimately holds.
+  test("peers/loaded does not blank a pin from a peer that has neither repo nor ws", () => {
+    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const state = dispatch(pinned, {
+      type: "peers/loaded",
+      peers: [{ sid: "a", repo: "", ws: "", cwd: "/repos/claude-ccmsg/main" }],
+    });
+    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+    expect(state.pinnedSessions.get("a")).toEqual(hit("a"));
+  });
+
+  // Peers of sessions that were never pinned are just the peers list.
+  test("peers/loaded ignores peers with no pin of their own", () => {
+    const pinned = dispatch(initialState(), { type: "pinned/added", hit: hit("a") });
+    const state = dispatch(pinned, {
+      type: "peers/loaded",
+      peers: [{ sid: "b", repo: "kawaz/other", ws: "main", cwd: "/repos/other/main" }],
+    });
+    expect(state.pinnedSessions).toBe(pinned.pinnedSessions);
+    expect(state.peers).toHaveLength(1);
+  });
+
   // The SessionView header button is one sid-keyed action: absent -> present,
   // then present -> absent, without requiring UI code to choose two reducers.
   test("toggled pins and then unpins the same sid", () => {
