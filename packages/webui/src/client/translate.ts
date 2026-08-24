@@ -130,14 +130,47 @@ async function translateParagraph(paragraph: string): Promise<string> {
   }
 }
 
+/** 訳の到着ごとに「その時点の本文」を受け取るコールバック。渡された文字列は
+ * 訳が届いた段落だけ訳文・残りは原文のまま結合したもので、そのまま描画できる
+ * (段落境界は原文と同じなので markdown 構造も崩れない)。 */
+export type PartialTextListener = (partialText: string) => void;
+
+/** 段落ごとの Promise を、resolve した順に results へ書き戻しながら待つ。
+ *
+ * Design rationale: `Promise.all` の結果だけを返すと、1 テキスト内の全段落が
+ * 揃うまで表示が原文のまま固まる (15 段落 thinking で数分)。段落は互いに
+ * 独立に訳せるので、届いたものから順に onPartial へ流して部分的に訳文へ
+ * 差し替えられるようにする (kawaz 裁定: 小出し優先)。翻訳不要な段落と失敗
+ * 段落は原文が入った初期値のままなので、初期状態から「確定した原文」として
+ * 扱われる。最終戻り値は従来どおり全段落結合後の完成訳文。 */
+async function joinProgressively(
+  paragraphs: string[],
+  translateOne: (paragraph: string) => Promise<string>,
+  onPartial?: PartialTextListener,
+): Promise<string> {
+  const results = [...paragraphs];
+  await Promise.all(
+    paragraphs.map(async (paragraph, index) => {
+      const translated = await translateOne(paragraph);
+      if (translated === results[index]) return;
+      results[index] = translated;
+      // 訳が原文と同じ段落 (skip / fallback) では results が動かないので
+      // 通知も出ない — 表示が変わらない更新で再描画を積まない。
+      onPartial?.(results.join("\n\n"));
+    }),
+  );
+  return results.join("\n\n");
+}
+
 /** TL 本文 (thinking / assistant 応答) を日本語へ翻訳する。`\n\n` で段落分割して
  * 段落ごとに translateParagraph を呼び、`\n\n` で再結合する (kawaz spec:
  * 「段落 (\n\n) 分割」) — 段落境界を保つことで markdown 構造 (箇条書き等)
- * を崩さない。 */
-export async function translateTextInBrowser(text: string): Promise<string> {
-  const paragraphs = text.split("\n\n");
-  const translated = await Promise.all(paragraphs.map(translateParagraph));
-  return translated.join("\n\n");
+ * を崩さない。`onPartial` を渡すと、段落の訳が届くたびに途中経過を受け取る。 */
+export async function translateTextInBrowser(
+  text: string,
+  onPartial?: PartialTextListener,
+): Promise<string> {
+  return joinProgressively(text.split("\n\n"), translateParagraph, onPartial);
 }
 
 // --- 段落訳のレジストリ (TL 検索が原文/訳文の双方を見るための共有面) ---
@@ -291,16 +324,19 @@ function translateParagraphOnHost(
 }
 
 /** テキストを `\n\n` で分割し、翻訳対象の各段落を段落ごとの独立した
- * translate op として送る。結果は入力順に `\n\n` で再結合する。 */
+ * translate op として送る。結果は入力順に `\n\n` で再結合する。
+ * `onPartial` を渡すと、段落の訳が届くたびに途中経過を受け取る (helper は
+ * 直列なので、長い thinking ほどこの小出しが効く)。 */
 export async function translateTextOnHost(
   text: string,
   request: HostTranslateRequest,
+  onPartial?: PartialTextListener,
 ): Promise<string> {
-  const paragraphs = text.split("\n\n");
-  const translated = await Promise.all(
-    paragraphs.map((paragraph) => translateParagraphOnHost(paragraph, request)),
+  return joinProgressively(
+    text.split("\n\n"),
+    (paragraph) => translateParagraphOnHost(paragraph, request),
+    onPartial,
   );
-  return translated.join("\n\n");
 }
 
 /** テスト専用: browser/host 両経路のモジュール内キャッシュと pending 状態を

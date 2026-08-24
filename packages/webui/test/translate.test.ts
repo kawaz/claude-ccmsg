@@ -92,6 +92,32 @@ describe("translateTextInBrowser", () => {
     expect(calls.sort()).toEqual(["First paragraph.", "Second paragraph."]);
   });
 
+  // host 経路と同じく browser 経路も段落の訳が届くたびに途中経過を渡す
+  // (表示側は 1 テキストの全段落が揃うのを待たずに部分的に訳文へ差し替える)。
+  test("streams a partial body each time a paragraph resolves", async () => {
+    const resolvers = new Map<string, (text: string) => void>();
+    installMockTranslator({
+      translate: (text: string) =>
+        new Promise<string>((resolve) => {
+          resolvers.set(text, resolve);
+        }),
+    });
+    const partials: string[] = [];
+    const translated = translateTextInBrowser("First.\n\nSecond.", (partial) =>
+      partials.push(partial),
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    expect(partials).toEqual([]);
+
+    resolvers.get("Second.")!("二番目");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(partials).toEqual(["First.\n\n二番目"]);
+
+    resolvers.get("First.")!("一番目");
+    expect(await translated).toBe("一番目\n\n二番目");
+    expect(partials).toEqual(["First.\n\n二番目", "一番目\n\n二番目"]);
+  });
+
   // kawaz spec: ひらがな/カタカナ/漢字を含む段落は翻訳をスキップし原文のまま
   // 通す — 既に日本語の thinking (通常は起きないが、混在ケース) を壊れた
   // 翻訳にしない。
@@ -288,6 +314,59 @@ describe("translateTextOnHost", () => {
     resolvers.get("Second.")!("二番目");
     resolvers.get("First.")!("一番目");
     expect(await translated).toBe("一番目\n\n二番目");
+  });
+
+  // 1 thinking の全段落が揃うまで表示が原文のまま固まらないよう、段落の訳が
+  // 届くたびに onPartial が「訳せた段落だけ差し替えた本文」を渡す。翻訳不要な
+  // 段落 (日本語) は最初から原文で確定しているので、それ自体では通知しない。
+  test("streams a partial body each time a paragraph resolves", async () => {
+    const resolvers = new Map<string, (text: string) => void>();
+    const partials: string[] = [];
+    const input = "First.\n\n日本語。\n\nSecond.";
+    const translated = translateTextOnHost(
+      input,
+      (texts) =>
+        new Promise((resolve) => {
+          resolvers.set(texts[0]!, (text) => resolve({ ok: true, results: [{ ok: true, text }] }));
+        }),
+      (partial) => partials.push(partial),
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    // 日本語段落は request にも onPartial にも出ない。
+    expect([...resolvers.keys()].sort()).toEqual(["First.", "Second."]);
+    expect(partials).toEqual([]);
+
+    resolvers.get("Second.")!("二番目");
+    await new Promise((r) => setTimeout(r, 5));
+    // 先に返った段落だけが訳文、未完了の段落は原文のまま。
+    expect(partials).toEqual(["First.\n\n日本語。\n\n二番目"]);
+
+    resolvers.get("First.")!("一番目");
+    expect(await translated).toBe("一番目\n\n日本語。\n\n二番目");
+    // 最終値と最後の途中経過は一致する (完成後に表示が揺れない)。
+    expect(partials.at(-1)).toBe("一番目\n\n日本語。\n\n二番目");
+    expect(partials).toHaveLength(2);
+  });
+
+  // 失敗段落は原文 fallback = 初期値と同じなので、表示は変わらない。変化の
+  // ない更新で再描画を積まないため、その段落では onPartial を呼ばない。
+  test("does not emit a partial for a paragraph that falls back to its original", async () => {
+    const partials: string[] = [];
+    const result = await translateTextOnHost(
+      "Works.\n\nFails.",
+      async (texts) => {
+        if (texts[0] === "Fails.") {
+          return {
+            ok: false as const,
+            error: { code: "translate_helper_failed", msg: "helper exited" },
+          };
+        }
+        return { ok: true as const, results: [{ ok: true as const, text: "[ja]Works." }] };
+      },
+      (partial) => partials.push(partial),
+    );
+    expect(result).toBe("[ja]Works.\n\nFails.");
+    expect(partials).toEqual(["[ja]Works.\n\nFails."]);
   });
 
   // 複数 thinking を同時に翻訳しても段落は束ねられず、段落ごとに 1 op が出る。

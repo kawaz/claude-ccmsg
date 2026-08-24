@@ -1019,7 +1019,21 @@ function translationTabItems(
  * 結果」だけで、選択中のタブにまだ訳が無ければその経路の翻訳を起動する。
  *
  * 訳文は原文とペアで保持する: text 自体が差し替わった (tail 追記で行が
- * 読み直された) 時に、前の原文の訳をそのまま出し続けないため。 */
+ * 読み直された) 時に、前の原文の訳をそのまま出し続けないため。
+ *
+ * 保持する訳は「途中経過 (done: false)」と「完成訳 (done: true)」の 2 相を
+ * 取る。長い thinking は段落数だけ翻訳 op が直列に並ぶので、完成まで待つと
+ * 数分間 1 文字も変わらない — 段落の訳が届くたびに途中経過で差し替えて、
+ * 訳せたところから順に日本語になっていくようにする。done は「もう起動し
+ * 直さなくてよい / 進捗ラベルを消してよい」の判定に要るので、途中経過とは
+ * 区別して持つ (途中経過の text で代用すると、再マウントや再選択のたびに
+ * 途中で止まった訳を完成扱いしてしまう)。 */
+interface TranslatedBody {
+  source: string;
+  text: string;
+  done: boolean;
+}
+
 function useTranslatedText(
   text: string,
   availability: TranslationAvailability,
@@ -1027,34 +1041,45 @@ function useTranslatedText(
   /** 表示中の綴りが差し替わった時に呼ばれる (in-view search の再計算契機)。 */
   onDisplayChange?: () => void,
 ): { bodyText: string; translatingLabel: string | null } {
-  const [host, setHost] = useState<{ source: string; text: string } | null>(null);
-  const [browser, setBrowser] = useState<{ source: string; text: string } | null>(null);
+  const [host, setHost] = useState<TranslatedBody | null>(null);
+  const [browser, setBrowser] = useState<TranslatedBody | null>(null);
   // 「今この原文を訳している最中」を原文そのもので表す (boolean だと text が
   // 変わった時に前の原文の進行中フラグと区別できない)。
   const [hostPending, setHostPending] = useState<string | null>(null);
   const [browserPending, setBrowserPending] = useState<string | null>(null);
 
-  const hostText = host !== null && host.source === text ? host.text : null;
-  const browserText = browser !== null && browser.source === text ? browser.text : null;
+  const hostBody = host !== null && host.source === text ? host : null;
+  const browserBody = browser !== null && browser.source === text ? browser : null;
+  const hostText = hostBody?.text ?? null;
+  const browserText = browserBody?.text ?? null;
+  const hostDone = hostBody?.done ?? false;
+  const browserDone = browserBody?.done ?? false;
   const hostTranslating = hostPending === text;
   const browserTranslating = browserPending === text;
 
   useEffect(() => {
     if (tab === "ja-host") {
-      if (!availability.host || hostText !== null || hostTranslating) return;
+      if (!availability.host || hostDone || hostTranslating) return;
       setHostPending(text);
-      void translateTextOnHost(text, availability.hostRequest)
-        .then((result) => setHost({ source: text, text: result }))
+      // 途中経過は「この原文の翻訳を今走らせている自分」だけが書く。text が
+      // 差し替わった後に前の原文の遅れた partial が届いても source が違うので
+      // 表示には出ない (hostBody の source 一致判定で落ちる)。
+      void translateTextOnHost(text, availability.hostRequest, (partial) =>
+        setHost({ source: text, text: partial, done: false }),
+      )
+        .then((result) => setHost({ source: text, text: result, done: true }))
         // 経路ごと失敗した時は原文へ倒す (タブは選ばれたまま、内容は原文)。
-        .catch(() => setHost({ source: text, text }))
+        .catch(() => setHost({ source: text, text, done: true }))
         .finally(() => setHostPending((pending) => (pending === text ? null : pending)));
       return;
     }
     if (tab === "ja-browser") {
-      if (!availability.browser || browserText !== null || browserTranslating) return;
+      if (!availability.browser || browserDone || browserTranslating) return;
       setBrowserPending(text);
-      void translateTextInBrowser(text)
-        .then((result) => setBrowser({ source: text, text: result }))
+      void translateTextInBrowser(text, (partial) =>
+        setBrowser({ source: text, text: partial, done: false }),
+      )
+        .then((result) => setBrowser({ source: text, text: result, done: true }))
         .finally(() => setBrowserPending((pending) => (pending === text ? null : pending)));
     }
   }, [
@@ -1063,8 +1088,8 @@ function useTranslatedText(
     availability.host,
     availability.browser,
     availability.hostRequest,
-    hostText,
-    browserText,
+    hostDone,
+    browserDone,
     hostTranslating,
     browserTranslating,
   ]);
@@ -1087,10 +1112,12 @@ function useTranslatedText(
   }, [bodyText, onDisplayChange]);
 
   // 訳が入った直後の 1 render (state 更新と pending 解除が別 microtask) で
-  // 「本文は訳文なのに翻訳中」と出さないよう、本文の有無も条件に含める。
+  // 「本文は訳文なのに翻訳中」と出さないよう、完成の有無も条件に含める。
+  // 判定に使うのは done であって本文の有無ではない — 途中経過が入っている
+  // 間はまだ残りの段落を訳しているので、ラベルは出したままにする。
   const translating =
-    (tab === "ja-host" && hostTranslating && hostText === null) ||
-    (tab === "ja-browser" && browserTranslating && browserText === null);
+    (tab === "ja-host" && hostTranslating && !hostDone) ||
+    (tab === "ja-browser" && browserTranslating && !browserDone);
 
   // 翻訳中の進捗表示 (kawaz r38 m94,95): 「翻訳中… 3s (待ち 5)」の形で、
   // リクエストを投げてからの経過秒と host 経路の未完了段落数を出す。固まっ
