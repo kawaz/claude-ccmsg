@@ -47,7 +47,11 @@ export function TerminalPanel({ hyouiSessionId, gatewayUrl }: Props) {
         title="Terminal"
         // tailnet 内部ツール前提だが、iframe 経由の script/form/same-origin は
         // 必要 (xterm.js の入力ハンドラ + resume バナー + input POST)。
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        // allow-popups は terminal 内の hyperlink (OSC 8 / 素の URL) を新規 tab で
+        // 開くために必要。これが無いと window.open() が sandbox に阻止される。
+        // allow-popups-to-escape-sandbox は不要 (実測: allow-popups 単独でも
+        // 開いた先の外部ページは script/event とも正常に動作する)。
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         allow="clipboard-read; clipboard-write"
       />
     </div>
