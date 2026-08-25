@@ -158,6 +158,45 @@ describe("ccmsg CLI end-to-end", () => {
     }
   }, 30000);
 
+  // 何を保証するか: `daemon start` は無セッション状態からでも daemon をデタッチ
+  // 起動でき (kawaz からの依頼「一つもセッションない状態からとりあえず daemon
+  // だけ CLI から起動する方法」)、既に起動していれば再起動せず同じ pid の
+  // status を返す (冪等)。
+  test("daemon start は無から起動し、起動済みなら再起動せず status のみ返す", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const s0 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(s0.running).toBe(false);
+
+      const started = JSON.parse((await runCli(["daemon", "start"], env)).out) as {
+        ok: boolean;
+        running: boolean;
+        started: boolean;
+        version: string;
+        pid: number;
+      };
+      expect(started.ok).toBe(true);
+      expect(started.running).toBe(true);
+      expect(started.started).toBe(true);
+      expect(started.version).toBe(VERSION);
+
+      const again = JSON.parse((await runCli(["daemon", "start"], env)).out) as {
+        running: boolean;
+        started: boolean;
+        pid: number;
+      };
+      expect(again.running).toBe(true);
+      expect(again.started).toBe(false);
+      expect(again.pid).toBe(started.pid); // same daemon, not respawned
+
+      const s1 = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(s1.running).toBe(true);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
   // 何を保証するか (default help のレール): 引数なしと通常の --help は
   // 指定された 6 コマンド + --help-full だけを byte-for-byte 表示する。隠した
   // コマンド・オプション・環境変数が混ざれば完全一致で検出する。

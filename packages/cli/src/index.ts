@@ -396,6 +396,18 @@ async function runSubscribe(
   }
 }
 
+/** Ping an already-connected client and shape the result the way `status`/`daemon
+ * start` report it (used by both so the two commands can't drift apart). Closes
+ * `client` before returning. */
+async function pingRunningStatus(
+  client: Client,
+  paths: ReturnType<typeof resolvePaths>,
+): Promise<Record<string, unknown>> {
+  const pong = await client.request<Record<string, unknown>>({ op: "ping" });
+  client.close();
+  return { ok: true, running: true, ...pong, stateDir: paths.stateDir, dataDir: paths.dataDir };
+}
+
 async function runStatus(): Promise<never> {
   const paths = resolvePaths();
   const client = await connectIfRunning(paths);
@@ -403,9 +415,24 @@ async function runStatus(): Promise<never> {
     output({ ok: true, running: false, stateDir: paths.stateDir, dataDir: paths.dataDir });
     process.exit(0);
   }
-  const pong = await client.request<Record<string, unknown>>({ op: "ping" });
-  client.close();
-  output({ ok: true, running: true, ...pong, stateDir: paths.stateDir, dataDir: paths.dataDir });
+  output(await pingRunningStatus(client, paths));
+  process.exit(0);
+}
+
+/** `ccmsg daemon start` — idempotent detached bring-up. Spawns the daemon (via
+ * `ensureDaemon`'s existing spawn path, same one every other command uses) only
+ * when nothing is listening yet, then reports the same shape as `status`. Uses
+ * the `{role: "user"}` fallback identity (no session context exists at this
+ * entry point, same as `status`/`read`/`rooms`/`peers`). */
+async function runDaemonStart(): Promise<never> {
+  const paths = resolvePaths();
+  const existing = await connectIfRunning(paths);
+  if (existing) {
+    output({ ...(await pingRunningStatus(existing, paths)), started: false });
+    process.exit(0);
+  }
+  const client = await ensureDaemon(paths, { role: "user" });
+  output({ ...(await pingRunningStatus(client, paths)), started: true });
   process.exit(0);
 }
 
@@ -429,6 +456,10 @@ async function runDaemonStop(): Promise<never> {
 
 function handleDaemon(positionals: string[], opts: Record<string, string | boolean>): void {
   const sub = positionals[0];
+  if (sub === "start") {
+    void runDaemonStart();
+    return;
+  }
   if (sub === "run") {
     // blocks: the listen socket keeps the event loop alive
     runDaemon({ foreground: opts.foreground === true });
@@ -438,7 +469,7 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
     void runDaemonStop();
     return;
   }
-  process.stderr.write("ccmsg: usage: ccmsg daemon <run|stop>\n");
+  process.stderr.write("ccmsg: usage: ccmsg daemon <start|run|stop>\n");
   process.exitCode = 1;
 }
 
@@ -499,11 +530,14 @@ Commands:
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
-  status                       Show daemon liveness / version / uptime / pid
+  status                       Show daemon liveness / version / uptime / pid.
+                               Does not start the daemon — use daemon start
   origins [list]               List persisted extra allowed Origins (webui reverse proxy)
   origins add <origin>         Allow an Origin (e.g. "https://ccmsg.example.com"), effective immediately
   origins remove <origin>      Remove a persisted Origin
   version                      Print the ccmsg version and exit
+  daemon start                 Start the daemon detached if not already running
+                               (idempotent: prints the same status either way)
   daemon run [--foreground]    Run the daemon in this process
   daemon stop                  Gracefully stop the running daemon
 
