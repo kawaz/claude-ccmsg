@@ -932,6 +932,32 @@ a {
   opacity: 0.85;
 }
 
+/* 「前回稼働中」行の resume ボタン (SessionList.tsx の LastLiveSessionRow)。
+ * Pinned 行の ⭐ と同じ位置・同じ器を使う — 1 行目の右端に付く 1 文字の
+ * アクションという役割が同じなので、見た目の文法も揃える。hover 色だけは
+ * 破壊的操作ではないので accent 側に振る。 */
+.last-live-resume-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  /* ⭐ (絵文字) と違い ▶ は字形が細いので、Pinned 行と同じ font-size だと
+   * 行の右端で線のように見える。1 段だけ上げて重さを揃える。 */
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  padding: 0 var(--space-3);
+}
+
+.last-live-resume-btn:hover {
+  color: var(--accent);
+}
+
+.session-row.active .last-live-resume-btn {
+  color: var(--accent-fg);
+  opacity: 0.85;
+}
+
 .room-title {
   display: block;
   font-weight: 600;

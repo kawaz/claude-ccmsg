@@ -3,6 +3,7 @@
 //
 //   state: ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
 //            daemon.sock / daemon.lock / daemon.pid / daemon.log
+//            last-live-sessions.json
 //   data:  ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //            rooms/<room-id>.jsonl
 //            dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
@@ -36,6 +37,13 @@ export interface Paths {
    * path is meant to be pasted somewhere and read back later, possibly after
    * a daemon restart. */
   dumps: string;
+  /** Sessions that were connected when the daemon last wrote this file, so a
+   * daemon that comes back from a crash / machine reboot can still say what
+   * was running (protocol's LastLiveSession). Lives in state/ rather than
+   * data/ on the XDG reading of the split: it must survive a restart (that is
+   * its whole point) but losing it costs only convenience, never a message —
+   * the same category as "recently used", not user data. */
+  lastLiveSessions: string;
 }
 
 function home(): string {
@@ -69,5 +77,6 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     allowedOrigins: path.join(dataDir, "allowed-origins.json"),
     config: path.join(dataDir, "config.json"),
     dumps: path.join(dataDir, "dumps"),
+    lastLiveSessions: path.join(stateDir, "last-live-sessions.json"),
   };
 }

@@ -12,6 +12,7 @@ import {
   type DeliveredEvent,
   type FsEntry,
   type FsReadResponse,
+  type LastLiveSession,
   type LlmRequestInfo,
   type MemberEvent,
   type PeerInfo,
@@ -182,6 +183,12 @@ export interface AppState {
   roomsLoaded: boolean;
   peers: PeerInfo[];
   peersLoaded: boolean;
+  /** Sessions a previous daemon saw connected that have not registered again
+   * — the sidebar's "前回稼働中" section after a machine reboot took the
+   * daemon down with them. Arrives on the same wire frame as `peers` (op reply
+   * and push alike) and is replaced whole, so a session coming back simply
+   * stops being in it. */
+  lastLiveSessions: LastLiveSession[];
   /** `claude agents --json` rows, merged with `peers` by sessionId in the
    * Sidebar Sessions list (U1, see utils.ts's toSessionRow/offlineAgentRows).
    * Populated by ws.ts's onOpen `op:"agents"` fetch and kept live via
@@ -319,6 +326,7 @@ export function initialState(): AppState {
     roomsLoaded: false,
     peers: [],
     peersLoaded: false,
+    lastLiveSessions: [],
     agents: [],
     agentsLoaded: false,
     daemonInfo: null,
@@ -365,7 +373,10 @@ export type Action =
   | { type: "rooms/history-reset"; rooms: string[] }
   | { type: "room-history/loading"; room: string }
   | { type: "room-history/loaded"; room: string; error?: string }
-  | { type: "peers/loaded"; peers: PeerInfo[] }
+  // `lastLive` rides along because the daemon sends both in one frame; absent
+  // means the daemon said nothing about it (older daemon, or nothing pending),
+  // and the reducer stores it as the empty list either way.
+  | { type: "peers/loaded"; peers: PeerInfo[]; lastLive?: LastLiveSession[] }
   // Both the one-shot `op:"agents"` reply (initial paint) and the pushed
   // `ev:"agents"` stream event (subsequent changes) fold in here — the
   // reducer just replaces the list either way, same as peers/loaded.
@@ -944,6 +955,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         peers: action.peers,
         peersLoaded: true,
+        lastLiveSessions: action.lastLive ?? [],
         // A connected session is the authority on its own repo/ws, so this is
         // where a pin frozen with a worse pair gets repaired — see
         // refreshPinsFromPeers, which returns the same Map (no persist) when

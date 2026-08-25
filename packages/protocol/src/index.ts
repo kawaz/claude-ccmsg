@@ -361,6 +361,10 @@ export interface AgentsStreamEvent {
 export interface PeersStreamEvent {
   ev: "peers";
   peers: PeerInfo[];
+  /** The `peers` op's `last_live` list, pushed on the same event: a session
+   * registering is exactly what removes it from that list, so the two always
+   * move together and one frame carries both. Same omit-when-empty rule. */
+  last_live?: LastLiveSession[];
 }
 /** Appended transcript lines for a session the subscriber asked to follow via
  * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
@@ -2060,9 +2064,57 @@ export interface PeerInfo {
   /** ISO time of this session's most recent request on any of its connections */
   last_activity_at?: string;
 }
+/** One session that was connected when the daemon last saw it alive, replayed
+ * after a daemon (or whole machine) restart it did not come back from — the
+ * "前回稼働中" list.
+ *
+ * The connection fields are a frozen copy of that session's `PeerInfo` as of
+ * the daemon's last snapshot write, not a live reading: the session is by
+ * definition not connected while it appears here. `model`/`effort` are the
+ * exception — they are read back from the transcript's last turn at load time
+ * (readSessionLaunchContext), because "what it must resume as" is a property
+ * of where the session actually ended, not of when the daemon last wrote a
+ * snapshot. Both are absent when the transcript could not establish them,
+ * exactly as in SessionSearchHit.
+ *
+ * An entry leaves the list the moment its sid registers again (resumed, or
+ * simply restarted by hand), so a fully recovered machine shows nothing. */
+export interface LastLiveSession {
+  sid: string;
+  repo: string;
+  ws: string;
+  cwd: string;
+  /** transcript the session had announced, if any — also what `model`/`effort`
+   * below were read from. */
+  transcript_path?: string;
+  /** repo container the session had announced, if any (PeerInfo.repo_root). */
+  repo_root?: string;
+  /** branch / bookmark at snapshot time, if known. */
+  branch?: string;
+  /** the session's own title (`claude agents --json`'s `name`, what `/rename`
+   * sets) as of the snapshot write, when the daemon knew one — the agents poll
+   * only runs while a webui is connected, so absence means "not known", never
+   * "untitled". */
+  title?: string;
+  /** ISO time the session registered with the daemon that recorded it. */
+  connected_at?: string;
+  /** ISO time of the snapshot write that last saw this session connected — the
+   * newest instant it is known to have been alive. */
+  last_seen_at: string;
+  /** what the session's last turn ran as, in raw transcript spellings (same
+   * pair, same source and same purpose as SessionSearchHit.model/effort: a
+   * resume must not silently switch the session to another model). */
+  model?: string;
+  effort?: string;
+}
 export interface PeersResponse {
   ok: true;
   peers: PeerInfo[];
+  /** Sessions that were live under a previous daemon and have not registered
+   * again (see LastLiveSession). Omitted — not `[]` — when there are none, so
+   * a client that never reads it is unaffected and an older daemon looks the
+   * same as a fully recovered one. */
+  last_live?: LastLiveSession[];
 }
 export interface NotifyResponse {
   ok: true;

@@ -568,7 +568,16 @@ export function createWsClient(
       if (stale.length > 0) dispatch({ type: "rooms/history-reset", rooms: stale });
       await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
       const peers = await send<PeersResponse>({ op: "peers" });
-      if (peers.ok) dispatch({ type: "peers/loaded", peers: peers.peers });
+      if (peers.ok) {
+        dispatch({
+          type: "peers/loaded",
+          peers: peers.peers,
+          // Sessions the daemon saw running before its last restart ("前回
+          // 稼働中"); absent on an older daemon or once every one of them is
+          // back, which the reducer reads as the empty list.
+          ...(peers.last_live ? { lastLive: peers.last_live } : {}),
+        });
+      }
       // U1: initial `claude agents --json` paint + daemon provenance for the
       // footer. Neither failure here should abort the handshake above (both
       // already landed) — a rejection just falls through to the catch below
@@ -689,7 +698,12 @@ export function createWsClient(
     // (same pattern as ev:"agents" above; issue
     // 2026-07-12-peers-live-update-protocol).
     if ("ev" in streamEv && streamEv.ev === "peers") {
-      dispatch({ type: "peers/loaded", peers: (streamEv as PeersStreamEvent).peers });
+      const ev = streamEv as PeersStreamEvent;
+      dispatch({
+        type: "peers/loaded",
+        peers: ev.peers,
+        ...(ev.last_live ? { lastLive: ev.last_live } : {}),
+      });
       return;
     }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's

@@ -15,6 +15,7 @@ import {
   type ErrorResponse,
   type Identity,
   type KindEvent,
+  type LastLiveSession,
   type LeaveEvent,
   type LlmStatsResponse,
   type LlmUsageResponse,
@@ -59,6 +60,11 @@ import {
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
 import { probeForkSupport } from "./fork-probe.ts";
+import {
+  readLastLiveSessions,
+  withLaunchContext,
+  writeLastLiveSessions,
+} from "./last-live-sessions.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
@@ -248,6 +254,11 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** Sessions a previous daemon last saw connected and that have not
+   * registered again (last-live-sessions.ts), keyed by sid. Loaded once at
+   * startup and only ever shrinks while this daemon runs — the one thing that
+   * removes an entry is that sid coming back. */
+  lastLive: Map<string, LastLiveSession>;
   /** Latest LLM gateway request per conversation series, for the webui's
    * prompt-cache ring (llm-events.ts). Filled by the gateway posting to
    * `/webhook/llm-gateway`; with no such webhook configured it stays empty and
@@ -509,6 +520,11 @@ function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
 }
 
 function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void {
+  // This sid is back, so it is no longer "前回稼働中" — whether it came back
+  // via the launcher's resume or was simply started again by hand, the row
+  // has done its job. maybeBroadcastPeers at the end of this function pushes
+  // the shortened list and rewrites the snapshot.
+  daemon.lastLive.delete(id.sid);
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
   // exception (DR-0009 addendum): unlike repo/ws/cwd, it arrives via the
@@ -652,10 +668,77 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
  * across re-hellos for the same still-open sid (registerSession never touches
  * it) and only differs across a genuine full-disconnect-then-rejoin. */
 function peersCompareKey(daemon: Daemon): string {
-  return JSON.stringify(
+  return JSON.stringify([
     [...daemon.sessions.values()]
       .filter((s) => s.conns.size > 0)
       .map((s) => ({ ...s.meta, connected_at: s.connectedAt })),
+    // The "前回稼働中" half travels in the same frame, so a change confined to
+    // it (a sid recovering, or the startup launch-context fill landing) has to
+    // be able to trigger the push on its own.
+    currentLastLive(daemon),
+  ]);
+}
+
+/** The `last_live` list on the wire: sessions a previous daemon saw connected
+ * that have not registered again. Newest sighting first — after a reboot the
+ * reader is looking for what they were in the middle of — with sid as the
+ * tiebreak so the order is stable enough to compare. */
+function currentLastLive(daemon: Daemon): LastLiveSession[] {
+  return [...daemon.lastLive.values()].sort(
+    (a, b) => b.last_seen_at.localeCompare(a.last_seen_at) || a.sid.localeCompare(b.sid),
+  );
+}
+
+/** The body both the `peers` op reply and the ev:"peers" push carry, so the
+ * two can never disagree about the pair. `last_live` is omitted rather than
+ * sent as `[]` when nothing is pending (protocol contract: a client that never
+ * reads it is unaffected, and a fully recovered machine looks the same as an
+ * older daemon). */
+function peersPayload(daemon: Daemon): { peers: PeerInfo[]; last_live?: LastLiveSession[] } {
+  const lastLive = currentLastLive(daemon);
+  return {
+    peers: currentPeers(daemon),
+    ...(lastLive.length > 0 ? { last_live: lastLive } : {}),
+  };
+}
+
+/** The session's own title as the agents poll currently reports it, if at all.
+ * That poll only runs while a webui is watching (DR-0009-agents), so this is
+ * genuinely best-effort — a snapshot written with no webui connected simply
+ * carries no title, and the row falls back to its cwd leaf like any untitled
+ * session row does. */
+function agentTitle(daemon: Daemon, sid: string): string | undefined {
+  for (const agent of daemon.agentsPoller.cache.agents) {
+    if (agent.sessionId === sid && agent.name) return agent.name;
+  }
+  return undefined;
+}
+
+/** Rewrite the on-disk record of who was alive: every session connected right
+ * now, plus the entries still waiting to be recovered.
+ *
+ * Carrying the unrecovered entries forward is what lets the list survive a
+ * second restart before the user got round to resuming anything — dropping
+ * them would mean a reboot loop quietly erasing exactly the sessions it
+ * exists to remember. `last_seen_at` is stamped now for the live half: this
+ * write is the moment those sessions are known to be alive. */
+function persistLastLive(daemon: Daemon): void {
+  const now = nowIso();
+  const live = [...daemon.sessions.values()]
+    .filter((s) => s.conns.size > 0)
+    .map((s) => {
+      const title = agentTitle(daemon, s.meta.sid);
+      return {
+        ...s.meta,
+        ...(title ? { title } : {}),
+        connected_at: s.connectedAt,
+        last_seen_at: now,
+      };
+    });
+  writeLastLiveSessions(
+    daemon.paths.lastLiveSessions,
+    [...live, ...daemon.lastLive.values()],
+    daemon.log,
   );
 }
 
@@ -751,9 +834,14 @@ function maybeBroadcastPeers(daemon: Daemon): void {
   const key = peersCompareKey(daemon);
   if (key === daemon.peersSnapshot) return;
   daemon.peersSnapshot = key;
-  const peers = currentPeers(daemon);
+  // Who is alive just changed, which is the whole content of the snapshot
+  // file — write it here rather than at each mutation point, so the disk
+  // record and the pushed list are produced from one observation of the
+  // registry (and an unchanged re-hello writes nothing at all).
+  persistLastLive(daemon);
+  const payload = peersPayload(daemon);
   for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
+    if (sub.identity?.role === "user") send(sub, { ev: "peers", ...payload });
   }
   // The connected set just changed, so the set of transcripts worth folding
   // for api_error did too.
@@ -2146,7 +2234,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "peers": {
-      send(conn, { ok: true, peers: currentPeers(daemon) });
+      // `last_live` rides along for the webui only, the same posture its push
+      // event has: a session-role client gets no ev:"peers" updates, so handing
+      // it a list that would silently go stale is worse than not answering.
+      const forUser = conn.identity?.role === "user";
+      send(conn, {
+        ok: true,
+        ...(forUser ? peersPayload(daemon) : { peers: currentPeers(daemon) }),
+      });
       return;
     }
 
@@ -3361,11 +3456,32 @@ export function startDaemon(opts: StartOptions = {}): void {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    lastLive: new Map(),
     llmRequests: new LlmRequestCache(),
     webhooks: new Map(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
+
+  // "前回稼働中": what the previous daemon last saw connected (last-live-
+  // sessions.ts). Loaded before anything can connect, so the first webui to
+  // ask already has the list. Filling in each entry's model/effort means
+  // reading transcripts, so it runs async and best-effort exactly like the
+  // fork probe below — the list is useful without it, just less pre-filled.
+  for (const entry of readLastLiveSessions(paths.lastLiveSessions, log)) {
+    daemon.lastLive.set(entry.sid, entry);
+  }
+  if (daemon.lastLive.size > 0) {
+    log.info(`last live sessions: ${daemon.lastLive.size} not recovered yet`);
+    void withLaunchContext([...daemon.lastLive.values()]).then((enriched) => {
+      for (const entry of enriched) {
+        // A sid that registered while we were reading is already recovered;
+        // putting it back would resurrect a row the client just dropped.
+        if (daemon.lastLive.has(entry.sid)) daemon.lastLive.set(entry.sid, entry);
+      }
+      maybeBroadcastPeers(daemon);
+    });
+  }
 
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test
   // daemons, which would otherwise each carry a `route -n monitor` child and

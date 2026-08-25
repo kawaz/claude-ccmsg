@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type { AgentInfo, LastLiveSession, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
@@ -8,6 +8,7 @@ import { formatAgentLiveState, formatSidebarBadge } from "../session-status-view
 import {
   badgeLabel,
   formatDuration,
+  formatRelativeAge,
   groupSessionsBySection,
   indexAgentsBySid,
   lastPathSegment,
@@ -20,6 +21,12 @@ import {
   type SessionRow,
 } from "../utils.ts";
 import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
+import {
+  lastLiveResumePrefill,
+  lastLiveSessionTitle,
+  sortLastLiveSessions,
+  visibleLastLiveSessions,
+} from "../last-live-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { Fold } from "./Fold.tsx";
@@ -658,6 +665,133 @@ function PinnedSessionsSection({
   );
 }
 
+/** One row of the sidebar's "前回稼働中" section: a session that was running
+ * when the daemon last saw it and has not come back (issue 2026-08-25-restart-
+ * recovery-last-live-sessions).
+ *
+ * Shares the four-element layout every other session row uses (`repo@ws` /
+ * title / full sid / path, kawaz r135m16) and nothing else — unlike a pinned
+ * row there is no live `PeerInfo`/`AgentInfo` to prefer, because "not
+ * connected" is the definition of belonging here: every field is the daemon's
+ * frozen record. That is also why the title is plain text rather than the
+ * editable `SessionTitle` — `/rename` needs a running session to type into.
+ *
+ * The row still links to the session view (its transcript is on disk and
+ * readable through the daemon's virtual-session path, the same way an offline
+ * pin's is); the resume button is the row's point, and opens the launcher on
+ * this session rather than starting anything itself. */
+function LastLiveSessionRow({
+  entry,
+  currentSid,
+  onResume,
+}: {
+  entry: LastLiveSession;
+  currentSid: string | null;
+  onResume: () => void;
+}) {
+  const title = lastLiveSessionTitle(entry);
+  const hasRepoWs = Boolean(entry.repo || entry.ws);
+  return (
+    <li class={entry.sid === currentSid ? "active session-row" : "session-row"} title={entry.cwd}>
+      <div class="session-line1">
+        <a href={sessionHref(entry.sid)} class="session-main-link">
+          <Avatar seed={entry.sid} size={16} />
+          {entry.repo ? <span class="session-line1-repo">{entry.repo}</span> : null}
+          {entry.ws ? (
+            <span class="session-line1-ws">{entry.repo ? `@${entry.ws}` : entry.ws}</span>
+          ) : null}
+          {hasRepoWs ? null : (
+            <span class="session-title" title={title}>
+              {title}
+            </span>
+          )}
+        </a>
+        <span class="session-idle" title={`最終確認 ${entry.last_seen_at}`}>
+          {formatRelativeAge(entry.last_seen_at)}
+        </span>
+        <button
+          type="button"
+          class="last-live-resume-btn"
+          aria-label="このセッションを resume"
+          title="このセッションを resume (ランチャーを開く)"
+          onClick={onResume}
+        >
+          ▶
+        </button>
+      </div>
+      {hasRepoWs ? (
+        <div class="session-line2">
+          <span class="session-title" title={title}>
+            {title}
+          </span>
+        </div>
+      ) : null}
+      <div class="session-line3">
+        <SessionIdText sid={entry.sid} />
+      </div>
+      <div class="session-line4" title={entry.cwd}>
+        <span class="session-cwd">
+          <bdi dir="ltr">{entry.cwd}</bdi>
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/** Sidebar "前回稼働中" section: the sessions a previous daemon saw connected
+ * that have not registered again — what was running when the machine went
+ * down, which is otherwise unrecoverable once the daemon's memory-only peers
+ * registry dies with it.
+ *
+ * Sits below Pinned and above the status sections: pins are a standing choice
+ * and stay first, while these rows are transient (each disappears the moment
+ * its session comes back) and are about sessions that are NOT in any status
+ * section — they belong on the boundary between the two. Renders nothing at
+ * all when the list is empty, which is what a fully recovered machine looks
+ * like. */
+function LastLiveSessionsSection({
+  lastLiveSessions,
+  peers,
+  currentSid,
+}: {
+  lastLiveSessions: LastLiveSession[];
+  peers: PeerInfo[];
+  currentSid: string | null;
+}) {
+  const { store } = useApp();
+  const rows = useMemo(
+    () => sortLastLiveSessions(visibleLastLiveSessions(lastLiveSessions, peers)),
+    [lastLiveSessions, peers],
+  );
+  // No `useTick` of its own: SessionList already ticks and re-renders this
+  // subtree, which is what keeps the "最終確認" age below moving.
+  if (rows.length === 0) return null;
+  return (
+    <Fold
+      open
+      class="session-section last-live-section"
+      summaryClass="session-section-summary"
+      summary={`前回稼働中 (${rows.length})`}
+    >
+      <ul class="session-section-list">
+        {rows.map((entry) => (
+          <LastLiveSessionRow
+            key={entry.sid}
+            entry={entry}
+            currentSid={currentSid}
+            onResume={() =>
+              store.dispatch({
+                type: "session-creator/prefill",
+                prefill: lastLiveResumePrefill(entry),
+              })
+            }
+          />
+        ))}
+      </ul>
+    </Fold>
+  );
+}
+
 /** Extra class for a status section's `<Fold>`, for the two sections that
  * need the reader's attention:
  * - `waiting`: ユーザ対応を促す強調 (warn 色 + 跳ねアニメーション、
@@ -701,7 +835,7 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions } =
+  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, lastLiveSessions } =
     useStoreState(store);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
@@ -718,6 +852,11 @@ export function SessionList({
         pinnedSessions={pinnedSessions}
         peers={peers}
         agentsBySid={agentsBySid}
+        currentSid={currentSid}
+      />
+      <LastLiveSessionsSection
+        lastLiveSessions={lastLiveSessions}
+        peers={peers}
         currentSid={currentSid}
       />
       {sections.map((section) => (
