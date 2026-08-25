@@ -2026,6 +2026,15 @@ export interface RoomSummary {
   /** room kind (DR-0013); absent = "normal". webui shows a broadcast badge
    * and swaps the Composer for a broadcast-target picker when this is set. */
   kind?: RoomKind;
+  /** How many of `members` currently have a connected session — i.e. how many
+   * people in this room can be reached right now. The User (`ADMIN_ID`) is
+   * never counted: it is an implicit member of every room with no session
+   * behind it, so counting it would make every room look inhabited. Derived
+   * from the live session registry on each request (never persisted), so it
+   * changes on every connect/disconnect. `0` means nobody in the room is
+   * reachable; absent means the daemon predates the field (a client must then
+   * treat liveness as unknown rather than as zero). */
+  live_members?: number;
 }
 export interface RoomsResponse {
   ok: true;

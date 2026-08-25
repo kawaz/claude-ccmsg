@@ -2116,19 +2116,31 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "rooms": {
-      const rooms = [...daemon.rooms.values()].map((r) => ({
-        id: r.id,
-        ...(r.title ? { title: r.title } : {}),
-        members: presentMembers(r),
-        last_mid: r.lastMid,
-        last_ts: lastTs(r),
-        ...(r.archived ? { archived: true } : {}),
-        // DR-0013 broadcast / DR-0014 1on1: surface non-`"normal"` kind so
-        // CLI can badge and webui can pick the right Composer variant (or
-        // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
-        // absence of the field.
-        ...(r.kind !== "normal" ? { kind: r.kind } : {}),
-      }));
+      // Sids with at least one open connection — the same liveness the `peers`
+      // op reports, computed once here instead of per room. Clients used to
+      // have to fetch `peers` separately and intersect it with each room's
+      // member list to tell an inhabited room from a dormant one; `live_members`
+      // (see RoomSummary) hands them that count directly.
+      const liveSids = new Set(
+        [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid),
+      );
+      const rooms = [...daemon.rooms.values()].map((r) => {
+        const members = presentMembers(r);
+        return {
+          id: r.id,
+          ...(r.title ? { title: r.title } : {}),
+          members,
+          live_members: members.filter((m) => m.id !== ADMIN_ID && liveSids.has(m.sid)).length,
+          last_mid: r.lastMid,
+          last_ts: lastTs(r),
+          ...(r.archived ? { archived: true } : {}),
+          // DR-0013 broadcast / DR-0014 1on1: surface non-`"normal"` kind so
+          // CLI can badge and webui can pick the right Composer variant (or
+          // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
+          // absence of the field.
+          ...(r.kind !== "normal" ? { kind: r.kind } : {}),
+        };
+      });
       send(conn, { ok: true, rooms });
       return;
     }

@@ -49,6 +49,33 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   };
 }
 
+/** Open a session connection and keep it open, so the daemon counts `sid` as
+ * connected (`rooms`' `live_members`, and hence what `ccmsg rooms` shows by
+ * default). A one-shot `runCli` can't stand in for this: it exits as soon as
+ * it prints, so the sid it registered is already disconnected by the time the
+ * next command asks. Resolves once the daemon has replied to the hello — the
+ * connection is registered by then. Returns a closer. */
+async function holdSession(sock: string, sid: string): Promise<() => void> {
+  return await new Promise<() => void>((resolve, reject) => {
+    void Bun.connect({
+      unix: sock,
+      socket: {
+        open(s) {
+          s.write(`${JSON.stringify({ op: "hello", role: "session", sid })}\n`);
+        },
+        data(s) {
+          resolve(() => {
+            s.end();
+          });
+        },
+        error(_s, e) {
+          reject(e);
+        },
+      },
+    });
+  });
+}
+
 const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
@@ -79,8 +106,11 @@ describe("ccmsg CLI end-to-end", () => {
       expect(created.ok).toBe(true);
       const room = created.room;
 
-      // session identity was applied: the room's sole member is S1 (id "a1")
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      // session identity was applied: the room's sole member is S1 (id "a1").
+      // `--all` because S1 only ever connected for the one-shot create-room —
+      // the default listing hides a room nobody is connected to, which is a
+      // separate behaviour with its own test.
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { id: string; members: { id: string; sid: string }[] }[];
       };
       expect(rooms.rooms.length).toBe(1);
@@ -325,7 +355,9 @@ describe("ccmsg CLI end-to-end", () => {
         (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      // `--all`: 一度きりの create-room で繋いだ S1/S2 はもう切断済みで、
+      // 既定の一覧は接続中メンバーが居ない room を隠す (別テストで検証)。
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { id: string; sid: string }[] }[];
       };
       // 順序は S1 (呼び出し元、a1) → S2 (a2)
@@ -348,7 +380,7 @@ describe("ccmsg CLI end-to-end", () => {
           .out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { id: string; sid: string }[] }[];
       };
       expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S2"]);
@@ -433,7 +465,7 @@ describe("ccmsg CLI end-to-end", () => {
       const created = JSON.parse(createdRes.out) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
       // 呼び出し元 sid = S1 が member に入っている
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
       expect(rooms.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "PEER"]);
@@ -506,7 +538,7 @@ describe("ccmsg CLI end-to-end", () => {
       const room = created.room;
 
       // register S2 as a resolvable session so its member row exists (create-room adds it eagerly)
-      const before = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const before = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
       expect(before.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1", "S2"]);
@@ -519,7 +551,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(left.ok).toBe(true);
       expect(left.room).toBe(room);
 
-      const after = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const after = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { members: { sid: string }[] }[];
       };
       expect(after.rooms[0]!.members.map((m) => m.sid)).toEqual(["S1"]);
@@ -864,7 +896,10 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
         (await runCli(["--sid", "S1", "create-room", "--kind", "broadcast"], env)).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      // `--all`: broadcast room の member は接続中 session から自動populate
+      // されるので、既定の一覧に載るかは「この瞬間どの session が繋がって
+      // いるか」次第になる。ここで見たいのは kind の露出なので固定する。
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { id: string; kind?: string }[];
       };
       const room = rooms.rooms.find((r) => r.id === created.room)!;
@@ -1103,22 +1138,85 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         });
       });
 
-      // デフォルト: active の r2 だけ + archived_omitted=1
-      const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
-        rooms: { id: string }[];
-        archived_omitted?: number;
-      };
-      expect(dflt.rooms.map((r) => r.id)).toEqual([r2.room]);
-      expect(dflt.archived_omitted).toBe(1);
+      // S1 を繋いだままにして、r1 / r2 の両方が「接続中メンバー有り」に
+      // なるようにする。そうしないと無人フィルタ (別テスト) も同時に効いて
+      // しまい、ここで見たい archive フィルタ単体の効果が分からなくなる。
+      const releaseS1 = await holdSession(sock, "S1");
+      try {
+        // デフォルト: active の r2 だけ + archived_omitted=1
+        const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
+          rooms: { id: string }[];
+          archived_omitted?: number;
+          inactive_omitted?: number;
+        };
+        expect(dflt.rooms.map((r) => r.id)).toEqual([r2.room]);
+        expect(dflt.archived_omitted).toBe(1);
+        expect(dflt.inactive_omitted).toBeUndefined();
 
-      // --all: 両方見える (archived room には archived:true が付く)
-      const all = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
-        rooms: { id: string; archived?: boolean }[];
-        archived_omitted?: number;
-      };
-      expect(all.rooms.map((r) => r.id).sort()).toEqual([r1.room, r2.room].sort());
-      expect(all.rooms.find((r) => r.id === r1.room)?.archived).toBe(true);
-      expect(all.archived_omitted).toBeUndefined();
+        // --all: 両方見える (archived room には archived:true が付く)
+        const all = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
+          rooms: { id: string; archived?: boolean }[];
+          archived_omitted?: number;
+        };
+        expect(all.rooms.map((r) => r.id).sort()).toEqual([r1.room, r2.room].sort());
+        expect(all.rooms.find((r) => r.id === r1.room)?.archived).toBe(true);
+        expect(all.archived_omitted).toBeUndefined();
+      } finally {
+        releaseS1();
+      }
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか: 誰も archive しないまま残った古い room (1on1 が主) が
+  // `ccmsg rooms` の既定出力に溜まり続け、AI セッションの context を無駄に
+  // 食う問題への対処。archive フラグではなく「present member の誰かが今
+  // 接続しているか」(RoomSummary.live_members) で絞るので、room データは
+  // 一切書き換わらず、相手が繋ぎ直せば黙って既定出力へ戻る。
+  test("rooms は接続中メンバーが居ない room を省き --all で全件 (省略数は inactive_omitted で申告)", async () => {
+    const { env, sock, cleanup } = (() => {
+      const made = makeEnv();
+      return { ...made, sock: path.join(made.env.CCMSG_STATE_DIR!, "daemon.sock") };
+    })();
+    try {
+      // 繋ぎっぱなしにする S1 の room と、作った直後に切断した S3 の room。
+      // member set が違うので create-room の dedup では 1 つにならない。
+      const attended = JSON.parse(
+        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
+      ) as { room: string };
+      const deserted = JSON.parse(
+        (await runCli(["--sid", "S3", "create-room", "--members", "S4"], env)).out,
+      ) as { room: string };
+
+      const releaseS1 = await holdSession(sock, "S1");
+      try {
+        const dflt = JSON.parse((await runCli(["rooms"], env)).out) as {
+          rooms: { id: string; live_members?: number }[];
+          inactive_omitted?: number;
+          archived_omitted?: number;
+          hint?: string;
+        };
+        expect(dflt.rooms.map((r) => r.id)).toEqual([attended.room]);
+        // 4 人の member 宣言があっても、繋がっているのは S1 だけ。
+        expect(dflt.rooms[0]!.live_members).toBe(1);
+        expect(dflt.inactive_omitted).toBe(1);
+        expect(dflt.archived_omitted).toBeUndefined();
+        expect(dflt.hint).toBe("--all で全件表示");
+
+        const all = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
+          rooms: { id: string; live_members?: number }[];
+          inactive_omitted?: number;
+          hint?: string;
+        };
+        expect(all.rooms.map((r) => r.id).sort()).toEqual([attended.room, deserted.room].sort());
+        expect(all.rooms.find((r) => r.id === deserted.room)?.live_members).toBe(0);
+        expect(all.inactive_omitted).toBeUndefined();
+        expect(all.hint).toBeUndefined();
+      } finally {
+        releaseS1();
+      }
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
@@ -1138,7 +1236,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           .out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { id: string; title?: string }[];
       };
       const r = rooms.rooms.find((x) => x.id === created.room)!;
@@ -1173,7 +1271,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         ).out,
       ) as { ok: boolean; room: string };
       expect(created.ok).toBe(true);
-      const rooms = JSON.parse((await runCli(["rooms"], env)).out) as {
+      const rooms = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
         rooms: { id: string; title?: string }[];
       };
       const r = rooms.rooms.find((x) => x.id === created.room)!;

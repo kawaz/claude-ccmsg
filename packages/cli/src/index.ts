@@ -493,8 +493,9 @@ Commands:
                                jsonl to a file and prints only its path (bare --out
                                auto-names it under <data>/dumps/)
   leave <room>                 Leave a room
-  rooms                        List active rooms (id / title / members / last_mid;
-                               archived rooms are omitted — use --all to include)
+  rooms                        List active rooms (id / title / members / last_mid /
+                               live_members; archived rooms and rooms whose members
+                               are all disconnected are omitted — use --all to include)
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
@@ -518,7 +519,8 @@ Command Options:
                                1on1: User + one session, --members must be a single sid)
   --msg <text>                 create-room / next-room: initial message
   --title <text>               create-room / next-room: room title
-  --all                        rooms: include archived rooms (default: active only)
+  --all                        rooms: include archived and all-disconnected rooms
+                               (default: only rooms with a connected member)
   --since <value>              subscribe: per-room last-seen seq JSON, e.g. '{"r7":7}';
                                dump: inclusive lower bound — an ISO 8601 timestamp with
                                timezone, or a transcript record uuid. A uuid cuts at that
@@ -798,10 +800,12 @@ async function main(): Promise<void> {
       return;
     }
     case "rooms": {
-      // デフォルトは active (非 archive) のみ (kawaz r17 mid=23、2026-07-15):
-      // AI セッションが rooms を叩くたびに archive 済み room 全件 (運用が
-      // 進むほど増える) が context に乗るのは無駄で、探す効率も落ちる。
-      // 全件は --all でオプトイン。絞りは CLI 側で行う — webui の op:"rooms"
+      // デフォルトは「今この場で話せる room」だけ (kawaz r17 mid=23、
+      // 2026-07-15 に archive 除外、r?? で無人 room 除外を追加):
+      // AI セッションが rooms を叩くたびに、archive 済み room と、誰も
+      // 接続していない古い room (誰も archive しないまま溜まる 1on1 が
+      // 主) が全件 context に乗るのは無駄で、探す効率も落ちる。全件は
+      // --all でオプトイン。絞りは CLI 側で行う — webui の op:"rooms"
       // (全件 + 表示側で折り畳み) に影響させないため。
       if (opts.all) {
         await runOnce(identity, { op: "rooms" });
@@ -810,21 +814,34 @@ async function main(): Promise<void> {
       const paths = resolvePaths();
       const client = await ensureDaemon(paths, identity);
       const res = await client.request<
-        { ok?: boolean; rooms?: Array<{ archived?: boolean }> } & Record<string, unknown>
+        {
+          ok?: boolean;
+          rooms?: Array<{ archived?: boolean; live_members?: number }>;
+        } & Record<string, unknown>
       >({ op: "rooms" });
       client.close();
       if (res.ok && Array.isArray(res.rooms)) {
-        const total = res.rooms.length;
-        const rooms = res.rooms.filter((r) => !r.archived);
-        // archived_omitted で「絞られている」ことを機械可読に示す (0 件なら
-        // 省略)。「見えない = 存在しない」と誤認して create-room で重複を
-        // 作る事故を防ぐ ([[interface-wording]] の空状態原則)。
-        const omitted = total - rooms.length;
+        const live = res.rooms.filter((r) => !r.archived);
+        const archivedOmitted = res.rooms.length - live.length;
+        // live_members === 0 = present member の誰一人 session を繋いでいない
+        // room。post しても読む相手が居ないので既定では隠す。`undefined` は
+        // フィールドを持たない古い daemon なので「不明」= 絞らない側に倒す
+        // (0 と同一視すると全 room が消える)。
+        const rooms = live.filter((r) => r.live_members === undefined || r.live_members > 0);
+        const inactiveOmitted = live.length - rooms.length;
+        // *_omitted で「絞られている」ことを機械可読に示す (0 件なら省略)。
+        // 「見えない = 存在しない」と誤認して create-room で重複を作る事故を
+        // 防ぐ ([[interface-wording]] の空状態原則)。
         process.exit(
           output({
             ...res,
             rooms,
-            ...(omitted > 0 ? { archived_omitted: omitted, hint: "--all で全件表示" } : {}),
+            ...(archivedOmitted > 0 ? { archived_omitted: archivedOmitted } : {}),
+            // inactive = 接続中メンバー 0 (room 自体は生きている、archive
+            // でもない)。話しかけたい相手が居るなら --all で拾って post
+            // できる。
+            ...(inactiveOmitted > 0 ? { inactive_omitted: inactiveOmitted } : {}),
+            ...(archivedOmitted > 0 || inactiveOmitted > 0 ? { hint: "--all で全件表示" } : {}),
           }),
         );
       }

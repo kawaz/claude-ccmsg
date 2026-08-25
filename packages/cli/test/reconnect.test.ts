@@ -182,7 +182,11 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         expect(fs.existsSync(sock)).toBe(false);
 
         // 再 spawn: `rooms` 呼び出しの ensureDaemon が新 daemon を起動する。
-        const roomsAfter = JSON.parse((await runCli(["rooms"], env)).out) as {
+        // `--all`: 見たいのは「新 daemon が room を復元したか」で、この時点の
+        // subscribe はまだ再接続 backoff の途中かもしれない。既定の一覧は
+        // 接続中メンバーが居ない room を隠すので、そのタイミング次第で
+        // 結果が変わってしまう。
+        const roomsAfter = JSON.parse((await runCli(["rooms", "--all"], env)).out) as {
           ok: boolean;
           rooms: { id: string }[];
         };
