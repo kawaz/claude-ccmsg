@@ -233,7 +233,9 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
    * on the resume recipe with the session and its cwd filled in. A hit with no
    * cwd still opens the form — the cwd picker starts empty and the run button
    * stays disabled until one is picked, which is the same state a plain open
-   * has. */
+   * has. The title travels too: `claude --resume` does not restore one, so a
+   * relaunch that did not carry it would come back under a derived name and
+   * lose the name the row is showing right here. */
   function resumeResult(hit: SessionSearchHit): void {
     store.dispatch({
       type: "session-creator/prefill",
@@ -243,6 +245,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
         sessionId: hit.sid,
         ...(hit.model ? { model: hit.model } : {}),
         ...(hit.effort ? { effort: hit.effort } : {}),
+        ...(hit.title ? { title: hit.title } : {}),
       },
     });
   }

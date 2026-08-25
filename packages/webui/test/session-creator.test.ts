@@ -56,12 +56,13 @@ const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$
 
 const RESUME = template(
   "resume",
-  'run --resume "$SESSION_ID" --model "$MODEL" --effort "$EFFORT"',
+  'run --resume "$SESSION_ID" --model "$MODEL" --effort "$EFFORT" --name "$TITLE"',
   {
     CWD: "",
     SESSION_ID: "",
     MODEL: "fable",
     EFFORT: "medium",
+    TITLE: "",
     PROMPT: "",
   },
 );
@@ -154,6 +155,36 @@ describe("initialSessionCreatorForm", () => {
       effort: "high",
     });
     expect(form.params).toMatchObject({ MODEL: "opus", EFFORT: "high" });
+  });
+
+  // `claude --resume` comes back under a name it derives from the directory
+  // unless it is told one, and that derived name then wins over the session's
+  // own title wherever live name does. Carrying the title into the recipe's
+  // TITLE parameter is what keeps a resumed session called what it was.
+  test("a resume prefill seeds the session's own title", () => {
+    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+      ...RESUME_PREFILL,
+      title: "案件メモ",
+    });
+    expect(form.params).toMatchObject({ TITLE: "案件メモ", SESSION_ID: "sid-1" });
+  });
+
+  // A session that was never renamed has no title to carry: the parameter
+  // stays at its declared default (empty), which is the recipe's signal to
+  // launch without --name rather than with an empty one.
+  test("a resume prefill with no title leaves the declared default in place", () => {
+    expect(initialSessionCreatorForm([PLAIN, RESUME], RESUME_PREFILL).params.TITLE).toBe("");
+    expect(
+      initialSessionCreatorForm([PLAIN, RESUME], { ...RESUME_PREFILL, title: "   " }).params.TITLE,
+    ).toBe("");
+  });
+
+  // An un-migrated resume recipe that predates the TITLE parameter: the seed
+  // has nowhere to land and is dropped, exactly like an undeclared model.
+  test("a resume recipe declaring no title ignores that seed", () => {
+    const bare = template("resume", 'run --resume "$SESSION_ID"', { CWD: "", SESSION_ID: "" });
+    const form = initialSessionCreatorForm([bare], { ...RESUME_PREFILL, title: "案件メモ" });
+    expect(form.params).toEqual({ CWD: "/repos/app", SESSION_ID: "sid-1" });
   });
 
   // Same rule as a fork's: a value with no honest mapping leaves the declared

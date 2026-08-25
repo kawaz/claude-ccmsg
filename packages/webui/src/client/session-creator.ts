@@ -43,6 +43,14 @@ export const RESUME_AT_PARAM = "RESUME_AT";
  * point, a resume re-enters the session itself at its end. */
 export const SESSION_ID_PARAM = "SESSION_ID";
 
+/** Parameter name carrying the name the relaunched session should run under
+ * (`claude --name`). A resume seeds it with the title the session already had,
+ * because the CLI does not restore one: a `claude --resume` with no `--name`
+ * registers under a name it derives from the directory (observed:
+ * `"name":"main-41","nameSource":"derived"` in the peer's session record),
+ * which then displaces the session's own title everywhere live name wins. */
+export const TITLE_PARAM = "TITLE";
+
 /** Which input a declared parameter gets. Chosen by name, because a name is
  * all the form knows about a parameter it did not invent: the four it
  * recognizes have a better control than a text box, and anything else — a
@@ -102,6 +110,12 @@ export interface ResumePrefill {
    * fork maps its source's. Absent when the search could not establish them. */
   model?: string;
   effort?: string;
+  /** The title the session already carries (`SessionSearchHit.title`, from the
+   * transcript's `custom-title` records). Seeded so the relaunched process
+   * registers under its own name instead of a derived one. Absent when the
+   * session was never renamed — there is nothing to carry, and the recipe's
+   * declared default decides what happens then. */
+  title?: string;
 }
 
 /** How the launcher was opened with a session already in hand. The two kinds
@@ -266,9 +280,11 @@ function paramValues(
 }
 
 /** The parameter values an opening carries with it. A fork brings its fork
- * point; a resume brings the session and, unlike a fork, its own cwd and
- * model/effort — the search hit carries all three, and a historical session has
- * no live peer row or status entry for `forkSourceDefaults` to read them from.
+ * point; a resume brings the session and, unlike a fork, its own cwd,
+ * model/effort and title — the search hit carries them all, and a historical
+ * session has no live peer row or status entry for `forkSourceDefaults` to
+ * read them from. A blank title is left out rather than seeded as "", so a
+ * session that never had one keeps the recipe's declared default.
  * The session id is placed last so it cannot be displaced. A blank cwd is left out
  * rather than seeded, so a recipe with a declared default CWD keeps it and the
  * picker opens in "editing" mode for the user to choose. */
@@ -277,9 +293,11 @@ function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, stri
   if (prefill.kind === "fork") {
     return { [RESUME_SID_PARAM]: prefill.resumeSid, [RESUME_AT_PARAM]: prefill.resumeAt };
   }
+  const title = prefill.title?.trim();
   return {
     ...(prefill.cwd.trim() === "" ? {} : { [LAUNCHER_CWD_PARAM]: prefill.cwd }),
     ...launchDefaultsFromTranscript(prefill),
+    ...(title ? { [TITLE_PARAM]: title } : {}),
     [SESSION_ID_PARAM]: prefill.sessionId,
   };
 }
