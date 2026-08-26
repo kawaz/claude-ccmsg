@@ -11,7 +11,7 @@
 // doc comment) — `collectByType`/`flattenText` below walk that VNode tree by
 // hand via `.type`/`.props.children`, which is all Preact's `h()` output
 // exposes without a DOM.
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { VNode } from "preact";
 import type { Root } from "mdast";
 import {
@@ -1434,6 +1434,63 @@ describe("renderMarkdownAst / markdown links to files", () => {
     expect(hrefOf(a[0]!)).toBe("https://example.com/x");
     expect((a[0]!.props as { target?: string }).target).toBe("_blank");
     expect((a[0]!.props as { rel?: string }).rel).toBe("noopener noreferrer");
+  });
+
+  // Self-referential ccmsg links (a session sharing its own webui URL) must
+  // not get the new-tab treatment: same reasoning as the path/anchor cases
+  // above (a standalone PWA has no way back). `location` does not exist in
+  // this bun:test environment (no DOM), matching the guard in
+  // `currentOrigin()` — these tests shim it in and restore it after.
+  describe("with a same-origin absolute URL (location shimmed in)", () => {
+    const origin = "https://ccmsg.example.com";
+    const previousLocation = (globalThis as { location?: unknown }).location;
+
+    beforeEach(() => {
+      Object.defineProperty(globalThis, "location", {
+        value: new URL(`${origin}/s/current`),
+        configurable: true,
+      });
+    });
+
+    afterEach(() => {
+      if (previousLocation === undefined) {
+        delete (globalThis as { location?: unknown }).location;
+      } else {
+        Object.defineProperty(globalThis, "location", {
+          value: previousLocation,
+          configurable: true,
+        });
+      }
+    });
+
+    test("a link back to this webui's own origin opens same-tab", () => {
+      const vnode = renderMarkdownAst(linkRoot(`${origin}/s/abc/timeline/head`));
+      const a = anchors(vnode);
+      expect(a).toHaveLength(1);
+      expect(hrefOf(a[0]!)).toBe(`${origin}/s/abc/timeline/head`);
+      expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+      expect((a[0]!.props as { rel?: string }).rel).toBeUndefined();
+    });
+
+    test("a link to a different origin still opens a new tab", () => {
+      const vnode = renderMarkdownAst(linkRoot("https://example.com/x"));
+      const a = anchors(vnode);
+      expect(a).toHaveLength(1);
+      expect((a[0]!.props as { target?: string }).target).toBe("_blank");
+      expect((a[0]!.props as { rel?: string }).rel).toBe("noopener noreferrer");
+    });
+
+    // A relative link's routing (the FileViewer `path` kind) must stay
+    // completely untouched by the `currentOrigin` addition.
+    test("a relative path link is still routed as a path target, unaffected", () => {
+      const vnode = renderMarkdownAst(linkRoot("docs/spec.md"), undefined, undefined, {
+        pathLinker: () => "#sSID:docs%2Fspec.md",
+      });
+      const a = anchors(vnode);
+      expect(a).toHaveLength(1);
+      expect(hrefOf(a[0]!)).toBe("#sSID:docs%2Fspec.md");
+      expect((a[0]!.props as { target?: string }).target).toBeUndefined();
+    });
   });
 
   test("in-page anchors stay same-window links", () => {

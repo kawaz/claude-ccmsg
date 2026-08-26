@@ -86,6 +86,57 @@ describe("classifyMarkdownLinkUrl", () => {
   test("an empty target disarms rather than resolving to the anchor directory", () => {
     expect(classifyMarkdownLinkUrl("")).toEqual({ kind: "disarm" });
   });
+
+  // A markdown body can carry a self-referential link — e.g. a ccmsg session
+  // sharing its own webui URL. Rendered with the default new-tab treatment,
+  // that link strands a standalone PWA user on a duplicate tab of the same
+  // app. Only an *absolute* URL matching `currentOrigin` gets this treatment;
+  // it must not interact with the scheme-less relative-link (`path`) routing
+  // tested above, which is unconditional.
+  describe("with a currentOrigin supplied", () => {
+    const origin = "https://ccmsg.example.com";
+
+    test("an absolute URL matching currentOrigin is internal, not external", () => {
+      expect(classifyMarkdownLinkUrl(`${origin}/s/abc/timeline/head`, origin)).toEqual({
+        kind: "internal",
+        url: `${origin}/s/abc/timeline/head`,
+      });
+    });
+
+    test("an absolute URL on a different origin stays external", () => {
+      expect(classifyMarkdownLinkUrl("https://example.com/x", origin)).toEqual({
+        kind: "external",
+        url: "https://example.com/x",
+      });
+    });
+
+    test("mailto: never becomes internal even if it were textually similar", () => {
+      expect(classifyMarkdownLinkUrl("mailto:a@example.com", origin)).toEqual({
+        kind: "external",
+        url: "mailto:a@example.com",
+      });
+    });
+
+    test("relative paths are unaffected — still path targets, not internal", () => {
+      expect(classifyMarkdownLinkUrl("docs/spec.md", origin)).toEqual({
+        kind: "path",
+        ref: { path: "docs/spec.md" },
+      });
+    });
+
+    test("a protocol-relative URL still disarms rather than becoming internal", () => {
+      expect(classifyMarkdownLinkUrl(`//${new URL(origin).host}/x`, origin)).toEqual({
+        kind: "disarm",
+      });
+    });
+  });
+
+  test("with no currentOrigin, a same-looking absolute URL stays external (unchanged default)", () => {
+    expect(classifyMarkdownLinkUrl("https://ccmsg.example.com/s/abc")).toEqual({
+      kind: "external",
+      url: "https://ccmsg.example.com/s/abc",
+    });
+  });
 });
 
 describe("markdownLinkPathRef", () => {

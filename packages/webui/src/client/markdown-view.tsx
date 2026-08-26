@@ -41,6 +41,14 @@ import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
 
+/** `location.origin`, or `null` where there is no `location` (unit tests
+ * render `renderMarkdownAst` outside a DOM). Kept as a tiny wrapper rather
+ * than inlining the guard at each of `classifyMarkdownLinkUrl`'s three call
+ * sites below. */
+function currentOrigin(): string | null {
+  return typeof location === "undefined" ? null : location.origin;
+}
+
 // `isSafeUrl` moved to markdown-link.ts (scheme policy and path policy are two
 // answers to the same question); re-exported here so existing importers and
 // DR-0010's named coverage target keep resolving through this module.
@@ -461,7 +469,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
         );
       }
       // kawaz r55 m116/m117. Four outcomes, see `classifyMarkdownLinkUrl`.
-      const target = classifyMarkdownLinkUrl(link.url);
+      const target = classifyMarkdownLinkUrl(link.url, currentOrigin());
       const label = renderChildren(link.children, key, ctx);
       if (target.kind === "disarm") {
         // Render the link's own text with no <a>/href at all, so neither a
@@ -493,7 +501,11 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
           </a>
         );
       }
-      if (target.kind === "anchor") {
+      if (target.kind === "anchor" || target.kind === "internal") {
+        // `internal`: an absolute URL that resolves back to this webui's own
+        // origin — e.g. a session link pasted from the address bar. No
+        // `target="_blank"`, same reasoning as the `path` case above: it
+        // names a place inside this same app, not an off-app destination.
         return (
           <a key={key} href={target.url} title={link.title ?? undefined}>
             {label}
@@ -521,7 +533,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // instead as alt text plus a clickable link the user opts into.
       const image = node as Image;
       const label = image.alt || image.url;
-      const target = classifyMarkdownLinkUrl(image.url);
+      const target = classifyMarkdownLinkUrl(image.url, currentOrigin());
       if (target.kind === "disarm") {
         return <span key={key}>🖼 {label}</span>;
       }
@@ -543,7 +555,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
           </a>
         );
       }
-      if (target.kind === "anchor") {
+      if (target.kind === "anchor" || target.kind === "internal") {
         return (
           <a key={key} class="md-image-link" href={target.url}>
             🖼 {label}
@@ -1214,7 +1226,7 @@ function renderRestrictedLink(label: string, url: string, key: string): VNode {
       </a>
     );
   }
-  const target = classifyMarkdownLinkUrl(url);
+  const target = classifyMarkdownLinkUrl(url, currentOrigin());
   // Restricted mode has no `pathLinker` (a user-typed path isn't a
   // session-scoped reference — same reasoning that keeps `filePathLinker` off
   // this path), so a path target renders inert rather than navigating the
@@ -1229,7 +1241,7 @@ function renderRestrictedLink(label: string, url: string, key: string): VNode {
     // the string we don't want to surface.
     return <span key={key}>{label}</span>;
   }
-  if (target.kind === "anchor") {
+  if (target.kind === "anchor" || target.kind === "internal") {
     return (
       <a key={key} href={target.url}>
         {label || url}

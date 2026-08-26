@@ -71,6 +71,14 @@ export function isSafeUrl(url: string): boolean {
  *    shown; only the navigation is withheld.
  *  - `external` — a real off-app destination (http/https/mailto). Unchanged
  *    from before: opens in a new tab.
+ *  - `internal` — an absolute http(s) URL that happens to point back at this
+ *    webui's own origin (e.g. a session link pasted from the address bar).
+ *    Only classified when the caller supplies `currentOrigin`; opens in the
+ *    same tab like `path`/`anchor` rather than a fresh tab, since it names a
+ *    place inside this same app. Deliberately narrower than `path`'s
+ *    scheme-less relative-link handling — this only ever matches a full
+ *    scheme'd URL, so it cannot interact with the existing relative-link
+ *    routing that `path` already owns.
  *  - `anchor` — `#fragment`, in-page navigation. Unchanged.
  *  - `path` — a target on the session's filesystem. The caller resolves `ref`
  *    against the sender/preview anchor and opens the FileViewer.
@@ -78,6 +86,7 @@ export function isSafeUrl(url: string): boolean {
 export type MarkdownLinkTarget =
   | { kind: "disarm" }
   | { kind: "external"; url: string }
+  | { kind: "internal"; url: string }
   | { kind: "anchor"; url: string }
   | { kind: "path"; ref: ParsedFilePathRef };
 
@@ -143,11 +152,31 @@ export function markdownLinkPathRef(url: string): ParsedFilePathRef | null {
   return { path, line: start };
 }
 
-/** Decide what to do with one markdown link/image target. */
-export function classifyMarkdownLinkUrl(url: string): MarkdownLinkTarget {
+/** Decide what to do with one markdown link/image target.
+ *
+ * `currentOrigin` (typically `location.origin`, `undefined` in contexts —
+ * such as unit tests — with no `location`) is used only to catch an
+ * *absolute* http(s) URL that names this same webui, so it opens in-app
+ * instead of a new tab. It plays no role in the scheme-less relative-link
+ * path below (`path` kind) — that routing is unconditional and unaffected by
+ * whether an origin was supplied. */
+export function classifyMarkdownLinkUrl(
+  url: string,
+  currentOrigin?: string | null,
+): MarkdownLinkTarget {
   const scheme = urlScheme(url);
   if (scheme !== null) {
-    return ALLOWED_URL_SCHEMES.has(scheme + ":") ? { kind: "external", url } : { kind: "disarm" };
+    if (!ALLOWED_URL_SCHEMES.has(scheme + ":")) return { kind: "disarm" };
+    if (currentOrigin && (scheme === "http" || scheme === "https")) {
+      let urlOrigin: string | null = null;
+      try {
+        urlOrigin = new URL(url).origin;
+      } catch {
+        urlOrigin = null;
+      }
+      if (urlOrigin === currentOrigin) return { kind: "internal", url };
+    }
+    return { kind: "external", url };
   }
   if (url.startsWith("#")) return { kind: "anchor", url };
   const ref = markdownLinkPathRef(url);
