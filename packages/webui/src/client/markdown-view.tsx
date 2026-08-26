@@ -692,26 +692,35 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       const table = node as Table;
       const align = table.align ?? [];
       return (
-        <table key={key}>
-          <tbody>
-            {table.children.map((row, ri) => (
-              <tr key={`${key}.${ri}`}>
-                {row.children.map((cell, ci) => {
-                  const cellTag = ri === 0 ? "th" : "td";
-                  const cellAlign = align[ci];
-                  return h(
-                    cellTag,
-                    {
-                      key: `${key}.${ri}.${ci}`,
-                      style: cellAlign ? { textAlign: cellAlign } : undefined,
-                    },
-                    renderChildren(cell.children, `${key}.${ri}.${ci}`, ctx),
-                  ) as VNode;
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        // Wrapper scrolls horizontally so a wide table (many columns) doesn't
+        // get squeezed into the container's width and wrap every cell onto
+        // several lines — the table itself keeps its natural (unwrapped)
+        // width via `.md table { width: max-content }` in app.css, and this
+        // div is what actually clips/scrolls. See app.css's `.md-table-scroll`
+        // doc comment for why the scroll container has to be a separate
+        // element rather than `overflow-x` on the table itself.
+        <div class="md-table-scroll" key={key}>
+          <table>
+            <tbody>
+              {table.children.map((row, ri) => (
+                <tr key={`${key}.${ri}`}>
+                  {row.children.map((cell, ci) => {
+                    const cellTag = ri === 0 ? "th" : "td";
+                    const cellAlign = align[ci];
+                    return h(
+                      cellTag,
+                      {
+                        key: `${key}.${ri}.${ci}`,
+                        style: cellAlign ? { textAlign: cellAlign } : undefined,
+                      },
+                      renderChildren(cell.children, `${key}.${ri}.${ci}`, ctx),
+                    ) as VNode;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     }
 

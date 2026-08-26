@@ -4620,9 +4620,23 @@ button.session-tab {
   line-height: 1.55;
 }
 
+/* 列数の多い表は自然幅 (セル内改行なし) のまま組み、コンテナ幅が足りない分は
+ * この箱だけが横スクロールする。table 自身に `overflow-x: auto` を置かない
+ * (`.status-env-table` と違う手当て) 理由: table の使用幅は auto-layout の
+ * 規則で「コンテナ幅と MIN (改行可能な最小幅) の大きい方」に決まり、内容が
+ * 改行可能な限りコンテナ幅に収まってしまう — 表自身に `overflow-x: auto` を
+ * 足しても、そもそも自分の箱からはみ出す内容が発生しない。`.md table` 側で
+ * `width: max-content` を指定して改行させない幅を強制し、その結果コンテナを
+ * はみ出した分をこの兄弟の div (table 自身ではなく、幅がコンテナに固定された
+ * 別要素) が `overflow-x: auto` で受け止める。 */
+.md-table-scroll {
+  overflow-x: auto;
+  margin: var(--space-10) 0;
+}
+
 .md table {
   border-collapse: collapse;
-  margin: var(--space-10) 0;
+  width: max-content;
   font-size: var(--font-size-lg);
   line-height: 1.5;
 }
@@ -4726,7 +4740,7 @@ button.session-tab {
   color: inherit;
 }
 
-.viewer-preview .md table,
+.viewer-preview .md .md-table-scroll,
 .viewer-preview .md .md-code,
 .viewer-preview .md .md-details {
   margin: var(--space-13) 0;

@@ -673,6 +673,34 @@ describe("renderMarkdownAst / structural coverage", () => {
     );
   });
 
+  // A table with many columns must not be squeezed into the container's
+  // width (see app.css's `.md-table-scroll` doc comment for why) — the
+  // renderer wraps <table> in a `.md-table-scroll` div so app.css can scroll
+  // that div horizontally while the table itself keeps its natural width.
+  test("GFM table is wrapped in a .md-table-scroll div", () => {
+    const root: Root = {
+      type: "root",
+      children: [
+        {
+          type: "table",
+          children: [
+            {
+              type: "tableRow",
+              children: [{ type: "tableCell", children: [{ type: "text", value: "H1" }] }],
+            },
+          ],
+        },
+      ],
+    };
+    const vnode = renderMarkdownAst(root);
+    const wrappers = collect(
+      vnode,
+      (n) => n.type === "div" && (n.props as { class?: string }).class === "md-table-scroll",
+    );
+    expect(wrappers).toHaveLength(1);
+    expect(collect(wrappers[0], (n) => n.type === "table")).toHaveLength(1);
+  });
+
   // Plain text and a paragraph wrapper are the baseline case everything else
   // builds on.
   test("plain text inside a paragraph round-trips", () => {
