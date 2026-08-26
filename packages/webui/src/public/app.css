@@ -1167,6 +1167,15 @@ a {
   border-color: var(--accent);
 }
 
+/* 選択中 (このヒットの Timeline が今開いている、kawaz 指摘 2026-08-26:
+ * クリック後マウスが離れると選択中の行が分からなくなる) — hover の枠色を
+ * 持続させ、薄い accent tint を足して常設の選択装飾にする。SessionList の
+ * `.session-row.active-secondary` と同じ薄い tint (文字色は上書きしない)。 */
+.session-search-hit.active .session-search-hit-main {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-alt));
+}
+
 .session-search-hit-head {
   display: flex;
   align-items: center;

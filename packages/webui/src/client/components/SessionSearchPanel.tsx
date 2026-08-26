@@ -17,6 +17,7 @@ import {
 } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { selectedSid } from "../store.ts";
 import { timelineHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import {
@@ -44,6 +45,7 @@ import { SearchModeToggles } from "./SearchBar.tsx";
 function SearchResultRow({
   hit,
   pinned,
+  active,
   words,
   onSelect,
   onResume,
@@ -51,6 +53,12 @@ function SearchResultRow({
 }: {
   hit: SessionSearchHit;
   pinned: boolean;
+  /** This hit's sid is the sidebar's current selection (kawaz r99m2 相当: 検索
+   * 結果をクリックして Timeline を開いた後、マウスが離れてもどれを見ているか
+   * 分かるように) — same source of truth SessionList/RoomList use
+   * (`selectedSid`, see store.ts's doc comment), so a hit stays marked as long
+   * as its Timeline is what's open, and moves the moment another row is. */
+  active: boolean;
   words: SearchWord[];
   onSelect: () => void;
   onResume: () => void;
@@ -58,7 +66,7 @@ function SearchResultRow({
 }) {
   const { repo, ws } = sessionSearchHitLabel(hit);
   return (
-    <li class="session-search-hit">
+    <li class={active ? "session-search-hit active" : "session-search-hit"}>
       <div
         class="session-search-hit-main"
         role="button"
@@ -155,6 +163,7 @@ function SearchResultRow({
 export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
   const { store, ws } = useApp();
   const state = useStoreState(store);
+  const currentSid = selectedSid(state);
   const [form, setForm] = useState<SessionSearchForm>(DEFAULT_SESSION_SEARCH_FORM);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -358,6 +367,7 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
                 key={hit.sid}
                 hit={hit}
                 pinned={state.pinnedSessions.has(hit.sid)}
+                active={hit.sid === currentSid}
                 words={resultWords}
                 onSelect={() => openResult(hit)}
                 onResume={() => resumeResult(hit)}
