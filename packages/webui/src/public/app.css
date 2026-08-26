@@ -4491,10 +4491,13 @@ button.session-tab {
   color: var(--fg-muted);
 }
 /* 帯の中はもう地の色ではない — 中に入る code / 表はこの色を基準に測る。
- * 宣言先が子なのは、`--md-surface` を自分自身の値から作り直すと custom
- * property の循環参照になって値ごと無効になるため (親の値は子から見える)。 */
+ * 混ぜ直さずに帯の地色そのものを渡すのは、`--md-surface` の値の中で
+ * `var(--md-surface)` を引くと custom property の循環参照になって値ごと無効に
+ * なるため (var() は宣言した要素の上で解決されるので、宣言先を子にしても
+ * 親の値は取れない)。帯の地色は既に外側の面から導出済みなので、これを
+ * そのまま名前で渡せば混ぜる段数も一致する。 */
 .md blockquote > * {
-  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 4%);
+  --md-surface: var(--md-quote-bg);
 }
 
 /* 区切り線は「話題がここで変わる」の最も強い合図なので、前後の余白は見出しの
@@ -4519,9 +4522,10 @@ button.session-tab {
   border-radius: 0.35rem;
   background: var(--md-details-bg);
 }
-/* 畳んだ中身はこのパネルの上に載る (子に宣言する理由は blockquote と同じ)。 */
+/* 畳んだ中身はこのパネルの上に載る (パネルの地色を名前で渡す理由は
+ * blockquote と同じ)。 */
 .md-details > * {
-  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 5%);
+  --md-surface: var(--md-details-bg);
 }
 
 .md-details > summary {
@@ -4631,14 +4635,15 @@ button.session-tab {
 }
 /* 見出し行は地色だけでなく濃さでも列の見出しだと分かるようにする (本文の
  * 強調と同じ手当て)。 */
-.md th > * {
-  --md-surface: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
-}
 .md th {
   --md-table-head-bg: color-mix(in oklab, var(--md-surface), var(--fg) 8%);
   background: var(--md-table-head-bg);
   color: var(--fg-strong);
   font-weight: 700;
+}
+/* 見出しセルの中は見出し行の地の上 (地色を名前で渡す理由は blockquote と同じ)。 */
+.md th > * {
+  --md-surface: var(--md-table-head-bg);
 }
 
 /* --- 文書としての markdown (ファイルプレビュー)。上の `.md` が持つ 2 つの比
