@@ -594,6 +594,15 @@ a {
 .session-row {
   padding: var(--space-5) var(--space-8);
   border-radius: 0.4rem;
+  /* 行のどこを押してもセッション選択になる (SessionList.tsx の
+   * selectSessionOnRowClick) ので、文字の無い余白でも押せることを見せる。
+   * 中の sid / path は「なぞって読む」対象なので text カーソルに戻す。 */
+  cursor: pointer;
+}
+
+.session-row .session-sid,
+.session-row .session-cwd {
+  cursor: text;
 }
 
 .session-row.active {
@@ -810,13 +819,31 @@ a {
 /* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら
  * ない幅では sid ボタン側の ellipsis に任せる。 */
 .session-line3 {
+  /* 幅の基準は行ではなくリストの可視幅 — .session-line4 と同じ理由 (行は
+   * width:max-content なので、行幅を基準にすると器が中身ちょうどに広がって
+   * 折り返しが一生起きない)。sid 全長 + model/effort が可視幅に収まらない
+   * 細いサイドバーでは、model/effort だけが sid の下に折り返す: 横スクロール
+   * しないと読めない位置に置くくらいなら、1 行増える方がまし。 */
+  width: calc(100cqi - var(--space-8) * 2);
+  box-sizing: border-box;
   padding-left: var(--space-14);
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
+  gap: var(--space-6);
   min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--fg-muted);
   opacity: 0.7;
+}
+
+/* sid の右に並ぶ model/effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
+ * repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。折り返すと行の
+ * 高さが変わるので nowrap。 */
+.session-model-effort {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
 }
 
 /* 4 行目: project path。左省略 (右端が常に見える) — direction:rtl が

@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentInfo, LastLiveSession, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
+import { pushNavigation } from "../navigation.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
-import { formatAgentLiveState, formatSidebarBadge } from "../session-status-view.ts";
+import {
+  formatAgentLiveState,
+  formatSessionModelEffort,
+  formatSidebarBadge,
+  type ModelEffortSource,
+} from "../session-status-view.ts";
 import {
   badgeLabel,
   formatDuration,
@@ -94,6 +100,46 @@ function useShiftHover(): {
       onMouseLeave: () => setHovered(false),
     },
   };
+}
+
+/** 行アイテム全体をセッション選択にする click ハンドラ。行の
+ * 中で実際に文字があるのは 1 行目の `<a>` だけで、他の 3 行や行末の余白は
+ * どれだけ広くても不感帯だった — 見た目が 1 個のカードなら、カードのどこを
+ * 押しても選択になるのが読み手の期待。
+ *
+ * 素通しする (= 行選択を起こさない) のは 4 つ:
+ * - **Shift 押下中**: sid コピー / タイトル編集など、中の各パーツが自分の
+ *   Shift 操作を持っている (useShiftHover)。押している間はパーツの担当。
+ * - **`a` / `button` / `input` などの上**: それぞれ自前の答えを持つ。1 行目の
+ *   `<a>` は同じ遷移先なので二重発火を避けるだけだが、⭐ / ▶ ボタンは
+ *   「選択」とは別の操作なので拾わせてはいけない。
+ * - **修飾キー付き**: Cmd/Ctrl/Alt+click は「新しいタブで」等のブラウザ側の
+ *   意味を持つ。行の余白でそれを横取りしても行き先は用意できない。
+ * - **テキスト選択が残っている時**: sid や path はマウスでなぞって読む対象
+ *   (SessionIdText の doc 参照)。ドラッグ選択の終わりにも click は飛ぶので、
+ *   選択が生きている間は遷移させない。
+ *
+ * キーボード経路は 1 行目の `<a>` がそのまま担う (行に role="button" +
+ * tabIndex を足すと、同じ行き先に tab stop が 2 つ並ぶだけになる)。 */
+function selectSessionOnRowClick(sid: string): (e: MouseEvent) => void {
+  return (e) => {
+    if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as Element | null;
+    if (target?.closest("a, button, input, textarea, select, summary")) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    pushNavigation(sessionHref(sid));
+  };
+}
+
+/** sid の右に並ぶ「今このセッションが何で走っているか」。
+ * 値が立たない行では何も描かない — 詳細は formatSessionModelEffort。 */
+function SessionModelEffort({ info }: { info: { text: string; title: string } | null }) {
+  if (!info) return null;
+  return (
+    <span class="session-model-effort" title={info.title}>
+      {info.text}
+    </span>
+  );
 }
 
 /** The session id, Shift+click-to-copy (kawaz r135m41). Plain text otherwise
@@ -329,6 +375,7 @@ function SessionRowItem({
   row,
   currentSid,
   statusBadge,
+  modelEffort,
   cacheTs,
   activeSecondary,
 }: {
@@ -338,6 +385,10 @@ function SessionRowItem({
    * い (走行中データなし、または今このセッションを開いていないので
    * subscribe していない — 下の SessionList の doc comment 参照)。 */
   statusBadge: string | null;
+  /** sid の右に出す `{model} {effort}` (formatSessionModelEffort の戻り)。
+   * null = どの供給元も model を答えられなかった (未購読かつ直近リクエスト
+   * 無し等) 行で、その場合は何も足さない。 */
+  modelEffort: { text: string; title: string } | null;
   /** この sid の最後の LLM リクエスト時刻 (epoch 秒) — アイコンに巻く prompt
    * cache リング (5 分で消える) の起点。null = 直近 5 分にリクエスト無し、
    * または daemon が gateway の event stream を購読していない (どちらもリング
@@ -410,6 +461,7 @@ function SessionRowItem({
           : "session-row"
       }
       title={titleParts.join("\n")}
+      onClick={selectSessionOnRowClick(row.sid)}
     >
       <div
         class="session-line1"
@@ -497,6 +549,7 @@ function SessionRowItem({
        * の用途が「他所に貼るために丸ごとコピーする」ことだから。 */}
       <div class="session-line3">
         <SessionIdText sid={row.sid} />
+        <SessionModelEffort info={modelEffort} />
       </div>
       {/* 4 行目: project path。左を省略して右端 (= worktree 名まで) を常時
        * 見せる。全文は行の title 属性で読める。 */}
@@ -531,12 +584,17 @@ function PinnedSessionRow({
   currentSid,
   peer,
   agent,
+  modelEffort,
   onUnpin,
 }: {
   hit: SessionSearchHit;
   currentSid: string | null;
   peer: PeerInfo | undefined;
   agent: AgentInfo | undefined;
+  /** sid の右に出す `{model} {effort}`。走っているピンなら live 観測、止まって
+   * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
+   * resolveModelEffort 参照)。 */
+  modelEffort: { text: string; title: string } | null;
   onUnpin: () => void;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -573,6 +631,7 @@ function PinnedSessionRow({
     <li
       class={hit.sid === currentSid ? "active session-row" : "session-row"}
       title={hit.cwd ?? undefined}
+      onClick={selectSessionOnRowClick(hit.sid)}
     >
       <div class="session-line1">
         <a href={sessionHref(hit.sid)} class="session-main-link">
@@ -603,6 +662,7 @@ function PinnedSessionRow({
       {renameNote ? <div class="session-rename-note">{renameNote}</div> : null}
       <div class="session-line3">
         <SessionIdText sid={hit.sid} />
+        <SessionModelEffort info={modelEffort} />
       </div>
       {hit.cwd ? (
         <div class="session-line4" title={hit.cwd}>
@@ -629,6 +689,7 @@ function PinnedSessionsSection({
   peers,
   agentsBySid,
   currentSid,
+  resolveModelEffort,
 }: {
   pinnedSessions: Map<string, SessionSearchHit>;
   peers: PeerInfo[];
@@ -637,6 +698,12 @@ function PinnedSessionsSection({
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
+  /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
+   * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
+  resolveModelEffort: (
+    sid: string,
+    frozen?: ModelEffortSource,
+  ) => { text: string; title: string } | null;
 }) {
   const { store } = useApp();
   const pins = useMemo(() => sortPinnedSessions([...pinnedSessions.values()]), [pinnedSessions]);
@@ -657,6 +724,7 @@ function PinnedSessionsSection({
             currentSid={currentSid}
             peer={peersBySid.get(hit.sid)}
             agent={agentsBySid.get(hit.sid)}
+            modelEffort={resolveModelEffort(hit.sid, hit)}
             onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
           />
         ))}
@@ -691,8 +759,15 @@ function LastLiveSessionRow({
 }) {
   const title = lastLiveSessionTitle(entry);
   const hasRepoWs = Boolean(entry.repo || entry.ws);
+  // 止まっているセッションなので live な供給元は存在しない: 出せるのは daemon が
+  // transcript の最後の turn から読み戻した凍結値だけ (LastLiveSession の doc)。
+  const modelEffort = formatSessionModelEffort([entry]);
   return (
-    <li class={entry.sid === currentSid ? "active session-row" : "session-row"} title={entry.cwd}>
+    <li
+      class={entry.sid === currentSid ? "active session-row" : "session-row"}
+      title={entry.cwd}
+      onClick={selectSessionOnRowClick(entry.sid)}
+    >
       <div class="session-line1">
         <a href={sessionHref(entry.sid)} class="session-main-link">
           <Avatar seed={entry.sid} size={16} />
@@ -728,6 +803,7 @@ function LastLiveSessionRow({
       ) : null}
       <div class="session-line3">
         <SessionIdText sid={entry.sid} />
+        <SessionModelEffort info={modelEffort} />
       </div>
       <div class="session-line4" title={entry.cwd}>
         <span class="session-cwd">
@@ -846,6 +922,23 @@ export function SessionList({
     [peers, agents, agentsBySid, sessionErrors],
   );
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
+  // 行に出す model/effort の供給元は 3 つあり、確度の高い順に並べる:
+  //   1. context 観測 — model と effort の両方を持つが、entry があるのは
+  //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
+  //      同じ購読事情、下のコメント参照)。
+  //   2. gateway の直近 LLM リクエスト — 全 sid 分がまとめて届くので購読に
+  //      左右されないが、model しか分からない (effort は request に無い)。
+  //   3. 呼び出し側が持つ凍結値 (ピンの検索ヒット等) — 走っていないセッション
+  //      でも「最後に何で走っていたか」は答えられる。
+  const resolveModelEffort = useMemo(
+    () => (sid: string, frozen?: ModelEffortSource) =>
+      formatSessionModelEffort([
+        sessionStatuses.get(sid)?.context,
+        { model: llmRequests.get(sid)?.model },
+        frozen,
+      ]),
+    [sessionStatuses, llmRequests],
+  );
   return (
     <div id="session-list">
       <PinnedSessionsSection
@@ -853,6 +946,7 @@ export function SessionList({
         peers={peers}
         agentsBySid={agentsBySid}
         currentSid={currentSid}
+        resolveModelEffort={resolveModelEffort}
       />
       <LastLiveSessionsSection
         lastLiveSessions={lastLiveSessions}
@@ -888,6 +982,7 @@ export function SessionList({
                 }
                 // statusBadge と違い全行に出す: prompt cache は daemon 側で
                 // 全 sid 分まとめて届くので、購読の有無に左右されない。
+                modelEffort={resolveModelEffort(row.sid)}
                 cacheTs={llmRequests.get(row.sid)?.ts ?? null}
               />
             ))}

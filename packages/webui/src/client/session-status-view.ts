@@ -195,6 +195,39 @@ export function formatContextUsage(ctx: SessionContextUsage): { text: string; ti
   };
 }
 
+/** 「そのセッションが何で走っているか」を 1 か所から読むための候補。sidebar の
+ * 行ごとに供給元が違う (購読中セッションだけが持つ context 観測、gateway の
+ * 直近リクエスト、検索ヒットや「前回稼働中」記録に凍結された値) ので、生の
+ * 綴りだけを共通の形にして渡す。 */
+export interface ModelEffortSource {
+  /** Raw transcript / gateway spelling, e.g. "claude-fable-5[1m]". */
+  model?: string;
+  /** Raw effort spelling, e.g. "low". Older CC rows carry none. */
+  effort?: string;
+}
+
+/** Sidebar の session 行が sid の右に出す `{model} {effort}`。
+ *
+ * 候補は優先順に渡し、**model を持つ最初の候補だけ**を採用する — effort は
+ * model を報告したのと同じ観測に属する値なので、model を A から effort を B
+ * から拾うと「その組み合わせで走ってはいない」表示になる。model が無ければ
+ * 行に何も足さない (placeholder は出さない): 情報が無いことを示す文字列は、
+ * 4 行しかない行の幅を潰すだけで読み手の判断を助けない。
+ *
+ * 短縮は `shortModel` — TL 下ミニパネル (formatContextUsage) と同じ表記に
+ * 揃える。open set なので未知のモデル名も落とさずそのまま出す。 */
+export function formatSessionModelEffort(
+  sources: readonly (ModelEffortSource | undefined)[],
+): { text: string; title: string } | null {
+  const source = sources.find((s) => s?.model);
+  if (!source?.model) return null;
+  const effort = source.effort;
+  return {
+    text: effort ? `${shortModel(source.model)} ${effort}` : shortModel(source.model),
+    title: `model ${source.model}` + (effort ? ` / effort ${effort}` : ""),
+  };
+}
+
 /** TL 下ミニパネル (DR-0020 §2.1、issue 2026-07-17 #1/#5 で拡張) の 1 行分。 */
 export type MiniSummaryLineKind = "workflow" | "todo" | "context" | "teammate";
 export interface MiniSummaryLine {

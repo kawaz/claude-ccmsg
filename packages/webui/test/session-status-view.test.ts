@@ -19,6 +19,7 @@ import {
   formatAgentLiveState,
   formatContextUsage,
   formatHyouiNamespace,
+  formatSessionModelEffort,
   shortModel,
   formatSidebarBadge,
   miniSummaryLines,
@@ -349,6 +350,37 @@ describe("context usage display", () => {
     expect(formatContextUsage({ tokens: 1_100_000, model: "m", timestamp: "t" }).text).toBe(
       "ctx 1100k/1M* (110%) · m",
     );
+  });
+
+  test("formatSessionModelEffort は model を持つ最初の候補だけを採用する", () => {
+    // effort は model を報告したのと同じ観測に属する値なので、model を採用した
+    // 候補の effort だけを使う (後続候補の effort を混ぜると、実際には走って
+    // いない組み合わせを表示してしまう)。
+    const info = formatSessionModelEffort([
+      undefined,
+      { model: "claude-fable-5[1m]", effort: "low" },
+      { model: "claude-sonnet-5", effort: "high" },
+    ]);
+    expect(info?.text).toBe("fable-5[1m] low");
+    expect(info?.title).toBe("model claude-fable-5[1m] / effort low");
+  });
+
+  test("formatSessionModelEffort は model を持たない候補を飛ばして次を見る", () => {
+    // 購読していない行では context 観測が無く、gateway の直近リクエスト
+    // (model のみ) や凍結値へ落ちる。effort が無い候補では effort 節を出さない。
+    const info = formatSessionModelEffort([
+      undefined,
+      { model: undefined, effort: "medium" },
+      { model: "gpt-5.6-sol" },
+    ]);
+    expect(info?.text).toBe("gpt-5.6-sol");
+    expect(info?.title).toBe("model gpt-5.6-sol");
+  });
+
+  test("formatSessionModelEffort は model がどこからも取れなければ null", () => {
+    // 行に placeholder を足さない境界 (「未購読かつ直近リクエスト無し」の行)。
+    expect(formatSessionModelEffort([])).toBeNull();
+    expect(formatSessionModelEffort([undefined, {}, { effort: "low" }])).toBeNull();
   });
 
   test("shortModel は claude- prefix だけを剥がし [1m] suffix と非 claude 名を保持する", () => {
