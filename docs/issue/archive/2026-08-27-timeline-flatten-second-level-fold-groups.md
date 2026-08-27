@@ -1,6 +1,6 @@
 ---
 title: TL の fold 構造の簡素化 (2 段目グルーピング廃止)
-status: open
+status: resolved
 category: task
 created: 2026-08-27T10:38:40+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-27T11:19:52+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.119.0 で実装完了。FoldSubgroup / splitFoldSubgroups / ItemsSubFold を削除、fold 内は個別 1 行 item 表示に統一。net -188 行。実機 (3.5MB transcript, fold group 71 個) で .tl-items-subfold 0 件・31 items fold が 33 個別行・個別開閉を確認済み"]
 blocked_by:
 origin: 自リポ TODO
 ---
