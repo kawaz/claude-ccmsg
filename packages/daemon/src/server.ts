@@ -98,6 +98,7 @@ import {
   type SessionStatusStore,
 } from "./session-status.ts";
 import { deriveRepoWs } from "./repo-derive.ts";
+import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -170,6 +171,12 @@ interface SessionEntry {
     /** present iff hello announced a non-empty branch/bookmark name. */
     branch?: string;
   };
+  /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
+   * announced one. Deliberately outside `meta`: it exists only to answer
+   * `PeerInfo.send_message` for a session asking about its peers, and `meta`
+   * is copied verbatim onto the wire (peers, ev:"peers", the last-live
+   * snapshot) where a bare config dir path would be noise nobody reads. */
+  configDir?: string;
   conns: Set<Conn>;
   /** ISO time this entry was first created in this daemon process; a later
    * hello for the same sid reuses the existing entry and never touches this
@@ -560,6 +567,13 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     ...(id.repo_root ? { repo_root: id.repo_root } : {}),
     ...(id.branch ? { branch: id.branch } : {}),
   };
+  // A process's CLAUDE_CONFIG_DIR cannot change while it runs, so a hello that
+  // omits it is telling us nothing new — an older CLI, or one invoked from a
+  // subprocess whose environment lost the variable. Preserve what an earlier
+  // hello for this sid established (transcript_path's rule, for the same
+  // reason: silently dropping it would take a genuinely reachable peer's
+  // `send_message` flag away mid-session).
+  const configDir = id.config_dir ?? entry?.configDir;
   const isNewEntry = !entry;
   const previousTranscriptPath = entry?.meta.transcript_path;
   if (
@@ -572,10 +586,11 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     );
   }
   if (!entry) {
-    entry = { meta, conns: new Set(), connectedAt: nowIso() };
+    entry = { meta, ...(configDir ? { configDir } : {}), conns: new Set(), connectedAt: nowIso() };
     daemon.sessions.set(id.sid, entry);
   } else {
     entry.meta = meta;
+    entry.configDir = configDir;
   }
   entry.conns.add(conn);
   // DR-0013 §2.2 auto-populate: first hello for this sid → add it to every
@@ -655,6 +670,23 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
       connected_at: s.connectedAt,
       ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
     }));
+}
+
+/** currentPeers() as one session sees it: every peer running under the same
+ * CLAUDE_CONFIG_DIR gets `send_message: true`, marking it reachable with
+ * Claude Code's own SendMessage tool instead of a ccmsg post (see
+ * PeerInfo.send_message). The asker's own row is left alone, and an asker
+ * whose own config dir is unknown flags nothing at all. */
+function peersFor(daemon: Daemon, asker: Identity | null): PeerInfo[] {
+  const peers = currentPeers(daemon);
+  if (asker?.role !== "session") return peers;
+  const askerConfigDir = daemon.sessions.get(asker.sid)?.configDir;
+  return peers.map((p) =>
+    p.sid !== asker.sid &&
+    canNativeSendMessage(askerConfigDir, daemon.sessions.get(p.sid)?.configDir)
+      ? { ...p, send_message: true as const }
+      : p,
+  );
 }
 
 /** The subset of currentPeers() compared to decide whether anything worth a push
@@ -1499,6 +1531,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // state file (same hole adoptTranscriptPath covers), so it announces
         // neither and used to show blank columns in the webui's session list.
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
+        // Not validated beyond "absolute path, canonically spelled": the value
+        // is only ever compared with another session's announcement, never
+        // opened, and a session that lies about it can at most mislabel its
+        // own view of who is natively reachable.
+        const configDir = normalizeConfigDir(req.config_dir);
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
         const derived =
@@ -1514,6 +1551,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
           ...(repoRoot ? { repo_root: repoRoot } : {}),
           ...(req.branch ? { branch: req.branch } : {}),
+          ...(configDir ? { config_dir: configDir } : {}),
         };
       }
       // A re-hello that moves this conn away from its previous sid (a different
@@ -2240,7 +2278,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const forUser = conn.identity?.role === "user";
       send(conn, {
         ok: true,
-        ...(forUser ? peersPayload(daemon) : { peers: currentPeers(daemon) }),
+        ...(forUser ? peersPayload(daemon) : { peers: peersFor(daemon, conn.identity) }),
       });
       return;
     }

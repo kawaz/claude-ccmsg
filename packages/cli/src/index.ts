@@ -2,6 +2,7 @@
 // ccmsg CLI. Subcommand style, long options, no-args prints help (per kawaz CLI
 // conventions). Every command except `daemon run` goes through ensure-daemon.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
@@ -217,6 +218,12 @@ function resolveSessionIdentity(
     // hook-written session file. Optional like repo_root (branch may be
     // unknown/detached), not defaulted to "" like repo/ws.
     const branch = strField(process.env.CCMSG_BRANCH) ?? strField(stored?.branch);
+    // The config dir of THIS process is the session's own: the CLI runs as a
+    // child of the Claude Code session, so it inherits whatever face that
+    // session was launched under. Unset means Claude Code's default rather
+    // than "unknown" (both ends of a comparison fall back to the same path),
+    // so the flag still works for the common single-config-dir setup.
+    const configDir = strField(process.env.CLAUDE_CONFIG_DIR) ?? path.join(os.homedir(), ".claude");
     return {
       role: "session",
       sid,
@@ -226,6 +233,7 @@ function resolveSessionIdentity(
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),
       ...(branch ? { branch } : {}),
+      config_dir: configDir,
     };
   }
   return null;

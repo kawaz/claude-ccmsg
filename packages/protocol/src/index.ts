@@ -896,6 +896,12 @@ export interface SessionIdentity {
   /** current branch / bookmark name of the session's checkout (informational,
    * for the webui session list). Empty/absent when detached or unknown. */
   branch?: string;
+  /** absolute path of the CLAUDE_CONFIG_DIR this session runs under, as the
+   * daemon normalized it at hello time. Claude Code's own cross-session
+   * messaging (the SendMessage tool) only reaches sessions sharing this
+   * directory, so it is what `PeerInfo.send_message` is computed from.
+   * Absent when the client did not announce one. */
+  config_dir?: string;
 }
 export interface UserIdentity {
   role: "user";
@@ -916,6 +922,12 @@ export interface HelloRequest {
   transcript_path?: string;
   repo_root?: string;
   branch?: string;
+  /** CLAUDE_CONFIG_DIR of the session's own process — the CLI reads it from
+   * its environment (falling back to Claude Code's default `$HOME/.claude`
+   * when unset) and the daemon normalizes it. Only used to answer "can this
+   * pair of sessions reach each other with the native SendMessage tool"
+   * (`PeerInfo.send_message`); never echoed back on the wire. */
+  config_dir?: string;
 }
 
 /** Post a new message. Session-authored posts to a 1on1 room are rejected
@@ -2063,6 +2075,18 @@ export interface PeerInfo {
   connected_at?: string;
   /** ISO time of this session's most recent request on any of its connections */
   last_activity_at?: string;
+  /** present (always `true`) iff the *asking* session can reach this peer with
+   * Claude Code's own SendMessage tool — i.e. both run under the same
+   * CLAUDE_CONFIG_DIR, the boundary native cross-session messaging does not
+   * cross (docs/findings/2026-08-27-native-cross-session-messaging-vs-ccmsg.md).
+   * A flagged peer is reachable inline, with no `ccmsg read` round trip.
+   *
+   * Computed per request against the asker, so it never appears for the
+   * asker's own row, for a user-role (webui) asker — which has no config dir
+   * to compare against — or on the `ev:"peers"` push. Absent whenever either
+   * side's config dir is unknown: an unflagged peer merely costs a `ccmsg
+   * post`, a wrongly flagged one costs a message that never arrives. */
+  send_message?: true;
 }
 /** One session that was connected when the daemon last saw it alive, replayed
  * after a daemon (or whole machine) restart it did not come back from — the

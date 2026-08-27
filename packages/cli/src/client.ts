@@ -178,6 +178,7 @@ export function helloRequest(identity: Identity): Record<string, unknown> {
     ...(identity.transcript_path ? { transcript_path: identity.transcript_path } : {}),
     ...(identity.repo_root ? { repo_root: identity.repo_root } : {}),
     ...(identity.branch ? { branch: identity.branch } : {}),
+    ...(identity.config_dir ? { config_dir: identity.config_dir } : {}),
   };
 }
 

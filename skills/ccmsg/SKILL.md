@@ -17,6 +17,14 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 既存メッセージへの応答に `post` を使わない。`reply` は宛先を daemon が構成する。通常応答を指示されたメッセージへの reply と、session から 1on1 room への post は `reply_via_tl` で拒否される。
 
+## 送る経路の選び方
+
+`peers` の行に `send_message: true` が付いた相手には、ccmsg ではなく Claude Code の SendMessage ツールで送る。本文がそのまま inline で届くので `read` の往復が要らない。付いていない相手・ユーザ宛・room での会話は下記のとおり ccmsg を使う。
+
+このフラグは「相手が自分と同じ CLAUDE_CONFIG_DIR で動いている」= ネイティブに到達できる、の意。SendMessage の宛先はセッション名なので ListAgents で引く (同名が複数ある時は SendMessage のエラーが `[ref]` 付きの候補を案内する)。
+
+既に届いている ccmsg への応答は経路を選ばない。上の「応答レール」の `reply_via` に従う。
+
 ## 新規の声かけ
 
 `post` は返信ではない新規メッセージ専用。
