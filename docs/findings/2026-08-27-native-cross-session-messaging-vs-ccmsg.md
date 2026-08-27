@@ -11,6 +11,8 @@
 - ユーザ (kawaz) からはやり取りが見えない: room / webui / 履歴閲覧に相当するものが無く、記録は各セッションの transcript のみ
 - 1:1 のみ (room / broadcast / グループ無し)。基本は同一マシン内
 - msg_id は返るが既読・到達の可観測性は無い (ccmsg は room log + seq/last_mid で追える)
+- **長文も全文 inline で届く**: 約 4500 字の送信・数千字の返信とも切り詰め・read 指示化なしに双方向とも全文が inline 配送された (2026-08-27 実測)。ccmsg の inline は `CCMSG_WIRE_MSG_SAFE_BYTES` (既定 **400 バイト**、Monitor `<event>` の経験的切り詰め ~500 文字への安全率) を超えると `msg_via` の read 指示に置換される — 「短文は inline」の閾値がネイティブは実質無制限、ccmsg は 400B と大差がある
+- `notify_when_idle` の通知は実際に着信することを確認済み (相手がターンを終えた時点で `[Cross-session idle notice]` が一回だけ注入される。別途モニタプロセスは不要)
 
 ## 実用的な示唆
 
@@ -22,7 +24,8 @@
 
 - 手順: `/tmp/native-msg-verify` cwd で `hyoui run --detached -- claude --model haiku --effort low --name native-msg-probe "<待機指示>"` により probe セッションを起動 → ListAgents で `native-msg-probe [d37208] · interactive · busy · started 1s ago` と即座に一覧に出現 → SendMessage (notify_when_idle: true 付き) で送信 → probe から `<cross-session-message>` ラップの返信が自動着信 (probe 側の報告: 受信は system-reminder 通知 + ラッパー付き本文、返信は SendMessage 1 ステップ) → probe を hyoui kill で個別停止
 - 送信結果には msg_id (uuid) と「Subscribed — idle 時に一回通知」の応答が返る
-- 検証は 1 往復 + 一覧確認のみ (busy キューイングは本セッションの worker 運用で日常的に観測済みの挙動)
+- 検証は短文 1 往復 + 長文 1 往復 + 一覧確認 (busy キューイングは本セッションの worker 運用で日常的に観測済みの挙動)
+- 長文検証: 2 台目 probe (native-msg-probe2) に約 4500 字を送信 → 送信は拒否・切り詰めなしで成功 (msg_id 返却) → probe2 から数千字の長文返信が全文 inline で着信。ccmsg 側の閾値は `packages/daemon/src/server.ts` の `readWireMsgSafeBytesEnv()` (既定 400、`CCMSG_WIRE_MSG_SAFE_BYTES` で変更可) がソース
 
 ## 関連
 
