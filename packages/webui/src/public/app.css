@@ -4858,6 +4858,13 @@ button.session-tab {
 .tl-agent-idle-from {
   opacity: 0.85;
 }
+/* 通信経路ラベル (cross-session)。compact 行の情報量を増やしすぎないよう、
+ * 名前よりさらに落とした等幅の小片として置く。 */
+.tl-agent-idle-channel {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  opacity: 0.6;
+}
 .tl-agent-idle-body {
   margin: var(--space-2) 0 var(--space-2) var(--space-14);
   color: var(--muted, #888);

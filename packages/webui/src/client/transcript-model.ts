@@ -1535,6 +1535,7 @@ export type UserMessageKind =
   | "task-notification"
   | "workflow-resume"
   | "peer-message"
+  | "cross-session-notice"
   | "spawn-prompt"
   | "unknown-meta"
   | "unknown-array";
@@ -1615,6 +1616,12 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
         : null;
     if (origin?.kind === "task-notification") return "task-notification";
     if (origin?.kind === "peer") return "peer-message";
+    // A cross-session notice is injected by this session's own harness (the
+    // subscription is ours), so it carries no `origin` naming a peer — the
+    // bracket label is the only wire signal it has.
+    if (typeof content === "string" && CROSS_SESSION_NOTICE_RE.test(content)) {
+      return "cross-session-notice";
+    }
     return "unknown-meta";
   }
 
@@ -1654,9 +1661,11 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   // A peer relay may carry isMeta:true while retaining the fixed peer banner.
   // The decisive peer wrapper must run before the generic isMeta catch.
   if (text.startsWith("Another Claude session sent a message:")) return "peer-message";
-  if (text.startsWith("<agent-message") || text.startsWith("<teammate-message")) {
-    return "peer-message";
-  }
+  if (PEER_MESSAGE_TAGS.some((tag) => text.startsWith(`<${tag}`))) return "peer-message";
+  // Same decisive-prefix reasoning as the peer wrapper above: the queued copy
+  // of a notice (a `queue-operation` row) has no `promptSource`/`origin` at
+  // all, so it reaches here rather than the system branch.
+  if (CROSS_SESSION_NOTICE_RE.test(text)) return "cross-session-notice";
 
   // TUI の `! <cmd>` (bash モード) 実行。ハーネスは入力を `<bash-input>`、
   // 直後の結果を `<bash-stdout>`+`<bash-stderr>` の別 `type:"user"` 行として
@@ -2048,6 +2057,15 @@ export interface SystemMessageField {
  * タブは出して構造統一)」. */
 export type PeerMessageCategory = "message" | "idle" | "task-assignment" | "lifecycle" | "unknown";
 
+/** Which transport carried a relay. `"teammate"` is the in-process Task-tool
+ * relay (`<teammate-message>`/`<agent-message>`); `"cross-session"` is Claude
+ * Code's session-to-session delivery (`<cross-session-message>`, the
+ * SendMessage/ListAgents pair) plus the `[Cross-session ...]` harness notices
+ * that ride the same channel. The two look alike once parsed, so the channel
+ * is kept on the relay itself and surfaced as a discreet label rather than
+ * being flattened away. */
+export type PeerChannel = "teammate" | "cross-session";
+
 export type SystemMessageRich =
   | { display: "fields"; heading: string | null; fields: SystemMessageField[] }
   | { display: "chip"; label: string; detail: string | null }
@@ -2066,6 +2084,7 @@ export interface PeerRelay {
   summary: string | null;
   category: PeerMessageCategory;
   body: string;
+  channel: PeerChannel;
 }
 
 /** Matches a top-level (non-nested) `<tag>...</tag>` pair — the backreference
@@ -2106,10 +2125,40 @@ function unwrapOuterTag(text: string, tagName: string): string | null {
   return m ? m[1]! : null;
 }
 
-/** Matches the first `<teammate-message>` or `<agent-message>` relay and captures
- * its tag name, opening-tag attributes, and body. A line can contain several
- * relays; rich mode shows the first while the raw tab preserves the full line. */
-const PEER_MESSAGE_ATTRS_RE = /<(teammate-message|agent-message)([^>]*)>([\s\S]*?)<\/\1>/g;
+/** Matches one `<teammate-message>`, `<agent-message>` or
+ * `<cross-session-message>` relay and captures its tag name, opening-tag
+ * attributes, and body. A line can carry several relays; every one of them is
+ * parsed, and the tag name decides the relay's `channel`. */
+const PEER_MESSAGE_ATTRS_RE =
+  /<(teammate-message|agent-message|cross-session-message)([^>]*)>([\s\S]*?)<\/\1>/g;
+
+/** Relay tag names, in the shape `classifyUserMessage`'s bare-prefix check and
+ * `queuePairingKey`'s tail search need them. */
+const PEER_MESSAGE_TAGS = ["teammate-message", "agent-message", "cross-session-message"] as const;
+
+function peerChannelOfTag(tagName: string): PeerChannel {
+  return tagName === "cross-session-message" ? "cross-session" : "teammate";
+}
+
+/** Harness notices about a cross-session subscription, delivered as their own
+ * injected user turn rather than inside a relay tag. The observed wording is
+ * `[Cross-session idle notice] "<name>", which you asked to be notified
+ * about, is idle now — ...`; the bracket label is matched by its
+ * `[Cross-session …]` shape instead of the one exact phrase so a sibling
+ * notice of the same family (a subscription that expired before the peer went
+ * idle) lands in the same compact row instead of falling back to a raw
+ * unknown-meta fold. */
+const CROSS_SESSION_NOTICE_RE = /^\[Cross-session [^\]]*\]/;
+
+/** The session the notice is about — the first double-quoted name in it. The
+ * notice is prose, so this is a best-effort read: an unnamed variant keeps the
+ * generic fallback rather than dropping the row. */
+const CROSS_SESSION_NOTICE_NAME_RE = /"([^"]+)"/;
+
+/** Shown as the sender of a cross-session notice whose text names no session.
+ * Japanese to match the surrounding UI vocabulary, and a role rather than a
+ * guessed name. */
+const CROSS_SESSION_NOTICE_FROM = "相手セッション";
 
 const XML_ATTR_RE = /([\w-]+)="([^"]*)"/g;
 
@@ -2215,15 +2264,22 @@ const SPAWN_PROMPT_FROM = "親";
 
 function parsePeerMessage(rawText: string): Extract<SystemMessageRich, { display: "peer" }> | null {
   const relays = [...rawText.matchAll(PEER_MESSAGE_ATTRS_RE)].map((match) =>
-    parsePeerRelay(match[2]!, match[3]!),
+    parsePeerRelay(match[1]!, match[2]!, match[3]!),
   );
   if (relays.length === 0) return null;
   return { display: "peer", relays };
 }
 
-function parsePeerRelay(attrString: string, rawTagBody: string): PeerRelay {
+function parsePeerRelay(tagName: string, attrString: string, rawTagBody: string): PeerRelay {
+  const channel = peerChannelOfTag(tagName);
   const attrs = Object.fromEntries(parseXmlAttrs(attrString).map((f) => [f.name, f.value]));
-  const from = attrs.from || attrs.teammate_id || "agent";
+  // `<cross-session-message>` names the sender twice: `from` is the peer's
+  // unix socket path (`uds:/tmp/cc-socks/<pid>.sock`, a pid that dies with the
+  // session) and `from-name` is the session name every other part of the UI
+  // addresses it by. Prefer the name so bubbles group and read by identity
+  // rather than by a number that is meaningless a minute later; the socket
+  // path stays as the last-resort fallback when a relay arrives unnamed.
+  const from = attrs["from-name"] || attrs.from || attrs.teammate_id || "agent";
   const summary = attrs.summary || null;
   const rawBody = rawTagBody.trim();
   let category: PeerMessageCategory = "message";
@@ -2271,7 +2327,7 @@ function parsePeerRelay(attrString: string, rawTagBody: string): PeerRelay {
   } catch {
     // Plain relayed reports and instructions are already readable as-is.
   }
-  return { from, summary, category, body };
+  return { from, summary, category, body, channel };
 }
 
 /**
@@ -2316,6 +2372,22 @@ export function parseSystemMessageFields(
     }
     case "peer-message":
       return parsePeerMessage(rawText) ?? { display: "text", text: rawText };
+    case "cross-session-notice":
+      // Same shape an idle relay takes, so the notice reuses the compact row
+      // idle notifications already get (operational noise, kawaz r46m6
+      // 「でしゃばらせるな」) instead of growing a second one-line layout.
+      return {
+        display: "peer",
+        relays: [
+          {
+            from: rawText.match(CROSS_SESSION_NOTICE_NAME_RE)?.[1] ?? CROSS_SESSION_NOTICE_FROM,
+            summary: null,
+            category: "idle",
+            body: rawText,
+            channel: "cross-session",
+          },
+        ],
+      };
     case "spawn-prompt":
       // spawn prompt は「親から渡された指示書」= 実質 agent message なので、
       // agent message の見た目 (AgentCard) を当てる (kawaz r55m155/156:
@@ -2332,7 +2404,15 @@ export function parseSystemMessageFields(
       return (
         parsePeerMessage(rawText) ?? {
           display: "peer",
-          relays: [{ from: SPAWN_PROMPT_FROM, summary: null, category: "message", body: rawText }],
+          relays: [
+            {
+              from: SPAWN_PROMPT_FROM,
+              summary: null,
+              category: "message",
+              body: rawText,
+              channel: "teammate",
+            },
+          ],
         }
       );
     case "slash-command-invocation": {
@@ -2448,26 +2528,31 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
   };
 }
 
-/** The fixed wrapper Claude Code puts around a teammate relay when it
- * delivers it as a `type:"user"` row: the queued copy carries only the bare
- * `<agent-message>`/`<teammate-message>` block, the delivered row wraps it in
- * this banner plus a trailing instruction paragraph (255/255 paired relays in
- * the sampled transcripts, 2026-07-25). Stripping the banner lets
- * `deliveredMetaByContent` pair the two copies by body. */
-const PEER_RELAY_BANNER = "Another Claude session sent a message:\n";
-
-/** The delivered `type:"user"` body a queued copy should be matched against —
- * identity for every shape except the peer relay, whose delivered row adds
- * the banner above and a trailing instruction paragraph around the queued
- * block. */
+/** The shape a queued copy and its delivered row are compared as. Identity for
+ * every text except a peer relay, which the two copies do not spell the same
+ * way: the delivered row adds the banner above and a trailing instruction
+ * paragraph below, and the two opening tags carry different attribute sets
+ * (a `<cross-session-message>` is queued with a `hop-chain` that the delivered
+ * copy drops — measured on CC 2.1.241, bodies byte-identical). Comparing the
+ * raw block therefore pairs the in-process relays and misses every
+ * cross-session one, showing that message twice.
+ *
+ * So both sides are keyed on what identifies a relay instead of how it was
+ * spelled: sender, summary, and body, per relay, in order. Every relay on the
+ * line contributes, so two batches that happen to share a first relay stay
+ * distinct.
+ *
+ * Applied to *both* sides of the comparison (`pairQueuedTurns`) — normalizing
+ * only the delivered side would leave the queued raw text unable to match it. */
 function queuePairingKey(text: string): string {
-  if (!text.startsWith(PEER_RELAY_BANNER)) return text;
-  const body = text.slice(PEER_RELAY_BANNER.length);
-  for (const tag of ["</agent-message>", "</teammate-message>"]) {
-    const end = body.lastIndexOf(tag);
-    if (end >= 0) return body.slice(0, end + tag.length);
-  }
-  return body;
+  const relays = [...text.matchAll(PEER_MESSAGE_ATTRS_RE)];
+  if (relays.length === 0) return text;
+  return relays
+    .map((match) => {
+      const relay = parsePeerRelay(match[1]!, match[2]!, match[3]!);
+      return [match[1]!, relay.from, relay.summary ?? "", relay.body].join("\u0000");
+    })
+    .join("\u0000\u0000");
 }
 
 /**
@@ -2529,7 +2614,7 @@ export function pairQueuedTurns(
   const consumed = new Set<number>();
   return lines.map((line, index) => {
     if (line.kind !== "turn" || line.queuedContent === undefined) return line;
-    const indices = delivered.get(line.queuedContent);
+    const indices = delivered.get(queuePairingKey(line.queuedContent));
     const match = indices?.find((at) => at > index && !consumed.has(at));
     if (match === undefined) return line;
     consumed.add(match);

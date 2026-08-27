@@ -1044,6 +1044,63 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
     expect(kept.userMessageKind).toBe("peer-message");
   });
 
+  // Claude Code のネイティブ session 間配送 (SendMessage/ListAgents) も同じ
+  // 「queue 済みは裸のタグ / 配送行は banner + 末尾注意書き」形で 2 度書かれる。
+  // 閉じタグ一覧に cross-session-message が無いと同じ本文が Timeline に 2 回
+  // 出る (queued の裸コピーがそのまま turn として残る)。
+  // 実測 (CC 2.1.241): queued コピーの開始タグには `hop-chain` が乗り、配送側は
+  // それを落とす (本文はバイト一致)。生ブロック同士の比較ではここで外れて同じ
+  // メッセージが Timeline に 2 度出るので、両側とも「送り主 + summary + 本文」
+  // に正規化してから突き合わせる。
+  test("a cross-session relay pairs even though the queued copy carries hop-chain", () => {
+    const body = "\n本文\n";
+    const queued = `<cross-session-message from="uds:/tmp/cc-socks/1234.sock" hop-chain="3c221584a9432809c02e4539" from-name="probe" from-mode="prompting">${body}</cross-session-message>`;
+    const deliveredBlock = `<cross-session-message from="uds:/tmp/cc-socks/1234.sock" from-name="probe" from-mode="prompting">${body}</cross-session-message>`;
+    const lines = parseTranscriptLines([
+      enqueue(queued),
+      delivered(
+        `Another Claude session sent a message:\n${deliveredBlock}\n\nThis came from another Claude session — not typed by your user...`,
+        { promptSource: "system", origin: { kind: "peer" } },
+      ),
+    ]);
+    expect(lines[0]!.kind).toBe("meta");
+    const kept = lines[1]!;
+    expect(kept.kind).toBe("turn");
+    if (kept.kind !== "turn") return;
+    expect(kept.userMessageKind).toBe("peer-message");
+  });
+
+  // 正規化しても「別々の 2 通」は畳まない: 送り主が違えば別の key になる。
+  test("two cross-session relays from different peers keep both rows", () => {
+    const block = (name: string) =>
+      `<cross-session-message from-name="${name}">同じ本文</cross-session-message>`;
+    const lines = parseTranscriptLines([
+      enqueue(block("probe-a")),
+      enqueue(block("probe-b")),
+      delivered(`Another Claude session sent a message:\n${block("probe-a")}\n\ntrailer`, {
+        promptSource: "system",
+        origin: { kind: "peer" },
+      }),
+    ]);
+    // probe-a の queued だけが配送とペアになり、probe-b の queued は残る。
+    expect(lines.map((l) => l.kind)).toEqual(["meta", "turn", "turn"]);
+  });
+
+  // idle 通知は banner を持たないので本文一致でそのままペアになる。
+  test("a cross-session idle notice pairs on its identical body", () => {
+    const notice =
+      '[Cross-session idle notice] "probe", which you asked to be notified about, is idle now.';
+    const lines = parseTranscriptLines([
+      enqueue(notice),
+      delivered(notice, { promptSource: "system", isMeta: true }),
+    ]);
+    expect(lines[0]!.kind).toBe("meta");
+    const kept = lines[1]!;
+    expect(kept.kind).toBe("turn");
+    if (kept.kind !== "turn") return;
+    expect(kept.userMessageKind).toBe("cross-session-notice");
+  });
+
   // Two genuinely separate sends of the same text must not collapse into one:
   // each queued copy may only cancel against its own delivery.
   test("the same text queued twice keeps both deliveries", () => {
@@ -1966,6 +2023,79 @@ describe("classifyUserMessage", () => {
         },
       };
       expect(classifyUserMessage(entry)).toBe("user-prompt");
+    });
+
+    // Claude Code のネイティブ session 間配送 (SendMessage / ListAgents)。配送行は
+    // 既存の relay と同じ banner + `origin.kind:"peer"` を持つので、分類自体は
+    // peer-message のまま — 変わるのは中身のパース (from-name / channel) だけ。
+    test("a cross-session relay row -> peer-message", () => {
+      const entry = {
+        type: "user",
+        promptSource: "system",
+        isMeta: true,
+        origin: { kind: "peer", name: "probe", from: "uds:/tmp/cc-socks/1234.sock" },
+        message: {
+          role: "user",
+          content:
+            'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/cc-socks/1234.sock" from-name="probe" from-mode="prompting">\n本文\n</cross-session-message>\n\nThis came from another Claude session...',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("peer-message");
+    });
+
+    // 裸の `<cross-session-message>` (queue-operation に書かれる queued コピー) は
+    // origin を持たないので、既存 relay タグと同じ prefix 判定で拾う。
+    test("bare <cross-session-message> prefix -> peer-message", () => {
+      const entry = {
+        type: "user",
+        message: {
+          role: "user",
+          content: '<cross-session-message from-name="probe">hi</cross-session-message>',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("peer-message");
+    });
+
+    // idle 購読の通知は「自セッションの harness が入れた通知」なので相手を指す
+    // origin が無い。角括弧ラベルだけが wire 上の signal。
+    test("'[Cross-session idle notice]' -> cross-session-notice", () => {
+      const entry = {
+        type: "user",
+        promptSource: "system",
+        isMeta: true,
+        message: {
+          role: "user",
+          content:
+            '[Cross-session idle notice] "probe", which you asked to be notified about, is idle now — it finished a turn at 10:04.',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("cross-session-notice");
+    });
+
+    // 同族の別文言 (購読が idle より先に期限切れした場合) も同じ 1 行表示へ。
+    // 文言そのものではなく `[Cross-session …]` の形で拾うのは、拾う側を包含的に
+    // 書いて「知らない変種は unknown-meta の raw fold」に落とさないため。
+    test("a sibling [Cross-session …] notice -> cross-session-notice", () => {
+      const entry = {
+        type: "user",
+        promptSource: "system",
+        isMeta: true,
+        message: {
+          role: "user",
+          content:
+            '[Cross-session subscription expired] "probe" never went idle within the subscription window.',
+        },
+      };
+      expect(classifyUserMessage(entry)).toBe("cross-session-notice");
+    });
+
+    // queued コピーには promptSource / origin / isMeta が一切無い。
+    test("a queued cross-session notice with no metadata -> cross-session-notice", () => {
+      const entry = {
+        type: "user",
+        message: { role: "user", content: '[Cross-session idle notice] "probe" is idle now.' },
+      };
+      expect(classifyUserMessage(entry)).toBe("cross-session-notice");
     });
 
     test("'Another Claude session sent a message:' prefix -> peer-message", () => {
@@ -3638,16 +3768,37 @@ describe("parseSystemMessageFields", () => {
         'Another Claude session sent a message:\n<teammate-message teammate_id="poc5" color="blue" summary="調査完了">\n本文\n</teammate-message>\n\nThis came from another Claude session...';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        relays: [{ from: "poc5", summary: "調査完了", category: "message", body: "本文" }],
+        relays: [
+          {
+            from: "poc5",
+            channel: "teammate",
+            summary: "調査完了",
+            category: "message",
+            body: "本文",
+          },
+        ],
       });
     });
 
     test("idle_notification JSON -> compact idle category", () => {
-      const idleEvent = { type: "idle_notification", from: "a3", idleReason: "available" };
+      const idleEvent = {
+        type: "idle_notification",
+        from: "a3",
+        channel: "teammate",
+        idleReason: "available",
+      };
       const raw = `<teammate-message teammate_id="a3">${JSON.stringify(idleEvent)}</teammate-message>`;
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        relays: [{ from: "a3", summary: null, category: "idle", body: "待機通知 · available" }],
+        relays: [
+          {
+            from: "a3",
+            channel: "teammate",
+            summary: null,
+            category: "idle",
+            body: "待機通知 · available",
+          },
+        ],
       });
     });
 
@@ -3666,9 +3817,27 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
         relays: [
-          { from: "a", summary: null, category: "idle", body: "待機通知 · available" },
-          { from: "b", summary: "完了報告", category: "message", body: "本文" },
-          { from: "c", summary: null, category: "idle", body: "待機通知 · available" },
+          {
+            from: "a",
+            channel: "teammate",
+            summary: null,
+            category: "idle",
+            body: "待機通知 · available",
+          },
+          {
+            from: "b",
+            channel: "teammate",
+            summary: "完了報告",
+            category: "message",
+            body: "本文",
+          },
+          {
+            from: "c",
+            channel: "teammate",
+            summary: null,
+            category: "idle",
+            body: "待機通知 · available",
+          },
         ],
       });
     });
@@ -3683,6 +3852,7 @@ describe("parseSystemMessageFields", () => {
         relays: [
           {
             from: "a3",
+            channel: "teammate",
             summary: null,
             category: "idle",
             body: "待機通知 · failed · API Error: 500",
@@ -3699,6 +3869,7 @@ describe("parseSystemMessageFields", () => {
         relays: [
           {
             from: "worker",
+            channel: "teammate",
             summary: null,
             category: "task-assignment",
             body: "実装\nテストも追加",
@@ -3711,7 +3882,15 @@ describe("parseSystemMessageFields", () => {
       const raw = '<agent-message from="reviewer">確認結果です</agent-message>';
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        relays: [{ from: "reviewer", summary: null, category: "message", body: "確認結果です" }],
+        relays: [
+          {
+            from: "reviewer",
+            channel: "teammate",
+            summary: null,
+            category: "message",
+            body: "確認結果です",
+          },
+        ],
       });
     });
 
@@ -3723,6 +3902,7 @@ describe("parseSystemMessageFields", () => {
         relays: [
           {
             from: "future",
+            channel: "teammate",
             summary: null,
             category: "unknown",
             body: JSON.stringify(event, null, 2),
@@ -3735,7 +3915,76 @@ describe("parseSystemMessageFields", () => {
       const raw = "<teammate-message>\nhi\n</teammate-message>";
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
-        relays: [{ from: "agent", summary: null, category: "message", body: "hi" }],
+        relays: [
+          { from: "agent", channel: "teammate", summary: null, category: "message", body: "hi" },
+        ],
+      });
+    });
+
+    // ネイティブ session 間メッセージ。`from` は相手の unix socket (pid 込みで
+    // セッション終了とともに死ぬ) なので、UI が addressing に使う `from-name`
+    // を送り主に採る。channel で in-process relay と区別できる。
+    test("cross-session-message -> from-name as sender and the cross-session channel", () => {
+      const raw =
+        'Another Claude session sent a message:\n<cross-session-message from="uds:/tmp/cc-socks/62395.sock" from-name="probe" from-mode="prompting">\n本文\n</cross-session-message>\n\nThis came from another Claude session...';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "probe",
+            channel: "cross-session",
+            summary: null,
+            category: "message",
+            body: "本文",
+          },
+        ],
+      });
+    });
+
+    // from-name が無い形が来ても socket path で識別だけは残す (揮発だが、
+    // 「送り主不明」より情報が多い)。
+    test("cross-session-message without from-name -> falls back to the socket path", () => {
+      const raw =
+        '<cross-session-message from="uds:/tmp/cc-socks/62395.sock" from-mode="prompting">hi</cross-session-message>';
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "uds:/tmp/cc-socks/62395.sock",
+            channel: "cross-session",
+            summary: null,
+            category: "message",
+            body: "hi",
+          },
+        ],
+      });
+    });
+
+    // 1 行に in-process relay と cross-session relay が混在しても、channel は
+    // タグごとに決まる (行単位で 1 つに畳まない)。
+    test("mixed teammate and cross-session tags on one line -> per-tag channel", () => {
+      const raw = [
+        '<teammate-message teammate_id="a" summary="完了報告">本文A</teammate-message>',
+        '<cross-session-message from-name="b">本文B</cross-session-message>',
+      ].join("\n");
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "a",
+            channel: "teammate",
+            summary: "完了報告",
+            category: "message",
+            body: "本文A",
+          },
+          {
+            from: "b",
+            channel: "cross-session",
+            summary: null,
+            category: "message",
+            body: "本文B",
+          },
+        ],
       });
     });
 
@@ -3749,6 +3998,45 @@ describe("parseSystemMessageFields", () => {
     });
   });
 
+  // cross-session-notice: idle 購読の通知。会話ではなく運用ノイズなので、idle
+  // relay と同じ形に落として既存の compact 1 行表示 (IdlePeerRow) を再利用する。
+  describe("cross-session-notice", () => {
+    test("an idle notice -> one idle relay named after the quoted session", () => {
+      const raw =
+        '[Cross-session idle notice] "probe", which you asked to be notified about, is idle now — it finished a turn at 10:04.';
+      expect(parseSystemMessageFields("cross-session-notice", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "probe",
+            channel: "cross-session",
+            summary: null,
+            category: "idle",
+            body: raw,
+          },
+        ],
+      });
+    });
+
+    // 通知本文はあくまで散文なので、名前が引用符で書かれない変種でも行を落と
+    // さない (送り主欄だけ役割名に degrade する)。
+    test("a notice quoting no session name -> generic sender, body kept whole", () => {
+      const raw = "[Cross-session idle notice] the subscription expired before anyone went idle.";
+      expect(parseSystemMessageFields("cross-session-notice", raw)).toEqual({
+        display: "peer",
+        relays: [
+          {
+            from: "相手セッション",
+            channel: "cross-session",
+            summary: null,
+            category: "idle",
+            body: raw,
+          },
+        ],
+      });
+    });
+  });
+
   // spawn-prompt: agent 転写の先頭 user 行 (kawaz r46m28)。実質は親から届いた
   // agent message なので、wrapper の有無に関わらず peer 表示 = AgentCard に
   // 載せる (kawaz r55m155)。wrapper 付きは from/summary を wire から取り、
@@ -3759,7 +4047,7 @@ describe("parseSystemMessageFields", () => {
         '<teammate-message teammate_id="team-lead" summary="translate bug">TL 翻訳バグを調査してください。</teammate-message>';
       expect(parseSystemMessageFields("spawn-prompt", raw)).toMatchObject({
         display: "peer",
-        relays: [{ from: "team-lead", summary: "translate bug" }],
+        relays: [{ from: "team-lead", channel: "teammate", summary: "translate bug" }],
       });
     });
 
@@ -3770,7 +4058,9 @@ describe("parseSystemMessageFields", () => {
       const raw = "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...";
       expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({
         display: "peer",
-        relays: [{ from: "親", summary: null, category: "message", body: raw }],
+        relays: [
+          { from: "親", channel: "teammate", summary: null, category: "message", body: raw },
+        ],
       });
     });
   });

@@ -118,7 +118,11 @@ import {
   RAW_PRETTY_MAX_CHARS,
 } from "../raw-view-mode.ts";
 import { foldSummaryView, type FoldSummaryDecoration } from "../timeline-summary.ts";
-import { agentDirectionMarker, peerMessagePresentation } from "../agent-communication-view.ts";
+import {
+  agentDirectionMarker,
+  peerChannelLabel,
+  peerMessagePresentation,
+} from "../agent-communication-view.ts";
 import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
@@ -850,11 +854,17 @@ function AgentCard({
   title,
   body,
   model,
+  channelLabel,
 }: {
   name: string;
   direction: "inbound" | "outbound";
   title?: string | null;
   body: string;
+  /** Transport this message rode (`peerChannelLabel`) — shown as one quiet
+   * chip on the header's right edge so a Claude Code cross-session peer can
+   * be told from an in-process teammate without giving it a different bubble.
+   * `null`/undefined for the unmarked default. */
+  channelLabel?: string | null;
   // Agent spawn 用: モデル名は名前のすぐ右に淡色で並べる (kawaz r46m15:
   // 「モデル名は名前のすぐ右に置くとかで良いんじゃない?他の 2 エージェント
   // メッセージタイプのやつも」)。SendMessage / peer-message はモデル情報を
@@ -887,6 +897,14 @@ function AgentCard({
         <div class="tl-bubble-from tl-agent-card-head">
           <span class="tl-agent-direction-marker">{marker}</span>
           <AgentIdentity name={name} model={model} linkify />
+          {channelLabel ? (
+            <span
+              class="tl-agent-badge"
+              title="Claude Code ネイティブのセッション間メッセージ (SendMessage / ListAgents)"
+            >
+              {channelLabel}
+            </span>
+          ) : null}
         </div>
         {title ? <div class="tl-agent-title">{title}</div> : null}
         {body ? (
@@ -1579,6 +1597,9 @@ function IdlePeerRow({ peer, ts }: { peer: PeerMessageRich; ts: string | null })
         <span class="tl-agent-idle-label">
           <span class="tl-agent-idle-kind">idle</span>
           <span class="tl-agent-idle-from">{peer.from}</span>
+          {presentation.channelLabel ? (
+            <span class="tl-agent-idle-channel">{presentation.channelLabel}</span>
+          ) : null}
         </span>
       </summary>
       <div class="tl-agent-idle-body">{presentation.text}</div>
@@ -1639,6 +1660,7 @@ function SystemMessageRichView({ rich }: { rich: SystemMessageRich }) {
                 direction="inbound"
                 title={relay.summary}
                 body={relay.body}
+                channelLabel={peerChannelLabel(relay.channel)}
               />
             ),
           )}
@@ -1768,7 +1790,15 @@ function SystemMessageFold({
     kind === "task-notification" && rich.display === "fields" ? rich.heading : null;
   // kind 文字列は internal enum なので UI に出す時だけ人間可読形へ (現状
   // spawn-prompt のみ special-case、他 kind は enum ラベルのまま踏襲)。
-  const kindLabel = kind === "spawn-prompt" ? "spawn prompt" : kind;
+  // A cross-session relay is still `peer-message` on the wire, but naming the
+  // transport in the closed summary is what makes the fold readable without
+  // opening it — the peer's channel is the one thing the kind enum can't say.
+  const kindLabel =
+    kind === "spawn-prompt"
+      ? "spawn prompt"
+      : peer?.channel === "cross-session"
+        ? "cross-session"
+        : kind;
   // `! <cmd>` の入力行は閉じたままでも何を実行したか分かるように、summary に
   // コマンドそのものを出す (出力行は本文側にしかないので kindLabel のまま)。
   const bashCommand = rich.display === "bash" ? rich.command : null;

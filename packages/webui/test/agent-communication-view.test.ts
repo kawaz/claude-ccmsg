@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   agentDirectionMarker,
+  peerChannelLabel,
   peerMessagePresentation,
 } from "../src/client/agent-communication-view.ts";
 
@@ -20,11 +21,12 @@ describe("peerMessagePresentation", () => {
     expect(
       peerMessagePresentation({
         from: "worker",
+        channel: "teammate",
         summary: "完了報告",
         category: "message",
         body: "done",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "受信" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "受信", channelLabel: null });
   });
 
   // 制御系 peer の右上 badge も用途ラベルだけを表示し、方向 marker と混ぜない。
@@ -32,19 +34,21 @@ describe("peerMessagePresentation", () => {
     expect(
       peerMessagePresentation({
         from: "worker",
+        channel: "teammate",
         summary: null,
         category: "task-assignment",
         body: "task",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "タスク指示" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "タスク指示", channelLabel: null });
     expect(
       peerMessagePresentation({
         from: "worker",
+        channel: "teammate",
         summary: null,
         category: "lifecycle",
         body: "shutdown",
       }),
-    ).toEqual({ kind: "card", marker: "🤖←", badge: "状態変更" });
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "状態変更", channelLabel: null });
   });
 
   // idle は会話カードではなく operational noise。identicon・bold・tabs を持つ card
@@ -53,10 +57,47 @@ describe("peerMessagePresentation", () => {
     expect(
       peerMessagePresentation({
         from: "worker",
+        channel: "teammate",
         summary: null,
         category: "idle",
         body: "待機通知 · available",
       }),
-    ).toEqual({ kind: "idle", marker: "🤖←", text: "待機通知 · available" });
+    ).toEqual({ kind: "idle", marker: "🤖←", text: "待機通知 · available", channelLabel: null });
+  });
+});
+
+describe("peerChannelLabel", () => {
+  // in-process relay が既定なので無印。cross-session だけ 1 語のラベルを持ち、
+  // バブルの見た目そのものは共通のままにする (別バブル族を増やさない)。
+  test("only the cross-session channel is labeled", () => {
+    expect(peerChannelLabel("teammate")).toBeNull();
+    expect(peerChannelLabel("cross-session")).toBe("cross-session");
+  });
+
+  // 受信カード / idle 行のどちらからでも同じラベルが取れる。
+  test("presentation carries the channel label for both card and idle shapes", () => {
+    expect(
+      peerMessagePresentation({
+        from: "probe",
+        channel: "cross-session",
+        summary: null,
+        category: "message",
+        body: "本文",
+      }),
+    ).toEqual({ kind: "card", marker: "🤖←", badge: "受信", channelLabel: "cross-session" });
+    expect(
+      peerMessagePresentation({
+        from: "probe",
+        channel: "cross-session",
+        summary: null,
+        category: "idle",
+        body: "[Cross-session idle notice] ...",
+      }),
+    ).toEqual({
+      kind: "idle",
+      marker: "🤖←",
+      text: "[Cross-session idle notice] ...",
+      channelLabel: "cross-session",
+    });
   });
 });
