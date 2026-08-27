@@ -5165,7 +5165,7 @@ button.session-tab {
  * この余白は **トップレベル配置に固有** の関心なので `:not(.tl-fold-group *)`
  * で限定する (kawaz r76 m49)。fold group の中 (peer 発のみの ccmsg 行、r55 m14)
  * では FoldGuide が既にインデントを与えており、そこへ更に 1.5rem 乗せると
- * thinking / items サブ fold より一段深く見え「items の内側にネストされている」
+ * fold 内の他の行より一段深く見え「items の内側にネストされている」
  * ように読める。u1 発を含む行は今も boundary = トップレベルなので、そちらでは
  * 従来どおり左端から離れる。 */
 .tl-ccmsg-fold:not(.tl-fold-group *) {
@@ -5576,15 +5576,6 @@ a.tl-attachment-file-path {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-}
-
-/* thinking 間の tool 群サブ fold (kawaz r17 mid=45)。summary は fold group
- * の等幅トーンに合わせる。 */
-.tl-items-subfold > summary {
-  cursor: pointer;
-  font-size: var(--font-size-md);
-  color: var(--fg-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* fold summary の「N thinkings」部の装飾 (kawaz r17 mid=47): thinking 本文

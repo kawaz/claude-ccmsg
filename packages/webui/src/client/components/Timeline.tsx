@@ -49,7 +49,7 @@ import {
   isSearchableSegment,
   segmentSearchText,
   itemRawSourceOffsets,
-  splitFoldSubgroups,
+  isDirectFoldEntry,
   userNavTargets,
   parseSystemMessageFields,
   parseTranscriptLine,
@@ -108,7 +108,7 @@ import {
   type SearchWord,
 } from "../in-view-search.ts";
 import { readStorage, writeStorage } from "../storage.ts";
-import { foldGroupKey, foldPathsByOffset, itemsSubFoldKey } from "../fold-tree.ts";
+import { foldGroupKey, foldPathsByOffset } from "../fold-tree.ts";
 import { FoldOpenStore } from "../fold-open-store.ts";
 import {
   canPrettyRawLine,
@@ -148,7 +148,7 @@ import { Tabs } from "./Tabs.tsx";
  * across a "load older" prepend just like the 👤 nav's userTurnKeys —
  * segIndex disambiguates multiple segments sharing one line). Bundled into a
  * single object rather than five separate props so the FoldGroup/
- * ItemsSubFold/LineView/*Bubble prop-drilling chain only grows by one prop
+ * LineView/*Bubble prop-drilling chain only grows by one prop
  * per component.
  */
 interface TLSearchCtx {
@@ -171,7 +171,7 @@ interface TLSearchCtx {
  * (`itemRawSourceOffsets`: normally the item's own line, plus the merged
  * tool_result line for a tool card). Threaded as context rather than as a
  * prop because the toggle sits on items several levels down the
- * FoldGroup/ItemsSubFold/LineView chain, and every one of them would
+ * FoldGroup/LineView chain, and every one of them would
  * otherwise have to forward it unchanged.
  */
 const ItemRawContext = createContext<((offset: number) => RawTranscriptRow[]) | null>(null);
@@ -306,7 +306,7 @@ const NEAR_BOTTOM_PX = 80;
 /** 展開 fold の左端縦線ガイド (kawaz r17 mid=45,49): クリックすると最も近い
  * 祖先の <details> (= 自分が中身を描いている fold) を閉じ、summary 位置へ
  * スクロールバックする。DOM 走査 (closest) 方式なのは、この線を fold group /
- * items サブ fold / thinking / tool_use / tool_result / meta の全展開部で
+ * thinking / tool_use / tool_result / meta の全展開部で
  * 使い回すため — 各コンポーネントの open state を prop で配るより、閉じる
  * 対象を「線が属する details」と構造で決める方が一貫する (details の open
  * 属性除去は onToggle 経由で各コンポーネントの state にも同期される)。 */
@@ -2045,7 +2045,7 @@ function LineView({
   );
 }
 
-// LineView, ItemsSubFold and FoldGroup (each memoized right where it is
+// LineView and FoldGroup (each memoized right where it is
 // defined) render the fold side of the timeline, which is 73-96% of every
 // entry in a real transcript — and a live tail re-rendered the whole of it
 // once per appended line, because Preact recurses into every child of a
@@ -2085,11 +2085,6 @@ function FoldGroup({
   // stored override when their revision changes, so a settings edit lands here
   // without the store having to know what any group's default is.
   const { open, mountBody, setOpen } = useFoldOpen(foldGroupKey(entries), groupAutoOpen);
-  const detailsRef = useRef<HTMLDetailsElement | null>(null);
-  // 展開時の中身は thinking / agent 通信で tool run を区切る。thinking と
-  // agent 通信は外側 fold の直下、間の tool 群は「N items」のサブ fold に
-  // 畳む。分割は pure function (transcript-model.ts) 側で単体テスト済み。
-  const subgroups = useMemo(() => splitFoldSubgroups(entries), [entries]);
   const thinkingCount = useMemo(
     () =>
       entries.filter(
@@ -2110,42 +2105,26 @@ function FoldGroup({
     [entries],
   );
   const itemCount = useMemo(
-    () =>
-      subgroups.reduce(
-        (count, subgroup) => count + (subgroup.kind === "items" ? subgroup.entries.length : 0),
-        0,
-      ),
-    [subgroups],
+    () => entries.filter((entry) => !isDirectFoldEntry(entry)).length,
+    [entries],
   );
+  // 単独の plain item は fold を作らず直接見せる (kawaz r38 mid=44)。
   if (!foldGroupNeedsOuterFold(entries)) {
+    const { offset, line } = entries[0]!;
     return (
       <div class="tl-guided-content">
-        {subgroups.map((subgroup) =>
-          subgroup.kind === "direct" ? (
-            <MemoLineView
-              key={subgroup.entry.offset}
-              line={subgroup.entry.line}
-              offset={subgroup.entry.offset}
-              translationAvailability={translationAvailability}
-              foldGroupOpen={true}
-              searchCtx={searchCtx}
-            />
-          ) : (
-            <MemoItemsSubFold
-              key={subgroup.entries[0]!.offset}
-              entries={subgroup.entries}
-              translationAvailability={translationAvailability}
-              foldGroupOpen={false}
-              searchCtx={searchCtx}
-            />
-          ),
-        )}
+        <MemoLineView
+          line={line}
+          offset={offset}
+          translationAvailability={translationAvailability}
+          foldGroupOpen={false}
+          searchCtx={searchCtx}
+        />
       </div>
     );
   }
   return (
     <details
-      ref={detailsRef}
       class="tl-line tl-fold-group"
       open={open}
       onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
@@ -2191,83 +2170,13 @@ function FoldGroup({
         <FoldGuide />
         <div class="tl-guided-content">
           {mountBody
-            ? subgroups.map((sg) =>
-                sg.kind === "direct" ? (
-                  <MemoLineView
-                    key={sg.entry.offset}
-                    line={sg.entry.line}
-                    offset={sg.entry.offset}
-                    translationAvailability={translationAvailability}
-                    foldGroupOpen={open}
-                    searchCtx={searchCtx}
-                  />
-                ) : (
-                  <MemoItemsSubFold
-                    key={sg.entries[0]!.offset}
-                    entries={sg.entries}
-                    translationAvailability={translationAvailability}
-                    foldGroupOpen={open}
-                    searchCtx={searchCtx}
-                  />
-                ),
-              )
-            : null}
-        </div>
-      </div>
-    </details>
-  );
-}
-
-const MemoFoldGroup = memo(FoldGroup);
-
-/** FoldGroup 展開時の thinking 間 tool 群サブ fold (kawaz r17 mid=45)。
- * 既定は閉。こちらにも縦線クリック閉じを付ける (ネスト側の「| |」相当)。 */
-function ItemsSubFold({
-  entries,
-  translationAvailability,
-  foldGroupOpen,
-  searchCtx,
-}: {
-  entries: TimelineEntry[];
-  translationAvailability: TranslationAvailability;
-  foldGroupOpen: boolean;
-  searchCtx: TLSearchCtx | undefined;
-}) {
-  const { open, mountBody, setOpen } = useFoldOpen(itemsSubFoldKey(entries), false);
-  const detailsRef = useRef<HTMLDetailsElement | null>(null);
-  // 「1 items」だけの subfold は開く手間が無駄 (kawaz r38 mid=44) — fold 層を
-  // 作らず中身 (それ自体が tool カード等の fold を持つ) を直接引き上げる。
-  if (entries.length === 1) {
-    const { offset, line } = entries[0]!;
-    return (
-      <MemoLineView
-        line={line}
-        offset={offset}
-        translationAvailability={translationAvailability}
-        foldGroupOpen={foldGroupOpen}
-        searchCtx={searchCtx}
-      />
-    );
-  }
-  return (
-    <details
-      ref={detailsRef}
-      class="tl-fold tl-items-subfold"
-      open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
-    >
-      <summary>{entries.length} items</summary>
-      <div class="tl-guided">
-        <FoldGuide />
-        <div class="tl-guided-content">
-          {mountBody
             ? entries.map(({ offset, line }) => (
                 <MemoLineView
                   key={offset}
                   line={line}
                   offset={offset}
                   translationAvailability={translationAvailability}
-                  foldGroupOpen={foldGroupOpen}
+                  foldGroupOpen={open}
                   searchCtx={searchCtx}
                 />
               ))
@@ -2278,7 +2187,7 @@ function ItemsSubFold({
   );
 }
 
-const MemoItemsSubFold = memo(ItemsSubFold);
+const MemoFoldGroup = memo(FoldGroup);
 
 // --- 境界行の吹き出し表示 (kawaz spec: 「timeline のユーザプロンプトと
 // エージェントアウトプットは ROOM のチャットに寄せた表現にしたい」) ---
@@ -3650,7 +3559,7 @@ export function Timeline({
 
   // With closed folds out of scope, "[N/M]" depends on the open/closed state
   // of every <details> on the page — but opening one only re-renders that
-  // fold's own subtree (FoldGroup/ItemsSubFold keep `open` in local state, see
+  // fold's own subtree (FoldGroup keeps `open` in local state, see
   // ccmsgRenderTargets' doc comment), so nothing would re-run the match effect
   // below. This bumps a revision the effect depends on. Only armed while the
   // toggle is off and a query is live: when closed folds *are* in scope the
@@ -3927,14 +3836,14 @@ export function Timeline({
     displayRevision,
   ]);
 
-  // Auto-expand every ancestor <details> (fold group / items sub-fold /
-  // system-message fold) before scrolling — Phase 2's "fold との相互作用込み"
+  // Auto-expand every ancestor <details> (fold group / system-message fold)
+  // before scrolling — Phase 2's "fold との相互作用込み"
   // (DR-0022 §4): a match living inside a collapsed fold must actually
   // become visible when navigated to, not silently scroll to a hidden
   // element. Mirrors FoldGuide's ancestor-`<details>`-via-`closest()` trick
   // used elsewhere in this file, walking outward through nested folds.
   // Opens a closed <details> in a way that survives the imminent re-render.
-  // FoldGroup/ItemsSubFold/ThinkingSegment all render a *controlled*
+  // FoldGroup/ThinkingSegment both render a *controlled*
   // `<details open={state}>` synced via onToggle. The browser fires `toggle`
   // asynchronously (as a task), but the setSearchCurrentIndex re-render from
   // searchNext/Prev lands first and writes the still-false state's `open`

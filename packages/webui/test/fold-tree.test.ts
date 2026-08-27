@@ -5,9 +5,8 @@
 // The contract that matters is agreement with what Timeline actually renders:
 // a path naming a fold that never appears would leave a match un-reachable,
 // and a missing path would leave nav thinking a hidden line was already on
-// screen. Both of Timeline's "no fold here after all" shortcuts are covered
-// below (a fold group with no direct entry renders no outer <details>; a
-// one-entry items run is hoisted instead of wrapped).
+// screen. Timeline's one "no fold here after all" shortcut is covered below
+// (a fold group that is a single plain item is hoisted instead of wrapped).
 import { describe, expect, test } from "bun:test";
 import {
   byteOffsetsFromLengths,
@@ -18,7 +17,7 @@ import {
   utf8ByteLength,
   type TimelineGroup,
 } from "../src/client/transcript-model.ts";
-import { foldGroupKey, foldPathsByOffset, itemsSubFoldKey } from "../src/client/fold-tree.ts";
+import { foldGroupKey, foldPathsByOffset } from "../src/client/fold-tree.ts";
 
 const START = 0;
 
@@ -99,7 +98,9 @@ describe("foldPathsByOffset", () => {
     expect(paths.get(offsets[4]!)).toBeUndefined();
   });
 
-  test("thinking sits directly under the outer fold; the tool run under a sub-fold", () => {
+  test("every entry of a fold group needs only that group's outer fold", () => {
+    // 2 段目のサブグループは廃止 (kawaz r151 m38): fold を開けば thinking も
+    // tool 群も等しく 1 行ずつ現れるので、どの entry も outer 1 段で届く。
     const raws = [
       userPrompt("q"),
       thinking("hmm"),
@@ -109,42 +110,27 @@ describe("foldPathsByOffset", () => {
       toolResult("tu_2"),
       assistantText("a"),
     ];
-    const { groups, offsets, paths } = build(raws);
+    const { groups, paths } = build(raws);
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
     const outer = foldGroupKey(fold.entries);
-    // Thinking is a direct child: opening the outer fold is enough.
-    expect(paths.get(offsets[1]!)).toEqual([outer]);
-    // The two tool calls (each with its result folded in by resolveToolResults)
-    // are one items run, so they need the sub-fold too.
-    const items = fold.entries.filter((entry) => entry.offset !== offsets[1]!);
-    expect(items.map((entry) => entry.offset)).toEqual([offsets[2]!, offsets[4]!]);
-    const inner = itemsSubFoldKey(items);
-    for (const entry of items) {
-      expect(paths.get(entry.offset)).toEqual([outer, inner]);
+    for (const entry of fold.entries) {
+      expect(paths.get(entry.offset)).toEqual([outer]);
     }
   });
 
-  test("a one-entry items run is hoisted, so it needs only the outer fold", () => {
+  test("a lone plain item is hoisted, so it has no fold to open", () => {
     // A single tool_use/tool_result pair resolves into one entry, which
-    // ItemsSubFold renders without a <details> of its own.
-    const raws = [
-      userPrompt("q"),
-      thinking("hmm"),
-      toolUse("tu_1"),
-      toolResult("tu_1"),
-      assistantText("a"),
-    ];
+    // FoldGroup renders without a <details> of its own.
+    const raws = [userPrompt("q"), toolUse("tu_1"), toolResult("tu_1"), assistantText("a")];
     const { groups, offsets, paths } = build(raws);
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
-    const outer = foldGroupKey(fold.entries);
-    expect(fold.entries.length).toBe(2);
-    expect(paths.get(offsets[2]!)).toEqual([outer]);
+    expect(fold.entries.length).toBe(1);
+    expect(paths.get(offsets[1]!)).toEqual([]);
   });
 
-  test("a fold group with no direct entry has no outer fold to open", () => {
-    // No thinking, no agent traffic: FoldGroup renders the sub-folds bare.
+  test("a tool-only run of several entries still folds under its own outer fold", () => {
     const raws = [
       userPrompt("q"),
       toolUse("tu_1"),
@@ -156,9 +142,9 @@ describe("foldPathsByOffset", () => {
     const { groups, offsets, paths } = build(raws);
     const fold = groups.find((group) => group.kind === "fold");
     if (fold?.kind !== "fold") throw new Error("expected a fold group");
-    const inner = itemsSubFoldKey(fold.entries);
-    expect(paths.get(offsets[1]!)).toEqual([inner]);
-    expect(paths.get(offsets[1]!)?.[0]).not.toBe(foldGroupKey(fold.entries));
+    const outer = foldGroupKey(fold.entries);
+    expect(paths.get(offsets[1]!)).toEqual([outer]);
+    expect(paths.get(offsets[3]!)).toEqual([outer]);
   });
 
   test("every fold entry is accounted for, and only fold entries are", () => {

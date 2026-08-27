@@ -1359,8 +1359,8 @@ export function groupTimelineLines(lines: ParsedLine[], offsets: number[]): Time
 }
 
 /** True when an entry contains a thinking segment. A mixed thinking+tool
- * turn is intentionally classified as thinking so its narrative marker does
- * not sink into an items sub-fold. */
+ * turn is intentionally classified as thinking so the fold summary advertises
+ * its narrative marker instead of burying it in the `N items` tally. */
 export function isThinkingEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   return (
@@ -1439,9 +1439,10 @@ export function ccmsgMessageCount(entry: TimelineEntry): number {
   return extractCcmsgMessages(line).length;
 }
 
-/** Entries rendered directly between items runs instead of being counted and
- * hidden inside an items sub-fold. Thinking, ccmsg, and agent communication
- * stay at the same level inside the outer fold and split adjacent items runs. */
+/** Entries the fold summary names by their own category (thinking, ccmsg,
+ * agent communication) rather than counting into the generic `N items`
+ * tally. Every entry of a fold group is rendered on its own line either way;
+ * this only decides how the closed summary describes it. */
 export function isDirectFoldEntry(entry: TimelineEntry): boolean {
   const { line } = entry;
   if (line.kind !== "turn") return false;
@@ -1470,41 +1471,13 @@ export function foldGroupLabel(entries: TimelineEntry[]): string {
     .join(" + ");
 }
 
-/** fold group 展開時の中身の区切り。thinking と agent 通信は直接見せ、
- * その間に挟まる tool 群 (tool_use/tool_result/meta/...) は「N items」の
- * サブ fold (既定閉) に畳む。返り値は表示順のまま: {kind:"items"}
- * (サブ fold 化する連続 run) と {kind:"direct"} (単独で直接表示) の列。 */
-export type FoldSubgroup =
-  | { kind: "items"; entries: TimelineEntry[] }
-  | { kind: "direct"; entry: TimelineEntry };
-
-/** Whether a fold group needs its outer, turn-level fold in addition to items
- * sub-folds. Thinking and agent communication are direct children of this
- * closed-by-default fold; an all-items run remains flat to avoid a redundant
- * `N items` outer fold containing only an `N items` sub-fold. */
+/** Whether a fold group renders its turn-level `<details>` at all. A group
+ * that is a single plain item is hoisted to the timeline instead (kawaz r38
+ * mid=44: 「1 items」を開く手間が無駄 — the entry carries its own tool card
+ * fold already). Everything else folds, and its body lists every entry on its
+ * own line. */
 export function foldGroupNeedsOuterFold(entries: TimelineEntry[]): boolean {
-  return entries.some(isDirectFoldEntry);
-}
-
-export function splitFoldSubgroups(entries: TimelineEntry[]): FoldSubgroup[] {
-  const out: FoldSubgroup[] = [];
-  let run: TimelineEntry[] = [];
-  const flush = () => {
-    if (run.length > 0) {
-      out.push({ kind: "items", entries: run });
-      run = [];
-    }
-  };
-  for (const e of entries) {
-    if (isDirectFoldEntry(e)) {
-      flush();
-      out.push({ kind: "direct", entry: e });
-    } else {
-      run.push(e);
-    }
-  }
-  flush();
-  return out;
+  return entries.length > 1 || entries.some(isDirectFoldEntry);
 }
 
 /**

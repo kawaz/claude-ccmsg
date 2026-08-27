@@ -18,7 +18,6 @@ import {
   extractCcmsgMessages,
   foldGroupLabel,
   foldGroupNeedsOuterFold,
-  splitFoldSubgroups,
   groupTimelineLines,
   isAgentCommunicationSegment,
   isApiErrorLine,
@@ -2712,9 +2711,10 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
   });
 });
 
-// splitFoldSubgroups (kawaz r17 mid=45): fold group 展開時の中身を thinking
-// 区切りでサブグループ化する分割の輪郭。
-describe("splitFoldSubgroups", () => {
+// fold group の中身の分類 (kawaz r151 m38 で 2 段目グルーピングを廃止): 開けば
+// 全 entry が 1 行ずつ並ぶので、残る判断は「閉じた summary が何と名指すか」
+// — thinking / ccmsg / agent 通信は自分のカテゴリ名で、それ以外は「N items」。
+describe("isDirectFoldEntry / foldGroupLabel", () => {
   const thinkingEntry = (offset: number) => ({
     offset,
     line: {
@@ -2734,21 +2734,18 @@ describe("splitFoldSubgroups", () => {
     },
   });
 
-  // 何を保証するか: tool 群 → thinking → tool 群 → thinking の列が
-  // items/thinking の交互列に分割され、表示順が保たれる。thinking は
-  // 単独 entry、tool run はまとめて 1 つの items グループ。
-  test("splits runs of tools at each thinking boundary, preserving order", () => {
+  // 何を保証するか: thinking は自分のカテゴリで数えられ、間の tool 群は
+  // 位置に関係なく単一の items カウントに合流する (run に分かれない)。
+  test("thinking is named by category; every tool entry counts into one items tally", () => {
     const entries = [toolEntry(1), toolEntry(2), thinkingEntry(3), toolEntry(4), thinkingEntry(5)];
-    const got = splitFoldSubgroups(entries);
-    expect(got.map((g) => g.kind)).toEqual(["items", "direct", "items", "direct"]);
-    expect(got[0]!.kind === "items" && got[0]!.entries.length).toBe(2);
-    expect(got[2]!.kind === "items" && got[2]!.entries.length).toBe(1);
+    expect(entries.map(isDirectFoldEntry)).toEqual([false, false, true, false, true]);
+    expect(foldGroupLabel(entries)).toBe("2 thinking + 3 items");
   });
 
   // 何を保証するか (kawaz r17 mid=49 の実観測): thinking と tool_use が
-  // 同一 turn 行に混在するケースは thinking 側 — items サブ fold に沈むと
-  // fold group 直下に出るべき thinking が 1 段深く表示される。
-  test("a mixed thinking+tool turn splits as thinking, not items", () => {
+  // 同一 turn 行に混在するケースは thinking 側 — items に数えると summary が
+  // thinking の在処を示せなくなる。
+  test("a mixed thinking+tool turn counts as thinking, not items", () => {
     const mixed = {
       offset: 10,
       line: {
@@ -2761,20 +2758,18 @@ describe("splitFoldSubgroups", () => {
         ],
       },
     };
-    const got = splitFoldSubgroups([toolEntry(1), mixed, toolEntry(3)]);
-    expect(got.map((g) => g.kind)).toEqual(["items", "direct", "items"]);
+    expect(isDirectFoldEntry(mixed)).toBe(true);
+    expect(foldGroupLabel([toolEntry(1), mixed, toolEntry(3)])).toBe("1 thinking + 2 items");
   });
 
-  // 何を保証するか (境界): thinking が無ければ全体が 1 つの items、
-  // thinking だけなら items グループは生まれない (空 run を flush しない)。
-  test("all-tools yields one items group; all-thinking yields no items group", () => {
-    const tools = splitFoldSubgroups([toolEntry(1), toolEntry(2)]);
-    expect(tools.map((g) => g.kind)).toEqual(["items"]);
-    const thinking = splitFoldSubgroups([thinkingEntry(1), thinkingEntry(2)]);
-    expect(thinking.map((g) => g.kind)).toEqual(["direct", "direct"]);
+  // 何を保証するか (境界): 片方のカテゴリしか無い group では、無い側の
+  // 項が summary から落ちる。
+  test("all-tools labels only items; all-thinking labels only thinking", () => {
+    expect(foldGroupLabel([toolEntry(1), toolEntry(2)])).toBe("2 items");
+    expect(foldGroupLabel([thinkingEntry(1), thinkingEntry(2)])).toBe("2 thinking");
   });
 
-  test("agent send, spawn, and peer messages split items runs and stay out of item counts", () => {
+  test("agent send, spawn, and peer messages are named by category, not counted as items", () => {
     const parsedEntry = (offset: number, raw: Record<string, unknown>): TimelineEntry => ({
       offset,
       line: parseTranscriptLine(JSON.stringify(raw)),
@@ -2806,7 +2801,7 @@ describe("splitFoldSubgroups", () => {
     });
     const entries = [toolEntry(1), send, toolEntry(3), spawn, toolEntry(5), peer, toolEntry(7)];
 
-    // Agent 通信は items run を分割する direct subgroup だが、外側 fold と
+    // Agent 通信は summary で自分のカテゴリを名乗るが、外側 fold と
     // 各通信 details は既定閉。通常 tool segment と他の system message は対象外。
     expect(send.line.kind === "turn" && isAgentCommunicationSegment(send.line.segments[0]!)).toBe(
       true,
@@ -2821,25 +2816,17 @@ describe("splitFoldSubgroups", () => {
     );
     expect(isPeerMessageLine(userToolResult("tu_1"))).toBe(false);
 
-    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
-      "items",
-      "direct",
-      "items",
-      "direct",
-      "items",
-      "direct",
-      "items",
-    ]);
+    expect(entries.map(isDirectFoldEntry)).toEqual([false, true, false, true, false, true, false]);
     expect(foldGroupLabel(entries)).toBe("3 agent messages + 4 items");
     expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 
   // 何を保証するか (kawaz r76 m49 の実データ形状): subscribe 通知で届く
   // peer 発のルームメッセージ (`<task-notification>` に `<event>` の jsonl が
-  // 載る形) は fold group 直下の direct — thinking と同じ階層に出る。
+  // 載る形) は summary で ccmsg として名指される — thinking と同じ扱い。
   // classifyBoundaryLine 側は r55 m14 どおり null (u1 発を含まないので
   // トップレベルの主役バブルにはしない) のままであることも同時に固定する。
-  test("a peer-sent ccmsg room message is a direct subgroup, not folded into items", () => {
+  test("a peer-sent ccmsg room message is named as ccmsg, not counted as an item", () => {
     const event = {
       type: "msg",
       mid: 2,
@@ -2867,15 +2854,10 @@ describe("splitFoldSubgroups", () => {
     expect(ccmsgMessageCount(peerCcmsg)).toBe(1);
     expect(isDirectFoldEntry(peerCcmsg)).toBe(true);
     expect(classifyBoundaryLine(peerCcmsg.line)).toBeNull();
-    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
-      "items",
-      "direct",
-      "items",
-    ]);
     expect(foldGroupLabel(entries)).toBe("1 ccmsg + 2 items");
   });
 
-  test("idle_notification peer messages stay in the items run", () => {
+  test("idle_notification peer messages count as plain items", () => {
     const idle: TimelineEntry = {
       offset: 2,
       line: parseTranscriptLine(
@@ -2892,9 +2874,8 @@ describe("splitFoldSubgroups", () => {
     const entries = [toolEntry(1), idle, toolEntry(3)];
 
     expect(isPeerMessageLine(idle.line)).toBe(true);
-    expect(splitFoldSubgroups(entries)).toEqual([{ kind: "items", entries }]);
+    expect(entries.map(isDirectFoldEntry)).toEqual([false, false, false]);
     expect(foldGroupLabel(entries)).toBe("3 items");
-    expect(foldGroupNeedsOuterFold(entries)).toBe(false);
   });
 
   // The harness batches everything that arrived while the session was busy into
@@ -2921,11 +2902,7 @@ describe("splitFoldSubgroups", () => {
     const entries = [toolEntry(1), batched, toolEntry(3)];
 
     expect(agentCommunicationCount(batched)).toBe(1);
-    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
-      "items",
-      "direct",
-      "items",
-    ]);
+    expect(entries.map(isDirectFoldEntry)).toEqual([false, true, false]);
     expect(foldGroupLabel(entries)).toBe("1 agent messages + 2 items");
   });
 });
@@ -2934,58 +2911,48 @@ describe("foldGroupNeedsOuterFold", () => {
   function parsedEntry(offset: number, raw: Record<string, unknown>): TimelineEntry {
     return { offset, line: parseTranscriptLine(JSON.stringify(raw)) };
   }
+  const bash = (offset: number) =>
+    parsedEntry(offset, {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "pwd" } }],
+      },
+    });
+  const bashResult = (offset: number) =>
+    parsedEntry(offset, {
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }],
+      },
+    });
 
-  // 実 transcript と同じ assistant tool_use / user tool_result の交互列には
-  // thinking の節目がない。外側も内側も同じ 2 items を表すため、外側 fold は
-  // 表示せず items fold 1 段だけにする。
-  test("tool-only transcript run is rendered as one flat items fold", () => {
-    const entries = [
-      parsedEntry(10, {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "pwd" } }],
-        },
-      }),
-      parsedEntry(20, {
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }],
-        },
-      }),
-    ];
-
-    expect(foldGroupLabel(entries)).toBe("2 items");
-    expect(splitFoldSubgroups(entries)).toEqual([{ kind: "items", entries }]);
-    expect(foldGroupNeedsOuterFold(entries)).toBe(false);
+  // 単独の plain item を「1 items」fold で包むと、開く手間だけが増えて
+  // 得るものがない (kawaz r38 mid=44)。entry 自身が tool カードの fold を
+  // 持っているので、そのまま timeline に出す。
+  test("a lone plain item is hoisted instead of getting a fold", () => {
+    expect(foldGroupNeedsOuterFold([bash(10)])).toBe(false);
   });
 
-  // thinking が混在する run では外側 fold が作業全体、items sub-fold が
-  // thinking 間の tool 群を表すため階層に意味がある。この場合は二段を保つ。
-  test("thinking-separated tool runs keep the meaningful outer fold", () => {
+  // 実 transcript と同じ assistant tool_use / user tool_result の交互列。
+  // thinking の節目が無くても、2 件以上あれば畳める価値がある。
+  test("a tool-only run of several entries folds under one items fold", () => {
+    const entries = [bash(10), bashResult(20)];
+    expect(foldGroupLabel(entries)).toBe("2 items");
+    expect(foldGroupNeedsOuterFold(entries)).toBe(true);
+  });
+
+  // 単独でも thinking / agent 通信は fold を持つ: 中身が長く、既定閉で
+  // 畳んでおくこと自体に意味がある。
+  test("a lone thinking entry still gets its fold", () => {
     const entries = [
       parsedEntry(1, {
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: {} }] },
-      }),
-      parsedEntry(2, {
-        type: "assistant",
         message: { role: "assistant", content: [{ type: "thinking", thinking: "inspect" }] },
       }),
-      parsedEntry(3, {
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "tool_result", tool_use_id: "tu_1", content: "ok" }],
-        },
-      }),
     ];
-    expect(splitFoldSubgroups(entries).map((group) => group.kind)).toEqual([
-      "items",
-      "direct",
-      "items",
-    ]);
+    expect(foldGroupLabel(entries)).toBe("1 thinking");
     expect(foldGroupNeedsOuterFold(entries)).toBe(true);
   });
 });

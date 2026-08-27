@@ -193,8 +193,8 @@ describe("foldGroupShouldAutoOpen", () => {
     },
   });
 
-  // N items は T/A を包む外側 FoldGroup だけを開くためのゲート。内側の
-  // ItemsSubFold を一斉展開する設定ではなく、T/A が一致しなければ外側も開かない。
+  // N items は T/A を包む FoldGroup を開くためのゲートにすぎず、T/A が
+  // 一致しなければ fold は開かない。
   test("N items gates only an outer FoldGroup containing enabled T/A", () => {
     expect(
       foldGroupShouldAutoOpen([thinking], {
