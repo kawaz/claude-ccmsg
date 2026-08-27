@@ -225,3 +225,19 @@ exec** を syspolicyd / XProtect の評価が終わるまで同期ブロック�
 mock の等価性 (引数・exit code・stdout/stderr・env・stdin・シグナル) は
 `packages/testkit/test/mock-bin.test.ts` に恒久化。既知の差異は mock 内の `$0` が
 sidecar のパスになる点のみ (インタープリタの仕様で回避不能、現存 mock は未使用)。
+
+## 追記: 2026-08-27 実測 — ローカル push gate での timeout 系再発と CI 新顔 flaky
+
+ローカル push gate (`just test`) で timeout 系 flaky が同日 3 回発生。従来より頻度が
+上がっている体感。
+
+- v0.119.0 push 時に 1 回 (`timed out after 5000ms`)
+- issue commit push 時に 2 連続
+- いずれも単独 / 直後の全量再実行では 2988 pass の一発 green で、個別テスト名は
+  特定できず
+
+CI (ubuntu-latest) で新顔の flaky を観測: `packages/daemon/test/last-live-sessions.test.ts`
+の「kill された daemon を起こし直すと、直前の接続が前回稼働中として出る」
+(v0.115.0 で追加) が `expect().toEqual` 不一致で fail、`gh run rerun --failed` で
+green (run 33045400668)。kill/再起動のタイミング依存の疑い。既知 flaky リスト
+(translate-e2e / reconnect / ws keepalive) への追加候補として記録。
