@@ -15,6 +15,9 @@
 - `notify_when_idle` の通知は実際に着信することを確認済み (相手がターンを終えた時点で `[Cross-session idle notice]` が一回だけ注入される。別途モニタプロセスは不要)
 - **同名衝突は送信時に拒否される**: 同名セッションが複数 (2 つ・3 つで実測) ある時、bare name 送信は失敗し全候補が `[ref]` (ListAgents が行ごとに振る短縮 16 進ハンドル) 付きで列挙される。`name [ref]` 指定で 1 つにだけ届く (受信側の実確認済み)。ref は直前の listing / エラーに出たものだけ解決可能な揮発ハンドルで、sessionId とは別物。安定した機械可読アドレスが無いのはネイティブ側の弱点 (ccmsg は sid が正)
 - **CLAUDE_CONFIG_DIR 面を跨ぐと通じない**: emrd 面に立てたセッションは personal 面の ListAgents に出ず、送信も `No agent named ... is reachable` で拒否 (2026-08-27 実測、kawaz が emrd 側に検証セッションを用意)。面分離運用では面越え通信は ccmsg のみ可能 = ccmsg の差別化点
+- **会話中の rename で旧名は即無効**: 会話確立後に相手が /rename すると、旧名宛は即 `No agent named ... is reachable`、新名宛で届く (実測)。エイリアス・転送は無く、送信側は ListAgents で見つけ直す必要がある
+- **不在の name 宛は即時エラー**: 送信時に `No agent named 'X' is reachable` (+類似名があれば `Did you mean: ...?` のサジェスト)。キューや dead letter は無く、宛先不明メッセージが溜まることはない
+- **ref は `claude agents --json` から取れない**: agents が出すのは pid / cwd / sessionId / name / status のみ。ref は sid の接頭辞でもない内部ハンドルで、ListAgents 出力とエラーメッセージにしか現れない (機械連携は name + sid、ref はその場の曖昧性解決専用)
 
 ## 実用的な示唆
 
