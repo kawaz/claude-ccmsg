@@ -236,6 +236,7 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("--agent <id|name>");
       expect(help.out).toContain("next-room <room>");
       expect(help.out).toContain("daemon run [--foreground]");
+      expect(help.out).toContain("stop <session-id>");
       expect(help.out).toContain("Command Options:");
       expect(help.out).toContain("Global Options:");
       expect(help.out).toContain("Environment Variables:");
@@ -1398,6 +1399,69 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
         p3.kill();
         fs.rmSync(peerBase, { recursive: true, force: true });
       }
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+});
+
+describe("ccmsg CLI stop <session-id> (DR-0028 session_kill wiring)", () => {
+  test("usage error when no <session-id> is given", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["stop"], env);
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("session-id");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  test("unknown session-id resolves to not_found (same as webui's Status tab kill)", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["stop", "no-such-session-id"], env);
+      const parsed = JSON.parse(res.err) as { ok: boolean; error?: { code?: string } };
+      expect(res.code).not.toBe(0);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error?.code).toBe("not_found");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  test("--force forwards through to the same not_found outcome (pid-reuse guard unaffected)", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["stop", "no-such-session-id", "--force"], env);
+      const parsed = JSON.parse(res.err) as { ok: boolean; error?: { code?: string } };
+      expect(res.code).not.toBe(0);
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error?.code).toBe("not_found");
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  test("a session-role identity cannot self-kill via CLAUDE_CODE_SESSION_ID (user role gate)", async () => {
+    // stop must hello as role "user" unconditionally — if it picked up
+    // CLAUDE_CODE_SESSION_ID via resolveSessionIdentity it would hello as
+    // role "session" and session_kill would reject with bad_request instead
+    // of resolving the target sid at all. Asserting not_found (not
+    // bad_request) here is the regression guard for that.
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(["stop", "no-such-session-id"], {
+        ...env,
+        CLAUDE_CODE_SESSION_ID: "caller-sid",
+      });
+      const parsed = JSON.parse(res.err) as { ok: boolean; error?: { code?: string } };
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error?.code).toBe("not_found");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();

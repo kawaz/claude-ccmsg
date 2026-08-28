@@ -30,6 +30,7 @@ const BOOL_FLAGS = new Set([
   "foreground",
   "no-thinking",
   "no-agent",
+  "force",
   "help",
   "help-full",
   "version",
@@ -462,6 +463,58 @@ async function runDaemonStop(): Promise<never> {
   process.exit(0);
 }
 
+/** `ccmsg stop <session-id> [--force]` — terminate the OS process behind a
+ * Claude Code session, via the same daemon op (`session_kill`, DR-0028) the
+ * webui's Status tab danger-zone button uses. `session_kill` is user-role
+ * only (DR-0028: session-role agents must never kill each other), so this
+ * hellos as `{ role: "user" }` unconditionally — same posture as `daemon
+ * start`/`stop`/`status` — rather than picking up CLAUDE_CODE_SESSION_ID via
+ * resolveSessionIdentity, which would hello as role "session" and get
+ * rejected. The op is 2-phase on the wire (RequestAcceptedResponse ack, then
+ * a request_id-correlated `ev:"session_kill_result"`) because the daemon's
+ * resolve-pid + two-shot-SIGTERM sequence can take up to ~4s; this dedicated
+ * connection only ever carries this one exchange, so any other line read
+ * here would be a protocol violation, not legitimate unrelated traffic. */
+async function runSessionKill(sessionId: string, force: boolean): Promise<never> {
+  const paths = resolvePaths();
+  const client = await ensureDaemon(paths, { role: "user" });
+  const requestId = `stop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const accept = await client.request<
+    { ok?: boolean; accepted?: boolean } & Record<string, unknown>
+  >({
+    op: "session_kill",
+    request_id: requestId,
+    session_id: sessionId,
+    ...(force ? { force: true } : {}),
+  });
+  if (accept.ok !== true || accept.accepted !== true) {
+    client.close();
+    process.exit(output(accept));
+  }
+  for (;;) {
+    const line = await client.readLine();
+    if (line === null) {
+      client.close();
+      process.exit(
+        output({
+          ok: false,
+          error: { code: "internal", msg: "connection closed before session_kill result" },
+        }),
+      );
+    }
+    const ev = JSON.parse(line) as { ev?: string; request_id?: string } & Record<string, unknown>;
+    if (ev.ev === "session_kill_result" && ev.request_id === requestId) {
+      client.close();
+      const { ev: _ev, request_id: _rid, ...rest } = ev;
+      process.exit(output(rest));
+    }
+    // Any other line on this dedicated single-purpose connection would be a
+    // protocol violation (see doc comment) — ignore rather than crash so a
+    // future daemon addition (e.g. an unrelated broadcast) degrades to a
+    // slightly longer wait instead of a hard failure.
+  }
+}
+
 function handleDaemon(positionals: string[], opts: Record<string, string | boolean>): void {
   const sub = positionals[0];
   if (sub === "start") {
@@ -540,6 +593,15 @@ Commands:
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
   status                       Show daemon liveness / version / uptime / pid.
                                Does not start the daemon — use daemon start
+  stop <session-id>            Terminate the OS process behind a Claude Code
+                               session (same op the webui Status tab's
+                               danger-zone button uses: resolve sid→pid fresh,
+                               verify, two-shot SIGTERM, ~4s grace). Not to be
+                               confused with "daemon stop", which stops the
+                               ccmsg daemon itself. --force escalates to a
+                               single SIGKILL instead (irreversible — only
+                               after a graceful stop reported
+                               terminated:false)
   origins [list]               List persisted extra allowed Origins (webui reverse proxy)
   origins add <origin>         Allow an Origin (e.g. "https://ccmsg.example.com"), effective immediately
   origins remove <origin>      Remove a persisted Origin
@@ -588,6 +650,8 @@ Command Options:
   --sid <sid>                  notify: target session id
   --text <text>                notify: notification text
   --foreground                 daemon run: also log to stderr
+  --force                      stop: escalate to a single SIGKILL instead of
+                               the graceful two-shot SIGTERM sequence
 
 Global Options:
   --sid <sid>                  Act as this session id (for 'notify', --sid is the
@@ -665,6 +729,18 @@ async function main(): Promise<void> {
 
   if (cmd === "daemon") {
     handleDaemon(args, opts);
+    return;
+  }
+
+  // `stop` hellos as role "user" unconditionally (see runSessionKill's doc
+  // comment) — handled before resolveSessionIdentity so a caller running
+  // inside a Claude Code session (CLAUDE_CODE_SESSION_ID set) doesn't get its
+  // own sid picked up as the identity and rejected by session_kill's
+  // user-role gate.
+  if (cmd === "stop") {
+    const usage = "ccmsg stop <session-id> [--force]";
+    const sid = requireArg(args[0], "session-id", usage);
+    await runSessionKill(sid, opts.force === true);
     return;
   }
 
