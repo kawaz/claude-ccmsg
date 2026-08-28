@@ -4510,6 +4510,161 @@ button.session-tab {
   border-top: 1px solid var(--md-hr-rule);
 }
 
+/* Markdown セクション折り畳み (kawaz r151 m41)。`##` 以深の見出しを
+ * 「見出し + 配下」の入れ子 <section> に組み直したものが .md-sec で、
+ * 開閉の三角 (▶/▼) と、展開中の左端の縦ガイドを持つ。
+ *
+ * 三角は見出しの左の溝に絶対配置する — 行内に置くと見出しが flex item に
+ * なり、h2 の罫 (border-bottom) が文字幅までしか伸びなくなる。溝の分は
+ * .md 自身の padding-left で確保するので、負の left が viewer の内側余白を
+ * はみ出して切れることはない。
+ *
+ * 余白は折り畳み導入前と同じでなければならないので、section / head / body の
+ * どれにも上下 padding と border を置かない — 見出しと本文の margin はこれらを
+ * 貫通して collapse し、以前と同じ間隔に落ち着く。縦ガイドも絶対配置なので
+ * 通常フローに触らない。
+ *
+ * 閉じた section の中身は unmount せず display:none で隠す: プレビューの
+ * in-view search は描画済みテキストを辿るし、閉じた節の中への見出しリンクは
+ * 「まず対象要素を見つけてから祖先を開く」(revealMarkdownAnchor)。 */
+.md-sections {
+  --md-sec-caret: 1.4em;
+  --md-sec-indent: 2em;
+  padding-left: var(--md-sec-caret);
+}
+
+.md-sec-head {
+  position: relative;
+}
+
+/* 採番カウンタのリセット位置 (見出し側の counter-reset の続き)。
+ *
+ * `h2 { counter-reset: md-h3 ... }` が効くのは「その h2 の子孫と後続の兄弟」
+ * まで。折り畳みで h3 が h2 の後続兄弟ではなく **兄弟 subtree (.md-sec-body)
+ * の中** へ移ったので、節をまたいで h3 の番号が繰り上がってしまう
+ * (実測: 「1.2.3 第二節の子」= 1 であるべき所が 3)。節の全子孫を覆う
+ * .md-sec 自身でリセットして、深さごとに配り直す。 */
+.viewer-preview .md .md-sec-d2 {
+  counter-reset: md-h3 md-h4 md-h5 md-h6;
+}
+.viewer-preview .md .md-sec-d3 {
+  counter-reset: md-h4 md-h5 md-h6;
+}
+.viewer-preview .md .md-sec-d4 {
+  counter-reset: md-h5 md-h6;
+}
+.viewer-preview .md .md-sec-d5 {
+  counter-reset: md-h6;
+}
+
+/* .md > :first-child の margin-top: 0 は section には効かない (見出しの
+ * margin が section を貫通して collapse するため) ので、見出しへ直接書く。 */
+.md-sections > .md-sec:first-child > .md-sec-head > :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0;
+}
+
+.md-sec-caret-wrap {
+  position: absolute;
+  top: 0.15em;
+  left: calc(-1 * var(--md-sec-caret));
+  z-index: 1;
+}
+
+/* マーカーは Timeline の fold (.tl-fold summary::before) と同じ字形・同じ
+ * 相対サイズ。TL と揃うことが「開閉できる」の合図になる。 */
+.md-sec-caret {
+  display: block;
+  width: 1.15em;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+.md-sec-caret::before {
+  content: "▶";
+}
+.md-sec:not(.md-sec-closed) > .md-sec-head .md-sec-caret::before {
+  content: "▼";
+}
+.md-sec-caret:hover {
+  color: var(--accent);
+}
+
+/* 三角の右・上端揃えに浮かぶ操作メニュー。見出し本文の上に重なるので、地と
+ * 影を持たせて「浮いている」ことを見せる。 */
+.md-sec-menu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: max-content;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-alt);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  font-size: var(--font-size-sm);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.md-sec-menu > button {
+  padding: var(--space-5) var(--space-9);
+  border: none;
+  border-radius: 0.35rem;
+  background: none;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  font: inherit;
+}
+
+.md-sec-menu > button:hover {
+  background: color-mix(in oklab, var(--bg-alt), var(--fg) 10%);
+}
+
+.md-sec-body {
+  position: relative;
+  padding-left: var(--md-sec-indent);
+}
+
+.md-sec-closed > .md-sec-body {
+  display: none;
+}
+
+/* 展開中の左端の縦ガイド。TL の .tl-fold-guide と同じで、クリックすると
+ * その節を閉じる — 節の末尾まで読んだ位置から見出しへ戻らずに畳める。 */
+.md-sec-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0.55em;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.md-sec-guide::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.md-sec-guide:hover::before {
+  background: var(--accent);
+}
+
 /* kawaz r55 m77: `<details>`/`<summary>` は markdown 中で唯一構造として解釈する
  * HTML (markdown-view.tsx の foldDetailsBlocks 参照)。RoomList 等の既存折り畳み
  * と同じく marker はデフォルトのまま活かす。 */

@@ -6,8 +6,8 @@
 // `innerHTML`/`dangerouslySetInnerHTML` — every renderable value reaches the
 // DOM as a JSX text node, so Preact's own escaping is what protects against
 // markdown content containing `<`/`&`/quotes.
-import { h, type VNode } from "preact";
-import { useMemo } from "preact/hooks";
+import { h, createContext, type VNode } from "preact";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
@@ -40,6 +40,7 @@ import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
 import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
+import { FoldOpenStore } from "./fold-open-store.ts";
 
 /** `location.origin`, or `null` where there is no `location` (unit tests
  * render `renderMarkdownAst` outside a DOM). Kept as a tiny wrapper rather
@@ -137,7 +138,29 @@ export interface MarkdownDetails {
   children: AnyNode[];
 }
 
-type AnyNode = RootContent | PhrasingContent | MarkdownDetails;
+/** Heading depths that own a foldable section. `h1` is the document's title
+ * rather than one of its sections, so it never folds — a document whose only
+ * heading is its title has nothing to fold, which is the intended reading. */
+type SectionDepth = 2 | 3 | 4 | 5 | 6;
+
+/** Synthetic node `foldMarkdownSections` inserts into the tree: a heading plus
+ * everything under it, so the renderer has a single element to hide when the
+ * section is collapsed. Namespaced `type` for the same reason
+ * `MarkdownDetails` is — it can never collide with a future mdast node. */
+export interface MarkdownSection {
+  type: "ccmsgSection";
+  depth: SectionDepth;
+  /** Position among sibling sections, dot-joined with the ancestors' ("2",
+   * "2.1", "2.1.3"). Structural rather than derived from the heading text, so
+   * two sections with the same title still fold independently, and stable for
+   * as long as the source is — which is exactly how long the open/closed state
+   * keyed on it lives (a new source builds a new store). */
+  key: string;
+  heading: Heading;
+  children: AnyNode[];
+}
+
+type AnyNode = RootContent | PhrasingContent | MarkdownDetails | MarkdownSection;
 
 export interface MarkdownHeading {
   depth: Heading["depth"];
@@ -292,6 +315,217 @@ export interface MarkdownTaskListCtx {
   errors?: ReadonlyMap<number, MarkdownTaskError>;
   /** Dismiss the message on one item. Absent = no dismiss affordance. */
   onDismissError?: (ordinal: number) => void;
+}
+
+/** The open/closed state of one document's sections, plus the key list the
+ * document-wide menu items act on. `null` (the default) is how every caller
+ * that did not ask for folding gets the flat rendering it always had — the
+ * shell then draws nothing but its children. */
+interface MarkdownSectionFold {
+  store: FoldOpenStore;
+  /** Every section key in the document, in order. */
+  allKeys: readonly string[];
+}
+const MarkdownSectionFoldContext = createContext<MarkdownSectionFold | null>(null);
+
+/** Hover-intent delays for the caret's menu. Opening is slow enough that a
+ * pointer crossing the caret on its way to the text never summons the menu;
+ * closing is slower still, because the gap the pointer travels to reach the
+ * menu is a `mouseleave` on the caret. */
+const SECTION_MENU_OPEN_MS = 200;
+const SECTION_MENU_CLOSE_MS = 250;
+
+/** One section's frame: the caret + its menu, the heading, and the collapsible
+ * body behind the guide line.
+ *
+ * The heading and the body arrive **already rendered**. The mdast walk assigns
+ * heading anchors by a counter it mutates as it goes (`ctx.headingIndex`), so
+ * it has to stay one synchronous document-order pass; deferring any part of it
+ * into a component that re-renders on its own (which is exactly what a fold
+ * toggle does) would renumber anchors on every click. This component therefore
+ * owns only the state, never the walk.
+ *
+ * A closed body stays mounted and is hidden in CSS rather than unmounted. Two
+ * things depend on it being in the DOM: the preview's in-view search walks the
+ * rendered text, and an anchor jump into a collapsed section has to find its
+ * target element before anything can open the sections around it. */
+function MarkdownSectionShell({
+  sectionKey,
+  depth,
+  descendantKeys,
+  heading,
+  body,
+}: {
+  sectionKey: string;
+  /** The heading's level. Carried into the class name because the numbering
+   * counters have to be reset per level from the section element (app.css:
+   * a heading's own `counter-reset` no longer reaches the headings below it
+   * once they sit in a sibling subtree rather than after it). */
+  depth: SectionDepth;
+  descendantKeys: readonly string[];
+  heading: VNode | string;
+  body: (VNode | string)[];
+}) {
+  const fold = useContext(MarkdownSectionFoldContext);
+  const store = fold?.store;
+  const [, bump] = useState(0);
+  useEffect(() => store?.subscribe(sectionKey, () => bump((n) => n + 1)), [store, sectionKey]);
+  const open = store ? store.isOpen(sectionKey, true) : true;
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelMenuTimer = useCallback(() => {
+    if (menuTimer.current === null) return;
+    clearTimeout(menuTimer.current);
+    menuTimer.current = null;
+  }, []);
+  const scheduleMenu = useCallback(
+    (next: boolean, delay: number) => {
+      cancelMenuTimer();
+      menuTimer.current = setTimeout(() => {
+        menuTimer.current = null;
+        setMenuOpen(next);
+      }, delay);
+    },
+    [cancelMenuTimer],
+  );
+  useEffect(() => cancelMenuTimer, [cancelMenuTimer]);
+
+  const applyTo = useCallback(
+    (keys: readonly string[], next: boolean) => {
+      if (!store) return;
+      for (const key of keys) store.set(key, next);
+      cancelMenuTimer();
+      setMenuOpen(false);
+    },
+    [store, cancelMenuTimer],
+  );
+
+  // "…children" opens this section too: opening the subtree of a collapsed
+  // section would otherwise reveal nothing. Closing the subtree deliberately
+  // leaves this section open — "close the children" and "close this" are two
+  // different requests, and the caret alone already does the second.
+  const openSelfAndChildren = [sectionKey, ...descendantKeys];
+
+  return (
+    <section
+      class={`md-sec md-sec-d${depth}${open ? "" : " md-sec-closed"}`}
+      data-md-section={sectionKey}
+      data-open={open ? "true" : "false"}
+    >
+      <div class="md-sec-head">
+        <span
+          class="md-sec-caret-wrap"
+          onMouseEnter={() => scheduleMenu(true, SECTION_MENU_OPEN_MS)}
+          onMouseLeave={() => scheduleMenu(false, SECTION_MENU_CLOSE_MS)}
+        >
+          <button
+            type="button"
+            class="md-sec-caret"
+            aria-expanded={open}
+            aria-label={open ? "セクションを閉じる" : "セクションを開く"}
+            title={open ? "セクションを閉じる" : "セクションを開く"}
+            onClick={() => store?.set(sectionKey, !open)}
+            onFocus={() => {
+              cancelMenuTimer();
+              setMenuOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setMenuOpen(false);
+            }}
+          />
+          {menuOpen ? (
+            <div
+              class="md-sec-menu"
+              role="menu"
+              onMouseEnter={cancelMenuTimer}
+              onMouseLeave={() => scheduleMenu(false, SECTION_MENU_CLOSE_MS)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setMenuOpen(false);
+              }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                title="この文書の全セクションを開く"
+                onClick={() => applyTo(fold?.allKeys ?? [], true)}
+              >
+                Open all
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                title="このセクションとその配下だけを開く"
+                onClick={() => applyTo(openSelfAndChildren, true)}
+              >
+                Open all children
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                title="この文書の全セクションを閉じる"
+                onClick={() => applyTo(fold?.allKeys ?? [], false)}
+              >
+                Close all
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                title="このセクションの配下だけを閉じる"
+                onClick={() => applyTo(descendantKeys, false)}
+              >
+                Close all children
+              </button>
+            </div>
+          ) : null}
+        </span>
+        {heading}
+      </div>
+      <div class="md-sec-body">
+        {/* Mirrors the Timeline's fold guide (`.tl-fold-guide`): the line down
+         * the left of an expanded section is also the control that closes it,
+         * so a reader who has scrolled past the heading does not have to
+         * scroll back up to the caret. */}
+        <button
+          type="button"
+          class="md-sec-guide"
+          aria-label="セクションを閉じる"
+          title="セクションを閉じる"
+          onClick={() => store?.set(sectionKey, false)}
+        />
+        <div class="md-sec-content">{body}</div>
+      </div>
+    </section>
+  );
+}
+
+/** Open every section between the document root and `id`, then bring it into
+ * view. Called for outline links: the target may be inside sections that are
+ * collapsed, and scrolling to a hidden element does nothing.
+ *
+ * Ancestors are read off the DOM rather than the tree because the anchor id is
+ * all the caller has — the outline entry knows the heading it points at, not
+ * which sections enclose it. The bodies are already mounted (see
+ * `MarkdownSectionShell`), so the element is findable even while hidden; only
+ * the scroll waits for the frame that reveals it. */
+function revealMarkdownAnchor(id: string, store: FoldOpenStore | null): void {
+  const target = document.getElementById(id);
+  if (!target) return;
+  if (!store) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  for (
+    let el: Element | null = target.closest("[data-md-section]");
+    el;
+    el = el.parentElement?.closest("[data-md-section]") ?? null
+  ) {
+    const key = el.getAttribute("data-md-section");
+    if (key) store.set(key, true);
+  }
+  requestAnimationFrame(() => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 }
 
 function renderChildren(
@@ -678,6 +912,24 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       );
     }
 
+    case "ccmsgSection": {
+      const section = node as MarkdownSection;
+      // Heading first, then body: `renderNode` is a single document-order
+      // pass and `ctx.headingIndex` counts on it staying that way.
+      const heading = renderNode(section.heading, `${key}.h`, ctx);
+      const body = renderChildren(section.children, key, ctx);
+      return (
+        <MarkdownSectionShell
+          key={key}
+          sectionKey={section.key}
+          depth={section.depth}
+          descendantKeys={collectMarkdownSectionKeys(section.children)}
+          heading={heading}
+          body={body}
+        />
+      );
+    }
+
     case "html":
       // Never executed: the raw source text of an HTML block/inline node is
       // shown as a plain JSX text child (Preact-escaped), not parsed or
@@ -1043,6 +1295,76 @@ function foldInsideContainer(node: AnyNode): AnyNode {
   return { ...node, children: foldDetailsBlocks(parent.children) } as AnyNode;
 }
 
+/** Group a flat block sequence into nested sections (kawaz r151 m41).
+ *
+ * mdast is flat: `## A`, its paragraphs, and `### A.1` are siblings, which is
+ * fine to *render* but leaves nothing to collapse — "close section A" has no
+ * element that means "A and everything under it". This walk rebuilds the
+ * implied outline: each heading of depth >= 2 opens a section that swallows
+ * the following blocks until a heading of the same or shallower depth, and a
+ * `#` (document title) closes everything and stays a plain heading.
+ *
+ * Depth skips (`##` -> `####`) nest by relative depth rather than by absolute
+ * level — the `####` becomes a child of the `##` because that is what the
+ * author's indentation says, even though a `###` level is missing. Only the
+ * top level of the block sequence is grouped: a heading inside a blockquote,
+ * a list item, or a `<details>` fold keeps rendering exactly as it did, since
+ * folding it would mean hiding part of a container that owns its own layout.
+ *
+ * Pure and total — every input node reaches the output exactly once, so a
+ * document with no headings at all round-trips unchanged. */
+export function foldMarkdownSections(nodes: AnyNode[]): AnyNode[] {
+  const out: AnyNode[] = [];
+  const stack: { section: MarkdownSection; childCount: number }[] = [];
+  let rootCount = 0;
+
+  for (const node of nodes) {
+    const depth = node.type === "heading" ? (node as Heading).depth : 0;
+
+    if (depth === 1) {
+      stack.length = 0;
+      out.push(node);
+      continue;
+    }
+
+    if (depth >= 2) {
+      while (stack.length > 0 && stack[stack.length - 1]!.section.depth >= depth) stack.pop();
+      const parent = stack[stack.length - 1];
+      const ordinal = parent ? (parent.childCount += 1) : (rootCount += 1);
+      const section: MarkdownSection = {
+        type: "ccmsgSection",
+        depth: depth as SectionDepth,
+        key: parent ? `${parent.section.key}.${ordinal}` : String(ordinal),
+        heading: node as Heading,
+        children: [],
+      };
+      (parent ? parent.section.children : out).push(section);
+      stack.push({ section, childCount: 0 });
+      continue;
+    }
+
+    (stack.length > 0 ? stack[stack.length - 1]!.section.children : out).push(node);
+  }
+
+  return out;
+}
+
+/** Every section key in a folded tree, in document order. The menu's
+ * document-wide "Open all"/"Close all" need the whole list, and a section's
+ * own "…children" items need its subtree's — the same walk answers both. */
+export function collectMarkdownSectionKeys(
+  nodes: readonly AnyNode[],
+  acc: string[] = [],
+): string[] {
+  for (const node of nodes) {
+    if (node.type !== "ccmsgSection") continue;
+    const section = node as MarkdownSection;
+    acc.push(section.key);
+    collectMarkdownSectionKeys(section.children, acc);
+  }
+  return acc;
+}
+
 /** Parse the markdown source used by MarkdownView. Kept as a pure seam so
  * parser-level compatibility fixes are exercised without a DOM. */
 export function parseMarkdownSource(source: string): Root {
@@ -1279,6 +1601,10 @@ export function renderMarkdownAst(
     filePathLinker?: FilePathLinker;
     pathLinker?: MarkdownPathLinker;
     taskList?: MarkdownTaskListCtx;
+    /** Marks the root for the section-fold layout (the caret gutter). The
+     * tree itself is folded by `foldMarkdownSections` before it gets here —
+     * this only tells CSS which layout the children were built for. */
+    sections?: boolean;
   },
 ): VNode {
   const ctx: MarkdownRenderCtx = {
@@ -1290,7 +1616,11 @@ export function renderMarkdownAst(
     taskList: opts?.taskList,
     taskIndex: 0,
   };
-  return <div class="md">{renderChildren(root.children, "md", ctx)}</div>;
+  return (
+    <div class={opts?.sections ? "md md-sections" : "md"}>
+      {renderChildren(root.children, "md", ctx)}
+    </div>
+  );
 }
 
 // `useMemo` keyed on `source`: parse+render は Timeline のような親が高頻度
@@ -1314,6 +1644,7 @@ export function MarkdownView({
   pathLinker,
   restricted = false,
   taskList,
+  foldSections = false,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -1343,19 +1674,43 @@ export function MarkdownView({
    * body has no file behind it to write a toggle back to. Ignored in
    * `restricted` mode (user-typed `- [ ]` is prose, not a task list). */
   taskList?: MarkdownTaskListCtx;
+  /** Collapsible `##`-and-deeper sections (kawaz r151 m41). Only the file
+   * preview asks for them: a Timeline bubble is a message, not a document —
+   * its headings are a few lines apart and a caret per heading would be
+   * noise. Ignored in `restricted` mode for the same reason the rest of the
+   * markdown pipeline is. */
+  foldSections?: boolean;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
+  // One store per document: section keys are positions in *this* source, so a
+  // different source has to start from the default (everything open) rather
+  // than inherit a previous document's collapsed positions.
+  const sectionFold = foldSections && !restricted;
+  const sectionStore = useMemo(() => new FoldOpenStore(), [source, sectionFold]);
   return useMemo(() => {
     if (restricted) return renderRestrictedMarkdown(source);
-    const root = parseMarkdownDocument(source);
-    const headings = tableOfContents ? extractMarkdownHeadings(root) : [];
+    const parsed = parseMarkdownDocument(source);
+    const headings = tableOfContents ? extractMarkdownHeadings(parsed) : [];
+    const root = sectionFold
+      ? { ...parsed, children: foldMarkdownSections(parsed.children) as RootContent[] }
+      : parsed;
     const markdown = renderMarkdownAst(root, search, tableOfContents ? headings : undefined, {
       filePathLinker,
       pathLinker,
       taskList,
+      sections: sectionFold,
     });
-    if (headings.length <= 1) return markdown;
+    const withFold = sectionFold ? (
+      <MarkdownSectionFoldContext.Provider
+        value={{ store: sectionStore, allKeys: collectMarkdownSectionKeys(root.children) }}
+      >
+        {markdown}
+      </MarkdownSectionFoldContext.Provider>
+    ) : (
+      markdown
+    );
+    if (headings.length <= 1) return withFold;
 
     return (
       <div class="md-document">
@@ -1375,9 +1730,7 @@ export function MarkdownView({
                       // The app hash owns session/file routing, so keep the anchor
                       // URL for semantics but scroll without replacing that hash.
                       event.preventDefault();
-                      document
-                        .getElementById(heading.id)
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      revealMarkdownAnchor(heading.id, sectionFold ? sectionStore : null);
                     }}
                   >
                     <span class="md-toc-number">{heading.number}</span>
@@ -1388,7 +1741,7 @@ export function MarkdownView({
             </ol>
           </nav>
         </details>
-        {markdown}
+        {withFold}
       </div>
     );
   }, [
@@ -1400,5 +1753,7 @@ export function MarkdownView({
     pathLinker,
     restricted,
     taskList,
+    sectionFold,
+    sectionStore,
   ]);
 }

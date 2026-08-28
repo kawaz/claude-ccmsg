@@ -1375,6 +1375,7 @@ export function FileViewer({
           <MarkdownView
             source={res.content}
             tableOfContents
+            foldSections
             taskList={taskToggle.taskList}
             pathLinker={previewPathLinker}
           />

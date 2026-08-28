@@ -16,7 +16,9 @@ import type { VNode } from "preact";
 import type { Root } from "mdast";
 import {
   attachmentUrlFromPath,
+  collectMarkdownSectionKeys,
   extractMarkdownHeadings,
+  foldMarkdownSections,
   extractTaskStates,
   isSafeUrl,
   parseMarkdownDocument,
@@ -1979,3 +1981,200 @@ function describeStrongLinkTests(): void {
     expect(links[0]!.props).toMatchObject({ class: "md-inline-code-file-link" });
   });
 }
+
+// Section folding (kawaz r151 m41). `foldMarkdownSections` is the whole of
+// the structural decision — what a "section" contains, how deep it nests, and
+// which key identifies it — so it is pinned here against hand-built trees,
+// away from the DOM the fold's open/closed state needs.
+describe("foldMarkdownSections", () => {
+  type TestNode = { type: string; [k: string]: unknown };
+
+  function heading(depth: number, text: string): TestNode {
+    return { type: "heading", depth, children: [{ type: "text", value: text }] };
+  }
+  function para(text: string): TestNode {
+    return { type: "paragraph", children: [{ type: "text", value: text }] };
+  }
+  /** `2:1 "…"` for a section (depth:key), the node type otherwise — a shape
+   * the expectations can be read as an outline. */
+  function outline(nodes: readonly unknown[]): unknown[] {
+    return nodes.map((n) => {
+      const node = n as TestNode;
+      if (node.type !== "ccmsgSection") return node.type;
+      const h = node.heading as { children: { value: string }[] };
+      return [
+        `${String(node.depth)}:${String(node.key)} ${h.children[0]!.value}`,
+        outline(node.children as unknown[]),
+      ];
+    });
+  }
+  function fold(nodes: TestNode[]): unknown[] {
+    // The helpers build mdast shapes structurally; the fold only reads
+    // `type`/`depth`, so the cast keeps the fixtures readable.
+    return outline(foldMarkdownSections(nodes as never));
+  }
+
+  test("a heading swallows the blocks that follow it", () => {
+    expect(fold([heading(2, "A"), para("a1"), para("a2")])).toEqual([
+      ["2:1 A", ["paragraph", "paragraph"]],
+    ]);
+  });
+
+  test("same-depth headings are siblings, deeper ones nest", () => {
+    expect(
+      fold([heading(2, "A"), para("a"), heading(3, "A.1"), para("b"), heading(2, "B")]),
+    ).toEqual([
+      ["2:1 A", ["paragraph", ["3:1.1 A.1", ["paragraph"]]]],
+      ["2:2 B", []],
+    ]);
+  });
+
+  test("a shallower heading closes every deeper section", () => {
+    expect(fold([heading(2, "A"), heading(4, "A.x"), heading(3, "A.2"), heading(2, "B")])).toEqual([
+      [
+        "2:1 A",
+        [
+          ["4:1.1 A.x", []],
+          ["3:1.2 A.2", []],
+        ],
+      ],
+      ["2:2 B", []],
+    ]);
+  });
+
+  test("a skipped level nests by relative depth (h2 -> h4)", () => {
+    expect(fold([heading(2, "A"), heading(4, "deep"), para("x")])).toEqual([
+      ["2:1 A", [["4:1.1 deep", ["paragraph"]]]],
+    ]);
+  });
+
+  // h1 is the document's title, not a section: it never folds, and it ends
+  // whatever section was open (the next h2 belongs to the new document part).
+  test("h1 stays a plain heading and closes open sections", () => {
+    expect(fold([heading(2, "A"), para("a"), heading(1, "Title"), heading(2, "B")])).toEqual([
+      ["2:1 A", ["paragraph"]],
+      "heading",
+      ["2:2 B", []],
+    ]);
+  });
+
+  test("blocks before the first heading stay at the top level", () => {
+    expect(fold([para("intro"), heading(2, "A")])).toEqual(["paragraph", ["2:1 A", []]]);
+  });
+
+  test("a document with no headings round-trips unchanged", () => {
+    const nodes = [para("a"), para("b")];
+    expect(foldMarkdownSections(nodes as never)).toEqual(nodes as never);
+  });
+
+  test("a document whose only heading is h1 has no sections", () => {
+    expect(fold([heading(1, "Title"), para("a")])).toEqual(["heading", "paragraph"]);
+  });
+
+  // A section that starts deeper than h2 (a fragment pasted mid-document) is
+  // still a section — the outline is read relatively, not from h2 downwards.
+  test("a document starting at h3 folds from there", () => {
+    expect(fold([heading(3, "A"), para("a"), heading(3, "B")])).toEqual([
+      ["3:1 A", ["paragraph"]],
+      ["3:2 B", []],
+    ]);
+  });
+
+  test("keys are document-order positions among siblings", () => {
+    const folded = foldMarkdownSections([
+      heading(2, "A"),
+      heading(3, "A.1"),
+      heading(3, "A.2"),
+      heading(4, "A.2.1"),
+      heading(2, "B"),
+    ] as never);
+    expect(collectMarkdownSectionKeys(folded)).toEqual(["1", "1.1", "1.2", "1.2.1", "2"]);
+  });
+
+  test("headings inside containers are left alone (only top level folds)", () => {
+    const quoted: TestNode = { type: "blockquote", children: [heading(2, "quoted")] };
+    expect(fold([quoted, heading(2, "A")])).toEqual(["blockquote", ["2:1 A", []]]);
+  });
+});
+
+describe("renderMarkdownAst with sections", () => {
+  const source = "# T\n\nintro\n\n## A\n\na1\n\n### A.1\n\na2\n\n## B\n\nb1\n";
+
+  function renderFolded(): VNode {
+    const parsed = parseMarkdownDocument(source);
+    const headings = extractMarkdownHeadings(parsed);
+    const root = { ...parsed, children: foldMarkdownSections(parsed.children as never) } as never;
+    return renderMarkdownAst(root, undefined, headings, { sections: true });
+  }
+
+  /** Every VNode in document order. A section's heading and body reach its
+   * shell through props rather than children (the mdast walk stays one
+   * synchronous pass — see MarkdownSectionShell), so the shared `collect`
+   * walker stops at the shell; this one steps through those two props too. */
+  function allNodes(node: unknown, acc: VNode[] = []): VNode[] {
+    if (Array.isArray(node)) {
+      for (const c of node) allNodes(c, acc);
+      return acc;
+    }
+    if (!isVNode(node)) return acc;
+    acc.push(node);
+    const props = node.props as { children?: unknown; heading?: unknown; body?: unknown };
+    allNodes(props.children, acc);
+    allNodes(props.heading, acc);
+    allNodes(props.body, acc);
+    return acc;
+  }
+
+  function blocks(): { tag: string; text: string; id?: string }[] {
+    return allNodes(renderFolded())
+      .filter((n) => typeof n.type === "string" && /^(h[1-6]|p)$/.test(n.type))
+      .map((n) => ({
+        tag: n.type as string,
+        text: flattenText(n),
+        id: (n.props as { id?: string }).id,
+      }));
+  }
+
+  test("the root carries the section layout class", () => {
+    expect((renderFolded().props as { class?: string }).class).toBe("md md-sections");
+  });
+
+  test("every block survives the regrouping, in document order", () => {
+    expect(blocks().map((b) => `${b.tag} ${b.text}`)).toEqual([
+      "h1 T",
+      "p intro",
+      "h2 A",
+      "p a1",
+      "h3 A.1",
+      "p a2",
+      "h2 B",
+      "p b1",
+    ]);
+  });
+
+  // The walk assigns anchors from a counter it advances as it goes, so the
+  // heading of a section must still be visited before that section's body.
+  // A renumbering here would silently break every outline link.
+  test("heading anchors keep document order through the nesting", () => {
+    expect(
+      blocks()
+        .filter((b) => b.tag !== "p")
+        .map((b) => b.id),
+    ).toEqual(["md-section-1", "md-section-1-1", "md-section-1-1-1", "md-section-1-2"]);
+  });
+
+  test("each section element is keyed by its structural position", () => {
+    const sections = allNodes(renderFolded()).filter(
+      (n) =>
+        typeof n.type === "function" && (n.props as unknown as { sectionKey?: string }).sectionKey,
+    );
+    expect(sections.map((n) => (n.props as unknown as { sectionKey: string }).sectionKey)).toEqual([
+      "1",
+      "1.1",
+      "2",
+    ]);
+    expect(
+      sections.map((n) => [...(n.props as unknown as { descendantKeys: string[] }).descendantKeys]),
+    ).toEqual([["1.1"], [], []]);
+  });
+});
