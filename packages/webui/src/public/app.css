@@ -4529,7 +4529,10 @@ button.session-tab {
  * 「まず対象要素を見つけてから祖先を開く」(revealMarkdownAnchor)。 */
 .md-sections {
   --md-sec-caret: 1.4em;
-  --md-sec-indent: 2em;
+  /* 入れ子 1 段ぶんのインデントはキャレットの溝と同じ幅 (kawaz r151m47:
+   * 「余白込みで▼と同じ幅分で十分」) — 縦ガイドの列とキャレットの列が
+   * 同じグリッドに乗る。 */
+  --md-sec-indent: var(--md-sec-caret);
   padding-left: var(--md-sec-caret);
 }
 
