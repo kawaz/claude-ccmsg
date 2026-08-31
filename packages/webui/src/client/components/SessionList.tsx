@@ -24,6 +24,7 @@ import {
   shortSid,
   sortPinnedSessions,
   toSessionRow,
+  sayUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
 import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
@@ -377,6 +378,7 @@ function SessionRowItem({
   statusBadge,
   modelEffort,
   cacheTs,
+  sayUnread,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -393,6 +395,10 @@ function SessionRowItem({
    * または daemon が gateway の event stream を購読していない (どちらもリング
    * 非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
   cacheTs: number | null;
+  /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
+   * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
+   * ようにするためのもので、既読は 1on1 room の 🔊 バブル側で付ける。 */
+  sayUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheTs);
@@ -517,6 +523,15 @@ function SessionRowItem({
         {/* DR-0020 §2.1 mini badge。kawaz r55 mid=20 で 2 行目が ws 専用に
          * なったのに伴い、live status 系ここへ移動 (idle と隣接、視覚的な
          * まとまりを保つ)。 */}
+        {sayUnread > 0 ? (
+          <span
+            class="session-say-unread"
+            title={`未読の say ${sayUnread} 件 — 1on1 room の 🔊 で既読にできます`}
+            aria-label={`未読の say ${sayUnread} 件`}
+          >
+            🔊{sayUnread > 1 ? sayUnread : ""}
+          </span>
+        ) : null}
         {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
@@ -574,6 +589,7 @@ function PinnedSessionRow({
   peer,
   agent,
   modelEffort,
+  sayUnread,
   onUnpin,
 }: {
   hit: SessionSearchHit;
@@ -584,6 +600,10 @@ function PinnedSessionRow({
    * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
   modelEffort: { text: string; title: string } | null;
+  /** 未読の `ccmsg say` 件数。ピンは下の status セクションから除外されている
+   * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
+   * 🔊 がどこにも出なくなる。 */
+  sayUnread: number;
   onUnpin: () => void;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -629,6 +649,15 @@ function PinnedSessionRow({
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
         </a>
+        {sayUnread > 0 ? (
+          <span
+            class="session-say-unread"
+            title={`未読の say ${sayUnread} 件 — 1on1 room の 🔊 で既読にできます`}
+            aria-label={`未読の say ${sayUnread} 件`}
+          >
+            🔊{sayUnread > 1 ? sayUnread : ""}
+          </span>
+        ) : null}
         {peer === undefined ? (
           <span
             class="session-badge session-badge-offline"
@@ -679,6 +708,7 @@ function PinnedSessionsSection({
   peers,
   agentsBySid,
   currentSid,
+  sayUnreadBy,
   resolveModelEffort,
 }: {
   pinnedSessions: Map<string, SessionSearchHit>;
@@ -688,6 +718,8 @@ function PinnedSessionsSection({
    * status sections below. */
   agentsBySid: Map<string, AgentInfo>;
   currentSid: string | null;
+  /** sid → 未読 say 件数 (SessionList が rooms から引いたもの)。 */
+  sayUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
   resolveModelEffort: (
@@ -715,6 +747,7 @@ function PinnedSessionsSection({
             peer={peersBySid.get(hit.sid)}
             agent={agentsBySid.get(hit.sid)}
             modelEffort={resolveModelEffort(hit.sid, hit)}
+            sayUnread={sayUnreadBy.get(hit.sid) ?? 0}
             onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
           />
         ))}
@@ -901,8 +934,19 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, lastLiveSessions } =
-    useStoreState(store);
+  const {
+    agents,
+    sessionStatuses,
+    sessionErrors,
+    llmRequests,
+    pinnedSessions,
+    lastLiveSessions,
+    rooms,
+  } = useStoreState(store);
+  // 1on1 room 由来なので rooms が変わった時だけ引き直す。room を開いていなく
+  // ても say/say_read は subscribe で届き store が畳むので、未読は「まだ開いて
+  // いないセッション」でも正しく出る (store.ts applyProtocolEvent の say 分岐)。
+  const sayUnreadBy = useMemo(() => sayUnreadBySid(rooms), [rooms]);
   const agentsBySid = useMemo(() => indexAgentsBySid(agents), [agents]);
   const rows = useMemo(
     () => [
@@ -946,6 +990,7 @@ export function SessionList({
         peers={peers}
         agentsBySid={agentsBySid}
         currentSid={currentSid}
+        sayUnreadBy={sayUnreadBy}
         resolveModelEffort={resolveModelEffort}
       />
       <LastLiveSessionsSection
@@ -983,6 +1028,7 @@ export function SessionList({
                 // 全 sid 分まとめて届くので、購読の有無に左右されない。
                 modelEffort={resolveModelEffort(row.sid)}
                 cacheTs={llmRequests.get(row.sid)?.ts ?? null}
+                sayUnread={sayUnreadBy.get(row.sid) ?? 0}
               />
             ))}
           </ul>

@@ -67,6 +67,15 @@ export interface RoomState {
    * RoomView from re-fetching (and duplicating non-msg events in `timeline`,
    * which has no id to dedup on the way `msgs` does). */
   history: "idle" | "loading" | "loaded" | "error";
+  /** `seq` of this room's `say` events that have no `say_read` ack yet
+   * (kawaz r244 m5-m6) — the 🔊 marker in the Sessions list counts these.
+   * A set, not a counter, so that re-folding the same events (the room's
+   * `room_history` refetch replays every past say and ack) converges instead
+   * of drifting. Seeded from `RoomSummary.say_unread_seqs`, then maintained by
+   * the `say` / `say_read` branches of applyProtocolEvent. Say events are
+   * delivered to the webui only, so this stays empty in any session-role
+   * consumer of this store. */
+  sayUnread: Set<number>;
 }
 
 export type ConnStatus = "connecting" | "connected" | "disconnected" | "restarting";
@@ -547,6 +556,7 @@ function newRoom(id: string): RoomState {
     lastTs: null,
     kind: "normal",
     history: "idle",
+    sayUnread: new Set(),
   };
 }
 
@@ -612,6 +622,10 @@ function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
     // reply — subsequent creates come through the KindEvent path in
     // applyProtocolEvent below. Absent = "normal", already the newRoom default.
     if (summary.kind !== undefined) room = { ...room, kind: summary.kind };
+    // Authoritative snapshot of what is still unread: replace rather than
+    // merge, so an ack made in another tab before this one connected doesn't
+    // linger. Absent = nothing unread (the daemon omits an empty list).
+    room = { ...room, sayUnread: new Set(summary.say_unread_seqs ?? []) };
     room = {
       ...room,
       lastMid: summary.last_mid ?? room.lastMid,
@@ -715,6 +729,24 @@ function applyProtocolEvent(state: AppState, ev: DeliveredEvent): AppState {
       // moment the new broadcast lands.
       room = { ...room, kind: ev.kind, timeline: [...room.timeline, ev], lastTs: ev.ts };
       break;
+    case "say": {
+      // Unread tracking runs whether or not the room has been painted: the
+      // sidebar marker must light up for a room the User has never opened,
+      // which is the whole point of the marker. The bubble itself only joins
+      // the timeline of a painted room, same rule as every other event here.
+      const sayUnread = new Set(room.sayUnread);
+      if (ev.seq !== undefined) sayUnread.add(ev.seq);
+      room = { ...withEvent({ ...room, sayUnread }, ev), lastTs: ev.ts };
+      break;
+    }
+    case "say_read": {
+      const sayUnread = new Set(room.sayUnread);
+      sayUnread.delete(ev.ref);
+      // The ack is state, not conversation: it flips the bubble's button and
+      // leaves no line of its own in the timeline.
+      room = { ...room, sayUnread, lastTs: ev.ts };
+      break;
+    }
     case "next":
     case "prev":
       room = { ...room, timeline: [...room.timeline, ev], lastTs: ev.ts };

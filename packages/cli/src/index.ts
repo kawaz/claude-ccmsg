@@ -15,6 +15,7 @@ import {
 import {
   Client,
   connectIfRunning,
+  helloRequest,
   ensureDaemon,
   reconnectSubscribeNoSpawn,
   waitDaemonGone,
@@ -300,6 +301,97 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   process.exit(output(res));
 }
 
+// --- say -------------------------------------------------------------------
+
+/** The real macOS speech binary. Absolute on purpose: a `say` shim earlier on
+ * PATH is exactly what delegates here, so resolving through PATH again would
+ * re-enter the shim and loop. */
+const SYSTEM_SAY = "/usr/bin/say";
+
+/** How long the say-event record may take before the speech goes ahead
+ * without it. The event is a nicety (which session spoke); the speech is the
+ * thing the caller asked for, so a wedged daemon must cost latency once, not
+ * silence. */
+const SAY_RECORD_TIMEOUT_MS = 1500;
+
+function printSayHelp(): void {
+  process.stdout.write(`ccmsg say — speak through ${SYSTEM_SAY}, and record which session spoke
+
+Usage:
+  ccmsg say [say-options] [text...]
+  echo <text> | ccmsg say [say-options]
+
+Every argument is forwarded to ${SYSTEM_SAY} verbatim — ccmsg defines no options
+of its own here, so \`say\`'s own flags (-v, -r, -o, ...) work unchanged and a
+PATH shim can delegate to this command without altering behaviour. The one
+exception is a lone --help / -h, which prints this text (${SYSTEM_SAY} has no
+--help of its own to shadow).
+
+Before speaking, the session id in CCMSG_SID / CLAUDE_CODE_SESSION_ID is used to
+record a say event in that session's 1on1 room, so the webui can answer "which
+session just talked" when several are running. Speech happens either way: no
+session id, no running daemon, or a daemon that errors all fall through to
+${SYSTEM_SAY} unchanged.
+
+Environment Variables:
+  CCMSG_SAY_BIN                Speech binary to exec instead of ${SYSTEM_SAY}
+                               (test hook — lets the say path be exercised
+                               without producing audio)
+`);
+}
+
+/** Best-effort record of "this session spoke". Never throws, never blocks past
+ * SAY_RECORD_TIMEOUT_MS, and deliberately does NOT spawn a daemon: the only
+ * consumer of the event is the webui, which the daemon itself serves, so
+ * starting one from a speech path would be a surprising side effect that
+ * benefits nobody. */
+async function recordSayEvent(args: string[]): Promise<void> {
+  const identity = resolveSessionIdentity({}, "say");
+  if (identity === null || identity.role !== "session") return;
+  let client: Client | null = null;
+  const timer = setTimeout(() => client?.close(), SAY_RECORD_TIMEOUT_MS);
+  try {
+    client = await connectIfRunning(resolvePaths());
+    if (!client) return;
+    const hello = await client.request<{ ok?: boolean }>(helloRequest(identity));
+    if (hello.ok !== true) return;
+    await client.request({ op: "say", text: args.join(" ") });
+  } catch {
+    // daemon down / socket closed under us / op rejected — the speech below is
+    // what the caller asked for and it proceeds regardless.
+  } finally {
+    clearTimeout(timer);
+    client?.close();
+  }
+}
+
+/**
+ * `ccmsg say` (kawaz r244 m5-m6). Records the say event, then hands the exact
+ * argv to the system `say`. Argument handling bypasses the CLI's own parser
+ * entirely (see main()): `say -v Kyoko --whatever` must reach `say` byte for
+ * byte, and a ccmsg option in the middle of that would be a landmine for the
+ * shim's users.
+ *
+ * Design rationale (no-args does NOT print help, unlike every other ccmsg
+ * command): bare `say` reads the text from stdin, and `echo hi | say` is a
+ * real, commonly-shimmed usage. Printing help there would break the pipe form
+ * that the PATH shim exists to preserve.
+ */
+async function runSay(args: string[]): Promise<never> {
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    printSayHelp();
+    process.exit(0);
+  }
+  await recordSayEvent(args);
+  const bin = process.env.CCMSG_SAY_BIN || SYSTEM_SAY;
+  const proc = Bun.spawn([bin, ...args], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  process.exit(await proc.exited);
+}
+
 async function runSubscribe(
   identity: Identity,
   opts: Record<string, string | boolean>,
@@ -546,6 +638,7 @@ function printHelp(): void {
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+  say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
   --help-full
@@ -591,6 +684,13 @@ Commands:
   peers [<cwd>]                List connected sessions; positional <cwd> filters
                                by substring match on each session's cwd
   notify                       Signal a session's subscribe stream (--self / --sid, --text)
+  say [args...]                Speak via /usr/bin/say, recording a say event in
+                               this session's 1on1 room first so the webui can
+                               show which session spoke. Every argument is
+                               forwarded verbatim (say's own -v/-r/-o keep
+                               working); speech still happens when there is no
+                               session id or no running daemon. Run
+                               "ccmsg say --help" for the full description
   status                       Show daemon liveness / version / uptime / pid.
                                Does not start the daemon — use daemon start
   stop <session-id>            Terminate the OS process behind a Claude Code
@@ -690,6 +790,8 @@ Environment Variables:
                                hook, DR-0008 addendum); adopted only if the
                                daemon accepts it (widens fs_list/fs_read to
                                sibling workspaces instead of just cwd)
+  CCMSG_SAY_BIN                say: speech binary to exec instead of /usr/bin/say
+                               (test hook — exercise the path without audio)
   CCMSG_DEDUP_WINDOW_MS        create-room dedup window (daemon side, default 60000)
   CCMSG_HTTP_BIND              webui/HTTP binds, comma-separated host:port
                                (daemon side, default 127.0.0.1:8642,[::1]:8642,
@@ -708,6 +810,14 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0) {
     printHelp();
+    return;
+  }
+  // `say` takes over argv before the shared parser runs: its arguments belong
+  // to /usr/bin/say, not to ccmsg (runSay's doc comment). This also means a
+  // global option like --sid is passed through to say rather than consumed —
+  // intentional, the shim contract is "same arguments as say".
+  if (argv[0] === "say") {
+    await runSay(argv.slice(1));
     return;
   }
   // Parse the whole argv so options may appear before or after the command (kawaz

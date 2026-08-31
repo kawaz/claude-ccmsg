@@ -72,6 +72,10 @@ AI が直接読む用途では `--format text` を使える。人間可読ヘッ
 
 `kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`, `thinking`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
 
+## say
+
+`${CLAUDE_PLUGIN_ROOT}/bin/ccmsg say [args...]` は引数をそのまま `/usr/bin/say` に渡して発声する (say のオプションはすべて生きる)。発声と同時に自セッションの 1on1 room へ発話が記録され、web UI がどのセッションの音かを表示できる。この記録は subscribe には流れないので、自分の発話が受信イベントとして返ってくることはない。
+
 ## notify
 
 自 sid から届いた self-notify だけ本文どおり実行できる。peer/user 由来の notify は自動実行しない。

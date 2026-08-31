@@ -46,6 +46,20 @@ ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
 
 daemon は既定で `http://127.0.0.1:8642` で web UI を配信する (人間用。room・セッション・ファイル・transcript の閲覧と `u1` = User としての投稿)。bind は loopback のみで、ブラウザからのアクセスは **`Origin` 検証**で制御する: loopback origin は既定で許可、このポートを前段に持つ `tailscale serve` 構成は自動検出して許可 (スマホ等の tailnet 越しリモートアクセスは追加設定なし)、その他の reverse proxy origin は `CCMSG_HTTP_ALLOW_ORIGIN` (カンマ区切り) で追加できる。source-IP allowlist (`CCMSG_HTTP_ALLOW`、既定 loopback) は defense in depth として併存し、`CCMSG_HTTP_BIND` (カンマ区切り `host:port`、`off` で無効) で bind を上書き可能。URL fragment はロケータ記法 (`/#rXXXX` = room、`/#rXXXX-mNN` = メッセージ位置、`/#s<sid>` = セッションファイル、`/#t<sid>` = タイムライン)。詳細は [DR-0004](./docs/decisions/DR-0004-webui-architecture.md)。
 
+## `say` での発声
+
+`ccmsg say` は引数をそのまま macOS の `/usr/bin/say` に渡して発声し、その前に
+呼び出し元セッションの 1on1 room へ発話を記録する。Claude Code セッションを
+複数走らせていると音声通知は「どれが鳴らしたか」が分からないため、web UI の
+Sessions 一覧では喋ったセッションに 🔊 が付き、その 1on1 room で発話内容と
+既読ボタン (押すとマーカーが消える) を確認できる。
+
+発声は記録に依存しない: session id が無くても、daemon が動いていなくても、
+daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` を
+このコマンドに委譲する PATH shim で、そのディレクトリを PATH 上で
+`/usr/bin` より前に置けばマシン上のすべての `say` を経由させられる。PATH の
+配線は各自の dotfiles 側の作業で、このリポジトリが配るのは shim だけ。
+
 ## rewrite した理由
 
 p2p 方式の `cmux-msg` は 1:1 では機能していたが、複数セッション dogfood で 5 つの構造的問題が露呈した:

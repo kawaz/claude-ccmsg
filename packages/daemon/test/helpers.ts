@@ -187,16 +187,20 @@ export class TestClient {
     this.socket.write(`${JSON.stringify(obj)}\n`);
   }
   /** Send an op and return its reply, classifying the way the real client does
-   * (ws.ts onMessage): a line carrying `ev` is a stream event, never a reply.
-   * An op that awaits IO can have a push land on the socket before its reply,
-   * so events are set aside for readEvent instead of being mistaken for one. */
+   * (ws.ts onMessage): a reply is the line carrying `ok`; everything else is a
+   * stream event and is set aside for readEvent. Two kinds of frame can arrive
+   * ahead of a reply on the same socket — an ephemeral `ev` push while the op
+   * awaits IO, and a delivered storage event when the op itself broadcasts to
+   * a room this same connection subscribes to (create_room, say, say_read...).
+   * Both must keep their place in the event stream rather than being mistaken
+   * for the reply, or every later reply on this socket is off by one. */
   async request<T = any>(obj: unknown): Promise<T> {
     this.write(obj);
     for (;;) {
       const line = await this.readLine();
       if (line === null) throw new Error("connection closed before response");
       const parsed = JSON.parse(line);
-      if (parsed !== null && typeof parsed === "object" && Object.hasOwn(parsed, "ev")) {
+      if (parsed !== null && typeof parsed === "object" && !Object.hasOwn(parsed, "ok")) {
         this.eventBacklog.push(line);
         continue;
       }

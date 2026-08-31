@@ -152,7 +152,8 @@ export const SESSION_SEARCH_MATCH_SUMMARY_MAX = 3;
 // Storage events (room jsonl lines). File line order is the source of truth for
 // ordering; `mid` (msg only) is a per-room daemon-assigned sequence. `seq`
 // (DR-0016) is a SEPARATE per-room daemon-assigned sequence spanning ALL event
-// types (msg, member, leave, next, prev, title, archive, kind) — the cursor
+// types (msg, member, leave, next, prev, title, archive, kind, say,
+// say_read) — the cursor
 // coordinate for subscribe reconnect. Optional only for pre-append event
 // construction (caller hasn't been stamped yet) and legacy log rows written
 // before this field existed (in-memory backfilled by loadRoom, see storage.ts);
@@ -254,6 +255,45 @@ export interface KindEvent {
   seq?: number;
 }
 
+/** A session spoke through `ccmsg say` (kawaz r244 m5-m6). Recorded in the
+ * session's 1on1 room so the webui can answer "which session just made my
+ * speakers talk" — with several sessions running, macOS `say` alone is
+ * anonymous. NOT a `msg`: it is paired with its own read-ack (`say_read`) and
+ * is deliberately never delivered back into a session-role subscribe stream
+ * (the session that spoke already knows it spoke; mirroring it would spend
+ * agent context for nothing). `seq` doubles as the ack target — say events
+ * carry no `mid` because they are not messages and must not consume the
+ * room's msg numbering. */
+export interface SayEvent {
+  type: "say";
+  /** sid of the session that spoke. Redundant with the 1on1 room's single
+   * member row, but recorded so a reader of the raw jsonl (or a future room
+   * shape) never has to resolve membership to answer "who". */
+  sid: string;
+  /** The argv `ccmsg say` forwarded to `/usr/bin/say`, joined by spaces —
+   * verbatim, options included. Empty when the caller piped text on stdin
+   * (the CLI must not consume that stream to peek at it). */
+  text: string;
+  ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
+}
+
+/** Read-ack for one `say` event, from the webui's per-bubble 既読 button.
+ * `ref` is the acked SayEvent's `seq`. Per-say rather than a "everything up
+ * to here" watermark: the UI element is one button on one bubble, and a
+ * watermark would silently clear older bubbles the reader never looked at.
+ * Repeated acks for the same `ref` are harmless (the unread count derives
+ * from set membership, not from a running total). */
+export interface SayReadEvent {
+  type: "say_read";
+  /** `seq` of the SayEvent this acks. */
+  ref: number;
+  ts: string;
+  /** per-room sequence number (DR-0016), see file banner above. */
+  seq?: number;
+}
+
 export type StorageEvent =
   | MemberEvent
   | LeaveEvent
@@ -262,7 +302,9 @@ export type StorageEvent =
   | PrevEvent
   | TitleEvent
   | ArchiveEvent
-  | KindEvent;
+  | KindEvent
+  | SayEvent
+  | SayReadEvent;
 
 /** Room kind (DR-0013 broadcast / DR-0014 1on1).
  * - `"normal"` = every other room (default).
@@ -976,6 +1018,30 @@ export interface CreateRoomRequest {
    *   MUST contain exactly one sid; empty or multiple returns
    *   `one_on_one_requires_single_member` (DR-0014 §2.1). */
   kind?: RoomKind;
+}
+
+/** Record that this session spoke through `ccmsg say` (kawaz r244 m5-m6).
+ * Session role only. The daemon resolves the caller's own 1on1 room (u1 + this
+ * sid), creating one if none exists, and appends a `SayEvent` there — the
+ * caller names no room, because "the session's own 1on1" is the only place
+ * this belongs. The reply carries the room and the event's `seq`; the CLI
+ * ignores both and goes on to exec `/usr/bin/say` regardless, so a failure
+ * here costs the observation, never the speech. */
+export interface SayRequest {
+  op: "say";
+  /** The argv forwarded to `/usr/bin/say`, joined by spaces (see SayEvent.text). */
+  text: string;
+}
+
+/** Ack one `say` event as read (webui 既読 button). User role only: the
+ * unread count exists for the person watching the session list, and a session
+ * acking its own speech would clear a badge nobody looked at. */
+export interface SayReadRequest {
+  op: "say_read";
+  room: string;
+  /** `seq` of the SayEvent being acked (SayEvent doc comment explains why the
+   * ack target is `seq` and not a `mid`). */
+  seq: number;
 }
 
 export interface NextRoomRequest {
@@ -1876,6 +1942,8 @@ export type Request =
   | ReplyRequest
   | CreateRoomRequest
   | NextRoomRequest
+  | SayRequest
+  | SayReadRequest
   | SetTitleRequest
   | ArchiveRoomRequest
   | KickRequest
@@ -1997,6 +2065,22 @@ export interface CreateRoomResponse {
    * Absent when there's nothing to warn about. */
   warning?: string;
 }
+export interface SayResponse {
+  ok: true;
+  /** The 1on1 room the say landed in (resolved or freshly created). */
+  room: string;
+  /** `seq` stamped on the appended SayEvent — the ack target a later
+   * `say_read` names. */
+  seq: number;
+  /** true when this call is what created the 1on1 room. */
+  created: boolean;
+}
+export interface SayReadResponse {
+  ok: true;
+  room: string;
+  /** echo of the acked SayEvent's seq */
+  ref: number;
+}
 export interface NextRoomResponse {
   ok: true;
   room: string;
@@ -2052,6 +2136,17 @@ export interface RoomSummary {
    * reachable; absent means the daemon predates the field (a client must then
    * treat liveness as unknown rather than as zero). */
   live_members?: number;
+  /** `seq` of every `say` event in this room with no matching `say_read` ack
+   * (kawaz r244 m5-m6). Only ever non-empty on a 1on1 room; absent when there
+   * is nothing unread. Seeds the webui's sidebar 🔊 marker, which then tracks
+   * live `say` / `say_read` deliveries on the subscribe stream.
+   *
+   * Design rationale (the seqs, not just their count): the client keeps this
+   * as a set, so folding a replayed history — opening the room refetches every
+   * past `say` and `say_read` through `room_history` — is idempotent. A bare
+   * count plus increment/decrement deltas would double-count on exactly that
+   * very ordinary path. */
+  say_unread_seqs?: number[];
 }
 export interface RoomsResponse {
   ok: true;
@@ -2720,6 +2815,8 @@ export type Response =
   | PostResponse
   | CreateRoomResponse
   | NextRoomResponse
+  | SayResponse
+  | SayReadResponse
   | SetTitleResponse
   | ArchiveRoomResponse
   | KickResponse

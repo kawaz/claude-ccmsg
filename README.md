@@ -46,6 +46,20 @@ re-points it if it's strictly newer than what the symlink currently targets
 
 The daemon serves a web UI at `http://127.0.0.1:8642` by default (for the human user: browse rooms, sessions, files, and transcripts, and post as `u1` = User). Binding is loopback-only and browser access is gated by an `Origin` check: loopback origins pass by default, a `tailscale serve` front for this port is detected and allowed automatically (zero config for remote/phone access over your tailnet), and other reverse-proxy origins can be added with `CCMSG_HTTP_ALLOW_ORIGIN` (comma-separated). A source-IP allowlist (`CCMSG_HTTP_ALLOW`, default loopback) remains as defense in depth, and `CCMSG_HTTP_BIND` (comma-separated `host:port`, `off` to disable) overrides the bind. URL fragments are locators (`/#rXXXX` = room, `/#rXXXX-mNN` = message position, `/#s<sid>` = session files, `/#t<sid>` = session timeline). See [DR-0004](./docs/decisions/DR-0004-webui-architecture.md).
 
+## Speaking with `say`
+
+`ccmsg say` forwards its arguments to macOS's `/usr/bin/say` unchanged, and
+records the speech in the calling session's 1on1 room first. With several
+Claude Code sessions running, a spoken notification is otherwise anonymous —
+the web UI's Sessions list marks the session that spoke with 🔊, and its 1on1
+room shows what was said with a 既読 (read) button that clears the marker.
+
+Speech never depends on the recording: no session id, no running daemon, or a
+daemon that refuses the event all still speak. `bin/say` is a ready-made PATH
+shim that routes an ordinary `say` through this command — put its directory
+ahead of `/usr/bin` on PATH to intercept every `say` on the machine. Wiring
+PATH is left to you; the repo only ships the shim.
+
 ## Why a rewrite?
 
 The p2p approach in `cmux-msg` worked for 1:1 messaging but exposed five structural problems during multi-session dogfooding:

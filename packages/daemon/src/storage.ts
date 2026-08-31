@@ -136,6 +136,24 @@ export function nextAgentMemberId(room: Room): string {
   return `a${maxA + 1}`;
 }
 
+/** `seq` of every `say` event in this room with no matching `say_read` ack —
+ * what the webui sidebar's 🔊 marker counts (kawaz r244 m5-m6). Derived by a
+ * scan rather than kept as a field on Room: the ack set is the authority, a
+ * duplicate ack for the same seq must not double-decrement, and a scan of an
+ * append-only log needs no restart-time reconstruction. A `say` whose `seq`
+ * is somehow unset is skipped — it can never be acked (an ack names a seq),
+ * so reporting it would leave a badge nobody can clear. */
+export function sayUnreadSeqs(room: Room): number[] {
+  const acked = new Set<number>();
+  for (const ev of room.events) if (ev.type === "say_read") acked.add(ev.ref);
+  const out: number[] = [];
+  for (const ev of room.events) {
+    if (ev.type !== "say" || ev.seq === undefined) continue;
+    if (!acked.has(ev.seq)) out.push(ev.seq);
+  }
+  return out;
+}
+
 /** ts of the last event, or null for an empty room. */
 export function lastTs(room: Room): string | null {
   for (let i = room.events.length - 1; i >= 0; i--) {

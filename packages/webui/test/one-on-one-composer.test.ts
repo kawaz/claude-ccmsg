@@ -68,6 +68,7 @@ function makeRoomState(overrides: Partial<RoomState> & { id: string }): RoomStat
     timeline: overrides.timeline ?? [],
     lastMid: overrides.lastMid ?? 0,
     lastTs: overrides.lastTs ?? null,
+    sayUnread: overrides.sayUnread ?? new Set<number>(),
     archived: overrides.archived,
     kind: overrides.kind ?? "normal",
     history: overrides.history ?? "loaded",

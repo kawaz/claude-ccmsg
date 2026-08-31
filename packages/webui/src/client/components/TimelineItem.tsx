@@ -168,20 +168,74 @@ function MsgItem({
   );
 }
 
+/** A `say` event's bubble (kawaz r244 m5-m6). Reads as a message rather than
+ * as a thin status line because it carries what the machine actually said —
+ * the text is the content, not metadata about the room. The 既読 button is
+ * the only way the unread 🔊 in the Sessions list goes away, so it stays
+ * visible until acked and then reports the ack rather than vanishing (a
+ * disappearing control leaves the reader unsure whether the click landed). */
+function SayItem({
+  event,
+  now,
+  unread,
+  onRead,
+}: {
+  event: Extract<DeliveredEvent, { type: "say" }>;
+  now: number;
+  unread: boolean;
+  onRead?: (seq: number) => void;
+}) {
+  const seq = event.seq;
+  return (
+    <div class={unread ? "say say-unread" : "say"}>
+      <div class="say-meta">
+        <span class="say-icon" aria-hidden="true">
+          🔊
+        </span>
+        <span class="say-from">say</span>
+        <span class="say-time">{formatMsgTime(event.ts, now)}</span>
+        {seq !== undefined && unread ? (
+          <button type="button" class="say-read-btn" onClick={() => onRead?.(seq)}>
+            既読
+          </button>
+        ) : (
+          <span class="say-read-done">既読</span>
+        )}
+      </div>
+      {/* Rendered as plain text: this is argv handed to /usr/bin/say, so
+          markdown-ish characters in it are literal, not formatting. */}
+      <div class="say-body">{event.text}</div>
+    </div>
+  );
+}
+
 export function TimelineItem({
   event,
   room,
   peers,
   now,
+  onSayRead,
 }: {
   event: DeliveredEvent;
   room: RoomState;
   peers: readonly PeerInfo[];
   now: number;
+  /** Sends the `say_read` ack for a 🔊 bubble. Absent in read-only contexts
+   * (the component catalog), where the button simply does nothing. */
+  onSayRead?: (seq: number) => void;
 }) {
   switch (event.type) {
     case "msg":
       return <MsgItem event={event} room={room} peers={peers} now={now} />;
+    case "say":
+      return (
+        <SayItem
+          event={event}
+          now={now}
+          unread={event.seq !== undefined && room.sayUnread.has(event.seq)}
+          onRead={onSayRead}
+        />
+      );
     case "member":
       return <div class="event event-member">+ {memberLabel(event.id, room)} が参加</div>;
     case "leave":

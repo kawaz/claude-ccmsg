@@ -293,6 +293,98 @@ describe("reducer / broadcast kind (DR-0013)", () => {
   });
 });
 
+describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
+  const say = (seq: number, text: string): DeliveredEvent =>
+    ({
+      type: "say",
+      r: "r1",
+      sid: "sid-abcdefgh",
+      text,
+      ts: "2026-08-31T00:00:00.000Z",
+      seq,
+    }) as DeliveredEvent;
+
+  // 輪郭: 未読の追跡は room を開いていなくても動く。サイドバーの 🔊 は「まだ
+  // 開いていないセッションが鳴らした」を伝えるためのものなので、painted 判定に
+  // 引きずられて未読が増えないと機能そのものが成立しない。
+  test("tracks unread even for a room whose history was never fetched", () => {
+    let state = dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null }],
+    });
+    expect(state.rooms.get("r1")?.history).toBe("idle");
+    state = dispatch(state, { type: "protocol-event", event: say(7, "hi") });
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7]);
+    // 未 painted の room には bubble を積まない (msg と同じ規則)。
+    expect(state.rooms.get("r1")?.timeline).toEqual([]);
+  });
+
+  // 輪郭: painted な room では bubble も積まれ、say_read は未読からだけ消えて
+  // timeline には行を足さない (既読は状態であって会話ではない)。
+  test("appends the bubble in a painted room and clears unread on ack", () => {
+    let state = dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null }],
+    });
+    state = dispatch(state, { type: "room-history/loaded", room: "r1" });
+    state = dispatch(state, { type: "protocol-event", event: say(7, "hi") });
+    state = dispatch(state, { type: "protocol-event", event: say(9, "again") });
+    expect(state.rooms.get("r1")?.timeline).toHaveLength(2);
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7, 9]);
+
+    state = dispatch(state, {
+      type: "protocol-event",
+      event: {
+        type: "say_read",
+        r: "r1",
+        ref: 7,
+        ts: "2026-08-31T00:00:01.000Z",
+        seq: 10,
+      } as DeliveredEvent,
+    });
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([9]);
+    expect(state.rooms.get("r1")?.timeline).toHaveLength(2);
+  });
+
+  // 輪郭: 同じイベントを畳み直しても未読はズレない。room を開くと
+  // room_history が過去の say / say_read を丸ごと再配信するので、これは
+  // 例外ケースではなく通常経路。
+  test("re-folding the same events converges (room_history replay)", () => {
+    let state = dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null, say_unread_seqs: [9] }],
+    });
+    state = dispatch(state, { type: "room-history/loaded", room: "r1" });
+    for (const ev of [say(7, "hi"), say(9, "again")]) {
+      state = dispatch(state, { type: "protocol-event", event: ev });
+    }
+    state = dispatch(state, {
+      type: "protocol-event",
+      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 } as DeliveredEvent,
+    });
+    state = dispatch(state, {
+      type: "protocol-event",
+      event: { type: "say_read", r: "r1", ref: 7, ts: "t", seq: 10 } as DeliveredEvent,
+    });
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([9]);
+  });
+
+  // 輪郭: rooms 応答は未読の正本。別タブで既読にされた分が、再接続後に
+  // 復活しない。
+  test("rooms/loaded replaces the unread set rather than merging", () => {
+    let state = dispatch(initialState(), {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null, say_unread_seqs: [7, 9] }],
+    });
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([7, 9]);
+    state = dispatch(state, {
+      type: "rooms/loaded",
+      rooms: [{ id: "r1", members: [member], last_mid: 0, last_ts: null }],
+    });
+    expect([...state.rooms.get("r1")!.sayUnread]).toEqual([]);
+  });
+});
+
 describe("reducer / conn/status", () => {
   // restarting → 再接続状態: daemon 再起動中の ev frame は WS effect 層が
   // 直接この action に正規化する (ws.ts)。reducer 側は connStatus を素通しで

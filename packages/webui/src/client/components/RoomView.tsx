@@ -169,6 +169,22 @@ export function RoomView({ state }: { state: AppState }) {
     }
   }
 
+  // 既読は非楽観 — 成功時は broadcast される say_read イベントを store が
+  // 拾って未読集合から消す (archive toggle / set_title と同じ流儀)。失敗は
+  // 同じ notice レール (error-until-retry) に載せて、押しても何も起きない
+  // ように見えるのを避ける。
+  const handleSayRead = (seq: number): void => {
+    if (!room) return;
+    void ws
+      .sayRead(room.id, seq)
+      .then((res) => {
+        if (!res.ok) setNotice({ kind: "error", text: res.error.msg });
+      })
+      .catch(() => {
+        setNotice({ kind: "error", text: "接続エラーのため既読にできませんでした" });
+      });
+  };
+
   async function handleDrop(e: DragEvent): Promise<void> {
     e.preventDefault();
     setDragOver(false);
@@ -258,7 +274,14 @@ export function RoomView({ state }: { state: AppState }) {
         onDrop={(e) => void handleDrop(e)}
       >
         {room.timeline.map((ev, i) => (
-          <TimelineItem key={i} event={ev} room={room} peers={state.peers} now={now} />
+          <TimelineItem
+            key={i}
+            event={ev}
+            room={room}
+            peers={state.peers}
+            now={now}
+            onSayRead={handleSayRead}
+          />
         ))}
       </div>
       {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer

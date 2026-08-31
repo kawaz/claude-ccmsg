@@ -86,6 +86,7 @@ const MINIMAL_HELP = `Commands:
   create-room --members <sid[,sid...]> <title>  ルーム作成
   subscribe                                 Monitor常駐用
   notify --self --text <msg>                自セッション通知 (justfile等の組み込み用途)
+  say [say-options] [text...]               say で発声 + どのセッションが喋ったか記録
 
 Options:
   --help-full

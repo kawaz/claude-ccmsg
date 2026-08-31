@@ -730,6 +730,15 @@ a {
   border: 1px solid var(--border);
 }
 
+/* 未読 say マーカー (kawaz r244 m5-m6)。行の情報量を増やしすぎないよう、
+ * 1 件なら絵文字だけ、2 件以上のときだけ件数を添える。 */
+.session-say-unread {
+  flex-shrink: 0;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .session-live-dot {
   flex: none;
   width: 0.5rem;
@@ -2207,6 +2216,73 @@ a {
 }
 
 .msg-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--font-size-xl);
+}
+
+/* `ccmsg say` の発話バブル (kawaz r244 m5-m6)。msg でも event でもない
+ * 第 3 の種別: 中身は「実際に喋った文字列」なので event の 1 行より厚く、
+ * かといって room の会話ではないので msg の色分け (member hue) には乗せず、
+ * スピーカー色として琥珀系を 1 色だけ使う。未読は左ボーダーで強め、既読に
+ * なると淡く沈む — 一覧を上から流し見た時に「まだ見ていないやつ」だけが
+ * 目に留まるようにするため。 */
+.say {
+  border-radius: 0.5rem;
+  padding: var(--space-7) var(--space-9);
+  max-width: 90%;
+  background: oklch(0.96 0.03 80);
+  border-left: 3px solid oklch(0.75 0.05 80);
+}
+
+.say-unread {
+  border-left: 3px solid oklch(0.7 0.16 80);
+}
+
+@media (prefers-color-scheme: dark) {
+  .say {
+    background: oklch(0.24 0.025 80);
+    border-left-color: oklch(0.45 0.05 80);
+  }
+  .say-unread {
+    border-left-color: oklch(0.72 0.14 80);
+  }
+}
+
+.say-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-2);
+}
+
+.say-time {
+  margin-left: auto;
+}
+
+.say-read-btn {
+  flex-shrink: 0;
+  font-size: var(--font-size-3xs);
+  line-height: 1;
+  padding: var(--space-2) var(--space-6);
+  border-radius: 999px;
+  border: 1px solid oklch(0.7 0.16 80);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+/* 既読後もラベルは残す (消すと「押せたのか」が分からない)。ボタンでは
+ * なくなった、という状態そのものが既読の表示になる。 */
+.say-read-done {
+  flex-shrink: 0;
+  font-size: var(--font-size-3xs);
+  color: var(--fg-muted);
+}
+
+.say-body {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--font-size-xl);

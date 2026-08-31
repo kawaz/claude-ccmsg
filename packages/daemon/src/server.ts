@@ -27,6 +27,8 @@ import {
   type PeerInfo,
   type Request,
   type RoomKind,
+  type SayEvent,
+  type SayReadEvent,
   type SessionIdentity,
   type SessionEnvResponse,
   type SessionKillResponse,
@@ -153,6 +155,7 @@ import {
   parseMidSelector,
   presentMembers,
   readMsgs,
+  sayUnreadSeqs,
   scanRooms,
   type Room,
 } from "./storage.ts";
@@ -1089,6 +1092,18 @@ function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
   return room.kind === "broadcast" && (ev.type === "member" || ev.type === "leave");
 }
 
+/** `say` / `say_read` are観測用 events for the webui only (kawaz r244 m6:
+ * 「webui とかが知りたいだけなのでセッションへの echo は不要、コンテキストの
+ * 無駄」). A session's own speech is something it already knows about, and the
+ * read-ack is a User-side gesture — delivering either into a session-role
+ * subscribe stream would spend agent context to tell an agent what it did.
+ * Applied on every delivery path (live deliver, since/backlog replay,
+ * room_history) so a reconnecting agent doesn't collect them retroactively. */
+function isSuppressedForSubscriber(conn: Conn, room: Room, ev: StorageEvent): boolean {
+  if (isSuppressedForBroadcastStream(room, ev)) return true;
+  return (ev.type === "say" || ev.type === "say_read") && conn.identity?.role !== "user";
+}
+
 /**
  * Live-deliver a single event to all subscribers that see the room.
  * The echo rule (DR-0003 §5) applies to `msg` only: the author's own post never
@@ -1099,9 +1114,9 @@ function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
  * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
  */
 function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
-  if (isSuppressedForBroadcastStream(room, ev)) return;
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
+    if (isSuppressedForSubscriber(sub, room, ev)) continue;
     if (ev.type === "msg") {
       if (isAuthorSub(sub, author)) {
         // The `to` filter is not applied: it decides who *else* receives the
@@ -1179,7 +1194,7 @@ function sendBacklog(
     for (let i = start; i < room.events.length; i++) {
       const ev = room.events[i]!;
       // DR-0013 §2.3 (see the sinceMid branch below for the same rule).
-      if (isSuppressedForBroadcastStream(room, ev)) continue;
+      if (isSuppressedForSubscriber(conn, room, ev)) continue;
       if (ev.type === "msg") {
         if (ev.from === selfId) {
           // echo rule (see docstring): own post replayed bodyless
@@ -1207,7 +1222,7 @@ function sendBacklog(
       // DR-0013 §2.3: broadcast room の member/leave は since replay でも配信しない。
       // live deliver と since replay の両輪でスキップして、遅れて再接続した member
       // の subscribe stream にも noise を復元させない。
-      if (isSuppressedForBroadcastStream(room, ev)) continue;
+      if (isSuppressedForSubscriber(conn, room, ev)) continue;
       if (ev.type === "msg") {
         if (ev.from === selfId) {
           // echo rule (see docstring): own post replayed bodyless
@@ -1238,6 +1253,9 @@ function sendBacklog(
     // (webui は rooms 応答で member 一覧を取得する契約)。leave は上の一律 continue
     // で既に落ちているので追加の broadcast チェック不要。
     if (room.kind === "broadcast" && ev.type === "member") continue;
+    // say / say_read はこの snapshot 経路 (room_history / backlog:true) でも
+    // session role には出さない — 遡って渡しても agent には使い道がない。
+    if (isSuppressedForSubscriber(conn, room, ev)) continue;
     if (ev.type === "msg") {
       if (!recent.has(ev)) continue;
       if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) {
@@ -1312,6 +1330,24 @@ function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): 
 // routing between room and session views on the leading literal "r" vs "s" — that
 // disambiguation relies on room ids always starting with "r". If this id format ever
 // changes, check that invariant test too.
+/** The 1on1 room whose single present member is `sid`, or null. Identified by
+ * `kind === "1on1"` alone — the same rule the webui's `findExistingOneOnOne`
+ * follows (DR-0014 §2.1「判別は kind フィールドで行う」; title strings are
+ * display-only and typo-prone). u1 is implicit and has no member row, so a
+ * well-formed 1on1 has exactly one present member. Oldest match wins when
+ * several exist (rooms are inserted in creation order): `ccmsg say` should
+ * keep landing in the room the User already has open rather than drifting to
+ * a newer duplicate. */
+function findOneOnOneRoomForSid(daemon: Daemon, sid: string): Room | null {
+  for (const room of daemon.rooms.values()) {
+    if (room.kind !== "1on1") continue;
+    const present = presentMembers(room).filter((m) => m.id !== ADMIN_ID);
+    if (present.length !== 1) continue;
+    if (present[0]!.sid === sid) return room;
+  }
+  return null;
+}
+
 function generateRoomId(daemon: Daemon): string {
   let n = 1;
   for (const id of daemon.rooms.keys()) {
@@ -1385,6 +1421,8 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 // sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS = new Set([
   "post",
+  "say",
+  "say_read",
   "create_room",
   "next_room",
   "set_title",
@@ -2081,6 +2119,84 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "say": {
+      // kawaz r244 m5-m6: `ccmsg say` は say の実行そのものは CLI が必ず行う。
+      // ここは「どのセッションが喋ったか」を webui が答えられるようにするため
+      // の記録だけを担う。session role 限定 — 「自分の 1on1 room」が宛先の
+      // 全てなので、caller が room を名指しする余地はない。
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'say' requires session role");
+        return;
+      }
+      if (typeof req.text !== "string") {
+        sendErr(conn, ErrorCode.invalid_args, "say requires a text string");
+        return;
+      }
+      const sid = conn.identity.sid;
+      let room = findOneOnOneRoomForSid(daemon, sid);
+      const created = room === null;
+      if (room === null) {
+        // 同じ形の room を webui の §2.2 auto-create と揃える (kind marker を
+        // 先に書く理由は create_room の 1on1 分岐と同一: 作成途中でクラッシュ
+        // しても restart 後に "normal" として復活させない)。title も webui と
+        // 同じ `<repo> 1on1 <sid8>` にして、どちらが先に作っても見た目が同じに
+        // なるようにする。
+        room = createRoom(daemon, [sid], false, "1on1");
+        appendEvent(room, { type: "kind", kind: "1on1", ts: nowIso() } satisfies KindEvent);
+        const repo = daemon.sessions.get(sid)?.meta.repo || "(unknown)";
+        appendEvent(room, {
+          type: "title",
+          title: `${repo} 1on1 ${sid.slice(0, 8)}`,
+          ts: nowIso(),
+        } satisfies TitleEvent);
+        writeMembers(daemon, room, [sid]);
+      }
+      const ev: SayEvent = { type: "say", sid, text: req.text, ts: nowIso() };
+      appendEvent(room, ev);
+      if (created) {
+        // 新規 room は snapshot ごと配信する (create_room と同じ経路)。say
+        // 自体もその snapshot に含まれるので、ここで個別 deliver はしない。
+        deliverNewRoom(daemon, room, authorOf(conn), null);
+      } else {
+        deliver(daemon, room, ev, authorOf(conn));
+      }
+      send(conn, { ok: true, room: room.id, seq: ev.seq!, created });
+      return;
+    }
+
+    case "say_read": {
+      // 既読は webui の 🔊 バブル上のボタンからだけ立つ (user role 限定):
+      // 未読数は「kawaz がまだ見ていない say」の数であって、喋った session が
+      // 自分で消せる意味の数ではない。
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'say_read' requires user role");
+        return;
+      }
+      const room = daemon.rooms.get(req.room);
+      if (!room) {
+        sendErr(conn, ErrorCode.room_not_found, `no such room: ${req.room}`);
+        return;
+      }
+      const target = room.events.find((e): e is SayEvent => e.type === "say" && e.seq === req.seq);
+      if (!target) {
+        // 存在しない seq を黙って ack すると、未読数が減らないまま "既読にした"
+        // と見える (typo / 別 room の seq を渡した時の典型)。落として気づかせる。
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `no say event with seq ${String(req.seq)} in ${room.id}`,
+        );
+        return;
+      }
+      const ev: SayReadEvent = { type: "say_read", ref: req.seq, ts: nowIso() };
+      appendEvent(room, ev);
+      // 他タブの webui にも既読を伝える (session role には届かない —
+      // isSuppressedForSubscriber)。
+      deliver(daemon, room, ev, authorOf(conn));
+      send(conn, { ok: true, room: room.id, ref: req.seq });
+      return;
+    }
+
     case "set_title": {
       const room = daemon.rooms.get(req.room);
       if (!room) {
@@ -2302,6 +2418,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       );
       const rooms = [...daemon.rooms.values()].map((r) => {
         const members = presentMembers(r);
+        const sayUnread = sayUnreadSeqs(r);
         return {
           id: r.id,
           ...(r.title ? { title: r.title } : {}),
@@ -2315,6 +2432,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
           // absence of the field.
           ...(r.kind !== "normal" ? { kind: r.kind } : {}),
+          // 🔊 marker seed (kawaz r244 m5-m6): only 1on1 rooms ever carry say
+          // events, but the scan runs uniformly — a room's kind is not a reason
+          // to special-case a walk that finds nothing on rooms without them.
+          // Omitted when empty, per the field's contract.
+          ...(sayUnread.length > 0 ? { say_unread_seqs: sayUnread } : {}),
         };
       });
       send(conn, { ok: true, rooms });

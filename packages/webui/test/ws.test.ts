@@ -1336,6 +1336,7 @@ describe("createWsClient agents/ping (U1)", () => {
             timeline: [],
             lastMid: 5,
             lastTs: null,
+            sayUnread: new Set<number>(),
             kind: "normal" as const,
             history: "loaded" as const,
           },
@@ -1378,6 +1379,7 @@ describe("createWsClient agents/ping (U1)", () => {
       timeline: [],
       lastMid: 5,
       lastTs: null,
+      sayUnread: new Set<number>(),
       kind: "normal" as const,
       history: "loaded" as const,
     });

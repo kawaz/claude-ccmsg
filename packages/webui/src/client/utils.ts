@@ -145,6 +145,24 @@ export function splitRoomsByKind(rooms: RoomState[]): {
  * counts — it's an implicit member of every room with no `peers` row backing
  * it (see MemberChip's isAdmin handling), so counting it would make every
  * room look inhabited. */
+/** Unread `say` count per session sid (kawaz r244 m5-m6), for the Sessions
+ * list's 🔊 marker. Says live in a session's 1on1 room, so this walks the
+ * rooms and attributes each room's unread set to that room's single non-User
+ * member. A room that somehow has several present members contributes to none
+ * of them: the marker means "this session made a sound", and a guessed
+ * attribution would point at the wrong session. */
+export function sayUnreadBySid(rooms: Map<string, RoomState>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const room of rooms.values()) {
+    if (room.sayUnread.size === 0) continue;
+    const present = [...room.membersById.values()].filter((m) => !m.left && m.id !== ADMIN_ID);
+    if (present.length !== 1) continue;
+    const sid = present[0]!.sid;
+    out.set(sid, (out.get(sid) ?? 0) + room.sayUnread.size);
+  }
+  return out;
+}
+
 export function liveAgentCount(room: RoomState, peers: PeerInfo[]): number {
   let n = 0;
   for (const m of room.membersById.values()) {

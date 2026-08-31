@@ -65,6 +65,7 @@ import type {
   SessionStatusResponse,
   SessionStatusStreamEvent,
   SessionStatusSubscribeResponse,
+  SayReadResponse,
   SessionStatusUnsubscribeResponse,
   SetTitleResponse,
   StreamEvent,
@@ -123,6 +124,12 @@ export interface WsHandle {
    * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
    * this response. */
   kick(room: string, id: string): Promise<KickResponse | ErrorResponse>;
+  /** Ack one `say` event as read (kawaz r244 m5-m6): the 既読 button on a
+   * 🔊 bubble. `seq` is the SayEvent's own seq. Like every other room
+   * mutation here the update is non-optimistic — the `say_read` event comes
+   * back on the subscribe stream and the store clears the unread entry from
+   * there, so every open tab converges on the same badge. */
+  sayRead(room: string, seq: number): Promise<SayReadResponse | ErrorResponse>;
   /** Create a room whose initial members (besides the always-implicit
    * User/u1) are `members` (U3: SessionView's "+ 新規 Room" passes a single
    * sid; the sidebar ROOMS "+ 新規" (RoomCreator.tsx) passes an explicit
@@ -903,6 +910,7 @@ export function createWsClient(
     setTitle: (room, title) => send({ op: "set_title", room, title }),
     archiveRoom: (room, archived) => send({ op: "archive_room", room, archived }),
     kick: (room, id) => send({ op: "kick", room, id }),
+    sayRead: (room, seq) => send({ op: "say_read", room, seq }),
     createRoom: (members, title, kind) =>
       send({
         op: "create_room",

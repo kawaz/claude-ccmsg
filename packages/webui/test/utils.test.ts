@@ -45,6 +45,7 @@ import {
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   sessionStatus,
+  sayUnreadBySid,
   SESSION_PANE_MAX_RATIO,
   SESSION_PANE_MIN_RATIO,
   shortSid,
@@ -160,6 +161,7 @@ function member(overrides: Partial<MemberEvent>): MemberEvent {
 function roomWithMember(m: MemberEvent): RoomState {
   return {
     id: "r1",
+    sayUnread: new Set<number>(),
     membersById: new Map([[m.id, { ...m, left: false }]]),
     memberOrder: [m.id],
     msgs: new Map(),
@@ -170,6 +172,43 @@ function roomWithMember(m: MemberEvent): RoomState {
     history: "loaded",
   };
 }
+
+describe("sayUnreadBySid (kawaz r244 m5-m6)", () => {
+  const roomWith = (id: string, sids: string[], unread: number[]): RoomState => ({
+    ...makeRoom({ id }),
+    kind: "1on1",
+    membersById: new Map(
+      sids.map((sid, i) => [`a${i + 1}`, { ...member({ id: `a${i + 1}`, sid }), left: false }]),
+    ),
+    memberOrder: sids.map((_, i) => `a${i + 1}`),
+    sayUnread: new Set(unread),
+  });
+
+  // 輪郭: 未読は room の唯一の非 User member に帰属し、複数 room 分は合算される。
+  test("attributes each room's unread to its single member sid", () => {
+    const rooms = new Map([
+      ["r1", roomWith("r1", ["sid-a"], [3])],
+      ["r2", roomWith("r2", ["sid-a"], [5, 6])],
+      ["r3", roomWith("r3", ["sid-b"], [1])],
+      ["r4", roomWith("r4", ["sid-c"], [])],
+    ]);
+    const got = sayUnreadBySid(rooms);
+    expect(got.get("sid-a")).toBe(3);
+    expect(got.get("sid-b")).toBe(1);
+    // 未読ゼロの sid はエントリごと出さない (呼び出し側は ?? 0 で読む)。
+    expect(got.has("sid-c")).toBe(false);
+  });
+
+  // 輪郭: member が 1 人に定まらない room は誰にも帰属させない。マーカーの意味は
+  // 「このセッションが鳴らした」なので、当て推量で別セッションを指すより出さない。
+  test("skips a room whose present members are not exactly one", () => {
+    const rooms = new Map([
+      ["r1", roomWith("r1", ["sid-a", "sid-b"], [3])],
+      ["r2", roomWith("r2", [], [4])],
+    ]);
+    expect([...sayUnreadBySid(rooms).keys()]).toEqual([]);
+  });
+});
 
 describe("memberLabel", () => {
   test("ADMIN_ID always renders as 'User', regardless of room state", () => {
@@ -226,6 +265,7 @@ describe("memberLabel", () => {
 function makeRoom(overrides: Partial<RoomState> = {}): RoomState {
   return {
     id: "r1",
+    sayUnread: new Set<number>(),
     membersById: new Map(),
     memberOrder: [],
     msgs: new Map(),
