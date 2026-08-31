@@ -144,7 +144,7 @@ jq -c 'select(.kind == "dom_commit" and .elapsed_ms > 1000)' ~/.local/state/ccms
 ## 再現環境で試すとき
 
 本番 daemon を触らずに確認する場合は `.claude/skills/verify` の隔離 daemon 手順
-(`CCMSG_STATE_DIR` / `CCMSG_DATA_DIR` を temp dir に、`CCMSG_HTTP_BIND` を空き
+(`CCMSG_STATE_DIR` / `CCMSG_CONFIG_DIR` / `CCMSG_DATA_DIR` を temp dir に、`CCMSG_HTTP_BIND` を空き
 ポートに) を使う。`trace.jsonl` はその `CCMSG_STATE_DIR` 配下に出る。
 
 ## 関連

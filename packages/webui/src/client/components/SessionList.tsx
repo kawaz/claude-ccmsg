@@ -377,7 +377,6 @@ function SessionRowItem({
   statusBadge,
   modelEffort,
   cacheTs,
-  activeSecondary,
 }: {
   row: SessionRow;
   currentSid: string | null;
@@ -394,10 +393,6 @@ function SessionRowItem({
    * または daemon が gateway の event stream を購読していない (どちらもリング
    * 非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
   cacheTs: number | null;
-  /** kawaz r99m1: 同じ sid が Pinned セクションにも出ている時、こちら
-   * (status セクション側 = 2 番目に出てくる方) の選択装飾は主張を弱める。
-   * Pinned 側が正の「選択中」表示を担う。 */
-  activeSecondary: boolean;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
   const ring = useCacheRing(cacheTs);
@@ -453,13 +448,7 @@ function SessionRowItem({
 
   return (
     <li
-      class={
-        row.sid === currentSid
-          ? activeSecondary
-            ? "active-secondary session-row"
-            : "active session-row"
-          : "session-row"
-      }
+      class={row.sid === currentSid ? "active session-row" : "session-row"}
       title={titleParts.join("\n")}
       onClick={selectSessionOnRowClick(row.sid)}
     >
@@ -679,11 +668,12 @@ function PinnedSessionRow({
  * one session is pinned, positioned above the status-grouped sections below
  * — pins are a deliberate user choice ("I want to keep finding this one"),
  * so they stay visible regardless of the search panel being open/closed
- * (see Sidebar.tsx's doc comment) or which status section a *live* copy of
- * the same sid happens to sort into. A pinned sid can be BOTH here and in a
- * status section below simultaneously if it's also currently connected —
- * that's intentional (same "favorites duplicate the normal listing"
- * convention FileTree's ★ section already uses), not deduped. */
+ * (see Sidebar.tsx's doc comment).
+ *
+ * A pinned sid appears here and nowhere else among the status sections below:
+ * SessionList filters them out before grouping (kawaz 2026-08-31), because a
+ * pinned row already prefers the live PeerInfo/AgentInfo when the session is
+ * connected, so the second copy carried no information the first one lacked. */
 function PinnedSessionsSection({
   pinnedSessions,
   peers,
@@ -921,7 +911,17 @@ export function SessionList({
     ],
     [peers, agents, agentsBySid, sessionErrors],
   );
-  const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
+  // kawaz 2026-08-31: "Pinned に居るセッションは Busy リストから除外してほしい"。
+  // ピンは「見失いたくない一件」を上に固定する場所で、その行は live な
+  // PeerInfo/AgentInfo を優先して描く (PinnedSessionsSection の doc comment)
+  // ため、下の status セクションに同じ sid をもう一度出しても増える情報が無く、
+  // リストの実効的な長さだけが伸びる。除外は Pinned とこの status セクション
+  // 群の間だけ — 「前回稼働中」は resume ボタンという固有の操作を持つので、
+  // そちらの重複はピンでは代替できない。
+  const sections = useMemo(
+    () => groupSessionsBySection(rows.filter((row) => !pinnedSessions.has(row.sid))),
+    [rows, pinnedSessions],
+  );
   // 行に出す model/effort の供給元は 3 つあり、確度の高い順に並べる:
   //   1. context 観測 — model と effort の両方を持つが、entry があるのは
   //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
@@ -969,7 +969,6 @@ export function SessionList({
                 currentSid={currentSid}
                 // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
                 // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
-                activeSecondary={pinnedSessions.has(row.sid)}
                 // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
                 // subscribe すると常駐コストが人数分乗るため、SessionView が
                 // 実際に Status/Timeline タブを開いているセッションだけ

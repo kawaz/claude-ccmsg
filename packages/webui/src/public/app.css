@@ -609,14 +609,6 @@ a {
   background: var(--accent);
 }
 
-/* kawaz r99m1: 選択中 sid が Pinned セクションにも出ている時、status
- * セクション側 (2 番目に出てくる方) の行に付く弱めの選択装飾。accent の
- * 薄い tint だけにして文字色は通常のまま (= .active 系の accent-fg 上書き
- * を一切継承しない別クラス)。「選択中」の主表示は Pinned 側が担う。 */
-.session-row.active-secondary {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-}
-
 .session-row.active .session-main-link,
 .session-row.active .session-title,
 .session-row.active .session-line1-repo,
@@ -1196,8 +1188,8 @@ a {
 
 /* 選択中 (このヒットの Timeline が今開いている、kawaz 指摘 2026-08-26:
  * クリック後マウスが離れると選択中の行が分からなくなる) — hover の枠色を
- * 持続させ、薄い accent tint を足して常設の選択装飾にする。SessionList の
- * `.session-row.active-secondary` と同じ薄い tint (文字色は上書きしない)。 */
+ * 持続させ、薄い accent tint を足して常設の選択装飾にする (文字色は上書き
+ * しない)。 */
 .session-search-hit.active .session-search-hit-main {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-alt));

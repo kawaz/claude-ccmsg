@@ -7,6 +7,7 @@ import * as path from "node:path";
 import {
   connect,
   spawnDaemonProc,
+  testConfigDir,
   startTestDaemon,
   stopTestDaemon,
   waitConnectable,
@@ -24,8 +25,9 @@ async function startConfiguredDaemon(
   const dataDir = path.join(base, "d");
   fs.mkdirSync(stateDir);
   fs.mkdirSync(dataDir);
+  fs.mkdirSync(testConfigDir(dataDir));
   fs.writeFileSync(
-    path.join(dataDir, "config.json"),
+    path.join(testConfigDir(dataDir), "config.json"),
     JSON.stringify({
       session_launcher: {
         root_dirs: [root],
@@ -42,13 +44,23 @@ async function startConfiguredDaemon(
   );
   const env = {
     CCMSG_STATE_DIR: stateDir,
+    CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
     CCMSG_HTTP_BIND: "off",
   };
   const proc = spawnDaemonProc(stateDir, dataDir);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  return { base, stateDir, dataDir, roomsDir: path.join(dataDir, "rooms"), sock, proc, env };
+  return {
+    base,
+    stateDir,
+    configDir: testConfigDir(dataDir),
+    dataDir,
+    roomsDir: path.join(dataDir, "rooms"),
+    sock,
+    proc,
+    env,
+  };
 }
 
 describe("session launcher wire ops", () => {
@@ -194,6 +206,48 @@ describe("session launcher wire ops", () => {
     T,
   );
 
+  // Installs that predate the config/ split still have their config.json in
+  // data/; the daemon moves it on startup, so the launcher they configured
+  // keeps working across the upgrade with no user action.
+  test("a config.json left in the legacy data dir is migrated and takes effect", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-legacy-"));
+    const stateDir = path.join(base, "s");
+    const dataDir = path.join(base, "d");
+    fs.mkdirSync(stateDir);
+    fs.mkdirSync(dataDir);
+    const legacy = path.join(dataDir, "config.json");
+    fs.writeFileSync(
+      legacy,
+      JSON.stringify({
+        session_launcher: {
+          root_dirs: [root],
+          shell: "bash",
+          templates: [{ name: "default", command: "printf legacy", params: { CWD: "" } }],
+        },
+      }),
+    );
+    const proc = spawnDaemonProc(stateDir, dataDir);
+    const sock = path.join(stateDir, "daemon.sock");
+    await waitConnectable(sock);
+    try {
+      const client = await connect(sock);
+      await client.hello({ role: "user" });
+      const response = await client.request<{ ok: true; root_dirs: string[] }>({
+        op: "session_launcher_config",
+      });
+      expect(response.ok).toBe(true);
+      if (response.ok) expect(response.root_dirs).toEqual([path.resolve(root)]);
+      client.close();
+      expect(fs.existsSync(legacy)).toBe(false);
+      expect(fs.existsSync(path.join(testConfigDir(dataDir), "config.json"))).toBe(true);
+    } finally {
+      proc.kill();
+      fs.rmSync(base, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 15000);
+
   // LN-Q4 makes config a startup snapshot: editing config.json cannot silently
   // widen or replace launcher roots until an explicit daemon restart.
   test(
@@ -206,7 +260,7 @@ describe("session launcher wire ops", () => {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
         fs.writeFileSync(
-          path.join(ctx.dataDir, "config.json"),
+          path.join(ctx.configDir, "config.json"),
           JSON.stringify({
             session_launcher: {
               root_dirs: [replacement],
@@ -250,8 +304,9 @@ describe("session launcher wire ops", () => {
       const dataDir = path.join(base, "d");
       fs.mkdirSync(stateDir);
       fs.mkdirSync(dataDir);
+      fs.mkdirSync(testConfigDir(dataDir));
       fs.writeFileSync(
-        path.join(dataDir, "config.json"),
+        path.join(testConfigDir(dataDir), "config.json"),
         JSON.stringify({
           session_launcher: {
             root_dirs: [root],
@@ -272,11 +327,17 @@ describe("session launcher wire ops", () => {
       const ctx: DaemonCtx = {
         base,
         stateDir,
+        configDir: testConfigDir(dataDir),
         dataDir,
         roomsDir: path.join(dataDir, "rooms"),
         sock,
         proc,
-        env: { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir, CCMSG_HTTP_BIND: "off" },
+        env: {
+          CCMSG_STATE_DIR: stateDir,
+          CCMSG_CONFIG_DIR: testConfigDir(dataDir),
+          CCMSG_DATA_DIR: dataDir,
+          CCMSG_HTTP_BIND: "off",
+        },
       };
       try {
         const client = await connect(ctx.sock);

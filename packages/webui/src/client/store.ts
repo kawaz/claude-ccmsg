@@ -202,7 +202,7 @@ export interface AppState {
    * `terminal_gateway_url` を保持し、SessionView の Terminal タブは
    * この値が非 null かつ agent の hyoui_session_id が解決済みの時のみ
    * 表示する (issue 2026-07-21-webui-terminal-tab-embed)。daemon の
-   * `<dataDir>/config.json` の `terminal_gateway_url` 未設定なら null。 */
+   * `<configDir>/config.json` の `terminal_gateway_url` 未設定なら null。 */
   terminalGatewayUrl: string | null;
   /** hello response の `llm_usage_available`。daemon が LLM gateway の usage
    * URL を設定している時だけ true になり、topbar の Usage ボタンと /usage

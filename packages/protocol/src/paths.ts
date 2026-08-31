@@ -1,19 +1,25 @@
-// Filesystem layout (DR-0002 §1). runtime (state) and data are separated so that
-// "the thing you must not lose is only data/" is expressed structurally.
+// Filesystem layout (DR-0002 §1). runtime (state), user configuration (config)
+// and data are separated so that "the thing you must not lose is only data/" is
+// expressed structurally, and "the thing you may hand-edit is only config/".
 //
-//   state: ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
-//            daemon.sock / daemon.lock / daemon.pid / daemon.log
-//            last-live-sessions.json
-//   data:  ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
-//            rooms/<room-id>.jsonl
-//            dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
+//   state:  ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
+//             daemon.sock / daemon.lock / daemon.pid / daemon.log
+//             last-live-sessions.json
+//   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
+//             config.json
+//             allowed-origins.json
+//   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
+//             rooms/<room-id>.jsonl
+//             dumps/<sid>-<YYYYMMDD-HHmmss>.{txt,jsonl}
 //
-// CCMSG_STATE_DIR / CCMSG_DATA_DIR are direct overrides (tests depend on them).
+// CCMSG_STATE_DIR / CCMSG_CONFIG_DIR / CCMSG_DATA_DIR are direct overrides
+// (tests depend on them).
 import * as os from "node:os";
 import * as path from "node:path";
 
 export interface Paths {
   stateDir: string;
+  configDir: string;
   dataDir: string;
   roomsDir: string;
   sock: string;
@@ -24,13 +30,13 @@ export interface Paths {
   trace: string;
   /** persisted extra allowed `Origin` values (JSON string[]), managed by
    * `ccmsg origins add/remove/list` and read by the daemon's Origin check.
-   * Lives in data/ (not state/) because it is user configuration that must
+   * Lives in config/ because it is declarative user configuration that must
    * survive daemon restarts — unlike CCMSG_HTTP_ALLOW_ORIGIN, which vanishes
    * whenever a client respawns the daemon without that env set. */
   allowedOrigins: string;
-  /** DR-0018 session launcher and future daemon user configuration. Lives in
-   * data/ beside allowedOrigins because user configuration must survive daemon
-   * restarts; state/ remains disposable runtime state. */
+  /** DR-0018 session launcher and the rest of the daemon's user configuration
+   * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
+   * disposable runtime state and data/ holds only what must not be lost. */
   config: string;
   /** Session dumps written for a human to hand to another session
    * (`ccmsg dump --out`, the webui's dump action). Lives in data/ because the
@@ -56,6 +62,12 @@ export function resolveStateDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(base, "ccmsg");
 }
 
+export function resolveConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CCMSG_CONFIG_DIR) return env.CCMSG_CONFIG_DIR;
+  const base = env.XDG_CONFIG_HOME || path.join(home(), ".config");
+  return path.join(base, "ccmsg");
+}
+
 export function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.CCMSG_DATA_DIR) return env.CCMSG_DATA_DIR;
   const base = env.XDG_DATA_HOME || path.join(home(), ".local", "share");
@@ -64,9 +76,11 @@ export function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
 
 export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
   const stateDir = resolveStateDir(env);
+  const configDir = resolveConfigDir(env);
   const dataDir = resolveDataDir(env);
   return {
     stateDir,
+    configDir,
     dataDir,
     roomsDir: path.join(dataDir, "rooms"),
     sock: path.join(stateDir, "daemon.sock"),
@@ -74,8 +88,8 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     pid: path.join(stateDir, "daemon.pid"),
     log: path.join(stateDir, "daemon.log"),
     trace: path.join(stateDir, "trace.jsonl"),
-    allowedOrigins: path.join(dataDir, "allowed-origins.json"),
-    config: path.join(dataDir, "config.json"),
+    allowedOrigins: path.join(configDir, "allowed-origins.json"),
+    config: path.join(configDir, "config.json"),
     dumps: path.join(dataDir, "dumps"),
     lastLiveSessions: path.join(stateDir, "last-live-sessions.json"),
   };

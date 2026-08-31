@@ -515,16 +515,16 @@ describe("formatRelativeAge", () => {
 
 describe("nextPeerSortKey", () => {
   // Cycle order matches the button-label progression kawaz asked for
-  // (2026-07-16: name/created/recent), which is name -> connected -> idle,
-  // not the PeerSortKey union's own declaration order.
-  test("cycles name -> connected -> idle -> name", () => {
+  // (2026-07-16: name/created/recent), not the PeerSortKey union's own
+  // declaration order. "prompt" (2026-08-31) leads because it is the default.
+  test("cycles prompt -> name -> connected -> idle -> prompt", () => {
     const seq: PeerSortKey[] = [];
-    let k: PeerSortKey = "name";
-    for (let i = 0; i < 4; i++) {
+    let k: PeerSortKey = "prompt";
+    for (let i = 0; i < 5; i++) {
       seq.push(k);
       k = nextPeerSortKey(k);
     }
-    expect(seq).toEqual(["name", "connected", "idle", "name"]);
+    expect(seq).toEqual(["prompt", "name", "connected", "idle", "prompt"]);
   });
 });
 
@@ -536,6 +536,7 @@ describe("peerSortButtonLabel", () => {
     expect(peerSortButtonLabel("name")).toBe("name");
     expect(peerSortButtonLabel("connected")).toBe("created");
     expect(peerSortButtonLabel("idle")).toBe("recent");
+    expect(peerSortButtonLabel("prompt")).toBe("prompt");
   });
 });
 
@@ -580,6 +581,55 @@ describe("sortPeers", () => {
       peer({ sid: "new", connected_at: "2026-07-10T00:05:00.000Z" }),
     ];
     expect(sortPeers(peers, "connected").map((p) => p.sid)).toEqual(["new", "old"]);
+  });
+
+  // kawaz 2026-08-31: the sidebar's default ordering. Reads
+  // last_user_input_at, not last_activity_at — see PeerSortKey's doc comment
+  // for why the two are separate keys.
+  test("prompt key: most recent user input (last_user_input_at) first", () => {
+    const peers = [
+      peer({ sid: "old", last_user_input_at: "2026-08-31T00:00:00.000Z" }),
+      peer({ sid: "new", last_user_input_at: "2026-08-31T00:05:00.000Z" }),
+      peer({ sid: "mid", last_user_input_at: "2026-08-31T00:02:00.000Z" }),
+    ];
+    expect(sortPeers(peers, "prompt").map((p) => p.sid)).toEqual(["new", "mid", "old"]);
+  });
+
+  // A busy agent re-stamps last_activity_at constantly; the point of the key
+  // is that this must not move it up past a session the user just spoke to.
+  test("prompt key: ignores last_activity_at entirely", () => {
+    const peers = [
+      peer({
+        sid: "busy-agent",
+        last_activity_at: "2026-08-31T09:00:00.000Z",
+        last_user_input_at: "2026-08-31T01:00:00.000Z",
+      }),
+      peer({
+        sid: "just-prompted",
+        last_activity_at: "2026-08-31T02:00:00.000Z",
+        last_user_input_at: "2026-08-31T08:00:00.000Z",
+      }),
+    ];
+    expect(sortPeers(peers, "prompt").map((p) => p.sid)).toEqual(["just-prompted", "busy-agent"]);
+  });
+
+  // Absent means "the daemon folded no user input" (old transcript, no
+  // readable transcript, nothing typed yet) — not epoch, so these go last
+  // instead of displacing sessions with a real timestamp.
+  test("prompt key: peers missing last_user_input_at sort after every peer that has one", () => {
+    const peers = [
+      peer({ sid: "no-input", last_user_input_at: undefined }),
+      peer({ sid: "has-input", last_user_input_at: "2026-08-31T00:00:00.000Z" }),
+    ];
+    expect(sortPeers(peers, "prompt").map((p) => p.sid)).toEqual(["has-input", "no-input"]);
+  });
+
+  test("prompt key: peers with no timestamp at all fall back to name order", () => {
+    const peers = [
+      peer({ sid: "b", repo: "b-repo", last_user_input_at: undefined }),
+      peer({ sid: "a", repo: "a-repo", last_user_input_at: undefined }),
+    ];
+    expect(sortPeers(peers, "prompt").map((p) => p.sid)).toEqual(["a", "b"]);
   });
 
   test("does not mutate the input array", () => {

@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import {
   connect,
   spawnDaemonProc,
+  testConfigDir,
   waitConnectable,
   type DaemonCtx,
   type TestClient,
@@ -36,7 +37,8 @@ async function startWebhookDaemon(options: { configured?: boolean } = {}): Promi
   fs.writeFileSync(tokenFile, `${TOKEN}\n`, { mode: 0o600 });
   const config =
     options.configured === false ? {} : { webhooks: { "llm-gateway": { token_file: tokenFile } } };
-  fs.writeFileSync(path.join(dataDir, "config.json"), JSON.stringify(config));
+  fs.mkdirSync(testConfigDir(dataDir));
+  fs.writeFileSync(path.join(testConfigDir(dataDir), "config.json"), JSON.stringify(config));
   const proc = spawnDaemonProc(stateDir, dataDir, { CCMSG_HTTP_BIND: "127.0.0.1:0" });
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
@@ -47,11 +49,16 @@ async function startWebhookDaemon(options: { configured?: boolean } = {}): Promi
   return {
     base,
     stateDir,
+    configDir: testConfigDir(dataDir),
     dataDir,
     roomsDir: path.join(dataDir, "rooms"),
     sock,
     proc,
-    env: { CCMSG_STATE_DIR: stateDir, CCMSG_DATA_DIR: dataDir },
+    env: {
+      CCMSG_STATE_DIR: stateDir,
+      CCMSG_CONFIG_DIR: testConfigDir(dataDir),
+      CCMSG_DATA_DIR: dataDir,
+    },
     http: `http://${pong.http[0]}`,
   };
 }

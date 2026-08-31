@@ -10,15 +10,15 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
 ## 前提
 
-- daemon の設定ファイル (`<dataDir>/config.json`、通常
-  `~/.local/share/ccmsg/config.json`。`CCMSG_DATA_DIR` を設定していれば
-  そのディレクトリ) を編集できること
+- daemon の設定ファイル (`<configDir>/config.json`、通常
+  `~/.config/ccmsg/config.json`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を
+  設定していればそのディレクトリ) を編集できること
 - 設定変更後に daemon を再起動できること (LN-Q4 裁定: config はホット
   リロードされない、明示的な再起動が必要)
 
 ## 手順
 
-1. **`<dataDir>/config.json` に `session_launcher` キーを追加する**
+1. **`<configDir>/config.json` に `session_launcher` キーを追加する**
 
    YAML ではなく **JSON** (このリポの daemon 設定は JSON、DR-0018 §3.1 の
    YAML 表記は設計時のスケッチ)。既存の `config.json` に他のキーがあれば

@@ -16,8 +16,8 @@ const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
 function loadSortKey(): PeerSortKey {
   const raw = readStorage(SORT_KEY_STORAGE);
-  if (raw === "name" || raw === "idle" || raw === "connected") return raw;
-  return "name";
+  if (raw === "name" || raw === "idle" || raw === "connected" || raw === "prompt") return raw;
+  return "prompt";
 }
 
 function saveSortKey(key: PeerSortKey): void {
@@ -43,13 +43,14 @@ function PeersRefreshButton() {
 }
 
 function PeersSortButton({ sortKey, onCycle }: { sortKey: PeerSortKey; onCycle: () => void }) {
-  // Labels are name/created/recent (kawaz 2026-07-16: "わかりづらい。
+  // Labels are prompt/name/created/recent (kawaz 2026-07-16: "わかりづらい。
   // name/created/recent にして"); "click for X" names the *next* key in
-  // PEER_SORT_CYCLE's order (name -> connected -> idle -> name).
+  // PEER_SORT_CYCLE's order (prompt -> name -> connected -> idle -> prompt).
   const titles: Record<PeerSortKey, string> = {
+    prompt: "sorted by last user input (most recent first) — click for name",
     name: "sorted by name (repo · ws · branch) — click for created",
     connected: "sorted by connect time (most recently connected first) — click for recent",
-    idle: "sorted by idle time (most recently active first) — click for name",
+    idle: "sorted by idle time (most recently active first) — click for prompt",
   };
   return (
     <button id="peers-sort" type="button" title={titles[sortKey]} onClick={onCycle}>

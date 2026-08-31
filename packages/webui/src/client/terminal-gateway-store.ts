@@ -1,7 +1,7 @@
 // Terminal タブ (SessionView の hyoui gateway iframe) の embed URL 組み立て
 // 純関数 (issue 2026-07-21-webui-terminal-tab-embed)。
 //
-// gateway URL の値は daemon の `<dataDir>/config.json` の
+// gateway URL の値は daemon の `<configDir>/config.json` の
 // `terminal_gateway_url` トップレベルキーが正本で、hello response の
 // `terminal_gateway_url` で webui に届き AppState.terminalGatewayUrl に載る。
 // webui 側にはもはや設定 UI / localStorage は無い (「他タブに設定 UI が

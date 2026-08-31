@@ -47,6 +47,7 @@ describe("daemon process-group detachment", () => {
     const env = {
       ...process.env,
       CCMSG_STATE_DIR: stateDir,
+      CCMSG_CONFIG_DIR: path.join(dataDir, "config"),
       CCMSG_DATA_DIR: dataDir,
       CCMSG_NO_SELF_EXEC: "1",
       CCMSG_HTTP_BIND: "off",

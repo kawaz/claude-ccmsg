@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { VERSION, resolvePaths, type Identity } from "@ccmsg/protocol";
+import { VERSION, migrateLegacyConfigFiles, resolvePaths, type Identity } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
   dumpSession,
@@ -671,6 +671,7 @@ Notes:
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
+  CCMSG_CONFIG_DIR             Override config dir (config.json, allowed-origins.json)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl, dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
                                CLAUDE_CODE_SESSION_ID is normally already set
@@ -1024,7 +1025,7 @@ async function main(): Promise<void> {
 }
 
 /** `ccmsg origins <list|add|remove> [origin]` — manage the persisted extra
- * allowed Origins file (<dataDir>/allowed-origins.json) that the daemon's
+ * allowed Origins file (<configDir>/allowed-origins.json) that the daemon's
  * Origin check consults on misses (origins-file.ts). Pure file manipulation,
  * no daemon round-trip: the daemon re-reads the file on its next failing
  * Origin lookup, so an add here is live from the next request. Origins are
@@ -1035,6 +1036,14 @@ function runOrigins(args: string[]): void {
     "ccmsg origins list | ccmsg origins add <origin> | ccmsg origins remove <origin>\n" +
     '  <origin> は scheme://host[:port] 形式 (例: "https://ccmsg.example.com")';
   const paths = resolvePaths(process.env);
+  // The daemon migrates on startup, but `ccmsg origins` is pure file
+  // manipulation that runs with no daemon in sight — migrate here too so an
+  // add never lands in a fresh configDir while the legacy file still holds the
+  // origins the user added earlier.
+  migrateLegacyConfigFiles(paths, {
+    info: (m) => process.stderr.write(`ccmsg: ${m}\n`),
+    warn: (m) => process.stderr.write(`ccmsg: ${m}\n`),
+  });
   const file = paths.allowedOrigins;
   const load = (): string[] => {
     try {

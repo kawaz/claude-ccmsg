@@ -2,7 +2,7 @@
 //
 // The DR presents the shape in YAML, but this daemon already persists user
 // configuration as JSON (`allowed-origins.json`) and has no YAML dependency.
-// `<dataDir>/config.json` keeps that established zero-dependency convention;
+// `<configDir>/config.json` keeps that established zero-dependency convention;
 // malformed user edits degrade to an unavailable launcher, never daemon crash.
 import * as fs from "node:fs";
 import * as os from "node:os";

@@ -203,16 +203,26 @@ export function sessionLabel(peer: PeerInfo): string {
 }
 
 /** Sidebar Sessions-list ordering keys, cycled by the sort-toggle button
- * (see Sidebar.tsx): "name" is the default (lexicographic on `sessionLabel`'s
- * fields, so it doubles as an alphabetical grouping by repo/ws/branch),
- * "idle" surfaces the most recently active session first, "connected"
- * surfaces the most recently (re)connected session first. */
-export type PeerSortKey = "name" | "idle" | "connected";
+ * (see Sidebar.tsx): "prompt" is the default (most recent *user* input first),
+ * "name" is lexicographic on `sessionLabel`'s fields, so it doubles as an
+ * alphabetical grouping by repo/ws/branch, "idle" surfaces the most recently
+ * active session first, "connected" surfaces the most recently (re)connected
+ * session first.
+ *
+ * "prompt" vs "idle" (kawaz 2026-08-31: "TL 上で最後にユーザ入力した時間の
+ * 新しい順") — they answer different questions and both stay available.
+ * "idle" reads `last_activity_at`, which every ccmsg request a session makes
+ * re-stamps, so a session grinding through a long autonomous run keeps
+ * floating to the top; "prompt" reads `last_user_input_at`, which only moves
+ * when the user actually says something, so the list orders by the
+ * conversations the reader is in the middle of. */
+export type PeerSortKey = "name" | "idle" | "connected" | "prompt";
 
 // Cycle order matches the button-label progression kawaz asked for
 // (name -> created -> recent -> name), which happens to differ from the
-// PeerSortKey union's own declaration order above.
-const PEER_SORT_CYCLE: PeerSortKey[] = ["name", "connected", "idle"];
+// PeerSortKey union's own declaration order above. "prompt" leads: it is the
+// default, so the cycle starts where a fresh tab already is.
+const PEER_SORT_CYCLE: PeerSortKey[] = ["prompt", "name", "connected", "idle"];
 
 /** Short label for the sort-toggle button, so its current mode is visible
  * without hovering for the title attribute. kawaz 2026-07-16: "わかりづらい。
@@ -226,6 +236,8 @@ export function peerSortButtonLabel(key: PeerSortKey): string {
       return "recent";
     case "connected":
       return "created";
+    case "prompt":
+      return "prompt";
     default:
       return "name";
   }
@@ -252,11 +264,17 @@ function cmpByName(a: PeerInfo, b: PeerInfo): number {
 }
 
 /** Descending compare on an optional ISO timestamp field (newest first);
- * a peer missing the field (older daemon, or a session that hasn't made a
- * request yet for "idle") sorts after every peer that has one, tiebroken by
+ * a peer missing the field (older daemon, a session that hasn't made a
+ * request yet for "idle", or one the daemon has folded no user input for —
+ * see PeerInfo.last_user_input_at) sorts after every peer that has one,
+ * tiebroken by
  * `cmpByName` so the ordering within "missing" and within equal timestamps
  * stays deterministic rather than following daemon Map insertion order. */
-function cmpByTsDesc(a: PeerInfo, b: PeerInfo, field: "last_activity_at" | "connected_at"): number {
+function cmpByTsDesc(
+  a: PeerInfo,
+  b: PeerInfo,
+  field: "last_activity_at" | "connected_at" | "last_user_input_at",
+): number {
   const ta = a[field];
   const tb = b[field];
   if (ta === tb) return cmpByName(a, b);
@@ -274,6 +292,9 @@ function cmpByTsDesc(a: PeerInfo, b: PeerInfo, field: "last_activity_at" | "conn
 export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
   const sorted = [...peers];
   switch (key) {
+    case "prompt":
+      sorted.sort((a, b) => cmpByTsDesc(a, b, "last_user_input_at"));
+      break;
     case "idle":
       sorted.sort((a, b) => cmpByTsDesc(a, b, "last_activity_at"));
       break;

@@ -58,11 +58,13 @@ function setupEnv(): Env {
   // temp dir を見るには親側 env に置く必要がある。テスト終了時に restore する。
   const prev = {
     CCMSG_STATE_DIR: process.env.CCMSG_STATE_DIR,
+    CCMSG_CONFIG_DIR: process.env.CCMSG_CONFIG_DIR,
     CCMSG_DATA_DIR: process.env.CCMSG_DATA_DIR,
     CCMSG_DAEMON_ENTRY: process.env.CCMSG_DAEMON_ENTRY,
     CCMSG_VERSION_OVERRIDE: process.env.CCMSG_VERSION_OVERRIDE,
   };
   process.env.CCMSG_STATE_DIR = stateDir;
+  process.env.CCMSG_CONFIG_DIR = path.join(dataDir, "config");
   process.env.CCMSG_DATA_DIR = dataDir;
   process.env.CCMSG_DAEMON_ENTRY = DAEMON_ENTRY;
   // 親側で override を設定してはいけない (= 親 = "新 version" client 役)。

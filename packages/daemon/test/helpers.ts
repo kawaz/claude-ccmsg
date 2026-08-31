@@ -15,11 +15,19 @@ function sleep(ms: number): Promise<void> {
 export interface DaemonCtx {
   base: string;
   stateDir: string;
+  configDir: string;
   dataDir: string;
   roomsDir: string;
   sock: string;
   proc: Bun.Subprocess;
   env: Record<string, string>;
+}
+
+/** Test daemons keep their config dir inside the temp data dir so that every
+ * call site gets it from `dataDir` alone (restarts stay one-liners) and no test
+ * can ever read or migrate into the developer's real ~/.config/ccmsg. */
+export function testConfigDir(dataDir: string): string {
+  return path.join(dataDir, "config");
 }
 
 export function spawnDaemonProc(
@@ -37,6 +45,7 @@ export function spawnDaemonProc(
     env: {
       ...process.env,
       CCMSG_STATE_DIR: stateDir,
+      CCMSG_CONFIG_DIR: testConfigDir(dataDir),
       CCMSG_DATA_DIR: dataDir,
       // Pin integration subprocesses to this working copy rather than PATH's install.
       CCMSG_NO_SELF_EXEC: "1",
@@ -75,6 +84,7 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
   fs.mkdirSync(dataDir);
   const env: Record<string, string> = {
     CCMSG_STATE_DIR: stateDir,
+    CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
     CCMSG_NO_SELF_EXEC: "1",
     CCMSG_HTTP_BIND: "off",
@@ -84,7 +94,16 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
   const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  return { base, stateDir, dataDir, roomsDir: path.join(dataDir, "rooms"), sock, proc, env };
+  return {
+    base,
+    stateDir,
+    configDir: testConfigDir(dataDir),
+    dataDir,
+    roomsDir: path.join(dataDir, "rooms"),
+    sock,
+    proc,
+    env,
+  };
 }
 
 export async function stopTestDaemon(ctx: DaemonCtx): Promise<void> {

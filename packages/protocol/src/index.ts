@@ -13,6 +13,7 @@
 export { VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
+export * from "./config-migration.ts";
 export * from "./search-query.ts";
 export * from "./file-search-query.ts";
 
@@ -97,7 +98,7 @@ export interface SessionLauncherTemplate {
   shell: "bash" | "zsh";
 }
 
-/** Parsed normal form of `<dataDir>/config.json`'s `session_launcher` key
+/** Parsed normal form of `<configDir>/config.json`'s `session_launcher` key
  * (DR-0018 §3.1). Paths are home-expanded and absolute; shell is a deliberate
  * built-in choice so launch never falls through to an implicit `sh -c`.
  *
@@ -1271,7 +1272,7 @@ export interface SessionLauncherConfigRequest {
 }
 
 /** Per-credential LLM quota snapshot, proxied from the gateway named by
- * `<dataDir>/config.json`'s `llm_usage_url` (user role only — quota is an
+ * `<configDir>/config.json`'s `llm_usage_url` (user role only — quota is an
  * operator's view of the host's credentials, not something a session's agent
  * has any use for). The daemon fetches rather than the browser because the
  * gateway serves no CORS headers, so a direct fetch from the webui origin is
@@ -1296,7 +1297,7 @@ export interface LlmUsageRequest {
   refresh?: boolean;
 }
 
-/** Per-day LLM spend, proxied from the gateway named by `<dataDir>/config.json`'s
+/** Per-day LLM spend, proxied from the gateway named by `<configDir>/config.json`'s
  * `llm_stats_url` (user role only, same posture as `llm_usage`: what the host's
  * credentials cost is an operator's view). The daemon fetches for the same
  * reason — the gateway serves no CORS headers, and proxying keeps its internal
@@ -1941,7 +1942,7 @@ export interface HelloResponse {
   ok: true;
   version: string;
   /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
-   * hello に対してのみ、`<dataDir>/config.json` の `terminal_gateway_url`
+   * hello に対してのみ、`<configDir>/config.json` の `terminal_gateway_url`
    * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)
    * をエコーバックする。未設定 / スキーム不正 / role="session" の場合は
    * 省略。webui はこれを iframe embed の base URL として使い、未設定なら
@@ -2075,6 +2076,19 @@ export interface PeerInfo {
   connected_at?: string;
   /** ISO time of this session's most recent request on any of its connections */
   last_activity_at?: string;
+  /** ISO time the *user* last put something into this session's timeline: a
+   * prompt they typed, or a ccmsg room message they sent as the User admin
+   * (`from: "u1"`) that the session's subscribe delivered. Distinct from
+   * `last_activity_at`, which every request the session makes on its own
+   * re-stamps — this one only moves when kawaz says something, which is what
+   * the sidebar's default ordering wants (daemon: session-user-input.ts).
+   *
+   * Absent while the daemon has found none: no user-role subscriber has been
+   * connected long enough to fold the transcript, the session announced no
+   * readable transcript, nobody has typed into it yet, or it predates the
+   * `origin`/`promptSource` fields the fold reads. Clients sort a peer without
+   * it after every peer that has one rather than treating it as epoch. */
+  last_user_input_at?: string;
   /** present (always `true`) iff the *asking* session can reach this peer with
    * Claude Code's own SendMessage tool — i.e. both run under the same
    * CLAUDE_CONFIG_DIR, the boundary native cross-session messaging does not
@@ -2821,7 +2835,7 @@ export const ErrorCode = {
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",
   translate_helper_failed: "translate_helper_failed",
-  // llm_usage: `<dataDir>/config.json` has no valid `llm_usage_url`, so there
+  // llm_usage: `<configDir>/config.json` has no valid `llm_usage_url`, so there
   // is nothing to proxy. Distinct from llm_usage_unavailable so the webui can
   // tell "operator never set this up" (hide the feature) from "the gateway is
   // down right now" (show the error and let the user retry).
@@ -2834,7 +2848,7 @@ export const ErrorCode = {
   // configured spend endpoint (`llm_stats_url`).
   llm_stats_not_configured: "llm_stats_not_configured",
   llm_stats_unavailable: "llm_stats_unavailable",
-  // sandbox_grant: `<dataDir>/config.json` has no usable
+  // sandbox_grant: `<configDir>/config.json` has no usable
   // `sandbox_origin_template`, so there is no origin to mint a URL on
   // (DR-0030 §7.1). Same "operator never set this up" role
   // llm_usage_not_configured plays — hello's `sandbox_available` normally

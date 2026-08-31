@@ -38,6 +38,7 @@ import {
   type StorageEvent,
   type TitleEvent,
   type TranslateResponse,
+  migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { TraceWriter } from "./trace.ts";
@@ -81,6 +82,15 @@ import {
   syncSessionErrorWatches,
   type SessionErrorsStore,
 } from "./session-errors.ts";
+import {
+  createSessionUserInputStore,
+  lastUserInputAt,
+  sessionUserInputsReady,
+  stopAllUserInputs,
+  syncUserInputWatches,
+  userInputEntries,
+  type SessionUserInputStore,
+} from "./session-user-input.ts";
 import { createNetworkWatch, fileNetworkSource, type NetworkWatch } from "./network-watch.ts";
 import {
   createSessionWakeState,
@@ -229,6 +239,7 @@ export interface Daemon {
    * section. Independent of `sessionStatus`, which only follows the sids a
    * client explicitly subscribed to. */
   sessionErrors: SessionErrorsStore;
+  sessionUserInputs: SessionUserInputStore;
   /** sessionErrorEntries() as of the last `ev:"session_errors"` broadcast —
    * same "don't push an unchanged list" guard as peersSnapshot. */
   sessionErrorsSnapshot: string;
@@ -645,6 +656,7 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   // The departing conn may have been the last user-role subscriber, in which
   // case syncSessionErrors drops every watch (see its doc comment).
   syncSessionErrors(daemon);
+  syncSessionUserInputs(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
   transcriptUnsubscribeAll(daemon.transcriptTail, conn);
   const id = conn.identity;
@@ -659,6 +671,14 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   }
 }
 
+/** `last_user_input_at` for one sid, as a spreadable fragment so an unknown
+ * value omits the field rather than sending null (PeerInfo's contract: absent
+ * means "the daemon has not folded one", which clients sort last). */
+function withUserInput(daemon: Daemon, sid: string): { last_user_input_at?: string } {
+  const at = lastUserInputAt(daemon.sessionUserInputs, sid);
+  return at ? { last_user_input_at: at } : {};
+}
+
 /** Compute the peers list exactly as the `peers` op returns it (only sessions
  * with at least one live connection) — shared by that op and the ev:"peers"
  * push below so the two never drift apart. */
@@ -669,6 +689,7 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
       ...s.meta,
       connected_at: s.connectedAt,
       ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
+      ...withUserInput(daemon, s.meta.sid),
     }));
 }
 
@@ -704,6 +725,10 @@ function peersCompareKey(daemon: Daemon): string {
     [...daemon.sessions.values()]
       .filter((s) => s.conns.size > 0)
       .map((s) => ({ ...s.meta, connected_at: s.connectedAt })),
+    // Tail-derived, so it changes without any registry mutation — the fold's
+    // own onChange is what re-enters maybeBroadcastPeers for it, and this entry
+    // is what stops that re-entry from being a no-op push.
+    userInputEntries(daemon.sessionUserInputs),
     // The "前回稼働中" half travels in the same frame, so a change confined to
     // it (a sid recovering, or the startup launch-context fill landing) has to
     // be able to trigger the push on its own.
@@ -861,7 +886,11 @@ function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSo
  * repo/ws/branch/transcript_path/repo_root must not spam a push (issue
  * 2026-07-12-peers-live-update-protocol). No polling: called only from the two
  * registry mutation points (registerSession, removeConn) that can change the
- * result, so this stays purely event-driven, unlike the agents poller. */
+ * result, plus the user-input fold's onChange when a transcript tail moves
+ * `last_user_input_at` — all three are events, so this stays purely
+ * event-driven, unlike the agents poller. Re-entry through that third caller
+ * terminates: the snapshot is stamped before the syncs below run, and a sync
+ * that changes nothing fires no onChange. */
 function maybeBroadcastPeers(daemon: Daemon): void {
   const key = peersCompareKey(daemon);
   if (key === daemon.peersSnapshot) return;
@@ -876,8 +905,9 @@ function maybeBroadcastPeers(daemon: Daemon): void {
     if (sub.identity?.role === "user") send(sub, { ev: "peers", ...payload });
   }
   // The connected set just changed, so the set of transcripts worth folding
-  // for api_error did too.
+  // for api_error — and for last_user_input_at — did too.
   syncSessionErrors(daemon);
+  syncSessionUserInputs(daemon);
 }
 
 function hasUserSubscriber(daemon: Daemon): boolean {
@@ -921,6 +951,25 @@ function syncSessionErrors(daemon: Daemon): void {
     sids,
     daemon.log,
     () => broadcastSessionErrors(daemon),
+  );
+}
+
+/** Watch exactly the connected sessions, and only while a webui is open to
+ * read the result — the same gate the agents poller uses, for the same reason
+ * (DR-0009-agents: no work on behalf of nobody). Unlike syncSessionErrors this
+ * has no second consumer: nothing but the sidebar's ordering reads it, so it
+ * stops folding the moment the last tab closes. */
+function syncSessionUserInputs(daemon: Daemon): void {
+  const sids = hasUserSubscriber(daemon)
+    ? [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid)
+    : [];
+  syncUserInputWatches(
+    daemon.sessionUserInputs,
+    daemon.transcriptTail,
+    daemon.sessions,
+    sids,
+    daemon.log,
+    () => maybeBroadcastPeers(daemon),
   );
 }
 
@@ -2203,8 +2252,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         // Same "only while a webui is watching" gate as the agents poller:
         // this conn may be the first user subscriber, which is what makes the
-        // per-peer api_error watches worth holding.
+        // per-peer api_error and user-input watches worth holding.
         syncSessionErrors(daemon);
+        syncSessionUserInputs(daemon);
         // Catch-up for the windows that opened before this tab connected. Sent
         // only when something is live: an empty push would make a daemon with
         // no gateway configured look like one whose sessions all went cold.
@@ -2276,6 +2326,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // event has: a session-role client gets no ev:"peers" updates, so handing
       // it a list that would silently go stale is worse than not answering.
       const forUser = conn.identity?.role === "user";
+      // Same settled-answer contract as `session_errors`: a watch started when
+      // this tab subscribed moments ago may still be folding, and a peers list
+      // whose ordering key fills in afterwards would sort wrong on first paint.
+      if (forUser) await sessionUserInputsReady(daemon.sessionUserInputs);
       send(conn, {
         ok: true,
         ...(forUser ? peersPayload(daemon) : { peers: peersFor(daemon, conn.identity) }),
@@ -3349,6 +3403,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.translator.stop();
   stopAllSessionStatus(daemon.sessionStatus, daemon.transcriptTail);
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
+  stopAllUserInputs(daemon.sessionUserInputs, daemon.transcriptTail);
   daemon.networkWatch?.stop();
   stopAllTailWatches(daemon.transcriptTail);
   try {
@@ -3461,6 +3516,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     .filter((s) => s !== "");
 
   const rooms = scanRooms(paths.roomsDir, log);
+  migrateLegacyConfigFiles(paths, log);
   const config = loadConfig(paths.config, log);
   const trace = new TraceWriter(paths.trace);
   const daemon: Daemon = {
@@ -3485,6 +3541,7 @@ export function startDaemon(opts: StartOptions = {}): void {
     trace,
     sessionStatus: createSessionStatusStore(),
     sessionErrors: createSessionErrorsStore(),
+    sessionUserInputs: createSessionUserInputStore(),
     sessionErrorsSnapshot: "",
     networkWatch: null,
     sessionWake: createSessionWakeState(),

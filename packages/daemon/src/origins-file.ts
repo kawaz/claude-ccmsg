@@ -4,7 +4,7 @@
 // without it, and the tailscale-serve auto-allow only covers proxies tailscale
 // itself reports — a reverse proxy the daemon can't introspect (caddy on a
 // public hostname) needs an allowance that survives respawns. That allowance
-// lives in `<dataDir>/allowed-origins.json` (a JSON string[], managed by
+// lives in `<configDir>/allowed-origins.json` (a JSON string[], managed by
 // `ccmsg origins add/remove/list`) and is read here with an mtime-gated cache.
 //
 // Freshness without a watcher: http.ts consults this ONLY when a request's

@@ -3,7 +3,7 @@
 // = ヘッダ無しのターミナル + resume バナー + input 欄) を iframe で埋め込む。
 // ccmsg 側はターミナル描画/入力ロジックを一切持たない — iframe を出すだけ。
 //
-// gateway URL は daemon `<dataDir>/config.json` の `terminal_gateway_url`
+// gateway URL は daemon `<configDir>/config.json` の `terminal_gateway_url`
 // で設定し hello response 経由で受け取る (旧 localStorage `ccmsg.terminalGatewayUrl`
 // 方式と画面内の設定 UI は r46m7 で撤去)。gateway URL 未設定 / HYOUI_SESSION_ID
 // 未解決の場合は SessionView 側でそもそも Terminal タブ自体を出さないので、

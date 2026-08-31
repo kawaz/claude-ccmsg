@@ -11,6 +11,7 @@ import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import {
   connect,
   spawnDaemonProc,
+  testConfigDir,
   waitConnectable,
   type DaemonCtx,
   type TestClient,
@@ -80,6 +81,7 @@ async function startAgentsTestDaemon(
   fs.mkdirSync(dataDir);
   const env: Record<string, string> = {
     CCMSG_STATE_DIR: stateDir,
+    CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
     CCMSG_HTTP_BIND: "off",
     CCMSG_AGENTS_POLL_MS: String(POLL_MS),
@@ -90,7 +92,16 @@ async function startAgentsTestDaemon(
   const proc = spawnDaemonProc(stateDir, dataDir, env);
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
-  return { base, stateDir, dataDir, roomsDir: path.join(dataDir, "rooms"), sock, proc, env };
+  return {
+    base,
+    stateDir,
+    configDir: testConfigDir(dataDir),
+    dataDir,
+    roomsDir: path.join(dataDir, "rooms"),
+    sock,
+    proc,
+    env,
+  };
 }
 
 async function stopAgentsTestDaemon(ctx: DaemonCtx): Promise<void> {
