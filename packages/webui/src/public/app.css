@@ -823,13 +823,15 @@ a {
   /* 幅の基準は行ではなくリストの可視幅 — .session-line4 と同じ理由 (行は
    * width:max-content なので、行幅を基準にすると器が中身ちょうどに広がって
    * 折り返しが一生起きない)。sid 全長 + model/effort が可視幅に収まらない
-   * 細いサイドバーでは、model/effort だけが sid の下に折り返す: 横スクロール
-   * しないと読めない位置に置くくらいなら、1 行増える方がまし。 */
+   * 細いサイドバーでは折り返さず、はみ出す右側を隠す (kawaz r244m7)。行の
+   * 高さが状況で変わらず、sid の読める部分は先頭側 (= 識別に効く側) が残る。
+   * 全長は行の title と Shift+クリックのコピーで届く。 */
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
   padding-left: var(--space-14);
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
   align-items: baseline;
   gap: var(--space-6);
   min-width: 0;
