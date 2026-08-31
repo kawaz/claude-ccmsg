@@ -37,6 +37,11 @@ import {
   togglePosition,
 } from "./timeline-position.ts";
 import {
+  shouldCloseSidePanel,
+  sidePanelReserveWidth,
+  TL_SIDE_PANEL_MIN_CONTENT_PX,
+} from "./timeline-side-panel.ts";
+import {
   agentCommunicationCount,
   ccmsgMessageCount,
   ccmsgRenderTargets,
@@ -3169,17 +3174,46 @@ export function Timeline({
   const [sidePanelTab, setSidePanelTab] = useState<SidePanelTabId>("auto-open");
   // パネル外 click で自動収納 (kawaz r38 mid=66)。useFabPopup と同じ理由で
   // click イベント (tap 完了) のみ — mousedown/touchstart はスクロール目的の
-  // タッチでも閉じてしまう。open 中だけ listener を張る。
+  // タッチでも閉じてしまう。open 中だけ listener を張る。項目リストへの
+  // click だけは畳まない (判断は shouldCloseSidePanel)。
   const autoOpenFloatRef = useRef<HTMLDivElement | null>(null);
+  const tlLinesRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!autoOpenPanelOpen) return;
     const onClick = (e: MouseEvent) => {
-      const el = autoOpenFloatRef.current;
-      if (!el || !(e.target instanceof Node)) return;
-      if (!el.contains(e.target)) setAutoOpenPanelOpen(false);
+      if (!(e.target instanceof Node)) return;
+      if (shouldCloseSidePanel(e.target, autoOpenFloatRef.current, tlLinesRef.current)) {
+        setAutoOpenPanelOpen(false);
+      }
     };
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
+  }, [autoOpenPanelOpen]);
+  // 開いている間だけ TL の列を右に詰めて、パネルの真下に隠れて押せない項目を
+  // 無くす (issue 2026-08-16-timeline-float-panel-blocks-record-click)。パネル
+  // 幅は中身 (fork の説明文 / dump の出力先パス) で変わるので実測して渡す。
+  const [floatReserve, setFloatReserve] = useState(0);
+  useEffect(() => {
+    const float = autoOpenFloatRef.current;
+    const column = float?.parentElement;
+    if (!float || !column) return;
+    const measure = () => {
+      setFloatReserve(
+        sidePanelReserveWidth(
+          autoOpenPanelOpen,
+          float.getBoundingClientRect().width,
+          column.getBoundingClientRect().width,
+          TL_SIDE_PANEL_MIN_CONTENT_PX,
+        ),
+      );
+    };
+    measure();
+    // padding-right は column の border-box 幅も float の幅も変えないので、
+    // この observe が自分自身を再発火させるループにはならない。
+    const observer = new ResizeObserver(measure);
+    observer.observe(float);
+    observer.observe(column);
+    return () => observer.disconnect();
   }, [autoOpenPanelOpen]);
   useEffect(() => {
     setAutoOpenSettings(
@@ -4399,7 +4433,11 @@ export function Timeline({
             <FoldOpenContext.Provider value={foldOpenStore}>
               <CcmsgRenderContext.Provider value={ccmsgRenderValue}>
                 <ItemRawContext.Provider value={getItemRawRows}>
-                  <div class="timeline-view" ref={scrollRef}>
+                  <div
+                    class="timeline-view"
+                    ref={scrollRef}
+                    style={{ "--tl-float-reserve": `${floatReserve}px` }}
+                  >
                     {agentLabel ? (
                       <div class="tl-agent-header">
                         <span class="tl-agent-header-label">agent: {agentLabel}</span>
@@ -4493,7 +4531,7 @@ export function Timeline({
                         action={{ label: "再試行 (tail から読み直す)", onClick: refresh }}
                       />
                     ) : (
-                      <div class="tl-lines">
+                      <div class="tl-lines" ref={tlLinesRef}>
                         {parsed.length === 0 ? (
                           <p class="tl-empty">(空の transcript)</p>
                         ) : (

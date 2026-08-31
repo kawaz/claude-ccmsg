@@ -3792,6 +3792,18 @@ button.session-tab {
    * に overflow-x:hidden を持たせれば同じ clip 効果は得られ、かつ子は
    * overflow visible のままで縦方向の自然な伸長が親 scrollHeight に届く。 */
   overflow-x: hidden;
+  /* 右端のフロートパネル (.tl-auto-open-float) が開いている間だけ、その幅ぶん
+   * 本文を左へ詰める。重ねたままだとパネルの真下の項目が押せず fork 地点を
+   * 選び直せない (issue 2026-08-16-timeline-float-panel-blocks-record-click)。
+   * 値は Timeline.tsx が実測して入れる (パネル幅は中身で変わる)。 */
+  padding-right: var(--tl-float-reserve, 0px);
+  transition: padding-right 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-view {
+    transition: none;
+  }
 }
 
 .tl-toolbar {
