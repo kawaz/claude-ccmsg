@@ -1,6 +1,6 @@
 ---
 title: Timeline でネイティブ (SendMessage/ListAgents) クロスセッションメッセージをバブル表示
-status: open
+status: resolved
 category: design
 created: 2026-08-27T10:05:36+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-31T12:58:42+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented","done:v0.118.0 で実装済み、packages/webui/src/client/transcript-model.ts:2110 PEER_MESSAGE_TAGS で確認"]
 blocked_by:
 origin: 自リポ TODO
 ---
@@ -40,4 +40,4 @@ kawaz 案 (r151m27): 受信側 transcript には
 
 ## 受け入れ条件
 
-- [ ] Timeline 上でネイティブ送受信メッセージが from-name 付きのエージェント通信バブルとして表示される
+- [x] Timeline 上でネイティブ送受信メッセージが from-name 付きのエージェント通信バブルとして表示される

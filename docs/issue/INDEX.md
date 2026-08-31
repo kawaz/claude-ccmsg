@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-08-27 | design | open | [timeline-native-cross-session-message-bubbles](./2026-08-27-timeline-native-cross-session-message-bubbles.md) | Claude Code ネイティブのクロスセッションメッセージ (SendMessage/ListAgents) を Timeline のエージェント間通信バブルとして表示する |
 | 2026-08-20 | design | open | [timeline-message-hover-toolbar](./2026-08-20-timeline-message-hover-toolbar.md) | Timeline のメッセージバブル hover ツールバー設計 (kawaz r135m48-57 議論まとめ)。応答バブルの翻訳タブ・md/source 切替・重い操作の格下げを決定、実装未着手 |
 | 2026-08-16 | bug | open | [timeline-float-panel-blocks-record-click](./2026-08-16-timeline-float-panel-blocks-record-click.md) | timeline のフロートパネル(アクションパネル)を開いた状態だと項目に重なりクリック選択ができない |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
