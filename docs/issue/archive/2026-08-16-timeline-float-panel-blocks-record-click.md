@@ -1,6 +1,6 @@
 ---
 title: timeline フロートパネルが項目クリックを塞ぐ
-status: open
+status: resolved
 category: bug
 created: 2026-08-16T15:40:26+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-08-31T13:25:51+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.123.1 で修正。パネル開時に TL 本文を padding-right (実測幅) で押しのけて遮蔽を解消 + .tl-lines 内クリックではパネルを畳まない判定を追加 (timeline-side-panel.ts)。隔離 daemon + ブラウザ実測で「パネル開のまま項目クリック → 選択変更・パネル維持」を確認、受け入れ条件達成"]
 blocked_by:
 origin: dump-file-impl worker (実機検証中に発見)
 ---
