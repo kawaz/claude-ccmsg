@@ -56,9 +56,13 @@ Sessions 一覧では喋ったセッションに 🔊 が付き、その 1on1 ro
 
 発声は記録に依存しない: session id が無くても、daemon が動いていなくても、
 daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` を
-このコマンドに委譲する PATH shim で、そのディレクトリを PATH 上で
-`/usr/bin` より前に置けばマシン上のすべての `say` を経由させられる。PATH の
-配線は各自の dotfiles 側の作業で、このリポジトリが配るのは shim だけ。
+このコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に
+置けばマシン上のすべての `say` (自分・スクリプト・エージェント) が
+どのセッションのものか分かるようになる。配置は SessionStart hook が
+ユーザ確認の上で案内する (PATH 上の `ccmsg` と同じ dir に **コピー** で置く。
+symlink にしないのは、参照先が version 付き plugin cache dir で update のたびに
+消えるため)。一度断れば以後は提案しない。自分の物でない `say` が PATH に
+居る場合は何もしない。
 
 ## rewrite した理由
 

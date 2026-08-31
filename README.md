@@ -55,10 +55,12 @@ the web UI's Sessions list marks the session that spoke with 🔊, and its 1on1
 room shows what was said with a 既読 (read) button that clears the marker.
 
 Speech never depends on the recording: no session id, no running daemon, or a
-daemon that refuses the event all still speak. `bin/say` is a ready-made PATH
-shim that routes an ordinary `say` through this command — put its directory
-ahead of `/usr/bin` on PATH to intercept every `say` on the machine. Wiring
-PATH is left to you; the repo only ships the shim.
+daemon that refuses the event all still speak. `bin/say` is a PATH shim that
+routes an ordinary `say` through this command, so every `say` on the machine —
+yours, a script's, an agent's — becomes attributable. The SessionStart hook
+offers to install it (as a copy, next to the `ccmsg` on your PATH) and asks
+first; declining once is remembered. A `say` on PATH that isn't ours is never
+touched.
 
 ## Why a rewrite?
 

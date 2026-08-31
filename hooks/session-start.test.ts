@@ -14,8 +14,10 @@ import {
   deriveRepoRoot,
   deriveWs,
   detectPathInstallCandidate,
+  detectSayShimCandidate,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
+  sayShimDeclineMarkerPath,
   sessionFilePath,
   writeSessionFile,
 } from "./session-start.ts";
@@ -408,6 +410,119 @@ describe("detectPathInstallCandidate", () => {
     } finally {
       fs.chmodSync(localBin, 0o700);
     }
+  });
+});
+
+// detectSayShimCandidate: `say` shim を PATH に配る/更新する提案の検出。
+// 「乗っ取らない」(= 他人の say があれば黙る) と「効かない場所に置かない」
+// (= system say より後ろの dir なら黙る) の 2 つが安全側の輪郭。
+describe("detectSayShimCandidate", () => {
+  let base: string;
+  let home: string;
+  let stateDir: string;
+  let pluginRoot: string;
+  let systemSay: string;
+  let localBin: string;
+
+  const SHIM_BODY = '#!/bin/bash\n# ccmsg-say-shim\nexec /usr/bin/say "$@"\n';
+
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-sayshim-"));
+    home = path.join(base, "home");
+    stateDir = path.join(base, "state");
+    pluginRoot = path.join(base, "plugin");
+    localBin = path.join(home, ".local", "bin");
+    fs.mkdirSync(stateDir);
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(path.join(pluginRoot, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(pluginRoot, "bin", "say"), SHIM_BODY);
+    // 実 /usr/bin/say に依存せず「system say」を模す。
+    const usrBin = path.join(base, "usr", "bin");
+    fs.mkdirSync(usrBin, { recursive: true });
+    systemSay = path.join(usrBin, "say");
+    fs.writeFileSync(systemSay, "#!/bin/sh\n# the real thing\n");
+  });
+
+  afterEach(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  const detect = (pathEnv: string) =>
+    detectSayShimCandidate(pathEnv, home, stateDir, { pluginRoot, systemSay });
+
+  const withSystem = (...dirs: string[]) => [...dirs, path.dirname(systemSay)].join(path.delimiter);
+
+  // 正常系: PATH の実効 say が system の物だけで、その前に書き込み可能な dir が
+  // あるなら install を提案する。
+  test("system say だけの PATH なら install を提案する", () => {
+    expect(detect(withSystem(localBin))).toEqual({
+      dir: localBin,
+      shimPath: path.join(localBin, "say"),
+      source: path.join(pluginRoot, "bin", "say"),
+      action: "install",
+    });
+  });
+
+  // ccmsg が既に PATH に居るなら、shim は同じ dir に置く (= 2 箇所に散らさない)。
+  test("PATH 上の ccmsg と同じ dir を配置先に選ぶ", () => {
+    const otherBin = path.join(base, "other");
+    fs.mkdirSync(otherBin);
+    fs.writeFileSync(path.join(otherBin, "ccmsg"), "#!/bin/sh\n");
+    const got = detect(withSystem(otherBin, localBin));
+    expect(got?.dir).toBe(otherBin);
+  });
+
+  // 既に自分の shim が最新の内容で置かれているなら、何も言わない。
+  test("最新の shim が既に置かれていれば null", () => {
+    fs.writeFileSync(path.join(localBin, "say"), SHIM_BODY);
+    expect(detect(withSystem(localBin))).toBeNull();
+  });
+
+  // 自分の shim (marker 有り) だが内容が古いなら update を提案する
+  // (= shim は自己更新経路を持たないので、内容 drift の再コピーが更新手段)。
+  test("自分の shim が古ければ update を提案する", () => {
+    const stale = path.join(localBin, "say");
+    fs.writeFileSync(stale, "#!/bin/bash\n# ccmsg-say-shim\n# old\n");
+    expect(detect(withSystem(localBin))).toEqual({
+      dir: localBin,
+      shimPath: stale,
+      source: path.join(pluginRoot, "bin", "say"),
+      action: "update",
+    });
+  });
+
+  // PATH の実効 say が他人の物 (marker 無し) なら、上書き案内をしない (乗っ取り防止)。
+  test("他人の say が PATH に居れば null", () => {
+    fs.writeFileSync(path.join(localBin, "say"), "#!/bin/sh\n# somebody else's say\n");
+    expect(detect(withSystem(localBin))).toBeNull();
+  });
+
+  // 書き込み可能な候補 dir が system say より後ろにしか無いなら、置いても効かない
+  // ので提案しない。
+  test("候補 dir が system say より後ろなら null", () => {
+    expect(detect(withSystem() + path.delimiter + localBin)).toBeNull();
+  });
+
+  // decline マーカーが立っていれば二度と提案しない (毎セッション nag 防止)。
+  test("decline マーカーがあれば null", () => {
+    fs.writeFileSync(sayShimDeclineMarkerPath(stateDir), "");
+    expect(detect(withSystem(localBin))).toBeNull();
+  });
+
+  // 候補 dir が書き込み不可なら提案しない (失敗するだけの案内を出さない)。
+  test("候補 dir が書き込み不可なら null", () => {
+    fs.chmodSync(localBin, 0o500);
+    try {
+      expect(detect(withSystem(localBin))).toBeNull();
+    } finally {
+      fs.chmodSync(localBin, 0o700);
+    }
+  });
+
+  // plugin が bin/say を配っていない (読めない) なら提案のしようがない。
+  test("plugin の bin/say が読めなければ null", () => {
+    fs.rmSync(path.join(pluginRoot, "bin", "say"));
+    expect(detect(withSystem(localBin))).toBeNull();
   });
 });
 

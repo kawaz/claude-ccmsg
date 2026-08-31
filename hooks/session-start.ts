@@ -2,7 +2,7 @@
 /**
  * SessionStart hook.
  *
- * Three jobs:
+ * Four jobs:
  *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
  *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
  *       hello time. A state file the CLI reads on its own keeps the suggested
@@ -24,6 +24,9 @@
  *       the AI to ask the user (AskUserQuestion) whether to symlink one in.
  *       The hook itself never writes the symlink or the decline marker — only
  *       detects and instructs; the AI performs the confirmed action. (DR-0007 §1)
+ *   (d) Likewise for the `say` shim: when PATH's effective `say` is the plain
+ *       system one (or our own copy, gone stale) and a writable dir ahead of it
+ *       is available, tell the AI to ask whether to copy `bin/say` there.
  *
  * Failure here never blocks the turn: parse errors and ensure failures exit 0 quietly.
  */
@@ -330,10 +333,15 @@ export function buildSubscribeCommand(bin: string): string {
   return `${bin} subscribe`;
 }
 
-/** Absolute path to the launcher, robust to a missing CLAUDE_PLUGIN_ROOT. */
+/** Absolute path of this plugin's root, robust to a missing CLAUDE_PLUGIN_ROOT
+ *  (a dev checkout runs the hook straight from `hooks/`). */
+function resolvePluginRoot(): string {
+  return process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, "..");
+}
+
+/** Absolute path to the launcher. */
 function resolveBin(): string {
-  const root = process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, "..");
-  return path.join(root, "bin", "ccmsg");
+  return path.join(resolvePluginRoot(), "bin", "ccmsg");
 }
 
 // --- PATH install candidate detection (DR-0007 §1) --------------------------
@@ -352,16 +360,20 @@ function pathDirs(pathEnv: string | undefined): string[] {
   return (pathEnv ?? "").split(path.delimiter).filter((s) => s !== "");
 }
 
-/** True iff some PATH dir has an entry named `ccmsg` (symlink or regular file). */
-function hasCcmsgOnPath(dirs: string[]): boolean {
-  return dirs.some((d) => {
+/** First PATH dir holding an entry named `ccmsg` (symlink or regular file),
+ *  or null when there is none. The dir — not just the yes/no — is what the say
+ *  shim detection below needs, so it can put the shim next to the ccmsg the
+ *  user already installed rather than inventing a second location. */
+function findCcmsgDir(dirs: string[]): string | null {
+  for (const d of dirs) {
     try {
       fs.accessSync(path.join(d, "ccmsg"));
-      return true;
+      return d;
     } catch {
-      return false;
+      // not here; keep looking
     }
-  });
+  }
+  return null;
 }
 
 /** True iff `dir` exists, is a directory, and is writable by this process. */
@@ -398,7 +410,7 @@ export function detectPathInstallCandidate(
   stateDir: string,
 ): PathInstallCandidate | null {
   const dirs = pathDirs(pathEnv);
-  if (hasCcmsgOnPath(dirs)) return null;
+  if (findCcmsgDir(dirs) !== null) return null;
   if (fs.existsSync(declineMarkerPath(stateDir))) return null;
 
   for (const cand of candidateBinDirs(home)) {
@@ -407,6 +419,142 @@ export function detectPathInstallCandidate(
     }
   }
   return null;
+}
+
+// --- `say` shim install detection --------------------------------------------
+//
+// The same "detect, ask, let the AI do it" shape as the ccmsg PATH install
+// above (DR-0007 §1): the hook never writes anything, it only reports what it
+// found and what command would fix it.
+//
+// Two things differ from the ccmsg case:
+//
+//   - the shim is COPIED, not symlinked. A symlink would point into the
+//     versioned plugin cache (`.../cache/ccmsg/ccmsg/<version>/bin/say`), a
+//     path that disappears on the next plugin update and leaves a dangling
+//     `say` on PATH — and a broken `say` is exactly the failure the shim's own
+//     fallback logic is written to avoid. `ccmsg`'s symlink can afford that
+//     dependency because the launcher repairs it (DR-0007 §2); a shim with no
+//     self-update path cannot, so it is copied and re-copied when stale.
+//   - it must not hijack someone else's `say`. Only a PATH where the effective
+//     `say` is the system one (or our own shim) is eligible; anything else is
+//     left alone, silently.
+
+/** Marker line carried by `bin/say`, used to tell our own shim apart from an
+ *  unrelated `say` a user put on PATH. */
+const SAY_SHIM_MARKER = "ccmsg-say-shim";
+
+/** The macOS `say` the shim ultimately execs. Overridable only so the
+ *  detection can be unit-tested without a real /usr/bin/say. */
+const SYSTEM_SAY = "/usr/bin/say";
+
+export interface SayShimCandidate {
+  dir: string;
+  /** dir/say — where the copy goes. */
+  shimPath: string;
+  /** source file to copy from (the plugin's own bin/say). */
+  source: string;
+  /** "install": no shim there yet. "update": our shim is there but stale. */
+  action: "install" | "update";
+}
+
+export interface SayShimOptions {
+  /** plugin root holding `bin/say`; the copy's source. */
+  pluginRoot: string;
+  /** test seam for {@link SYSTEM_SAY}. */
+  systemSay?: string;
+}
+
+/** Absolute path of the say-shim decline marker (separate from the ccmsg one:
+ *  declining a PATH `ccmsg` and declining to intercept `say` are different
+ *  answers, and a user who already has ccmsg on PATH never saw the first
+ *  question at all). */
+export function sayShimDeclineMarkerPath(stateDir: string): string {
+  return path.join(stateDir, "say-shim-declined");
+}
+
+function readFileOrNull(file: string): string | null {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function realpathOrNull(file: string): string | null {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the say-shim install/update candidate, or null when nothing should
+ * be proposed. Conditions, all required:
+ *
+ *   - the user hasn't declined before (marker in stateDir);
+ *   - the plugin ships a readable `bin/say`;
+ *   - the *effective* `say` on PATH (first PATH dir with such an entry) is
+ *     either the system binary or our own shim — a third party's `say` means
+ *     hands off;
+ *   - the target dir (where `ccmsg` already lives on PATH, else the ccmsg
+ *     install candidate) is writable and sits ahead of the system `say`, so the
+ *     copy would actually take effect.
+ *
+ * An up-to-date shim already in place returns null: nothing to say.
+ */
+export function detectSayShimCandidate(
+  pathEnv: string | undefined,
+  home: string,
+  stateDir: string,
+  opts: SayShimOptions,
+): SayShimCandidate | null {
+  if (fs.existsSync(sayShimDeclineMarkerPath(stateDir))) return null;
+
+  const source = path.join(opts.pluginRoot, "bin", "say");
+  const wanted = readFileOrNull(source);
+  if (wanted === null) return null;
+
+  const systemSay = realpathOrNull(opts.systemSay ?? SYSTEM_SAY);
+  const dirs = pathDirs(pathEnv);
+
+  // The effective `say`: the first one PATH would resolve to.
+  let effectiveDir: string | null = null;
+  let effectiveBody: string | null = null;
+  for (const d of dirs) {
+    const p = path.join(d, "say");
+    if (!fs.existsSync(p)) continue;
+    effectiveDir = d;
+    const real = realpathOrNull(p);
+    if (systemSay !== null && real === systemSay) break; // the system one
+    effectiveBody = readFileOrNull(p);
+    if (effectiveBody === null || !effectiveBody.includes(SAY_SHIM_MARKER)) return null; // someone else's
+    break;
+  }
+
+  // Ours is already the effective `say`: only propose when its content drifted
+  // from what this plugin version ships (the shim has no self-update path, so
+  // re-copying on drift is the whole update mechanism).
+  if (effectiveBody !== null && effectiveDir !== null) {
+    if (effectiveBody === wanted) return null;
+    return {
+      dir: effectiveDir,
+      shimPath: path.join(effectiveDir, "say"),
+      source,
+      action: "update",
+    };
+  }
+
+  const ccmsgDir = findCcmsgDir(dirs);
+  const target =
+    ccmsgDir ?? candidateBinDirs(home).find((c) => dirs.includes(c) && isWritableDir(c)) ?? null;
+  if (target === null || !isWritableDir(target)) return null;
+
+  // A copy placed behind the system `say` on PATH would never run.
+  if (effectiveDir !== null && dirs.indexOf(target) > dirs.indexOf(effectiveDir)) return null;
+
+  return { dir: target, shimPath: path.join(target, "say"), source, action: "install" };
 }
 
 async function main(): Promise<void> {
@@ -460,7 +608,8 @@ async function main(): Promise<void> {
     "Without it you cannot proactively notice incoming messages (the UserPromptSubmit hook only nags you on your next turn).",
   ];
 
-  // (c) PATH install suggestion (DR-0007 §1), only when detected.
+  // (c) PATH install suggestion (DR-0007 §1) and (d) `say` shim suggestion,
+  // each only when detected.
   try {
     const home = process.env.HOME ?? os.homedir();
     const candidate = detectPathInstallCandidate(process.env.PATH, home, stateDir);
@@ -475,8 +624,27 @@ async function main(): Promise<void> {
         "Do this at most once per session, and only after an explicit answer — don't run either command without asking first.",
       );
     }
+
+    const shim = detectSayShimCandidate(process.env.PATH, home, stateDir, {
+      pluginRoot: resolvePluginRoot(),
+    });
+    if (shim) {
+      const decline = sayShimDeclineMarkerPath(stateDir);
+      const what =
+        shim.action === "install"
+          ? `A \`say\` shim in ${shim.dir} (which is on PATH ahead of /usr/bin) would let the web UI show which session made a sound`
+          : `The \`say\` shim in ${shim.dir} is out of date with this ccmsg version`;
+      contextLines.push(
+        "",
+        `${what}. Ask the user with AskUserQuestion whether to ${shim.action} it:`,
+        `  - If they agree: install -m 0755 '${shim.source}' '${shim.shimPath}'`,
+        `  - If they decline: touch '${decline}'`,
+        "The shim is a copy, not a symlink, on purpose — the source lives in a versioned plugin cache dir that disappears on the next update.",
+        "Do this at most once per session, and only after an explicit answer — don't run either command without asking first.",
+      );
+    }
   } catch {
-    // best-effort detection; never block the turn over PATH install suggestion
+    // best-effort detection; never block the turn over an install suggestion
   }
 
   await exitHook(

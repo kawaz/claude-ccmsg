@@ -1,31 +1,23 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# ccmsg-say-shim
+#
 # PATH shim: a `say` that also records which Claude Code session spoke.
 #
-# Put this directory (or a symlink to this file named `say`) ahead of /usr/bin
-# on PATH, and every `say` — yours, a script's, an agent's — routes through
-# `ccmsg say`, which forwards the arguments to /usr/bin/say unchanged after
-# noting the speech in the session's 1on1 room. The webui can then answer
-# "which of these sessions just made a sound", which bare macOS `say` cannot.
+# Install a copy of this file as `say` in a PATH dir ahead of /usr/bin, and
+# every `say` — yours, a script's, an agent's — routes through `ccmsg say`,
+# which forwards the arguments to /usr/bin/say unchanged after noting the
+# speech in the session's 1on1 room. The webui can then answer "which of these
+# sessions just made a sound", which bare macOS `say` cannot.
 #
-# Wiring PATH is left to the user's own dotfiles: this repo ships the shim, not
-# the decision to intercept a system command.
+# ccmsg is resolved through PATH (it is installed there by the same SessionStart
+# flow that installs this shim). If it is missing, speech still happens — a
+# broken observation path must never cost the user their audio.
 #
 # Recursion is structurally impossible: `ccmsg say` execs the absolute
 # /usr/bin/say, never a PATH lookup that would find this file again.
 #
-# ccmsg is resolved through PATH, falling back to this repo's own launcher so
-# the shim works from a checkout with nothing installed. If neither is
-# reachable, speech still happens — a broken observation path must never cost
-# the user their audio.
-set -u
-
-if command -v ccmsg >/dev/null 2>&1; then
-  exec ccmsg say "$@"
-fi
-
-__here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-if [ -x "$__here/ccmsg" ]; then
-  exec "$__here/ccmsg" say "$@"
-fi
-
+# The `ccmsg-say-shim` marker on line 2 is how the SessionStart hook recognises
+# its own shim: a `say` on PATH without it belongs to someone else and is left
+# alone.
+command -v ccmsg >/dev/null 2>&1 && exec ccmsg say "$@"
 exec /usr/bin/say "$@"
