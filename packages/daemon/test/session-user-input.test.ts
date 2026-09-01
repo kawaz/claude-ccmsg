@@ -150,6 +150,35 @@ function inputAt(peers: PeerInfo[], sid: string): string | undefined {
 describe("classifyUserInputRow", () => {
   // The two counted kinds (kawaz 2026-08-31: 通常のプロンプト + ccmsg の
   // from:"u1")。判定は wire field で行い、prefix カタログには依存しない。
+  // kawaz r244m18: 引数付き slash command (/clear に次タスクの本文を渡した形)
+  // はユーザが書いたテキストなので数える。素の command (args 空/無し) は数えない。
+  test("引数付き slash command はユーザ入力", () => {
+    const row = {
+      type: "user",
+      timestamp: "2026-09-01T03:02:23.224Z",
+      message: {
+        role: "user",
+        content:
+          "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>8月の勤怠表を出力してください。</command-args>",
+      },
+    };
+    expect(classifyUserInputRow(row)).toBe("2026-09-01T03:02:23.224Z");
+  });
+
+  test("引数なし slash command は数えない", () => {
+    for (const args of ["", "   "]) {
+      const row = {
+        type: "user",
+        timestamp: "2026-09-01T03:02:23.224Z",
+        message: {
+          role: "user",
+          content: `<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>${args}</command-args>`,
+        },
+      };
+      expect(classifyUserInputRow(row)).toBeUndefined();
+    }
+  });
+
   test("typed prompt counts, crediting the row's own timestamp", () => {
     expect(classifyUserInputRow(row(typedPromptLine("やって", T1)))).toBe(T1);
   });

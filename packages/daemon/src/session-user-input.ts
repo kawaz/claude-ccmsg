@@ -51,13 +51,18 @@ const U1_MSG_EVENT_RE = /\{\\"type\\":\\"msg\\"[^{}]*?\\"from\\":\\"u1\\"/;
  * alternation so each stays a plain literal-anchored scan. */
 const U1_MSG_EVENT_RAW_RE = /\{"type":"msg"[^{}]*?"from":"u1"/;
 
+/** `<command-args>` whose body holds at least one non-whitespace character —
+ * the "the user actually wrote something" half of the slash-command rule in
+ * classifyUserInputRow. */
+const COMMAND_ARGS_NONEMPTY_RE = /<command-args>[^<]*\S[^<]*<\/command-args>/;
+
 /** Cheap string prefilter before JSON.parse, mirroring isApiErrorCandidate's
  * role: only rows that could carry one of the two counted kinds are worth
  * parsing. `"kind":"human"` is the typed-prompt marker and `"u1"` admits the
  * ccmsg deliveries (plus the `ccmsg read` echoes the classifier then rejects —
  * a prefilter is allowed to be generous, only cheap). */
 export function isUserInputCandidate(line: string): boolean {
-  return line.includes('"kind":"human"') || line.includes("u1");
+  return line.includes('"kind":"human"') || line.includes("u1") || line.includes("<command-args>");
 }
 
 /** The timestamp to credit `row` with as user input, or undefined when the row
@@ -97,6 +102,23 @@ export function classifyUserInputRow(row: Record<string, unknown>): string | und
 
   const origin = isRecord(row.origin) ? row.origin : null;
   if (origin?.kind === "human") return timestamp;
+
+  // A slash command the user typed with arguments (kawaz r244m18: a /clear
+  // whose <command-args> carries the next task's actual prompt). These rows
+  // are command plumbing — no origin, no promptSource — but a non-empty args
+  // body is text the user wrote, so it counts. A bare command (<command-args>
+  // empty or absent) stays out: it repositions the session without saying
+  // anything, and the plumbing around it is not the user talking.
+  {
+    const content = isRecord(row.message) ? row.message.content : undefined;
+    if (
+      typeof content === "string" &&
+      content.includes("<command-name>") &&
+      COMMAND_ARGS_NONEMPTY_RE.test(content)
+    ) {
+      return timestamp;
+    }
+  }
 
   if (row.promptSource !== "system") return undefined;
   const content = isRecord(row.message) ? row.message.content : undefined;
