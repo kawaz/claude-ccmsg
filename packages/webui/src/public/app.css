@@ -8605,3 +8605,12 @@ button.usage-reset:hover {
   font-size: var(--font-size-sm);
   margin: 0;
 }
+
+/* 引数付き slash command (`/clear <本文>`) のユーザ発話バブルに添えるコマンド
+ * ラベル (kawaz r244m18)。本文が主役なので、吹き出し内で控えめに 1 行。 */
+.tl-slash-command-prefix {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-3);
+}

@@ -52,6 +52,7 @@ import {
   foldGroupNeedsOuterFold,
   isApiErrorLine,
   isSearchableSegment,
+  isUserSpeechKind,
   segmentSearchText,
   itemRawSourceOffsets,
   isDirectFoldEntry,
@@ -1516,6 +1517,11 @@ function SegmentView({
             onDisplayChange={searchCtx?.notifyDisplayChange}
           />
         );
+      case "slash-command-prefix":
+        // 引数付き slash command (`/clear <本文>`) の由来ラベル。本文は隣の
+        // text segment が普通のユーザ発話として描くので、ここはどのコマンド
+        // 経由で送られたかを小さく添えるだけ。
+        return <div class="tl-slash-command-prefix">{segment.command}</div>;
       case "thinking-hidden":
         return <HiddenThinkingSegment reason={segment.reason} ts={ts} />;
       case "tool-use":
@@ -2008,7 +2014,7 @@ function LineView({
   // 「▶ HH:MM:SS <kind>」形式 (kind をそのままラベルに)。本文は
   // SystemMessageBody の rich|raw タブに委譲 (U2 リッチ表示タスク)。
   const sysKind =
-    line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt"
+    line.role === "user" && line.userMessageKind && !isUserSpeechKind(line.userMessageKind)
       ? line.userMessageKind
       : null;
   if (sysKind) {
@@ -3757,7 +3763,7 @@ export function Timeline({
     const targets = { user: targetUser, ai: targetAI, ccmsg: targetCcmsg };
     const pushLine = (offset: number, line: ParsedLine) => {
       if (line.kind !== "turn") return;
-      if (line.role === "user" && line.userMessageKind && line.userMessageKind !== "user-prompt")
+      if (line.role === "user" && line.userMessageKind && !isUserSpeechKind(line.userMessageKind))
         return;
       // 同じ理由で assistant 側の合成行 (Claude Code の turn 中断報告) も除外:
       // ApiErrorNotice は searchCtx を渡さず本文を verbatim 描画するので、

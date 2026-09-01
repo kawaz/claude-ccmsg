@@ -101,6 +101,7 @@ export type Segment =
       prompt: string;
       background: boolean;
     }
+  | { kind: "slash-command-prefix"; command: string }
   | { kind: "bash-command"; command: string; output: BashCommandOutput | null }
   | ({ kind: "bash-command-output"; hasCommand: boolean } & BashCommandOutput)
   | { kind: "tool-result"; toolUseId: string; isError: boolean; text: string }
@@ -974,9 +975,17 @@ export function isUserNavTurn(line: ParsedLine): boolean {
 
 export function isUserTextTurn(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "user") return false;
-  if (line.userMessageKind !== undefined && line.userMessageKind !== "user-prompt") return false;
-  if (line.userMessageKind === "user-prompt") return line.segments.length > 0;
+  if (line.userMessageKind !== undefined && !isUserSpeechKind(line.userMessageKind)) return false;
+  if (line.userMessageKind !== undefined) return line.segments.length > 0;
   return line.segments.some((s) => s.kind === "text");
+}
+
+/** ユーザ自身が書いた文章として扱う `UserMessageKind` — 素のプロンプトと、
+ * 引数付き slash command (`/clear <本文>`)。この 2 つだけが吹き出し表示 /
+ * fold 境界 / 👤 nav / 検索対象の「ユーザ発話」で、残りはシステム由来として
+ * fold される (Timeline.tsx の `sysKind` もこの述語を使う)。 */
+export function isUserSpeechKind(kind: UserMessageKind): boolean {
+  return kind === "user-prompt" || kind === "slash-command-prompt";
 }
 
 /**
@@ -1027,6 +1036,8 @@ export function segmentSearchText(segment: Segment): string {
         .join("\n");
     case "bash-result":
       return segment.text;
+    case "slash-command-prefix":
+      return segment.command;
     case "bash-command":
       return [segment.command, segment.output?.stdout, segment.output?.stderr]
         .filter(Boolean)
@@ -1088,6 +1099,7 @@ export function isSearchableSegment(segment: Segment, targets: SearchTargets): b
     case "file-tool-result":
     case "bash-use":
     case "bash-result":
+    case "slash-command-prefix":
     case "bash-command":
     case "bash-command-output":
     case "agent-send":
@@ -1501,6 +1513,14 @@ export type UserMessageKind =
   | "skill-invocation-preamble"
   | "system-caveat"
   | "slash-command-invocation"
+  /** A slash command the user submitted with arguments — `/clear <次タスクの
+   * 本文>` のような形 (kawaz r244m18)。コマンド行の体裁は harness の配管だが、
+   * `<command-args>` の中身はユーザが書いた文章そのものなので、fold に沈める
+   * 配管ではなく本物のユーザ発話として扱う (引数なしの裸コマンドは
+   * `slash-command-invocation` のまま — セッションを動かすだけで何も喋って
+   * いない)。daemon 側 prompt 判定 (packages/daemon/src/session-user-input.ts
+   * の classifyUserInputRow) と同じ「非空 command-args」規則。 */
+  | "slash-command-prompt"
   | "slash-command-stdout"
   | "bash-command-invocation"
   | "bash-command-stdout"
@@ -1564,6 +1584,39 @@ function isTextOrImageBlock(b: unknown): boolean {
  * from the wire. Accepted per the research's own limits section; not
  * observed in any sampled real transcript.
  */
+/** `<command-name>` と、中身が空でない `<command-args>` を持つ user 行から、
+ * コマンド名と引数本文を取り出す (どちらか欠けていれば null = 引数なしの裸
+ * コマンド、または slash command ですらない行)。
+ *
+ * 引数本文に `<` が含まれていても拾えるよう非貪欲マッチで書いてある
+ * (コード片や XML を /clear に渡す形が普通にあるため)。daemon 側の同じ規則は
+ * packages/daemon/src/session-user-input.ts の hasNonEmptyCommandArgs — TL の
+ * 表示と prompt 件数の判定がずれないよう、両者は同じ「非空 command-args」で
+ * 揃える (パッケージ境界を跨ぐ共有ではなく、相互参照で同期を保つ)。 */
+const COMMAND_NAME_TAG_RE = /<command-name>([\s\S]*?)<\/command-name>/;
+const COMMAND_ARGS_TAG_RE = /<command-args>([\s\S]*?)<\/command-args>/;
+
+export function parseSlashCommandPrompt(text: string): { command: string; args: string } | null {
+  const name = text.match(COMMAND_NAME_TAG_RE)?.[1]?.trim();
+  if (!name) return null;
+  const args = text.match(COMMAND_ARGS_TAG_RE)?.[1]?.trim();
+  if (!args) return null;
+  return { command: name, args };
+}
+
+/** 引数付き slash command 行の表示形: コマンド名のチップ + ユーザが書いた
+ * 本文。本文を通常の user text segment にすることで、検索 / 折返し / 吹き出し
+ * 描画が普通のユーザ発話とまったく同じ経路に乗る。 */
+function slashCommandPromptSegments(content: unknown): Segment[] | null {
+  if (typeof content !== "string") return null;
+  const parsed = parseSlashCommandPrompt(content);
+  if (parsed === null) return null;
+  return [
+    { kind: "slash-command-prefix", command: parsed.command },
+    { kind: "text", role: "user", text: parsed.args },
+  ];
+}
+
 export function classifyUserMessage(entry: Record<string, unknown>): UserMessageKind {
   const message = entry.message as Record<string, unknown> | undefined;
   const content = message?.content;
@@ -1649,6 +1702,11 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   if (text.startsWith("<bash-stdout>") || text.startsWith("<bash-stderr>")) {
     return "bash-command-stdout";
   }
+
+  // 引数付き slash command はユーザ発話 (上の doc comment 参照)。isMeta の
+  // 有無に依らないので、slash-command-invocation を拾う 2 経路 (isMeta 分岐と
+  // その下の bare prefix 判定) の両方より前に置く。
+  if (parseSlashCommandPrompt(text) !== null) return "slash-command-prompt";
 
   if (isMeta) {
     if (text.startsWith("<local-command-caveat>")) return "system-caveat";
@@ -2444,8 +2502,12 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
   if (o.type === "user" || o.type === "assistant") {
     const role = o.type;
     const message = o.message as Record<string, unknown> | undefined;
-    const segments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
+    const parsedSegments = message ? parseSegments(message.content, role, o.toolUseResult) : [];
     const userMessageKind = role === "user" ? classifyUserMessage(o) : undefined;
+    const segments =
+      userMessageKind === "slash-command-prompt"
+        ? (slashCommandPromptSegments(message?.content) ?? parsedSegments)
+        : parsedSegments;
     const assistantMessageKind = role === "assistant" ? classifyAssistantMessage(o) : undefined;
     return {
       kind: "turn",
@@ -2480,7 +2542,9 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
       ...(uuid ? { uuid } : {}),
       ...(parentUuid ? { parentUuid } : {}),
       role: "user",
-      segments: [{ kind: "text", role: "user", text: content }],
+      segments: slashCommandPromptSegments(content) ?? [
+        { kind: "text", role: "user", text: content },
+      ],
       userMessageKind,
       queuedContent: content,
     };

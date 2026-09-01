@@ -54,7 +54,12 @@ import {
 // round trip already covered by the parseTranscriptLine describe blocks
 // above, so hand-constructing ParsedLine values keeps each case to one line.
 function userText(text: string): ParsedLine {
-  return { kind: "turn", ts: null, role: "user", segments: [{ kind: "text", role: "user", text }] };
+  return {
+    kind: "turn",
+    ts: null,
+    role: "user",
+    segments: [{ kind: "text", role: "user", text }],
+  };
 }
 function userToolResult(toolUseId: string): ParsedLine {
   return {
@@ -65,7 +70,12 @@ function userToolResult(toolUseId: string): ParsedLine {
   };
 }
 function assistantThinking(text: string): ParsedLine {
-  return { kind: "turn", ts: null, role: "assistant", segments: [{ kind: "thinking", text }] };
+  return {
+    kind: "turn",
+    ts: null,
+    role: "assistant",
+    segments: [{ kind: "thinking", text }],
+  };
 }
 function assistantToolUse(name: string): ParsedLine {
   return {
@@ -206,7 +216,12 @@ describe("itemRawSourceOffsets", () => {
   // 項目が両方の行を引けないと生 JSONL に到達する手段が無くなる。
   test("カードに畳まれた tool_result は tool_use 側の項目に両方の行として付く", () => {
     const lines = resolveFileToolResults([
-      { kind: "turn", ts: null, role: "assistant", segments: [bashUse("t1", "ls")] },
+      {
+        kind: "turn",
+        ts: null,
+        role: "assistant",
+        segments: [bashUse("t1", "ls")],
+      },
       userToolResult("t1"),
     ]);
     const offsets = [0, 50];
@@ -278,15 +293,24 @@ describe("itemRawSourceOffsets", () => {
 // ケースがあり、全行を全長描画すると raw 切替の瞬間にレイアウトが固まる。
 describe("truncateRawLine", () => {
   test("limit 以下はそのまま (truncated=false)", () => {
-    expect(truncateRawLine("abc", 5)).toEqual({ text: "abc", truncated: false });
+    expect(truncateRawLine("abc", 5)).toEqual({
+      text: "abc",
+      truncated: false,
+    });
   });
 
   test("limit 超過は limit 文字に切って truncated=true", () => {
-    expect(truncateRawLine("abcdef", 3)).toEqual({ text: "abc", truncated: true });
+    expect(truncateRawLine("abcdef", 3)).toEqual({
+      text: "abc",
+      truncated: true,
+    });
   });
 
   test("ちょうど limit 丁度は切らない (境界)", () => {
-    expect(truncateRawLine("abc", 3)).toEqual({ text: "abc", truncated: false });
+    expect(truncateRawLine("abc", 3)).toEqual({
+      text: "abc",
+      truncated: false,
+    });
   });
 
   // サロゲートペアの途中で切ると片割れが U+FFFD になって化ける。切り口が
@@ -344,7 +368,12 @@ describe("parseTranscriptLine / user turns", () => {
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
     expect(line.segments).toEqual([
-      { kind: "tool-result", toolUseId: "tu_1", isError: false, text: "42 files" },
+      {
+        kind: "tool-result",
+        toolUseId: "tu_1",
+        isError: false,
+        text: "42 files",
+      },
     ]);
   });
 
@@ -355,7 +384,14 @@ describe("parseTranscriptLine / user turns", () => {
         type: "user",
         message: {
           role: "user",
-          content: [{ type: "tool_result", tool_use_id: "tu_2", is_error: true, content: "boom" }],
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_2",
+              is_error: true,
+              content: "boom",
+            },
+          ],
         },
       }),
     );
@@ -414,7 +450,11 @@ describe("parseTranscriptLine / assistant turns", () => {
             {
               type: "tool_use",
               name: "SendMessage",
-              input: { to: "reviewer", summary: "確認依頼", message: "見てください" },
+              input: {
+                to: "reviewer",
+                summary: "確認依頼",
+                message: "見てください",
+              },
             },
           ],
         },
@@ -436,7 +476,11 @@ describe("parseTranscriptLine / assistant turns", () => {
             {
               type: "tool_use",
               name: "SendMessage",
-              input: { recipient: "worker", content: "進めて", type: "message" },
+              input: {
+                recipient: "worker",
+                content: "進めて",
+                type: "message",
+              },
             },
           ],
         },
@@ -493,7 +537,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "tu_read", name: "Read", input: { file_path: "a.ts" } },
+            {
+              type: "tool_use",
+              id: "tu_read",
+              name: "Read",
+              input: { file_path: "a.ts" },
+            },
           ],
         },
       }),
@@ -502,9 +551,18 @@ describe("parseTranscriptLine / assistant turns", () => {
       JSON.stringify({
         type: "user",
         message: {
-          content: [{ type: "tool_result", tool_use_id: "tu_read", content: "1\\talpha" }],
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tu_read",
+              content: "1\\talpha",
+            },
+          ],
         },
-        toolUseResult: { type: "text", file: { filePath: "a.ts", content: "alpha\n" } },
+        toolUseResult: {
+          type: "text",
+          file: { filePath: "a.ts", content: "alpha\n" },
+        },
       }),
     );
     const resolved = resolveFileToolResults([use, result]);
@@ -532,7 +590,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "tu_img", name: "Read", input: { file_path: "/tmp/shot.png" } },
+            {
+              type: "tool_use",
+              id: "tu_img",
+              name: "Read",
+              input: { file_path: "/tmp/shot.png" },
+            },
           ],
         },
       }),
@@ -548,7 +611,11 @@ describe("parseTranscriptLine / assistant turns", () => {
               content: [
                 {
                   type: "image",
-                  source: { type: "base64", data: "iVBOR", media_type: "image/png" },
+                  source: {
+                    type: "base64",
+                    data: "iVBOR",
+                    media_type: "image/png",
+                  },
                 },
               ],
             },
@@ -600,7 +667,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "tu_img2", name: "Read", input: { file_path: "/tmp/a.gif" } },
+            {
+              type: "tool_use",
+              id: "tu_img2",
+              name: "Read",
+              input: { file_path: "/tmp/a.gif" },
+            },
           ],
         },
       }),
@@ -616,7 +688,11 @@ describe("parseTranscriptLine / assistant turns", () => {
               content: [
                 {
                   type: "image",
-                  source: { type: "base64", data: "R0lGOD", media_type: "image/gif" },
+                  source: {
+                    type: "base64",
+                    data: "R0lGOD",
+                    media_type: "image/gif",
+                  },
                 },
               ],
             },
@@ -644,7 +720,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "tu_err", name: "Read", input: { file_path: "/tmp/gone.png" } },
+            {
+              type: "tool_use",
+              id: "tu_err",
+              name: "Read",
+              input: { file_path: "/tmp/gone.png" },
+            },
           ],
         },
       }),
@@ -768,7 +849,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "user",
         message: {
           content: [
-            { type: "tool_result", tool_use_id: "tu_bg", is_error: true, content: "failed" },
+            {
+              type: "tool_result",
+              tool_use_id: "tu_bg",
+              is_error: true,
+              content: "failed",
+            },
           ],
         },
       }),
@@ -804,7 +890,12 @@ describe("parseTranscriptLine / assistant turns", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", id: "tu_pending", name: "Bash", input: { command: "job" } },
+            {
+              type: "tool_use",
+              id: "tu_pending",
+              name: "Bash",
+              input: { command: "job" },
+            },
           ],
         },
       }),
@@ -885,7 +976,12 @@ describe("parseTranscriptLine / assistant turns", () => {
           role: "assistant",
           content: [
             { type: "thinking", thinking: "let me check", signature: "sig" },
-            { type: "tool_use", id: "tu_1", name: "Bash", input: { command: "ls" } },
+            {
+              type: "tool_use",
+              id: "tu_1",
+              name: "Bash",
+              input: { command: "ls" },
+            },
             { type: "text", text: "done" },
           ],
         },
@@ -1000,7 +1096,10 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   test("a real queued human prompt keeps exactly one user-prompt turn", () => {
     const lines = parseTranscriptLines([
       enqueue("スキル見える？"),
-      delivered("スキル見える？", { promptSource: "queued", origin: { kind: "human" } }),
+      delivered("スキル見える？", {
+        promptSource: "queued",
+        origin: { kind: "human" },
+      }),
     ]);
     expect(lines[0]!.kind).toBe("meta");
     const kept = lines[1]!;
@@ -1105,9 +1204,15 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   test("the same text queued twice keeps both deliveries", () => {
     const lines = parseTranscriptLines([
       enqueue("続けて"),
-      delivered("続けて", { promptSource: "queued", origin: { kind: "human" } }),
+      delivered("続けて", {
+        promptSource: "queued",
+        origin: { kind: "human" },
+      }),
       enqueue("続けて"),
-      delivered("続けて", { promptSource: "queued", origin: { kind: "human" } }),
+      delivered("続けて", {
+        promptSource: "queued",
+        origin: { kind: "human" },
+      }),
     ]);
     expect(lines.map((l) => l.kind)).toEqual(["meta", "turn", "meta", "turn"]);
   });
@@ -1117,7 +1222,10 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   // the enqueue is a different send and must not cancel it.
   test("a delivery preceding the enqueue does not cancel it", () => {
     const lines = parseTranscriptLines([
-      delivered("もう一回", { promptSource: "typed", origin: { kind: "human" } }),
+      delivered("もう一回", {
+        promptSource: "typed",
+        origin: { kind: "human" },
+      }),
       enqueue("もう一回"),
     ]);
     expect(lines.map((l) => l.kind)).toEqual(["turn", "turn"]);
@@ -1129,7 +1237,10 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   test("output stays index-aligned with the input lines", () => {
     const raws = [
       enqueue(STOPPED),
-      delivered(STOPPED, { promptSource: "system", origin: { kind: "task-notification" } }),
+      delivered(STOPPED, {
+        promptSource: "system",
+        origin: { kind: "task-notification" },
+      }),
     ];
     expect(parseTranscriptLines(raws)).toHaveLength(raws.length);
   });
@@ -1139,7 +1250,11 @@ describe("parseTranscriptLines / queued-vs-delivered pairing", () => {
   test("agrees with parseTranscriptLine on lines with no queued copy", () => {
     const raws = [
       delivered("hello", { promptSource: "typed", origin: { kind: "human" } }),
-      JSON.stringify({ type: "queue-operation", operation: "dequeue", timestamp: "t" }),
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "dequeue",
+        timestamp: "t",
+      }),
       "{ not json",
     ];
     expect(parseTranscriptLines(raws)).toEqual(raws.map(parseTranscriptLine));
@@ -1151,7 +1266,11 @@ describe("parseTranscriptLine / meta lines (non-turn types)", () => {
   // transcript): summary should surface it without a per-type whitelist.
   test("queue-operation folds to a one-line summary including the operation", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "queue-operation", operation: "dequeue", timestamp: "t" }),
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "dequeue",
+        timestamp: "t",
+      }),
     );
     expect(line.kind).toBe("meta");
     if (line.kind !== "meta") return;
@@ -1189,7 +1308,11 @@ describe("parseTranscriptLine / meta lines (non-turn types)", () => {
   // rather than throwing on the missing field.
   test("a type with no timestamp field -> ts null, no throw", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "file-history-snapshot", isSnapshotUpdate: true, snapshot: {} }),
+      JSON.stringify({
+        type: "file-history-snapshot",
+        isSnapshotUpdate: true,
+        snapshot: {},
+      }),
     );
     expect(line.kind).toBe("meta");
     if (line.kind !== "meta") return;
@@ -1223,7 +1346,10 @@ describe("parseTranscriptLine / meta lines (non-turn types)", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "brand_new_block_kind", foo: "bar" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "brand_new_block_kind", foo: "bar" }],
+        },
       }),
     );
     expect(line.kind).toBe("turn");
@@ -1270,7 +1396,10 @@ describe("parseTranscriptLine / turn with empty content array", () => {
   // from the "no message at all" case, both must yield zero segments, not throw.
   test("empty content array -> zero segments", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [] } }),
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [] },
+      }),
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
@@ -1315,9 +1444,13 @@ describe("segmentSearchText", () => {
   });
 
   test("tool-use/unknown-segment stringify their JSON payload (matches SegmentView's pretty-print)", () => {
-    expect(segmentSearchText({ kind: "tool-use", name: "Read", input: { path: "a.ts" } })).toBe(
-      JSON.stringify({ path: "a.ts" }, null, 2),
-    );
+    expect(
+      segmentSearchText({
+        kind: "tool-use",
+        name: "Read",
+        input: { path: "a.ts" },
+      }),
+    ).toBe(JSON.stringify({ path: "a.ts" }, null, 2));
     expect(segmentSearchText({ kind: "unknown-segment", type: "number", raw: 42 })).toBe(
       JSON.stringify(42, null, 2),
     );
@@ -1397,7 +1530,10 @@ describe("ccmsgDedupKey", () => {
 describe("isUserTextTurn", () => {
   test("user turn with a text segment -> true", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "hello" },
+      }),
     );
     expect(isUserTextTurn(line)).toBe(true);
   });
@@ -1720,7 +1856,11 @@ describe("foldGroupLabel", () => {
         type: "assistant",
         message: {
           content: [
-            { type: "tool_use", name: "SendMessage", input: { to: "worker", message: "go" } },
+            {
+              type: "tool_use",
+              name: "SendMessage",
+              input: { to: "worker", message: "go" },
+            },
           ],
         },
       }),
@@ -1728,7 +1868,9 @@ describe("foldGroupLabel", () => {
     const peer = parseTranscriptLine(
       JSON.stringify({
         type: "user",
-        message: { content: '<agent-message from="worker">done</agent-message>' },
+        message: {
+          content: '<agent-message from="worker">done</agent-message>',
+        },
       }),
     );
     const entries = [
@@ -1775,6 +1917,104 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("slash-command-invocation");
     });
 
+    describe("引数付き slash command (kawaz r244m18)", () => {
+      // 実レコード形 (kawaz 提供): /clear に次タスクの本文をそのまま渡した形。
+      // 配管ではなくユーザが書いた文章なので、TL では通常のユーザ発話として
+      // 扱う (fold に沈めない)。
+      const REAL_CONTENT =
+        "<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>mainロールのスキルロードは省略して良い。8月の勤怠表を出力してください。</command-args>";
+
+      test("非空 command-args -> slash-command-prompt", () => {
+        expect(
+          classifyUserMessage({
+            isMeta: true,
+            message: { role: "user", content: REAL_CONTENT },
+          }),
+        ).toBe("slash-command-prompt");
+        // isMeta なしで届く形 (slash-command-invocation と同じ 2 経路) も同じ判定。
+        expect(
+          classifyUserMessage({
+            message: { role: "user", content: REAL_CONTENT },
+          }),
+        ).toBe("slash-command-prompt");
+      });
+
+      test("引数が空 / 空白のみ / タグ自体が無い -> 従来の slash-command-invocation", () => {
+        for (const args of ["", "   ", "\n"]) {
+          const content = `<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args>${args}</command-args>`;
+          expect(
+            classifyUserMessage({
+              isMeta: true,
+              message: { role: "user", content },
+            }),
+          ).toBe("slash-command-invocation");
+        }
+        expect(
+          classifyUserMessage({
+            isMeta: true,
+            message: {
+              role: "user",
+              content: "<command-name>/clear</command-name>",
+            },
+          }),
+        ).toBe("slash-command-invocation");
+      });
+
+      test("本文が text segment、コマンド名は prefix segment", () => {
+        const line = parseTranscriptLine(
+          JSON.stringify({
+            type: "user",
+            uuid: "u-1",
+            parentUuid: "p-1",
+            isMeta: true,
+            timestamp: "2026-09-01T03:02:23.224Z",
+            message: { role: "user", content: REAL_CONTENT },
+          }),
+        );
+        expect(line.kind).toBe("turn");
+        if (line.kind !== "turn") return;
+        expect(line.userMessageKind).toBe("slash-command-prompt");
+        expect(line.segments).toEqual([
+          { kind: "slash-command-prefix", command: "/clear" },
+          {
+            kind: "text",
+            role: "user",
+            text: "mainロールのスキルロードは省略して良い。8月の勤怠表を出力してください。",
+          },
+        ]);
+        // 通常のユーザ発話と同じ扱い = fold されず boundary バブルになる。
+        expect(isUserTextTurn(line)).toBe(true);
+        expect(classifyBoundaryLine(line)).toEqual({ kind: "user-prompt" });
+      });
+
+      test("args に markup が入っていても本文として拾う", () => {
+        const content =
+          "<command-name>/clear</command-name>\n<command-args>直して: <div>a</div> の件</command-args>";
+        expect(classifyUserMessage({ message: { role: "user", content } })).toBe(
+          "slash-command-prompt",
+        );
+      });
+
+      test("引数なし slash command は従来どおり fold 内 (boundary ではない)", () => {
+        const line = parseTranscriptLine(
+          JSON.stringify({
+            type: "user",
+            isMeta: true,
+            timestamp: "2026-09-01T03:02:23.224Z",
+            message: {
+              role: "user",
+              content:
+                "<command-name>/clear</command-name>\n<command-message>clear</command-message>",
+            },
+          }),
+        );
+        if (line.kind !== "turn") throw new Error("expected turn");
+        expect(line.userMessageKind).toBe("slash-command-invocation");
+        expect(isUserTextTurn(line)).toBe(false);
+        expect(classifyBoundaryLine(line)).toBeNull();
+      });
+    });
+
     test("<local-command-stdout> -> slash-command-stdout", () => {
       const entry = {
         isMeta: true,
@@ -1811,7 +2051,10 @@ describe("classifyUserMessage", () => {
     test("<bash-stderr>-leading content -> bash-command-stdout", () => {
       const entry = {
         parentUuid: "p",
-        message: { role: "user", content: "<bash-stderr>no such file</bash-stderr>" },
+        message: {
+          role: "user",
+          content: "<bash-stderr>no such file</bash-stderr>",
+        },
       };
       expect(classifyUserMessage(entry)).toBe("bash-command-stdout");
     });
@@ -1838,7 +2081,10 @@ describe("classifyUserMessage", () => {
         message: {
           role: "user",
           content: [
-            { type: "text", text: "Base directory for this skill: /path/to/skill\n\n# タスク..." },
+            {
+              type: "text",
+              text: "Base directory for this skill: /path/to/skill\n\n# タスク...",
+            },
           ],
         },
       };
@@ -1850,7 +2096,10 @@ describe("classifyUserMessage", () => {
     // する (未知 type が MetaLine に degrade する transcript-model.ts の設計
     // と同じ思想)。
     test("isMeta:true with an unrecognized string content -> unknown-meta", () => {
-      const entry = { isMeta: true, message: { role: "user", content: "some future injection" } };
+      const entry = {
+        isMeta: true,
+        message: { role: "user", content: "some future injection" },
+      };
       expect(classifyUserMessage(entry)).toBe("unknown-meta");
     });
   });
@@ -1902,7 +2151,10 @@ describe("classifyUserMessage", () => {
     test("<task-notification> prefix with isMeta explicitly false -> task-notification", () => {
       const entry = {
         isMeta: false,
-        message: { role: "user", content: "<task-notification>\n<task-id>x</task-id>" },
+        message: {
+          role: "user",
+          content: "<task-notification>\n<task-id>x</task-id>",
+        },
       };
       expect(classifyUserMessage(entry)).toBe("task-notification");
     });
@@ -1966,7 +2218,10 @@ describe("classifyUserMessage", () => {
     test("bare <agent-message>/<teammate-message> prefix -> peer-message", () => {
       const agentEntry = {
         type: "user",
-        message: { role: "user", content: '<agent-message from="a1">report</agent-message>' },
+        message: {
+          role: "user",
+          content: '<agent-message from="a1">report</agent-message>',
+        },
       };
       expect(classifyUserMessage(agentEntry)).toBe("peer-message");
       const teammateEntry = {
@@ -2032,7 +2287,11 @@ describe("classifyUserMessage", () => {
         type: "user",
         promptSource: "system",
         isMeta: true,
-        origin: { kind: "peer", name: "probe", from: "uds:/tmp/cc-socks/1234.sock" },
+        origin: {
+          kind: "peer",
+          name: "probe",
+          from: "uds:/tmp/cc-socks/1234.sock",
+        },
         message: {
           role: "user",
           content:
@@ -2092,7 +2351,10 @@ describe("classifyUserMessage", () => {
     test("a queued cross-session notice with no metadata -> cross-session-notice", () => {
       const entry = {
         type: "user",
-        message: { role: "user", content: '[Cross-session idle notice] "probe" is idle now.' },
+        message: {
+          role: "user",
+          content: '[Cross-session idle notice] "probe" is idle now.',
+        },
       };
       expect(classifyUserMessage(entry)).toBe("cross-session-notice");
     });
@@ -2142,7 +2404,12 @@ describe("classifyUserMessage", () => {
       const entry = {
         message: {
           role: "user",
-          content: [{ type: "text", text: "[Request interrupted by user for tool use]" }],
+          content: [
+            {
+              type: "text",
+              text: "[Request interrupted by user for tool use]",
+            },
+          ],
         },
       };
       expect(classifyUserMessage(entry)).toBe("user-interrupt-marker");
@@ -2163,7 +2430,10 @@ describe("classifyUserMessage", () => {
 
     test("an unrecognized array content shape -> unknown-array", () => {
       const entry = {
-        message: { role: "user", content: [{ type: "some_future_block", foo: "bar" }] },
+        message: {
+          role: "user",
+          content: [{ type: "some_future_block", foo: "bar" }],
+        },
       };
       expect(classifyUserMessage(entry)).toBe("unknown-array");
     });
@@ -2180,7 +2450,10 @@ describe("classifyUserMessage", () => {
         message: {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/png", data: "..." } },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "..." },
+            },
             { type: "text", text: "この画面のエラーは何？" },
           ],
         },
@@ -2196,8 +2469,14 @@ describe("classifyUserMessage", () => {
         message: {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/png", data: "a" } },
-            { type: "image", source: { type: "base64", media_type: "image/png", data: "b" } },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "a" },
+            },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "b" },
+            },
           ],
         },
       };
@@ -2213,7 +2492,10 @@ describe("classifyUserMessage", () => {
         message: {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: "image/png", data: "a" } },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "a" },
+            },
           ],
         },
       };
@@ -2266,7 +2548,10 @@ describe("classifyUserMessage", () => {
     // (レポートの判別ロジックそのもの)。
     test("user text containing an unrelated <tag>-looking string -> user-prompt (not misclassified)", () => {
       const entry = {
-        message: { role: "user", content: "<foo>これはただのユーザ入力です</foo>" },
+        message: {
+          role: "user",
+          content: "<foo>これはただのユーザ入力です</foo>",
+        },
       };
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
@@ -2274,7 +2559,10 @@ describe("classifyUserMessage", () => {
     // isMeta:true が明示的に false でも同じ扱い (isMeta === true のみが
     // "isMeta 立っている" とみなされる、report のロジック通り)。
     test("isMeta:false with plain text -> user-prompt", () => {
-      const entry = { isMeta: false, message: { role: "user", content: "hello" } };
+      const entry = {
+        isMeta: false,
+        message: { role: "user", content: "hello" },
+      };
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
@@ -2357,7 +2645,10 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
       JSON.stringify({
         isMeta: true,
         type: "user",
-        message: { role: "user", content: "<command-name>/model</command-name>" },
+        message: {
+          role: "user",
+          content: "<command-name>/model</command-name>",
+        },
       }),
     );
     expect(line.kind).toBe("turn");
@@ -2424,7 +2715,10 @@ describe("parseTranscriptLine / userMessageKind wiring (U2)", () => {
 
   test("a real user turn's userMessageKind is user-prompt", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "hello" },
+      }),
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
@@ -2583,7 +2877,14 @@ describe("classifyAssistantMessage / api-error lines", () => {
         type: "assistant",
         message: {
           role: "assistant",
-          content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a" } }],
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_1",
+              name: "Read",
+              input: { file_path: "a" },
+            },
+          ],
         },
       }),
     );
@@ -2595,7 +2896,10 @@ describe("classifyAssistantMessage / api-error lines", () => {
 
   test("a user line gets no assistantMessageKind (classification never runs for user)", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "hello" },
+      }),
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
@@ -2608,7 +2912,10 @@ describe("classifyAssistantMessage / api-error lines", () => {
     const thinking = parseTranscriptLine(
       JSON.stringify({
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "thinking", thinking: "hmm" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "hmm" }],
+        },
       }),
     );
     const apiError = parseTranscriptLine(apiErrorRaw("Prompt is too long"));
@@ -2675,7 +2982,10 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
   // covered by the "isUserTextTurn" describe block above) must still count.
   test("userMessageKind explicitly 'user-prompt' -> isUserTextTurn true", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "real question" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "real question" },
+      }),
     );
     expect(line.kind).toBe("turn");
     if (line.kind !== "turn") return;
@@ -2699,7 +3009,10 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
   // not genuine human utterances.
   test("a real user-prompt turn between boundaries stays a standalone entry, not folded", () => {
     const realPrompt = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "follow-up question" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "follow-up question" },
+      }),
     );
     const lines = [assistantText("first answer"), realPrompt, assistantText("second answer")];
     const offsets = [0, 1, 2];
@@ -2779,7 +3092,11 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
       message: {
         role: "assistant",
         content: [
-          { type: "tool_use", name: "SendMessage", input: { to: "worker", message: "go" } },
+          {
+            type: "tool_use",
+            name: "SendMessage",
+            input: { to: "worker", message: "go" },
+          },
         ],
       },
     });
@@ -2788,7 +3105,11 @@ describe("isDirectFoldEntry / foldGroupLabel", () => {
       message: {
         role: "assistant",
         content: [
-          { type: "tool_use", name: "Agent", input: { name: "reviewer", prompt: "review" } },
+          {
+            type: "tool_use",
+            name: "Agent",
+            input: { name: "reviewer", prompt: "review" },
+          },
         ],
       },
     });
@@ -2916,7 +3237,14 @@ describe("foldGroupNeedsOuterFold", () => {
       type: "assistant",
       message: {
         role: "assistant",
-        content: [{ type: "tool_use", id: "tu_1", name: "Bash", input: { command: "pwd" } }],
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "Bash",
+            input: { command: "pwd" },
+          },
+        ],
       },
     });
   const bashResult = (offset: number) =>
@@ -2949,7 +3277,10 @@ describe("foldGroupNeedsOuterFold", () => {
     const entries = [
       parsedEntry(1, {
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "thinking", thinking: "inspect" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "thinking", thinking: "inspect" }],
+        },
       }),
     ];
     expect(foldGroupLabel(entries)).toBe("1 thinking");
@@ -3192,8 +3523,22 @@ describe("extractCcmsgMessages", () => {
   // ccmsg subscribe の Monitor は stdout 1 行 = 1 event の jsonl を出す —
   // 複数行 (複数 msg) が同じ <event> ブロックにまとまって来ることがある。
   test("task-notification <event> body with multiple type:msg jsonl lines -> multiple CcmsgMessages", () => {
-    const e1 = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "one" };
-    const e2 = { type: "msg", mid: 2, from: "a2", r: "r1", ts: "t2", msg: "two" };
+    const e1 = {
+      type: "msg",
+      mid: 1,
+      from: "a1",
+      r: "r1",
+      ts: "t1",
+      msg: "one",
+    };
+    const e2 = {
+      type: "msg",
+      mid: 2,
+      from: "a2",
+      r: "r1",
+      ts: "t2",
+      msg: "two",
+    };
     const line = userLine(
       `<task-notification>\n<event>${JSON.stringify(e1)}\n${JSON.stringify(e2)}</event>\n</task-notification>`,
     );
@@ -3250,7 +3595,10 @@ describe("extractCcmsgMessages", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+        },
       }),
     );
     expect(extractCcmsgMessages(line)).toEqual([]);
@@ -3346,7 +3694,13 @@ describe("extractCcmsgMessages", () => {
 // 1 件に collapse される (kawaz r15 mid=21 dedup の拡張、DR-0027 §2.2)。
 describe("DR-0027 dedup: (room, mid) canonical key collapses duplicate extractions", () => {
   test("ccmsgDedupKey uses `${room}|m${mid}` when mid is present", () => {
-    const m: CcmsgMessage = { from: "a1", room: "r5", msg: "", ts: "", mid: 42 };
+    const m: CcmsgMessage = {
+      from: "a1",
+      room: "r5",
+      msg: "",
+      ts: "",
+      mid: 42,
+    };
     expect(ccmsgDedupKey(m)).toBe("r5|m42");
   });
 
@@ -3356,7 +3710,13 @@ describe("DR-0027 dedup: (room, mid) canonical key collapses duplicate extractio
   });
 
   test("bodyless echo placeholder and wrapper-parsed message with same (room, mid) collapse", () => {
-    const placeholder: CcmsgMessage = { from: "a1", room: "r5", msg: "", ts: "ts1", mid: 42 };
+    const placeholder: CcmsgMessage = {
+      from: "a1",
+      room: "r5",
+      msg: "",
+      ts: "ts1",
+      mid: 42,
+    };
     const wrapperParsed: CcmsgMessage = {
       from: "a1",
       room: "r5",
@@ -3409,8 +3769,20 @@ describe("ccmsgRenderTargets", () => {
   }
 
   test("peer 発は fold placement、u1 発は boundary placement で document 順に並ぶ", () => {
-    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 1 };
-    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 2 };
+    const peer = {
+      from: "a1",
+      room: "r1",
+      ts: "t1",
+      msg: "peer message",
+      mid: 1,
+    };
+    const user = {
+      from: "u1",
+      room: "r1",
+      ts: "t2",
+      msg: "user message",
+      mid: 2,
+    };
     const groups = groupTimelineLines(
       [ccmsgLine(peer), ccmsgLine(user), assistantText("done")],
       [10, 20, 30],
@@ -3437,8 +3809,20 @@ describe("ccmsgRenderTargets", () => {
   // boundary 側で index 0 が落ちても index 1 の key は 1 のまま = messageIndex
   // は「その行の message 配列上の位置」であって描画順の連番ではない。
   test("経路をまたぐ重複は document 順で先の 1 件だけが残る", () => {
-    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 7 };
-    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 8 };
+    const peer = {
+      from: "a1",
+      room: "r1",
+      ts: "t1",
+      msg: "peer message",
+      mid: 7,
+    };
+    const user = {
+      from: "u1",
+      room: "r1",
+      ts: "t2",
+      msg: "user message",
+      mid: 8,
+    };
     const groups = groupTimelineLines([ccmsgLine(peer), ccmsgLine(peer, user)], [10, 20]);
 
     expect(
@@ -3456,8 +3840,20 @@ describe("ccmsgRenderTargets", () => {
   // 本命の回帰: fold の開閉は Timeline 本体を再実行しないので、判定関数は
   // 同じ入力に対して何度でも同じ答えを返さなければならない。
   test("同じ groups で繰り返し呼んでも結果が変わらない (fold 開閉で消えない)", () => {
-    const peer = { from: "a1", room: "r1", ts: "t1", msg: "peer message", mid: 1 };
-    const user = { from: "u1", room: "r1", ts: "t2", msg: "user message", mid: 2 };
+    const peer = {
+      from: "a1",
+      room: "r1",
+      ts: "t1",
+      msg: "peer message",
+      mid: 1,
+    };
+    const user = {
+      from: "u1",
+      room: "r1",
+      ts: "t2",
+      msg: "user message",
+      mid: 2,
+    };
     const groups = groupTimelineLines(
       [userText("prompt"), ccmsgLine(peer), ccmsgLine(user)],
       [10, 20, 30],
@@ -3504,7 +3900,12 @@ describe("userNavTargets", () => {
 
   test("excludes duplicate and non-user ccmsg bubbles exactly as rendering does", () => {
     const userCcmsg = { from: "u1", room: "r1", ts: "t1", msg: "same message" };
-    const agentCcmsg = { from: "a1", room: "r1", ts: "t2", msg: "agent message" };
+    const agentCcmsg = {
+      from: "a1",
+      room: "r1",
+      ts: "t2",
+      msg: "agent message",
+    };
     const lines = [
       ccmsgLine(userCcmsg),
       ccmsgLine(agentCcmsg),
@@ -3523,7 +3924,14 @@ describe("userNavTargets", () => {
 describe("classifyBoundaryLine", () => {
   // u1 (ADMIN) 発 ccmsg は本物のユーザ発話と同格に扱う (r55 m14) — boundary。
   test("a system-origin line carrying a u1-sent ccmsg -> {kind:'ccmsg', messages:[...]}", () => {
-    const msgEvent = { type: "msg", mid: 1, from: "u1", r: "r1", ts: "t1", msg: "hi" };
+    const msgEvent = {
+      type: "msg",
+      mid: 1,
+      from: "u1",
+      r: "r1",
+      ts: "t1",
+      msg: "hi",
+    };
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -3542,7 +3950,14 @@ describe("classifyBoundaryLine", () => {
   // r55 m14: peer 発 (u1 以外) ccmsg は boundary にせず fold group 内で
   // thinking/agent と同格の direct 要素として描画する。
   test("a system-origin line carrying a peer-sent ccmsg -> null (folds)", () => {
-    const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
+    const msgEvent = {
+      type: "msg",
+      mid: 1,
+      from: "a1",
+      r: "r1",
+      ts: "t1",
+      msg: "hi",
+    };
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -3558,7 +3973,14 @@ describe("classifyBoundaryLine", () => {
   // u1 ccmsg-carrying line は境界として standalone、peer ccmsg-carrying line
   // は fold group に入る。
   test("u1 ccmsg-carrying line stands alone as a boundary in groupTimelineLines", () => {
-    const msgEvent = { type: "msg", mid: 1, from: "u1", r: "r1", ts: "t1", msg: "hi" };
+    const msgEvent = {
+      type: "msg",
+      mid: 1,
+      from: "u1",
+      r: "r1",
+      ts: "t1",
+      msg: "hi",
+    };
     const ccmsgLine = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -3578,7 +4000,14 @@ describe("classifyBoundaryLine", () => {
   });
 
   test("peer ccmsg-carrying line folds into surrounding group, not boundary", () => {
-    const msgEvent = { type: "msg", mid: 1, from: "a1", r: "r1", ts: "t1", msg: "hi" };
+    const msgEvent = {
+      type: "msg",
+      mid: 1,
+      from: "a1",
+      r: "r1",
+      ts: "t1",
+      msg: "hi",
+    };
     const ccmsgLine = parseTranscriptLine(
       JSON.stringify({
         type: "user",
@@ -3599,7 +4028,10 @@ describe("classifyBoundaryLine", () => {
 
   test("a real user prompt -> {kind:'user-prompt'}", () => {
     const line = parseTranscriptLine(
-      JSON.stringify({ type: "user", message: { role: "user", content: "hello" } }),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "hello" },
+      }),
     );
     expect(classifyBoundaryLine(line)).toEqual({ kind: "user-prompt" });
   });
@@ -3608,7 +4040,10 @@ describe("classifyBoundaryLine", () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         type: "assistant",
-        message: { role: "assistant", content: [{ type: "text", text: "done" }] },
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+        },
       }),
     );
     expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
@@ -3883,7 +4318,13 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("peer-message", raw)).toEqual({
         display: "peer",
         relays: [
-          { from: "agent", channel: "teammate", summary: null, category: "message", body: "hi" },
+          {
+            from: "agent",
+            channel: "teammate",
+            summary: null,
+            category: "message",
+            body: "hi",
+          },
         ],
       });
     });
@@ -3961,7 +4402,10 @@ describe("parseSystemMessageFields", () => {
     test("no <teammate-message> tag at all -> text fallback carrying the raw text unchanged", () => {
       const raw = "Another Claude session sent a message: some future shape with no tag";
       expect(() => parseSystemMessageFields("peer-message", raw)).not.toThrow();
-      expect(parseSystemMessageFields("peer-message", raw)).toEqual({ display: "text", text: raw });
+      expect(parseSystemMessageFields("peer-message", raw)).toEqual({
+        display: "text",
+        text: raw,
+      });
     });
   });
 
@@ -4026,7 +4470,13 @@ describe("parseSystemMessageFields", () => {
       expect(parseSystemMessageFields("spawn-prompt", raw)).toEqual({
         display: "peer",
         relays: [
-          { from: "親", channel: "teammate", summary: null, category: "message", body: raw },
+          {
+            from: "親",
+            channel: "teammate",
+            summary: null,
+            category: "message",
+            body: raw,
+          },
         ],
       });
     });
@@ -4272,7 +4722,11 @@ describe("parseSystemMessageFields", () => {
       const [merged] = resolveToolResults([invocation, output]);
       expect(merged).toMatchObject({
         segments: [
-          { kind: "bash-command", command: "ls", output: { stdout: "bin", stderr: null } },
+          {
+            kind: "bash-command",
+            command: "ls",
+            output: { stdout: "bin", stderr: null },
+          },
         ],
       });
     });
@@ -4296,7 +4750,9 @@ describe("parseSystemMessageFields", () => {
         segments: [{ kind: "text", role: "assistant", text: "hi" }],
       } satisfies ParsedLine;
       const [merged, kept] = resolveToolResults([invocation, other]);
-      expect(merged).toMatchObject({ segments: [{ kind: "bash-command", output: null }] });
+      expect(merged).toMatchObject({
+        segments: [{ kind: "bash-command", output: null }],
+      });
       expect(kept).toBe(other);
     });
 
@@ -4304,13 +4760,17 @@ describe("parseSystemMessageFields", () => {
     // メッセージのように fold へ沈めず、ユーザ側の流れに standalone で出す。
     test("a `! <cmd>` run is a boundary (stands alone) rather than folding away", () => {
       const [merged] = resolveToolResults([invocation, output]);
-      expect(classifyBoundaryLine(merged!)).toMatchObject({ kind: "bash-command" });
+      expect(classifyBoundaryLine(merged!)).toMatchObject({
+        kind: "bash-command",
+      });
     });
 
     // 相方の来なかった出力行も同様に standalone (= バイトを黙って隠さない)。
     test("an orphaned output row still stands alone instead of sinking into a fold", () => {
       const [only] = resolveToolResults([output]);
-      expect(classifyBoundaryLine(only!)).toMatchObject({ kind: "bash-command-output" });
+      expect(classifyBoundaryLine(only!)).toMatchObject({
+        kind: "bash-command-output",
+      });
       expect(groupTimelineLines([only!], [0])).toMatchObject([{ kind: "entry" }]);
     });
 
@@ -4340,14 +4800,20 @@ describe("parseSystemMessageFields", () => {
       "tool-result",
     ] as const)("kind '%s' -> {display:'text', text: rawText}", (kind) => {
       expect(() => parseSystemMessageFields(kind, raw)).not.toThrow();
-      expect(parseSystemMessageFields(kind, raw)).toEqual({ display: "text", text: raw });
+      expect(parseSystemMessageFields(kind, raw)).toEqual({
+        display: "text",
+        text: raw,
+      });
     });
 
     // kind が undefined (parseTranscriptLine を通らない手組み ParsedLine 等)
     // でも同じ fallback、throw しない。
     test("kind undefined -> text fallback, no throw", () => {
       expect(() => parseSystemMessageFields(undefined, raw)).not.toThrow();
-      expect(parseSystemMessageFields(undefined, raw)).toEqual({ display: "text", text: raw });
+      expect(parseSystemMessageFields(undefined, raw)).toEqual({
+        display: "text",
+        text: raw,
+      });
     });
 
     // 空文字列 (segments が空、または text セグメントが無い line からの
@@ -4355,7 +4821,10 @@ describe("parseSystemMessageFields", () => {
     // throw しない。
     test("empty rawText -> text fallback with empty text, no throw", () => {
       expect(() => parseSystemMessageFields("system-caveat", "")).not.toThrow();
-      expect(parseSystemMessageFields("system-caveat", "")).toEqual({ display: "text", text: "" });
+      expect(parseSystemMessageFields("system-caveat", "")).toEqual({
+        display: "text",
+        text: "",
+      });
     });
   });
 });
@@ -4394,7 +4863,11 @@ describe("attachmentDetail", () => {
   // 空行を作らず落ちる (空文字の stderr も同様)。
   test("hook_additional_context -> 存在するフィールドだけが並ぶ", () => {
     const detail = attachmentDetail(
-      { type: "hook_additional_context", hookName: "ccmsg", hookEvent: "UserPromptSubmit" },
+      {
+        type: "hook_additional_context",
+        hookName: "ccmsg",
+        hookEvent: "UserPromptSubmit",
+      },
       null,
     );
     expect(detail.trailing).toBe("ccmsg");
@@ -4403,7 +4876,11 @@ describe("attachmentDetail", () => {
 
   test("edited_text_file -> ファイルパスが従属ラベル、cwd 配下なら相対表示", () => {
     const detail = attachmentDetail(
-      { type: "edited_text_file", filename: "/repo/main/src/a.ts", snippet: "…" },
+      {
+        type: "edited_text_file",
+        filename: "/repo/main/src/a.ts",
+        snippet: "…",
+      },
       "/repo/main",
     );
     expect(detail.type).toBe("edited_text_file");
@@ -4434,10 +4911,18 @@ describe("attachmentDetail", () => {
   // 素のまま見せる方が安全)。
   test("edited_text_file -> 番号形でない snippet はそのまま 1 行目から表示", () => {
     const detail = attachmentDetail(
-      { type: "edited_text_file", filename: "/tmp/a.ts", snippet: "no numbers here" },
+      {
+        type: "edited_text_file",
+        filename: "/tmp/a.ts",
+        snippet: "no numbers here",
+      },
       null,
     );
-    expect(detail.file).toEqual({ path: "/tmp/a.ts", content: "no numbers here", startLine: 1 });
+    expect(detail.file).toEqual({
+      path: "/tmp/a.ts",
+      content: "no numbers here",
+      startLine: 1,
+    });
   });
 
   test("file -> content.file.content をそのままプレビューに使う", () => {
@@ -4452,7 +4937,11 @@ describe("attachmentDetail", () => {
       },
       null,
     );
-    expect(detail.file).toEqual({ path: "/tmp/b.sh", content: "#!/bin/sh\n", startLine: 1 });
+    expect(detail.file).toEqual({
+      path: "/tmp/b.sh",
+      content: "#!/bin/sh\n",
+      startLine: 1,
+    });
   });
 
   // 画像の file attachment には text body が無い。プレビューを出さず従来どおり
@@ -4462,7 +4951,10 @@ describe("attachmentDetail", () => {
       {
         type: "file",
         filename: "/tmp/c.png",
-        content: { type: "image", source: { data: "…", media_type: "image/png" } },
+        content: {
+          type: "image",
+          source: { data: "…", media_type: "image/png" },
+        },
       },
       null,
     );
@@ -4505,14 +4997,24 @@ describe("attachmentDetail", () => {
     expect(parseNumberedSnippet("")).toBeNull();
     expect(parseNumberedSnippet("0\ta")).toBeNull();
     // 末尾の改行は本文側の空行であって番号の抜けではない。
-    expect(parseNumberedSnippet("7\ta\n8\tb\n")).toEqual({ content: "a\nb\n", startLine: 7 });
+    expect(parseNumberedSnippet("7\ta\n8\tb\n")).toEqual({
+      content: "a\nb\n",
+      startLine: 7,
+    });
     // 本文にタブが含まれていても、剥がすのは先頭の 1 個だけ。
-    expect(parseNumberedSnippet("1\ta\tb")).toEqual({ content: "a\tb", startLine: 1 });
+    expect(parseNumberedSnippet("1\ta\tb")).toEqual({
+      content: "a\tb",
+      startLine: 1,
+    });
   });
 
   test("attachment が欠落・非オブジェクトでも壊れない", () => {
     for (const bad of [undefined, null, "x", 3, []]) {
-      expect(attachmentDetail(bad, null)).toEqual({ type: "?", trailing: null, fields: [] });
+      expect(attachmentDetail(bad, null)).toEqual({
+        type: "?",
+        trailing: null,
+        fields: [],
+      });
     }
   });
 
@@ -4522,7 +5024,10 @@ describe("attachmentDetail", () => {
         type: "attachment",
         timestamp: "2026-08-02T00:00:00.000Z",
         cwd: "/repo/main",
-        attachment: { type: "edited_text_file", filename: "/repo/main/src/a.ts" },
+        attachment: {
+          type: "edited_text_file",
+          filename: "/repo/main/src/a.ts",
+        },
       }),
     );
     expect(line.kind).toBe("meta");

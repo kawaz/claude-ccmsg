@@ -53,8 +53,16 @@ const U1_MSG_EVENT_RAW_RE = /\{"type":"msg"[^{}]*?"from":"u1"/;
 
 /** `<command-args>` whose body holds at least one non-whitespace character —
  * the "the user actually wrote something" half of the slash-command rule in
- * classifyUserInputRow. */
-const COMMAND_ARGS_NONEMPTY_RE = /<command-args>[^<]*\S[^<]*<\/command-args>/;
+ * classifyUserInputRow. The body is matched lazily rather than as "no `<`
+ * allowed", so args carrying code or markup still count. The webui mirrors
+ * this rule for its timeline display (packages/webui/src/client/transcript-model.ts
+ * の parseSlashCommandPrompt) — the two are kept in sync so a row shown as a
+ * user utterance is the same row counted as a prompt. */
+const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
+
+function hasNonEmptyCommandArgs(content: string): boolean {
+  return (content.match(COMMAND_ARGS_RE)?.[1] ?? "").trim() !== "";
+}
 
 /** Cheap string prefilter before JSON.parse, mirroring isApiErrorCandidate's
  * role: only rows that could carry one of the two counted kinds are worth
@@ -114,7 +122,7 @@ export function classifyUserInputRow(row: Record<string, unknown>): string | und
     if (
       typeof content === "string" &&
       content.includes("<command-name>") &&
-      COMMAND_ARGS_NONEMPTY_RE.test(content)
+      hasNonEmptyCommandArgs(content)
     ) {
       return timestamp;
     }

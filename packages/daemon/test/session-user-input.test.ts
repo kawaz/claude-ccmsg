@@ -179,6 +179,19 @@ describe("classifyUserInputRow", () => {
     }
   });
 
+  test("引数に markup が入っていてもユーザ入力 (webui の表示判定と同じ規則)", () => {
+    const row = {
+      type: "user",
+      timestamp: "2026-09-01T03:02:23.224Z",
+      message: {
+        role: "user",
+        content:
+          "<command-name>/clear</command-name>\n<command-args>直して: <div>a</div> の件</command-args>",
+      },
+    };
+    expect(classifyUserInputRow(row)).toBe("2026-09-01T03:02:23.224Z");
+  });
+
   test("typed prompt counts, crediting the row's own timestamp", () => {
     expect(classifyUserInputRow(row(typedPromptLine("やって", T1)))).toBe(T1);
   });
