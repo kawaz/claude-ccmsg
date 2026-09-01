@@ -804,12 +804,34 @@ describe("loadConfig", () => {
       }
     });
 
-    // Top-level `await` is the one shape a synchronous load cannot support.
-    // It degrades like any other unloadable module rather than crashing startup.
-    test("a module using top-level await degrades with a warning", () => {
-      fs.writeFileSync(jsFile, "await Promise.resolve();\nexport default {};");
-      expect(loadConfig(files, log)).toEqual({});
-      expect(warnings).toHaveLength(1);
+    // Top-level `await` support in a synchronous require is Bun-version
+    // dependent (1.3.x rejects it; newer Bun resolves an already-settled
+    // await and loads the module). The contract is only "never crash": on a
+    // Bun that can load it the config applies, on one that cannot it degrades
+    // with one warning like any other unloadable module. The test probes this
+    // runtime's behaviour first and asserts the matching branch, so it stays
+    // green across Bun upgrades without weakening either outcome.
+    test("a module using top-level await never crashes startup", () => {
+      const probe = path.join(dir, "tla-probe.js");
+      fs.writeFileSync(probe, "await Promise.resolve();\nexport default {};");
+      let probeLoads = true;
+      try {
+        require(probe);
+      } catch {
+        probeLoads = false;
+      }
+      fs.writeFileSync(
+        jsFile,
+        'await Promise.resolve();\nexport default { llm_usage_url: "http://127.0.0.1:1/u" };',
+      );
+      const config = loadConfig(files, log);
+      if (probeLoads) {
+        expect(config.llm_usage_url).toBe("http://127.0.0.1:1/u");
+        expect(warnings).toHaveLength(0);
+      } else {
+        expect(config).toEqual({});
+        expect(warnings).toHaveLength(1);
+      }
     });
 
     test("a module without an object default export returns an empty config", () => {
