@@ -771,7 +771,8 @@ Notes:
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
-  CCMSG_CONFIG_DIR             Override config dir (config.json, allowed-origins.json)
+  CCMSG_CONFIG_DIR             Override config dir (config.js or config.json,
+                               allowed-origins.json)
   CCMSG_DATA_DIR               Override data dir (rooms/<id>.jsonl, dumps/*.jsonl)
   CCMSG_SID / CLAUDE_CODE_SESSION_ID  Session id for identity auto-detection.
                                CLAUDE_CODE_SESSION_ID is normally already set

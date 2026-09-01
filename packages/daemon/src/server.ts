@@ -3639,7 +3639,7 @@ export function startDaemon(opts: StartOptions = {}): void {
 
   const rooms = scanRooms(paths.roomsDir, log);
   migrateLegacyConfigFiles(paths, log);
-  const config = loadConfig(paths.config, log);
+  const config = loadConfig(paths, log);
   const trace = new TraceWriter(paths.trace);
   const daemon: Daemon = {
     paths,

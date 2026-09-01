@@ -10,19 +10,70 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
 ## 前提
 
-- daemon の設定ファイル (`<configDir>/config.json`、通常
-  `~/.config/ccmsg/config.json`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を
+- daemon の設定ファイル (`<configDir>/config.js` または `<configDir>/config.json`、
+  通常 `~/.config/ccmsg/`。`CCMSG_CONFIG_DIR` / `XDG_CONFIG_HOME` を
   設定していればそのディレクトリ) を編集できること
 - 設定変更後に daemon を再起動できること (LN-Q4 裁定: config はホット
   リロードされない、明示的な再起動が必要)
 
 ## 手順
 
-1. **`<configDir>/config.json` に `session_launcher` キーを追加する**
+1. **設定ファイルに `session_launcher` キーを追加する**
 
-   YAML ではなく **JSON** (このリポの daemon 設定は JSON、DR-0018 §3.1 の
-   YAML 表記は設計時のスケッチ)。既存の `config.json` に他のキーがあれば
-   マージする、無ければ新規作成する:
+   設定ファイルは 2 形式あり、**両方あれば `config.js` が優先** される
+   (JSON 側は無視され、起動ログに 1 行 warn が出る)。既存ファイルに他の
+   キーがあればマージする、無ければ新規作成する。
+
+   YAML は使えない (このリポの daemon 設定は JSON / JS、DR-0018 §3.1 の
+   YAML 表記は設計時のスケッチ)。
+
+   **`<configDir>/config.js`** — ES module の default export でオブジェクトを
+   返す (vite / eslint flat config / prettier と同じ形)。`command` が複数行
+   になる場合はテンプレートリテラルでそのまま書けるので、JSON のように改行を
+   `\n` へエスケープする必要がない。こちらを推奨:
+
+   ```js
+   export default {
+     session_launcher: {
+       root_dirs: ["~/.local/share/repos/github.com/kawaz/"],
+       shell: "zsh",
+       timeout_seconds: 10,
+       dir_tree_depth: 2,
+       templates: [
+         {
+           name: "new",
+           // テンプレートリテラルなので改行も引用符もそのまま書ける
+           command: `
+             name="\${$(bump-semver vcs get repository):t1}@$(date +%Y%m%dT%H%M)"
+             direnv exec "$CWD" hyoui run --detached -- \\
+               claude --model "$MODEL" --effort "$EFFORT" --name "$name" "$PROMPT"
+           `,
+           params: {
+             CWD: "",
+             MODEL: "fable",
+             EFFORT: "low",
+             PROMPT: "ccmsg subscribe起動。pre-clear出力があればロード",
+           },
+         },
+       ],
+     },
+   };
+   ```
+
+   注意点:
+   - `export default` は**プレーンなオブジェクト**であること (`default` が無い /
+     オブジェクトでない場合は warn + 設定なし扱い)
+   - **top-level `await` は使えない** (daemon 起動が同期なので同期 require で
+     読む)。使うと warn + 設定なし扱いになる
+   - シェル変数の `$CWD` / `$MODEL` はテンプレートリテラル内でもそのまま書ける
+     (JS が展開するのは `${...}` の形だけ)。`${` を含むシェル記法 (zsh の
+     modifier 展開等) を書くときは **`\${` とエスケープ**する。シェルの行継続
+     `\` も JS 側で `\\` と書く必要がある — 展開の衝突を避けたいなら
+     テンプレートリテラルをやめて通常の文字列リテラル (`'...'`) でもよい
+   - このファイルは daemon 起動時に 1 回だけ評価される (LN-Q4)。設定形式で
+     あってプラグイン機構ではないので、副作用のあるコードは書かない
+
+   **`<configDir>/config.json`** — 従来形式。JSON のみ (コメント・末尾カンマ不可):
 
    ```json
    {
@@ -154,7 +205,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 
 | 症状 | 原因 | 対処 |
 |---|---|---|
-| 「+ 新規」を押しても未設定の案内のまま | `config.json` の JSON 構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、各 template は非空の `command` を持つ必要がある |
+| 「+ 新規」を押しても未設定の案内のまま | `config.js` / `config.json` の構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、各 template は非空の `command` を持つ必要がある |
 | cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
 | 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に 宣言した各変数への代入 (`CWD=...; MODEL=...; ...`) を書いた状態で手元で試して構文を確認 |
 | 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--detached` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |

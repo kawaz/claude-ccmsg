@@ -6,7 +6,7 @@
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
 //             last-live-sessions.json
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
-//             config.json
+//             config.js / config.json
 //             allowed-origins.json
 //   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //             rooms/<room-id>.jsonl
@@ -38,6 +38,12 @@ export interface Paths {
    * (hand-edited JSON). Lives in config/ beside allowedOrigins; state/ remains
    * disposable runtime state and data/ holds only what must not be lost. */
   config: string;
+  /** The same configuration written as an ES module (`export default {…}`),
+   * which is what the daemon prefers when both files exist. JSON cannot carry a
+   * multi-line launcher command without escaping every newline; a module can
+   * (template literals), and it is the form every JS tool now offers for
+   * hand-written configuration. */
+  configJs: string;
   /** Session dumps written for a human to hand to another session
    * (`ccmsg dump --out`, the webui's dump action). Lives in data/ because the
    * path is meant to be pasted somewhere and read back later, possibly after
@@ -90,6 +96,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     trace: path.join(stateDir, "trace.jsonl"),
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
     config: path.join(configDir, "config.json"),
+    configJs: path.join(configDir, "config.js"),
     dumps: path.join(dataDir, "dumps"),
     lastLiveSessions: path.join(stateDir, "last-live-sessions.json"),
   };

@@ -4,7 +4,17 @@
 // configuration as JSON (`allowed-origins.json`) and has no YAML dependency.
 // `<configDir>/config.json` keeps that established zero-dependency convention;
 // malformed user edits degrade to an unavailable launcher, never daemon crash.
+//
+// `<configDir>/config.js` — an ES module whose default export is that same
+// object — is accepted as well, and wins when both files exist. Launcher
+// commands are multi-line shell snippets, which JSON can only express as one
+// string with every newline escaped; a module writes them as template literals.
+// The file is a config format, not a plugin: it is evaluated once at startup
+// (LN-Q4) and its default export goes through exactly the validation the JSON
+// path goes through, so no key can mean something different depending on which
+// file it came from.
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -513,16 +523,54 @@ function parseSessionLauncher(
   };
 }
 
-/** Read daemon configuration once at startup (LN-Q4). Missing is the normal
- * unconfigured state; malformed content logs and collapses to an empty config. */
-export function loadConfig(file: string, log: Log): DaemonConfig {
+/** The two files `loadConfig` chooses between. `Paths` satisfies this, so the
+ * daemon hands its resolved paths straight over. */
+export interface ConfigFiles {
+  config: string;
+  configJs: string;
+}
+
+/** `require` resolves relative to this module, so config paths are passed
+ * absolute (both come from `resolvePaths`, and the tests build theirs the same
+ * way). Requiring an ES module is synchronous here, which is what lets startup
+ * stay synchronous — the one thing it cannot load is a module with top-level
+ * `await`, and that error is reported like any other broken config. */
+const requireConfigModule = createRequire(import.meta.url);
+
+/** Evaluate `config.js` and hand back its default export for validation.
+ * Anything that goes wrong — a syntax error, a module that throws, a missing
+ * or non-object default export — degrades to an empty config with one warning,
+ * exactly as broken JSON does. Executing user configuration is not a new
+ * exposure: this file already names the commands the launcher runs. */
+function readJsConfig(file: string, log: Log): Record<string, unknown> | undefined {
+  let mod: { default?: unknown };
+  try {
+    mod = requireConfigModule(file) as { default?: unknown };
+  } catch (e) {
+    warn(log, file, `could not be loaded (${String(e)}); treating as empty`);
+    return undefined;
+  }
+  const value = mod.default;
+  if (value === undefined) {
+    warn(log, file, "must `export default` an object; treating as empty");
+    return undefined;
+  }
+  if (!isObject(value)) {
+    warn(log, file, "default export must be an object; treating as empty");
+    return undefined;
+  }
+  return value;
+}
+
+/** Read and parse `config.json`. */
+function readJsonConfig(file: string, log: Log): Record<string, unknown> | undefined {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     warn(log, file, `unreadable (${String(e)}); treating as empty`);
-    return {};
+    return undefined;
   }
 
   let parsed: unknown;
@@ -530,12 +578,33 @@ export function loadConfig(file: string, log: Log): DaemonConfig {
     parsed = JSON.parse(text);
   } catch (e) {
     warn(log, file, `invalid JSON (${String(e)}); treating as empty`);
-    return {};
+    return undefined;
   }
   if (!isObject(parsed)) {
     warn(log, file, "top level must be a JSON object; treating as empty");
-    return {};
+    return undefined;
   }
+  return parsed;
+}
+
+/** Read daemon configuration once at startup (LN-Q4). Missing is the normal
+ * unconfigured state; malformed content logs and collapses to an empty config.
+ * `config.js` wins over `config.json` when both are present — the same "the
+ * current location is authoritative, say so and change nothing" rule that
+ * `migrateLegacyConfigFiles` applies to a leftover copy. */
+export function loadConfig(files: ConfigFiles, log: Log): DaemonConfig {
+  const hasJs = fs.existsSync(files.configJs);
+  if (hasJs && fs.existsSync(files.config)) {
+    warn(
+      log,
+      files.configJs,
+      `${files.config} is also present and is being ignored (delete it, or delete ${files.configJs} to go back to JSON)`,
+    );
+  }
+  const file = hasJs ? files.configJs : files.config;
+  const parsed = hasJs ? readJsConfig(file, log) : readJsonConfig(file, log);
+  if (parsed === undefined) return {};
+
   const sessionLauncher =
     parsed.session_launcher === undefined
       ? undefined

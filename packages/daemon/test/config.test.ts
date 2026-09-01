@@ -10,12 +10,18 @@ import { loadConfig } from "../src/config.ts";
 describe("loadConfig", () => {
   let dir: string;
   let file: string;
+  let jsFile: string;
+  // The pair the daemon hands over; `file` stays the JSON one so the cases
+  // below read as they did before config.js existed.
+  let files: { config: string; configJs: string };
   let warnings: string[];
   const log = { warn: (msg: string) => warnings.push(msg) };
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-config-"));
     file = path.join(dir, "config.json");
+    jsFile = path.join(dir, "config.js");
+    files = { config: file, configJs: jsFile };
     warnings = [];
   });
 
@@ -26,7 +32,7 @@ describe("loadConfig", () => {
   // A missing file is the normal unconfigured state, so startup stays quiet and
   // exposes no launcher rather than treating first use as an error.
   test("missing file returns an empty config without warning", () => {
-    expect(loadConfig(file, log)).toEqual({});
+    expect(loadConfig(files, log)).toEqual({});
     expect(warnings).toEqual([]);
   });
 
@@ -34,7 +40,7 @@ describe("loadConfig", () => {
   // make the launcher unavailable, with one diagnostic for repair.
   test("broken JSON returns an empty config with one warning", () => {
     fs.writeFileSync(file, "{not-json");
-    expect(loadConfig(file, log)).toEqual({});
+    expect(loadConfig(files, log)).toEqual({});
     expect(warnings).toHaveLength(1);
   });
 
@@ -44,7 +50,7 @@ describe("loadConfig", () => {
     for (const value of ["null", "42", "[]"]) {
       fs.writeFileSync(file, value);
       warnings = [];
-      expect(loadConfig(file, log)).toEqual({});
+      expect(loadConfig(files, log)).toEqual({});
       expect(warnings).toHaveLength(1);
     }
   });
@@ -74,7 +80,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log)).toEqual({
+    expect(loadConfig(files, log)).toEqual({
       session_launcher: {
         root_dirs: [path.resolve(root)],
         templates: [
@@ -113,7 +119,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.templates[0]?.params).toEqual([
+    expect(loadConfig(files, log).session_launcher?.templates[0]?.params).toEqual([
       { name: "CWD", default: "" },
       { name: "PROMPT", default: "hi" },
     ]);
@@ -141,7 +147,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.templates[0]?.params).toEqual([
+    expect(loadConfig(files, log).session_launcher?.templates[0]?.params).toEqual([
       { name: "CWD", default: "" },
       { name: "PROMPT", default: "" },
     ]);
@@ -171,7 +177,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    const templates = loadConfig(file, log).session_launcher?.templates;
+    const templates = loadConfig(files, log).session_launcher?.templates;
     expect(templates?.[0]?.params).toEqual([
       { name: "CWD", default: "" },
       { name: "MODEL", default: "fable" },
@@ -200,7 +206,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+    expect(loadConfig(files, log).session_launcher?.templates).toEqual([
       {
         name: "default",
         command: 'run "$PROMPT"',
@@ -227,7 +233,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.root_dirs).toEqual([
+    expect(loadConfig(files, log).session_launcher?.root_dirs).toEqual([
       path.join(os.homedir(), "launcher-root"),
     ]);
   });
@@ -251,7 +257,7 @@ describe("loadConfig", () => {
         }),
       );
       warnings = [];
-      expect(loadConfig(file, log).session_launcher?.templates[0]?.shell).toBe("bash");
+      expect(loadConfig(files, log).session_launcher?.templates[0]?.shell).toBe("bash");
       expect(warnings).toHaveLength(warningCount);
     }
   });
@@ -279,7 +285,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+    expect(loadConfig(files, log).session_launcher?.templates).toEqual([
       {
         name: "plain",
         command: "run $PROMPT",
@@ -322,7 +328,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.templates).toEqual([
+    expect(loadConfig(files, log).session_launcher?.templates).toEqual([
       { name: "good", command: "run", params: [{ name: "CWD", default: "" }], shell: "bash" },
     ]);
     expect(warnings).toHaveLength(4);
@@ -341,7 +347,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher).toBeUndefined();
+    expect(loadConfig(files, log).session_launcher).toBeUndefined();
   });
 
   // Containment cannot be defined without at least one root, so absent, empty,
@@ -358,7 +364,7 @@ describe("loadConfig", () => {
         }),
       );
       warnings = [];
-      expect(loadConfig(file, log).session_launcher).toBeUndefined();
+      expect(loadConfig(files, log).session_launcher).toBeUndefined();
       expect(warnings).toHaveLength(1);
     }
   });
@@ -367,7 +373,7 @@ describe("loadConfig", () => {
   // it, accepting session_launch would create an undefined execution contract.
   test("missing command disables session_launcher", () => {
     fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
-    expect(loadConfig(file, log).session_launcher).toBeUndefined();
+    expect(loadConfig(files, log).session_launcher).toBeUndefined();
     expect(warnings).toHaveLength(1);
   });
 
@@ -387,7 +393,7 @@ describe("loadConfig", () => {
         }),
       );
       warnings = [];
-      const cfg = loadConfig(file, log).session_launcher!;
+      const cfg = loadConfig(files, log).session_launcher!;
       expect(cfg.timeout_seconds).toBe(DEFAULT_LAUNCH_TIMEOUT_SECONDS);
       expect(cfg.dir_tree_depth).toBe(DEFAULT_DIR_TREE_DEPTH);
       expect(warnings).toHaveLength(2);
@@ -407,7 +413,7 @@ describe("loadConfig", () => {
       }),
     );
 
-    expect(loadConfig(file, log).session_launcher?.root_dirs).toEqual([path.resolve(dir)]);
+    expect(loadConfig(files, log).session_launcher?.root_dirs).toEqual([path.resolve(dir)]);
     expect(warnings).toHaveLength(1);
   });
 
@@ -424,7 +430,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
+    expect(loadConfig(files, log).session_launcher?.clean_env).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
@@ -442,7 +448,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual([]);
+    expect(loadConfig(files, log).session_launcher?.clean_env).toEqual([]);
     expect(warnings).toHaveLength(1);
   });
 
@@ -460,7 +466,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.clean_env).toEqual(["CLAUDE_*", "AI_AGENT"]);
+    expect(loadConfig(files, log).session_launcher?.clean_env).toEqual(["CLAUDE_*", "AI_AGENT"]);
     expect(warnings).toHaveLength(2);
   });
 
@@ -477,7 +483,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
+    expect(loadConfig(files, log).session_launcher?.keep_env).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
@@ -498,7 +504,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([]);
+    expect(loadConfig(files, log).session_launcher?.keep_env).toEqual([]);
     expect(warnings).toHaveLength(1);
   });
 
@@ -515,7 +521,7 @@ describe("loadConfig", () => {
         },
       }),
     );
-    expect(loadConfig(file, log).session_launcher?.keep_env).toEqual([
+    expect(loadConfig(files, log).session_launcher?.keep_env).toEqual([
       "CLAUDE_CONFIG_DIR",
       "CLAUDE_CODE_ENTRYPOINT",
     ]);
@@ -527,32 +533,32 @@ describe("loadConfig", () => {
   describe("terminal_gateway_url", () => {
     test("valid https URL is retained", () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "https://gw.example" }));
-      expect(loadConfig(file, log).terminal_gateway_url).toBe("https://gw.example");
+      expect(loadConfig(files, log).terminal_gateway_url).toBe("https://gw.example");
       expect(warnings).toEqual([]);
     });
 
     test("valid http URL with port is retained", () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://127.0.0.1:43690" }));
-      expect(loadConfig(file, log).terminal_gateway_url).toBe("http://127.0.0.1:43690");
+      expect(loadConfig(files, log).terminal_gateway_url).toBe("http://127.0.0.1:43690");
     });
 
     test("whitespace is trimmed", () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "  https://gw.example  " }));
-      expect(loadConfig(file, log).terminal_gateway_url).toBe("https://gw.example");
+      expect(loadConfig(files, log).terminal_gateway_url).toBe("https://gw.example");
     });
 
     test("non-string / empty value degrades to unset with a warning", () => {
       for (const value of [42, "", "   ", null]) {
         fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
         warnings = [];
-        expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+        expect(loadConfig(files, log).terminal_gateway_url).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
 
     test("unparseable URL degrades to unset with a warning", () => {
       fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "not a url" }));
-      expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+      expect(loadConfig(files, log).terminal_gateway_url).toBeUndefined();
       expect(warnings).toHaveLength(1);
     });
 
@@ -560,7 +566,7 @@ describe("loadConfig", () => {
       for (const value of ["ftp://gw.example", "javascript:alert(1)", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: value }));
         warnings = [];
-        expect(loadConfig(file, log).terminal_gateway_url).toBeUndefined();
+        expect(loadConfig(files, log).terminal_gateway_url).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
@@ -576,7 +582,7 @@ describe("loadConfig", () => {
           terminal_gateway_url: "https://gw.example",
         }),
       );
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(cfg.session_launcher).toBeDefined();
       expect(cfg.terminal_gateway_url).toBe("https://gw.example");
     });
@@ -589,20 +595,20 @@ describe("loadConfig", () => {
   describe("llm_usage_url", () => {
     test("valid https URL is retained", () => {
       fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "https://gw.example/usage" }));
-      expect(loadConfig(file, log).llm_usage_url).toBe("https://gw.example/usage");
+      expect(loadConfig(files, log).llm_usage_url).toBe("https://gw.example/usage");
       expect(warnings).toEqual([]);
     });
 
     test("whitespace is trimmed", () => {
       fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "  http://127.0.0.1:8080/usage  " }));
-      expect(loadConfig(file, log).llm_usage_url).toBe("http://127.0.0.1:8080/usage");
+      expect(loadConfig(files, log).llm_usage_url).toBe("http://127.0.0.1:8080/usage");
     });
 
     test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
       for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ llm_usage_url: value }));
         warnings = [];
-        expect(loadConfig(file, log).llm_usage_url).toBeUndefined();
+        expect(loadConfig(files, log).llm_usage_url).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
@@ -617,7 +623,7 @@ describe("loadConfig", () => {
           llm_usage_url: "https://gw.example/usage",
         }),
       );
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(cfg.terminal_gateway_url).toBeUndefined();
       expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
       expect(warnings).toHaveLength(1);
@@ -630,7 +636,7 @@ describe("loadConfig", () => {
   describe("llm_stats_url", () => {
     test("valid https URL is retained", () => {
       fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats" }));
-      expect(loadConfig(file, log).llm_stats_url).toBe("https://gw.example/stats");
+      expect(loadConfig(files, log).llm_stats_url).toBe("https://gw.example/stats");
       expect(warnings).toEqual([]);
     });
 
@@ -639,14 +645,14 @@ describe("loadConfig", () => {
     // config (the op overwrites just the `days` parameter).
     test("an existing query string is retained", () => {
       fs.writeFileSync(file, JSON.stringify({ llm_stats_url: "https://gw.example/stats?days=30" }));
-      expect(loadConfig(file, log).llm_stats_url).toBe("https://gw.example/stats?days=30");
+      expect(loadConfig(files, log).llm_stats_url).toBe("https://gw.example/stats?days=30");
     });
 
     test("non-string / empty / unparseable / non-http degrades to unset with a warning", () => {
       for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
         fs.writeFileSync(file, JSON.stringify({ llm_stats_url: value }));
         warnings = [];
-        expect(loadConfig(file, log).llm_stats_url).toBeUndefined();
+        expect(loadConfig(files, log).llm_stats_url).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
@@ -659,7 +665,7 @@ describe("loadConfig", () => {
           llm_stats_url: "https://gw.example/stats",
         }),
       );
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(cfg.llm_usage_url).toBeUndefined();
       expect(cfg.llm_stats_url).toBe("https://gw.example/stats");
       expect(warnings).toHaveLength(1);
@@ -672,7 +678,7 @@ describe("loadConfig", () => {
   describe("llm_events_url (retired)", () => {
     test("is ignored with a warning pointing at its replacement", () => {
       fs.writeFileSync(file, JSON.stringify({ llm_events_url: "http://127.0.0.1:8402/events" }));
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(cfg).toEqual({});
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain("webhooks");
@@ -688,7 +694,7 @@ describe("loadConfig", () => {
         file,
         JSON.stringify({ webhooks: { "llm-gateway": { token_file: "~/secrets/gw.token" } } }),
       );
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(cfg.webhooks?.["llm-gateway"]?.token_file).toBe(
         path.join(os.homedir(), "secrets/gw.token"),
       );
@@ -705,7 +711,7 @@ describe("loadConfig", () => {
           },
         }),
       );
-      expect(Object.keys(loadConfig(file, log).webhooks ?? {}).sort()).toEqual([
+      expect(Object.keys(loadConfig(files, log).webhooks ?? {}).sort()).toEqual([
         "llm-gateway",
         "some-other",
       ]);
@@ -717,7 +723,7 @@ describe("loadConfig", () => {
       for (const source of ["../etc", "Llm-Gateway", "llm gateway", "a".repeat(65), ""]) {
         fs.writeFileSync(file, JSON.stringify({ webhooks: { [source]: { token_file: "/t" } } }));
         warnings = [];
-        expect(loadConfig(file, log).webhooks).toBeUndefined();
+        expect(loadConfig(files, log).webhooks).toBeUndefined();
         expect(warnings).toHaveLength(1);
       }
     });
@@ -733,15 +739,88 @@ describe("loadConfig", () => {
           },
         }),
       );
-      const cfg = loadConfig(file, log);
+      const cfg = loadConfig(files, log);
       expect(Object.keys(cfg.webhooks ?? {})).toEqual(["llm-gateway"]);
       expect(warnings).toHaveLength(2);
     });
 
     test("a non-object webhooks value degrades to unset with a warning", () => {
       fs.writeFileSync(file, JSON.stringify({ webhooks: "llm-gateway" }));
-      expect(loadConfig(file, log).webhooks).toBeUndefined();
+      expect(loadConfig(files, log).webhooks).toBeUndefined();
       expect(warnings).toHaveLength(1);
+    });
+  });
+  // `config.js` exists because a launcher command is a shell script, and JSON
+  // can only hold one as a single escaped line. Everything past the file read
+  // is shared with the JSON path, so these cases cover the choice of file and
+  // the module-specific failures — not the field validation above.
+  describe("config.js", () => {
+    test("a module's default export is used and multi-line strings survive", () => {
+      fs.writeFileSync(
+        jsFile,
+        [
+          "export default {",
+          "  session_launcher: {",
+          "    root_dirs: [" + JSON.stringify(dir) + "],",
+          "    templates: [",
+          "      {",
+          "        name: 'multiline',",
+          "        command: `cd $CWD &&",
+          "  claude --model $MODEL`,",
+          "        params: { CWD: '', MODEL: 'fable' },",
+          "      },",
+          "    ],",
+          "  },",
+          "};",
+        ].join("\n"),
+      );
+      const templates = loadConfig(files, log).session_launcher?.templates;
+      expect(templates?.[0]?.command).toBe("cd $CWD &&\n  claude --model $MODEL");
+      expect(warnings).toEqual([]);
+    });
+
+    // Both files present is a half-finished migration, not a merge: the newer
+    // form wins and the user is told which file stopped being read.
+    test("config.js wins over config.json, with one warning naming both", () => {
+      fs.writeFileSync(jsFile, 'export default { terminal_gateway_url: "http://js.example/" };');
+      fs.writeFileSync(file, JSON.stringify({ terminal_gateway_url: "http://json.example/" }));
+      expect(loadConfig(files, log).terminal_gateway_url).toBe("http://js.example/");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain("config.json");
+    });
+
+    // A module that cannot be evaluated is user-editable garbage, exactly like
+    // broken JSON: warn once, start the daemon, expose nothing.
+    test("a module that throws or fails to parse returns an empty config", () => {
+      for (const source of ["export default { a: ;", 'throw new Error("boom");']) {
+        fs.rmSync(jsFile, { force: true });
+        // A fresh path per case: modules are cached by path once required.
+        jsFile = path.join(dir, `broken-${warnings.length}-${source.length}.js`);
+        files = { config: file, configJs: jsFile };
+        fs.writeFileSync(jsFile, source);
+        warnings = [];
+        expect(loadConfig(files, log)).toEqual({});
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    // Top-level `await` is the one shape a synchronous load cannot support.
+    // It degrades like any other unloadable module rather than crashing startup.
+    test("a module using top-level await degrades with a warning", () => {
+      fs.writeFileSync(jsFile, "await Promise.resolve();\nexport default {};");
+      expect(loadConfig(files, log)).toEqual({});
+      expect(warnings).toHaveLength(1);
+    });
+
+    test("a module without an object default export returns an empty config", () => {
+      for (const source of ["export const a = 1;", "export default 42;"]) {
+        jsFile = path.join(dir, `nodefault-${source.length}.js`);
+        files = { config: file, configJs: jsFile };
+        fs.writeFileSync(jsFile, source);
+        warnings = [];
+        expect(loadConfig(files, log)).toEqual({});
+        expect(warnings).toHaveLength(1);
+      }
     });
   });
 });
