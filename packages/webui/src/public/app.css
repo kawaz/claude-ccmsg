@@ -730,11 +730,11 @@ a {
   border: 1px solid var(--border);
 }
 
-/* 未読 say マーカー (kawaz r244 m5-m6)。行の情報量を増やしすぎないよう、
- * 1 件なら絵文字だけ、2 件以上のときだけ件数を添える。 */
+/* 未読 say マーカー (kawaz r244 m5-m6)。repo 名の直前に置き、文字サイズも
+ * repo と同格 (r244m13: 小さく行末に置いたら絶対気づかない)。1 件なら絵文字
+ * だけ、2 件以上のときだけ件数を添える。 */
 .session-say-unread {
   flex-shrink: 0;
-  font-size: var(--font-size-3xs);
   line-height: 1;
   white-space: nowrap;
 }

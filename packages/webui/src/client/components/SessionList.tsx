@@ -490,6 +490,18 @@ function SessionRowItem({
           >
             <Avatar seed={row.sid} size={16} />
           </span>
+          {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
+           * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと
+           * repo の間に割り込ませて、鳴ったことを見逃させない。 */}
+          {sayUnread > 0 ? (
+            <span
+              class="session-say-unread"
+              title={`未読の say ${sayUnread} 件 — 1on1 room の say バブルで既読にできます`}
+              aria-label={`未読の say ${sayUnread} 件`}
+            >
+              📣{sayUnread > 1 ? sayUnread : ""}
+            </span>
+          ) : null}
           {/* 1 行目は repo@ws (kawaz r135m17 で title と入れ替え)。行の中で
            * 唯一の強い文字で、`@ws` は @ ごと別色 (r135m18) — worktree 名は
            * 同じ repo の行同士を見分ける唯一の手掛かりなので、repo 名の反復に
@@ -520,18 +532,6 @@ function SessionRowItem({
               {badgeLabel(b)}
             </span>
           ))}
-        {/* DR-0020 §2.1 mini badge。kawaz r55 mid=20 で 2 行目が ws 専用に
-         * なったのに伴い、live status 系ここへ移動 (idle と隣接、視覚的な
-         * まとまりを保つ)。 */}
-        {sayUnread > 0 ? (
-          <span
-            class="session-say-unread"
-            title={`未読の say ${sayUnread} 件 — 1on1 room の 🔊 で既読にできます`}
-            aria-label={`未読の say ${sayUnread} 件`}
-          >
-            🔊{sayUnread > 1 ? sayUnread : ""}
-          </span>
-        ) : null}
         {statusBadge ? <span class="session-status-badge">{statusBadge}</span> : null}
         {idleMs !== null && <span class="session-idle">{formatDuration(idleMs)}</span>}
       </div>
@@ -645,19 +645,21 @@ function PinnedSessionRow({
       <div class="session-line1">
         <a href={sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
+          {/* 📣 の位置は SessionRowItem と同じ「アイコンと repo の間」
+           * (kawaz r244m13)。 */}
+          {sayUnread > 0 ? (
+            <span
+              class="session-say-unread"
+              title={`未読の say ${sayUnread} 件 — 1on1 room の say バブルで既読にできます`}
+              aria-label={`未読の say ${sayUnread} 件`}
+            >
+              📣{sayUnread > 1 ? sayUnread : ""}
+            </span>
+          ) : null}
           {repo ? <span class="session-line1-repo">{repo}</span> : null}
           {wsLabel ? <span class="session-line1-ws">{repo ? `@${wsLabel}` : wsLabel}</span> : null}
           {hasRepoWs ? null : titleCell}
         </a>
-        {sayUnread > 0 ? (
-          <span
-            class="session-say-unread"
-            title={`未読の say ${sayUnread} 件 — 1on1 room の 🔊 で既読にできます`}
-            aria-label={`未読の say ${sayUnread} 件`}
-          >
-            🔊{sayUnread > 1 ? sayUnread : ""}
-          </span>
-        ) : null}
         {peer === undefined ? (
           <span
             class="session-badge session-badge-offline"
