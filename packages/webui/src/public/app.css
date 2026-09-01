@@ -8576,3 +8576,12 @@ button.usage-reset:hover {
   flex-direction: column;
   gap: var(--space-8);
 }
+
+/* say_read 失敗の表示 (kawaz r244m14)。TL に差し込んだ say バブルの既読は
+ * RoomView と同じ非楽観なので、失敗がどこにも出ないと「押しても何も起きない」
+ * ように見える。次の試行まで残る 1 行。 */
+.tl-say-error {
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+  margin: 0;
+}

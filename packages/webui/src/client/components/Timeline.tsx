@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import type { ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
+import type { DeliveredEvent, ForkOrigin, PeerInfo, SessionStatusSnapshot } from "@ccmsg/protocol";
 import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
@@ -27,7 +27,7 @@ import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-ma
 import { crossLineIncrementally, emptyCrossLineCache } from "../incremental-cross-line.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
-import { bubbleHue, filePathCtxForSender, MemberAvatar } from "./TimelineItem.tsx";
+import { bubbleHue, filePathCtxForSender, MemberAvatar, TimelineItem } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
@@ -132,6 +132,8 @@ import { reindexStableSelection } from "../user-nav.ts";
 import { forkActionState, liveChain, type ForkActionState } from "../fork-point.ts";
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
+import { saySlots } from "../say-merge.ts";
+import { findExistingOneOnOne } from "./OneOnOneComposer.tsx";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,
@@ -3505,6 +3507,80 @@ export function Timeline({
   // (CcmsgRenderContext 経由の PeerCcmsgLineView) は別コンポーネントなので、
   // render 中に共有 Set を mutate すると fold の開閉のような子局所 re-render で
   // 判定が変わってしまう。
+  // --- `ccmsg say` バブルの差し込み (kawaz r244m14) ---
+  //
+  // say はセッション transcript には echo されない (protocol の SayEvent 参照:
+  // 喋った本人の context を食うだけなので意図的に切ってある) ので、TL に出すには
+  // transcript 以外の唯一の記録 — そのセッションの 1on1 room — から時刻で合流
+  // させるしかない (say-merge.ts)。バブル自体は RoomView と同じ TimelineItem を
+  // 使う (見た目も既読ボタンの経路も 1 実装のまま)。agent TL は別セッションの
+  // transcript を見ているので対象外 — その say はこの transcript のものではない。
+  const oneOnOne = useMemo(
+    () => (agent ? null : findExistingOneOnOne(appState, sid)),
+    [appState.rooms, sid, agent],
+  );
+  const oneOnOneId = oneOnOne?.id;
+  const oneOnOneHistory = oneOnOne?.history;
+  // room の events は「開いた room だけ」取りに行く設計 (store の room.history)。
+  // TL に say を出すにはその履歴が要るので、TL が実際に画面に出ている時にだけ
+  // 1 回取る — 見ていない間は何もしない (DR-0009/0020 と同じ線引き)。失敗は
+  // "error" のまま置き、reconnect / 再表示が再試行になる (RoomView と同じ)。
+  useEffect(() => {
+    if (!visible || !oneOnOneId || oneOnOneHistory !== "idle") return;
+    store.dispatch({ type: "room-history/loading", room: oneOnOneId });
+    void ws
+      .roomHistory(oneOnOneId)
+      .then((res) => {
+        store.dispatch({
+          type: "room-history/loaded",
+          room: oneOnOneId,
+          ...(res.ok ? {} : { error: res.error.msg }),
+        });
+      })
+      .catch(() => {
+        store.dispatch({ type: "room-history/loaded", room: oneOnOneId, error: "disconnected" });
+      });
+  }, [visible, oneOnOneId, oneOnOneHistory, store, ws]);
+  const says = useMemo(
+    () =>
+      (oneOnOne?.timeline ?? []).filter(
+        (ev): ev is Extract<DeliveredEvent, { type: "say" }> => ev.type === "say",
+      ),
+    [oneOnOne?.timeline],
+  );
+  const saySlotsByGroup = useMemo(() => saySlots(groups, says), [groups, says]);
+  // 既読は RoomView と同じ非楽観 — 成功は broadcast される say_read を store が
+  // 畳んで未読集合から消す。失敗を黙って捨てると「押しても何も起きない」に
+  // 見えるので、TL でも 1 行のエラーとして出して次の試行まで残す。
+  const [sayReadError, setSayReadError] = useState<string | null>(null);
+  const handleSayRead = useCallback(
+    (seq: number): void => {
+      if (!oneOnOneId) return;
+      void ws
+        .sayRead(oneOnOneId, seq)
+        .then((res) => {
+          setSayReadError(res.ok ? null : res.error.msg);
+        })
+        .catch(() => {
+          setSayReadError("接続エラーのため既読にできませんでした");
+        });
+    },
+    [ws, oneOnOneId],
+  );
+  const sayNodes = (slot: number) => {
+    if (!oneOnOne) return [];
+    return (saySlotsByGroup[slot] ?? []).map((ev) => (
+      <TimelineItem
+        key={`say-${ev.seq ?? ev.ts}`}
+        event={ev}
+        room={oneOnOne}
+        peers={appState.peers}
+        now={now}
+        onSayRead={handleSayRead}
+      />
+    ));
+  };
+
   const ccmsgTargets = useMemo(() => ccmsgRenderTargets(groups), [groups]);
   // Which folds enclose each line, so that nav can open them by key. Only the
   // fold side has entries here; a boundary bubble is always mounted.
@@ -4532,169 +4608,182 @@ export function Timeline({
                       />
                     ) : (
                       <div class="tl-lines" ref={tlLinesRef}>
-                        {parsed.length === 0 ? (
+                        {parsed.length === 0 && says.length === 0 ? (
                           <p class="tl-empty">(空の transcript)</p>
                         ) : (
-                          groups
-                            .map((group, i) => {
-                              if (group.kind === "fold") {
-                                return (
-                                  <MemoFoldGroup
-                                    key={group.entries[0]!.offset}
-                                    entries={group.entries}
-                                    translationAvailability={translationAvailability}
-                                    searchCtx={searchCtx}
-                                  />
-                                );
-                              }
-                              const { line, offset } = group;
-                              // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
-                              // 絶対に boundary と判定しない (groupTimelineLines がそれらを
-                              // fold group に送るので groups の "entry" 側には来ない) —
-                              // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
-                              // 実データ上も自明に成り立つ。
-                              if (line.kind !== "turn") return null;
-                              // boundaries[i] は上の useMemo で groups と同じ index で
-                              // 計算済み (render のたびの再分類を避けるため)。
-                              const boundary = boundaries[i]!;
-                              if (boundary === null) return null;
-                              switch (boundary.kind) {
-                                case "user-prompt":
+                          <>
+                            {sayReadError !== null ? (
+                              <p class="tl-say-error">{sayReadError}</p>
+                            ) : null}
+                            {groups
+                              .map((group, i) => {
+                                if (group.kind === "fold") {
                                   return (
-                                    <ItemRawToggle
-                                      key={offset}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <UserPromptBubble
-                                        line={line}
-                                        offsetKey={offset}
-                                        navKey={`user:${offset}`}
-                                        registerUserTurnRef={registerUserTurnRef}
-                                        translationAvailability={translationAvailability}
-                                        now={now}
-                                        searchCtx={searchCtx}
-                                        onUserTurnClick={onUserTurnClick}
-                                        selected={selectedUserTurnKey === `user:${offset}`}
-                                      />
-                                    </ItemRawToggle>
+                                    <MemoFoldGroup
+                                      key={group.entries[0]!.offset}
+                                      entries={group.entries}
+                                      translationAvailability={translationAvailability}
+                                      searchCtx={searchCtx}
+                                    />
                                   );
-                                case "assistant-response":
-                                  return (
-                                    <ItemRawToggle
-                                      key={offset}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <AssistantBubble
-                                        line={line}
-                                        offset={offset}
-                                        translationAvailability={translationAvailability}
-                                        now={now}
-                                        searchCtx={searchCtx}
-                                        actions={bubbleActions}
-                                      />
-                                    </ItemRawToggle>
-                                  );
-                                case "api-error":
-                                  return (
-                                    <ItemRawToggle
-                                      key={offset}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <ApiErrorNotice line={line} />
-                                    </ItemRawToggle>
-                                  );
-                                case "bash-command":
-                                  return (
-                                    <ItemRawToggle
-                                      key={offset}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <BashRunCard
-                                        command={boundary.segment.command}
-                                        output={boundary.segment.output}
-                                        ts={line.ts}
-                                      />
-                                    </ItemRawToggle>
-                                  );
-                                case "bash-command-output":
-                                  return (
-                                    <ItemRawToggle
-                                      key={offset}
-                                      offset={offset}
-                                      uuid={line.uuid}
-                                      selectedPosition={currentPosition === line.uuid}
-                                      onSelectPosition={selectPosition}
-                                    >
-                                      <BashRunCard
-                                        command={null}
-                                        output={boundary.segment}
-                                        ts={line.ts}
-                                      />
-                                    </ItemRawToggle>
-                                  );
-                                case "ccmsg": {
-                                  // raw タブ用の「この行に何が書いてあったか」:
-                                  // extractCcmsgMessages が読むのと同じ text segment 結合
-                                  // (subscribe / teammate-message wrapper の原文はそこにある)。
-                                  const rawText = line.segments
-                                    .filter(
-                                      (s): s is Extract<Segment, { kind: "text" }> =>
-                                        s.kind === "text",
-                                    )
-                                    .map((s) => s.text)
-                                    .join("\n");
-                                  return boundary.messages
-                                    .map((m, j) => {
-                                      if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
-                                        return null;
-                                      const navKey = `ccmsg:${offset}:${j}`;
-                                      return (
-                                        <ItemRawToggle
-                                          key={`${offset}-${j}`}
-                                          offset={offset}
-                                          uuid={line.uuid}
-                                          selectedPosition={currentPosition === line.uuid}
-                                          onSelectPosition={selectPosition}
-                                        >
-                                          <CcmsgBubble
-                                            message={m}
-                                            rawText={rawText}
-                                            now={now}
-                                            searchKey={ccmsgUnitKey(offset, j)}
-                                            searchCtx={searchCtx}
-                                            navKey={userTurnKeySet.has(navKey) ? navKey : undefined}
-                                            registerUserTurnRef={registerUserTurnRef}
-                                            onUserTurnClick={onUserTurnClick}
-                                            selected={selectedUserTurnKey === navKey}
-                                            room={appState.rooms.get(m.room)}
-                                            peers={appState.peers}
-                                          />
-                                        </ItemRawToggle>
-                                      );
-                                    })
-                                    .filter((n) => n !== null);
                                 }
-                              }
-                            })
-                            // Index-aligned with `groups`, so the seam splices in
-                            // ahead of the first group of forked-off history.
-                            .flatMap((node, i) =>
-                              i === forkDividerIndex
-                                ? [<ForkDivider key="fork-divider" origin={forkOrigin!} />, node]
-                                : node,
-                            )
+                                const { line, offset } = group;
+                                // line.kind !== "turn" (meta/broken) は classifyBoundaryLine が
+                                // 絶対に boundary と判定しない (groupTimelineLines がそれらを
+                                // fold group に送るので groups の "entry" 側には来ない) —
+                                // ここでの line.kind==="turn" ガードは型ナローイングのためだが、
+                                // 実データ上も自明に成り立つ。
+                                if (line.kind !== "turn") return null;
+                                // boundaries[i] は上の useMemo で groups と同じ index で
+                                // 計算済み (render のたびの再分類を避けるため)。
+                                const boundary = boundaries[i]!;
+                                if (boundary === null) return null;
+                                switch (boundary.kind) {
+                                  case "user-prompt":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <UserPromptBubble
+                                          line={line}
+                                          offsetKey={offset}
+                                          navKey={`user:${offset}`}
+                                          registerUserTurnRef={registerUserTurnRef}
+                                          translationAvailability={translationAvailability}
+                                          now={now}
+                                          searchCtx={searchCtx}
+                                          onUserTurnClick={onUserTurnClick}
+                                          selected={selectedUserTurnKey === `user:${offset}`}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  case "assistant-response":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <AssistantBubble
+                                          line={line}
+                                          offset={offset}
+                                          translationAvailability={translationAvailability}
+                                          now={now}
+                                          searchCtx={searchCtx}
+                                          actions={bubbleActions}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  case "api-error":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <ApiErrorNotice line={line} />
+                                      </ItemRawToggle>
+                                    );
+                                  case "bash-command":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <BashRunCard
+                                          command={boundary.segment.command}
+                                          output={boundary.segment.output}
+                                          ts={line.ts}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  case "bash-command-output":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <BashRunCard
+                                          command={null}
+                                          output={boundary.segment}
+                                          ts={line.ts}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  case "ccmsg": {
+                                    // raw タブ用の「この行に何が書いてあったか」:
+                                    // extractCcmsgMessages が読むのと同じ text segment 結合
+                                    // (subscribe / teammate-message wrapper の原文はそこにある)。
+                                    const rawText = line.segments
+                                      .filter(
+                                        (s): s is Extract<Segment, { kind: "text" }> =>
+                                          s.kind === "text",
+                                      )
+                                      .map((s) => s.text)
+                                      .join("\n");
+                                    return boundary.messages
+                                      .map((m, j) => {
+                                        if (!visibleCcmsgKeys.has(ccmsgUnitKey(offset, j)))
+                                          return null;
+                                        const navKey = `ccmsg:${offset}:${j}`;
+                                        return (
+                                          <ItemRawToggle
+                                            key={`${offset}-${j}`}
+                                            offset={offset}
+                                            uuid={line.uuid}
+                                            selectedPosition={currentPosition === line.uuid}
+                                            onSelectPosition={selectPosition}
+                                          >
+                                            <CcmsgBubble
+                                              message={m}
+                                              rawText={rawText}
+                                              now={now}
+                                              searchKey={ccmsgUnitKey(offset, j)}
+                                              searchCtx={searchCtx}
+                                              navKey={
+                                                userTurnKeySet.has(navKey) ? navKey : undefined
+                                              }
+                                              registerUserTurnRef={registerUserTurnRef}
+                                              onUserTurnClick={onUserTurnClick}
+                                              selected={selectedUserTurnKey === navKey}
+                                              room={appState.rooms.get(m.room)}
+                                              peers={appState.peers}
+                                            />
+                                          </ItemRawToggle>
+                                        );
+                                      })
+                                      .filter((n) => n !== null);
+                                  }
+                                }
+                              })
+                              // Index-aligned with `groups` on both counts: the seam
+                              // splices in ahead of the first group of forked-off
+                              // history, and each slot's say bubbles ahead of the
+                              // first group that is newer than them.
+                              .flatMap((node, i) => [
+                                ...sayNodes(i),
+                                ...(i === forkDividerIndex
+                                  ? [<ForkDivider key="fork-divider" origin={forkOrigin!} />, node]
+                                  : [node]),
+                              ])}
+                            {/* 読み込み済み window より新しい say (= 喋った turn の行が
+                                まだ jsonl に無い live のケース) は末尾に出す。 */}
+                            {sayNodes(groups.length)}
+                          </>
                         )}
                       </div>
                     )}
