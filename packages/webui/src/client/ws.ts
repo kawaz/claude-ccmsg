@@ -125,7 +125,7 @@ export interface WsHandle {
    * this response. */
   kick(room: string, id: string): Promise<KickResponse | ErrorResponse>;
   /** Ack one `say` event as read (kawaz r244 m5-m6): the 既読 button on a
-   * 🔊 bubble. `seq` is the SayEvent's own seq. Like every other room
+   * 📣 bubble. `seq` is the SayEvent's own seq. Like every other room
    * mutation here the update is non-optimistic — the `say_read` event comes
    * back on the subscribe stream and the store clears the unread entry from
    * there, so every open tab converges on the same badge. */

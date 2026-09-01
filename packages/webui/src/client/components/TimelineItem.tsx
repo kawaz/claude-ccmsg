@@ -171,7 +171,7 @@ function MsgItem({
 /** A `say` event's bubble (kawaz r244 m5-m6). Reads as a message rather than
  * as a thin status line because it carries what the machine actually said —
  * the text is the content, not metadata about the room. The 既読 button is
- * the only way the unread 🔊 in the Sessions list goes away, so it stays
+ * the only way the unread 📣 in the Sessions list goes away, so it stays
  * visible until acked and then reports the ack rather than vanishing (a
  * disappearing control leaves the reader unsure whether the click landed). */
 function SayItem({
@@ -190,9 +190,17 @@ function SayItem({
     <div class={unread ? "say say-unread" : "say"}>
       <div class="say-meta">
         <span class="say-icon" aria-hidden="true">
-          🔊
+          📣
         </span>
         <span class="say-from">say</span>
+      </div>
+      {/* Rendered as plain text: this is argv handed to /usr/bin/say, so
+          markdown-ish characters in it are literal, not formatting. */}
+      <div class="say-body">{event.text}</div>
+      {/* 時刻は本文の下 (kawaz r244 m16): TL の吹き出し (.tl-bubble-footer) も
+          ROOM 側の慣習も「発言のあとに時刻」で読むので、say だけ右上に置くと
+          浮く。既読の操作も時刻と同じ足元の行に置いて 1 行にまとめる。 */}
+      <div class="say-footer">
         <span class="say-time">{formatMsgTime(event.ts, now)}</span>
         {seq !== undefined && unread ? (
           <button type="button" class="say-read-btn" onClick={() => onRead?.(seq)}>
@@ -202,9 +210,6 @@ function SayItem({
           <span class="say-read-done">既読</span>
         )}
       </div>
-      {/* Rendered as plain text: this is argv handed to /usr/bin/say, so
-          markdown-ish characters in it are literal, not formatting. */}
-      <div class="say-body">{event.text}</div>
     </div>
   );
 }
@@ -220,7 +225,7 @@ export function TimelineItem({
   room: RoomState;
   peers: readonly PeerInfo[];
   now: number;
-  /** Sends the `say_read` ack for a 🔊 bubble. Absent in read-only contexts
+  /** Sends the `say_read` ack for a 📣 bubble. Absent in read-only contexts
    * (the component catalog), where the button simply does nothing. */
   onSayRead?: (seq: number) => void;
 }) {

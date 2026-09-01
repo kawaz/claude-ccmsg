@@ -2138,7 +2138,7 @@ export interface RoomSummary {
   live_members?: number;
   /** `seq` of every `say` event in this room with no matching `say_read` ack
    * (kawaz r244 m5-m6). Only ever non-empty on a 1on1 room; absent when there
-   * is nothing unread. Seeds the webui's sidebar 🔊 marker, which then tracks
+   * is nothing unread. Seeds the webui's sidebar 📣 marker, which then tracks
    * live `say` / `say_read` deliveries on the subscribe stream.
    *
    * Design rationale (the seqs, not just their count): the client keeps this

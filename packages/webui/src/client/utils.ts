@@ -146,7 +146,7 @@ export function splitRoomsByKind(rooms: RoomState[]): {
  * it (see MemberChip's isAdmin handling), so counting it would make every
  * room look inhabited. */
 /** Unread `say` count per session sid (kawaz r244 m5-m6), for the Sessions
- * list's 🔊 marker. Says live in a session's 1on1 room, so this walks the
+ * list's 📣 marker. Says live in a session's 1on1 room, so this walks the
  * rooms and attributes each room's unread set to that room's single non-User
  * member. A room that somehow has several present members contributes to none
  * of them: the marker means "this session made a sound", and a guessed

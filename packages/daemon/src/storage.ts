@@ -137,7 +137,7 @@ export function nextAgentMemberId(room: Room): string {
 }
 
 /** `seq` of every `say` event in this room with no matching `say_read` ack —
- * what the webui sidebar's 🔊 marker counts (kawaz r244 m5-m6). Derived by a
+ * what the webui sidebar's 📣 marker counts (kawaz r244 m5-m6). Derived by a
  * scan rather than kept as a field on Room: the ack set is the authority, a
  * duplicate ack for the same seq must not double-decrement, and a scan of an
  * append-only log needs no restart-time reconstruction. A `say` whose `seq`

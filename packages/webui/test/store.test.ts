@@ -304,7 +304,7 @@ describe("reducer / say and say_read (kawaz r244 m5-m6)", () => {
       seq,
     }) as DeliveredEvent;
 
-  // 輪郭: 未読の追跡は room を開いていなくても動く。サイドバーの 🔊 は「まだ
+  // 輪郭: 未読の追跡は room を開いていなくても動く。サイドバーの 📣 は「まだ
   // 開いていないセッションが鳴らした」を伝えるためのものなので、painted 判定に
   // 引きずられて未読が増えないと機能そのものが成立しない。
   test("tracks unread even for a room whose history was never fetched", () => {

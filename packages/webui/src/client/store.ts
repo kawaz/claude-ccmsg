@@ -68,7 +68,7 @@ export interface RoomState {
    * which has no id to dedup on the way `msgs` does). */
   history: "idle" | "loading" | "loaded" | "error";
   /** `seq` of this room's `say` events that have no `say_read` ack yet
-   * (kawaz r244 m5-m6) — the 🔊 marker in the Sessions list counts these.
+   * (kawaz r244 m5-m6) — the 📣 marker in the Sessions list counts these.
    * A set, not a counter, so that re-folding the same events (the room's
    * `room_history` refetch replays every past say and ack) converges instead
    * of drifting. Seeded from `RoomSummary.say_unread_seqs`, then maintained by

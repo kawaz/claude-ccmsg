@@ -2165,7 +2165,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "say_read": {
-      // 既読は webui の 🔊 バブル上のボタンからだけ立つ (user role 限定):
+      // 既読は webui の 📣 バブル上のボタンからだけ立つ (user role 限定):
       // 未読数は「kawaz がまだ見ていない say」の数であって、喋った session が
       // 自分で消せる意味の数ではない。
       if (conn.identity?.role !== "user") {
@@ -2432,7 +2432,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
           // absence of the field.
           ...(r.kind !== "normal" ? { kind: r.kind } : {}),
-          // 🔊 marker seed (kawaz r244 m5-m6): only 1on1 rooms ever carry say
+          // 📣 marker seed (kawaz r244 m5-m6): only 1on1 rooms ever carry say
           // events, but the scan runs uniformly — a room's kind is not a reason
           // to special-case a walk that finds nothing on rooms without them.
           // Omitted when empty, per the field's contract.

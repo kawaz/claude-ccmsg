@@ -397,7 +397,7 @@ function SessionRowItem({
   cacheTs: number | null;
   /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
-   * ようにするためのもので、既読は 1on1 room の 🔊 バブル側で付ける。 */
+   * ようにするためのもので、既読は 1on1 room の 📣 バブル側で付ける。 */
   sayUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
@@ -602,7 +602,7 @@ function PinnedSessionRow({
   modelEffort: { text: string; title: string } | null;
   /** 未読の `ccmsg say` 件数。ピンは下の status セクションから除外されている
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
-   * 🔊 がどこにも出なくなる。 */
+   * 📣 がどこにも出なくなる。 */
   sayUnread: number;
   onUnpin: () => void;
 }) {

@@ -2232,7 +2232,13 @@ a {
 .say {
   border-radius: 0.5rem;
   padding: var(--space-7) var(--space-9);
-  max-width: 90%;
+  /* 幅は中身なり (kawaz r244 m16): 親 (.timeline / .tl-lines) が
+   * flex-direction:column なので、指定なしだと stretch して短い一言でも
+   * 行いっぱいに伸び、TL の吹き出し (.tl-bubble-body の width:fit-content)
+   * より長く見える。上限も .tl-bubble と同じ 85%。 */
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 85%;
   background: oklch(0.96 0.03 80);
   border-left: 3px solid oklch(0.75 0.05 80);
 }
@@ -2260,8 +2266,18 @@ a {
   margin-bottom: var(--space-2);
 }
 
+/* 時刻 + 既読の足元行。.tl-bubble-footer と同じ「本文の下に 1 行」構成。 */
+.say-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-top: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--fg-muted);
+}
+
 .say-time {
-  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .say-read-btn {
@@ -2288,6 +2304,10 @@ a {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: var(--font-size-xl);
+  /* markdown を通さない素のテキストなので .md の行間が乗らない。会話の
+   * 吹き出しとして同じ密度で読めるよう明示する (kawaz r244 m16
+   * 「行間がつまりすぎ」)。 */
+  line-height: var(--md-leading-tight);
 }
 
 .event {
