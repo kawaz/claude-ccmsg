@@ -655,6 +655,15 @@ a {
   gap: var(--space-5);
 }
 
+/* repo/ws を持たない行ではタイトルが 1 行目に上がる (SessionRowItem の
+ * hasRepoWs 分岐)。その行だけリンクの幅をリストの可視幅に留める: 行は
+ * width:max-content で伸びる (r46m36) ため、長いタイトルを素通しにすると
+ * 右に添えた ✏️ が可視域の外へ出て、横スクロールしないと押せなくなる。
+ * repo@ws の行は 1 行目に編集導線を持たないので、従来どおり伸ばす。 */
+.session-line1-titled > .session-main-link {
+  max-width: calc(100cqi - var(--space-8) * 2);
+}
+
 .session-main-link {
   display: flex;
   align-items: center;
@@ -770,8 +779,12 @@ a {
   white-space: nowrap;
 }
 
-/* 2 行目: タイトル。 */
+/* 2 行目: タイトル。幅の基準は行ではなくリストの可視幅 — .session-line3 と
+ * 同じ理由に加えて、タイトル右の ✏️ を可視域に留めるため。 */
 .session-line2 {
+  width: calc(100cqi - var(--space-8) * 2);
+  box-sizing: border-box;
+  overflow: hidden;
   padding-left: var(--space-14);
   display: flex;
   align-items: baseline;
@@ -788,6 +801,11 @@ a {
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
+  /* 行末の 📋 (.session-inline-icon-btn) を押せる位置に残すため、はみ出しは
+   * sid 自身の中で切る。細いサイドバーで line3 ごと溢れさせると、右端に並ぶ
+   * ボタンの方が先に画面外へ出てタップできなくなる。 */
+  overflow: hidden;
+  min-width: 0;
 }
 
 .session-sid.armed {
@@ -804,6 +822,7 @@ a {
 }
 
 .session-sid-copied {
+  color: var(--accent);
   margin-left: var(--space-6);
   font-family:
     system-ui,
@@ -813,8 +832,46 @@ a {
   white-space: nowrap;
 }
 
-.session-row.active .session-sid.copied {
+.session-row.active .session-sid.copied,
+.session-row.active .session-sid-copied {
   color: var(--accent-fg);
+}
+
+/* タイトル右の ✏️ / sid 右の 📋 (kawaz r244m20)。Shift+クリックはそのまま
+ * 残したうえでの追加導線なので、既定では行を hover した時だけ浮かび上がる
+ * — 4 行の情報が縦に並ぶ行に、常時光るボタンを 2 つ足すと行の密度が壊れる。
+ * hover を持たないタッチ端末では代わりに常時薄表示 (.tl-item-raw-toggle と
+ * 同じ扱い) にする。そちらこそがこのボタンの本来の宛先なので、見えない状態
+ * のまま残してはいけない。 */
+.session-inline-icon-btn {
+  flex: none;
+  align-self: center;
+  padding: 0 var(--space-3);
+  margin-left: var(--space-3);
+  border: 0;
+  background: none;
+  line-height: 1;
+  font-size: var(--font-size-2xs);
+  color: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.session-row:hover .session-inline-icon-btn,
+.session-row:focus-within .session-inline-icon-btn {
+  opacity: 0.75;
+}
+
+.session-inline-icon-btn:hover,
+.session-inline-icon-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .session-inline-icon-btn {
+    opacity: 0.45;
+  }
 }
 
 /* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら

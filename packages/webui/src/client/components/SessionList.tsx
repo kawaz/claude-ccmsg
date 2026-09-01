@@ -172,17 +172,36 @@ function SessionIdText({ sid }: { sid: string }) {
   }
 
   return (
-    <span
-      class={`session-sid${armed ? " armed" : ""}${copied ? " copied" : ""}`}
-      title={`${sid}\nShift+クリックでコピー`}
-      onClick={(e) => {
-        if (e.shiftKey) void copy();
-      }}
-      {...handlers}
-    >
-      {sid}
+    <>
+      <span
+        class={`session-sid${armed ? " armed" : ""}${copied ? " copied" : ""}`}
+        title={`${sid}\nShift+クリックでコピー`}
+        onClick={(e) => {
+          if (e.shiftKey) void copy();
+        }}
+        {...handlers}
+      >
+        {sid}
+      </span>
+      {/* タップ用のコピー導線 (kawaz r244m20)。Shift+クリックはポインタと
+       * 修飾キーが要るのでタッチ端末では踏めない — 同じ copy() を叩く明示的な
+       * ボタンを sid の右に添える。行 click は button 上で素通しになる
+       * (selectSessionOnRowClick) ので、遷移との競合はない。 */}
+      <button
+        type="button"
+        class="session-inline-icon-btn"
+        title="セッション ID をコピー"
+        aria-label="セッション ID をコピー"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void copy();
+        }}
+      >
+        📋
+      </button>
       {copied ? <span class="session-sid-copied">✓ コピーしました</span> : null}
-    </span>
+    </>
   );
 }
 
@@ -245,6 +264,13 @@ function SessionTitle({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, [editing]);
+
+  function startEditing(): void {
+    settledRef.current = false;
+    savingRef.current = false;
+    setDraft(title);
+    setEditing(true);
+  }
 
   function close(): void {
     setEditing(false);
@@ -331,23 +357,42 @@ function SessionTitle({
   }
 
   return (
-    <span
-      class={`session-title${editable && armed ? " armed" : ""}`}
-      title={editable ? `${title}\nShift+クリックでタイトルを変更` : title}
-      onClick={(e) => {
-        if (!editable || !e.shiftKey) return;
-        // An agent-only row renders this title inside the row's link (see
-        // SessionRowItem's `hasRepoWs` branch); arming must not also navigate.
-        e.preventDefault();
-        settledRef.current = false;
-        savingRef.current = false;
-        setDraft(title);
-        setEditing(true);
-      }}
-      {...(editable ? handlers : {})}
-    >
-      {title}
-    </span>
+    <>
+      <span
+        class={`session-title${editable && armed ? " armed" : ""}`}
+        title={editable ? `${title}\nShift+クリックでタイトルを変更` : title}
+        onClick={(e) => {
+          if (!editable || !e.shiftKey) return;
+          // An agent-only row renders this title inside the row's link (see
+          // SessionRowItem's `hasRepoWs` branch); arming must not also navigate.
+          e.preventDefault();
+          startEditing();
+        }}
+        {...(editable ? handlers : {})}
+      >
+        {title}
+      </span>
+      {/* タップ用の編集導線 (kawaz r244m20)。Shift+クリックと同じ編集モードに
+       * 入るだけで、編集可否の条件も同じ — editable でない行には出さない
+       * (押しても失敗しかしない導線を置かない、という上の doc と同じ理由)。
+       * repo/ws を持たない行ではこのタイトルが行の <a> の中に描かれるので、
+       * 既定の遷移を止めてから編集を開く。 */}
+      {editable ? (
+        <button
+          type="button"
+          class="session-inline-icon-btn"
+          title="タイトルを変更"
+          aria-label="タイトルを変更"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            startEditing();
+          }}
+        >
+          ✏️
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -459,7 +504,7 @@ function SessionRowItem({
       onClick={selectSessionOnRowClick(row.sid)}
     >
       <div
-        class="session-line1"
+        class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}
         // DR-0011 §1-4: drag onto a room's chat area to invite this session.
         // Only meaningful for a connected (ccmsg-started) row — invite needs
         // the sid to be in the daemon's live connection registry, which an
@@ -642,7 +687,7 @@ function PinnedSessionRow({
       title={hit.cwd ?? undefined}
       onClick={selectSessionOnRowClick(hit.sid)}
     >
-      <div class="session-line1">
+      <div class={hasRepoWs ? "session-line1" : "session-line1 session-line1-titled"}>
         <a href={sessionHref(hit.sid)} class="session-main-link">
           <Avatar seed={hit.sid} size={16} />
           {/* 📣 の位置は SessionRowItem と同じ「アイコンと repo の間」
