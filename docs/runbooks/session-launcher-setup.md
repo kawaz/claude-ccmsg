@@ -72,8 +72,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    `: CcmsgConfig` ではなく `satisfies CcmsgConfig` を使うと、
    command の文字列リテラル等の型を保ったまま構造チェックだけがかかる。
    `CcmsgConfig` は手書き設定がそのまま満たせる **入力側**の型
-   (`params` はこの例のような `{ 名前: 初期値 }` の record、`root_dirs` 以外の
-   フィールドは全て省略可) — daemon が起動時に検証・正規化した後の内部表現
+   (`params` はこの例のような `{ 名前: 初期値 }` の record。必須は
+   `root_dirs` と `templates`、各テンプレートは `name` / `command` / `params`) — daemon が起動時に検証・正規化した後の内部表現
    (`ResolvedCcmsgConfig`。`params` が resolved な配列になる等) とは別物なので、
    `CcmsgConfig` の方を使う。他ファイルへの分割は普通の相対 import で
    できる (下記は `params` の宣言だけ別ファイルに出す例):
@@ -249,8 +249,10 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    }
 ```
 
-- 個別エントリが壊れていても (name が空 / 重複 / command が無い) そのエントリ
-  だけ warn して無視し、残りは生きる。全滅すると launcher 無効
+- 各テンプレートは `command` と `params` を自分で全部書く (継承は `shell` の
+  デフォルトのみ)
+- 個別エントリが壊れていても (name が空 / 重複 / `command` や `params` が無い)
+  そのエントリだけ warn して無視し、残りは生きる。全滅すると launcher 無効
 - **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している
   最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由。
   逆に「+ 新規」は `RESUME_AT` を宣言していない最初のテンプレートを開く
@@ -262,15 +264,6 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
   `claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、
   その `session_id` を 2 段目が対話で resume する。`RESUME_AT` が空なら
   `--resume-session-at` を付けない (空文字は 1 段目のエラーになる)
-
-### 旧形式 (`params` 以前) からの移行
-
-`session_launcher` 直下の `command` / `default_prompt` と、`params` を持たない
-`templates` エントリは **まだ動く** が、起動時に deprecation warn が 1 行出る。
-旧形式は各 command が実際に読んでいる変数 (`$CWD` / `$MODEL` / `$EFFORT` /
-`$PROMPT` / `$RESUME_SID` / `$RESUME_AT`) から `params` を推定して正規化される。
-`default_prompt` は `PROMPT` の初期値になる。推定に頼ると「command がまだ
-使っていない変数を先に入力欄として出す」ことができないので、上の形に書き直す。
 
 2. **daemon を再起動する**
 

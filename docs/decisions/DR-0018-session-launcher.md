@@ -153,9 +153,18 @@ launcher がテンプレ構造なのに既定値がテンプレの外にあり�
   `params: Record<string, string>` に一本化。未宣言の変数名は invalid_args
   (黙って捨てない)。carrier は `ccmsg_new_session_param_<NAME>` に改名
   (変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
-- 旧形式 (トップレベル command/default_prompt + 部分上書き templates) は
-  読み込み時に新形式へ正規化して deprecation 警告を 1 行出す。実行系は
-  正規化後の 1 経路のみ
+**Addendum 2026-09-02 (kawaz r259m19): 移行経路の撤去**: 上の supersede に
+伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの
+`default_prompt`、`params` 未宣言テンプレの変数推測) を撤去する。既定値が
+テンプレの外にあること自体が是正対象だったので、移行用の受け皿を残すと
+「入力欄が command 文字列から推測される」旧モデルが型と実装に生き続ける。
+config の形は §3.1 の supersede 後の 1 つだけ:
+
+- `templates` は必須。各テンプレは `command` と `params` を自分で全部書く。
+  launcher 直下から継承するのは `shell` の既定値のみ
+- `command` / `params` を欠くテンプレは warn してそのエントリだけ無視。
+  使えるテンプレが 0 件なら launcher 無効 (root_dirs 不正時と同じ posture)
+- 既定プロンプトは `params.PROMPT` の初期値として書く
 
 ### 3.2 protocol (新 op)
 
@@ -228,7 +237,7 @@ fork テンプレは次の二段で書く:
 - **`components/Sidebar.tsx`**: SESSIONS 見出しの右に「+ 新規」ボタン、クリックで `state.view = "session-creator"` へ dispatch
 - **新規コンポーネント** `components/SessionCreator.tsx`:
   - フォーム (dropdown / textarea / dir tree trigger)
-  - 「default」ボタン → prompt を config.default_prompt に戻す
+  - 「default」ボタン → 各入力を `params` の宣言値に戻す
   - 「実行」ボタン → session_launch op、結果を下に表示
 - **新規コンポーネント** `components/CwdTree.tsx`:
   - dir_tree op で fetch、展開状態 local state

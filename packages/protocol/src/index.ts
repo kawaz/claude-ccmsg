@@ -53,10 +53,6 @@ export const FS_READ_MAX_BYTES = 512 * 1024;
 export const DEFAULT_DIR_TREE_DEPTH = 2;
 export const DEFAULT_LAUNCH_TIMEOUT_SECONDS = 10;
 
-/** Name given to the implicit single template a flat (pre-templates)
- * `session_launcher` config parses into. */
-export const DEFAULT_LAUNCHER_TEMPLATE_NAME = "default";
-
 /** One launch parameter a template declares: the shell variable name its
  * command may read, and the value the form opens with. The declaration is the
  * only source of truth for which variables exist — the launcher shell defines
@@ -80,9 +76,9 @@ export interface LauncherParam {
 export const LAUNCHER_CWD_PARAM = "CWD";
 
 /** One named launch recipe in the parsed normal form of `session_launcher`.
- * Every field is fully resolved at parse time (a legacy config's inherited
- * `command`/`default_prompt`/`shell` and its implied parameter list are
- * normalized here), so nothing downstream has to re-apply fallbacks.
+ * Every field is fully resolved at parse time (an inherited `shell` and the
+ * implicit CWD parameter are normalized here), so nothing downstream has to
+ * re-apply fallbacks.
  *
  * `command` is a shell program, not an argv: its vocabulary is the shell
  * variables this template declares in `params`, which the launcher shell
@@ -103,9 +99,8 @@ export interface SessionLauncherTemplate {
  * built-in choice so launch never falls through to an implicit `sh -c`.
  *
  * `templates` is always non-empty — a config that yields no usable template
- * disables the launcher entirely (same posture as a missing `command` before
- * templates existed). The flat single-command form stays valid and parses to
- * exactly one template; `templates[0]` is the launcher's default recipe. */
+ * disables the launcher entirely. `templates[0]` is the launcher's default
+ * recipe. */
 export interface SessionLauncherConfig {
   root_dirs: string[];
   templates: SessionLauncherTemplate[];

@@ -157,61 +157,28 @@ describe("loadConfig", () => {
     expect(warnings).toHaveLength(3);
   });
 
-  // The pre-`params` form still launches: its parameter list is re-derived from
-  // the variables each command actually reads, which is the same set the webui
-  // used to infer at render time. One warning points at the current form.
-  test("a legacy config is normalized into params, with a deprecation warning", async () => {
+  // `params` is the only source of truth for the form's inputs, so a template
+  // that omits it (or its command) is unusable and must not silently launch a
+  // recipe nobody declared — it is skipped with a warning, exactly like any
+  // other malformed entry, while its siblings keep working.
+  test("templates without params or command are ignored with a warning", async () => {
     fs.writeFileSync(
       file,
       JSON.stringify({
         session_launcher: {
           root_dirs: [dir],
-          default_prompt: "shared",
-          command: 'claude --model "$MODEL" --effort "$EFFORT" "$PROMPT"',
           templates: [
-            { name: "new" },
-            {
-              name: "fork",
-              default_prompt: "",
-              command: 'claude --resume "$RESUME_SID" --resume-session-at="$RESUME_AT" "$PROMPT"',
-            },
+            { name: "no-params", command: 'run "$PROMPT"' },
+            { name: "no-command", params: { PROMPT: "" } },
+            { name: "ok", command: 'run "$PROMPT"', params: { PROMPT: "hi" } },
           ],
         },
       }),
     );
 
-    const templates = (await loadConfig(files, log)).session_launcher?.templates;
-    expect(templates?.[0]?.params).toEqual([
-      { name: "CWD", default: "" },
-      { name: "MODEL", default: "fable" },
-      { name: "EFFORT", default: "medium" },
-      { name: "PROMPT", default: "shared" },
-    ]);
-    // The fork recipe reads the resume pair and overrode the prompt to empty;
-    // it never mentions $MODEL, so no model input is implied for it.
-    expect(templates?.[1]?.params).toEqual([
-      { name: "CWD", default: "" },
-      { name: "PROMPT", default: "" },
-      { name: "RESUME_SID", default: "" },
-      { name: "RESUME_AT", default: "" },
-    ]);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toContain("params");
-  });
-
-  // The flat (pre-templates) form goes through the same normalization: one
-  // implicit recipe, its parameters read off its command.
-  test("the flat single-command form normalizes to one declared recipe", async () => {
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        session_launcher: { root_dirs: [dir], command: 'run "$PROMPT"', default_prompt: "hi" },
-      }),
-    );
-
     expect((await loadConfig(files, log)).session_launcher?.templates).toEqual([
       {
-        name: "default",
+        name: "ok",
         command: 'run "$PROMPT"',
         params: [
           { name: "CWD", default: "" },
@@ -220,7 +187,20 @@ describe("loadConfig", () => {
         shell: "bash",
       },
     ]);
-    expect(warnings).toHaveLength(1);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("no params");
+    expect(warnings[1]).toContain("command must be a non-empty string");
+  });
+
+  // No `templates` key at all leaves nothing to launch, so the launcher is
+  // disabled rather than inferring a recipe from other fields.
+  test("a launcher without templates is disabled", async () => {
+    fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
+
+    expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("templates must be an array");
+    expect(warnings[1]).toContain("launcher disabled");
   });
 
   // DR-0018's user-facing examples use ~/..., so the parser expands it against
@@ -370,14 +350,6 @@ describe("loadConfig", () => {
       expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
       expect(warnings).toHaveLength(1);
     }
-  });
-
-  // command is the fixed launch program selected by the administrator. Without
-  // it, accepting session_launch would create an undefined execution contract.
-  test("missing command disables session_launcher", async () => {
-    fs.writeFileSync(file, JSON.stringify({ session_launcher: { root_dirs: [dir] } }));
-    expect((await loadConfig(files, log)).session_launcher).toBeUndefined();
-    expect(warnings).toHaveLength(1);
   });
 
   // Numeric garbage is localized to the affected field: the launcher remains

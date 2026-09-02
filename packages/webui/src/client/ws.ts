@@ -346,8 +346,8 @@ export interface WsHandle {
     req: Omit<SessionLaunchRequest, "op" | "request_id">,
   ): Promise<SessionLaunchResponse | ErrorResponse>;
   /** Session-launcher config projection (DR-0018 §3.4 addendum, user role
-   * only): `root_dirs` (CwdTree's initial fetch roots) and `default_prompt`
-   * (SessionCreator's "default" button). `error.code === "launcher_not_configured"`
+   * only): `root_dirs` (CwdTree's initial fetch roots) and the `templates`
+   * SessionCreator renders its form from. `error.code === "launcher_not_configured"`
    * is the signal SessionCreator uses to show setup guidance instead of the
    * form (§2.1 "launcher 未設定時"). */
   sessionLauncherConfig(): Promise<SessionLauncherConfigResponse | ErrorResponse>;
