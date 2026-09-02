@@ -37,7 +37,8 @@ DR-0029、docs/findings/2026-07-31-blocking-io-audit.md からの派生検討。
 
 ## 受け入れ条件
 
-- [ ] 同一接続内での cold scan 待ち時間を実測し、体感/実害の有無を確認する
+- [x] 同一接続内での cold scan 待ち時間を実測し、体感/実害の有無を確認する
+  ([findings](../findings/2026-09-02-session-status-same-connection-latency.md))
 - [ ] 実測結果を踏まえ、2-phase 化に着手するか見送るかを裁定する
 - [ ] 着手する場合、session_search と同型の protocol 拡張案 (accept + request_id event) を設計する
 
