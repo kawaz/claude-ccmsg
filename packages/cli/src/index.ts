@@ -537,6 +537,45 @@ async function runDaemonStart(): Promise<never> {
   process.exit(0);
 }
 
+/** `ccmsg daemon restart` — stop the running daemon and bring a fresh one up in
+ * its place, which is how an edited `<configDir>/config.{ts,js,json}` reaches a
+ * live daemon: user configuration is read once at startup (DR-0018 LN-Q4) and
+ * the `config.ts` path goes through a dynamic `import()`, whose module cache
+ * hands back the first-loaded module for the rest of the process's life (a
+ * cache-busting query does not defeat it under bun) — so no in-process reload
+ * can observe the edit.
+ *
+ * The stop→respawn sequence is the same one `ensureDaemon` runs for a
+ * client-driven version upgrade (shutdown, waitDaemonGone, spawn), reused here
+ * rather than duplicated. Live `subscribe` clients reattach through their own
+ * no-spawn reconnect backoff once the replacement is listening; the no-spawn
+ * contract only keeps subscribe from resurrecting a daemon nobody replaced, and
+ * here the restarting client is the one putting it back.
+ *
+ * With nothing running this degrades to `daemon start` (restarted:false,
+ * started:true) instead of erroring — "make a current daemon be running" is the
+ * ask either way. */
+async function runDaemonRestart(): Promise<never> {
+  const paths = resolvePaths();
+  const existing = await connectIfRunning(paths);
+  if (existing) {
+    try {
+      await existing.request({ op: "shutdown", reason: "restart" });
+    } catch {
+      // daemon may drop the connection without replying
+    }
+    existing.close();
+    await waitDaemonGone(paths.sock);
+  }
+  const client = await ensureDaemon(paths, { role: "user" });
+  output({
+    ...(await pingRunningStatus(client, paths)),
+    restarted: existing !== null,
+    started: existing === null,
+  });
+  process.exit(0);
+}
+
 async function runDaemonStop(): Promise<never> {
   const paths = resolvePaths();
   const client = await connectIfRunning(paths);
@@ -622,7 +661,11 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
     void runDaemonStop();
     return;
   }
-  process.stderr.write("ccmsg: usage: ccmsg daemon <start|run|stop>\n");
+  if (sub === "restart") {
+    void runDaemonRestart();
+    return;
+  }
+  process.stderr.write("ccmsg: usage: ccmsg daemon <start|run|stop|restart>\n");
   process.exitCode = 1;
 }
 
@@ -710,6 +753,11 @@ Commands:
                                (idempotent: prints the same status either way)
   daemon run [--foreground]    Run the daemon in this process
   daemon stop                  Gracefully stop the running daemon
+  daemon restart               Stop the daemon and start a fresh one — how an
+                               edited config.ts/js/json (see CCMSG_CONFIG_DIR)
+                               takes effect, since configuration is read once
+                               at startup. Starts the daemon if none was running.
+                               Live "subscribe" clients reattach on their own
 
 Command Options:
   --to <ids>                   post: deliver only to these agent member id(s) + sender,

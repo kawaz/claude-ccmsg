@@ -268,9 +268,13 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 2. **daemon を再起動する**
 
    ```bash
-   ccmsg daemon stop   # または現在の運用手順に沿った停止方法
-   ccmsg daemon run    # または通常の起動手順
+   ccmsg daemon restart
    ```
+
+   設定は daemon 起動時に 1 度だけ読まれるので、編集を反映する手段は
+   restart しかない (`config.ts` は動的 `import()` 経由で読まれ、module
+   cache が同一プロセス内での読み直しを許さない)。接続中の webui /
+   `ccmsg subscribe` は自動再接続で復帰する。
 
    期待結果: 起動ログにエラーが出ない。`root_dirs` / `command` が不正な形
    (非配列、絶対パスでない要素のみ、等) だと daemon はクラッシュせず
