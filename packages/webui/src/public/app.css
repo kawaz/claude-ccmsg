@@ -7860,6 +7860,53 @@ button.usage-reset:hover {
   color: var(--danger);
 }
 
+/* A reading from a period that has already reset. Faded rather than hidden —
+   the last known figure is still the best information about that window — and
+   labelled beside it, since fading alone does not say why. */
+.usage-window.is-stale {
+  opacity: 0.55;
+}
+
+.usage-window-expired {
+  margin-left: var(--space-4);
+  font-size: var(--font-size-3xs);
+  color: var(--fg-muted);
+  vertical-align: middle;
+}
+
+/* The credential cannot authenticate: stated above its numbers, with the fix
+   (the gateway's own login page) on the same line. */
+.usage-auth {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-6);
+  margin-top: var(--space-7);
+  font-size: var(--font-size-md);
+}
+
+.usage-auth-label {
+  font-weight: 600;
+}
+
+.usage-auth.tone-warn .usage-auth-label {
+  color: var(--warn);
+}
+
+.usage-auth.tone-bad .usage-auth-label {
+  color: var(--danger);
+}
+
+/* The gateway's English prose, kept subordinate to the heading above it. */
+.usage-auth-reason {
+  flex-basis: 100%;
+  color: var(--fg-muted);
+}
+
+.usage-auth-login {
+  font-weight: 600;
+}
+
 /* Sits with the label rather than in the figures: it qualifies which limit
    this is, not how full it is. */
 .usage-limit-active {

@@ -129,6 +129,88 @@ describe("parseUsagePayload", () => {
     expect(credentials.map((c) => c.name)).toEqual(["kept"]);
   });
 
+  // `expired` is how the gateway says a reading predates its own reset. It
+  // travels as a flag rather than being inferred from `reset` vs the clock:
+  // only the gateway knows when it took the reading.
+  test("carries a window's expired flag, and only when it is set", () => {
+    const windows = unwrap(
+      parseUsagePayload({
+        credentials: [
+          {
+            name: "x",
+            support: "observed",
+            snapshot: {
+              "5h": { utilization: 0.1, status: "allowed" },
+              "7d": { utilization: 1.01, status: "rejected", expired: true },
+            },
+          },
+        ],
+      }),
+    ).credentials[0]?.snapshot?.windows;
+    expect(windows?.["5h"]).toEqual({ utilization: 0.1, status: "allowed" });
+    expect(windows?.["7d"]).toEqual({ utilization: 1.01, status: "rejected", expired: true });
+  });
+
+  describe("auth", () => {
+    const withAuth = (auth: unknown, base?: string) =>
+      unwrap(
+        parseUsagePayload(
+          { credentials: [{ name: "x", type: "claude_oauth", support: "observed", auth }] },
+          base,
+        ),
+      ).credentials[0]?.auth;
+
+    test("passes the gateway's state through", () => {
+      expect(
+        withAuth({
+          status: "relogin_required",
+          reason: "run `llm-gateway login --type claude_oauth x`",
+          observed_at: 1785449700,
+          observed_at_iso: "2026-07-30T23:55:00Z",
+        }),
+      ).toEqual({
+        status: "relogin_required",
+        reason: "run `llm-gateway login --type claude_oauth x`",
+        observed_at: 1785449700,
+        observed_at_iso: "2026-07-30T23:55:00Z",
+      });
+    });
+
+    // The gateway does not know the origin it is published under, so it sends
+    // a path; the address the daemon fetched from is the one thing known to
+    // reach the gateway, so that is what the path is resolved against.
+    test("resolves login_path against the usage endpoint", () => {
+      expect(
+        withAuth(
+          { status: "relogin_required", login_path: "/llm-gateway/login/x/start" },
+          "https://gw.example/llm-gateway/usage",
+        )?.login_url,
+      ).toBe("https://gw.example/llm-gateway/login/x/start");
+    });
+
+    test("drops a login_path that would point off the gateway's origin", () => {
+      expect(
+        withAuth(
+          { status: "relogin_required", login_path: "https://elsewhere.example/steal" },
+          "https://gw.example/llm-gateway/usage",
+        )?.login_url,
+      ).toBeUndefined();
+    });
+
+    // Every gateway older than the one that introduced login_path, and every
+    // credential whose re-login is a CLI-only affair.
+    test("omits login_url when the gateway sends no path", () => {
+      expect(withAuth({ status: "degraded" }, "https://gw.example/llm-gateway/usage")).toEqual({
+        status: "degraded",
+      });
+    });
+
+    test("drops an auth object with no status", () => {
+      expect(withAuth({ reason: "who knows" })).toBeUndefined();
+      expect(withAuth("relogin_required")).toBeUndefined();
+    });
+  });
+
   test("rejects a body with no credentials array", () => {
     for (const body of [{}, { credentials: {} }, [], "text", null]) {
       const result = parseUsagePayload(body);
@@ -154,6 +236,32 @@ describe("fetchLlmUsage", () => {
       },
     });
     expect(seen).toEqual(["https://gw.example/llm-gateway/usage"]);
+  });
+
+  // The probe variant of the URL carries `?refresh=true`; a login link built
+  // from it would ask the gateway to probe every provider on the way to the
+  // login page.
+  test("resolves login links against the configured URL, not the probe variant", async () => {
+    const result = await fetchLlmUsage(
+      "https://gw.example/llm-gateway/usage",
+      true,
+      jsonDeps({
+        credentials: [
+          {
+            name: "x",
+            type: "claude_oauth",
+            support: "observed",
+            auth: { status: "relogin_required", login_path: "/llm-gateway/login/x/start" },
+          },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.credentials[0]?.auth?.login_url).toBe(
+        "https://gw.example/llm-gateway/login/x/start",
+      );
+    }
   });
 
   test("reports a non-2xx status", async () => {

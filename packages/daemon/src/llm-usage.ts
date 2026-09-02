@@ -5,6 +5,7 @@
 import {
   ErrorCode,
   type ErrorCode as ErrorCodeType,
+  type LlmUsageAuth,
   type LlmUsageCredential,
   type LlmUsageLimit,
   type LlmUsageOverage,
@@ -60,6 +61,55 @@ function parseWindow(value: unknown): LlmUsageWindow | null {
     ...(reset !== undefined ? { reset } : {}),
     ...(resetIso !== undefined ? { reset_iso: resetIso } : {}),
     ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
+    ...(value.expired === true ? { expired: true } : {}),
+  };
+}
+
+/** Resolve the gateway's relative `login_path` against the address the daemon
+ * fetched usage from, which is the only address it knows reaches the gateway.
+ *
+ * Design rationale: the result is confined to that endpoint's own origin. The
+ * link is rendered in the operator's browser, so a gateway (or something
+ * answering in its place) that sent an absolute URL elsewhere would be
+ * planting a "log in here" button pointing off-host; nothing legitimate needs
+ * that, and dropping it costs a button rather than a credential. */
+export function resolveLoginUrl(loginPath: string, base: string): string | undefined {
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(base);
+  } catch {
+    return undefined;
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(loginPath, baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (resolved.origin !== baseUrl.origin) return undefined;
+  return resolved.toString();
+}
+
+/** `auth` is the gateway's own reading of whether the credential can still
+ * authenticate. Only `status` is required — everything else degrades to absent
+ * and the badge still renders — and an entry without one is dropped rather
+ * than shown as a state the UI would have to invent a word for. */
+function parseAuth(value: unknown, base: string | undefined): LlmUsageAuth | undefined {
+  if (!isRecord(value)) return undefined;
+  const status = optionalString(value.status);
+  if (status === undefined) return undefined;
+  const reason = optionalString(value.reason);
+  const observedAt = optionalNumber(value.observed_at);
+  const observedAtIso = optionalString(value.observed_at_iso);
+  const loginPath = optionalString(value.login_path);
+  const loginUrl =
+    loginPath === undefined || base === undefined ? undefined : resolveLoginUrl(loginPath, base);
+  return {
+    status,
+    ...(reason !== undefined ? { reason } : {}),
+    ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
+    ...(observedAtIso !== undefined ? { observed_at_iso: observedAtIso } : {}),
+    ...(loginUrl !== undefined ? { login_url: loginUrl } : {}),
   };
 }
 
@@ -116,12 +166,13 @@ function parseLimit(value: unknown): LlmUsageLimit | null {
 /** A credential without a name cannot be labelled or told apart from its
  * neighbours, so it is dropped; every other field degrades to absent and the
  * row still renders. */
-function parseCredential(value: unknown): LlmUsageCredential | null {
+function parseCredential(value: unknown, base: string | undefined): LlmUsageCredential | null {
   if (!isRecord(value)) return null;
   const name = optionalString(value.name);
   if (name === undefined) return null;
   const type = optionalString(value.type);
   const support = optionalString(value.support) ?? "unknown";
+  const auth = parseAuth(value.auth, base);
   const snapshot = parseSnapshot(value.snapshot);
   const probeError = optionalString(value.probe_error);
   // An absent `limits` and an unusable one both collapse to "no limits": the
@@ -134,6 +185,7 @@ function parseCredential(value: unknown): LlmUsageCredential | null {
     name,
     ...(type !== undefined ? { type } : {}),
     support,
+    ...(auth ? { auth } : {}),
     ...(snapshot ? { snapshot } : {}),
     ...(limits.length > 0 ? { limits } : {}),
     ...(probeError !== undefined ? { probe_error: probeError } : {}),
@@ -142,8 +194,13 @@ function parseCredential(value: unknown): LlmUsageCredential | null {
 
 /** Split out from the fetch so the shape rules are testable without a
  * Response object. Rejects only the one thing the UI cannot work around: a
- * body that is not an object with a `credentials` array. */
-export function parseUsagePayload(parsed: unknown): LlmUsageResult {
+ * body that is not an object with a `credentials` array.
+ *
+ * `base` is the endpoint this document came from, and the only thing it is
+ * used for is turning the gateway's relative `login_path` into an address a
+ * browser can follow (resolveLoginUrl). Omitting it drops those links and
+ * leaves the rest of the document unchanged. */
+export function parseUsagePayload(parsed: unknown, base?: string): LlmUsageResult {
   if (!isRecord(parsed) || !Array.isArray(parsed.credentials)) {
     return {
       ok: false,
@@ -153,7 +210,7 @@ export function parseUsagePayload(parsed: unknown): LlmUsageResult {
   }
   const credentials: LlmUsageCredential[] = [];
   for (const entry of parsed.credentials) {
-    const credential = parseCredential(entry);
+    const credential = parseCredential(entry, base);
     if (credential) credentials.push(credential);
   }
   const generatedAt = optionalNumber(parsed.generated_at);
@@ -206,5 +263,7 @@ export async function fetchLlmUsage(
     deps,
   );
   if (!res.ok) return res;
-  return parseUsagePayload(res.parsed);
+  // Resolved against the configured endpoint rather than the probe variant of
+  // it, so a login link does not carry `?refresh=true` along.
+  return parseUsagePayload(res.parsed, url);
 }

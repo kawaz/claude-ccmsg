@@ -2324,6 +2324,11 @@ export interface LlmUsageWindow {
    * whose length differs between providers. Absent when the provider does not
    * report one, which means unknown — not a licence to guess. */
   window_seconds?: number;
+  /** The reading is from before `reset` and is NOT the current consumption —
+   * the counter has since rolled over. Upstream sends the field only when it
+   * is true. Without it a week-old "101%" reads as a credential that is out of
+   * quota right now, which is the misreading this flag exists to prevent. */
+  expired?: boolean;
 }
 
 /** Extra-credit spending state, which is per credential rather than per
@@ -2383,6 +2388,34 @@ export interface LlmUsageLimit {
   window_seconds?: number;
 }
 
+/** State of the credential's own authentication, as the gateway last observed
+ * it while refreshing a token. Separate from `support` and from the quota
+ * readings: a credential whose refresh token died still has its last snapshot,
+ * and nothing about that snapshot says why the numbers stopped moving. */
+export interface LlmUsageAuth {
+  /** "ok" / "relogin_required" / "degraded" today. String for
+   * LlmUsageWindow.status's reason — the vocabulary is the gateway's to grow,
+   * and the UI treats anything it does not know as "nothing to announce"
+   * rather than inventing an alarm. */
+  status: string;
+  /** What to do about it, in the gateway's own words (English, and it names
+   * the CLI command for the cases the browser cannot fix). Present on the
+   * states that are not "ok". */
+  reason?: string;
+  observed_at?: number;
+  observed_at_iso?: string;
+  /** Absolute URL of the gateway's browser re-login page for this credential.
+   * The gateway sends a relative `login_path` — it does not know the origin it
+   * is published under — and the daemon resolves it against the usage endpoint
+   * it fetched, since that is the one address it knows reaches the gateway.
+   * The wire carries only the resolved form: a relative path would otherwise
+   * be resolved a second time against the WEBUI's origin, which is the
+   * daemon's, not the gateway's. Present only for a credential whose re-login
+   * the browser can actually perform (`claude_oauth`), and only from a gateway
+   * new enough to offer it. */
+  login_url?: string;
+}
+
 export interface LlmUsageCredential {
   name: string;
   /** Credential kind, e.g. "claude_oauth" / "claude_bedrock" / "relay". */
@@ -2392,6 +2425,10 @@ export interface LlmUsageCredential {
    * no quota to report), "upstream_dependent" (quota lives behind a relay).
    * String for LlmUsageWindow.status's reason. */
   support: string;
+  /** How the credential's authentication is holding up. Absent on a gateway
+   * too old to report it and on one that has not observed this credential yet,
+   * so absence means "nothing known", never "healthy". */
+  auth?: LlmUsageAuth;
   /** Present when `support` is "observed"; absent otherwise. */
   snapshot?: LlmUsageSnapshot;
   /** Provider-enforced limits beside the quota windows, in upstream's order.

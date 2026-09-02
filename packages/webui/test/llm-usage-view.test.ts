@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmUsageCredential, LlmUsageLimit, LlmUsageSnapshot } from "@ccmsg/protocol";
 import {
+  authNotice,
   formatAge,
   formatDurationShort,
   formatResetAt,
@@ -157,6 +158,95 @@ describe("resetAtMs", () => {
     );
     expect(progress.resetAtMs).toBe(NOW - HOUR);
     expect(progress.remainingMs).toBe(0);
+  });
+
+  test("carries upstream's expired flag, defaulting to a current reading", () => {
+    expect(windowProgress("7d", { utilization: 0.5, status: "allowed" }, NOW).expired).toBe(false);
+    expect(
+      windowProgress("7d", { utilization: 0.5, status: "allowed", expired: true }, NOW).expired,
+    ).toBe(true);
+  });
+
+  // The reading that makes this matter: "rejected" from a window that has
+  // since reset. Painted red it says "blocked now", which is exactly what
+  // upstream has told us is no longer true.
+  test("an expired window is not coloured by its own stale verdict", () => {
+    const stale = windowProgress(
+      "7d",
+      { utilization: 1.01, status: "rejected", reset: resetIn(-5 * 24 * HOUR), expired: true },
+      NOW,
+    );
+    expect(stale.tone).toBe("ok");
+    // The figure itself survives — it is still the last thing known.
+    expect(stale.utilization).toBe(1.01);
+    const current = windowProgress("7d", { utilization: 1.01, status: "rejected" }, NOW);
+    expect(current.tone).toBe("bad");
+  });
+});
+
+describe("authNotice", () => {
+  const credential = (auth: LlmUsageCredential["auth"]): LlmUsageCredential => ({
+    name: "x",
+    type: "claude_oauth",
+    support: "observed",
+    ...(auth ? { auth } : {}),
+  });
+
+  test("says nothing for a gateway that reports no auth, or reports it healthy", () => {
+    expect(authNotice(credential(undefined), NOW)).toBeNull();
+    expect(authNotice(credential({ status: "ok" }), NOW)).toBeNull();
+  });
+
+  // A word the UI does not know is not evidence of trouble; the gateway owns
+  // this vocabulary and may add to it.
+  test("says nothing for a status it does not recognise", () => {
+    expect(authNotice(credential({ status: "renewing" }), NOW)).toBeNull();
+  });
+
+  test("offers the login link for a credential the browser can re-authenticate", () => {
+    const notice = authNotice(
+      credential({
+        status: "relogin_required",
+        reason: "run `llm-gateway login --type claude_oauth x`",
+        observed_at: (NOW - 3 * HOUR) / 1000,
+        login_url: "https://gw.example/llm-gateway/login/x/start",
+      }),
+      NOW,
+    );
+    expect(notice).toEqual({
+      tone: "bad",
+      label: "再ログインが必要",
+      reason: "run `llm-gateway login --type claude_oauth x`",
+      loginUrl: "https://gw.example/llm-gateway/login/x/start",
+      age: "3 時間前",
+    });
+  });
+
+  // Whatever cannot be fixed from a browser arrives without a path, and the
+  // gateway's `reason` is what names the command that does fix it.
+  test("shows the reason with no button when there is no login page", () => {
+    const notice = authNotice(
+      credential({ status: "relogin_required", reason: "run `llm-gateway login codex-x`" }),
+      NOW,
+    );
+    expect(notice?.loginUrl).toBeNull();
+    expect(notice?.reason).toBe("run `llm-gateway login codex-x`");
+  });
+
+  // `degraded` is a warning, not a broken login: a button would suggest
+  // re-authenticating fixes something that is still working.
+  test("degraded warns without a button, even if a link came along", () => {
+    const notice = authNotice(
+      credential({
+        status: "degraded",
+        reason: "refresh failed once",
+        login_url: "https://gw.example/llm-gateway/login/x/start",
+      }),
+      NOW,
+    );
+    expect(notice?.tone).toBe("warn");
+    expect(notice?.label).toBe("認証が不安定");
+    expect(notice?.loginUrl).toBeNull();
   });
 });
 

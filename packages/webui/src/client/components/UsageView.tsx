@@ -8,6 +8,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { ErrorResponse, LlmUsageCredential, LlmUsageResponse } from "@ccmsg/protocol";
 import {
+  authNotice,
   formatDurationShort,
   formatPercent,
   formatResetAt,
@@ -99,6 +100,7 @@ function TrackRow({
   reset,
   keyTitle,
   extra,
+  dim,
 }: {
   progress: BarProgress;
   label: string;
@@ -106,6 +108,8 @@ function TrackRow({
   reset: ResetDisplay;
   keyTitle?: string;
   extra?: ComponentChildren;
+  /** Render the row as a reading that is no longer current. */
+  dim?: boolean;
 }) {
   // "86%/7d" — how far into the period we are, over how long it is. Empty
   // when either half is unknown; half of it alone would read as the other.
@@ -114,7 +118,7 @@ function TrackRow({
       ? ""
       : `${formatPercent(progress.elapsed)}/${formatDurationShort(progress.durationMs)}`;
   return (
-    <div class="usage-window">
+    <div class={dim === true ? "usage-window is-stale" : "usage-window"}>
       <span class="usage-window-key" title={keyTitle}>
         {glyph} {label}
         {extra}
@@ -160,6 +164,20 @@ function WindowRow({ progress, reset }: { progress: WindowProgress; reset: Reset
       glyph={periodGlyph(progress.durationMs)}
       reset={reset}
       keyTitle={progress.status}
+      dim={progress.expired}
+      extra={
+        // Said in the row rather than by dimming alone: the figure beside it
+        // is a real number from a period that has since reset, and "101%" with
+        // no words next to it reads as "out of quota now".
+        progress.expired ? (
+          <span
+            class="usage-window-expired"
+            title="リセット時刻を過ぎた観測。現在の消費量ではありません"
+          >
+            期限切れ
+          </span>
+        ) : null
+      }
     />
   );
 }
@@ -206,6 +224,7 @@ function CredentialRow({
   const limits = sortedLimits(probe.limits, now);
   const age = snapshot ? snapshotAge(snapshot, now) : null;
   const overage = snapshot?.overage;
+  const auth = authNotice(credential, now);
   return (
     <li class="usage-credential">
       <div class="usage-credential-head">
@@ -221,6 +240,31 @@ function CredentialRow({
           </span>
         ) : null}
       </div>
+      {/* Above the readings, because it is why they stopped moving: a
+       * credential that cannot authenticate keeps serving its last snapshot,
+       * and the numbers alone give no hint that anything is wrong. */}
+      {auth ? (
+        <div class={`usage-auth tone-${auth.tone}`}>
+          <span class="usage-auth-label">{auth.label}</span>
+          {auth.age ? <span class="usage-age">({auth.age})</span> : null}
+          {/* A link, not a button: the login page is the gateway's own, on
+           * another origin, and opening it in this tab would drop the usage
+           * screen for a flow that ends on a page it does not control.
+           * `noreferrer` keeps the daemon's URL out of the gateway's logs; it
+           * has no `opener` to hand over either way. */}
+          {auth.loginUrl ? (
+            <a
+              class="usage-auth-login"
+              href={auth.loginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              ログイン
+            </a>
+          ) : null}
+          {auth.reason ? <span class="usage-auth-reason">{auth.reason}</span> : null}
+        </div>
+      ) : null}
       {windows.length > 0 || limits.length > 0 ? (
         <div class="usage-windows">
           {windows.map((progress) => (

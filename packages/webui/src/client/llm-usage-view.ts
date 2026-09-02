@@ -67,6 +67,9 @@ export interface BarProgress {
 
 export interface WindowProgress extends BarProgress {
   status: string;
+  /** The reading predates its own reset, so it describes a period that has
+   * already rolled over rather than the quota available now. */
+  expired: boolean;
 }
 
 export interface LimitProgress extends BarProgress {
@@ -196,6 +199,7 @@ export function windowProgress(key: string, window: LlmUsageWindow, nowMs: numbe
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const durationMs = windowDurationMs(key, window);
   const { elapsed, overPace } = paceOf(durationMs, remainingMs, window.utilization);
+  const expired = window.expired === true;
   return {
     key,
     utilization: window.utilization,
@@ -205,7 +209,13 @@ export function windowProgress(key: string, window: LlmUsageWindow, nowMs: numbe
     remainingMs,
     resetAtMs,
     overPace,
-    tone: toneFor(window.status, overPace),
+    // An expired reading gets no colour: upstream has told us the counter has
+    // since reset, so a "rejected" from before that is not a statement about
+    // now, and painting it red would raise an alarm about a period that is
+    // over. The row says it is expired instead, and the figure stays visible
+    // for whoever wants the last thing we knew.
+    tone: expired ? "ok" : toneFor(window.status, overPace),
+    expired,
   };
 }
 
@@ -306,6 +316,48 @@ export function sortedWindows(snapshot: LlmUsageSnapshot, nowMs: number): Window
 export function snapshotAge(snapshot: LlmUsageSnapshot, nowMs: number): string | null {
   if (snapshot.observed_at === undefined) return null;
   return formatAge(Math.max(0, nowMs - snapshot.observed_at * 1000));
+}
+
+/** What to say about a credential whose authentication is not healthy, or null
+ * when there is nothing to announce. */
+export interface AuthNotice {
+  tone: "warn" | "bad";
+  /** Heading for the notice, in the UI's language. The gateway's own `reason`
+   * is English prose aimed at whoever runs the CLI, so it is carried below as
+   * detail rather than used as the headline. */
+  label: string;
+  reason: string | null;
+  /** Where the "log in" button goes, when re-logging in is something the
+   * browser can do at all. */
+  loginUrl: string | null;
+  /** How old the gateway's observation is, when it is old enough to matter. */
+  age: string | null;
+}
+
+/** Decide the notice for a credential's `auth`.
+ *
+ * A status the UI does not know produces no notice: the vocabulary is the
+ * gateway's to grow, and announcing an unrecognised word as trouble would
+ * invent an alarm out of a field that may well mean things are fine. */
+export function authNotice(credential: LlmUsageCredential, nowMs: number): AuthNotice | null {
+  const auth = credential.auth;
+  if (!auth) return null;
+  if (auth.status !== "relogin_required" && auth.status !== "degraded") return null;
+  const reloginRequired = auth.status === "relogin_required";
+  return {
+    tone: reloginRequired ? "bad" : "warn",
+    label: reloginRequired ? "再ログインが必要" : "認証が不安定",
+    reason: auth.reason ?? null,
+    // Offered only for the state a browser round trip actually fixes. The
+    // gateway sends the path only for credentials it can re-authenticate that
+    // way, so an absent link means the fix is a CLI one — which is what
+    // `reason` says.
+    loginUrl: reloginRequired ? (auth.login_url ?? null) : null,
+    age:
+      auth.observed_at === undefined
+        ? null
+        : formatAge(Math.max(0, nowMs - auth.observed_at * 1000)),
+  };
 }
 
 /** What "support" means for a credential, for the tooltip beside the raw
