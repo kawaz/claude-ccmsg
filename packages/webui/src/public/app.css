@@ -885,6 +885,23 @@ a {
   opacity: 0.7;
 }
 
+/* 幅が足りない時、この行で最初に消えるのはコピーボタン (kawaz r259m8)。
+ * 縮む順は model/effort > sid > ボタン — 読むための 3 要素が先で、ボタンは
+ * それらを押しのけてまで居座る価値がない。ボタンが消えてもコピー手段は
+ * 失われない (sid の Shift+クリック、SessionIdText 参照) ので、狭い幅では
+ * `[e8c38f…] [fable…] [low]` の 3 要素だけが残る。
+ *
+ * 閾値の根拠 (font-size-2xs = 10.4px の等幅で実測): sid を UUID 第 1 ブロック
+ * + 省略記号の 9 文字 (約 56px) まで見せた上で、model (約 58px) / effort
+ * (約 21px) / ボタン (37px + margin) / gap 3 個 (約 17px) / 行の padding
+ * (約 36px) を並べるには 230px 弱が要る。それを割ったらボタンの側が降りる。
+ * 中途半端に clip された「コ…」は出さない — 押せるか消えるかの二値にする。 */
+@container (max-width: 240px) {
+  .session-line3 .status-meta-copy {
+    display: none;
+  }
+}
+
 /* sid の右に並ぶ model / effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
  * repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。
  *
@@ -4420,15 +4437,59 @@ button.session-tab {
   line-height: 1;
 }
 
+/* ☰ とメニューの包み。メニューの配置基準 (= ☰ ボタンそのもの) になる。 */
+.tl-msg-menu-anchor {
+  position: relative;
+  display: flex;
+}
+
 /* ハンバーガーで開く重い操作 (fork / dump)。中身は側面パネルと同じ
- * .tl-float-* のまま — 同じ操作なので見た目も揃える。 */
+ * .tl-float-* のまま — 同じ操作なので見た目も揃える。
+ *
+ * フロー内に置くと開閉のたびに以降の TL 全体が押し下がるため、☰ を基準に
+ * 重ねる: top = ☰ の下端。ここは絶対配置なので祖先のスクロールに自然に
+ * 追従し、閉じている間は DOM ごと消えるので下の項目のクリックも塞がない。
+ *
+ * 横は ☰ の右端に揃える。☰ は吹き出しの右端 = TL 列の右寄りに出るので、
+ * 左端揃えにすると幅ぶんが画面外へ溢れる (実測 1280px 幅で 64px 溢れ)。 */
 .tl-msg-menu {
-  max-width: 100%;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: var(--z-composer);
+  width: max-content;
+  max-width: min(20rem, 80vw);
   margin-top: var(--space-5);
   padding: var(--space-6) var(--space-9) var(--space-8);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   background: var(--bg-alt);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  text-align: left;
+}
+
+/* anchor positioning が使えるブラウザ (Chrome 125+ / Safari 26+) では、上の
+ * 絶対配置と同じ位置を宣言しつつ、収まらない軸だけ自動で折り返させる。
+ * 非対応ブラウザは上の絶対配置のまま (折り返しは効かないが、☰ 右端揃えなので
+ * 画面内に収まる)。 */
+@supports (anchor-name: --a) and (position-area: bottom) {
+  .tl-msg-menu-toggle {
+    anchor-name: --tl-msg-menu;
+  }
+
+  .tl-msg-menu {
+    position: fixed;
+    position-anchor: --tl-msg-menu;
+    position-area: bottom span-left;
+    /* ☰ が画面の左端・下端に近いと素直な「左下」に収まらない。溢れる軸だけ
+     * 折り返す (横 → 縦 → 両方の順に試す)。 */
+    position-try-fallbacks:
+      flip-inline,
+      flip-block,
+      flip-inline flip-block;
+    top: auto;
+    right: auto;
+  }
 }
 
 /* source タブ (markdown 原文)。コピペが目的なので折り返して全体を見せる。 */
@@ -6862,45 +6923,11 @@ a.tl-attachment-file-path {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 
-/* タブ帯 + 中身。フロートは handle と body の横並び、body 内は縦積み。 */
+/* フロートは handle と body の横並び、body 内は縦積み。 */
 .tl-float-body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-}
-
-.tl-float-tabs {
-  display: flex;
-  border: 1px solid var(--border);
-  border-bottom: 0;
-  border-radius: 0.5rem 0 0 0;
-  background: var(--bg-alt);
-  overflow: hidden;
-}
-
-.tl-float-tab {
-  flex: 1 1 auto;
-  padding: var(--space-3) var(--space-8);
-  border: 0;
-  background: transparent;
-  color: var(--fg-muted);
-  font: inherit;
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.tl-float-tab[aria-selected="true"] {
-  background: color-mix(in srgb, var(--fg) 12%, var(--bg-alt));
-  color: var(--fg);
-}
-
-.tl-float-actions {
-  padding: var(--space-6) var(--space-9) var(--space-8);
-  border: 1px solid var(--border);
-  border-radius: 0 0 0 0.5rem;
-  background: var(--bg-alt);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .tl-float-note {
@@ -6983,8 +7010,8 @@ a.tl-attachment-file-path {
   margin: 0;
   padding: var(--space-4) var(--space-9) var(--space-5);
   border: 1px solid var(--border);
-  /* 上はタブ帯と接するので角を丸めない (丸めるとタブとの間に隙間が見える)。 */
-  border-radius: 0 0 0 0.5rem;
+  /* 画面右端に貼り付くので、外へ出る右側だけ角を残さない。 */
+  border-radius: 0.5rem 0 0 0.5rem;
   background: var(--bg-alt);
   color: var(--fg-muted);
   font-size: var(--font-size-xs);

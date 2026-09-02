@@ -204,7 +204,10 @@ function SessionIdText({ sid }: { sid: string }) {
        * 修飾キーが要るのでタッチ端末では踏めない — webui 共通のコピーボタン
        * (StatusPanel のメタ情報と同じもの) を sid の右に常設する。行 click は
        * button 上で素通しになる (selectSessionOnRowClick) ので、遷移との競合は
-       * ない。成功の ✓ はボタン側が出すので、こちらは sid の色だけ合わせる。 */}
+       * ない。成功の ✓ はボタン側が出すので、こちらは sid の色だけ合わせる。
+       * サイドバーが狭い時は CSS 側でこのボタンごと消える (app.css の
+       * `@container` — 読むための sid/model/effort が優先)。その幅では上の
+       * Shift+クリックがコピー手段として残る。 */}
       <CopyButton value={sid} label="セッション ID" compact onCopied={markCopied} />
     </>
   );

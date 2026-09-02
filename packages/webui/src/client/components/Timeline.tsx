@@ -29,6 +29,7 @@ import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
 import { bubbleHue, filePathCtxForSender, MemberAvatar, TimelineItem } from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
+import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
 import {
   positionLandingKey,
@@ -2337,6 +2338,20 @@ function AssistantBubble({
     if (menuOpen && !selectedHere) setMenuOpen(false);
   }, [menuOpen, selectedHere]);
 
+  // メニューは本文の上に重なるオーバーレイなので、外側を触ったら畳む
+  // (置きっぱなしだと下の項目が押せない)。ツールバーごと囲うことで、翻訳
+  // タブ等の隣接操作では閉じない。
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  useDismissOnOutsidePointer(toolbarRef, menuOpen, () => setMenuOpen(false));
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
   return (
     <div class="tl-bubble tl-bubble-left tl-bubble-assistant">
       <div class="tl-bubble-body">
@@ -2358,7 +2373,7 @@ function AssistantBubble({
        * 出し入れするとレイアウトが跳ねる)。 */}
       <div class="tl-bubble-footer">
         {line.ts ? <span class="tl-bubble-time">{formatMsgTime(line.ts, now)}</span> : null}
-        <div class={`tl-msg-toolbar${menuOpen ? " tl-msg-toolbar-open" : ""}`}>
+        <div class={`tl-msg-toolbar${menuOpen ? " tl-msg-toolbar-open" : ""}`} ref={toolbarRef}>
           {hasTranslationTab ? (
             <Tabs
               class="tl-thinking-tabs"
@@ -2381,25 +2396,29 @@ function AssistantBubble({
             ]}
           />
           {actions === undefined ? null : (
-            <button
-              type="button"
-              class="tl-thinking-tab tl-msg-menu-toggle"
-              aria-expanded={menuOpen}
-              aria-label="この項目の操作"
-              title="fork / dump"
-              onClick={() => {
-                const next = !menuOpen;
-                // 開く操作 = この項目を fork/dump の対象に決める明示選択。
-                if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
-                setMenuOpen(next);
-              }}
-            >
-              ☰
-            </button>
+            // ☰ とメニューを同じ包みに入れる: メニューはこの包みを基準に
+            // 絶対配置され、TL のレイアウトを一切動かさない。
+            <div class="tl-msg-menu-anchor">
+              <button
+                type="button"
+                class="tl-thinking-tab tl-msg-menu-toggle"
+                aria-expanded={menuOpen}
+                aria-label="この項目の操作"
+                title="fork / dump"
+                onClick={() => {
+                  const next = !menuOpen;
+                  // 開く操作 = この項目を fork/dump の対象に決める明示選択。
+                  if (next && !selectedHere && line.uuid) actions.onSelect(line.uuid);
+                  setMenuOpen(next);
+                }}
+              >
+                ☰
+              </button>
+              {menuOpen ? <BubbleActionsMenu actions={actions} /> : null}
+            </div>
           )}
         </div>
       </div>
-      {menuOpen && actions !== undefined ? <BubbleActionsMenu actions={actions} /> : null}
     </div>
   );
 }
@@ -2899,16 +2918,6 @@ function topBelowToolbar(container: HTMLElement, target: HTMLElement): number {
   return target.getBoundingClientRect().top - toolbarBottom + container.scrollTop;
 }
 
-/** 右端フロートパネルのタブ。設定 (常時 ON/OFF の切替) と、選択中の項目に
- * 対して「今これをする」アクションは性質が違うので同居させず切り替える
- * (常時両方出すと邪魔、kawaz r99m43)。 */
-const SIDE_PANEL_TABS = [
-  { id: "auto-open", label: "auto open" },
-  { id: "actions", label: "アクション" },
-] as const;
-
-type SidePanelTabId = (typeof SIDE_PANEL_TABS)[number]["id"];
-
 /** dump をファイルに書き出すアクションの状態。path は daemon ホスト上の絶対
  * パスで、次にすることは「別のセッションに渡す」なので表示したまま残す。 */
 type DumpActionState =
@@ -3008,13 +3017,14 @@ function ForkAction({
   onFork,
 }: {
   state: ForkActionState;
-  /** hello の `fork_available`。この host の claude が `--resume-session-at` を
-   * 受け付けない時はボタン自体を出さない (押せば必ず unknown option で死ぬ)。 */
+  /** hello の `fork_available`。fork は launcher テンプレの起動なので、daemon
+   * に launcher が無い時はボタンを出さない (押しても起動フォームが「未設定」
+   * を返すだけ)。 */
   available: boolean;
   onFork: (resumeAt: string) => void;
 }) {
   if (!available) {
-    return <p class="tl-float-note">この claude は fork (--resume-session-at) に未対応です。</p>;
+    return <p class="tl-float-note">daemon にセッション起動 (launcher) が設定されていません。</p>;
   }
   if (state.kind === "no-selection") {
     return <p class="tl-float-note">fork 地点にする項目をクリックして選択してください。</p>;
@@ -3179,7 +3189,6 @@ export function Timeline({
   );
   const [autoOpenRevision, setAutoOpenRevision] = useState(0);
   const [autoOpenPanelOpen, setAutoOpenPanelOpen] = useState(false);
-  const [sidePanelTab, setSidePanelTab] = useState<SidePanelTabId>("auto-open");
   // パネル外 click で自動収納 (kawaz r38 mid=66)。useFabPopup と同じ理由で
   // click イベント (tap 完了) のみ — mousedown/touchstart はスクロール目的の
   // タッチでも閉じてしまう。open 中だけ listener を張る。項目リストへの
@@ -4810,73 +4819,44 @@ export function Timeline({
                         {autoOpenPanelOpen ? "›" : "‹"}
                       </button>
                       <div class="tl-float-body">
-                        <Tabs
-                          class="tl-float-tabs"
-                          tabClass="tl-float-tab"
-                          label="サイドパネル"
-                          selected={sidePanelTab}
-                          onSelect={setSidePanelTab}
-                          items={SIDE_PANEL_TABS.map((tab) => ({ id: tab.id, label: tab.label }))}
-                        />
-                        {sidePanelTab === "actions" ? (
-                          <div class="tl-float-actions" role="tabpanel">
-                            <ForkAction
-                              state={forkAction}
-                              available={appState.forkAvailable}
-                              onFork={(resumeAt) =>
-                                store.dispatch({
-                                  type: "session-creator/prefill",
-                                  prefill: { kind: "fork", resumeSid: sid, resumeAt },
-                                })
-                              }
+                        <fieldset
+                          class="tl-auto-open"
+                          aria-label="自動オープンする Timeline カテゴリ"
+                        >
+                          <legend>auto open</legend>
+                          {(["U", "R", "C", "T", "A"] as const).map((category) => {
+                            const fixed = category === "U" || category === "R";
+                            // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
+                            // U/R は境界要素なので常に表示 (fixed)。
+                            const settingKey =
+                              category === "C" ? "ccmsg" : category === "T" ? "thinking" : "agent";
+                            return (
+                              <label
+                                key={category}
+                                title={fixed ? "常に表示" : `${category} を自動オープン`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={fixed ? true : autoOpenSettings[settingKey]}
+                                  disabled={fixed}
+                                  onChange={() => {
+                                    if (!fixed) toggleAutoOpen(settingKey);
+                                  }}
+                                />
+                                {category}
+                              </label>
+                            );
+                          })}
+                          <span class="tl-auto-open-separator" aria-hidden="true" />
+                          <label title="C/T/A を含む外側の fold を自動オープン">
+                            <input
+                              type="checkbox"
+                              checked={autoOpenSettings.items}
+                              onChange={() => toggleAutoOpen("items")}
                             />
-                            <DumpFileAction sid={sid} position={currentPosition} />
-                          </div>
-                        ) : (
-                          <fieldset
-                            class="tl-auto-open"
-                            role="tabpanel"
-                            aria-label="自動オープンする Timeline カテゴリ"
-                          >
-                            <legend>auto open</legend>
-                            {(["U", "R", "C", "T", "A"] as const).map((category) => {
-                              const fixed = category === "U" || category === "R";
-                              // C/T/A の checkbox 表示状態と toggle 対象キーの対応。
-                              // U/R は境界要素なので常に表示 (fixed)。
-                              const settingKey =
-                                category === "C"
-                                  ? "ccmsg"
-                                  : category === "T"
-                                    ? "thinking"
-                                    : "agent";
-                              return (
-                                <label
-                                  key={category}
-                                  title={fixed ? "常に表示" : `${category} を自動オープン`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={fixed ? true : autoOpenSettings[settingKey]}
-                                    disabled={fixed}
-                                    onChange={() => {
-                                      if (!fixed) toggleAutoOpen(settingKey);
-                                    }}
-                                  />
-                                  {category}
-                                </label>
-                              );
-                            })}
-                            <span class="tl-auto-open-separator" aria-hidden="true" />
-                            <label title="C/T/A を含む外側の fold を自動オープン">
-                              <input
-                                type="checkbox"
-                                checked={autoOpenSettings.items}
-                                onChange={() => toggleAutoOpen("items")}
-                              />
-                              N items
-                            </label>
-                          </fieldset>
-                        )}
+                            N items
+                          </label>
+                        </fieldset>
                       </div>
                     </div>
                     <div class="tl-bottom-controls">
