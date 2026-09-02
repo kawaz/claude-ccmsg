@@ -2038,14 +2038,11 @@ export interface HelloResponse {
    * the "HTML として開く" / "生ダウンロード" buttons entirely rather than
    * offer a button that can only fail. */
   sandbox_available?: boolean;
-  /** True when this host's `claude` accepts `--resume-session-at` (the
-   * undocumented option a fork launch needs to cut the resumed conversation at
-   * a chosen record), user-role hellos only. Probed once at daemon startup by
-   * running a launch that is guaranteed to fail at session lookup and reading
-   * whether the option itself was rejected — see fork-probe.ts. Absent means
-   * either an unsupported `claude` or one that could not be run at all, and
-   * the webui then hides every fork affordance instead of offering a button
-   * whose launch would die on an unknown option. */
+  /** True when the daemon has a `session_launcher` configured, user-role
+   * hellos only. Same posture as the flags above, for the webui's fork
+   * affordances: a fork is a launcher template run with the fork point filled
+   * in, so with no launcher configured the button could only ever lead to a
+   * launch form that answers launcher_not_configured. */
   fork_available?: boolean;
 }
 export interface PostResponse {

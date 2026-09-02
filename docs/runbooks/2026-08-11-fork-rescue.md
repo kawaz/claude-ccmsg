@@ -42,8 +42,7 @@ NEW_SID=$(claude -p --resume <元sid> --fork-session \
 claude --resume "$NEW_SID"
 ```
 
-`--resume-session-at` は非公開オプション (daemon が起動時 probe で生存
-確認し、非対応版では webui の fork 導線ごと隠す)。地点 uuid は「戻りたい
+`--resume-session-at` は `claude --help` に出ない非公開オプション。地点 uuid は「戻りたい
 user turn の直前の assistant レコードの uuid」。
 
 **`--resume-session-at` は print mode 専用**で、対話起動 (`claude --resume ...`

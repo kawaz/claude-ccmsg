@@ -397,4 +397,38 @@ describe("session launcher wire ops", () => {
     },
     T,
   );
+
+  // hello の fork_available は「launcher があるか」だけを見る。fork は
+  // launcher テンプレの起動そのものなので、未設定 daemon で導線を出しても
+  // 押した先は上のテストの launcher_not_configured にしかならない。
+  test(
+    "hello reports fork_available only where a launcher is configured",
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
+      const configured = await startConfiguredDaemon(root);
+      try {
+        const client = await connect(configured.sock);
+        const hello = await client.request<{ fork_available?: boolean }>({
+          op: "hello",
+          role: "user",
+        });
+        expect(hello.fork_available).toBe(true);
+      } finally {
+        await stopTestDaemon(configured);
+      }
+
+      const bare = await startTestDaemon();
+      try {
+        const client = await connect(bare.sock);
+        const hello = await client.request<{ fork_available?: boolean }>({
+          op: "hello",
+          role: "user",
+        });
+        expect(hello.fork_available).toBeUndefined();
+      } finally {
+        await stopTestDaemon(bare);
+      }
+    },
+    T,
+  );
 });

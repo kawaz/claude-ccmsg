@@ -62,7 +62,6 @@ import {
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
-import { probeForkSupport } from "./fork-probe.ts";
 import {
   readLastLiveSessions,
   withLaunchContext,
@@ -260,11 +259,6 @@ export interface Daemon {
    * when unconfigured/malformed — which is also what turns the whole sandbox
    * surface off (no hello capability, no mint, no Host branch). */
   sandboxOrigin: SandboxOrigin | null;
-  /** Whether this host's `claude` accepts `--resume-session-at` (fork-probe.ts).
-   * Starts false and is filled in by the startup probe; false therefore covers
-   * both "unsupported" and "not answered yet", which are the same thing to a
-   * client deciding whether to offer a fork button. */
-  forkAvailable: boolean;
   /** Memoized fork-seam resolutions (fork-origin.ts), keyed by transcript
    * identity so a live session's appends don't re-trigger the sweep. */
   forkOrigins: ReturnType<typeof createForkOriginCache>;
@@ -1677,10 +1671,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
       // ドメインが前段に無い環境) では webui が導線を一切出さない。
       const sandboxAvailable = newId.role === "user" && daemon.sandboxOrigin !== null;
-      // fork も同じ流儀の capability。`--resume-session-at` を受け付けない
-      // claude では fork 起動が unknown option で必ず死ぬので、webui 側の
-      // 導線ごと出さないための判断材料だけを渡す。
-      const forkAvailable = newId.role === "user" && daemon.forkAvailable;
+      // fork も同じ流儀の capability。fork は launcher テンプレを起動する操作
+      // なので、launcher が設定されていなければ導線を出す意味がない (押した先
+      // の起動フォームが launcher_not_configured しか返せない)。
+      const forkAvailable = newId.role === "user" && !!daemon.config.session_launcher;
       send(conn, {
         ok: true,
         version: daemon.version,
@@ -3669,7 +3663,6 @@ export function startDaemon(opts: StartOptions = {}): void {
     sessionWake: createSessionWakeState(),
     sandboxGrants: createSandboxGrants(),
     sandboxOrigin: compileSandboxOrigin(config.sandbox_origin_template),
-    forkAvailable: false,
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
@@ -3684,7 +3677,8 @@ export function startDaemon(opts: StartOptions = {}): void {
   // sessions.ts). Loaded before anything can connect, so the first webui to
   // ask already has the list. Filling in each entry's model/effort means
   // reading transcripts, so it runs async and best-effort exactly like the
-  // fork probe below — the list is useful without it, just less pre-filled.
+  // tailscale origin lookup below — the list is useful without it, just less
+  // pre-filled.
   for (const entry of readLastLiveSessions(paths.lastLiveSessions, log)) {
     daemon.lastLive.set(entry.sid, entry);
   }
@@ -3853,18 +3847,6 @@ export function startDaemon(opts: StartOptions = {}): void {
       log,
     }).then((origins) => {
       for (const origin of origins) httpAllowOrigin.add(origin);
-    });
-  }
-
-  // Fork capability probe (fork-probe.ts): best-effort and async like the
-  // tailscale lookup above — a hello arriving before it settles simply reports
-  // no fork support, and the next hello (the webui re-hellos on every
-  // reconnect) carries the real answer. Only worth running where launches can
-  // happen at all, so an unconfigured launcher skips spawning `claude`.
-  if (daemon.config.session_launcher) {
-    void probeForkSupport().then((result) => {
-      daemon.forkAvailable = result.available;
-      log.info(`fork support: ${result.available ? "yes" : "no"} (${result.detail})`);
     });
   }
 

@@ -2084,8 +2084,8 @@ describe("session-creator/prefill", () => {
     ).toEqual({ kind: "session-creator", prefill: null });
   });
 
-  // hello 由来の capability。probe が終わるまで daemon は false を返すので、
-  // 再接続で true に変わる経路がそのまま「後から有効になる」経路になる。
+  // hello 由来の capability。daemon の launcher 設定が変わって再接続すれば
+  // 値も入れ替わる。
   test("fork availability follows the latest hello", () => {
     const on = dispatch(initialState(), { type: "fork/availability", available: true });
     expect(on.forkAvailable).toBe(true);

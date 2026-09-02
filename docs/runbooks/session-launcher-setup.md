@@ -166,9 +166,9 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 - **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している
   最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由。
   逆に「+ 新規」は `RESUME_AT` を宣言していない最初のテンプレートを開く
-- `--resume-session-at` は `claude --help` に出ない非公開オプション。daemon
-  は起動時に 1 度だけ「この claude が受け付けるか」を実測し、受け付けない
-  ホストでは webui の fork 導線を出さない (`fork_available`)
+- `--resume-session-at` は `claude --help` に出ない非公開オプション。webui の
+  fork 導線は launcher が設定されているかだけで決まる (hello の
+  `fork_available`)
 - fork テンプレが **二段** なのは `--resume-session-at` が print mode 専用で、
   対話起動では黙って無視されるため (DR-0018 §3.3.1)。1 段目の
   `claude -p ... '/exit'` が API 呼び出しゼロで切り詰め済み transcript を作り、

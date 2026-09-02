@@ -232,11 +232,11 @@ export interface AppState {
    * 「HTML として開く」/「生ダウンロード」はこの時のみ出す。未設定環境 (=
    * 前段に sandbox ドメインが無い) では押せば必ず失敗するので導線ごと隠す。 */
   sandboxAvailable: boolean;
-  /** hello response の `fork_available`。この host の `claude` が
-   * `--resume-session-at` を受け付ける時だけ true になり、Timeline の
-   * 「ここから fork」導線はこの時のみ出す (受け付けない claude では fork 起動が
-   * unknown option で必ず死ぬので、押せば必ず失敗するボタンを置かない —
-   * sandboxAvailable と同じ姿勢)。 */
+  /** hello response の `fork_available`。daemon に session_launcher が設定
+   * されている時だけ true で、Timeline の「ここから fork」導線はこの時のみ
+   * 出す (fork は launcher テンプレの起動そのものなので、未設定 daemon では
+   * 押した先の起動フォームが「未設定」しか返せない — sandboxAvailable と
+   * 同じ姿勢)。 */
   forkAvailable: boolean;
   /** 開いているフォームパネル (新規セッション / セッション検索 / 新規 Room)
    * と、開いた時に渡された値。3 つは排他 (sidebar-panel.ts)。
