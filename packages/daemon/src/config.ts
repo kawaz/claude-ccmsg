@@ -6,17 +6,22 @@
 // malformed user edits degrade to an unavailable launcher, never daemon crash.
 //
 // `<configDir>/config.js` — an ES module whose default export is that same
-// object — is accepted as well, and wins when both files exist. Launcher
-// commands are multi-line shell snippets, which JSON can only express as one
-// string with every newline escaped; a module writes them as template literals.
-// The file is a config format, not a plugin: it is evaluated once at startup
-// (LN-Q4) and its default export goes through exactly the validation the JSON
-// path goes through, so no key can mean something different depending on which
-// file it came from.
+// object (or a Promise resolving to one, letting the module use top-level
+// `await` or build the config asynchronously) — is accepted as well, and wins
+// over config.json when both files exist. Launcher commands are multi-line
+// shell snippets, which JSON can only express as one string with every
+// newline escaped; a module writes them as template literals.
+// `<configDir>/config.ts` is the same acceptance path with type annotations
+// available on the default export (Bun's ESM loader evaluates it directly,
+// stripping types with no build step) and wins over both when present. The
+// file is a config format, not a plugin: it is evaluated once at startup
+// (LN-Q4, extended to "once, awaited if async") and its default export goes
+// through exactly the validation the JSON path goes through, so no key can
+// mean something different depending on which file it came from.
 import * as fs from "node:fs";
-import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   DEFAULT_DIR_TREE_DEPTH,
   DEFAULT_LAUNCH_TIMEOUT_SECONDS,
@@ -27,7 +32,7 @@ import {
   type SessionLauncherTemplate,
 } from "@ccmsg/protocol";
 
-export interface DaemonConfig {
+export interface ResolvedCcmsgConfig {
   session_launcher?: SessionLauncherConfig;
   /** Web gateway (hyoui) の base URL — SessionView の Terminal タブが
    * `${terminal_gateway_url}/sessions/<HYOUI_SESSION_ID>?embed=1` を iframe に
@@ -67,6 +72,64 @@ export interface WebhookSourceConfig {
   /** bearer token を格納したファイル。先頭の `~` は展開し、読めた内容は
    * trim して使う (エディタが付ける改行で認証が落ちるのを避ける)。 */
   token_file: string;
+}
+
+/** One `session_launcher.templates` entry as a hand-authored config.ts /
+ * config.js / config.json may declare it — `params` is the ergonomic
+ * name-to-default record documented in the runbook, not the resolved
+ * `LauncherParam[]` `SessionLauncherTemplate.params` becomes after
+ * `parseLauncherTemplates`/`withCwdParam` run. */
+export interface CcmsgConfigLauncherTemplate {
+  name: string;
+  /** Required unless the launcher-level `command` supplies one to inherit. */
+  command?: string;
+  default_prompt?: string;
+  shell?: "bash" | "zsh";
+  /** Parameter name → form default value, in declaration order. Omitting
+   * this entirely falls back to the deprecated pre-`params` inference from
+   * `command` (see `legacyParams`/`warnIfLegacyForm`) — new configs should
+   * always declare it explicitly. */
+  params?: Record<string, string>;
+}
+
+/** `session_launcher` as a hand-authored config file may declare it — the
+ * pre-parse counterpart of `SessionLauncherConfig` (protocol). Every field
+ * `parseSessionLauncher` accepts is optional here because the daemon fills
+ * in defaults or degrades the launcher entirely; the type only shapes what a
+ * value must look like *if present*, not the cross-field rules (non-empty
+ * `root_dirs`, unique template names, …) that stay runtime-only. */
+export interface CcmsgConfigLauncher {
+  root_dirs: string[];
+  command?: string;
+  default_prompt?: string;
+  shell?: "bash" | "zsh";
+  timeout_seconds?: number;
+  dir_tree_depth?: number;
+  clean_env?: string[];
+  keep_env?: string[];
+  templates?: CcmsgConfigLauncherTemplate[];
+}
+
+/** The shape a hand-authored `config.ts` / `config.js` / `config.json` may
+ * declare — every field `loadConfig` accepts before validation and
+ * defaulting run, as opposed to `ResolvedCcmsgConfig` (this module's internal
+ * post-parse representation, held on `Daemon.config` and shaped by what the
+ * daemon actually uses at runtime, e.g. `session_launcher.templates[].params`
+ * as a resolved array rather than a record). `writeConfigTypesFile`
+ * re-exports this one — a config.ts author `satisfies`-checks against it, not
+ * against `ResolvedCcmsgConfig` — so authoring gets real feedback without forcing
+ * the config to be written in the resolved internal shape. It is a
+ * convenience, not a full validator: everything `loadConfig`'s `parse*`
+ * helpers warn-and-degrade on individually (a bad shell identifier as a
+ * param name, an entry with no usable command, …) still only surfaces as a
+ * startup warning, exactly as it does for config.json. */
+export interface CcmsgConfig {
+  session_launcher?: CcmsgConfigLauncher;
+  terminal_gateway_url?: string;
+  llm_usage_url?: string;
+  llm_stats_url?: string;
+  webhooks?: Record<string, WebhookSourceConfig>;
+  sandbox_origin_template?: string;
 }
 
 /** Validate one absolute-http(s)-URL config field. Both URL-valued keys
@@ -152,6 +215,19 @@ function parseWebhooks(
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A config.js/config.ts default export may be a `Promise<object>` rather
+ * than the object itself; this is the narrowing `readJsConfig` needs to
+ * `await` only when that's actually the case (a plain object with no `then`
+ * must never be awaited). */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then: unknown }).then === "function"
+  );
 }
 
 function warn(log: Log, file: string, msg: string): void {
@@ -523,40 +599,94 @@ function parseSessionLauncher(
   };
 }
 
-/** The two files `loadConfig` chooses between. `Paths` satisfies this, so the
+/** The three files `loadConfig` chooses between. `Paths` satisfies this, so the
  * daemon hands its resolved paths straight over. */
 export interface ConfigFiles {
   config: string;
   configJs: string;
+  configTs: string;
 }
 
-/** `require` resolves relative to this module, so config paths are passed
- * absolute (both come from `resolvePaths`, and the tests build theirs the same
- * way). Requiring an ES module is synchronous here, which is what lets startup
- * stay synchronous — the one thing it cannot load is a module with top-level
- * `await`, and that error is reported like any other broken config. */
-const requireConfigModule = createRequire(import.meta.url);
+/** Basename of the generated type-declaration file `writeConfigTypesFile`
+ * refreshes in configDir on every startup, so `config.ts` can `import type`
+ * `CcmsgConfig` from a name that sits right beside it. */
+export const CONFIG_TYPES_BASENAME = "ccmsg-config.d.ts";
 
-/** Evaluate `config.js` and hand back its default export for validation.
- * Anything that goes wrong — a syntax error, a module that throws, a missing
- * or non-object default export — degrades to an empty config with one warning,
- * exactly as broken JSON does. Executing user configuration is not a new
- * exposure: this file already names the commands the launcher runs. */
-function readJsConfig(file: string, log: Log): Record<string, unknown> | undefined {
+/** This module's own absolute path, resolved once from the running checkout
+ * (not the caller's) — Bun's native ESM loader resolves `import.meta.url`
+ * here to wherever this source file actually lives, so the generated
+ * re-export always tracks the checkout that is validating config.ts. */
+const thisModulePath = fileURLToPath(import.meta.url);
+
+/** Write (or overwrite) `<configDir>/ccmsg-config.d.ts`: a one-line re-export
+ * of `CcmsgConfig` (the hand-authored shape, not the internal
+ * post-parse `ResolvedCcmsgConfig`) from this very module. It is not hand-maintained
+ * and carries no independently-generated declarations to drift from the real
+ * type — `config.ts` gets exactly the type this file's own validation logic
+ * accepts, because it is that type. Refreshed unconditionally on every
+ * startup (cheap, and the only way an upgrade's type changes reach a
+ * checkout the user hasn't restarted); a write failure only costs editor
+ * type-checking for config.ts; it must never block the daemon from starting. */
+export function writeConfigTypesFile(configDir: string, version: string, log: Log): void {
+  const target = path.join(configDir, CONFIG_TYPES_BASENAME);
+  const content = [
+    `// Generated by ccmsg v${version} at daemon startup.`,
+    "// Do NOT edit — this file is overwritten every time the daemon starts,",
+    "// and only re-exports the daemon's real config input type so it can never",
+    "// drift from what the daemon actually accepts.",
+    "//",
+    "// Use from <configDir>/config.ts:",
+    `//   import type { CcmsgConfig } from "./${CONFIG_TYPES_BASENAME}";`,
+    "//   export default { ... } satisfies CcmsgConfig;",
+    `export type { CcmsgConfig } from ${JSON.stringify(thisModulePath)};`,
+    "",
+  ].join("\n");
+  try {
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(target, content);
+  } catch (e) {
+    warn(
+      log,
+      target,
+      `could not write the generated config type declaration (${String(e)}); config.ts will type-check without CcmsgConfig`,
+    );
+  }
+}
+
+/** Evaluate `config.js` or `config.ts` and hand back its default export for
+ * validation — the same code path for both, since Bun's ESM loader strips
+ * `.ts` types before evaluating with no separate build step. A dynamic
+ * `import()` (rather than `createRequire`) is what lets the default export be
+ * a `Promise` and the module use top-level `await`: both are ordinary ESM
+ * evaluation, not something a synchronous `require` can observe. Anything
+ * that goes wrong — a syntax error, a module that throws, a rejected default
+ * export, a missing or non-object default export — degrades to an empty
+ * config with one warning, exactly as broken JSON does. Executing user
+ * configuration is not a new exposure: this file already names the commands
+ * the launcher runs. */
+async function readJsConfig(file: string, log: Log): Promise<Record<string, unknown> | undefined> {
   let mod: { default?: unknown };
   try {
-    mod = requireConfigModule(file) as { default?: unknown };
+    mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
   } catch (e) {
     warn(log, file, `could not be loaded (${String(e)}); treating as empty`);
     return undefined;
   }
-  const value = mod.default;
+  let value = mod.default;
+  if (isThenable(value)) {
+    try {
+      value = await value;
+    } catch (e) {
+      warn(log, file, `default export rejected (${String(e)}); treating as empty`);
+      return undefined;
+    }
+  }
   if (value === undefined) {
-    warn(log, file, "must `export default` an object; treating as empty");
+    warn(log, file, "must `export default` an object (or a Promise of one); treating as empty");
     return undefined;
   }
   if (!isObject(value)) {
-    warn(log, file, "default export must be an object; treating as empty");
+    warn(log, file, "default export must be an object (or a Promise of one); treating as empty");
     return undefined;
   }
   return value;
@@ -589,20 +719,29 @@ function readJsonConfig(file: string, log: Log): Record<string, unknown> | undef
 
 /** Read daemon configuration once at startup (LN-Q4). Missing is the normal
  * unconfigured state; malformed content logs and collapses to an empty config.
- * `config.js` wins over `config.json` when both are present — the same "the
- * current location is authoritative, say so and change nothing" rule that
- * `migrateLegacyConfigFiles` applies to a leftover copy. */
-export function loadConfig(files: ConfigFiles, log: Log): DaemonConfig {
-  const hasJs = fs.existsSync(files.configJs);
-  if (hasJs && fs.existsSync(files.config)) {
+ * Precedence is `config.ts` > `config.js` > `config.json` when more than one
+ * is present — the same "the current location is authoritative, say so and
+ * change nothing" rule that `migrateLegacyConfigFiles` applies to a leftover
+ * copy, extended to three candidates instead of two. Async because config.js
+ * / config.ts load through a dynamic `import()` (see `readJsConfig`), which
+ * is the only way to let their default export be a `Promise` or the module
+ * use top-level `await`; startup awaits this once and nothing downstream is
+ * async. */
+export async function loadConfig(files: ConfigFiles, log: Log): Promise<ResolvedCcmsgConfig> {
+  const hasTs = fs.existsSync(files.configTs);
+  const hasJs = !hasTs && fs.existsSync(files.configJs);
+  const file = hasTs ? files.configTs : hasJs ? files.configJs : files.config;
+  const ignored = [files.configTs, files.configJs, files.config].filter(
+    (f) => f !== file && fs.existsSync(f),
+  );
+  if (ignored.length > 0) {
     warn(
       log,
-      files.configJs,
-      `${files.config} is also present and is being ignored (delete it, or delete ${files.configJs} to go back to JSON)`,
+      file,
+      `${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} also present and being ignored (delete ${ignored.length > 1 ? "them" : "it"}, or delete ${file} to fall back)`,
     );
   }
-  const file = hasJs ? files.configJs : files.config;
-  const parsed = hasJs ? readJsConfig(file, log) : readJsonConfig(file, log);
+  const parsed = hasTs || hasJs ? await readJsConfig(file, log) : readJsonConfig(file, log);
   if (parsed === undefined) return {};
 
   const sessionLauncher =
@@ -629,7 +768,7 @@ export function loadConfig(files: ConfigFiles, log: Log): DaemonConfig {
     file,
     log,
   );
-  const cfg: DaemonConfig = {};
+  const cfg: ResolvedCcmsgConfig = {};
   if (sandboxOriginTemplate) cfg.sandbox_origin_template = sandboxOriginTemplate;
   if (sessionLauncher) cfg.session_launcher = sessionLauncher;
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;

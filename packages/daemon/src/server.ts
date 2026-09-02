@@ -44,7 +44,7 @@ import {
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
 import { TraceWriter } from "./trace.ts";
-import { loadConfig, type DaemonConfig } from "./config.ts";
+import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
 import {
   fsList,
@@ -210,7 +210,7 @@ interface Listener {
 export interface Daemon {
   paths: Paths;
   /** User configuration is parsed once at daemon startup (DR-0018 LN-Q4). */
-  config: DaemonConfig;
+  config: ResolvedCcmsgConfig;
   version: string;
   startTime: number;
   rooms: Map<string, Room>;
@@ -3595,7 +3595,7 @@ function resolveHttpAllowOrigin(): Set<string> {
   );
 }
 
-export function startDaemon(opts: StartOptions = {}): void {
+export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const paths = resolvePaths();
   fs.mkdirSync(paths.stateDir, { recursive: true });
   fs.mkdirSync(paths.roomsDir, { recursive: true });
@@ -3633,7 +3633,8 @@ export function startDaemon(opts: StartOptions = {}): void {
 
   const rooms = scanRooms(paths.roomsDir, log);
   migrateLegacyConfigFiles(paths, log);
-  const config = loadConfig(paths, log);
+  writeConfigTypesFile(paths.configDir, VERSION, log);
+  const config = await loadConfig(paths, log);
   const trace = new TraceWriter(paths.trace);
   const daemon: Daemon = {
     paths,

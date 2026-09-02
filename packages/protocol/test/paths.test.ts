@@ -23,6 +23,7 @@ describe("resolvePaths (DR-0002 §1)", () => {
     // allowed-origins configuration — not under state/ or data/.
     expect(p.config).toBe("/c/config.json");
     expect(p.configJs).toBe("/c/config.js");
+    expect(p.configTs).toBe("/c/config.ts");
     expect(p.allowedOrigins).toBe("/c/allowed-origins.json");
     expect(p.dumps).toBe("/d/dumps");
   });

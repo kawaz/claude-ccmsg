@@ -5,7 +5,7 @@
 import { createWebuiApp } from "@ccmsg/webui";
 import { startDaemon, type StartOptions } from "./server.ts";
 
-export function runDaemon(opts: Omit<StartOptions, "fallback"> = {}): void {
+export async function runDaemon(opts: Omit<StartOptions, "fallback"> = {}): Promise<void> {
   const webui = createWebuiApp();
-  startDaemon({ ...opts, fallback: (req) => webui.fetch(req) });
+  await startDaemon({ ...opts, fallback: (req) => webui.fetch(req) });
 }

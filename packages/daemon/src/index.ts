@@ -4,4 +4,4 @@
 import { runDaemon } from "./run.ts";
 
 const foreground = process.argv.includes("--foreground");
-runDaemon({ foreground });
+void runDaemon({ foreground });

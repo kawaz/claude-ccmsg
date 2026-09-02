@@ -6,7 +6,7 @@
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
 //             last-live-sessions.json
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
-//             config.js / config.json
+//             config.ts / config.js / config.json
 //             allowed-origins.json
 //   data:   ${CCMSG_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/ccmsg}
 //             rooms/<room-id>.jsonl
@@ -44,6 +44,14 @@ export interface Paths {
    * (template literals), and it is the form every JS tool now offers for
    * hand-written configuration. */
   configJs: string;
+  /** The same configuration written as a TypeScript ES module, evaluated the
+   * same way as configJs (Bun's ESM loader strips types without a build step)
+   * and preferred over it when both exist. The only reason to reach for this
+   * over configJs is wanting type annotations on the default export — the
+   * daemon writes `<configDir>/ccmsg-config.d.ts` at startup so config.ts can
+   * `import type { CcmsgConfig }` from it — the accepted shape is otherwise
+   * identical. */
+  configTs: string;
   /** Session dumps written for a human to hand to another session
    * (`ccmsg dump --out`, the webui's dump action). Lives in data/ because the
    * path is meant to be pasted somewhere and read back later, possibly after
@@ -97,6 +105,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     allowedOrigins: path.join(configDir, "allowed-origins.json"),
     config: path.join(configDir, "config.json"),
     configJs: path.join(configDir, "config.js"),
+    configTs: path.join(configDir, "config.ts"),
     dumps: path.join(dataDir, "dumps"),
     lastLiveSessions: path.join(stateDir, "last-live-sessions.json"),
   };
