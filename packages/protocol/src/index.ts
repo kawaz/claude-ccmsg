@@ -884,6 +884,24 @@ export type LlmStatsResultEvent = {
   request_id: string;
 } & (LlmStatsResponse | ErrorResponse);
 
+/** Completion of a 2-phase `llm_status` request (see LlmStatusRequest's doc
+ * comment). Same correlation/classification rules as TranslateResultEvent. */
+export type LlmStatusResultEvent = {
+  ev: "llm_status_result";
+  request_id: string;
+} & (LlmStatusResponse | ErrorResponse);
+
+/** Unsolicited push of a freshly fetched status report (user-role subscribers
+ * only, same posture as ev:"llm_requests"). Sent when the gateway's webhook
+ * reports a 529 and the daemon re-reads the status endpoint: that is the
+ * moment the header badge has to change, and it is the one moment a client
+ * cannot anticipate. Absent entirely on a daemon with no status endpoint
+ * configured, or one the gateway never posts a 529 to. */
+export interface LlmStatusStreamEvent {
+  ev: "llm_status";
+  report: LlmStatusReport;
+}
+
 export type StreamEvent =
   | DeliveredEvent
   | NotifyStreamEvent
@@ -905,7 +923,9 @@ export type StreamEvent =
   | ForkOriginResultEvent
   | SessionDumpFileResultEvent
   | LlmUsageResultEvent
-  | LlmStatsResultEvent;
+  | LlmStatsResultEvent
+  | LlmStatusResultEvent
+  | LlmStatusStreamEvent;
 
 // ---------------------------------------------------------------------------
 // Wire: identity
@@ -1378,6 +1398,28 @@ export interface LlmStatsRequest {
    * wider than its own history, so asking for more than it holds is the
    * supported way to say "everything you have". */
   days?: number;
+}
+
+/** Upstream service health, proxied from the gateway named by
+ * `<configDir>/config.json`'s `llm_status_url` (user role only, same posture
+ * as `llm_usage`: which providers are up is the operator's view of the host's
+ * gateway). The daemon fetches for the same two reasons — no CORS headers on
+ * the endpoint, and the gateway's internal address stays out of the browser.
+ *
+ * 2-phase like `llm_usage`; the outcome arrives as `ev:"llm_status_result"`.
+ * The same report also arrives unsolicited as `ev:"llm_status"` after the
+ * gateway reports a 529, so a client that has asked once keeps up without
+ * asking again. */
+export interface LlmStatusRequest {
+  op: "llm_status";
+  /** Client-generated correlation id echoed in the ack and the result event
+   * (same uniqueness contract as SessionEnvRequest.request_id). */
+  request_id: string;
+  /** Ask the gateway to re-read the providers' status pages before answering,
+   * passed through as `?refresh=true`. The cached read costs the gateway
+   * nothing; a refresh calls out to every configured status page, so it
+   * belongs to an explicit user action. */
+  refresh?: boolean;
 }
 
 /**
@@ -1956,6 +1998,7 @@ export type Request =
   | SessionLauncherConfigRequest
   | LlmUsageRequest
   | LlmStatsRequest
+  | LlmStatusRequest
   | FsListRequest
   | FsReadRequest
   | FsReadExternalRequest
@@ -2025,6 +2068,12 @@ export interface HelloResponse {
    * because the two endpoints are configured independently — one can be set
    * up without the other, and the webui shows only the section it can fill. */
   llm_stats_available?: boolean;
+  /** True when the daemon has a usable `llm_status_url` configured. Same
+   * posture and same independence as the two flags above: a gateway can serve
+   * quota without serving upstream status (an older build does exactly that),
+   * and the webui then shows the quota screen with no service strip rather
+   * than a strip that can only ever error. */
+  llm_status_available?: boolean;
   /** True when the daemon has a usable `sandbox_origin_template` configured
    * (DR-0030 §7.1), user-role hellos only. Same posture as the two flags
    * above: the template itself stays server-side (the client only ever
@@ -2491,6 +2540,135 @@ export interface LlmStatsResponse {
   generated_at_iso?: string;
   days: Record<string, LlmStatsDay>;
 }
+
+/** The gateway's display verdict for one service, and for the report as a
+ * whole. ccmsg never recomputes it: the gateway is the one that knows which
+ * of `official` and `observed` outweighs the other, and a second opinion here
+ * would disagree with the CLI showing the same report. A value outside this
+ * set normalizes to "unknown" rather than being passed through, so a future
+ * vocabulary cannot reach the UI as a word it has no colour for. */
+export type LlmStatusSeverity = "ok" | "warning" | "critical" | "unknown";
+
+/** What the provider's own status page says. Fixed vocabulary; anything else
+ * (a state the gateway added, or a malformed document) is "unknown". */
+export type LlmStatusOfficialState =
+  | "operational"
+  | "degraded"
+  | "partial_outage"
+  | "major_outage"
+  | "maintenance"
+  | "unknown";
+
+/** What this gateway saw on the wire. Deliberately disjoint from the official
+ * vocabulary so a reader can never mistake one signal for the other. */
+export type LlmStatusObservedState = "reachable" | "failing" | "unknown";
+
+/** One status-page component the gateway watches for this service. */
+export interface LlmStatusComponent {
+  id?: string;
+  name: string;
+  state: LlmStatusOfficialState;
+}
+
+/** One unresolved incident from the provider's status page. Every field but
+ * the title is optional: the gateway passes through what the page gave it,
+ * and a summary line with a title alone is still worth showing. All of it is
+ * provider-authored prose, rendered as text and never as markup. */
+export interface LlmStatusIncident {
+  id?: string;
+  name: string;
+  /** Provider's own workflow word ("investigating", "monitoring", …). A
+   * string rather than a union: the vocabulary is the status page's to grow,
+   * and the UI shows it verbatim. */
+  state?: string;
+  impact?: string;
+  created_at?: string;
+  updated_at?: string;
+  url?: string;
+  latest_update?: string;
+  /** "page" when the incident carries no component mapping, meaning it is
+   * shown for reference and did not raise this service's severity. */
+  scope?: string;
+}
+
+/** The provider's published state for one service. */
+export interface LlmStatusOfficial {
+  state: LlmStatusOfficialState;
+  /** How the gateway obtained it ("statuspage_v2", "link", …). */
+  source?: string;
+  /** The human status page, for the "詳しくは公式ページ" link. */
+  source_url?: string;
+  /** When the gateway last read the source (epoch seconds). */
+  observed_at?: number;
+  /** True when that reading is older than the gateway's `stale_after`: the
+   * value shown is the last success, not a current one. */
+  stale?: boolean;
+  components: LlmStatusComponent[];
+  incidents: LlmStatusIncident[];
+  /** Why the last read failed, when it did. The previous successful state is
+   * kept beside it rather than being replaced by the failure. */
+  error?: string;
+}
+
+/** What this gateway itself observed for the service's routes. */
+export interface LlmStatusObserved {
+  state: LlmStatusObservedState;
+  observed_at?: number;
+  /** When the observation stops counting and the state falls back to
+   * "unknown" (the gateway's `observation_ttl`). */
+  expires_at?: number;
+  last_success_at?: number;
+  last_failure?: {
+    at?: number;
+    /** What kind of failure it was ("upstream_http", "transport", …). */
+    kind?: string;
+    /** HTTP status when the failure was one (529 in the case this feature
+     * exists for). */
+    status?: number;
+  };
+}
+
+/** One upstream service, with the two signals kept apart. Both are optional
+ * because a gateway may report a service it has neither read nor exercised;
+ * `severity` is always present (normalizing to "unknown" if need be) since it
+ * is what the row's icon is chosen from. */
+export interface LlmStatusService {
+  id: string;
+  /** Display name from the gateway; falls back to `id` when absent. */
+  name: string;
+  severity: LlmStatusSeverity;
+  /** Which configured routes draw on this service. */
+  routes: string[];
+  official?: LlmStatusOfficial;
+  observed?: LlmStatusObserved;
+}
+
+/** Top-level roll-up: the worst service severity, plus the breakdown that
+ * keeps "one critical among many ok" from reading as "everything is down". */
+export interface LlmStatusOverall {
+  severity: LlmStatusSeverity;
+  /** severity → how many services hold it. Kept as a Record rather than four
+   * named fields so a future severity does not need a protocol change. */
+  service_counts: Record<string, number>;
+}
+
+/** The gateway's upstream-service report (DR-0021 in the gateway repo), as it
+ * reaches the webui — the same document whether it arrives as the answer to
+ * an `llm_status` request or as a `ev:"llm_status"` push, which is why the
+ * `ok: true` envelope is not part of it. */
+export interface LlmStatusReport {
+  /** The gateway's own version of this document's shape. Passed through
+   * rather than gated on: every field is normalized defensively, so a newer
+   * schema degrades to "unknown"s instead of to nothing at all. */
+  schema_version?: number;
+  /** When the gateway assembled the report (epoch seconds). */
+  generated_at?: number;
+  overall: LlmStatusOverall;
+  services: LlmStatusService[];
+}
+
+/** Payload of a completed llm_status, delivered inside LlmStatusResultEvent. */
+export type LlmStatusResponse = { ok: true } & LlmStatusReport;
 
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
  * passed synchronous validation and its outcome will arrive as the matching
@@ -2974,6 +3152,12 @@ export const ErrorCode = {
   // configured spend endpoint (`llm_stats_url`).
   llm_stats_not_configured: "llm_stats_not_configured",
   llm_stats_unavailable: "llm_stats_unavailable",
+  // llm_status: the same two distinctions again, for the independently
+  // configured upstream-service endpoint (`llm_status_url`). Separate from the
+  // usage pair because a gateway old enough to serve usage may not serve
+  // status at all, and the webui hides only the part it cannot fill.
+  llm_status_not_configured: "llm_status_not_configured",
+  llm_status_unavailable: "llm_status_unavailable",
   // sandbox_grant: `<configDir>/config.json` has no usable
   // `sandbox_origin_template`, so there is no origin to mint a URL on
   // (DR-0030 §7.1). Same "operator never set this up" role

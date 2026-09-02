@@ -39,6 +39,8 @@ import type {
   KickResponse,
   LlmRequestsStreamEvent,
   LlmStatsResponse,
+  LlmStatusResponse,
+  LlmStatusStreamEvent,
   LlmUsageResponse,
   PeersResponse,
   PeersStreamEvent,
@@ -393,6 +395,15 @@ export interface WsHandle {
    * own default window. `error.code === "llm_stats_not_configured"` is the
    * hello capability seen after a config change under a live connection. */
   llmStats(days?: number): Promise<LlmStatsResponse | ErrorResponse>;
+  /** Upstream service health as the gateway sees it, proxied by the daemon
+   * (user role only). 2-phase on the wire (ack + ev:"llm_status_result") like
+   * llmUsage. `refresh` makes the gateway re-read the providers' status pages
+   * first, which is the screen's own button and never an automatic read.
+   * `error.code === "llm_status_not_configured"` is the hello capability seen
+   * after a config change under a live connection. The daemon also pushes the
+   * same report unsolicited (ev:"llm_status") after a 529, so a client that
+   * has asked once stays current without asking again. */
+  llmStatus(opts?: { refresh?: boolean }): Promise<LlmStatusResponse | ErrorResponse>;
 }
 
 /** Every final outcome a 2-phase op can settle with (the result event's
@@ -409,6 +420,7 @@ type TwoPhaseOutcome =
   | SessionDumpFileResponse
   | LlmUsageResponse
   | LlmStatsResponse
+  | LlmStatusResponse
   | ErrorResponse;
 
 export function createWsClient(
@@ -547,6 +559,27 @@ export function createWsClient(
           type: "llm-stats/availability",
           available: hello.llm_stats_available === true,
         });
+        // upstream service status も同じ扱い。加えて、capability が立って
+        // いれば接続直後に 1 回だけ report を取りに行く: topbar の badge は
+        // 表示中の画面に関係なく出るので、/usage を開くまで空という状態を
+        // 作らない。以降は 529 を観測した daemon の push (ev:"llm_status")
+        // と /usage 側の再取得が更新する — 定期 poll は張らない。
+        dispatch({
+          type: "llm-status/availability",
+          available: hello.llm_status_available === true,
+        });
+        if (hello.llm_status_available === true) {
+          void sendTwoPhase<LlmStatusResponse | ErrorResponse>({
+            op: "llm_status",
+            request_id: `q${++nextRequestId}`,
+          }).then((res) => {
+            // 取れなければ badge が出ないだけ。ここで画面にエラーを出すと、
+            // gateway が落ちている間ずっと全画面に無関係な警告が出る。
+            if (!res.ok) return;
+            const { ok: _ok, ...report } = res;
+            dispatch({ type: "llm-status/loaded", report });
+          });
+        }
         // sandbox origin (DR-0030) の capability。同じ理由で省略時は false へ
         // 明示的に落とす — daemon の設定が消えた後に古い capability が残ると、
         // FileViewer の「HTML として開く」が必ず失敗するボタンになる。
@@ -643,7 +676,8 @@ export function createWsClient(
           streamEv.ev === "fork_origin_result" ||
           streamEv.ev === "session_dump_file_result" ||
           streamEv.ev === "llm_usage_result" ||
-          streamEv.ev === "llm_stats_result")
+          streamEv.ev === "llm_stats_result" ||
+          streamEv.ev === "llm_status_result")
       ) {
         const settle = inflight.get(streamEv.request_id);
         if (settle) {
@@ -721,6 +755,14 @@ export function createWsClient(
         type: "llm-requests/loaded",
         requests: (streamEv as LlmRequestsStreamEvent).requests,
       });
+      return;
+    }
+    // Freshly re-read upstream service status, pushed after the gateway told
+    // the daemon an upstream returned 529 (gateway DR-0021 §6). Same "replace
+    // the whole thing" shape as ev:"llm_requests" above — the report always
+    // covers every configured service.
+    if ("ev" in streamEv && streamEv.ev === "llm_status") {
+      dispatch({ type: "llm-status/loaded", report: (streamEv as LlmStatusStreamEvent).report });
       return;
     }
     // Live-tail push for a session's transcript (DR-0009 addendum,
@@ -1017,6 +1059,12 @@ export function createWsClient(
         op: "llm_stats",
         request_id: `q${++nextRequestId}`,
         ...(days !== undefined ? { days } : {}),
+      }),
+    llmStatus: (opts) =>
+      sendTwoPhase({
+        op: "llm_status",
+        request_id: `q${++nextRequestId}`,
+        ...(opts?.refresh ? { refresh: true } : {}),
       }),
   };
 }

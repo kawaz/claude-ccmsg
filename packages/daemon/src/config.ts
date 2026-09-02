@@ -51,6 +51,19 @@ export interface ResolvedCcmsgConfig {
    * URL のみ) を通す。集計期間は op の `days` が query parameter として上書き
    * するので、ここには days を付けても付けなくてもよい。 */
   llm_stats_url?: string;
+  /** LLM gateway の status endpoint URL (gateway 側 DR-0021) — webui の Usage
+   * 画面の service status strip と topbar の badge が `llm_status` op 経由で
+   * ここの JSON を読む。llm_usage_url と同じ理由で daemon proxy 経由 (CORS
+   * ヘッダ無し)、同じ検証 (http:// / https:// の絶対 URL のみ) を通す。
+   *
+   * Design rationale: usage URL から `/usage` → `/status` を導出する案は採ら
+   * ない。3 つの endpoint は「同じ gateway の隣り合う path」である保証がなく
+   * (reverse proxy の path prefix / 別ホスト運用)、導出は operator が書いて
+   * いない URL を daemon が組み立てて叩くことになる。加えて status を出せる
+   * gateway かどうかは usage を出せるかと独立 (古い gateway は usage だけ
+   * 返す) で、capability を独立に持てないと「押せば必ずエラー」の strip が
+   * 出る。llm_usage_url / llm_stats_url が既に独立キーなのと同じ理由。 */
+  llm_status_url?: string;
   /** 外部プロデューサからの `POST /webhook/<source>` 受け口 (webhook.ts)。
    * source 名 (`[a-z0-9-]{1,64}`) → その source 専用の bearer token を置いた
    * ファイルパス。token 値をここに直書きしないのは、config.json が token より
@@ -123,6 +136,7 @@ export interface CcmsgConfig {
   terminal_gateway_url?: string;
   llm_usage_url?: string;
   llm_stats_url?: string;
+  llm_status_url?: string;
   webhooks?: Record<string, WebhookSourceConfig>;
   sandbox_origin_template?: string;
 }
@@ -644,6 +658,7 @@ export async function loadConfig(files: ConfigFiles, log: Log): Promise<Resolved
   );
   const llmUsageUrl = parseHttpUrl(parsed.llm_usage_url, "llm_usage_url", file, log);
   const llmStatsUrl = parseHttpUrl(parsed.llm_stats_url, "llm_stats_url", file, log);
+  const llmStatusUrl = parseHttpUrl(parsed.llm_status_url, "llm_status_url", file, log);
   if (parsed.llm_events_url !== undefined) {
     // 旧: daemon が gateway の SSE を購読する方式。gateway が stable/unstable の
     // 2 プロセスで走るため 1 本の購読では掴んだ側のイベントしか見えず、向きを
@@ -662,6 +677,7 @@ export async function loadConfig(files: ConfigFiles, log: Log): Promise<Resolved
   if (terminalGatewayUrl) cfg.terminal_gateway_url = terminalGatewayUrl;
   if (llmUsageUrl) cfg.llm_usage_url = llmUsageUrl;
   if (llmStatsUrl) cfg.llm_stats_url = llmStatsUrl;
+  if (llmStatusUrl) cfg.llm_status_url = llmStatusUrl;
   if (webhooks) cfg.webhooks = webhooks;
   return cfg;
 }

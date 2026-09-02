@@ -30,6 +30,7 @@ import { useApp } from "../context.ts";
 import { readStorage, writeStorage } from "../storage.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageStats } from "./UsageStats.tsx";
+import { ServiceStatus } from "./ServiceStatus.tsx";
 import { catalogHref, usageHref, usageStatsHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 
@@ -497,12 +498,16 @@ export function UsageView({ state }: { state: AppState }) {
     state.llmStatsAvailable && (state.usageTab === "stats" || !state.llmUsageAvailable);
   return (
     <main id="usage-view">
+      {/* Above the tabs, and outside them: whether the provider is up changes
+       * how both tabs below read, and it is the first thing asked when the
+       * numbers stop moving. */}
+      {state.llmStatusAvailable ? <ServiceStatus state={state} /> : null}
       <UsageTabs state={state} />
       {showStats ? (
         <UsageStats period={state.usagePeriod} days={state.usageDays} />
       ) : state.llmUsageAvailable ? (
         <QuotaSection state={state} />
-      ) : (
+      ) : state.llmStatusAvailable ? null : (
         <p class="usage-empty">この daemon には LLM gateway が設定されていません。</p>
       )}
     </main>

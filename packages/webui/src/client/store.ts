@@ -14,6 +14,7 @@ import {
   type FsReadResponse,
   type LastLiveSession,
   type LlmRequestInfo,
+  type LlmStatusReport,
   type MemberEvent,
   type PeerInfo,
   type RoomKind,
@@ -227,6 +228,16 @@ export interface AppState {
    * 使用量 endpoint 版で、/usage 画面の使用量セクションはこれが true の時
    * だけ出す。2 つの endpoint は独立に設定できるので flag も独立。 */
   llmStatsAvailable: boolean;
+  /** hello response の `llm_status_available` (gateway 側 DR-0021)。daemon が
+   * status endpoint を設定している時だけ true。usage / stats とは独立に設定
+   * できるので flag も独立で、これが false の環境では service status strip も
+   * topbar の badge も出さない。 */
+  llmStatusAvailable: boolean;
+  /** 直近の upstream service status report。接続時と /usage を開いた時の
+   * `llm_status` 応答、および daemon が 529 を観測して push してくる
+   * ev:"llm_status" で更新される。まだ 1 度も取れていなければ null (= badge
+   * 無し)。表示中の画面に関わらず topbar の badge がここを読む。 */
+  llmStatus: LlmStatusReport | null;
   /** hello response の `sandbox_available` (DR-0030)。daemon が
    * `sandbox_origin_template` を設定している時だけ true になり、FileViewer の
    * 「HTML として開く」/「生ダウンロード」はこの時のみ出す。未設定環境 (=
@@ -344,6 +355,8 @@ export function initialState(): AppState {
     llmUsageAvailable: false,
     llmUsageProbes: new Map(),
     llmStatsAvailable: false,
+    llmStatusAvailable: false,
+    llmStatus: null,
     sandboxAvailable: false,
     forkAvailable: false,
     activePanel: null,
@@ -404,6 +417,12 @@ export type Action =
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
   | { type: "llm-stats/availability"; available: boolean }
+  | { type: "llm-status/availability"; available: boolean }
+  // Whole-report replacement, whichever way it arrived (the `llm_status`
+  // answer or the daemon's ev:"llm_status" push): the gateway reports the
+  // state of every configured service every time, so a service that stopped
+  // being reported has stopped being configured.
+  | { type: "llm-status/loaded"; report: LlmStatusReport }
   | { type: "sandbox/availability"; available: boolean }
   | { type: "fork/availability"; available: boolean }
   // null = 要求の取り下げ (フォームを閉じた / 起動した)。同じ turn を 2 度
@@ -1035,6 +1054,17 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, llmUsageAvailable: action.available };
     case "llm-stats/availability":
       return { ...state, llmStatsAvailable: action.available };
+    case "llm-status/availability":
+      // Clearing the report with the capability: a daemon that no longer has
+      // a status endpoint has no report either, and leaving the last one up
+      // would show a badge nothing can ever clear.
+      return {
+        ...state,
+        llmStatusAvailable: action.available,
+        ...(action.available ? {} : { llmStatus: null }),
+      };
+    case "llm-status/loaded":
+      return { ...state, llmStatus: action.report };
     case "sandbox/availability":
       return { ...state, sandboxAvailable: action.available };
     case "fork/availability":

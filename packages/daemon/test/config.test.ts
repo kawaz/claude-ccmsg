@@ -650,6 +650,52 @@ describe("loadConfig", () => {
     });
   });
 
+  // llm_status_url: the upstream-service endpoint (gateway DR-0021), a third
+  // independent key. Deliberately NOT derived from llm_usage_url: the three
+  // endpoints are not guaranteed to sit on adjacent paths of one origin, and a
+  // gateway old enough to serve usage may not serve status at all.
+  describe("llm_status_url", () => {
+    test("valid https URL is retained", async () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_status_url: "https://gw.example/status" }));
+      expect((await loadConfig(files, log)).llm_status_url).toBe("https://gw.example/status");
+      expect(warnings).toEqual([]);
+    });
+
+    test("non-string / empty / unparseable / non-http degrades to unset with a warning", async () => {
+      for (const value of [42, "", "   ", null, "not a url", "file:///etc/passwd"]) {
+        fs.writeFileSync(file, JSON.stringify({ llm_status_url: value }));
+        warnings = [];
+        expect((await loadConfig(files, log)).llm_status_url).toBeUndefined();
+        expect(warnings).toHaveLength(1);
+      }
+    });
+
+    // Configuring usage says nothing about status: the capability the webui
+    // reads has to come from this key alone.
+    test("is unset when only the usage endpoint is configured", async () => {
+      fs.writeFileSync(file, JSON.stringify({ llm_usage_url: "https://gw.example/usage" }));
+      const cfg = await loadConfig(files, log);
+      expect(cfg.llm_usage_url).toBe("https://gw.example/usage");
+      expect(cfg.llm_status_url).toBeUndefined();
+    });
+
+    test("the three llm URL keys degrade independently of each other", async () => {
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          llm_usage_url: "not a url",
+          llm_stats_url: "https://gw.example/stats",
+          llm_status_url: "https://gw.example/status",
+        }),
+      );
+      const cfg = await loadConfig(files, log);
+      expect(cfg.llm_usage_url).toBeUndefined();
+      expect(cfg.llm_stats_url).toBe("https://gw.example/stats");
+      expect(cfg.llm_status_url).toBe("https://gw.example/status");
+      expect(warnings).toHaveLength(1);
+    });
+  });
+
   // llm_events_url named the SSE stream the daemon used to subscribe to. The
   // gateway now posts to ccmsg instead, so the key is dead — but a config
   // still carrying it must say so rather than silently doing nothing.

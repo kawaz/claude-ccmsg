@@ -18,6 +18,8 @@ import {
   type LastLiveSession,
   type LeaveEvent,
   type LlmStatsResponse,
+  type LlmStatusReport,
+  type LlmStatusResponse,
   type LlmUsageResponse,
   type MemberEvent,
   type MsgEvent,
@@ -75,6 +77,7 @@ import { sessionSearch } from "./session-search.ts";
 import { dumpSession, writeSessionDumpFile } from "./session-dump.ts";
 import { fetchLlmUsage } from "./llm-usage.ts";
 import { fetchLlmStats, isValidDays } from "./llm-stats.ts";
+import { fetchLlmStatus, LlmStatusRefresher } from "./llm-status.ts";
 import {
   createSessionErrorsStore,
   sessionErrorEntries,
@@ -279,6 +282,11 @@ export interface Daemon {
    * `/webhook/llm-gateway`; with no such webhook configured it stays empty and
    * no ev:"llm_requests" is ever sent. */
   llmRequests: LlmRequestCache;
+  /** Re-reads the gateway's status endpoint after one of its request events
+   * reports a 529 (llm-status.ts), and pushes the result to user-role
+   * subscribers. Null when no `llm_status_url` is configured — there is then
+   * nothing to read, and the events are still folded into llmRequests. */
+  llmStatusRefresher: LlmStatusRefresher | null;
   /** Producers allowed to POST to `/webhook/<source>`, keyed by that path
    * segment (webhook.ts). Built at startup from config + token files, so a
    * source whose token could not be read simply isn't here — and its route
@@ -813,6 +821,41 @@ function broadcastLlmRequests(daemon: Daemon): void {
   }
 }
 
+/** Push one status report to every user-role subscriber. Unsolicited, like
+ * ev:"llm_requests": the report only ever changes because the daemon just
+ * re-read it, and the screens that draw it (the header badge, the service
+ * strip) are host-wide rather than tied to whoever asked. */
+export function broadcastLlmStatus(daemon: Daemon, report: LlmStatusReport): void {
+  for (const sub of daemon.subscribers) {
+    if (sub.identity?.role === "user") send(sub, { ev: "llm_status", report });
+  }
+}
+
+/** Wire the webhook-driven re-read to the configured endpoint, or leave it
+ * off when there is none. Not a refresh: the gateway refreshes its own
+ * sources on the same 529 it reported (gateway DR-0021 §5), so asking it to
+ * refresh again would only make this read wait on status pages that are
+ * already being fetched. */
+export function createStatusRefresher(daemon: Daemon): LlmStatusRefresher | null {
+  const statusUrl = daemon.config.llm_status_url;
+  if (!statusUrl) return null;
+  return new LlmStatusRefresher({
+    fetch: () => fetchLlmStatus(statusUrl),
+    onReport: (report) => broadcastLlmStatus(daemon, report),
+    onError: (msg) => daemon.log.info(`llm status re-read after upstream failure failed: ${msg}`),
+  });
+}
+
+/** True for an event reporting the one upstream failure that means "this
+ * provider is refusing traffic right now" (gateway DR-0021 §2: 401/403/429 are
+ * credential problems and general 5xx can be synthesized by a relay). Read off
+ * the raw item rather than the parsed one: an event whose client sent no
+ * session id is dropped by the parser but is just as good a signal that the
+ * upstream is failing. */
+function reportsUpstreamOverload(item: unknown): boolean {
+  return typeof item === "object" && item !== null && (item as { status?: unknown }).status === 529;
+}
+
 /** Fold a posted batch of gateway request events into the cache and push the
  * result. Called from the webhook handler; exported for the tests that drive
  * the fold without an HTTP layer.
@@ -825,6 +868,10 @@ function broadcastLlmRequests(daemon: Daemon): void {
 export function recordLlmRequests(daemon: Daemon, items: unknown[], log: Logger): void {
   let accepted = 0;
   let dropped = 0;
+  // Independent of whether the events parse: an outage is exactly the moment
+  // the status report changes, and it is the one change no client can
+  // anticipate. The refresher collapses the burst.
+  if (items.some(reportsUpstreamOverload)) daemon.llmStatusRefresher?.trigger();
   for (const item of items) {
     const info = parseLlmRequestEvent(item);
     if (!info) {
@@ -1489,6 +1536,7 @@ type TwoPhaseResult =
   | TranslateResponse
   | LlmUsageResponse
   | LlmStatsResponse
+  | LlmStatusResponse
   | ErrorResponse;
 
 function acceptTwoPhase(
@@ -1666,6 +1714,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // capability も独立に返す — 片方だけ設定した環境で、設定していない方の
       // セクションが「押せば必ずエラー」の状態で出るのを防ぐ。
       const llmStatsAvailable = newId.role === "user" && !!daemon.config.llm_stats_url;
+      // upstream service status (gateway 側 DR-0021) も同じ扱い。status を返せる
+      // gateway かどうかは usage を返せるかと独立 (古い gateway は usage だけ)
+      // なので capability も独立に返す。
+      const llmStatusAvailable = newId.role === "user" && !!daemon.config.llm_status_url;
       // sandbox origin (DR-0030 §7.1) も同じ流儀。template 自体は返さない —
       // client が触るのは sandbox_grant が組み立てた完成 URL だけなので、
       // 「導線を出してよいか」だけ渡せば足りる。未設定 (= canddy の sandbox
@@ -1681,6 +1733,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
         ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
+        ...(llmStatusAvailable ? { llm_status_available: true } : {}),
         ...(sandboxAvailable ? { sandbox_available: true } : {}),
         ...(forkAvailable ? { fork_available: true } : {}),
       });
@@ -3254,6 +3307,44 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    // Same role rationale again: which upstream providers are up is a property
+    // of the host's gateway, and a session's agent neither chooses routes nor
+    // has anywhere to show this.
+    case "llm_status": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'llm_status' requires user role");
+        return;
+      }
+      const statusUrl = daemon.config.llm_status_url;
+      if (!statusUrl) {
+        sendErr(conn, ErrorCode.llm_status_not_configured, "llm status endpoint is not configured");
+        return;
+      }
+      const complete = acceptTwoPhase(
+        daemon,
+        conn,
+        "llm_status",
+        "llm_status_result",
+        req.request_id,
+      );
+      if (!complete) return;
+      // `refresh` makes the gateway re-read every configured status page, so
+      // it is passed through only for the screen's own button — never for the
+      // fetch a connecting client makes, and never for the webhook-driven
+      // re-read (the gateway refreshes its sources on that trigger itself).
+      void fetchLlmStatus(statusUrl, req.refresh === true).then(
+        (result) => {
+          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
+          else complete({ ok: true, ...result.data });
+        },
+        (e) => {
+          daemon.log.error(`op 'llm_status' failed: ${String(e)}`);
+          complete({ ok: false, error: { code: "internal", msg: String(e) } });
+        },
+      );
+      return;
+    }
+
     case "translate": {
       if (conn.identity?.role !== "user") {
         sendErr(conn, ErrorCode.bad_request, "op 'translate' requires user role");
@@ -3521,6 +3612,7 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   stopAllSessionErrors(daemon.sessionErrors, daemon.transcriptTail);
   stopAllUserInputs(daemon.sessionUserInputs, daemon.transcriptTail);
   daemon.networkWatch?.stop();
+  daemon.llmStatusRefresher?.stop();
   stopAllTailWatches(daemon.transcriptTail);
   try {
     daemon.server?.stop();
@@ -3669,10 +3761,12 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     peersSnapshot: "",
     lastLive: new Map(),
     llmRequests: new LlmRequestCache(),
+    llmStatusRefresher: null,
     webhooks: new Map(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
+  daemon.llmStatusRefresher = createStatusRefresher(daemon);
 
   // "前回稼働中": what the previous daemon last saw connected (last-live-
   // sessions.ts). Loaded before anything can connect, so the first webui to

@@ -2030,6 +2030,55 @@ describe("llm-requests/loaded", () => {
   });
 });
 
+// The upstream service report reaches the store two ways — the answer to
+// `llm_status`, and the daemon's push after a 529 — and both fold through one
+// action. The capability action beside it is what makes the strip and the
+// header badge exist at all.
+describe("llm-status", () => {
+  const report = {
+    overall: { severity: "critical" as const, service_counts: { critical: 1 } },
+    services: [
+      { id: "anthropic", name: "Anthropic", severity: "critical" as const, routes: ["claude-a"] },
+    ],
+  };
+
+  test("holds the report whichever way it arrived", () => {
+    const after = dispatch(initialState(), { type: "llm-status/loaded", report });
+    expect(after.llmStatus).toEqual(report);
+  });
+
+  test("replaces the report whole, so a recovered service stops being listed", () => {
+    const loaded = dispatch(initialState(), { type: "llm-status/loaded", report });
+    const after = dispatch(loaded, {
+      type: "llm-status/loaded",
+      report: { overall: { severity: "ok", service_counts: { ok: 1 } }, services: [] },
+    });
+    expect(after.llmStatus?.services).toEqual([]);
+    expect(after.llmStatus?.overall.severity).toBe("ok");
+  });
+
+  // A daemon that no longer has a status endpoint has no report either, and a
+  // badge nobody can clear is worse than no badge.
+  test("losing the capability clears the report", () => {
+    const loaded = dispatch(
+      dispatch(initialState(), { type: "llm-status/availability", available: true }),
+      { type: "llm-status/loaded", report },
+    );
+    expect(loaded.llmStatusAvailable).toBe(true);
+    const after = dispatch(loaded, { type: "llm-status/availability", available: false });
+    expect(after.llmStatusAvailable).toBe(false);
+    expect(after.llmStatus).toBeNull();
+  });
+
+  // Re-announcing the same capability on a reconnect must not blank a report
+  // the push already delivered.
+  test("keeping the capability keeps the report", () => {
+    const loaded = dispatch(initialState(), { type: "llm-status/loaded", report });
+    const after = dispatch(loaded, { type: "llm-status/availability", available: true });
+    expect(after.llmStatus).toEqual(report);
+  });
+});
+
 // フォームパネルの開閉。描画先が幅で変わる (デスクトップ = FormPane、スマホ =
 // サイドバー内) ため状態は store が持ち、遷移そのものは sidebar-panel.ts の
 // 純関数が決める (その排他の網羅は sidebar-panel.test.ts)。

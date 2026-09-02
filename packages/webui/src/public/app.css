@@ -8116,6 +8116,194 @@ button.usage-reset:hover {
 
 /* ---- /usage: tabs and spend chart -------------------------------------- */
 
+/* --- upstream service status (gateway DR-0021) ---------------------------
+   Its own surface above the tabs, and deliberately quieter than the quota
+   rows below it: this strip is read at a glance and only earns attention when
+   a mark is not "ok". Tones reuse the usage palette so a service in trouble
+   and a quota in trouble read as the same kind of alarm. */
+.status-strip {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: var(--space-8) var(--space-11);
+  margin-bottom: var(--space-11);
+  background: var(--bg-alt);
+}
+
+.status-strip-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-9);
+  flex-wrap: wrap;
+}
+
+.status-strip-head h2 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+}
+
+.status-overall {
+  font-weight: 600;
+}
+
+.status-counts,
+.status-age {
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+.status-error {
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-md);
+  color: var(--danger);
+}
+
+.status-loading,
+.status-empty {
+  margin: var(--space-7) 0 0;
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+.status-services {
+  list-style: none;
+  margin: var(--space-7) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.status-service-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-9);
+  flex-wrap: wrap;
+}
+
+/* The mark carries the severity, so the row's text stays at its normal weight
+   — a whole row in red would drown the two signals that explain it. */
+.status-mark {
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+.tone-ok > .status-service-head > .status-mark,
+.status-mark.tone-ok {
+  color: var(--accent);
+}
+
+.tone-warn > .status-service-head > .status-mark,
+.status-mark.tone-warn {
+  color: var(--warn);
+}
+
+.tone-bad > .status-service-head > .status-mark,
+.status-mark.tone-bad {
+  color: var(--danger);
+}
+
+.status-name {
+  font-weight: 600;
+}
+
+.status-severity {
+  font-size: var(--font-size-md);
+  color: var(--fg-muted);
+}
+
+/* Each signal is one cell with its own label, so "公式" and "実測" can never
+   be read as one verdict. */
+.status-signal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
+}
+
+.status-signal-label {
+  color: var(--fg-muted);
+}
+
+.status-signal-value {
+  color: var(--fg);
+}
+
+.status-stale,
+.status-failure {
+  font-size: var(--font-size-sm);
+  color: var(--warn);
+}
+
+.status-failure {
+  font-family: var(--mono, monospace);
+  color: var(--danger);
+}
+
+.status-source-error {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--warn);
+}
+
+.status-incidents {
+  margin-top: var(--space-5);
+  font-size: var(--font-size-md);
+}
+
+.status-incidents > summary {
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+
+.status-incidents ul {
+  list-style: none;
+  margin: var(--space-5) 0 0;
+  padding: 0 0 0 var(--space-11);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.status-incident-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+.status-incident-impact,
+.status-incident-state,
+.status-incident-scope {
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+.status-incident-update {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
+/* Topbar badge. Absent unless something is wrong, so it needs no reserved
+   space and no neutral state. */
+.status-badge {
+  font-size: var(--font-size-xl);
+  line-height: 1;
+  padding: 0 var(--space-4);
+  text-decoration: none;
+}
+
+.status-badge.tone-warn {
+  color: var(--warn);
+}
+
+.status-badge.tone-bad {
+  color: var(--danger);
+}
+
 .usage-tabs {
   display: flex;
   gap: var(--space-4);

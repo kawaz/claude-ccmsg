@@ -14,6 +14,7 @@ import { FormPane } from "./FormPane.tsx";
 import { useNarrowLayout } from "../useNarrowLayout.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
+import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
 import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
@@ -52,6 +53,7 @@ function TopbarTitle({ state }: { state: AppState }) {
     const parts = [
       ...(state.llmUsageAvailable ? ["クオータ"] : []),
       ...(state.llmStatsAvailable ? ["使用量"] : []),
+      ...(state.llmUsageAvailable || state.llmStatsAvailable ? [] : ["upstream"]),
     ];
     return <h1 class="topbar-title">{parts.length > 0 ? parts.join(" / ") : "クオータ"}</h1>;
   }
@@ -204,7 +206,11 @@ export function App() {
          * configured — without one the screen could only ever show an error,
          * so the feature does not exist for that operator (same posture as the
          * Terminal tab). */}
-        {state.llmUsageAvailable || state.llmStatsAvailable ? (
+        {/* Beside the usage entry rather than inside it: the badge says
+         * something is wrong upstream, which is worth seeing on every screen,
+         * and the entry beside it is where the detail lives. */}
+        <ServiceStatusBadge state={state} />
+        {state.llmUsageAvailable || state.llmStatsAvailable || state.llmStatusAvailable ? (
           <button
             id="app-usage"
             type="button"
