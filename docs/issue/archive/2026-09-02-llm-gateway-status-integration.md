@@ -1,6 +1,6 @@
 ---
 title: llm-gateway status API の ccmsg 組み込み (DR-0021)
-status: open
+status: resolved
 category: request
 created: 2026-09-02T15:04:20+09:00
 last_read: 2026-09-02T16:24:00+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-02T16:48:47+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:v0.134.0 (commit 38278df4) で実装。llm_status_url 設定 / llm_status op + 二相 llm_status_result / hello llm_status_available / usage 画面の service status strip / header badge / webhook 529 受信で 5 秒 debounce + single-flight の再取得と push。受け入れ条件の「60 秒ごとの polling」のみ意図的に不採用 (接続時 1 回 + usage 画面表示時 + 529 駆動の push で代替、統括メモどおり event 駆動に見直し)。"]
 blocked_by:
 origin: llm-gateway
 ---

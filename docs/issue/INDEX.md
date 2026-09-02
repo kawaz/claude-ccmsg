@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-09-02 | request | open | [llm-gateway-status-integration](./2026-09-02-llm-gateway-status-integration.md) | llm-gateway v0.25.1 (DR-0021) が `GET /llm-gateway/status` を提供開始した。ccmsg 側への組み込み… |
 | 2026-09-02 | request | open | [quota-page-relogin-button](./2026-09-02-quota-page-relogin-button.md) | quota 表示ページで再ログインが必要な credential にログインボタンを置く (llm-gateway v0.29.0 auth フィールド対応) |
 | 2026-08-20 | design | open | [timeline-message-hover-toolbar](./2026-08-20-timeline-message-hover-toolbar.md) | Timeline のメッセージバブル hover ツールバー設計 (kawaz r135m48-57 議論まとめ)。応答バブルの翻訳タブ・md/source 切替・重い操作の格下げを決定、実装未着手 |
 | 2026-07-31 | design | open | [session-status-two-phase](./2026-07-31-session-status-two-phase.md) | session_status の 2-phase 化検討 (同一接続内の cold scan 待ちの解消)。実測なしで着手しない (kawaz 裁定 2026-07-31) |
