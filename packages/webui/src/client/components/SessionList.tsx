@@ -9,6 +9,7 @@ import {
   formatAgentLiveState,
   formatSessionModelEffort,
   formatSidebarBadge,
+  type ModelEffortInfo,
   type ModelEffortSource,
 } from "../session-status-view.ts";
 import {
@@ -36,6 +37,7 @@ import {
 } from "../last-live-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
+import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 
 const TICK_MS = 10_000;
@@ -133,13 +135,24 @@ function selectSessionOnRowClick(sid: string): (e: MouseEvent) => void {
 }
 
 /** sid の右に並ぶ「今このセッションが何で走っているか」。
- * 値が立たない行では何も描かない — 詳細は formatSessionModelEffort。 */
-function SessionModelEffort({ info }: { info: { text: string; title: string } | null }) {
+ * 値が立たない行では何も描かない — 詳細は formatSessionModelEffort。
+ *
+ * model と effort は別々の要素にする (kawaz r259m5): 行が狭まった時に
+ * `[e8c38f…] [fable…] [low]` のように各自が自分の幅の中で省略されるのが期待
+ * される見え方で、1 要素に連結するとその途中状態を作れない。 */
+function SessionModelEffort({ info }: { info: ModelEffortInfo | null }) {
   if (!info) return null;
   return (
-    <span class="session-model-effort" title={info.title}>
-      {info.text}
-    </span>
+    <>
+      <span class="session-model" title={info.title}>
+        {info.model}
+      </span>
+      {info.effort ? (
+        <span class="session-effort" title={info.title}>
+          {info.effort}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -148,9 +161,9 @@ function SessionModelEffort({ info }: { info: { text: string; title: string } | 
  * would both invite a click that is no longer wanted and fight the text
  * selection that is.
  *
- * Feedback contract on a successful copy matches StatusPanel's CopyButton
- * (a ✓ for 1.5s), except that the label here is the id itself, which must
- * stay readable, so the tick joins it instead of replacing it. A clipboard
+ * A successful copy is reported by the shared CopyButton beside it (a ✓ for
+ * 1.5s); the id itself only tints to the same accent, so that a Shift+click —
+ * which never touches the button — still says something happened. A clipboard
  * rejection (insecure context, permission denied) shows nothing: the id is
  * fully visible in the row either way, and a success mark for a copy that did
  * not happen is worse than no mark. */
@@ -160,12 +173,16 @@ function SessionIdText({ sid }: { sid: string }) {
   const { armed, handlers } = useShiftHover();
   useEffect(() => () => window.clearTimeout(resetTimer.current), []);
 
+  function markCopied(): void {
+    setCopied(true);
+    window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_MARK_MS);
+  }
+
   async function copy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(sid);
-      setCopied(true);
-      window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), COPIED_MARK_MS);
+      markCopied();
     } catch {
       setCopied(false);
     }
@@ -184,23 +201,11 @@ function SessionIdText({ sid }: { sid: string }) {
         {sid}
       </span>
       {/* タップ用のコピー導線 (kawaz r244m20)。Shift+クリックはポインタと
-       * 修飾キーが要るのでタッチ端末では踏めない — 同じ copy() を叩く明示的な
-       * ボタンを sid の右に添える。行 click は button 上で素通しになる
-       * (selectSessionOnRowClick) ので、遷移との競合はない。 */}
-      <button
-        type="button"
-        class="session-inline-icon-btn"
-        title="セッション ID をコピー"
-        aria-label="セッション ID をコピー"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          void copy();
-        }}
-      >
-        📋
-      </button>
-      {copied ? <span class="session-sid-copied">✓ コピーしました</span> : null}
+       * 修飾キーが要るのでタッチ端末では踏めない — webui 共通のコピーボタン
+       * (StatusPanel のメタ情報と同じもの) を sid の右に常設する。行 click は
+       * button 上で素通しになる (selectSessionOnRowClick) ので、遷移との競合は
+       * ない。成功の ✓ はボタン側が出すので、こちらは sid の色だけ合わせる。 */}
+      <CopyButton value={sid} label="セッション ID" compact onCopied={markCopied} />
     </>
   );
 }
@@ -372,7 +377,9 @@ function SessionTitle({
       >
         {title}
       </span>
-      {/* タップ用の編集導線 (kawaz r244m20)。Shift+クリックと同じ編集モードに
+      {/* タップ用の編集導線 (kawaz r244m20)。記号は RoomTitle / SessionCreator
+       * の編集ボタンと同じ ✎ — webui で「その場で書き換える」操作はどこでも
+       * この字。Shift+クリックと同じ編集モードに
        * 入るだけで、編集可否の条件も同じ — editable でない行には出さない
        * (押しても失敗しかしない導線を置かない、という上の doc と同じ理由)。
        * repo/ws を持たない行ではこのタイトルが行の <a> の中に描かれるので、
@@ -389,7 +396,7 @@ function SessionTitle({
             startEditing();
           }}
         >
-          ✏️
+          ✎
         </button>
       ) : null}
     </>
@@ -434,7 +441,7 @@ function SessionRowItem({
   /** sid の右に出す `{model} {effort}` (formatSessionModelEffort の戻り)。
    * null = どの供給元も model を答えられなかった (未購読かつ直近リクエスト
    * 無し等) 行で、その場合は何も足さない。 */
-  modelEffort: { text: string; title: string } | null;
+  modelEffort: ModelEffortInfo | null;
   /** この sid の最後の LLM リクエスト時刻 (epoch 秒) — アイコンに巻く prompt
    * cache リング (5 分で消える) の起点。null = 直近 5 分にリクエスト無し、
    * または daemon が gateway の event stream を購読していない (どちらもリング
@@ -644,7 +651,7 @@ function PinnedSessionRow({
   /** sid の右に出す `{model} {effort}`。走っているピンなら live 観測、止まって
    * いるピンなら検索ヒットに凍結された値が採用される (SessionList の
    * resolveModelEffort 参照)。 */
-  modelEffort: { text: string; title: string } | null;
+  modelEffort: ModelEffortInfo | null;
   /** 未読の `ccmsg say` 件数。ピンは下の status セクションから除外されている
    * (SessionList の filter) ので、ここに出さないとピン留めしたセッションの
    * 📣 がどこにも出なくなる。 */
@@ -769,10 +776,7 @@ function PinnedSessionsSection({
   sayUnreadBy: Map<string, number>;
   /** SessionList が組み立てた model/effort の解決子 — ピンは live/凍結の両方を
    * 供給元に持つので、第 2 引数に凍結値 (検索ヒット) を渡す。 */
-  resolveModelEffort: (
-    sid: string,
-    frozen?: ModelEffortSource,
-  ) => { text: string; title: string } | null;
+  resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
 }) {
   const { store } = useApp();
   const pins = useMemo(() => sortPinnedSessions([...pinnedSessions.values()]), [pinnedSessions]);

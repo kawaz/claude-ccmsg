@@ -206,7 +206,22 @@ export interface ModelEffortSource {
   effort?: string;
 }
 
-/** Sidebar の session 行が sid の右に出す `{model} {effort}`。
+/** Sidebar の session 行が sid の右に出す 2 要素と、その両方に付ける hover
+ * 説明 (短縮前の model 名と effort)。 */
+export interface ModelEffortInfo {
+  /** `shortModel` で短縮した表示名。 */
+  model: string;
+  /** 報告されなかった行では null (古い CC 行や gateway 由来の候補)。 */
+  effort: string | null;
+  title: string;
+}
+
+/** Sidebar の session 行が sid の右に出す model と effort。
+ *
+ * 連結済みの 1 文字列ではなく 2 つに分けて返すのは、この行が
+ * `[sid][コピー] [model] [effort]` の横並びで、幅が足りない時は要素ごとに
+ * 別々へ省略される必要があるため (kawaz r259m5)。連結すると省略も 1 個所に
+ * しか効かず、狭い幅では effort だけが丸ごと消える。
  *
  * 候補は優先順に渡し、**model を持つ最初の候補だけ**を採用する — effort は
  * model を報告したのと同じ観測に属する値なので、model を A から effort を B
@@ -218,12 +233,13 @@ export interface ModelEffortSource {
  * 揃える。open set なので未知のモデル名も落とさずそのまま出す。 */
 export function formatSessionModelEffort(
   sources: readonly (ModelEffortSource | undefined)[],
-): { text: string; title: string } | null {
+): ModelEffortInfo | null {
   const source = sources.find((s) => s?.model);
   if (!source?.model) return null;
-  const effort = source.effort;
+  const effort = source.effort ?? null;
   return {
-    text: effort ? `${shortModel(source.model)} ${effort}` : shortModel(source.model),
+    model: shortModel(source.model),
+    effort,
     title: `model ${source.model}` + (effort ? ` / effort ${effort}` : ""),
   };
 }

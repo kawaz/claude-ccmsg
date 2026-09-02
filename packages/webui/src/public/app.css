@@ -658,7 +658,7 @@ a {
 /* repo/ws を持たない行ではタイトルが 1 行目に上がる (SessionRowItem の
  * hasRepoWs 分岐)。その行だけリンクの幅をリストの可視幅に留める: 行は
  * width:max-content で伸びる (r46m36) ため、長いタイトルを素通しにすると
- * 右に添えた ✏️ が可視域の外へ出て、横スクロールしないと押せなくなる。
+ * 右に添えた ✎ が可視域の外へ出て、横スクロールしないと押せなくなる。
  * repo@ws の行は 1 行目に編集導線を持たないので、従来どおり伸ばす。 */
 .session-line1-titled > .session-main-link {
   max-width: calc(100cqi - var(--space-8) * 2);
@@ -780,7 +780,7 @@ a {
 }
 
 /* 2 行目: タイトル。幅の基準は行ではなくリストの可視幅 — .session-line3 と
- * 同じ理由に加えて、タイトル右の ✏️ を可視域に留めるため。 */
+ * 同じ理由に加えて、タイトル右の ✎ を可視域に留めるため。 */
 .session-line2 {
   width: calc(100cqi - var(--space-8) * 2);
   box-sizing: border-box;
@@ -801,11 +801,22 @@ a {
   font-family: ui-monospace, monospace;
   color: var(--fg-muted);
   opacity: 0.75;
-  /* 行末の 📋 (.session-inline-icon-btn) を押せる位置に残すため、はみ出しは
+  /* 行末のコピーボタン (.status-meta-copy-compact) を押せる位置に残すため、はみ出しは
    * sid 自身の中で切る。細いサイドバーで line3 ごと溢れさせると、右端に並ぶ
    * ボタンの方が先に画面外へ出てタップできなくなる。 */
   overflow: hidden;
-  min-width: 0;
+  /* 折り返さない (line3 の doc 通り): 折り返しを許すと、右のボタンが幅を取る
+   * ほど sid が 2 行にも 4 行にも割れて行の高さが状況で変わってしまう。UUID は
+   * ハイフン区切りなので、幅が足りない時は既定でそこが改行機会になる
+   * (kawaz r259m5 の実機報告: サイドバーを細くすると 4 行に折れる)。入り切ら
+   * ない分は末尾を省略し、全文は行の title とコピーボタンで届く。 */
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 行の 3 要素の中で最初に、かつ最も縮む (.session-model の doc 参照)。
+   * min-width は先頭 6 桁ほどが残る幅 — ここを 0 にすると、狭い時に sid が
+   * 消えて model だけの行になる。 */
+  flex: 0 1000 auto;
+  min-width: 4em;
 }
 
 .session-sid.armed {
@@ -821,28 +832,15 @@ a {
   color: var(--accent);
 }
 
-.session-sid-copied {
-  color: var(--accent);
-  margin-left: var(--space-6);
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
-  white-space: nowrap;
-}
-
-.session-row.active .session-sid.copied,
-.session-row.active .session-sid-copied {
+.session-row.active .session-sid.copied {
   color: var(--accent-fg);
 }
 
-/* タイトル右の ✏️ / sid 右の 📋 (kawaz r244m20)。Shift+クリックはそのまま
- * 残したうえでの追加導線なので、既定では行を hover した時だけ浮かび上がる
- * — 4 行の情報が縦に並ぶ行に、常時光るボタンを 2 つ足すと行の密度が壊れる。
- * hover を持たないタッチ端末では代わりに常時薄表示 (.tl-item-raw-toggle と
- * 同じ扱い) にする。そちらこそがこのボタンの本来の宛先なので、見えない状態
- * のまま残してはいけない。 */
+/* タイトル右の ✎ (kawaz r244m20/r259m2)。Shift+クリックを踏めない端末のため
+ * の導線なので、常時見えていなければ意味がない — hover で出す設計にすると、
+ * hover を持たない端末には出しようがなく、`(hover: none)` での分岐もトラック
+ * パッドや Pencil を併用する端末では `hover: hover` 側に倒れて当てにならない。
+ * 常時出しつつ弱い色に留め、hover / focus で濃くする。 */
 .session-inline-icon-btn {
   flex: none;
   align-self: center;
@@ -852,26 +850,16 @@ a {
   background: none;
   line-height: 1;
   font-size: var(--font-size-2xs);
-  color: inherit;
+  color: var(--fg-muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.6;
   transition: opacity 0.12s ease-out;
-}
-
-.session-row:hover .session-inline-icon-btn,
-.session-row:focus-within .session-inline-icon-btn {
-  opacity: 0.75;
 }
 
 .session-inline-icon-btn:hover,
 .session-inline-icon-btn:focus-visible {
   opacity: 1;
-}
-
-@media (hover: none) {
-  .session-inline-icon-btn {
-    opacity: 0.45;
-  }
+  color: var(--accent);
 }
 
 /* 3 行目: セッション UUID 全長 (kawaz r135m16)。折り返しはさせず、入り切ら
@@ -897,13 +885,31 @@ a {
   opacity: 0.7;
 }
 
-/* sid の右に並ぶ model/effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
- * repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。折り返すと行の
- * 高さが変わるので nowrap。 */
-.session-model-effort {
-  flex-shrink: 0;
+/* sid の右に並ぶ model / effort。sid と同じ弱い文字のまま (行の主役は 1 行目の
+ * repo@ws で、ここは「開く前に見分けたい時だけ読む」情報)。
+ *
+ * 3 要素とも自分の幅の中で末尾を省略する (kawaz r259m5: 狭い時は
+ * `[e8c38f…] [fable…] [low]`)。縮む順は sid → model → effort: sid が圧倒的に
+ * 長くかつ先頭 8 桁ほどで identify できるのに対し、effort は元から 3〜6 文字
+ * で削る余地が無い。flex-shrink の比 (1000 : 10 : 1) がその順序を表す —
+ * flex の縮小は比例配分なので、桁を離しておかないと「sid が溢れているだけ」
+ * の幅でも model が数 px 削られて不要な省略記号が出る。 */
+.session-model,
+.session-effort {
   font-size: var(--font-size-2xs);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-model {
+  flex: 0 10 auto;
+  min-width: 2.5em;
+}
+
+.session-effort {
+  flex: 0 1 auto;
+  min-width: 2em;
 }
 
 /* 4 行目: project path。左省略 (右端が常に見える) — direction:rtl が
@@ -6416,12 +6422,46 @@ a.tl-attachment-file-path {
   font: inherit;
   font-size: var(--font-size-sm);
   cursor: pointer;
+  /* 成功マークを重ねる器 (下の .status-meta-copy-mark)。 */
+  position: relative;
 }
 
 .status-meta-copy:hover,
 .status-meta-copy.copied {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* 成功表示でボタンの寸法を 1px も動かさないための組み (kawaz r259m4)。
+ * ラベルは常に place を取り続け (成功時は visibility で消えるだけ)、✓ は
+ * その上に絶対配置で重なる。文字を差し替える実装だと「コピー」→「✓」の幅差
+ * だけボタンが縮み、隣の値・sid の折り返し・行の高さまで連鎖して動く。 */
+.status-meta-copy.copied .status-meta-copy-label {
+  visibility: hidden;
+}
+
+.status-meta-copy-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.status-meta-copy.copied .status-meta-copy-mark {
+  opacity: 1;
+}
+
+/* SESSIONS の行のように 4 行が縦に詰まった狭い場所向け (kawaz r259m2)。
+ * 枠と色 = 「押すとコピーされる」手掛かりはそのままに、寸法だけ sid の行に
+ * 収まるところまで詰める。 */
+.status-meta-copy-compact {
+  align-self: center;
+  margin-left: var(--space-3);
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-2xs);
+  line-height: 1.4;
 }
 
 /* A value read from the absence of a variable rather than from its value

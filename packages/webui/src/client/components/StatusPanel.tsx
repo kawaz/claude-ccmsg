@@ -7,7 +7,7 @@
 // Agent/workflow structure is shown by the Timeline's agent tree
 // (`AgentTreePanel`), which is the single place for that view.
 import type { JSX } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useState } from "preact/hooks";
 import type {
   ErrorResponse,
   SessionBackgroundStatus,
@@ -34,6 +34,7 @@ import { agentTimelineHref } from "../locator.ts";
 import { formatClockTime, resolveSessionTopbar } from "../utils.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
+import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
 
 /** r38 mid=4: TODO 行の頭状態マーカー。open set の status (upstream が値を
@@ -43,35 +44,6 @@ function todoIconGlyph(status: string): string {
   if (status === "completed") return "✓";
   if (status === "in_progress") return "⟳";
   return "·";
-}
-
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
-
-  async function copy(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      class={"status-meta-copy" + (copied ? " copied" : "")}
-      title={`${label} をコピー`}
-      aria-label={`${label} をコピー`}
-      onClick={() => void copy()}
-    >
-      {copied ? "✓" : "コピー"}
-    </button>
-  );
 }
 
 function TodoRow({ todo }: { todo: SessionTodo }) {

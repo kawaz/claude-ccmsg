@@ -361,7 +361,8 @@ describe("context usage display", () => {
       { model: "claude-fable-5[1m]", effort: "low" },
       { model: "claude-sonnet-5", effort: "high" },
     ]);
-    expect(info?.text).toBe("fable-5[1m] low");
+    expect(info?.model).toBe("fable-5[1m]");
+    expect(info?.effort).toBe("low");
     expect(info?.title).toBe("model claude-fable-5[1m] / effort low");
   });
 
@@ -373,7 +374,10 @@ describe("context usage display", () => {
       { model: undefined, effort: "medium" },
       { model: "gpt-5.6-sol" },
     ]);
-    expect(info?.text).toBe("gpt-5.6-sol");
+    // effort は要素ごと出さない (null) — 行の狭さを考えると、値の無いことを
+    // 示す文字列に幅を割く意味がない。
+    expect(info?.model).toBe("gpt-5.6-sol");
+    expect(info?.effort).toBeNull();
     expect(info?.title).toBe("model gpt-5.6-sol");
   });
 
