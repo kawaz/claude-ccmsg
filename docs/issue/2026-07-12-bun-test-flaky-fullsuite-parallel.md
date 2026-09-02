@@ -241,3 +241,25 @@ CI (ubuntu-latest) で新顔の flaky を観測: `packages/daemon/test/last-live
 (v0.115.0 で追加) が `expect().toEqual` 不一致で fail、`gh run rerun --failed` で
 green (run 33045400668)。kill/再起動のタイミング依存の疑い。既知 flaky リスト
 (translate-e2e / reconnect / ws keepalive) への追加候補として記録。
+
+## 追記: 2026-09-02 daemon restart recovery の race 根治
+
+対象は `packages/daemon/test/last-live-sessions.test.ts` の crash recovery 4 ケース。
+
+真因は fixture が `sessionHello` の直後に `TestClient.close()` で正常切断を開始し、
+その直後に `SIGKILL` していたため、daemon 側の正常切断処理と `SIGKILL` が競争していたこと。
+
+`server.ts` の `registerSession` は `maybeBroadcastPeers` を同期呼出しし、
+`persistLastLive` の `writeFileSync`+`renameSync` が完了してから hello reply を返すので、
+書き込み前 kill 仮説は棄却した。反対に `close` が先に処理されると
+`removeConn`→`detachSession`→`maybeBroadcastPeers` が snapshot を空にし、
+再起動後 `last_live` が `undefined` になる。
+
+接続を閉じずに `SIGKILL` するよう crash recovery 4 ケースを修正し、ファイル冒頭と
+`crashRestart` の power cut 意図に fixture を一致させた。timeout/retry/sleep は
+追加していない。
+
+修正前の単体 `--rerun-each 100` は 100/100 pass でローカル低負荷では再現せず、CI 2 件と
+full suite 1 件の低頻度症状は scheduler による close/SIGKILL 到達順の差と一致。
+
+status は wip のまま。

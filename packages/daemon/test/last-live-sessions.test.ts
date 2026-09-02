@@ -219,8 +219,7 @@ describe("daemon restart recovery", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await sessionHello(ctx, "s-crashed", { ws: "wt-1", cwd: "/tmp/wt-1" });
-        s.close();
+        await sessionHello(ctx, "s-crashed", { ws: "wt-1", cwd: "/tmp/wt-1" });
         await crashRestart(ctx);
 
         const u = await userConn(ctx);
@@ -245,8 +244,7 @@ describe("daemon restart recovery", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await sessionHello(ctx, "s-back");
-        s.close();
+        await sessionHello(ctx, "s-back");
         await crashRestart(ctx);
 
         const u = await userConn(ctx);
@@ -280,15 +278,13 @@ describe("daemon restart recovery", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await sessionHello(ctx, "s-twice");
-        s.close();
+        await sessionHello(ctx, "s-twice");
         await crashRestart(ctx);
         // Nobody resumed it; a second crash must not erase what the first one
         // recorded — the new daemon carries unrecovered entries into its own
         // snapshot. Drive one registry change so it writes at all.
-        const filler = await sessionHello(ctx, "s-filler");
+        await sessionHello(ctx, "s-filler");
         expect(snapshotSids(ctx).sort()).toEqual(["s-filler", "s-twice"]);
-        filler.close();
         await crashRestart(ctx);
 
         const u = await userConn(ctx);
@@ -307,8 +303,7 @@ describe("daemon restart recovery", () => {
     async () => {
       const ctx = await startTestDaemon();
       try {
-        const s = await sessionHello(ctx, "s-gone");
-        s.close();
+        await sessionHello(ctx, "s-gone");
         await crashRestart(ctx);
 
         const other = await sessionHello(ctx, "s-asking");
