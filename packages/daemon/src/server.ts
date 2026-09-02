@@ -3854,6 +3854,10 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     }
   }
 
+  // The pid file must exist by the time the socket accepts: a client that
+  // connects and then reads the pid (the upgrade test does exactly this) would
+  // otherwise race the write below listen().
+  fs.writeFileSync(paths.pid, `${process.pid}\n`);
   const server = Bun.listen<UdsConnState>({
     unix: paths.sock,
     socket: {
@@ -3895,7 +3899,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.server = server;
 
   fs.chmodSync(paths.sock, 0o600);
-  fs.writeFileSync(paths.pid, `${process.pid}\n`);
   log.info(
     `listening on ${paths.sock} (v${VERSION}, ${rooms.size} rooms, dedup ${daemon.dedupWindowMs}ms)`,
   );
