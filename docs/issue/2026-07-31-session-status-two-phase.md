@@ -3,7 +3,7 @@ title: session_status の 2-phase 化検討 (同一接続内の cold scan 待ち
 status: open
 category: design
 created: 2026-07-31T12:58:04+09:00
-last_read:
+last_read: 2026-09-02T17:09:34+09:00
 open_entered: 2026-07-31T12:58:04+09:00
 wip_entered:
 blocked_entered:
