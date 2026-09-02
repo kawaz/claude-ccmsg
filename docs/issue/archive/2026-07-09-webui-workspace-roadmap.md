@@ -1,6 +1,6 @@
 ---
 title: webui を workspace UI に育てる長期 roadmap
-status: wip
+status: resolved
 category: design
 created: 2026-07-09T23:35:02+09:00
 last_read: 2026-08-12T19:15:57+09:00
@@ -9,10 +9,10 @@ wip_entered: 2026-07-10T22:01:21+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-02T13:48:18+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0005:implemented","dr/DR-0008:implemented","dr/DR-0009:implemented","done:kawaz 裁定 (r259m1, 2026-09-02) roadmap の内容はほぼ達成済みのため close"]
 blocked_by:
 origin: 自リポ TODO
 ---
