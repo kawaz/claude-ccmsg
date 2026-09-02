@@ -38,6 +38,7 @@ import type {
 import { CodeBlock } from "./components/CodeBlock.tsx";
 import { openImageLightbox } from "./components/ImageLightbox.tsx";
 import { splitTextForHighlight, type SearchWord } from "./in-view-search.ts";
+import { splitTextForIssueRefs } from "./issue-ref.ts";
 import { classifyMarkdownLinkUrl, isSafeUrl } from "./markdown-link.ts";
 import type { ParsedFilePathRef } from "./filepath-ref.ts";
 import { FoldOpenStore } from "./fold-open-store.ts";
@@ -284,6 +285,15 @@ interface MarkdownRenderCtx {
   /** Running count of task items visited so far — the ordinal assigned to the
    * next one. Mutated during the walk, mirroring `headingIndex`. */
   taskIndex: number;
+  /** kawaz r259 m1: `owner/name` of the repository the text belongs to, when
+   * known. Set = `#NNN` runs in plain text become links to that repo's
+   * issues; absent = they render as the text they always were. */
+  issueRepo?: string;
+  /** True while rendering the children of a `link` node. `#NNN` inside a link
+   * keeps its plain text — an `<a>` inside an `<a>` is invalid HTML, and the
+   * author's own link target wins over a derived one. Mutated during the
+   * walk, mirroring `headingIndex`. */
+  inLink: boolean;
 }
 
 /** A failed write, reported against the item it happened to.
@@ -528,6 +538,53 @@ function revealMarkdownAnchor(id: string, store: FoldOpenStore | null): void {
   });
 }
 
+/** One plain text run, with in-view search highlighting applied when a search
+ * is active. Returns the bare string on the common no-search path (what Preact
+ * expects for a text child); the <span> wrapper exists only so the <mark>
+ * spans have a parent. */
+function renderTextRun(
+  value: string,
+  key: string,
+  search: MarkdownSearchCtx | undefined,
+): VNode | string {
+  if (!search || search.words.length === 0) return value;
+  const pieces = splitTextForHighlight(value, search.words);
+  if (pieces.length === 1 && pieces[0]!.colorIndex === null) return value;
+  return (
+    <span key={key}>
+      {pieces.map((p, i) =>
+        p.colorIndex !== null ? (
+          <mark
+            key={`${key}.${i}`}
+            class="search-hl"
+            style={{ "--hl-color": `var(--search-color-${p.colorIndex + 1})` }}
+            onClick={search.onMatchClick}
+          >
+            {p.text}
+          </mark>
+        ) : (
+          p.text
+        ),
+      )}
+    </span>
+  );
+}
+
+/** `renderChildren` for the children of a `link` node — see `ctx.inLink`. */
+function renderLinkLabel(
+  nodes: AnyNode[] | undefined,
+  keyPrefix: string,
+  ctx: MarkdownRenderCtx,
+): (VNode | string)[] {
+  const outer = ctx.inLink;
+  ctx.inLink = true;
+  try {
+    return renderChildren(nodes, keyPrefix, ctx);
+  } finally {
+    ctx.inLink = outer;
+  }
+}
+
 function renderChildren(
   nodes: AnyNode[] | undefined,
   keyPrefix: string,
@@ -551,28 +608,32 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
   switch (node.type) {
     case "text": {
       const value = (node as Text).value;
-      if (!search || search.words.length === 0) return value;
-      const pieces = splitTextForHighlight(value, search.words);
-      if (pieces.length === 1 && pieces[0]!.colorIndex === null) return value;
-      // Wrapped in a <span> only on this (active-search) path — the common
-      // no-search path above still returns the bare string Preact expects,
-      // unchanged from pre-DR-0022 behavior.
+      // kawaz r259 m1: `#NNN` becomes an issue link when the repo is known and
+      // we are not already inside an <a>. Code spans and fenced blocks never
+      // reach here (separate node types), so that exclusion is structural.
+      const issuePieces = ctx.inLink ? null : splitTextForIssueRefs(value, ctx.issueRepo);
+      if (!issuePieces || !issuePieces.some((p) => p.href)) {
+        return renderTextRun(value, key, search);
+      }
       return (
         <span key={key}>
-          {pieces.map((p, i) =>
-            p.colorIndex !== null ? (
-              <mark
-                key={`${key}.${i}`}
-                class="search-hl"
-                style={{ "--hl-color": `var(--search-color-${p.colorIndex + 1})` }}
-                onClick={search.onMatchClick}
+          {issuePieces.map((p, i) => {
+            const pieceKey = `${key}.i${i}`;
+            const body = renderTextRun(p.text, pieceKey, search);
+            return p.href ? (
+              <a
+                key={pieceKey}
+                class="md-issue-link"
+                href={p.href}
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                {p.text}
-              </mark>
+                {body}
+              </a>
             ) : (
-              p.text
-            ),
-          )}
+              body
+            );
+          })}
         </span>
       );
     }
@@ -668,7 +729,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       // by this same origin.
       const attachment = attachmentUrlFromPath(link.url);
       if (attachment) {
-        const label = renderChildren(link.children, key, ctx);
+        const label = renderLinkLabel(link.children, key, ctx);
         // Extract text-only alt for the <img>; falls back to link text as-is
         // when children include non-text (rare for `[FILE1:name](path)` shape
         // which is a single text run, but be defensive).
@@ -704,7 +765,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
       }
       // kawaz r55 m116/m117. Four outcomes, see `classifyMarkdownLinkUrl`.
       const target = classifyMarkdownLinkUrl(link.url, currentOrigin());
-      const label = renderChildren(link.children, key, ctx);
+      const label = renderLinkLabel(link.children, key, ctx);
       if (target.kind === "disarm") {
         // Render the link's own text with no <a>/href at all, so neither a
         // hostile URL scheme nor an unopenable path target can reach the DOM,
@@ -1601,6 +1662,7 @@ export function renderMarkdownAst(
     filePathLinker?: FilePathLinker;
     pathLinker?: MarkdownPathLinker;
     taskList?: MarkdownTaskListCtx;
+    issueRepo?: string;
     /** Marks the root for the section-fold layout (the caret gutter). The
      * tree itself is folded by `foldMarkdownSections` before it gets here —
      * this only tells CSS which layout the children were built for. */
@@ -1615,6 +1677,8 @@ export function renderMarkdownAst(
     pathLinker: opts?.pathLinker,
     taskList: opts?.taskList,
     taskIndex: 0,
+    issueRepo: opts?.issueRepo,
+    inLink: false,
   };
   return (
     <div class={opts?.sections ? "md md-sections" : "md"}>
@@ -1645,6 +1709,7 @@ export function MarkdownView({
   restricted = false,
   taskList,
   foldSections = false,
+  issueRepo,
 }: {
   source: string;
   highlightWords?: readonly SearchWord[];
@@ -1680,6 +1745,13 @@ export function MarkdownView({
    * noise. Ignored in `restricted` mode for the same reason the rest of the
    * markdown pipeline is. */
   foldSections?: boolean;
+  /** kawaz r259 m1: `owner/name` of the repository this text belongs to.
+   * Given, `#NNN` in prose links to that repo's GitHub issue; omitted (no
+   * attributable session, or a session outside the repos path convention),
+   * `#NNN` stays plain text. Ignored in `restricted` mode — a user typing
+   * `#123 の件` is writing prose, and that mode deliberately renders their
+   * text verbatim. */
+  issueRepo?: string;
 }) {
   const search =
     highlightWords && onMatchClick ? { words: highlightWords, onMatchClick } : undefined;
@@ -1700,6 +1772,7 @@ export function MarkdownView({
       pathLinker,
       taskList,
       sections: sectionFold,
+      issueRepo,
     });
     const withFold = sectionFold ? (
       <MarkdownSectionFoldContext.Provider
@@ -1755,5 +1828,6 @@ export function MarkdownView({
     taskList,
     sectionFold,
     sectionStore,
+    issueRepo,
   ]);
 }

@@ -1378,6 +1378,7 @@ export function FileViewer({
             foldSections
             taskList={taskToggle.taskList}
             pathLinker={previewPathLinker}
+            issueRepo={peer?.repo}
           />
         </div>
       ) : lines.length === 0 ? (

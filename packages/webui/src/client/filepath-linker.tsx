@@ -177,6 +177,7 @@ export function LinkedMarkdownView({
       filePathLinker={linker}
       pathLinker={pathLinker}
       restricted={restricted}
+      issueRepo={ctx?.repo}
     />
   );
 }

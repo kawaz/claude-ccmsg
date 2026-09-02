@@ -159,6 +159,12 @@ export interface FilePathResolveCtx {
    * (`rootRelativeReading`). Absent for message bodies — nothing holds them,
    * so there is no directory to strip back off. */
   docPath?: string;
+  /** `owner/name` slug of the repository the sender announced, when the daemon
+   * knew one. Nothing about filesystem resolution reads it — it rides along
+   * because every surface that builds this ctx builds it from the same peer /
+   * member row, and `#NNN` issue references in a body are scoped to the same
+   * sender this ctx already identifies (markdown-view's `issueRepo`). */
+  repo?: string;
 }
 
 /** POSIX-style path normalization (collapse `.` / `..`, strip duplicate `/`).

@@ -4492,7 +4492,10 @@ export function Timeline({
   // 使っているので挙動は揃う。
   const selfPeer = useMemo(() => appState.peers.find((p) => p.sid === sid), [appState.peers, sid]);
   const sessionFilePathCtx = useMemo<FilePathResolveCtx | undefined>(
-    () => (selfPeer ? { sid, cwd: selfPeer.cwd, repoRoot: selfPeer.repo_root } : undefined),
+    () =>
+      selfPeer
+        ? { sid, cwd: selfPeer.cwd, repoRoot: selfPeer.repo_root, repo: selfPeer.repo }
+        : undefined,
     [sid, selfPeer],
   );
   // r55 m14: peer 発 ccmsg は boundary から外れて fold group 内 (LineView →

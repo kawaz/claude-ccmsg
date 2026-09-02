@@ -75,7 +75,7 @@ export function filePathCtxForSender(
   // only need repo_root beyond that, and its absence just means "no
   // repo-root rebase, cwd is the tree base".
   const peer = peers.find((p) => p.sid === member.sid);
-  return { sid: member.sid, cwd: member.cwd, repoRoot: peer?.repo_root };
+  return { sid: member.sid, cwd: member.cwd, repoRoot: peer?.repo_root, repo: member.repo };
 }
 
 /** The `msg` event's rendering — hoisted into its own component so the

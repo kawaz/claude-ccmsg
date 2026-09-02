@@ -2178,3 +2178,104 @@ describe("renderMarkdownAst with sections", () => {
     ).toEqual([["1.1"], [], []]);
   });
 });
+
+// kawaz r259 m1: `#NNN` in prose links to the sender's repo issue. The
+// exclusions that matter are structural (code spans / fenced blocks are
+// separate mdast node types, link children are marked while walking), so they
+// are pinned here through the real parser rather than against the recognizer,
+// which issue-ref.test.ts covers on its own.
+describe("renderMarkdownAst / issue references", () => {
+  const REPO = "kawaz/claude-ccmsg";
+
+  function issueLinks(source: string, repo: string | undefined = REPO): VNode[] {
+    const vnode = renderMarkdownAst(parseMarkdownDocument(source), undefined, undefined, {
+      issueRepo: repo,
+    });
+    return collect(
+      vnode,
+      (n) => n.type === "a" && (n.props as { class?: string }).class === "md-issue-link",
+    );
+  }
+
+  function hrefs(source: string, repo: string | undefined = REPO): string[] {
+    return issueLinks(source, repo).map((n) => (n.props as unknown as { href: string }).href);
+  }
+
+  test("plain text gets an external issue link", () => {
+    const links = issueLinks("この件は #123 で対応する");
+    expect(links).toHaveLength(1);
+    const props = links[0]!.props as unknown as {
+      href: string;
+      target?: string;
+      rel?: string;
+    };
+    expect(props.href).toBe("https://github.com/kawaz/claude-ccmsg/issues/123");
+    expect(props.target).toBe("_blank");
+    expect(props.rel).toBe("noopener noreferrer");
+    expect(flattenText(links[0])).toBe("#123");
+  });
+
+  test("no repo means no link, and the text survives untouched", () => {
+    const vnode = renderMarkdownAst(
+      parseMarkdownDocument("この件は #123 で"),
+      undefined,
+      undefined,
+      {
+        issueRepo: undefined,
+      },
+    );
+    expect(collect(vnode, (n) => n.type === "a")).toHaveLength(0);
+    expect(flattenText(vnode)).toBe("この件は #123 で");
+  });
+
+  test("inline code and fenced blocks keep `#NNN` as text", () => {
+    expect(hrefs("`#123` は文字列")).toEqual([]);
+    expect(hrefs("```\nsee #123\n```")).toEqual([]);
+  });
+
+  test("a reference inside a link is not re-linked", () => {
+    expect(hrefs("[#123 の続き](https://example.com/x)")).toEqual([]);
+    // ...and the author's own link is still rendered.
+    const vnode = renderMarkdownAst(
+      parseMarkdownDocument("[#123 の続き](https://example.com/x)"),
+      undefined,
+      undefined,
+      { issueRepo: REPO },
+    );
+    const anchors = collect(vnode, (n) => n.type === "a");
+    expect(anchors).toHaveLength(1);
+    expect((anchors[0]!.props as unknown as { href: string }).href).toBe("https://example.com/x");
+  });
+
+  test("token-boundary exclusions hold through the parser", () => {
+    expect(hrefs("[a](x.md) foo#123 と docs/spec.md#12")).toEqual([]);
+    expect(hrefs("#12a は別物")).toEqual([]);
+  });
+
+  test("references in emphasis, list items and table cells all link", () => {
+    expect(hrefs("**#12** と *#13*")).toEqual([
+      "https://github.com/kawaz/claude-ccmsg/issues/12",
+      "https://github.com/kawaz/claude-ccmsg/issues/13",
+    ]);
+    expect(hrefs("- #14\n- #15\n")).toHaveLength(2);
+  });
+
+  test("search highlighting still applies inside a linked reference", () => {
+    const words: SearchWord[] = parseSearchQuery("123", {
+      caseSensitive: false,
+      regex: false,
+    }).words;
+    const vnode = renderMarkdownAst(
+      parseMarkdownDocument("この件は #123 で"),
+      { words, onMatchClick: () => {} },
+      undefined,
+      { issueRepo: REPO },
+    );
+    const link = collect(
+      vnode,
+      (n) => n.type === "a" && (n.props as { class?: string }).class === "md-issue-link",
+    )[0]!;
+    expect(flattenText(link)).toBe("#123");
+    expect(collect(link, (n) => n.type === "mark").map(flattenText)).toEqual(["123"]);
+  });
+});
