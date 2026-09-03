@@ -1,6 +1,6 @@
 ---
 title: 2-phase op を「Promise が長い RPC」に畳む
-status: open
+status: resolved
 category: task
 created: 2026-09-03T10:55:56+09:00
 last_read: 2026-09-03T11:49:43+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-03T12:15:04+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0029", "implemented"]
 blocked_by:
 origin: 自リポ TODO
 ---
