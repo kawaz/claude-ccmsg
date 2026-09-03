@@ -11,6 +11,8 @@ import {
   LLM_STATS_DAYS_MAX,
   LLM_STATS_DAYS_MIN,
   VERSION,
+  PROTOCOL_VERSION,
+  UNANNOUNCED_PROTOCOL_VERSION,
   resolvePaths,
   type ArchiveEvent,
   type ErrorResponse,
@@ -33,6 +35,7 @@ import {
   type SayEvent,
   type SayReadEvent,
   type SessionIdentity,
+  type StaleClientInfo,
   type SessionEnvResponse,
   type SessionKillResponse,
   type SessionRenameResponse,
@@ -193,6 +196,13 @@ interface SessionEntry {
    * is copied verbatim onto the wire (peers, ev:"peers", the last-live
    * snapshot) where a bare config dir path would be noise nobody reads. */
   configDir?: string;
+  /** ccmsg build / wire generation the latest hello for this sid announced
+   * (PeerInfo.client_version / .protocol). Outside `meta` for the same reason
+   * configDir is: `meta` is also the last-live snapshot's payload, and which
+   * build was running when a daemon died says nothing about the session that
+   * has to be resumed. */
+  clientVersion?: string;
+  clientProtocol?: number;
   conns: Set<Conn>;
   /** ISO time this entry was first created in this daemon process; a later
    * hello for the same sid reuses the existing entry and never touches this
@@ -273,6 +283,11 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** Out-of-date ccmsg clients seen per sid (PeerInfo.stale_client), including
+   * the ones whose hello was refused — those never reach `sessions`, so this
+   * is the only record that they tried. Keyed by the sid the refused hello
+   * claimed; a hello speaking the current generation deletes its own entry. */
+  staleClients: Map<string, StaleClientInfo>;
   /** Sessions a previous daemon last saw connected and that have not
    * registered again (last-live-sessions.ts), keyed by sid. Loaded once at
    * startup and only ever shrinks while this daemon runs — the one thing that
@@ -578,7 +593,22 @@ function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
   }
 }
 
-function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void {
+/** What the hello announced about the ccmsg build behind it. Passed alongside
+ * the identity rather than folded into it: it describes the *client process*,
+ * not the session, and two connections of one session can legitimately run
+ * different builds (a subscribe started before an upgrade, plus a fresh hook
+ * invocation after it) — the latest hello is simply what the peer reports. */
+interface ClientBuild {
+  version?: string;
+  protocol?: number;
+}
+
+function registerSession(
+  daemon: Daemon,
+  conn: Conn,
+  id: SessionIdentity,
+  client: ClientBuild,
+): void {
   // This sid is back, so it is no longer "前回稼働中" — whether it came back
   // via the launcher's resume or was simply started again by hand, the row
   // has done its job. maybeBroadcastPeers at the end of this function pushes
@@ -644,6 +674,12 @@ function registerSession(daemon: Daemon, conn: Conn, id: SessionIdentity): void 
     entry.meta = meta;
     entry.configDir = configDir;
   }
+  // Latest hello wins outright, with no preserve-on-omit: an omitted field is
+  // itself the report — a client from before this session's hello carried
+  // either one — and the peer row says so rather than showing the last
+  // connection's answer as if it were this one's.
+  entry.clientVersion = client.version;
+  entry.clientProtocol = client.protocol;
   entry.conns.add(conn);
   // DR-0013 §2.2 auto-populate: first hello for this sid → add it to every
   // broadcast room. A re-hello (isNewEntry === false) is deliberately a no-op:
@@ -712,6 +748,46 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   }
 }
 
+/** File the "this sid has an out-of-date ccmsg client" record the session list
+ * renders. Called from the two places a hello is refused: no correlation
+ * envelope, and a generation this daemon does not speak.
+ *
+ * A client that simply predates the `protocol` field is NOT stale — it speaks
+ * `UNANNOUNCED_PROTOCOL_VERSION`, gets served, and never reaches here. Every
+ * subscribe running right now is such a client, so flagging them would ask
+ * kawaz to restart every session on the machine over nothing.
+ *
+ * The record is overwritten rather than accumulated — a refused subscribe
+ * retries every few seconds, and "still trying as of `last_seen`" is the whole
+ * signal; a counter would only turn one stale process into a number that keeps
+ * moving. Pushing `ev:"peers"` is the caller's job: both callers refuse the
+ * hello, so neither reaches the registerSession that normally pushes. */
+function markStaleClient(daemon: Daemon, sid: string, client: ClientBuild): void {
+  daemon.staleClients.set(sid, {
+    last_seen: nowIso(),
+    ...(client.version ? { version: client.version } : {}),
+    ...(client.protocol !== undefined ? { protocol: client.protocol } : {}),
+  });
+}
+
+/** The generation a hello speaks: what it announced, or — for a client from
+ * before the field existed — the generation that field was introduced in. */
+function protocolOf(client: ClientBuild): number {
+  return client.protocol ?? UNANNOUNCED_PROTOCOL_VERSION;
+}
+
+/** What a hello line claims about its own build, read defensively: this also
+ * runs on requests rejected before they were ever typed as a `HelloRequest`,
+ * so a field of the wrong type is treated as absent rather than trusted. */
+function readClientBuild(req: { client_version?: unknown; protocol?: unknown }): ClientBuild {
+  return {
+    ...(typeof req.client_version === "string" && req.client_version !== ""
+      ? { version: req.client_version }
+      : {}),
+    ...(typeof req.protocol === "number" ? { protocol: req.protocol } : {}),
+  };
+}
+
 /** `last_user_input_at` for one sid, as a spreadable fragment so an unknown
  * value omits the field rather than sending null (PeerInfo's contract: absent
  * means "the daemon has not folded one", which clients sort last). */
@@ -731,7 +807,24 @@ function currentPeers(daemon: Daemon): PeerInfo[] {
       connected_at: s.connectedAt,
       ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
       ...withUserInput(daemon, s.meta.sid),
+      ...clientBuildFields(daemon, s),
     }));
+}
+
+/** The build half of a peer row: what its latest hello announced, plus the
+ * stale-client warning when some client of this sid is out of date. Shared by
+ * `currentPeers` and `peersCompareKey` so a stale record appearing (or being
+ * cleared) is always a change worth pushing. */
+function clientBuildFields(
+  daemon: Daemon,
+  s: SessionEntry,
+): Pick<PeerInfo, "client_version" | "protocol" | "stale_client"> {
+  const stale = daemon.staleClients.get(s.meta.sid);
+  return {
+    ...(s.clientVersion ? { client_version: s.clientVersion } : {}),
+    ...(s.clientProtocol !== undefined ? { protocol: s.clientProtocol } : {}),
+    ...(stale ? { stale_client: stale } : {}),
+  };
 }
 
 /** currentPeers() as one session sees it: every peer running under the same
@@ -765,7 +858,21 @@ function peersCompareKey(daemon: Daemon): string {
   return JSON.stringify([
     [...daemon.sessions.values()]
       .filter((s) => s.conns.size > 0)
-      .map((s) => ({ ...s.meta, connected_at: s.connectedAt })),
+      .map((s) => {
+        // `stale_client.last_seen` is deliberately dropped here for the same
+        // reason `last_activity_at` is: a refused client retries every few
+        // seconds, and comparing its timestamp would turn one stale process
+        // into an endless push loop. Whether a warning is showing, and what it
+        // says, is what a client re-renders on — the exact instant of the last
+        // attempt only has to be right in a `peers` reply, which reads it live.
+        const { stale_client: stale, ...build } = clientBuildFields(daemon, s);
+        return {
+          ...s.meta,
+          connected_at: s.connectedAt,
+          ...build,
+          ...(stale ? { stale_client: { version: stale.version, protocol: stale.protocol } } : {}),
+        };
+      }),
     // Tail-derived, so it changes without any registry mutation — the fold's
     // own onChange is what re-enters maybeBroadcastPeers for it, and this entry
     // is what stops that re-entry from being a no-op push.
@@ -1633,6 +1740,14 @@ async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promi
   // is a deliberate break (DR-0029 追補 / DR-0002 §4 設計意図); a subscribe from
   // before this envelope is resolved by restarting it, not by serving it here.
   if (typeof req.request_id !== "string" || req.request_id === "") {
+    // The refusal stands, but a client this old is otherwise invisible: it
+    // never registers, so nothing in the session list ever mentions it. File
+    // it against the sid its hello claimed, which is the only thing here that
+    // ties the failing process back to a session kawaz can act on.
+    if (req.op === "hello" && typeof req.sid === "string" && req.sid !== "") {
+      markStaleClient(daemon, req.sid, readClientBuild(req));
+      maybeBroadcastPeers(daemon);
+    }
     sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires a non-empty string request_id`);
     return;
   }
@@ -1668,6 +1783,29 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
   switch (req.op) {
     case "hello": {
       const prevId = conn.identity;
+      const client = readClientBuild(req);
+      // A client speaking another generation is refused, not adapted to: ccmsg
+      // evolves per host, all at once (DR-0002 §4). Announcing no generation is
+      // not a way out of this check — it means generation
+      // UNANNOUNCED_PROTOCOL_VERSION and is compared like any other value —
+      // it just happens to be the current one while that constant and
+      // PROTOCOL_VERSION agree.
+      const generation = protocolOf(client);
+      if (generation !== PROTOCOL_VERSION) {
+        if (req.role === "session" && req.sid) {
+          markStaleClient(daemon, req.sid, client);
+          maybeBroadcastPeers(daemon);
+        }
+        sendErr(
+          conn,
+          ErrorCode.bad_request,
+          `client speaks protocol ${generation}, this daemon speaks ${PROTOCOL_VERSION}`,
+        );
+        return;
+      }
+      // Served, so whatever this sid was flagged for is over. registerSession's
+      // own push below carries the cleared warning out.
+      if (req.role === "session" && req.sid) daemon.staleClients.delete(req.sid);
       let newId: Identity;
       if (req.role === "user") {
         newId = { role: "user" };
@@ -1732,7 +1870,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       if (newId.role === "session") {
         // pushes ev:"peers" itself, covering both the detach above and this
         // registration as one combined change (see detachSession's doc comment).
-        registerSession(daemon, conn, newId);
+        registerSession(daemon, conn, newId, client);
       } else if (movedAwayFromSession) {
         // detach-only change (session -> user role): still need the push detachSession
         // deliberately didn't make.
@@ -1768,6 +1906,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       send(conn, {
         ok: true,
         version: daemon.version,
+        protocol: PROTOCOL_VERSION,
         ...(terminalGatewayUrl ? { terminal_gateway_url: terminalGatewayUrl } : {}),
         ...(llmUsageAvailable ? { llm_usage_available: true } : {}),
         ...(llmStatsAvailable ? { llm_stats_available: true } : {}),
@@ -3716,6 +3855,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    staleClients: new Map(),
     lastLive: new Map(),
     llmRequests: new LlmRequestCache(),
     llmStatusRefresher: null,

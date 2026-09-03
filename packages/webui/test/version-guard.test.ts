@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   reactToDaemonVersion,
+  reactToHandshakeVersion,
   type VersionGuardEnv,
   type VersionGuardOutcome,
 } from "../src/client/version-guard.ts";
@@ -125,5 +126,56 @@ describe("unsent-input registry", () => {
     const other = registerUnsentInput();
     expect(hasUnsentInput()).toBe(true);
     other();
+  });
+});
+
+// hello 自体が拒否される upgrade (今回の protocol 世代変更、v0.136.0 の
+// request_id 必須化) こそこの guard が要る場面なのに、hello 応答の version
+// しか見ないと判定材料が無いまま沈黙する。ping は hello 不要で version を
+// 返すので、そこから拾い直せることを押さえる。
+describe("reactToHandshakeVersion", () => {
+  const refused = { ok: false } as const;
+  const never = async (): Promise<string | null> => {
+    throw new Error("probe must not run when hello already named a version");
+  };
+
+  test("hello が成功していれば ping を打たずにその version で判定する", async () => {
+    const h = harness();
+    const res = await reactToHandshakeVersion({ ok: true, version: "0.137.0" }, never, h.env);
+    expect(res).toEqual({ outcome: "reloaded", daemonVersion: "0.137.0" });
+    expect(h.reloads).toBe(1);
+  });
+
+  test("hello 拒否 + ping が新しい version を返したら 1 度だけリロードする", async () => {
+    const h = harness();
+    const res = await reactToHandshakeVersion(refused, async () => "0.137.0", h.env);
+    expect(res).toEqual({ outcome: "reloaded", daemonVersion: "0.137.0" });
+    expect(h.reloads).toBe(1);
+
+    // 2 度目 (再接続で同じ拒否を踏む) はリロードループに落ちない。
+    const again = await reactToHandshakeVersion(refused, async () => "0.137.0", h.env);
+    expect(again?.outcome).toBe("notified");
+    expect(h.reloads).toBe(1);
+  });
+
+  test("hello 拒否 + ping も版数を返せなければ何もしない", async () => {
+    const h = harness();
+    expect(await reactToHandshakeVersion(refused, async () => null, h.env)).toBeNull();
+    expect(h.reloads).toBe(0);
+    expect(h.session.size).toBe(0);
+  });
+
+  test("hello が ok でも version を名乗らなければ ping に落ちる", async () => {
+    const h = harness();
+    const res = await reactToHandshakeVersion({ ok: true }, async () => "0.137.0", h.env);
+    expect(res?.daemonVersion).toBe("0.137.0");
+    expect(h.reloads).toBe(1);
+  });
+
+  test("hello 拒否 + ping が同じ version を返したらリロードしない", async () => {
+    const h = harness();
+    const res = await reactToHandshakeVersion(refused, async () => BUNDLE, h.env);
+    expect(res).toEqual({ outcome: "match", daemonVersion: BUNDLE });
+    expect(h.reloads).toBe(0);
   });
 });

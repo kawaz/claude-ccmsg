@@ -62,6 +62,32 @@ export function reactToDaemonVersion(
   return "reloaded";
 }
 
+/** Run the guard against a handshake that may not have completed.
+ *
+ * `reactToDaemonVersion` needs a version, and the hello reply is where one
+ * normally comes from — but the upgrade that most needs this guard is exactly
+ * the one that keeps the hello from succeeding. A daemon that changed the wire
+ * protocol (the v0.136.0 `request_id` requirement, a `protocol` generation the
+ * bundle does not speak) answers this tab's hello with `bad_request`, and a
+ * guard that only reads `hello.version` learns nothing and leaves the tab
+ * talking to a daemon it cannot talk to.
+ *
+ * So a refused hello falls back to `ping`, which needs no hello (it is outside
+ * the daemon's IDENTITY_OPS) and has carried `version` since the first
+ * generation. `probeVersion` resolving to null — ping refused too, or the
+ * socket gone — returns null: nothing was learned, and the caller's reconnect
+ * backoff is the remaining answer.
+ */
+export async function reactToHandshakeVersion(
+  hello: { ok?: boolean; version?: string },
+  probeVersion: () => Promise<string | null>,
+  env: VersionGuardEnv,
+): Promise<{ outcome: VersionGuardOutcome; daemonVersion: string } | null> {
+  const daemonVersion = hello.ok && hello.version ? hello.version : await probeVersion();
+  if (!daemonVersion) return null;
+  return { outcome: reactToDaemonVersion(daemonVersion, env), daemonVersion };
+}
+
 /** sessionStorage を try/catch で包む (private mode / quota で例外が飛ぶ環境が
  *  ある)。読めない環境では「まだリロードしていない」に degrade する — 1 回は
  *  自動リロードが走り、書き込みも失敗するので 2 回目以降もリロードし続ける

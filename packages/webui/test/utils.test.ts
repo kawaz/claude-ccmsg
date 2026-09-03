@@ -9,6 +9,7 @@ import type { AppState } from "../src/client/store.ts";
 import { ADMIN_ID, initialState } from "../src/client/store.ts";
 import {
   badgeLabel,
+  clientBuildLabel,
   buildSessionSearchRequest,
   canonicalViewerPath,
   clampPaneRatio,
@@ -60,6 +61,7 @@ import {
   splitRoomsByLiveness,
   liveAgentCount,
   toggleFavorite,
+  staleClientWarning,
   toSessionRow,
   type PeerSortKey,
   type SessionRow,
@@ -2031,5 +2033,68 @@ describe("sortPinnedSessions", () => {
     const input = [older, newer];
     expect(sortPinnedSessions(input)).toEqual([newer, older]);
     expect(input).toEqual([older, newer]); // unmutated
+  });
+});
+
+describe("clientBuildLabel / staleClientWarning", () => {
+  test("clientBuildLabel names the build and the generation it speaks", () => {
+    expect(clientBuildLabel({ client_version: "0.137.0", protocol: 1 })).toBe(
+      "v0.137.0 (protocol 1)",
+    );
+  });
+
+  test("clientBuildLabel keeps the version alone when no generation was announced", () => {
+    expect(clientBuildLabel({ client_version: "0.129.0" })).toBe("v0.129.0");
+  });
+
+  // 現在走っている subscribe は全部この形 (どちらの欄も無い)。完全に互換な
+  // ので、警告どころか generation の表示もしない。
+  test("clientBuildLabel reads a pre-field client as an unknown build, nothing more", () => {
+    expect(clientBuildLabel({})).toBe("版数不明");
+    expect(staleClientWarning(peer({}))).toBeNull();
+  });
+
+  test("staleClientWarning is null while every client of the session is current", () => {
+    expect(staleClientWarning(peer({ client_version: "0.137.0", protocol: 1 }))).toBeNull();
+  });
+
+  // stale 記録の protocol 欄が無い = 世代を名乗る前に弾かれた (request_id
+  // 欠落)。generation 番号より、繋がらない理由そのものを出す。
+  test("staleClientWarning names the stale build and what to do about it", () => {
+    const warning = staleClientWarning(
+      peer({ stale_client: { last_seen: "2026-09-03T01:00:00.000Z", version: "0.129.0" } }),
+    );
+    expect(warning?.marker).toBe("⚠");
+    expect(warning?.build).toBe("v0.129.0 / request_id 非対応");
+    expect(warning?.text).toContain("v0.129.0");
+    expect(warning?.text).toContain("request_id 非対応");
+    expect(warning?.text).toContain("subscribe を張り直して");
+    expect(warning?.text).toContain("2026-09-03T01:00:00.000Z");
+  });
+
+  test("staleClientWarning reports the generation a mismatched client claimed", () => {
+    const warning = staleClientWarning(
+      peer({ stale_client: { last_seen: "2026-09-03T01:00:00.000Z", protocol: 2 } }),
+    );
+    expect(warning?.build).toBe("版数不明 / protocol 2");
+    expect(warning?.text).toContain("protocol 2");
+    // No version to name: the client reported none.
+    expect(warning?.text).toContain("版数不明");
+  });
+
+  test("toSessionRow carries the build fields and the stale flag onto the row", () => {
+    const row = toSessionRow(
+      peer({
+        sid: "s1",
+        client_version: "0.137.0",
+        protocol: 1,
+        stale_client: { last_seen: "2026-09-03T01:00:00.000Z", version: "0.129.0" },
+      }),
+      indexAgentsBySid([]),
+      new Map(),
+    );
+    expect(row.client_version).toBe("0.137.0");
+    expect(row.protocol).toBe(1);
+    expect(staleClientWarning(row)?.marker).toBe("⚠");
   });
 });

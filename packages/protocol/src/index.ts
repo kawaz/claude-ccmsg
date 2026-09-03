@@ -10,7 +10,7 @@
 // row. `u2+` are guests (room-local, explicit member row, `role: "guest"`). Agents
 // get `a1, a2, ...` in room join order. This is NOT the Unix UID.
 
-export { VERSION } from "./version.ts";
+export { VERSION, PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 export { compareVersions } from "./version-compare.ts";
 export * from "./paths.ts";
 export * from "./config-migration.ts";
@@ -980,7 +980,12 @@ export type Identity = SessionIdentity | UserIdentity;
  * Reject-before-dispatch failures that cannot name a request (unparseable
  * JSON, missing `op`, missing `request_id`) are the one class of reply that
  * carries no id — a client can only log those, never settle a caller with
- * them. */
+ * them.
+ *
+ * A missing id is a `bad_request`, with no path that serves the older protocol
+ * instead: breaking those clients was the deliberate choice (DR-0029 追補 /
+ * DR-0002 §4 設計意図), and a `subscribe` predating this envelope is fixed by
+ * restarting it. */
 export interface RequestEnvelope {
   request_id: string;
 }
@@ -1007,6 +1012,16 @@ export interface HelloRequest {
    * pair of sessions reach each other with the native SendMessage tool"
    * (`PeerInfo.send_message`); never echoed back on the wire. */
   config_dir?: string;
+  /** The ccmsg build this client runs (`VERSION`). Diagnostic only — the
+   * daemon never gates on it — but it is what turns "this session's client is
+   * stale" into an actionable line: it names the version to upgrade from. */
+  client_version?: string;
+  /** The wire generation this client speaks (`PROTOCOL_VERSION`). A hello
+   * announcing a generation the daemon does not speak is rejected with
+   * `bad_request`. Omitting the field means generation
+   * `UNANNOUNCED_PROTOCOL_VERSION`, which is a statement about the client, not
+   * an exemption: it is checked like any announced value. */
+  protocol?: number;
 }
 
 /** Post a new message. Session-authored posts to a 1on1 room are rejected
@@ -2023,6 +2038,10 @@ export interface ErrorResponse {
 export interface HelloResponse {
   ok: true;
   version: string;
+  /** The wire generation this daemon speaks (`PROTOCOL_VERSION`). A client
+   * whose own generation differs never gets here — its hello is rejected —
+   * so this is for display, not for the client to branch on. */
+  protocol: number;
   /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
    * hello に対してのみ、`<configDir>/config.json` の `terminal_gateway_url`
    * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)
@@ -2213,6 +2232,43 @@ export interface PeerInfo {
    * side's config dir is unknown: an unflagged peer merely costs a `ccmsg
    * post`, a wrongly flagged one costs a message that never arrives. */
   send_message?: true;
+  /** ccmsg build of the client that last hello'd for this sid, when it
+   * announced one (`HelloRequest.client_version`). */
+  client_version?: string;
+  /** Wire generation that client announced (`HelloRequest.protocol`). Absent
+   * for a client that predates the field, which means
+   * `UNANNOUNCED_PROTOCOL_VERSION` rather than "unknown" — it is left absent
+   * instead of filled in so a display can say "版数不明" for such a client
+   * without inventing a generation it never mentioned. */
+  protocol?: number;
+  /** Set while the daemon has seen a client for this sid whose hello it
+   * refused. The session itself is fine — some *other* ccmsg process of the
+   * same session (typically a long-lived `ccmsg subscribe` started before an
+   * upgrade) is the stale one, and it is invisible otherwise: it retries
+   * forever, its hello is refused every time, and nothing in the UI moves.
+   * Cleared by any hello from that sid the daemon accepts. */
+  stale_client?: StaleClientInfo;
+}
+/** A ccmsg client for one sid whose hello the daemon refused. Overwritten,
+ * never accumulated — the offending client reconnects every few seconds, so
+ * the useful reading is "still happening as of `last_seen`", not how many
+ * times it tried.
+ *
+ * There are exactly two ways to get here, and `protocol` tells them apart:
+ * present, the client announced a generation this daemon does not speak;
+ * absent, it was refused before it could be read as a hello at all, for
+ * sending no `request_id` (generation 1's envelope). A client merely too old
+ * to announce a generation is *not* here — that is
+ * `UNANNOUNCED_PROTOCOL_VERSION`, and it is served like any other client of
+ * that generation. */
+export interface StaleClientInfo {
+  /** ISO time of that client's most recent attempt. */
+  last_seen: string;
+  /** ccmsg build it reported, when it reported one. */
+  version?: string;
+  /** Generation it announced. Absent means it never got that far: refused for
+   * the missing correlation envelope. */
+  protocol?: number;
 }
 /** One session that was connected when the daemon last saw it alive, replayed
  * after a daemon (or whole machine) restart it did not come back from — the

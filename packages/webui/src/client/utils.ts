@@ -10,6 +10,7 @@ import type {
   SessionSearchHit,
   SessionSearchMatch,
   SessionSearchRequest,
+  StaleClientInfo,
 } from "@ccmsg/protocol";
 import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
@@ -491,6 +492,14 @@ export interface SessionRow {
    * this over *connected* peers' transcripts, and such a row is `"offline"`
    * regardless. */
   api_error?: SessionApiError;
+  /** ccmsg build / wire generation this session's latest hello announced, and
+   * the warning set while some client of it is out of date (PeerInfo's three
+   * build fields). All absent on an agent-only row: `claude agents --json`
+   * knows nothing about ccmsg, and a session that never connected has no
+   * client to be stale. */
+  client_version?: string;
+  protocol?: number;
+  stale_client?: StaleClientInfo;
 }
 
 /** Indexes `claude agents --json` rows by sessionId for O(1) lookup while
@@ -527,6 +536,9 @@ export function toSessionRow(
     last_activity_at: peer.last_activity_at,
     repo_root: peer.repo_root,
     transcript_path: peer.transcript_path,
+    client_version: peer.client_version,
+    protocol: peer.protocol,
+    stale_client: peer.stale_client,
     agent: agentsBySid.get(peer.sid),
     connected: true,
     api_error: errorsBySid.get(peer.sid),
@@ -695,6 +707,52 @@ export function sessionBadges(row: SessionRow): string[] {
   const badges: string[] = [sessionStatus(row)];
   if (row.agent.kind === "background") badges.push("bg");
   return badges;
+}
+
+/** How a session's ccmsg client reads in the Status tab: the build it
+ * announced, and the generation when it named one.
+ *
+ * A client from before either field existed reads as "版数不明" and nothing
+ * more — every subscribe running today is one, they are perfectly compatible
+ * (`UNANNOUNCED_PROTOCOL_VERSION`), and this row is not the place to imply
+ * otherwise. Any warning comes from `staleClientWarning` instead. */
+export function clientBuildLabel(row: { client_version?: string; protocol?: number }): string {
+  const version = row.client_version ? `v${row.client_version}` : "版数不明";
+  return row.protocol === undefined ? version : `${version} (protocol ${row.protocol})`;
+}
+
+/** The warning one session's refused ccmsg client earns, or null while every
+ * client of it is being served.
+ *
+ * The stale process is almost never the one that just hello'd — it is a
+ * `ccmsg subscribe` still looping against a daemon that has moved on, refused
+ * every few seconds and silent about it. So the text names the fix (restart
+ * that session's subscribe) rather than the symptom, and the version it
+ * reports is the *stale* client's, not the row's.
+ *
+ * An absent `protocol` is not "unknown generation" here: it is the daemon
+ * saying the hello never got as far as being read as one, for carrying no
+ * `request_id`. Naming that is more useful than a generation number, since it
+ * is the actual reason that client cannot connect. */
+export function staleClientWarning(row: {
+  stale_client?: StaleClientInfo;
+}): { marker: string; build: string; text: string } | null {
+  const stale = row.stale_client;
+  if (!stale) return null;
+  const version = stale.version ? `v${stale.version}` : "版数不明";
+  const generation =
+    stale.protocol === undefined ? "request_id 非対応" : `protocol ${stale.protocol}`;
+  // The stale client's own build, not the row's: the row reports whatever
+  // hello'd last, which on a healthy-plus-stale session is the *working*
+  // process — naming that one would point the reader at the wrong version.
+  const build = `${version} / ${generation}`;
+  return {
+    marker: "⚠",
+    build,
+    text:
+      `ccmsg クライアントが古い (${build})。` +
+      `このセッションで subscribe を張り直してください\n最終試行: ${stale.last_seen}`,
+  };
 }
 
 /** Display text for a badge kind (SessionList.tsx renders these verbatim). */

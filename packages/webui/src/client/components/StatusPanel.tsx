@@ -31,7 +31,12 @@ import {
   type EnvRow,
 } from "../env-filter.ts";
 import { agentTimelineHref } from "../locator.ts";
-import { formatClockTime, resolveSessionTopbar } from "../utils.ts";
+import {
+  clientBuildLabel,
+  formatClockTime,
+  resolveSessionTopbar,
+  staleClientWarning,
+} from "../utils.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { CopyButton } from "./CopyButton.tsx";
@@ -431,6 +436,12 @@ export function StatusPanel({
   const pinned = state.pinnedSessions.get(sid);
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
   const namespace = formatHyouiNamespace(agent);
+  // このセッションの ccmsg クライアント。CWD や PID と同じ「今この session が
+  // 何で動いているか」の一部なので identity 表に並べる。古い client が居るとき
+  // だけ警告に変わり、それ以外は版数だけを黙って出す。
+  const peer = state.peers.find((candidate) => candidate.sid === sid);
+  const staleClient = peer ? staleClientWarning(peer) : null;
+  const clientBuild = peer ? clientBuildLabel(peer) : "—";
   if (!snapshot) {
     return (
       <div class="status-view">
@@ -512,6 +523,16 @@ export function StatusPanel({
             </>
           ) : (
             "—"
+          )}
+        </dd>
+        <dt>CCMSG</dt>
+        <dd class="status-meta-value" title={staleClient?.text}>
+          {staleClient ? (
+            <span class="status-stale-client">
+              {staleClient.marker} {staleClient.build} — ccmsg クライアントが古い
+            </span>
+          ) : (
+            <span>{clientBuild}</span>
           )}
         </dd>
         <dt>LIVE</dt>

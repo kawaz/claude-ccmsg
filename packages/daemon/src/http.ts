@@ -84,14 +84,22 @@ function pinHelloToUser(line: string): string {
     return line; // malformed JSON: let handleRequest's own parse report bad_request
   }
   if (req !== null && typeof req === "object" && (req as { op?: unknown }).op === "hello") {
-    // Everything the client claimed about its identity is dropped; its
+    // Everything the client claimed about its *identity* is dropped; its
     // correlation id is not — the reply still has to reach the caller that is
-    // waiting for it.
-    const { request_id: requestId } = req as { request_id?: unknown };
+    // waiting for it — and neither is what it claimed about its own build,
+    // which is not an identity claim at all: the generation check has to see
+    // it or a browser holding a stale bundle would be served silently.
+    const {
+      request_id: requestId,
+      client_version: clientVersion,
+      protocol,
+    } = req as { request_id?: unknown; client_version?: unknown; protocol?: unknown };
     return JSON.stringify({
       op: "hello",
       role: "user",
       ...(requestId !== undefined ? { request_id: requestId } : {}),
+      ...(clientVersion !== undefined ? { client_version: clientVersion } : {}),
+      ...(protocol !== undefined ? { protocol } : {}),
     });
   }
   return line;

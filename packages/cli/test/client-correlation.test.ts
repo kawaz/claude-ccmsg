@@ -6,7 +6,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, expect, test } from "bun:test";
-import { Client } from "../src/client.ts";
+import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import { Client, helloRequest } from "../src/client.ts";
 
 let cleanup: Array<() => void> = [];
 
@@ -73,4 +74,25 @@ test("a reply with no request_id is accepted, so a pre-correlation daemon can st
     version: "0.0.1",
   });
   client.close();
+});
+
+test("every hello announces this build and the generation it speaks", () => {
+  // Both roles: a stale `ccmsg subscribe` is a session-role client, but a
+  // browser holding an old bundle is a user-role one, and neither should be
+  // able to reach a daemon that has moved on without being noticed.
+  expect(helloRequest({ role: "user" })).toMatchObject({
+    op: "hello",
+    role: "user",
+    client_version: VERSION,
+    protocol: PROTOCOL_VERSION,
+  });
+  expect(
+    helloRequest({ role: "session", sid: "S", repo: "r", ws: "w", cwd: "/tmp" }),
+  ).toMatchObject({
+    op: "hello",
+    role: "session",
+    sid: "S",
+    client_version: VERSION,
+    protocol: PROTOCOL_VERSION,
+  });
 });

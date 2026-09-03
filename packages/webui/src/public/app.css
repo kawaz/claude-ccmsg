@@ -761,6 +761,20 @@ a {
   white-space: nowrap;
 }
 
+/* 古い ccmsg クライアント警告。未読 say と同じ位置・同じ大きさで出す —
+ * 拒否され続ける subscribe は他に一切痕跡を残さないので、弱い badge 扱いに
+ * すると気づけない。 */
+.session-stale-client {
+  flex-shrink: 0;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--warn);
+}
+
+.status-stale-client {
+  color: var(--warn);
+}
+
 .session-live-dot {
   flex: none;
   width: 0.5rem;

@@ -76,11 +76,11 @@ import type {
   TranscriptSubscribeResponse,
   TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
-import { VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import { hasUnsentInput } from "./unsent-input.ts";
-import { browserVersionGuardEnv, reactToDaemonVersion } from "./version-guard.ts";
+import { browserVersionGuardEnv, reactToHandshakeVersion } from "./version-guard.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
@@ -539,24 +539,39 @@ export function createWsClient(
     // painted before an in-page reconnect stays caught up.
     const spaHasState = getState().rooms.size > 0;
     try {
-      const hello = await send<HelloResponse>({ op: "hello", role: "user" });
-      // Terminal タブの gateway URL (issue 2026-07-21) — daemon config.json 未設定
-      // なら省略されるので null に落とす。値が来ていれば AppState に反映し、
-      // SessionView は「hyoui_session_id 解決済み かつ この URL 有り」の
-      // 両条件でのみ Terminal タブを出す。
-      if (hello.ok) {
-        // bundle と daemon の version 照合は handshake の他の何よりも先。
-        // 不一致のまま先へ進むと、wire protocol が動いた upgrade
-        // (v0.136.0 の request_id 必須化) では以降の全 op が失敗して沈黙する。
-        // 一致していれば dispatch は null で、前の接続で立った導線を畳む。
-        const outcome = reactToDaemonVersion(
-          hello.version,
-          browserVersionGuardEnv(VERSION, hasUnsentInput),
-        );
+      const hello = await send<HelloResponse>({
+        op: "hello",
+        role: "user",
+        client_version: VERSION,
+        protocol: PROTOCOL_VERSION,
+      });
+      // bundle と daemon の version 照合は handshake の他の何よりも先。
+      // 不一致のまま先へ進むと、wire protocol が動いた upgrade
+      // (v0.136.0 の request_id 必須化) では以降の全 op が失敗して沈黙する。
+      // 一致していれば dispatch は null で、前の接続で立った導線を畳む。
+      //
+      // hello が拒否された時ほどこの照合が要る (その拒否自体が protocol 変更の
+      // 症状) ので、その場合は hello 不要の ping から version を取りに行く。
+      // どちらも取れなければ判定材料が無いので、再接続の backoff に委ねる。
+      const guard = await reactToHandshakeVersion(
+        hello,
+        async () => {
+          const probe = await send<PingResponse>({ op: "ping" }).catch(() => null);
+          return probe?.ok ? probe.version : null;
+        },
+        browserVersionGuardEnv(VERSION, hasUnsentInput),
+      );
+      if (guard) {
         dispatch({
           type: "version-mismatch/detected",
-          daemonVersion: outcome === "notified" ? hello.version : null,
+          daemonVersion: guard.outcome === "notified" ? guard.daemonVersion : null,
         });
+      }
+      if (hello.ok) {
+        // Terminal タブの gateway URL (issue 2026-07-21) — daemon config.json 未設定
+        // なら省略されるので null に落とす。値が来ていれば AppState に反映し、
+        // SessionView は「hyoui_session_id 解決済み かつ この URL 有り」の
+        // 両条件でのみ Terminal タブを出す。
         dispatch({
           type: "terminal-gateway/loaded",
           url: hello.terminal_gateway_url ?? null,

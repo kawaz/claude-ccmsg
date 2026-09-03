@@ -7,7 +7,13 @@
 // same-or-newer daemon is left alone so old and new clients don't fight over
 // which version should run during a gradual plugin rollout).
 import type { Socket } from "bun";
-import { compareVersions, VERSION, type Identity, type Paths } from "@ccmsg/protocol";
+import {
+  compareVersions,
+  PROTOCOL_VERSION,
+  VERSION,
+  type Identity,
+  type Paths,
+} from "@ccmsg/protocol";
 
 export class Client {
   private socket!: Socket;
@@ -219,11 +225,17 @@ async function waitDaemonGone(sockPath: string): Promise<void> {
   // give up waiting; the re-spawn below will unlink a stale socket anyway
 }
 
+/** What every hello says about the process sending it, regardless of role: the
+ * build, so a stale client can be named, and the wire generation, so a daemon
+ * that no longer speaks it refuses instead of half-serving it. */
+const clientBuild = { client_version: VERSION, protocol: PROTOCOL_VERSION };
+
 export function helloRequest(identity: Identity): Record<string, unknown> {
-  if (identity.role === "user") return { op: "hello", role: "user" };
+  if (identity.role === "user") return { op: "hello", role: "user", ...clientBuild };
   return {
     op: "hello",
     role: "session",
+    ...clientBuild,
     sid: identity.sid,
     repo: identity.repo,
     ws: identity.ws,

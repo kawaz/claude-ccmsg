@@ -22,6 +22,7 @@ import {
   offlineAgentRows,
   sessionRowTitle,
   sessionBadges,
+  staleClientWarning,
   shortSid,
   sortPinnedSessions,
   toSessionRow,
@@ -506,6 +507,8 @@ function SessionRowItem({
   // 省略される) ので、全文は hover の title 側で読めるようにしておく。
   if (row.api_error)
     titleParts.push(`API error (${row.api_error.timestamp}):\n${row.api_error.text}`);
+  const staleClient = staleClientWarning(row);
+  if (staleClient) titleParts.push(staleClient.text);
 
   return (
     <li
@@ -548,6 +551,19 @@ function SessionRowItem({
           {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
            * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと
            * repo の間に割り込ませて、鳴ったことを見逃させない。 */}
+          {/* 古い ccmsg クライアント (典型的には upgrade 前から回り続けている
+           * subscribe) は、拒否され続けても行の見た目を一切動かさない。未読
+           * say と同じ「repo 名の直前」に出して、そのセッションだけの問題だと
+           * 一目で分かるようにする。 */}
+          {staleClient ? (
+            <span
+              class="session-stale-client"
+              title={staleClient.text}
+              aria-label="ccmsg クライアントが古い"
+            >
+              {staleClient.marker}
+            </span>
+          ) : null}
           {sayUnread > 0 ? (
             <span
               class="session-say-unread"
