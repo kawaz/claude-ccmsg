@@ -8,6 +8,18 @@ import type { Socket } from "bun";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
+const spawnedDaemons = new Set<Bun.Subprocess>();
+
+process.on("exit", () => {
+  for (const proc of spawnedDaemons) {
+    try {
+      proc.kill();
+    } catch {
+      // The subprocess may have exited between registry lookup and signaling.
+    }
+  }
+});
+
 function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
@@ -35,7 +47,7 @@ export function spawnDaemonProc(
   dataDir: string,
   extraEnv: Record<string, string> = {},
 ): Bun.Subprocess {
-  return Bun.spawn([process.execPath, DAEMON_ENTRY, "daemon", "run"], {
+  const proc = Bun.spawn([process.execPath, DAEMON_ENTRY, "daemon", "run"], {
     stdin: "ignore",
     stdout: "ignore",
     stderr: "ignore",
@@ -56,6 +68,9 @@ export function spawnDaemonProc(
       ...extraEnv,
     },
   });
+  spawnedDaemons.add(proc);
+  void proc.exited.then(() => spawnedDaemons.delete(proc));
+  return proc;
 }
 
 export async function waitConnectable(sock: string, timeoutMs = 5000): Promise<void> {
@@ -93,17 +108,28 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
   };
   const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);
   const sock = path.join(stateDir, "daemon.sock");
-  await waitConnectable(sock);
-  return {
-    base,
-    stateDir,
-    configDir: testConfigDir(dataDir),
-    dataDir,
-    roomsDir: path.join(dataDir, "rooms"),
-    sock,
-    proc,
-    env,
-  };
+  try {
+    await waitConnectable(sock);
+    return {
+      base,
+      stateDir,
+      configDir: testConfigDir(dataDir),
+      dataDir,
+      roomsDir: path.join(dataDir, "rooms"),
+      sock,
+      proc,
+      env,
+    };
+  } catch (error) {
+    try {
+      proc.kill();
+    } catch {
+      // The subprocess may have exited while readiness was being checked.
+    }
+    await proc.exited;
+    fs.rmSync(base, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function stopTestDaemon(ctx: DaemonCtx): Promise<void> {

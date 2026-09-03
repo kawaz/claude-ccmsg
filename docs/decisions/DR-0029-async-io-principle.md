@@ -58,15 +58,25 @@ transcript の cold scan 中、同一接続の `ping` が 1.15 秒待つ)。
 ### 2-phase op の位置づけ
 
 `acceptTwoPhase` の 2-phase 応答 (即時 ack + `ev:"*_result"`) は **「長い Promise
-の RPC」に吸収された**。遅い op が他を待たせないための仕組みとしては不要になり、
-既存 op は互換のためそのまま残す (client は result event で settle する)。
-op ごとに単一応答へ寄せてよい。
+の RPC」に吸収された**。遅い op が他を待たせないための仕組みとしては不要。
+
+2-phase op (`session_search` / `session_launch` / `session_kill` /
+`session_dump_file` / `translate` 等) を「Promise が長い RPC」へ畳む**後続作業を
+残す** (issue: `2026-09-03-fold-two-phase-ops-into-rpc`)。今この形が残っているのは
+畳む作業が未着手だからであって、**後方互換のために形を残すことはしない**。
 
 ### 相関できない失敗
 
 parse 不能な JSON / `op` 欠落 / `request_id` 欠落の 3 つだけは、応答に id を載せ
 られない (= どの要求への答えか名指しできない)。これらは `bad_request` を返すが、
 client は誰も settle できない — log するだけ。正常な client は必ず id を送る。
+
+### subscribe 経路の互換を切る意図的な変更
+
+本追補は DR-0002 §4「設計意図」でいう **subscribe 経路の互換を意図的に切る変更**。
+旧 version の `subscribe` は id を送らないため新 daemon の hello を通れず、**その
+セッションでは subscribe の張り直しが必要**になる。`request_id` 欠落を旧 protocol
+として受け付ける互換経路は**設けない** (kawaz 裁定 r259m32、今後も戻さない)。
 
 ## 影響
 

@@ -1629,6 +1629,9 @@ async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promi
   // to be known first. A request without one cannot be answered in a way its
   // sender could pair up: report it as bad_request (uncorrelated, like the two
   // parse failures above) rather than dispatching into a reply nobody claims.
+  // No compatibility path for the pre-correlation clients that omit it — that
+  // is a deliberate break (DR-0029 追補 / DR-0002 §4 設計意図); a subscribe from
+  // before this envelope is resolved by restarting it, not by serving it here.
   if (typeof req.request_id !== "string" || req.request_id === "") {
     sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires a non-empty string request_id`);
     return;

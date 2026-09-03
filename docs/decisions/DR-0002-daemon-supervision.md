@@ -38,6 +38,15 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 - plugin update 直後の「新 CLI vs 旧常駐 daemon」はこれで自動解消する
 - **追補 (2026-07-10)**: 不一致判定は等値ではなく **newer-wins** (client が自分の version と daemon の version を比較し、client の方が厳密に新しい場合のみ shutdown+respawn。daemon が同じか新しければ何もしない)。理由: gradual rollout で新旧 client が同時に daemon へ接触すると、等値比較では互いに相手を降格させ合うフラッピングが発生する (docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md)。比較は `@ccmsg/protocol` の `compareVersions`
 
+#### 設計意図: 最新であるべきは daemon プロセスだけ (2026-09-03)
+
+- **`subscribe` は daemon の更新をまたいで生き続ける**。daemon が新しくなっても subscribe プロセスは再起動しないし、更新されたことをセッションに通知もしない。subscribe の責務は「通知をセッションに出す」ことだけで、自分自身の version は責務ではない
+- 根拠: 以前は daemon 更新のたびに subscribe を自動再起動していたが、その通知と再接続がセッションのコンテキストを毎回浪費するので撤廃した。同じ理由で「daemon が新しいので張り直してください」という案内も出さない
+- したがって **subscribe が使う経路 (hello / subscribe / イベント配信 / 再接続) の後方互換を保つ義務は daemon 側にある**。この経路を変えるときは、旧 version の subscribe が話す形をそのまま受け付け続けられるかを先に考える
+- **「旧 subscribe が黙って再接続を続ける」のは仕様であって不具合ではない**。再起動しないこと自体を不具合と見て「直さねば」と動かない (fail-fast も自動再起動も、上のコンテキスト浪費に戻る)
+- **後方互換は原則実装しない** (host 単位で丸ごと進化するイメージ。ccmsg は kawaz の 1 ホストに閉じた系で、新旧が併存する配布先を持たない)。互換のために形を残す・分岐を足すのは禁止で、必要に見えた時は**実装せず kawaz に相談する** (kawaz r259m33)
+- **互換を切る場合は意図的な判断として DR に理由を書く**。切った時点で旧 subscribe は再接続しても通らなくなるので、**セッション側での張り直しが必要になる**ことも併せて記録する。実例: v0.136.0 の `request_id` 必須化 (DR-0029 追補) — 互換経路は意図的に設けない裁定 (kawaz r259m32) で、旧 subscribe は張り直しで解消する
+
 ### 5. Crash 回復 [提案]
 
 - 監視プロセスは置かない。crash → 次のクライアント接触 (ターン毎 hook 含む) で再 spawn される = 自然回復

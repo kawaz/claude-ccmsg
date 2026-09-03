@@ -273,6 +273,12 @@ export async function connectIfRunning(paths: Paths): Promise<Client | null> {
  *   (newer-wins). Reconnect just re-attaches to whatever daemon is now listening —
  *   an old-client reconnect to a newer daemon must NOT retrigger the upgrade path
  *   (would flap during gradual rollout, cf. DR-0002 §4 追補).
+ * - Never fatal: reconnect keeps retrying and never exits the subscribe, however
+ *   old this CLI gets — see DR-0002 §4 設計意図. A subscribe is meant to outlive
+ *   daemon upgrades without restarting or announcing one, so a skew that keeps
+ *   hello from succeeding is not something to tear this process down over.
+ *   Cutting that compatibility is the daemon's deliberate call (reasoned in a
+ *   DR), and the session restarts its subscribe when it happens.
  * - Returns null when the socket is not connectable, hello fails, or subscribe ack
  *   is not ok. Callers handle backoff/retry.
  */

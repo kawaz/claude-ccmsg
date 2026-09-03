@@ -483,6 +483,11 @@ async function runSubscribe(
     }
     // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
     // `ccmsg daemon stop` を subscribe が resurrection しない契約。
+    // 打ち切り条件は持たない (DR-0002 §4 設計意図): subscribe は daemon 更新を
+    // またいで生き続ける側で、再起動も通知もしない。非互換に見えても subscribe 側で
+    // exit / 再起動する方向には倒さない。protocol の互換を切るのは daemon 側の
+    // 意図的な判断で、その時はセッションが張り直す (例: DR-0029 追補の request_id
+    // 必須化)。
     for (;;) {
       const c = await raceOwner(reconnectSubscribeNoSpawn(paths, identity, sinceMap));
       if (c !== null) {
