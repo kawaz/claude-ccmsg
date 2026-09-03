@@ -225,13 +225,24 @@ export function navigationTarget(
   return withSidebarState(url, sidebar ?? parseSidebarUrl(currentSearch));
 }
 
+/** `navigate()` info marking a URL whose `sb.*` was composed on purpose — by
+ * `navigationTarget`, which either carried the current panel over or applied
+ * an explicit state (including "closed"). A navigation without it (a plain
+ * `<a href>` such as a session tab, a typed URL) says nothing about the panel,
+ * so the intercept keeps the one that is open (kawaz r259m65). */
+const SIDEBAR_COMPOSED = { sidebar: "composed" } as const;
+
 export function pushNavigation(url: string, sidebar?: SidebarUrlState): void {
-  window.navigation.navigate(navigationTarget(url, location.search, sidebar), { history: "push" });
+  window.navigation.navigate(navigationTarget(url, location.search, sidebar), {
+    history: "push",
+    info: SIDEBAR_COMPOSED,
+  });
 }
 
 export function replaceNavigation(url: string, sidebar?: SidebarUrlState): void {
   window.navigation.navigate(navigationTarget(url, location.search, sidebar), {
     history: "replace",
+    info: SIDEBAR_COMPOSED,
   });
 }
 
@@ -271,6 +282,26 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     if (event.navigationType === "reload") return;
     const targetUrl = new URL(event.destination.url);
     if (targetUrl.origin !== location.origin) return;
+    // A link that says nothing about the sidebar keeps the open panel: the
+    // session tabs are plain anchors, and hopping Files → Timeline must not
+    // close a Session Search the user is reading results from. Re-issued as
+    // the same navigation with `sb.*` carried over (now marked composed, so
+    // this branch runs once).
+    const composed = (event.info as { sidebar?: string } | undefined)?.sidebar === "composed";
+    if (!composed && event.navigationType !== "traverse") {
+      const current = parseSidebarUrl(location.search);
+      if (current.panel !== null && parseSidebarUrl(targetUrl.search).panel === null) {
+        event.preventDefault();
+        window.navigation.navigate(
+          withSidebarState(`${targetUrl.pathname}${targetUrl.search}`, current),
+          {
+            history: event.navigationType === "replace" ? "replace" : "push",
+            info: SIDEBAR_COMPOSED,
+          },
+        );
+        return;
+      }
+    }
     window.dispatchEvent(new Event(BEFORE_NAVIGATION_EVENT));
     const target = parseUrl(targetUrl.pathname, targetUrl.search);
     const current = parseUrl(location.pathname, location.search);
