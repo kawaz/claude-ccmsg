@@ -53,17 +53,21 @@ describe("parseLlmRequestEvent", () => {
     }
   });
 
-  test("an origin the gateway never promised is left unstated", () => {
+  test("origin is an open vocabulary: any stated string is kept, non-strings dropped", () => {
     // Absent origin is what a pre-v0.33.0 gateway sends, and the cache reads
-    // it as "estimate this session's main series". A value outside the three
-    // known ones has to degrade to that, not to a fourth meaning.
-    for (const origin of [undefined, null, "MAIN", "agent", 1]) {
+    // it as "estimate this session's main series". The word list is the
+    // gateway's to grow ("oneshot" arrived in its v0.34.0), so an unknown
+    // string is kept as stated — downstream only ever asks "is it main?" —
+    // while a non-string degrades to unstated.
+    for (const origin of [undefined, null, 1, ""]) {
       const info = parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin });
       expect(info?.origin).toBeUndefined();
     }
-    expect(
-      parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin: "sub" })?.origin,
-    ).toBe("sub");
+    for (const origin of ["sub", "oneshot", "MAIN", "agent"]) {
+      expect(parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin })?.origin).toBe(
+        origin,
+      );
+    }
     expect(
       parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin: "unknown" })?.origin,
     ).toBe("unknown");
@@ -231,12 +235,13 @@ describe("LlmRequestCache", () => {
   describe("a gateway that states origin", () => {
     /** One event as such a gateway sends it: origin stated, and a deadline
      * because the request did cache. */
-    const cached = (
-      ts: number,
-      session_id: string,
-      prefix: string,
-      origin: "main" | "sub" | "unknown",
-    ) => ({ ts, session_id, prefix, origin, cache_expires_at: ts + 300 });
+    const cached = (ts: number, session_id: string, prefix: string, origin: string) => ({
+      ts,
+      session_id,
+      prefix,
+      origin,
+      cache_expires_at: ts + 300,
+    });
 
     test("gives main to the series it called main, whatever the arrival order", () => {
       const cache = new LlmRequestCache();

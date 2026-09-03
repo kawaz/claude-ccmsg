@@ -35,7 +35,10 @@ export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | nu
   const rawPrefix = raw.prefix;
   const prefix = typeof rawPrefix === "string" ? rawPrefix : "";
   const info: LlmRequestObservation = { ts, session_id: sid, prefix };
-  if (raw.origin === "main" || raw.origin === "sub" || raw.origin === "unknown") {
+  // The origin vocabulary is the gateway's to grow ("oneshot" arrived in its
+  // v0.34.0); any string is kept as stated, and everything downstream asks
+  // only "is it main?" — so a new word behaves like sub without a change here.
+  if (typeof raw.origin === "string" && raw.origin !== "") {
     info.origin = raw.origin;
   }
   // Only a deadline in the future of its own request opens a window; anything

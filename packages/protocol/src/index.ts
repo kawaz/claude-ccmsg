@@ -460,7 +460,9 @@ export interface LlmRequestInfo {
    * a subagent under it, "unknown" when the field said neither. Absent from a
    * gateway older than v0.33.0, which is why `main` above stays the thing
    * clients read: it is the verdict, this is one of its inputs. */
-  origin?: "main" | "sub" | "unknown";
+  /** As the gateway states it: "main" / "sub" / "unknown" / "oneshot" today,
+   * an open set — consumers only ever test for "main". */
+  origin?: string;
   /** Epoch SECONDS at which this series' prompt cache goes cold, as the
    * gateway computed it (`ts` + the cache TTL it actually asked for, 5m or
    * 1h). Absent when the request cached nothing, and from a gateway older
