@@ -3,7 +3,7 @@ title: 2-phase op を「Promise が長い RPC」に畳む
 status: open
 category: task
 created: 2026-09-03T10:55:56+09:00
-last_read:
+last_read: 2026-09-03T11:49:43+09:00
 open_entered: 2026-09-03T10:55:56+09:00
 wip_entered:
 blocked_entered:
