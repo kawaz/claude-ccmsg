@@ -4067,7 +4067,7 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
   const reply = (text: string) => assistantContent([{ type: "text", text }]);
 
   test("the exact token on its own -> not a boundary (folds)", () => {
-    const line = reply("LLMGW-KEEPALIVE-Ab3-_xY9");
+    const line = reply("LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3");
     expect(isCacheKeepaliveReplyLine(line)).toBe(true);
     expect(classifyBoundaryLine(line)).toBeNull();
   });
@@ -4075,12 +4075,20 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
   // marker の指示どおりならトークン 1 個だけ。前後に文章が付く / 別の行が
   // 続く応答は指示に従っていない = 隠さない。
   const notReplies: [string, string][] = [
-    ["extra prose after", "LLMGW-KEEPALIVE-n1\nok, done"],
-    ["prose before", "Sure:\nLLMGW-KEEPALIVE-n1"],
-    ["merely mentioning the token", "I replied with LLMGW-KEEPALIVE-n1 earlier."],
+    ["extra prose after", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3\nok, done"],
+    ["prose before", "Sure:\nLLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3"],
+    [
+      "merely mentioning the token",
+      "I replied with LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 earlier.",
+    ],
     ["no nonce", "LLMGW-KEEPALIVE-"],
-    ["nonce with an out-of-alphabet character", "LLMGW-KEEPALIVE-n1!"],
-    ["trailing space", "LLMGW-KEEPALIVE-n1 "],
+    ["nonce shorter than 43", "LLMGW-KEEPALIVE-n1"],
+    ["nonce longer than 43", `LLMGW-KEEPALIVE-${"a".repeat(44)}`],
+    [
+      "nonce with an out-of-alphabet character",
+      "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3!",
+    ],
+    ["trailing space", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 "],
     ["lowercased token", "llmgw-keepalive-n1"],
   ];
   for (const [name, text] of notReplies) {
@@ -4094,7 +4102,7 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
   test("thinking alongside the reply -> a normal assistant bubble", () => {
     const line = assistantContent([
       { type: "thinking", thinking: "hmm" },
-      { type: "text", text: "LLMGW-KEEPALIVE-n1" },
+      { type: "text", text: "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3" },
     ]);
     expect(isCacheKeepaliveReplyLine(line)).toBe(false);
     expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
@@ -4102,7 +4110,7 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
 
   test("a tool call alongside the reply -> a normal assistant bubble", () => {
     const line = assistantContent([
-      { type: "text", text: "LLMGW-KEEPALIVE-n1" },
+      { type: "text", text: "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3" },
       { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a" } },
     ]);
     expect(isCacheKeepaliveReplyLine(line)).toBe(false);
@@ -4118,7 +4126,10 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
   // fold される = 前後の中間エントリと 1 つの fold group にまとまる
   // (standalone entry として turn を切らない)。
   test("the reply joins the surrounding fold group instead of splitting it", () => {
-    const lines = [assistantThinking("hmm"), reply("LLMGW-KEEPALIVE-n1")];
+    const lines = [
+      assistantThinking("hmm"),
+      reply("LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3"),
+    ];
     const groups = groupTimelineLines(lines, [0, 1]);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.kind).toBe("fold");
