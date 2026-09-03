@@ -1410,9 +1410,11 @@ export function isApiErrorLine(line: ParsedLine): boolean {
  * decided, and nothing a reader of the conversation is looking for.
  *
  * The reply is one opaque token, `LLMGW-KEEPALIVE-<nonce>` with a 32-byte
- * base64url nonce (always 43 characters), matched strictly: a turn that merely mentions the token, or
- * answers with extra prose around it, is real speech and stays a bubble. */
-const CACHE_KEEPALIVE_REPLY = /^LLMGW-KEEPALIVE-[A-Za-z0-9_-]{43}$/;
+ * base64url nonce (always 43 characters), on a single line (backticks or
+ * similar wrapping allowed): a turn that answers with a second line is real
+ * speech and stays a bubble. */
+const CACHE_KEEPALIVE_REPLY =
+  /(?<![A-Za-z0-9_-])LLMGW-KEEPALIVE-[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/;
 
 /** True for an assistant turn that is nothing but a cache-keepalive reply —
  * one `text` segment, whose whole content matches, and no thinking or tool
@@ -1425,7 +1427,12 @@ export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
   if (line.kind !== "turn" || line.role !== "assistant") return false;
   if (line.segments.length !== 1) return false;
   const segment = line.segments[0]!;
-  return segment.kind === "text" && CACHE_KEEPALIVE_REPLY.test(segment.text);
+  if (segment.kind !== "text") return false;
+  // One line only: the model may wrap the token in backticks or similar, so
+  // the token is matched by character-class boundaries rather than ^…$, but
+  // any second line means it said something else too.
+  const text = segment.text.trim();
+  return !text.includes("\n") && CACHE_KEEPALIVE_REPLY.test(text);
 }
 
 /** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間

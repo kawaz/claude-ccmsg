@@ -4077,20 +4077,26 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
   const notReplies: [string, string][] = [
     ["extra prose after", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3\nok, done"],
     ["prose before", "Sure:\nLLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3"],
-    [
-      "merely mentioning the token",
-      "I replied with LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 earlier.",
-    ],
     ["no nonce", "LLMGW-KEEPALIVE-"],
     ["nonce shorter than 43", "LLMGW-KEEPALIVE-n1"],
     ["nonce longer than 43", `LLMGW-KEEPALIVE-${"a".repeat(44)}`],
-    [
-      "nonce with an out-of-alphabet character",
-      "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3!",
-    ],
-    ["trailing space", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 "],
     ["lowercased token", "llmgw-keepalive-n1"],
   ];
+  // 1 行のままなら、囲み (backtick 等) や前後の語があっても指示への応答と
+  // 見なす (gateway r261m28: モデルがトークンを装飾する可能性)。
+  const wrappedReplies: [string, string][] = [
+    ["backtick-wrapped", "`LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3`"],
+    ["trailing space", "LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3 "],
+    [
+      "one-line sentence around it",
+      "Token: LLMGW-KEEPALIVE-Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3-_xY9Ab3.",
+    ],
+  ];
+  for (const [name, text] of wrappedReplies) {
+    test(`${name} -> still folds`, () => {
+      expect(isCacheKeepaliveReplyLine(reply(text))).toBe(true);
+    });
+  }
   for (const [name, text] of notReplies) {
     test(`${name} -> a normal assistant bubble`, () => {
       const line = reply(text);
