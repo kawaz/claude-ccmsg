@@ -2,6 +2,12 @@ import type { Store } from "./useStore.ts";
 import type { AppState, MissingTarget } from "./store.ts";
 import type { createWsClient } from "./ws.ts";
 import { parseUrl, timelineHref, type Locator } from "./locator.ts";
+import {
+  CLOSED_SIDEBAR,
+  parseSidebarUrl,
+  withSidebarState,
+  type SidebarUrlState,
+} from "./sidebar-url.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 
 const RECENT_PREFIX = "ccmsg.recent.";
@@ -80,7 +86,12 @@ export function isAgentTimelineUrl(url: string, origin: string = location.origin
  * RECENT_STALE_MS. */
 function saveRecent(sid: string, url: string): void {
   if (isAgentTimelineUrl(url)) return;
-  writeStorage(recentKey(sid), JSON.stringify({ url, updatedAt: new Date().toISOString() }));
+  // Strip `sb.*`: what the session was parked on is a place, and a form panel
+  // that happened to be open while the user was there is not part of it.
+  // Restoring one would reopen a launcher nobody asked for, seeded from
+  // whatever session was being looked at then.
+  const place = withSidebarState(url, CLOSED_SIDEBAR);
+  writeStorage(recentKey(sid), JSON.stringify({ url: place, updatedAt: new Date().toISOString() }));
 }
 
 export async function recentIsValid(
@@ -198,17 +209,50 @@ export async function resolveSessionRootTarget(
     : timelineHref(sid);
 }
 
-export function pushNavigation(url: string): void {
-  window.navigation.navigate(url, { history: "push" });
+/** The URL to actually navigate to, given a caller that named a path. With no
+ * `sidebar` argument the open panel travels along unchanged — a session link,
+ * a room link, a search hit's Timeline all mean "show me this", not "and close
+ * what I have open", and DR-0021 relies on the search panel surviving the
+ * navigation it triggers. Callers that do mean to change the panel pass the
+ * state they want, `CLOSED_SIDEBAR` included; nothing is inferred from whether
+ * the url they built happens to carry `sb.*`, because "close it" and "leave it
+ * alone" would then be the same argument. */
+export function navigationTarget(
+  url: string,
+  currentSearch: string,
+  sidebar?: SidebarUrlState,
+): string {
+  return withSidebarState(url, sidebar ?? parseSidebarUrl(currentSearch));
 }
 
-export function replaceNavigation(url: string): void {
-  window.navigation.navigate(url, { history: "replace" });
+export function pushNavigation(url: string, sidebar?: SidebarUrlState): void {
+  window.navigation.navigate(navigationTarget(url, location.search, sidebar), { history: "push" });
+}
+
+export function replaceNavigation(url: string, sidebar?: SidebarUrlState): void {
+  window.navigation.navigate(navigationTarget(url, location.search, sidebar), {
+    history: "replace",
+  });
+}
+
+/** Open, close or swap a form panel without leaving the page. Pushed rather
+ * than replaced so 戻る closes what the user just opened — the panel is a
+ * place the user navigated to, and the back button is the cheapest way out of
+ * it. */
+export function pushSidebarState(sidebar: SidebarUrlState): void {
+  pushNavigation(`${location.pathname}${location.search}`, sidebar);
 }
 
 export function setupNavigation(store: Store, ws: WsClient): void {
+  // path と `sb.*` は同じ URL の別々の名前空間なので、1 回の遷移で両方を
+  // 届ける。パネルの開閉も遷移 (pushSidebarState) なので、この経路以外から
+  // activePanel が変わることはない = URL が正本。
   const apply = (url: URL): void => {
-    store.dispatch({ type: "locator/changed", locator: parseUrl(url.pathname, url.search) });
+    store.dispatch({
+      type: "locator/changed",
+      locator: parseUrl(url.pathname, url.search),
+      sidebar: parseSidebarUrl(url.search),
+    });
   };
 
   const redirectSessionRoot = async (sid: string, history: "push" | "replace"): Promise<void> => {
@@ -252,7 +296,13 @@ export function setupNavigation(store: Store, ws: WsClient): void {
 
     if (isSameSessionTabChange(current, target) && event.navigationType === "push") {
       event.preventDefault();
-      replaceNavigation(`${targetUrl.pathname}${targetUrl.search}`);
+      // Re-issued verbatim, `sb.*` included: this is the same navigation the
+      // caller already composed, only demoted to a replace so tab hopping
+      // inside one session does not stack history entries.
+      replaceNavigation(
+        `${targetUrl.pathname}${targetUrl.search}`,
+        parseSidebarUrl(targetUrl.search),
+      );
       return;
     }
 

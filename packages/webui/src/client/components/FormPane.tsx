@@ -1,5 +1,6 @@
-// デスクトップ幅で新規セッション / セッション検索フォームを収める main ペイン
-// 側のパネル (D-Q1 裁定 = b、2026-08-12)。
+// デスクトップ幅でフォームパネルを収める main ペイン側のパネル (D-Q1 裁定
+// = b、2026-08-12)。新規セッション / セッション検索 / 新規 Room の 3 つとも
+// ここに出る (kawaz r259 m53)。
 //
 // 置き場所を #layout 直下 (サイドバーの右隣) にしているのは:
 //
@@ -12,40 +13,59 @@
 // - SessionView 群は既に全部 mount 済みで表示のみ切り替わる (App.tsx) ため、
 //   兄弟としてパネルが増えても Timeline は再マウントされない。
 //
+// どれが開いているかと、フォームの初期値は URL の `sb.*` が正本
+// (sidebar-url.ts)。ここは state.sidebar を読んで描くだけで、閉じる操作も
+// URL を書き換える遷移として出す。
+//
 // スマホ幅ではサイドバー内インライン置換のまま (裁定文が明示) — Sidebar.tsx
-// が narrow のときだけ自分で描き、こちらは描かない。RoomCreator は幅の制約が
-// 中身 (title + メンバのチェックボックス) に無く、並び順がサイドバーの peer
-// ソートに従うため、どの幅でもサイドバー内に残る (Sidebar.tsx 参照)。
-import { useEffect, useRef, useState } from "preact/hooks";
+// が narrow のときだけ自分で描き、こちらは描かない。
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
-import { useApp } from "../context.ts";
-import { clampFormPaneWidth, loadFormPaneWidth, saveFormPaneWidth } from "../form-pane.ts";
-import { sessionCreatorPrefill } from "../sidebar-panel.ts";
+import {
+  clampFormPaneWidth,
+  formPanePanel,
+  loadFormPaneWidth,
+  saveFormPaneWidth,
+} from "../form-pane.ts";
+import { useNarrowLayout } from "../useNarrowLayout.ts";
+import { CLOSED_SIDEBAR } from "../sidebar-url.ts";
+import { pushSidebarState } from "../navigation.ts";
+import { sortPeers } from "../utils.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
+import { RoomCreator } from "./RoomCreator.tsx";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
 
 export function FormPane({ state }: { state: AppState }) {
-  const { store } = useApp();
   const [width, setWidth] = useState<number>(loadFormPaneWidth);
   const paneRef = useRef<HTMLElement>(null);
+  // Sidebar と同じ並び (state.peerSortKey)。identity を保つのは RoomCreator の
+  // メンバ一覧が peers 配列の参照で再描画されるため。
+  const sortedPeers = useMemo(
+    () => sortPeers(state.peers, state.peerSortKey),
+    [state.peers, state.peerSortKey],
+  );
   // ドラッグが落ち着いてから永続化 (FilesPanes の ratio と同じく、ハンドラの
   // クロージャが捕まえた値ではなく実際に反映された値を保存する)。
   useEffect(() => {
     saveFormPaneWidth(width);
   }, [width]);
 
-  const panel = state.activePanel;
-  if (panel === null || panel.kind === "room-creator") return null;
-  const close = () => store.dispatch({ type: "panel/closed" });
+  const narrow = useNarrowLayout();
+  const { template, params, search } = state.sidebar;
+  const panel = formPanePanel(state.sidebar.panel, narrow);
+  if (panel === null) return null;
+  const close = () => pushSidebarState(CLOSED_SIDEBAR);
 
   return (
     <>
       <aside id="form-pane" ref={paneRef} style={{ width: `${width}px` }}>
-        {panel.kind === "session-creator" ? (
-          <SessionCreator onClose={close} prefill={sessionCreatorPrefill(panel)} />
+        {panel === "session-creator" ? (
+          <SessionCreator onClose={close} template={template} params={params} />
+        ) : panel === "session-search" ? (
+          <SessionSearchPanel onClose={close} query={search} />
         ) : (
-          <SessionSearchPanel onClose={close} />
+          <RoomCreator peers={sortedPeers} onClose={close} />
         )}
       </aside>
       {/* #sidebar-splitter と同じ「clientX の px 直読み」解釈。ただしこのペイン

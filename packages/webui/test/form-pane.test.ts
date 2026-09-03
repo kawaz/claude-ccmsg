@@ -2,6 +2,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   clampFormPaneWidth,
+  formPanePanel,
+  sidebarInlinePanel,
   FORM_PANE_DEFAULT_PX,
   FORM_PANE_MAX_PX,
   FORM_PANE_MIN_PX,
@@ -28,5 +30,42 @@ describe("clampFormPaneWidth", () => {
   // (docs/findings/2026-08-12-form-ux-width-survey.md)。
   test("既定幅は cwd 表示の所要幅を満たす", () => {
     expect(FORM_PANE_DEFAULT_PX).toBeGreaterThanOrEqual(422);
+  });
+});
+
+// 幅ごとの担当 (D-Q1 裁定 = b / kawaz r259 m53)。3 つの panel は同じ規則に
+// 従い、どの幅でもちょうど片方だけが描く。
+describe("sidebarInlinePanel / formPanePanel", () => {
+  const PANELS = ["session-creator", "session-search", "room-creator"] as const;
+
+  test("デスクトップでは 3 つとも FormPane 側", () => {
+    for (const panel of PANELS) {
+      expect(formPanePanel(panel, false)).toBe(panel);
+      expect(sidebarInlinePanel(panel, false)).toBeNull();
+    }
+  });
+
+  // overlay の中にさらにパネルを重ねない。
+  test("スマホ幅では 3 つともサイドバー内", () => {
+    for (const panel of PANELS) {
+      expect(sidebarInlinePanel(panel, true)).toBe(panel);
+      expect(formPanePanel(panel, true)).toBeNull();
+    }
+  });
+
+  // 本命: 片方だけが例外を持つと「どちらも描かない」「両方に mount される」
+  // が生まれる (RoomCreator が FormPane 側だけ除外されていた形)。
+  test("どの幅でも、描くのはちょうど片方だけ", () => {
+    for (const panel of PANELS) {
+      for (const narrow of [true, false]) {
+        const hosts = [sidebarInlinePanel(panel, narrow), formPanePanel(panel, narrow)];
+        expect(hosts.filter((host) => host !== null)).toEqual([panel]);
+      }
+    }
+  });
+
+  test("何も開いていなければどちらも描かない", () => {
+    expect(sidebarInlinePanel(null, true)).toBeNull();
+    expect(formPanePanel(null, false)).toBeNull();
   });
 });

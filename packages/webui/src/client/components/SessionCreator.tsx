@@ -1,13 +1,14 @@
-// New-session launcher form (DR-0018 §2.1/§3.4). Sits inside the sidebar's
-// SESSIONS section, toggled on by Sidebar's "+ 新規" button, replacing
-// SessionList while open — same sidebar-internal-panel pattern
-// SessionSearchPanel established (see Sidebar.tsx's doc comment for why a
-// locator-driven `state.view` was rejected there): a session-creation form is
-// a disposable tool, not a durable/bookmarkable screen, so this deliberately
-// does NOT add a `"session-creator"` to store.ts's `View` union despite
-// DR-0018 §3.4 sketching it that way — consistency with the established
-// sidebar-panel convention won out once an existing precedent existed to
-// match (SessionSearchPanel was the first of the two DRs, landed first).
+// New-session launcher form (DR-0018 §2.1/§3.4)。フォーム自体の描き場所は幅で
+// 変わり (デスクトップ = FormPane、スマホ = サイドバー内)、開いているかどうかと
+// フォームの初期値は URL の `sb.*` が持つ — `?sb.panel=new&sb.SESSION_ID=…` を
+// 開けばこのフォームがその値で立ち上がる (sidebar-url.ts、表は
+// docs/design/webui-url-grammar.md)。
+//
+// path 側に `"session-creator"` を足していない (DR-0018 §3.4 のスケッチはそう
+// 書いていた) のは、このフォームがメインペインの中身を置き換えないから:
+// `/s/<sid>/timeline` を開いたまま横で使うものなので、「どこを見ているか」を
+// 名乗る path ではなく、それと直交する `sb.` の名前空間に属する。ブックマーク
+// できないから query にしたのではない — できる、その上で path とは軸が違う。
 //
 // Explicitly out of scope (DR-0018 §2.3): no process tracking after launch.
 // The run button's request/response round trip *is* the whole feature —
@@ -35,10 +36,10 @@ import {
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
+  SESSION_ID_PARAM,
   type CwdPickerMode,
   type ForkSourceInfo,
   type SessionCreatorForm,
-  type SessionCreatorPrefill,
 } from "../session-creator.ts";
 import type { AppState } from "../store.ts";
 import { CwdTree } from "./CwdTree.tsx";
@@ -299,14 +300,17 @@ function selectedTemplate(
 
 export function SessionCreator({
   onClose,
-  prefill,
+  template,
+  params,
 }: {
   onClose: () => void;
-  /** Fork request from the Timeline's action panel, or null for a plain
-   * "+ New" open. Read once when the config arrives (the form is seeded from
-   * it); the Sidebar clears the request as it hands it over, so re-forking the
-   * same turn re-opens the form rather than being deduplicated away. */
-  prefill: SessionCreatorPrefill | null;
+  /** `sb.template` — the recipe the URL pinned, or null (every in-app action
+   * leaves it out and lets the seeded parameters pick; see `initialTemplate`). */
+  template: string | null;
+  /** `sb.<PARAM>` — the seed values the URL carries. Read once when the config
+   * arrives; the user's edits from then on are the form's own, and are not
+   * written back to the address bar (a keystroke is not a navigation). */
+  params: Readonly<Record<string, string>>;
 }) {
   const { ws, store } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
@@ -322,17 +326,18 @@ export function SessionCreator({
         if (cancelled) return;
         if (res.ok) {
           setProbe({ status: "ready", rootDirs: res.root_dirs, templates: res.templates });
-          // 起動元の値は「フォームを開いた瞬間の状態」で足りるので購読せず
-          // getState() で 1 回だけ読む (以後の peers/status 更新でフォームを
-          // 上書きしたら、ユーザの編集を奪うことになる)。
-          const defaults =
-            prefill?.kind === "fork"
-              ? forkSourceDefaults(
-                  forkSourceInfo(store.getState(), prefill.sessionId),
-                  res.root_dirs,
-                )
-              : {};
-          const initialForm = initialSessionCreatorForm(res.templates, prefill, defaults);
+          // URL が名指したセッションが今も動いていれば、そこから cwd /
+          // model / effort を補う。URL に無いものだけが埋まる (URL が優先、
+          // initialSessionCreatorForm 参照) ので、Timeline の ⑂ のように
+          // 「セッションは画面に出ている = 生きている」経路はリンクを短く
+          // 保てるし、手で打った `?sb.panel=new&sb.SESSION_ID=X` も同じ値で
+          // 開く。購読せず getState() で 1 回だけ読むのは、以後の
+          // peers/status 更新でフォームを上書きしたらユーザの編集を奪うから。
+          const sessionId = params[SESSION_ID_PARAM];
+          const defaults = sessionId
+            ? forkSourceDefaults(forkSourceInfo(store.getState(), sessionId), res.root_dirs)
+            : {};
+          const initialForm = initialSessionCreatorForm(res.templates, template, params, defaults);
           setForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(sessionCreatorCwd(initialForm)));
         } else if (res.error.code === "launcher_not_configured") {
@@ -347,9 +352,10 @@ export function SessionCreator({
     return () => {
       cancelled = true;
     };
-    // `prefill` は「開いた瞬間の起動元」なので依存に入れない — 開いている間に
-    // 別 turn の fork 要求が来ても、それは Sidebar がパネルを開き直す扱い。
-  }, [ws, store, prefill]);
+    // template / params は URL 由来なので、別の値で開き直されれば URL が
+    // 変わり = ここも張り直される。フォームを開いたまま別 turn を fork する
+    // 経路がそれで、seed からやり直すのが正しい。
+  }, [ws, store, template, params]);
 
   async function run(e: Event): Promise<void> {
     e.preventDefault();

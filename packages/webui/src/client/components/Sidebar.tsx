@@ -1,28 +1,23 @@
-import { useMemo, useState } from "preact/hooks";
+import { useMemo } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
 import { nextPeerSortKey, peerSortButtonLabel, sortPeers, type PeerSortKey } from "../utils.ts";
-import { readStorage, writeStorage } from "../storage.ts";
+import { writeStorage } from "../storage.ts";
 import { RoomCreator } from "./RoomCreator.tsx";
 import { RoomList } from "./RoomList.tsx";
-import { sessionCreatorPrefill, type SidebarPanelKind } from "../sidebar-panel.ts";
+import {
+  CLOSED_SIDEBAR,
+  SORT_KEY_STORAGE,
+  toggleSidebarPanel,
+  type SidebarPanelKind,
+} from "../sidebar-url.ts";
+import { pushSidebarState } from "../navigation.ts";
+import { sidebarInlinePanel } from "../form-pane.ts";
 import { useNarrowLayout } from "../useNarrowLayout.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
-
-const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
-
-function loadSortKey(): PeerSortKey {
-  const raw = readStorage(SORT_KEY_STORAGE);
-  if (raw === "name" || raw === "idle" || raw === "connected" || raw === "prompt") return raw;
-  return "prompt";
-}
-
-function saveSortKey(key: PeerSortKey): void {
-  writeStorage(SORT_KEY_STORAGE, key);
-}
 
 function PeersRefreshButton() {
   const { store, ws } = useApp();
@@ -113,51 +108,47 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
   );
 }
 
-/** Sidebar SESSIONS section (DR-0021 Phase 2 SS-Q1/Q2 doc note): search is a
- * panel toggle (`state.activePanel`), NOT a fourth
- * `state.view`/URL-locator form alongside room/session/timeline. The locator
- * forms in locator.ts each name something durable and shareable — "this
- * room", "this session's Files at this path", "this session's Timeline" —
- * whereas a search is a disposable tool for finding and pinning a session,
- * with no useful "resume this exact search" bookmark semantics. Everything
- * else (Rooms panel, the tab layout, the URL) is untouched by the toggle. The
- * Pinned section DR-0021 §2.4 asks for lives inside SessionList itself (see its doc
- * comment) — it's a permanent part of the normal session list, not something
- * the search toggle owns.
+/** サイドバーの SESSIONS / ROOMS セクションと、そこから開く 3 つのフォーム
+ * パネル (新規セッション / Session Search / 新規 Room) のトグル。
  *
- * DR-0018's "+ 新規" (SessionCreator) and the ROOMS section's "+ 新規"
- * (RoomCreator, same affordance for rooms) share that one toggle track rather
- * than adding parallel ones — `activePanel` holds at most one of the three at
- * a time (`null` = none), so opening any one of RoomList/SessionList's
- * "+ 新規"/🔍 toggles closes whichever of the other two was open, regardless
- * of which section it lived in (issue 2026-07-17-rooms-sidebar-new-button.md's
- * "creator/search パネルと同じ排他開閉に統合" — a single shared union is what
- * makes that cross-section exclusivity trivial instead of needing each boolean
- * setter to know about the other two).
+ * **3 つは 1 本の排他トグル**: `state.sidebar.panel` が高々 1 つを持つ
+ * (`null` = どれも開いていない)。セクションをまたいで排他なのは、ROOMS の
+ * 「+ 新規」を押したら SESSIONS のフォームが閉じるのが自然だからで、単一の
+ * 値がそれを構造として保証する (3 つの boolean だと互いを知る必要が出る)。
+ *
+ * **状態の正本は URL** (kawaz r259 m47-m53)。トグルは
+ * `pushSidebarState(toggleSidebarPanel(...))` で `?sb.panel=new|search|room`
+ * を書き換える遷移で、store の `sidebar` はそれを読み直した結果でしかない。
+ * これで「今どのセッションを見ながら、どのフォームを何の値で開いているか」
+ * が丸ごと 1 本の URL になり、リロード・戻る・リンク共有のどれでも同じ画面に
+ * なる。文法は sidebar-url.ts、表は docs/design/webui-url-grammar.md。
+ *
+ * path 側に載せないのは、この 3 つがメインペインの中身を置き換えないから:
+ * `/s/<sid>/timeline` を開いたまま横で使うものなので、「どこを見ているか」を
+ * 名乗る path とは別の名前空間 (`sb.`) に属する。
  *
  * どこに描くかは幅で変わる (D-Q1 裁定 = b、2026-08-12):
  *
- * - **デスクトップ**: 新規セッション / 検索フォームは main ペイン側の
- *   `FormPane` が描き、サイドバーは SessionList を出したまま (= 一覧を見ながら
- *   入力できる)。サイドバーの実効幅 264px がフォームの表示欠けの根だった
- *   (docs/findings/2026-08-12-form-ux-width-survey.md)。
- * - **スマホ** (サイドバーが overlay になる幅): 従来どおりここでインライン
- *   置換する。overlay の中にさらにパネルを重ねない。
- * - **RoomCreator はどちらの幅でもここ**: 中身が title + メンバのチェック
- *   ボックスで幅に縛られておらず、そのメンバの並び順は SESSIONS の
- *   ソートボタン (`sortKey`、このコンポーネントのローカル state) に従う。
- *   main ペインへ出すとその並び順だけが別の場所から供給されることになる。
- *   排他は `state.activePanel` が担うので、描き分けても 3 パネル排他は保たれる。 */
+ * - **デスクトップ**: 3 つとも main ペイン側の `FormPane` が描き、サイドバー
+ *   は SessionList / RoomList を出したまま (= 一覧を見ながら入力できる)。
+ *   サイドバーの実効幅 264px がフォームの表示欠けの根だった
+ *   (docs/findings/2026-08-12-form-ux-width-survey.md)。RoomCreator も同じ
+ *   理由で FormPane 側に出す (kawaz r259 m53) — メンバのチェックボックスを
+ *   一覧と見比べながら選ぶ価値は他の 2 つと変わらない。その並び順が依存する
+ *   ソートキーは `state.peerSortKey` なので、描画先が変わっても同じ順で並ぶ。
+ * - **スマホ** (サイドバーが overlay になる幅): 3 つとも従来どおりここで
+ *   インライン置換する。overlay の中にさらにパネルを重ねない。 */
 export function Sidebar({ state }: { state: AppState }) {
   const { store } = useApp();
-  const [sortKey, setSortKey] = useState<PeerSortKey>(loadSortKey);
+  const sortKey = state.peerSortKey;
   const narrow = useNarrowLayout();
-  const activePanel = state.activePanel;
-  const togglePanel = (panel: SidebarPanelKind) =>
-    store.dispatch({ type: "panel/toggled", kind: panel });
-  const closePanel = () => store.dispatch({ type: "panel/closed" });
-  // デスクトップではこの 2 つは FormPane が描くので、ここは一覧のまま。
-  const inlineSessionPanel = narrow ? activePanel : null;
+  const panel = state.sidebar.panel;
+  const togglePanel = (kind: SidebarPanelKind) =>
+    pushSidebarState(toggleSidebarPanel(state.sidebar, kind));
+  const closePanel = () => pushSidebarState(CLOSED_SIDEBAR);
+  // デスクトップではフォームは FormPane が描くので、ここは一覧のまま
+  // (対になる formPanePanel と合わせて form-pane.ts が正本)。
+  const inlinePanel = sidebarInlinePanel(panel, narrow);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
@@ -170,30 +161,31 @@ export function Sidebar({ state }: { state: AppState }) {
         <h2>
           Sessions{" "}
           <CreatorToggleButton
-            open={activePanel?.kind === "session-creator"}
+            open={panel === "session-creator"}
             onToggle={() => togglePanel("session-creator")}
           />{" "}
           <SearchToggleButton
-            open={activePanel?.kind === "session-search"}
+            open={panel === "session-search"}
             onToggle={() => togglePanel("session-search")}
           />{" "}
           <PeersSortButton
             sortKey={sortKey}
             onCycle={() => {
               const next = nextPeerSortKey(sortKey);
-              setSortKey(next);
-              saveSortKey(next);
+              store.dispatch({ type: "peers/sort-key", key: next });
+              writeStorage(SORT_KEY_STORAGE, next);
             }}
           />{" "}
           <PeersRefreshButton />
         </h2>
-        {inlineSessionPanel?.kind === "session-creator" ? (
+        {inlinePanel === "session-creator" ? (
           <SessionCreator
             onClose={closePanel}
-            prefill={sessionCreatorPrefill(inlineSessionPanel)}
+            template={state.sidebar.template}
+            params={state.sidebar.params}
           />
-        ) : inlineSessionPanel?.kind === "session-search" ? (
-          <SessionSearchPanel onClose={closePanel} />
+        ) : inlinePanel === "session-search" ? (
+          <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
         ) : (
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
         )}
@@ -203,11 +195,11 @@ export function Sidebar({ state }: { state: AppState }) {
         <h2>
           Rooms{" "}
           <RoomCreatorToggleButton
-            open={activePanel?.kind === "room-creator"}
+            open={panel === "room-creator"}
             onToggle={() => togglePanel("room-creator")}
           />
         </h2>
-        {activePanel?.kind === "room-creator" ? (
+        {inlinePanel === "room-creator" ? (
           <RoomCreator peers={sortedPeers} onClose={closePanel} />
         ) : (
           <RoomList state={state} />

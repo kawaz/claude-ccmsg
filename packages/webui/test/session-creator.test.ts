@@ -20,11 +20,35 @@ import {
   templateDeclares,
   initialCwdPickerMode,
   initialSessionCreatorForm,
+  prefillSidebarState,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
   type SessionCreatorForm,
+  type SessionCreatorPrefill,
 } from "../src/client/session-creator.ts";
+
+/** 「セッションを選んでランチャーを開く」経路を、本番と同じ 2 段で通す:
+ * 呼び出し元が prefill から `sb.*` を組み (prefillSidebarState)、フォームは
+ * その URL 状態だけを見て初期化される。ここを 1 本の helper にしておくと、
+ * 以降の期待値が「fork / resume のリンクを開いたら何が入るか」を素直に
+ * 表したままになる。 */
+function formFromPrefill(
+  templates: SessionLauncherConfigTemplate[],
+  prefill: SessionCreatorPrefill,
+  defaults: Record<string, string> = {},
+): SessionCreatorForm {
+  const url = prefillSidebarState(prefill);
+  return initialSessionCreatorForm(templates, url.template, url.params, defaults);
+}
+
+function templateFromPrefill(
+  templates: SessionLauncherConfigTemplate[],
+  prefill: SessionCreatorPrefill,
+): SessionLauncherConfigTemplate | undefined {
+  const url = prefillSidebarState(prefill);
+  return initialTemplate(templates, url.template, url.params);
+}
 
 /** One configured recipe, as session_launcher_config projects it. `params` is
  * written as a name→default object for readability and kept in that order — the
@@ -115,7 +139,7 @@ describe("initialSessionCreatorForm", () => {
   // A fork opens on a recipe that actually declares the fork point, whatever
   // its position in the list, and carries the fork values into the form.
   test("a fork prefill opens on the fork recipe with the fork point filled in", () => {
-    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
+    const form = formFromPrefill([PLAIN, FORK], FORK_PREFILL);
     expect(form).toMatchObject({ template: "fork", command: FORK.command });
     expect(form.params).toMatchObject({ SESSION_ID: "sid-1", RESUME_AT: "u-9" });
   });
@@ -124,14 +148,14 @@ describe("initialSessionCreatorForm", () => {
   // default); the fork values have nowhere to go and are dropped rather than
   // riding along invisibly in a request nothing would read.
   test("a fork prefill falls back to the default recipe, dropping undeclared fork values", () => {
-    const form = initialSessionCreatorForm([PLAIN], FORK_PREFILL);
+    const form = formFromPrefill([PLAIN], FORK_PREFILL);
     expect(form.template).toBe("default");
     expect(form.params).not.toHaveProperty("RESUME_AT");
   });
 
   // Fork-source defaults win over the declared defaults, parameter by parameter.
   test("applies the fork source's cwd/model/effort when given", () => {
-    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL, {
+    const form = formFromPrefill([PLAIN, FORK], FORK_PREFILL, {
       CWD: "/repos/app",
       MODEL: "opus",
       EFFORT: "high",
@@ -152,7 +176,7 @@ describe("initialSessionCreatorForm", () => {
       SESSION_ID: "",
       RESUME_AT: "",
     });
-    const form = initialSessionCreatorForm([PLAIN, forkWithTitle], {
+    const form = formFromPrefill([PLAIN, forkWithTitle], {
       kind: "fork",
       sessionId: "sid-1",
       resumeAt: "",
@@ -175,14 +199,14 @@ describe("initialSessionCreatorForm", () => {
   // The Timeline's fork knows none of that (it reads live state instead), and
   // must keep behaving exactly as it did — an absent field is not an empty one.
   test("a fork prefill without them leaves the declared defaults alone", () => {
-    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
+    const form = formFromPrefill([PLAIN, FORK], FORK_PREFILL);
     expect(form.params).toMatchObject({ CWD: "", MODEL: "fable", EFFORT: "medium" });
   });
 
   // A resume brings its own cwd (the search hit knows where the session ran —
   // a historical session has no live peer row to inherit one from).
   test("a resume prefill opens on the resume recipe with cwd and session id filled in", () => {
-    const form = initialSessionCreatorForm([PLAIN, RESUME], RESUME_PREFILL);
+    const form = formFromPrefill([PLAIN, RESUME], RESUME_PREFILL);
     expect(form).toMatchObject({ template: "resume", command: RESUME.command });
     expect(form.params).toMatchObject({ CWD: "/repos/app", SESSION_ID: "sid-1" });
   });
@@ -191,7 +215,7 @@ describe("initialSessionCreatorForm", () => {
   // is: without this the launcher's own default would silently switch a
   // resumed session's model.
   test("a resume prefill seeds the session's own model and effort", () => {
-    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+    const form = formFromPrefill([PLAIN, RESUME], {
       ...RESUME_PREFILL,
       model: "claude-opus-5[1m]",
       effort: "high",
@@ -204,7 +228,7 @@ describe("initialSessionCreatorForm", () => {
   // own title wherever live name does. Carrying the title into the recipe's
   // TITLE parameter is what keeps a resumed session called what it was.
   test("a resume prefill seeds the session's own title", () => {
-    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+    const form = formFromPrefill([PLAIN, RESUME], {
       ...RESUME_PREFILL,
       title: "案件メモ",
     });
@@ -215,24 +239,24 @@ describe("initialSessionCreatorForm", () => {
   // stays at its declared default (empty), which is the recipe's signal to
   // launch without --name rather than with an empty one.
   test("a resume prefill with no title leaves the declared default in place", () => {
-    expect(initialSessionCreatorForm([PLAIN, RESUME], RESUME_PREFILL).params.TITLE).toBe("");
-    expect(
-      initialSessionCreatorForm([PLAIN, RESUME], { ...RESUME_PREFILL, title: "   " }).params.TITLE,
-    ).toBe("");
+    expect(formFromPrefill([PLAIN, RESUME], RESUME_PREFILL).params.TITLE).toBe("");
+    expect(formFromPrefill([PLAIN, RESUME], { ...RESUME_PREFILL, title: "   " }).params.TITLE).toBe(
+      "",
+    );
   });
 
   // An un-migrated resume recipe that predates the TITLE parameter: the seed
   // has nowhere to land and is dropped, exactly like an undeclared model.
   test("a resume recipe declaring no title ignores that seed", () => {
     const bare = template("resume", 'run --resume "$SESSION_ID"', { CWD: "", SESSION_ID: "" });
-    const form = initialSessionCreatorForm([bare], { ...RESUME_PREFILL, title: "案件メモ" });
+    const form = formFromPrefill([bare], { ...RESUME_PREFILL, title: "案件メモ" });
     expect(form.params).toEqual({ CWD: "/repos/app", SESSION_ID: "sid-1" });
   });
 
   // Same rule as a fork's: a value with no honest mapping leaves the declared
   // default alone rather than guessing at one.
   test("a resume prefill the form cannot map keeps the declared defaults", () => {
-    const form = initialSessionCreatorForm([PLAIN, RESUME], {
+    const form = formFromPrefill([PLAIN, RESUME], {
       ...RESUME_PREFILL,
       model: "<synthetic>",
       effort: "ultra",
@@ -244,7 +268,7 @@ describe("initialSessionCreatorForm", () => {
   // nowhere to land, and the form still shows exactly what it declares.
   test("a resume recipe declaring no model or effort ignores those seeds", () => {
     const bare = template("resume", 'run --resume "$SESSION_ID"', { CWD: "", SESSION_ID: "" });
-    const form = initialSessionCreatorForm([bare], {
+    const form = formFromPrefill([bare], {
       ...RESUME_PREFILL,
       model: "claude-opus-5",
       effort: "high",
@@ -256,7 +280,7 @@ describe("initialSessionCreatorForm", () => {
   // declared default survives and the run button gates on the empty cwd.
   test("a resume prefill without a cwd leaves the declared default in place", () => {
     const withDefault = template("resume", "run", { CWD: "/repos/fallback", SESSION_ID: "" });
-    const form = initialSessionCreatorForm([withDefault], {
+    const form = formFromPrefill([withDefault], {
       kind: "resume",
       cwd: "",
       sessionId: "sid-1",
@@ -268,7 +292,7 @@ describe("initialSessionCreatorForm", () => {
   // like a fork point does not (the cwd still lands, since every recipe
   // declares CWD).
   test("a resume prefill falls back to the default recipe, dropping the session id", () => {
-    const form = initialSessionCreatorForm([PLAIN], RESUME_PREFILL);
+    const form = formFromPrefill([PLAIN], RESUME_PREFILL);
     expect(form.template).toBe("default");
     expect(form.params).not.toHaveProperty("SESSION_ID");
     expect(form.params).toMatchObject({ CWD: "/repos/app" });
@@ -474,10 +498,10 @@ describe("forkTemplate / initialTemplate", () => {
   });
 
   test("a resume prefill opens on the resume recipe whatever the config order", () => {
-    expect(initialTemplate([PLAIN, RESUME], RESUME_PREFILL)?.name).toBe("resume");
-    expect(initialTemplate([RESUME, PLAIN], RESUME_PREFILL)?.name).toBe("resume");
+    expect(templateFromPrefill([PLAIN, RESUME], RESUME_PREFILL)?.name).toBe("resume");
+    expect(templateFromPrefill([RESUME, PLAIN], RESUME_PREFILL)?.name).toBe("resume");
     // …and a fork prefill still opens on the fork recipe, not this one.
-    expect(initialTemplate([RESUME, FORK], FORK_PREFILL)?.name).toBe("fork");
+    expect(templateFromPrefill([RESUME, FORK], FORK_PREFILL)?.name).toBe("fork");
   });
 
   // A resume recipe needs a session the user picked elsewhere, exactly like a
@@ -488,7 +512,51 @@ describe("forkTemplate / initialTemplate", () => {
   });
 
   test("with no resume recipe configured the form still opens", () => {
-    expect(initialTemplate([PLAIN], RESUME_PREFILL)?.name).toBe("default");
+    expect(templateFromPrefill([PLAIN], RESUME_PREFILL)?.name).toBe("default");
+  });
+});
+
+// URL がフォームの正本になった以上、リンクが名指した値と、テンプレが宣言して
+// いる名前の突き合わせはここが受け持つ。
+describe("sb.template / sb.<PARAM> の採用規則", () => {
+  test("sb.template は宣言から導く規則より優先される", () => {
+    // params だけなら fork 側に落ちるところを、名指しで resume に固定する。
+    expect(
+      initialTemplate([PLAIN, RESUME, FORK], "resume", { SESSION_ID: "sid-1", RESUME_AT: "u-9" })
+        ?.name,
+    ).toBe("resume");
+  });
+
+  // 別 daemon の config を指す URL を貼られた場合。空のフォームを出すより、
+  // 手元の config で意味の通る recipe を選ぶ方が復帰できる。
+  test("存在しないテンプレ名は無視して、宣言から導いた recipe に落ちる", () => {
+    expect(initialTemplate([PLAIN, FORK], "nope", { RESUME_AT: "u-9" })?.name).toBe("fork");
+    expect(initialTemplate([PLAIN, FORK], "nope", {})?.name).toBe("default");
+  });
+
+  // 手で打った URL や、他所の config 由来の余分な値。見えない入力が起動内容を
+  // 決めてしまわないよう、宣言に無い名前は落とす。
+  test("テンプレが宣言していない sb.<PARAM> は採用されない", () => {
+    const form = initialSessionCreatorForm([PLAIN], null, {
+      CWD: "/repos/app",
+      NOT_DECLARED: "x",
+      SESSION_ID: "sid-1",
+    });
+    expect(form.params).not.toHaveProperty("NOT_DECLARED");
+    expect(form.params).not.toHaveProperty("SESSION_ID");
+    expect(form.params.CWD).toBe("/repos/app");
+  });
+
+  // URL が明示した値が、live state から補った値より強い (リンクは意図表明)。
+  test("sb.<PARAM> は live state 由来の既定値に勝つ", () => {
+    const form = initialSessionCreatorForm(
+      [PLAIN, FORK],
+      null,
+      { SESSION_ID: "sid-1", RESUME_AT: "u-9", CWD: "/from/url" },
+      { CWD: "/from/live", MODEL: "opus" },
+    );
+    // URL が言っていない MODEL だけが live state で埋まる。
+    expect(form.params).toMatchObject({ CWD: "/from/url", MODEL: "opus" });
   });
 });
 
@@ -497,7 +565,7 @@ describe("selectSessionCreatorTemplate", () => {
   // restart from the new declaration except where the user had moved a value
   // away from the old recipe's default.
   test("switching a template replaces the command and keeps the user's edits", () => {
-    const start = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
+    const start = formFromPrefill([PLAIN, FORK], FORK_PREFILL);
     const edited = {
       ...start,
       params: { ...start.params, CWD: "/repo", MODEL: "opus" },
@@ -531,7 +599,7 @@ describe("selectSessionCreatorTemplate", () => {
   // reconsidering resume ↔ fork for the same session costs nothing — the
   // ordinary same-name rule carries it, with no notion of aliases anywhere.
   test("the session id follows a resume → fork switch", () => {
-    const start = initialSessionCreatorForm([RESUME, FORK], RESUME_PREFILL);
+    const start = formFromPrefill([RESUME, FORK], RESUME_PREFILL);
     const switched = selectSessionCreatorTemplate(start, [RESUME, FORK], "fork");
     expect(switched.params.SESSION_ID).toBe("sid-1");
     // The fork point is not part of what the resume recipe knew, so it stays
@@ -540,7 +608,7 @@ describe("selectSessionCreatorTemplate", () => {
   });
 
   test("and back again, so the switch is not a one-way trip", () => {
-    const start = initialSessionCreatorForm([RESUME, FORK], FORK_PREFILL);
+    const start = formFromPrefill([RESUME, FORK], FORK_PREFILL);
     const switched = selectSessionCreatorTemplate(start, [RESUME, FORK], "resume");
     expect(switched.params.SESSION_ID).toBe("sid-1");
     // Nowhere to branch from in the resume recipe, and the value does not
@@ -549,11 +617,66 @@ describe("selectSessionCreatorTemplate", () => {
   });
 
   test("unrelated parameters carry across by their own name too", () => {
-    const start = initialSessionCreatorForm([RESUME, FORK], RESUME_PREFILL);
+    const start = formFromPrefill([RESUME, FORK], RESUME_PREFILL);
     const edited = { ...start, params: { ...start.params, PROMPT: "typed" } };
     const switched = selectSessionCreatorTemplate(edited, [RESUME, FORK], "fork");
     expect(switched.params.PROMPT).toBe("typed");
     expect(switched.params.MODEL).toBe("fable");
+  });
+});
+
+// 呼び出し元が組むリンクそのもの。fork / resume の違いは `sb.*` の中身だけで、
+// 受け取る側 (initialTemplate) はその中身から recipe を決める。
+describe("prefillSidebarState", () => {
+  test("fork は fork 地点ごとリンクに乗る", () => {
+    expect(prefillSidebarState({ kind: "fork", sessionId: "sid-1", resumeAt: "u-9" })).toEqual({
+      panel: "session-creator",
+      template: null,
+      search: null,
+      params: { SESSION_ID: "sid-1", RESUME_AT: "u-9" },
+    });
+  });
+
+  // 前回稼働中の行は切断済みで live state から何も読めないので、行が持って
+  // いる cwd/model/effort/title を全部リンクに載せる。fork 地点だけは行が
+  // 知らないので空のまま (= フォームで貼れる)。
+  test("前回稼働中の ⑂ は行の持ち物を全部リンクに載せる", () => {
+    expect(
+      prefillSidebarState({
+        kind: "fork",
+        sessionId: "sid-1",
+        resumeAt: "",
+        cwd: "/repos/app",
+        model: "claude-opus-5[1m]",
+        effort: "high",
+        title: "案件メモ",
+      }).params,
+    ).toEqual({
+      CWD: "/repos/app",
+      MODEL: "opus",
+      EFFORT: "high",
+      TITLE: "案件メモ",
+      RESUME_AT: "",
+      SESSION_ID: "sid-1",
+    });
+  });
+
+  // fork 地点が無い = resume の recipe が選ばれる側。
+  test("resume は fork 地点を載せない", () => {
+    const params = prefillSidebarState({
+      kind: "resume",
+      cwd: "/repos/app",
+      sessionId: "sid-1",
+    }).params;
+    expect(params).not.toHaveProperty("RESUME_AT");
+    expect(params).toEqual({ CWD: "/repos/app", SESSION_ID: "sid-1" });
+  });
+
+  // 空の cwd / title はリンクに載せない: テンプレの宣言済み既定値を残す。
+  test("空の cwd / title は載せない", () => {
+    expect(
+      prefillSidebarState({ kind: "resume", cwd: "  ", sessionId: "sid-1", title: "  " }).params,
+    ).toEqual({ SESSION_ID: "sid-1" });
   });
 });
 

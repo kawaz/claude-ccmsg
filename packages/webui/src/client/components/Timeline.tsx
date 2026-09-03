@@ -18,7 +18,8 @@ import type { RoomState, TimelineState } from "../store.ts";
 import { ADMIN_ID } from "../store.ts";
 import type { AgentRef } from "../locator.ts";
 import { agentTimelineHref, fileHref, parseUrl, sessionHref, timelineHref } from "../locator.ts";
-import { rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
+import { pushNavigation, rememberTimelinePosition, replaceNavigation } from "../navigation.ts";
+import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { activeTraceCollector } from "../trace.ts";
@@ -4122,11 +4123,15 @@ export function Timeline({
             position: currentPosition,
             forkAction,
             forkAvailable: appState.forkAvailable,
+            // fork 元はこの画面に出ているセッション = 生きているので、
+            // cwd/model/effort はランチャー側が live state から補える
+            // (SessionCreator の forkSourceDefaults)。リンクには「どの
+            // セッションの、どの地点か」だけを載せる。
             onFork: (resumeAt: string) =>
-              store.dispatch({
-                type: "session-creator/prefill",
-                prefill: { kind: "fork", sessionId: sid, resumeAt },
-              }),
+              pushNavigation(
+                `${location.pathname}${location.search}`,
+                prefillSidebarState({ kind: "fork", sessionId: sid, resumeAt }),
+              ),
             onSelect: selectPosition,
           },
     [

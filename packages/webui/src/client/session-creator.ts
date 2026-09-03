@@ -13,6 +13,7 @@ import {
   type SessionLauncherConfigTemplate,
   type SessionLaunchRequest,
 } from "@ccmsg/protocol";
+import type { SidebarUrlState } from "./sidebar-url.ts";
 
 /** DR-0018 §2.1 fixed dropdown options — the DR explicitly scopes "コマンド
  * テンプレの UI 編集" out (§2.3), so these lists are hardcoded here rather
@@ -190,18 +191,25 @@ export function templateDeclares(template: SessionLauncherConfigTemplate, name: 
   return template.params.some((p) => p.name === name);
 }
 
-/** The template the form opens on, decided by how the form was opened rather
- * than by config order: a fork opens on the first recipe that takes a fork
- * point (`forkTemplate`), a resume on the first that takes a session id
- * (`resumeTemplate`), a plain "+ 新規" on the first that takes neither
- * (`plainTemplate`). All fall back to `templates[0]` when the config has no
- * recipe of the asked-for kind. */
+/** The template the form opens on. `sb.template` names one outright — that is
+ * the only way to reach a recipe the rules below would not pick, and it is
+ * what a bookmark or a shared link pins. With no name (every in-app action
+ * builds its URL this way, because no caller knows what the config calls its
+ * recipes) the seeded parameters decide, on the same "the declaration says
+ * what a recipe takes" rule the three finders below use: a fork point means
+ * the fork recipe, a bare session id means the resume recipe, neither means a
+ * plain launch. All fall back to `templates[0]` when the config has no recipe
+ * of the asked-for kind, and a `sb.template` naming nothing is ignored rather
+ * than emptying the form. */
 export function initialTemplate(
   templates: SessionLauncherConfigTemplate[],
-  prefill: SessionCreatorPrefill | null,
+  template: string | null,
+  params: Readonly<Record<string, string>> = {},
 ): SessionLauncherConfigTemplate | undefined {
-  if (prefill?.kind === "fork") return forkTemplate(templates) ?? templates[0];
-  if (prefill?.kind === "resume") return resumeTemplate(templates) ?? templates[0];
+  const named = template === null ? undefined : templates.find((t) => t.name === template);
+  if (named) return named;
+  if (params[RESUME_AT_PARAM] !== undefined) return forkTemplate(templates) ?? templates[0];
+  if (params[SESSION_ID_PARAM] !== undefined) return resumeTemplate(templates) ?? templates[0];
   return plainTemplate(templates) ?? templates[0];
 }
 
@@ -336,7 +344,7 @@ export function launchDefaultsFromTranscript(source: {
  * anything. */
 function paramValues(
   params: LauncherParam[],
-  seed: Record<string, string> = {},
+  seed: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   const values: Record<string, string> = {};
   for (const { name, default: value } of params) {
@@ -345,26 +353,32 @@ function paramValues(
   return values;
 }
 
-/** The parameter values an opening carries with it. Both kinds bring the
- * session and, when they know them, its cwd, model/effort and title — a
- * historical session has no live peer row or status entry for
- * `forkSourceDefaults` to read them from, so whoever opened the form supplies
- * what it knows. A fork brings its fork point on top of that. A blank title is
- * left out rather than seeded as "", so a session that never had one keeps the
- * recipe's declared default. The session id is placed last so it cannot be
- * displaced. A blank cwd is left out rather than seeded, so a recipe with a
- * declared default CWD keeps it and the picker opens in "editing" mode for the
- * user to choose. */
-function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, string> {
-  if (!prefill) return {};
+/** The sidebar URL that opens the launcher on a session the user already
+ * chose. Both kinds bring the session and, when they know them, its cwd,
+ * model/effort and title — a historical session has no live peer row or status
+ * entry for `forkSourceDefaults` to read them from, so whoever opened the form
+ * puts what it knows in the link. A fork brings its fork point on top of that,
+ * which is also what tells `initialTemplate` to land on the fork recipe.
+ *
+ * A blank title is left out rather than carried as "", so a session that never
+ * had one keeps the recipe's declared default; a blank cwd likewise, so the
+ * picker opens in "editing" mode for the user to choose. `sb.template` is not
+ * set: no caller knows what this daemon's config calls its recipes, and the
+ * parameters already say which kind of recipe is wanted. */
+export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlState {
   const cwd = prefill.cwd?.trim();
   const title = prefill.title?.trim();
   return {
-    ...(cwd ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
-    ...launchDefaultsFromTranscript(prefill),
-    ...(title ? { [TITLE_PARAM]: title } : {}),
-    ...(prefill.kind === "fork" ? { [RESUME_AT_PARAM]: prefill.resumeAt } : {}),
-    [SESSION_ID_PARAM]: prefill.sessionId,
+    panel: "session-creator",
+    template: null,
+    search: null,
+    params: {
+      ...(cwd ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
+      ...launchDefaultsFromTranscript(prefill),
+      ...(title ? { [TITLE_PARAM]: title } : {}),
+      ...(prefill.kind === "fork" ? { [RESUME_AT_PARAM]: prefill.resumeAt } : {}),
+      [SESSION_ID_PARAM]: prefill.sessionId,
+    },
   };
 }
 
@@ -373,24 +387,25 @@ function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, stri
  * (the daemon disables the launcher instead), so the fields fall back to empty
  * only to keep this total.
  *
- * `defaults` is what a fork inherits from its source (`forkSourceDefaults`);
- * on a plain open it is empty and every parameter keeps its declared default.
- * The prefill's own values are seeded the same way, so a template that does not
- * declare them simply ignores them. */
+ * Two layers of seed values, URL first: `params` is what the link asked for
+ * (`sb.<PARAM>`), `defaults` is what the launcher could read out of live state
+ * for the session that link names (`forkSourceDefaults`). The URL wins because
+ * it is the explicit request — a link that says which cwd to run in means it,
+ * and live state is only there to fill what the link left out. Both are seeds:
+ * a name the chosen template does not declare is dropped rather than carried
+ * invisibly, and everything the template does declare stays editable. */
 export function initialSessionCreatorForm(
   templates: SessionLauncherConfigTemplate[],
-  prefill: SessionCreatorPrefill | null = null,
+  template: string | null = null,
+  params: Readonly<Record<string, string>> = {},
   defaults: Record<string, string> = {},
 ): SessionCreatorForm {
-  const template = initialTemplate(templates, prefill);
-  const seed = {
-    ...defaults,
-    ...prefillSeed(prefill),
-  };
+  const selected = initialTemplate(templates, template, params);
+  const seed = { ...defaults, ...params };
   return {
-    template: template?.name ?? "",
-    command: template?.command ?? "",
-    params: paramValues(template?.params ?? [], seed),
+    template: selected?.name ?? "",
+    command: selected?.command ?? "",
+    params: paramValues(selected?.params ?? [], seed),
   };
 }
 

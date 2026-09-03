@@ -1,14 +1,17 @@
-// Historical session search (DR-0021 Phase 2). Sits inside the sidebar's
-// SESSIONS section, toggled on by Sidebar's 🔍 button, replacing SessionList
-// while open (see Sidebar.tsx's doc comment for why a sidebar-internal panel
-// was chosen over a locator-driven `state.view` — search is a tool to find
-// and pin a session, not itself a durable/bookmarkable screen the way a room
-// or a session's Files/Timeline is). Clicking a result caches its historical
-// metadata and submitted query options, then navigates to its Timeline without
-// implicitly pinning or closing this panel. The daemon's `allowVirtual`
-// transcript_read/fs_list/fs_read resolution
-// (DR-0021 §3.1, server.ts) makes a historical sid's Timeline work with no
-// live peer required.
+// Historical session search (DR-0021 Phase 2)。開いているかどうかと検索語は
+// URL の `sb.*` が持ち (`?sb.panel=search&sb.search=…`、sidebar-url.ts / 表は
+// docs/design/webui-url-grammar.md)、描き場所は幅で変わる (デスクトップ =
+// FormPane、スマホ = サイドバー内で SessionList を置換)。path 側の view に
+// しないのは、検索がメインペインの中身を置き換えないから — 結果を選んで
+// Timeline へ遷移してもこのパネルは開いたままで、そこが要点になっている。
+//
+// 検索語を URL に書き戻すのは検索を**実行した**時だけ (replace)。打鍵ごとに
+// 履歴を積むと、戻るがパネルを閉じるところまで届かなくなる。
+//
+// 結果クリックは履歴メタデータと送信済みクエリをキャッシュしてから Timeline へ
+// 遷移する (ピン留めもパネルを閉じることもしない)。daemon の allowVirtual
+// transcript_read/fs_list/fs_read 解決 (DR-0021 §3.1, server.ts) により、
+// 過去 sid の Timeline は live peer 無しで開ける。
 import { useMemo, useState } from "preact/hooks";
 import {
   SESSION_SEARCH_RESULT_MAX,
@@ -19,7 +22,7 @@ import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { selectedSid } from "../store.ts";
 import { timelineHref } from "../locator.ts";
-import { pushNavigation } from "../navigation.ts";
+import { pushNavigation, replaceNavigation } from "../navigation.ts";
 import {
   buildSessionSearchRequest,
   DEFAULT_SESSION_SEARCH_FORM,
@@ -32,6 +35,7 @@ import {
   shortSid,
   type SessionSearchForm,
 } from "../utils.ts";
+import { prefillSidebarState } from "../session-creator.ts";
 import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
 import { SearchModeToggles } from "./SearchBar.tsx";
 
@@ -160,11 +164,24 @@ function SearchResultRow({
   );
 }
 
-export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
+export function SessionSearchPanel({
+  onClose,
+  query,
+}: {
+  onClose: () => void;
+  /** `sb.search` — the query the URL opened this panel on, or null. Seeds the
+   * input once; from then on typing is the form's own state and the address
+   * bar is rewritten only when a search is actually run (`runSearch`), so a
+   * shared link reproduces the search that was performed rather than every
+   * keystroke on the way to it. */
+  query: string | null;
+}) {
   const { store, ws } = useApp();
   const state = useStoreState(store);
   const currentSid = selectedSid(state);
-  const [form, setForm] = useState<SessionSearchForm>(DEFAULT_SESSION_SEARCH_FORM);
+  const [form, setForm] = useState<SessionSearchForm>(() =>
+    query === null ? DEFAULT_SESSION_SEARCH_FORM : { ...DEFAULT_SESSION_SEARCH_FORM, query },
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SessionSearchResponse | null>(null);
@@ -212,6 +229,12 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
 
   async function runSearch(e: Event): Promise<void> {
     e.preventDefault();
+    // 実行した検索語を URL に残す (replace: 検索のたびに履歴を積むと、戻るが
+    // 「パネルを閉じる」に届くまで何度も押すことになる)。
+    replaceNavigation(`${location.pathname}${location.search}`, {
+      ...state.sidebar,
+      search: form.query,
+    });
     setLoading(true);
     setError(null);
     try {
@@ -246,17 +269,17 @@ export function SessionSearchPanel({ onClose }: { onClose: () => void }) {
    * relaunch that did not carry it would come back under a derived name and
    * lose the name the row is showing right here. */
   function resumeResult(hit: SessionSearchHit): void {
-    store.dispatch({
-      type: "session-creator/prefill",
-      prefill: {
+    pushNavigation(
+      `${location.pathname}${location.search}`,
+      prefillSidebarState({
         kind: "resume",
         cwd: hit.cwd ?? "",
         sessionId: hit.sid,
         ...(hit.model ? { model: hit.model } : {}),
         ...(hit.effort ? { effort: hit.effort } : {}),
         ...(hit.title ? { title: hit.title } : {}),
-      },
-    });
+      }),
+    );
   }
 
   return (

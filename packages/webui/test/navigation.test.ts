@@ -5,6 +5,7 @@ import {
   isAgentTimelineUrl,
   isSameSessionTabChange,
   missingTarget,
+  navigationTarget,
   recentIsValid,
   rememberTimelinePosition,
   resolveSessionRootTarget,
@@ -15,6 +16,7 @@ import {
   type WsClient,
 } from "../src/client/navigation.ts";
 import type { Locator } from "../src/client/locator.ts";
+import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 
 function hydratedState(): AppState {
   return {
@@ -97,7 +99,11 @@ describe("Navigation API routing decisions", () => {
       type: "navigation/missing",
       target: { kind: "session", id: "missing" },
     });
-    const recovered = reducer(failed, { type: "locator/changed", locator: files("s1") });
+    const recovered = reducer(failed, {
+      type: "locator/changed",
+      locator: files("s1"),
+      sidebar: CLOSED_SIDEBAR,
+    });
     expect(recovered.missingTarget).toBeNull();
     expect(recovered.currentSid).toBe("s1");
   });
@@ -228,5 +234,37 @@ describe("recent session restoration", () => {
     expect(
       await resolveSessionRootTarget(record, "s1", stateWithSession(), ws, "http://localhost"),
     ).toBe("/s/s1/timeline/head");
+  });
+});
+
+// path とサイドバーのフォームパネルは 1 つの URL の別々の名前空間なので、
+// 「どこを見ているか」を変える遷移でフォームが閉じてはいけない (DR-0021 は
+// 検索結果を選んで Timeline へ移ってもパネルが残ることに依存している)。
+describe("navigationTarget", () => {
+  test("path 遷移では開いている sb.* がそのまま引き継がれる", () => {
+    expect(navigationTarget("/s/s2/timeline/head", "?sb.panel=search&sb.search=foo")).toBe(
+      "/s/s2/timeline/head?sb.panel=search&sb.search=foo",
+    );
+  });
+
+  test("ページ固有の query を持つ遷移先でも引き継ぐ (両者は混ざらない)", () => {
+    const url = navigationTarget("/usage/stats/daily?days=7", "?sb.panel=room");
+    expect(new URL(url, "http://x").searchParams.get("days")).toBe("7");
+    expect(parseSidebarUrl(new URL(url, "http://x").search).panel).toBe("room-creator");
+  });
+
+  // パネルを変える側は明示する。「閉じる」と「触らない」が同じ引数にならない
+  // ように、url が sb.* を持つかどうかからは何も推測しない。
+  test("sidebar を渡した側が勝つ (閉じる指定を含む)", () => {
+    expect(navigationTarget("/r/room-1", "?sb.panel=new&sb.CWD=/a", CLOSED_SIDEBAR)).toBe(
+      "/r/room-1",
+    );
+    expect(
+      navigationTarget("/s/s1/timeline/head", "", parseSidebarUrl("?sb.panel=new&sb.SESSION_ID=x")),
+    ).toBe("/s/s1/timeline/head?sb.panel=new&sb.SESSION_ID=x");
+  });
+
+  test("何も開いていなければ遷移先はそのまま", () => {
+    expect(navigationTarget("/s/s1/files?path=a.ts", "")).toBe("/s/s1/files?path=a.ts");
   });
 });

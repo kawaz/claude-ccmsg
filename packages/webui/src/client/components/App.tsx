@@ -11,7 +11,6 @@ import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { FormPane } from "./FormPane.tsx";
-import { useNarrowLayout } from "../useNarrowLayout.ts";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { ServiceStatusBadge } from "./ServiceStatus.tsx";
@@ -140,7 +139,6 @@ export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
-  const narrow = useNarrowLayout();
   const sessionViewsRef = useRef<CachedSessionView[]>([]);
   // Sids the LRU dropped since the last commit, queued for the effect below.
   // The eviction is discovered here (render) but dispatched there, because a
@@ -292,8 +290,10 @@ export function App() {
           onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
         {/* デスクトップのフォームパネル (D-Q1 裁定 = b)。スマホ幅では
-         * Sidebar が自分の中に描くので、こちらは何も出さない。 */}
-        {narrow ? null : <FormPane state={state} />}
+         * Sidebar が自分の中に描くので、FormPane 自身が何も出さない
+         * (幅ごとの担当は form-pane.ts の sidebarInlinePanel / formPanePanel
+         * が対で決める)。 */}
+        <FormPane state={state} />
         {sessionViewsRef.current.map((view) => (
           <CachedSessionViewComponent
             key={view.sid}

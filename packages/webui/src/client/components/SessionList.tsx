@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentInfo, LastLiveSession, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
+import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
@@ -960,7 +961,7 @@ function LastLiveSessionsSection({
   peers: PeerInfo[];
   currentSid: string | null;
 }) {
-  const { store, ws } = useApp();
+  const { ws } = useApp();
   const rows = useMemo(
     () => sortLastLiveSessions(visibleLastLiveSessions(lastLiveSessions, peers)),
     [lastLiveSessions, peers],
@@ -981,17 +982,21 @@ function LastLiveSessionsSection({
             key={entry.sid}
             entry={entry}
             currentSid={currentSid}
+            // ランチャーを「この行のセッションで」開く = URL を書き換える
+            // 遷移 (sidebar-url.ts)。行が持つ cwd/model/effort/title は
+            // そのままリンクに乗るので、切断済みで live state から読めない
+            // このセクションでも値が揃う。
             onResume={() =>
-              store.dispatch({
-                type: "session-creator/prefill",
-                prefill: lastLiveResumePrefill(entry),
-              })
+              pushNavigation(
+                `${location.pathname}${location.search}`,
+                prefillSidebarState(lastLiveResumePrefill(entry)),
+              )
             }
             onFork={() =>
-              store.dispatch({
-                type: "session-creator/prefill",
-                prefill: lastLiveForkPrefill(entry),
-              })
+              pushNavigation(
+                `${location.pathname}${location.search}`,
+                prefillSidebarState(lastLiveForkPrefill(entry)),
+              )
             }
             // 応答は待たない: 消えた行は daemon の peers push で届く
             // (last_live はその frame の片割れ)。失敗しても行が残るだけなので、

@@ -28,14 +28,23 @@ import {
 } from "@ccmsg/protocol";
 import { DEFAULT_STATS_PERIOD, type AgentRef, type Locator, type SessionTab } from "./locator.ts";
 import type { ProbeRecord } from "./llm-usage-view.ts";
-import type { SessionCreatorPrefill } from "./session-creator.ts";
 import {
-  openPrefilledCreator,
-  toggleSidebarPanel,
-  type SidebarPanelKind,
-  type SidebarPanelState,
-} from "./sidebar-panel.ts";
+  CLOSED_SIDEBAR,
+  isPeerSortKey,
+  sameSidebarState,
+  SORT_KEY_STORAGE,
+  type SidebarUrlState,
+} from "./sidebar-url.ts";
+import { readStorage } from "./storage.ts";
+import type { PeerSortKey } from "./utils.ts";
 import { refreshPinsFromAgents, refreshPinsFromPeers } from "./pinned-sessions.ts";
+
+/** 並び順は前回のまま開く (localStorage)。既定の "prompt" は「最後にユーザが
+ * 入力したセッションが上」で、次にどれを見るかを探す動きに一番近い。 */
+function initialPeerSortKey(): PeerSortKey {
+  const raw = readStorage(SORT_KEY_STORAGE);
+  return isPeerSortKey(raw) ? raw : "prompt";
+}
 import type { StatsPeriod } from "./llm-stats-view.ts";
 
 export { ADMIN_ID };
@@ -255,13 +264,22 @@ export interface AppState {
    * 同じ姿勢)。 */
   forkAvailable: boolean;
   /** 開いているフォームパネル (新規セッション / セッション検索 / 新規 Room)
-   * と、開いた時に渡された値。3 つは排他 (sidebar-panel.ts)。
+   * と、そのフォームに渡された初期値。3 つは排他 (sidebar-url.ts)。
    *
-   * ここに置くのは、描画先が幅で変わるため: デスクトップは main ペインの
+   * URL の `sb.*` から導出した値で、ここが書き変わる経路は
+   * `locator/changed` だけ = URL が正本 (kawaz r259 m47-m53)。パネルの開閉
+   * 自体が遷移 (`pushSidebarState`) なので、リロードでも戻るでも共有された
+   * リンクでも同じフォームが同じ値で開く。
+   *
+   * store に置くのは、描画先が幅で変わるため: デスクトップは main ペインの
    * FormPane、スマホはサイドバー内インライン置換 — トグルボタンを持つ
-   * Sidebar と、パネルを描く App は兄弟なので props では渡せない。URL には
-   * 載せない (D-Q1 裁定でページ化は退けられた)。 */
-  activePanel: SidebarPanelState;
+   * Sidebar と、パネルを描く App は兄弟なので props では渡せない。 */
+  sidebar: SidebarUrlState;
+  /** SESSIONS 一覧の並び順。RoomCreator のメンバ欄も同じ順で並ぶので、
+   * サイドバーのローカル state ではなくここが持つ (デスクトップでは
+   * RoomCreator が FormPane 側に出るため、Sidebar から props で渡せない)。
+   * URL には載せない — 見る順序は貼って共有する状態ではない。 */
+  peerSortKey: PeerSortKey;
   /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
   usageTab: "quota" | "stats";
@@ -365,7 +383,8 @@ export function initialState(): AppState {
     llmStatus: null,
     sandboxAvailable: false,
     forkAvailable: false,
-    activePanel: null,
+    sidebar: CLOSED_SIDEBAR,
+    peerSortKey: initialPeerSortKey(),
     usageTab: "quota",
     usagePeriod: DEFAULT_STATS_PERIOD,
     usageDays: null,
@@ -435,19 +454,12 @@ export type Action =
   | { type: "llm-status/loaded"; report: LlmStatusReport }
   | { type: "sandbox/availability"; available: boolean }
   | { type: "fork/availability"; available: boolean }
-  // null = 要求の取り下げ (フォームを閉じた / 起動した)。同じ turn を 2 度
-  // fork する時に同じ値をもう一度 dispatch できるよう、値の異同では判断せず
-  // 明示的に set / clear する。
-  // Timeline の「ここから fork」/ Session Search の「resume」: 選ばれた
-  // セッションごと launcher を開く。
-  | { type: "session-creator/prefill"; prefill: SessionCreatorPrefill }
-  // フォームパネルのトグル (押した panel が開く / 開いていれば閉じる) と、
-  // フォーム側からの明示的な閉じる操作。
-  | { type: "panel/toggled"; kind: SidebarPanelKind }
-  | { type: "panel/closed" }
+  | { type: "peers/sort-key"; key: PeerSortKey }
   | { type: "llm-usage/probed"; records: ReadonlyMap<string, ProbeRecord> }
   | { type: "protocol-event"; event: DeliveredEvent }
-  | { type: "locator/changed"; locator: Locator }
+  // path と `sb.*` は 1 つの URL の別々の名前空間で、遷移のたびに両方が
+  // 届く (navigation.ts の apply)。フォームパネルはこの経路でしか開かない。
+  | { type: "locator/changed"; locator: Locator; sidebar: SidebarUrlState }
   | { type: "navigation/missing"; target: MissingTarget | null }
   | { type: "mention/toggle"; id: string }
   | { type: "sidebar/set"; open: boolean }
@@ -1081,16 +1093,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, sandboxAvailable: action.available };
     case "fork/availability":
       return { ...state, forkAvailable: action.available };
-    // fork 要求は「launcher をこの値で開け」そのもの — 中継用のフィールドを
-    // 別に置いて Sidebar 側の effect でパネルに移し替えると、要求とパネルが
-    // 二重に状態を持ち、消し忘れれば古い fork 元が蘇る (sidebar-panel.ts の
-    // prefill を union の中に置いた理由と同じ)。
-    case "session-creator/prefill":
-      return { ...state, activePanel: openPrefilledCreator(action.prefill) };
-    case "panel/toggled":
-      return { ...state, activePanel: toggleSidebarPanel(state.activePanel, action.kind) };
-    case "panel/closed":
-      return { ...state, activePanel: null };
+    case "peers/sort-key":
+      return { ...state, peerSortKey: action.key };
     // Merged rather than replaced: a probe that failed for one credential
     // still answered for the others, and dropping the ones it did not mention
     // would lose readings the failure says nothing about.
@@ -1103,7 +1107,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
     case "locator/changed":
-      return applyLocatorChanged(state, action.locator);
+      return {
+        ...applyLocatorChanged(state, action.locator),
+        // 同値なら前の参照を残す (sameSidebarState 参照) — フォームの seed は
+        // この参照が変わった時だけやり直す。
+        sidebar: sameSidebarState(state.sidebar, action.sidebar) ? state.sidebar : action.sidebar,
+      };
     case "navigation/missing":
       return { ...state, missingTarget: action.target };
     case "mention/toggle": {

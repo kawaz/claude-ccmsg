@@ -20,6 +20,7 @@ import {
   selectedSid,
 } from "../src/client/store.ts";
 import type { ProbeRecord } from "../src/client/llm-usage-view.ts";
+import { CLOSED_SIDEBAR, parseSidebarUrl } from "../src/client/sidebar-url.ts";
 
 function dispatch(state: AppState, action: Action): AppState {
   return reducer(state, action);
@@ -413,6 +414,7 @@ describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
     const state = dispatch(withSidebar, {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: 4 },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.view).toBe("room");
     expect(state.currentRoomId).toBe("r1");
@@ -425,6 +427,7 @@ describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.currentMid).toBeNull();
   });
@@ -438,6 +441,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.view).toBe("session");
     expect(state.currentSid).toBe("sess-1");
@@ -453,6 +457,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: "src/index.ts" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.sessionTrees.get("sess-1")?.selectedPath).toBe("src/index.ts");
     expect(state.sessionTrees.has("sess-2")).toBe(false);
@@ -465,6 +470,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
   test("the source-document hint reaches the tree, and clears when absent", () => {
     const followed = dispatch(initialState(), {
       type: "locator/changed",
+      sidebar: CLOSED_SIDEBAR,
       locator: {
         view: "session",
         sid: "sess-1",
@@ -479,6 +485,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
     const picked = dispatch(followed, {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: "docs/other.md" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(picked.sessionTrees.get("sess-1")?.selectedFrom).toBeNull();
   });
@@ -491,6 +498,7 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
     const visited = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     const loaded = dispatch(visited, {
       type: "fs/dir-loaded",
@@ -502,8 +510,13 @@ describe("reducer / locator/changed (session view, DR-0008)", () => {
       dispatch(loaded, {
         type: "locator/changed",
         locator: { view: "room", room: "r1", mid: null },
+        sidebar: CLOSED_SIDEBAR,
       }),
-      { type: "locator/changed", locator: { view: "session", sid: "sess-1", path: null } },
+      {
+        type: "locator/changed",
+        locator: { view: "session", sid: "sess-1", path: null },
+        sidebar: CLOSED_SIDEBAR,
+      },
     );
     expect(awayAndBack.sessionTrees.get("sess-1")?.dirs.get("")).toEqual([
       { name: "src", type: "dir" },
@@ -847,6 +860,7 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sess-1" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.view).toBe("timeline");
     expect(state.currentSid).toBe("sess-1");
@@ -863,6 +877,7 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
     const visited = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sess-1" },
+      sidebar: CLOSED_SIDEBAR,
     });
     const res: TranscriptReadResponse = {
       ok: true,
@@ -882,8 +897,13 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
       dispatch(loaded, {
         type: "locator/changed",
         locator: { view: "room", room: "r1", mid: null },
+        sidebar: CLOSED_SIDEBAR,
       }),
-      { type: "locator/changed", locator: { view: "timeline", sid: "sess-1" } },
+      {
+        type: "locator/changed",
+        locator: { view: "timeline", sid: "sess-1" },
+        sidebar: CLOSED_SIDEBAR,
+      },
     );
     expect(awayAndBack.sessionTrees.get("sess-1")?.timeline.lines).toEqual(['{"type":"user"}']);
   });
@@ -896,12 +916,14 @@ describe("reducer / locator/changed (timeline view, DR-0009)", () => {
       dispatch(initialState(), {
         type: "locator/changed",
         locator: { view: "session", sid: "sess-1", path: null },
+        sidebar: CLOSED_SIDEBAR,
       }),
       { type: "fs/dir-loaded", sid: "sess-1", path: "", entries: [{ name: "src", type: "dir" }] },
     );
     const toTimeline = dispatch(filesLoaded, {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sess-1" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(toTimeline.sessionTrees.get("sess-1")?.dirs.get("")).toEqual([
       { name: "src", type: "dir" },
@@ -1410,6 +1432,7 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(selectedRoomId(state)).toBe("r1");
     expect(selectedSid(state)).toBeNull();
@@ -1419,6 +1442,7 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(selectedSid(state)).toBe("sess-1");
     expect(selectedRoomId(state)).toBeNull();
@@ -1428,6 +1452,7 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "timeline", sid: "sess-1" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(selectedSid(state)).toBe("sess-1");
     expect(selectedRoomId(state)).toBeNull();
@@ -1442,10 +1467,12 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     const onSession = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     const onRoom = dispatch(onSession, {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     // currentSid itself is untouched (still backs sess-1's cached tree) ...
     expect(onRoom.currentSid).toBe("sess-1");
@@ -1462,10 +1489,12 @@ describe("reducer / selectedRoomId and selectedSid (selection one-source-of-trut
     const onRoom = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     const onSession = dispatch(onRoom, {
       type: "locator/changed",
       locator: { view: "session", sid: "sess-1", path: null },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(onSession.currentRoomId).toBe("r1");
     expect(selectedRoomId(onSession)).toBeNull();
@@ -1764,6 +1793,7 @@ describe("reducer / pinned/hydrated, pinned/added, pinned/removed (DR-0021 §2.4
     const state = dispatch(initialState(), {
       type: "locator/changed",
       locator: { view: "timeline", sid: "a" },
+      sidebar: CLOSED_SIDEBAR,
     });
     expect(state.sessionTrees.get("a")?.timelineSearch).toEqual({
       queryText: "👺\\s*[A-Za-z0-9α-ωΑ-Ω\\-]{2,}",
@@ -2079,60 +2109,66 @@ describe("llm-status", () => {
   });
 });
 
-// フォームパネルの開閉。描画先が幅で変わる (デスクトップ = FormPane、スマホ =
-// サイドバー内) ため状態は store が持ち、遷移そのものは sidebar-panel.ts の
-// 純関数が決める (その排他の網羅は sidebar-panel.test.ts)。
-describe("panel/toggled, panel/closed", () => {
-  test("押した panel が開き、もう一度押すと閉じる", () => {
-    const opened = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
-    expect(opened.activePanel).toEqual({ kind: "session-search" });
-    expect(
-      dispatch(opened, { type: "panel/toggled", kind: "session-search" }).activePanel,
-    ).toBeNull();
+// フォームパネルの開閉。状態の正本は URL の `sb.*` (sidebar-url.ts) で、
+// store はそれを読み直した結果を持つだけ — 開閉も「遷移」なので、reducer に
+// 入ってくる経路は locator/changed 一本きり。文法そのものの網羅は
+// sidebar-url.test.ts、遷移で `sb.*` が引き継がれるかは navigation.test.ts。
+describe("locator/changed の sb.* 反映", () => {
+  const at = (search: string) =>
+    dispatch(initialState(), {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sid-1" },
+      sidebar: parseSidebarUrl(search),
+    });
+
+  test("sb.panel が開いている panel を決める", () => {
+    expect(at("?sb.panel=search").sidebar.panel).toBe("session-search");
+    expect(at("?sb.panel=room").sidebar.panel).toBe("room-creator");
+    expect(at("").sidebar.panel).toBeNull();
   });
 
-  test("別の panel を押すと入れ替わる (section をまたいでも 1 つだけ)", () => {
-    const search = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
-    const room = dispatch(search, { type: "panel/toggled", kind: "room-creator" });
-    expect(room.activePanel).toEqual({ kind: "room-creator" });
+  test("fork のリンクは launcher を fork 元ごと開く", () => {
+    const state = at("?sb.panel=new&sb.SESSION_ID=sid-9&sb.RESUME_AT=uuid-1");
+    expect(state.sidebar.panel).toBe("session-creator");
+    expect(state.sidebar.params).toEqual({ SESSION_ID: "sid-9", RESUME_AT: "uuid-1" });
   });
 
-  test("フォームの閉じるボタンはどの panel でも閉じる", () => {
-    const opened = dispatch(initialState(), { type: "panel/toggled", kind: "session-creator" });
-    expect(dispatch(opened, { type: "panel/closed" }).activePanel).toBeNull();
+  // 「+ 新規」が組む URL は `sb.panel=new` だけ。前に fork で開いていても、
+  // その `sb.*` は URL から消えている = 古い fork 元は蘇りようがない。
+  test("「+ 新規」で開き直した launcher は fork 元を引き継がない", () => {
+    const forked = at("?sb.panel=new&sb.SESSION_ID=sid-9&sb.RESUME_AT=uuid-1");
+    const plain = dispatch(forked, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sid-1" },
+      sidebar: parseSidebarUrl("?sb.panel=new"),
+    });
+    expect(plain.sidebar.params).toEqual({});
+  });
+
+  // 同値なら参照を据え置く。ランチャーを開いたまま別セッションへ移っても、
+  // フォームの seed をやり直させないため (SessionCreator の effect の依存)。
+  test("sb.* が同じなら sidebar の参照は変わらない", () => {
+    const opened = at("?sb.panel=new&sb.CWD=/repos/app");
+    const moved = dispatch(opened, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "sid-2" },
+      sidebar: parseSidebarUrl("?sb.panel=new&sb.CWD=/repos/app"),
+    });
+    expect(moved.sidebar).toBe(opened.sidebar);
+    expect(moved.currentSid).toBe("sid-2");
   });
 });
 
-// Timeline の「ここから fork」は launcher をその fork 元ごと開く要求そのもの。
-// 中継用のフィールドを別に持たないので、「要求を消し忘れて古い fork 元が
-// 蘇る」経路自体が無い。
-describe("session-creator/prefill", () => {
-  test("fork 要求は launcher を fork 元ごと開く", () => {
-    const prefill = { kind: "fork" as const, sessionId: "sid-1", resumeAt: "uuid-1" };
-    const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
-    expect(forked.activePanel).toEqual({ kind: "session-creator", prefill });
+describe("peers/sort-key", () => {
+  test("並び順は store が持つ (RoomCreator が FormPane 側でも同じ順で並ぶ)", () => {
+    expect(initialState().peerSortKey).toBe("prompt");
+    expect(dispatch(initialState(), { type: "peers/sort-key", key: "name" }).peerSortKey).toBe(
+      "name",
+    );
   });
+});
 
-  test("fork 要求は開いていた別 panel を置き換える", () => {
-    const searching = dispatch(initialState(), { type: "panel/toggled", kind: "session-search" });
-    const prefill = { kind: "fork" as const, sessionId: "sid-1", resumeAt: "uuid-1" };
-    expect(dispatch(searching, { type: "session-creator/prefill", prefill }).activePanel).toEqual({
-      kind: "session-creator",
-      prefill,
-    });
-  });
-
-  // fork で開いた launcher を閉じて「+ 新規」で開き直すと、前の fork 元
-  // (と、そこから入る cwd/model/effort) は引き継がない。
-  test("閉じて開き直した launcher は fork 元を引き継がない", () => {
-    const prefill = { kind: "fork" as const, sessionId: "sid-1", resumeAt: "uuid-1" };
-    const forked = dispatch(initialState(), { type: "session-creator/prefill", prefill });
-    const closed = dispatch(forked, { type: "panel/closed" });
-    expect(
-      dispatch(closed, { type: "panel/toggled", kind: "session-creator" }).activePanel,
-    ).toEqual({ kind: "session-creator", prefill: null });
-  });
-
+describe("fork availability", () => {
   // hello 由来の capability。daemon の launcher 設定が変わって再接続すれば
   // 値も入れ替わる。
   test("fork availability follows the latest hello", () => {
