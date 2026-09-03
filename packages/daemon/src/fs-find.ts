@@ -93,6 +93,10 @@ async function walkFind(
       // report what is reachable rather than failing the whole request.
       continue;
     }
+    // readdir order is filesystem-defined (APFS sorted, ext4 hash order), so
+    // pin the within-directory order by name: BFS still fixes the depth order,
+    // and the display order must not change between hosts.
+    dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     // A `.gitignore` in this directory joins the inherited layers for its own
     // entries and everything below, per gitignore(5)'s "rules apply to the
     // directory containing the file and its subdirectories".
