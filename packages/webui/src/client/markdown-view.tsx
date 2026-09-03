@@ -625,8 +625,7 @@ function renderNode(node: AnyNode, key: string, ctx: MarkdownRenderCtx): VNode |
                 key={pieceKey}
                 class="md-issue-link"
                 href={p.href}
-                target="_blank"
-                rel="noopener noreferrer"
+                {...(p.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
               >
                 {body}
               </a>
@@ -1517,7 +1516,9 @@ export function renderRestrictedMarkdown(source: string, issueRepo?: string): VN
       const text = quoted.join("\n");
       blocks.push(
         <blockquote key={`b${key++}`}>
-          <span class="md-restricted-text">{renderRestrictedInline(text, `b${key}`, issueRepo)}</span>
+          <span class="md-restricted-text">
+            {renderRestrictedInline(text, `b${key}`, issueRepo)}
+          </span>
         </blockquote>,
       );
       continue;
@@ -1568,8 +1569,7 @@ function renderRestrictedText(
         key={`${keyPrefix}i${i}`}
         class="md-issue-link"
         href={p.href}
-        target="_blank"
-        rel="noopener noreferrer"
+        {...(p.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       >
         {p.text}
       </a>
@@ -1598,7 +1598,9 @@ function renderRestrictedInline(
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last)
-      out.push(...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo));
+      out.push(
+        ...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo),
+      );
     if (m[1] !== undefined) {
       out.push(
         <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>

@@ -102,7 +102,7 @@ describe("splitTextForIssueRefs", () => {
 
   test("the short forms need a usable session repo", () => {
     expect(splitTextForIssueRefs("see #123", undefined)).toEqual([
-      { text: "see #123", href: null },
+      { text: "see #123", href: null, external: false },
     ]);
     expect(refsIn("see #123", "")).toEqual([]);
     expect(refsIn("see #123", "claude-ccmsg")).toEqual([]);
@@ -113,7 +113,7 @@ describe("splitTextForIssueRefs", () => {
 
   test("a text run with no reference comes back as one untouched piece", () => {
     const pieces = splitTextForIssueRefs("plain text", REPO);
-    expect(pieces).toEqual([{ text: "plain text", href: null }]);
+    expect(pieces).toEqual([{ text: "plain text", href: null, external: false }]);
   });
 
   test("consecutive calls do not carry regex state (lastIndex reset)", () => {
@@ -139,5 +139,27 @@ describe("issueRefUrl", () => {
   test("rejects a fragment that is not fragment-shaped", () => {
     expect(issueRefUrl(REPO, "1", "a/b")).toBeNull();
     expect(issueRefUrl(REPO, "1", "")).toBeNull();
+  });
+});
+
+describe("room message references (kawaz r259m56)", () => {
+  test("rNmM and #rNmM link to the message in the app, without a repo", () => {
+    const pieces = splitTextForIssueRefs("see r259m55 and #r12m3.", undefined);
+    expect(pieces.filter((p) => p.href)).toEqual([
+      { text: "r259m55", href: "/r/r259/m55", external: false },
+      { text: "#r12m3", href: "/r/r12/m3", external: false },
+    ]);
+  });
+
+  test("shapes that are not a room reference", () => {
+    for (const text of ["r0m1", "r1m0", "xr1m2", "r1m2x", "##r1m2", "room1m2"]) {
+      expect(splitTextForIssueRefs(text, undefined).some((p) => p.href)).toBe(false);
+    }
+  });
+
+  test("issue and room references interleave in order", () => {
+    const pieces = splitTextForIssueRefs("#1 r2m3 #4", "o/r");
+    expect(pieces.map((p) => p.text)).toEqual(["#1", " ", "r2m3", " ", "#4"]);
+    expect(pieces.map((p) => p.external)).toEqual([true, false, false, false, true]);
   });
 });

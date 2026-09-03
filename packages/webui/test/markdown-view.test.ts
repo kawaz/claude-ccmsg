@@ -955,14 +955,14 @@ describe("renderRestrictedMarkdown", () => {
     // Characters untouched (the backticks are the code span's own markup).
     expect(flattenText(vnode)).toBe(src.replaceAll("`", ""));
     const links = collect(vnode, (n) => n.type === "a");
-    expect(links.map((a) => (a.props as { href: string }).href)).toEqual([
+    expect(links.map((a) => (a.props as unknown as { href: string }).href)).toEqual([
       "https://github.com/owner/repo/issues/12",
       "https://github.com/owner/other/issues/3#issuecomment-9",
     ]);
     // Without a repo only the fully qualified reference can still link.
     expect(
       collect(renderRestrictedMarkdown(src), (n) => n.type === "a").map(
-        (a) => (a.props as { href: string }).href,
+        (a) => (a.props as unknown as { href: string }).href,
       ),
     ).toEqual(["https://github.com/owner/other/issues/3#issuecomment-9"]);
   });

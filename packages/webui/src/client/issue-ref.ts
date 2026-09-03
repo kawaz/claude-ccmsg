@@ -62,8 +62,19 @@ export function issueRefUrl(repo: string, number: string, fragment?: string): st
 
 export interface IssueRefPiece {
   text: string;
-  /** Issue URL when this piece is a reference, `null` for plain text. */
+  /** Link target when this piece is a reference, `null` for plain text. */
   href: string | null;
+  /** True for a GitHub URL (opens in a new tab); false for an in-app room
+   * message link, which the app's own navigation handles in place. */
+  external: boolean;
+}
+
+/** `rNmM` / `#rNmM` — a ccmsg room message id as the CLI prints it
+ * (kawaz r259m56). Links to that message in the app; no repo needed. */
+const ROOM_REF_RE = /(?<![\w#])#?r([1-9]\d*)m([1-9]\d*)\b/g;
+
+export function roomRefUrl(room: string, mid: string): string {
+  return `/r/r${room}/m${mid}`;
 }
 
 /** Resolve the repo a match points at: both parts as written, the name against
@@ -86,18 +97,31 @@ export function splitTextForIssueRefs(
   text: string,
   repo: string | undefined,
 ): readonly IssueRefPiece[] {
-  const pieces: IssueRefPiece[] = [];
-  let cursor = 0;
+  type Hit = { index: number; text: string; href: string; external: boolean };
+  const hits: Hit[] = [];
   ISSUE_REF_RE.lastIndex = 0;
   for (let m = ISSUE_REF_RE.exec(text); m; m = ISSUE_REF_RE.exec(text)) {
     const slug = resolveRepo(m[1], m[2], repo);
     const href = slug ? issueRefUrl(slug, m[3]!, m[4]) : null;
-    if (!href) continue;
-    if (m.index > cursor) pieces.push({ text: text.slice(cursor, m.index), href: null });
-    pieces.push({ text: m[0], href });
-    cursor = m.index + m[0].length;
+    if (href) hits.push({ index: m.index, text: m[0], href, external: true });
   }
-  if (pieces.length === 0) return [{ text, href: null }];
-  if (cursor < text.length) pieces.push({ text: text.slice(cursor), href: null });
+  ROOM_REF_RE.lastIndex = 0;
+  for (let m = ROOM_REF_RE.exec(text); m; m = ROOM_REF_RE.exec(text)) {
+    hits.push({ index: m.index, text: m[0], href: roomRefUrl(m[1]!, m[2]!), external: false });
+  }
+  if (hits.length === 0) return [{ text, href: null, external: false }];
+  hits.sort((a, b) => a.index - b.index);
+  const pieces: IssueRefPiece[] = [];
+  let cursor = 0;
+  for (const hit of hits) {
+    // The two patterns cannot overlap (one needs digits after `#`, the other
+    // `r`), so a hit before the cursor never happens; guard anyway.
+    if (hit.index < cursor) continue;
+    if (hit.index > cursor)
+      pieces.push({ text: text.slice(cursor, hit.index), href: null, external: false });
+    pieces.push({ text: hit.text, href: hit.href, external: hit.external });
+    cursor = hit.index + hit.text.length;
+  }
+  if (cursor < text.length) pieces.push({ text: text.slice(cursor), href: null, external: false });
   return pieces;
 }
