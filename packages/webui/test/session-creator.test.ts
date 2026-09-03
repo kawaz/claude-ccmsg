@@ -408,6 +408,11 @@ describe("forkSourceDefaults", () => {
     expect(forkSourceDefaults({ cwd: "   " }, ROOTS)).toEqual({});
   });
 
+  test("seeds TITLE from the source session's name (kawaz r259m62)", () => {
+    expect(forkSourceDefaults({ title: "my session" }, ROOTS)).toEqual({ TITLE: "my session" });
+    expect(forkSourceDefaults({ title: "   " }, ROOTS)).toEqual({});
+  });
+
   test("nothing is inherited when the fork source could not be identified", () => {
     expect(forkSourceDefaults(null, ROOTS)).toEqual({});
     expect(forkSourceDefaults({}, ROOTS)).toEqual({});

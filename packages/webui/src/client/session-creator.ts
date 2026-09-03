@@ -262,6 +262,9 @@ export interface ForkSourceInfo {
   model?: string;
   /** Raw transcript `effort`, e.g. "medium". */
   effort?: string;
+  /** The source session's own name — the fork opens as "this one, branched",
+   * so its title is the natural seed (kawaz r259m62). */
+  title?: string;
 }
 
 /** The dropdown option a raw transcript model maps to, or undefined when none
@@ -314,9 +317,11 @@ export function forkSourceDefaults(
 ): Record<string, string> {
   if (!info) return {};
   const cwd = info.cwd?.trim();
+  const title = info.title?.trim();
   return {
     ...(cwd && cwdWithinRoots(cwd, rootDirs) ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
     ...launchDefaultsFromTranscript(info),
+    ...(title ? { [TITLE_PARAM]: title } : {}),
   };
 }
 

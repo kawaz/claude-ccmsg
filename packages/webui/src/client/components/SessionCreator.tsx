@@ -59,6 +59,10 @@ function forkSourceInfo(state: AppState, sid: string): ForkSourceInfo {
     cwd: state.peers.find((p) => p.sid === sid)?.cwd,
     model: context?.model,
     effort: context?.effort,
+    // The forked session should open under the source's name (the doc on
+    // ForkSourceInfo.title); agents' `name` is where a live session's title
+    // lives (same source pinnedSessionTitle reads).
+    title: state.agents.find((a) => a.sessionId === sid)?.name,
   };
 }
 
