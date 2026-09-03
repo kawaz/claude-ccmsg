@@ -457,6 +457,7 @@ export function SessionCreator({
             </div>
             <textarea
               class="session-creator-prompt"
+              rows={paramRows(form.command)}
               value={form.command}
               onInput={(e) =>
                 setForm({ ...form, command: (e.target as HTMLTextAreaElement).value })

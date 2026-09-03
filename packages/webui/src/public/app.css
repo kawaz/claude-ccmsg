@@ -1508,10 +1508,16 @@ a {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
+  /* 複数行の値 (shell スニペット等) は折り返すと行の構造が読めなくなるので、
+   * 横は折り返さずスクロール (kawaz r259m63)。rows 制御 (行数+2) と対で、
+   * 縦は内容ぶん、横ははみ出しをスクロールで見る。 */
+  white-space: pre;
+  overflow-x: auto;
 }
 
 .session-creator-prompt {
-  min-height: 4.5rem;
+  /* rows (行数+2) が高さを決めるので固定の min-height は置かない —
+   * 1 行値のフォームまで 4.5rem に伸びてしまう。 */
   resize: vertical;
 }
 
