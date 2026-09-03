@@ -1,6 +1,6 @@
 ---
 title: webui が daemon の version 不一致を検知して自動リロードする
-status: open
+status: resolved
 category: task
 created: 2026-09-03T09:47:44+09:00
 last_read: 2026-09-03T09:48:55+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-03T10:04:03+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.137.0 (commit 2ad4ff50) で実装。hello 応答の version と bundle の VERSION を接続・再接続のたびに比較、daemon が新しければ sessionStorage を鍵に1回だけ自動リロード、2回目/書きかけありは topbar のボタンに fallback。bundle が新しい場合は何もしない (daemon 入れ替えは CLI の version-mismatch upgrade の責務)。v0.136.0以前の bundle は hello 自体が通らないので救えない (手動リロード)。"]
 blocked_by:
 origin: 自リポ TODO
 ---
