@@ -119,8 +119,7 @@ export class Client {
    * stays in the readable stream for `readLine`. */
   async request<T = Record<string, unknown>>(obj: unknown): Promise<T> {
     const body = obj as Record<string, unknown>;
-    // A caller that also has to recognize a later result event (the 2-phase
-    // ops) supplies the id itself; everyone else gets one from the counter.
+    // A caller may supply the id itself; everyone else gets one from the counter.
     const rid = typeof body.request_id === "string" ? body.request_id : `r${++this.nextRequestId}`;
     const line = await new Promise<string | null>((resolve) => {
       this.pendingReplies.set(rid, resolve);

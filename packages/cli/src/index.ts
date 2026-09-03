@@ -606,49 +606,19 @@ async function runDaemonStop(): Promise<never> {
  * hellos as `{ role: "user" }` unconditionally — same posture as `daemon
  * start`/`stop`/`status` — rather than picking up CLAUDE_CODE_SESSION_ID via
  * resolveSessionIdentity, which would hello as role "session" and get
- * rejected. The op is 2-phase on the wire (RequestAcceptedResponse ack, then
- * a request_id-correlated `ev:"session_kill_result"`) because the daemon's
- * resolve-pid + two-shot-SIGTERM sequence can take up to ~4s; this dedicated
- * connection only ever carries this one exchange, so any other line read
- * here would be a protocol violation, not legitimate unrelated traffic. */
+ * rejected. The reply takes up to ~4s (the daemon's resolve-pid +
+ * two-shot-SIGTERM sequence), which `request` simply waits out. */
 async function runSessionKill(sessionId: string, force: boolean): Promise<never> {
   const paths = resolvePaths();
   const client = await ensureDaemon(paths, { role: "user" });
-  const requestId = `stop-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const accept = await client.request<
-    { ok?: boolean; accepted?: boolean } & Record<string, unknown>
-  >({
+  const reply = await client.request<Record<string, unknown>>({
     op: "session_kill",
-    request_id: requestId,
     session_id: sessionId,
     ...(force ? { force: true } : {}),
   });
-  if (accept.ok !== true || accept.accepted !== true) {
-    client.close();
-    process.exit(output(accept));
-  }
-  for (;;) {
-    const line = await client.readLine();
-    if (line === null) {
-      client.close();
-      process.exit(
-        output({
-          ok: false,
-          error: { code: "internal", msg: "connection closed before session_kill result" },
-        }),
-      );
-    }
-    const ev = JSON.parse(line) as { ev?: string; request_id?: string } & Record<string, unknown>;
-    if (ev.ev === "session_kill_result" && ev.request_id === requestId) {
-      client.close();
-      const { ev: _ev, request_id: _rid, ...rest } = ev;
-      process.exit(output(rest));
-    }
-    // Any other line on this dedicated single-purpose connection would be a
-    // protocol violation (see doc comment) — ignore rather than crash so a
-    // future daemon addition (e.g. an unrelated broadcast) degrades to a
-    // slightly longer wait instead of a hard failure.
-  }
+  client.close();
+  const { request_id: _rid, ...rest } = reply;
+  process.exit(output(rest));
 }
 
 function handleDaemon(positionals: string[], opts: Record<string, string | boolean>): void {

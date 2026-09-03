@@ -453,32 +453,21 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     }
   });
 
-  // user role + a sid no `claude agents` run can know: the 2-phase ack
-  // arrives first (arrival-order contract), then the result event carries
-  // not_found. This also covers environments where the `claude` CLI itself
-  // is absent/failing — resolution failure and no-match are the same
-  // not_found to the caller.
-  test("user role with an unknown session_id gets ack then not_found result", async () => {
+  // user role + a sid no `claude agents` run can know. This also covers
+  // environments where the `claude` CLI itself is absent/failing — resolution
+  // failure and no-match are the same not_found to the caller.
+  test("user role with an unknown session_id is answered not_found", async () => {
     const ctx = await startTestDaemon();
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const ack = await c.request({
+      const reply = await c.request<{ ok: boolean; error?: { code: string } }>({
         op: "session_kill",
         request_id: "k2",
         session_id: "00000000-0000-0000-0000-000000000000",
       });
-      expect(ack.ok).toBe(true);
-      expect(ack.accepted).toBe(true);
-      const { ev } = await c.readEventUntil<{
-        ev: string;
-        request_id: string;
-        ok: boolean;
-        error?: { code: string };
-      }>((e) => e.ev === "session_kill_result");
-      expect(ev.request_id).toBe("k2");
-      expect(ev.ok).toBe(false);
-      expect(ev.error?.code).toBe("not_found");
+      expect(reply.ok).toBe(false);
+      expect(reply.error?.code).toBe("not_found");
       c.close();
     } finally {
       await stopTestDaemon(ctx);
@@ -486,7 +475,7 @@ describe("session_kill over the wire (role gate + not_found)", () => {
   }, 30000);
 
   // request_id is what a reply is paired with, so a request without one is
-  // refused before dispatch (same for every op, not just the 2-phase ones).
+  // refused before dispatch (same for every op).
   test("missing request_id is refused with bad_request", async () => {
     const ctx = await startTestDaemon();
     try {

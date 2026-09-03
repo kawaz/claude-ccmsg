@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
 const ERR_TS = "2026-08-12T03:00:00.000Z";
@@ -136,6 +137,7 @@ describe("network online wake", () => {
       try {
         await a.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r",
@@ -145,6 +147,7 @@ describe("network online wake", () => {
         });
         await b.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "B",
           repo: "r",

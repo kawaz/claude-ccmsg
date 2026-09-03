@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { canNativeSendMessage, normalizeConfigDir } from "../src/native-messaging.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -72,6 +73,7 @@ async function sessionHello(
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -138,7 +140,7 @@ describe("peers の send_message フラグ", () => {
         await sessionHello(ctx, "A", cfg);
         await sessionHello(ctx, "B", cfg);
         const admin = await connect(ctx.sock);
-        await admin.request({ op: "hello", role: "user" });
+        await admin.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
         const peers = await peersOf(admin);
         expect(peers.get("A")?.send_message).toBeUndefined();
         expect(peers.get("B")?.send_message).toBeUndefined();
@@ -162,6 +164,7 @@ describe("peers の send_message フラグ", () => {
         // subprocess) しても、確立済みの面は保たれる
         await peerConn.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "PEER",
           repo: "r",

@@ -22,6 +22,7 @@ import {
   selectRemoteUrl,
   slugFromCheckoutPath,
 } from "../src/repo-derive.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 let dir: string;
 
@@ -149,7 +150,7 @@ async function sessionHello(
   fields: { cwd: string; repo?: string; ws?: string },
 ): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "session", sid, ...fields });
+  await c.request({ op: "hello", role: "session", protocol: PROTOCOL_VERSION, sid, ...fields });
   return c;
 }
 

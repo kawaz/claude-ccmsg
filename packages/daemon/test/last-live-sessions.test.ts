@@ -25,6 +25,7 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -140,6 +141,7 @@ async function sessionHello(
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: over.repo ?? "kawaz/claude-ccmsg",
@@ -151,7 +153,7 @@ async function sessionHello(
 
 async function userConn(ctx: DaemonCtx): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   return c;
 }
 

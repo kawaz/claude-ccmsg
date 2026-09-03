@@ -399,7 +399,7 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
   return sessionCreatorCwd(form).trim() !== "";
 }
 
-/** Builds the wire `session_launch` request body (op and the 2-phase
+/** Builds the wire `session_launch` request body (op and the correlation
  * request_id excluded — ws.ts's `sessionLaunch` adds both, same convention as
  * SessionSearchPanel's buildSessionSearchRequest). Returns null when the form
  * isn't launchable yet (mirrors sessionCreatorFormValid) so callers can't

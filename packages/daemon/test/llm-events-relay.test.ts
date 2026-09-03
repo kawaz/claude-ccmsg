@@ -15,6 +15,7 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 const TOKEN = "test-webhook-token";
@@ -43,7 +44,7 @@ async function startWebhookDaemon(options: { configured?: boolean } = {}): Promi
   const sock = path.join(stateDir, "daemon.sock");
   await waitConnectable(sock);
   const c = await connect(sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   const pong = await c.request<{ http: string[] }>({ op: "ping" });
   c.close();
   return {
@@ -98,7 +99,7 @@ async function postEvents(
 
 async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   await c.request({ op: "subscribe" });
   return c;
 }
@@ -121,7 +122,15 @@ interface LlmRequestsEv {
  * back bodyless — which is why the anchor can't be a self-post. */
 async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, string]> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "session", sid: "MARK", repo: "r", ws: "w", cwd: "/tmp" });
+  await c.request({
+    op: "hello",
+    role: "session",
+    protocol: PROTOCOL_VERSION,
+    sid: "MARK",
+    repo: "r",
+    ws: "w",
+    cwd: "/tmp",
+  });
   const { room } = await c.request<{ room: string }>({ op: "create_room", members });
   return [c, room];
 }
@@ -317,6 +326,7 @@ describe("webhook → ev:llm_requests", () => {
         const s = await connect(ctx.sock);
         await s.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "S9",
           repo: "r",

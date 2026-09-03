@@ -55,15 +55,13 @@ transcript の cold scan 中、同一接続の `ping` が 1.15 秒待つ)。
 - client は `Map<request_id, resolver>` で pairing する。呼び出し側から見た形は
   従来どおり「rpc したら Promise で結果が返る」
 
-### 2-phase op の位置づけ
+### 遅い op も 1 応答の RPC
 
-`acceptTwoPhase` の 2-phase 応答 (即時 ack + `ev:"*_result"`) は **「長い Promise
-の RPC」に吸収された**。遅い op が他を待たせないための仕組みとしては不要。
-
-2-phase op (`session_search` / `session_launch` / `session_kill` /
-`session_dump_file` / `translate` 等) を「Promise が長い RPC」へ畳む**後続作業を
-残す** (issue: `2026-09-03-fold-two-phase-ops-into-rpc`)。今この形が残っているのは
-畳む作業が未着手だからであって、**後方互換のために形を残すことはしない**。
+遅い op も他と同じく **1 つの相関応答**で答える。`session_launch` /
+`session_kill` / `session_rename` / `session_env` / `session_search` /
+`fork_origin` / `session_dump_file` / `translate` / `llm_usage` /
+`llm_stats` / `llm_status` は、await して結果を `send` するだけ。遅い op が他を
+待たせないのは並行 dispatch が担保するので、応答を分割する理由はない。
 
 ### 相関できない失敗
 
@@ -77,6 +75,15 @@ client は誰も settle できない — log するだけ。正常な client は
 旧 version の `subscribe` は id を送らないため新 daemon の hello を通れず、**その
 セッションでは subscribe の張り直しが必要**になる。`request_id` 欠落を旧 protocol
 として受け付ける互換経路は**設けない** (kawaz 裁定 r259m32、今後も戻さない)。
+
+一方、遅い op を 1 応答へ畳んだ変更で **`PROTOCOL_VERSION` は 1 のまま**。世代を
+上げる基準は「稼働中の subscribe client が通らなくなるか」であり (kawaz 裁定
+r259m36)、2-phase 撤去は hello / subscribe / イベント配信のどれにも触れないので
+世代 1 の subscribe はそのまま動く。ここで世代を上げると稼働中の全 subscribe が
+hello で拒否され、避けたいはずの張り直しを全セッションに強いることになる。
+
+世代 1 client のうち 2-phase op を使うのは webui (version guard でリロードする) と
+CLI の単発コマンド (ランチャーの self-exec で最新版に流れる) だけなので、実害は無い。
 
 ## 影響
 

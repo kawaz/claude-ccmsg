@@ -44,9 +44,8 @@ class MockWebSocket {
   /** Deliver one frame to the client. A reply frame (`ok`, no `ev`) that does
    * not name a request is addressed to the oldest request this mock has not
    * answered yet — the ordinary case, where a test just wants "the answer to
-   * what I asked". Tests about correlation itself (out-of-order replies, the
-   * 2-phase result events) put an explicit `request_id` in the frame and this
-   * leaves it alone. */
+   * what I asked". Tests about correlation itself (out-of-order replies) put
+   * an explicit `request_id` in the frame and this leaves it alone. */
   triggerMessage(data: string): void {
     let frame = data;
     const obj = JSON.parse(data);
@@ -831,10 +830,9 @@ describe("createWsClient agents/ping (U1)", () => {
     }
   });
 
-  // 2-phase op: the wire request carries a client-generated request_id, the
-  // positional reply is only the ack, and the Promise settles from the
-  // correlated ev:"translate_result" push — order/per-item failures preserved.
-  test("translate sends the texts batch with a request_id and resolves from the result event", async () => {
+  // The wire request carries a client-generated request_id and the Promise
+  // settles from the correlated reply — order/per-item failures preserved.
+  test("translate sends the texts batch with a request_id and resolves from the reply", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -852,12 +850,8 @@ describe("createWsClient agents/ping (U1)", () => {
       texts: ["English.日本語。", "Second."],
     });
     expect(sent.request_id).not.toBe("");
-    // ack (positional reply) — must NOT settle the Promise yet.
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
-    // correlated result event settles it.
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "translate_result",
         request_id: sent.request_id,
         ok: true,
         results: [
@@ -877,11 +871,9 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // session_rename is 2-phase like translate. The assertion that matters is
-  // that `session_rename_result` is classified as an EVENT rather than as a
-  // positional reply: an ev the client does not recognize would both leave
-  // this Promise hanging forever and steal the next op's reply slot.
-  test("sessionRename sends the title with a request_id and resolves from the result event", async () => {
+  // session_rename is a slow op like translate; its reply pairs by
+  // request_id the same way.
+  test("sessionRename sends the title with a request_id and resolves from the reply", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -900,10 +892,8 @@ describe("createWsClient agents/ping (U1)", () => {
       title: "新しいタイトル",
     });
 
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "session_rename_result",
         request_id: sent.request_id,
         ok: true,
         hyoui_session_id: "run-abc",
@@ -918,9 +908,8 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // The failure path the row's editor renders inline: a session with no
-  // terminal answers on the same result event, not as a positional reply.
-  test("sessionRename surfaces a terminal_unavailable result event as an error", async () => {
+  // The failure path the row's editor renders inline.
+  test("sessionRename surfaces a terminal_unavailable reply as an error", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -932,10 +921,8 @@ describe("createWsClient agents/ping (U1)", () => {
 
     const req = handle.sessionRename("sid-1", "t");
     const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "session_rename_result",
         request_id: sent.request_id,
         ok: false,
         error: { code: "terminal_unavailable", msg: "no known terminal" },
@@ -947,11 +934,10 @@ describe("createWsClient agents/ping (U1)", () => {
     if (!res.ok) expect(res.error.code).toBe("terminal_unavailable");
   });
 
-  // THE regression the 2-phase design fixes (kawaz r26 mid=108): while a slow
-  // translate is in flight, a later op's positional reply must pair with that
-  // later op — the translate ack already consumed translate's positional slot,
+  // THE regression correlated replies fix (kawaz r26 mid=108): while a slow
+  // translate is in flight, a later op's reply must pair with that later op,
   // so nothing is held back and nothing is mis-paired.
-  test("a later op's reply resolves while a translate result is still outstanding", async () => {
+  test("a later op's reply resolves while a translate is still outstanding", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -964,13 +950,13 @@ describe("createWsClient agents/ping (U1)", () => {
     const slow = handle.translate(["slow text"]);
     const quick = handle.ping();
     const sentTranslate = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
-    // ack for translate, then ping's real reply — the daemon is no longer
-    // gating the connection on the running translation.
-    ws1.triggerMessage(
-      JSON.stringify({ ok: true, accepted: true, request_id: sentTranslate.request_id }),
-    );
+    const sentPing = JSON.parse(ws1.sent[1] ?? "") as { request_id: string };
+    // ping's reply comes back first — the daemon is no longer gating the
+    // connection on the running translation. Named explicitly so it cannot be
+    // mis-paired with the translate that is still running.
     ws1.triggerMessage(
       JSON.stringify({
+        request_id: sentPing.request_id,
         ok: true,
         pong: true,
         version: "0",
@@ -988,10 +974,9 @@ describe("createWsClient agents/ping (U1)", () => {
     const pingRes = await quick;
     expect(pingRes).toMatchObject({ ok: true, pong: true });
 
-    // translate's Promise is still unsettled; the late result event resolves it.
+    // translate's Promise is still unsettled; its late reply resolves it.
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "translate_result",
         request_id: sentTranslate.request_id,
         ok: true,
         results: [{ ok: true, text: "遅い" }],
@@ -1001,10 +986,10 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(slowRes).toEqual({ ok: true, results: [{ ok: true, text: "遅い" }] });
   });
 
-  // Two concurrent translates: result events may arrive in ANY order (the
-  // daemon pushes each as its helper batch finishes) and must pair strictly by
+  // Two concurrent translates: replies may arrive in ANY order (the daemon
+  // answers each as its helper batch finishes) and must pair strictly by
   // request_id, not arrival order.
-  test("concurrent translates pair result events by request_id, not arrival order", async () => {
+  test("concurrent translates pair replies by request_id, not arrival order", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -1019,12 +1004,9 @@ describe("createWsClient agents/ping (U1)", () => {
     const rid1 = (JSON.parse(ws1.sent[0] ?? "") as { request_id: string }).request_id;
     const rid2 = (JSON.parse(ws1.sent[1] ?? "") as { request_id: string }).request_id;
     expect(rid1).not.toBe(rid2);
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid1 }));
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid2 }));
     // second finishes first — cross order on purpose.
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "translate_result",
         request_id: rid2,
         ok: true,
         results: [{ ok: true, text: "二番" }],
@@ -1032,7 +1014,6 @@ describe("createWsClient agents/ping (U1)", () => {
     );
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "translate_result",
         request_id: rid1,
         ok: true,
         results: [{ ok: true, text: "一番" }],
@@ -1043,11 +1024,10 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(await second).toEqual({ ok: true, results: [{ ok: true, text: "二番" }] });
   });
 
-  // Disconnect while a result event is outstanding: the ack already consumed
-  // the positional slot, so only the `inflight` registry knows about the op —
-  // flushPending must settle it with connection_closed instead of leaving the
-  // Promise (and a Map entry) behind forever.
-  test("close settles an acked-but-unresolved translate with connection_closed", async () => {
+  // Disconnect while a slow op is still running: flushPending must settle it
+  // with connection_closed instead of leaving the Promise (and a Map entry)
+  // behind forever.
+  test("close settles an unanswered translate with connection_closed", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -1058,8 +1038,6 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["never finishes"]);
-    const rid = (JSON.parse(ws1.sent[0] ?? "") as { request_id: string }).request_id;
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: rid }));
     ws1.triggerClose();
 
     const res = await req;
@@ -1069,10 +1047,9 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
-  // Synchronous validation failure (e.g. invalid_args): the positional reply
-  // IS the error, no result event will ever come — the Promise must settle
-  // from that reply and the inflight entry must not linger.
-  test("a validation-error positional reply settles a 2-phase op directly", async () => {
+  // Synchronous validation failure (e.g. invalid_args): the reply IS the
+  // error, and the Promise settles from it like any other reply.
+  test("a validation-error reply settles a slow op directly", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -1110,7 +1087,7 @@ describe("createWsClient agents/ping (U1)", () => {
   // the 2-phase request_id, both added by the wrapper) pass through
   // untouched (same convention as fsList/transcriptRead's option-object
   // callers), and the Promise resolves from the correlated result event.
-  test("sessionSearch sends {op:'session_search', ...params} and resolves hits from the result event", async () => {
+  test("sessionSearch sends {op:'session_search', ...params} and resolves hits from the reply", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -1136,10 +1113,8 @@ describe("createWsClient agents/ping (U1)", () => {
       mtime_within: "2h",
     });
 
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: sent.request_id }));
     ws1.triggerMessage(
       JSON.stringify({
-        ev: "session_search_result",
         request_id: sent.request_id,
         ok: true,
         hits: [

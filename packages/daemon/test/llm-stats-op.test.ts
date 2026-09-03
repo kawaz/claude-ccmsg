@@ -1,6 +1,6 @@
 // llm_stats op contract: role guard, the unconfigured case the webui uses to
-// hide the section, the window's validation boundary, and the 2-phase ack →
-// result-event exchange driven against a real local gateway (the op wires
+// hide the section, the window's validation boundary, and the correlated
+// reply driven against a real local gateway (the op wires
 // production fetch, so a stub deps object would not exercise the wiring under
 // test).
 import { afterAll, describe, expect, test } from "bun:test";
@@ -80,47 +80,44 @@ const SESSION: Conn["identity"] = {
 } as Conn["identity"];
 
 describe("llm_stats op", () => {
-  test("acks, then delivers the gateway document on the result event", async () => {
-    const [ack, event] = await requestFrames(
+  test("delivers the gateway document as the reply", async () => {
+    const [reply] = await requestFrames(
       daemonWith(URL_OK),
       USER,
       { op: "llm_stats", request_id: "q1", days: 30 },
-      2,
+      1,
     );
-    expect(ack).toEqual({ ok: true, accepted: true, request_id: "q1" });
-    expect(event?.ev).toBe("llm_stats_result");
-    expect(event?.request_id).toBe("q1");
-    expect(event?.ok).toBe(true);
-    expect(event?.generated_at).toBe(1785552299);
-    expect(event?.days["2026-07-31"].total_usd).toBe(1.25);
+    expect(reply?.ok).toBe(true);
+    expect(reply?.generated_at).toBe(1785552299);
+    expect(reply?.days["2026-07-31"].total_usd).toBe(1.25);
   });
 
   // The whole point of the parameter: a window chosen in the UI has to reach
   // the gateway, not just the daemon.
   test("passes the caller's window through to the gateway", async () => {
-    const [, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(URL_OK),
       USER,
       { op: "llm_stats", request_id: "q2", days: 7 },
-      2,
+      1,
     );
-    expect(event?.ok).toBe(true);
+    expect(reply?.ok).toBe(true);
     expect(received.at(-1)).toBe("7");
   });
 
   test("omitting the window leaves the gateway's own default in place", async () => {
-    const [, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(URL_OK),
       USER,
       { op: "llm_stats", request_id: "q3" },
-      2,
+      1,
     );
-    expect(event?.ok).toBe(true);
+    expect(reply?.ok).toBe(true);
     expect(received.at(-1)).toBeNull();
   });
 
-  // Rejected before the ack rather than as a 2-phase failure: an out-of-range
-  // window is the client's bug, and dressing it as a gateway error would send
+  // Rejected without reaching the gateway: an out-of-range window is the
+  // client's bug, and dressing it as a gateway error would send
   // whoever debugs it to the wrong machine.
   test("refuses an out-of-range window without reaching the gateway", async () => {
     const before = received.length;
@@ -138,15 +135,14 @@ describe("llm_stats op", () => {
   });
 
   test("a failing gateway settles the request as an error event", async () => {
-    const [, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`),
       USER,
       { op: "llm_stats", request_id: "q5", days: 7 },
-      2,
+      1,
     );
-    expect(event?.ev).toBe("llm_stats_result");
-    expect(event?.ok).toBe(false);
-    expect(event?.error.code).toBe(ErrorCode.llm_stats_unavailable);
+    expect(reply?.ok).toBe(false);
+    expect(reply?.error.code).toBe(ErrorCode.llm_stats_unavailable);
   });
 
   // The signal the webui uses to hide the spend section, and the reason it is

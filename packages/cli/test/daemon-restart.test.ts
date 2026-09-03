@@ -18,6 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "../../daemon/test/helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(new URL("../../daemon/src/index.ts", import.meta.url));
@@ -81,7 +82,11 @@ function sleep(ms: number): Promise<void> {
 async function helloCapabilities(sock: string): Promise<Record<string, unknown>> {
   const client = await connect(sock);
   try {
-    return await client.request<Record<string, unknown>>({ op: "hello", role: "user" });
+    return await client.request<Record<string, unknown>>({
+      op: "hello",
+      role: "user",
+      protocol: PROTOCOL_VERSION,
+    });
   } finally {
     client.close();
   }

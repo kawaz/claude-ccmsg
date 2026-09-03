@@ -12,9 +12,7 @@ function daemonWith(translator: TranslateService): Daemon {
   return daemon;
 }
 
-/** Drive one request and resolve with the FIRST frame written back (for
- * translate that's the 2-phase ack, for validation errors the ErrorResponse).
- * Frames after the first stay in `conn.lines` via requestFrames below. */
+/** Drive one request and resolve with the single frame written back. */
 function requestOnce(
   daemon: Daemon,
   identity: Conn["identity"],
@@ -24,8 +22,7 @@ function requestOnce(
 }
 
 /** Drive one request against a registered conn and resolve once `count`
- * frames (replies AND events, in write order) have been captured — the
- * 2-phase translate op writes ack + result event to the same conn. */
+ * frames (in write order) have been captured. */
 function requestFrames(
   daemon: Daemon,
   identity: Conn["identity"],
@@ -42,19 +39,16 @@ function requestFrames(
         if (frames.length === count) resolve(frames);
       },
     };
-    // Result events are only delivered to conns still registered in
-    // daemon.connections (disconnect discard contract) — register like the
-    // real transports do.
+    // Register like the real transports do.
     daemon.connections.add(conn);
     handleRequest(daemon, conn, JSON.stringify(request));
   });
 }
 
 describe("translate op", () => {
-  // 2-phase contract: the positional reply is an immediate ack echoing
-  // request_id; the helper outcome (order-preserving results, per-item
-  // failures included) arrives as the correlated ev:"translate_result" event.
-  test("a user request acks immediately, then the result event preserves text order and per-item helper failures", async () => {
+  // One correlated reply carries the whole helper outcome: order-preserving
+  // results, per-item failures included.
+  test("a user request is answered with one reply preserving text order and per-item helper failures", async () => {
     const seen: string[][] = [];
     const translator: TranslateService = {
       async translate(texts) {
@@ -70,7 +64,7 @@ describe("translate op", () => {
       stop() {},
     };
 
-    const [ack, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(translator),
       { role: "user" },
       {
@@ -78,12 +72,10 @@ describe("translate op", () => {
         request_id: "t-1",
         texts: ["first", "second"],
       },
-      2,
+      1,
     );
     expect(seen).toEqual([["first", "second"]]);
-    expect(ack).toEqual({ ok: true, accepted: true, request_id: "t-1" });
-    expect(event).toEqual({
-      ev: "translate_result",
+    expect(reply).toEqual({
       request_id: "t-1",
       ok: true,
       results: [
@@ -167,10 +159,10 @@ describe("translate op", () => {
     });
   });
 
-  // Capability failures surface AFTER the ack (they're only known once the
-  // helper answers), so they ride the result event as ok:false — the webui's
-  // probe reads translate_unavailable from there.
-  test("host/helper unavailability is returned as an explicit error on the result event", async () => {
+  // Capability failures are only known once the helper answers, so they come
+  // back as the reply's ok:false — the webui's probe reads
+  // translate_unavailable from there.
+  test("host/helper unavailability is returned as an explicit error reply", async () => {
     const translator: TranslateService = {
       async translate() {
         return {
@@ -182,7 +174,7 @@ describe("translate op", () => {
       stop() {},
     };
 
-    const [ack, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(translator),
       { role: "user" },
       {
@@ -190,11 +182,9 @@ describe("translate op", () => {
         request_id: "t-2",
         texts: [],
       },
-      2,
+      1,
     );
-    expect(ack).toEqual({ ok: true, accepted: true, request_id: "t-2" });
-    expect(event).toEqual({
-      ev: "translate_result",
+    expect(reply).toEqual({
       request_id: "t-2",
       ok: false,
       error: {

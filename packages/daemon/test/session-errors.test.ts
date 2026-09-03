@@ -10,6 +10,7 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
 const START = "2026-07-14T16:27:55.672Z";
@@ -57,6 +58,7 @@ async function sessionHello(ctx: DaemonCtx, sid: string, file: string): Promise<
   const client = await connect(ctx.sock);
   await client.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",

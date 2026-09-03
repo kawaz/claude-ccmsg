@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Socket } from "bun";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -320,10 +321,12 @@ export class TestClient {
       | { role: "user" }
       | { role: "session"; sid: string; repo?: string; ws?: string; cwd?: string },
   ): Promise<any> {
-    if (identity.role === "user") return this.request({ op: "hello", role: "user" });
+    if (identity.role === "user")
+      return this.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
     return this.request({
       op: "hello",
       role: "session",
+      protocol: PROTOCOL_VERSION,
       sid: identity.sid,
       repo: identity.repo ?? "",
       ws: identity.ws ?? "",

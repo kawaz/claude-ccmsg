@@ -15,15 +15,11 @@ import {
   UNANNOUNCED_PROTOCOL_VERSION,
   resolvePaths,
   type ArchiveEvent,
-  type ErrorResponse,
   type Identity,
   type KindEvent,
   type LastLiveSession,
   type LeaveEvent,
-  type LlmStatsResponse,
   type LlmStatusReport,
-  type LlmStatusResponse,
-  type LlmUsageResponse,
   type MemberEvent,
   type MsgEvent,
   type PingResponse,
@@ -36,16 +32,8 @@ import {
   type SayReadEvent,
   type SessionIdentity,
   type StaleClientInfo,
-  type SessionEnvResponse,
-  type SessionKillResponse,
-  type SessionRenameResponse,
-  type SessionLaunchResponse,
-  type SessionSearchResponse,
-  type ForkOriginResponse,
-  type SessionDumpFileResponse,
   type StorageEvent,
   type TitleEvent,
-  type TranslateResponse,
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
@@ -325,9 +313,8 @@ const nowIso = (): string => new Date().toISOString();
 const activeRequest = new AsyncLocalStorage<{ conn: Conn; requestId: string }>();
 
 /** True for the frames that answer a request: replies carry `ok`, pushes carry
- * `ev`. The 2-phase result events carry both and are classified as pushes,
- * exactly as client authors are told to classify them (see
- * TranslateResultEvent's doc comment). */
+ * `ev`. A frame carrying both is a push, and one carrying a `request_id`
+ * already has its correlation stamped. */
 function isReplyFrame(obj: unknown): obj is Record<string, unknown> {
   return (
     typeof obj === "object" &&
@@ -1656,51 +1643,6 @@ const CLIENT_TRACE_MAX_POINTS = 8;
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
-/** Slow ops (translate / session_launch / session_search) answer in two
- * phases (see RequestAcceptedResponse in the protocol): an immediate ack as
- * the reply, and the outcome pushed later as an `ev:"*_result"` stream event
- * carrying the same request_id. This helper sends the ack and returns a
- * completion callback that pushes the result event — or silently drops it when
- * the connection is already gone (the daemon keeps no per-request state, so a
- * disconnect leaves nothing to clean up beyond the op's own promise chain,
- * which settles into this no-op). Events are pushed only to the requesting
- * conn, not to subscribers.
- *
- * With correlated replies this split is no longer needed to keep a slow op
- * from delaying others; it stays because clients settle on the result event,
- * and each op can move to a single correlated reply on its own schedule. */
-/** Final outcome payload of a 2-phase op — exactly what the matching
- * `ev:"*_result"` event carries beside its ev/request_id envelope. */
-type TwoPhaseResult =
-  | SessionKillResponse
-  | SessionRenameResponse
-  | SessionEnvResponse
-  | SessionLaunchResponse
-  | SessionSearchResponse
-  | ForkOriginResponse
-  | SessionDumpFileResponse
-  | TranslateResponse
-  | LlmUsageResponse
-  | LlmStatsResponse
-  | LlmStatusResponse
-  | ErrorResponse;
-
-function acceptTwoPhase(
-  daemon: Daemon,
-  conn: Conn,
-  ev: string,
-  requestId: string,
-): (result: TwoPhaseResult) => void {
-  send(conn, { ok: true, accepted: true });
-  return (result) => {
-    // A conn that disconnected while the op ran is no longer in
-    // daemon.connections; its transport write would be a silent no-op anyway
-    // (see send()), but skipping explicitly documents the discard contract.
-    if (!daemon.connections.has(conn)) return;
-    send(conn, { ev, request_id: requestId, ...result });
-  };
-}
-
 /** Start handling one request. Requests of the same connection run
  * concurrently: a reply carries the `request_id` of the request it answers
  * (see RequestEnvelope), so a client settles it by id and an op that awaits IO
@@ -2763,16 +2705,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, validation.code, validation.msg);
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "session_launch_result", req.request_id);
       // The validation success branch proves launcher exists: an absent config
       // returns launcher_not_configured before process execution is reachable.
-      void executeSessionLaunch(validation, launcher!.timeout_seconds).then(
-        (result) => complete(result),
-        (e) => {
-          daemon.log.error(`op 'session_launch' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      send(conn, await executeSessionLaunch(validation, launcher!.timeout_seconds));
       return;
     }
 
@@ -2787,35 +2722,20 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_kill requires a non-empty session_id");
         return;
       }
-      // 2-phase like session_launch: the fresh `claude agents` run plus up to
-      // 3s of kill grace is long to hold a reply open, so the ack goes back
-      // immediately and the outcome travels on its own event (DR-0028
-      // addendum).
-      const complete = acceptTwoPhase(daemon, conn, "session_kill_result", req.request_id);
-      // DR-0028 addendum (r38 mid=6): forward force through to session-kill.ts
-      // for the SIGKILL escalation path. Everything else in this dispatch
-      // stays the same (2-phase ack, error mapping, request_id echo).
-      void sessionKill(req.session_id, productionKillDeps, {
+      // Slow: the fresh `claude agents` run plus up to 3s of kill grace
+      // (DR-0028 addendum). DR-0028 addendum (r38 mid=6): forward force
+      // through to session-kill.ts for the SIGKILL escalation path.
+      const killed = await sessionKill(req.session_id, productionKillDeps, {
         force: req.force === true,
-      }).then(
-        (result) => {
-          if (!result.found) {
-            // Unresolvable sid and a pid that failed the ps verification are
-            // the same outcome for the caller: the session's process is not
-            // there (anymore) — DR-0028 maps both to not_found.
-            complete({
-              ok: false,
-              error: { code: ErrorCode.not_found, msg: `no process for session ${req.session_id}` },
-            });
-            return;
-          }
-          complete({ ok: true, terminated: result.terminated });
-        },
-        (e) => {
-          daemon.log.error(`op 'session_kill' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      });
+      if (!killed.found) {
+        // Unresolvable sid and a pid that failed the ps verification are the
+        // same outcome for the caller: the session's process is not there
+        // (anymore) — DR-0028 maps both to not_found.
+        sendErr(conn, ErrorCode.not_found, `no process for session ${req.session_id}`);
+        return;
+      }
+      send(conn, { ok: true, terminated: killed.terminated });
       return;
     }
 
@@ -2831,16 +2751,14 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_rename requires a non-empty session_id");
         return;
       }
-      // Title validation happens before the ack so a malformed title costs
-      // nothing and reports synchronously — only the delivery attempt (which
-      // spawns hyoui) is worth the 2-phase machinery.
+      // Title validation happens before the delivery attempt so a malformed
+      // title costs nothing but a synchronous invalid_args.
       const titleCheck = validateRenameTitle(req.title);
       if (!titleCheck.ok) {
         sendErr(conn, ErrorCode.invalid_args, titleCheck.msg);
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "session_rename_result", req.request_id);
-      void sessionRename(
+      const renamed = await sessionRename(
         req.session_id,
         titleCheck.title,
         productionRenameDeps(
@@ -2853,42 +2771,27 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
             return agent?.hyoui_namespace ?? null;
           },
         ),
-      ).then(
-        (result) => {
-          if (result.ok) {
-            complete({
-              ok: true,
-              hyoui_session_id: result.hyoui_session_id,
-              title: result.title,
-            });
-            return;
-          }
-          if (result.reason === "terminal_unavailable") {
-            complete({
-              ok: false,
-              error: {
-                code: ErrorCode.terminal_unavailable,
-                msg: `session ${req.session_id} has no known terminal (no HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
-              },
-            });
-            return;
-          }
-          // The browser shows this once and moves on; the log line is what a
-          // later "why did rename fail" investigation has to go on.
-          daemon.log.warn(`op 'session_rename' send failed for ${req.session_id}: ${result.msg}`);
-          complete({
-            ok: false,
-            error: {
-              code: "internal",
-              msg: `sending /rename to the session's terminal failed: ${result.msg}`,
-            },
-          });
-        },
-        (e) => {
-          daemon.log.error(`op 'session_rename' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
       );
+      if (renamed.ok) {
+        send(conn, {
+          ok: true,
+          hyoui_session_id: renamed.hyoui_session_id,
+          title: renamed.title,
+        });
+        return;
+      }
+      if (renamed.reason === "terminal_unavailable") {
+        sendErr(
+          conn,
+          ErrorCode.terminal_unavailable,
+          `session ${req.session_id} has no known terminal (no HYOUI_SESSION_ID); rename it from the session's own terminal instead`,
+        );
+        return;
+      }
+      // The browser shows this once and moves on; the log line is what a
+      // later "why did rename fail" investigation has to go on.
+      daemon.log.warn(`op 'session_rename' send failed for ${req.session_id}: ${renamed.msg}`);
+      sendErr(conn, "internal", `sending /rename to the session's terminal failed: ${renamed.msg}`);
       return;
     }
 
@@ -2904,27 +2807,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_env requires a non-empty session_id");
         return;
       }
-      // 2-phase for session_kill's reason: the fresh `claude agents`
-      // resolution is slow.
-      const complete = acceptTwoPhase(daemon, conn, "session_env_result", req.request_id);
-      void sessionEnv(req.session_id, productionEnvDeps(productionKillDeps)).then(
-        (result) => {
-          if (!result.found) {
-            // Unresolvable sid and a pid that failed ps verification are the
-            // same outcome for the caller, exactly as in session_kill.
-            complete({
-              ok: false,
-              error: { code: ErrorCode.not_found, msg: `no process for session ${req.session_id}` },
-            });
-            return;
-          }
-          complete({ ok: true, pid: result.pid, env: result.env });
-        },
-        (e) => {
-          daemon.log.error(`op 'session_env' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      // Slow for session_kill's reason: the fresh `claude agents` resolution.
+      const envRead = await sessionEnv(req.session_id, productionEnvDeps(productionKillDeps));
+      if (!envRead.found) {
+        // Unresolvable sid and a pid that failed ps verification are the
+        // same outcome for the caller, exactly as in session_kill.
+        sendErr(conn, ErrorCode.not_found, `no process for session ${req.session_id}`);
+        return;
+      }
+      send(conn, { ok: true, pid: envRead.pid, env: envRead.env });
       return;
     }
 
@@ -2933,19 +2824,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_search' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "session_search_result", req.request_id);
-      // The bounded filesystem scan is read-only but slow enough that its
-      // outcome travels on the result event rather than a deferred reply.
-      void sessionSearch(req, daemon.log).then(
-        (result) => {
-          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
-          else complete(result.data);
-        },
-        (e) => {
-          daemon.log.error(`op 'session_search' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      // The bounded filesystem scan is read-only but slow; the reply comes
+      // back when it finishes, which holds back nothing else on this conn.
+      const found = await sessionSearch(req, daemon.log);
+      if (!found.ok) sendErr(conn, found.code, found.msg);
+      else send(conn, found.data);
       return;
     }
 
@@ -2954,28 +2837,18 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'fork_origin' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "fork_origin_result", req.request_id);
       // Same resolver transcript_read uses, so a historical sid is answerable
       // and no path ever comes from the client.
       const resolved = await resolveTranscript(daemon.sessions, req.sid, {
         allowVirtual: true,
       });
       if (!resolved.ok) {
-        complete({ ok: false, error: { code: resolved.code, msg: resolved.msg } });
+        sendErr(conn, resolved.code, resolved.msg);
         return;
       }
       // Reading whole sibling transcripts is slow on the first ask for a
-      // session, so the outcome travels on the result event; later asks are
-      // served from the memo.
-      void daemon.forkOrigins.resolve(resolved.file, daemon.log).then(
-        (origin) => {
-          complete({ ok: true, origin });
-        },
-        (e) => {
-          daemon.log.error(`op 'fork_origin' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      // session; later asks are served from the memo.
+      send(conn, { ok: true, origin: await daemon.forkOrigins.resolve(resolved.file, daemon.log) });
       return;
     }
 
@@ -2984,44 +2857,37 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_dump_file' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "session_dump_file_result", req.request_id);
       // Same resolver transcript_read and fork_origin use, so a connected or a
       // historical sid is answerable and no path ever comes from the client.
       const dumpTarget = await resolveTranscript(daemon.sessions, req.sid, {
         allowVirtual: true,
       });
       if (!dumpTarget.ok) {
-        complete({ ok: false, error: { code: dumpTarget.code, msg: dumpTarget.msg } });
+        sendErr(conn, dumpTarget.code, dumpTarget.msg);
         return;
       }
       // Dumping reads the whole transcript plus every agent transcript beside
-      // it, so the outcome travels on the result event. The destination is the
-      // daemon's own dumps/ — nothing here is client-named.
-      void dumpSession(req.sid, {
+      // it, so this is slow. The destination is the daemon's own dumps/ —
+      // nothing here is client-named.
+      const dump = await dumpSession(req.sid, {
         dataDir: daemon.paths.dataDir,
         transcriptFile: dumpTarget.file,
         ...(req.since !== undefined ? { since: req.since } : {}),
         ...(req.until !== undefined ? { until: req.until } : {}),
         ...(req.no_thinking === true ? { noThinking: true } : {}),
         ...(req.no_agent === true ? { noAgent: true } : {}),
-      })
-        .then((dump) => {
-          // Written as text, not jsonl: this file is meant to be picked up and
-          // read directly by whatever session inherits it, not parsed as
-          // structured data (kawaz: jsonl invites over-clever reads that burn
-          // context or half-read the handoff).
-          const file = writeSessionDumpFile(dump, { dir: daemon.paths.dumps }, "text");
-          complete({
-            ok: true,
-            path: file,
-            entries: dump.entries.length,
-            bytes: fs.statSync(file).size,
-          });
-        })
-        .catch((e: unknown) => {
-          daemon.log.error(`op 'session_dump_file' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        });
+      });
+      // Written as text, not jsonl: this file is meant to be picked up and
+      // read directly by whatever session inherits it, not parsed as
+      // structured data (kawaz: jsonl invites over-clever reads that burn
+      // context or half-read the handoff).
+      const dumpFile = writeSessionDumpFile(dump, { dir: daemon.paths.dumps }, "text");
+      send(conn, {
+        ok: true,
+        path: dumpFile,
+        entries: dump.entries.length,
+        bytes: fs.statSync(dumpFile).size,
+      });
       return;
     }
 
@@ -3361,22 +3227,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.llm_usage_not_configured, "llm usage endpoint is not configured");
         return;
       }
-      // 2-phase for session_search's reason: the upstream fetch can take
-      // seconds.
-      const complete = acceptTwoPhase(daemon, conn, "llm_usage_result", req.request_id);
+      // Slow for session_search's reason: the upstream fetch can take seconds.
       // `refresh` reaches upstream as a real probe and can spend rate limit,
       // so it is passed through only when the client asked for it explicitly
       // (the webui's manual button, never its polling).
-      void fetchLlmUsage(usageUrl, req.refresh === true).then(
-        (result) => {
-          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
-          else complete(result.data);
-        },
-        (e) => {
-          daemon.log.error(`op 'llm_usage' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      const usage = await fetchLlmUsage(usageUrl, req.refresh === true);
+      if (!usage.ok) sendErr(conn, usage.code, usage.msg);
+      else send(conn, usage.data);
       return;
     }
 
@@ -3392,9 +3249,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.llm_stats_not_configured, "llm stats endpoint is not configured");
         return;
       }
-      // Validated before the ack rather than passed through: an out-of-range
-      // window is the client's bug, and answering it as a 2-phase failure
-      // would hide that behind an error that looks like the gateway's.
+      // Validated here rather than passed through: an out-of-range window is
+      // the client's bug, and forwarding it would hide that behind an error
+      // that looks like the gateway's.
       if (req.days !== undefined && !isValidDays(req.days)) {
         sendErr(
           conn,
@@ -3403,17 +3260,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "llm_stats_result", req.request_id);
-      void fetchLlmStats(statsUrl, req.days).then(
-        (result) => {
-          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
-          else complete(result.data);
-        },
-        (e) => {
-          daemon.log.error(`op 'llm_stats' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      const stats = await fetchLlmStats(statsUrl, req.days);
+      if (!stats.ok) sendErr(conn, stats.code, stats.msg);
+      else send(conn, stats.data);
       return;
     }
 
@@ -3430,21 +3279,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.llm_status_not_configured, "llm status endpoint is not configured");
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "llm_status_result", req.request_id);
       // `refresh` makes the gateway re-read every configured status page, so
       // it is passed through only for the screen's own button — never for the
       // fetch a connecting client makes, and never for the webhook-driven
       // re-read (the gateway refreshes its sources on that trigger itself).
-      void fetchLlmStatus(statusUrl, req.refresh === true).then(
-        (result) => {
-          if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
-          else complete({ ok: true, ...result.data });
-        },
-        (e) => {
-          daemon.log.error(`op 'llm_status' failed: ${String(e)}`);
-          complete({ ok: false, error: { code: "internal", msg: String(e) } });
-        },
-      );
+      const status = await fetchLlmStatus(statusUrl, req.refresh === true);
+      if (!status.ok) sendErr(conn, status.code, status.msg);
+      else send(conn, { ok: true, ...status.data });
       return;
     }
 
@@ -3457,23 +3298,19 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "translate requires a string[] texts");
         return;
       }
-      const complete = acceptTwoPhase(daemon, conn, "translate_result", req.request_id);
-      // Translation.framework and helper process I/O are async; the outcome
-      // (including capability failures like translate_unavailable) travels on
-      // the result event rather than a deferred reply.
-      void daemon.translator.translate(req.texts).then(
-        (result) => {
-          if (result.ok) complete({ ok: true, results: result.results });
-          else complete({ ok: false, error: { code: result.code, msg: result.msg } });
-        },
-        (error) => {
-          daemon.log.error(`op 'translate' failed: ${String(error)}`);
-          complete({
-            ok: false,
-            error: { code: ErrorCode.translate_helper_failed, msg: String(error) },
-          });
-        },
-      );
+      // Translation.framework and helper process I/O are async; a thrown
+      // helper failure is mapped to translate_helper_failed here rather than
+      // falling through to the dispatch-wide `internal`.
+      let translated;
+      try {
+        translated = await daemon.translator.translate(req.texts);
+      } catch (error) {
+        daemon.log.error(`op 'translate' failed: ${String(error)}`);
+        sendErr(conn, ErrorCode.translate_helper_failed, String(error));
+        return;
+      }
+      if (translated.ok) send(conn, { ok: true, results: translated.results });
+      else sendErr(conn, translated.code, translated.msg);
       return;
     }
 

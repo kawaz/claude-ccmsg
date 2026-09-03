@@ -13,6 +13,7 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -24,6 +25,7 @@ async function sessionHello(
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: extra.repo ?? "r",
@@ -36,7 +38,7 @@ async function sessionHello(
 
 async function userConn(ctx: DaemonCtx): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   return c;
 }
 
@@ -149,6 +151,7 @@ describe("ev:peers push", () => {
         // identical re-hello on the same conn — must not push again.
         await a.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r",
@@ -179,6 +182,7 @@ describe("ev:peers push", () => {
 
         await a.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r2",
@@ -240,6 +244,7 @@ describe("ev:peers push", () => {
         // same conn, re-hello as a different sid
         await a.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "B",
           repo: "r",
@@ -275,7 +280,7 @@ describe("ev:peers push", () => {
         await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // A's registration push
 
         // same conn, re-hello as user role instead of session
-        await a.request({ op: "hello", role: "user" });
+        await a.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
         expect(ev.peers.some((p) => p.sid === "A")).toBe(false);
         a.close();

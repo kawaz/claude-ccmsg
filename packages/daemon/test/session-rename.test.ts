@@ -185,8 +185,8 @@ describe("session_rename over the wire", () => {
     }
   });
 
-  // A bad title costs nothing to reject, so it is refused synchronously —
-  // before the 2-phase ack — and no result event ever follows.
+  // A bad title costs nothing to reject, so it is refused before the delivery
+  // attempt is ever made.
   test("a title with a newline is refused synchronously with invalid_args", async () => {
     const ctx = await startTestDaemon();
     try {
@@ -247,28 +247,19 @@ describe("session_rename over the wire", () => {
   // A well-formed request for a session the agents poll has never seen: the
   // ack arrives on the positional slot, then the outcome event says there is
   // no terminal. Nothing is spawned, so this stays fast and hermetic.
-  test("user role with an unknown session gets ack then terminal_unavailable", async () => {
+  test("user role with an unknown session is answered terminal_unavailable", async () => {
     const ctx = await startTestDaemon();
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const ack = await c.request({
+      const reply = await c.request<{ ok: boolean; error?: { code: string } }>({
         op: "session_rename",
         request_id: "r4",
         session_id: "00000000-0000-0000-0000-000000000000",
         title: "新しい名前",
       });
-      expect(ack.ok).toBe(true);
-      expect(ack.accepted).toBe(true);
-      const { ev } = await c.readEventUntil<{
-        ev: string;
-        request_id: string;
-        ok: boolean;
-        error?: { code: string };
-      }>((e) => e.ev === "session_rename_result");
-      expect(ev.request_id).toBe("r4");
-      expect(ev.ok).toBe(false);
-      expect(ev.error?.code).toBe("terminal_unavailable");
+      expect(reply.ok).toBe(false);
+      expect(reply.error?.code).toBe("terminal_unavailable");
       c.close();
     } finally {
       await stopTestDaemon(ctx);

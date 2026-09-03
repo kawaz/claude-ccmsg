@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FS_READ_MAX_BYTES } from "@ccmsg/protocol";
+import { FS_READ_MAX_BYTES, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { validateRepoRoot } from "../src/fs-access.ts";
 import {
   connect,
@@ -37,6 +37,7 @@ async function sessionAtWithRoot(
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -61,6 +62,7 @@ async function sessionAtWithTranscript(
   const session = await connect(ctx.sock);
   await session.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -1036,6 +1038,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
     const session = await connect(ctx.sock);
     await session.request({
       op: "hello",
+      protocol: PROTOCOL_VERSION,
       role: "session",
       sid,
       repo: "r",
@@ -2742,6 +2745,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
     const session = await connect(ctx.sock);
     await session.request({
       op: "hello",
+      protocol: PROTOCOL_VERSION,
       role: "session",
       sid,
       repo: "r",
@@ -2811,7 +2815,15 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         const subdir = path.join(cwd, "subdir");
         fs.mkdirSync(subdir);
         const session = await connect(ctx.sock);
-        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        await session.request({
+          op: "hello",
+          role: "session",
+          protocol: PROTOCOL_VERSION,
+          sid: "A",
+          repo: "r",
+          ws: "w",
+          cwd,
+        });
         const user = await userAt(ctx);
         const res = await user.request<{
           ok: true;
@@ -2837,7 +2849,15 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
       try {
         fs.writeFileSync(path.join(cwd, "ok.md"), "ok");
         const session = await connect(ctx.sock);
-        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        await session.request({
+          op: "hello",
+          role: "session",
+          protocol: PROTOCOL_VERSION,
+          sid: "A",
+          repo: "r",
+          ws: "w",
+          cwd,
+        });
         const user = await userAt(ctx);
         const okAbs = path.join(cwd, "ok.md");
         const res = await user.request<{
@@ -2905,7 +2925,15 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
       const cwd = fs.realpathSync(mkfixture());
       try {
         const session = await connect(ctx.sock);
-        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        await session.request({
+          op: "hello",
+          role: "session",
+          protocol: PROTOCOL_VERSION,
+          sid: "A",
+          repo: "r",
+          ws: "w",
+          cwd,
+        });
         const res = await session.request<{ ok: false; error: { code: string } }>({
           op: "fs_stat_batch",
           sid: "A",
@@ -2941,6 +2969,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         const session = await connect(ctx.sock);
         await session.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r",
@@ -2980,7 +3009,15 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
       const cwd = fs.realpathSync(mkfixture());
       try {
         const session = await connect(ctx.sock);
-        await session.request({ op: "hello", role: "session", sid: "A", repo: "r", ws: "w", cwd });
+        await session.request({
+          op: "hello",
+          role: "session",
+          protocol: PROTOCOL_VERSION,
+          sid: "A",
+          repo: "r",
+          ws: "w",
+          cwd,
+        });
         const user = await userAt(ctx);
         const res1 = await user.request<{ ok: false; error: { code: string } }>({
           op: "fs_stat_batch",

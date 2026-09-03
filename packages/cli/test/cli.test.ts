@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 
 const CLI = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -62,7 +62,9 @@ async function holdSession(sock: string, sid: string): Promise<() => void> {
       unix: sock,
       socket: {
         open(s) {
-          s.write(`${JSON.stringify({ op: "hello", role: "session", sid, request_id: "hold" })}\n`);
+          s.write(
+            `${JSON.stringify({ op: "hello", role: "session", sid, protocol: PROTOCOL_VERSION, request_id: "hold" })}\n`,
+          );
         },
         data(s) {
           resolve(() => {
@@ -1162,7 +1164,9 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           unix: sock,
           socket: {
             open(s) {
-              s.write(`${JSON.stringify({ op: "hello", role: "user", request_id: "h" })}\n`);
+              s.write(
+                `${JSON.stringify({ op: "hello", role: "user", protocol: PROTOCOL_VERSION, request_id: "h" })}\n`,
+              );
               s.write(
                 `${JSON.stringify({ op: "archive_room", room: r1.room, archived: true, request_id: "a" })}\n`,
               );

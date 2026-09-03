@@ -16,18 +16,27 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
 async function sessionHello(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "session", sid, repo: "r", ws: "w", cwd: "/tmp" });
+  await c.request({
+    op: "hello",
+    role: "session",
+    protocol: PROTOCOL_VERSION,
+    sid,
+    repo: "r",
+    ws: "w",
+    cwd: "/tmp",
+  });
   return c;
 }
 
 async function adminConn(ctx: DaemonCtx): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   return c;
 }
 
@@ -101,6 +110,7 @@ describe("peers timestamps", () => {
         // はそのまま、上書きされない
         await c.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r2",

@@ -1,5 +1,5 @@
 // llm_usage op contract: role guard, the unconfigured case the webui uses to
-// hide the feature, and the 2-phase ack → result-event exchange driven
+// hide the feature, and the correlated reply driven
 // against a real local gateway (the op wires production fetch, so a stub deps
 // object would not exercise the wiring under test).
 import { afterAll, describe, expect, test } from "bun:test";
@@ -97,31 +97,22 @@ const SESSION: Conn["identity"] = {
 } as Conn["identity"];
 
 describe("llm_usage op", () => {
-  test("acks, then delivers the gateway document on the result event", async () => {
+  test("delivers the gateway document as the reply", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [ack, event] = await requestFrames(
-      daemon,
-      USER,
-      { op: "llm_usage", request_id: "q1" },
-      2,
-    );
-    expect(ack).toEqual({ ok: true, accepted: true, request_id: "q1" });
-    expect(event?.ev).toBe("llm_usage_result");
-    expect(event?.request_id).toBe("q1");
-    expect(event?.ok).toBe(true);
-    expect(event?.generated_at).toBe(1785450000);
-    expect(event?.credentials).toHaveLength(2);
-    expect(event?.credentials[1].snapshot.windows["5h"].utilization).toBe(0.13);
+    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q1" }, 1);
+    expect(reply?.ok).toBe(true);
+    expect(reply?.generated_at).toBe(1785450000);
+    expect(reply?.credentials).toHaveLength(2);
+    expect(reply?.credentials[1].snapshot.windows["5h"].utilization).toBe(0.13);
   });
 
   // The gateway is reachable but the path is wrong: the failure has to reach
-  // the client as a result event, not as a hang.
-  test("a failing gateway settles the request as an error event", async () => {
+  // the client as an error reply, not as a hang.
+  test("a failing gateway settles the request as an error reply", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`);
-    const [, event] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q2" }, 2);
-    expect(event?.ev).toBe("llm_usage_result");
-    expect(event?.ok).toBe(false);
-    expect(event?.error.code).toBe(ErrorCode.llm_usage_unavailable);
+    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q2" }, 1);
+    expect(reply?.ok).toBe(false);
+    expect(reply?.error.code).toBe(ErrorCode.llm_usage_unavailable);
   });
 
   // The signal the webui uses to hide the usage screen entirely, and the
@@ -141,24 +132,24 @@ describe("llm_usage op", () => {
   // gateway — and must not be sent when the client did not ask for one.
   test("passes a refresh through to the gateway and surfaces its limits", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemon,
       USER,
       { op: "llm_usage", request_id: "r1", refresh: true },
-      2,
+      1,
     );
     expect(received.at(-1)).toBe("true");
-    expect(event?.ok).toBe(true);
-    expect(event?.credentials[1].limits).toEqual([
+    expect(reply?.ok).toBe(true);
+    expect(reply?.credentials[1].limits).toEqual([
       { kind: "weekly_all", percent: 100, severity: "critical" },
     ]);
   });
 
   test("a request without the flag reads the cache and gets no limits", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [, event] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r2" }, 2);
+    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r2" }, 1);
     expect(received.at(-1)).toBeNull();
-    expect(event?.credentials[1].limits).toBeUndefined();
+    expect(reply?.credentials[1].limits).toBeUndefined();
   });
 
   // Anything other than an explicit `true` is a plain read: a probe spends
@@ -166,7 +157,7 @@ describe("llm_usage op", () => {
   test("a non-true refresh value does not trigger a probe", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
     for (const refresh of ["true", 1, null]) {
-      await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r3", refresh }, 2);
+      await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r3", refresh }, 1);
       expect(received.at(-1)).toBeNull();
     }
   });

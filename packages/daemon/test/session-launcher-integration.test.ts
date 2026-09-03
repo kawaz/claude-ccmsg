@@ -13,6 +13,7 @@ import {
   waitConnectable,
   type DaemonCtx,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -94,12 +95,10 @@ describe("session launcher wire ops", () => {
     T,
   );
 
-  // 2-phase reply contract: the direct reply is an immediate ack echoing the
-  // client's request_id, and the executed command's real streams / non-zero
-  // exit status arrive later as an ev:"session_launch_result" event carrying
-  // the same request_id — never as a positional reply.
+  // One correlated reply carries the executed command's real streams and
+  // non-zero exit status, once the run finishes.
   test(
-    "user role receives an immediate ack, then the executed result event",
+    "user role receives the executed result as one correlated reply",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       const ctx = await startConfiguredDaemon(
@@ -110,18 +109,13 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const ack = await client.request<{ ok: true; accepted: true }>({
+        const reply = await client.request<Record<string, unknown>>({
           op: "session_launch",
           request_id: "launch-1",
           cwd: root,
           params: { MODEL: "wire-model", EFFORT: "wire-effort", PROMPT: "wire-prompt" },
         });
-        expect(ack).toEqual({ ok: true, accepted: true });
-
-        const event = await client.readEvent<Record<string, unknown>>();
-        expect(event).toEqual({
-          ev: "session_launch_result",
-          request_id: "launch-1",
+        expect(reply).toEqual({
           ok: true,
           stdout: "model=wire-model;effort=wire-effort;prompt=wire-prompt",
           stderr: `cwd=${fs.realpathSync(root)}`,
@@ -161,13 +155,13 @@ describe("session launcher wire ops", () => {
     T,
   );
 
-  // THE regression this 2-phase design exists for (kawaz r26 mid=108): a slow
-  // launch used to hold back every later reply on the same connection (the
-  // webui's single WS connection stalled all panes). The connection must carry
-  // the launch ack and then the ping reply IMMEDIATELY — i.e. before the slow
-  // command finishes — and the launch outcome arrives last as its event.
+  // THE regression correlated replies fix (kawaz r26 mid=108): a slow launch
+  // used to hold back every later reply on the same connection (the webui's
+  // single WS connection stalled all panes). The ping reply must come back
+  // IMMEDIATELY — i.e. before the slow command finishes — and the launch's own
+  // reply arrives after it.
   test(
-    "a later op's reply arrives before a slow session_launch's result event",
+    "a later op's reply arrives before a slow session_launch's reply",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       // The command is slow enough (200ms) that the ping reply arriving before
@@ -186,11 +180,8 @@ describe("session launcher wire ops", () => {
 
         const first = JSON.parse((await client.readLine())!) as Record<string, unknown>;
         const second = JSON.parse((await client.readLine())!) as Record<string, unknown>;
-        const third = JSON.parse((await client.readLine())!) as Record<string, unknown>;
-        expect(first).toEqual({ ok: true, accepted: true, request_id: "slow-launch" });
-        expect(second).toMatchObject({ ok: true, pong: true, request_id: "slow-ping" });
-        expect(third).toMatchObject({
-          ev: "session_launch_result",
+        expect(first).toMatchObject({ ok: true, pong: true, request_id: "slow-ping" });
+        expect(second).toMatchObject({
           request_id: "slow-launch",
           ok: true,
           stdout: "slow-done",
@@ -408,6 +399,7 @@ describe("session launcher wire ops", () => {
         const client = await connect(configured.sock);
         const hello = await client.request<{ fork_available?: boolean }>({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "user",
         });
         expect(hello.fork_available).toBe(true);
@@ -420,6 +412,7 @@ describe("session launcher wire ops", () => {
         const client = await connect(bare.sock);
         const hello = await client.request<{ fork_available?: boolean }>({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "user",
         });
         expect(hello.fork_available).toBeUndefined();

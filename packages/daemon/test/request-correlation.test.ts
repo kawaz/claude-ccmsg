@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 30000;
 
@@ -35,7 +36,7 @@ describe("request correlation", () => {
   test("every reply carries back the request_id of the request it answers", async () => {
     await withDaemon(async (ctx) => {
       const c = await connect(ctx.sock);
-      c.write({ op: "hello", role: "user", request_id: "h1" });
+      c.write({ op: "hello", role: "user", protocol: PROTOCOL_VERSION, request_id: "h1" });
       expect(await c.readEvent()).toMatchObject({ ok: true, request_id: "h1" });
 
       c.write({ op: "ping", request_id: "p1" });
@@ -77,6 +78,7 @@ describe("request correlation", () => {
           const session = await connect(ctx.sock);
           await session.request({
             op: "hello",
+            protocol: PROTOCOL_VERSION,
             role: "session",
             sid: "A",
             repo: "r",
@@ -119,6 +121,7 @@ describe("request correlation", () => {
           const session = await connect(ctx.sock);
           await session.request({
             op: "hello",
+            protocol: PROTOCOL_VERSION,
             role: "session",
             sid: "A",
             repo: "r",

@@ -1,10 +1,10 @@
 // llm_status op contract: role guard, the unconfigured case the webui uses to
-// hide the strip, the 2-phase ack → result-event exchange driven against a
+// hide the strip, the correlated reply driven against a
 // real local gateway, the hello capability the webui reads before asking, and
 // the one thing this endpoint has that the other two do not — a 529 in the
 // gateway's webhook making the daemon re-read and push the report.
 import { afterAll, describe, expect, test } from "bun:test";
-import { ErrorCode } from "@ccmsg/protocol";
+import { ErrorCode, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import {
   broadcastLlmStatus,
   createStatusRefresher,
@@ -96,31 +96,27 @@ const SESSION: Conn["identity"] = {
 } as Conn["identity"];
 
 describe("llm_status op", () => {
-  test("acks, then delivers the gateway report on the result event", async () => {
-    const [ack, event] = await requestFrames(
+  test("delivers the gateway report as the reply", async () => {
+    const [reply] = await requestFrames(
       daemonWith(STATUS_URL),
       USER,
       { op: "llm_status", request_id: "q1" },
-      2,
+      1,
     );
-    expect(ack).toEqual({ ok: true, accepted: true, request_id: "q1" });
-    expect(event?.ev).toBe("llm_status_result");
-    expect(event?.request_id).toBe("q1");
-    expect(event?.ok).toBe(true);
-    expect(event?.overall.severity).toBe("warning");
-    expect(event?.services.map((s: { id: string }) => s.id)).toEqual(["anthropic", "openai"]);
+    expect(reply?.ok).toBe(true);
+    expect(reply?.overall.severity).toBe("warning");
+    expect(reply?.services.map((s: { id: string }) => s.id)).toEqual(["anthropic", "openai"]);
   });
 
   test("a failing gateway settles the request as an error event", async () => {
-    const [, event] = await requestFrames(
+    const [reply] = await requestFrames(
       daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`),
       USER,
       { op: "llm_status", request_id: "q2" },
-      2,
+      1,
     );
-    expect(event?.ev).toBe("llm_status_result");
-    expect(event?.ok).toBe(false);
-    expect(event?.error.code).toBe(ErrorCode.llm_status_unavailable);
+    expect(reply?.ok).toBe(false);
+    expect(reply?.error.code).toBe(ErrorCode.llm_status_unavailable);
   });
 
   // The signal the webui uses to hide the strip, and the reason it is a
@@ -138,10 +134,10 @@ describe("llm_status op", () => {
 
   test("passes a refresh through, and only when asked for explicitly", async () => {
     const daemon = daemonWith(STATUS_URL);
-    await requestFrames(daemon, USER, { op: "llm_status", request_id: "r1", refresh: true }, 2);
+    await requestFrames(daemon, USER, { op: "llm_status", request_id: "r1", refresh: true }, 1);
     expect(received.at(-1)).toBe("true");
     for (const refresh of ["true", 1, null]) {
-      await requestFrames(daemon, USER, { op: "llm_status", request_id: "r2", refresh }, 2);
+      await requestFrames(daemon, USER, { op: "llm_status", request_id: "r2", refresh }, 1);
       expect(received.at(-1)).toBeNull();
     }
   });
@@ -171,6 +167,7 @@ describe("hello llm_status_available", () => {
       null as Conn["identity"],
       {
         op: "hello",
+        protocol: PROTOCOL_VERSION,
         request_id: "hello-1",
         ...(identity as object),
       },
@@ -318,7 +315,7 @@ describe("529 in a gateway webhook event", () => {
     expect(frames.map((frame) => frame.ev)).toEqual(["llm_requests"]);
     // A round trip to the gateway above would have completed by now had one
     // been started; the op tests in this file are the proof of that latency.
-    await requestFrames(h.daemon, USER, { op: "llm_status", request_id: "probe" }, 2);
+    await requestFrames(h.daemon, USER, { op: "llm_status", request_id: "probe" }, 1);
     expect(frames.filter((frame) => frame.ev === "llm_status")).toHaveLength(0);
   });
 

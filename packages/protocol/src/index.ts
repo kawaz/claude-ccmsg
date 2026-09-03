@@ -805,92 +805,6 @@ export interface NetworkOnlineStreamEvent {
   error_ts: string;
 }
 
-/** Completion of a 2-phase `translate` request (see TranslateRequest's doc
- * comment for why the reply is split). Pushed to the requesting connection
- * only, correlated by the client-generated `request_id` from the request.
- * Carries the same success/error payload a deferred reply would have carried —
- * including per-op failures like translate_unavailable, which after the
- * immediate ack can only travel on this event. NOTE for client authors:
- * result events carry `ok`, so a frame must be classified as push-vs-reply by
- * the presence of `ev`, never by `ok` alone. */
-export type TranslateResultEvent = {
-  ev: "translate_result";
-  request_id: string;
-} & (TranslateResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_launch` request (see SessionLaunchRequest's
- * doc comment). Same correlation/classification rules as TranslateResultEvent. */
-export type SessionLaunchResultEvent = {
-  ev: "session_launch_result";
-  request_id: string;
-} & (SessionLaunchResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_kill` request (see SessionKillRequest's
- * doc comment). Same correlation/classification rules as TranslateResultEvent. */
-export type SessionKillResultEvent = {
-  ev: "session_kill_result";
-  request_id: string;
-} & (SessionKillResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_rename` request (see
- * SessionRenameRequest's doc comment). Same correlation/classification rules
- * as TranslateResultEvent. */
-export type SessionRenameResultEvent = {
-  ev: "session_rename_result";
-  request_id: string;
-} & (SessionRenameResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_env` request (see SessionEnvRequest's
- * doc comment). Same correlation/classification rules as TranslateResultEvent. */
-export type SessionEnvResultEvent = {
-  ev: "session_env_result";
-  request_id: string;
-} & (SessionEnvResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_search` request (see SessionSearchRequest's
- * request_id doc comment). Same correlation/classification rules as
- * TranslateResultEvent. */
-export type SessionSearchResultEvent = {
-  ev: "session_search_result";
-  request_id: string;
-} & (SessionSearchResponse | ErrorResponse);
-
-/** Completion of a 2-phase `fork_origin` request (see ForkOriginRequest's doc
- * comment). Same correlation/classification rules as TranslateResultEvent. */
-export type ForkOriginResultEvent = {
-  ev: "fork_origin_result";
-  request_id: string;
-} & (ForkOriginResponse | ErrorResponse);
-
-/** Completion of a 2-phase `session_dump_file` request (see
- * SessionDumpFileRequest's doc comment). Same correlation/classification rules
- * as TranslateResultEvent. */
-export type SessionDumpFileResultEvent = {
-  ev: "session_dump_file_result";
-  request_id: string;
-} & (SessionDumpFileResponse | ErrorResponse);
-
-/** Completion of a 2-phase `llm_usage` request (see LlmUsageRequest's doc
- * comment). Same correlation/classification rules as TranslateResultEvent. */
-export type LlmUsageResultEvent = {
-  ev: "llm_usage_result";
-  request_id: string;
-} & (LlmUsageResponse | ErrorResponse);
-
-/** Completion of a 2-phase `llm_stats` request (see LlmStatsRequest's doc
- * comment). Same correlation/classification rules as TranslateResultEvent. */
-export type LlmStatsResultEvent = {
-  ev: "llm_stats_result";
-  request_id: string;
-} & (LlmStatsResponse | ErrorResponse);
-
-/** Completion of a 2-phase `llm_status` request (see LlmStatusRequest's doc
- * comment). Same correlation/classification rules as TranslateResultEvent. */
-export type LlmStatusResultEvent = {
-  ev: "llm_status_result";
-  request_id: string;
-} & (LlmStatusResponse | ErrorResponse);
-
 /** Unsolicited push of a freshly fetched status report (user-role subscribers
  * only, same posture as ev:"llm_requests"). Sent when the gateway's webhook
  * reports a 529 and the daemon re-reads the status endpoint: that is the
@@ -914,17 +828,6 @@ export type StreamEvent =
   | SessionStatusStreamEvent
   | SessionErrorsStreamEvent
   | LlmRequestsStreamEvent
-  | TranslateResultEvent
-  | SessionLaunchResultEvent
-  | SessionKillResultEvent
-  | SessionRenameResultEvent
-  | SessionEnvResultEvent
-  | SessionSearchResultEvent
-  | ForkOriginResultEvent
-  | SessionDumpFileResultEvent
-  | LlmUsageResultEvent
-  | LlmStatsResultEvent
-  | LlmStatusResultEvent
   | LlmStatusStreamEvent;
 
 // ---------------------------------------------------------------------------
@@ -1218,10 +1121,10 @@ export interface DirTreeEntry {
 /** Session launch request (DR-0018 §3.2, user role only). The daemon validates
  * the opaque values, builds env/argv, and executes the configured command.
  *
- * 2-phase reply: launching awaits the whole run (up to timeout_seconds + kill
- * escalation, potentially ~10s). The daemon acks immediately with
- * RequestAcceptedResponse and pushes the outcome as an
- * ev:"session_launch_result" event carrying the same `request_id`. */
+ * Slow reply: launching awaits the whole run (up to timeout_seconds + kill
+ * escalation, potentially ~10s), and the single reply carrying the outcome
+ * comes back then. Requests of one connection are answered concurrently
+ * (RequestEnvelope), so the wait holds nothing else back. */
 export interface SessionLaunchRequest {
   op: "session_launch";
   /** Working directory for the launched process, and the value the command
@@ -1271,10 +1174,8 @@ export interface SessionLaunchRequest {
  * to ~3s total. Never escalates to SIGKILL (graceful shutdown / transcript
  * flush must not be broken by the daemon's own judgement).
  *
- * 2-phase reply (same as SessionLaunchRequest: the resolve + kill sequence
- * takes up to ~4s): the direct reply is RequestAcceptedResponse and the
- * outcome arrives as `ev:"session_kill_result"` carrying the same
- * `request_id`. */
+ * Slow reply like session_launch: the resolve + kill sequence takes up to
+ * ~4s, and the one reply carrying the outcome comes back then. */
 export interface SessionKillRequest {
   op: "session_kill";
   /** The Claude Code session UUID whose process to terminate. The request
@@ -1320,9 +1221,8 @@ export interface SessionKillRequest {
  * command. Control characters are therefore rejected up front (see
  * validateRenameTitle in the daemon) instead of being silently stripped.
  *
- * 2-phase reply for the same reason as session_kill: this spawns a `hyoui
- * input` child (and hyoui itself serializes against other input holders), so
- * the outcome arrives as `ev:"session_rename_result"`. */
+ * Slow reply for the same reason as session_kill: this spawns a `hyoui
+ * input` child, and hyoui itself serializes against other input holders. */
 export interface SessionRenameRequest {
   op: "session_rename";
   /** The Claude Code session UUID to retitle. The request carries no
@@ -1344,9 +1244,8 @@ export interface SessionRenameRequest {
  * pid-reuse verification are shared verbatim with session_kill — reading a
  * recycled pid's environment would disclose an unrelated process's secrets.
  *
- * 2-phase for the same reason as session_kill: the fresh `claude agents`
- * resolution makes this a slow op. The outcome arrives as
- * `ev:"session_env_result"`. */
+ * Slow for the same reason as session_kill: the fresh `claude agents`
+ * resolution takes seconds. */
 export interface SessionEnvRequest {
   op: "session_env";
   /** The Claude Code session UUID whose process environment to read. Carries
@@ -1378,8 +1277,7 @@ export interface SessionLauncherConfigRequest {
  * impossible; routing it through the daemon also keeps the gateway URL (an
  * internal address) out of the browser entirely.
  *
- * 2-phase for session_env's reason: the upstream fetch is slow. The outcome
- * arrives as `ev:"llm_usage_result"`. */
+ * Slow for session_env's reason: the upstream fetch takes seconds. */
 export interface LlmUsageRequest {
   op: "llm_usage";
   /** Ask the gateway to probe upstream instead of answering from its cache,
@@ -1398,9 +1296,8 @@ export interface LlmUsageRequest {
  * reason — the gateway serves no CORS headers, and proxying keeps its internal
  * address out of the browser.
  *
- * 2-phase like `llm_usage`: a wide window is a much larger document than the
- * quota one and the fetch is correspondingly slow. The outcome arrives as
- * `ev:"llm_stats_result"`. */
+ * Slow like `llm_usage`: a wide window is a much larger document than the
+ * quota one and the fetch is correspondingly slow. */
 export interface LlmStatsRequest {
   op: "llm_stats";
   /** How many days back to ask the gateway for, passed through as its `days`
@@ -1417,7 +1314,7 @@ export interface LlmStatsRequest {
  * gateway). The daemon fetches for the same two reasons — no CORS headers on
  * the endpoint, and the gateway's internal address stays out of the browser.
  *
- * 2-phase like `llm_usage`; the outcome arrives as `ev:"llm_status_result"`.
+ * Slow like `llm_usage`.
  * The same report also arrives unsolicited as `ev:"llm_status"` after the
  * gateway reports a 529, so a client that has asked once keeps up without
  * asking again. */
@@ -1926,10 +1823,9 @@ export interface PingRequest {
  * An empty batch is a capability probe: it verifies the helper can be found or
  * built without starting a TranslationSession.
  *
- * 2-phase reply (same rationale as SessionLaunchRequest): translation takes
- * hundreds of ms to seconds per batch. The daemon acks immediately with
- * RequestAcceptedResponse and pushes the outcome as an ev:"translate_result"
- * event carrying the same `request_id`. */
+ * Slow reply (same rationale as SessionLaunchRequest): translation takes
+ * hundreds of ms to seconds per batch, and the one reply carrying every
+ * result — per-item failures included — comes back then. */
 export interface TranslateRequest {
   op: "translate";
   texts: string[];
@@ -2331,8 +2227,7 @@ export interface DirTreeResponse {
   entries: DirTreeEntry[];
 }
 /** Payload of a completed session launch, delivered inside
- * SessionLaunchResultEvent (2-phase reply — the direct reply to the request
- * is RequestAcceptedResponse). Signal termination uses null exit_code. */
+ * the session_launch reply. Signal termination uses null exit_code. */
 export interface SessionLaunchResponse {
   ok: true;
   stdout: string;
@@ -2341,7 +2236,7 @@ export interface SessionLaunchResponse {
   timed_out: boolean;
 }
 /** Payload of a completed session_kill (DR-0028), delivered inside
- * SessionKillResultEvent. `terminated: true` = the process was observed gone
+ * the session_kill reply. `terminated: true` = the process was observed gone
  * within the ~3s grace. `terminated: false` is NOT a failure: both SIGTERM
  * sends succeeded but the process was still alive when the grace expired —
  * the UI presents this as "signal sent, termination unconfirmed" and a human
@@ -2351,7 +2246,7 @@ export interface SessionKillResponse {
   terminated: boolean;
 }
 /** Payload of a completed session_rename, delivered inside
- * SessionRenameResultEvent. `ok` here means "the `/rename <title>` keystrokes
+ * the session_rename reply. `ok` here means "the `/rename <title>` keystrokes
  * reached the terminal", not "the session is now called that" — see
  * SessionRenameRequest for why the daemon cannot know the latter. `title` is
  * the normalized (trimmed) string actually typed, so a UI can report what it
@@ -2362,7 +2257,7 @@ export interface SessionRenameResponse {
   hyoui_session_id: string;
   title: string;
 }
-/** Payload of a completed session_env, delivered inside SessionEnvResultEvent.
+/** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
  *
  * On macOS the source is `ps eww`, whose output is space-separated with no
@@ -2518,7 +2413,7 @@ export interface LlmUsageCredential {
   probe_error?: string;
 }
 
-/** Payload of a completed llm_usage, delivered inside LlmUsageResultEvent.
+/** Payload of a completed llm_usage.
  * The gateway's own top-level fields are passed through; only `credentials`
  * is normalized (see LlmUsageSnapshot.windows). */
 export interface LlmUsageResponse {
@@ -2562,7 +2457,7 @@ export interface LlmStatsDay {
   total_usd?: number;
 }
 
-/** Payload of a completed llm_stats, delivered inside LlmStatsResultEvent.
+/** Payload of a completed llm_stats.
  * Keyed by "YYYY-MM-DD" in the gateway's own timezone — the daemon does not
  * reinterpret the dates, so a day here means whatever the gateway means. */
 export interface LlmStatsResponse {
@@ -2699,19 +2594,9 @@ export interface LlmStatusReport {
   services: LlmStatusService[];
 }
 
-/** Payload of a completed llm_status, delivered inside LlmStatusResultEvent. */
+/** Payload of a completed llm_status. */
 export type LlmStatusResponse = { ok: true } & LlmStatusReport;
 
-/** Immediate ack for 2-phase ops (translate / session_launch): the request
- * passed synchronous validation and its outcome will arrive as the matching
- * `*_result` stream event carrying the same `request_id` this ack does.
- * Synchronous validation failures (role, invalid_args,
- * launcher_not_configured, cwd containment) still reply ErrorResponse directly
- * instead of this ack. */
-export interface RequestAcceptedResponse {
-  ok: true;
-  accepted: true;
-}
 /** session_launcher_config reply — see its request doc comment above.
  * `templates` is the configured recipe list in config order, each carrying its
  * shell command template verbatim (no variable substitution — `$CWD` and every
@@ -3065,8 +2950,18 @@ export type ResponseBody =
   | PeersResponse
   | NotifyResponse
   | DirTreeResponse
-  | RequestAcceptedResponse
   | SessionLauncherConfigResponse
+  | SessionLaunchResponse
+  | SessionKillResponse
+  | SessionRenameResponse
+  | SessionEnvResponse
+  | SessionSearchResponse
+  | ForkOriginResponse
+  | SessionDumpFileResponse
+  | TranslateResponse
+  | LlmUsageResponse
+  | LlmStatsResponse
+  | LlmStatusResponse
   | FsListResponse
   | FsReadResponse
   | FsWriteResponse

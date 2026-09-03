@@ -16,28 +16,19 @@ afterEach(async () => {
 // persistent Swift child process, JSONL correlation, and mixed-text translation.
 const helperExists = fs.existsSync(defaultTranslateHelperPaths().binary);
 const e2eTest = helperExists ? test : test.skip;
-e2eTest(
-  "daemon translate acks, then the result event carries a real en→ja mixed-text result",
-  async () => {
-    daemon = await startTestDaemon();
-    const client = await connect(daemon.sock);
-    try {
-      expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
-      const input = "The build completed successfully.ここから日本語です。";
-      // 2-phase: the reply is the ack, the translation itself arrives on the
-      // ev:"translate_result" event carrying the same request_id.
-      const ack = await client.request({ op: "translate", request_id: "e2e-1", texts: [input] });
-      expect(ack).toEqual({ ok: true, accepted: true });
-      const event = await client.readEvent();
-      expect(event.ev).toBe("translate_result");
-      expect(event.request_id).toBe("e2e-1");
-      expect(event.ok).toBe(true);
-      expect(event.results).toHaveLength(1);
-      expect(event.results[0].ok).toBe(true);
-      expect(event.results[0].text).toContain("ここから日本語です。");
-      expect(event.results[0].text).not.toContain("The build completed successfully.");
-    } finally {
-      client.close();
-    }
-  },
-);
+e2eTest("daemon translate replies with a real en→ja mixed-text result", async () => {
+  daemon = await startTestDaemon();
+  const client = await connect(daemon.sock);
+  try {
+    expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
+    const input = "The build completed successfully.ここから日本語です。";
+    const reply = await client.request({ op: "translate", request_id: "e2e-1", texts: [input] });
+    expect(reply.ok).toBe(true);
+    expect(reply.results).toHaveLength(1);
+    expect(reply.results[0].ok).toBe(true);
+    expect(reply.results[0].text).toContain("ここから日本語です。");
+    expect(reply.results[0].text).not.toContain("The build completed successfully.");
+  } finally {
+    client.close();
+  }
+});

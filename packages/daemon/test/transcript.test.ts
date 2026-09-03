@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { TRANSCRIPT_READ_MAX_BYTES } from "@ccmsg/protocol";
+import { TRANSCRIPT_READ_MAX_BYTES, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import {
   connect,
   startTestDaemon,
@@ -30,6 +30,7 @@ async function sessionHello(
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -43,7 +44,7 @@ async function sessionHello(
 /** Connect + hello as the admin user. */
 async function userHello(ctx: DaemonCtx): Promise<TestClient> {
   const c = await connect(ctx.sock);
-  await c.request({ op: "hello", role: "user" });
+  await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
   return c;
 }
 
@@ -166,6 +167,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         const c = await connect(ctx.sock);
         const res = await c.request<{ ok: boolean }>({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r",

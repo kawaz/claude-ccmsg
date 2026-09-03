@@ -9,7 +9,7 @@
 /** `hyoui input` child budget. hyoui serializes input holders (its auto-lock),
  * so this covers "another client is mid-input" as well as a wedged daemon;
  * a rename that cannot get through in this window is better reported as
- * failed than left holding the 2-phase reply open. */
+ * failed than left holding the reply open. */
 export const HYOUI_TIMEOUT_MS = 5000;
 
 /** Title clamp, matching the room `set_title` cap: a session title shows up

@@ -9,13 +9,10 @@
 // `request_id` this client generates and the daemon echoes on the reply, so
 // replies pair by id and may arrive in any order — the daemon runs our
 // requests concurrently, and a slow one no longer delays the rest. Slow ops
-// (translate / session_launch / session_search) are additionally 2-phase: the
-// reply is an immediate ack (RequestAcceptedResponse) and the outcome arrives
-// later as an `ev:"*_result"` push carrying the same request_id. Both are
-// hidden behind a Promise, so callers see one shape of request/reply.
-// Classification rule: a frame with `ev` is a push (result events DO carry
-// `ok`, so `ev` must be checked first); a frame with `ok` and no `ev` is a
-// reply; anything else is a persisted subscribe delivery.
+// (translate / session_launch / session_search) are ordinary requests whose
+// reply simply takes seconds to come back.
+// Classification rule: a frame with `ev` is a push; a frame with `ok` and no
+// `ev` is a reply; anything else is a persisted subscribe delivery.
 import type {
   AgentsResponse,
   AgentsStreamEvent,
@@ -306,17 +303,17 @@ export interface WsHandle {
   /** Search historical Claude Code session transcripts under daemon-detected
    * config dirs (DR-0021 Phase 1 op, Phase 2 client wiring; user role only).
    * `params` excludes `op` and `request_id` — the wire shape (including the
-   * 2-phase correlation id) is assembled here, same convention as
+   * correlation id) is assembled here, same convention as
    * fsList/transcriptRead's option-object callers. */
   sessionSearch(
     params: Omit<SessionSearchRequest, "op" | "request_id">,
   ): Promise<SessionSearchResponse | ErrorResponse>;
-  /** Ask where `sid`'s copied fork history ends (user role only). 2-phase for
+  /** Ask where `sid`'s copied fork history ends (user role only). Slow for
    * the same reason as sessionSearch: the first ask for a session reads whole
    * sibling transcripts. `origin: null` means there is no seam to draw. */
   forkOrigin(sid: string): Promise<ForkOriginResponse | ErrorResponse>;
   /** Write `sid`'s dump to a file on the daemon host and answer where it
-   * landed (user role only). 2-phase for the same reason as sessionSearch:
+   * landed (user role only). Slow for the same reason as sessionSearch:
    * dumping reads the whole transcript plus its agent transcripts. `params`
    * excludes `op`/`request_id`, same convention as sessionSearch. */
   sessionDumpFile(
@@ -329,9 +326,8 @@ export interface WsHandle {
   ping(): Promise<PingResponse | ErrorResponse>;
   /** Translate complete texts through the daemon host. Unlike browser
    * translation, callers must not split or skip Japanese-containing segments.
-   * 2-phase on the wire (ack + ev:"translate_result") so concurrent
-   * translations never block other ops' replies; the returned Promise still
-   * settles with the final outcome. */
+   * The reply takes seconds; concurrent daemon dispatch means it never blocks
+   * other ops' replies. */
   translate(texts: string[]): Promise<TranslateResponse | ErrorResponse>;
   /** Session-launcher directory-only cwd tree (DR-0018 §3.2, user role only).
    * `depth` omitted uses the daemon's configured `dir_tree_depth`; CwdTree's
@@ -342,11 +338,9 @@ export interface WsHandle {
   ): Promise<DirTreeResponse | ErrorResponse>;
   /** Launch a new session via the configured command template (DR-0018 §3.2,
    * user role only). The daemon awaits the whole run (bounded by
-   * `timeout_seconds` + kill x2, §3.3) before the result event arrives, so
-   * this call is naturally slow — SessionCreator shows its own loading state
-   * while it's in flight rather than relying on a generic pending indicator.
-   * The 2-phase wire exchange (ack + result event) is hidden here: the
-   * returned Promise settles with the final outcome, same as before. */
+   * `timeout_seconds` + kill x2, §3.3) before replying, so this call is
+   * naturally slow — SessionCreator shows its own loading state while it's in
+   * flight rather than relying on a generic pending indicator. */
   sessionLaunch(
     req: Omit<SessionLaunchRequest, "op" | "request_id">,
   ): Promise<SessionLaunchResponse | ErrorResponse>;
@@ -359,9 +353,8 @@ export interface WsHandle {
   /** Terminate the OS process behind a session (DR-0028, user role only —
    * StatusPanel's danger-zone button). The daemon resolves the pid fresh and
    * runs the two-shot SIGTERM sequence, so this is naturally slow (up to
-   * ~4s); 2-phase on the wire (ack + ev:"session_kill_result") like
-   * sessionLaunch, hidden behind one Promise. `terminated: false` in a
-   * successful response means "signals sent, termination unconfirmed". */
+   * ~4s), like sessionLaunch. `terminated: false` in a successful response
+   * means "signals sent, termination unconfirmed". */
   sessionKill(
     sessionId: string,
     opts?: { force?: boolean },
@@ -373,18 +366,15 @@ export interface WsHandle {
    * callers should report "sent" rather than showing the new title as fact —
    * the real one arrives with the next agents poll. `error.code ===
    * "terminal_unavailable"` means the session runs outside hyoui and can only
-   * be renamed by hand. 2-phase on the wire (ack +
-   * ev:"session_rename_result") like sessionKill. */
+   * be renamed by hand. Slow like sessionKill. */
   sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
-   * sessionKill, so this is 2-phase on the wire (ack +
-   * ev:"session_env_result") hidden behind one Promise. */
+   * sessionKill, so this is slow. */
   sessionEnv(sessionId: string): Promise<SessionEnvResponse | ErrorResponse>;
   /** Per-credential LLM quota, proxied by the daemon from its configured
-   * gateway (user role only). 2-phase on the wire (ack +
-   * ev:"llm_usage_result") because the upstream fetch is slow; hidden behind
-   * one Promise like the others. `error.code === "llm_usage_not_configured"`
+   * gateway (user role only). Slow, because the upstream fetch is.
+   * `error.code === "llm_usage_not_configured"`
    * means the daemon has no gateway URL — the same signal hello's
    * `llm_usage_available` carries, seen here when the config changed under a
    * live connection. `refresh` makes the gateway probe upstream instead of
@@ -393,14 +383,13 @@ export interface WsHandle {
    * belongs to an explicit user action and never to polling. */
   llmUsage(opts?: { refresh?: boolean }): Promise<LlmUsageResponse | ErrorResponse>;
   /** Per-day LLM spend over the last `days` days, proxied by the daemon from
-   * its configured stats gateway (user role only). 2-phase on the wire (ack +
-   * ev:"llm_stats_result") like llmUsage; `days` omitted leaves the gateway's
-   * own default window. `error.code === "llm_stats_not_configured"` is the
+   * its configured stats gateway (user role only). Slow like llmUsage; `days`
+   * omitted leaves the gateway's own default window. `error.code === "llm_stats_not_configured"` is the
    * hello capability seen after a config change under a live connection. */
   llmStats(days?: number): Promise<LlmStatsResponse | ErrorResponse>;
   /** Upstream service health as the gateway sees it, proxied by the daemon
-   * (user role only). 2-phase on the wire (ack + ev:"llm_status_result") like
-   * llmUsage. `refresh` makes the gateway re-read the providers' status pages
+   * (user role only). Slow like llmUsage.
+   * `refresh` makes the gateway re-read the providers' status pages
    * first, which is the screen's own button and never an automatic read.
    * `error.code === "llm_status_not_configured"` is the hello capability seen
    * after a config change under a live connection. The daemon also pushes the
@@ -408,23 +397,6 @@ export interface WsHandle {
    * has asked once stays current without asking again. */
   llmStatus(opts?: { refresh?: boolean }): Promise<LlmStatusResponse | ErrorResponse>;
 }
-
-/** Every final outcome a 2-phase op can settle with (the result event's
- * payload minus its ev/request_id envelope, or a synchronous validation
- * error / connection_closed flush). */
-type TwoPhaseOutcome =
-  | TranslateResponse
-  | SessionKillResponse
-  | SessionRenameResponse
-  | SessionEnvResponse
-  | SessionLaunchResponse
-  | SessionSearchResponse
-  | ForkOriginResponse
-  | SessionDumpFileResponse
-  | LlmUsageResponse
-  | LlmStatsResponse
-  | LlmStatusResponse
-  | ErrorResponse;
 
 export function createWsClient(
   dispatch: (action: Action) => void,
@@ -436,11 +408,6 @@ export function createWsClient(
    * An entry lives from the request being written until its reply arrives or
    * a disconnect flush settles it. */
   let pending = new Map<string, (v: Response) => void>();
-  /** 2-phase ops' outstanding result-event resolvers, keyed by the same
-   * request_id (see the header comment's classification rule). Entries live
-   * from the request being written until the `ev:"*_result"` push, a
-   * validation-error reply, or a disconnect flush — whichever comes first. */
-  const inflight = new Map<string, (v: TwoPhaseOutcome) => void>();
   /** request_ids only need to be unique among this client's in-flight
    * requests (protocol doc), so a monotonic counter suffices — no UUID. */
   let nextRequestId = 0;
@@ -477,36 +444,6 @@ export function createWsClient(
       },
     }),
   );
-
-  /** Send a 2-phase op (translate / session_launch / session_search): the
-   * reply is only the immediate ack (or a synchronous validation error, which
-   * settles the Promise right away), and the final outcome arrives as the
-   * result event carrying the same request_id — resolved through `inflight` in
-   * onMessage. Callers get one Promise for the final outcome, exactly like
-   * plain send(), so no component needed changing. */
-  function sendTwoPhase<T extends TwoPhaseOutcome>(req: RequestInput): Promise<T> {
-    return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        reject(new Error("ws not open"));
-        return;
-      }
-      const rid = `q${++nextRequestId}`;
-      const settle = resolve as (v: TwoPhaseOutcome) => void;
-      inflight.set(rid, settle);
-      pending.set(rid, (ack) => {
-        // ok ack = accepted; the result event will settle via `inflight`.
-        // An ok:false reply means the op failed synchronous validation and no
-        // event will ever come — settle now. The identity guard keeps this a
-        // no-op if a disconnect flush already settled us (flushPending clears
-        // `inflight` before flushing `pending`).
-        if (!ack.ok && inflight.get(rid) === settle) {
-          inflight.delete(rid);
-          settle(ack);
-        }
-      });
-      ws.send(JSON.stringify({ ...req, request_id: rid }));
-    });
-  }
 
   async function onOpen(): Promise<void> {
     reconnectAttempt = 0;
@@ -601,7 +538,7 @@ export function createWsClient(
           available: hello.llm_status_available === true,
         });
         if (hello.llm_status_available === true) {
-          void sendTwoPhase<LlmStatusResponse | ErrorResponse>({
+          void send<LlmStatusResponse | ErrorResponse>({
             op: "llm_status",
           }).then((res) => {
             // 取れなければ badge が出ないだけ。ここで画面にエラーを出すと、
@@ -670,9 +607,7 @@ export function createWsClient(
       // DR-0023 host capability probe. An empty batch verifies the daemon can
       // find/build its helper without starting TranslationSession or translating
       // dummy content; a later per-item model error hides the tab at first use.
-      // Goes through the 2-phase path like any other translate — the probe's
-      // outcome arrives on its result event and this await resumes then.
-      const translate = await sendTwoPhase<TranslateResponse>({
+      const translate = await send<TranslateResponse>({
         op: "translate",
         texts: [],
       });
@@ -689,35 +624,9 @@ export function createWsClient(
     } catch {
       return;
     }
-    // `ev` must be classified BEFORE `ok`: 2-phase result events carry both
-    // (see the header comment). Shifting `pending` for one of these would
-    // steal a later op's positional reply slot and desynchronize every reply
-    // after it.
+    // `ev` classified BEFORE `ok`, per the header comment's rule.
     if (Object.hasOwn(obj, "ev")) {
-      const streamEv = obj as StreamEvent;
-      if (
-        "ev" in streamEv &&
-        (streamEv.ev === "translate_result" ||
-          streamEv.ev === "session_launch_result" ||
-          streamEv.ev === "session_kill_result" ||
-          streamEv.ev === "session_rename_result" ||
-          streamEv.ev === "session_env_result" ||
-          streamEv.ev === "session_search_result" ||
-          streamEv.ev === "fork_origin_result" ||
-          streamEv.ev === "session_dump_file_result" ||
-          streamEv.ev === "llm_usage_result" ||
-          streamEv.ev === "llm_stats_result" ||
-          streamEv.ev === "llm_status_result")
-      ) {
-        const settle = inflight.get(streamEv.request_id);
-        if (settle) {
-          inflight.delete(streamEv.request_id);
-          const { ev: _ev, request_id: _rid, ...result } = streamEv;
-          settle(result as TwoPhaseOutcome);
-        }
-        return;
-      }
-      onStreamEvent(streamEv);
+      onStreamEvent(obj as StreamEvent);
       return;
     }
     if (Object.hasOwn(obj, "ok")) {
@@ -730,8 +639,7 @@ export function createWsClient(
       if (rid === undefined) return;
       const settle = pending.get(rid);
       pending.delete(rid);
-      // Callers get the payload without the envelope, the same shape the
-      // 2-phase result path hands them.
+      // Callers get the payload without the envelope.
       settle?.(body as Response);
       return;
     }
@@ -863,22 +771,15 @@ export function createWsClient(
     dispatch({ type: "protocol-event", event: delivered });
   }
 
-  // Settles every in-flight send()/sendTwoPhase() with a synthetic error
-  // response instead of leaving its Promise pending forever, and empties both
-  // registries so a stale resolver can never be mis-matched (a request_id
-  // reused after reconnect, in `pending` or `inflight`) to a
-  // reply/event that arrives on a later, reconnected socket. `inflight` is
-  // flushed FIRST: sendTwoPhase's positional ack callback guards on
-  // `inflight.get(rid) === settle`, so clearing the map here turns those
-  // still-queued ack callbacks into no-ops instead of double-settles.
+  // Settles every in-flight send() with a synthetic error response instead of
+  // leaving its Promise pending forever, and empties the registry so a stale
+  // resolver can never be mis-matched (a request_id reused after reconnect) to
+  // a reply that arrives on a later, reconnected socket.
   function flushPending(): void {
     const closed: ErrorResponse = {
       ok: false,
       error: { code: "connection_closed", msg: "ws connection closed" },
     };
-    const staleInflight = [...inflight.values()];
-    inflight.clear();
-    for (const settle of staleInflight) settle(closed);
     const stale = [...pending.values()];
     pending = new Map();
     for (const settle of stale) settle(closed);
@@ -1049,11 +950,11 @@ export function createWsClient(
     sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
     agents: () => send({ op: "agents" }),
     sessionErrors: () => send({ op: "session_errors" }),
-    sessionSearch: (params) => sendTwoPhase({ op: "session_search", ...params }),
-    forkOrigin: (sid) => sendTwoPhase({ op: "fork_origin", sid }),
-    sessionDumpFile: (params) => sendTwoPhase({ op: "session_dump_file", ...params }),
+    sessionSearch: (params) => send({ op: "session_search", ...params }),
+    forkOrigin: (sid) => send({ op: "fork_origin", sid }),
+    sessionDumpFile: (params) => send({ op: "session_dump_file", ...params }),
     ping: () => send({ op: "ping" }),
-    translate: (texts) => sendTwoPhase({ op: "translate", texts }),
+    translate: (texts) => send({ op: "translate", texts }),
     dirTree: (roots, opts) =>
       send({
         op: "dir_tree",
@@ -1061,37 +962,37 @@ export function createWsClient(
         ...(opts?.depth !== undefined ? { depth: opts.depth } : {}),
         ...(opts?.filter !== undefined ? { filter: opts.filter } : {}),
       }),
-    sessionLaunch: (req) => sendTwoPhase({ op: "session_launch", ...req }),
+    sessionLaunch: (req) => send({ op: "session_launch", ...req }),
     sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
     sessionKill: (sessionId, opts) =>
-      sendTwoPhase({
+      send({
         op: "session_kill",
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
       }),
     sessionRename: (sessionId, title) =>
-      sendTwoPhase({
+      send({
         op: "session_rename",
         session_id: sessionId,
         title,
       }),
     sessionEnv: (sessionId) =>
-      sendTwoPhase({
+      send({
         op: "session_env",
         session_id: sessionId,
       }),
     llmUsage: (opts) =>
-      sendTwoPhase({
+      send({
         op: "llm_usage",
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
     llmStats: (days) =>
-      sendTwoPhase({
+      send({
         op: "llm_stats",
         ...(days !== undefined ? { days } : {}),
       }),
     llmStatus: (opts) =>
-      sendTwoPhase({
+      send({
         op: "llm_status",
         ...(opts?.refresh ? { refresh: true } : {}),
       }),

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -85,9 +86,11 @@ class WsTestClient {
     }
   }
   async hello(identity: { role: "user" } | { role: "session"; sid: string }): Promise<any> {
-    if (identity.role === "user") return this.request({ op: "hello", role: "user" });
+    if (identity.role === "user")
+      return this.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
     return this.request({
       op: "hello",
+      protocol: PROTOCOL_VERSION,
       role: "session",
       sid: identity.sid,
       repo: "",

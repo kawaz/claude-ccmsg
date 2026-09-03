@@ -19,6 +19,7 @@ import {
   type DaemonCtx,
   type TestClient,
 } from "./helpers.ts";
+import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
 const START = "2026-07-14T16:27:55.672Z";
@@ -186,6 +187,7 @@ async function sessionHello(
   const client = await connect(ctx.sock);
   await client.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -2347,6 +2349,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
 
         await session.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid,
           repo: "r",
@@ -2702,6 +2705,7 @@ describe("session_status event loop yielding (DR-0029)", () => {
         leaving.write({ op: "subscribe", request_id: "s2" });
         leaving.write({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           request_id: "s3",
           role: "session",
           sid: "ghost",

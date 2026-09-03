@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { FS_FIND_RESULT_MAX } from "@ccmsg/protocol";
+import { FS_FIND_RESULT_MAX, PROTOCOL_VERSION } from "@ccmsg/protocol";
 import {
   connect,
   startTestDaemon,
@@ -52,6 +52,7 @@ async function sessionWithWorkspace(
   const session = await connect(ctx.sock);
   await session.request({
     op: "hello",
+    protocol: PROTOCOL_VERSION,
     role: "session",
     sid,
     repo: "r",
@@ -535,6 +536,7 @@ describe("fs_find (workspace, DR-0026)", () => {
         const session = await connect(ctx.sock);
         await session.request({
           op: "hello",
+          protocol: PROTOCOL_VERSION,
           role: "session",
           sid: "A",
           repo: "r",
