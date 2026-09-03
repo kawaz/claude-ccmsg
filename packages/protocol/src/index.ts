@@ -417,9 +417,10 @@ export interface TranscriptStreamEvent {
   size: number;
 }
 
-/** How long an upstream prompt cache entry stays warm after a request. The
- * daemon prunes its per-sid cache with it and the webui counts down to it, so
- * both sides must agree on the same deadline. */
+/** Fallback length of an upstream prompt cache window, for events that carry
+ * no `cache_expires_at` (a gateway older than v0.33.0). Both sides count down
+ * to the same deadline, so the assumed length has to be shared; when the
+ * gateway states the real one, that wins over this guess. */
 export const LLM_PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** One upstream LLM request as the gateway observed it (its
@@ -450,13 +451,46 @@ export interface LlmRequestInfo {
   prefix: string;
   /** True for the session's primary series: the one whose cache window the
    * session's own turns keep alive, as opposed to a subagent's. The daemon
-   * decides this (first series it sees for the sid, re-learned once that
-   * series goes cold), so every client agrees on which ring to draw. */
+   * decides this — from `origin` when the gateway states it, otherwise from
+   * the series it saw first for the sid — so every client agrees on which
+   * ring to draw. */
   main: boolean;
+  /** Whose turn issued the request, as the gateway read it off the request's
+   * `metadata.user_id`: "main" for the session's own conversation, "sub" for
+   * a subagent under it, "unknown" when the field said neither. Absent from a
+   * gateway older than v0.33.0, which is why `main` above stays the thing
+   * clients read: it is the verdict, this is one of its inputs. */
+  origin?: "main" | "sub" | "unknown";
+  /** Epoch SECONDS at which this series' prompt cache goes cold, as the
+   * gateway computed it (`ts` + the cache TTL it actually asked for, 5m or
+   * 1h). Absent when the request cached nothing, and from a gateway older
+   * than v0.33.0 — in both cases the window falls back to
+   * LLM_PROMPT_CACHE_TTL_MS after `ts`. A keepalive ping arrives as another
+   * request event on the same series, so a live window's end keeps moving. */
+  cache_expires_at?: number;
   ns?: string;
   model?: string;
   credential?: string;
   status?: number;
+}
+
+/** When the cache window opened by one request closes, in epoch ms. The
+ * daemon prunes with it and the webui draws the ring to it, so the arithmetic
+ * lives here once rather than once per side.
+ *
+ * A gateway from v0.33.0 on states `origin` on every request event, so on such
+ * an event a missing deadline is not silence about the cache — it is the
+ * gateway saying this request cached nothing, and the window closed the moment
+ * it opened. Only an event carrying no `origin` at all predates that guarantee
+ * and falls back to the assumed five minutes. */
+export function llmCacheWindowEndMs(info: {
+  ts: number;
+  cache_expires_at?: number;
+  origin?: LlmRequestInfo["origin"];
+}): number {
+  if (info.cache_expires_at !== undefined) return info.cache_expires_at * 1000;
+  if (info.origin !== undefined) return info.ts * 1000;
+  return info.ts * 1000 + LLM_PROMPT_CACHE_TTL_MS;
 }
 
 /** Push of the most recent LLM request per conversation series (user-role

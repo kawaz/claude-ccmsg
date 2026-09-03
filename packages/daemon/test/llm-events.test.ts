@@ -16,16 +16,57 @@ describe("parseLlmRequestEvent", () => {
       credential: "claude-zunsystem",
       status: 200,
       prefix: "484eda9c",
+      origin: "main",
+      cache_ttl_secs: 3600,
+      cache_expires_at: 1785568345,
+      cache_expires_at_iso: "2026-08-01T07:12:25Z",
     });
     expect(info).toEqual({
       ts: 1785564745,
       session_id: "f13ba456",
       prefix: "484eda9c",
+      origin: "main",
+      // The deadline is kept; the TTL it was derived from is not, since
+      // `cache_expires_at - ts` is the same number and one of the two would
+      // eventually be believed over the other.
+      cache_expires_at: 1785568345,
       ns: "personal",
       model: "claude-fable-5",
       credential: "claude-zunsystem",
       status: 200,
     });
+  });
+
+  test("an unusable cache deadline leaves the window to the assumed length", () => {
+    // The gateway sends no deadline for a request that cached nothing; older
+    // ones send none at all. A deadline at or before its own request would be
+    // a window that was never open, so it is dropped the same way rather than
+    // drawing a ring that is already over.
+    const base = { ts: 1785564745, session_id: "s", prefix: "p", origin: "main" };
+    for (const expires of [null, undefined, "soon", 1785564745, 1785564700, Number.NaN]) {
+      expect(parseLlmRequestEvent({ ...base, cache_expires_at: expires })).toEqual({
+        ts: 1785564745,
+        session_id: "s",
+        prefix: "p",
+        origin: "main",
+      });
+    }
+  });
+
+  test("an origin the gateway never promised is left unstated", () => {
+    // Absent origin is what a pre-v0.33.0 gateway sends, and the cache reads
+    // it as "estimate this session's main series". A value outside the three
+    // known ones has to degrade to that, not to a fourth meaning.
+    for (const origin of [undefined, null, "MAIN", "agent", 1]) {
+      const info = parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin });
+      expect(info?.origin).toBeUndefined();
+    }
+    expect(
+      parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin: "sub" })?.origin,
+    ).toBe("sub");
+    expect(
+      parseLlmRequestEvent({ ts: 1, session_id: "s", prefix: "p", origin: "unknown" })?.origin,
+    ).toBe("unknown");
   });
 
   test("drops what cannot be attached to a session row or placed in time", () => {
@@ -181,6 +222,116 @@ describe("LlmRequestCache", () => {
       cache.record({ ts: sec(150_000), session_id: "b", prefix: other });
       const mains = cache.snapshot(NOW).filter((r) => r.session_id === "a" && r.main);
       expect(mains).toEqual([{ ts: sec(1_000), session_id: "a", prefix: other, main: true }]);
+    });
+  });
+
+  // From v0.33.0 the gateway states whose turn issued each request, which is
+  // the question the two signals above only estimate. Where it speaks, the
+  // estimate is not consulted.
+  describe("a gateway that states origin", () => {
+    /** One event as such a gateway sends it: origin stated, and a deadline
+     * because the request did cache. */
+    const cached = (
+      ts: number,
+      session_id: string,
+      prefix: string,
+      origin: "main" | "sub" | "unknown",
+    ) => ({ ts, session_id, prefix, origin, cache_expires_at: ts + 300 });
+
+    test("gives main to the series it called main, whatever the arrival order", () => {
+      const cache = new LlmRequestCache();
+      // Arrival order alone would elect SUB; the sharing signal cannot correct
+      // it either, since this subagent prefix has been seen under one session.
+      cache.record(cached(sec(200_000), "a", SUB, "sub"));
+      cache.record(cached(sec(1_000), "a", MAIN, "main"));
+      expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe(MAIN);
+    });
+
+    test("leaves a session without a main when it has only subagent traffic", () => {
+      // The estimate's last resort is "show the latest series anyway", which
+      // here would put a subagent's countdown on the session's row. A stated
+      // origin makes that guess unnecessary and wrong.
+      const cache = new LlmRequestCache();
+      cache.record(cached(sec(1_000), "a", SUB, "sub"));
+      cache.record(cached(sec(500), "a", "77778888", "unknown"));
+      expect(cache.snapshot(NOW).some((r) => r.main)).toBe(false);
+    });
+
+    test("prefers the newest stated main, since a compaction starts a new one", () => {
+      const cache = new LlmRequestCache();
+      cache.record(cached(sec(200_000), "a", MAIN, "main"));
+      cache.record(cached(sec(1_000), "a", "33334444", "main"));
+      expect(cache.snapshot(NOW).find((r) => r.main)?.prefix).toBe("33334444");
+    });
+
+    test("does not disturb sessions the same gateway said nothing about", () => {
+      // Both kinds of event coexist while a gateway is being rolled out, and
+      // one session's stated origin says nothing about another's series.
+      const cache = new LlmRequestCache();
+      cache.record(cached(sec(1_000), "a", MAIN, "main"));
+      cache.record({ ts: sec(1_000), session_id: "b", prefix: SUB });
+      expect(
+        cache
+          .snapshot(NOW)
+          .filter((r) => r.main)
+          .map((r) => r.session_id)
+          .sort(),
+      ).toEqual(["a", "b"]);
+    });
+  });
+
+  describe("a stated cache deadline", () => {
+    test("keeps a long window live well past the assumed five minutes", () => {
+      const cache = new LlmRequestCache();
+      const ts = sec(30 * 60_000);
+      cache.record({ ts, session_id: "a", prefix: MAIN, cache_expires_at: ts + 3600 });
+      expect(cache.snapshot(NOW).map((r) => r.cache_expires_at)).toEqual([ts + 3600]);
+    });
+
+    test("is what the prune reads, so a closed window goes even if recent", () => {
+      const cache = new LlmRequestCache();
+      const ts = sec(60_000);
+      // A deadline the gateway shortened below the assumed TTL: the entry is
+      // already cold at 60s old, which only the stated deadline can tell.
+      cache.record({ ts, session_id: "a", prefix: MAIN, cache_expires_at: ts + 30 });
+      expect(cache.snapshot(NOW)).toEqual([]);
+    });
+
+    test("is what its absence means too, once the gateway states origin", () => {
+      const cache = new LlmRequestCache();
+      // Stated origin, no deadline: the gateway is saying this request cached
+      // nothing, so there is no window to keep — and in particular it must not
+      // take main away from a series whose stated hour is still running.
+      const warm = sec(30 * 60_000);
+      cache.record({
+        ts: warm,
+        session_id: "a",
+        prefix: MAIN,
+        origin: "main",
+        cache_expires_at: warm + 3600,
+      });
+      cache.record({ ts: sec(1_000), session_id: "a", prefix: "55556666", origin: "main" });
+      expect(cache.snapshot(NOW)).toEqual([
+        {
+          ts: warm,
+          session_id: "a",
+          prefix: MAIN,
+          origin: "main",
+          cache_expires_at: warm + 3600,
+          main: true,
+        },
+      ]);
+    });
+
+    test("moves forward when a keepalive ping renews the same series", () => {
+      const cache = new LlmRequestCache();
+      const first = sec(120_000);
+      cache.record({ ts: first, session_id: "a", prefix: MAIN, cache_expires_at: first + 300 });
+      const ping = sec(10_000);
+      cache.record({ ts: ping, session_id: "a", prefix: MAIN, cache_expires_at: ping + 3600 });
+      expect(cache.snapshot(NOW)).toEqual([
+        { ts: ping, session_id: "a", prefix: MAIN, cache_expires_at: ping + 3600, main: true },
+      ]);
     });
   });
 

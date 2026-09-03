@@ -3,12 +3,13 @@
 // those events feed.
 //
 // The gateway sends one event per call it forwards, carrying the instant its
-// upstream answered — the moment the 5-minute prompt cache starts running.
+// upstream answered — the moment the prompt cache starts running — and, from
+// v0.33.0, the instant that cache goes cold.
 // Delivery is inbound (the gateway POSTs to this daemon's /webhook/llm-gateway,
 // see webhook.ts) rather than the daemon subscribing outward: the gateway runs
 // as two processes at once (stable and unstable), and a single subscription
 // only ever saw whichever one it happened to connect to. A receiver sees both.
-import { LLM_PROMPT_CACHE_TTL_MS, type LlmRequestInfo } from "@ccmsg/protocol";
+import { llmCacheWindowEndMs, type LlmRequestInfo } from "@ccmsg/protocol";
 
 /** One observed event, before the daemon decides whether its series is the
  * session's main one — that verdict belongs to the cache (it needs the other
@@ -34,6 +35,17 @@ export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | nu
   const rawPrefix = raw.prefix;
   const prefix = typeof rawPrefix === "string" ? rawPrefix : "";
   const info: LlmRequestObservation = { ts, session_id: sid, prefix };
+  if (raw.origin === "main" || raw.origin === "sub" || raw.origin === "unknown") {
+    info.origin = raw.origin;
+  }
+  // Only a deadline in the future of its own request opens a window; anything
+  // else (a null from a request that cached nothing, a value at or before
+  // `ts`) is dropped so the fallback length applies instead of a window that
+  // was never open.
+  const expires = raw.cache_expires_at;
+  if (typeof expires === "number" && Number.isFinite(expires) && expires > ts) {
+    info.cache_expires_at = expires;
+  }
   if (typeof raw.ns === "string" && raw.ns !== "") info.ns = raw.ns;
   if (typeof raw.model === "string" && raw.model !== "") info.model = raw.model;
   if (typeof raw.credential === "string" && raw.credential !== "") info.credential = raw.credential;
@@ -77,9 +89,10 @@ interface CachedSeries {
  * expiring on schedule while a subagent chatters.
  *
  * The daemon also decides WHICH series is a session's main one, since that
- * verdict needs a view across sessions that no single client has. Two signals
- * decide it, and both are observations rather than declarations — the gateway
- * reports no such flag:
+ * verdict needs a view across sessions that no single client has. A gateway
+ * from v0.33.0 on states it per event (`origin`), and where it does, that is
+ * the answer. The two signals below are what the daemon estimated with before
+ * the gateway could say, and they still serve events that carry no `origin`:
  *
  *  - A prefix seen under more than one session is a subagent's. A main
  *    series' system prompt carries that session's cwd and git status, so it
@@ -156,11 +169,29 @@ export class LlmRequestCache {
   snapshot(now = Date.now()): LlmRequestInfo[] {
     const live: CachedSeries[] = [];
     for (const [key, series] of this.entries) {
-      if (series.info.ts * 1000 + LLM_PROMPT_CACHE_TTL_MS <= now) {
+      if (llmCacheWindowEndMs(series.info) <= now) {
         this.entries.delete(key);
         continue;
       }
       live.push(series);
+    }
+    // A gateway that reports `origin` has answered the question the two
+    // signals below only estimate, so for those sessions the estimate is not
+    // consulted at all: the session's own series is the newest one the
+    // gateway called "main", and a session showing only "sub"/"unknown" gets
+    // no main rather than a guessed one. Newest rather than earliest-seen
+    // because a stated main series can legitimately be replaced (a compaction
+    // rewrites the system prompt, so the prefix changes) and the live cache
+    // is the later one.
+    const stated = new Map<string, CachedSeries>();
+    const statedSids = new Set<string>();
+    for (const series of live) {
+      if (series.info.origin === undefined) continue;
+      const sid = series.info.session_id;
+      statedSids.add(sid);
+      if (series.info.origin !== "main") continue;
+      const best = stated.get(sid);
+      if (!best || series.info.ts > best.info.ts) stated.set(sid, series);
     }
     // One main per session: the earliest-seen of its series that isn't a
     // known subagent's. Computed from what is live right now, which is what
@@ -171,6 +202,7 @@ export class LlmRequestCache {
     for (const series of live) {
       if (this.isShared(series.info.prefix)) continue;
       const sid = series.info.session_id;
+      if (statedSids.has(sid)) continue;
       const best = mainKey.get(sid);
       if (!best || series.firstSeen < best.firstSeen) mainKey.set(sid, series);
     }
@@ -184,11 +216,12 @@ export class LlmRequestCache {
     // where there is nothing left to separate.
     for (const series of live) {
       const sid = series.info.session_id;
-      if (mainKey.has(sid)) continue;
+      if (statedSids.has(sid) || mainKey.has(sid)) continue;
       const best = fallback.get(sid);
       if (!best || series.info.ts > best.info.ts) fallback.set(sid, series);
     }
     for (const [sid, series] of fallback) mainKey.set(sid, series);
+    for (const [sid, series] of stated) mainKey.set(sid, series);
     return live.map((series) => ({
       ...series.info,
       main: mainKey.get(series.info.session_id) === series,

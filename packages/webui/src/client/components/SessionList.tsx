@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentInfo, LastLiveSession, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
+import type {
+  AgentInfo,
+  LastLiveSession,
+  LlmRequestInfo,
+  PeerInfo,
+  SessionSearchHit,
+} from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { prefillSidebarState } from "../session-creator.ts";
@@ -436,6 +442,8 @@ function SessionRowItem({
   statusBadge,
   modelEffort,
   cacheTs,
+  cacheExpiresAt,
+  cacheOrigin,
   sayUnread,
 }: {
   row: SessionRow;
@@ -449,17 +457,22 @@ function SessionRowItem({
    * 無し等) 行で、その場合は何も足さない。 */
   modelEffort: ModelEffortInfo | null;
   /** この sid の最後の LLM リクエスト時刻 (epoch 秒) — アイコンに巻く prompt
-   * cache リング (5 分で消える) の起点。null = 直近 5 分にリクエスト無し、
-   * または daemon が gateway の event stream を購読していない (どちらもリング
-   * 非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
+   * cache リングの起点。null = 直近のキャッシュ窓が既に閉じている、または
+   * daemon が gateway の event stream を購読していない (どちらもリング非
+   * 表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
   cacheTs: number | null;
+  /** 同 event の `cache_expires_at` (epoch 秒) — リングの終点。 */
+  cacheExpiresAt?: number;
+  /** 同 event の `origin`。終点が無い時、これがあれば「キャッシュ無し = リング
+   * 無し」、無ければ「旧 gateway なので 5 分と仮定」の分岐に使う。 */
+  cacheOrigin?: LlmRequestInfo["origin"];
   /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
    * ようにするためのもので、既読は 1on1 room の 📣 バブル側で付ける。 */
   sayUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
-  const ring = useCacheRing(cacheTs);
+  const ring = useCacheRing(cacheTs, cacheExpiresAt, cacheOrigin);
   const title = sessionRowTitle(row);
   // Straight from the row: a session that announced no repo/ws shows neither
   // (kawaz r135m16: 欠けたら欠けたなり). No substitute is invented here — the
@@ -1146,6 +1159,8 @@ export function SessionList({
                 // 全 sid 分まとめて届くので、購読の有無に左右されない。
                 modelEffort={resolveModelEffort(row.sid)}
                 cacheTs={llmRequests.get(row.sid)?.ts ?? null}
+                cacheExpiresAt={llmRequests.get(row.sid)?.cache_expires_at}
+                cacheOrigin={llmRequests.get(row.sid)?.origin}
                 sayUnread={sayUnreadBy.get(row.sid) ?? 0}
               />
             ))}

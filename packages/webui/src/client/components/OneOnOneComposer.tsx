@@ -182,7 +182,12 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   // textarea (開いている時) に緑リングが巻かれ、5 分かけて時計回りに消える
   // (kawaz r99m25-m27)。宛先が sid で一意に決まる 1on1 composer だからこそ
   // 「今送るとキャッシュに乗るか」を送信 UI そのものに出せる。
-  const cacheRing = useCacheRing(state.llmRequests.get(sid)?.ts ?? null);
+  const cacheRequest = state.llmRequests.get(sid);
+  const cacheRing = useCacheRing(
+    cacheRequest?.ts ?? null,
+    cacheRequest?.cache_expires_at,
+    cacheRequest?.origin,
+  );
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
