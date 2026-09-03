@@ -3,7 +3,7 @@ title: webui が daemon の version 不一致を検知して自動リロード�
 status: open
 category: task
 created: 2026-09-03T09:47:44+09:00
-last_read:
+last_read: 2026-09-03T09:48:55+09:00
 open_entered: 2026-09-03T09:47:44+09:00
 wip_entered:
 blocked_entered:
