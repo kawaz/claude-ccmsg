@@ -1286,7 +1286,9 @@ export type BoundaryKind =
  * otherwise render as the agent's own final response; an
  * assistant turn carrying at least one `text` segment — the "次のユーザ向け
  * アシスタント最終レスポンス" that ends a run of intermediate entries — is
- * `"assistant-response"`; a system-origin "type:user" line that itself
+ * `"assistant-response"`, unless it is only a cache-keepalive reply
+ * (`isCacheKeepaliveReplyLine`), which folds like the keepalive notify it
+ * answers; a system-origin "type:user" line that itself
  * carries at least one **u1 (ADMIN)-発** ccmsg room message (kawaz r55 m14
  * 裁定: u1 発 ccmsg は本物のユーザ発話と同格の主役表示なので boundary
  * 維持、peer 発 ccmsg は thinking/agent と同様に fold group 内へ) is
@@ -1314,7 +1316,8 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
   if (
     line.kind === "turn" &&
     line.role === "assistant" &&
-    line.segments.some((s) => s.kind === "text")
+    line.segments.some((s) => s.kind === "text") &&
+    !isCacheKeepaliveReplyLine(line)
   )
     return { kind: "assistant-response" };
   const ccmsgMessages = extractCcmsgMessages(line);
@@ -1399,6 +1402,30 @@ export function isPeerMessageLine(line: ParsedLine): boolean {
  * can't disagree about what is agent speech. */
 export function isApiErrorLine(line: ParsedLine): boolean {
   return line.kind === "turn" && line.assistantMessageKind === "api-error";
+}
+
+/** The one line a session says back to the LLM gateway's prompt-cache
+ * keepalive marker. The marker asks for exactly this and nothing else, so a
+ * conforming reply is entirely the gateway's bookkeeping — nothing the session
+ * decided, and nothing a reader of the conversation is looking for.
+ *
+ * The reply is one opaque token, `LLMGW-KEEPALIVE-<nonce>` with the nonce in
+ * base64url, matched strictly: a turn that merely mentions the token, or
+ * answers with extra prose around it, is real speech and stays a bubble. */
+const CACHE_KEEPALIVE_REPLY = /^LLMGW-KEEPALIVE-[A-Za-z0-9_-]+$/;
+
+/** True for an assistant turn that is nothing but a cache-keepalive reply —
+ * one `text` segment, whose whole content matches, and no thinking or tool
+ * call alongside it. The assistant-side mirror of the keepalive *notify*,
+ * which folds because `classifyUserMessage` marks it system-origin: both
+ * halves of the exchange become fold items rather than disappearing, so
+ * opening the fold still shows what was said. A turn carrying thinking or a
+ * tool call did more than the marker asked, and is left as a bubble. */
+export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
+  if (line.kind !== "turn" || line.role !== "assistant") return false;
+  if (line.segments.length !== 1) return false;
+  const segment = line.segments[0]!;
+  return segment.kind === "text" && CACHE_KEEPALIVE_REPLY.test(segment.text);
 }
 
 /** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間

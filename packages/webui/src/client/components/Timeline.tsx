@@ -2032,9 +2032,10 @@ function LineView({
     );
   }
   // 残り: thinking/tool_use-only の assistant turn、tool-result-only の
-  // user turn — 中身の各 segment 自体が (SegmentView 経由で) fold 済みの
-  // 1 行 summary を持つので、turn の外枠はプレーンな container のまま
-  // (二重に時刻を出さない)。
+  // user turn、そして cache-keepalive 応答 (text 1 個だけの assistant turn。
+  // classifyBoundaryLine が boundary から外すのでここへ来る) — 中身の各
+  // segment 自体が (SegmentView 経由で) fold 済みの 1 行 summary を持つので、
+  // turn の外枠はプレーンな container のまま (二重に時刻を出さない)。
   return (
     <ItemRawToggle offset={offset}>
       <div class="tl-line">

@@ -21,6 +21,7 @@ import {
   groupTimelineLines,
   isAgentCommunicationSegment,
   isApiErrorLine,
+  isCacheKeepaliveReplyLine,
   isDirectFoldEntry,
   isPeerMessageLine,
   agentCommunicationCount,
@@ -4051,6 +4052,77 @@ describe("classifyBoundaryLine", () => {
 
   test("a non-boundary line (thinking-only assistant turn) -> null", () => {
     expect(classifyBoundaryLine(assistantThinking("hmm"))).toBeNull();
+  });
+});
+
+// LLM gateway の prompt-cache keepalive marker への応答 (`LLMGW-KEEPALIVE-
+// <nonce>` トークン 1 個だけの assistant text) は gateway の帳簿であって会話
+// ではないので、notify 側 (system-origin user メッセージ) と同じく fold 内の
+// 1 行に落とす。
+describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
+  const assistantContent = (content: unknown[]) =>
+    parseTranscriptLine(
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content } }),
+    );
+  const reply = (text: string) => assistantContent([{ type: "text", text }]);
+
+  test("the exact token on its own -> not a boundary (folds)", () => {
+    const line = reply("LLMGW-KEEPALIVE-Ab3-_xY9");
+    expect(isCacheKeepaliveReplyLine(line)).toBe(true);
+    expect(classifyBoundaryLine(line)).toBeNull();
+  });
+
+  // marker の指示どおりならトークン 1 個だけ。前後に文章が付く / 別の行が
+  // 続く応答は指示に従っていない = 隠さない。
+  const notReplies: [string, string][] = [
+    ["extra prose after", "LLMGW-KEEPALIVE-n1\nok, done"],
+    ["prose before", "Sure:\nLLMGW-KEEPALIVE-n1"],
+    ["merely mentioning the token", "I replied with LLMGW-KEEPALIVE-n1 earlier."],
+    ["no nonce", "LLMGW-KEEPALIVE-"],
+    ["nonce with an out-of-alphabet character", "LLMGW-KEEPALIVE-n1!"],
+    ["trailing space", "LLMGW-KEEPALIVE-n1 "],
+    ["lowercased token", "llmgw-keepalive-n1"],
+  ];
+  for (const [name, text] of notReplies) {
+    test(`${name} -> a normal assistant bubble`, () => {
+      const line = reply(text);
+      expect(isCacheKeepaliveReplyLine(line)).toBe(false);
+      expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+    });
+  }
+
+  test("thinking alongside the reply -> a normal assistant bubble", () => {
+    const line = assistantContent([
+      { type: "thinking", thinking: "hmm" },
+      { type: "text", text: "LLMGW-KEEPALIVE-n1" },
+    ]);
+    expect(isCacheKeepaliveReplyLine(line)).toBe(false);
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+  });
+
+  test("a tool call alongside the reply -> a normal assistant bubble", () => {
+    const line = assistantContent([
+      { type: "text", text: "LLMGW-KEEPALIVE-n1" },
+      { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "a" } },
+    ]);
+    expect(isCacheKeepaliveReplyLine(line)).toBe(false);
+    expect(classifyBoundaryLine(line)).toEqual({ kind: "assistant-response" });
+  });
+
+  // 旧 marker (`... reply with exactly "ok".`) への応答は gateway 側が文言を
+  // 変える前のもの。ccmsg は新形式だけ扱うので、素の "ok" はバブルのまま。
+  test("a bare 'ok' -> a normal assistant bubble", () => {
+    expect(isCacheKeepaliveReplyLine(reply("ok"))).toBe(false);
+  });
+
+  // fold される = 前後の中間エントリと 1 つの fold group にまとまる
+  // (standalone entry として turn を切らない)。
+  test("the reply joins the surrounding fold group instead of splitting it", () => {
+    const lines = [assistantThinking("hmm"), reply("LLMGW-KEEPALIVE-n1")];
+    const groups = groupTimelineLines(lines, [0, 1]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.kind).toBe("fold");
+    expect(groups[0]!.kind === "fold" ? groups[0]!.entries : []).toHaveLength(2);
   });
 });
 
