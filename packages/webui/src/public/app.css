@@ -277,6 +277,19 @@ a {
   color: var(--accent);
 }
 
+/* version 不一致の手動リロード導線。アイコンボタン群と違って文字を出すのは、
+ * 「押すと今の画面が捨てられる」ことを記号だけで伝えられないため。 */
+#app-version-mismatch {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 0.35rem;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: var(--space-4) var(--space-9);
+  white-space: nowrap;
+}
+
 #app-back:disabled,
 #app-forward:disabled {
   opacity: 0.3;

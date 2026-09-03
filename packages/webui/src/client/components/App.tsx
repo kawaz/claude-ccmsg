@@ -260,6 +260,20 @@ export function App() {
         >
           &#8635;
         </button>
+        {/* 自動リロードを見送った version 不一致 (version-guard.ts) の受け皿。
+         * 書きかけを抱えたタブと、リロードしても bundle が入れ替わらなかった
+         * タブがここに来る — どちらも勝手にページを捨てられないので、押す
+         * タイミングをユーザに渡す。 */}
+        {state.versionMismatch !== null ? (
+          <button
+            id="app-version-mismatch"
+            type="button"
+            title={`daemon が v${state.versionMismatch} に更新されています。この画面は古いままなので、再読み込みしてください`}
+            onClick={() => window.location.reload()}
+          >
+            新しい版 v{state.versionMismatch}
+          </button>
+        ) : null}
       </header>
       <div id="layout" style={{ "--sidebar-width": `${sidebarWidth}px` }}>
         <Sidebar state={state} />

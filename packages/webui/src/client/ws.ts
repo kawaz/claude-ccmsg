@@ -76,8 +76,11 @@ import type {
   TranscriptSubscribeResponse,
   TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
+import { VERSION } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
+import { hasUnsentInput } from "./unsent-input.ts";
+import { browserVersionGuardEnv, reactToDaemonVersion } from "./version-guard.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
@@ -542,6 +545,18 @@ export function createWsClient(
       // SessionView は「hyoui_session_id 解決済み かつ この URL 有り」の
       // 両条件でのみ Terminal タブを出す。
       if (hello.ok) {
+        // bundle と daemon の version 照合は handshake の他の何よりも先。
+        // 不一致のまま先へ進むと、wire protocol が動いた upgrade
+        // (v0.136.0 の request_id 必須化) では以降の全 op が失敗して沈黙する。
+        // 一致していれば dispatch は null で、前の接続で立った導線を畳む。
+        const outcome = reactToDaemonVersion(
+          hello.version,
+          browserVersionGuardEnv(VERSION, hasUnsentInput),
+        );
+        dispatch({
+          type: "version-mismatch/detected",
+          daemonVersion: outcome === "notified" ? hello.version : null,
+        });
         dispatch({
           type: "terminal-gateway/loaded",
           url: hello.terminal_gateway_url ?? null,

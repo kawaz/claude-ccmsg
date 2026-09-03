@@ -3,6 +3,7 @@ import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { useApp } from "../context.ts";
 import { memberLabel } from "../utils.ts";
+import { registerUnsentInput } from "../unsent-input.ts";
 import {
   extractTransferFiles,
   hasPendingUpload,
@@ -134,6 +135,14 @@ export function Composer({
   useEffect(() => {
     onDraftChange?.(hasDraft);
   }, [hasDraft, onDraftChange]);
+
+  // room の Composer の書きかけは localStorage に載らない (1on1 の draft と
+  // 違ってリロードで本当に消える) ので、version 不一致の自動リロード判定に
+  // 「消えては困る入力がある」と申告しておく。version-guard.ts 参照。
+  useEffect(() => {
+    if (!hasDraft) return;
+    return registerUnsentInput();
+  }, [hasDraft]);
 
   /** 添付エントリを一件追加し、XHR upload を開始する。DR-0015 §2.5 の
    *  「選択時 即 upload、直ちに送信はしない」経路。placeholder 挿入は

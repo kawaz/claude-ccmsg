@@ -10,6 +10,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createWsClient } from "../src/client/ws.ts";
 import { initialState, type Action } from "../src/client/store.ts";
+import { VERSION } from "@ccmsg/protocol";
+import { registerUnsentInput, resetUnsentInput } from "../src/client/unsent-input.ts";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -104,7 +106,12 @@ let storage: Record<string, string> = {};
 // "WebSocket is not defined" on CI runners where this file happens to run
 // first; locally the file order differed and hid it.)
 const originalGlobals: Record<string, unknown> = {};
-const MOCKED_GLOBALS = ["WebSocket", "location", "localStorage"] as const;
+const MOCKED_GLOBALS = ["WebSocket", "location", "localStorage", "sessionStorage"] as const;
+
+// version-guard の自動リロード観測用。location.reload() は実行せずここを
+// 数えるだけにして、テストプロセスが実ページ遷移を試みないようにする。
+let reloads = 0;
+let sessionStore: Record<string, string> = {};
 
 // Every handle created in a test is closed in afterEach even if the test
 // fails mid-way: close() also cancels the client's scheduled auto-reconnect
@@ -120,7 +127,21 @@ beforeEach(() => {
     originalGlobals[key] = (globalThis as any)[key];
   }
   (globalThis as any).WebSocket = MockWebSocket;
-  (globalThis as any).location = { protocol: "http:", host: "localhost:8642" };
+  reloads = 0;
+  sessionStore = {};
+  (globalThis as any).location = {
+    protocol: "http:",
+    host: "localhost:8642",
+    reload: () => {
+      reloads++;
+    },
+  };
+  (globalThis as any).sessionStorage = {
+    getItem: (k: string) => sessionStore[k] ?? null,
+    setItem: (k: string, v: string) => {
+      sessionStore[k] = v;
+    },
+  };
   (globalThis as any).localStorage = {
     getItem: (k: string) => storage[k] ?? null,
     setItem: (k: string, v: string) => {
@@ -1741,5 +1762,70 @@ describe("createWsClient session_status push (DR-0020)", () => {
         },
       },
     ]);
+  });
+});
+
+// 古い bundle のまま新 daemon と喋り続けるタブを畳む (issue 2026-09-03)。
+// 判定そのものの分岐は version-guard.test.ts が持つので、ここで見るのは
+// 「onOpen の hello 応答が判定に繋がっていて、接続のたびに通る」こと。
+describe("createWsClient daemon version guard", () => {
+  /** hello だけ返して onOpen の version 判定を通す (以降の handshake の
+   *  応答は判定に関与しないので返さない)。 */
+  async function helloWith(version: string, dispatch: (a: Action) => void): Promise<void> {
+    const handle = createWsClient(dispatch, () => initialState());
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[instances.length - 1];
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    ws1.triggerMessage(JSON.stringify({ ok: true, version }));
+    await Promise.resolve().then(() => Promise.resolve());
+  }
+
+  function newerThanBundle(): string {
+    const major = Number.parseInt(VERSION.split(".")[0] ?? "0", 10);
+    return `${major + 1}.0.0`;
+  }
+
+  afterEach(() => {
+    resetUnsentInput();
+  });
+
+  test("bundle と同じ version の daemon にはリロードも通知もしない", async () => {
+    const actions: Action[] = [];
+    await helloWith(VERSION, (a) => actions.push(a));
+    expect(reloads).toBe(0);
+    expect(actions).toContainEqual({ type: "version-mismatch/detected", daemonVersion: null });
+  });
+
+  test("daemon の方が新しければリロードし、そのタブに記録を残す", async () => {
+    const newer = newerThanBundle();
+    await helloWith(newer, () => {});
+    expect(reloads).toBe(1);
+    expect(sessionStore["ccmsg:reloaded-for-daemon-version"]).toBe(newer);
+  });
+
+  test("同じ daemon version でリロード済みのタブは再リロードせず通知を出す", async () => {
+    const newer = newerThanBundle();
+    sessionStore["ccmsg:reloaded-for-daemon-version"] = newer;
+    const actions: Action[] = [];
+    await helloWith(newer, (a) => actions.push(a));
+    expect(reloads).toBe(0);
+    expect(actions).toContainEqual({
+      type: "version-mismatch/detected",
+      daemonVersion: newer,
+    });
+  });
+
+  test("書きかけを抱えたタブはリロードせず通知を出す", async () => {
+    const newer = newerThanBundle();
+    registerUnsentInput();
+    const actions: Action[] = [];
+    await helloWith(newer, (a) => actions.push(a));
+    expect(reloads).toBe(0);
+    expect(actions).toContainEqual({
+      type: "version-mismatch/detected",
+      daemonVersion: newer,
+    });
   });
 });

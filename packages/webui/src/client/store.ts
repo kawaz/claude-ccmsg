@@ -206,6 +206,11 @@ export interface AppState {
   agents: AgentInfo[];
   agentsLoaded: boolean;
   daemonInfo: DaemonInfo | null;
+  /** hello が名乗った daemon version が、この bundle より新しかったときの
+   * その version。自動リロードを見送った (書きかけがある / 一度リロードしても
+   * 解消しなかった) タブだけがここに値を持ち、topbar がユーザ操作でのリロード
+   * 導線を出す。判定と見送りの理由は version-guard.ts が持つ。 */
+  versionMismatch: string | null;
   /** DR-0023 host translation capability, probed once after each hello. */
   hostTranslatorAvailable: boolean;
   /** Web gateway (hyoui) の base URL。hello response の
@@ -350,6 +355,7 @@ export function initialState(): AppState {
     agents: [],
     agentsLoaded: false,
     daemonInfo: null,
+    versionMismatch: null,
     hostTranslatorAvailable: false,
     terminalGatewayUrl: null,
     llmUsageAvailable: false,
@@ -413,6 +419,10 @@ export type Action =
   // whole non-expired set on both the live push and the subscribe catch-up.
   | { type: "llm-requests/loaded"; requests: LlmRequestInfo[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
+  // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
+  // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
+  // bundle と揃っていれば導線を引っ込める。
+  | { type: "version-mismatch/detected"; daemonVersion: string | null }
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
@@ -1046,6 +1056,8 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         daemonInfo: { version: action.version, exe: action.exe, script: action.script },
       };
+    case "version-mismatch/detected":
+      return { ...state, versionMismatch: action.daemonVersion };
     case "translator/availability":
       return { ...state, hostTranslatorAvailable: action.host };
     case "terminal-gateway/loaded":
