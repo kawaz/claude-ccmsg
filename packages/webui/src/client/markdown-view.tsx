@@ -1473,7 +1473,7 @@ export function parseMarkdownDocument(source: string): Root {
  * The output is wrapped in `<div class="md md-restricted">`; `.md-restricted`
  * applies `white-space: pre-wrap` so bare newlines in the user's message
  * render as line breaks (matching how the composer showed them). */
-export function renderRestrictedMarkdown(source: string): VNode {
+export function renderRestrictedMarkdown(source: string, issueRepo?: string): VNode {
   const lines = source.split("\n");
   const blocks: (VNode | string)[] = [];
   let key = 0;
@@ -1485,7 +1485,7 @@ export function renderRestrictedMarkdown(source: string): VNode {
     pending = [];
     blocks.push(
       <span class="md-restricted-text" key={`b${key++}`}>
-        {renderRestrictedInline(text, `b${key}`)}
+        {renderRestrictedInline(text, `b${key}`, issueRepo)}
       </span>,
     );
   };
@@ -1517,7 +1517,7 @@ export function renderRestrictedMarkdown(source: string): VNode {
       const text = quoted.join("\n");
       blocks.push(
         <blockquote key={`b${key++}`}>
-          <span class="md-restricted-text">{renderRestrictedInline(text, `b${key}`)}</span>
+          <span class="md-restricted-text">{renderRestrictedInline(text, `b${key}`, issueRepo)}</span>
         </blockquote>,
       );
       continue;
@@ -1551,7 +1551,39 @@ export function renderRestrictedMarkdown(source: string): VNode {
  * A backtick or `[` with no matching pair on the same string is left
  * verbatim (no swallowing). Scanning is left-to-right with `lastIndex`
  * tracked manually so each character is claimed by at most one token. */
-function renderRestrictedInline(text: string, keyPrefix: string): (VNode | string)[] {
+/** Plain text under restricted rendering: verbatim, except that `#N` issue
+ * references become links when the repo is known (kawaz r259m55). The
+ * characters are untouched — only an href is attached — so this stays within
+ * restricted mode's promise of not reinterpreting what the user typed. */
+function renderRestrictedText(
+  text: string,
+  keyPrefix: string,
+  issueRepo: string | undefined,
+): (VNode | string)[] {
+  const pieces = splitTextForIssueRefs(text, issueRepo);
+  if (!pieces.some((p) => p.href)) return [text];
+  return pieces.map((p, i) =>
+    p.href ? (
+      <a
+        key={`${keyPrefix}i${i}`}
+        class="md-issue-link"
+        href={p.href}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        {p.text}
+      </a>
+    ) : (
+      p.text
+    ),
+  );
+}
+
+function renderRestrictedInline(
+  text: string,
+  keyPrefix: string,
+  issueRepo?: string,
+): (VNode | string)[] {
   // Match either `code` OR [text](url). Alternation is left-to-right so a
   // literal `[foo](bar)` inside `code` stays inside the code span (the
   // backtick match wins first at that position).
@@ -1565,7 +1597,8 @@ function renderRestrictedInline(text: string, keyPrefix: string): (VNode | strin
   let n = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last)
+      out.push(...renderRestrictedText(text.slice(last, m.index), `${keyPrefix}t${n++}`, issueRepo));
     if (m[1] !== undefined) {
       out.push(
         <code class="md-inline-code" key={`${keyPrefix}c${n++}`}>
@@ -1579,7 +1612,8 @@ function renderRestrictedInline(text: string, keyPrefix: string): (VNode | strin
     }
     last = m.index + m[0].length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length)
+    out.push(...renderRestrictedText(text.slice(last), `${keyPrefix}t${n++}`, issueRepo));
   return out.length > 0 ? out : [text];
 }
 
@@ -1748,9 +1782,8 @@ export function MarkdownView({
   /** kawaz r259 m1: `owner/name` of the repository this text belongs to.
    * Given, `#NNN` in prose links to that repo's GitHub issue; omitted (no
    * attributable session, or a session outside the repos path convention),
-   * `#NNN` stays plain text. Ignored in `restricted` mode — a user typing
-   * `#123 の件` is writing prose, and that mode deliberately renders their
-   * text verbatim. */
+   * `#NNN` stays plain text. Applies in `restricted` mode too: the user's
+   * characters are still rendered verbatim, an href is merely attached. */
   issueRepo?: string;
 }) {
   const search =
@@ -1761,7 +1794,7 @@ export function MarkdownView({
   const sectionFold = foldSections && !restricted;
   const sectionStore = useMemo(() => new FoldOpenStore(), [source, sectionFold]);
   return useMemo(() => {
-    if (restricted) return renderRestrictedMarkdown(source);
+    if (restricted) return renderRestrictedMarkdown(source, issueRepo);
     const parsed = parseMarkdownDocument(source);
     const headings = tableOfContents ? extractMarkdownHeadings(parsed) : [];
     const root = sectionFold

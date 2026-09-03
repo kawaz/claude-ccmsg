@@ -146,6 +146,7 @@ export function LinkedMarkdownView({
   highlightWords,
   onMatchClick,
   restricted = false,
+  issueRepo,
 }: {
   source: string;
   ctx: FilePathResolveCtx | undefined;
@@ -159,6 +160,10 @@ export function LinkedMarkdownView({
    * churned by noise. Hooks stay called unconditionally so React's call
    * order is stable regardless of the flag. */
   restricted?: boolean;
+  /** Repository for `#N` issue links when the sender has none to derive it
+   * from (a user-authored room message, `ctx` undefined). Falls back to
+   * `ctx.repo` when omitted. */
+  issueRepo?: string;
 }) {
   const probeTarget = restricted ? undefined : probeSource === undefined ? source : probeSource;
   const probeCtx = restricted ? undefined : ctx;
@@ -177,7 +182,7 @@ export function LinkedMarkdownView({
       filePathLinker={linker}
       pathLinker={pathLinker}
       restricted={restricted}
-      issueRepo={ctx?.repo}
+      issueRepo={issueRepo ?? ctx?.repo}
     />
   );
 }

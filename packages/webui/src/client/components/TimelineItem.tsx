@@ -62,6 +62,18 @@ export function bubbleHue(room: RoomState | undefined, fromId: string): number |
  * cwd — MarkdownView then renders inline code plainly, same as before this
  * DR. Kept as a pure function on top of `MemberInfo` + `PeerInfo[]` so it's
  * trivially testable in isolation. */
+/** The repository a user-authored (u1) message in this room refers to when it
+ * writes `#N`: the room's session members share it in the common case (a room
+ * is a conversation about one repo), so take the first member that announced
+ * one. `undefined` when no member did — `#N` then stays plain text, same as
+ * for an agent message from a repo-less session. */
+export function issueRepoForRoom(room: RoomState): string | undefined {
+  for (const member of room.membersById.values()) {
+    if (member.repo) return member.repo;
+  }
+  return undefined;
+}
+
 export function filePathCtxForSender(
   room: RoomState,
   peers: readonly PeerInfo[],
@@ -150,8 +162,8 @@ function MsgItem({
       <div class="msg-body">
         {renderAsMarkdown ? (
           // Only agent-authored markdown messages carry file-path links; user
-          // (u1) messages fall through to restricted mode below where the
-          // linker context is dropped anyway.
+          // (u1) messages fall through to restricted mode below, which keeps
+          // `#N` issue links (kawaz r259m55) but no file-path linker.
           <LinkedMarkdownView source={event.msg} ctx={filePathCtx} />
         ) : (
           // kawaz r55 m12: user-authored msgs get restricted markdown — only
@@ -161,7 +173,12 @@ function MsgItem({
           // `<R G B>` doesn't lose its brackets. Previously this branch
           // rendered `event.msg` as a raw string which lost inline code
           // rendering the user did intend.
-          <LinkedMarkdownView source={event.msg} ctx={undefined} restricted />
+          <LinkedMarkdownView
+            source={event.msg}
+            ctx={undefined}
+            restricted
+            issueRepo={issueRepoForRoom(room)}
+          />
         )}
       </div>
     </div>

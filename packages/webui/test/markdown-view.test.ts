@@ -949,6 +949,24 @@ describe("renderRestrictedMarkdown", () => {
     expect(flattenText(vnode)).toBe(src);
   });
 
+  test("#N becomes an issue link when the repo is known, text still verbatim (kawaz r259m55)", () => {
+    const src = "#12 と owner/other#3#issuecomment-9 の件、`#4` は code";
+    const vnode = renderRestrictedMarkdown(src, "owner/repo");
+    // Characters untouched (the backticks are the code span's own markup).
+    expect(flattenText(vnode)).toBe(src.replaceAll("`", ""));
+    const links = collect(vnode, (n) => n.type === "a");
+    expect(links.map((a) => (a.props as { href: string }).href)).toEqual([
+      "https://github.com/owner/repo/issues/12",
+      "https://github.com/owner/other/issues/3#issuecomment-9",
+    ]);
+    // Without a repo only the fully qualified reference can still link.
+    expect(
+      collect(renderRestrictedMarkdown(src), (n) => n.type === "a").map(
+        (a) => (a.props as { href: string }).href,
+      ),
+    ).toEqual(["https://github.com/owner/other/issues/3#issuecomment-9"]);
+  });
+
   test("<R G B> is NOT an autolink / HTML tag — angle brackets survive", () => {
     const src = "色は <R G B> の順で並ぶ";
     const vnode = renderRestrictedMarkdown(src);
