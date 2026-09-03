@@ -181,10 +181,10 @@ describe("session_dump_file op", () => {
     expect(event?.error.msg).toContain("not found in this session's transcript");
   });
 
-  test("requires a request_id, since the outcome only travels on the event", async () => {
+  test("requires a request_id, like every other op", async () => {
     const { daemon } = daemonWith({ transcript: true });
     const [reply] = await requestFrames(daemon, USER, { op: "session_dump_file", sid: SID }, 1);
     expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+    expect(reply?.error.code).toBe(ErrorCode.bad_request);
   });
 });

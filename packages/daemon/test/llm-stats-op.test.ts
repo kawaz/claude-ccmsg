@@ -173,9 +173,9 @@ describe("llm_stats op", () => {
     expect(reply?.error.code).toBe(ErrorCode.bad_request);
   });
 
-  test("refuses a request with no request_id (2-phase correlation is required)", async () => {
+  test("refuses a request with no request_id (every op needs one to be answered)", async () => {
     const [reply] = await requestFrames(daemonWith(URL_OK), USER, { op: "llm_stats" }, 1);
     expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+    expect(reply?.error.code).toBe(ErrorCode.bad_request);
   });
 });

@@ -16,6 +16,11 @@ export class Client {
   private lines: string[] = [];
   private waiters: Array<(line: string | null) => void> = [];
   private ended = false;
+  /** request_ids only have to be unique among this connection's in-flight
+   * requests, so a counter is enough. */
+  private nextRequestId = 0;
+  /** In-flight `request` calls, keyed by the request_id each is waiting for. */
+  private pendingReplies = new Map<string, (line: string | null) => void>();
 
   static async connect(sockPath: string): Promise<Client> {
     const client = new Client();
@@ -43,15 +48,52 @@ export class Client {
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx);
       this.buf = this.buf.slice(idx + 1);
-      const w = this.waiters.shift();
-      if (w) w(line);
+      // A reply an in-flight request is waiting for goes straight to it;
+      // everything else (stream events on a subscribed connection) joins the
+      // readable stream.
+      const claimant = this.replyWaiter(line);
+      if (claimant) claimant(line);
       else this.lines.push(line);
+    }
+    this.drain();
+  }
+
+  /** The `request` call this frame answers, if it is a reply at all.
+   *
+   * A reply with no `request_id` is handed to the oldest in-flight request:
+   * that is a daemon older than the correlation envelope, and completing a
+   * hello against one is how `ensureDaemon` discovers the version it has to
+   * replace. */
+  private replyWaiter(line: string): ((line: string) => void) | undefined {
+    if (this.pendingReplies.size === 0) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return undefined;
+    }
+    if (typeof parsed !== "object" || parsed === null || !Object.hasOwn(parsed, "ok")) {
+      return undefined;
+    }
+    const rid = (parsed as { request_id?: unknown }).request_id;
+    const key = typeof rid === "string" ? rid : this.pendingReplies.keys().next().value!;
+    const settle = this.pendingReplies.get(key);
+    if (settle) this.pendingReplies.delete(key);
+    return settle;
+  }
+
+  /** Hand buffered lines to whoever is waiting, oldest first. */
+  private drain(): void {
+    while (this.waiters.length > 0 && this.lines.length > 0) {
+      this.waiters.shift()!(this.lines.shift()!);
     }
   }
 
   private onClose(): void {
     this.ended = true;
     while (this.waiters.length) this.waiters.shift()!(null);
+    for (const settle of this.pendingReplies.values()) settle(null);
+    this.pendingReplies.clear();
   }
 
   readLine(): Promise<string | null> {
@@ -64,9 +106,20 @@ export class Client {
     this.socket.write(`${JSON.stringify(obj)}\n`);
   }
 
+  /** Send one request and wait for the reply carrying its `request_id`. The
+   * daemon answers a connection's requests concurrently, so replies may come
+   * back in any order and several requests may be outstanding at once;
+   * anything that is not a reply (a subscribed connection's stream events)
+   * stays in the readable stream for `readLine`. */
   async request<T = Record<string, unknown>>(obj: unknown): Promise<T> {
-    this.write(obj);
-    const line = await this.readLine();
+    const body = obj as Record<string, unknown>;
+    // A caller that also has to recognize a later result event (the 2-phase
+    // ops) supplies the id itself; everyone else gets one from the counter.
+    const rid = typeof body.request_id === "string" ? body.request_id : `r${++this.nextRequestId}`;
+    const line = await new Promise<string | null>((resolve) => {
+      this.pendingReplies.set(rid, resolve);
+      this.write({ ...body, request_id: rid });
+    });
     if (line === null) throw new Error("connection closed before response");
     return JSON.parse(line) as T;
   }

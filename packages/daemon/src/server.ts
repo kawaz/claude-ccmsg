@@ -1,4 +1,5 @@
 // UDS + HTTP/WS server + wire protocol dispatch + delivery (DR-0003, DR-0004).
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import {
   ADMIN_ID,
@@ -296,9 +297,44 @@ export interface Daemon {
 
 const nowIso = (): string => new Date().toISOString();
 
+/** The request `dispatch` is currently answering, for the connection it came
+ * in on. Async-local rather than a parameter because every reply already flows
+ * through `send`/`sendErr`, and threading an id through all ~55 dispatch cases
+ * (plus the helpers they call, which reply on their own) would put the same
+ * value in every signature in this file.
+ *
+ * Design rationale: the alternative to a request-scoped store is a field on
+ * Conn, which the FIFO removal below rules out — several requests of one
+ * connection are now in flight at once, so "the id this connection is
+ * answering" is not a property of the connection. */
+const activeRequest = new AsyncLocalStorage<{ conn: Conn; requestId: string }>();
+
+/** True for the frames that answer a request: replies carry `ok`, pushes carry
+ * `ev`. The 2-phase result events carry both and are classified as pushes,
+ * exactly as client authors are told to classify them (see
+ * TranslateResultEvent's doc comment). */
+function isReplyFrame(obj: unknown): obj is Record<string, unknown> {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    Object.hasOwn(obj, "ok") &&
+    !Object.hasOwn(obj, "ev") &&
+    !Object.hasOwn(obj, "request_id")
+  );
+}
+
 export function send(conn: Conn, obj: unknown): void {
+  // Stamp the correlation id on the way out, so no dispatch case has to
+  // remember to. Only the reply going back to the connection that asked gets
+  // one: a broadcast reaching other connections while this request runs is
+  // nobody's answer.
+  const active = activeRequest.getStore();
+  const frame =
+    active && active.conn === conn && isReplyFrame(obj)
+      ? { ...obj, request_id: active.requestId }
+      : obj;
   try {
-    conn.write(`${JSON.stringify(obj)}\n`);
+    conn.write(`${JSON.stringify(frame)}\n`);
   } catch {
     // transport may be closing; delivery is best-effort
   }
@@ -1513,16 +1549,19 @@ const CLIENT_TRACE_MAX_POINTS = 8;
 /** set_title clamp: keep room titles reasonably short in room lists / tab titles. */
 const SET_TITLE_MAX_LEN = 200;
 
-/** Slow ops (translate / session_launch / session_search) use a 2-phase reply
- * (see RequestAcceptedResponse in the protocol): the direct reply is an
- * immediate ack on the arrival-order contract, and the outcome is pushed later
- * as an `ev:"*_result"` stream event correlated by the client's request_id.
- * This helper validates the id, sends the ack, and returns a completion
- * callback that pushes the result event — or silently drops it when the
- * connection is already gone (the daemon keeps no per-request state, so a
+/** Slow ops (translate / session_launch / session_search) answer in two
+ * phases (see RequestAcceptedResponse in the protocol): an immediate ack as
+ * the reply, and the outcome pushed later as an `ev:"*_result"` stream event
+ * carrying the same request_id. This helper sends the ack and returns a
+ * completion callback that pushes the result event — or silently drops it when
+ * the connection is already gone (the daemon keeps no per-request state, so a
  * disconnect leaves nothing to clean up beyond the op's own promise chain,
  * which settles into this no-op). Events are pushed only to the requesting
- * conn, not to subscribers. */
+ * conn, not to subscribers.
+ *
+ * With correlated replies this split is no longer needed to keep a slow op
+ * from delaying others; it stays because clients settle on the result event,
+ * and each op can move to a single correlated reply on its own schedule. */
 /** Final outcome payload of a 2-phase op — exactly what the matching
  * `ev:"*_result"` event carries beside its ev/request_id envelope. */
 type TwoPhaseResult =
@@ -1542,15 +1581,10 @@ type TwoPhaseResult =
 function acceptTwoPhase(
   daemon: Daemon,
   conn: Conn,
-  op: string,
   ev: string,
-  requestId: unknown,
-): ((result: TwoPhaseResult) => void) | null {
-  if (typeof requestId !== "string" || requestId === "") {
-    sendErr(conn, ErrorCode.invalid_args, `${op} requires a non-empty string request_id`);
-    return null;
-  }
-  send(conn, { ok: true, accepted: true, request_id: requestId });
+  requestId: string,
+): (result: TwoPhaseResult) => void {
+  send(conn, { ok: true, accepted: true });
   return (result) => {
     // A conn that disconnected while the op ran is no longer in
     // daemon.connections; its transport write would be a silent no-op anyway
@@ -1560,40 +1594,25 @@ function acceptTwoPhase(
   };
 }
 
-/** Per-connection FIFO for request handling.
- *
- * Ordinary (non 2-phase) replies pair with their request by arrival order on
- * the client — ws.ts settles them with `pending.shift()` — so a reply must not
- * overtake an earlier one on the same connection. Ops that await IO would do
- * exactly that, so each connection dispatches through a chain: an awaited scan
- * yields to the event loop, which unblocks every OTHER connection and the WS
- * pushes DR-0029 is about, while this connection's own replies stay ordered.
- *
- * 2-phase ops (acceptTwoPhase) queue here too, but only to send their accept
- * reply — that reply is positional like any other, so it must keep its slot.
- * The work itself runs off-chain and reports through a result event carrying a
- * request_id, which is what frees it from the ordering constraint.
- *
- * Keyed weakly so a chain dies with its connection, and each link swallows its
- * own failure so one rejected op cannot poison the rest. */
-const connOpChains = new WeakMap<Conn, Promise<void>>();
-
+/** Start handling one request. Requests of the same connection run
+ * concurrently: a reply carries the `request_id` of the request it answers
+ * (see RequestEnvelope), so a client settles it by id and an op that awaits IO
+ * no longer holds back the cheap ops queued behind it. Each request swallows
+ * its own failure so one rejected op cannot take down the connection. */
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
-  const next = (connOpChains.get(conn) ?? Promise.resolve()).then(() =>
-    handleRequestQueued(daemon, conn, line).catch((e: unknown) => {
-      daemon.log.error(`request handling failed: ${String(e)}`);
-    }),
-  );
-  connOpChains.set(conn, next);
+  void handleOneRequest(daemon, conn, line).catch((e: unknown) => {
+    daemon.log.error(`request handling failed: ${String(e)}`);
+  });
 }
 
-async function handleRequestQueued(daemon: Daemon, conn: Conn, line: string): Promise<void> {
-  // The conn can disconnect while earlier queued ops await IO. Its replies
-  // would be discarded (send() no-ops, and removeConn already tore down its
-  // subscriptions), but the registry writes would not: hello would resurrect a
-  // session entry for a socket nobody holds, and the subscribe ops would
-  // install watches with no reader and no future removeConn to clear them.
-  // Dropping the request is the same outcome as the bytes never arriving.
+async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promise<void> {
+  // Bytes that arrived before the disconnect but are read after it. Their
+  // replies would be discarded (send() no-ops), but their registry writes
+  // would not: hello would resurrect a session entry for a socket nobody
+  // holds, and the subscribe ops would install watches with no reader.
+  // Dropping the request is the same outcome as the bytes never arriving. A
+  // request already running when the disconnect lands is cleaned up after
+  // dispatch instead (see the end of this function).
   if (!daemon.connections.has(conn)) return;
   let req: Request;
   try {
@@ -1606,16 +1625,32 @@ async function handleRequestQueued(daemon: Daemon, conn: Conn, line: string): Pr
     sendErr(conn, ErrorCode.bad_request, "missing op");
     return;
   }
-  if (IDENTITY_OPS.has(req.op) && conn.identity === null) {
-    sendErr(conn, ErrorCode.hello_required, `op '${req.op}' requires hello first`);
+  // Everything from here on is answered with a correlated reply, so the id has
+  // to be known first. A request without one cannot be answered in a way its
+  // sender could pair up: report it as bad_request (uncorrelated, like the two
+  // parse failures above) rather than dispatching into a reply nobody claims.
+  if (typeof req.request_id !== "string" || req.request_id === "") {
+    sendErr(conn, ErrorCode.bad_request, `op '${req.op}' requires a non-empty string request_id`);
     return;
   }
-  try {
-    await dispatch(daemon, conn, req);
-  } catch (e) {
-    daemon.log.error(`op '${req.op}' failed: ${String(e)}`);
-    sendErr(conn, "internal", String(e));
-  }
+  await activeRequest.run({ conn, requestId: req.request_id }, async () => {
+    if (IDENTITY_OPS.has(req.op) && conn.identity === null) {
+      sendErr(conn, ErrorCode.hello_required, `op '${req.op}' requires hello first`);
+      return;
+    }
+    try {
+      await dispatch(daemon, conn, req);
+    } catch (e) {
+      daemon.log.error(`op '${req.op}' failed: ${String(e)}`);
+      sendErr(conn, "internal", String(e));
+    }
+  });
+  // A request that started before the disconnect but finished after it can
+  // still have written to the registries (hello registering a session,
+  // subscribe installing a watch) — the entry guard above only sees requests
+  // that arrived late. Repeat the teardown: it is idempotent, and this is the
+  // only place that knows the op is now done touching them.
+  if (!daemon.connections.has(conn)) removeConn(daemon, conn);
   // single choke point for "this sid did something" (checked post-dispatch so
   // a session's very first request, hello itself, also counts — conn.identity
   // is null until dispatch's "hello" case sets it).
@@ -2586,14 +2621,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, validation.code, validation.msg);
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_launch",
-        "session_launch_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "session_launch_result", req.request_id);
       // The validation success branch proves launcher exists: an absent config
       // returns launcher_not_configured before process execution is reachable.
       void executeSessionLaunch(validation, launcher!.timeout_seconds).then(
@@ -2617,21 +2645,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_kill requires a non-empty session_id");
         return;
       }
-      // 2-phase like session_launch, and for a stronger reason than latency:
-      // ordinary replies pair by arrival order, so an op held open for its
-      // whole duration (fresh `claude agents` run + up to 3s kill grace) would
-      // block every later reply on this connection behind it — the per-conn
-      // chain preserves that order rather than removing the constraint. The
-      // accept reply takes the positional slot immediately and the outcome
-      // travels on a request_id-carrying event (DR-0028 addendum).
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_kill",
-        "session_kill_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      // 2-phase like session_launch: the fresh `claude agents` run plus up to
+      // 3s of kill grace is long to hold a reply open, so the ack goes back
+      // immediately and the outcome travels on its own event (DR-0028
+      // addendum).
+      const complete = acceptTwoPhase(daemon, conn, "session_kill_result", req.request_id);
       // DR-0028 addendum (r38 mid=6): forward force through to session-kill.ts
       // for the SIGKILL escalation path. Everything else in this dispatch
       // stays the same (2-phase ack, error mapping, request_id echo).
@@ -2679,14 +2697,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, titleCheck.msg);
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_rename",
-        "session_rename_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "session_rename_result", req.request_id);
       void sessionRename(
         req.session_id,
         titleCheck.title,
@@ -2751,17 +2762,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_env requires a non-empty session_id");
         return;
       }
-      // 2-phase for session_kill's reason: the fresh `claude agents` resolution
-      // is slow, and ordinary replies pair by arrival order, so holding this
-      // one open would stall every later reply on this connection.
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_env",
-        "session_env_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      // 2-phase for session_kill's reason: the fresh `claude agents`
+      // resolution is slow.
+      const complete = acceptTwoPhase(daemon, conn, "session_env_result", req.request_id);
       void sessionEnv(req.session_id, productionEnvDeps(productionKillDeps)).then(
         (result) => {
           if (!result.found) {
@@ -2788,14 +2791,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_search' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_search",
-        "session_search_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "session_search_result", req.request_id);
       // The bounded filesystem scan is read-only but slow enough that its
       // outcome travels on the result event rather than a deferred reply.
       void sessionSearch(req, daemon.log).then(
@@ -2816,14 +2812,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'fork_origin' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "fork_origin",
-        "fork_origin_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "fork_origin_result", req.request_id);
       // Same resolver transcript_read uses, so a historical sid is answerable
       // and no path ever comes from the client.
       const resolved = await resolveTranscript(daemon.sessions, req.sid, {
@@ -2853,14 +2842,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.bad_request, "op 'session_dump_file' requires user role");
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "session_dump_file",
-        "session_dump_file_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "session_dump_file_result", req.request_id);
       // Same resolver transcript_read and fork_origin use, so a connected or a
       // historical sid is answerable and no path ever comes from the client.
       const dumpTarget = await resolveTranscript(daemon.sessions, req.sid, {
@@ -3238,15 +3220,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       // 2-phase for session_search's reason: the upstream fetch can take
-      // seconds, and ordinary replies pair by arrival order.
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "llm_usage",
-        "llm_usage_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      // seconds.
+      const complete = acceptTwoPhase(daemon, conn, "llm_usage_result", req.request_id);
       // `refresh` reaches upstream as a real probe and can spend rate limit,
       // so it is passed through only when the client asked for it explicitly
       // (the webui's manual button, never its polling).
@@ -3286,14 +3261,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         );
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "llm_stats",
-        "llm_stats_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "llm_stats_result", req.request_id);
       void fetchLlmStats(statsUrl, req.days).then(
         (result) => {
           if (!result.ok) complete({ ok: false, error: { code: result.code, msg: result.msg } });
@@ -3320,14 +3288,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.llm_status_not_configured, "llm status endpoint is not configured");
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "llm_status",
-        "llm_status_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "llm_status_result", req.request_id);
       // `refresh` makes the gateway re-read every configured status page, so
       // it is passed through only for the screen's own button — never for the
       // fetch a connecting client makes, and never for the webhook-driven
@@ -3354,14 +3315,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "translate requires a string[] texts");
         return;
       }
-      const complete = acceptTwoPhase(
-        daemon,
-        conn,
-        "translate",
-        "translate_result",
-        req.request_id,
-      );
-      if (!complete) return;
+      const complete = acceptTwoPhase(daemon, conn, "translate_result", req.request_id);
       // Translation.framework and helper process I/O are async; the outcome
       // (including capability failures like translate_unavailable) travels on
       // the result event rather than a deferred reply.

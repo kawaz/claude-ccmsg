@@ -1,10 +1,10 @@
 // Guards against the pending-resolver leak found in codex review (2026-07-10,
 // Minor 3, see docs/findings/2026-07-10-codex-review-evaluation.md): send()
-// pushes a resolver onto `pending` before the response arrives; if the socket
+// registers a resolver in `pending` before the response arrives; if the socket
 // closes before a reply comes back, that resolver used to sit forever
-// (Composer's awaited Promise hangs), and a *later* reconnected socket's
-// first reply could be mis-delivered to the stale resolver via
-// onMessage's pending.shift(). These tests exercise createWsClient against a
+// (Composer's awaited Promise hangs), and a *later* reconnected socket's reply
+// could be mis-delivered to the stale resolver through a reused request_id.
+// These tests exercise createWsClient against a
 // minimal in-memory WebSocket mock (bun's runtime has no DOM globals, so
 // WebSocket/location/localStorage are stubbed for the duration of the file).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -39,9 +39,37 @@ class MockWebSocket {
   }
 
   // --- test-only helpers to drive the mock from outside ---
+  /** Deliver one frame to the client. A reply frame (`ok`, no `ev`) that does
+   * not name a request is addressed to the oldest request this mock has not
+   * answered yet — the ordinary case, where a test just wants "the answer to
+   * what I asked". Tests about correlation itself (out-of-order replies, the
+   * 2-phase result events) put an explicit `request_id` in the frame and this
+   * leaves it alone. */
   triggerMessage(data: string): void {
-    for (const cb of this.listeners.message ?? []) cb({ data });
+    let frame = data;
+    const obj = JSON.parse(data);
+    const isReply =
+      obj !== null &&
+      typeof obj === "object" &&
+      Object.hasOwn(obj, "ok") &&
+      !Object.hasOwn(obj, "ev");
+    if (isReply && Object.hasOwn(obj, "request_id")) {
+      this.answered.add(obj.request_id);
+    } else if (isReply) {
+      const rid = this.sentRequestIds().find((id) => !this.answered.has(id));
+      if (rid !== undefined) {
+        this.answered.add(rid);
+        frame = JSON.stringify({ ...obj, request_id: rid });
+      }
+    }
+    for (const cb of this.listeners.message ?? []) cb({ data: frame });
   }
+  private sentRequestIds(): string[] {
+    return this.sent.map((line) => JSON.parse(line).request_id).filter((id) => id !== undefined);
+  }
+  /** request_ids already answered, so the next unaddressed reply moves on to
+   * the next outstanding request instead of re-answering this one. */
+  private answered = new Set<string>();
 
   triggerClose(): void {
     this.readyState = MockWebSocket.CLOSED;
@@ -55,6 +83,14 @@ class MockWebSocket {
   triggerOpen(): void {
     for (const cb of this.listeners.open ?? []) cb(undefined);
   }
+}
+
+/** The nth frame this socket sent, without its correlation envelope — so a
+ * test can assert the exact wire body (excess fields included) without
+ * restating the request_id the client stamps on every request. */
+function sentBody(ws: MockWebSocket, index: number): Record<string, unknown> {
+  const { request_id: _rid, ...body } = JSON.parse(ws.sent[index] ?? "{}");
+  return body;
 }
 
 let instances: MockWebSocket[] = [];
@@ -203,7 +239,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.fsList("sess-1");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "fs_list", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "fs_list", sid: "sess-1" });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1", path: "", entries: [] }));
     const res = await req;
@@ -221,7 +257,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.fsList("sess-1", "src");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "fs_list", sid: "sess-1", path: "src" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "fs_list", sid: "sess-1", path: "src" });
   });
 
   test("fsRead sends {op:'fs_read', sid, path} and resolves the file response", async () => {
@@ -235,7 +271,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.fsRead("sess-1", "README.md");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "fs_read",
       sid: "sess-1",
       path: "README.md",
@@ -271,7 +307,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
 
     const externalPath = "/external/shared.md";
     const req = handle.fsReadExternal("sess-1", externalPath);
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "fs_read_external",
       sid: "sess-1",
       path: externalPath,
@@ -305,7 +341,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptRead("sess-1");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_read", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "transcript_read", sid: "sess-1" });
 
     ws1.triggerMessage(
       JSON.stringify({ ok: true, sid: "sess-1", lines: ["a"], start: 0, end: 2, size: 2 }),
@@ -326,7 +362,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.transcriptRead("sess-1", { before: 100 });
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "transcript_read",
       sid: "sess-1",
       before: 100,
@@ -344,7 +380,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.transcriptRead("sess-1", { before: 100, max_bytes: 4096 });
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "transcript_read",
       sid: "sess-1",
       before: 100,
@@ -365,7 +401,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptSubscribe("sess-1");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_subscribe", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "transcript_subscribe", sid: "sess-1" });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1", size: 200 }));
     const res = await req;
@@ -384,7 +420,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptUnsubscribe("sess-1");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "transcript_unsubscribe", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "transcript_unsubscribe", sid: "sess-1" });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1" }));
     const res = await req;
@@ -418,7 +454,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(ws2.sent.length).toBe(1);
 
     // A reply arrives late on the discarded socket. Without the `socket !==
-    // ws` guard this would incorrectly settle `fresh` via pending.shift().
+    // ws` guard this would incorrectly settle `fresh` from the stale socket.
     ws1.triggerMessage(JSON.stringify({ ok: true, peers: [] }));
 
     let settled = false;
@@ -537,7 +573,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.archiveRoom("room-1", true);
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "archive_room",
       room: "room-1",
       archived: true,
@@ -562,7 +598,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.archiveRoom("room-1", false);
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({
+    expect(sentBody(ws1, 0)).toEqual({
       op: "archive_room",
       room: "room-1",
       archived: false,
@@ -581,7 +617,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.kick("room-1", "a2");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "kick", room: "room-1", id: "a2" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "kick", room: "room-1", id: "a2" });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "a2" }));
     const res = await req;
@@ -623,7 +659,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.invite("room-1", "sess-2");
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "invite", room: "room-1", sid: "sess-2" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "invite", room: "room-1", sid: "sess-2" });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: false }));
     const res = await req;
@@ -716,7 +752,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.agents();
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "agents" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "agents" });
 
     ws1.triggerMessage(
       JSON.stringify({
@@ -750,7 +786,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.ping();
-    expect(JSON.parse(ws1.sent[0] ?? "")).toEqual({ op: "ping" });
+    expect(sentBody(ws1, 0)).toEqual({ op: "ping" });
 
     ws1.triggerMessage(
       JSON.stringify({
@@ -1263,7 +1299,7 @@ describe("createWsClient agents/ping (U1)", () => {
     // and must not ask for `backlog` at all: room history is fetched per room when
     // one is opened (`op:"room_history"`), not pushed for every room at connect
     // time (kawaz r99 m12).
-    const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
+    const subscribeReq = sentBody(ws1, 2);
     expect(subscribeReq).toEqual({ op: "subscribe" });
   });
 
@@ -1307,7 +1343,7 @@ describe("createWsClient agents/ping (U1)", () => {
     );
     await tick();
 
-    const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
+    const subscribeReq = sentBody(ws1, 2);
     // Must be the fresh-reload shape (no `since_seq`), because the store was empty
     // at handshake start even though rooms/loaded has since filled it.
     expect(subscribeReq).toEqual({ op: "subscribe" });
@@ -1359,7 +1395,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
     await tick();
 
-    const subscribeReq = JSON.parse(ws1.sent[2] ?? "{}");
+    const subscribeReq = sentBody(ws1, 2);
     expect(subscribeReq).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
   });
 
@@ -1410,7 +1446,7 @@ describe("createWsClient agents/ping (U1)", () => {
     expect(reset).toEqual([{ type: "rooms/history-reset", rooms: ["r2"] }]);
     // ...and it was dispatched before subscribe went out, so the replay that
     // follows lands in rooms whose status already reflects this connection.
-    expect(JSON.parse(ws1.sent[2] ?? "{}")).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
+    expect(sentBody(ws1, 2)).toEqual({ op: "subscribe", since_seq: { r1: 5 } });
   });
 
   test("ev:'agents' push dispatches agents/loaded (live update, no request needed)", () => {

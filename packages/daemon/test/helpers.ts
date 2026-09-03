@@ -154,8 +154,11 @@ export class TestClient {
   private lines: string[] = [];
   private waiters: Array<(l: string | null) => void> = [];
   private ended = false;
-  /** Stream events that arrived while `request` was waiting for a reply. */
+  /** Stream events that arrived while `requestRaw` was waiting for a reply. */
   private eventBacklog: string[] = [];
+  private nextRequestId = 0;
+  /** In-flight `request` calls, keyed by the request_id each is waiting for. */
+  private pendingReplies = new Map<string, (line: string | null) => void>();
 
   attach(socket: Socket): void {
     this.socket = socket;
@@ -166,14 +169,42 @@ export class TestClient {
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx);
       this.buf = this.buf.slice(idx + 1);
-      const w = this.waiters.shift();
-      if (w) w(line);
+      // A reply someone is waiting for goes straight to them; anything else
+      // (stream events, replies nobody claimed) joins the readable stream.
+      const claimant = this.replyWaiter(line);
+      if (claimant) claimant(line);
       else this.lines.push(line);
+    }
+    this.drain();
+  }
+  /** The `request` call waiting for this frame, if it is a correlated reply. */
+  private replyWaiter(line: string): ((line: string) => void) | undefined {
+    if (this.pendingReplies.size === 0) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return undefined;
+    }
+    if (typeof parsed !== "object" || parsed === null || !Object.hasOwn(parsed, "ok")) {
+      return undefined;
+    }
+    const rid = (parsed as { request_id?: unknown }).request_id;
+    if (typeof rid !== "string") return undefined;
+    const settle = this.pendingReplies.get(rid);
+    if (settle) this.pendingReplies.delete(rid);
+    return settle;
+  }
+  private drain(): void {
+    while (this.waiters.length > 0 && this.lines.length > 0) {
+      this.waiters.shift()!(this.lines.shift()!);
     }
   }
   onClose(): void {
     this.ended = true;
     while (this.waiters.length) this.waiters.shift()!(null);
+    for (const settle of this.pendingReplies.values()) settle(null);
+    this.pendingReplies.clear();
   }
   readLine(): Promise<string | null> {
     if (this.lines.length) return Promise.resolve(this.lines.shift()!);
@@ -186,15 +217,33 @@ export class TestClient {
   write(obj: unknown): void {
     this.socket.write(`${JSON.stringify(obj)}\n`);
   }
-  /** Send an op and return its reply, classifying the way the real client does
-   * (ws.ts onMessage): a reply is the line carrying `ok`; everything else is a
-   * stream event and is set aside for readEvent. Two kinds of frame can arrive
-   * ahead of a reply on the same socket — an ephemeral `ev` push while the op
-   * awaits IO, and a delivered storage event when the op itself broadcasts to
-   * a room this same connection subscribes to (create_room, say, say_read...).
-   * Both must keep their place in the event stream rather than being mistaken
-   * for the reply, or every later reply on this socket is off by one. */
+  /** Send an op and return its reply, pairing the way the real clients do: by
+   * the `request_id` this stamps on the way out. Everything else on the socket
+   * — stream events, and the replies to this connection's other in-flight
+   * requests — keeps its place in the readable stream for readEvent. Several
+   * requests may therefore be outstanding at once.
+   *
+   * The reply comes back without its correlation envelope, the same shape the
+   * webui client hands its callers; a test that asserts the echo itself reads
+   * the raw frame (write + readEvent) instead. */
   async request<T = any>(obj: unknown): Promise<T> {
+    const body = obj as Record<string, unknown>;
+    const rid = typeof body.request_id === "string" ? body.request_id : `t${++this.nextRequestId}`;
+    const reply = new Promise<string | null>((resolve) => {
+      this.pendingReplies.set(rid, resolve);
+      // Frames buffered before this request even went out cannot be its reply,
+      // so only newly arriving ones are inspected (see onData).
+      this.write({ ...body, request_id: rid });
+    });
+    const line = await reply;
+    if (line === null) throw new Error("connection closed before response");
+    const { request_id: _rid, ...payload } = JSON.parse(line);
+    return payload as T;
+  }
+  /** Send a request exactly as given — no request_id stamped — and return the
+   * next reply frame. For the malformed-request cases, whose reply carries no
+   * request_id to correlate on. */
+  async requestRaw<T = any>(obj: unknown): Promise<T> {
     this.write(obj);
     for (;;) {
       const line = await this.readLine();

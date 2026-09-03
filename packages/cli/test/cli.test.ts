@@ -62,7 +62,7 @@ async function holdSession(sock: string, sid: string): Promise<() => void> {
       unix: sock,
       socket: {
         open(s) {
-          s.write(`${JSON.stringify({ op: "hello", role: "session", sid })}\n`);
+          s.write(`${JSON.stringify({ op: "hello", role: "session", sid, request_id: "hold" })}\n`);
         },
         data(s) {
           resolve(() => {
@@ -1162,8 +1162,10 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           unix: sock,
           socket: {
             open(s) {
-              s.write(`${JSON.stringify({ op: "hello", role: "user" })}\n`);
-              s.write(`${JSON.stringify({ op: "archive_room", room: r1.room, archived: true })}\n`);
+              s.write(`${JSON.stringify({ op: "hello", role: "user", request_id: "h" })}\n`);
+              s.write(
+                `${JSON.stringify({ op: "archive_room", room: r1.room, archived: true, request_id: "a" })}\n`,
+              );
             },
             data(s, chunk) {
               chunks.push(new TextDecoder().decode(chunk));

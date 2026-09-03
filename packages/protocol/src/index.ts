@@ -970,6 +970,27 @@ export type Identity = SessionIdentity | UserIdentity;
 // Wire: requests (client -> daemon), one JSON per line
 // ---------------------------------------------------------------------------
 
+/** Correlation envelope every request carries (DR-0029 addendum). The daemon
+ * echoes `request_id` on the matching reply, so a client pairs request and
+ * reply by id and never by arrival order — which is what lets the daemon run
+ * the requests of one connection concurrently instead of through a FIFO.
+ *
+ * Uniqueness only has to hold among one connection's in-flight requests; a
+ * monotonic counter per socket is enough, and ids may be reused once settled.
+ * Reject-before-dispatch failures that cannot name a request (unparseable
+ * JSON, missing `op`, missing `request_id`) are the one class of reply that
+ * carries no id — a client can only log those, never settle a caller with
+ * them. */
+export interface RequestEnvelope {
+  request_id: string;
+}
+
+/** A request as a caller composes it: the body without the correlation
+ * envelope, which the client's transport stamps on the way out. Distributive
+ * so each member of the union keeps its own discriminated `op`. */
+export type RequestBodyOf<T> = T extends unknown ? Omit<T, "request_id"> : never;
+export type RequestInput = RequestBodyOf<Request>;
+
 export interface HelloRequest {
   op: "hello";
   role: "session" | "user";
@@ -1183,19 +1204,11 @@ export interface DirTreeEntry {
  * the opaque values, builds env/argv, and executes the configured command.
  *
  * 2-phase reply: launching awaits the whole run (up to timeout_seconds + kill
- * escalation, potentially ~10s), and the wire protocol has no request ids for
- * ordinary ops — clients pair replies by arrival order, so a deferred reply
- * used to hold back every later reply on the same connection (the webui's
- * single WS connection stalled all panes behind one slow op). Instead the
- * daemon acks immediately with RequestAcceptedResponse (on the arrival-order
- * contract) and pushes the outcome as an ev:"session_launch_result" event
- * correlated by `request_id` (events live outside the arrival-order contract,
- * like transcript/session_status pushes). */
+ * escalation, potentially ~10s). The daemon acks immediately with
+ * RequestAcceptedResponse and pushes the outcome as an
+ * ev:"session_launch_result" event carrying the same `request_id`. */
 export interface SessionLaunchRequest {
   op: "session_launch";
-  /** Client-generated correlation id echoed in the ack and the result event.
-   * Uniqueness only needs to hold among this connection's in-flight requests. */
-  request_id: string;
   /** Working directory for the launched process, and the value the command
    * sees as `$CWD`. Carried as its own field rather than inside `params`
    * because it is the one launch value the daemon itself acts on: it is
@@ -1243,16 +1256,12 @@ export interface SessionLaunchRequest {
  * to ~3s total. Never escalates to SIGKILL (graceful shutdown / transcript
  * flush must not be broken by the daemon's own judgement).
  *
- * 2-phase reply (same arrival-order rationale as SessionLaunchRequest: the
- * resolve + kill sequence takes up to ~4s, and a deferred positional reply
- * would desynchronize every later reply on the connection): the direct reply
- * is RequestAcceptedResponse and the outcome arrives as
- * `ev:"session_kill_result"` correlated by `request_id`. */
+ * 2-phase reply (same as SessionLaunchRequest: the resolve + kill sequence
+ * takes up to ~4s): the direct reply is RequestAcceptedResponse and the
+ * outcome arrives as `ev:"session_kill_result"` carrying the same
+ * `request_id`. */
 export interface SessionKillRequest {
   op: "session_kill";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionLaunchRequest.request_id). */
-  request_id: string;
   /** The Claude Code session UUID whose process to terminate. The request
    * intentionally carries NO pid — a client-asserted pid would be a weaker
    * basis for killing than the daemon's own fresh resolution (DR-0028). */
@@ -1296,14 +1305,11 @@ export interface SessionKillRequest {
  * command. Control characters are therefore rejected up front (see
  * validateRenameTitle in the daemon) instead of being silently stripped.
  *
- * 2-phase reply for the same arrival-order reason as session_kill: this
- * spawns a `hyoui input` child (and hyoui itself serializes against other
- * input holders), so the outcome arrives as `ev:"session_rename_result"`. */
+ * 2-phase reply for the same reason as session_kill: this spawns a `hyoui
+ * input` child (and hyoui itself serializes against other input holders), so
+ * the outcome arrives as `ev:"session_rename_result"`. */
 export interface SessionRenameRequest {
   op: "session_rename";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionKillRequest.request_id). */
-  request_id: string;
   /** The Claude Code session UUID to retitle. The request carries no
    * hyoui session id for the same reason session_kill carries no pid: the
    * daemon's own agents-poll resolution is a stronger basis than a
@@ -1324,13 +1330,10 @@ export interface SessionRenameRequest {
  * recycled pid's environment would disclose an unrelated process's secrets.
  *
  * 2-phase for the same reason as session_kill: the fresh `claude agents`
- * resolution makes this an async op, and handleRequest pairs ordinary replies
- * by arrival order. The outcome arrives as `ev:"session_env_result"`. */
+ * resolution makes this a slow op. The outcome arrives as
+ * `ev:"session_env_result"`. */
 export interface SessionEnvRequest {
   op: "session_env";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionKillRequest.request_id). */
-  request_id: string;
   /** The Claude Code session UUID whose process environment to read. Carries
    * no pid for the same reason session_kill doesn't — a client-asserted pid
    * is a weaker basis than the daemon's own fresh resolution. */
@@ -1360,14 +1363,10 @@ export interface SessionLauncherConfigRequest {
  * impossible; routing it through the daemon also keeps the gateway URL (an
  * internal address) out of the browser entirely.
  *
- * 2-phase for session_env's reason: the upstream fetch is async and
- * handleRequest pairs ordinary replies by arrival order. The outcome arrives
- * as `ev:"llm_usage_result"`. */
+ * 2-phase for session_env's reason: the upstream fetch is slow. The outcome
+ * arrives as `ev:"llm_usage_result"`. */
 export interface LlmUsageRequest {
   op: "llm_usage";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionEnvRequest.request_id). */
-  request_id: string;
   /** Ask the gateway to probe upstream instead of answering from its cache,
    * passed through as `?refresh=true`. Only a probe response carries
    * `LlmUsageCredential.limits` and `probe_error` — the cached document has
@@ -1389,9 +1388,6 @@ export interface LlmUsageRequest {
  * `ev:"llm_stats_result"`. */
 export interface LlmStatsRequest {
   op: "llm_stats";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionEnvRequest.request_id). */
-  request_id: string;
   /** How many days back to ask the gateway for, passed through as its `days`
    * query parameter. Must be an integer in LLM_STATS_DAYS_MIN..MAX; omitted
    * leaves the gateway's own default in place. The gateway clamps a request
@@ -1412,9 +1408,6 @@ export interface LlmStatsRequest {
  * asking again. */
 export interface LlmStatusRequest {
   op: "llm_status";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (same uniqueness contract as SessionEnvRequest.request_id). */
-  request_id: string;
   /** Ask the gateway to re-read the providers' status pages before answering,
    * passed through as `?refresh=true`. The cached read costs the gateway
    * nothing; a refresh calls out to every configured status page, so it
@@ -1779,11 +1772,6 @@ export interface TranscriptReadRequest {
  * config dirs (DR-0021 Phase 1, user role only). */
 export interface SessionSearchRequest {
   op: "session_search";
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (2-phase reply, same rationale as TranslateRequest: the bounded
-   * filesystem scan takes long enough that a deferred arrival-order reply
-   * would stall every later reply on the same connection). */
-  request_id: string;
   /** newline-separated clauses, OR-ed; blank lines are ignored, and a clause's
    * whitespace-separated terms are ANDed across the session's messages */
   query?: string;
@@ -1818,12 +1806,6 @@ export interface SessionSearchRequest {
 export interface ForkOriginRequest {
   op: "fork_origin";
   sid: string;
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (2-phase reply, same rationale as SessionSearchRequest: resolving reads
-   * whole sibling transcripts the first time, which is slow enough that a
-   * deferred arrival-order reply would stall every later reply on the same
-   * connection). */
-  request_id: string;
 }
 
 /**
@@ -1841,12 +1823,6 @@ export interface ForkOriginRequest {
 export interface SessionDumpFileRequest {
   op: "session_dump_file";
   sid: string;
-  /** Client-generated correlation id echoed in the ack and the result event
-   * (2-phase reply, same rationale as SessionSearchRequest: dumping reads the
-   * whole transcript plus its agent transcripts, which is slow enough that a
-   * deferred arrival-order reply would stall every later reply on the same
-   * connection). */
-  request_id: string;
   /** Inclusive lower bound, as either a timezone-qualified ISO 8601 timestamp
    * or a transcript record `uuid`; same parsing as `ccmsg dump --since`. A
    * uuid cuts at that record's position rather than its clock, so records
@@ -1936,17 +1912,11 @@ export interface PingRequest {
  * built without starting a TranslationSession.
  *
  * 2-phase reply (same rationale as SessionLaunchRequest): translation takes
- * hundreds of ms to seconds per batch, and a deferred arrival-order reply
- * would hold back every later reply on the same connection — with the webui's
- * single WS connection, opening several thinking tabs stalled every other
- * pane behind the running translations. The daemon acks immediately with
+ * hundreds of ms to seconds per batch. The daemon acks immediately with
  * RequestAcceptedResponse and pushes the outcome as an ev:"translate_result"
- * event correlated by `request_id`. */
+ * event carrying the same `request_id`. */
 export interface TranslateRequest {
   op: "translate";
-  /** Client-generated correlation id echoed in the ack and the result event.
-   * Uniqueness only needs to hold among this connection's in-flight requests. */
-  request_id: string;
   texts: string[];
 }
 
@@ -1973,7 +1943,9 @@ export interface InviteRequest {
   sid: string;
 }
 
-export type Request =
+/** Every request shape, before the correlation envelope. Use `Request` (the
+ * wire form) unless you specifically mean "the body a caller composes". */
+export type RequestBody =
   | HelloRequest
   | PostRequest
   | ReplyRequest
@@ -2029,6 +2001,10 @@ export type Request =
   | ShutdownRequest
   | LeaveRequest
   | InviteRequest;
+
+/** A request on the wire: one of the bodies above plus its correlation id.
+ * The intersection distributes over the union, so `req.op` still narrows. */
+export type Request = RequestBody & RequestEnvelope;
 
 // ---------------------------------------------------------------------------
 // Wire: responses (daemon -> client)
@@ -2672,15 +2648,13 @@ export type LlmStatusResponse = { ok: true } & LlmStatusReport;
 
 /** Immediate ack for 2-phase ops (translate / session_launch): the request
  * passed synchronous validation and its outcome will arrive as the matching
- * `*_result` stream event carrying the echoed `request_id`. This ack is the
- * op's reply on the arrival-order contract, so later replies on the same
- * connection are never held back by the op's slow work. Synchronous
- * validation failures (role, invalid_args, launcher_not_configured, cwd
- * containment) still reply ErrorResponse directly instead of this ack. */
+ * `*_result` stream event carrying the same `request_id` this ack does.
+ * Synchronous validation failures (role, invalid_args,
+ * launcher_not_configured, cwd containment) still reply ErrorResponse directly
+ * instead of this ack. */
 export interface RequestAcceptedResponse {
   ok: true;
   accepted: true;
-  request_id: string;
 }
 /** session_launcher_config reply — see its request doc comment above.
  * `templates` is the configured recipe list in config order, each carrying its
@@ -3016,7 +2990,8 @@ export interface InviteResponse {
   already: boolean;
 }
 
-export type Response =
+/** Every reply shape, before the correlation envelope. */
+export type ResponseBody =
   | ErrorResponse
   | HelloResponse
   | PostResponse
@@ -3059,6 +3034,15 @@ export type Response =
   | ShutdownResponse
   | LeaveResponse
   | InviteResponse;
+
+/** A reply on the wire: one of the bodies above, carrying back the
+ * `request_id` of the request it answers.
+ *
+ * Optional in the type, required in the daemon's behaviour: the id is missing
+ * only where no request could be identified (see RequestEnvelope) or where the
+ * peer is a daemon predating the correlation envelope, and both are cases a
+ * client handles as "cannot settle anyone", not as a normal reply. */
+export type Response = ResponseBody & { request_id?: string };
 
 // ---------------------------------------------------------------------------
 // HTTP-only responses (not part of the WS/UDS line-protocol Response union).

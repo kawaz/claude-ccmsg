@@ -50,12 +50,27 @@ class WsTestClient {
   write(obj: unknown): void {
     this.ws.send(`${JSON.stringify(obj)}\n`);
   }
+  /** Same correlation the real clients do: stamp a request_id and take the
+   * reply that carries it back, leaving anything else for readEvent. */
   async request<T = any>(obj: unknown): Promise<T> {
-    this.write(obj);
-    const line = await this.readLine();
-    if (line === null) throw new Error("connection closed before response");
-    return JSON.parse(line) as T;
+    const rid = `w${++this.nextRequestId}`;
+    this.write({ ...(obj as Record<string, unknown>), request_id: rid });
+    const deferred: string[] = [];
+    for (;;) {
+      const line = await this.readLine();
+      if (line === null) {
+        this.lines.unshift(...deferred);
+        throw new Error("connection closed before response");
+      }
+      const parsed = JSON.parse(line);
+      if (parsed?.request_id === rid) {
+        this.lines.unshift(...deferred);
+        return parsed as T;
+      }
+      deferred.push(line);
+    }
   }
+  private nextRequestId = 0;
   async readEvent<T = any>(): Promise<T | null> {
     const line = await this.readLine();
     return line === null ? null : (JSON.parse(line) as T);

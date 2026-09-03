@@ -24,10 +24,10 @@ e2eTest(
     try {
       expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
       const input = "The build completed successfully.ここから日本語です。";
-      // 2-phase: positional reply is the ack, the translation itself arrives on
-      // the correlated ev:"translate_result" event.
+      // 2-phase: the reply is the ack, the translation itself arrives on the
+      // ev:"translate_result" event carrying the same request_id.
       const ack = await client.request({ op: "translate", request_id: "e2e-1", texts: [input] });
-      expect(ack).toEqual({ ok: true, accepted: true, request_id: "e2e-1" });
+      expect(ack).toEqual({ ok: true, accepted: true });
       const event = await client.readEvent();
       expect(event.ev).toBe("translate_result");
       expect(event.request_id).toBe("e2e-1");

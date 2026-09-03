@@ -470,7 +470,6 @@ describe("session_kill over the wire (role gate + not_found)", () => {
       });
       expect(ack.ok).toBe(true);
       expect(ack.accepted).toBe(true);
-      expect(ack.request_id).toBe("k2");
       const { ev } = await c.readEventUntil<{
         ev: string;
         request_id: string;
@@ -486,17 +485,16 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     }
   }, 30000);
 
-  // request_id is the 2-phase correlation key — an absent/empty one is a
-  // synchronous invalid_args, mirroring acceptTwoPhase's contract for
-  // translate/session_launch.
-  test("missing request_id is refused with invalid_args", async () => {
+  // request_id is what a reply is paired with, so a request without one is
+  // refused before dispatch (same for every op, not just the 2-phase ones).
+  test("missing request_id is refused with bad_request", async () => {
     const ctx = await startTestDaemon();
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const res = await c.request({ op: "session_kill", session_id: "sid-x" });
+      const res = await c.requestRaw({ op: "session_kill", session_id: "sid-x" });
       expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("invalid_args");
+      expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
       await stopTestDaemon(ctx);

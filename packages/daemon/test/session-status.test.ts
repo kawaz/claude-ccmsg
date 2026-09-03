@@ -2685,9 +2685,9 @@ describe("session_status event loop yielding (DR-0029)", () => {
   test(
     "cold scan 中に切断した接続のキュー済み op はレジストリを汚さない",
     async () => {
-      // FIFO チェーンは切断後もキューを進めるので、hello / subscribe 系が
-      // 遅れて実行されると読み手のいない peer と watch が残り、daemon 再起動
-      // まで消えない。受信済みでも切断後の op は捨てる。
+      // 重い scan と並行して走る hello / subscribe 系が切断後に完了すると、
+      // 読み手のいない peer と watch が残り daemon 再起動まで消えない。
+      // 受信済みでも、切断した接続の op は登録を残さない。
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
@@ -2698,10 +2698,11 @@ describe("session_status event loop yielding (DR-0029)", () => {
 
         // 重い scan を先頭に積み、その後ろに登録系の op を並べてから切断する。
         const leaving = await userHello(ctx);
-        leaving.write({ op: "session_status", sid });
-        leaving.write({ op: "subscribe" });
+        leaving.write({ op: "session_status", sid, request_id: "s1" });
+        leaving.write({ op: "subscribe", request_id: "s2" });
         leaving.write({
           op: "hello",
+          request_id: "s3",
           role: "session",
           sid: "ghost",
           repo: "r",

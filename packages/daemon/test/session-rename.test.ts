@@ -226,18 +226,18 @@ describe("session_rename over the wire", () => {
     }
   });
 
-  test("missing request_id is refused with invalid_args", async () => {
+  test("missing request_id is refused with bad_request", async () => {
     const ctx = await startTestDaemon();
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const res = await c.request({
+      const res = await c.requestRaw({
         op: "session_rename",
         session_id: "sid-x",
         title: "ok title",
       });
       expect(res.ok).toBe(false);
-      expect(res.error.code).toBe("invalid_args");
+      expect(res.error.code).toBe("bad_request");
       c.close();
     } finally {
       await stopTestDaemon(ctx);
@@ -260,7 +260,6 @@ describe("session_rename over the wire", () => {
       });
       expect(ack.ok).toBe(true);
       expect(ack.accepted).toBe(true);
-      expect(ack.request_id).toBe("r4");
       const { ev } = await c.readEventUntil<{
         ev: string;
         request_id: string;

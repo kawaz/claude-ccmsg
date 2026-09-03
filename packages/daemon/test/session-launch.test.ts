@@ -42,9 +42,6 @@ function withCommand(cfg: SessionLauncherConfig, command: string): SessionLaunch
 function request(cwd: string, prompt = "do the work"): SessionLaunchRequest {
   return {
     op: "session_launch",
-    // Correlation id for the 2-phase wire exchange; validate/execute (the
-    // units under test here) never read it, only server.ts's ack/event do.
-    request_id: "test-request",
     cwd,
     params: { MODEL: "opaque-model", EFFORT: "opaque-effort", PROMPT: prompt },
   };

@@ -208,7 +208,12 @@ export function SessionView({
     // in sessionStatuses that violates its "absence = not subscribed"
     // contract (store.ts) with no owner left to ever clear it.
     let cancelled = false;
-    void ws
+    // The daemon answers this connection's requests concurrently, and
+    // session_status_subscribe awaits IO while session_status_unsubscribe does
+    // not — so the cleanup below waits for this Promise instead of racing it,
+    // or a fast tab switch could tear down the subscription before it exists
+    // and leave the watch installed with no reader.
+    const subscribed = ws
       .sessionStatusSubscribe(sid)
       .then((res) => {
         if (cancelled || !res.ok) return;
@@ -234,7 +239,7 @@ export function SessionView({
       });
     return () => {
       cancelled = true;
-      void ws.sessionStatusUnsubscribe(sid).catch(() => {});
+      void subscribed.then(() => ws.sessionStatusUnsubscribe(sid).catch(() => {}));
       store.dispatch({ type: "session-status/cleared", sid });
     };
   }, [active, sid, needsStatus, hasStatusFeed, statusSource, state.connStatus]);

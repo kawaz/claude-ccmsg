@@ -84,7 +84,15 @@ function pinHelloToUser(line: string): string {
     return line; // malformed JSON: let handleRequest's own parse report bad_request
   }
   if (req !== null && typeof req === "object" && (req as { op?: unknown }).op === "hello") {
-    return JSON.stringify({ op: "hello", role: "user" });
+    // Everything the client claimed about its identity is dropped; its
+    // correlation id is not — the reply still has to reach the caller that is
+    // waiting for it.
+    const { request_id: requestId } = req as { request_id?: unknown };
+    return JSON.stringify({
+      op: "hello",
+      role: "user",
+      ...(requestId !== undefined ? { request_id: requestId } : {}),
+    });
   }
   return line;
 }

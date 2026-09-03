@@ -5,17 +5,17 @@
 // touches the network. HTTP/WS connections are pinned to role "user" (u1)
 // server-side regardless of what we send, so we always hello as user.
 //
-// Responses vs. pushed events share one socket. Ordinary ops carry no request
-// id: the daemon processes each line synchronously in receipt order, so their
-// replies arrive in the same order we sent them and pair by position. Slow ops
-// (translate / session_launch / session_search) are 2-phase: the positional
+// Responses vs. pushed events share one socket. Every request carries a
+// `request_id` this client generates and the daemon echoes on the reply, so
+// replies pair by id and may arrive in any order — the daemon runs our
+// requests concurrently, and a slow one no longer delays the rest. Slow ops
+// (translate / session_launch / session_search) are additionally 2-phase: the
 // reply is an immediate ack (RequestAcceptedResponse) and the outcome arrives
-// later as an `ev:"*_result"` push correlated by our client-generated
-// request_id — so a running translation can no longer hold back every other
-// reply on this single connection. Classification rule: a frame with `ev` is
-// a push (result events DO carry `ok`, so `ev` must be checked first); a
-// frame with `ok` and no `ev` is a positional reply; anything else is a
-// persisted subscribe delivery.
+// later as an `ev:"*_result"` push carrying the same request_id. Both are
+// hidden behind a Promise, so callers see one shape of request/reply.
+// Classification rule: a frame with `ev` is a push (result events DO carry
+// `ok`, so `ev` must be checked first); a frame with `ok` and no `ev` is a
+// reply; anything else is a persisted subscribe delivery.
 import type {
   AgentsResponse,
   AgentsStreamEvent,
@@ -48,7 +48,7 @@ import type {
   PostResponse,
   ReadResponse,
   RoomHistoryResponse,
-  Request,
+  RequestInput,
   Response,
   RoomsResponse,
   SessionEnvResponse,
@@ -429,11 +429,14 @@ export function createWsClient(
   keepalive: WsKeepaliveOptions = {},
 ): WsHandle {
   let ws: WebSocket | null = null;
-  let pending: Array<(v: Response) => void> = [];
-  /** 2-phase ops' outstanding result-event resolvers, keyed by request_id
-   * (see the header comment's classification rule). Entries live from the
-   * request being written until the `ev:"*_result"` push, a validation-error
-   * positional reply, or a disconnect flush — whichever comes first. */
+  /** Outstanding replies, keyed by the request_id we stamped on the way out.
+   * An entry lives from the request being written until its reply arrives or
+   * a disconnect flush settles it. */
+  let pending = new Map<string, (v: Response) => void>();
+  /** 2-phase ops' outstanding result-event resolvers, keyed by the same
+   * request_id (see the header comment's classification rule). Entries live
+   * from the request being written until the `ev:"*_result"` push, a
+   * validation-error reply, or a disconnect flush — whichever comes first. */
   const inflight = new Map<string, (v: TwoPhaseOutcome) => void>();
   /** request_ids only need to be unique among this client's in-flight
    * requests (protocol doc), so a monotonic counter suffices — no UUID. */
@@ -449,14 +452,15 @@ export function createWsClient(
   const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
   const since = loadSince();
 
-  function send<T extends Response>(req: Request): Promise<T> {
+  function send<T extends Response>(req: RequestInput): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         reject(new Error("ws not open"));
         return;
       }
-      pending.push(resolve as (v: Response) => void);
-      ws.send(JSON.stringify(req));
+      const rid = `q${++nextRequestId}`;
+      pending.set(rid, resolve as (v: Response) => void);
+      ws.send(JSON.stringify({ ...req, request_id: rid }));
     });
   }
 
@@ -472,34 +476,32 @@ export function createWsClient(
   );
 
   /** Send a 2-phase op (translate / session_launch / session_search): the
-   * positional reply slot only consumes the immediate ack (or a synchronous
-   * validation error, which settles the Promise right away), and the final
-   * outcome arrives as the correlated result event — resolved through
-   * `inflight` in onMessage. Callers get one Promise for the final outcome,
-   * exactly like plain send(), so no component needed changing. */
-  function sendTwoPhase<T extends TwoPhaseOutcome>(
-    req: Request & { request_id: string },
-  ): Promise<T> {
+   * reply is only the immediate ack (or a synchronous validation error, which
+   * settles the Promise right away), and the final outcome arrives as the
+   * result event carrying the same request_id — resolved through `inflight` in
+   * onMessage. Callers get one Promise for the final outcome, exactly like
+   * plain send(), so no component needed changing. */
+  function sendTwoPhase<T extends TwoPhaseOutcome>(req: RequestInput): Promise<T> {
     return new Promise((resolve, reject) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         reject(new Error("ws not open"));
         return;
       }
-      const rid = req.request_id;
+      const rid = `q${++nextRequestId}`;
       const settle = resolve as (v: TwoPhaseOutcome) => void;
       inflight.set(rid, settle);
-      pending.push((ack) => {
+      pending.set(rid, (ack) => {
         // ok ack = accepted; the result event will settle via `inflight`.
-        // An ok:false positional reply means the op failed synchronous
-        // validation and no event will ever come — settle now. The identity
-        // guard keeps this a no-op if a disconnect flush already settled us
-        // (flushPending clears `inflight` before flushing `pending`).
+        // An ok:false reply means the op failed synchronous validation and no
+        // event will ever come — settle now. The identity guard keeps this a
+        // no-op if a disconnect flush already settled us (flushPending clears
+        // `inflight` before flushing `pending`).
         if (!ack.ok && inflight.get(rid) === settle) {
           inflight.delete(rid);
           settle(ack);
         }
       });
-      ws.send(JSON.stringify(req));
+      ws.send(JSON.stringify({ ...req, request_id: rid }));
     });
   }
 
@@ -571,7 +573,6 @@ export function createWsClient(
         if (hello.llm_status_available === true) {
           void sendTwoPhase<LlmStatusResponse | ErrorResponse>({
             op: "llm_status",
-            request_id: `q${++nextRequestId}`,
           }).then((res) => {
             // 取れなければ badge が出ないだけ。ここで画面にエラーを出すと、
             // gateway が落ちている間ずっと全画面に無関係な警告が出る。
@@ -643,7 +644,6 @@ export function createWsClient(
       // outcome arrives on its result event and this await resumes then.
       const translate = await sendTwoPhase<TranslateResponse>({
         op: "translate",
-        request_id: `q${++nextRequestId}`,
         texts: [],
       });
       dispatch({ type: "translator/availability", host: translate.ok });
@@ -691,8 +691,18 @@ export function createWsClient(
       return;
     }
     if (Object.hasOwn(obj, "ok")) {
-      const settle = pending.shift();
-      settle?.(obj as Response);
+      const reply = obj as Response;
+      // A reply with no request_id answers no request we can name (the daemon
+      // sends one only for a frame it could not parse far enough to find an
+      // id). Nothing to settle, and guessing a caller would settle the wrong
+      // one — drop it.
+      const { request_id: rid, ...body } = reply;
+      if (rid === undefined) return;
+      const settle = pending.get(rid);
+      pending.delete(rid);
+      // Callers get the payload without the envelope, the same shape the
+      // 2-phase result path hands them.
+      settle?.(body as Response);
       return;
     }
     onStreamEvent(obj as StreamEvent);
@@ -825,8 +835,8 @@ export function createWsClient(
 
   // Settles every in-flight send()/sendTwoPhase() with a synthetic error
   // response instead of leaving its Promise pending forever, and empties both
-  // registries so a stale resolver can never be mis-matched (via onMessage's
-  // pending.shift() or an `inflight` request_id reused after reconnect) to a
+  // registries so a stale resolver can never be mis-matched (a request_id
+  // reused after reconnect, in `pending` or `inflight`) to a
   // reply/event that arrives on a later, reconnected socket. `inflight` is
   // flushed FIRST: sendTwoPhase's positional ack callback guards on
   // `inflight.get(rid) === settle`, so clearing the map here turns those
@@ -839,8 +849,8 @@ export function createWsClient(
     const staleInflight = [...inflight.values()];
     inflight.clear();
     for (const settle of staleInflight) settle(closed);
-    const stale = pending;
-    pending = [];
+    const stale = [...pending.values()];
+    pending = new Map();
     for (const settle of stale) settle(closed);
   }
 
@@ -1009,15 +1019,11 @@ export function createWsClient(
     sessionStatusUnsubscribe: (sid) => send({ op: "session_status_unsubscribe", sid }),
     agents: () => send({ op: "agents" }),
     sessionErrors: () => send({ op: "session_errors" }),
-    sessionSearch: (params) =>
-      sendTwoPhase({ op: "session_search", request_id: `q${++nextRequestId}`, ...params }),
-    forkOrigin: (sid) =>
-      sendTwoPhase({ op: "fork_origin", request_id: `q${++nextRequestId}`, sid }),
-    sessionDumpFile: (params) =>
-      sendTwoPhase({ op: "session_dump_file", request_id: `q${++nextRequestId}`, ...params }),
+    sessionSearch: (params) => sendTwoPhase({ op: "session_search", ...params }),
+    forkOrigin: (sid) => sendTwoPhase({ op: "fork_origin", sid }),
+    sessionDumpFile: (params) => sendTwoPhase({ op: "session_dump_file", ...params }),
     ping: () => send({ op: "ping" }),
-    translate: (texts) =>
-      sendTwoPhase({ op: "translate", request_id: `q${++nextRequestId}`, texts }),
+    translate: (texts) => sendTwoPhase({ op: "translate", texts }),
     dirTree: (roots, opts) =>
       send({
         op: "dir_tree",
@@ -1025,45 +1031,38 @@ export function createWsClient(
         ...(opts?.depth !== undefined ? { depth: opts.depth } : {}),
         ...(opts?.filter !== undefined ? { filter: opts.filter } : {}),
       }),
-    sessionLaunch: (req) =>
-      sendTwoPhase({ op: "session_launch", request_id: `q${++nextRequestId}`, ...req }),
+    sessionLaunch: (req) => sendTwoPhase({ op: "session_launch", ...req }),
     sessionLauncherConfig: () => send({ op: "session_launcher_config" }),
     sessionKill: (sessionId, opts) =>
       sendTwoPhase({
         op: "session_kill",
-        request_id: `q${++nextRequestId}`,
         session_id: sessionId,
         ...(opts?.force ? { force: true } : {}),
       }),
     sessionRename: (sessionId, title) =>
       sendTwoPhase({
         op: "session_rename",
-        request_id: `q${++nextRequestId}`,
         session_id: sessionId,
         title,
       }),
     sessionEnv: (sessionId) =>
       sendTwoPhase({
         op: "session_env",
-        request_id: `q${++nextRequestId}`,
         session_id: sessionId,
       }),
     llmUsage: (opts) =>
       sendTwoPhase({
         op: "llm_usage",
-        request_id: `q${++nextRequestId}`,
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
     llmStats: (days) =>
       sendTwoPhase({
         op: "llm_stats",
-        request_id: `q${++nextRequestId}`,
         ...(days !== undefined ? { days } : {}),
       }),
     llmStatus: (opts) =>
       sendTwoPhase({
         op: "llm_status",
-        request_id: `q${++nextRequestId}`,
         ...(opts?.refresh ? { refresh: true } : {}),
       }),
   };

@@ -110,13 +110,13 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const ack = await client.request<{ ok: true; accepted: true; request_id: string }>({
+        const ack = await client.request<{ ok: true; accepted: true }>({
           op: "session_launch",
           request_id: "launch-1",
           cwd: root,
           params: { MODEL: "wire-model", EFFORT: "wire-effort", PROMPT: "wire-prompt" },
         });
-        expect(ack).toEqual({ ok: true, accepted: true, request_id: "launch-1" });
+        expect(ack).toEqual({ ok: true, accepted: true });
 
         const event = await client.readEvent<Record<string, unknown>>();
         expect(event).toEqual({
@@ -136,24 +136,23 @@ describe("session launcher wire ops", () => {
     T,
   );
 
-  // A missing/empty request_id is a synchronous validation error: 2-phase
-  // correlation is impossible without it, so the op is refused up front and
-  // no command is executed (no result event will ever arrive).
+  // A missing/empty request_id is refused before dispatch (a reply could not
+  // be paired with anything), so no command is executed.
   test(
-    "session_launch without a request_id is rejected with invalid_args",
+    "session_launch without a request_id is rejected with bad_request",
     async () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-root-"));
       const ctx = await startConfiguredDaemon(root);
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const response = await client.request<{ ok: false; error: { code: string } }>({
+        const response = await client.requestRaw<{ ok: false; error: { code: string } }>({
           op: "session_launch",
           cwd: root,
           params: { PROMPT: "p" },
         });
         expect(response.ok).toBe(false);
-        expect(response.error.code).toBe("invalid_args");
+        expect(response.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(root, { recursive: true, force: true });
@@ -163,11 +162,10 @@ describe("session launcher wire ops", () => {
   );
 
   // THE regression this 2-phase design exists for (kawaz r26 mid=108): a slow
-  // launch used to defer its positional reply and hold back every later reply
-  // on the same connection (the webui's single WS connection stalled all
-  // panes). Now the connection's positional stream must carry the launch ack
-  // and then the ping reply IMMEDIATELY — i.e. before the slow command
-  // finishes — and the launch outcome arrives last as the correlated event.
+  // launch used to hold back every later reply on the same connection (the
+  // webui's single WS connection stalled all panes). The connection must carry
+  // the launch ack and then the ping reply IMMEDIATELY — i.e. before the slow
+  // command finishes — and the launch outcome arrives last as its event.
   test(
     "a later op's reply arrives before a slow session_launch's result event",
     async () => {
@@ -184,13 +182,13 @@ describe("session launcher wire ops", () => {
           cwd: root,
           params: { PROMPT: "p" },
         });
-        client.write({ op: "ping" });
+        client.write({ op: "ping", request_id: "slow-ping" });
 
         const first = JSON.parse((await client.readLine())!) as Record<string, unknown>;
         const second = JSON.parse((await client.readLine())!) as Record<string, unknown>;
         const third = JSON.parse((await client.readLine())!) as Record<string, unknown>;
         expect(first).toEqual({ ok: true, accepted: true, request_id: "slow-launch" });
-        expect(second).toMatchObject({ ok: true, pong: true });
+        expect(second).toMatchObject({ ok: true, pong: true, request_id: "slow-ping" });
         expect(third).toMatchObject({
           ev: "session_launch_result",
           request_id: "slow-launch",

@@ -38,7 +38,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * only sets aside frames carrying `ev`, and delivered events carry none), so
  * this reads the stream itself — which is also what the assertion needs. */
 async function fetchHistory(c: TestClient, room: string): Promise<any[]> {
-  c.write({ op: "room_history", room });
+  c.write({ op: "room_history", room, request_id: "history" });
   const { seen } = await c.readEventUntil((ev) => ev.ok !== undefined);
   return seen;
 }
@@ -132,7 +132,7 @@ describe("room_history", () => {
         // A room B is not a member of is reported as absent rather than as a
         // permission error — room ids are opaque, "exists but not yours" would
         // leak that this one is live.
-        b.write({ op: "room_history", room: other });
+        b.write({ op: "room_history", room: other, request_id: "history-other" });
         const { ev } = await b.readEventUntil((e) => e.ok !== undefined);
         expect(ev).toMatchObject({ ok: false, error: { code: "room_not_found" } });
 

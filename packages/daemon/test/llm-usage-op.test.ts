@@ -178,10 +178,10 @@ describe("llm_usage op", () => {
     expect(reply?.error.code).toBe(ErrorCode.bad_request);
   });
 
-  test("refuses a request with no request_id (2-phase correlation is required)", async () => {
+  test("refuses a request with no request_id (every op needs one to be answered)", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
     const [reply] = await requestFrames(daemon, USER, { op: "llm_usage" }, 1);
     expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+    expect(reply?.error.code).toBe(ErrorCode.bad_request);
   });
 });

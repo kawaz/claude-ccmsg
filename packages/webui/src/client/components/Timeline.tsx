@@ -3274,9 +3274,13 @@ export function Timeline({
   useEffect(() => {
     if (!active || agentActive) return;
     if (connStatus !== "connected") return;
-    void ws.transcriptSubscribe(sid).catch(() => {});
+    // Wait for the subscribe before undoing it: the daemon runs this
+    // connection's requests concurrently, so an unsubscribe sent while the
+    // subscribe is still in flight could be answered first and leave the tail
+    // watch installed with nobody reading it.
+    const subscribed = ws.transcriptSubscribe(sid).catch(() => {});
     return () => {
-      void ws.transcriptUnsubscribe(sid).catch(() => {});
+      void subscribed.then(() => ws.transcriptUnsubscribe(sid).catch(() => {}));
     };
   }, [active, sid, connStatus, agentActive]);
 

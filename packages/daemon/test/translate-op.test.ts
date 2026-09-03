@@ -93,8 +93,8 @@ describe("translate op", () => {
     });
   });
 
-  // Correlation is impossible without a request_id, so its absence is a
-  // synchronous invalid_args reply and the helper is never invoked.
+  // A request with no request_id is refused before dispatch (nothing could
+  // pair with the reply), so the helper is never invoked.
   test("a missing request_id is rejected before the helper is touched", async () => {
     let calls = 0;
     const translator: TranslateService = {
@@ -113,7 +113,7 @@ describe("translate op", () => {
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
-      error: { code: "invalid_args", msg: "translate requires a non-empty string request_id" },
+      error: { code: "bad_request", msg: "op 'translate' requires a non-empty string request_id" },
     });
   });
 
@@ -130,12 +130,13 @@ describe("translate op", () => {
     const response = await requestOnce(
       daemonWith(translator),
       { role: "session", sid: "s1", repo: "", ws: "", cwd: "" },
-      { op: "translate", texts: ["secret"] },
+      { op: "translate", request_id: "q1", texts: ["secret"] },
     );
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
       error: { code: "bad_request", msg: "op 'translate' requires user role" },
+      request_id: "q1",
     });
   });
 
@@ -154,6 +155,7 @@ describe("translate op", () => {
       { role: "user" },
       {
         op: "translate",
+        request_id: "q1",
         texts: ["ok", 42],
       },
     );
@@ -161,6 +163,7 @@ describe("translate op", () => {
     expect(response).toEqual({
       ok: false,
       error: { code: "invalid_args", msg: "translate requires a string[] texts" },
+      request_id: "q1",
     });
   });
 
