@@ -3,7 +3,7 @@ title: bun test フルスイート並列実行時に稀に 1 件 fail する fla
 status: wip
 category: bug
 created: 2026-07-12T17:40:21+09:00
-last_read: 2026-07-21T02:56:29+09:00
+last_read: 2026-09-03T13:28:12+09:00
 open_entered: 2026-07-12T17:40:21+09:00
 wip_entered: 2026-07-21T03:05:15+09:00
 blocked_entered:
