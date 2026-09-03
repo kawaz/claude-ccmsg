@@ -45,6 +45,7 @@ import {
 } from "./timeline-side-panel.ts";
 import {
   agentCommunicationCount,
+  CACHE_KEEPALIVE_FOLD_LABEL,
   ccmsgMessageCount,
   ccmsgRenderTargets,
   ccmsgUnitKey,
@@ -53,6 +54,7 @@ import {
   foldGroupLabel,
   foldGroupNeedsOuterFold,
   isApiErrorLine,
+  isCacheKeepaliveReplyLine,
   isSearchableSegment,
   isUserSpeechKind,
   segmentSearchText,
@@ -2031,11 +2033,26 @@ function LineView({
       </ItemRawToggle>
     );
   }
+  // cache-keepalive 応答 (kawaz r259 m60): text segment 1 個だけの assistant
+  // turn なので、下の既定経路では SegmentView の text 分岐に落ちてトークンの
+  // 生文字列が ▶ も時刻もラベルも無しで裸で並ぶ — 同じ fold 内の
+  // task-notification / queue-operation 行と揃わない。システム由来 user
+  // メッセージ (SystemMessageFold) と同じ「▶ 時刻 ラベル」の 1 行に畳み、
+  // 中身はトークンそのものを開いてから見せる。
+  if (isCacheKeepaliveReplyLine(line)) {
+    return (
+      <ItemRawToggle offset={offset}>
+        <details class="tl-line tl-fold">
+          <FoldSummary ts={line.ts} label={CACHE_KEEPALIVE_FOLD_LABEL} />
+          <pre class="tl-fold-body">{segmentSearchText(line.segments[0]!)}</pre>
+        </details>
+      </ItemRawToggle>
+    );
+  }
   // 残り: thinking/tool_use-only の assistant turn、tool-result-only の
-  // user turn、そして cache-keepalive 応答 (text 1 個だけの assistant turn。
-  // classifyBoundaryLine が boundary から外すのでここへ来る) — 中身の各
-  // segment 自体が (SegmentView 経由で) fold 済みの 1 行 summary を持つので、
-  // turn の外枠はプレーンな container のまま (二重に時刻を出さない)。
+  // user turn — 中身の各 segment 自体が (SegmentView 経由で) fold 済みの
+  // 1 行 summary を持つので、turn の外枠はプレーンな container のまま
+  // (二重に時刻を出さない)。
   return (
     <ItemRawToggle offset={offset}>
       <div class="tl-line">
@@ -3784,6 +3801,9 @@ export function Timeline({
       // ApiErrorNotice は searchCtx を渡さず本文を verbatim 描画するので、
       // ここで数えると highlight も scroll 先も無い ghost match になる。
       if (isApiErrorLine(line)) return;
+      // keepalive 応答も同じ — fold 内の 1 行 summary + <pre> 本文で、
+      // searchCtx を渡さない verbatim 描画になっている。
+      if (isCacheKeepaliveReplyLine(line)) return;
       line.segments.forEach((seg, i) => {
         if (!isSearchableSegment(seg, targets)) return;
         const text = segmentSearchText(seg);

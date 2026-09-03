@@ -22,6 +22,7 @@ import {
   isAgentCommunicationSegment,
   isApiErrorLine,
   isCacheKeepaliveReplyLine,
+  CACHE_KEEPALIVE_FOLD_LABEL,
   isDirectFoldEntry,
   isPeerMessageLine,
   agentCommunicationCount,
@@ -4140,6 +4141,23 @@ describe("isCacheKeepaliveReplyLine / cache-keepalive replies fold", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]!.kind).toBe("fold");
     expect(groups[0]!.kind === "fold" ? groups[0]!.entries : []).toHaveLength(2);
+  });
+
+  // kawaz r259 m60/m61: fold 内で他の item と同じ「▶ 時刻 ラベル」の 1 行に
+  // なるよう、Timeline の LineView が `isCacheKeepaliveReplyLine` を見て
+  // このラベルの fold を描く。トークン本体は開いてから見せるので summary
+  // には出さない。
+  test("the fold label follows summarizeMeta's `<type>: <what>` and names no nonce", () => {
+    expect(CACHE_KEEPALIVE_FOLD_LABEL).toBe("assistant: llm-gateway keep-alive");
+    expect(CACHE_KEEPALIVE_FOLD_LABEL).not.toContain("LLMGW-KEEPALIVE-");
+    // prefix は jsonl 行の top-level type、つまり `system: turn_duration` /
+    // `queue-operation: enqueue` を作るのと同じ規則 (summarizeMeta)。
+    const [prefix] = CACHE_KEEPALIVE_FOLD_LABEL.split(": ");
+    expect(prefix).toBe("assistant");
+    const meta = parseTranscriptLine(
+      JSON.stringify({ type: "system", subtype: "turn_duration", durationMs: 1 }),
+    );
+    expect(meta.kind === "meta" ? meta.summary : null).toBe("system: turn_duration");
   });
 });
 

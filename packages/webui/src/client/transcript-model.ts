@@ -1435,6 +1435,15 @@ export function isCacheKeepaliveReplyLine(line: ParsedLine): boolean {
   return !text.includes("\n") && CACHE_KEEPALIVE_REPLY.test(text);
 }
 
+/** Closed-summary label for a folded keepalive reply (kawaz r259 m60/m61)。
+ * 他の fold item と同じ「▶ 時刻 ラベル」の 1 行に揃えるためのラベルで、
+ * トークン本体は開いてから見る。
+ *
+ * 形は `summarizeMeta` の `<type>: <何の行か>` に倣う (`system: turn_duration`
+ * / `queue-operation: enqueue` と同じ組み立て) — prefix は jsonl 行の
+ * top-level `type`、つまりこの行では `assistant`。 */
+export const CACHE_KEEPALIVE_FOLD_LABEL = "assistant: llm-gateway keep-alive";
+
 /** Agent transcript 先頭の spawn prompt (親からの指示書) も agent 間
  * コミュニケーションの一種 (kawaz r55 m35: AUTO OPEN の A で開いておいて
  * ほしい対象)。 */
