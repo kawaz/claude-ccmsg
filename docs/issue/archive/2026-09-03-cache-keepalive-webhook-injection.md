@@ -1,6 +1,6 @@
 ---
 title: llm-gateway の cache_keepalive webhook を受けてセッションにマーカーを注入する
-status: open
+status: resolved
 category: request
 created: 2026-09-03T12:10:58+09:00
 last_read: 2026-09-03T12:23:50+09:00
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-03T12:45:14+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["implemented:v0.140.0 (commit e0f1462d)", "done:設計変更 — hyoui PTY注入ではなくセッションのsubscribe streamへ通常notify(text=marker, from{role:user})として送る形に変更。busy待ち不要(次requestに相乗り)。deadline超過/未接続sessionはlogのみ。kawaz裁定(r259m39/m40/m41)とgateway合意(r261m16/m17)。gateway側は末尾userメッセージ内nonce一致判定に緩和済み"]
 blocked_by:
 origin: llm-gateway (依頼 r261m11、2026-09-03、kawaz 合意済み設計 DR-0024)
 ---
