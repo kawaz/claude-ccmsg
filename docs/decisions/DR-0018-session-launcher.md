@@ -145,8 +145,9 @@ launcher がテンプレ構造なのに既定値がテンプレの外にあり�
 - テンプレ = `{ name, command, params }`。`params` は「変数名 → デフォルト値
   (string)」の列挙で、**宣言が変数の存在の唯一の根拠**: launcher shell は宣言
   された変数だけを定義し (未入力は空文字、`set -u` 安全)、webui は宣言された
-  入力欄だけを宣言順に描画する (widget は変数名で選ぶ: CWD=picker、
-  MODEL/EFFORT=select、PROMPT=textarea、未知名=プレーン input)
+  入力欄だけを描画する (widget: CWD=picker、MODEL/EFFORT=select、それ以外は
+  値に改行があれば textarea、無ければ input。並びは CWD/MODEL/EFFORT が先頭、
+  `COMMAND` が末尾、残りは宣言順 — kawaz r259m47)
 - `CWD` のみ wire の独立フィールド (realpath 封じ込め + spawn cwd と daemon
   自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
 - wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は
@@ -209,7 +210,7 @@ config の形は §3.1 の supersede 後の 1 つだけ:
 fork テンプレは次の二段で書く:
 
 1. **切り詰め済みセッションを作る (print)**
-   `claude -p --resume "$RESUME_SID" --fork-session [--resume-session-at "$RESUME_AT"]
+   `claude -p --resume "$SESSION_ID" --fork-session [--resume-session-at "$RESUME_AT"]
    --output-format json '/exit'` を launcher shell の中で同期実行する。
    `/exit` は print mode に無いので何も実行されず (実測 `num_turns: 0`,
    `total_cost_usd: 0`, `duration_api_ms: 0` = API 呼び出しゼロ)、それでも

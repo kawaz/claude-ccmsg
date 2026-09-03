@@ -32,16 +32,17 @@ export const SESSION_CREATOR_MODELS = [
  * setting without telling them. */
 export const SESSION_CREATOR_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
-/** Parameter names the fork flow seeds: the source session and the record to
- * resume at. A template that declares neither simply cannot be forked into. */
-export const RESUME_SID_PARAM = "RESUME_SID";
-export const RESUME_AT_PARAM = "RESUME_AT";
-
-/** Parameter name the resume flow seeds: the session to continue in place
- * (`claude --resume <sid>`). Distinct from RESUME_SID_PARAM because the two
- * flows differ in kind — a fork branches off a chosen record and needs a fork
- * point, a resume re-enters the session itself at its end. */
+/** Parameter name carrying the session to continue from, whichever way the
+ * form continues it (kawaz r259 m43). Both flows pass the same thing —
+ * `claude --resume <sid>` — so both recipes take it under one name, and
+ * switching between them carries the value across by the ordinary same-name
+ * rule rather than needing anything to know the two are related. */
 export const SESSION_ID_PARAM = "SESSION_ID";
+
+/** Parameter name carrying the record to resume at: the fork point. This is
+ * what makes a recipe a fork recipe — a session id alone continues a session,
+ * branching off it needs a place to branch from. */
+export const RESUME_AT_PARAM = "RESUME_AT";
 
 /** Parameter name carrying the name the relaunched session should run under
  * (`claude --name`). A resume seeds it with the title the session already had,
@@ -51,19 +52,57 @@ export const SESSION_ID_PARAM = "SESSION_ID";
  * which then displaces the session's own title everywhere live name wins. */
 export const TITLE_PARAM = "TITLE";
 
-/** Which input a declared parameter gets. Chosen by name, because a name is
- * all the form knows about a parameter it did not invent: the four it
- * recognizes have a better control than a text box, and anything else — a
- * parameter this webui has never heard of — gets a plain one rather than not
- * being offered at all. */
-export type ParamWidget = "cwd" | "model" | "effort" | "prompt" | "text";
+/** Which input a declared parameter gets. Three names get a control that beats
+ * a text box because the form knows their vocabulary — a directory to pick, a
+ * model and an effort to choose from fixed lists. Every other parameter is
+ * just text, and the only question left is how much room it needs, which the
+ * value answers rather than the name: a value with newlines in it is a value
+ * you have to see more than one line of (kawaz r259 m47). That keeps PROMPT
+ * from being special — a multi-line prompt gets a box because it is
+ * multi-line, and a one-line one gets an input like any other parameter. */
+export type ParamWidget = "cwd" | "model" | "effort" | "text" | "multiline";
 
-export function paramWidget(name: string): ParamWidget {
-  if (name === LAUNCHER_CWD_PARAM) return "cwd";
-  if (name === "MODEL") return "model";
-  if (name === "EFFORT") return "effort";
-  if (name === "PROMPT") return "prompt";
-  return "text";
+/** The widget for one parameter at its current value. The declared default is
+ * consulted alongside the value so the field does not change shape under the
+ * user's hands: a recipe whose default is multi-line keeps its box even while
+ * the text in it happens to be one line. */
+export function paramWidget(param: LauncherParam, value: string): ParamWidget {
+  if (param.name === LAUNCHER_CWD_PARAM) return "cwd";
+  if (param.name === "MODEL") return "model";
+  if (param.name === "EFFORT") return "effort";
+  return param.default.includes("\n") || value.includes("\n") ? "multiline" : "text";
+}
+
+/** How many rows a multiline field shows: its line count plus two, so there is
+ * always visible room to add a line rather than the box being exactly full
+ * (kawaz r259 m47:「行数+2 の高さ」). */
+export function paramRows(value: string): number {
+  return value.split("\n").length + 2;
+}
+
+/** Parameters this webui puts first, in this order — the three it has a real
+ * control for, which are also the three that decide what gets launched at all.
+ * Anything the template declares beyond them follows in declaration order,
+ * because their order is the config author's statement about their own recipe. */
+const LEADING_PARAMS: readonly string[] = [LAUNCHER_CWD_PARAM, "MODEL", "EFFORT"];
+
+/** A parameter literally named COMMAND goes last, next to the command textarea
+ * it reads as a sibling of. */
+const TRAILING_PARAM = "COMMAND";
+
+/** The order the form renders a template's parameters in (kawaz r259 m47).
+ * Declaration order otherwise, so a recipe that declares nothing special reads
+ * exactly as its config does. */
+export function orderedParams(params: LauncherParam[]): LauncherParam[] {
+  const rank = (param: LauncherParam): number => {
+    if (param.name === TRAILING_PARAM) return LEADING_PARAMS.length + 1;
+    const leading = LEADING_PARAMS.indexOf(param.name);
+    return leading === -1 ? LEADING_PARAMS.length : leading;
+  };
+  return params
+    .map((param, index) => ({ param, index }))
+    .sort((a, b) => rank(a.param) - rank(b.param) || a.index - b.index)
+    .map(({ param }) => param);
 }
 
 export interface SessionCreatorForm {
@@ -85,14 +124,36 @@ export interface SessionCreatorForm {
   params: Record<string, string>;
 }
 
-/** What the Timeline's "ここから fork" action hands to the form: the session to
- * resume and the record to resume at (the selected item's own uuid — see
- * fork-point.ts). Both land in editable fields, so this is a starting point
- * rather than a fixed choice. */
+/** What a "fork" action hands to the form: the session to resume and the
+ * record to resume at (for the Timeline's "ここから fork", the selected item's
+ * own uuid — see fork-point.ts). Both land in editable fields, so this is a
+ * starting point rather than a fixed choice.
+ *
+ * The launch-context fields below are optional because the two callers know
+ * different amounts. A Timeline fork knows none of them and does not need to:
+ * the session is on screen, so it is connected, and SessionCreator reads cwd /
+ * model / effort out of live AppState (`forkSourceDefaults`). A 前回稼働中 row
+ * has no live state to read — "not connected" is what puts it in that section
+ * — so it carries the daemon's frozen record here instead, exactly as a
+ * ResumePrefill does. */
 export interface ForkPrefill {
   kind: "fork";
-  resumeSid: string;
+  sessionId: string;
   resumeAt: string;
+  /** Where the source session ran. Omitted (rather than "") when unknown, so a
+   * recipe's declared default CWD survives and the picker opens for the user
+   * to choose. */
+  cwd?: string;
+  /** What the source last ran as, in raw transcript spellings — mapped onto
+   * the form's options the same way a resume's are, for the same reason: a
+   * fork that silently switches model is not the fork the user asked for. */
+  model?: string;
+  effort?: string;
+  /** The name the forked session should run under. Unlike a resume this is a
+   * genuine choice rather than a restoration — the fork is a new session — but
+   * seeding the source's title is the closest thing to "this one, branched",
+   * and the field stays editable. */
+  title?: string;
 }
 
 /** What the Session Search result row's "resume" action hands to the form: the
@@ -165,13 +226,18 @@ export function forkTemplate(
   return templates.find((t) => templateDeclares(t, RESUME_AT_PARAM));
 }
 
-/** Which configured recipe resumes a session in place: the first that declares
- * a session id. Same rule as `forkTemplate` — the declaration decides, not the
+/** Which configured recipe resumes a session in place: the first that takes a
+ * session id and no fork point. Both kinds declare the session id — it is the
+ * same argument — so what distinguishes a resume recipe is what it does *not*
+ * take: with nowhere to branch from, continuing the session is all it can do.
+ * Same rule as `forkTemplate` otherwise — the declaration decides, not the
  * recipe's name. */
 export function resumeTemplate(
   templates: SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
-  return templates.find((t) => templateDeclares(t, SESSION_ID_PARAM));
+  return templates.find(
+    (t) => templateDeclares(t, SESSION_ID_PARAM) && !templateDeclares(t, RESUME_AT_PARAM),
+  );
 }
 
 /** What the form can inherit from the session a fork resumes: where it ran and
@@ -279,25 +345,25 @@ function paramValues(
   return values;
 }
 
-/** The parameter values an opening carries with it. A fork brings its fork
- * point; a resume brings the session and, unlike a fork, its own cwd,
- * model/effort and title — the search hit carries them all, and a historical
- * session has no live peer row or status entry for `forkSourceDefaults` to
- * read them from. A blank title is left out rather than seeded as "", so a
- * session that never had one keeps the recipe's declared default.
- * The session id is placed last so it cannot be displaced. A blank cwd is left out
- * rather than seeded, so a recipe with a declared default CWD keeps it and the
- * picker opens in "editing" mode for the user to choose. */
+/** The parameter values an opening carries with it. Both kinds bring the
+ * session and, when they know them, its cwd, model/effort and title — a
+ * historical session has no live peer row or status entry for
+ * `forkSourceDefaults` to read them from, so whoever opened the form supplies
+ * what it knows. A fork brings its fork point on top of that. A blank title is
+ * left out rather than seeded as "", so a session that never had one keeps the
+ * recipe's declared default. The session id is placed last so it cannot be
+ * displaced. A blank cwd is left out rather than seeded, so a recipe with a
+ * declared default CWD keeps it and the picker opens in "editing" mode for the
+ * user to choose. */
 function prefillSeed(prefill: SessionCreatorPrefill | null): Record<string, string> {
   if (!prefill) return {};
-  if (prefill.kind === "fork") {
-    return { [RESUME_SID_PARAM]: prefill.resumeSid, [RESUME_AT_PARAM]: prefill.resumeAt };
-  }
+  const cwd = prefill.cwd?.trim();
   const title = prefill.title?.trim();
   return {
-    ...(prefill.cwd.trim() === "" ? {} : { [LAUNCHER_CWD_PARAM]: prefill.cwd }),
+    ...(cwd ? { [LAUNCHER_CWD_PARAM]: cwd } : {}),
     ...launchDefaultsFromTranscript(prefill),
     ...(title ? { [TITLE_PARAM]: title } : {}),
+    ...(prefill.kind === "fork" ? { [RESUME_AT_PARAM]: prefill.resumeAt } : {}),
     [SESSION_ID_PARAM]: prefill.sessionId,
   };
 }
@@ -333,9 +399,10 @@ export function initialSessionCreatorForm(
  * would leave the form showing a command the chosen template never had.
  * Parameters restart from the new declaration, except that a value the user
  * moved away from the old recipe's default carries over when the new recipe
- * declares the same name: a picked cwd or a typed prompt is the user's work and
- * survives, while an untouched field takes the new recipe's default. Unknown
- * names leave the form untouched. */
+ * declares the same name: a picked cwd, a typed prompt, or the session id a
+ * resume ↔ fork switch is reconsidering is the user's work and survives, while
+ * an untouched field takes the new recipe's default. Unknown names leave the
+ * form untouched. */
 export function selectSessionCreatorTemplate(
   form: SessionCreatorForm,
   templates: SessionLauncherConfigTemplate[],

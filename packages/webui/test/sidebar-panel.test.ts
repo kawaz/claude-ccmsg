@@ -6,7 +6,7 @@ import {
   toggleSidebarPanel,
 } from "../src/client/sidebar-panel.ts";
 
-const PREFILL = { kind: "fork", resumeSid: "sid-1", resumeAt: "u-9" } as const;
+const PREFILL = { kind: "fork", sessionId: "sid-1", resumeAt: "u-9" } as const;
 
 describe("toggleSidebarPanel", () => {
   test("何も開いていなければ押した panel が開く", () => {

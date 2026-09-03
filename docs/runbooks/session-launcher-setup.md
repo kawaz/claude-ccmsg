@@ -202,8 +202,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    - `templates[].command`: 実行するコマンド。文字列置換ではなく **変数渡し**
      なので quote は書き手の責務
    - `templates[].params`: そのレシピが受け取る変数の宣言 (**変数名 →
-     フォーム初期値**)。宣言した変数だけが command から見え、フォームには
-     **宣言順に** 入力欄が並ぶ。宣言していない変数は shell に定義すらされない
+     フォーム初期値**)。宣言した変数だけが command から見える。宣言していない
+     変数は shell に定義すらされない
 
 ### params — フォームは宣言そのもの
 
@@ -214,8 +214,10 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 | `CWD` | ディレクトリピッカー (CwdTree)。**全レシピ必須** — 書かなければ先頭に自動追加される |
 | `MODEL` | model ドロップダウン |
 | `EFFORT` | effort ドロップダウン |
-| `PROMPT` | プロンプト textarea |
-| それ以外 (`RESUME_SID` / `BRANCH` など任意の名前) | プレーンなテキスト入力 |
+| それ以外 (`SESSION_ID` / `PROMPT` / `BRANCH` など任意の名前) | テキスト入力。**値に改行が含まれていれば** textarea (高さは行数 + 2)、無ければ 1 行の input |
+
+入力欄の並び順は `CWD` / `MODEL` / `EFFORT` (宣言していれば、この順) が先頭、
+`COMMAND` があれば末尾、残りは **宣言順**。
 
 - 値は **export されていないシェル変数** として渡る — command が起動する
   プロセス (= claude セッションとその子孫) には引き継がれない
@@ -241,8 +243,8 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
          },
          {
            "name": "fork",
-           "command": "fork_args=(--resume \"$RESUME_SID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
-           "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "", "RESUME_SID": "", "RESUME_AT": "" }
+           "command": "fork_args=(--resume \"$SESSION_ID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
+           "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "", "SESSION_ID": "", "RESUME_AT": "" }
          }
        ]
      }
@@ -254,8 +256,13 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 - 個別エントリが壊れていても (name が空 / 重複 / `command` や `params` が無い)
   そのエントリだけ warn して無視し、残りは生きる。全滅すると launcher 無効
 - **fork テンプレの判定は `params` に `RESUME_AT` があるか**: 宣言している
-  最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由。
-  逆に「+ 新規」は `RESUME_AT` を宣言していない最初のテンプレートを開く
+  最初のテンプレートを Timeline の「ここから fork」が選ぶ。名前は自由
+- **resume テンプレの判定は `SESSION_ID` を宣言し `RESUME_AT` を宣言しない
+  こと**: 分岐先を持たない = そのセッションを続けるしかない、という消去法で
+  選ぶ (fork テンプレも同じ `SESSION_ID` を受け取るため)。宣言している最初の
+  ものを Session Search / 前回稼働中の resume 導線が開く
+- 「+ 新規」は **どちらも宣言していない** 最初のテンプレートを開く (どちらも
+  ユーザが別の場所で選んだセッションを前提にするので、新規起動ではない)
 - `--resume-session-at` は `claude --help` に出ない非公開オプション。webui の
   fork 導線は launcher が設定されているかだけで決まる (hello の
   `fork_available`)

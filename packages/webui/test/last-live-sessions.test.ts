@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LastLiveSession, PeerInfo } from "@ccmsg/protocol";
 import {
+  lastLiveForkPrefill,
   lastLiveResumePrefill,
   lastLiveSessionTitle,
   sortLastLiveSessions,
@@ -87,6 +88,44 @@ describe("lastLiveResumePrefill", () => {
     expect(prefill).toEqual({ kind: "resume", cwd: "/repos/claude-ccmsg/main", sessionId: "s1" });
     expect("model" in prefill).toBe(false);
     expect("title" in prefill).toBe(false);
+  });
+});
+
+describe("lastLiveForkPrefill", () => {
+  test("resume と同じ情報を fork レシピ向けに渡す", () => {
+    expect(
+      lastLiveForkPrefill(
+        entry({ model: "claude-opus-5", effort: "high", title: "restart recovery" }),
+      ),
+    ).toEqual({
+      kind: "fork",
+      sessionId: "s1",
+      // 行はどのレコードから分岐するかを知らない (それを選ぶのは Timeline)。
+      // 空のまま渡して、必要なら form で uuid を貼れる状態にする。
+      resumeAt: "",
+      cwd: "/repos/claude-ccmsg/main",
+      model: "claude-opus-5",
+      effort: "high",
+      title: "restart recovery",
+    });
+  });
+
+  test("model/effort/title が分からない時は渡さない (form の既定を上書きしない)", () => {
+    const prefill = lastLiveForkPrefill(entry());
+    expect(prefill).toEqual({
+      kind: "fork",
+      sessionId: "s1",
+      resumeAt: "",
+      cwd: "/repos/claude-ccmsg/main",
+    });
+    expect("model" in prefill).toBe(false);
+  });
+
+  // 同じ行の 2 つのボタンは同じセッションを指す — 片方だけ sid の出所が
+  // ずれていたら、押したボタンで別セッションが起動することになる。
+  test("resume 導線と同じ sid を指す", () => {
+    const row = entry({ sid: "same-session" });
+    expect(lastLiveForkPrefill(row).sessionId).toBe(lastLiveResumePrefill(row).sessionId);
   });
 });
 

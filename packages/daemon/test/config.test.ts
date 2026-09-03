@@ -259,8 +259,8 @@ describe("loadConfig", () => {
             { name: "plain", command: "run $PROMPT", params: { PROMPT: "shared" } },
             {
               name: "fork",
-              command: 'run --resume "$RESUME_SID"',
-              params: { RESUME_SID: "" },
+              command: 'run --resume "$SESSION_ID"',
+              params: { SESSION_ID: "" },
               shell: "bash",
             },
           ],
@@ -280,10 +280,10 @@ describe("loadConfig", () => {
       },
       {
         name: "fork",
-        command: 'run --resume "$RESUME_SID"',
+        command: 'run --resume "$SESSION_ID"',
         params: [
           { name: "CWD", default: "" },
-          { name: "RESUME_SID", default: "" },
+          { name: "SESSION_ID", default: "" },
         ],
         shell: "bash",
       },

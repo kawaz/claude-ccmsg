@@ -7,7 +7,7 @@
 // module is the row's presentation rule and the launcher request a row makes,
 // kept out of the JSX so both are testable (same split as pinned-sessions.ts).
 import type { LastLiveSession, PeerInfo } from "@ccmsg/protocol";
-import type { ResumePrefill } from "./session-creator.ts";
+import type { ForkPrefill, ResumePrefill } from "./session-creator.ts";
 import { lastPathSegment, shortSid } from "./utils.ts";
 
 /** Rows to actually show: never one whose session is connected right now.
@@ -58,6 +58,31 @@ export function lastLiveResumePrefill(entry: LastLiveSession): ResumePrefill {
     kind: "resume",
     cwd: entry.cwd,
     sessionId: entry.sid,
+    ...(entry.model ? { model: entry.model } : {}),
+    ...(entry.effort ? { effort: entry.effort } : {}),
+    ...(entry.title ? { title: entry.title } : {}),
+  };
+}
+
+/** What the row's fork action hands the launcher (kawaz r259 m42:「resume
+ * じゃなく fork で起動したいときもあります」): the same session and the same
+ * inherited context as the resume above, on the fork recipe instead.
+ *
+ * `resumeAt` is empty rather than a guessed record. A fork point is a uuid the
+ * user picked out of a conversation they were looking at, and this row is not
+ * looking at one — the Timeline's "ここから fork" is where that choice is
+ * made. Left blank, the field says so and stays editable, so a user who does
+ * have a uuid in mind can paste it before pressing 実行.
+ *
+ * The launcher is opened rather than anything being started, exactly as the
+ * resume action does: what the form seeds is a starting point the user
+ * confirms. */
+export function lastLiveForkPrefill(entry: LastLiveSession): ForkPrefill {
+  return {
+    kind: "fork",
+    sessionId: entry.sid,
+    resumeAt: "",
+    cwd: entry.cwd,
     ...(entry.model ? { model: entry.model } : {}),
     ...(entry.effort ? { effort: entry.effort } : {}),
     ...(entry.title ? { title: entry.title } : {}),

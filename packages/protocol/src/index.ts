@@ -1269,6 +1269,26 @@ export interface SessionLauncherConfigRequest {
   op: "session_launcher_config";
 }
 
+/** Drop one entry from the "前回稼働中" list (user role only): the session it
+ * names is one the user has decided not to bring back, so the row has no
+ * further job to do.
+ *
+ * Removal is confined to that list — the transcript, the launcher and anything
+ * else keyed by the sid are untouched, and the sid remains resumable by every
+ * other route. It is also not a permanent exclusion: the entry describes a
+ * past observation, so a daemon that later sees the session connected records
+ * it again. That is why the op needs no confirmation step on the client —
+ * nothing it does is unrecoverable.
+ *
+ * An unknown sid is not an error (`removed: false`): two tabs pressing ✕ on
+ * the same row is the ordinary case, and the caller's goal — "this sid is not
+ * in the list" — holds either way. */
+export interface LastLiveRemoveRequest {
+  op: "last_live_remove";
+  /** The Claude Code session UUID whose "前回稼働中" record to forget. */
+  sid: string;
+}
+
 /** Per-credential LLM quota snapshot, proxied from the gateway named by
  * `<configDir>/config.json`'s `llm_usage_url` (user role only — quota is an
  * operator's view of the host's credentials, not something a session's agent
@@ -1879,6 +1899,7 @@ export type RequestBody =
   | SessionRenameRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
+  | LastLiveRemoveRequest
   | LlmUsageRequest
   | LlmStatsRequest
   | LlmStatusRequest
@@ -2256,6 +2277,13 @@ export interface SessionRenameResponse {
   ok: true;
   hyoui_session_id: string;
   title: string;
+}
+/** Payload of a completed last_live_remove. `removed` says whether the sid was
+ * actually in the list, so a client can tell "I removed it" from "someone
+ * already had" — neither is a failure (see the request's doc comment). */
+export interface LastLiveRemoveResponse {
+  ok: true;
+  removed: boolean;
 }
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
@@ -2954,6 +2982,7 @@ export type ResponseBody =
   | SessionLaunchResponse
   | SessionKillResponse
   | SessionRenameResponse
+  | LastLiveRemoveResponse
   | SessionEnvResponse
   | SessionSearchResponse
   | ForkOriginResponse

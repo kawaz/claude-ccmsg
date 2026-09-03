@@ -300,6 +300,92 @@ describe("daemon restart recovery", () => {
     T,
   );
 
+  // 「もう要らない行を消す手段が無い」(kawaz r259 m42) に対する op。消えるのは
+  // 記録だけで、transcript も resume 可能性も触らない。
+  test(
+    "last_live_remove で行が消え、snapshot と push の両方に反映される",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        await sessionHello(ctx, "s-drop");
+        await sessionHello(ctx, "s-keep");
+        await crashRestart(ctx);
+
+        const u = await userConn(ctx);
+        await u.request({ op: "subscribe" });
+        expect((await u.request<PeersReply>({ op: "peers" })).last_live?.length).toBe(2);
+
+        const res = await u.request<{ ok: true; removed: boolean }>({
+          op: "last_live_remove",
+          sid: "s-drop",
+        });
+        expect(res.removed).toBe(true);
+        // 見ている tab は push で知る (last_live は peers frame の片割れ)。
+        const { ev } = await u.readEventUntil<{ ev: string; last_live?: { sid: string }[] }>(
+          (e) => e.ev === "peers" && e.last_live?.length === 1,
+        );
+        expect(ev.last_live?.map((e) => e.sid)).toEqual(["s-keep"]);
+        // 消えたままであることは disk が決める — 次に daemon が起きた時に
+        // 復活したら「消した」ことにならない。
+        expect(snapshotSids(ctx)).toEqual(["s-keep"]);
+        u.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // 2 つの tab が同じ行の ✕ を押すのは普通に起きる。呼び手の目的 (「この sid は
+  // もう無い」) はどちらでも達成されているので、失敗にはしない。
+  test(
+    "知らない sid の last_live_remove はエラーにせず removed:false を返す",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const u = await userConn(ctx);
+        const res = await u.request<{ ok: true; removed: boolean }>({
+          op: "last_live_remove",
+          sid: "never-seen",
+        });
+        expect(res).toMatchObject({ ok: true, removed: false });
+        u.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  // last_live そのものが user 限定 (session role は push を受け取れない) なので、
+  // それを書き換える op も同じ側に置く。
+  test(
+    "session role は last_live_remove を呼べない",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        await sessionHello(ctx, "s-gone-2");
+        await crashRestart(ctx);
+
+        const other = await sessionHello(ctx, "s-asking-2");
+        const res = await other.request<{ ok: boolean; error?: { code: string } }>({
+          op: "last_live_remove",
+          sid: "s-gone-2",
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error?.code).toBe("bad_request");
+
+        const u = await userConn(ctx);
+        expect((await u.request<PeersReply>({ op: "peers" })).last_live?.length).toBe(1);
+        other.close();
+        u.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
   test(
     "session role の peers には last_live を返さない (push を受け取れないため)",
     async () => {

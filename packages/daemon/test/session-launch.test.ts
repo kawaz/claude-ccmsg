@@ -16,7 +16,7 @@ import {
 
 /** The parameter set these tests declare on their templates — the legacy
  * vocabulary, which config.ts also derives when normalizing an old config. */
-const LAUNCH_PARAM_NAMES = ["CWD", "MODEL", "EFFORT", "PROMPT", "RESUME_SID", "RESUME_AT"];
+const LAUNCH_PARAM_NAMES = ["CWD", "MODEL", "EFFORT", "PROMPT", "SESSION_ID", "RESUME_AT"];
 const LAUNCH_PARAMS: LauncherParam[] = LAUNCH_PARAM_NAMES.map((name) => ({ name, default: "" }));
 
 /** The shell program for a command under the standard parameter set. */
@@ -90,7 +90,7 @@ describe("session launch validation", () => {
       // A declared parameter the request left out is defined-but-empty (its
       // default), so a template mentioning $RESUME_AT does not abort under
       // `set -u` when nothing is being forked.
-      ccmsg_new_session_param_RESUME_SID: "",
+      ccmsg_new_session_param_SESSION_ID: "",
       ccmsg_new_session_param_RESUME_AT: "",
     });
     expect(result.cwd).toBe(fs.realpathSync(cwd));
@@ -115,7 +115,7 @@ describe("session launch validation", () => {
         'unset -v MODEL; MODEL="$ccmsg_new_session_param_MODEL"; unset -v ccmsg_new_session_param_MODEL',
         'unset -v EFFORT; EFFORT="$ccmsg_new_session_param_EFFORT"; unset -v ccmsg_new_session_param_EFFORT',
         'unset -v PROMPT; PROMPT="$ccmsg_new_session_param_PROMPT"; unset -v ccmsg_new_session_param_PROMPT',
-        'unset -v RESUME_SID; RESUME_SID="$ccmsg_new_session_param_RESUME_SID"; unset -v ccmsg_new_session_param_RESUME_SID',
+        'unset -v SESSION_ID; SESSION_ID="$ccmsg_new_session_param_SESSION_ID"; unset -v ccmsg_new_session_param_SESSION_ID',
         'unset -v RESUME_AT; RESUME_AT="$ccmsg_new_session_param_RESUME_AT"; unset -v ccmsg_new_session_param_RESUME_AT',
       ].join("\n"),
     );
@@ -271,7 +271,7 @@ describe("session launch validation", () => {
         { name: "default", command: "run-default", params: LAUNCH_PARAMS, shell: "bash" },
         {
           name: "fork",
-          command: 'run --resume "$RESUME_SID"',
+          command: 'run --resume "$SESSION_ID"',
           params: LAUNCH_PARAMS,
           shell: "zsh",
         },
@@ -288,7 +288,7 @@ describe("session launch validation", () => {
       "-o",
       "pipefail",
       "-c",
-      program('run --resume "$RESUME_SID"'),
+      program('run --resume "$SESSION_ID"'),
     ]);
 
     const fallback = validateSessionLaunch(cfg, request(cwd));
@@ -313,14 +313,14 @@ describe("session launch validation", () => {
     const result = validateSessionLaunch(config(root), {
       ...request(cwd),
       params: {
-        RESUME_SID: "11111111-2222-3333-4444-555555555555",
+        SESSION_ID: "11111111-2222-3333-4444-555555555555",
         RESUME_AT: "66666666-7777-8888-9999-000000000000",
       },
     });
     expect(result).toMatchObject({
       ok: true,
       env: {
-        ccmsg_new_session_param_RESUME_SID: "11111111-2222-3333-4444-555555555555",
+        ccmsg_new_session_param_SESSION_ID: "11111111-2222-3333-4444-555555555555",
         ccmsg_new_session_param_RESUME_AT: "66666666-7777-8888-9999-000000000000",
       },
     });
@@ -330,7 +330,7 @@ describe("session launch validation", () => {
   // sees them empty (not unset) on a plain launch — a fork template running
   // under `set -u` must not abort when nothing is being resumed.
   test("a non-fork launch defines the resume variables as empty", async () => {
-    const cfg = withCommand(config(root), `printf 'sid=[%s] at=[%s]' "$RESUME_SID" "$RESUME_AT"`);
+    const cfg = withCommand(config(root), `printf 'sid=[%s] at=[%s]' "$SESSION_ID" "$RESUME_AT"`);
     expect(await execute(cfg, request(cwd))).toMatchObject({
       ok: true,
       exit_code: 0,
@@ -339,7 +339,7 @@ describe("session launch validation", () => {
     expect(
       await execute(cfg, {
         ...request(cwd),
-        params: { RESUME_SID: "sid-1", RESUME_AT: "uuid-1" },
+        params: { SESSION_ID: "sid-1", RESUME_AT: "uuid-1" },
       }),
     ).toMatchObject({ ok: true, exit_code: 0, stdout: "sid=[sid-1] at=[uuid-1]" });
   });

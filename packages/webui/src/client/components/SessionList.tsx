@@ -31,6 +31,7 @@ import {
 } from "../utils.ts";
 import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
+  lastLiveForkPrefill,
   lastLiveResumePrefill,
   lastLiveSessionTitle,
   sortLastLiveSessions,
@@ -845,10 +846,21 @@ function LastLiveSessionRow({
   entry,
   currentSid,
   onResume,
+  onFork,
+  onRemove,
 }: {
   entry: LastLiveSession;
   currentSid: string | null;
   onResume: () => void;
+  /** Open the launcher on the fork recipe for this session instead of the
+   * resume one (kawaz r259 m42). A second button rather than a menu: the row
+   * already carries its actions inline, and two of them still read at a
+   * glance. */
+  onFork: () => void;
+  /** Forget this row. No confirmation step — the entry is a record of a past
+   * observation, not the session, so nothing is lost that a later sighting
+   * would not record again (see the last_live_remove op). */
+  onRemove: () => void;
 }) {
   const title = lastLiveSessionTitle(entry);
   const hasRepoWs = Boolean(entry.repo || entry.ws);
@@ -877,14 +889,35 @@ function LastLiveSessionRow({
         <span class="session-idle" title={`最終確認 ${entry.last_seen_at}`}>
           {formatRelativeAge(entry.last_seen_at)}
         </span>
+        {/* 3 つとも常時表示 — hover でしか出ない操作はタッチで押せない
+         * (kawaz r259 m2)。並びは「よく使う順」ではなく「取り返しの付く順」に
+         * しない: ✕ を端に置くのは、隣を狙った指が消す方に当たらないため。 */}
         <button
           type="button"
-          class="last-live-resume-btn"
+          class="last-live-action-btn"
           aria-label="このセッションを resume"
           title="このセッションを resume (ランチャーを開く)"
           onClick={onResume}
         >
           ▶
+        </button>
+        <button
+          type="button"
+          class="last-live-action-btn"
+          aria-label="このセッションから fork"
+          title="このセッションから fork (ランチャーを開く)"
+          onClick={onFork}
+        >
+          ⑂
+        </button>
+        <button
+          type="button"
+          class="last-live-action-btn last-live-remove-btn"
+          aria-label="この行を前回稼働中から削除"
+          title="この行を前回稼働中から削除 (セッション自体は消えません)"
+          onClick={onRemove}
+        >
+          ✕
         </button>
       </div>
       {hasRepoWs ? (
@@ -927,7 +960,7 @@ function LastLiveSessionsSection({
   peers: PeerInfo[];
   currentSid: string | null;
 }) {
-  const { store } = useApp();
+  const { store, ws } = useApp();
   const rows = useMemo(
     () => sortLastLiveSessions(visibleLastLiveSessions(lastLiveSessions, peers)),
     [lastLiveSessions, peers],
@@ -954,6 +987,16 @@ function LastLiveSessionsSection({
                 prefill: lastLiveResumePrefill(entry),
               })
             }
+            onFork={() =>
+              store.dispatch({
+                type: "session-creator/prefill",
+                prefill: lastLiveForkPrefill(entry),
+              })
+            }
+            // 応答は待たない: 消えた行は daemon の peers push で届く
+            // (last_live はその frame の片割れ)。失敗しても行が残るだけなので、
+            // ここで握るのは reject だけにして送信自体は撃ちっぱなしにする。
+            onRemove={() => void ws.lastLiveRemove(entry.sid).catch(() => {})}
           />
         ))}
       </ul>

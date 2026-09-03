@@ -1069,28 +1069,35 @@ a {
   opacity: 0.85;
 }
 
-/* 「前回稼働中」行の resume ボタン (SessionList.tsx の LastLiveSessionRow)。
- * Pinned 行の ⭐ と同じ位置・同じ器を使う — 1 行目の右端に付く 1 文字の
- * アクションという役割が同じなので、見た目の文法も揃える。hover 色だけは
- * 破壊的操作ではないので accent 側に振る。 */
-.last-live-resume-btn {
+/* 「前回稼働中」行の操作ボタン列 ▶ ⑂ ✕ (SessionList.tsx の
+ * LastLiveSessionRow)。Pinned 行の ⭐ と同じ位置・同じ器を使う — 1 行目の
+ * 右端に付く 1 文字のアクションという役割が同じなので、見た目の文法も揃える。
+ * 3 つ並ぶぶん padding は左右 space-2 に詰める (space-3 のままだと sid/cwd を
+ * 押し出す)。 */
+.last-live-action-btn {
   flex-shrink: 0;
   background: none;
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  /* ⭐ (絵文字) と違い ▶ は字形が細いので、Pinned 行と同じ font-size だと
+  /* ⭐ (絵文字) と違い ▶ ⑂ ✕ は字形が細いので、Pinned 行と同じ font-size だと
    * 行の右端で線のように見える。1 段だけ上げて重さを揃える。 */
   font-size: var(--font-size-sm);
   line-height: 1;
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
 }
 
-.last-live-resume-btn:hover {
+.last-live-action-btn:hover {
   color: var(--accent);
 }
 
-.session-row.active .last-live-resume-btn {
+/* ✕ だけは消す操作なので hover を danger 側に振る — 隣の ▶ ⑂ と同じ色で
+ * 光ると、押す直前に区別が付くのが字形だけになる。 */
+.last-live-remove-btn:hover {
+  color: var(--danger);
+}
+
+.session-row.active .last-live-action-btn {
   color: var(--accent-fg);
   opacity: 0.85;
 }

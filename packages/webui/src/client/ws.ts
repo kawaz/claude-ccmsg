@@ -52,6 +52,7 @@ import type {
   SessionErrorsResponse,
   SessionErrorsStreamEvent,
   SessionKillResponse,
+  LastLiveRemoveResponse,
   SessionRenameResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
@@ -368,6 +369,11 @@ export interface WsHandle {
    * "terminal_unavailable"` means the session runs outside hyoui and can only
    * be renamed by hand. Slow like sessionKill. */
   sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
+  /** Forget one "前回稼働中" row (user role only): the user has decided not to
+   * bring that session back. The shortened list arrives on its own through the
+   * normal peers push, so callers need not update anything from the reply —
+   * `removed: false` only means another tab got there first. */
+  lastLiveRemove(sid: string): Promise<LastLiveRemoveResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -976,6 +982,7 @@ export function createWsClient(
         session_id: sessionId,
         title,
       }),
+    lastLiveRemove: (sid) => send({ op: "last_live_remove", sid }),
     sessionEnv: (sessionId) =>
       send({
         op: "session_env",

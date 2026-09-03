@@ -4125,7 +4125,7 @@ export function Timeline({
             onFork: (resumeAt: string) =>
               store.dispatch({
                 type: "session-creator/prefill",
-                prefill: { kind: "fork", resumeSid: sid, resumeAt },
+                prefill: { kind: "fork", sessionId: sid, resumeAt },
               }),
             onSelect: selectPosition,
           },

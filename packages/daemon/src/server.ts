@@ -1645,6 +1645,7 @@ const IDENTITY_OPS = new Set([
   "session_kill",
   "session_rename",
   "session_launcher_config",
+  "last_live_remove",
   "leave",
   "invite",
   "fs_list",
@@ -2708,6 +2709,22 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           params,
         })),
       });
+      return;
+    }
+
+    case "last_live_remove": {
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'last_live_remove' requires user role");
+        return;
+      }
+      const removed = daemon.lastLive.delete(req.sid);
+      // The list is half of the peers frame, so the ordinary push path both
+      // rewrites the snapshot and tells every watching tab — there is no
+      // separate "last_live changed" event to reach for, and going through
+      // maybeBroadcastPeers is what keeps the file and the pushed list produced
+      // from one observation of the registry (see persistLastLive).
+      if (removed) maybeBroadcastPeers(daemon);
+      send(conn, { ok: true, removed });
       return;
     }
 

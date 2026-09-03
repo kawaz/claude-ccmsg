@@ -27,6 +27,8 @@ import {
   forkSourceDefaults,
   initialCwdPickerMode,
   initialSessionCreatorForm,
+  orderedParams,
+  paramRows,
   paramWidget,
   selectSessionCreatorTemplate,
   sessionCreatorCwd,
@@ -161,20 +163,12 @@ function CwdPicker({
   );
 }
 
-/** Extra guidance under a parameter's input, keyed by name. Only the fork point
- * has any: what a record uuid means for the resulting session is not something
- * the field name can say, and getting it wrong fails at launch rather than
- * visibly. Parameters the webui doesn't know get no hint — the config author
- * named them and knows what they are. */
-const PARAM_HINTS: Record<string, string> = {
-  RESUME_AT:
-    "このレコード「まで」が新セッションの記憶に残ります (指定した本人は残る)。会話に載っているレコードなら種類を問わず指定できますが (turn 途中の tool_use も可)、会話に無い uuid は起動時に No message found で失敗します。",
-};
-
-/** One declared parameter's input. Which control appears is decided by the
- * parameter's name (`paramWidget`) and nothing else — a template that declares
- * MODEL gets the model dropdown, one that declares something this webui has
- * never heard of gets a text box, and one that declares neither shows neither.
+/** One declared parameter's input. Which control appears is decided by
+ * `paramWidget` and nothing else — CWD / MODEL / EFFORT get the control the
+ * form has for them, and every other parameter gets a text field sized by
+ * whether its value has newlines in it. No parameter carries explanatory text
+ * of its own (kawaz r259 m47): the config author named them and knows what
+ * they are.
  *
  * The fork values are plain editable inputs like every other parameter (kawaz
  * r115 m7:「仮にそこを正確でない値に変えたとしても単にコマンドの実行に失敗する
@@ -196,9 +190,8 @@ function ParamField({
   cwdMode: CwdPickerMode;
   setCwdMode: (mode: CwdPickerMode) => void;
 }) {
-  const widget = paramWidget(param.name);
+  const widget = paramWidget(param, value);
   const label = <span class="session-creator-label">{param.name.toLowerCase()}</span>;
-  const hint = PARAM_HINTS[param.name];
 
   if (widget === "cwd") {
     return (
@@ -242,37 +235,28 @@ function ParamField({
     </button>
   );
 
-  if (widget === "prompt") {
-    return (
-      <label class="session-creator-field">
-        <div class="session-creator-prompt-head">
-          {label}
-          {restore}
-        </div>
-        <textarea
-          class="session-creator-prompt"
-          value={value}
-          onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
-        />
-        {hint ? <span class="session-creator-hint">{hint}</span> : null}
-      </label>
-    );
-  }
-
   return (
     <label class="session-creator-field">
       <div class="session-creator-prompt-head">
         {label}
         {restore}
       </div>
-      <input
-        type="text"
-        class="session-creator-resume-input"
-        value={value}
-        placeholder={`$${param.name}`}
-        onInput={(e) => onChange((e.target as HTMLInputElement).value)}
-      />
-      {hint ? <span class="session-creator-hint">{hint}</span> : null}
+      {widget === "multiline" ? (
+        <textarea
+          class="session-creator-prompt"
+          rows={paramRows(value)}
+          value={value}
+          onInput={(e) => onChange((e.target as HTMLTextAreaElement).value)}
+        />
+      ) : (
+        <input
+          type="text"
+          class="session-creator-resume-input"
+          value={value}
+          placeholder={`$${param.name}`}
+          onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+        />
+      )}
     </label>
   );
 }
@@ -344,7 +328,7 @@ export function SessionCreator({
           const defaults =
             prefill?.kind === "fork"
               ? forkSourceDefaults(
-                  forkSourceInfo(store.getState(), prefill.resumeSid),
+                  forkSourceInfo(store.getState(), prefill.sessionId),
                   res.root_dirs,
                 )
               : {};
@@ -429,9 +413,10 @@ export function SessionCreator({
             </label>
           ) : null}
           {/* 入力欄の唯一の根拠は選択中テンプレの params 宣言 (kawaz r119 m6)。
-           * 宣言順にそのまま並べる — どの変数を受け取るかは config が決めることで、
-           * webui が command 文字列から推測する筋合いのものではない。 */}
-          {(selectedTemplate(probe.templates, form)?.params ?? []).map((param) => (
+           * どの変数を受け取るかは config が決めることで、webui が command 文字列
+           * から推測する筋合いのものではない。並べ替えるのは cwd/model/effort を
+           * 前、COMMAND を後ろに寄せるところまでで、残りは宣言順 (orderedParams)。 */}
+          {orderedParams(selectedTemplate(probe.templates, form)?.params ?? []).map((param) => (
             <ParamField
               key={param.name}
               param={param}

@@ -12,6 +12,8 @@ import {
   initialTemplate,
   launcherEffortFromTranscript,
   launcherModelFromTranscript,
+  orderedParams,
+  paramRows,
   paramWidget,
   selectSessionCreatorTemplate,
   sessionCreatorCwd,
@@ -45,12 +47,12 @@ const PLAIN = template("default", "run-launch", {
   EFFORT: "medium",
   PROMPT: "hello",
 });
-const FORK = template("fork", 'run --resume "$RESUME_SID" --resume-session-at="$RESUME_AT"', {
+const FORK = template("fork", 'run --resume "$SESSION_ID" --resume-session-at="$RESUME_AT"', {
   CWD: "",
   MODEL: "fable",
   EFFORT: "medium",
   PROMPT: "",
-  RESUME_SID: "",
+  SESSION_ID: "",
   RESUME_AT: "",
 });
 
@@ -67,7 +69,7 @@ const RESUME = template(
   },
 );
 
-const FORK_PREFILL = { kind: "fork", resumeSid: "sid-1", resumeAt: "u-9" } as const;
+const FORK_PREFILL = { kind: "fork", sessionId: "sid-1", resumeAt: "u-9" } as const;
 const RESUME_PREFILL = { kind: "resume", cwd: "/repos/app", sessionId: "sid-1" } as const;
 
 describe("initialSessionCreatorForm", () => {
@@ -115,7 +117,7 @@ describe("initialSessionCreatorForm", () => {
   test("a fork prefill opens on the fork recipe with the fork point filled in", () => {
     const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
     expect(form).toMatchObject({ template: "fork", command: FORK.command });
-    expect(form.params).toMatchObject({ RESUME_SID: "sid-1", RESUME_AT: "u-9" });
+    expect(form.params).toMatchObject({ SESSION_ID: "sid-1", RESUME_AT: "u-9" });
   });
 
   // With no fork-capable recipe configured the form still opens (on the
@@ -135,6 +137,46 @@ describe("initialSessionCreatorForm", () => {
       EFFORT: "high",
     });
     expect(form.params).toMatchObject({ CWD: "/repos/app", MODEL: "opus", EFFORT: "high" });
+  });
+
+  // A fork of a session that is no longer connected (the sidebar's 前回稼働中
+  // row, kawaz r259 m42) has no live AppState to read its context out of, so
+  // it carries the daemon's frozen record on the prefill instead — same fields
+  // a resume carries, mapped the same way.
+  test("a fork prefill can carry its own cwd/model/effort/title", () => {
+    const forkWithTitle = template("fork", "run-fork", {
+      CWD: "",
+      MODEL: "fable",
+      EFFORT: "medium",
+      TITLE: "",
+      SESSION_ID: "",
+      RESUME_AT: "",
+    });
+    const form = initialSessionCreatorForm([PLAIN, forkWithTitle], {
+      kind: "fork",
+      sessionId: "sid-1",
+      resumeAt: "",
+      cwd: "/repos/app",
+      model: "claude-opus-5[1m]",
+      effort: "high",
+      title: "案件メモ",
+    });
+    expect(form.template).toBe("fork");
+    expect(form.params).toMatchObject({
+      CWD: "/repos/app",
+      MODEL: "opus",
+      EFFORT: "high",
+      TITLE: "案件メモ",
+      SESSION_ID: "sid-1",
+      RESUME_AT: "",
+    });
+  });
+
+  // The Timeline's fork knows none of that (it reads live state instead), and
+  // must keep behaving exactly as it did — an absent field is not an empty one.
+  test("a fork prefill without them leaves the declared defaults alone", () => {
+    const form = initialSessionCreatorForm([PLAIN, FORK], FORK_PREFILL);
+    expect(form.params).toMatchObject({ CWD: "", MODEL: "fable", EFFORT: "medium" });
   });
 
   // A resume brings its own cwd (the search hit knows where the session ran —
@@ -241,15 +283,82 @@ describe("initialSessionCreatorForm", () => {
 });
 
 describe("paramWidget", () => {
-  // Names the form knows get a purpose-built control; anything else is still
-  // offered, as a plain text input.
-  test("known names map to their control, everything else to a text input", () => {
-    expect(paramWidget("CWD")).toBe("cwd");
-    expect(paramWidget("MODEL")).toBe("model");
-    expect(paramWidget("EFFORT")).toBe("effort");
-    expect(paramWidget("PROMPT")).toBe("prompt");
-    expect(paramWidget("RESUME_SID")).toBe("text");
-    expect(paramWidget("BRANCH")).toBe("text");
+  const p = (name: string, def = ""): LauncherParam => ({ name, default: def });
+
+  // The three names the form has a real control for; everything else is text.
+  test("known names map to their control", () => {
+    expect(paramWidget(p("CWD"), "")).toBe("cwd");
+    expect(paramWidget(p("MODEL"), "")).toBe("model");
+    expect(paramWidget(p("EFFORT"), "")).toBe("effort");
+  });
+
+  // kawaz r259 m47: PROMPT is not special — how much room a value needs is a
+  // property of the value, not of the name it was given.
+  test("everything else is sized by whether the value has newlines", () => {
+    expect(paramWidget(p("PROMPT"), "one line")).toBe("text");
+    expect(paramWidget(p("PROMPT"), "two\nlines")).toBe("multiline");
+    expect(paramWidget(p("SESSION_ID"), "sid-1")).toBe("text");
+    expect(paramWidget(p("BRANCH"), "main")).toBe("text");
+  });
+
+  // A recipe whose default is multi-line keeps its box while the text in it
+  // happens to be one line, so the field does not collapse mid-edit.
+  test("a multi-line default keeps the box even when the value is one line", () => {
+    expect(paramWidget(p("PROMPT", "a\nb"), "a")).toBe("multiline");
+  });
+});
+
+describe("paramRows", () => {
+  test("行数 + 2 — 常に 1 行足す余地が見えている", () => {
+    expect(paramRows("")).toBe(3);
+    expect(paramRows("a\nb")).toBe(4);
+    expect(paramRows("a\nb\n")).toBe(5);
+  });
+});
+
+describe("orderedParams", () => {
+  const names = (params: LauncherParam[]): string[] =>
+    orderedParams(params).map((param) => param.name);
+
+  // kawaz r259 m47: cwd/model/effort first in that order, COMMAND last,
+  // everything else in the order the config declared it.
+  test("cwd/model/effort go first in that order, whatever the declaration order", () => {
+    expect(
+      names([
+        { name: "EFFORT", default: "" },
+        { name: "PROMPT", default: "" },
+        { name: "CWD", default: "" },
+        { name: "MODEL", default: "" },
+      ]),
+    ).toEqual(["CWD", "MODEL", "EFFORT", "PROMPT"]);
+  });
+
+  test("a COMMAND parameter goes last", () => {
+    expect(
+      names([
+        { name: "COMMAND", default: "" },
+        { name: "CWD", default: "" },
+        { name: "BRANCH", default: "" },
+      ]),
+    ).toEqual(["CWD", "BRANCH", "COMMAND"]);
+  });
+
+  test("the rest keep their declaration order — that order is the config's statement", () => {
+    expect(
+      names([
+        { name: "SESSION_ID", default: "" },
+        { name: "RESUME_AT", default: "" },
+        { name: "PROMPT", default: "" },
+      ]),
+    ).toEqual(["SESSION_ID", "RESUME_AT", "PROMPT"]);
+  });
+
+  test("a template that declares none of the special names is left alone", () => {
+    const params = [
+      { name: "B", default: "" },
+      { name: "A", default: "" },
+    ];
+    expect(names(params)).toEqual(["B", "A"]);
   });
 });
 
@@ -403,7 +512,7 @@ describe("selectSessionCreatorTemplate", () => {
       PROMPT: "hello",
     });
     // The fork values have no home in the plain recipe and are dropped.
-    expect(switched.params).not.toHaveProperty("RESUME_SID");
+    expect(switched.params).not.toHaveProperty("SESSION_ID");
   });
 
   test("an untouched value takes the new recipe's default", () => {
@@ -416,6 +525,35 @@ describe("selectSessionCreatorTemplate", () => {
   test("an unknown name leaves the form untouched", () => {
     const start = initialSessionCreatorForm([PLAIN]);
     expect(selectSessionCreatorTemplate(start, [PLAIN], "nope")).toBe(start);
+  });
+
+  // kawaz r259 m43: both recipes take the session under one name, so
+  // reconsidering resume ↔ fork for the same session costs nothing — the
+  // ordinary same-name rule carries it, with no notion of aliases anywhere.
+  test("the session id follows a resume → fork switch", () => {
+    const start = initialSessionCreatorForm([RESUME, FORK], RESUME_PREFILL);
+    const switched = selectSessionCreatorTemplate(start, [RESUME, FORK], "fork");
+    expect(switched.params.SESSION_ID).toBe("sid-1");
+    // The fork point is not part of what the resume recipe knew, so it stays
+    // at the fork recipe's own default rather than being invented.
+    expect(switched.params.RESUME_AT).toBe("");
+  });
+
+  test("and back again, so the switch is not a one-way trip", () => {
+    const start = initialSessionCreatorForm([RESUME, FORK], FORK_PREFILL);
+    const switched = selectSessionCreatorTemplate(start, [RESUME, FORK], "resume");
+    expect(switched.params.SESSION_ID).toBe("sid-1");
+    // Nowhere to branch from in the resume recipe, and the value does not
+    // leak into some other field on the way.
+    expect(switched.params).not.toHaveProperty("RESUME_AT");
+  });
+
+  test("unrelated parameters carry across by their own name too", () => {
+    const start = initialSessionCreatorForm([RESUME, FORK], RESUME_PREFILL);
+    const edited = { ...start, params: { ...start.params, PROMPT: "typed" } };
+    const switched = selectSessionCreatorTemplate(edited, [RESUME, FORK], "fork");
+    expect(switched.params.PROMPT).toBe("typed");
+    expect(switched.params.MODEL).toBe("fable");
   });
 });
 
@@ -577,12 +715,12 @@ describe("buildSessionLaunchRequest", () => {
       form({
         template: "fork",
         command: FORK.command,
-        params: { RESUME_SID: "s-1", RESUME_AT: "u-1" },
+        params: { SESSION_ID: "s-1", RESUME_AT: "u-1" },
       }),
       [PLAIN, FORK],
     );
     expect(req).toMatchObject({ template: "fork" });
-    expect(req?.params).toMatchObject({ RESUME_SID: "s-1", RESUME_AT: "u-1" });
+    expect(req?.params).toMatchObject({ SESSION_ID: "s-1", RESUME_AT: "u-1" });
     expect(buildSessionLaunchRequest(form(), [PLAIN])?.params).not.toHaveProperty("RESUME_AT");
   });
 
