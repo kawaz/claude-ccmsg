@@ -124,6 +124,12 @@ import {
   type AgentsPoller,
 } from "./agents.ts";
 import { LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
+import {
+  CACHE_KEEPALIVE_FROM,
+  isCacheKeepaliveItem,
+  parseCacheKeepaliveEvent,
+  relayCacheKeepalive,
+} from "./cache-keepalive.ts";
 import { type WebhookSource } from "./webhook.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
@@ -986,6 +992,22 @@ function reportsUpstreamOverload(item: unknown): boolean {
   return typeof item === "object" && item !== null && (item as { status?: unknown }).status === 529;
 }
 
+/** Push one `ev:"notify"` down every subscribe stream held by `sid`, returning
+ * how many got it (0 when that session has none open). The single place a
+ * session-targeted notify is written, so the webhook-driven cache keepalive and
+ * the `notify` op deliver through identical frames. */
+function notifySession(daemon: Daemon, sid: string, from: NotifyFrom, text: string): number {
+  const ephem = { ev: "notify", text, from };
+  let delivered = 0;
+  for (const sub of daemon.subscribers) {
+    const id = sub.identity;
+    if (id?.role !== "session" || id.sid !== sid) continue;
+    send(sub, ephem);
+    delivered++;
+  }
+  return delivered;
+}
+
 /** Fold a posted batch of gateway request events into the cache and push the
  * result. Called from the webhook handler; exported for the tests that drive
  * the fold without an HTTP layer.
@@ -1003,6 +1025,22 @@ export function recordLlmRequests(daemon: Daemon, items: unknown[], log: Logger)
   // anticipate. The refresher collapses the burst.
   if (items.some(reportsUpstreamOverload)) daemon.llmStatusRefresher?.trigger();
   for (const item of items) {
+    // Keepalive items are routed out before the request parser sees them.
+    // They carry a `session_id` and a `ts` of their own, so that parser would
+    // happily accept one and restart a series' cache countdown — off a marker
+    // the gateway has not sent upstream yet, and may never get to send.
+    if (isCacheKeepaliveItem(item)) {
+      const keepalive = parseCacheKeepaliveEvent(item);
+      if (!keepalive) {
+        dropped += 1;
+        continue;
+      }
+      relayCacheKeepalive(keepalive, {
+        deliver: (sid, text) => notifySession(daemon, sid, CACHE_KEEPALIVE_FROM, text),
+        log,
+      });
+      continue;
+    }
     const info = parseLlmRequestEvent(item);
     if (!info) {
       dropped += 1;
@@ -2635,17 +2673,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // auto-execute a peer's command-shaped text (DR-0003 §7).
       const from: NotifyFrom =
         id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
-      const ephem = { ev: "notify", text: req.text, from };
-      for (const sub of daemon.subscribers) {
-        const sid = sub.identity;
-        if (!sid) continue;
-        if (targetUser && sid.role === "user") {
-          send(sub, ephem);
-          delivered++;
-        } else if (targetSid && sid.role === "session" && sid.sid === targetSid) {
+      if (targetUser) {
+        const ephem = { ev: "notify", text: req.text, from };
+        for (const sub of daemon.subscribers) {
+          if (sub.identity?.role !== "user") continue;
           send(sub, ephem);
           delivered++;
         }
+      } else if (targetSid) {
+        delivered = notifySession(daemon, targetSid, from, req.text);
       }
       send(conn, { ok: true, delivered });
       return;
