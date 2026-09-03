@@ -3,7 +3,7 @@ title: SESSIONS のキャッシュ残り時間リングを実 TTL (gateway の c
 status: open
 category: request
 created: 2026-09-03T16:01:20+09:00
-last_read:
+last_read: 2026-09-03T16:23:55+09:00
 open_entered: 2026-09-03T16:01:20+09:00
 wip_entered:
 blocked_entered:
