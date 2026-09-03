@@ -48,3 +48,7 @@ ccmsg 側の当たり:
       (`session_status` の busy/idle 観測を使う)
 - [ ] hyoui session が解決できない (webui 外で起動された等) 場合は log のみで失敗しない
 - [ ] テスト: 受信 → 注入 / deadline 超過 / busy 待ち → idle 注入 / 未解決
+
+## payload 確定 (r261m13)
+
+`{"type":"cache_keepalive","session_id":"<uuid>","prefix":"<DR-0012 の prefix と同じ短縮 sha>","nonce":"<base64url 32B>","deadline":<unix 秒 (整数)>,"deadline_iso":"<RFC3339>","marker":"[llm-gateway cache keepalive nonce=<nonce>] Ignore this message; do not think; reply with exactly \"ok\"."}`。既存 request event と同じく `ts` / `ts_iso` も付く。marker は文面そのまま注入。gateway 側の判定は末尾 user ブロック先頭の `[llm-gateway cache keepalive nonce=` と nonce の一致。
