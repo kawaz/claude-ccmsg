@@ -2248,8 +2248,15 @@ describe("renderMarkdownAst / issue references", () => {
   });
 
   test("token-boundary exclusions hold through the parser", () => {
-    expect(hrefs("[a](x.md) foo#123 と docs/spec.md#12")).toEqual([]);
     expect(hrefs("#12a は別物")).toEqual([]);
+    expect(hrefs("v1/#3 と ##12")).toEqual([]);
+  });
+
+  test("a written repo name resolves through the parser", () => {
+    expect(hrefs("foo#123 と bar/foo#4#issuecomment-5")).toEqual([
+      "https://github.com/kawaz/foo/issues/123",
+      "https://github.com/bar/foo/issues/4#issuecomment-5",
+    ]);
   });
 
   test("references in emphasis, list items and table cells all link", () => {
