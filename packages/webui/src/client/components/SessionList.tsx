@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type {
   AgentInfo,
@@ -1086,17 +1087,14 @@ export function SessionList({
     ],
     [peers, agents, agentsBySid, sessionErrors],
   );
-  // kawaz 2026-08-31: "Pinned に居るセッションは Busy リストから除外してほしい"。
-  // ピンは「見失いたくない一件」を上に固定する場所で、その行は live な
-  // PeerInfo/AgentInfo を優先して描く (PinnedSessionsSection の doc comment)
-  // ため、下の status セクションに同じ sid をもう一度出しても増える情報が無く、
-  // リストの実効的な長さだけが伸びる。除外は Pinned とこの status セクション
-  // 群の間だけ — 「前回稼働中」は resume ボタンという固有の操作を持つので、
-  // そちらの重複はピンでは代替できない。
-  const sections = useMemo(
-    () => groupSessionsBySection(rows.filter((row) => !pinnedSessions.has(row.sid))),
-    [rows, pinnedSessions],
-  );
+  // kawaz r259m64 (2026-09-04): ピン留めされたセッションも status セクション
+  // に出す。以前は「Pinned に居る行は Busy から除外」だったが、行の並びが
+  // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
+  // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
+  const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
+  // 「前回稼働中」は Busy セクションの直後に置く (kawaz r259m64): 走っている
+  // ものの次に「さっきまで走っていたもの」が来る並びで、Busy が無い時は先頭。
+  const lastLiveAfter = sections.findIndex((section) => section.key === "busy");
   // 行に出す model/effort の供給元は 3 つあり、確度の高い順に並べる:
   //   1. context 観測 — model と effort の両方を持つが、entry があるのは
   //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
@@ -1124,48 +1122,58 @@ export function SessionList({
         sayUnreadBy={sayUnreadBy}
         resolveModelEffort={resolveModelEffort}
       />
-      <LastLiveSessionsSection
-        lastLiveSessions={lastLiveSessions}
-        peers={peers}
-        currentSid={currentSid}
-      />
-      {sections.map((section) => (
-        <Fold
-          key={section.key}
-          open
-          class={sectionClass(section.key)}
-          summaryClass="session-section-summary"
-          summary={`${section.label} (${section.rows.length})`}
-        >
-          <ul class="session-section-list">
-            {section.rows.map((row) => (
-              <SessionRowItem
-                key={row.sid}
-                row={row}
-                currentSid={currentSid}
-                // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
-                // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
-                // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
-                // subscribe すると常駐コストが人数分乗るため、SessionView が
-                // 実際に Status/Timeline タブを開いているセッションだけ
-                // sessionStatuses に entry を持つ (SessionView.tsx の購読
-                // effect 参照)。よってバッジが出るのは currentSid の行だけ
-                // — 他行は subscribe していないので常に null (「ゼロ件」で
-                // はなく「未購読」、意図的にバッジ非表示のまま)。
-                statusBadge={
-                  row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
-                }
-                // statusBadge と違い全行に出す: prompt cache は daemon 側で
-                // 全 sid 分まとめて届くので、購読の有無に左右されない。
-                modelEffort={resolveModelEffort(row.sid)}
-                cacheTs={llmRequests.get(row.sid)?.ts ?? null}
-                cacheExpiresAt={llmRequests.get(row.sid)?.cache_expires_at}
-                cacheOrigin={llmRequests.get(row.sid)?.origin}
-                sayUnread={sayUnreadBy.get(row.sid) ?? 0}
-              />
-            ))}
-          </ul>
-        </Fold>
+      {lastLiveAfter < 0 ? (
+        <LastLiveSessionsSection
+          lastLiveSessions={lastLiveSessions}
+          peers={peers}
+          currentSid={currentSid}
+        />
+      ) : null}
+      {sections.map((section, index) => (
+        <Fragment key={section.key}>
+          <Fold
+            open
+            class={sectionClass(section.key)}
+            summaryClass="session-section-summary"
+            summary={`${section.label} (${section.rows.length})`}
+          >
+            <ul class="session-section-list">
+              {section.rows.map((row) => (
+                <SessionRowItem
+                  key={row.sid}
+                  row={row}
+                  currentSid={currentSid}
+                  // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+                  // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+                  // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
+                  // subscribe すると常駐コストが人数分乗るため、SessionView が
+                  // 実際に Status/Timeline タブを開いているセッションだけ
+                  // sessionStatuses に entry を持つ (SessionView.tsx の購読
+                  // effect 参照)。よってバッジが出るのは currentSid の行だけ
+                  // — 他行は subscribe していないので常に null (「ゼロ件」で
+                  // はなく「未購読」、意図的にバッジ非表示のまま)。
+                  statusBadge={
+                    row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
+                  }
+                  // statusBadge と違い全行に出す: prompt cache は daemon 側で
+                  // 全 sid 分まとめて届くので、購読の有無に左右されない。
+                  modelEffort={resolveModelEffort(row.sid)}
+                  cacheTs={llmRequests.get(row.sid)?.ts ?? null}
+                  cacheExpiresAt={llmRequests.get(row.sid)?.cache_expires_at}
+                  cacheOrigin={llmRequests.get(row.sid)?.origin}
+                  sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+                />
+              ))}
+            </ul>
+          </Fold>
+          {index === lastLiveAfter ? (
+            <LastLiveSessionsSection
+              lastLiveSessions={lastLiveSessions}
+              peers={peers}
+              currentSid={currentSid}
+            />
+          ) : null}
+        </Fragment>
       ))}
     </div>
   );
