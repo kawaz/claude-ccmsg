@@ -363,38 +363,56 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-// --- SessionView pane splitter (FileTree / FileViewer) --- //
+// --- Splitter-driven pane sizing (sidebar / form pane / session panes) --- //
 
-/** Lower/upper clamp for the tree-pane fraction of the session-panes flex
- * container. Values chosen so neither pane can shrink to a hairline: at the
- * lower bound the tree still shows at least one full row of names, at the
- * upper bound the viewer's line-number gutter + a chunk of the first line
- * still fit. Not a user preference — a hard usability floor/ceiling that
- * the drag handler and the persisted-ratio loader both funnel through. */
-export const SESSION_PANE_MIN_RATIO = 0.1;
-export const SESSION_PANE_MAX_RATIO = 0.9;
+/** 潰した側のペインに残す最小幅 (px)。スプリッター自身の見える太さ
+ * (最も太い #sidebar-splitter で 7px) を一回り上回る値で、潰しきっても
+ * 「線ではなくペイン」として残り、掴み直す先が視認できるところで止まる。
+ * 幅の好みはユーザがドラッグで決めるもので、ここは「消えて戻せなくなる」
+ * だけを防ぐ下限 — だから上限は固定値で持たず、常に反対側の同じ下限
+ * (= コンテナ幅 − PANE_MIN_PX) から導く。 */
+export const PANE_MIN_PX = 16;
+
+/** px 直値で幅を持つペイン (#sidebar / #form-pane) の丸め。`containerPx` は
+ * そのペインが分け合っている領域の幅で、渡されたときだけ上限が効く
+ * (レイアウト前・display:none で 0 や非有限になる場面では下限のみ)。
+ * `fallbackPx` は px が非有限のとき — localStorage のゴミ値や、ドラッグ中に
+ * 参照要素が消えた場合に NaN が state へ流れるのを止める。 */
+export function clampPanePx(px: number, fallbackPx: number, containerPx?: number): number {
+  if (!Number.isFinite(px)) return fallbackPx;
+  const max =
+    containerPx !== undefined && Number.isFinite(containerPx) && containerPx > 0
+      ? Math.max(PANE_MIN_PX, containerPx - PANE_MIN_PX)
+      : Number.POSITIVE_INFINITY;
+  return Math.min(max, Math.max(PANE_MIN_PX, px));
+}
 
 /** Default first-pane (tree) fraction when nothing is persisted. Roughly
  * matches the pre-splitter fixed 280px tree width at a ~1000px viewport
  * (280/1000 = 0.28) so the first render after upgrading doesn't jump. */
 export const SESSION_PANE_DEFAULT_RATIO = 0.28;
 
-/** Clamps a pane-split fraction into the usability window. Kept as a plain
- * `[min, max]` clamp (not a bias-toward-default) so a persisted ratio the
- * user deliberately dragged near a limit reloads exactly where they left
- * it. NaN falls through to `min` because callers get NaN from `parseFloat`
- * on garbage localStorage values (private mode wipe, cross-origin
- * migration, etc.) — snapping to the closer edge of the range would just
- * silently pick one for them. */
-export function clampPaneRatio(
-  ratio: number,
-  min: number = SESSION_PANE_MIN_RATIO,
-  max: number = SESSION_PANE_MAX_RATIO,
-): number {
-  if (!Number.isFinite(ratio)) return min;
-  if (ratio < min) return min;
-  if (ratio > max) return max;
-  return ratio;
+/** 比率を有効域に収める。実際の下限は px 側 (PANE_MIN_PX) にあるので、
+ * コンテナ幅が分かる場面 (ドラッグ中) は `containerPx` を渡す — 同じ 1% でも
+ * 400px 幅と 2000px 幅では残る太さが違うため、比率固定の下限では細い画面で
+ * 潰せず広い画面で潰れすぎる。
+ *
+ * `containerPx` 無し (localStorage からの復元) は `[0, 1]` だけを守る:
+ * ユーザが自分で潰した幅を、コンテナ幅を知らないまま押し戻さないため。
+ * 非有限は既定比率へ — 呼び出し側は `parseFloat` の結果をそのまま渡すので、
+ * ゴミ値のときに 0 (= 完全に潰れた状態) を作らない。
+ *
+ * 比率はスプリッターも含むコンテナに対する割合なので、反対側に実際に残るのは
+ * PANE_MIN_PX からスプリッターの太さ (.session-splitter は 4px) を引いた分。
+ * それでもスプリッターより太いままなので、掴み直す先は視認できる。 */
+export function clampPaneRatio(ratio: number, containerPx?: number): number {
+  if (!Number.isFinite(ratio)) return SESSION_PANE_DEFAULT_RATIO;
+  // 両側の下限が衝突するほど狭いコンテナでは中央で折り合う。
+  const floor =
+    containerPx !== undefined && Number.isFinite(containerPx) && containerPx > 0
+      ? Math.min(PANE_MIN_PX / containerPx, 0.5)
+      : 0;
+  return Math.min(1 - floor, Math.max(floor, ratio));
 }
 
 /** Turns a pointer position (clientX for horizontal splits, clientY for
@@ -403,17 +421,15 @@ export function clampPaneRatio(
  * function is deliberately axis-agnostic so the same code path drives both
  * the desktop side-by-side layout and the 720px-and-below column layout
  * (the CSS `flex-direction` swap is the only thing that changes). Returns
- * `min` when the container has collapsed to zero size (mid-resize, tab
- * hidden) rather than dividing by zero. */
+ * the default ratio when the container has collapsed to zero size
+ * (mid-resize, tab hidden) rather than dividing by zero. */
 export function paneRatioFromPointer(
   pointerPos: number,
   containerStart: number,
   containerSize: number,
-  min: number = SESSION_PANE_MIN_RATIO,
-  max: number = SESSION_PANE_MAX_RATIO,
 ): number {
-  if (containerSize <= 0) return min;
-  return clampPaneRatio((pointerPos - containerStart) / containerSize, min, max);
+  if (!(containerSize > 0)) return SESSION_PANE_DEFAULT_RATIO;
+  return clampPaneRatio((pointerPos - containerStart) / containerSize, containerSize);
 }
 
 /** File-extension predicate for FileViewer's Markdown preview toggle. Only

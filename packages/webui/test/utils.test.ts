@@ -12,6 +12,7 @@ import {
   clientBuildLabel,
   buildSessionSearchRequest,
   canonicalViewerPath,
+  clampPanePx,
   clampPaneRatio,
   DEFAULT_SESSION_SEARCH_FORM,
   errorMessage,
@@ -47,8 +48,8 @@ import {
   sessionSearchHitLabel,
   sessionStatus,
   sayUnreadBySid,
-  SESSION_PANE_MAX_RATIO,
-  SESSION_PANE_MIN_RATIO,
+  PANE_MIN_PX,
+  SESSION_PANE_DEFAULT_RATIO,
   shortSid,
   groupExternalFiles,
   sortExternalFiles,
@@ -682,54 +683,90 @@ describe("sortPeers", () => {
   });
 });
 
+describe("clampPanePx", () => {
+  // px 直値ペイン (#sidebar / #form-pane) の丸め。手動操作が主なので、
+  // 範囲内はそのまま通す。
+  test("範囲内はそのまま", () => {
+    expect(clampPanePx(500, 280, 1200)).toBe(500);
+  });
+
+  // 本命: 「潰れるまで動かせる」。かつてここには 200px / 320px といった
+  // 快適さ由来の下限があったが、残すのは掴み直せる太さだけ。
+  test("下限は PANE_MIN_PX まで潰せる", () => {
+    expect(clampPanePx(0, 280, 1200)).toBe(PANE_MIN_PX);
+    expect(clampPanePx(-500, 280, 1200)).toBe(PANE_MIN_PX);
+    expect(clampPanePx(PANE_MIN_PX, 280, 1200)).toBe(PANE_MIN_PX);
+    expect(clampPanePx(60, 280, 1200)).toBe(60);
+  });
+
+  // 上限は固定 px ではなくコンテナ由来 = 反対側のペインも同じ下限まで潰せる。
+  test("上限はコンテナ幅 − PANE_MIN_PX", () => {
+    expect(clampPanePx(5000, 280, 1200)).toBe(1200 - PANE_MIN_PX);
+    expect(clampPanePx(900, 280, 1200)).toBe(900);
+  });
+
+  // コンテナ幅が不明な経路 (localStorage 復元) は下限のみ。狭いウィンドウで
+  // 一度開いただけで記憶した幅を削らないため。
+  test("コンテナ幅を渡さなければ上限なし", () => {
+    expect(clampPanePx(5000, 280)).toBe(5000);
+    expect(clampPanePx(0, 280)).toBe(PANE_MIN_PX);
+  });
+
+  // レイアウト前 / display:none で 0 や非有限が来る経路も同じ扱い。
+  test("コンテナ幅が 0 や非有限なら上限なし", () => {
+    expect(clampPanePx(5000, 280, 0)).toBe(5000);
+    expect(clampPanePx(5000, 280, Number.NaN)).toBe(5000);
+  });
+
+  // 両側の下限が入らないほど狭い場合でも下限側を優先し、NaN を作らない。
+  test("コンテナが下限 2 つ分より狭ければ下限を返す", () => {
+    expect(clampPanePx(100, 280, 20)).toBe(PANE_MIN_PX);
+  });
+
+  // localStorage のゴミ値 / ドラッグ中に参照要素が消えた場合。
+  test("非有限は fallback", () => {
+    expect(clampPanePx(Number.NaN, 280, 1200)).toBe(280);
+    expect(clampPanePx(Number.POSITIVE_INFINITY, 280, 1200)).toBe(280);
+  });
+});
+
 describe("clampPaneRatio", () => {
-  // In-window values pass through unchanged — a persisted 40/60 split
-  // reloads to exactly 0.4, not "close to 0.4".
+  // 範囲内はそのまま — 永続した 40/60 は 0.4 ちょうどで戻る。
   test("passes an in-range ratio through unchanged", () => {
     expect(clampPaneRatio(0.4)).toBe(0.4);
     expect(clampPaneRatio(0.5)).toBe(0.5);
   });
 
-  // Boundary values are inclusive — dragging the splitter all the way to
-  // one edge should land on the constant the caller sees, not one epsilon
-  // inside, otherwise "dragged to min" and "one pixel past min" would
-  // persist differently after a reload.
-  test("keeps boundary values (min, max) as-is", () => {
-    expect(clampPaneRatio(SESSION_PANE_MIN_RATIO)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(clampPaneRatio(SESSION_PANE_MAX_RATIO)).toBe(SESSION_PANE_MAX_RATIO);
+  // コンテナ幅を渡さない復元経路は [0, 1] だけ。ユーザが潰した幅を、幅を
+  // 知らないまま押し戻さない。
+  test("コンテナ幅なしでは 0..1 のみを守る", () => {
+    expect(clampPaneRatio(0.01)).toBe(0.01);
+    expect(clampPaneRatio(0.99)).toBe(0.99);
+    expect(clampPaneRatio(-0.5)).toBe(0);
+    expect(clampPaneRatio(1.5)).toBe(1);
   });
 
-  // Below-min / above-max clamp to the boundary — the splitter never lets
-  // the pointer push a pane past the usability floor/ceiling, and the
-  // localStorage loader uses the same clamp so a stale value from an old
-  // build with wider bounds shrinks to today's window without discarding
-  // it outright.
-  test("clamps below-min up and above-max down", () => {
-    expect(clampPaneRatio(0)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(clampPaneRatio(-0.5)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(clampPaneRatio(1)).toBe(SESSION_PANE_MAX_RATIO);
-    expect(clampPaneRatio(1.5)).toBe(SESSION_PANE_MAX_RATIO);
+  // 下限は px 基準 = 同じ 1% でもコンテナ幅で残る太さが違うため。
+  test("コンテナ幅を渡すと下限は PANE_MIN_PX 相当の比率", () => {
+    expect(clampPaneRatio(0, 1000)).toBe(PANE_MIN_PX / 1000);
+    expect(clampPaneRatio(1, 1000)).toBe(1 - PANE_MIN_PX / 1000);
+    // 400px 幅では同じ 2% が下限を割る。
+    expect(clampPaneRatio(0.02, 400)).toBe(PANE_MIN_PX / 400);
+    expect(clampPaneRatio(0.02, 2000)).toBe(0.02);
   });
 
-  // Non-finite falls to min (see the doc comment on clampPaneRatio for
-  // why min rather than default): the caller feeds this parseFloat's
-  // result on a garbage/missing storage read, and picking either edge is
-  // less surprising than silently substituting the default and hiding
-  // the corruption.
-  test("returns min for non-finite input (NaN / Infinity)", () => {
-    expect(clampPaneRatio(Number.NaN)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(clampPaneRatio(Number.POSITIVE_INFINITY)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(clampPaneRatio(Number.NEGATIVE_INFINITY)).toBe(SESSION_PANE_MIN_RATIO);
+  // 下限 2 つ分より狭いコンテナでは中央で折り合う (min > max を作らない)。
+  test("極端に狭いコンテナでは 0.5 に収束", () => {
+    expect(clampPaneRatio(0.1, 20)).toBe(0.5);
+    expect(clampPaneRatio(0.9, 20)).toBe(0.5);
   });
 
-  // Caller-supplied custom bounds override the module defaults — used in
-  // tests, and in case a future callsite wants a different window (e.g. a
-  // narrower "tree hidden" mode). Verifies the arg plumbing, not just the
-  // default constants.
-  test("honors custom min/max bounds", () => {
-    expect(clampPaneRatio(0.5, 0.2, 0.8)).toBe(0.5);
-    expect(clampPaneRatio(0.1, 0.2, 0.8)).toBe(0.2);
-    expect(clampPaneRatio(0.9, 0.2, 0.8)).toBe(0.8);
+  // parseFloat がゴミ値で NaN を返す経路。0 (= 完全に潰れた状態) を作らず
+  // 既定比率へ戻す。
+  test("returns the default ratio for non-finite input", () => {
+    expect(clampPaneRatio(Number.NaN)).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(clampPaneRatio(Number.POSITIVE_INFINITY)).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(clampPaneRatio(Number.NEGATIVE_INFINITY)).toBe(SESSION_PANE_DEFAULT_RATIO);
   });
 });
 
@@ -747,22 +784,18 @@ describe("paneRatioFromPointer", () => {
     expect(paneRatioFromPointer(300, 100, 800)).toBe(0.25);
   });
 
-  // Pointer past either edge — the drag handler doesn't stop pointermove
-  // events at the container's edges (pointer capture keeps them coming
-  // even after leaving the element), so this function has to clamp the
-  // out-of-container drag to the usability window itself.
-  test("clamps a pointer past the container's edges", () => {
-    expect(paneRatioFromPointer(-100, 0, 1000)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(paneRatioFromPointer(2000, 0, 1000)).toBe(SESSION_PANE_MAX_RATIO);
+  // ポインタがコンテナ外へ出ても (pointer capture でイベントは来続ける)、
+  // 止まるのは反対側のペインが PANE_MIN_PX を残す位置。
+  test("コンテナ外へのドラッグは潰れる手前で止まる", () => {
+    expect(paneRatioFromPointer(-100, 0, 1000)).toBe(PANE_MIN_PX / 1000);
+    expect(paneRatioFromPointer(2000, 0, 1000)).toBe(1 - PANE_MIN_PX / 1000);
   });
 
   // Zero / negative container size — a tab hidden mid-resize, or a
-  // display:none race — must not divide by zero. Falls back to min (see
-  // doc comment) so the caller gets a defined value it can still write
-  // to state without an NaN propagating into React style props.
-  test("returns min for zero or negative container size", () => {
-    expect(paneRatioFromPointer(500, 0, 0)).toBe(SESSION_PANE_MIN_RATIO);
-    expect(paneRatioFromPointer(500, 0, -100)).toBe(SESSION_PANE_MIN_RATIO);
+  // display:none race — must not divide by zero.
+  test("returns the default ratio for zero or negative container size", () => {
+    expect(paneRatioFromPointer(500, 0, 0)).toBe(SESSION_PANE_DEFAULT_RATIO);
+    expect(paneRatioFromPointer(500, 0, -100)).toBe(SESSION_PANE_DEFAULT_RATIO);
   });
 
   // Axis-agnosticism check: the same function drives both horizontal
@@ -773,6 +806,11 @@ describe("paneRatioFromPointer", () => {
   test("axis-agnostic: works for vertical (Y) inputs the same way", () => {
     expect(paneRatioFromPointer(150, 0, 300)).toBe(0.5);
     expect(paneRatioFromPointer(90, 30, 300)).toBe(0.2);
+  });
+
+  // 縦積み (≤720px) でも下限は同じ px。高さの短いコンテナでも上端まで潰せる。
+  test("縦積みでも下限は同じ px 基準", () => {
+    expect(paneRatioFromPointer(0, 0, 320)).toBe(PANE_MIN_PX / 320);
   });
 });
 

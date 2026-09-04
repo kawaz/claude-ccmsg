@@ -5,19 +5,28 @@ import {
   formPanePanel,
   sidebarInlinePanel,
   FORM_PANE_DEFAULT_PX,
-  FORM_PANE_MAX_PX,
-  FORM_PANE_MIN_PX,
 } from "../src/client/form-pane.ts";
+import { PANE_MIN_PX } from "../src/client/utils.ts";
 
 describe("clampFormPaneWidth", () => {
   test("範囲内はそのまま", () => {
     expect(clampFormPaneWidth(500)).toBe(500);
   });
 
-  test("狭すぎ / 広すぎは範囲の端に丸める", () => {
-    expect(clampFormPaneWidth(10)).toBe(FORM_PANE_MIN_PX);
-    expect(clampFormPaneWidth(-200)).toBe(FORM_PANE_MIN_PX);
-    expect(clampFormPaneWidth(5000)).toBe(FORM_PANE_MAX_PX);
+  // #sidebar と同じ扱い: 快適さ由来の下限は持たず、掴み直せる太さだけ残す。
+  test("潰れる手前まで狭められる", () => {
+    expect(clampFormPaneWidth(40, 1200)).toBe(40);
+    expect(clampFormPaneWidth(-200, 1200)).toBe(PANE_MIN_PX);
+  });
+
+  // 上限は固定 px ではなく、右のセッションビューが潰れる手前。
+  test("上限は残り幅 − PANE_MIN_PX", () => {
+    expect(clampFormPaneWidth(5000, 1200)).toBe(1200 - PANE_MIN_PX);
+  });
+
+  // 復元経路は残り幅を知らないので下限のみ。
+  test("残り幅なしなら上限なし", () => {
+    expect(clampFormPaneWidth(5000)).toBe(5000);
   });
 
   // localStorage に数値でない値が入っていた / ドラッグ中に要素が消えた等。

@@ -3,7 +3,7 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState, MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
+import { clampPanePx, documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
@@ -27,16 +27,14 @@ import {
 } from "../session-view-cache.ts";
 
 const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
-const SIDEBAR_MIN_PX = 200;
-const SIDEBAR_MAX_PX = 560;
+const SIDEBAR_DEFAULT_PX = 280;
 
-function clampSidebarWidth(w: number): number {
-  if (!Number.isFinite(w)) return 280;
-  return Math.min(SIDEBAR_MAX_PX, Math.max(SIDEBAR_MIN_PX, w));
-}
-
+/** 復元時はコンテナ幅を渡さない (下限のみ) — ウィンドウを一時的に狭くした
+ * だけで、記憶している幅を書き換えてしまわないため。ドラッグ側は
+ * `window.innerWidth` を渡して、右のペインが潰れる手前で止める。 */
 function loadSidebarWidth(): number {
-  return clampSidebarWidth(Number(readStorage(SIDEBAR_WIDTH_KEY)) || 280);
+  // 未保存 (null) と空文字はどちらも Number で 0 になる = 既定幅扱いにする。
+  return clampPanePx(Number(readStorage(SIDEBAR_WIDTH_KEY)) || Number.NaN, SIDEBAR_DEFAULT_PX);
 }
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
@@ -282,7 +280,9 @@ export function App() {
         <PaneSplitter
           id="sidebar-splitter"
           ariaOrientation="vertical"
-          onDrag={(e) => setSidebarWidth(clampSidebarWidth(e.clientX))}
+          onDrag={(e) =>
+            setSidebarWidth(clampPanePx(e.clientX, SIDEBAR_DEFAULT_PX, window.innerWidth))
+          }
         />
         <div
           id="sidebar-backdrop"

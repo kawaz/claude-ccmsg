@@ -77,7 +77,10 @@ export function FormPane({ state }: { state: AppState }) {
         onDrag={(e) => {
           const pane = paneRef.current;
           if (!pane) return;
-          setWidth(clampFormPaneWidth(e.clientX - pane.getBoundingClientRect().left));
+          // 上限はこのペインの左辺から先の残り幅で決まる (右のセッション
+          // ビューを潰しきる手前まで動かせる)。
+          const left = pane.getBoundingClientRect().left;
+          setWidth(clampFormPaneWidth(e.clientX - left, window.innerWidth - left));
         }}
       />
     </>
