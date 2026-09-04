@@ -639,6 +639,28 @@ a {
   color: var(--accent-fg);
 }
 
+/* Pinned 側の選択中は控えめに (kawaz r259m66): ピンは固定表示の複製で、同じ
+ * sid が status セクションにも出るようになった (v0.144.4) ため、両方が同じ
+ * accent 塗りだと「どちらが本体か」で目が迷う。ピン側は塗らず accent の枠線
+ * だけにし、文字色も通常のまま — 選択の主表示は status セクション側。 */
+.pinned-section .session-row.active {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.pinned-section .session-row.active .session-main-link,
+.pinned-section .session-row.active .session-title,
+.pinned-section .session-row.active .session-line1-repo,
+.pinned-section .session-row.active .session-line1-ws,
+.pinned-section .session-row.active .session-branch,
+.pinned-section .session-row.active .session-sid,
+.pinned-section .session-row.active .session-line4,
+.pinned-section .session-row.active .session-status-badge,
+.pinned-section .session-row.active .session-error-text,
+.pinned-section .session-row.active .session-line3 {
+  color: inherit;
+}
+
 /* 選択中セッション行の時間表示 (kawaz r15 mid=11、2026-07-14): 通常状態は
  * fg-muted + opacity:0.65 でグレーになっているが、accent 背景の上では
  * コントラスト不足で「ほぼ読めない」。他の row 内テキストと同じ accent-fg
@@ -660,6 +682,25 @@ a {
  * base rule で accent-fg を当てている。 */
 .session-row.active .session-live-dot-running {
   background: var(--accent-fg);
+}
+
+/* ピン側は塗らない (上の .pinned-section ルール) ので、accent 背景前提の
+ * 反転・減光緩和も元に戻す。 */
+.pinned-section .session-row.active .session-live-dot-running {
+  background: var(--accent);
+}
+
+.pinned-section .session-row.active .session-idle {
+  opacity: 0.65;
+}
+
+.pinned-section .session-row.active .session-sid {
+  opacity: 0.75;
+}
+
+.pinned-section .session-row.active .session-line4,
+.pinned-section .session-row.active .session-line3 {
+  opacity: 0.7;
 }
 
 .session-line1 {
