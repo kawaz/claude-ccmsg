@@ -34,7 +34,7 @@ export function PaneSplitter({
   return (
     <div
       id={id}
-      class={dragging ? `${cls} dragging` : cls}
+      class={[cls, dragging ? "dragging" : undefined].filter(Boolean).join(" ") || undefined}
       role="separator"
       aria-orientation={ariaOrientation}
       onPointerDown={(e) => {

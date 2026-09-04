@@ -336,14 +336,32 @@ a {
 }
 
 /* sidebar 右のドラッグ splitter (desktop のみ、PaneSplitter)。従来の
- * border-right 1px の見た目をこの splitter 自身が担う。 */
-#sidebar-splitter {
-  flex: 0 0 5px;
+ * border-right 1px の見た目をこの splitter 自身が担う。見える線は 1px の
+ * まま、当たり判定は透明 padding で 7px 確保 (kawaz r273m2: 余白は増やさず
+ * 掴める太さを)。hover / drag 中は線を accent にして「掴める場所」を示す
+ * (.session-splitter と同じ合図)。 */
+#sidebar-splitter,
+#form-pane-splitter {
+  flex: 0 0 7px;
   cursor: col-resize;
   background: var(--border);
   background-clip: content-box;
-  padding: 0 2px;
+  padding: 0 3px;
   touch-action: none;
+  user-select: none;
+  transition: background-color 0.1s ease;
+}
+
+#sidebar-splitter.dragging,
+#form-pane-splitter.dragging {
+  background: var(--accent);
+}
+
+@media (hover: hover) {
+  #sidebar-splitter:hover,
+  #form-pane-splitter:hover {
+    background: var(--accent);
+  }
 }
 
 /* デスクトップのフォームパネル (FormPane.tsx、D-Q1 裁定 = b)。新規セッション
@@ -365,16 +383,6 @@ a {
  * ペインも一緒にスクロールする)。 */
 #form-pane .cwd-tree {
   max-height: 10rem;
-}
-
-/* #sidebar-splitter と同じ見た目・当たり判定 (境界線の役も兼ねる)。 */
-#form-pane-splitter {
-  flex: 0 0 5px;
-  cursor: col-resize;
-  background: var(--border);
-  background-clip: content-box;
-  padding: 0 2px;
-  touch-action: none;
 }
 
 #sidebar h2 {
