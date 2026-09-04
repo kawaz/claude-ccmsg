@@ -23,6 +23,7 @@ import { FileTypeIcon, type FileIconKind } from "./FileIcon.tsx";
 import { MarkdownView } from "../markdown-view.tsx";
 import { MdAllSection, MdColorSection } from "./CatalogMdColors.tsx";
 import { MemberChip } from "./MemberChip.tsx";
+import { NO_TRANSCRIPT_MESSAGE } from "./SessionView.tsx";
 import { Fold } from "./Fold.tsx";
 import { Tabs } from "./Tabs.tsx";
 
@@ -546,7 +547,7 @@ function TabsSection() {
                 id: "timeline",
                 label: "Timeline",
                 disabled: true,
-                title: "このセッションは transcript を申告していません",
+                title: NO_TRANSCRIPT_MESSAGE,
               },
             ]}
           />

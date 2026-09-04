@@ -47,6 +47,7 @@ import {
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   sessionStatus,
+  sessionTranscriptGates,
   sayUnreadBySid,
   PANE_MIN_PX,
   SESSION_PANE_DEFAULT_RATIO,
@@ -919,6 +920,49 @@ describe("indexAgentsBySid / toSessionRow", () => {
     const err = { text: "API Error: 500", timestamp: "2026-07-27T00:00:00Z" };
     const row = toSessionRow(peer({ sid: "s1" }), indexAgentsBySid([]), new Map([["other", err]]));
     expect(row.api_error).toBeUndefined();
+  });
+});
+
+describe("sessionTranscriptGates", () => {
+  test("a connected session announcing a transcript_path gets both capabilities", () => {
+    expect(sessionTranscriptGates({ transcript_path: "/p/s1.jsonl" }, undefined, false)).toEqual({
+      statusFeed: true,
+      transcript: true,
+    });
+  });
+
+  // The daemon resolves session_status_subscribe without allowVirtual, so
+  // every source below yields a readable transcript but never a live feed.
+  test("a pinned/searched hit's file makes the transcript readable with no peer", () => {
+    expect(sessionTranscriptGates(undefined, "/p/s1.jsonl", false)).toEqual({
+      statusFeed: false,
+      transcript: true,
+    });
+  });
+
+  test("an agent-only sid makes the transcript readable via the daemon's virtual resolve", () => {
+    expect(sessionTranscriptGates(undefined, undefined, true)).toEqual({
+      statusFeed: false,
+      transcript: true,
+    });
+  });
+
+  test("a sid with no peer, no stored file and no agents row has neither", () => {
+    expect(sessionTranscriptGates(undefined, "", false)).toEqual({
+      statusFeed: false,
+      transcript: false,
+    });
+  });
+
+  // transcript.ts keeps the fallback keyed on "not connected", not on "no file
+  // to read": a connected session that announced no transcript_path gets its
+  // own not_found even under allowVirtual, so offering Timeline for it (just
+  // because `claude agents --json` lists the sid) would only render an error.
+  test("a connected session without transcript_path is not widened by the agents row", () => {
+    expect(sessionTranscriptGates({}, undefined, true)).toEqual({
+      statusFeed: false,
+      transcript: false,
+    });
   });
 });
 

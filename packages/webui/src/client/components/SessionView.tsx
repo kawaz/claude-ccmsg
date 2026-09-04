@@ -18,6 +18,7 @@ import {
   type SessionTab,
 } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
+import { sessionTranscriptGates } from "../utils.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
@@ -28,6 +29,14 @@ import { StatusPanel } from "./StatusPanel.tsx";
 import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { Tabs, type TabItem } from "./Tabs.tsx";
+
+/** Shown wherever `hasTranscript` is false. Names all three sources that came
+ * up empty (see sessionTranscriptGates) and the one way left to open the
+ * session, since a sid with no peer, no pinned/searched file and no agents row
+ * is one nothing on this screen can resolve to a jsonl. Exported so the style
+ * catalog's disabled-tab specimen shows the same words the app does. */
+export const NO_TRANSCRIPT_MESSAGE =
+  "transcript が見つかりません (ccmsg 未接続 + 実行中セッション一覧にも無し)。Session Search から開き直してください";
 
 /** Terminal appears only for sessions that have one — an always-present but
  * dead Terminal tab would invite clicks that do nothing. Timeline instead
@@ -46,7 +55,7 @@ function sessionTabItems(
           id: "timeline",
           label: "Timeline",
           disabled: true,
-          title: "このセッションは transcript を申告していません",
+          title: NO_TRANSCRIPT_MESSAGE,
         },
     ...(hasTerminal
       ? [{ id: "terminal", label: "Terminal", href: terminalHref(sid) } as TabItem<SessionTab>]
@@ -141,9 +150,7 @@ export function SessionView({
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
   // hello 時に transcript_path を申告・検証済みのセッションでしか
   // session_status_subscribe は成立しない (daemon の resolveTranscript が
-  // error を返す)。Timeline タブが既に使っている判定と同一 (下の
-  // hasTranscript と同値だが、early return より前 = hooks 位置で必要なので
-  // ここで引く)。
+  // error を返す)。early return より前 = hooks 位置で要るのでここで引く。
   const peer = state.peers.find((p) => p.sid === sid);
   // Terminal タブは agent の hyoui_session_id が解決済み かつ daemon の
   // config.json で terminal_gateway_url が設定されているセッションでのみ
@@ -154,29 +161,27 @@ export function SessionView({
   const hyouiSessionId = agentForSid?.hyoui_session_id;
   const terminalGatewayUrl = state.terminalGatewayUrl;
   const hasTerminal = !!hyouiSessionId && !!terminalGatewayUrl;
-  // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1):
-  //
-  // - hasStatusFeed: the daemon's session_status_subscribe resolves the
-  //   transcript WITHOUT the allowVirtual fallback (transcript.ts's
-  //   TranscriptResolveOptions doc: "session-status callers intentionally
-  //   keep the connected-session contract") — so a live folded status feed
-  //   only exists for a connected session that announced a transcript_path.
-  //   Subscribing for a virtual sid would get session_not_found back and
-  //   leave StatusPanel's "読み込み中…" up forever.
-  // - hasTranscript: transcript_read DOES take the allowVirtual path for a
-  //   user-role conn (server.ts). A selected historical search hit (or a pin
-  //   created from one) carries its resolved jsonl file, so it remains readable
-  //   with no live peer. Arbitrary sid pins without a transcript file do not
-  //   widen this capability gate.
-  const hasStatusFeed = !!peer?.transcript_path;
+  // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1) — the
+  // derivation and the reason the two differ live in sessionTranscriptGates.
+  // An agent-only row (no peer, present in `claude agents --json`) therefore
+  // gets a readable Timeline but no live feed: transcript_subscribe needs a
+  // connected session, so the pane is a static read that the Timeline's own
+  // refresh button re-issues. Should that session connect, the 5s agents poll
+  // and the peers push both re-render this component with a peer in hand and
+  // the ordinary subscribe path takes over.
+  const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
+  const { statusFeed: hasStatusFeed, transcript: hasTranscript } = sessionTranscriptGates(
+    peer,
+    storedHit?.file,
+    !!agentForSid,
+  );
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
-  const statusSource = hasStatusFeed
+  // Same condition as hasStatusFeed, spelled inline so TS narrows `peer`.
+  const statusSource = peer?.transcript_path
     ? `${peer.transcript_path}\n${peer.repo_root ?? peer.cwd}`
     : null;
-  const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
-  const hasTranscript = hasStatusFeed || !!storedHit?.file;
 
   // Status データ購読 (DR-0020 Phase 2/3, DR-0024): Status/Timeline に加え
   // Files タブも external_files を要るため、この 3 タブのどれかが開いている間
@@ -349,7 +354,7 @@ export function SessionView({
               );
             })()
           ) : (
-            <p id="empty-state">このセッションは transcript を申告していません</p>
+            <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
           )}
         </div>
       ) : null}
@@ -372,7 +377,7 @@ export function SessionView({
               Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
             </p>
           ) : (
-            <p id="empty-state">このセッションは transcript を申告していません</p>
+            <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
           )}
         </div>
       ) : null}
