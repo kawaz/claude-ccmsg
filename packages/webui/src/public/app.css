@@ -1565,9 +1565,11 @@ a {
 }
 
 .session-creator-prompt {
-  /* rows (行数+2) が高さを決めるので固定の min-height は置かない —
-   * 1 行値のフォームまで 4.5rem に伸びてしまう。 */
-  resize: vertical;
+  /* rows (行数+2) が入力に追随して高さを決めるので固定の min-height は
+   * 置かず、手動リサイズも要らない (.composer textarea と同じ)。ブラウザ
+   * 標準の resize グリップは dark テーマで明るい四角として浮く
+   * (kawaz r273m3)。 */
+  resize: none;
 }
 
 /* resume_sid / resume_at: 中身は sid と uuid なので等幅で、桁の違いが
