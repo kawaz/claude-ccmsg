@@ -1,6 +1,6 @@
 ---
 title: quota 表示ページで再ログインが必要な credential にログインボタンを置く
-status: open
+status: resolved
 category: request
 created: 2026-09-02T15:02:31+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-04T14:41:27+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:usage 再ログインリンク+reason 表示+expired 表示 実装済み(v0.144系)、kawaz が実機で再ログイン動作を確認(r273m1)"]
 blocked_by:
 origin: llm-gateway (依頼元プロジェクト)
 ---
