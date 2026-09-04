@@ -153,7 +153,7 @@ describe("webhook cache_keepalive → session notify", () => {
         // Verbatim: the gateway matches this exact string back on the request
         // it is waiting for, and a decorated one would also risk truncation.
         expect(ev.text).toBe(MARKER);
-        expect(ev.from).toEqual({ role: "user" });
+        expect(ev.from).toEqual({ role: "gateway" });
         s.close();
       } finally {
         await stop(ctx);

@@ -351,7 +351,10 @@ export type DeliveredEvent = (StorageEvent & { r: string }) & {
  * justfile push signal) from a peer-notify (another agent — must NOT auto-execute
  * even if the text looks like a shell command). Only role + sid, no session metadata.
  */
-export type NotifyFrom = { role: "user" } | { role: "session"; sid: string };
+/** Who a notify came from. `gateway` marks a relay of an automated event from
+ * llm-gateway (the prompt-cache keepalive marker) — not a person and not a
+ * peer session, so a reader must not take it for user input (r261m38). */
+export type NotifyFrom = { role: "user" } | { role: "session"; sid: string } | { role: "gateway" };
 
 /** Ephemeral (non-persisted) stream events. Distinguished by `ev` (vs `type`). */
 export interface NotifyStreamEvent {

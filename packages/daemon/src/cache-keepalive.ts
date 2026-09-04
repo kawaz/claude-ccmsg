@@ -68,7 +68,10 @@ export function parseCacheKeepaliveEvent(value: unknown): CacheKeepaliveEvent | 
 /** Stamped on the relayed notify: from the session's side this is
  * indistinguishable from `ccmsg notify --sid <sid>` sent by a user-role client,
  * so nothing downstream (CLI relay, webui fold) needs a case for it. */
-export const CACHE_KEEPALIVE_FROM: NotifyFrom = { role: "user" };
+/** The marker is machinery, not a person: a session that reads `from` must be
+ * able to tell it apart from a human `ccmsg notify` (a session once rejected a
+ * `role:"user"` marker as impersonated input — r261m38). */
+export const CACHE_KEEPALIVE_FROM: NotifyFrom = { role: "gateway" };
 
 export interface CacheKeepaliveDeps {
   /** Push the marker down that session's subscribe stream, answering how many
