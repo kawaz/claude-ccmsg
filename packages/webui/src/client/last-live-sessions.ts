@@ -7,7 +7,7 @@
 // module is the row's presentation rule and the launcher request a row makes,
 // kept out of the JSX so both are testable (same split as pinned-sessions.ts).
 import type { LastLiveSession, PeerInfo } from "@ccmsg/protocol";
-import type { ForkPrefill, ResumePrefill } from "./session-creator.ts";
+import type { ResumePrefill } from "./session-creator.ts";
 import { lastPathSegment, shortSid } from "./utils.ts";
 
 /** Rows to actually show: never one whose session is connected right now.
@@ -64,27 +64,26 @@ export function lastLiveResumePrefill(entry: LastLiveSession): ResumePrefill {
   };
 }
 
-/** What the row's fork action hands the launcher (kawaz r259 m42:「resume
- * じゃなく fork で起動したいときもあります」): the same session and the same
- * inherited context as the resume above, on the fork recipe instead.
+/** 削除ボタンの「見た目」と「確認の要否」を 1 つの判断として返す
+ * (kawaz r273m7)。既定は確認ダイアログを 1 枚挟む — 行は消しても取り返しの付く
+ * 記録だが、隣が resume である以上、狙いを外した指が黙って行を消すのは避けたい。
+ * Shift を押している間だけ確認なしの即時削除にして、溜まった行をサクサク片付け
+ * られる経路を残す。
  *
- * `resumeAt` is empty rather than a guessed record. A fork point is a uuid the
- * user picked out of a conversation they were looking at, and this row is not
- * looking at one — the Timeline's "ここから fork" is where that choice is
- * made. Left blank, the field says so and stays editable, so a user who does
- * have a uuid in mind can paste it before pressing 実行.
+ * mark と confirm を同じ関数から出すのは、両者が同じ Shift 状態から導かれる
+ * ためで、ボタンが ❌ を出しているのに確認が挟まる (またはその逆) という食い
+ * 違いを構造的に作れなくする。呼び出し側は表示に hover 中の Shift を、実行に
+ * click の `shiftKey` を渡す。
  *
- * The launcher is opened rather than anything being started, exactly as the
- * resume action does: what the form seeds is a starting point the user
- * confirms. */
-export function lastLiveForkPrefill(entry: LastLiveSession): ForkPrefill {
+ * Shift を持たないタッチ環境では常に確認あり側になる — それがこの行で踏める
+ * 唯一の削除経路。 */
+export function lastLiveRemoveAction(
+  entry: LastLiveSession,
+  shift: boolean,
+): { mark: string; confirm: string | null } {
+  if (shift) return { mark: "❌", confirm: null };
   return {
-    kind: "fork",
-    sessionId: entry.sid,
-    resumeAt: "",
-    cwd: entry.cwd,
-    ...(entry.model ? { model: entry.model } : {}),
-    ...(entry.effort ? { effort: entry.effort } : {}),
-    ...(entry.title ? { title: entry.title } : {}),
+    mark: "✕",
+    confirm: `「${lastLiveSessionTitle(entry)}」を前回稼働中から削除しますか?\n(セッション自体は消えません)`,
   };
 }

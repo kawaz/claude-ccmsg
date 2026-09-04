@@ -318,6 +318,13 @@ a {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* スプリッターは隣のペインが潰れるところまで動かせる。潰された側は
+   * box-sizing: border-box の下限 (= 自分の左右 padding の合計) より細く
+   * ならないので、そのはみ出しをここで断ち切る — 出さないとページ全体に
+   * 横スクロールが生えて、topbar ごと左右に運ばれる。`clip` は `hidden` と
+   * 違って反対軸の `visible` を `auto` に変えないため、縦は各ペインが
+   * 自前で持つスクロールのまま。 */
+  overflow-x: clip;
 }
 
 #sidebar {
@@ -1118,10 +1125,10 @@ a {
   opacity: 0.85;
 }
 
-/* 「前回稼働中」行の操作ボタン列 ▶ ⑂ ✕ (SessionList.tsx の
+/* 「前回稼働中」行の操作ボタン列 ▶ ✕ (SessionList.tsx の
  * LastLiveSessionRow)。Pinned 行の ⭐ と同じ位置・同じ器を使う — 1 行目の
  * 右端に付く 1 文字のアクションという役割が同じなので、見た目の文法も揃える。
- * 3 つ並ぶぶん padding は左右 space-2 に詰める (space-3 のままだと sid/cwd を
+ * 並ぶぶん padding は左右 space-2 に詰める (space-3 のままだと sid/cwd を
  * 押し出す)。 */
 .last-live-action-btn {
   flex-shrink: 0;
@@ -1129,7 +1136,7 @@ a {
   border: none;
   color: var(--fg-muted);
   cursor: pointer;
-  /* ⭐ (絵文字) と違い ▶ ⑂ ✕ は字形が細いので、Pinned 行と同じ font-size だと
+  /* ⭐ (絵文字) と違い ▶ ✕ は字形が細いので、Pinned 行と同じ font-size だと
    * 行の右端で線のように見える。1 段だけ上げて重さを揃える。 */
   font-size: var(--font-size-sm);
   line-height: 1;
@@ -1143,6 +1150,15 @@ a {
 /* ✕ だけは消す操作なので hover を danger 側に振る — 隣の ▶ ⑂ と同じ色で
  * 光ると、押す直前に区別が付くのが字形だけになる。 */
 .last-live-remove-btn:hover {
+  color: var(--danger);
+}
+
+/* Shift+hover 中の ❌ (kawaz r273m7)。確認を挟まず即座に消える状態なので、
+ * 字が入れ替わるだけでなく器も一段強くする。絵文字は自前の色を持っていて
+ * color が効かないぶん、細字の ✕ より視覚的に重い — font-size は上げず、
+ * 幅の変化で行の他の要素を押し出さないようにする。 */
+.last-live-remove-btn.armed {
+  opacity: 1;
   color: var(--danger);
 }
 

@@ -39,7 +39,7 @@ import {
 } from "../utils.ts";
 import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
-  lastLiveForkPrefill,
+  lastLiveRemoveAction,
   lastLiveResumePrefill,
   lastLiveSessionTitle,
   sortLastLiveSessions,
@@ -861,23 +861,22 @@ function LastLiveSessionRow({
   entry,
   currentSid,
   onResume,
-  onFork,
   onRemove,
 }: {
   entry: LastLiveSession;
   currentSid: string | null;
   onResume: () => void;
-  /** Open the launcher on the fork recipe for this session instead of the
-   * resume one (kawaz r259 m42). A second button rather than a menu: the row
-   * already carries its actions inline, and two of them still read at a
-   * glance. */
-  onFork: () => void;
-  /** Forget this row. No confirmation step — the entry is a record of a past
-   * observation, not the session, so nothing is lost that a later sighting
-   * would not record again (see the last_live_remove op). */
+  /** Forget this row (see the last_live_remove op). What is dropped is a record
+   * of a past observation, not the session — but the button sits next to
+   * resume, so the confirmation in `lastLiveRemoveAction` still stands between
+   * a stray click and a row that disappears. */
   onRemove: () => void;
 }) {
   const title = lastLiveSessionTitle(entry);
+  // 削除ボタンだけ Shift+hover で見た目が変わる (行の sid / タイトルと同じ
+  // 仕掛け): 押した時に確認が挟まるかどうかを、押す前の字で見せる。
+  const { armed, handlers } = useShiftHover();
+  const remove = lastLiveRemoveAction(entry, armed);
   const hasRepoWs = Boolean(entry.repo || entry.ws);
   // 止まっているセッションなので live な供給元は存在しない: 出せるのは daemon が
   // transcript の最後の turn から読み戻した凍結値だけ (LastLiveSession の doc)。
@@ -904,7 +903,7 @@ function LastLiveSessionRow({
         <span class="session-idle" title={`最終確認 ${entry.last_seen_at}`}>
           {formatRelativeAge(entry.last_seen_at)}
         </span>
-        {/* 3 つとも常時表示 — hover でしか出ない操作はタッチで押せない
+        {/* 2 つとも常時表示 — hover でしか出ない操作はタッチで押せない
          * (kawaz r259 m2)。並びは「よく使う順」ではなく「取り返しの付く順」に
          * しない: ✕ を端に置くのは、隣を狙った指が消す方に当たらないため。 */}
         <button
@@ -918,21 +917,22 @@ function LastLiveSessionRow({
         </button>
         <button
           type="button"
-          class="last-live-action-btn"
-          aria-label="このセッションから fork"
-          title="このセッションから fork (ランチャーを開く)"
-          onClick={onFork}
-        >
-          ⑂
-        </button>
-        <button
-          type="button"
-          class="last-live-action-btn last-live-remove-btn"
+          class={`last-live-action-btn last-live-remove-btn${armed ? " armed" : ""}`}
           aria-label="この行を前回稼働中から削除"
-          title="この行を前回稼働中から削除 (セッション自体は消えません)"
-          onClick={onRemove}
+          title={
+            "この行を前回稼働中から削除 (セッション自体は消えません)\n" +
+            "Shift+クリックで確認なしに削除"
+          }
+          // 表示は hover 中の Shift、実行は click 自身の shiftKey で決める
+          // (hover を経ずに届く click — キーボード操作等 — でも確認側に倒れる)。
+          onClick={(e) => {
+            const { confirm } = lastLiveRemoveAction(entry, e.shiftKey);
+            if (confirm && !window.confirm(confirm)) return;
+            onRemove();
+          }}
+          {...handlers}
         >
-          ✕
+          {remove.mark}
         </button>
       </div>
       {hasRepoWs ? (
@@ -1004,12 +1004,6 @@ function LastLiveSessionsSection({
               pushNavigation(
                 `${location.pathname}${location.search}`,
                 prefillSidebarState(lastLiveResumePrefill(entry)),
-              )
-            }
-            onFork={() =>
-              pushNavigation(
-                `${location.pathname}${location.search}`,
-                prefillSidebarState(lastLiveForkPrefill(entry)),
               )
             }
             // 応答は待たない: 消えた行は daemon の peers push で届く

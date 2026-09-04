@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { LastLiveSession, PeerInfo } from "@ccmsg/protocol";
 import {
-  lastLiveForkPrefill,
+  lastLiveRemoveAction,
   lastLiveResumePrefill,
   lastLiveSessionTitle,
   sortLastLiveSessions,
@@ -91,41 +91,30 @@ describe("lastLiveResumePrefill", () => {
   });
 });
 
-describe("lastLiveForkPrefill", () => {
-  test("resume と同じ情報を fork レシピ向けに渡す", () => {
-    expect(
-      lastLiveForkPrefill(
-        entry({ model: "claude-opus-5", effort: "high", title: "restart recovery" }),
-      ),
-    ).toEqual({
-      kind: "fork",
-      sessionId: "s1",
-      // 行はどのレコードから分岐するかを知らない (それを選ぶのは Timeline)。
-      // 空のまま渡して、必要なら form で uuid を貼れる状態にする。
-      resumeAt: "",
-      cwd: "/repos/claude-ccmsg/main",
-      model: "claude-opus-5",
-      effort: "high",
-      title: "restart recovery",
-    });
+describe("lastLiveRemoveAction", () => {
+  test("既定 (Shift なし) は確認を挟み、✕ のまま", () => {
+    const action = lastLiveRemoveAction(entry({ title: "restart recovery" }), false);
+    expect(action.mark).toBe("✕");
+    expect(action.confirm).toContain("restart recovery");
   });
 
-  test("model/effort/title が分からない時は渡さない (form の既定を上書きしない)", () => {
-    const prefill = lastLiveForkPrefill(entry());
-    expect(prefill).toEqual({
-      kind: "fork",
-      sessionId: "s1",
-      resumeAt: "",
-      cwd: "/repos/claude-ccmsg/main",
-    });
-    expect("model" in prefill).toBe(false);
+  // 確認文はどの行を消すのかを言えないと意味がない。タイトルが無い行でも
+  // 行に見えている文字 (cwd 末尾 / 短縮 sid) と同じものが出る。
+  test("確認文は行に見えているタイトルで対象を名指しする", () => {
+    expect(lastLiveRemoveAction(entry(), false).confirm).toContain("main");
   });
 
-  // 同じ行の 2 つのボタンは同じセッションを指す — 片方だけ sid の出所が
-  // ずれていたら、押したボタンで別セッションが起動することになる。
-  test("resume 導線と同じ sid を指す", () => {
-    const row = entry({ sid: "same-session" });
-    expect(lastLiveForkPrefill(row).sessionId).toBe(lastLiveResumePrefill(row).sessionId);
+  test("Shift 押下中は確認なしで、字も ❌ に変わる", () => {
+    expect(lastLiveRemoveAction(entry(), true)).toEqual({ mark: "❌", confirm: null });
+  });
+
+  // 見た目と挙動が同じ判断から出ていること自体が仕様: ❌ が出ているのに
+  // 確認が挟まる (逆もまた) 組み合わせは存在しない。
+  test("❌ を出す時は必ず確認なし、✕ を出す時は必ず確認あり", () => {
+    for (const shift of [true, false]) {
+      const { mark, confirm } = lastLiveRemoveAction(entry(), shift);
+      expect(mark === "❌").toBe(confirm === null);
+    }
   });
 });
 
