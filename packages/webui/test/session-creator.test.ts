@@ -21,6 +21,7 @@ import {
   initialCwdPickerMode,
   initialSessionCreatorForm,
   prefillSidebarState,
+  sessionCreatorFormDirty,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
@@ -860,5 +861,41 @@ describe("buildSessionLaunchRequest", () => {
       FORK,
     ]);
     expect(req).not.toHaveProperty("command");
+  });
+});
+
+// version 不一致の遅延リロード (navigation.ts) は、書きかけのあるフォームが
+// 開いている間だけ遷移に相乗りしない。比較相手が空フォームではなく seed なのが
+// このフォーム固有の点 — fork / resume のリンクは値の入った状態で開く。
+describe("sessionCreatorFormDirty", () => {
+  const TEMPLATES = [
+    template("plain", "claude", { CWD: "/repo", PROMPT: "" }),
+    template("fork", "claude --resume $SESSION_ID", { CWD: "/repo", SESSION_ID: "" }),
+  ];
+
+  test("prefill から開いただけのフォームは書きかけではない", () => {
+    const seed = initialSessionCreatorForm(TEMPLATES, null, { PROMPT: "調べて" });
+    expect(sessionCreatorFormDirty(seed, seed)).toBe(false);
+    expect(sessionCreatorFormDirty({ ...seed, params: { ...seed.params } }, seed)).toBe(false);
+  });
+
+  test("パラメータ・コマンド・テンプレのどれを触っても書きかけになる", () => {
+    const seed = initialSessionCreatorForm(TEMPLATES);
+    expect(
+      sessionCreatorFormDirty({ ...seed, params: { ...seed.params, PROMPT: "書きかけ" } }, seed),
+    ).toBe(true);
+    expect(sessionCreatorFormDirty({ ...seed, command: "claude --fast" }, seed)).toBe(true);
+    expect(
+      sessionCreatorFormDirty(selectSessionCreatorTemplate(seed, TEMPLATES, "fork"), seed),
+    ).toBe(true);
+  });
+
+  // テンプレ切替で宣言が入れ替わり、片方にしか無い名前が残る/消えることがある。
+  // 値の有無の差もユーザの入力なので拾う。
+  test("片方にしか無いパラメータ名も差として数える", () => {
+    const seed = initialSessionCreatorForm(TEMPLATES);
+    expect(sessionCreatorFormDirty({ ...seed, params: { ...seed.params, EXTRA: "x" } }, seed)).toBe(
+      true,
+    );
   });
 });

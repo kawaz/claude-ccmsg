@@ -9,6 +9,8 @@ import {
   type SidebarUrlState,
 } from "./sidebar-url.ts";
 import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
+import { hasUnsentInput } from "./unsent-input.ts";
+import { markReloadedForVersion, type VersionMismatch } from "./version-guard.ts";
 
 const RECENT_PREFIX = "ccmsg.recent.";
 const timelinePositions = new Map<string, string>();
@@ -254,6 +256,31 @@ export function pushSidebarState(sidebar: SidebarUrlState): void {
   pushNavigation(`${location.pathname}${location.search}`, sidebar);
 }
 
+/** 新しい daemon に追従するためのフルリロードを、この遷移に相乗りさせて
+ * よいか (kawaz r273m9)。version-guard は不一致を見つけても即リロードせず
+ * 予約だけ立てるので、実際にページを捨てる瞬間はここが決める。
+ *
+ * `push` に限るのは「ユーザが自分で次の画面を選んだ」遷移だけを拾うため。
+ * 戻る/進む (`traverse`) は元の画面が返ってくることを期待した操作なので
+ * 読み直しは不意打ちになるし、`replace` はタイムライン位置の追従やファイル
+ * 復元のようにプログラム起点の書き換えが大半で、ユーザは何も操作していない。
+ *
+ * 書きかけがある間は見送る。遷移でフォームが unmount される経路なら下書きは
+ * どのみち失われるが、パネルの開閉のようにその場に留まる遷移では生き残る。 */
+export function shouldReloadForVersion(
+  mismatch: VersionMismatch | null,
+  navigationType: NavigationType,
+  unsentInput: boolean,
+): boolean {
+  return (
+    mismatch !== null && mismatch.reloadOnNavigation && navigationType === "push" && !unsentInput
+  );
+}
+
+/** リロードを始めたら、遷移そのものはブラウザに任せる。`location.assign` は
+ * それ自体が `navigate` を撃つので、印を付けないと同じ判定が再入する。 */
+let reloadingForVersion = false;
+
 export function setupNavigation(store: Store, ws: WsClient): void {
   // path と `sb.*` は同じ URL の別々の名前空間なので、1 回の遷移で両方を
   // 届ける。パネルの開閉も遷移 (pushSidebarState) なので、この経路以外から
@@ -274,6 +301,7 @@ export function setupNavigation(store: Store, ws: WsClient): void {
 
   window.navigation.addEventListener("navigate", (rawEvent) => {
     const event = rawEvent as NavigateEvent;
+    if (reloadingForVersion) return;
     if (!event.canIntercept || event.downloadRequest !== null || event.hashChange) return;
     // A reload (location.reload(), the header reload button, Cmd+R) also fires
     // `navigate` with canIntercept=true. Intercepting it would turn "restart
@@ -324,6 +352,18 @@ export function setupNavigation(store: Store, ws: WsClient): void {
     const currentSid = locatorSid(current);
     const targetSid = locatorSid(target);
     if (currentSid && currentSid !== targetSid) saveRecent(currentSid, currentUrl());
+
+    // 予約済みのフルリロードは、遷移先へそのまま着地させる形で消化する
+    // (ユーザから見れば「移動したら画面が新しくなっていた」だけ)。ここまで
+    // 来ているので遷移先の存在確認と recent 保存は済んでいる。
+    const mismatch = store.getState().versionMismatch;
+    if (mismatch && shouldReloadForVersion(mismatch, event.navigationType, hasUnsentInput())) {
+      event.preventDefault();
+      reloadingForVersion = true;
+      markReloadedForVersion(mismatch.daemonVersion);
+      location.assign(targetUrl.href);
+      return;
+    }
 
     if (isSameSessionTabChange(current, target) && event.navigationType === "push") {
       event.preventDefault();

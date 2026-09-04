@@ -10,6 +10,7 @@ import {
   rememberTimelinePosition,
   resolveSessionRootTarget,
   sessionRootHistory,
+  shouldReloadForVersion,
   transcriptContainsUuid,
   urlWithRememberedTimelinePosition,
   type RecentRecord,
@@ -266,5 +267,39 @@ describe("navigationTarget", () => {
 
   test("何も開いていなければ遷移先はそのまま", () => {
     expect(navigationTarget("/s/s1/files?path=a.ts", "")).toBe("/s/s1/files?path=a.ts");
+  });
+});
+
+// 新しい daemon への追従を、遷移に相乗りさせてよいかの判定 (kawaz r273m9)。
+// 実際の location.assign は setupNavigation の中なので、ここでは分岐だけを見る。
+describe("shouldReloadForVersion", () => {
+  const pending = { daemonVersion: "0.137.0", reloadOnNavigation: true };
+
+  test("ユーザが次の画面を選んだ遷移 (push) で読み直す", () => {
+    expect(shouldReloadForVersion(pending, "push", false)).toBe(true);
+  });
+
+  // 戻る/進むは「さっきの画面に戻す」操作なので、ここで読み直すと押した本人に
+  // とって不意打ちになる。replace はプログラム起点 (位置追従・ファイル復元) が
+  // 大半で、ユーザは何も操作していない。
+  test("traverse / replace / reload では読み直さない", () => {
+    expect(shouldReloadForVersion(pending, "traverse", false)).toBe(false);
+    expect(shouldReloadForVersion(pending, "replace", false)).toBe(false);
+    expect(shouldReloadForVersion(pending, "reload", false)).toBe(false);
+  });
+
+  test("書きかけがある間は遷移でも読み直さない", () => {
+    expect(shouldReloadForVersion(pending, "push", true)).toBe(false);
+  });
+
+  test("予約が無い / 手動だけのタブは遷移で読み直さない", () => {
+    expect(shouldReloadForVersion(null, "push", false)).toBe(false);
+    expect(
+      shouldReloadForVersion(
+        { daemonVersion: "0.137.0", reloadOnNavigation: false },
+        "push",
+        false,
+      ),
+    ).toBe(false);
   });
 });

@@ -1834,18 +1834,22 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      daemonVersion: null,
+      mismatch: null,
     });
   });
 
-  test("daemon の方が新しければリロードし、そのタブに記録を残す", async () => {
+  test("daemon の方が新しければ、その場では読み直さず次の遷移に予約する", async () => {
     const newer = newerThanBundle();
-    await helloWith(newer, () => {});
-    expect(reloads).toBe(1);
-    expect(sessionStore["ccmsg:reloaded-for-daemon-version"]).toBe(newer);
+    const actions: Action[] = [];
+    await helloWith(newer, (a) => actions.push(a));
+    expect(reloads).toBe(0);
+    expect(actions).toContainEqual({
+      type: "version-mismatch/detected",
+      mismatch: { daemonVersion: newer, reloadOnNavigation: true },
+    });
   });
 
-  test("同じ daemon version でリロード済みのタブは再リロードせず通知を出す", async () => {
+  test("同じ daemon version でリロード済みのタブは予約せず導線だけ出す", async () => {
     const newer = newerThanBundle();
     sessionStore["ccmsg:reloaded-for-daemon-version"] = newer;
     const actions: Action[] = [];
@@ -1853,11 +1857,13 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      daemonVersion: newer,
+      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
     });
   });
 
-  test("書きかけを抱えたタブはリロードせず通知を出す", async () => {
+  // hello が通っている限り、検出時に書きかけがあっても予約は立てる。実際に
+  // 読み直すかは遷移の瞬間に navigation.ts が改めて判断する。
+  test("書きかけを抱えたタブでも予約は立つ", async () => {
     const newer = newerThanBundle();
     registerUnsentInput();
     const actions: Action[] = [];
@@ -1865,7 +1871,7 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      daemonVersion: newer,
+      mismatch: { daemonVersion: newer, reloadOnNavigation: true },
     });
   });
 });

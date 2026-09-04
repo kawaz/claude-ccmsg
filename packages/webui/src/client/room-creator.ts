@@ -36,6 +36,17 @@ export function roomCreatorFormValid(form: RoomCreatorForm): boolean {
   return form.kind === "broadcast" || form.memberSids.length > 0;
 }
 
+/** 初期状態から動いているか = リロードすると失われる入力があるか。
+ * RoomCreator.tsx が unsent-input として申告し、version 不一致の遅延リロード
+ * (navigation.ts) がこのパネルを開いている間は遷移で読み直さなくなる。
+ * 開いただけの空フォームは何も失わないので dirty ではない。 */
+export function roomCreatorFormDirty(form: RoomCreatorForm): boolean {
+  const initial = initialRoomCreatorForm();
+  return (
+    form.title.trim() !== initial.title || form.memberSids.length > 0 || form.kind !== initial.kind
+  );
+}
+
 export function toggleRoomCreatorMember(form: RoomCreatorForm, sid: string): RoomCreatorForm {
   const has = form.memberSids.includes(sid);
   return {

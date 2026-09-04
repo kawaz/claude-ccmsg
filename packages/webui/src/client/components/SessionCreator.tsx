@@ -21,6 +21,7 @@ import type {
   SessionLaunchResponse,
 } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
+import { registerUnsentInput } from "../unsent-input.ts";
 import { errorMessage } from "../utils.ts";
 import {
   buildSessionLaunchRequest,
@@ -33,6 +34,7 @@ import {
   paramWidget,
   selectSessionCreatorTemplate,
   sessionCreatorCwd,
+  sessionCreatorFormDirty,
   sessionCreatorFormValid,
   SESSION_CREATOR_EFFORTS,
   SESSION_CREATOR_MODELS,
@@ -319,6 +321,9 @@ export function SessionCreator({
   const { ws, store } = useApp();
   const [probe, setProbe] = useState<LauncherProbe>({ status: "loading" });
   const [form, setForm] = useState<SessionCreatorForm | null>(null);
+  // 種の控え。「ユーザが打ち込んだ分だけ」を見分けるための比較相手で、URL 由来の
+  // prefill (fork / resume) はここに入るので dirty にはならない。
+  const [seededForm, setSeededForm] = useState<SessionCreatorForm | null>(null);
   const [cwdPickerMode, setCwdPickerMode] = useState<CwdPickerMode>("editing");
   const [launch, setLaunch] = useState<LaunchState>({ status: "idle" });
 
@@ -343,6 +348,7 @@ export function SessionCreator({
             : {};
           const initialForm = initialSessionCreatorForm(res.templates, template, params, defaults);
           setForm(initialForm);
+          setSeededForm(initialForm);
           setCwdPickerMode(initialCwdPickerMode(sessionCreatorCwd(initialForm)));
         } else if (res.error.code === "launcher_not_configured") {
           setProbe({ status: "unconfigured" });
@@ -360,6 +366,20 @@ export function SessionCreator({
     // 変わり = ここも張り直される。フォームを開いたまま別 turn を fork する
     // 経路がそれで、seed からやり直すのが正しい。
   }, [ws, store, template, params]);
+
+  // 打ち込んだ内容は localStorage に載らないので、リロードすると本当に消える。
+  // version 不一致の遅延リロード (version-guard.ts / navigation.ts) に
+  // 「消えては困る入力がある」と申告して、遷移に相乗りしたリロードを止める。
+  // 起動し終えたフォームは用済みなので申告しない。
+  const dirty =
+    form !== null &&
+    seededForm !== null &&
+    launch.status !== "done" &&
+    sessionCreatorFormDirty(form, seededForm);
+  useEffect(() => {
+    if (!dirty) return;
+    return registerUnsentInput();
+  }, [dirty]);
 
   async function run(e: Event): Promise<void> {
     e.preventDefault();

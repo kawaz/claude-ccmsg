@@ -414,6 +414,21 @@ export function initialSessionCreatorForm(
   };
 }
 
+/** 種として与えられた状態から動いているか = リロードすると失われる入力が
+ * あるか。SessionCreator.tsx が unsent-input として申告し、version 不一致の
+ * 遅延リロード (navigation.ts) がこのパネルを開いている間は遷移で読み直さなく
+ * なる。比較相手が空フォームでなく seed なのは、URL 由来の prefill (fork /
+ * resume) はユーザが打ち込んだものではないため — 開いただけのフォームで
+ * 遷移を止めない。 */
+export function sessionCreatorFormDirty(
+  form: SessionCreatorForm,
+  seed: SessionCreatorForm,
+): boolean {
+  if (form.template !== seed.template || form.command !== seed.command) return true;
+  const names = new Set([...Object.keys(form.params), ...Object.keys(seed.params)]);
+  return [...names].some((name) => (form.params[name] ?? "") !== (seed.params[name] ?? ""));
+}
+
 /** Switch the form to another configured template. The command follows the new
  * recipe wholesale — it is that recipe's text, so keeping the old one's edits
  * would leave the form showing a command the chosen template never had.

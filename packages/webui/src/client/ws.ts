@@ -78,7 +78,7 @@ import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import { hasUnsentInput } from "./unsent-input.ts";
-import { browserVersionGuardEnv, reactToHandshakeVersion } from "./version-guard.ts";
+import { browserVersionGuardEnv, mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
@@ -542,7 +542,7 @@ export function createWsClient(
       if (guard) {
         dispatch({
           type: "version-mismatch/detected",
-          daemonVersion: guard.outcome === "notified" ? guard.daemonVersion : null,
+          mismatch: mismatchOf(guard.outcome, guard.daemonVersion),
         });
       }
       if (hello.ok) {

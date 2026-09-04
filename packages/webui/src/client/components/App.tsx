@@ -17,6 +17,7 @@ import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
 import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
+import { markReloadedForVersion } from "../version-guard.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
 import {
@@ -137,6 +138,7 @@ export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
   const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
+  const versionMismatch = state.versionMismatch;
   const sessionViewsRef = useRef<CachedSessionView[]>([]);
   // Sids the LRU dropped since the last commit, queued for the effect below.
   // The eviction is discovered here (render) but dispatched there, because a
@@ -256,18 +258,25 @@ export function App() {
         >
           &#8635;
         </button>
-        {/* 自動リロードを見送った version 不一致 (version-guard.ts) の受け皿。
-         * 書きかけを抱えたタブと、リロードしても bundle が入れ替わらなかった
-         * タブがここに来る — どちらも勝手にページを捨てられないので、押す
-         * タイミングをユーザに渡す。 */}
-        {state.versionMismatch !== null ? (
+        {/* version 不一致 (version-guard.ts) の受け皿。予約が立っている間は
+         * 次の画面遷移が勝手に読み直すので、ここは「待たずに今すぐ」の導線。
+         * 予約を見送ったタブ (書きかけがある / リロードしても bundle が
+         * 入れ替わらなかった) にとっては、これが唯一の追従手段になる。 */}
+        {versionMismatch !== null ? (
           <button
             id="app-version-mismatch"
             type="button"
-            title={`daemon が v${state.versionMismatch} に更新されています。この画面は古いままなので、再読み込みしてください`}
-            onClick={() => window.location.reload()}
+            title={
+              versionMismatch.reloadOnNavigation
+                ? `daemon が v${versionMismatch.daemonVersion} に更新されています。次の画面移動で反映されます (今すぐ反映するには押してください)`
+                : `daemon が v${versionMismatch.daemonVersion} に更新されています。この画面は古いままなので、再読み込みしてください`
+            }
+            onClick={() => {
+              markReloadedForVersion(versionMismatch.daemonVersion);
+              window.location.reload();
+            }}
           >
-            新しい版 v{state.versionMismatch}
+            新しい版 v{versionMismatch.daemonVersion}
           </button>
         ) : null}
       </header>

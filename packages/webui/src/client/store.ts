@@ -36,6 +36,7 @@ import {
   type SidebarUrlState,
 } from "./sidebar-url.ts";
 import { readStorage } from "./storage.ts";
+import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
 import { refreshPinsFromAgents, refreshPinsFromPeers } from "./pinned-sessions.ts";
 
@@ -216,10 +217,10 @@ export interface AppState {
   agentsLoaded: boolean;
   daemonInfo: DaemonInfo | null;
   /** hello が名乗った daemon version が、この bundle より新しかったときの
-   * その version。自動リロードを見送った (書きかけがある / 一度リロードしても
-   * 解消しなかった) タブだけがここに値を持ち、topbar がユーザ操作でのリロード
-   * 導線を出す。判定と見送りの理由は version-guard.ts が持つ。 */
-  versionMismatch: string | null;
+   * その version と、次の画面遷移をフルリロードに差し替えてよいか
+   * (navigation.ts が読む)。値がある間は topbar が「新しい版」の導線を出す。
+   * 判定と待たせ方の理由は version-guard.ts が持つ。 */
+  versionMismatch: VersionMismatch | null;
   /** DR-0023 host translation capability, probed once after each hello. */
   hostTranslatorAvailable: boolean;
   /** Web gateway (hyoui) の base URL。hello response の
@@ -441,7 +442,7 @@ export type Action =
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
   // bundle と揃っていれば導線を引っ込める。
-  | { type: "version-mismatch/detected"; daemonVersion: string | null }
+  | { type: "version-mismatch/detected"; mismatch: VersionMismatch | null }
   | { type: "translator/availability"; host: boolean }
   | { type: "terminal-gateway/loaded"; url: string | null }
   | { type: "llm-usage/availability"; available: boolean }
@@ -1068,8 +1069,19 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         daemonInfo: { version: action.version, exe: action.exe, script: action.script },
       };
-    case "version-mismatch/detected":
-      return { ...state, versionMismatch: action.daemonVersion };
+    case "version-mismatch/detected": {
+      // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を
+      // 据え置いて、立っている予約と導線をそのまま使い回す。
+      const next = action.mismatch;
+      const current = state.versionMismatch;
+      if (
+        next?.daemonVersion === current?.daemonVersion &&
+        next?.reloadOnNavigation === current?.reloadOnNavigation
+      ) {
+        return state;
+      }
+      return { ...state, versionMismatch: next };
+    }
     case "translator/availability":
       return { ...state, hostTranslatorAvailable: action.host };
     case "terminal-gateway/loaded":

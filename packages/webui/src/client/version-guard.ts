@@ -19,10 +19,30 @@ export type VersionGuardOutcome =
   /** bundle の方が新しい。daemon の入れ替えは CLI 側の version-mismatch
    *  upgrade (DR-0002 §4) の仕事で、ページを読み直しても何も変わらない。 */
   | "bundle-newer"
-  /** 不一致で、リロードした。 */
+  /** 不一致で、その場でリロードした。 */
   | "reloaded"
-  /** 不一致だが自動リロードは見送り、ユーザに委ねた。 */
-  | "notified";
+  /** 不一致。次のユーザ操作による画面遷移をフルリロードに差し替える
+   *  (navigation.ts) 予約を立て、それまでは画面をそのまま使わせる。 */
+  | "on-navigation"
+  /** 不一致だが自動リロードの予約もしない。ユーザがボタンを押した時だけ。 */
+  | "manual";
+
+/** 不一致を抱えたタブの状態。AppState.versionMismatch に入る。 */
+export interface VersionMismatch {
+  daemonVersion: string;
+  /** 次の遷移でフルリロードしてよいか (= outcome が "on-navigation")。 */
+  reloadOnNavigation: boolean;
+}
+
+/** 判定結果を AppState に載る形へ。リロード済み / 一致は「不一致なし」。 */
+export function mismatchOf(
+  outcome: VersionGuardOutcome,
+  daemonVersion: string,
+): VersionMismatch | null {
+  if (outcome === "on-navigation") return { daemonVersion, reloadOnNavigation: true };
+  if (outcome === "manual") return { daemonVersion, reloadOnNavigation: false };
+  return null;
+}
 
 export interface VersionGuardEnv {
   /** この bundle が焼き込んでいる version。 */
@@ -37,29 +57,41 @@ export interface VersionGuardEnv {
 
 /** hello が名乗った daemon version に対して、このタブが取るべき行動を決めて
  *  実行する。副作用 (reload / sessionStorage 書き込み) は env 越しなので、
- *  テストは実 DOM なしで全分岐を回せる。 */
+ *  テストは実 DOM なしで全分岐を回せる。
+ *
+ *  `handshakeOk` が false = hello 自体が拒否された = この bundle は daemon と
+ *  もう会話できない (以降の全 op が bad_request)。画面は何も更新されないまま
+ *  沈黙するので、この時だけは即リロードする。hello が通っているなら表示は
+ *  生きているので、リロードは「次の画面遷移」まで待たせる (kawaz r273m9:
+ *  入力中・操作中に画面を捨てられる方が損失が大きい)。 */
 export function reactToDaemonVersion(
   daemonVersion: string,
   env: VersionGuardEnv,
+  handshakeOk = true,
 ): VersionGuardOutcome {
   const diff = compareVersions(daemonVersion, env.bundleVersion);
   if (diff === 0) return "match";
   if (diff < 0) return "bundle-newer";
 
   // 2 回目の不一致 = リロードしても bundle が入れ替わらなかった (中間キャッシュ
-  // / Service Worker / daemon が古い build を掴んだまま等)。ここで再度
-  // location.reload() を打つとリロードループになるので、以後は通知に落として
-  // ユーザの操作を待つ。
-  if (env.readReloadedVersion() === daemonVersion) return "notified";
+  // / Service Worker / daemon が古い build を掴んだまま等)。ここで自動の
+  // リロードを再び予約するとリロードループ (遷移するたびに読み直して、なお
+  // 古いまま) になるので、以後は導線だけ出してユーザの操作を待つ。
+  if (env.readReloadedVersion() === daemonVersion) return "manual";
 
-  // 書きかけを抱えたタブを黙って捨てない。壊れた状態で喋り続けるのも困るが、
-  // 打ち込み中の本文が消える方がユーザにとっては損失が大きいので、判断を
-  // 渡す (通知のボタンからならユーザ自身のタイミングでリロードできる)。
-  if (env.hasUnsentInput()) return "notified";
-
-  env.writeReloadedVersion(daemonVersion);
-  env.reload();
-  return "reloaded";
+  if (!handshakeOk) {
+    // 書きかけを抱えたタブを黙って捨てない。壊れたタブでも、打ち込み中の
+    // 本文をユーザが取り出す時間は残す (導線のボタンから自分で読み直せる)。
+    if (env.hasUnsentInput()) return "manual";
+    env.writeReloadedVersion(daemonVersion);
+    env.reload();
+    return "reloaded";
+  }
+  // 予約の段階では書きかけの有無を見ない。実際に読み直すかは遷移の瞬間に
+  // navigation.ts が hasUnsentInput() を見て決めるので、検出時にたまたま
+  // 書きかけがあっただけで以後ずっと予約なしになる (送信して空になっても
+  // 追従しない) のを避ける。
+  return "on-navigation";
 }
 
 /** Run the guard against a handshake that may not have completed.
@@ -85,7 +117,7 @@ export async function reactToHandshakeVersion(
 ): Promise<{ outcome: VersionGuardOutcome; daemonVersion: string } | null> {
   const daemonVersion = hello.ok && hello.version ? hello.version : await probeVersion();
   if (!daemonVersion) return null;
-  return { outcome: reactToDaemonVersion(daemonVersion, env), daemonVersion };
+  return { outcome: reactToDaemonVersion(daemonVersion, env, hello.ok === true), daemonVersion };
 }
 
 /** sessionStorage を try/catch で包む (private mode / quota で例外が飛ぶ環境が
@@ -107,6 +139,13 @@ function writeSession(key: string, value: string): void {
   } catch {
     // storage unavailable — 自動リロード自体は成立するので握り潰す
   }
+}
+
+/** 実際にリロードへ踏み切る側 (遷移フック / topbar のボタン) が、その事実を
+ *  このタブに記録する。記録がないと、リロードしても bundle が入れ替わらな
+ *  かった時に同じ判定が何度でも成立してループになる。 */
+export function markReloadedForVersion(daemonVersion: string): void {
+  writeSession(RELOADED_FOR_VERSION_KEY, daemonVersion);
 }
 
 /** ブラウザ実環境用の env。 */

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildCreateRoomRequest,
   initialRoomCreatorForm,
+  roomCreatorFormDirty,
   roomCreatorFormValid,
   toggleRoomCreatorMember,
   type RoomCreatorForm,
@@ -97,5 +98,26 @@ describe("broadcast kind (kawaz r26 mid=118)", () => {
   test("normal request omits kind", () => {
     const req = buildCreateRoomRequest(form({ memberSids: ["sid-1"] }));
     expect(req).toEqual({ members: ["sid-1"] });
+  });
+});
+
+// version 不一致の遅延リロード (navigation.ts) は、書きかけのあるフォームが
+// 開いている間だけ遷移に相乗りしない。開いただけのパネルで遷移を止めない
+// ことと、打ち込んだ内容を捨てないことの両方をここで押さえる。
+describe("roomCreatorFormDirty", () => {
+  test("開いただけの空フォームは書きかけではない", () => {
+    expect(roomCreatorFormDirty(initialRoomCreatorForm())).toBe(false);
+  });
+
+  test("タイトル・メンバー・種類のどれを触っても書きかけになる", () => {
+    expect(roomCreatorFormDirty(form({ title: "設計相談" }))).toBe(true);
+    expect(roomCreatorFormDirty(form({ memberSids: ["sid-1"] }))).toBe(true);
+    expect(roomCreatorFormDirty(form({ kind: "broadcast" }))).toBe(true);
+  });
+
+  // 空白だけのタイトルは送信時も trim で消える (buildCreateRoomRequest) ので、
+  // 失われて困る入力として数えない。
+  test("空白だけのタイトルは書きかけではない", () => {
+    expect(roomCreatorFormDirty(form({ title: "   " }))).toBe(false);
   });
 });

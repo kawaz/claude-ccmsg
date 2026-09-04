@@ -12,15 +12,17 @@
 // has no session context, so it needs the member checkboxes NewRoomForm
 // doesn't (see room-creator.ts's doc comment for why "reuse the form 1:1"
 // wasn't possible despite the linked issue's initial framing).
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { PeerInfo } from "@ccmsg/protocol";
 import { useApp } from "../context.ts";
 import { roomHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
+import { registerUnsentInput } from "../unsent-input.ts";
 import { errorMessage, sessionLabel, shortSid } from "../utils.ts";
 import {
   buildCreateRoomRequest,
   initialRoomCreatorForm,
+  roomCreatorFormDirty,
   roomCreatorFormValid,
   toggleRoomCreatorMember,
   type RoomCreatorForm,
@@ -31,6 +33,15 @@ export function RoomCreator({ peers, onClose }: { peers: PeerInfo[]; onClose: ()
   const [form, setForm] = useState<RoomCreatorForm>(initialRoomCreatorForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 打ち込んだ内容は localStorage に載らないので、リロードすると本当に消える。
+  // version 不一致の遅延リロード (version-guard.ts / navigation.ts) に
+  // 「消えては困る入力がある」と申告して、遷移に相乗りしたリロードを止める。
+  const dirty = roomCreatorFormDirty(form);
+  useEffect(() => {
+    if (!dirty) return;
+    return registerUnsentInput();
+  }, [dirty]);
 
   async function create(e: Event): Promise<void> {
     e.preventDefault();
