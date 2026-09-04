@@ -414,6 +414,13 @@ export function createWsClient(
    * An entry lives from the request being written until its reply arrives or
    * a disconnect flush settles it. */
   let pending = new Map<string, (v: Response) => void>();
+  /** Requests made while the current socket is still connecting. They have no
+   * request_id until they are written, so replies enter `pending` only when
+   * the opened socket sends them. */
+  let connecting: Array<{
+    write(socket: WebSocket): void;
+    reject(reason: unknown): void;
+  }> = [];
   /** request_ids only need to be unique among this client's in-flight
    * requests (protocol doc), so a monotonic counter suffices — no UUID. */
   let nextRequestId = 0;
@@ -428,16 +435,44 @@ export function createWsClient(
   const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
   const since = loadSince();
 
+  function write(socket: WebSocket, req: RequestInput, resolve: (value: Response) => void): void {
+    const rid = `q${++nextRequestId}`;
+    pending.set(rid, resolve);
+    socket.send(JSON.stringify({ ...req, request_id: rid }));
+  }
+
   function send<T extends Response>(req: RequestInput): Promise<T> {
     return new Promise((resolve, reject) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      const socket = ws;
+      if (!socket) {
         reject(new Error("ws not open"));
         return;
       }
-      const rid = `q${++nextRequestId}`;
-      pending.set(rid, resolve as (v: Response) => void);
-      ws.send(JSON.stringify({ ...req, request_id: rid }));
+      if (socket.readyState === WebSocket.CONNECTING) {
+        connecting.push({
+          write: (opened) => write(opened, req, resolve as (value: Response) => void),
+          reject,
+        });
+        return;
+      }
+      if (socket.readyState !== WebSocket.OPEN) {
+        reject(new Error("ws not open"));
+        return;
+      }
+      write(socket, req, resolve as (value: Response) => void);
     });
+  }
+
+  function flushConnecting(socket: WebSocket): void {
+    const queued = connecting;
+    connecting = [];
+    for (const request of queued) request.write(socket);
+  }
+
+  function rejectConnecting(): void {
+    const queued = connecting;
+    connecting = [];
+    for (const request of queued) request.reject(new Error("ws connection closed"));
   }
 
   // The Timeline supplies the DOM-commit end of the trace and has no handle on
@@ -600,7 +635,9 @@ export function createWsClient(
       // Initial paint of the "stopped on an API error" set for the sidebar;
       // later changes arrive as `ev:"session_errors"` pushes. Same
       // failure-tolerance as the agents fetch above.
-      const errorsRes = await send<SessionErrorsResponse>({ op: "session_errors" });
+      const errorsRes = await send<SessionErrorsResponse>({
+        op: "session_errors",
+      });
       if (errorsRes.ok) dispatch({ type: "session-errors/loaded", errors: errorsRes.errors });
       const ping = await send<PingResponse>({ op: "ping" });
       if (ping.ok)
@@ -669,7 +706,10 @@ export function createWsClient(
     // one-shot op:"agents" reply in onOpen uses, so the reducer has exactly
     // one code path for "replace the agents list".
     if ("ev" in streamEv && streamEv.ev === "agents") {
-      dispatch({ type: "agents/loaded", agents: (streamEv as AgentsStreamEvent).agents });
+      dispatch({
+        type: "agents/loaded",
+        agents: (streamEv as AgentsStreamEvent).agents,
+      });
       return;
     }
     // Live push whenever the set of sessions stopped on a harness API error
@@ -716,7 +756,10 @@ export function createWsClient(
     // the whole thing" shape as ev:"llm_requests" above — the report always
     // covers every configured service.
     if ("ev" in streamEv && streamEv.ev === "llm_status") {
-      dispatch({ type: "llm-status/loaded", report: (streamEv as LlmStatusStreamEvent).report });
+      dispatch({
+        type: "llm-status/loaded",
+        report: (streamEv as LlmStatusStreamEvent).report,
+      });
       return;
     }
     // Live-tail push for a session's transcript (DR-0009 addendum,
@@ -825,6 +868,7 @@ export function createWsClient(
   function onClose(): void {
     stopKeepalive();
     dispatch({ type: "conn/status", status: "disconnected" });
+    rejectConnecting();
     flushPending();
     if (closedByUs) return;
     const delay =
@@ -844,6 +888,7 @@ export function createWsClient(
     }
     // Belt-and-suspenders: also flush on connect() itself, in case it's ever
     // invoked (e.g. a manual reconnect) without onClose having run first.
+    rejectConnecting();
     flushPending();
     const previous = ws;
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -859,6 +904,7 @@ export function createWsClient(
       if (socket !== ws) return;
       startKeepalive(socket);
       void onOpen();
+      flushConnecting(socket);
     });
     socket.addEventListener("message", (e) => {
       if (socket !== ws) return;
@@ -936,7 +982,15 @@ export function createWsClient(
     fsCreate: (sid, path, kind, content) => send({ op: "fs_create", sid, path, kind, content }),
     fsDelete: (sid, path, kind) => send({ op: "fs_delete", sid, path, kind }),
     fsEdit: (sid, path, kind, content, expected_mtime, expected_size) =>
-      send({ op: "fs_edit", sid, path, kind, content, expected_mtime, expected_size }),
+      send({
+        op: "fs_edit",
+        sid,
+        path,
+        kind,
+        content,
+        expected_mtime,
+        expected_size,
+      }),
     sandboxGrant: (sid, path, kind) => send({ op: "sandbox_grant", sid, path, kind }),
     sandboxRevoke: (gid) => send({ op: "sandbox_revoke", gid }),
     transcriptRead: (sid, opts) =>

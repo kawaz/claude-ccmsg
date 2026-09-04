@@ -277,7 +277,11 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     void handle.fsList("sess-1", "src");
-    expect(sentBody(ws1, 0)).toEqual({ op: "fs_list", sid: "sess-1", path: "src" });
+    expect(sentBody(ws1, 0)).toEqual({
+      op: "fs_list",
+      sid: "sess-1",
+      path: "src",
+    });
   });
 
   test("fsRead sends {op:'fs_read', sid, path} and resolves the file response", async () => {
@@ -364,7 +368,14 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(sentBody(ws1, 0)).toEqual({ op: "transcript_read", sid: "sess-1" });
 
     ws1.triggerMessage(
-      JSON.stringify({ ok: true, sid: "sess-1", lines: ["a"], start: 0, end: 2, size: 2 }),
+      JSON.stringify({
+        ok: true,
+        sid: "sess-1",
+        lines: ["a"],
+        start: 0,
+        end: 2,
+        size: 2,
+      }),
     );
     const res = await req;
     expect(res.ok).toBe(true);
@@ -421,7 +432,10 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptSubscribe("sess-1");
-    expect(sentBody(ws1, 0)).toEqual({ op: "transcript_subscribe", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({
+      op: "transcript_subscribe",
+      sid: "sess-1",
+    });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1", size: 200 }));
     const res = await req;
@@ -440,7 +454,10 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.transcriptUnsubscribe("sess-1");
-    expect(sentBody(ws1, 0)).toEqual({ op: "transcript_unsubscribe", sid: "sess-1" });
+    expect(sentBody(ws1, 0)).toEqual({
+      op: "transcript_unsubscribe",
+      sid: "sess-1",
+    });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, sid: "sess-1" }));
     const res = await req;
@@ -516,14 +533,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(instances.length).toBe(1); // no resurrected socket
   });
 
-  // Guards the exact race the webui bugfix (direct `#s<sid>[:<path>]` /
-  // `#t<sid>` links opened before the WS handshake completes) is built on:
-  // FileTree/FileViewer/Timeline's first-fetch effects call fsList/fsRead/
-  // transcriptRead, and send() rejects synchronously (not "resolves with an
-  // error response") when the socket isn't open yet. Callers must `.catch()`
-  // this, not just `.then()` — these tests document the rejection shape so a
-  // regression that turned it back into a hang would show up here first.
-  test("fsList rejects with 'ws not open' before the socket has ever opened", async () => {
+  test("a request made while connecting is sent after hello when the socket opens", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
@@ -532,53 +542,48 @@ describe("createWsClient pending queue on close/reconnect", () => {
     handle.connect();
     const ws1 = instances[0];
     expect(ws1).toBeDefined();
-    expect(ws1.readyState).toBe(MockWebSocket.CONNECTING); // not OPEN yet
+    expect(ws1.readyState).toBe(MockWebSocket.CONNECTING);
 
-    let caught: unknown;
-    try {
-      await handle.fsList("sess-1");
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("ws not open");
-    expect(ws1.sent.length).toBe(0); // send() bailed before touching the socket
+    const queued = handle.fsList("sess-1");
+    expect(ws1.sent).toEqual([]);
+
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    expect(sentBody(ws1, 0)).toEqual({
+      op: "hello",
+      role: "user",
+      client_version: VERSION,
+      protocol: 1,
+    });
+    expect(sentBody(ws1, 1)).toEqual({ op: "fs_list", sid: "sess-1" });
+
+    const queuedRid = (JSON.parse(ws1.sent[1] ?? "{}") as { request_id: string }).request_id;
+    ws1.triggerMessage(JSON.stringify({ ok: true, entries: [], request_id: queuedRid }));
+    const result = await queued;
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.entries).toEqual([]);
   });
 
-  test("fsRead rejects with 'ws not open' before the socket has ever opened", async () => {
+  test("a request made while connecting rejects if that socket closes", async () => {
     const handle = createWsClient(
       () => {},
       () => initialState(),
     );
     openHandles.push(handle);
     handle.connect();
+    const ws1 = instances[0];
+
+    const queued = handle.fsRead("sess-1", "README.md");
+    ws1.triggerClose();
 
     let caught: unknown;
     try {
-      await handle.fsRead("sess-1", "README.md");
-    } catch (err) {
-      caught = err;
+      await queued;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("ws not open");
-  });
-
-  test("transcriptRead rejects with 'ws not open' before the socket has ever opened", async () => {
-    const handle = createWsClient(
-      () => {},
-      () => initialState(),
-    );
-    openHandles.push(handle);
-    handle.connect();
-
-    let caught: unknown;
-    try {
-      await handle.transcriptRead("sess-1");
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("ws not open");
+    expect((caught as Error).message).toBe("ws connection closed");
   });
 
   // DR-0012: archive_room wire shape (RoomView's header toggle button).
@@ -679,7 +684,11 @@ describe("createWsClient pending queue on close/reconnect", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.invite("room-1", "sess-2");
-    expect(sentBody(ws1, 0)).toEqual({ op: "invite", room: "room-1", sid: "sess-2" });
+    expect(sentBody(ws1, 0)).toEqual({
+      op: "invite",
+      room: "room-1",
+      sid: "sess-2",
+    });
 
     ws1.triggerMessage(JSON.stringify({ ok: true, room: "room-1", id: "m2", already: false }));
     const res = await req;
@@ -843,7 +852,9 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["English.日本語。", "Second."]);
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
+      request_id: string;
+    };
     expect(sent).toEqual({
       op: "translate",
       request_id: sent.request_id,
@@ -884,7 +895,9 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.sessionRename("sid-1", "新しいタイトル");
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
+      request_id: string;
+    };
     expect(sent).toEqual({
       op: "session_rename",
       request_id: sent.request_id,
@@ -949,7 +962,9 @@ describe("createWsClient agents/ping (U1)", () => {
 
     const slow = handle.translate(["slow text"]);
     const quick = handle.ping();
-    const sentTranslate = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    const sentTranslate = JSON.parse(ws1.sent[0] ?? "") as {
+      request_id: string;
+    };
     const sentPing = JSON.parse(ws1.sent[1] ?? "") as { request_id: string };
     // ping's reply comes back first — the daemon is no longer gating the
     // connection on the running translation. Named explicitly so it cannot be
@@ -983,7 +998,10 @@ describe("createWsClient agents/ping (U1)", () => {
       }),
     );
     const slowRes = await slow;
-    expect(slowRes).toEqual({ ok: true, results: [{ ok: true, text: "遅い" }] });
+    expect(slowRes).toEqual({
+      ok: true,
+      results: [{ ok: true, text: "遅い" }],
+    });
   });
 
   // Two concurrent translates: replies may arrive in ANY order (the daemon
@@ -1020,8 +1038,14 @@ describe("createWsClient agents/ping (U1)", () => {
       }),
     );
 
-    expect(await first).toEqual({ ok: true, results: [{ ok: true, text: "一番" }] });
-    expect(await second).toEqual({ ok: true, results: [{ ok: true, text: "二番" }] });
+    expect(await first).toEqual({
+      ok: true,
+      results: [{ ok: true, text: "一番" }],
+    });
+    expect(await second).toEqual({
+      ok: true,
+      results: [{ ok: true, text: "二番" }],
+    });
   });
 
   // Disconnect while a slow op is still running: flushPending must settle it
@@ -1060,8 +1084,16 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.readyState = MockWebSocket.OPEN;
 
     const req = handle.translate(["bad"]);
-    ws1.triggerMessage(JSON.stringify({ ok: false, error: { code: "invalid_args", msg: "nope" } }));
-    expect(await req).toEqual({ ok: false, error: { code: "invalid_args", msg: "nope" } });
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: false,
+        error: { code: "invalid_args", msg: "nope" },
+      }),
+    );
+    expect(await req).toEqual({
+      ok: false,
+      error: { code: "invalid_args", msg: "nope" },
+    });
 
     // The lane is clean afterwards: a following ordinary op pairs correctly.
     const ping = handle.ping();
@@ -1103,7 +1135,9 @@ describe("createWsClient agents/ping (U1)", () => {
       regex: true,
       mtime_within: "2h",
     });
-    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & { request_id: string };
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
+      request_id: string;
+    };
     expect(sent).toEqual({
       op: "session_search",
       request_id: sent.request_id,
@@ -1206,7 +1240,13 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerMessage(
       JSON.stringify({
         ok: true,
-        errors: [{ sid: "s1", text: "API Error: 500", timestamp: "2026-07-27T09:00:00Z" }],
+        errors: [
+          {
+            sid: "s1",
+            text: "API Error: 500",
+            timestamp: "2026-07-27T09:00:00Z",
+          },
+        ],
       }),
     );
     await tick();
@@ -1232,8 +1272,18 @@ describe("createWsClient agents/ping (U1)", () => {
     const probe = JSON.parse(ws1.sent[7] ?? "{}") as Record<string, unknown> & {
       request_id: string;
     };
-    expect(probe).toEqual({ op: "translate", request_id: probe.request_id, texts: [] });
-    ws1.triggerMessage(JSON.stringify({ ok: true, accepted: true, request_id: probe.request_id }));
+    expect(probe).toEqual({
+      op: "translate",
+      request_id: probe.request_id,
+      texts: [],
+    });
+    ws1.triggerMessage(
+      JSON.stringify({
+        ok: true,
+        accepted: true,
+        request_id: probe.request_id,
+      }),
+    );
     await tick();
     ws1.triggerMessage(
       JSON.stringify({
@@ -1553,14 +1603,26 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerMessage(
       JSON.stringify({
         ev: "session_errors",
-        errors: [{ sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:00:00Z" }],
+        errors: [
+          {
+            sid: "s2",
+            text: "Prompt is too long",
+            timestamp: "2026-07-27T09:00:00Z",
+          },
+        ],
       }),
     );
 
     expect(actions).toEqual([
       {
         type: "session-errors/loaded",
-        errors: [{ sid: "s2", text: "Prompt is too long", timestamp: "2026-07-27T09:00:00Z" }],
+        errors: [
+          {
+            sid: "s2",
+            text: "Prompt is too long",
+            timestamp: "2026-07-27T09:00:00Z",
+          },
+        ],
       },
     ]);
   });
@@ -1770,7 +1832,10 @@ describe("createWsClient daemon version guard", () => {
     const actions: Action[] = [];
     await helloWith(VERSION, (a) => actions.push(a));
     expect(reloads).toBe(0);
-    expect(actions).toContainEqual({ type: "version-mismatch/detected", daemonVersion: null });
+    expect(actions).toContainEqual({
+      type: "version-mismatch/detected",
+      daemonVersion: null,
+    });
   });
 
   test("daemon の方が新しければリロードし、そのタブに記録を残す", async () => {
