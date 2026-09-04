@@ -50,3 +50,11 @@ DOM 挙動を単体テスト化できる基盤が無い。tlr-impl / unif-impl �
 - [ ] 比較結果に基づき採用方式を決定する (DR 化を検討)
 - [ ] `SessionView` / `RoomComposerFab` / `OneOnOneComposer` / `Timeline` の
   open-close 遷移・effect 由来の DOM 挙動に対する回帰テストを追加する
+
+## 2026-09-04 調査
+
+詳細: [docs/findings/2026-09-04-webui-render-test-feasibility.md](../findings/2026-09-04-webui-render-test-feasibility.md)
+
+- 原因: `.tsx` を import する test は動くが、リポ外の設定境界では Preact JSX transform (tsconfig の `jsx`/`jsxImportSource`) が適用されず `react/jsx-dev-runtime` エラーになる。component の client render には Bun 単体では DOM が無いため別途 DOM shim が必要。
+- 推奨案 A: `happy-dom` + `@testing-library/preact` を導入。PoC で interactive な click → DOM 更新の検証まで実動確認済み (`preact-render-to-string` の案 B は静的 snapshot 用途に限られ open-close 遷移の検証には不足)。
+- 未確認事項: 実 `Timeline` の Provider/Store/WsHandle fixture を組んだ mount の完走、`happy-dom` での `matchMedia`/`ResizeObserver` 等の網羅、`jsdom`/Playwright browser mode との比較、TypeScript 7 での typecheck。
