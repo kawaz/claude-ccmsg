@@ -1753,10 +1753,8 @@ describe("canonicalViewerPath", () => {
     expect(canonicalViewerPath(`${ROOT}/sibling/x.md`, ROOT, folders)).toBe(`${ROOT}/sibling/x.md`);
   });
 
-  test("no containment root (peer row not delivered) leaves the path alone", () => {
-    expect(canonicalViewerPath(`${ROOT}/main/docs/dr.md`, undefined, [])).toBe(
-      `${ROOT}/main/docs/dr.md`,
-    );
+  test("peer row が未到着なら absolute path の分類を保留する", () => {
+    expect(canonicalViewerPath(`${ROOT}/main/docs/dr.md`, undefined, [])).toBeNull();
   });
 
   test("the containment root itself is not rebased to an empty path", () => {

@@ -1017,14 +1017,16 @@ export function isWorkspaceFilePath(
  *     definition and keeps the exact-file allowlist as its authorization.
  *
  * `containmentRoot` is `repo_root ?? cwd` — the daemon's own `resolveRoot`
- * rule. `undefined` (peer row not delivered yet) leaves the path alone; the
- * caller re-evaluates when the peer arrives. */
+ * rule. An absolute path cannot be classified until that root arrives. `null`
+ * tells the caller to hold the read instead of prematurely treating it as an
+ * external file. */
 export function canonicalViewerPath(
   selectedPath: string,
   containmentRoot: string | undefined,
   workspaceFolders: readonly { path: string }[],
-): string {
+): string | null {
   if (!isExternalFilePath(selectedPath)) return selectedPath;
+  if (containmentRoot === undefined) return null;
   if (isWorkspaceFilePath(selectedPath, workspaceFolders)) return selectedPath;
   return viewerPathForAbsolute(selectedPath, containmentRoot);
 }
