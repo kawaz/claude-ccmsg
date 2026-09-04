@@ -1,6 +1,6 @@
 ---
 title: idle 通知購読機能 (notify_when_idle 相当) の ccmsg 導入検討
-status: idea
+status: discarded
 category: design
 created: 2026-08-27T11:31:51+09:00
 last_read:
@@ -8,11 +8,11 @@ open_entered:
 wip_entered:
 blocked_entered:
 pending_entered:
-discarded_entered:
+discarded_entered: 2026-09-04T14:42:23+09:00
 resolved_entered:
-discard_reason:
+discard_reason: ["kawaz 裁定で不要 (r273m1「Bは不要」)。実装せず"]
 pending_reason:
-close_reason:
+close_reason: ["discarded"]
 blocked_by:
 origin: 自リポ TODO
 ---
