@@ -35,10 +35,19 @@ import {
   SORT_KEY_STORAGE,
   type SidebarUrlState,
 } from "./sidebar-url.ts";
-import { readStorage } from "./storage.ts";
+import { readSessionStorage, readStorage } from "./storage.ts";
 import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
 import { refreshPinsFromAgents, refreshPinsFromPeers } from "./pinned-sessions.ts";
+
+export const SIDEBAR_OPEN_KEY = "ccmsg.sidebarOpen";
+
+/** 既定は「在る」。消してある状態を覚えるのはその窓の中だけなので、
+ * sessionStorage を読む (storage.ts の表)。書き戻しは App.tsx の effect が
+ * 持つ — reducer は純粋なまま (DR-0005 §1)。 */
+function initialSidebarOpen(): boolean {
+  return readSessionStorage(SIDEBAR_OPEN_KEY) !== "false";
+}
 
 /** 並び順は前回のまま開く (localStorage)。既定の "prompt" は「最後にユーザが
  * 入力したセッションが上」で、次にどれを見るかを探す動きに一番近い。 */
@@ -358,6 +367,10 @@ export interface AppState {
   /** mention targets staged for the composer of the current room. */
   mentionTo: Set<string>;
   connStatus: ConnStatus;
+  /** サイドバーが在るか。既定は「在る」で、ハンバーガーが唯一の切り替え口
+   * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたい時に消す)。
+   * 窓ごとの状態なので sessionStorage にだけ残す — 1 つの窓で消したことが
+   * 別の窓や次に開くタブに伝染しない (storage.ts の表)。 */
   sidebarOpen: boolean;
 }
 
@@ -401,7 +414,7 @@ export function initialState(): AppState {
     pinnedSessions: new Map(),
     mentionTo: new Set(),
     connStatus: "connecting",
-    sidebarOpen: false,
+    sidebarOpen: initialSidebarOpen(),
   };
 }
 
@@ -810,26 +823,6 @@ function agentRefKey(agent: AgentRef | null | undefined): string {
   return `${agent.runId ?? ""}|${agent.agentId ?? ""}|${agent.teammate ?? ""}`;
 }
 
-/** スマホ幅の overlay ドロワーを、この遷移で閉じるか。
- *
- * 閉じるのは**行き先が実際に変わった**時だけ (kawaz r273 m15)。フォームの
- * 開閉は path を変えず `sb.*` だけを書き換える遷移なので、遷移一般で閉じて
- * いると「新規」を押した瞬間にドロワーごと消えて、フォームがどこにも出ない。
- *
- * フォームを開いている間は行き先が変わっても閉じない: 検索結果を選んで
- * Timeline を見て、また次の結果を選ぶ、という使い方 (kawaz r273 m15) は
- * 結果一覧が出たままでないと成立しない。フォームを閉じている時は、一覧から
- * セッションを選ぶ = 見たい場所へ着いたということなので、ドロワーは退く。 */
-function closesDrawer(before: AppState, after: AppState, sidebar: SidebarUrlState): boolean {
-  if (sidebar.panel !== null) return false;
-  return (
-    before.view !== after.view ||
-    before.currentRoomId !== after.currentRoomId ||
-    before.currentSid !== after.currentSid ||
-    before.unknownPath !== after.unknownPath
-  );
-}
-
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "unknown") {
     return { ...state, unknownPath: locator.pathname };
@@ -1137,7 +1130,6 @@ export function reducer(state: AppState, action: Action): AppState {
         // 同値なら前の参照を残す (sameSidebarState 参照) — フォームの seed は
         // この参照が変わった時だけやり直す。
         sidebar: sameSidebarState(state.sidebar, action.sidebar) ? state.sidebar : action.sidebar,
-        sidebarOpen: state.sidebarOpen && !closesDrawer(state, next, action.sidebar),
       };
     }
     case "navigation/missing":

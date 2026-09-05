@@ -408,10 +408,9 @@ describe("reducer / translator availability (DR-0023)", () => {
 });
 
 describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
-  test("sets currentRoomId + currentMid and resets mentionTo + closes mobile sidebar", () => {
+  test("sets currentRoomId + currentMid and resets mentionTo", () => {
     const withMention = dispatch(initialState(), { type: "mention/toggle", id: "a1" });
-    const withSidebar = dispatch(withMention, { type: "sidebar/set", open: true });
-    const state = dispatch(withSidebar, {
+    const state = dispatch(withMention, {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: 4 },
       sidebar: CLOSED_SIDEBAR,
@@ -420,7 +419,6 @@ describe("reducer / locator/changed (room view, DR-0004 §5)", () => {
     expect(state.currentRoomId).toBe("r1");
     expect(state.currentMid).toBe(4);
     expect(state.mentionTo.size).toBe(0);
-    expect(state.sidebarOpen).toBe(false);
   });
 
   test("room-only locator (#rXXXX, no message anchor) leaves currentMid null", () => {
@@ -746,40 +744,36 @@ describe("reducer / peers/loaded and sidebar/set", () => {
     expect(state.peers).toHaveLength(1);
   });
 
-  test("sidebar/set toggles sidebarOpen independent of locator changes", () => {
-    const opened = dispatch(initialState(), { type: "sidebar/set", open: true });
-    expect(opened.sidebarOpen).toBe(true);
+  // 既定は「在る」。消すのはハンバーガーを押した時だけ。
+  test("既定は在る、sidebar/set で消せる", () => {
+    expect(initialState().sidebarOpen).toBe(true);
+    expect(dispatch(initialState(), { type: "sidebar/set", open: false }).sidebarOpen).toBe(false);
   });
 });
 
-// スマホ幅の overlay ドロワーを閉じる条件 (kawaz r273 m15)。フォームの開閉は
-// path を変えず `sb.*` だけが変わる遷移なので、遷移一般で閉じていると
-// 「新規」を押した瞬間にドロワーごと消えてフォームがどこにも出ない。
-describe("reducer / locator/changed (mobile drawer)", () => {
+// サイドバーは「在る / 無い」だけで、遷移では動かない (kawaz r273 m42)。
+// 押し出し方式では本文がサイドバーに隠れないので、セッションを選んだから
+// 引っ込める、という理由が無くなった。
+describe("reducer / locator/changed (サイドバーは遷移で動かない)", () => {
   const atRoom = (state: AppState, sidebar = CLOSED_SIDEBAR) =>
     dispatch(state, {
       type: "locator/changed",
       locator: { view: "room", room: "r1", mid: null },
       sidebar,
     });
-  /** r1 を見ている状態でハンバーガーを押した = 以降の遷移だけを見る。 */
-  const drawerOpenAtRoom = (sidebar = CLOSED_SIDEBAR) =>
-    dispatch(atRoom(initialState(), sidebar), { type: "sidebar/set", open: true });
 
-  test("行き先が変わらない遷移 (パネルの開閉) では閉じない", () => {
-    const shown = drawerOpenAtRoom();
-    expect(shown.sidebarOpen).toBe(true);
-    const opened = dispatch(shown, {
+  test("行き先が変わっても在るまま", () => {
+    const moved = dispatch(atRoom(initialState()), {
       type: "locator/changed",
-      locator: { view: "room", room: "r1", mid: null },
-      sidebar: parseSidebarUrl("?sb.panel=new"),
+      locator: { view: "timeline", sid: "s1", position: "head" },
+      sidebar: CLOSED_SIDEBAR,
     });
-    expect(opened.sidebarOpen).toBe(true);
+    expect(moved.sidebarOpen).toBe(true);
   });
 
-  test("行き先が変われば閉じる", () => {
-    const shown = drawerOpenAtRoom();
-    const moved = dispatch(shown, {
+  test("消してあれば遷移で勝手に出てこない", () => {
+    const hidden = dispatch(initialState(), { type: "sidebar/set", open: false });
+    const moved = dispatch(hidden, {
       type: "locator/changed",
       locator: { view: "timeline", sid: "s1", position: "head" },
       sidebar: CLOSED_SIDEBAR,
@@ -787,23 +781,14 @@ describe("reducer / locator/changed (mobile drawer)", () => {
     expect(moved.sidebarOpen).toBe(false);
   });
 
-  // 検索結果を選んで Timeline を見て、また次の結果を選ぶ (kawaz r273 m15) は
-  // 結果一覧が出たままでないと成立しない。
-  test("フォームを開いている間は行き先が変わっても閉じない", () => {
-    const search = parseSidebarUrl("?sb.panel=search");
-    const shown = drawerOpenAtRoom(search);
-    const moved = dispatch(shown, {
+  // フォームの開閉は path を変えず `sb.*` だけが変わる遷移。ここでも動かない。
+  test("パネルの開閉でも動かない", () => {
+    const opened = dispatch(atRoom(initialState()), {
       type: "locator/changed",
-      locator: { view: "timeline", sid: "s1", position: "head" },
-      sidebar: search,
+      locator: { view: "room", room: "r1", mid: null },
+      sidebar: parseSidebarUrl("?sb.panel=new"),
     });
-    expect(moved.sidebarOpen).toBe(true);
-  });
-
-  // 閉じている時に遷移しても勝手に開かない (閉じる側だけの一方向)。
-  test("閉じているドロワーは遷移で開かない", () => {
-    const moved = atRoom(initialState());
-    expect(moved.sidebarOpen).toBe(false);
+    expect(opened.sidebarOpen).toBe(true);
   });
 });
 

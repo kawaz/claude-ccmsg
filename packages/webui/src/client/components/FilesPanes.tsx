@@ -27,19 +27,19 @@ import { FileTree, loadDir } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
-import { readStorage, writeStorage } from "../storage.ts";
+import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
 // Persisted alongside Sidebar's ccmsg.peerSortKey (see Sidebar.tsx).
 const PANE_RATIO_STORAGE = "ccmsg.sessionPaneRatio";
 
 function loadPaneRatio(): number {
-  const raw = readStorage(PANE_RATIO_STORAGE);
+  const raw = readLayoutStorage(PANE_RATIO_STORAGE);
   if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
   return SESSION_PANE_DEFAULT_RATIO;
 }
 
 function savePaneRatio(ratio: number): void {
-  writeStorage(PANE_RATIO_STORAGE, String(ratio));
+  writeLayoutStorage(PANE_RATIO_STORAGE, String(ratio));
 }
 
 export function FilesPanes({

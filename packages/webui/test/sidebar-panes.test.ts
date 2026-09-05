@@ -1,5 +1,4 @@
-// サイドバーの 2 段 (一覧 / フォーム) の寸法と、外側タップの判定
-// (sidebar-panes.ts)。同じ 2 段が軸で並び替わるので、値は軸ごとに別のキーを
+// サイドバーの 2 段 (一覧 / フォーム) の寸法 (sidebar-panes.ts)。同じ 2 段が軸で並び替わるので、値は軸ごとに別のキーを
 // 持つ — 横に広げた幅を、縦に積んだときの高さとして復元しても意味がない。
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
@@ -16,7 +15,6 @@ import {
   clampSidebarListHeight,
   clampSidebarWidth,
   defaultDrawerWidth,
-  outsideClickClosesDrawer,
   loadDrawerWidth,
   loadFormWidth,
   loadSidebarListHeight,
@@ -51,8 +49,11 @@ class MemStorage {
   }
 }
 
+// 寸法は sessionStorage + localStorage の 2 段に書かれる (storage.ts) ので、
+// 窓を開き直したのと同じ状態にするには両方を差し替える。
 beforeEach(() => {
   (globalThis as unknown as { localStorage: MemStorage }).localStorage = new MemStorage();
+  (globalThis as unknown as { sessionStorage: MemStorage }).sessionStorage = new MemStorage();
 });
 
 describe("defaultDrawerWidth", () => {
@@ -184,31 +185,5 @@ describe("寸法のキー", () => {
   test("4 つの寸法はすべて別のキー", () => {
     const keys = [SIDEBAR_WIDTH_KEY, FORM_WIDTH_KEY, SIDEBAR_LIST_HEIGHT_KEY, DRAWER_WIDTH_KEY];
     expect(new Set(keys).size).toBe(keys.length);
-  });
-});
-
-// 外側タップでドロワーを閉じる判定 (App.tsx が composedPath の id を渡す)。
-// 「今どこにあるか」でなく押した瞬間の経路で見るのが要点 — フォームの ✕ は
-// その click の中で自分ごと unmount されるので、DOM を辿る判定では
-// ドロワーの外扱いになって、閉じたくない時に閉じてしまう。
-describe("outsideClickClosesDrawer", () => {
-  test("ドロワーの中を押したら閉じない", () => {
-    expect(outsideClickClosesDrawer(["session-creator-panel", "sidebar-form", "sidebar"])).toBe(
-      false,
-    );
-  });
-
-  // ここで閉じると、同じ click が toggle を走らせて開き直す = ボタンが効かない。
-  test("ハンバーガーを押したら閉じない", () => {
-    expect(outsideClickClosesDrawer(["menu-toggle", "topbar", "app"])).toBe(false);
-  });
-
-  test("ドロワーの外を押したら閉じる", () => {
-    expect(outsideClickClosesDrawer(["room-view", "layout", "app"])).toBe(true);
-  });
-
-  // id の無い要素は経路から落ちる (App.tsx が id を持つものだけ渡す)。
-  test("id が 1 つも無ければ外扱い", () => {
-    expect(outsideClickClosesDrawer([])).toBe(true);
   });
 });

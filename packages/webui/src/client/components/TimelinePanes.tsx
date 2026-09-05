@@ -17,20 +17,20 @@ import { AgentTreePanel } from "./AgentTreePanel.tsx";
 import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { Timeline } from "./Timeline.tsx";
-import { readStorage, writeStorage } from "../storage.ts";
+import { readLayoutStorage, writeLayoutStorage } from "../storage.ts";
 
 // Files タブの ccmsg.sessionPaneRatio とは別に持つ — Timeline 側の split を Files
 // 側に引きずられないため。default は共有 (0.28)。
 const PANE_RATIO_STORAGE = "ccmsg.timelinePaneRatio";
 
 function loadPaneRatio(): number {
-  const raw = readStorage(PANE_RATIO_STORAGE);
+  const raw = readLayoutStorage(PANE_RATIO_STORAGE);
   if (raw !== null) return clampPaneRatio(Number.parseFloat(raw));
   return SESSION_PANE_DEFAULT_RATIO;
 }
 
 function savePaneRatio(ratio: number): void {
-  writeStorage(PANE_RATIO_STORAGE, String(ratio));
+  writeLayoutStorage(PANE_RATIO_STORAGE, String(ratio));
 }
 
 export function TimelinePanes({

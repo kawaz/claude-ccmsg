@@ -2,7 +2,7 @@
 // `cache_expires_at`" into the two CSS values that drive the countdown ring
 // (app.css's `.cache-ring`).
 //
-// The ring is one linear animation of a registered `--cache-ring-angle`,
+// The ring is one linear animation of a registered `--cache-ring-progress`,
 // started mid-flight with a NEGATIVE animation-delay rather than ticked from
 // JS: the browser then owns every frame, and the page costs nothing per second
 // per session. That leaves this module with just the arithmetic — which is why

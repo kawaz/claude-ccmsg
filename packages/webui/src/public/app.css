@@ -31,6 +31,10 @@
   --agent-comm-border: #a8acb8;
   --danger: #dc2626;
   --warn: #b45309;
+  /* prompt cache が生きている残量を示す輪 (.cache-ring)。accent は「押せる」
+   * の色なので、残量という別の意味には別の色を当てる。accent 色の FAB の上に
+   * 重なるので、地に沈まない明るさを選ぶ。 */
+  --cache-ring: #22c55e;
   /* 本文より濃い文字色。システムフォントの 400 と 700 の差は本文サイズでは
    * 小さく、太さだけの強調は地の文に沈む — 太さに濃さを足して初めて拾える
    * (kawaz r119 m13「bold って人には微妙な違いでしかなくわかりにくい」)。 */
@@ -160,6 +164,7 @@
     --agent-comm-border: #626875;
     --danger: #f87171;
     --warn: #fbbf24;
+    --cache-ring: #4ade80;
     /* 暗い地では太字が明るく滲んで見える分、濃さの差は光の側に振る。 */
     --fg-strong: #ffffff;
     /* 暗い面ではコードの地を光の側へずらす (色相と比率はライトと共通)。 */
@@ -238,25 +243,18 @@ a {
   white-space: nowrap;
 }
 
-#menu-toggle {
-  display: none;
-  background: none;
-  border: none;
-  font-size: var(--font-size-4xl);
-  color: var(--fg);
-  cursor: pointer;
-}
-
 /* SPA 内リロードボタン (App.tsx、kawaz 2026-07-14 RLD-Q1=a)。iOS PWA でブラウザ
- * リロードが無い時のフォールバック。ConnectionStatus の隣に配置、他 topbar
- * ボタン (#menu-toggle) と同じ pill 系スタイル。&#8635; (↻) は system font
- * が表現する回転矢印。 */
+ * リロードが無い時のフォールバック。ConnectionStatus の隣に配置。
+ * &#8635; (↻) は system font が表現する回転矢印。 */
 .app-history-controls {
   display: flex;
   align-items: center;
   gap: var(--space-1);
 }
 
+/* topbar のボタンは 1 つの寸法体系に揃える。字だけ大きい / line-height が
+ * 既定のままのボタンが 1 つ混ざると、そのボタンだけが行の高さを決めてしまう。 */
+#menu-toggle,
 #app-back,
 #app-forward,
 #app-reload,
@@ -268,6 +266,51 @@ a {
   cursor: pointer;
   padding: 0 var(--space-4);
   line-height: 1;
+}
+
+/* サイドバーの在り / 無しの切り替えは幅を問わず常に出す (kawaz r273 m42)。
+ * 履歴・リロードと違って画面の骨格を動かす操作なので、色は muted に落とさない。 */
+#menu-toggle {
+  color: var(--fg);
+}
+
+/* 指で押す端末では当たり判定を広げる。topbar は行の高さを 37px に抑えている
+ * (ボタンの字だけ大きくすると行ごと伸びる) ので、見た目の 18px のままでは
+ * 指に対して細すぎる。
+ *
+ * 縦は透明な ::before で伸ばす — バーの高さを変えずに広げられる唯一の軸で、
+ * 上下の余白は topbar 自身の padding なので他の要素と取り合いにならない。
+ * 横は ::before ではなくボタン自身の padding を広げる: 隣り合うボタン
+ * (戻る / 進む) で ::before を左右に伸ばすと互いに重なり、重なった側では
+ * 後ろの要素が手前に来て、見えている矢印を押しても隣が反応する。padding なら
+ * 隣同士が押し合うので重ならない。
+ *
+ * `pointer: coarse` に限るのは splitter の当たり判定と同じ理由 — 常時 ON に
+ * すると、位置指定された箱がマウス操作の邪魔になる。 */
+@media (pointer: coarse) {
+  #menu-toggle,
+  #app-back,
+  #app-forward,
+  #app-reload,
+  #app-usage {
+    position: relative;
+    padding: 0 var(--space-9);
+  }
+
+  #menu-toggle::before,
+  #app-back::before,
+  #app-forward::before,
+  #app-reload::before,
+  #app-usage::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* 18px の行に上下 11px ずつ = 40px。バーの高さ (37px) がそもそもの上限
+     * なので、これ以上伸ばしても下の一覧からタップを奪うだけになる。 */
+    top: -11px;
+    bottom: -11px;
+  }
 }
 
 #app-back:hover:not(:disabled),
@@ -313,17 +356,15 @@ a {
   color: var(--fg-muted);
 }
 
-/* サイドバーと本文の並べ方。grid なのは、サイドバーが列として並ぶ形と main に
- * 重なるドロワーの形を、同じ 1 つのセル指定の違いだけで表せるため — 重ねる側を
- * position: absolute で流れから抜くと、基準要素・上下左右の値・z-index が
- * ドロワー専用に増える。
+/* サイドバーと本文の横並び。サイドバーは「在る / 無い」の 2 状態で、無い時は
+ * display:none でフローから外れる (#sidebar[hidden])。重ねて上に乗せる形を
+ * 採らないので、基準要素・transform・z-index はどれも要らない。
  *
- * 本文側の子は複数ある (LRU 分の SessionView + room/usage/404 のどれか) が、
- * 見えているのは常に 1 つで残りは hidden なので、全部を同じセルに置いてよい。 */
+ * `overflow-x` はこの後の幅ごとの節で決まる: デスクトップは clip、スマホは
+ * auto (本文が viewport 幅を占めるので、サイドバーが在る間は本文が右へ押し
+ * 出され、横スクロールで覗く)。 */
 #layout {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  display: flex;
   flex: 1;
   min-height: 0;
   /* スプリッターは隣のペインが潰れるところまで動かせる。潰された側は
@@ -335,19 +376,24 @@ a {
   overflow-x: clip;
 }
 
-#layout > #sidebar {
-  grid-area: 1 / 1;
+/* 中のどのスクロール領域も、横スクロールを外へ伝播させない。端まで行った
+ * 拍子に Layout ごと (= 実質ページ全体が) 左右に運ばれるのを断つ
+ * (kawaz r46m36 の iPad D&D と同じ現象)。個々のスクロール領域を数え上げず
+ * 子孫全体に敷くのは、スクロールしない要素にこの指定は何の効果も持たない
+ * ため — 新しく横スクロールする箱が増えても書き足しが要らない。 */
+#layout * {
+  overscroll-behavior-x: contain;
 }
 
-#layout > *:not(#sidebar) {
-  grid-area: 1 / 2;
+#sidebar[hidden] {
+  display: none;
 }
 
 /* サイドバーは中身 (#sidebar-panes) と、右端の幅スプリッターの横並び。
  *
- * 幅は中の段から足し上げて明示する。grid の `auto` トラックに任せる (= 中身の
- * max-content で決めさせる) と、段が持つスクロールバーのぶんだけ細く見積もられ
- * て一覧がはみ出す (実測 WebKit 1280x900: 287px のはずが 270px)。
+ * 幅は中の段から足し上げて明示する。中身の max-content に決めさせると、段が
+ * 持つスクロールバーのぶんだけ細く見積もられて一覧がはみ出す (実測 WebKit
+ * 1280x900: 287px のはずが 270px)。
  *
  * ここでは clip しない。右端の #sidebar-splitter は指で掴めるよう当たり判定を
  * 左右に広げており (下の pointer:coarse ブロック)、ここで overflow を切ると
@@ -361,6 +407,7 @@ a {
  * 変える) のも避けられる。 */
 #sidebar {
   width: calc(var(--sidebar-width, 280px) + var(--splitter-px));
+  flex-shrink: 0;
   background: var(--bg-alt);
   display: flex;
 }
@@ -6233,45 +6280,41 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
-/* サイドバーが main に重なるドロワーに切り替わる境界。中の 2 段も同時に
- * 縦積みへ回り、JS 側はこの flex-direction を読んで splitter の軸を決める
- * (useFlexColumn.ts) ので、閾値を持つのはここだけ。 */
+/* サイドバーの中が縦積みに回り、本文が viewport 幅を占めるようになる境界。
+ * JS 側はこの flex-direction を読んで splitter の軸を決める (pane-axis.ts)
+ * ので、閾値を持つのはここだけ。 */
 @media (max-width: 720px) {
-  #menu-toggle {
-    display: block;
+  /* 本文は幅いっぱい (Layout の幅 = viewport 幅) を占め、サイドバーが在る間は
+   * その右へ押し出される。押し出されたぶんは Layout の横スクロールで覗く —
+   * 重ねて隠すのをやめたので、本文とサイドバーは同時に画面に居られる幅を
+   * 持たないだけで、どちらもいつでも見に行ける。
+   *
+   * `100vw` でなく `100%` にするのは、Layout 自身の幅が viewport 幅なので
+   * 同じ値になり、かつ縦スクロールバーのぶんを含むかどうかという vw の
+   * ばらつきを持ち込まないため。
+   *
+   * スナップ点をサイドバーと本文の先頭に置くので、指を離した位置がどこでも
+   * どちらかの左端で止まる (= 両方が半端に見えている状態で止まらない)。 */
+  #layout {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
   }
 
-  /* サイドバーと本文が同じセルに重なる。列を畳むだけで、サイドバーは
-   * grid のセルに居たまま (= topbar の下に自動的に収まる) 本文の上に乗る。 */
-  #layout {
-    grid-template-columns: minmax(0, 1fr);
+  #layout > * {
+    scroll-snap-align: start;
   }
 
   #layout > *:not(#sidebar) {
-    grid-area: 1 / 1;
+    flex: 0 0 100%;
   }
 
-  /* 幅はドラッグで変えた値 (右端の #sidebar-splitter + localStorage 永続)。
-   * 既定は画面の 85% を上限 400px で頭打ち — タブレット幅の端末で端から端まで
-   * 伸びないように (sidebar-panes.ts が正本)。セルいっぱいに広がらないよう
-   * 左詰めにする。
-   *
-   * 暗転する backdrop は置かない: ドロワーの右に残った main (Timeline 等) を
-   * 見ながら検索結果を選べることが、幅を動かせるようにした目的なので、
-   * 覆って暗くしてしまうと意味がなくなる。外側タップで閉じる判定は App.tsx
-   * が document 側で持つ。 */
+  /* 幅はドラッグで変えた値 (右端の #sidebar-splitter)。既定は画面の 85% を
+   * 上限 400px で頭打ち — タブレット幅の端末で端から端まで伸びないように
+   * (sidebar-panes.ts が正本)。中が縦積みでも外枠の幅はこれ 1 つで決まるので、
+   * 一覧とフォームの幅を足し上げる横並びの指定は打ち消す。 */
   #sidebar,
   #sidebar.with-form {
     width: var(--drawer-width);
-    justify-self: start;
-    z-index: 20;
-    transform: translateX(-100%);
-    transition: transform 0.2s ease;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2);
-  }
-
-  #sidebar.open {
-    transform: translateX(0);
   }
 
   /* 上がフォーム、下が一覧 (kawaz r273 m26)。DOM の順 (一覧 → splitter →
@@ -8733,50 +8776,52 @@ button.usage-reset:hover {
 }
 
 /* prompt cache の残り時間リング (kawaz r99m25-m29)。ev:"llm_requests" で
- * 届いたリクエスト時刻を起点に、緑の輪が 0 時の位置から時計回りに欠けて
- * いき、5 分で消える (半分経過なら左半分が残る)。
+ * 届いたリクエスト時刻を起点に、要素の枠に重ねた輪が 0 時の位置から時計回りに
+ * 欠けていき、窓が閉じると消える (半分経過なら半周が残る)。
  *
- * JS の毎秒 tick は使わない: 登録済みカスタムプロパティ --cache-ring-angle
- * を 0→360deg へ 1 本の linear アニメーションで回し、途中から始めたい分は
- * 負の animation-delay (--cache-ring-delay) で巻き戻す。以後のフレームは
- * ブラウザが持つので、セッションが何個あっても JS の負荷は 0。
+ * 描くのは輪郭の線だけで、面は塗らない (CacheRing.tsx)。`pathLength="1"` で
+ * 周長を 1 に正規化してあるので、進行 (0→1) をそのまま `stroke-dashoffset` に
+ * 入れれば始点から順に線が消える。周長に沿って測るので、辺の中央と角で進む
+ * 速さが変わらない。
+ *
+ * JS の毎秒 tick は使わない: 登録済みカスタムプロパティ --cache-ring-progress
+ * を 0→1 へ 1 本の linear アニメーションで回し、途中から始めたい分は負の
+ * animation-delay (--cache-ring-delay) で巻き戻す。以後のフレームはブラウザが
+ * 持つので、セッションが何個あっても JS の負荷は 0。
  *
  * 新しいリクエストで巻き直すのは cache-ring-a / cache-ring-b の名前交替。
  * 同名の再宣言では走行中のアニメーションは止まらず、要素の remount は
  * 入力中の caret を飛ばすため、名前を変えるのが唯一の非破壊な再起動。
  * @property は Safari 16.4+ / Chrome で安定なのでフォールバックは持たない。 */
-@property --cache-ring-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
+@property --cache-ring-progress {
+  syntax: "<number>";
+  /* アニメーションが載るのは輪を持つ要素、線を引くのはその中の svg の子 —
+   * 進行は継承で降ろす。 */
+  inherits: true;
+  initial-value: 0;
 }
 
-/* 消えた側 (transparent) を先に置き、残りを緑で塗る。角度が増えるほど
- * 0 時から時計回りに透明が広がる = 緑が減る。 */
 @keyframes cache-ring-a {
   from {
-    --cache-ring-angle: 0deg;
+    --cache-ring-progress: 0;
   }
   to {
-    --cache-ring-angle: 360deg;
+    --cache-ring-progress: 1;
   }
 }
 
 @keyframes cache-ring-b {
   from {
-    --cache-ring-angle: 0deg;
+    --cache-ring-progress: 0;
   }
   to {
-    --cache-ring-angle: 360deg;
+    --cache-ring-progress: 1;
   }
 }
 
-/* このクラスは「アニメーションを回す」だけを担い、リングの塗りは使う側が
- * 置く。塗りまで持たせると、FAB のように自分の背景を持つ要素に付けた瞬間
- * background 一括指定がその背景を消してしまう (実機で FAB が白抜きになるのを
- * 確認)。塗る場所も要素ごとに違う (ラッパーは自分自身、FAB は ::before)。 */
+/* このクラスは「進行を回す」だけを担い、線の位置と太さは使う側が置く
+ * (要素ごとに枠の形が違うため)。 */
 .cache-ring {
-  --cache-ring-color: #3ecf6d;
   animation-name: cache-ring-a;
   animation-duration: var(--cache-ring-duration, 300s);
   animation-timing-function: linear;
@@ -8788,53 +8833,76 @@ button.usage-reset:hover {
   animation-name: cache-ring-b;
 }
 
-/* SESSIONS 行のアイコン (kawaz r99m29: 行に要素は足さず、アイコンの
- * ボーダーで示す)。ラッパーの padding がリング幅、Avatar 自身の不透明な
- * 背景が内側を塗り潰すので mask は要らない。リングが無い時は padding 分
- * だけの透明な余白 = 行の見た目は従来どおり。 */
-.session-avatar-ring {
-  display: inline-flex;
-  flex: 0 0 auto;
-  padding: 2px;
-  /* Avatar 自身の角丸 (3px) + padding 2px。円 (50%) にすると内接円から
-   * はみ出た角が輪を隠し、リングが四隅にしか見えない (実機確認済み)。
-   * 外側 5px / 内側 3px で枠幅が全周 2px に揃う。 */
-  border-radius: 5px;
-}
-
-.session-avatar-ring.cache-ring {
-  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
-}
-
-/* FAB のリングは ::before に描いて本体の背後へ回す。FAB 本体は position:
- * fixed + drag 用の inline style を持つので包めず、また下書き時の跳ね
- * (composer-fab-draft) が本体の animation を占有しているため、リングは
- * 別レイヤに置く必要がある。inset の負値がそのままリング幅。 */
-.one-on-one-fab.cache-ring::before {
-  content: "";
+/* 重ね描きの 1 枚。レイアウトには参加しない (親の寸法も兄弟の位置も変えない)
+ * ので、位置指定はここでは構造の歪みにあたらない。 */
+.cache-ring-svg {
   position: absolute;
-  inset: -3px;
-  border-radius: 50%;
-  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
-  /* 内側を刳り抜いて円グラフを輪にする。FAB は position:fixed + z-index を
-   * 持つため自前の stacking context を作り、::before を z-index:-1 にしても
-   * 本体の背景より前に描かれる (実機でボタン面が緑のパイに塗り潰されるのを
-   * 確認)。包めない要素なので、ここだけは mask で輪にする。 */
-  mask: radial-gradient(closest-side, transparent calc(100% - 3px), #000 0);
-  animation: inherit;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
-/* 展開中の入力欄。textarea 自身の背景が内側を塗り潰すので、ラッパーの
- * padding がそのままボーダー幅になる (角丸にも素直に沿う)。 */
-.one-on-one-textarea-ring {
-  display: flex;
-  padding: 2px;
-  border-radius: 0.5rem;
+/* 線を 1 本の破線にして、その「消えている先頭」を進行で伸ばす。dasharray の
+ * 1 は pathLength で正規化した周長そのもの = 全周 1 本の線。offset を負に
+ * するのは、始点側から消したいため (正だと終点側から消える)。 */
+.cache-ring-shape {
+  fill: none;
+  stroke: var(--cache-ring);
+  stroke-width: var(--cache-ring-width, 1px);
+  stroke-dasharray: 1px 1px;
+  stroke-dashoffset: calc(var(--cache-ring-progress) * -1px);
 }
 
-.one-on-one-textarea-ring.cache-ring {
-  background: conic-gradient(transparent var(--cache-ring-angle), var(--cache-ring-color) 0);
+/* 角丸の矩形は要素の枠のちょうど上に来るよう、線の太さの半分だけ内側に置く
+ * (SVG 2 のジオメトリプロパティ)。 */
+rect.cache-ring-shape {
+  x: calc(var(--cache-ring-width, 1px) / 2);
+  y: calc(var(--cache-ring-width, 1px) / 2);
+  width: calc(100% - var(--cache-ring-width, 1px));
+  height: calc(100% - var(--cache-ring-width, 1px));
+  rx: var(--cache-ring-radius, 0);
+}
+
+/* 円のパスは 3 時から始まるので、0 時起点で欠けるよう 90 度戻す。矩形の方は
+ * パスの始点が上辺の左端 (角丸の終わり) で、そこから時計回りに欠ける — 角丸の
+ * 矩形に「0 時」に当たるパスの継ぎ目は無く、上辺の中央から始めるには寸法を
+ * 測ってパスを組む必要がある (この設計が避けている測定そのもの)。 */
+circle.cache-ring-shape {
+  cx: 50%;
+  cy: 50%;
+  r: calc(50% - var(--cache-ring-width, 1px) / 2);
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+/* SESSIONS 行のアイコン (kawaz r99m29: 行に要素は足さず、アイコンの枠で
+ * 示す)。リングの有無に関わらず常設する: 条件付きで包むと Avatar が remount
+ * され、リング開始のたびに再描画が走る。 */
+.session-avatar-ring {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  /* Avatar 自身の角丸に合わせる (avatar.tsx が 3px)。 */
+  --cache-ring-radius: 3px;
+}
+
+/* FAB は本体が accent 色の円なので、線は少し太くして地の上で読めるようにする
+ * (実機で 1px は円周が長いぶん埋もれた)。 */
+.one-on-one-fab {
+  --cache-ring-width: 2px;
+}
+
+/* 展開中の入力欄 (kawaz r99m26: 展開中は FAB が消えるので装飾の置き場が
+ * textarea になる)。textarea は子を持てないので、重ねる 1 枚を置くためだけの
+ * 入れ物が要る — 余白も背景も持たない。リングの有無に関わらず常設: 条件付きで
+ * 包むと textarea が remount され、入力中の caret とフォーカスが飛ぶ。 */
+.one-on-one-textarea-ring {
+  position: relative;
+  display: flex;
+  /* textarea 自身の角丸 (.one-on-one-textarea)。 */
+  --cache-ring-radius: 0.4rem;
 }
 
 .one-on-one-textarea-ring > .one-on-one-textarea {
@@ -8843,10 +8911,9 @@ button.usage-reset:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 動きは止めるが残量表示としての意味は残す (delay で決まった開始角度の
+  /* 動きは止めるが残量表示としての意味は残す (delay で決まった開始位置の
    * まま静止する)。 */
-  .cache-ring,
-  .one-on-one-fab.cache-ring::before {
+  .cache-ring {
     animation-play-state: paused;
   }
 }

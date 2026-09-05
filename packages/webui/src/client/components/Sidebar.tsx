@@ -151,7 +151,7 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
  * 中は一覧とフォームの 2 段 (`#sidebar-panes`) で、並ぶ軸だけが画面で変わる:
  *
  * - **横並び**: 左が一覧、右がフォーム。一覧を見ながら入力できる。
- * - **縦積み** (サイドバーが overlay ドロワーになる幅): 上がフォーム、下が
+ * - **縦積み** (本文が viewport 幅を占める幅): 上がフォーム、下が
  *   一覧 (kawaz r273 m26)。同じ形を縦長の画面に合わせて積み替えたもので、
  *   一覧側の既定の高さは行が 2〜3 本見える程度。もっと見たくなったら間の
  *   スプリッターを下げる。
@@ -199,9 +199,11 @@ export function Sidebar({ state }: { state: AppState }) {
   return (
     <nav
       id="sidebar"
-      class={[state.sidebarOpen ? "open" : null, panel !== null ? "with-form" : null]
-        .filter(Boolean)
-        .join(" ")}
+      class={panel !== null ? "with-form" : undefined}
+      // 消すのは display だけで、要素は残す (app.css)。unmount すると書きかけ
+      // のフォームと一覧のスクロール位置が消えるが、消す目的は画面共有で見せ
+      // ないことなので、戻したときに続きから使えないと用を成さない。
+      hidden={!state.sidebarOpen}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
         "--sidebar-form-width": `${formWidth}px`,

@@ -41,6 +41,7 @@ import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../st
 import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
+import { CacheRing } from "./CacheRing.tsx";
 
 export const LOCAL_STORAGE_PREFIX = "ccmsg.1on1.";
 export const CLEANUP_STALE_DAYS = 10;
@@ -472,11 +473,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
         // リングの起点 (負 delay) は fab 自身の drag 位置と同じ style に載る。
-        // 下書き中の跳ねアニメーションは FAB 本体、リングは ::before なので
-        // 併発しても互いを打ち消さない (既存装飾を優先、リングは背面)。
+        // 下書き中の跳ねアニメーションは FAB 本体の transform、リングは中に
+        // 重ねた svg の線なので、併発しても互いを打ち消さない。
         style={{ ...fabDrag.style, ...cacheRing?.style }}
       >
-        +
+        +{cacheRing ? <CacheRing shape="circle" /> : null}
       </button>
     );
   }
@@ -523,11 +524,11 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           ✕
         </button>
       </header>
-      {/* 入力欄のボーダーを cache リングにする (kawaz r99m26: 展開中は FAB が
-       * 消えるので装飾の置き場が textarea になる)。角丸に沿わせるため
-       * border-image ではなく「ラッパー背景に conic + textarea 自身の背景で
-       * 内側を塗り潰す」方式。ラッパーは常設: リングの有無で包み方を変えると
-       * textarea が remount され、入力中の caret とフォーカスが飛ぶ。 */}
+      {/* 入力欄の枠に cache リングを重ねる (kawaz r99m26: 展開中は FAB が
+       * 消えるので装飾の置き場が textarea になる)。textarea は子を持てないので
+       * 重ねる 1 枚の置き場として入れ物が要る — 余白も背景も持たない。
+       * 入れ物は常設: リングの有無で包み方を変えると textarea が remount され、
+       * 入力中の caret とフォーカスが飛ぶ。 */}
       <div
         class={
           cacheRing ? `one-on-one-textarea-ring ${cacheRing.class}` : "one-on-one-textarea-ring"
@@ -559,6 +560,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           disabled={sending}
           rows={4}
         />
+        {cacheRing ? <CacheRing shape="rect" /> : null}
       </div>
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}

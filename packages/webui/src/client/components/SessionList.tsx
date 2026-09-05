@@ -46,6 +46,7 @@ import {
   visibleLastLiveSessions,
 } from "../last-live-sessions.ts";
 import { Avatar } from "../avatar.tsx";
+import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CopyButton } from "./CopyButton.tsx";
 import { Fold } from "./Fold.tsx";
@@ -554,15 +555,16 @@ function SessionRowItem({
           href={sessionHref(row.sid)}
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
-          {/* prompt cache が生きている間だけアイコンに緑リングが巻かれ、
-           * 5 分かけて時計回りに消える (app.css の .cache-ring)。ラッパーは
-           * リングの有無に関わらず常設する: 条件付きで包むと Avatar が
-           * remount され、リング開始のたびに再描画が走る。 */}
+          {/* prompt cache が生きている間だけアイコンの枠に緑の輪が重なり、
+           * 窓が閉じるまでかけて時計回りに欠けていく (CacheRing.tsx)。
+           * ラッパーはリングの有無に関わらず常設する: 条件付きで包むと
+           * Avatar が remount され、リング開始のたびに再描画が走る。 */}
           <span
             class={ring ? `session-avatar-ring ${ring.class}` : "session-avatar-ring"}
             style={ring?.style}
           >
             <Avatar seed={row.sid} size={16} />
+            {ring ? <CacheRing shape="rect" /> : null}
           </span>
           {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
            * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと

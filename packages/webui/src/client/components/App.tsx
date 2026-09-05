@@ -1,7 +1,7 @@
 import { memo } from "preact/compat";
 import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
-import type { AppState, MissingTarget } from "../store.ts";
+import { SIDEBAR_OPEN_KEY, type AppState, type MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
 import { documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
@@ -17,7 +17,7 @@ import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef } from "preact/hooks";
-import { outsideClickClosesDrawer } from "../sidebar-panes.ts";
+import { writeSessionStorage } from "../storage.ts";
 import {
   evictedSessionViewSids,
   skipInactiveSessionViewRender,
@@ -158,34 +158,10 @@ export function App() {
     const sids = queued.filter((sid) => !mounted.has(sid));
     if (sids.length > 0) store.dispatch({ type: "timeline/evicted", sids });
   });
-  // ドロワーの外をタップしたら閉じる (kawaz r273 m16/m17)。
-  //
-  // 見るのは `click` そのもの: スクロール・スワイプ・長押しでは click が出ない
-  // ようブラウザが既に区別しているので、移動量や時間を自前で測る必要がない。
-  //
-  // 判定を document に置くのは、透明な当たり判定層をドロワーの外に敷くと
-  // main のタップ・スクロールがその層に吸われるため — ドロワーの右に見えて
-  // いる Timeline を触れることが暗転をやめた目的そのものなので、層は置かずに
-  // イベントを覗くだけにする。押された要素の動作 (リンク・ボタン) は横取り
-  // しない = preventDefault も stopPropagation もせず、閉じるだけ。
-  //
-  // ハンバーガーだけは対象外: ここで閉じてから同じ click が toggle を走らせ
-  // ると開き直してしまい、ボタンが効かなくなる。
+  // サイドバーの在り / 無しはその窓の中だけの状態 (storage.ts の表)。
   useEffect(() => {
-    if (!state.sidebarOpen) return;
-    const onClick = (e: MouseEvent) => {
-      // 判定は composedPath (= 押した瞬間の経路)。今の DOM を辿る closest では、
-      // その click の中で自分ごと消える要素 (フォームの ✕) が「ドロワーの外」に
-      // 化けて、閉じたくない時に閉じてしまう (sidebar-panes.ts の doc 参照)。
-      const pathIds = e
-        .composedPath()
-        .flatMap((node) => (node instanceof Element && node.id ? [node.id] : []));
-      if (!outsideClickClosesDrawer(pathIds)) return;
-      store.dispatch({ type: "sidebar/set", open: false });
-    };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, [state.sidebarOpen, store]);
+    writeSessionStorage(SIDEBAR_OPEN_KEY, String(state.sidebarOpen));
+  }, [state.sidebarOpen]);
   // Tab title tracks the selected session/room (kawaz r99 mid=39): opening
   // several sessions in separate tabs otherwise leaves every tab reading the
   // fixed "ccmsg" title, indistinguishable until clicked.
@@ -196,10 +172,15 @@ export function App() {
   return (
     <div id="app">
       <header id="topbar">
+        {/* サイドバーの在り / 無しの唯一の切り替え口。幅を問わず常に出す
+         * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたいときに
+         * サイドバーごと消せることが目的なので、デスクトップでも要る)。 */}
         <button
           id="menu-toggle"
           type="button"
           aria-label="menu"
+          aria-pressed={state.sidebarOpen}
+          title={state.sidebarOpen ? "サイドバーを隠す" : "サイドバーを出す"}
           onClick={() => store.dispatch({ type: "sidebar/set", open: !state.sidebarOpen })}
         >
           &#9776;

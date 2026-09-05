@@ -1,14 +1,33 @@
-// localStorage の try/catch を1箇所に集約する pure I/O ヘルパ (webui simplify
-// componentization、issue 2026-07-17)。private mode / quota 超過で
-// localStorage アクセスが例外を投げる環境への耐性がこれまで App.tsx /
-// FilesPanes.tsx / Sidebar.tsx / ws.ts / main.tsx / FileTree.tsx /
-// files-view-store.ts / OneOnOneComposer.tsx の 8 箇所で同一の
-// try/catch ラップとして重複していた。
+// localStorage / sessionStorage の try/catch を1箇所に集約する pure I/O ヘルパ
+// (webui simplify componentization、issue 2026-07-17)。private mode / quota
+// 超過でアクセスが例外を投げる環境への耐性が各所で同一の try/catch ラップと
+// して重複していた。
 //
 // garbage 耐性の解釈 (clamp / 型 validate / filter / reject) は呼び出し側
 // ごとに意図的に異なる (各 utils.ts ヘルパのコメント参照) ので、そちらは
 // 統合しない — ここは read/write/remove の I/O 例外吸収と key 列挙だけを
 // 担う配管。
+//
+// **どこに置くかは 3 分類** (kawaz r273 m44)。「その値は窓ごとに違ってよいか」
+// で決まる:
+//
+// | 分類 | 置き場 | 例 |
+// |---|---|---|
+// | 窓ごとの状態 | sessionStorage のみ | サイドバーの在り / 無し |
+// | レイアウト寸法 | 読み session → local → 既定、書きは両方 | ペインの幅・高さ・比率 |
+// | 内容 | localStorage | 下書き、ピン留め、並び順 |
+//
+// **窓ごとの状態**は他の窓に伝染してはいけないもの。画面共有のために 1 つの
+// 窓でサイドバーを消したら、別の窓や次に開くタブは「在る」で始まってほしい。
+//
+// **レイアウト寸法**は 2 つの要求が同時にある: 窓ごとに独立して動かせること
+// (片方の窓で広げたら、もう片方が勝手に動かない) と、次に開く窓が「最後に
+// 使った値」で始まること。読みを session → local の順、書きを両方にすると
+// その両方が出る — その窓で 1 度でも動かせば以後 session 側が答え、動かして
+// いない窓は local 側 = 最後に使った値を引く。
+//
+// **内容**は窓で分ける理由がない。書きかけの下書きが窓を移った途端に消える
+// のは事故にしか見えない。
 import type { AppState } from "./store.ts";
 
 /** `localStorage.getItem` を try/catch でラップ。private mode / quota 超過等
@@ -39,6 +58,37 @@ export function removeStorage(key: string): void {
   } catch {
     // ignore
   }
+}
+
+/** sessionStorage 版の read/write。窓ごとの状態 (上表の 1 段目) 用。 */
+export function readSessionStorage(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writeSessionStorage(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // storage unavailable (private mode / quota) — degrade to non-persistent
+  }
+}
+
+/** レイアウト寸法 (上表の 2 段目) の読み。この窓で 1 度でも動かしていれば
+ * sessionStorage が答え、動かしていなければ localStorage = 最後にどこかの窓で
+ * 使った値を引く。どちらも無ければ `null` = 呼び出し側の既定。 */
+export function readLayoutStorage(key: string): string | null {
+  return readSessionStorage(key) ?? readStorage(key);
+}
+
+/** レイアウト寸法の書き。両方に書くことで「この窓では以後この値」と
+ * 「次に開く窓の初期値」が同時に立つ。 */
+export function writeLayoutStorage(key: string, value: string): void {
+  writeSessionStorage(key, value);
+  writeStorage(key, value);
 }
 
 /** `prefix` で始まる localStorage の全 key を列挙する。files-view-store.ts の
