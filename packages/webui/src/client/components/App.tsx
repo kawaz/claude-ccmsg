@@ -20,6 +20,7 @@ import { pushNavigation } from "../navigation.ts";
 import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
+import { outsideClickClosesDrawer } from "../drawer.ts";
 import {
   evictedSessionViewSids,
   skipInactiveSessionViewRender,
@@ -191,9 +192,13 @@ export function App() {
   useEffect(() => {
     if (!state.sidebarOpen) return;
     const onClick = (e: MouseEvent) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest("#sidebar") || target.closest("#menu-toggle")) return;
+      // 判定は composedPath (= 押した瞬間の経路)。今の DOM を辿る closest では、
+      // その click の中で自分ごと消える要素 (フォームの ✕) が「ドロワーの外」に
+      // 化けて、閉じたくない時に閉じてしまう (drawer.ts の doc 参照)。
+      const pathIds = e
+        .composedPath()
+        .flatMap((node) => (node instanceof Element && node.id ? [node.id] : []));
+      if (!outsideClickClosesDrawer(pathIds)) return;
       store.dispatch({ type: "sidebar/set", open: false });
     };
     document.addEventListener("click", onClick);

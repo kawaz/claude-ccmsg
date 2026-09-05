@@ -62,3 +62,19 @@ export function saveDrawerWidth(width: number): void {
 export function clampDrawerWidth(width: number, viewportPx: number): number {
   return clampPanePx(width, defaultDrawerWidth(viewportPx), viewportPx);
 }
+
+/** ドロワーを開いたままにする経路上の id。ドロワー自身の中と、開閉を担う
+ *  ハンバーガー (ここで閉じると同じ click が toggle を走らせて開き直す)。 */
+const DRAWER_KEEP_OPEN_IDS: readonly string[] = ["sidebar", "menu-toggle"];
+
+/** その click でドロワーを閉じるか。渡すのは `composedPath()` 上の id
+ *  (App.tsx)。
+ *
+ *  「今どこにあるか」ではなく**押した瞬間の経路**で判定するのが要点:
+ *  フォームの ✕ のように、その click の中で自分自身が unmount される要素だと、
+ *  document に届く頃には DOM から外れていて `closest("#sidebar")` が届かない
+ *  (実測: `isConnected: false` / `closest → null` なのに `composedPath` には
+ *  `#sidebar` が残る)。経路で見れば、押した場所が消えた後でも分かる。 */
+export function outsideClickClosesDrawer(pathIds: readonly string[]): boolean {
+  return !pathIds.some((id) => DRAWER_KEEP_OPEN_IDS.includes(id));
+}

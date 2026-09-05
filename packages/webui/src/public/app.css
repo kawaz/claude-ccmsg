@@ -1097,9 +1097,11 @@ a {
  *
  * 閾値の根拠 (font-size-2xs = 10.4px の等幅で実測): sid を UUID 第 1 ブロック
  * + 省略記号の 9 文字 (約 56px) まで見せた上で、model (約 58px) / effort
- * (約 21px) / ボタン (37px + margin) / gap 3 個 (約 17px) / 行の padding
- * (約 36px) を並べるには 230px 弱が要る。それを割ったらボタンの側が降りる。
- * 中途半端に clip された「コ…」は出さない — 押せるか消えるかの二値にする。 */
+ * (約 21px) / ボタン (アイコン 1 文字 + margin で約 20px) / gap 3 個 (約 17px)
+ * / 行の padding (約 36px) を並べるのに 210px 強。閾値に少し余裕を持たせて
+ * あるのは、読むための 3 要素が自分の min-width まで削られる前にボタンの側が
+ * 降りるようにするため。中途半端に clip されたアイコンは出さない — 押せるか
+ * 消えるかの二値にする。 */
 @container (max-width: 240px) {
   .session-line3 .status-meta-copy {
     display: none;

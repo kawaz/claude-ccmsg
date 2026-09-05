@@ -8,6 +8,7 @@ import {
   clampDrawerWidth,
   clampSidebarListHeight,
   defaultDrawerWidth,
+  outsideClickClosesDrawer,
   loadDrawerWidth,
   loadSidebarListHeight,
   saveDrawerWidth,
@@ -116,5 +117,31 @@ describe("clampSidebarListHeight / loadSidebarListHeight", () => {
   // 一覧の高さ) ので、片方を動かしてもう片方が動く結び付きは意図しない。
   test("form-pane の幅とはキーを分ける", () => {
     expect(SIDEBAR_LIST_HEIGHT_KEY).not.toBe("ccmsg.formPaneWidth");
+  });
+});
+
+// 外側タップでドロワーを閉じる判定 (App.tsx が composedPath の id を渡す)。
+// 「今どこにあるか」でなく押した瞬間の経路で見るのが要点 — フォームの ✕ は
+// その click の中で自分ごと unmount されるので、DOM を辿る判定では
+// ドロワーの外扱いになって、閉じたくない時に閉じてしまう。
+describe("outsideClickClosesDrawer", () => {
+  test("ドロワーの中を押したら閉じない", () => {
+    expect(outsideClickClosesDrawer(["session-creator-panel", "sidebar-form", "sidebar"])).toBe(
+      false,
+    );
+  });
+
+  // ここで閉じると、同じ click が toggle を走らせて開き直す = ボタンが効かない。
+  test("ハンバーガーを押したら閉じない", () => {
+    expect(outsideClickClosesDrawer(["menu-toggle", "topbar", "app"])).toBe(false);
+  });
+
+  test("ドロワーの外を押したら閉じる", () => {
+    expect(outsideClickClosesDrawer(["room-view", "layout", "app"])).toBe(true);
+  });
+
+  // id の無い要素は経路から落ちる (App.tsx が id を持つものだけ渡す)。
+  test("id が 1 つも無ければ外扱い", () => {
+    expect(outsideClickClosesDrawer([])).toBe(true);
   });
 });
