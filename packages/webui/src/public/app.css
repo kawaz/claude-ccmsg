@@ -339,6 +339,8 @@ a {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* スマホ幅のドロワー (#sidebar、absolute) の基準 (下の @media 節)。 */
+  position: relative;
   /* スプリッターは隣のペインが潰れるところまで動かせる。潰された側は
    * box-sizing: border-box の下限 (= 自分の左右 padding の合計) より細く
    * ならないので、そのはみ出しをここで断ち切る — 出さないとページ全体に
@@ -6288,7 +6290,11 @@ a.tl-attachment-file-path {
    * 覆って暗くしてしまうと意味がなくなる。外側タップで閉じる判定は App.tsx
    * が document 側で持つ。 */
   #sidebar {
-    position: fixed;
+    /* ドロワーは #layout (= topbar の下の領域) に対して絶対配置する。fixed
+     * だと画面上端からになり、topbar に被さってハンバーガーやリロードを
+     * 隠してしまう (kawaz r273m30)。topbar の高さは中身で決まるので数値で
+     * 引かず、#layout を基準にすることで自動的にその下に収まる。 */
+    position: absolute;
     top: 0;
     bottom: 0;
     left: 0;
