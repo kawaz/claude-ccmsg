@@ -145,10 +145,9 @@ export function toggleSidebarPanel(
   return { panel: kind, template: null, params: {}, search: null };
 }
 
-/** SESSIONS のソート順。RoomCreator のメンバ並び順もこれに従うため、
- * サイドバーのローカル state ではなく store が持つ (FormPane 側に出た
- * RoomCreator へ props で降ろせないのが直接の理由)。URL には載せない —
- * 「今どう並べて見ているか」は貼って共有する類の状態ではない。 */
+/** SESSIONS のソート順。一覧と RoomCreator のメンバ欄が同じ順で並ぶよう
+ * 共有し、localStorage に永続する。URL には載せない — 「今どう並べて見て
+ * いるか」は貼って共有する類の状態ではない。 */
 export const SORT_KEY_STORAGE = "ccmsg.peerSortKey";
 
 export function isPeerSortKey(raw: string | null): raw is PeerSortKey {

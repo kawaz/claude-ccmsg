@@ -1308,7 +1308,8 @@ describe("createWsClient agents/ping (U1)", () => {
     if (agentsAction?.type === "agents/loaded") expect(agentsAction.agents).toHaveLength(1);
     if (errorsAction?.type === "session-errors/loaded")
       expect(errorsAction.errors.map((e) => e.sid)).toEqual(["s1"]);
-    if (daemonAction?.type === "daemon-info/loaded") expect(daemonAction.script).toBe("entry.ts");
+    if (daemonAction?.type === "daemon-info/loaded")
+      expect(daemonAction.exe).toBe("/usr/local/bin/bun");
   });
 
   // kawaz 2026-07-14 webui reload bug: after a page reload the SPA store is

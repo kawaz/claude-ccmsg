@@ -14,6 +14,7 @@ import type { AgentRef } from "../locator.ts";
 import type { TimelineState } from "../store.ts";
 import { clampPaneRatio, paneRatioFromPointer, SESSION_PANE_DEFAULT_RATIO } from "../utils.ts";
 import { AgentTreePanel } from "./AgentTreePanel.tsx";
+import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { Timeline } from "./Timeline.tsx";
 import { readStorage, writeStorage } from "../storage.ts";
@@ -61,17 +62,13 @@ export function TimelinePanes({
     savePaneRatio(ratio);
   }, [ratio]);
 
-  // FilesPanes と同じ axis-agnostic な解釈: getComputedStyle で container の
-  // flex-direction を読み、CSS @media (≤720px) の column 切替に自動追従。
+  // FilesPanes と同じ解釈 (pane-axis.ts): container の flex-direction から軸を
+  // 読むので、CSS @media (≤720px) の column 切替に自動追従する。
   const onSplitterDrag = (e: PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
-    const isVertical = getComputedStyle(container).flexDirection === "column";
-    const rect = container.getBoundingClientRect();
-    const next = isVertical
-      ? paneRatioFromPointer(e.clientY, rect.top, rect.height)
-      : paneRatioFromPointer(e.clientX, rect.left, rect.width);
-    setRatio(next);
+    const m = paneAxisMetrics(readPaneAxis(container), container.getBoundingClientRect(), e);
+    setRatio(paneRatioFromPointer(m.pointer, m.start, m.size));
   };
 
   const treeStyle = { flex: `0 0 ${(ratio * 100).toFixed(4)}%` };

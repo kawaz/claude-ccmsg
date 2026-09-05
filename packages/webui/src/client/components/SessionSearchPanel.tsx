@@ -1,7 +1,7 @@
 // Historical session search (DR-0021 Phase 2)。開いているかどうかと検索語は
-// URL の `sb.*` が持ち (`?sb.panel=search&sb.search=…`、sidebar-url.ts / 表は
-// docs/design/webui-url-grammar.md)、描き場所は幅で変わる (デスクトップ =
-// FormPane、スマホ = サイドバー内で SessionList を置換)。path 側の view に
+// URL の `sb.*` が持つ (`?sb.panel=search&sb.search=…`、sidebar-url.ts / 表は
+// docs/design/webui-url-grammar.md)。フォームはサイドバーの中に一覧と並んで
+// 出る (Sidebar.tsx)。path 側の view に
 // しないのは、検索がメインペインの中身を置き換えないから — 結果を選んで
 // Timeline へ遷移してもこのパネルは開いたままで、そこが要点になっている。
 //

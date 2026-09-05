@@ -1,19 +1,31 @@
-// スマホ幅の overlay ドロワーの寸法と、外側タップの判定 (drawer.ts)。
+// サイドバーの 2 段 (一覧 / フォーム) の寸法と、外側タップの判定
+// (sidebar-panes.ts)。同じ 2 段が軸で並び替わるので、値は軸ごとに別のキーを
+// 持つ — 横に広げた幅を、縦に積んだときの高さとして復元しても意味がない。
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   DRAWER_DEFAULT_MAX_PX,
   DRAWER_WIDTH_KEY,
+  FORM_DEFAULT_PX,
+  FORM_WIDTH_KEY,
+  SIDEBAR_DEFAULT_PX,
   SIDEBAR_LIST_DEFAULT_PX,
   SIDEBAR_LIST_HEIGHT_KEY,
+  SIDEBAR_WIDTH_KEY,
   clampDrawerWidth,
+  clampFormWidth,
   clampSidebarListHeight,
+  clampSidebarWidth,
   defaultDrawerWidth,
   outsideClickClosesDrawer,
   loadDrawerWidth,
+  loadFormWidth,
   loadSidebarListHeight,
+  loadSidebarWidth,
   saveDrawerWidth,
+  saveFormWidth,
   saveSidebarListHeight,
-} from "../src/client/drawer.ts";
+  saveSidebarWidth,
+} from "../src/client/sidebar-panes.ts";
 import { PANE_MIN_PX } from "../src/client/utils.ts";
 
 // files-view-store.test.ts と同じ最小 localStorage shim。
@@ -92,7 +104,7 @@ describe("loadDrawerWidth / saveDrawerWidth", () => {
 });
 
 describe("clampSidebarListHeight / loadSidebarListHeight", () => {
-  // kawaz r273 m26: ドロワーはフォームが上・一覧が下の縦分割。一覧は「今どの
+  // kawaz r273 m26: 縦積みはフォームが上・一覧が下。一覧は「今どの
   // セッションを見ているか」が分かる行数だけ残す。実測 (390x844) で一覧の
   // 上端から 1 行目までが 75px、行ピッチが 59px。
   test("既定は行が 2〜3 本見える高さ", () => {
@@ -112,11 +124,66 @@ describe("clampSidebarListHeight / loadSidebarListHeight", () => {
     saveSidebarListHeight(320);
     expect(loadSidebarListHeight()).toBe(320);
   });
+});
 
-  // #form-pane の幅とは別のキー。測っているものが違う (フォームの幅 / その下の
-  // 一覧の高さ) ので、片方を動かしてもう片方が動く結び付きは意図しない。
-  test("form-pane の幅とはキーを分ける", () => {
-    expect(SIDEBAR_LIST_HEIGHT_KEY).not.toBe("ccmsg.formPaneWidth");
+// 横並びのときの 2 段の幅。一覧は #sidebar-pane-splitter、フォームは
+// サイドバー右端の #sidebar-splitter が動かす。
+describe("clampSidebarWidth / clampFormWidth", () => {
+  test("範囲内はそのまま", () => {
+    expect(clampSidebarWidth(320)).toBe(320);
+    expect(clampFormWidth(500)).toBe(500);
+  });
+
+  // 快適さ由来の下限は持たず、掴み直せる太さだけ残す。
+  test("潰れる手前まで狭められる", () => {
+    expect(clampFormWidth(40, 1200)).toBe(40);
+    expect(clampFormWidth(-200, 1200)).toBe(PANE_MIN_PX);
+    expect(clampSidebarWidth(-200, 1200)).toBe(PANE_MIN_PX);
+  });
+
+  // 上限は固定 px ではなく、右のペインが潰れる手前。
+  test("上限は残り幅 − PANE_MIN_PX", () => {
+    expect(clampFormWidth(5000, 1200)).toBe(1200 - PANE_MIN_PX);
+    expect(clampSidebarWidth(5000, 1200)).toBe(1200 - PANE_MIN_PX);
+  });
+
+  // 復元経路は残り幅を知らないので下限のみ。
+  test("残り幅なしなら上限なし", () => {
+    expect(clampFormWidth(5000)).toBe(5000);
+  });
+
+  // localStorage に数値でない値が入っていた / ドラッグ中に要素が消えた等。
+  test("数値でなければ既定", () => {
+    expect(clampFormWidth(Number.NaN)).toBe(FORM_DEFAULT_PX);
+    expect(clampFormWidth(Number.POSITIVE_INFINITY)).toBe(FORM_DEFAULT_PX);
+    expect(clampSidebarWidth(Number.NaN)).toBe(SIDEBAR_DEFAULT_PX);
+  });
+
+  // 既定幅は cwd 確定表示に要る 422px を満たす
+  // (docs/findings/2026-08-12-form-ux-width-survey.md)。
+  test("フォームの既定幅は cwd 表示の所要幅を満たす", () => {
+    expect(FORM_DEFAULT_PX).toBeGreaterThanOrEqual(422);
+  });
+
+  test("保存値を復元する", () => {
+    saveSidebarWidth(320);
+    saveFormWidth(510);
+    expect(loadSidebarWidth()).toBe(320);
+    expect(loadFormWidth()).toBe(510);
+  });
+
+  test("未保存なら既定", () => {
+    expect(loadSidebarWidth()).toBe(SIDEBAR_DEFAULT_PX);
+    expect(loadFormWidth()).toBe(FORM_DEFAULT_PX);
+  });
+});
+
+// 本命: 同じ 2 段でも軸が変われば測っているものが違う。1 本の splitter が
+// 軸で別のキーを書くので、4 つが互いに衝突しないことを形として押さえる。
+describe("寸法のキー", () => {
+  test("4 つの寸法はすべて別のキー", () => {
+    const keys = [SIDEBAR_WIDTH_KEY, FORM_WIDTH_KEY, SIDEBAR_LIST_HEIGHT_KEY, DRAWER_WIDTH_KEY];
+    expect(new Set(keys).size).toBe(keys.length);
   });
 });
 

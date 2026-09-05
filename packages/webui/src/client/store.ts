@@ -187,15 +187,14 @@ export interface SessionTreeState {
   forkOrigin?: ForkOrigin | null;
 }
 
-/** Provenance of the running daemon (U1 footer), from a `ping` reply's
- * exe/script/version fields — which face's plugin cache (personal / a work
- * overlay / ...) this daemon actually runs from was previously unobservable
- * from the webui. `null` until the first ping reply lands (ws.ts's onOpen
- * handshake fires one after hello). */
+/** Provenance of the running daemon (U1 footer), from a `ping` reply.
+ * 常設の行に出すのは version だけで、どの実行ファイルが動いているかは
+ * hover の title に譲る — 見えている必要があるのは「どの版か」で、パスは
+ * 疑ったときに確かめられれば足りる。`null` until the first ping reply lands
+ * (ws.ts's onOpen handshake fires one after hello). */
 export interface DaemonInfo {
   version: string;
   exe?: string;
-  script?: string;
 }
 
 export interface AppState {
@@ -272,14 +271,12 @@ export interface AppState {
    * 自体が遷移 (`pushSidebarState`) なので、リロードでも戻るでも共有された
    * リンクでも同じフォームが同じ値で開く。
    *
-   * store に置くのは、描画先が幅で変わるため: デスクトップは main ペインの
-   * FormPane、スマホはサイドバー内インライン置換 — トグルボタンを持つ
-   * Sidebar と、パネルを描く App は兄弟なので props では渡せない。 */
+   * store に置くのは、この値が URL から降ってくるため — locator を読む
+   * のは App で、パネルを描くのは Sidebar。 */
   sidebar: SidebarUrlState;
   /** SESSIONS 一覧の並び順。RoomCreator のメンバ欄も同じ順で並ぶので、
-   * サイドバーのローカル state ではなくここが持つ (デスクトップでは
-   * RoomCreator が FormPane 側に出るため、Sidebar から props で渡せない)。
-   * URL には載せない — 見る順序は貼って共有する状態ではない。 */
+   * 両者が読める場所として store が持つ。URL には載せない — 見る順序は
+   * 貼って共有する状態ではない。 */
   peerSortKey: PeerSortKey;
   /** /usage のどちらのタブを見ているか。クオータと使用量は問いが違うので
    * 画面を分けてある。 */
@@ -438,7 +435,7 @@ export type Action =
   // Full replacement, same as session-errors/loaded: the daemon sends the
   // whole non-expired set on both the live push and the subscribe catch-up.
   | { type: "llm-requests/loaded"; requests: LlmRequestInfo[] }
-  | { type: "daemon-info/loaded"; version: string; exe?: string; script?: string }
+  | { type: "daemon-info/loaded"; version: string; exe?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
   // bundle と揃っていれば導線を引っ込める。
@@ -1082,7 +1079,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "daemon-info/loaded":
       return {
         ...state,
-        daemonInfo: { version: action.version, exe: action.exe, script: action.script },
+        daemonInfo: { version: action.version, exe: action.exe },
       };
     case "version-mismatch/detected": {
       // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を

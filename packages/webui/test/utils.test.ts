@@ -685,7 +685,7 @@ describe("sortPeers", () => {
 });
 
 describe("clampPanePx", () => {
-  // px 直値ペイン (#sidebar / #form-pane) の丸め。手動操作が主なので、
+  // px 直値ペイン (#sidebar-lists / #sidebar-form 等) の丸め。手動操作が主なので、
   // 範囲内はそのまま通す。
   test("範囲内はそのまま", () => {
     expect(clampPanePx(500, 280, 1200)).toBe(500);

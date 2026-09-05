@@ -128,6 +128,10 @@
   /* PC / iPad では 24rem は狭すぎる (kawaz r17 mid=8) — 広め既定。
    * スマホ幅は 720px breakpoint (下の @media) で従来幅に絞る。 */
   --composer-panel-width: min(40rem, calc(100vw - 4rem));
+  /* スプリッターの太さ。見える線は 1px で、残りは掴むための透明な padding
+   * (#sidebar-splitter)。サイドバーの幅がこの値を足し込んで決まるので、
+   * 太さは 1 か所に持つ。 */
+  --splitter-px: 7px;
   --z-composer: 40;
 }
 
@@ -278,37 +282,11 @@ a {
 }
 
 /* version 不一致 (version-guard.ts) の知らせ。専用のボックスや行は作らず、
- * 常設のリロードボタンの見た目だけを変える (kawaz r273 m27: 見出しの上に箱が
- * 出てレイアウトが変わるのが邪魔)。効かせるのは色と transform だけなので、
- * 不一致の前後でボタンの占める大きさは 1px も変わらない。
- *
- * 動きは composer-fab-draft と同じ「周期の一部だけ」方式で鬱陶しさを抑える。
- * 跳ねではなく回すのは、このボタンの記号 (↻) が回るものだから — 「読み直せ
- * ばこれが手に入る」が動き自体で読める。 */
+ * 常設のリロードボタンの色だけを変える (kawaz r273 m27: 見出しの上に箱が
+ * 出てレイアウトが変わるのが邪魔)。効かせるのは色だけなので、不一致の前後で
+ * ボタンの占める大きさは 1px も変わらない。何が起きているかは title が言う。 */
 #app-reload.app-reload-update {
   color: var(--accent);
-  animation: app-reload-update-nudge 3s infinite;
-}
-
-@keyframes app-reload-update-nudge {
-  0%,
-  16%,
-  100% {
-    transform: none;
-  }
-  4% {
-    transform: rotate(-40deg);
-  }
-  12% {
-    transform: rotate(40deg);
-  }
-}
-
-/* 動きを止めても色は残す = 知らせ自体は消さない (waiting セクションと同じ)。 */
-@media (prefers-reduced-motion: reduce) {
-  #app-reload.app-reload-update {
-    animation: none;
-  }
 }
 
 #app-back:disabled,
@@ -335,12 +313,19 @@ a {
   color: var(--fg-muted);
 }
 
+/* サイドバーと本文の並べ方。grid なのは、サイドバーが列として並ぶ形と main に
+ * 重なるドロワーの形を、同じ 1 つのセル指定の違いだけで表せるため — 重ねる側を
+ * position: absolute で流れから抜くと、基準要素・上下左右の値・z-index が
+ * ドロワー専用に増える。
+ *
+ * 本文側の子は複数ある (LRU 分の SessionView + room/usage/404 のどれか) が、
+ * 見えているのは常に 1 つで残りは hidden なので、全部を同じセルに置いてよい。 */
 #layout {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
-  /* スマホ幅のドロワー (#sidebar、absolute) の基準 (下の @media 節)。 */
-  position: relative;
   /* スプリッターは隣のペインが潰れるところまで動かせる。潰された側は
    * box-sizing: border-box の下限 (= 自分の左右 padding の合計) より細く
    * ならないので、そのはみ出しをここで断ち切る — 出さないとページ全体に
@@ -350,41 +335,59 @@ a {
   overflow-x: clip;
 }
 
-#sidebar {
-  /* kawaz r26 mid=75: 幅は #layout の --sidebar-width (App.tsx がドラッグで
-   * 更新 + localStorage 永続) から。未設定時 280px。 */
-  width: var(--sidebar-width, 280px);
-  flex-shrink: 0;
-  background: var(--bg-alt);
-  /* 中身 (#sidebar-panes) と、右端の幅スプリッターの横並び。 */
-  display: flex;
-  /* ここでは clip しない。右端の #sidebar-drawer-splitter は指で掴めるよう
-   * 当たり判定を左右に広げており (下の pointer:coarse ブロック)、ここで
-   * overflow を切ると外側の半分が消えて、ドロワーの縁を狙った指が「内側
-   * ちょうど」に当たらないと掴めなくなる (実測: 43px のはずが 25px)。
-   * 横方向にスクロールさせない目的 (kawaz r46m36: iPad 等の D&D で sidebar
-   * 全体 = 実質ページ全体が左右に運ばれる現象の根治) は、下の
-   * #sidebar-lists / #sidebar-form 側の overflow-x で果たしている
-   * — 長い行の横スクロールを担うのは、さらに内側の #session-list /
-   * #room-list。overflow を持たないことで、ドロワー自身が縦のスクロール
-   * コンテナになる (片軸 hidden が反対軸の visible を auto に変える) のも
-   * 避けられる。 */
+#layout > #sidebar {
+  grid-area: 1 / 1;
 }
 
-/* ドロワーの中身はフォーム (上) と一覧 (下) の縦積み (kawaz r273 m26)。
- * 幅を変える #sidebar-drawer-splitter は右端に立てるので、縦に積むのは
- * この中だけ。 */
+#layout > *:not(#sidebar) {
+  grid-area: 1 / 2;
+}
+
+/* サイドバーは中身 (#sidebar-panes) と、右端の幅スプリッターの横並び。
+ *
+ * 幅は中の段から足し上げて明示する。grid の `auto` トラックに任せる (= 中身の
+ * max-content で決めさせる) と、段が持つスクロールバーのぶんだけ細く見積もられ
+ * て一覧がはみ出す (実測 WebKit 1280x900: 287px のはずが 270px)。
+ *
+ * ここでは clip しない。右端の #sidebar-splitter は指で掴めるよう当たり判定を
+ * 左右に広げており (下の pointer:coarse ブロック)、ここで overflow を切ると
+ * 外側の半分が消えて、縁を狙った指が「内側ちょうど」に当たらないと掴めなく
+ * なる (実測: 43px のはずが 25px)。横方向にスクロールさせない目的
+ * (kawaz r46m36: iPad 等の D&D で sidebar 全体 = 実質ページ全体が左右に
+ * 運ばれる現象の根治) は、下の #sidebar-lists / #sidebar-form 側の
+ * overflow-x で果たしている — 長い行の横スクロールを担うのは、さらに内側の
+ * #session-list / #room-list。overflow を持たないことで、サイドバー自身が
+ * 縦のスクロールコンテナになる (片軸 hidden が反対軸の visible を auto に
+ * 変える) のも避けられる。 */
+#sidebar {
+  width: calc(var(--sidebar-width, 280px) + var(--splitter-px));
+  background: var(--bg-alt);
+  display: flex;
+}
+
+#sidebar.with-form {
+  width: calc(
+    var(--sidebar-width, 280px) + var(--sidebar-form-width, 460px) + 2 * var(--splitter-px)
+  );
+}
+
+/* 一覧とフォームの 2 段。横並びでは左が一覧・右がフォーム、縦積みでは
+ * 上がフォーム・下が一覧 (kawaz r273 m26) — DOM は一覧が先で固定で、順序は
+ * 子の `order` で入れ替える。`*-reverse` を使わないのは、段が 3 つ以上に
+ * なったとき全部まとめてひっくり返すことしかできず、任意の順を指定できない
+ * ため。JS はこの flex-direction を読んで splitter の軸を決める
+ * (pane-axis.ts)。 */
 #sidebar-panes {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
 }
 
 /* 縦スクロールと余白は段ごとに持つ — 一覧とフォームは独立に長くなるので、
- * ドロワー全体で 1 本のスクロールにすると短い方に引きずられる。`min-height`
- * は flex 段が中身の高さで押し広がらないように (押し広がると、指定した
- * 高さより低くならず縦分割が効かない)。 */
+ * サイドバー全体で 1 本のスクロールにすると短い方に引きずられる。`min-*`
+ * は flex 段が中身の寸法で押し広がらないように (押し広がると、指定した
+ * 寸法より小さくならず分割が効かない)。 */
 #sidebar-lists,
 #sidebar-form {
   min-width: 0;
@@ -393,63 +396,53 @@ a {
   overflow-x: hidden;
 }
 
+/* 寸法を持つのは一覧だけで、フォームは残りを埋める (`flex-basis: 0` にして、
+ * 中身の広さが段の広さに影響しないようにする)。サイドバー全体の幅は上で
+ * 足し上げてあるので、フォームの実寸はそこで指定した値になる。値はどれも
+ * px 直値 + localStorage 永続で、Sidebar.tsx が CSS 変数として渡す。 */
 #sidebar-lists {
-  flex: 1 1 auto;
+  flex: 0 0 var(--sidebar-width, 280px);
   padding: var(--space-8);
 }
 
-/* ドロワー内のフォーム。余白は #form-pane と揃える (同じフォームが幅で
- * 描画先を変えるだけなので、見た目が変わる理由がない)。 */
+/* 余白が一覧より広いのは、フォームは入力欄が縁に触れると窮屈に見えるため。 */
 #sidebar-form {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   padding: var(--space-11);
 }
 
-/* sidebar 右のドラッグ splitter (desktop のみ、PaneSplitter)。従来の
- * border-right 1px の見た目をこの splitter 自身が担う。見える線は 1px の
- * まま、当たり判定は透明 padding で 7px 確保 (kawaz r273m2: 余白は増やさず
- * 掴める太さを)。hover / drag 中は線を accent にして「掴める場所」を示す
- * (.session-splitter と同じ合図)。 */
+/* cwd ツリーはフォームの中で低くする。フォーム全体 (末尾の実行ボタンまで) が
+ * 段に収まり、スクロールするのはツリーだけ = 入れ子のスクローラが同時に
+ * 動かない (fork テンプレートは項目が多く、14rem のままだと外側の段も一緒に
+ * スクロールする)。 */
+#sidebar-form .cwd-tree {
+  max-height: 10rem;
+}
+
+/* ドラッグ splitter (PaneSplitter)。従来の border-right 1px の見た目をこの
+ * splitter 自身が担う。見える線は 1px のまま、当たり判定は透明 padding で
+ * 7px 確保 (kawaz r273m2: 余白は増やさず掴める太さを)。hover / drag 中は線を
+ * accent にして「掴める場所」を示す (.session-splitter と同じ合図)。 */
 #sidebar-splitter,
-#form-pane-splitter,
-#sidebar-drawer-splitter {
-  flex: 0 0 7px;
+#sidebar-pane-splitter {
+  flex: 0 0 var(--splitter-px);
   position: relative;
-  cursor: col-resize;
   background: var(--border);
   background-clip: content-box;
+  cursor: col-resize;
   padding: 0 3px;
   touch-action: none;
   user-select: none;
   transition: background-color 0.1s ease;
 }
 
-/* ドロワー内のフォーム (上) と一覧 (下) の境界。上の 3 本と同じ見た目・同じ
- * 当たり判定の作りで、軸だけ横棒に入れ替えたもの (見える線は 1px、透明
- * padding で 7px)。 */
-#sidebar-pane-splitter {
-  flex: 0 0 7px;
-  position: relative;
-  cursor: row-resize;
-  background: var(--border);
-  background-clip: content-box;
-  padding: 3px 0;
-  touch-action: none;
-  user-select: none;
-  transition: background-color 0.1s ease;
-}
-
 #sidebar-splitter.dragging,
-#form-pane-splitter.dragging,
-#sidebar-drawer-splitter.dragging,
 #sidebar-pane-splitter.dragging {
   background: var(--accent);
 }
 
 @media (hover: hover) {
   #sidebar-splitter:hover,
-  #form-pane-splitter:hover,
-  #sidebar-drawer-splitter:hover,
   #sidebar-pane-splitter:hover {
     background: var(--accent);
   }
@@ -464,8 +457,7 @@ a {
  * PaneSplitter.tsx のハンドラは `e.currentTarget` を読むので JS 側は不変。 */
 @media (pointer: coarse) {
   #sidebar-splitter::before,
-  #form-pane-splitter::before,
-  #sidebar-drawer-splitter::before {
+  #sidebar-pane-splitter::before {
     content: "";
     position: absolute;
     top: 0;
@@ -474,39 +466,6 @@ a {
     right: -18px;
     z-index: 1;
   }
-
-  /* 同じ拡張を軸だけ入れ替えたもの (この splitter は横棒)。 */
-  #sidebar-pane-splitter::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -18px;
-    bottom: -18px;
-    z-index: 1;
-  }
-}
-
-/* デスクトップのフォームパネル (FormPane.tsx、D-Q1 裁定 = b)。新規セッション
- * / セッション検索をサイドバー (実効幅 264px) から main ペイン側へ出した先。
- * 幅は inline style (px、localStorage 永続) が持ち、#form-pane-splitter で
- * ドラッグできる — サイドバーと同じ扱い。 */
-#form-pane {
-  flex-shrink: 0;
-  min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: var(--bg-alt);
-  padding: var(--space-11);
-}
-
-/* このペインでは cwd ツリーを低くする。フォーム全体 (末尾の実行ボタンまで)
- * がペインに収まり、スクロールするのはツリーだけ = 入れ子のスクローラが
- * 同時に動かない (fork テンプレートは項目が多く、14rem のままだと外側の
- * ペインも一緒にスクロールする)。 */
-#form-pane .cwd-tree,
-#sidebar-form .cwd-tree {
-  max-height: 10rem;
 }
 
 #sidebar h2 {
@@ -6274,30 +6233,37 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
-/* サイドバーが overlay に切り替わる境界。この 720px は JS 側の
- * useNarrowLayout.ts (フォームをサイドバー内と main ペインのどちらに描くかの
- * 判定) と同じ値で、片方だけ動かすとフォームがどちらにも出ない幅ができる。 */
+/* サイドバーが main に重なるドロワーに切り替わる境界。中の 2 段も同時に
+ * 縦積みへ回り、JS 側はこの flex-direction を読んで splitter の軸を決める
+ * (useFlexColumn.ts) ので、閾値を持つのはここだけ。 */
 @media (max-width: 720px) {
   #menu-toggle {
     display: block;
   }
 
-  /* 幅は Sidebar.tsx が inline style で持つ (右端の #sidebar-drawer-splitter
-   * でドラッグ + localStorage 永続)。既定は画面の 85% を上限 400px で頭打ち
-   * — タブレット幅の端末で端から端まで伸びないように (drawer.ts が正本)。
+  /* サイドバーと本文が同じセルに重なる。列を畳むだけで、サイドバーは
+   * grid のセルに居たまま (= topbar の下に自動的に収まる) 本文の上に乗る。 */
+  #layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #layout > *:not(#sidebar) {
+    grid-area: 1 / 1;
+  }
+
+  /* 幅はドラッグで変えた値 (右端の #sidebar-splitter + localStorage 永続)。
+   * 既定は画面の 85% を上限 400px で頭打ち — タブレット幅の端末で端から端まで
+   * 伸びないように (sidebar-panes.ts が正本)。セルいっぱいに広がらないよう
+   * 左詰めにする。
+   *
    * 暗転する backdrop は置かない: ドロワーの右に残った main (Timeline 等) を
    * 見ながら検索結果を選べることが、幅を動かせるようにした目的なので、
    * 覆って暗くしてしまうと意味がなくなる。外側タップで閉じる判定は App.tsx
    * が document 側で持つ。 */
-  #sidebar {
-    /* ドロワーは #layout (= topbar の下の領域) に対して絶対配置する。fixed
-     * だと画面上端からになり、topbar に被さってハンバーガーやリロードを
-     * 隠してしまう (kawaz r273m30)。topbar の高さは中身で決まるので数値で
-     * 引かず、#layout を基準にすることで自動的にその下に収まる。 */
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
+  #sidebar,
+  #sidebar.with-form {
+    width: var(--drawer-width);
+    justify-self: start;
     z-index: 20;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
@@ -6308,12 +6274,44 @@ a.tl-attachment-file-path {
     transform: translateX(0);
   }
 
-  /* モバイル overlay では sidebar は fixed で layout フローから抜けるため
-   * 一覧と main の境界としての splitter は無意味 (kawaz r26 mid=17 と同種の
-   * 「スマホで動かれても困る」)。ドロワー自体の幅は右端の
-   * #sidebar-drawer-splitter が担う。 */
-  #sidebar-splitter {
-    display: none;
+  /* 上がフォーム、下が一覧 (kawaz r273 m26)。DOM の順 (一覧 → splitter →
+   * フォーム) は変えずに `order` で並べ替える。間の splitter は既定の 0 の
+   * ままなので、その前後に来るよう両端に負と正を振る — フォームだけを前に
+   * 出すと、splitter が一覧より後ろ (= 一番下) に残る。 */
+  #sidebar-panes {
+    flex-direction: column;
+  }
+
+  #sidebar-form {
+    order: -1;
+  }
+
+  /* 縦積みでは一覧が高さを持ち、フォームが残りを埋める。フォームが無ければ
+   * 一覧がドロワーいっぱいに広がる。 */
+  #sidebar-lists {
+    order: 1;
+    flex: 1 1 auto;
+  }
+
+  #sidebar.with-form #sidebar-lists {
+    flex: 0 0 var(--sidebar-list-height, 220px);
+  }
+
+  /* 2 段の境界は横棒になる (見える線は 1px、透明 padding で 7px は同じ)。
+   * サイドバー右端の #sidebar-splitter は縦のままなので、ここには含めない。 */
+  #sidebar-pane-splitter {
+    cursor: row-resize;
+    padding: 3px 0;
+  }
+
+  /* 当たり判定の拡張も軸を入れ替える (計 ~43px は同じ)。 */
+  @media (pointer: coarse) {
+    #sidebar-pane-splitter::before {
+      left: 0;
+      right: 0;
+      top: -18px;
+      bottom: -18px;
+    }
   }
 
   .msg {

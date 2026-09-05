@@ -373,7 +373,7 @@ export function errorMessage(err: unknown): string {
  * (= コンテナ幅 − PANE_MIN_PX) から導く。 */
 export const PANE_MIN_PX = 16;
 
-/** px 直値で幅を持つペイン (#sidebar / #form-pane) の丸め。`containerPx` は
+/** px 直値で寸法を持つペイン (#sidebar-lists / #sidebar-form 等) の丸め。`containerPx` は
  * そのペインが分け合っている領域の幅で、渡されたときだけ上限が効く
  * (レイアウト前・display:none で 0 や非有限になる場面では下限のみ)。
  * `fallbackPx` は px が非有限のとき — localStorage のゴミ値や、ドラッグ中に

@@ -25,6 +25,7 @@ import {
 } from "../utils.ts";
 import { FileTree, loadDir } from "./FileTree.tsx";
 import { FileViewer } from "./FileViewer.tsx";
+import { paneAxisMetrics, readPaneAxis } from "../pane-axis.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
 import { readStorage, writeStorage } from "../storage.ts";
 
@@ -123,21 +124,16 @@ export function FilesPanes({
   }
 
   // Drag plumbing lives in the shared PaneSplitter (kawaz r26 mid=76) — this
-  // callback only owns the layout interpretation. Which axis to measure comes
-  // from the container's own computed flex-direction — desktop row layout
-  // uses clientX / rect.left / .width, mobile column layout uses clientY /
-  // rect.top / .height. Reading getComputedStyle lets the CSS @media query in
-  // app.css stay the source of truth for the breakpoint (no duplicate
-  // window.matchMedia check here).
+  // callback only owns the layout interpretation, and even the axis comes from
+  // the container's own computed flex-direction (pane-axis.ts), so the CSS
+  // @media query in app.css stays the source of truth for the breakpoint.
+  // The tree pane is at the near end on both axes, so the ratio is always
+  // measured from the container's start edge.
   const onSplitterDrag = (e: PointerEvent) => {
     const container = containerRef.current;
     if (!container) return;
-    const isVertical = getComputedStyle(container).flexDirection === "column";
-    const rect = container.getBoundingClientRect();
-    const next = isVertical
-      ? paneRatioFromPointer(e.clientY, rect.top, rect.height)
-      : paneRatioFromPointer(e.clientX, rect.left, rect.width);
-    setRatio(next);
+    const m = paneAxisMetrics(readPaneAxis(container), container.getBoundingClientRect(), e);
+    setRatio(paneRatioFromPointer(m.pointer, m.start, m.size));
   };
 
   // Style: tree pane gets a flex-basis derived from the ratio, viewer

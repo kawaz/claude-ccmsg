@@ -1,6 +1,6 @@
-// New-session launcher form (DR-0018 §2.1/§3.4)。フォーム自体の描き場所は幅で
-// 変わり (デスクトップ = FormPane、スマホ = サイドバー内)、開いているかどうかと
-// フォームの初期値は URL の `sb.*` が持つ — `?sb.panel=new&sb.SESSION_ID=…` を
+// New-session launcher form (DR-0018 §2.1/§3.4)。フォームはサイドバーの中に
+// 一覧と並んで出る (Sidebar.tsx)。開いているかどうかとフォームの初期値は
+// URL の `sb.*` が持つ — `?sb.panel=new&sb.SESSION_ID=…` を
 // 開けばこのフォームがその値で立ち上がる (sidebar-url.ts、表は
 // docs/design/webui-url-grammar.md)。
 //

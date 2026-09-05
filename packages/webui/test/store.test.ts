@@ -838,23 +838,20 @@ describe("reducer / agents/loaded and daemon-info/loaded (U1)", () => {
     expect(second.agents).toEqual([]);
   });
 
-  test("daemon-info/loaded stores version/exe/script for the footer", () => {
+  // 常設の行に出るのは version だけ。exe は hover の title に回るので
+  // state には残す (App.tsx の footer)。
+  test("daemon-info/loaded stores version/exe for the footer", () => {
     const state = dispatch(initialState(), {
       type: "daemon-info/loaded",
       version: "0.19.0",
       exe: "/usr/local/bin/bun",
-      script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
     });
-    expect(state.daemonInfo).toEqual({
-      version: "0.19.0",
-      exe: "/usr/local/bin/bun",
-      script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
-    });
+    expect(state.daemonInfo).toEqual({ version: "0.19.0", exe: "/usr/local/bin/bun" });
   });
 
-  test("daemon-info/loaded tolerates a reply with no exe/script (older daemon)", () => {
+  test("daemon-info/loaded tolerates a reply with no exe (older daemon)", () => {
     const state = dispatch(initialState(), { type: "daemon-info/loaded", version: "0.10.0" });
-    expect(state.daemonInfo).toEqual({ version: "0.10.0", exe: undefined, script: undefined });
+    expect(state.daemonInfo).toEqual({ version: "0.10.0", exe: undefined });
   });
 });
 
@@ -2215,7 +2212,7 @@ describe("locator/changed の sb.* 反映", () => {
 });
 
 describe("peers/sort-key", () => {
-  test("並び順は store が持つ (RoomCreator が FormPane 側でも同じ順で並ぶ)", () => {
+  test("並び順は store が持つ (一覧と RoomCreator が同じ順で並ぶ)", () => {
     expect(initialState().peerSortKey).toBe("prompt");
     expect(dispatch(initialState(), { type: "peers/sort-key", key: "name" }).peerSortKey).toBe(
       "name",

@@ -3,14 +3,12 @@ import { useStoreState } from "../useStore.ts";
 import { useApp } from "../context.ts";
 import type { AppState, MissingTarget } from "../store.ts";
 import { Avatar } from "../avatar.tsx";
-import { clampPanePx, documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
+import { documentTitleFor, lastPathSegment, resolveSessionTopbar } from "../utils.ts";
 import { ConnectionStatus } from "./ConnectionStatus.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 import { RoomView } from "./RoomView.tsx";
 import { SessionView } from "./SessionView.tsx";
 import { ImageLightboxHost } from "./ImageLightbox.tsx";
-import { PaneSplitter } from "./PaneSplitter.tsx";
-import { FormPane } from "./FormPane.tsx";
 import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { ServiceStatusBadge } from "./ServiceStatus.tsx";
@@ -18,26 +16,14 @@ import { CatalogView } from "./CatalogView.tsx";
 import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
-import { useEffect, useRef, useState } from "preact/hooks";
-import { readStorage, writeStorage } from "../storage.ts";
-import { outsideClickClosesDrawer } from "../drawer.ts";
+import { useEffect, useRef } from "preact/hooks";
+import { outsideClickClosesDrawer } from "../sidebar-panes.ts";
 import {
   evictedSessionViewSids,
   skipInactiveSessionViewRender,
   touchSessionViewCache,
   type CachedSessionView,
 } from "../session-view-cache.ts";
-
-const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
-const SIDEBAR_DEFAULT_PX = 280;
-
-/** 復元時はコンテナ幅を渡さない (下限のみ) — ウィンドウを一時的に狭くした
- * だけで、記憶している幅を書き換えてしまわないため。ドラッグ側は
- * `window.innerWidth` を渡して、右のペインが潰れる手前で止める。 */
-function loadSidebarWidth(): number {
-  // 未保存 (null) と空文字はどちらも Number で 0 になる = 既定幅扱いにする。
-  return clampPanePx(Number(readStorage(SIDEBAR_WIDTH_KEY)) || Number.NaN, SIDEBAR_DEFAULT_PX);
-}
 
 /** topbar のタイトル — アプリ名 "ccmsg" の固定表示をやめ、選択中の
  * SESSION (repo ▸ ws) / ROOM (title) を出す (kawaz r17 mid=1、2026-07-14):
@@ -138,7 +124,6 @@ const CachedSessionViewComponent = memo(SessionView, (previous, next) =>
 export function App() {
   const { store } = useApp();
   const state = useStoreState(store);
-  const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
   const versionMismatch = state.versionMismatch;
   const sessionViewsRef = useRef<CachedSessionView[]>([]);
   // Sids the LRU dropped since the last commit, queued for the effect below.
@@ -173,9 +158,6 @@ export function App() {
     const sids = queued.filter((sid) => !mounted.has(sid));
     if (sids.length > 0) store.dispatch({ type: "timeline/evicted", sids });
   });
-  useEffect(() => {
-    writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
-  }, [sidebarWidth]);
   // ドロワーの外をタップしたら閉じる (kawaz r273 m16/m17)。
   //
   // 見るのは `click` そのもの: スクロール・スワイプ・長押しでは click が出ない
@@ -194,7 +176,7 @@ export function App() {
     const onClick = (e: MouseEvent) => {
       // 判定は composedPath (= 押した瞬間の経路)。今の DOM を辿る closest では、
       // その click の中で自分ごと消える要素 (フォームの ✕) が「ドロワーの外」に
-      // 化けて、閉じたくない時に閉じてしまう (drawer.ts の doc 参照)。
+      // 化けて、閉じたくない時に閉じてしまう (sidebar-panes.ts の doc 参照)。
       const pathIds = e
         .composedPath()
         .flatMap((node) => (node instanceof Element && node.id ? [node.id] : []));
@@ -283,7 +265,7 @@ export function App() {
           type="button"
           aria-label="reload"
           // 不一致は専用のボックスを増やさず、このボタンの見た目だけで伝える
-          // (kawaz r273 m27)。色とアニメーションはレイアウトを動かさない。
+          // (kawaz r273 m27)。色だけを変えるのでレイアウトは動かない。
           class={versionMismatch !== null ? "app-reload-update" : undefined}
           title={reloadButtonTitle(versionMismatch)}
           onClick={() => {
@@ -296,24 +278,11 @@ export function App() {
           &#8635;
         </button>
       </header>
-      <div id="layout" style={{ "--sidebar-width": `${sidebarWidth}px` }}>
+      <div id="layout">
+        {/* サイドバーは一覧もフォームも自分の中に持ち、幅を変える splitter も
+         * 自分の右端に立てる (Sidebar.tsx)。この列に並ぶか、main に重なる
+         * ドロワーになるかは app.css の grid が決める。 */}
         <Sidebar state={state} />
-        {/* kawaz r26 mid=75: ワイドスクリーン時のサイドバー右セパレータも
-         * ドラッグで幅調整。#sidebar は layout 左端に接しているので clientX
-         * がそのまま幅 (px)。localStorage 永続。モバイル (720px 以下の
-         * overlay) では CSS が splitter を隠す。 */}
-        <PaneSplitter
-          id="sidebar-splitter"
-          ariaOrientation="vertical"
-          onDrag={(e) =>
-            setSidebarWidth(clampPanePx(e.clientX, SIDEBAR_DEFAULT_PX, window.innerWidth))
-          }
-        />
-        {/* デスクトップのフォームパネル (D-Q1 裁定 = b)。スマホ幅では
-         * Sidebar が自分の中に描くので、FormPane 自身が何も出さない
-         * (幅ごとの担当は form-pane.ts の sidebarInlinePanel / formPanePanel
-         * が対で決める)。 */}
-        <FormPane state={state} />
         {sessionViewsRef.current.map((view) => (
           <CachedSessionViewComponent
             key={view.sid}
@@ -341,10 +310,7 @@ export function App() {
       </div>
       <footer id="app-footer">
         {state.daemonInfo ? (
-          <span title={state.daemonInfo.exe ?? undefined}>
-            daemon v{state.daemonInfo.version}
-            {state.daemonInfo.script ? ` · ${state.daemonInfo.script}` : ""}
-          </span>
+          <span title={state.daemonInfo.exe ?? undefined}>daemon v{state.daemonInfo.version}</span>
         ) : null}
       </footer>
       <ImageLightboxHost />

@@ -13,17 +13,22 @@ import {
   type SidebarPanelKind,
 } from "../sidebar-url.ts";
 import { pushSidebarState } from "../navigation.ts";
-import { sidebarInlinePanel } from "../form-pane.ts";
 import {
   clampDrawerWidth,
+  clampFormWidth,
   clampSidebarListHeight,
+  clampSidebarWidth,
   loadDrawerWidth,
+  loadFormWidth,
   loadSidebarListHeight,
+  loadSidebarWidth,
   saveDrawerWidth,
+  saveFormWidth,
   saveSidebarListHeight,
-} from "../drawer.ts";
+  saveSidebarWidth,
+} from "../sidebar-panes.ts";
 import { PaneSplitter } from "./PaneSplitter.tsx";
-import { useNarrowLayout } from "../useNarrowLayout.ts";
+import { paneAxisMetrics, readPaneAxis, usePaneAxis } from "../pane-axis.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
 import { SessionSearchPanel } from "./SessionSearchPanel.tsx";
@@ -136,41 +141,54 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
  * `/s/<sid>/timeline` を開いたまま横で使うものなので、「どこを見ているか」を
  * 名乗る path とは別の名前空間 (`sb.`) に属する。
  *
- * どこに描くかは幅で変わる (D-Q1 裁定 = b、2026-08-12):
+ * **3 つともサイドバーの中に描く** (kawaz r273 m35): フォームは一覧に対する
+ * 操作 (セッションを起動する / 探す / ルームを作る) なので、一覧を管理する
+ * このコンポーネントの責務に属する。幅が splitter で自由に動かせる今、これを
+ * main ペイン側に出す理由は無い — フォームの表示欠け
+ * (docs/findings/2026-08-12-form-ux-width-survey.md) は「サイドバーの外へ
+ * 出す」ではなく「サイドバーを広げられるようにする」で解ける。
  *
- * - **デスクトップ**: 3 つとも main ペイン側の `FormPane` が描き、サイドバー
- *   は SessionList / RoomList を出したまま (= 一覧を見ながら入力できる)。
- *   サイドバーの実効幅 264px がフォームの表示欠けの根だった
- *   (docs/findings/2026-08-12-form-ux-width-survey.md)。RoomCreator も同じ
- *   理由で FormPane 側に出す (kawaz r259 m53) — メンバのチェックボックスを
- *   一覧と見比べながら選ぶ価値は他の 2 つと変わらない。その並び順が依存する
- *   ソートキーは `state.peerSortKey` なので、描画先が変わっても同じ順で並ぶ。
- * - **スマホ** (サイドバーが overlay ドロワーになる幅): 3 つともここで描く。
- *   ドロワーの中を上下に分け、**フォームが上・一覧が下** (kawaz r273 m26)。
- *   デスクトップと同じ「一覧を見ながら入力できる」形を、縦長の画面に合わせて
- *   縦に積んだもの。一覧側の既定の高さは行が 2〜3 本見える程度で、もっと見たく
- *   なったら間のスプリッターを下げる。 */
+ * 中は一覧とフォームの 2 段 (`#sidebar-panes`) で、並ぶ軸だけが画面で変わる:
+ *
+ * - **横並び**: 左が一覧、右がフォーム。一覧を見ながら入力できる。
+ * - **縦積み** (サイドバーが overlay ドロワーになる幅): 上がフォーム、下が
+ *   一覧 (kawaz r273 m26)。同じ形を縦長の画面に合わせて積み替えたもので、
+ *   一覧側の既定の高さは行が 2〜3 本見える程度。もっと見たくなったら間の
+ *   スプリッターを下げる。
+ *
+ * 軸を決めるのは app.css の `flex-direction` だけで、DOM も mount するものも
+ * どちらでも同じ。RoomCreator が他の 2 つと同じ場所に出るのも同じ理由で
+ * (kawaz r259 m53)、メンバのチェックボックスを一覧と見比べながら選ぶ価値は
+ * 変わらない。その並び順が依存するソートキーは `state.peerSortKey`。 */
 export function Sidebar({ state }: { state: AppState }) {
   const { store } = useApp();
   const sortKey = state.peerSortKey;
-  const narrow = useNarrowLayout();
   const panel = state.sidebar.panel;
   const togglePanel = (kind: SidebarPanelKind) =>
     pushSidebarState(toggleSidebarPanel(state.sidebar, kind));
   const closePanel = () => pushSidebarState(CLOSED_SIDEBAR);
-  // デスクトップではフォームは FormPane が描くので、ここは一覧のまま
-  // (対になる formPanePanel と合わせて form-pane.ts が正本)。
-  const inlinePanel = sidebarInlinePanel(panel, narrow);
   // Sorting only ever depends on the peers array reference and the chosen
   // key — never on wall-clock time — so a session list re-render triggered
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
   // sortPeers's doc comment in utils.ts and SessionList.tsx's tick).
   const sortedPeers = useMemo(() => sortPeers(state.peers, sortKey), [state.peers, sortKey]);
-  // ドロワーの幅と、その中の一覧の高さ。どちらもこの中だけの寸法なので、幅を
-  // 持つ他のペインと同じく px 直値 + localStorage 永続で Sidebar が抱える。
+  // 2 段の寸法。どれもサイドバーの中だけの値なので、他のペインと同じく
+  // px 直値 + localStorage 永続でここが抱える (どの値がどの軸のものかは
+  // sidebar-panes.ts の表)。CSS 変数として置き、どれを使うかは app.css が
+  // 軸ごとに選ぶ。
+  const [sidebarWidth, setSidebarWidth] = useState<number>(loadSidebarWidth);
+  const [formWidth, setFormWidth] = useState<number>(loadFormWidth);
   const [drawerWidth, setDrawerWidth] = useState<number>(() => loadDrawerWidth(window.innerWidth));
   const [listHeight, setListHeight] = useState<number>(loadSidebarListHeight);
   const panesRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLElement>(null);
+  const axis = usePaneAxis(panesRef);
+  useEffect(() => {
+    saveSidebarWidth(sidebarWidth);
+  }, [sidebarWidth]);
+  useEffect(() => {
+    saveFormWidth(formWidth);
+  }, [formWidth]);
   useEffect(() => {
     saveDrawerWidth(drawerWidth);
   }, [drawerWidth]);
@@ -181,48 +199,21 @@ export function Sidebar({ state }: { state: AppState }) {
   return (
     <nav
       id="sidebar"
-      class={state.sidebarOpen ? "open" : undefined}
-      // デスクトップの幅は #layout の --sidebar-width (App.tsx) が持つので、
-      // ここで幅を指定するのは overlay ドロワーの時だけ。
-      style={narrow ? { width: `${drawerWidth}px` } : undefined}
+      class={[state.sidebarOpen ? "open" : null, panel !== null ? "with-form" : null]
+        .filter(Boolean)
+        .join(" ")}
+      style={{
+        "--sidebar-width": `${sidebarWidth}px`,
+        "--sidebar-form-width": `${formWidth}px`,
+        "--sidebar-list-height": `${listHeight}px`,
+        "--drawer-width": `${drawerWidth}px`,
+      }}
     >
-      {/* フォームと一覧の縦積み。ドロワーの幅を変える splitter は右端に立てる
-       * ので、縦に積むのはこの中だけ。 */}
+      {/* 一覧とフォームの 2 段。並ぶ軸は app.css が決める (横並び = 一覧 →
+       * フォーム、縦積み = フォーム → 一覧)。サイドバー自体の右端に立つ
+       * splitter はこの外なので、軸が変わるのはこの中だけ。 */}
       <div id="sidebar-panes" ref={panesRef}>
-        {inlinePanel !== null ? (
-          <>
-            <aside id="sidebar-form">
-              {inlinePanel === "session-creator" ? (
-                <SessionCreator
-                  onClose={closePanel}
-                  template={state.sidebar.template}
-                  params={state.sidebar.params}
-                />
-              ) : inlinePanel === "session-search" ? (
-                <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
-              ) : (
-                <RoomCreator peers={sortedPeers} onClose={closePanel} />
-              )}
-            </aside>
-            {/* フォーム (上) と一覧 (下) の境界。持たせる値は下側の高さなので、
-             * ドラッグ位置からは「この列の下辺までの距離」を測る。上限はこの列の
-             * 高さ = フォームが隠れるところまで下げられる。 */}
-            <PaneSplitter
-              id="sidebar-pane-splitter"
-              ariaOrientation="horizontal"
-              onDrag={(e) => {
-                const panes = panesRef.current;
-                if (!panes) return;
-                const rect = panes.getBoundingClientRect();
-                setListHeight(clampSidebarListHeight(rect.bottom - e.clientY, rect.height));
-              }}
-            />
-          </>
-        ) : null}
-        <div
-          id="sidebar-lists"
-          style={inlinePanel ? { height: `${listHeight}px`, flex: "0 0 auto" } : undefined}
-        >
+        <div id="sidebar-lists">
           <section id="sessions-panel">
             <h2>
               Sessions{" "}
@@ -258,16 +249,69 @@ export function Sidebar({ state }: { state: AppState }) {
             <RoomList state={state} />
           </section>
         </div>
+        {panel !== null ? (
+          <>
+            {/* 一覧とフォームの境界。持たせる値は軸で変わり、一覧がどちらの端に
+             * あるかも app.css の `order` で変わる: 横並びなら手前 (左) が一覧
+             * なので幅は `pointer - start`、縦積みならフォームが `order` で前に
+             * 出るので一覧は奥 (下) にあり、高さは `end - pointer`。どちらも
+             * 上限は隣が潰れる手前 = フォームを隠しきるところまで動かせる。 */}
+            <PaneSplitter
+              id="sidebar-pane-splitter"
+              ariaOrientation={axis === "column" ? "horizontal" : "vertical"}
+              onDrag={(e) => {
+                const panes = panesRef.current;
+                if (!panes) return;
+                const dragAxis = readPaneAxis(panes);
+                const m = paneAxisMetrics(dragAxis, panes.getBoundingClientRect(), e);
+                if (dragAxis === "column") {
+                  setListHeight(clampSidebarListHeight(m.end - m.pointer, m.size));
+                } else {
+                  setSidebarWidth(
+                    clampSidebarWidth(m.pointer - m.start, window.innerWidth - m.start),
+                  );
+                }
+              }}
+            />
+            <aside id="sidebar-form" ref={formRef}>
+              {panel === "session-creator" ? (
+                <SessionCreator
+                  onClose={closePanel}
+                  template={state.sidebar.template}
+                  params={state.sidebar.params}
+                />
+              ) : panel === "session-search" ? (
+                <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
+              ) : (
+                <RoomCreator peers={sortedPeers} onClose={closePanel} />
+              )}
+            </aside>
+          </>
+        ) : null}
       </div>
-      {narrow ? (
-        // ドロワーの右端。ここを動かすとドロワー自体の幅が変わり、右に残った
-        // main (Timeline 等) を見ながら操作できる (kawaz r273 m15)。
-        <PaneSplitter
-          id="sidebar-drawer-splitter"
-          ariaOrientation="vertical"
-          onDrag={(e) => setDrawerWidth(clampDrawerWidth(e.clientX, window.innerWidth))}
-        />
-      ) : null}
+      {/* サイドバーの右端。横並びでは右のペイン (= フォーム、閉じていれば一覧)
+       * の幅を、縦積みではサイドバーそのものの幅を動かす — どちらも「右に残った
+       * main を見ながら操作できる」ための同じ操作 (kawaz r273 m15)。幅は自分の
+       * 左辺からの距離で測る (左のものの幅を足し直すより、動いても壊れない)。 */}
+      <PaneSplitter
+        id="sidebar-splitter"
+        ariaOrientation="vertical"
+        onDrag={(e) => {
+          const panes = panesRef.current;
+          if (!panes) return;
+          if (readPaneAxis(panes) === "column") {
+            setDrawerWidth(clampDrawerWidth(e.clientX, window.innerWidth));
+            return;
+          }
+          const form = formRef.current;
+          if (form === null) {
+            setSidebarWidth(clampSidebarWidth(e.clientX, window.innerWidth));
+            return;
+          }
+          const left = form.getBoundingClientRect().left;
+          setFormWidth(clampFormWidth(e.clientX - left, window.innerWidth - left));
+        }}
+      />
     </nav>
   );
 }

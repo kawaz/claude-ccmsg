@@ -645,7 +645,6 @@ export function createWsClient(
           type: "daemon-info/loaded",
           version: ping.version,
           exe: ping.exe,
-          script: ping.script,
         });
       // DR-0023 host capability probe. An empty batch verifies the daemon can
       // find/build its helper without starting TranslationSession or translating
