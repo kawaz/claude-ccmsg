@@ -17,7 +17,7 @@ import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
 import { usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
-import { markReloadedForVersion } from "../version-guard.ts";
+import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readStorage, writeStorage } from "../storage.ts";
 import {
@@ -277,32 +277,19 @@ export function App() {
           id="app-reload"
           type="button"
           aria-label="reload"
-          title="ページを再読み込み"
-          onClick={() => window.location.reload()}
+          // 不一致は専用のボックスを増やさず、このボタンの見た目だけで伝える
+          // (kawaz r273 m27)。色とアニメーションはレイアウトを動かさない。
+          class={versionMismatch !== null ? "app-reload-update" : undefined}
+          title={reloadButtonTitle(versionMismatch)}
+          onClick={() => {
+            // 押した = このタブはこの version のために読み直した。記録しないと
+            // 入れ替わらなかった時に同じ判定が何度でも成立する。
+            if (versionMismatch !== null) markReloadedForVersion(versionMismatch.daemonVersion);
+            window.location.reload();
+          }}
         >
           &#8635;
         </button>
-        {/* version 不一致 (version-guard.ts) の受け皿。予約が立っている間は
-         * 次の画面遷移が勝手に読み直すので、ここは「待たずに今すぐ」の導線。
-         * 予約を見送ったタブ (書きかけがある / リロードしても bundle が
-         * 入れ替わらなかった) にとっては、これが唯一の追従手段になる。 */}
-        {versionMismatch !== null ? (
-          <button
-            id="app-version-mismatch"
-            type="button"
-            title={
-              versionMismatch.reloadOnNavigation
-                ? `daemon が v${versionMismatch.daemonVersion} に更新されています。次の画面移動で反映されます (今すぐ反映するには押してください)`
-                : `daemon が v${versionMismatch.daemonVersion} に更新されています。この画面は古いままなので、再読み込みしてください`
-            }
-            onClick={() => {
-              markReloadedForVersion(versionMismatch.daemonVersion);
-              window.location.reload();
-            }}
-          >
-            新しい版 v{versionMismatch.daemonVersion}
-          </button>
-        ) : null}
       </header>
       <div id="layout" style={{ "--sidebar-width": `${sidebarWidth}px` }}>
         <Sidebar state={state} />

@@ -44,6 +44,21 @@ export function mismatchOf(
   return null;
 }
 
+/** topbar のリロードボタンの title。不一致は専用のボックスを増やさず、常設の
+ *  リロードボタンの見た目 (色 + 控えめな動き) と、この文言だけで伝える
+ *  (kawaz r273 m27: 見出しの上に箱が出てレイアウトが変わるのが邪魔)。
+ *
+ *  押した時にすることは 3 状態とも同じ「今すぐ読み直す」なので、文言の差は
+ *  **押さなかった場合に何が起きるか**だけにする — 予約が立っていれば放って
+ *  おいても次の画面移動で反映され、立っていなければ古いまま残る。 */
+export function reloadButtonTitle(mismatch: VersionMismatch | null): string {
+  if (mismatch === null) return "ページを再読み込み";
+  const head = `新しい版 v${mismatch.daemonVersion} — 押すと今すぐ反映`;
+  return mismatch.reloadOnNavigation
+    ? `${head} / 次の画面移動で自動反映`
+    : `${head} (押すまでこの画面は古いまま)`;
+}
+
 export interface VersionGuardEnv {
   /** この bundle が焼き込んでいる version。 */
   bundleVersion: string;

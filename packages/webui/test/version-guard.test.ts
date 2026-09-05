@@ -6,6 +6,7 @@ import {
   mismatchOf,
   reactToDaemonVersion,
   reactToHandshakeVersion,
+  reloadButtonTitle,
   type VersionGuardEnv,
   type VersionGuardOutcome,
 } from "../src/client/version-guard.ts";
@@ -218,5 +219,29 @@ describe("reactToHandshakeVersion", () => {
     const res = await reactToHandshakeVersion(refused, async () => BUNDLE, h.env);
     expect(res).toEqual({ outcome: "match", daemonVersion: BUNDLE });
     expect(h.reloads).toBe(0);
+  });
+});
+
+// 不一致の知らせは topbar のリロードボタンの title に載る (kawaz r273 m27:
+// 専用のボックスを増やさない)。押した時の動作は 3 状態とも同じなので、
+// 文言が伝えるのは「押さなかったらどうなるか」。
+describe("reloadButtonTitle", () => {
+  test("不一致なしなら、ただのリロードボタン", () => {
+    expect(reloadButtonTitle(null)).toBe("ページを再読み込み");
+  });
+
+  test("予約が立っていれば、放っておいても反映されることを言う", () => {
+    const title = reloadButtonTitle(mismatchOf("on-navigation", "0.147.2"));
+    expect(title).toContain("新しい版 v0.147.2");
+    expect(title).toContain("今すぐ反映");
+    expect(title).toContain("次の画面移動で自動反映");
+  });
+
+  // 予約なし = 押されるまで何も起きない。放置すると古いままだと分かる必要がある。
+  test("予約が無ければ、押すまで古いままだと言う", () => {
+    const title = reloadButtonTitle(mismatchOf("manual", "0.147.2"));
+    expect(title).toContain("新しい版 v0.147.2");
+    expect(title).toContain("押すまでこの画面は古いまま");
+    expect(title).not.toContain("自動反映");
   });
 });

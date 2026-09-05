@@ -277,17 +277,38 @@ a {
   color: var(--accent);
 }
 
-/* version 不一致の手動リロード導線。アイコンボタン群と違って文字を出すのは、
- * 「押すと今の画面が捨てられる」ことを記号だけで伝えられないため。 */
-#app-version-mismatch {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: none;
-  border-radius: 0.35rem;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  padding: var(--space-4) var(--space-9);
-  white-space: nowrap;
+/* version 不一致 (version-guard.ts) の知らせ。専用のボックスや行は作らず、
+ * 常設のリロードボタンの見た目だけを変える (kawaz r273 m27: 見出しの上に箱が
+ * 出てレイアウトが変わるのが邪魔)。効かせるのは色と transform だけなので、
+ * 不一致の前後でボタンの占める大きさは 1px も変わらない。
+ *
+ * 動きは composer-fab-draft と同じ「周期の一部だけ」方式で鬱陶しさを抑える。
+ * 跳ねではなく回すのは、このボタンの記号 (↻) が回るものだから — 「読み直せ
+ * ばこれが手に入る」が動き自体で読める。 */
+#app-reload.app-reload-update {
+  color: var(--accent);
+  animation: app-reload-update-nudge 3s infinite;
+}
+
+@keyframes app-reload-update-nudge {
+  0%,
+  16%,
+  100% {
+    transform: none;
+  }
+  4% {
+    transform: rotate(-40deg);
+  }
+  12% {
+    transform: rotate(40deg);
+  }
+}
+
+/* 動きを止めても色は残す = 知らせ自体は消さない (waiting セクションと同じ)。 */
+@media (prefers-reduced-motion: reduce) {
+  #app-reload.app-reload-update {
+    animation: none;
+  }
 }
 
 #app-back:disabled,
