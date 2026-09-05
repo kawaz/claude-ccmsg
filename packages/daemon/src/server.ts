@@ -3637,6 +3637,36 @@ export interface StartOptions {
   fallback?: HttpFallback;
 }
 
+const HTTP_BIND_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 800, 800];
+
+function isAddressInUse(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EADDRINUSE" &&
+    "syscall" in error &&
+    error.syscall === "listen"
+  );
+}
+
+async function startHttpListenerWithRetry(
+  start: () => HttpListener,
+  bindSpec: string,
+  log: Logger,
+): Promise<HttpListener> {
+  for (const delay of HTTP_BIND_RETRY_DELAYS_MS) {
+    try {
+      return start();
+    } catch (error) {
+      if (!isAddressInUse(error)) throw error;
+      log.warn(`http ${bindSpec} is in use; retrying bind in ${delay}ms`);
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  return start();
+}
+
 /** `CCMSG_HTTP_BIND`: comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
 function resolveHttpBinds(): string[] {
   const raw = process.env.CCMSG_HTTP_BIND;
@@ -3898,13 +3928,18 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
-      const listener = startHttpListener(
-        daemon,
+      const listener = await startHttpListenerWithRetry(
+        () =>
+          startHttpListener(
+            daemon,
+            bindSpec,
+            httpAllowCidrs,
+            httpAllowOrigin,
+            opts.fallback,
+            originsFile,
+          ),
         bindSpec,
-        httpAllowCidrs,
-        httpAllowOrigin,
-        opts.fallback,
-        originsFile,
+        log,
       );
       httpListeners.push(listener);
       log.info(`http listening on ${listener.address}`);

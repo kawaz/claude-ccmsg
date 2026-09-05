@@ -165,6 +165,43 @@ describe("HTTP/WS transport (DR-0004)", () => {
   );
 
   test(
+    "a temporarily occupied HTTP port is acquired after its previous listener releases it",
+    async () => {
+      // During a newer-wins daemon swap, the replacement can own the UDS lock before
+      // the predecessor has released its HTTP listener. The replacement must keep
+      // retrying that transient EADDRINUSE rather than remain healthy on UDS while the
+      // browser transport is permanently absent.
+      const holder = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data() {}, open() {}, close() {}, error() {}, drain() {} },
+      });
+      const port = holder.port;
+      const ctx = await startTestDaemon({ CCMSG_HTTP_BIND: `127.0.0.1:${port}` });
+      try {
+        const before = await connect(ctx.sock);
+        await before.hello({ role: "user" });
+        const beforePing = await before.request<{ http: string[] }>({ op: "ping" });
+        before.close();
+        expect(beforePing.http).toEqual([]);
+
+        holder.stop(true);
+        await waitHttpConnectable(`127.0.0.1:${port}`);
+
+        const after = await connect(ctx.sock);
+        await after.hello({ role: "user" });
+        const afterPing = await after.request<{ http: string[] }>({ op: "ping" });
+        after.close();
+        expect(afterPing.http).toEqual([`127.0.0.1:${port}`]);
+      } finally {
+        holder.stop(true);
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "WS round trip: hello -> rooms -> subscribe -> post delivers the msg, same shape as UDS",
     async () => {
       const ctx = await startHttpDaemon();
