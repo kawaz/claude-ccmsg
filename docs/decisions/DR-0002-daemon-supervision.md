@@ -34,7 +34,7 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 
 - daemon は hello / pong 応答に自 `version` を含める
 - クライアントは自分の version と比較し、不一致なら `{op:"shutdown", reason:"upgrade"}` を送って graceful stop させ、ensure 手順で新 version を spawn する (クライアント主導)
-- graceful stop: 新規受付停止 → 接続中 client に `{ev:"restarting"}` → flush → exit。sidecar は自動再接続する
+- graceful stop: 新規受付停止 → 接続中 client に `{ev:"restarting"}` → 後継 daemon と競合する全資源 (listen port、pid file、lock 等) の解放 → UDS listener 停止 → exit。UDS 接続不能が旧 daemon の停止完了を示す唯一の境界なので、UDS close は競合資源の後片付けの最後に行う。socket pathname は lock を得た後継の起動時 cleanup に委ねる。sidecar は自動再接続する
 - plugin update 直後の「新 CLI vs 旧常駐 daemon」はこれで自動解消する
 - **追補 (2026-07-10)**: 不一致判定は等値ではなく **newer-wins** (client が自分の version と daemon の version を比較し、client の方が厳密に新しい場合のみ shutdown+respawn。daemon が同じか新しければ何もしない)。理由: gradual rollout で新旧 client が同時に daemon へ接触すると、等値比較では互いに相手を降格させ合うフラッピングが発生する (docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md)。比較は `@ccmsg/protocol` の `compareVersions`
 

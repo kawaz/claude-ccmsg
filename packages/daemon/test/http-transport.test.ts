@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { tryAcquireLock } from "../src/flock.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 15000;
@@ -128,6 +129,20 @@ async function connectWs(ctx: DaemonCtx): Promise<WsTestClient> {
   return client;
 }
 
+async function waitUdsGone(sock: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const client = await connect(sock);
+      client.close();
+    } catch {
+      return;
+    }
+    if (Date.now() > deadline) throw new Error(`daemon UDS still connectable: ${sock}`);
+    await Bun.sleep(10);
+  }
+}
+
 describe("HTTP/WS transport (DR-0004)", () => {
   test(
     "CCMSG_HTTP_BIND=off: no HTTP listener, status reports empty http[]",
@@ -158,43 +173,6 @@ describe("HTTP/WS transport (DR-0004)", () => {
         expect(addr).toMatch(/^127\.0\.0\.1:\d+$/);
         expect(addr.endsWith(":0")).toBe(false);
       } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
-  test(
-    "a temporarily occupied HTTP port is acquired after its previous listener releases it",
-    async () => {
-      // During a newer-wins daemon swap, the replacement can own the UDS lock before
-      // the predecessor has released its HTTP listener. The replacement must keep
-      // retrying that transient EADDRINUSE rather than remain healthy on UDS while the
-      // browser transport is permanently absent.
-      const holder = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: { data() {}, open() {}, close() {}, error() {}, drain() {} },
-      });
-      const port = holder.port;
-      const ctx = await startTestDaemon({ CCMSG_HTTP_BIND: `127.0.0.1:${port}` });
-      try {
-        const before = await connect(ctx.sock);
-        await before.hello({ role: "user" });
-        const beforePing = await before.request<{ http: string[] }>({ op: "ping" });
-        before.close();
-        expect(beforePing.http).toEqual([]);
-
-        holder.stop(true);
-        await waitHttpConnectable(`127.0.0.1:${port}`);
-
-        const after = await connect(ctx.sock);
-        await after.hello({ role: "user" });
-        const afterPing = await after.request<{ http: string[] }>({ op: "ping" });
-        after.close();
-        expect(afterPing.http).toEqual([`127.0.0.1:${port}`]);
-      } finally {
-        holder.stop(true);
         await stopTestDaemon(ctx);
       }
     },
@@ -539,6 +517,45 @@ describe("HTTP/WS transport (DR-0004)", () => {
         const evilRes = await fetch(`http://${addr}/`, { headers: { Origin: "http://evil.com" } });
         expect(evilRes.status).toBe(403);
       } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "HTTP port is released before the UDS marks graceful shutdown complete",
+    async () => {
+      // A replacement daemon treats UDS connection refusal as permission to start.
+      // Therefore the predecessor must release its HTTP listen socket before closing
+      // UDS, even while an active WebSocket connection still exists.
+      const ctx = await startHttpDaemon();
+      let replacement: ReturnType<typeof Bun.serve> | undefined;
+      let replacementLock: ReturnType<typeof tryAcquireLock> = null;
+      try {
+        const addr = await httpAddress(ctx);
+        const port = Number(addr.slice(addr.lastIndexOf(":") + 1));
+        const ws = await connectWs(ctx);
+        await ws.hello({ role: "user" });
+
+        const uds = await connect(ctx.sock);
+        await uds.hello({ role: "user" });
+        await uds.request({ op: "shutdown", reason: "upgrade" });
+        uds.close();
+
+        await waitUdsGone(ctx.sock);
+        replacement = Bun.serve({
+          hostname: "127.0.0.1",
+          port,
+          fetch: () => new Response("replacement"),
+        });
+        replacementLock = tryAcquireLock(path.join(ctx.stateDir, "daemon.lock"));
+        expect(replacement.port).toBe(port);
+        expect(replacementLock).not.toBeNull();
+        ws.close();
+      } finally {
+        replacementLock?.release();
+        await replacement?.stop(true);
         await stopTestDaemon(ctx);
       }
     },

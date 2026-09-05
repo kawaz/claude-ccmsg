@@ -17,7 +17,7 @@ export interface HttpFallback {
 export interface HttpListener {
   /** actual bound "host:port" — resolved even when the configured port was 0 (ephemeral). */
   address: string;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 interface WsData {
@@ -336,8 +336,6 @@ export function startHttpListener(
   });
   return {
     address: `${server.hostname}:${server.port}`,
-    stop: () => {
-      void server.stop();
-    },
+    stop: () => server.stop(true),
   };
 }

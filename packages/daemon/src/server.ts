@@ -131,6 +131,7 @@ import {
   relayCacheKeepalive,
 } from "./cache-keepalive.ts";
 import { type WebhookSource } from "./webhook.ts";
+import { releaseDaemonResources } from "./daemon-shutdown.ts";
 import { tryAcquireLock, type LockHandle } from "./flock.ts";
 import { startHttpListener, type HttpFallback, type HttpListener } from "./http.ts";
 import {
@@ -3560,7 +3561,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "shutdown": {
       send(conn, { ok: true, stopping: true });
-      gracefulShutdown(daemon, req.reason);
+      void gracefulShutdown(daemon, req.reason);
       return;
     }
 
@@ -3588,7 +3589,7 @@ function buildDedupIndex(rooms: Map<string, Room>): Map<string, string> {
   return index;
 }
 
-function gracefulShutdown(daemon: Daemon, reason?: string): void {
+async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> {
   if (daemon.shuttingDown) return;
   daemon.shuttingDown = true;
   daemon.log.info(`graceful shutdown (${reason ?? ""})`);
@@ -3600,34 +3601,39 @@ function gracefulShutdown(daemon: Daemon, reason?: string): void {
   daemon.networkWatch?.stop();
   daemon.llmStatusRefresher?.stop();
   stopAllTailWatches(daemon.transcriptTail);
-  try {
-    daemon.server?.stop();
-  } catch {
-    // ignore
-  }
+
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
-  // tearing down the HTTP listeners so the WS side actually gets the frame out.
+  // tearing down either transport so both sides can receive the restarting frame.
   const ev = { ev: "restarting", ...(reason ? { reason } : {}) };
   for (const conn of daemon.connections) send(conn, ev);
-  for (const listener of daemon.httpListeners) {
-    try {
-      listener.stop();
-    } catch {
-      // ignore
-    }
-  }
+
   for (const room of daemon.rooms.values()) closeRoom(room);
-  try {
-    fs.unlinkSync(daemon.paths.sock);
-  } catch {
-    // ignore
-  }
-  try {
-    fs.unlinkSync(daemon.paths.pid);
-  } catch {
-    // ignore
-  }
-  daemon.lock.release();
+
+  // UDS disappearance is the sole boundary clients use to conclude that this
+  // daemon has yielded. Release every resource that can block its successor
+  // before closing UDS. The predecessor deliberately leaves the socket pathname:
+  // after releasing the lock, unlinking it could delete a successor's newly bound
+  // socket; the next lock holder owns the existing stale-socket cleanup at startup.
+  await releaseDaemonResources({
+    stopHttp: async () => {
+      await Promise.allSettled(daemon.httpListeners.map((listener) => listener.stop()));
+    },
+    removePid: () => {
+      try {
+        fs.unlinkSync(daemon.paths.pid);
+      } catch {
+        // ignore
+      }
+    },
+    releaseLock: () => daemon.lock.release(),
+    stopUds: () => {
+      try {
+        daemon.server?.stop();
+      } catch {
+        // ignore
+      }
+    },
+  });
   process.exit(0);
 }
 
@@ -3635,36 +3641,6 @@ export interface StartOptions {
   foreground?: boolean;
   /** Non-/ws HTTP requests are delegated here (e.g. webui static/app routes); 404 if absent. */
   fallback?: HttpFallback;
-}
-
-const HTTP_BIND_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 800, 800];
-
-function isAddressInUse(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "EADDRINUSE" &&
-    "syscall" in error &&
-    error.syscall === "listen"
-  );
-}
-
-async function startHttpListenerWithRetry(
-  start: () => HttpListener,
-  bindSpec: string,
-  log: Logger,
-): Promise<HttpListener> {
-  for (const delay of HTTP_BIND_RETRY_DELAYS_MS) {
-    try {
-      return start();
-    } catch (error) {
-      if (!isAddressInUse(error)) throw error;
-      log.warn(`http ${bindSpec} is in use; retrying bind in ${delay}ms`);
-      await new Promise<void>((resolve) => setTimeout(resolve, delay));
-    }
-  }
-  return start();
 }
 
 /** `CCMSG_HTTP_BIND`: comma-separated `host:port` list, `off` to disable, default DEFAULT_HTTP_BIND (DR-0004 §3). */
@@ -3928,18 +3904,13 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   const httpListeners: HttpListener[] = [];
   for (const bindSpec of resolveHttpBinds()) {
     try {
-      const listener = await startHttpListenerWithRetry(
-        () =>
-          startHttpListener(
-            daemon,
-            bindSpec,
-            httpAllowCidrs,
-            httpAllowOrigin,
-            opts.fallback,
-            originsFile,
-          ),
+      const listener = startHttpListener(
+        daemon,
         bindSpec,
-        log,
+        httpAllowCidrs,
+        httpAllowOrigin,
+        opts.fallback,
+        originsFile,
       );
       httpListeners.push(listener);
       log.info(`http listening on ${listener.address}`);
@@ -3970,8 +3941,8 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     });
   }
 
-  process.on("SIGTERM", () => gracefulShutdown(daemon, "signal"));
-  process.on("SIGINT", () => gracefulShutdown(daemon, "signal"));
+  process.on("SIGTERM", () => void gracefulShutdown(daemon, "signal"));
+  process.on("SIGINT", () => void gracefulShutdown(daemon, "signal"));
 }
 
 function resolveDedupWindow(): number {
