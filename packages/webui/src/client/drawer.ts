@@ -1,6 +1,6 @@
-// スマホ幅のサイドバー (overlay ドロワー) の寸法と、外側タップの判定。
-// 描画から切り出してあるのは form-pane.ts と同じ理由 — 幅の丸めと永続化を
-// レンダラ無しで検証できるように (DR-0005 §1)。
+// スマホ幅のサイドバー (overlay ドロワー) の寸法。描画から切り出してあるのは
+// form-pane.ts と同じ理由 — 寸法の丸めと永続化をレンダラ無しで検証できるように
+// (DR-0005 §1)。
 import { readStorage, writeStorage } from "./storage.ts";
 import { clampPanePx } from "./utils.ts";
 
@@ -10,29 +10,33 @@ export const DRAWER_WIDTH_KEY = "ccmsg.drawerWidth";
 export const DRAWER_DEFAULT_RATIO = 0.85;
 export const DRAWER_DEFAULT_MAX_PX = 400;
 
-export const SIDEBAR_LIST_WIDTH_KEY = "ccmsg.sidebarListWidth";
-/** フォームを開いている時の一覧側の既定幅 (kawaz r273 m13: 「セッションリスト
- * 側のデフォルト幅は 2,3 文字程度まで狭くて構わない」)。左右 padding
- * (var(--space-8) = 0.5rem ずつ) を引いて中身 24px ≒ 2〜3 文字分。読みたく
- * なったらスプリッターで広げられるし、邪魔なら潰しきれる。 */
-export const SIDEBAR_LIST_DEFAULT_PX = 40;
+export const SIDEBAR_LIST_HEIGHT_KEY = "ccmsg.sidebarListHeight";
+/** フォームを開いている時の一覧側の既定の高さ。ドロワーの中はフォームが上・
+ * 一覧が下の縦分割なので (kawaz r273 m26)、一覧は「今どのセッションを見ながら
+ * 入力しているか」が分かる最小限だけ残す = 行が 2〜3 本見える高さ。
+ *
+ * 実測 (390x844): 一覧の上端から 1 行目までに 75px (padding + SESSIONS 見出し
+ * + セクション見出し)、行のピッチが 59px。220px なら 2 行が収まり、3 行目が
+ * 途中まで覗く (= まだ下に続くことも見える)。足りなければスプリッターを
+ * 下げれば広がるし、邪魔なら潰しきれる。 */
+export const SIDEBAR_LIST_DEFAULT_PX = 220;
 
-/** 一覧幅は `#form-pane` の幅とは別のキーに持つ。px 直値である点も、潰す /
- * 広げるの操作も同じだが、測っているものが違う (あちらはフォームの幅、
- * こちらはその隣の一覧の幅) ので、片方をドラッグしたらもう片方も動く、
- * という結び付きは意図しない。 */
-export function loadSidebarListWidth(): number {
-  return clampSidebarListWidth(Number(readStorage(SIDEBAR_LIST_WIDTH_KEY)) || Number.NaN);
+/** 一覧の高さは `#form-pane` の幅とは別のキーに持つ。px 直値である点も、
+ * 潰す / 広げるの操作も同じだが、測っているものが違う (あちらはフォームの
+ * 幅、こちらはその下の一覧の高さ) ので、片方をドラッグしたらもう片方も
+ * 動く、という結び付きは意図しない。 */
+export function loadSidebarListHeight(): number {
+  return clampSidebarListHeight(Number(readStorage(SIDEBAR_LIST_HEIGHT_KEY)) || Number.NaN);
 }
 
-/** 上限はドロワー幅そのもの — フォームが完全に隠れるところまで広げられる
- * (kawaz r273 m13)。`drawerPx` はドラッグ時のみ渡す。 */
-export function clampSidebarListWidth(width: number, drawerPx?: number): number {
-  return clampPanePx(width, SIDEBAR_LIST_DEFAULT_PX, drawerPx);
+/** 上限はドロワーの高さそのもの — フォームが完全に隠れるところまで広げられる
+ * (横分割だった頃と同じ扱い)。`drawerPx` はドラッグ時のみ渡す。 */
+export function clampSidebarListHeight(height: number, drawerPx?: number): number {
+  return clampPanePx(height, SIDEBAR_LIST_DEFAULT_PX, drawerPx);
 }
 
-export function saveSidebarListWidth(width: number): void {
-  writeStorage(SIDEBAR_LIST_WIDTH_KEY, String(width));
+export function saveSidebarListHeight(height: number): void {
+  writeStorage(SIDEBAR_LIST_HEIGHT_KEY, String(height));
 }
 
 export function defaultDrawerWidth(viewportPx: number): number {

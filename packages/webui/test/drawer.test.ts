@@ -4,14 +4,14 @@ import {
   DRAWER_DEFAULT_MAX_PX,
   DRAWER_WIDTH_KEY,
   SIDEBAR_LIST_DEFAULT_PX,
-  SIDEBAR_LIST_WIDTH_KEY,
+  SIDEBAR_LIST_HEIGHT_KEY,
   clampDrawerWidth,
-  clampSidebarListWidth,
+  clampSidebarListHeight,
   defaultDrawerWidth,
   loadDrawerWidth,
-  loadSidebarListWidth,
+  loadSidebarListHeight,
   saveDrawerWidth,
-  saveSidebarListWidth,
+  saveSidebarListHeight,
 } from "../src/client/drawer.ts";
 import { PANE_MIN_PX } from "../src/client/utils.ts";
 
@@ -90,27 +90,31 @@ describe("loadDrawerWidth / saveDrawerWidth", () => {
   });
 });
 
-describe("clampSidebarListWidth / loadSidebarListWidth", () => {
-  // kawaz r273 m13: フォームを開いた時の一覧は数文字分から始めてよい。
-  test("既定は数文字分、潰した状態よりは広い", () => {
-    expect(loadSidebarListWidth()).toBe(SIDEBAR_LIST_DEFAULT_PX);
-    expect(SIDEBAR_LIST_DEFAULT_PX).toBeGreaterThan(PANE_MIN_PX);
+describe("clampSidebarListHeight / loadSidebarListHeight", () => {
+  // kawaz r273 m26: ドロワーはフォームが上・一覧が下の縦分割。一覧は「今どの
+  // セッションを見ているか」が分かる行数だけ残す。実測 (390x844) で一覧の
+  // 上端から 1 行目までが 75px、行ピッチが 59px。
+  test("既定は行が 2〜3 本見える高さ", () => {
+    expect(loadSidebarListHeight()).toBe(SIDEBAR_LIST_DEFAULT_PX);
+    const rows = (SIDEBAR_LIST_DEFAULT_PX - 75) / 59;
+    expect(rows).toBeGreaterThanOrEqual(2);
+    expect(rows).toBeLessThanOrEqual(3);
   });
 
-  // 「フォームが隠れるまで広げられる」= 上限はドロワー幅 (PANE_MIN_PX を残す)。
-  test("上限はドロワー幅、下限は PANE_MIN_PX", () => {
-    expect(clampSidebarListWidth(9999, 300)).toBe(300 - PANE_MIN_PX);
-    expect(clampSidebarListWidth(-10, 300)).toBe(PANE_MIN_PX);
+  // 「フォームが隠れるまで下げられる」= 上限はドロワーの高さ (PANE_MIN_PX を残す)。
+  test("上限はドロワーの高さ、下限は PANE_MIN_PX", () => {
+    expect(clampSidebarListHeight(9999, 800)).toBe(800 - PANE_MIN_PX);
+    expect(clampSidebarListHeight(-10, 800)).toBe(PANE_MIN_PX);
   });
 
   test("保存値を復元する", () => {
-    saveSidebarListWidth(120);
-    expect(loadSidebarListWidth()).toBe(120);
+    saveSidebarListHeight(320);
+    expect(loadSidebarListHeight()).toBe(320);
   });
 
-  // #form-pane の幅とは別のキー。片方を動かしてもう片方が動くと、測っている
-  // ものが違う (フォームの幅 / その隣の一覧の幅) のに連動することになる。
+  // #form-pane の幅とは別のキー。測っているものが違う (フォームの幅 / その下の
+  // 一覧の高さ) ので、片方を動かしてもう片方が動く結び付きは意図しない。
   test("form-pane の幅とはキーを分ける", () => {
-    expect(SIDEBAR_LIST_WIDTH_KEY).not.toBe("ccmsg.formPaneWidth");
+    expect(SIDEBAR_LIST_HEIGHT_KEY).not.toBe("ccmsg.formPaneWidth");
   });
 });

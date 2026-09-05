@@ -333,8 +333,7 @@ a {
   width: var(--sidebar-width, 280px);
   flex-shrink: 0;
   background: var(--bg-alt);
-  /* 中は「一覧 | スプリッター | フォーム」の横並び (スマホ幅でフォームを
-   * 開いた時)。フォームが無ければ一覧が全幅を取る。 */
+  /* 中身 (#sidebar-panes) と、右端の幅スプリッターの横並び。 */
   display: flex;
   /* ここでは clip しない。右端の #sidebar-drawer-splitter は指で掴めるよう
    * 当たり判定を左右に広げており (下の pointer:coarse ブロック)、ここで
@@ -349,11 +348,24 @@ a {
    * 避けられる。 */
 }
 
-/* 縦スクロールと余白は列ごとに持つ — 一覧とフォームは独立に長くなるので、
- * ドロワー全体で 1 本のスクロールにすると短い方に引きずられる。 */
+/* ドロワーの中身はフォーム (上) と一覧 (下) の縦積み (kawaz r273 m26)。
+ * 幅を変える #sidebar-drawer-splitter は右端に立てるので、縦に積むのは
+ * この中だけ。 */
+#sidebar-panes {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 縦スクロールと余白は段ごとに持つ — 一覧とフォームは独立に長くなるので、
+ * ドロワー全体で 1 本のスクロールにすると短い方に引きずられる。`min-height`
+ * は flex 段が中身の高さで押し広がらないように (押し広がると、指定した
+ * 高さより低くならず縦分割が効かない)。 */
 #sidebar-lists,
 #sidebar-form {
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -377,7 +389,6 @@ a {
  * (.session-splitter と同じ合図)。 */
 #sidebar-splitter,
 #form-pane-splitter,
-#sidebar-list-splitter,
 #sidebar-drawer-splitter {
   flex: 0 0 7px;
   position: relative;
@@ -390,18 +401,33 @@ a {
   transition: background-color 0.1s ease;
 }
 
+/* ドロワー内のフォーム (上) と一覧 (下) の境界。上の 3 本と同じ見た目・同じ
+ * 当たり判定の作りで、軸だけ横棒に入れ替えたもの (見える線は 1px、透明
+ * padding で 7px)。 */
+#sidebar-pane-splitter {
+  flex: 0 0 7px;
+  position: relative;
+  cursor: row-resize;
+  background: var(--border);
+  background-clip: content-box;
+  padding: 3px 0;
+  touch-action: none;
+  user-select: none;
+  transition: background-color 0.1s ease;
+}
+
 #sidebar-splitter.dragging,
 #form-pane-splitter.dragging,
-#sidebar-list-splitter.dragging,
-#sidebar-drawer-splitter.dragging {
+#sidebar-drawer-splitter.dragging,
+#sidebar-pane-splitter.dragging {
   background: var(--accent);
 }
 
 @media (hover: hover) {
   #sidebar-splitter:hover,
   #form-pane-splitter:hover,
-  #sidebar-list-splitter:hover,
-  #sidebar-drawer-splitter:hover {
+  #sidebar-drawer-splitter:hover,
+  #sidebar-pane-splitter:hover {
     background: var(--accent);
   }
 }
@@ -416,7 +442,6 @@ a {
 @media (pointer: coarse) {
   #sidebar-splitter::before,
   #form-pane-splitter::before,
-  #sidebar-list-splitter::before,
   #sidebar-drawer-splitter::before {
     content: "";
     position: absolute;
@@ -424,6 +449,17 @@ a {
     bottom: 0;
     left: -18px;
     right: -18px;
+    z-index: 1;
+  }
+
+  /* 同じ拡張を軸だけ入れ替えたもの (この splitter は横棒)。 */
+  #sidebar-pane-splitter::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -18px;
+    bottom: -18px;
     z-index: 1;
   }
 }
