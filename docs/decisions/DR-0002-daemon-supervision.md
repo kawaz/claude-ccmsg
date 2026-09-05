@@ -42,7 +42,7 @@ daemon は「ユーザが存在を意識せず使える」lazy 常駐が要件 [
 
 - **`subscribe` は daemon の更新をまたいで生き続ける**。daemon が新しくなっても subscribe プロセスは再起動しないし、更新されたことをセッションに通知もしない。subscribe の責務は「通知をセッションに出す」ことだけで、自分自身の version は責務ではない
 - 根拠: 以前は daemon 更新のたびに subscribe を自動再起動していたが、その通知と再接続がセッションのコンテキストを毎回浪費するので撤廃した。同じ理由で「daemon が新しいので張り直してください」という案内も出さない
-- 前提: subscribe プロセスは起動時の plugin cache の絶対パス (`$CLAUDE_CONFIG_DIR/plugins/cache/ccmsg/ccmsg/<version>/`) から bun がソースを実行しており、遅延 import はそのディレクトリを参照し続ける。**Claude Code が plugin update 時に旧 version のディレクトリを消さない** (未文書化の挙動、2026-09-04 時点で 70 個以上残存を実測) ことに依存している。将来掃除されるようになれば旧 subscribe は import 失敗で落ちる (= その時点で張り直し)。plugin cache を自前で掃除しないのは kawaz 裁定
+- subscribe プロセスは起動時の plugin cache (`$CLAUDE_CONFIG_DIR/plugins/cache/ccmsg/ccmsg/<version>/`) から bun がソースを実行するが、**起動後はその cache ディレクトリに依存しない** (CLI 経路に動的 import は無く、必要なコードは起動時にオンメモリ。稼働中の subscribe が開いている cache 内ファイルは lsof で 0 件、2026-09-05 実測)。旧 version のディレクトリが消えても走行中の subscribe は影響を受けない
 - したがって **subscribe が使う経路 (hello / subscribe / イベント配信 / 再接続) を変えるときは、旧 version の subscribe が通らなくなることを意識的に決める**。壊れるかどうかを先に確認し、壊すなら次項の手順 (DR に記録) を踏む。壊さないために互換分岐を足すのではない (次々項)
 - **「旧 subscribe が黙って再接続を続ける」のは仕様であって不具合ではない**。再起動しないこと自体を不具合と見て「直さねば」と動かない (fail-fast も自動再起動も、上のコンテキスト浪費に戻る)
 - **後方互換は原則実装しない** (host 単位で丸ごと進化するイメージ。ccmsg は kawaz の 1 ホストに閉じた系で、新旧が併存する配布先を持たない)。互換のために形を残す・分岐を足すのは禁止で、必要に見えた時は**実装せず kawaz に相談する** (kawaz r259m33)
