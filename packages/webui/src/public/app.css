@@ -336,11 +336,17 @@ a {
   /* 中は「一覧 | スプリッター | フォーム」の横並び (スマホ幅でフォームを
    * 開いた時)。フォームが無ければ一覧が全幅を取る。 */
   display: flex;
-  /* 横方向は sidebar 自身では絶対にスクロールさせない (kawaz r46m36:
-   * iPad 等で D&D すると sidebar 全体 = 実質ページ全体が左右に運ばれる
-   * 現象の根治)。長い行は下の #rooms-panel / #sessions-panel が個別に
-   * 横スクロールを担う。 */
-  overflow-x: hidden;
+  /* ここでは clip しない。右端の #sidebar-drawer-splitter は指で掴めるよう
+   * 当たり判定を左右に広げており (下の pointer:coarse ブロック)、ここで
+   * overflow を切ると外側の半分が消えて、ドロワーの縁を狙った指が「内側
+   * ちょうど」に当たらないと掴めなくなる (実測: 43px のはずが 25px)。
+   * 横方向にスクロールさせない目的 (kawaz r46m36: iPad 等の D&D で sidebar
+   * 全体 = 実質ページ全体が左右に運ばれる現象の根治) は、下の
+   * #sidebar-lists / #sidebar-form 側の overflow-x で果たしている
+   * — 長い行の横スクロールを担うのは、さらに内側の #session-list /
+   * #room-list。overflow を持たないことで、ドロワー自身が縦のスクロール
+   * コンテナになる (片軸 hidden が反対軸の visible を auto に変える) のも
+   * 避けられる。 */
 }
 
 /* 縦スクロールと余白は列ごとに持つ — 一覧とフォームは独立に長くなるので、
