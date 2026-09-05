@@ -31,6 +31,12 @@
   --agent-comm-border: #a8acb8;
   --danger: #dc2626;
   --warn: #b45309;
+  /* スプリッターの grip 印 (.cache-ring と違い、意味ではなく操作の手掛かり)。
+   * 罫線と地続きに見えては掴める場所が分からず、文字と同じ濃さでは常時
+   * 主張しすぎる。両者の間に置くことで「線ではない何かがある」とだけ伝わる。
+   * 絶対色でなく 2 つのトークンの中間として持つので、ライト / ダークの
+   * どちらでも同じ「罫線と文字の間」の位置に来る。 */
+  --splitter-grip: color-mix(in oklab, var(--border), var(--fg-muted) 45%);
   /* prompt cache が生きている残量を示す輪 (.cache-ring)。accent は「押せる」
    * の色なので、残量という別の意味には別の色を当てる。accent 色の FAB の上に
    * 重なるので、地に沈まない明るさを選ぶ。 */
@@ -483,14 +489,42 @@ a {
   transition: background-color 0.1s ease;
 }
 
+/* 掴める場所の印。線 (1px) は境界線の役を続け、その中央に短い pill を重ねて
+ * 「ここは掴める」だけを伝える。線そのものを太く / 濃くしないのは、境界線と
+ * しての役が先にあるため — 全長にわたって強くすると、画面のどこもかしこもが
+ * 主張する。印を中央の 24px に閉じ込めれば、視線が行くのは 1 か所で済む。
+ *
+ * 当たり判定の ::before とは別の疑似要素にする: あちらは coarse pointer の
+ * ときだけ現れる透明な箱で、寿命も条件も違う。z-index を明示する理由は
+ * ::before と同じで、隣のペインの sticky ヘッダが文書順で後ろに来るため。 */
+#sidebar-splitter::after,
+#sidebar-pane-splitter::after,
+.session-splitter::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+  border-radius: 1px;
+  background: var(--splitter-grip);
+  z-index: 1;
+  transition: background-color 0.1s ease;
+}
+
 #sidebar-splitter.dragging,
-#sidebar-pane-splitter.dragging {
+#sidebar-pane-splitter.dragging,
+#sidebar-splitter.dragging::after,
+#sidebar-pane-splitter.dragging::after {
   background: var(--accent);
 }
 
 @media (hover: hover) {
   #sidebar-splitter:hover,
-  #sidebar-pane-splitter:hover {
+  #sidebar-pane-splitter:hover,
+  #sidebar-splitter:hover::after,
+  #sidebar-pane-splitter:hover::after {
     background: var(--accent);
   }
 }
@@ -3101,7 +3135,8 @@ button.session-tab {
  * from pointerdown/up/cancel state, not CSS `:active` — pointer capture
  * keeps the drag alive even once the pointer leaves the splitter's own box,
  * and `:active` alone wouldn't track that. */
-.session-splitter.dragging {
+.session-splitter.dragging,
+.session-splitter.dragging::after {
   background: var(--accent);
 }
 
@@ -3113,6 +3148,10 @@ button.session-tab {
   .session-splitter:hover {
     background: var(--accent);
     opacity: 0.6;
+  }
+
+  .session-splitter:hover::after {
+    background: var(--accent);
   }
 }
 
@@ -6345,6 +6384,13 @@ a.tl-attachment-file-path {
   #sidebar-pane-splitter {
     cursor: row-resize;
     padding: 3px 0;
+  }
+
+  /* 印もバーと同じ向きに倒す (掴む方向を示すものなので)。 */
+  #sidebar-pane-splitter::after,
+  .session-splitter::after {
+    width: 24px;
+    height: 2px;
   }
 
   /* 当たり判定の拡張も軸を入れ替える (計 ~43px は同じ)。 */
