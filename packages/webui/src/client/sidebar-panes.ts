@@ -22,6 +22,7 @@
 // 値で始まる。
 import { readLayoutStorage, writeLayoutStorage } from "./storage.ts";
 import { clampPanePx } from "./utils.ts";
+import type { Locator } from "./locator.ts";
 
 export const SIDEBAR_WIDTH_KEY = "ccmsg.sidebarWidth";
 export const SIDEBAR_DEFAULT_PX = 280;
@@ -113,4 +114,40 @@ export function saveDrawerWidth(width: number): void {
  * 画面に残す。 */
 export function clampDrawerWidth(width: number, viewportPx: number): number {
   return clampPanePx(width, defaultDrawerWidth(viewportPx), viewportPx);
+}
+
+/** 横に並びきらない幅では、サイドバーと本文は Layout の横スクロールで
+ * 行き来する (app.css の scroll-snap)。ハンバーガーはその 2 つのスナップ点を
+ * 往復する切り替えになる — 「今どちら側に居るか」で行き先が決まる。
+ *
+ * `maxScrollPx` (= `scrollWidth - clientWidth`) をサイドバー幅の代わりに使う。
+ * 本文は Layout の幅ちょうどを占めるので、この 2 つは同じ値になる — そして
+ * スプリッターでサイドバー幅が変わっても測り直しが要らない。
+ *
+ * 半分を境にするので、指を離した位置がどちらつかずでも必ずどちらかへ動く
+ * (押しても何も起きないように見える状態を作らない)。 */
+export function nextSidebarSnapLeft(scrollLeft: number, maxScrollPx: number): number {
+  if (!(maxScrollPx > 0)) return 0;
+  return scrollLeft < maxScrollPx / 2 ? maxScrollPx : 0;
+}
+
+/** 窓を開いた直後にどちらを見せるか。見る対象 (セッション / ルーム) を URL が
+ * 名指しているなら、その本文を見に来たということなので本文側から始める。
+ * 名指していない (一覧だけの URL) なら、次に何を開くかを選ぶところから
+ * 始まるので一覧側。
+ *
+ * 判断を store の state ではなく locator から取るのは、`/s/<sid>` (一覧の
+ * リンク先) が store 上ではまだ何も選んでいない状態を経由するため — 開いた
+ * 瞬間に見れば URL だけが「何を見に来たか」を知っている。 */
+export function opensOnMain(locator: Locator): boolean {
+  switch (locator.view) {
+    case "session":
+    case "timeline":
+    case "session-root":
+      return true;
+    case "room":
+      return locator.room !== null;
+    default:
+      return false;
+  }
 }

@@ -363,7 +363,7 @@ a {
 }
 
 /* サイドバーと本文の横並び。サイドバーは「在る / 無い」の 2 状態で、無い時は
- * display:none でフローから外れる (#sidebar[hidden])。重ねて上に乗せる形を
+ * display:none でフローから外れる (#sidebar.off)。重ねて上に乗せる形を
  * 採らないので、基準要素・transform・z-index はどれも要らない。
  *
  * `overflow-x` はこの後の幅ごとの節で決まる: デスクトップは clip、スマホは
@@ -391,7 +391,7 @@ a {
   overscroll-behavior-x: contain;
 }
 
-#sidebar[hidden] {
+#sidebar.off {
   display: none;
 }
 
@@ -6356,6 +6356,13 @@ a.tl-attachment-file-path {
     width: var(--drawer-width);
   }
 
+  /* この幅ではサイドバーを消さない (kawaz r273 m63)。消しても本文の左に
+   * 見えなくなるだけで、横スクロールで戻れる今の形では「隠す」に意味が無い。
+   * ハンバーガーは代わりにスナップ点の切り替えになる (App.tsx)。 */
+  #sidebar.off {
+    display: flex;
+  }
+
   /* 上がフォーム、下が一覧 (kawaz r273 m26)。DOM の順 (一覧 → splitter →
    * フォーム) は変えずに `order` で並べ替える。間の splitter は既定の 0 の
    * ままなので、その前後に来るよう両端に負と正を振る — フォームだけを前に
@@ -6448,7 +6455,15 @@ a.tl-attachment-file-path {
  * blank bar before the first successful ping. */
 #app-footer {
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-11);
+  /* 画面の一番下・一番端に触れる帯なので、端末の丸い角とホームインジケータを
+   * 自分で避ける (index.html の viewport-fit=cover)。`max()` にするのは、
+   * safe-area の無い端末では従来の余白のままにするため。
+   *
+   * 中央寄せなのも同じ理由 — 左端に寄せると、避けきれなかったぶんだけ先頭の
+   * 文字から欠ける (実機: 丸い角に "dae" が隠れる)。中央なら削れるのは左右
+   * 対称の余白からで、短い 1 行が最後まで読める。 */
+  padding: var(--space-2) max(var(--space-11), env(safe-area-inset-right))
+    max(var(--space-2), env(safe-area-inset-bottom)) max(var(--space-11), env(safe-area-inset-left));
   font-size: var(--font-size-2xs);
   color: var(--fg-muted);
   opacity: 0.6;
@@ -6456,6 +6471,7 @@ a.tl-attachment-file-path {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
 }
 
 #app-footer:empty {
@@ -6469,8 +6485,11 @@ a.tl-attachment-file-path {
 .one-on-one-fab,
 .room-composer-fab {
   position: fixed;
-  right: var(--composer-fab-offset);
-  bottom: var(--composer-fab-offset);
+  /* viewport-fit=cover (index.html) で viewport が画面の端まで広がるので、
+   * 端に貼り付く要素は safe-area を自分で避ける — 避けないとホーム
+   * インジケータや丸い角の下に潜る。safe-area の無い端末では従来の余白。 */
+  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
   width: var(--composer-fab-size);
   height: var(--composer-fab-size);
   border-radius: 50%;
@@ -6549,8 +6568,8 @@ a.tl-attachment-file-path {
 
 .one-on-one-panel {
   position: fixed;
-  right: var(--composer-fab-offset);
-  bottom: var(--composer-fab-offset);
+  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
   width: var(--composer-panel-width);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -6597,8 +6616,8 @@ a.tl-attachment-file-path {
  * `.room-composer-panel-hidden` = 非表示、fab クリックで表示に切替。 */
 .room-composer-panel {
   position: fixed;
-  right: var(--composer-fab-offset);
-  bottom: var(--composer-fab-offset);
+  right: max(var(--composer-fab-offset), env(safe-area-inset-right));
+  bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
   width: var(--composer-panel-width);
   max-height: calc(100vh - 6rem);
   overflow-y: auto;

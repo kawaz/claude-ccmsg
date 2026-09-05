@@ -23,6 +23,8 @@ import {
   saveFormWidth,
   saveSidebarListHeight,
   saveSidebarWidth,
+  nextSidebarSnapLeft,
+  opensOnMain,
 } from "../src/client/sidebar-panes.ts";
 import { PANE_MIN_PX } from "../src/client/utils.ts";
 
@@ -185,5 +187,60 @@ describe("寸法のキー", () => {
   test("4 つの寸法はすべて別のキー", () => {
     const keys = [SIDEBAR_WIDTH_KEY, FORM_WIDTH_KEY, SIDEBAR_LIST_HEIGHT_KEY, DRAWER_WIDTH_KEY];
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+// 横に並びきらない幅での「どちら側を見るか」。ハンバーガーは 2 つのスナップ点を
+// 往復するだけで、押して何も起きないように見える状態を作らない。
+describe("nextSidebarSnapLeft", () => {
+  // 本文は Layout の幅ちょうどなので、最大スクロール量 = サイドバーの幅。
+  const MAX = 332;
+
+  test("一覧側に居れば本文へ", () => {
+    expect(nextSidebarSnapLeft(0, MAX)).toBe(MAX);
+  });
+
+  test("本文側に居れば一覧へ", () => {
+    expect(nextSidebarSnapLeft(MAX, MAX)).toBe(0);
+  });
+
+  // 指を離した位置が半端でも必ずどちらかへ動く (無反応に見えない)。
+  test("半分より手前なら本文へ、半分以降なら一覧へ", () => {
+    expect(nextSidebarSnapLeft(MAX / 2 - 1, MAX)).toBe(MAX);
+    expect(nextSidebarSnapLeft(MAX / 2, MAX)).toBe(0);
+  });
+
+  // スプリッターでサイドバー幅が変わると最大スクロール量も変わる。行き先は
+  // その時の実測値で決まるので、幅を覚えておく必要がない。
+  test("幅が変われば行き先も変わる", () => {
+    expect(nextSidebarSnapLeft(0, 250)).toBe(250);
+    expect(nextSidebarSnapLeft(0, 374)).toBe(374);
+  });
+
+  // 横に並びきる幅 (スクロールしない) では動かしようがない。
+  test("スクロールできなければ 0", () => {
+    expect(nextSidebarSnapLeft(0, 0)).toBe(0);
+    expect(nextSidebarSnapLeft(120, -5)).toBe(0);
+  });
+});
+
+// 開いた直後にどちら側から見せるか。判断は store ではなく URL の locator から
+// 取る — `/s/<sid>` は store 上ではまだ何も選んでいない状態を経由する。
+describe("opensOnMain", () => {
+  test("セッションを名指す URL は本文から", () => {
+    expect(opensOnMain({ view: "session-root", sid: "s1" })).toBe(true);
+    expect(opensOnMain({ view: "timeline", sid: "s1", position: "head" })).toBe(true);
+    expect(opensOnMain({ view: "session", tab: "files", sid: "s1", path: null })).toBe(true);
+  });
+
+  test("ルームを名指す URL は本文から", () => {
+    expect(opensOnMain({ view: "room", room: "r1", mid: null })).toBe(true);
+  });
+
+  test("何も名指していない URL は一覧から", () => {
+    expect(opensOnMain({ view: "room", room: null, mid: null })).toBe(false);
+    expect(opensOnMain({ view: "usage", tab: "quota" })).toBe(false);
+    expect(opensOnMain({ view: "catalog" })).toBe(false);
+    expect(opensOnMain({ view: "unknown", pathname: "/nope" })).toBe(false);
   });
 });

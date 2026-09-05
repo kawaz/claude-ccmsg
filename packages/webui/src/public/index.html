@@ -2,7 +2,10 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover: これが無いと env(safe-area-inset-*) が常に 0 になり、
+      端末の丸い角やホームインジケータを避ける指定が効かない。画面の端まで
+      描く代わりに、端に触れる要素は自分で safe-area を足す (app.css)。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>ccmsg</title>
     <link
       rel="icon"

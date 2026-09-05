@@ -13,11 +13,13 @@ import { ErrorView } from "./ErrorView.tsx";
 import { UsageView } from "./UsageView.tsx";
 import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
-import { usageHref } from "../locator.ts";
+import { parseUrl, usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
 import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
+import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
+import { nextSidebarSnapLeft, opensOnMain } from "../sidebar-panes.ts";
 import {
   evictedSessionViewSids,
   skipInactiveSessionViewRender,
@@ -131,6 +133,10 @@ export function App() {
   // dispatch during render would re-enter the store while Preact is building
   // this tree.
   const evictedSidsRef = useRef<string[]>([]);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const initialSnapRef = useRef(false);
+  // ラベルにだけ使う (押した瞬間の判定は下で読み直す)。
+  const layoutScrolls = useLayoutScrollsX(layoutRef);
   const visibleSessionSid =
     state.missingTarget === null &&
     state.unknownPath === null &&
@@ -162,6 +168,19 @@ export function App() {
   useEffect(() => {
     writeSessionStorage(SIDEBAR_OPEN_KEY, String(state.sidebarOpen));
   }, [state.sidebarOpen]);
+  // 横スクロールで行き来する幅では、開いた直後にどちら側を見せるかを決める
+  // (sidebar-panes.ts の opensOnMain)。1 度きり — 以後の位置は指と
+  // ハンバーガーのもので、遷移のたびに引き戻すと操作を奪う。
+  useEffect(() => {
+    const layout = layoutRef.current;
+    if (layout === null || initialSnapRef.current) return;
+    if (!layoutScrollsX(layout)) return;
+    const max = layout.scrollWidth - layout.clientWidth;
+    // 本文がまだ幅を持たないうちは測れない。次の描画で測り直す。
+    if (max <= 0) return;
+    initialSnapRef.current = true;
+    layout.scrollLeft = opensOnMain(parseUrl(location.pathname, location.search)) ? max : 0;
+  });
   // Tab title tracks the selected session/room (kawaz r99 mid=39): opening
   // several sessions in separate tabs otherwise leaves every tab reading the
   // fixed "ccmsg" title, indistinguishable until clicked.
@@ -172,16 +191,43 @@ export function App() {
   return (
     <div id="app">
       <header id="topbar">
-        {/* サイドバーの在り / 無しの唯一の切り替え口。幅を問わず常に出す
-         * (kawaz r273 m42: 画面共有で特定のセッションだけ見せたいときに
-         * サイドバーごと消せることが目的なので、デスクトップでも要る)。 */}
+        {/* 幅を問わず常に出すが、意味は Layout が横に並べきれるかで変わる
+         * (layout-mode.ts):
+         *
+         * - **並べきれる幅**: サイドバーを消す / 出す (kawaz r273 m42: 画面
+         *   共有で特定のセッションだけ見せたいときに消せることが目的)。
+         * - **並べきれない幅**: サイドバーは出しっぱなしで、どちら側を見るかを
+         *   切り替える (kawaz r273 m63)。消す方式だと、本文側へスワイプした
+         *   状態で押したときサイドバーが画面外で消えるだけになり、何も起きて
+         *   いないように見える。 */}
         <button
           id="menu-toggle"
           type="button"
           aria-label="menu"
-          aria-pressed={state.sidebarOpen}
-          title={state.sidebarOpen ? "サイドバーを隠す" : "サイドバーを出す"}
-          onClick={() => store.dispatch({ type: "sidebar/set", open: !state.sidebarOpen })}
+          // 「押された状態」を持つのは消す / 出すの時だけ。切り替えの時は
+          // 押しっぱなしの状態が無い。
+          aria-pressed={layoutScrolls ? undefined : state.sidebarOpen}
+          title={
+            layoutScrolls
+              ? "サイドバーと本文を行き来する"
+              : state.sidebarOpen
+                ? "サイドバーを隠す"
+                : "サイドバーを出す"
+          }
+          onClick={() => {
+            const layout = layoutRef.current;
+            if (layout !== null && layoutScrollsX(layout)) {
+              layout.scrollTo({
+                left: nextSidebarSnapLeft(
+                  layout.scrollLeft,
+                  layout.scrollWidth - layout.clientWidth,
+                ),
+                behavior: "smooth",
+              });
+              return;
+            }
+            store.dispatch({ type: "sidebar/set", open: !state.sidebarOpen });
+          }}
         >
           &#9776;
         </button>
@@ -259,10 +305,10 @@ export function App() {
           &#8635;
         </button>
       </header>
-      <div id="layout">
+      <div id="layout" ref={layoutRef}>
         {/* サイドバーは一覧もフォームも自分の中に持ち、幅を変える splitter も
-         * 自分の右端に立てる (Sidebar.tsx)。この列に並ぶか、main に重なる
-         * ドロワーになるかは app.css の grid が決める。 */}
+         * 自分の右端に立てる (Sidebar.tsx)。本文と横に並びきるか、本文が
+         * 幅いっぱいを占めて横スクロールで行き来するかは app.css が決める。 */}
         <Sidebar state={state} />
         {sessionViewsRef.current.map((view) => (
           <CachedSessionViewComponent

@@ -199,11 +199,18 @@ export function Sidebar({ state }: { state: AppState }) {
   return (
     <nav
       id="sidebar"
-      class={panel !== null ? "with-form" : undefined}
-      // 消すのは display だけで、要素は残す (app.css)。unmount すると書きかけ
-      // のフォームと一覧のスクロール位置が消えるが、消す目的は画面共有で見せ
-      // ないことなので、戻したときに続きから使えないと用を成さない。
-      hidden={!state.sidebarOpen}
+      // `off` が消す指示で、実際に消すかは app.css が決める — 横に並べきれない
+      // 幅ではサイドバーは出しっぱなしで、ハンバーガーはどちら側を見るかの
+      // 切り替えになる (kawaz r273 m63、App.tsx)。`hidden` 属性ではなく class
+      // なのはそのため: 属性で「隠している」と名乗りながら見えている状態を
+      // 作らない。
+      //
+      // 消すのは display だけで要素は残す。unmount すると書きかけのフォームと
+      // 一覧のスクロール位置が消えるが、消す目的は画面共有で見せないことなので、
+      // 戻したときに続きから使えないと用を成さない。
+      class={[panel !== null ? "with-form" : null, state.sidebarOpen ? null : "off"]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         "--sidebar-width": `${sidebarWidth}px`,
         "--sidebar-form-width": `${formWidth}px`,
