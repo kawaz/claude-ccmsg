@@ -333,13 +333,35 @@ a {
   width: var(--sidebar-width, 280px);
   flex-shrink: 0;
   background: var(--bg-alt);
-  overflow-y: auto;
+  /* 中は「一覧 | スプリッター | フォーム」の横並び (スマホ幅でフォームを
+   * 開いた時)。フォームが無ければ一覧が全幅を取る。 */
+  display: flex;
   /* 横方向は sidebar 自身では絶対にスクロールさせない (kawaz r46m36:
    * iPad 等で D&D すると sidebar 全体 = 実質ページ全体が左右に運ばれる
    * 現象の根治)。長い行は下の #rooms-panel / #sessions-panel が個別に
    * 横スクロールを担う。 */
   overflow-x: hidden;
+}
+
+/* 縦スクロールと余白は列ごとに持つ — 一覧とフォームは独立に長くなるので、
+ * ドロワー全体で 1 本のスクロールにすると短い方に引きずられる。 */
+#sidebar-lists,
+#sidebar-form {
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#sidebar-lists {
+  flex: 1 1 auto;
   padding: var(--space-8);
+}
+
+/* ドロワー内のフォーム。余白は #form-pane と揃える (同じフォームが幅で
+ * 描画先を変えるだけなので、見た目が変わる理由がない)。 */
+#sidebar-form {
+  flex: 1 1 auto;
+  padding: var(--space-11);
 }
 
 /* sidebar 右のドラッグ splitter (desktop のみ、PaneSplitter)。従来の
@@ -348,8 +370,11 @@ a {
  * 掴める太さを)。hover / drag 中は線を accent にして「掴める場所」を示す
  * (.session-splitter と同じ合図)。 */
 #sidebar-splitter,
-#form-pane-splitter {
+#form-pane-splitter,
+#sidebar-list-splitter,
+#sidebar-drawer-splitter {
   flex: 0 0 7px;
+  position: relative;
   cursor: col-resize;
   background: var(--border);
   background-clip: content-box;
@@ -360,14 +385,40 @@ a {
 }
 
 #sidebar-splitter.dragging,
-#form-pane-splitter.dragging {
+#form-pane-splitter.dragging,
+#sidebar-list-splitter.dragging,
+#sidebar-drawer-splitter.dragging {
   background: var(--accent);
 }
 
 @media (hover: hover) {
   #sidebar-splitter:hover,
-  #form-pane-splitter:hover {
+  #form-pane-splitter:hover,
+  #sidebar-list-splitter:hover,
+  #sidebar-drawer-splitter:hover {
     background: var(--accent);
+  }
+}
+
+/* .session-splitter::before と同じ理由の当たり判定拡張: 7px のバーは指では
+ * 掴みづらいので、見た目を変えずに ±18px (計 ~43px) へ広げる。`pointer:
+ * coarse` に限るのも同じ — 常時 ON にすると、位置指定された箱が隣のペインの
+ * 上に乗ってマウスでの行クリックやスクロールバー掴みを奪う。z-index も同様に
+ * 明示する: 隣のペインは中に position:sticky のヘッダを持ち、文書順で後ろに
+ * 来るぶん、指定しないとその高さのぶんだけ拡張部分を塗り潰して掴めなくなる。
+ * PaneSplitter.tsx のハンドラは `e.currentTarget` を読むので JS 側は不変。 */
+@media (pointer: coarse) {
+  #sidebar-splitter::before,
+  #form-pane-splitter::before,
+  #sidebar-list-splitter::before,
+  #sidebar-drawer-splitter::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -18px;
+    right: -18px;
+    z-index: 1;
   }
 }
 
@@ -388,7 +439,8 @@ a {
  * がペインに収まり、スクロールするのはツリーだけ = 入れ子のスクローラが
  * 同時に動かない (fork テンプレートは項目が多く、14rem のままだと外側の
  * ペインも一緒にスクロールする)。 */
-#form-pane .cwd-tree {
+#form-pane .cwd-tree,
+#sidebar-form .cwd-tree {
   max-height: 10rem;
 }
 
@@ -492,6 +544,12 @@ a {
   font-weight: 600;
   padding: var(--space-5) var(--space-8);
   color: var(--fg-muted);
+  /* 行と同じ扱い (上の .session-row): 折り返さず、リスト側の横スクロールに
+   * 委ねる。一覧はフォームの隣で数文字幅まで潰せるので、折り返しを許すと
+   * 見出しが 1 文字ずつ縦に伸びて一覧が読めなくなる。 */
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
 }
 
 .session-section-summary::-webkit-details-marker {
@@ -1581,11 +1639,17 @@ a {
 }
 
 .session-creator-prompt {
-  /* rows (行数+2) が入力に追随して高さを決めるので固定の min-height は
-   * 置かず、手動リサイズも要らない (.composer textarea と同じ)。ブラウザ
-   * 標準の resize グリップは dark テーマで明るい四角として浮く
-   * (kawaz r273m3)。 */
-  resize: none;
+  /* rows (行数+2) が高さを決めるので固定の min-height は置かない —
+   * 1 行値のフォームまで 4.5rem に伸びてしまう。 */
+  resize: vertical;
+}
+
+/* クラシックスクロールバー (kawaz 環境は常時表示) で縦横 2 本が出た時に
+ * 塗られる角。既定が白なので、横スクロールを許した textarea
+ * (.session-creator-prompt) では dark テーマで白い四角として浮き、その上に
+ * resize グリップが重なって目立っていた (kawaz r273m3/m21)。 */
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* resume_sid / resume_at: 中身は sid と uuid なので等幅で、桁の違いが
@@ -2000,10 +2064,6 @@ a {
     padding: var(--space-9) var(--space-12);
     font-size: var(--font-size-md);
   }
-}
-
-#sidebar-backdrop {
-  display: none;
 }
 
 #room-view {
@@ -6155,19 +6215,19 @@ a.tl-attachment-file-path {
     display: block;
   }
 
+  /* 幅は Sidebar.tsx が inline style で持つ (右端の #sidebar-drawer-splitter
+   * でドラッグ + localStorage 永続)。既定は画面の 85% を上限 400px で頭打ち
+   * — タブレット幅の端末で端から端まで伸びないように (drawer.ts が正本)。
+   * 暗転する backdrop は置かない: ドロワーの右に残った main (Timeline 等) を
+   * 見ながら検索結果を選べることが、幅を動かせるようにした目的なので、
+   * 覆って暗くしてしまうと意味がなくなる。外側タップで閉じる判定は App.tsx
+   * が document 側で持つ。 */
   #sidebar {
     position: fixed;
     top: 0;
     bottom: 0;
     left: 0;
     z-index: 20;
-    /* U3 (kawaz report): the fixed 280px desktop width truncated repo names /
-     * ws labels in the mobile overlay. Widened to a viewport-relative 85vw
-     * (capped at 400px so it doesn't span edge-to-edge on a tablet-width
-     * viewport still under the 720px breakpoint) — desktop's #sidebar rule
-     * above keeps its own fixed 280px, this only applies inside the overlay. */
-    width: 85vw;
-    max-width: 400px;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.2);
@@ -6178,17 +6238,11 @@ a.tl-attachment-file-path {
   }
 
   /* モバイル overlay では sidebar は fixed で layout フローから抜けるため
-   * splitter は無意味 (kawaz r26 mid=17 と同種の「スマホで動かれても困る」) */
+   * 一覧と main の境界としての splitter は無意味 (kawaz r26 mid=17 と同種の
+   * 「スマホで動かれても困る」)。ドロワー自体の幅は右端の
+   * #sidebar-drawer-splitter が担う。 */
   #sidebar-splitter {
     display: none;
-  }
-
-  #sidebar-backdrop.visible {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 10;
   }
 
   .msg {

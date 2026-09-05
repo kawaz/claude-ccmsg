@@ -752,6 +752,61 @@ describe("reducer / peers/loaded and sidebar/set", () => {
   });
 });
 
+// スマホ幅の overlay ドロワーを閉じる条件 (kawaz r273 m15)。フォームの開閉は
+// path を変えず `sb.*` だけが変わる遷移なので、遷移一般で閉じていると
+// 「新規」を押した瞬間にドロワーごと消えてフォームがどこにも出ない。
+describe("reducer / locator/changed (mobile drawer)", () => {
+  const atRoom = (state: AppState, sidebar = CLOSED_SIDEBAR) =>
+    dispatch(state, {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+      sidebar,
+    });
+  /** r1 を見ている状態でハンバーガーを押した = 以降の遷移だけを見る。 */
+  const drawerOpenAtRoom = (sidebar = CLOSED_SIDEBAR) =>
+    dispatch(atRoom(initialState(), sidebar), { type: "sidebar/set", open: true });
+
+  test("行き先が変わらない遷移 (パネルの開閉) では閉じない", () => {
+    const shown = drawerOpenAtRoom();
+    expect(shown.sidebarOpen).toBe(true);
+    const opened = dispatch(shown, {
+      type: "locator/changed",
+      locator: { view: "room", room: "r1", mid: null },
+      sidebar: parseSidebarUrl("?sb.panel=new"),
+    });
+    expect(opened.sidebarOpen).toBe(true);
+  });
+
+  test("行き先が変われば閉じる", () => {
+    const shown = drawerOpenAtRoom();
+    const moved = dispatch(shown, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "s1", position: "head" },
+      sidebar: CLOSED_SIDEBAR,
+    });
+    expect(moved.sidebarOpen).toBe(false);
+  });
+
+  // 検索結果を選んで Timeline を見て、また次の結果を選ぶ (kawaz r273 m15) は
+  // 結果一覧が出たままでないと成立しない。
+  test("フォームを開いている間は行き先が変わっても閉じない", () => {
+    const search = parseSidebarUrl("?sb.panel=search");
+    const shown = drawerOpenAtRoom(search);
+    const moved = dispatch(shown, {
+      type: "locator/changed",
+      locator: { view: "timeline", sid: "s1", position: "head" },
+      sidebar: search,
+    });
+    expect(moved.sidebarOpen).toBe(true);
+  });
+
+  // 閉じている時に遷移しても勝手に開かない (閉じる側だけの一方向)。
+  test("閉じているドロワーは遷移で開かない", () => {
+    const moved = atRoom(initialState());
+    expect(moved.sidebarOpen).toBe(false);
+  });
+});
+
 // U1: agents/loaded (initial op:"agents" fetch AND the pushed ev:"agents"
 // stream event both fold in through this one action — see ws.ts) and
 // daemon-info/loaded (a `ping` reply's provenance fields, for the footer).

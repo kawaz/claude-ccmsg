@@ -1,4 +1,4 @@
-import { useMemo } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import type { AppState } from "../store.ts";
 import { selectedSid } from "../store.ts";
 import { useApp } from "../context.ts";
@@ -14,6 +14,15 @@ import {
 } from "../sidebar-url.ts";
 import { pushSidebarState } from "../navigation.ts";
 import { sidebarInlinePanel } from "../form-pane.ts";
+import {
+  clampDrawerWidth,
+  clampSidebarListWidth,
+  loadDrawerWidth,
+  loadSidebarListWidth,
+  saveDrawerWidth,
+  saveSidebarListWidth,
+} from "../drawer.ts";
+import { PaneSplitter } from "./PaneSplitter.tsx";
 import { useNarrowLayout } from "../useNarrowLayout.ts";
 import { SessionCreator } from "./SessionCreator.tsx";
 import { SessionList } from "./SessionList.tsx";
@@ -136,8 +145,10 @@ function RoomCreatorToggleButton({ open, onToggle }: { open: boolean; onToggle: 
  *   理由で FormPane 側に出す (kawaz r259 m53) — メンバのチェックボックスを
  *   一覧と見比べながら選ぶ価値は他の 2 つと変わらない。その並び順が依存する
  *   ソートキーは `state.peerSortKey` なので、描画先が変わっても同じ順で並ぶ。
- * - **スマホ** (サイドバーが overlay になる幅): 3 つとも従来どおりここで
- *   インライン置換する。overlay の中にさらにパネルを重ねない。 */
+ * - **スマホ** (サイドバーが overlay ドロワーになる幅): 3 つともここで描く。
+ *   ドロワーの中を「一覧 | スプリッター | フォーム」に左右分割し、デスクトップ
+ *   と同じ「一覧を見ながら入力できる」形にする (kawaz r273 m13)。一覧側の
+ *   既定幅は数文字分で、読みたくなったらスプリッターで広げる。 */
 export function Sidebar({ state }: { state: AppState }) {
   const { store } = useApp();
   const sortKey = state.peerSortKey;
@@ -154,57 +165,98 @@ export function Sidebar({ state }: { state: AppState }) {
   // purely by SessionList's idle-time tick doesn't reshuffle rows (see
   // sortPeers's doc comment in utils.ts and SessionList.tsx's tick).
   const sortedPeers = useMemo(() => sortPeers(state.peers, sortKey), [state.peers, sortKey]);
+  // ドロワー幅と、その中の一覧幅。どちらもこの中だけの寸法なので、幅を持つ
+  // 他のペインと同じく px 直値 + localStorage 永続で Sidebar が抱える。
+  const [drawerWidth, setDrawerWidth] = useState<number>(() => loadDrawerWidth(window.innerWidth));
+  const [listWidth, setListWidth] = useState<number>(loadSidebarListWidth);
+  useEffect(() => {
+    saveDrawerWidth(drawerWidth);
+  }, [drawerWidth]);
+  useEffect(() => {
+    saveSidebarListWidth(listWidth);
+  }, [listWidth]);
 
   return (
-    <nav id="sidebar" class={state.sidebarOpen ? "open" : undefined}>
-      <section id="sessions-panel">
-        <h2>
-          Sessions{" "}
-          <CreatorToggleButton
-            open={panel === "session-creator"}
-            onToggle={() => togglePanel("session-creator")}
-          />{" "}
-          <SearchToggleButton
-            open={panel === "session-search"}
-            onToggle={() => togglePanel("session-search")}
-          />{" "}
-          <PeersSortButton
-            sortKey={sortKey}
-            onCycle={() => {
-              const next = nextPeerSortKey(sortKey);
-              store.dispatch({ type: "peers/sort-key", key: next });
-              writeStorage(SORT_KEY_STORAGE, next);
-            }}
-          />{" "}
-          <PeersRefreshButton />
-        </h2>
-        {inlinePanel === "session-creator" ? (
-          <SessionCreator
-            onClose={closePanel}
-            template={state.sidebar.template}
-            params={state.sidebar.params}
-          />
-        ) : inlinePanel === "session-search" ? (
-          <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
-        ) : (
+    <nav
+      id="sidebar"
+      class={state.sidebarOpen ? "open" : undefined}
+      // デスクトップの幅は #layout の --sidebar-width (App.tsx) が持つので、
+      // ここで幅を指定するのは overlay ドロワーの時だけ。
+      style={narrow ? { width: `${drawerWidth}px` } : undefined}
+    >
+      <div
+        id="sidebar-lists"
+        style={inlinePanel ? { width: `${listWidth}px`, flex: "0 0 auto" } : undefined}
+      >
+        <section id="sessions-panel">
+          <h2>
+            Sessions{" "}
+            <CreatorToggleButton
+              open={panel === "session-creator"}
+              onToggle={() => togglePanel("session-creator")}
+            />{" "}
+            <SearchToggleButton
+              open={panel === "session-search"}
+              onToggle={() => togglePanel("session-search")}
+            />{" "}
+            <PeersSortButton
+              sortKey={sortKey}
+              onCycle={() => {
+                const next = nextPeerSortKey(sortKey);
+                store.dispatch({ type: "peers/sort-key", key: next });
+                writeStorage(SORT_KEY_STORAGE, next);
+              }}
+            />{" "}
+            <PeersRefreshButton />
+          </h2>
           <SessionList peers={sortedPeers} currentSid={selectedSid(state)} />
-        )}
-      </section>
-      {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は参照頻度が低い */}
-      <section id="rooms-panel">
-        <h2>
-          Rooms{" "}
-          <RoomCreatorToggleButton
-            open={panel === "room-creator"}
-            onToggle={() => togglePanel("room-creator")}
-          />
-        </h2>
-        {inlinePanel === "room-creator" ? (
-          <RoomCreator peers={sortedPeers} onClose={closePanel} />
-        ) : (
+        </section>
+        {/* Sessions が日常の主動線なので上 (kawaz r76m52)。Rooms は参照頻度が低い */}
+        <section id="rooms-panel">
+          <h2>
+            Rooms{" "}
+            <RoomCreatorToggleButton
+              open={panel === "room-creator"}
+              onToggle={() => togglePanel("room-creator")}
+            />
+          </h2>
           <RoomList state={state} />
-        )}
-      </section>
+        </section>
+      </div>
+      {inlinePanel !== null ? (
+        <>
+          {/* 一覧とフォームの境界。ドロワーは画面左端に接しているので clientX が
+           * そのまま一覧の幅 (px)。上限はドロワー幅なので、フォームが隠れる
+           * ところまで広げられる。 */}
+          <PaneSplitter
+            id="sidebar-list-splitter"
+            ariaOrientation="vertical"
+            onDrag={(e) => setListWidth(clampSidebarListWidth(e.clientX, drawerWidth))}
+          />
+          <aside id="sidebar-form">
+            {inlinePanel === "session-creator" ? (
+              <SessionCreator
+                onClose={closePanel}
+                template={state.sidebar.template}
+                params={state.sidebar.params}
+              />
+            ) : inlinePanel === "session-search" ? (
+              <SessionSearchPanel onClose={closePanel} query={state.sidebar.search} />
+            ) : (
+              <RoomCreator peers={sortedPeers} onClose={closePanel} />
+            )}
+          </aside>
+        </>
+      ) : null}
+      {narrow ? (
+        // ドロワーの右端。ここを動かすとドロワー自体の幅が変わり、右に残った
+        // main (Timeline 等) を見ながら操作できる (kawaz r273 m15)。
+        <PaneSplitter
+          id="sidebar-drawer-splitter"
+          ariaOrientation="vertical"
+          onDrag={(e) => setDrawerWidth(clampDrawerWidth(e.clientX, window.innerWidth))}
+        />
+      ) : null}
     </nav>
   );
 }

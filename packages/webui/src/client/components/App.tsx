@@ -175,6 +175,30 @@ export function App() {
   useEffect(() => {
     writeStorage(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
+  // ドロワーの外をタップしたら閉じる (kawaz r273 m16/m17)。
+  //
+  // 見るのは `click` そのもの: スクロール・スワイプ・長押しでは click が出ない
+  // ようブラウザが既に区別しているので、移動量や時間を自前で測る必要がない。
+  //
+  // 判定を document に置くのは、透明な当たり判定層をドロワーの外に敷くと
+  // main のタップ・スクロールがその層に吸われるため — ドロワーの右に見えて
+  // いる Timeline を触れることが暗転をやめた目的そのものなので、層は置かずに
+  // イベントを覗くだけにする。押された要素の動作 (リンク・ボタン) は横取り
+  // しない = preventDefault も stopPropagation もせず、閉じるだけ。
+  //
+  // ハンバーガーだけは対象外: ここで閉じてから同じ click が toggle を走らせ
+  // ると開き直してしまい、ボタンが効かなくなる。
+  useEffect(() => {
+    if (!state.sidebarOpen) return;
+    const onClick = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("#sidebar") || target.closest("#menu-toggle")) return;
+      store.dispatch({ type: "sidebar/set", open: false });
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [state.sidebarOpen, store]);
   // Tab title tracks the selected session/room (kawaz r99 mid=39): opening
   // several sessions in separate tabs otherwise leaves every tab reading the
   // fixed "ccmsg" title, indistinguishable until clicked.
@@ -292,11 +316,6 @@ export function App() {
           onDrag={(e) =>
             setSidebarWidth(clampPanePx(e.clientX, SIDEBAR_DEFAULT_PX, window.innerWidth))
           }
-        />
-        <div
-          id="sidebar-backdrop"
-          class={state.sidebarOpen ? "visible" : undefined}
-          onClick={() => store.dispatch({ type: "sidebar/set", open: false })}
         />
         {/* デスクトップのフォームパネル (D-Q1 裁定 = b)。スマホ幅では
          * Sidebar が自分の中に描くので、FormPane 自身が何も出さない

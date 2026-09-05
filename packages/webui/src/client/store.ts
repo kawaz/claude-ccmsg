@@ -813,9 +813,29 @@ function agentRefKey(agent: AgentRef | null | undefined): string {
   return `${agent.runId ?? ""}|${agent.agentId ?? ""}|${agent.teammate ?? ""}`;
 }
 
+/** スマホ幅の overlay ドロワーを、この遷移で閉じるか。
+ *
+ * 閉じるのは**行き先が実際に変わった**時だけ (kawaz r273 m15)。フォームの
+ * 開閉は path を変えず `sb.*` だけを書き換える遷移なので、遷移一般で閉じて
+ * いると「新規」を押した瞬間にドロワーごと消えて、フォームがどこにも出ない。
+ *
+ * フォームを開いている間は行き先が変わっても閉じない: 検索結果を選んで
+ * Timeline を見て、また次の結果を選ぶ、という使い方 (kawaz r273 m15) は
+ * 結果一覧が出たままでないと成立しない。フォームを閉じている時は、一覧から
+ * セッションを選ぶ = 見たい場所へ着いたということなので、ドロワーは退く。 */
+function closesDrawer(before: AppState, after: AppState, sidebar: SidebarUrlState): boolean {
+  if (sidebar.panel !== null) return false;
+  return (
+    before.view !== after.view ||
+    before.currentRoomId !== after.currentRoomId ||
+    before.currentSid !== after.currentSid ||
+    before.unknownPath !== after.unknownPath
+  );
+}
+
 function applyLocatorChanged(state: AppState, locator: Locator): AppState {
   if (locator.view === "unknown") {
-    return { ...state, unknownPath: locator.pathname, sidebarOpen: false };
+    return { ...state, unknownPath: locator.pathname };
   }
   if (locator.view === "session-root") return state;
   if (locator.view === "catalog") {
@@ -830,7 +850,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       mentionTo: new Set(),
-      sidebarOpen: false,
     };
   }
   if (locator.view === "usage") {
@@ -849,7 +868,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       missingTarget: null,
       currentAgent: null,
       mentionTo: new Set(),
-      sidebarOpen: false,
     };
   }
   if (locator.view === "room") {
@@ -863,7 +881,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentMid: locator.mid,
       currentAgent: null,
       mentionTo: new Set(),
-      sidebarOpen: false,
     };
   }
   if (locator.view === "timeline") {
@@ -902,7 +919,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
       currentAgent: nextAgent,
       sessionTrees,
       mentionTo: new Set(),
-      sidebarOpen: false,
     };
   }
   let [tree, sessionTrees] = withSessionTree(state.sessionTrees, locator.sid);
@@ -928,7 +944,6 @@ function applyLocatorChanged(state: AppState, locator: Locator): AppState {
     currentAgent: null,
     sessionTrees,
     mentionTo: new Set(),
-    sidebarOpen: false,
   };
 }
 
@@ -1118,13 +1133,16 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "protocol-event":
       return applyProtocolEvent(state, action.event);
-    case "locator/changed":
+    case "locator/changed": {
+      const next = applyLocatorChanged(state, action.locator);
       return {
-        ...applyLocatorChanged(state, action.locator),
+        ...next,
         // 同値なら前の参照を残す (sameSidebarState 参照) — フォームの seed は
         // この参照が変わった時だけやり直す。
         sidebar: sameSidebarState(state.sidebar, action.sidebar) ? state.sidebar : action.sidebar,
+        sidebarOpen: state.sidebarOpen && !closesDrawer(state, next, action.sidebar),
       };
+    }
     case "navigation/missing":
       return { ...state, missingTarget: action.target };
     case "mention/toggle": {
