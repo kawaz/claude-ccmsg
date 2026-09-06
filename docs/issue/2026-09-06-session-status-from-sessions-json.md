@@ -49,6 +49,17 @@ idle だった。つまり busy/idle は「いま処理中か」の指標にな�
 - [ ] 生 status `"shell"` は Monitor 等の背景 shell が動いている待機中を示す (実測)。
       この事実は活動判定の切替後も残す
 
+## 依存
+
+活動判定 (Busy/Idle) の実装は llm-gateway 側のイベント拡張に依存する。現行の relay
+イベント (`packages/protocol/src/index.ts` の `LlmRequestInfo`) は 1 リクエスト 1 件で
+`ts` = 上流レスポンスヘッダ到着時刻のみ。「リクエスト開始」「レスポンス完了 (ストリーム
+終端)」の通知が無いため、「最終リクエストのレスポンス完了 = Idle」は gateway が
+request started / response completed を送るようになってから。それまでは ccmsg 側で
+実装しない (ヘッダ到着 + N 秒の近似は採らない)。
+
+gateway 側への起票先 (llm-gateway の docs/issue または r276 経由) は kawaz 裁定待ち。
+
 ## TODO
 
 関連: docs/QUESTIONS.md の SS-Q1 / SS-Q2 (セクション再設計、r278 の議論)。
