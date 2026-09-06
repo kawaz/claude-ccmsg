@@ -293,6 +293,14 @@ export function startHttpListener(
       if (url.pathname === "/fs-serve" && req.method === "GET") {
         return await handleFsServe(daemon.sessions, daemon.sessionStatus, url);
       }
+      // Page loads are logged so a webui reload can be told apart from an
+      // in-page re-render from the daemon side alone (a reload shows up as
+      // ws close -> GET / -> hello; a re-render leaves no trace here).
+      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+        daemon.log.info(
+          `http GET ${url.pathname} (webui page load) from ${remote?.address ?? "?"}`,
+        );
+      }
       if (fallback) return fallback(req);
       return new Response("Not Found", { status: 404 });
     },
@@ -330,6 +338,7 @@ export function startHttpListener(
         flushWsPending(ws);
       },
       close(ws) {
+        if (ws.data.conn.identity?.role === "user") daemon.log.info("webui ws closed");
         removeConn(daemon, ws.data.conn);
       },
     },

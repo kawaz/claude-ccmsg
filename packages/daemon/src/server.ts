@@ -1814,6 +1814,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       let newId: Identity;
       if (req.role === "user") {
         newId = { role: "user" };
+        daemon.log.info(`webui hello client_version=${client.version ?? "?"}`);
       } else {
         if (!req.sid) {
           sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");
