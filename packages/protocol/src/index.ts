@@ -421,9 +421,9 @@ export interface TranscriptStreamEvent {
 }
 
 /** Fallback length of an upstream prompt cache window, for events that carry
- * no `cache_expires_at` (a gateway older than v0.33.0). Both sides count down
- * to the same deadline, so the assumed length has to be shared; when the
- * gateway states the real one, that wins over this guess. */
+ * neither `cache_expires_at` nor `origin`. Both sides count down to the same
+ * deadline, so the assumed length has to be shared; when the gateway states
+ * the real one, that wins over this guess. */
 export const LLM_PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
 
 /** One upstream LLM request as the gateway observed it (its
@@ -434,10 +434,10 @@ export const LLM_PROMPT_CACHE_TTL_MS = 5 * 60 * 1000;
  * Requests the gateway could not attribute to a session are dropped by the
  * daemon and never appear here. */
 export interface LlmRequestInfo {
-  /** Epoch SECONDS (not ms — the gateway's unit, kept verbatim so the two
-   * sides never disagree about a converted value) at which the upstream
-   * response headers arrived. This is the instant the prompt cache TTL starts
-   * running, not when the request was sent. */
+  /** Epoch MILLISECONDS (the gateway's own unit for every instant it states,
+   * kept verbatim so the two sides never disagree about a converted value) at
+   * which the upstream response headers arrived. This is the instant the
+   * prompt cache TTL starts running, not when the request was sent. */
   ts: number;
   /** ccmsg sid (`X-Claude-Code-Session-Id`). Never empty. */
   session_id: string;
@@ -459,20 +459,51 @@ export interface LlmRequestInfo {
    * ring to draw. */
   main: boolean;
   /** Whose turn issued the request, as the gateway read it off the request's
-   * `metadata.user_id`: "main" for the session's own conversation, "sub" for
-   * a subagent under it, "unknown" when the field said neither. Absent from a
-   * gateway older than v0.33.0, which is why `main` above stays the thing
-   * clients read: it is the verdict, this is one of its inputs. */
-  /** As the gateway states it: "main" / "sub" / "unknown" / "oneshot" today,
-   * an open set — consumers only ever test for "main". */
+   * `metadata.user_id`. As the gateway states it: "main" / "sub" / "unknown" /
+   * "oneshot" today, an open set — consumers only ever test for "main", and
+   * `main` above stays the thing clients read: it is the verdict, this is one
+   * of its inputs. */
   origin?: string;
-  /** Epoch SECONDS at which this series' prompt cache goes cold, as the
-   * gateway computed it (`ts` + the cache TTL it actually asked for, 5m or
-   * 1h). Absent when the request cached nothing, and from a gateway older
-   * than v0.33.0 — in both cases the window falls back to
-   * LLM_PROMPT_CACHE_TTL_MS after `ts`. A keepalive ping arrives as another
-   * request event on the same series, so a live window's end keeps moving. */
+  /** Epoch ms at which this series' prompt cache goes cold, as the gateway
+   * computed it (`ts` + the cache TTL it actually asked for, 5m or 1h).
+   * Absent when the request cached nothing, in which case the window closed
+   * the moment it opened. A keepalive ping arrives as another request event
+   * on the same series, so a live window's end keeps moving. */
   cache_expires_at?: number;
+  /** Length of the cache the gateway asked for, in seconds (3600 for the
+   * hour-long cache the keepalive strategy is built around). A LENGTH, so the
+   * unit is in the name — every instant beside it is epoch ms. */
+  cache_ttl_secs?: number;
+  /** True while the gateway is holding off on keepalive markers for this
+   * series. Stated on every event of a series the strategy covers, so absent
+   * means "not a series the gateway keeps alive", never "running". */
+  cache_paused?: boolean;
+  /** Epoch ms of the real request that started the current keepalive chain —
+   * the same value on the request itself and on every marker's return trip,
+   * which is what makes it usable as the chain's fixed origin while `ts` and
+   * `cache_expires_at` walk forward. */
+  cache_since?: number;
+  /** Position in the keepalive chain: 0 on the real request, k on the k-th
+   * marker's return. */
+  cache_count?: number;
+  /** Epoch ms the gateway plans to send the next marker at. Absent when it
+   * plans none. */
+  next_keepalive_at?: number;
+  /** Epoch ms the keepalive chain is projected to end at (the last planned
+   * marker + the cache TTL), with `cache_until_count` the number of markers
+   * that takes. A projection recomputed per event, so the newest event's
+   * value wins outright rather than being merged with an older one. */
+  cache_until?: number;
+  cache_until_count?: number;
+  /** Epoch ms past which keeping the cache warm costs more than rebuilding
+   * it, with `cache_breakeven_count` the marker count that reaches it.
+   * Omitted for models whose price the gateway does not know. */
+  cache_breakeven_until?: number;
+  cache_breakeven_count?: number;
+  /** Present only on a marker's return trip: "applied" / "late" / "foreign"
+   * as the gateway judged it. Absent on an ordinary request, which is how the
+   * two are told apart. */
+  keepalive?: string;
   ns?: string;
   model?: string;
   credential?: string;
@@ -483,19 +514,19 @@ export interface LlmRequestInfo {
  * daemon prunes with it and the webui draws the ring to it, so the arithmetic
  * lives here once rather than once per side.
  *
- * A gateway from v0.33.0 on states `origin` on every request event, so on such
- * an event a missing deadline is not silence about the cache — it is the
- * gateway saying this request cached nothing, and the window closed the moment
- * it opened. Only an event carrying no `origin` at all predates that guarantee
- * and falls back to the assumed five minutes. */
+ * The gateway states `origin` on every request event, so on such an event a
+ * missing deadline is not silence about the cache — it is the gateway saying
+ * this request cached nothing, and the window closed the moment it opened.
+ * Only an event carrying no `origin` at all falls back to the assumed five
+ * minutes. */
 export function llmCacheWindowEndMs(info: {
   ts: number;
   cache_expires_at?: number;
   origin?: LlmRequestInfo["origin"];
 }): number {
-  if (info.cache_expires_at !== undefined) return info.cache_expires_at * 1000;
-  if (info.origin !== undefined) return info.ts * 1000;
-  return info.ts * 1000 + LLM_PROMPT_CACHE_TTL_MS;
+  if (info.cache_expires_at !== undefined) return info.cache_expires_at;
+  if (info.origin !== undefined) return info.ts;
+  return info.ts + LLM_PROMPT_CACHE_TTL_MS;
 }
 
 /** Push of the most recent LLM request per conversation series (user-role
@@ -2365,9 +2396,8 @@ export interface LlmUsageWindow {
    * gateway's to grow and an unknown value must reach the UI as-is rather
    * than being flattened into a wrong one. */
   status: string;
-  /** Epoch seconds at which the window's counter resets. */
+  /** Epoch ms at which the window's counter resets. */
   reset?: number;
-  reset_iso?: string;
   /** Length of the window's period in seconds (18000 for a 5h window, 604800
    * for a 7d one). Upstream states the period itself here rather than leaving
    * it to be read out of the key, because a key like "primary" names a slot
@@ -2393,8 +2423,8 @@ export interface LlmUsageOverage {
  * lag the response's own `generated_at` by minutes when the gateway has not
  * seen traffic on that credential recently, so the UI shows its age. */
 export interface LlmUsageSnapshot {
+  /** Epoch ms. */
   observed_at?: number;
-  observed_at_iso?: string;
   overage?: LlmUsageOverage;
   /** Window key → window, keys verbatim from upstream. A map rather than
    * named `five_hour`/`seven_day` fields so a gateway that starts reporting a
@@ -2422,9 +2452,9 @@ export interface LlmUsageLimit {
   /** Upstream's own verdict: "normal" / "warning" / "critical" today. String
    * for `kind`'s reason. */
   severity: string;
-  /** RFC3339 instant the limit's counter resets. Absent for a limit with no
+  /** Epoch ms the limit's counter resets at. Absent for a limit with no
    * scheduled reset. */
-  resets_at?: string;
+  resets_at?: number;
   /** Model family the limit is scoped to, as a display name ("Fable").
    * Present on `weekly_scoped` entries. */
   model?: string;
@@ -2452,8 +2482,8 @@ export interface LlmUsageAuth {
    * the CLI command for the cases the browser cannot fix). Present on the
    * states that are not "ok". */
   reason?: string;
+  /** Epoch ms. */
   observed_at?: number;
-  observed_at_iso?: string;
   /** Absolute URL of the gateway's browser re-login page for this credential.
    * The gateway sends a relative `login_path` — it does not know the origin it
    * is published under — and the daemon resolves it against the usage endpoint
@@ -2497,9 +2527,8 @@ export interface LlmUsageCredential {
  * is normalized (see LlmUsageSnapshot.windows). */
 export interface LlmUsageResponse {
   ok: true;
-  /** When the gateway assembled the response (epoch seconds). */
+  /** When the gateway assembled the response (epoch ms). */
   generated_at?: number;
-  generated_at_iso?: string;
   credentials: LlmUsageCredential[];
 }
 
@@ -2541,9 +2570,8 @@ export interface LlmStatsDay {
  * reinterpret the dates, so a day here means whatever the gateway means. */
 export interface LlmStatsResponse {
   ok: true;
-  /** When the gateway assembled the response (epoch seconds). */
+  /** When the gateway assembled the response (epoch ms). */
   generated_at?: number;
-  generated_at_iso?: string;
   days: Record<string, LlmStatsDay>;
 }
 
@@ -2588,8 +2616,9 @@ export interface LlmStatusIncident {
    * and the UI shows it verbatim. */
   state?: string;
   impact?: string;
-  created_at?: string;
-  updated_at?: string;
+  /** Epoch ms. Absent when the status page's own stamp could not be read. */
+  created_at?: number;
+  updated_at?: number;
   url?: string;
   latest_update?: string;
   /** "page" when the incident carries no component mapping, meaning it is
@@ -2604,7 +2633,7 @@ export interface LlmStatusOfficial {
   source?: string;
   /** The human status page, for the "詳しくは公式ページ" link. */
   source_url?: string;
-  /** When the gateway last read the source (epoch seconds). */
+  /** When the gateway last read the source (epoch ms). */
   observed_at?: number;
   /** True when that reading is older than the gateway's `stale_after`: the
    * value shown is the last success, not a current one. */
@@ -2619,6 +2648,7 @@ export interface LlmStatusOfficial {
 /** What this gateway itself observed for the service's routes. */
 export interface LlmStatusObserved {
   state: LlmStatusObservedState;
+  /** Epoch ms, like every other instant in this report. */
   observed_at?: number;
   /** When the observation stops counting and the state falls back to
    * "unknown" (the gateway's `observation_ttl`). */
@@ -2667,7 +2697,7 @@ export interface LlmStatusReport {
    * rather than gated on: every field is normalized defensively, so a newer
    * schema degrades to "unknown"s instead of to nothing at all. */
   schema_version?: number;
-  /** When the gateway assembled the report (epoch seconds). */
+  /** When the gateway assembled the report (epoch ms). */
   generated_at?: number;
   overall: LlmStatusOverall;
   services: LlmStatusService[];

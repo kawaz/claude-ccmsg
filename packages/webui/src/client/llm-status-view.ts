@@ -86,9 +86,9 @@ export function observedLabel(state: LlmStatusObservedState): string {
  * seconds while it is happening, coarser once it is history. Empty for an
  * absent instant — the column stays, so a service with no reading does not
  * pull the rows around it out of line. */
-export function formatStatusAge(atSeconds: number | undefined, nowMs: number): string {
-  if (atSeconds === undefined || !Number.isFinite(atSeconds)) return "";
-  const ageMs = Math.max(0, nowMs - atSeconds * 1000);
+export function formatStatusAge(atMs: number | undefined, nowMs: number): string {
+  if (atMs === undefined || !Number.isFinite(atMs)) return "";
+  const ageMs = Math.max(0, nowMs - atMs);
   const seconds = Math.floor(ageMs / 1000);
   if (seconds < 60) return `${seconds} 秒前`;
   const minutes = Math.floor(seconds / 60);

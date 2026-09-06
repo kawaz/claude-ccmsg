@@ -39,7 +39,7 @@ function event(now: number, secondsAhead: number, over: Partial<CacheKeepaliveEv
   return {
     session_id: "S1",
     marker: MARKER,
-    deadline: Math.floor(now / 1000) + secondsAhead,
+    deadline: now + secondsAhead * 1000,
     nonce: "n1",
     ...over,
   };
@@ -51,18 +51,16 @@ describe("parseCacheKeepaliveEvent", () => {
     session_id: "S1",
     prefix: "484eda9c",
     nonce: "n1",
-    deadline: 1_788_333_834,
-    deadline_iso: "2026-09-03T00:00:00.000Z",
+    deadline: 1_788_333_834_000,
     marker: MARKER,
-    ts: 1_788_333_774,
-    ts_iso: "2026-09-03T00:00:00.000Z",
+    ts: 1_788_333_774_000,
   };
 
   test("accepts the gateway's payload and keeps only what decides anything", () => {
     expect(parseCacheKeepaliveEvent(base)).toEqual({
       session_id: "S1",
       marker: MARKER,
-      deadline: 1_788_333_834,
+      deadline: 1_788_333_834_000,
       nonce: "n1",
     });
   });
@@ -123,7 +121,7 @@ describe("relayCacheKeepalive", () => {
 
   test("a deadline landing exactly now is already too late", () => {
     const { relay, state } = harness();
-    relay({ ...event(state.now, 0), deadline: state.now / 1000 });
+    relay({ ...event(state.now, 0), deadline: state.now });
     expect(state.delivered).toEqual([]);
   });
 

@@ -443,9 +443,7 @@ function SessionRowItem({
   currentSid,
   statusBadge,
   modelEffort,
-  cacheTs,
-  cacheExpiresAt,
-  cacheOrigin,
+  cacheRequest,
   sayUnread,
 }: {
   row: SessionRow;
@@ -458,23 +456,19 @@ function SessionRowItem({
    * null = どの供給元も model を答えられなかった (未購読かつ直近リクエスト
    * 無し等) 行で、その場合は何も足さない。 */
   modelEffort: ModelEffortInfo | null;
-  /** この sid の最後の LLM リクエスト時刻 (epoch 秒) — アイコンに巻く prompt
-   * cache リングの起点。null = 直近のキャッシュ窓が既に閉じている、または
-   * daemon が gateway の event stream を購読していない (どちらもリング非
-   * 表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで示す。 */
-  cacheTs: number | null;
-  /** 同 event の `cache_expires_at` (epoch 秒) — リングの終点。 */
-  cacheExpiresAt?: number;
-  /** 同 event の `origin`。終点が無い時、これがあれば「キャッシュ無し = リング
-   * 無し」、無ければ「旧 gateway なので 5 分と仮定」の分岐に使う。 */
-  cacheOrigin?: LlmRequestInfo["origin"];
+  /** この sid の最後の LLM リクエスト — アイコンに巻く prompt cache リングの
+   * 素材 (時刻はすべて epoch ミリ秒)。null = 直近のキャッシュ窓が既に閉じて
+   * いる、または daemon が gateway の event stream を購読していない (どちらも
+   * リング非表示)。kawaz r99m29: 行に要素は足さず、既存アイコンのボーダーで
+   * 示す。 */
+  cacheRequest: LlmRequestInfo | null;
   /** 未読の `ccmsg say` 件数 (kawaz r244 m5-m6)。0 = マーカーを出さない。
    * 複数セッションが並走している時に「今喋ったのはどれか」を行から辿れる
    * ようにするためのもので、既読は 1on1 room の 📣 バブル側で付ける。 */
   sayUnread: number;
 }) {
   const [renameNote, setRenameNote] = useState<string | null>(null);
-  const ring = useCacheRing(cacheTs, cacheExpiresAt, cacheOrigin);
+  const ring = useCacheRing(cacheRequest);
   const title = sessionRowTitle(row);
   // Straight from the row: a session that announced no repo/ws shows neither
   // (kawaz r135m16: 欠けたら欠けたなり). No substitute is invented here — the
@@ -555,8 +549,9 @@ function SessionRowItem({
           href={sessionHref(row.sid)}
           class={row.connected ? "session-main-link" : "session-main-link session-disconnected"}
         >
-          {/* prompt cache が生きている間だけアイコンの枠に緑の輪が重なり、
-           * 窓が閉じるまでかけて時計回りに欠けていく (CacheRing.tsx)。
+          {/* prompt cache が生きている間だけアイコンの枠に輪が重なり、窓が
+           * 閉じるまでかけて時計回りに欠けていく (CacheRing.tsx)。緑は会話が
+           * 作った窓、黄は合図で延命している分 (llm-cache-view.ts)。
            * ラッパーはリングの有無に関わらず常設する: 条件付きで包むと
            * Avatar が remount され、リング開始のたびに再描画が走る。 */}
           <span
@@ -564,7 +559,7 @@ function SessionRowItem({
             style={ring?.style}
           >
             <Avatar seed={row.sid} size={16} />
-            {ring ? <CacheRing shape="rect" /> : null}
+            {ring ? <CacheRing shape="rect" dash={ring.tickDash} /> : null}
           </span>
           {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
            * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと
@@ -1154,9 +1149,7 @@ export function SessionList({
                   // statusBadge と違い全行に出す: prompt cache は daemon 側で
                   // 全 sid 分まとめて届くので、購読の有無に左右されない。
                   modelEffort={resolveModelEffort(row.sid)}
-                  cacheTs={llmRequests.get(row.sid)?.ts ?? null}
-                  cacheExpiresAt={llmRequests.get(row.sid)?.cache_expires_at}
-                  cacheOrigin={llmRequests.get(row.sid)?.origin}
+                  cacheRequest={llmRequests.get(row.sid) ?? null}
                   sayUnread={sayUnreadBy.get(row.sid) ?? 0}
                 />
               ))}

@@ -100,18 +100,13 @@ function parseIncident(value: unknown): LlmStatusIncident | null {
   const name = optionalString(value.name);
   if (name === undefined) return null;
   const incident: LlmStatusIncident = { name };
-  for (const key of [
-    "id",
-    "state",
-    "impact",
-    "created_at",
-    "updated_at",
-    "url",
-    "latest_update",
-    "scope",
-  ] as const) {
+  for (const key of ["id", "state", "impact", "url", "latest_update", "scope"] as const) {
     const text = optionalString(value[key]);
     if (text !== undefined) incident[key] = text;
+  }
+  for (const key of ["created_at", "updated_at"] as const) {
+    const at = optionalNumber(value[key]);
+    if (at !== undefined) incident[key] = at;
   }
   return incident;
 }

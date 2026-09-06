@@ -3,8 +3,8 @@
 // those events feed.
 //
 // The gateway sends one event per call it forwards, carrying the instant its
-// upstream answered — the moment the prompt cache starts running — and, from
-// v0.33.0, the instant that cache goes cold.
+// upstream answered — the moment the prompt cache starts running — the instant
+// that cache goes cold, and what its keepalive strategy plans to do about it.
 // Delivery is inbound (the gateway POSTs to this daemon's /webhook/llm-gateway,
 // see webhook.ts) rather than the daemon subscribing outward: the gateway runs
 // as two processes at once (stable and unstable), and a single subscription
@@ -24,6 +24,13 @@ export type LlmRequestObservation = Omit<LlmRequestInfo, "main">;
 export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
+  // A posted batch mixes event kinds, and the others carry a `session_id` and
+  // a `ts` of their own — a `response` event would sail through the checks
+  // below and restart a series' countdown off the moment its answer FINISHED.
+  // So an item that names its kind is only a request when it says so, and one
+  // that names none is a request by position, as request events have always
+  // arrived.
+  if (raw.type !== undefined && raw.type !== "request") return null;
   const ts = raw.ts;
   const sid = raw.session_id;
   if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
@@ -49,11 +56,47 @@ export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | nu
   if (typeof expires === "number" && Number.isFinite(expires) && expires > ts) {
     info.cache_expires_at = expires;
   }
+  // The keepalive strategy's own bookkeeping, relayed as stated: these are
+  // projections the gateway recomputes per event, so a client reads the
+  // newest event and never merges two. Each is carried only when it is a
+  // usable number, which is also how a series the strategy does not cover
+  // (a subagent's, a passthrough) arrives — with the whole group absent.
+  for (const key of [
+    "cache_ttl_secs",
+    "cache_since",
+    "cache_count",
+    "next_keepalive_at",
+    "cache_until",
+    "cache_until_count",
+    "cache_breakeven_until",
+    "cache_breakeven_count",
+  ] as const) {
+    const num = raw[key];
+    if (typeof num === "number" && Number.isFinite(num)) info[key] = num;
+  }
+  if (typeof raw.cache_paused === "boolean") info.cache_paused = raw.cache_paused;
+  if (typeof raw.keepalive === "string" && raw.keepalive !== "") info.keepalive = raw.keepalive;
   if (typeof raw.ns === "string" && raw.ns !== "") info.ns = raw.ns;
   if (typeof raw.model === "string" && raw.model !== "") info.model = raw.model;
   if (typeof raw.credential === "string" && raw.credential !== "") info.credential = raw.credential;
   if (typeof raw.status === "number" && Number.isFinite(raw.status)) info.status = raw.status;
   return info;
+}
+
+/** Event kinds the gateway posts that ccmsg reads nothing from: the answer's
+ * completion (`response`) and the keepalive strategy being held off
+ * (`keepalive_paused`, whose state also rides on every request event as
+ * `cache_paused`). Named one by one rather than "anything that isn't a
+ * request" so a kind the gateway grows still reaches the drop log, which is
+ * what makes a schema change visible instead of silent. */
+const IGNORED_EVENT_TYPES = new Set(["response", "keepalive_paused"]);
+
+/** True for an item this daemon deliberately reads nothing from, so the caller
+ * skips it without counting it as unusable. */
+export function isIgnoredGatewayItem(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return typeof type === "string" && IGNORED_EVENT_TYPES.has(type);
 }
 
 /** Upper bound on remembered series. The TTL prune below already keeps this
@@ -178,7 +221,7 @@ export class LlmRequestCache {
       }
       live.push(series);
     }
-    // A gateway that reports `origin` has answered the question the two
+    // An event that reports `origin` has answered the question the two
     // signals below only estimate, so for those sessions the estimate is not
     // consulted at all: the session's own series is the newest one the
     // gateway called "main", and a session showing only "sub"/"unknown" gets

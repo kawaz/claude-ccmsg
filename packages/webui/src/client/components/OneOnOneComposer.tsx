@@ -180,15 +180,12 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const panelDrag = useDraggable({ handleFilter: isPanelDragHandle });
   const { onFabRef, onPanelRef } = useFabPanelPositionLink({ open, fabDrag, panelDrag });
   // このセッションの prompt cache が生きている間だけ、FAB (閉じている時) と
-  // textarea (開いている時) に緑リングが巻かれ、5 分かけて時計回りに消える
-  // (kawaz r99m25-m27)。宛先が sid で一意に決まる 1on1 composer だからこそ
+  // textarea (開いている時) にリングが巻かれ、窓が閉じるまでかけて時計回りに
+  // 消える (kawaz r99m25-m27)。緑は会話が作った窓、黄は合図で延命している分
+  // (llm-cache-view.ts)。宛先が sid で一意に決まる 1on1 composer だからこそ
   // 「今送るとキャッシュに乗るか」を送信 UI そのものに出せる。
   const cacheRequest = state.llmRequests.get(sid);
-  const cacheRing = useCacheRing(
-    cacheRequest?.ts ?? null,
-    cacheRequest?.cache_expires_at,
-    cacheRequest?.origin,
-  );
+  const cacheRing = useCacheRing(cacheRequest ?? null);
   // DR-0015 attachment 機能 (kawaz r15 mid=5、2026-07-14): 通常 room の
   // Composer と同じ添付経路を 1on1 でも提供。attachments は transient state
   // で localStorage には保存しない — draft は text のみ (§2.6)。close→reopen
@@ -477,7 +474,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         // 重ねた svg の線なので、併発しても互いを打ち消さない。
         style={{ ...fabDrag.style, ...cacheRing?.style }}
       >
-        +{cacheRing ? <CacheRing shape="circle" /> : null}
+        +{cacheRing ? <CacheRing shape="circle" dash={cacheRing.tickDash} /> : null}
       </button>
     );
   }
@@ -560,7 +557,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           disabled={sending}
           rows={4}
         />
-        {cacheRing ? <CacheRing shape="rect" /> : null}
+        {cacheRing ? <CacheRing shape="rect" dash={cacheRing.tickDash} /> : null}
       </div>
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}

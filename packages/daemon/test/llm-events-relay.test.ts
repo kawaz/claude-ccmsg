@@ -154,7 +154,7 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000);
+        const ts = Date.now();
         const status = await postEvents(ctx, {
           ts,
           session_id: "S1",
@@ -188,7 +188,7 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000);
+        const ts = Date.now();
         expect(
           await postEvents(ctx, [
             { ts, session_id: "S2", prefix: "484eda9c" },
@@ -215,14 +215,14 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000) - 100;
+        const ts = Date.now() - 100_000;
         await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
         await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
         // The duplicate is dropped by the cache, so its ts is unchanged. Anchor
         // on a later, genuinely new event to prove the assertion isn't just
         // reading the first push again.
-        await postEvents(ctx, { ts: ts + 50, session_id: "S5", prefix: "aa11bb22" });
+        await postEvents(ctx, { ts: ts + 50_000, session_id: "S5", prefix: "aa11bb22" });
         const { ev } = await u.readEventUntil<LlmRequestsEv>(
           (e) => e.ev === "llm_requests" && e.requests.length === 2,
         );
@@ -241,7 +241,7 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000);
+        const ts = Date.now();
         // session_id: null is the gateway's own shape for a client that sent
         // no session header — the most common event ccmsg cannot place.
         expect(
@@ -268,13 +268,13 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const mainTs = Math.floor(Date.now() / 1000) - 240;
+        const mainTs = Date.now() - 240_000;
         await postEvents(ctx, { ts: mainTs, session_id: "S7", prefix: "484eda9c" });
         await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         // Same session id, different system prompt: a subagent. The session's
         // own window must survive it untouched — that is what keeps the ring
         // counting down while a subagent chatters.
-        const subTs = Math.floor(Date.now() / 1000);
+        const subTs = Date.now();
         await postEvents(ctx, { ts: subTs, session_id: "S7", prefix: "9c31aa02" });
         const { ev } = await u.readEventUntil<LlmRequestsEv>(
           (e) => e.ev === "llm_requests" && e.requests.length === 2,
@@ -300,7 +300,7 @@ describe("webhook → ev:llm_requests", () => {
       const ctx = await startWebhookDaemon();
       try {
         const first = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000);
+        const ts = Date.now();
         await postEvents(ctx, { ts, session_id: "S8", prefix: "484eda9c" });
         await first.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
         first.close();
@@ -335,7 +335,7 @@ describe("webhook → ev:llm_requests", () => {
         });
         await s.request({ op: "subscribe" });
         await postEvents(ctx, {
-          ts: Math.floor(Date.now() / 1000),
+          ts: Date.now(),
           session_id: "S9",
           prefix: "484eda9c",
         });
@@ -365,7 +365,7 @@ describe("webhook → ev:llm_requests", () => {
         expect(
           await postEvents(
             ctx,
-            { ts: Math.floor(Date.now() / 1000), session_id: "SA", prefix: "484eda9c" },
+            { ts: Date.now(), session_id: "SA", prefix: "484eda9c" },
             "wrong-token",
           ),
         ).toBe(401);
@@ -388,7 +388,7 @@ describe("webhook → ev:llm_requests", () => {
       try {
         expect(
           await postEvents(ctx, {
-            ts: Math.floor(Date.now() / 1000),
+            ts: Date.now(),
             session_id: "SB",
             prefix: "484eda9c",
           }),

@@ -1,7 +1,7 @@
 // Prompt-cache keepalive markers posted by the LLM gateway, relayed to the
 // session they belong to as an ordinary `ev:"notify"`.
 //
-// The gateway watches a session's 5-minute prompt cache and, shortly before it
+// The gateway watches a session's prompt cache and, shortly before it
 // would lapse, asks ccmsg to make that session say something — one cheap turn
 // re-warms the cache and saves re-sending the whole prefix. It cannot reach the
 // session itself: it only ever sees HTTP requests, and has no channel back into
@@ -23,16 +23,16 @@ import type { NotifyFrom } from "@ccmsg/protocol";
 
 /** One `type: "cache_keepalive"` item from the gateway, validated.
  *
- * The wire payload carries more than this (`prefix`, `ts`, `ts_iso`,
- * `deadline_iso`) — those are the gateway's own bookkeeping and describe the
- * cache series it is protecting, which is not something this relay decides
- * anything from. Only the four fields below change what happens. */
+ * The wire payload carries more than this (`prefix`, `ts`) — those are the
+ * gateway's own bookkeeping and describe the cache series it is protecting,
+ * which is not something this relay decides anything from. Only the four
+ * fields below change what happens. */
 export interface CacheKeepaliveEvent {
   /** Claude session id the marker must reach. */
   session_id: string;
   /** Exact notification text. Relayed unchanged — see module doc. */
   marker: string;
-  /** Unix seconds after which delivering is pointless (the cache has lapsed). */
+  /** Epoch ms after which delivering is pointless (the cache has lapsed). */
   deadline: number;
   /** Single-use id of this keepalive, for logs. */
   nonce: string;
@@ -87,7 +87,7 @@ export interface CacheKeepaliveDeps {
 export function relayCacheKeepalive(event: CacheKeepaliveEvent, deps: CacheKeepaliveDeps): void {
   const label = `cache keepalive ${event.nonce === "" ? "" : `${event.nonce} `}for ${event.session_id}`;
   const now = deps.now ? deps.now() : Date.now();
-  if (event.deadline * 1000 - now <= 0) {
+  if (event.deadline - now <= 0) {
     deps.log.info(`${label}: deadline already passed, dropped`);
     return;
   }

@@ -24,7 +24,7 @@ const gateway = Bun.serve({
     if (url.pathname !== "/stats") return new Response("no such endpoint", { status: 404 });
     received.push(url.searchParams.get("days"));
     return Response.json({
-      generated_at: 1785552299,
+      generated_at: 1785552299000,
       days: {
         "2026-07-31": {
           credentials: { "claude-a": { "claude-opus-5": { requests: 3, usd: 1.25 } } },
@@ -88,7 +88,7 @@ describe("llm_stats op", () => {
       1,
     );
     expect(reply?.ok).toBe(true);
-    expect(reply?.generated_at).toBe(1785552299);
+    expect(reply?.generated_at).toBe(1785552299000);
     expect(reply?.days["2026-07-31"].total_usd).toBe(1.25);
   });
 

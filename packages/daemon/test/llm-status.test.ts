@@ -19,8 +19,8 @@ import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
  * a fetched source with an incident, a `link` placeholder that can only ever
  * be unknown, and a source whose own read failed. */
 const UPSTREAM = {
-  schema_version: 1,
-  generated_at: 1788333834,
+  schema_version: 2,
+  generated_at: 1788333834000,
   overall: {
     severity: "critical",
     service_counts: { ok: 1, warning: 0, critical: 1, unknown: 1 },
@@ -35,7 +35,7 @@ const UPSTREAM = {
         state: "major_outage",
         source: "statuspage_v2",
         source_url: "https://status.claude.com/",
-        observed_at: 1788333814,
+        observed_at: 1788333814000,
         stale: false,
         components: [{ id: "k8w3", name: "Claude API", state: "partial_outage" }],
         incidents: [
@@ -44,6 +44,8 @@ const UPSTREAM = {
             name: "Elevated errors on the API",
             state: "investigating",
             impact: "major",
+            created_at: 1788330000000,
+            updated_at: 1788333800000,
             url: "https://status.claude.com/incidents/inc-1",
             latest_update: "We are investigating elevated error rates.",
           },
@@ -51,10 +53,10 @@ const UPSTREAM = {
       },
       observed: {
         state: "failing",
-        observed_at: 1788333820,
-        expires_at: 1788334120,
-        last_success_at: 1788333000,
-        last_failure: { at: 1788333820, kind: "upstream_http", status: 529 },
+        observed_at: 1788333820000,
+        expires_at: 1788334120000,
+        last_success_at: 1788333000000,
+        last_failure: { at: 1788333820000, kind: "upstream_http", status: 529 },
       },
     },
     {
@@ -85,7 +87,7 @@ const UPSTREAM = {
         incidents: [],
         error: "invalid incidents: missing field `shortlink`",
       },
-      observed: { state: "reachable", observed_at: 1788333570 },
+      observed: { state: "reachable", observed_at: 1788333570000 },
     },
   ],
 };
@@ -99,8 +101,8 @@ function okPayload(overrides: Record<string, unknown> = {}) {
 describe("parseStatusPayload", () => {
   test("passes the gateway's verdicts through untouched", () => {
     const report = okPayload();
-    expect(report.schema_version).toBe(1);
-    expect(report.generated_at).toBe(1788333834);
+    expect(report.schema_version).toBe(2);
+    expect(report.generated_at).toBe(1788333834000);
     expect(report.overall).toEqual({
       severity: "critical",
       service_counts: { ok: 1, warning: 0, critical: 1, unknown: 1 },
@@ -123,12 +125,17 @@ describe("parseStatusPayload", () => {
     expect(anthropic?.official?.incidents[0]?.latest_update).toBe(
       "We are investigating elevated error rates.",
     );
+    // The incident's own stamps are instants like every other one in the
+    // report, so they survive as numbers rather than being dropped by the
+    // string pass that carries its prose.
+    expect(anthropic?.official?.incidents[0]?.created_at).toBe(1788330000000);
+    expect(anthropic?.official?.incidents[0]?.updated_at).toBe(1788333800000);
     expect(anthropic?.observed).toEqual({
       state: "failing",
-      observed_at: 1788333820,
-      expires_at: 1788334120,
-      last_success_at: 1788333000,
-      last_failure: { at: 1788333820, kind: "upstream_http", status: 529 },
+      observed_at: 1788333820000,
+      expires_at: 1788334120000,
+      last_success_at: 1788333000000,
+      last_failure: { at: 1788333820000, kind: "upstream_http", status: 529 },
     });
   });
 

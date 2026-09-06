@@ -195,7 +195,7 @@ export function limitDurationMs(limit: LlmUsageLimit): number | null {
 }
 
 export function windowProgress(key: string, window: LlmUsageWindow, nowMs: number): WindowProgress {
-  const resetAtMs = window.reset === undefined ? null : window.reset * 1000;
+  const resetAtMs = window.reset === undefined ? null : window.reset;
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const durationMs = windowDurationMs(key, window);
   const { elapsed, overPace } = paceOf(durationMs, remainingMs, window.utilization);
@@ -246,8 +246,8 @@ export function severityTone(severity: string): UsageTone {
  * a full bar. */
 export function limitProgress(limit: LlmUsageLimit, nowMs: number): LimitProgress {
   const utilization = limit.percent / 100;
-  const parsed = limit.resets_at === undefined ? Number.NaN : Date.parse(limit.resets_at);
-  const resetAtMs = Number.isNaN(parsed) ? null : parsed;
+  const resetAtMs =
+    limit.resets_at === undefined || !Number.isFinite(limit.resets_at) ? null : limit.resets_at;
   const remainingMs = resetAtMs === null ? null : Math.max(0, resetAtMs - nowMs);
   const durationMs = limitDurationMs(limit);
   const { elapsed, overPace } = paceOf(durationMs, remainingMs, utilization);
@@ -315,7 +315,7 @@ export function sortedWindows(snapshot: LlmUsageSnapshot, nowMs: number): Window
  * observation time or the reading is still fresh. */
 export function snapshotAge(snapshot: LlmUsageSnapshot, nowMs: number): string | null {
   if (snapshot.observed_at === undefined) return null;
-  return formatAge(Math.max(0, nowMs - snapshot.observed_at * 1000));
+  return formatAge(Math.max(0, nowMs - snapshot.observed_at));
 }
 
 /** What to say about a credential whose authentication is not healthy, or null
@@ -353,10 +353,7 @@ export function authNotice(credential: LlmUsageCredential, nowMs: number): AuthN
     // way, so an absent link means the fix is a CLI one — which is what
     // `reason` says.
     loginUrl: reloginRequired ? (auth.login_url ?? null) : null,
-    age:
-      auth.observed_at === undefined
-        ? null
-        : formatAge(Math.max(0, nowMs - auth.observed_at * 1000)),
+    age: auth.observed_at === undefined ? null : formatAge(Math.max(0, nowMs - auth.observed_at)),
   };
 }
 
@@ -383,8 +380,8 @@ export function supportDescription(support: string): string {
 export interface ProbeRecord {
   limits: LlmUsageLimit[];
   probeError?: string;
-  /** `observed_at` of the snapshot the probe produced (epoch seconds), which
-   * is what dates the retained figures. */
+  /** `observed_at` of the snapshot the probe produced (epoch ms), which is
+   * what dates the retained figures. */
   observedAt?: number;
 }
 
@@ -434,6 +431,6 @@ export function probeView(
     retainedAge:
       retained.observedAt === undefined
         ? null
-        : (formatAge(Math.max(0, nowMs - retained.observedAt * 1000)) ?? "直前"),
+        : (formatAge(Math.max(0, nowMs - retained.observedAt)) ?? "直前"),
   };
 }

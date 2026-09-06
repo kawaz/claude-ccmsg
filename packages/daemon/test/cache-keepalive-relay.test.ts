@@ -85,17 +85,15 @@ async function stop(ctx: Ctx): Promise<void> {
 }
 
 function keepalivePayload(over: Record<string, unknown> = {}): Record<string, unknown> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now();
   return {
     type: "cache_keepalive",
     session_id: SID,
     prefix: "484eda9c",
     nonce: "n1",
-    deadline: now + 120,
-    deadline_iso: new Date((now + 120) * 1000).toISOString(),
+    deadline: now + 120_000,
     marker: MARKER,
     ts: now,
-    ts_iso: new Date(now * 1000).toISOString(),
     ...over,
   };
 }
@@ -168,8 +166,7 @@ describe("webhook cache_keepalive → session notify", () => {
       const ctx = await startKeepaliveDaemon();
       try {
         const s = await sessionSubscriber(ctx);
-        const now = Math.floor(Date.now() / 1000);
-        expect(await postEvents(ctx, keepalivePayload({ deadline: now - 1 }))).toBe(204);
+        expect(await postEvents(ctx, keepalivePayload({ deadline: Date.now() - 1000 }))).toBe(204);
         await anchor(ctx, SID, "anchor");
         const { ev, seen } = await s.readEventUntil<NotifyEv>(
           (e) => e.ev === "notify" && e.text === "anchor",
@@ -213,7 +210,7 @@ describe("webhook cache_keepalive → session notify", () => {
       const ctx = await startKeepaliveDaemon();
       try {
         const u = await userSubscriber(ctx);
-        const ts = Math.floor(Date.now() / 1000);
+        const ts = Date.now();
         expect(
           await postEvents(ctx, [
             keepalivePayload(),

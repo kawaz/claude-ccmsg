@@ -123,7 +123,7 @@ import {
   stopAgentsPoller,
   type AgentsPoller,
 } from "./agents.ts";
-import { LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
+import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
 import {
   CACHE_KEEPALIVE_FROM,
   isCacheKeepaliveItem,
@@ -1086,6 +1086,11 @@ export function recordLlmRequests(daemon: Daemon, items: unknown[], log: Logger)
       });
       continue;
     }
+    // Event kinds ccmsg has no use for travel in the same batch (the gateway's
+    // `response` and `keepalive_paused`). Skipping them silently is the point:
+    // they are well-formed events this daemon simply does not consume, and
+    // counting them as dropped would log a line per batch about nothing.
+    if (isIgnoredGatewayItem(item)) continue;
     const info = parseLlmRequestEvent(item);
     if (!info) {
       dropped += 1;

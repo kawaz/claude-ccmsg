@@ -29,9 +29,9 @@ const NOW = Date.parse("2026-07-31T00:00:00Z");
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
 
-/** reset timestamp (epoch seconds) that is `ms` from NOW. */
+/** reset timestamp (epoch ms) that is `ms` from NOW. */
 function resetIn(ms: number): number {
-  return (NOW + ms) / 1000;
+  return NOW + ms;
 }
 
 describe("parseWindowDurationMs", () => {
@@ -208,7 +208,7 @@ describe("authNotice", () => {
       credential({
         status: "relogin_required",
         reason: "run `llm-gateway login --type claude_oauth x`",
-        observed_at: (NOW - 3 * HOUR) / 1000,
+        observed_at: NOW - 3 * HOUR,
         login_url: "https://gw.example/llm-gateway/login/x/start",
       }),
       NOW,
@@ -382,20 +382,18 @@ describe("sortedWindows", () => {
 
 describe("snapshotAge", () => {
   test("reports the age of a lagging observation", () => {
-    expect(snapshotAge({ windows: {}, observed_at: (NOW - 5 * MINUTE) / 1000 }, NOW)).toBe(
-      "5 分前",
-    );
+    expect(snapshotAge({ windows: {}, observed_at: NOW - 5 * MINUTE }, NOW)).toBe("5 分前");
   });
 
   test("stays silent when fresh or when upstream sent no observation time", () => {
-    expect(snapshotAge({ windows: {}, observed_at: NOW / 1000 }, NOW)).toBeNull();
+    expect(snapshotAge({ windows: {}, observed_at: NOW }, NOW)).toBeNull();
     expect(snapshotAge({ windows: {} }, NOW)).toBeNull();
   });
 
   // A clock skew that puts the observation in the future must not produce a
   // negative age or a bogus "0 分前".
   test("treats a future observation as fresh", () => {
-    expect(snapshotAge({ windows: {}, observed_at: (NOW + 10 * MINUTE) / 1000 }, NOW)).toBeNull();
+    expect(snapshotAge({ windows: {}, observed_at: NOW + 10 * MINUTE }, NOW)).toBeNull();
   });
 });
 
@@ -416,9 +414,9 @@ describe("supportDescription", () => {
 
 const DAY = 24 * HOUR;
 
-/** RFC3339 instant `ms` from NOW, the way upstream sends resets_at. */
-function resetsAtIn(ms: number): string {
-  return new Date(NOW + ms).toISOString();
+/** The instant `ms` from NOW, the way upstream sends resets_at. */
+function resetsAtIn(ms: number): number {
+  return NOW + ms;
 }
 
 function limit(over: Partial<LlmUsageLimit> = {}): LlmUsageLimit {
@@ -480,8 +478,11 @@ describe("limitProgress", () => {
     expect(progress.overPace).toBe(false);
   });
 
-  test("an unparseable resets_at degrades like a missing one", () => {
-    expect(limitProgress(limit({ resets_at: "not a date" }), NOW).remainingMs).toBeNull();
+  test("an unusable resets_at degrades like a missing one", () => {
+    // NaN reaches the view whenever the daemon's own guard is bypassed (a
+    // hand-built object in a test, a future field it passes through), and a
+    // countdown drawn from it would render as an empty bar with no reason.
+    expect(limitProgress(limit({ resets_at: Number.NaN }), NOW).remainingMs).toBeNull();
   });
 
   // A stale reading whose reset has already passed must not show negative
@@ -513,7 +514,7 @@ describe("limitProgress", () => {
     const progress = limitProgress(limit({ resets_at: resetsAtIn(2 * DAY) }), NOW);
     expect(progress.resetAtMs).toBe(NOW + 2 * DAY);
     expect(limitProgress(limit(), NOW).resetAtMs).toBeNull();
-    expect(limitProgress(limit({ resets_at: "not a date" }), NOW).resetAtMs).toBeNull();
+    expect(limitProgress(limit({ resets_at: Number.NaN }), NOW).resetAtMs).toBeNull();
   });
 
   test("is_active is carried as a marker, absent meaning not active", () => {
@@ -593,10 +594,8 @@ const LIMITS: LlmUsageLimit[] = [{ kind: "weekly_all", percent: 100, severity: "
 describe("probeRecordOf", () => {
   test("captures limits with the observation time that dates them", () => {
     expect(
-      probeRecordOf(
-        credential({ limits: LIMITS, snapshot: { windows: {}, observed_at: NOW / 1000 } }),
-      ),
-    ).toEqual({ limits: LIMITS, observedAt: NOW / 1000 });
+      probeRecordOf(credential({ limits: LIMITS, snapshot: { windows: {}, observed_at: NOW } })),
+    ).toEqual({ limits: LIMITS, observedAt: NOW });
   });
 
   test("captures a probe failure even with no limits to go with it", () => {
@@ -625,11 +624,7 @@ describe("probeView", () => {
   // The case the whole mechanism exists for: the poll that follows a manual
   // refresh must not blank the limits it just fetched.
   test("a cached response falls back to the last probe, dated", () => {
-    const view = probeView(
-      credential(),
-      { limits: LIMITS, observedAt: (NOW - 20 * MINUTE_MS) / 1000 },
-      NOW,
-    );
+    const view = probeView(credential(), { limits: LIMITS, observedAt: NOW - 20 * MINUTE_MS }, NOW);
     expect(view.limits).toEqual(LIMITS);
     expect(view.retainedAge).toBe("20 分前");
   });
@@ -637,7 +632,7 @@ describe("probeView", () => {
   test("a retained probe failure survives the cached reads after it", () => {
     const view = probeView(
       credential(),
-      { limits: [], probeError: "429", observedAt: (NOW - 2 * 60 * MINUTE_MS) / 1000 },
+      { limits: [], probeError: "429", observedAt: NOW - 2 * 60 * MINUTE_MS },
       NOW,
     );
     expect(view.probeError).toBe("429");
@@ -648,7 +643,7 @@ describe("probeView", () => {
   test("a live response is not dated by the retained record it replaces", () => {
     const view = probeView(
       credential({ limits: LIMITS }),
-      { limits: [], probeError: "old", observedAt: (NOW - 60 * MINUTE_MS) / 1000 },
+      { limits: [], probeError: "old", observedAt: NOW - 60 * MINUTE_MS },
       NOW,
     );
     expect(view.probeError).toBeNull();
@@ -656,9 +651,9 @@ describe("probeView", () => {
   });
 
   test("a probe too recent to date is labelled as just now", () => {
-    expect(
-      probeView(credential(), { limits: LIMITS, observedAt: NOW / 1000 }, NOW).retainedAge,
-    ).toBe("直前");
+    expect(probeView(credential(), { limits: LIMITS, observedAt: NOW }, NOW).retainedAge).toBe(
+      "直前",
+    );
   });
 
   test("nothing probed yet shows nothing, without an age on the emptiness", () => {

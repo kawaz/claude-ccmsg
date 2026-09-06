@@ -17,8 +17,7 @@ import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
 /** The live endpoint's document, trimmed to two credentials on one day —
  * including the "-" bucket the gateway uses for unattributed traffic. */
 const UPSTREAM = {
-  generated_at: 1785552299,
-  generated_at_iso: "2026-08-01T02:44:59Z",
+  generated_at: 1785552299000,
   days: {
     "2026-07-31": {
       credentials: {
@@ -101,8 +100,7 @@ describe("isValidDays", () => {
 describe("parseStatsPayload", () => {
   test("passes through the live endpoint's document", () => {
     const data = unwrap(parseStatsPayload(UPSTREAM));
-    expect(data.generated_at).toBe(1785552299);
-    expect(data.generated_at_iso).toBe("2026-08-01T02:44:59Z");
+    expect(data.generated_at).toBe(1785552299000);
     const day = data.days["2026-07-31"];
     expect(day?.total_usd).toBe(1548.119857);
     expect(Object.keys(day?.credentials ?? {})).toEqual(["-", "claude-kawazzz"]);

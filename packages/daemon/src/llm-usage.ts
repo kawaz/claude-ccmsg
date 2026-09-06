@@ -53,13 +53,11 @@ function parseWindow(value: unknown): LlmUsageWindow | null {
   const status = optionalString(value.status);
   if (utilization === undefined || status === undefined) return null;
   const reset = optionalNumber(value.reset);
-  const resetIso = optionalString(value.reset_iso);
   const windowSeconds = optionalNumber(value.window_seconds);
   return {
     utilization,
     status,
     ...(reset !== undefined ? { reset } : {}),
-    ...(resetIso !== undefined ? { reset_iso: resetIso } : {}),
     ...(windowSeconds !== undefined ? { window_seconds: windowSeconds } : {}),
     ...(value.expired === true ? { expired: true } : {}),
   };
@@ -100,7 +98,6 @@ function parseAuth(value: unknown, base: string | undefined): LlmUsageAuth | und
   if (status === undefined) return undefined;
   const reason = optionalString(value.reason);
   const observedAt = optionalNumber(value.observed_at);
-  const observedAtIso = optionalString(value.observed_at_iso);
   const loginPath = optionalString(value.login_path);
   const loginUrl =
     loginPath === undefined || base === undefined ? undefined : resolveLoginUrl(loginPath, base);
@@ -108,7 +105,6 @@ function parseAuth(value: unknown, base: string | undefined): LlmUsageAuth | und
     status,
     ...(reason !== undefined ? { reason } : {}),
     ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
-    ...(observedAtIso !== undefined ? { observed_at_iso: observedAtIso } : {}),
     ...(loginUrl !== undefined ? { login_url: loginUrl } : {}),
   };
 }
@@ -125,16 +121,14 @@ function parseSnapshot(value: unknown): LlmUsageSnapshot | undefined {
   if (!isRecord(value)) return undefined;
   const windows: Record<string, LlmUsageWindow> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (key === "observed_at" || key === "observed_at_iso" || key === "overage") continue;
+    if (key === "observed_at" || key === "overage") continue;
     const window = parseWindow(entry);
     if (window) windows[key] = window;
   }
   const observedAt = optionalNumber(value.observed_at);
-  const observedAtIso = optionalString(value.observed_at_iso);
   const overage = parseOverage(value.overage);
   return {
     ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
-    ...(observedAtIso !== undefined ? { observed_at_iso: observedAtIso } : {}),
     ...(overage ? { overage } : {}),
     windows,
   };
@@ -149,7 +143,7 @@ function parseLimit(value: unknown): LlmUsageLimit | null {
   const kind = optionalString(value.kind);
   const percent = optionalNumber(value.percent);
   if (kind === undefined || percent === undefined) return null;
-  const resetsAt = optionalString(value.resets_at);
+  const resetsAt = optionalNumber(value.resets_at);
   const model = optionalString(value.model);
   const windowSeconds = optionalNumber(value.window_seconds);
   return {
@@ -214,13 +208,11 @@ export function parseUsagePayload(parsed: unknown, base?: string): LlmUsageResul
     if (credential) credentials.push(credential);
   }
   const generatedAt = optionalNumber(parsed.generated_at);
-  const generatedAtIso = optionalString(parsed.generated_at_iso);
   return {
     ok: true,
     data: {
       ok: true,
       ...(generatedAt !== undefined ? { generated_at: generatedAt } : {}),
-      ...(generatedAtIso !== undefined ? { generated_at_iso: generatedAtIso } : {}),
       credentials,
     },
   };

@@ -82,10 +82,10 @@ describe("severity vocabulary", () => {
 
 describe("formatStatusAge", () => {
   test("counts in the units an outage is read in", () => {
-    expect(formatStatusAge(NOW / 1000 - 18, NOW)).toBe("18 秒前");
-    expect(formatStatusAge(NOW / 1000 - 90, NOW)).toBe("1 分前");
-    expect(formatStatusAge(NOW / 1000 - 7200, NOW)).toBe("2 時間前");
-    expect(formatStatusAge(NOW / 1000 - 172_800, NOW)).toBe("2 日前");
+    expect(formatStatusAge(NOW - 18_000, NOW)).toBe("18 秒前");
+    expect(formatStatusAge(NOW - 90_000, NOW)).toBe("1 分前");
+    expect(formatStatusAge(NOW - 7_200_000, NOW)).toBe("2 時間前");
+    expect(formatStatusAge(NOW - 172_800_000, NOW)).toBe("2 日前");
   });
 
   // The column stays even with nothing in it, so a service with no reading
@@ -98,7 +98,7 @@ describe("formatStatusAge", () => {
   // A gateway a few seconds ahead of this browser must not read as "in the
   // future" or as a negative age.
   test("clamps a reading from a clock slightly ahead of ours", () => {
-    expect(formatStatusAge(NOW / 1000 + 30, NOW)).toBe("0 秒前");
+    expect(formatStatusAge(NOW + 30_000, NOW)).toBe("0 秒前");
   });
 });
 
@@ -112,15 +112,15 @@ describe("serviceRows", () => {
             official: {
               state: "operational",
               source_url: "https://status.example/",
-              observed_at: NOW / 1000 - 20,
+              observed_at: NOW - 20_000,
               stale: true,
               components: [],
               incidents: [{ name: "Elevated errors" }],
             },
             observed: {
               state: "failing",
-              observed_at: NOW / 1000 - 5,
-              last_failure: { at: NOW / 1000 - 5, kind: "upstream_http", status: 529 },
+              observed_at: NOW - 5_000,
+              last_failure: { at: NOW - 5_000, kind: "upstream_http", status: 529 },
             },
           }),
         ],

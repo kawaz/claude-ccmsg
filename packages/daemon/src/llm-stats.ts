@@ -16,7 +16,6 @@ import {
   fetchGatewayJson,
   isRecord,
   optionalNumber,
-  optionalString,
   productionGatewayDeps,
   withQueryParam,
   type LlmGatewayDeps,
@@ -108,13 +107,11 @@ export function parseStatsPayload(parsed: unknown): LlmStatsResult {
     if (day) days[date] = day;
   }
   const generatedAt = optionalNumber(parsed.generated_at);
-  const generatedAtIso = optionalString(parsed.generated_at_iso);
   return {
     ok: true,
     data: {
       ok: true,
       ...(generatedAt !== undefined ? { generated_at: generatedAt } : {}),
-      ...(generatedAtIso !== undefined ? { generated_at_iso: generatedAtIso } : {}),
       days,
     },
   };

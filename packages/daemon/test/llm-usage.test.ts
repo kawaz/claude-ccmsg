@@ -11,8 +11,7 @@ import type { LlmGatewayDeps } from "../src/llm-gateway.ts";
 
 /** The live endpoint's document, trimmed to one credential per support kind. */
 const UPSTREAM = {
-  generated_at: 1785450000,
-  generated_at_iso: "2026-07-31T00:00:00Z",
+  generated_at: 1785450000000,
   credentials: [
     { name: "bedrock", type: "claude_bedrock", support: "not_applicable" },
     {
@@ -20,19 +19,16 @@ const UPSTREAM = {
       type: "claude_oauth",
       support: "observed",
       snapshot: {
-        observed_at: 1785449700,
-        observed_at_iso: "2026-07-30T23:55:00Z",
+        observed_at: 1785449700000,
         "5h": {
           utilization: 0.13,
           status: "allowed",
-          reset: 1785468600,
-          reset_iso: "2026-07-31T05:10:00Z",
+          reset: 1785468600000,
         },
         "7d": {
           utilization: 0.87,
           status: "allowed_warning",
-          reset: 1785640000,
-          reset_iso: "2026-08-02T04:46:40Z",
+          reset: 1785640000000,
         },
         overage: { status: "rejected", disabled_reason: "out_of_credits" },
       },
@@ -55,8 +51,7 @@ function unwrap(result: ReturnType<typeof parseUsagePayload>) {
 describe("parseUsagePayload", () => {
   test("passes through the live endpoint's document", () => {
     const data = unwrap(parseUsagePayload(UPSTREAM));
-    expect(data.generated_at).toBe(1785450000);
-    expect(data.generated_at_iso).toBe("2026-07-31T00:00:00Z");
+    expect(data.generated_at).toBe(1785450000000);
     expect(data.credentials.map((c) => c.name)).toEqual(["bedrock", "claude-kawazzz", "cpa"]);
     expect(data.credentials[0]).toEqual({
       name: "bedrock",
@@ -71,10 +66,9 @@ describe("parseUsagePayload", () => {
     expect(snapshot?.windows["5h"]).toEqual({
       utilization: 0.13,
       status: "allowed",
-      reset: 1785468600,
-      reset_iso: "2026-07-31T05:10:00Z",
+      reset: 1785468600000,
     });
-    expect(snapshot?.observed_at).toBe(1785449700);
+    expect(snapshot?.observed_at).toBe(1785449700000);
     expect(snapshot?.overage).toEqual({ status: "rejected", disabled_reason: "out_of_credits" });
   });
 
@@ -165,14 +159,12 @@ describe("parseUsagePayload", () => {
         withAuth({
           status: "relogin_required",
           reason: "run `llm-gateway login --type claude_oauth x`",
-          observed_at: 1785449700,
-          observed_at_iso: "2026-07-30T23:55:00Z",
+          observed_at: 1785449700000,
         }),
       ).toEqual({
         status: "relogin_required",
         reason: "run `llm-gateway login --type claude_oauth x`",
-        observed_at: 1785449700,
-        observed_at_iso: "2026-07-30T23:55:00Z",
+        observed_at: 1785449700000,
       });
     });
 
@@ -361,14 +353,14 @@ describe("parseUsagePayload limits", () => {
           kind: "weekly_all",
           percent: 100.0,
           severity: "critical",
-          resets_at: "2026-08-02T08:59:59.688201+00:00",
+          resets_at: 1785661199688,
           is_active: true,
         },
         {
           kind: "weekly_scoped",
           percent: 80.0,
           severity: "warning",
-          resets_at: "2026-08-02T08:59:59.688429+00:00",
+          resets_at: 1785661199688,
           model: "Fable",
           is_active: false,
         },
@@ -380,14 +372,14 @@ describe("parseUsagePayload limits", () => {
         kind: "weekly_all",
         percent: 100,
         severity: "critical",
-        resets_at: "2026-08-02T08:59:59.688201+00:00",
+        resets_at: 1785661199688,
         is_active: true,
       },
       {
         kind: "weekly_scoped",
         percent: 80,
         severity: "warning",
-        resets_at: "2026-08-02T08:59:59.688429+00:00",
+        resets_at: 1785661199688,
         model: "Fable",
         is_active: false,
       },
@@ -434,7 +426,7 @@ describe("parseUsagePayload limits", () => {
   test("probe_error is carried alongside whatever reading survives", () => {
     const credential = withCredential({
       probe_error: "429 from upstream",
-      snapshot: { observed_at: 1785449700, "5h": { utilization: 0.2, status: "allowed" } },
+      snapshot: { observed_at: 1785449700000, "5h": { utilization: 0.2, status: "allowed" } },
     });
     expect(credential?.probe_error).toBe("429 from upstream");
     expect(credential?.snapshot?.windows["5h"]?.utilization).toBe(0.2);

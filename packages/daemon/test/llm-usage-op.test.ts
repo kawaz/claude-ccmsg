@@ -8,7 +8,7 @@ import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
 
 const GATEWAY_PORT = 18921;
 const USAGE_BODY = {
-  generated_at: 1785450000,
+  generated_at: 1785450000000,
   credentials: [
     { name: "bedrock", type: "claude_bedrock", support: "not_applicable" },
     {
@@ -16,8 +16,8 @@ const USAGE_BODY = {
       type: "claude_oauth",
       support: "observed",
       snapshot: {
-        observed_at: 1785449700,
-        "5h": { utilization: 0.13, status: "allowed", reset: 1785468600 },
+        observed_at: 1785449700000,
+        "5h": { utilization: 0.13, status: "allowed", reset: 1785468600000 },
       },
     },
   ],
@@ -101,7 +101,7 @@ describe("llm_usage op", () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
     const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q1" }, 1);
     expect(reply?.ok).toBe(true);
-    expect(reply?.generated_at).toBe(1785450000);
+    expect(reply?.generated_at).toBe(1785450000000);
     expect(reply?.credentials).toHaveLength(2);
     expect(reply?.credentials[1].snapshot.windows["5h"].utilization).toBe(0.13);
   });
