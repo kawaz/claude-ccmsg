@@ -51,6 +51,54 @@
 - [ ] b: フロートパネルを残し、中を 3 分類で区切る
 - [ ] c: 別案 (チャットで)
 
+### WA-Q1: webui 状態層の選定 (r273m92「signal で良さそう」の確定)
+
+土台: [docs/design/webui-architecture.md](design/webui-architecture.md) (Draft)。再描画の根本は
+「store が 1 値、購読が selector 無し」= どの更新でも全 component が再レンダーされること。
+必要なのは **独立に変わる単位ごとに購読できる仕組み**。
+
+- [ ] a: `@preact/signals` (統括推し)。購読粒度が signal 単位で、テキスト/属性は component の
+  再レンダー無しで更新される。依存 +1 は preact と同じ bun auto-install 経路。弱点: `signal.value`
+  はどこからでも書けるので、変更経路の規律 (WA-Q3) は規約とレビューで守ることになる
+- [ ] b: 自作 store 継続 + selector 付き購読 (`useStore(s => s.peers)`)。reducer は残る。弱点:
+  再レンダー単位は component のまま、selector の書き忘れが今の問題を再生産する
+- [ ] c: 外部 store (zustand / nanostores)。preact との結合が薄く a に対する利点が無い (不採用推し)
+
+### WA-Q2: signal の単位 (要素単位をどこまで)
+
+Draft §3 の表は「群単位」(接続 / 能力 / 一覧 / room / 現在地 / …)。争点は Map を持つものを
+**要素ごとの signal** (`Map<sid, Signal<tree>>`) にする範囲。
+
+- [ ] a: `sessionTrees` / `sessionStatuses` / `rooms` を要素単位 (統括推し)。1 セッションの
+  transcript 更新が他セッションの Timeline を触らない。一覧 (`peers` / `agents`) は並び替えが
+  配列全体の値なので群単位のまま
+- [ ] b: 一覧の行も sid 単位にする (行の内容更新と並び替えを分離)。効果は大きいが構造が二重になる
+- [ ] c: まず群単位のみで始め、要素単位は移行段階 3 で判断 (WA-Q4 と連動)
+
+### WA-Q3: DR-0005 §1 (action + reducer) の読み替え
+
+一次資料 (vision statement) の原文は「各種アクションやメッセージが形式化してリデューサーで処理」。
+統括の解釈: 価値は **変更経路が一つで、サーバイベントと UI 操作が同じ形に乗ること**。
+型付き action + 単一 reducer という器は「状態が 1 値」を強制し、今回の粒度問題の原因になった。
+
+- [ ] a: 「形式化 = state module に集約した更新関数 (関数名が action 名、引数が payload)」と
+  読み替え、Transport と Intents だけがそれを呼ぶ。reducer の switch は消える。DR-0005 §1 を
+  新 DR で supersede (統括推し)
+- [ ] b: `dispatch({type, …})` の形を signals の上で維持 (action の union 型が一覧として残る)。
+  弱点: 1 つの switch が「1 値を返す」癖を再導入しやすい
+- [ ] c: 原文の「リデューサー」を字義通り要件とみなす (a/b とも不可、再検討)
+
+### WA-Q4: 移行順と「再描画」の当面の手当て
+
+r273m97「今は再描画を何とかして」への統括案: **Draft §8 の段階 1 (購読層の signal 化) 自体が
+再描画の根本対処**なので、並び替え throttle 等の場当たりは入れず段階 1 を最初に出す。
+再接続時の全状態作り直し (§7) は段階 1 に含める。Timeline 分割 (4900 行) は再描画に直結しない
+ので後段。
+
+- [ ] a: 統括案 (段階 1 → 2 → 3 → Timeline 分割 → layout/persistence 分離)
+- [ ] b: Timeline 分割を先に (最大ファイルを先に割ってから状態層を入れ替える)
+- [ ] c: 段階 1 の前に小手当て (一覧の並び替え throttle / 選択行の固定) を 1 リリース出す
+
 ## 確認待ち
 
 ### SB-C1: v0.150.0 のスマホ実機確認
