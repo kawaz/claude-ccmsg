@@ -58,20 +58,20 @@ describe("reactToDaemonVersion", () => {
   // ことがこの機能の要。
   test("daemon が新しくても hello が通っていれば遷移まで待つ", () => {
     const h = harness();
-    expect(reactToDaemonVersion("0.137.0", h.env)).toBe("on-navigation");
+    expect(reactToDaemonVersion("0.137.0", h.env)).toBe("manual");
     expect(h.reloads).toBe(0);
     // 記録は実際にリロードする側 (遷移フック / ボタン) が付ける。予約の段階で
     // 付けると、1 度も読み直さないまま「もう試した」扱いになる。
     expect(h.session.size).toBe(0);
   });
 
-  // hello 拒否 = 以降の全 op が失敗する = 画面が更新されないまま沈黙する。
-  // 待たせても得るものがないので、この分岐だけ即リロードを残す。
-  test("hello 自体が拒否されていれば即リロードし、そのことを記録する", () => {
+  // hello 拒否でも自動では読み直さない (kawaz r273m81)。壊れたタブでも
+  // 打ち込み中の本文を取り出す時間を奪わない。
+  test("hello 自体が拒否されていても自動リロードはしない", () => {
     const h = harness();
-    expect(reactToDaemonVersion("0.137.0", h.env, false)).toBe("reloaded");
-    expect(h.reloads).toBe(1);
-    expect(h.session.get("k")).toBe("0.137.0");
+    expect(reactToDaemonVersion("0.137.0", h.env, false)).toBe("manual");
+    expect(h.reloads).toBe(0);
+    expect(h.session.size).toBe(0);
   });
 
   // リロードしても bundle が入れ替わらない (中間キャッシュ等) 場合にループへ
@@ -90,7 +90,7 @@ describe("reactToDaemonVersion", () => {
   test("さらに新しい daemon version なら記録があっても再び予約する", () => {
     const h = harness();
     h.session.set("k", "0.137.0");
-    expect(reactToDaemonVersion("0.138.0", h.env)).toBe("on-navigation");
+    expect(reactToDaemonVersion("0.138.0", h.env)).toBe("manual");
   });
 
   // 予約はあくまで予約で、読み直すかどうかは遷移の瞬間に navigation.ts が
@@ -98,7 +98,7 @@ describe("reactToDaemonVersion", () => {
   // なった後も二度と追従しないタブができる。
   test("検出時に書きかけがあっても予約はする (遷移時に改めて見る)", () => {
     const h = harness({ hasUnsentInput: () => true });
-    expect(reactToDaemonVersion("0.137.0", h.env)).toBe("on-navigation");
+    expect(reactToDaemonVersion("0.137.0", h.env)).toBe("manual");
     expect(h.reloads).toBe(0);
   });
 
@@ -182,20 +182,15 @@ describe("reactToHandshakeVersion", () => {
   test("hello が成功していれば ping を打たずにその version で判定する", async () => {
     const h = harness();
     const res = await reactToHandshakeVersion({ ok: true, version: "0.137.0" }, never, h.env);
-    expect(res).toEqual({ outcome: "on-navigation", daemonVersion: "0.137.0" });
+    expect(res).toEqual({ outcome: "manual", daemonVersion: "0.137.0" });
     expect(h.reloads).toBe(0);
   });
 
-  test("hello 拒否 + ping が新しい version を返したら 1 度だけリロードする", async () => {
+  test("hello 拒否 + ping が新しい version を返しても自動リロードはしない", async () => {
     const h = harness();
     const res = await reactToHandshakeVersion(refused, async () => "0.137.0", h.env);
-    expect(res).toEqual({ outcome: "reloaded", daemonVersion: "0.137.0" });
-    expect(h.reloads).toBe(1);
-
-    // 2 度目 (再接続で同じ拒否を踏む) はリロードループに落ちない。
-    const again = await reactToHandshakeVersion(refused, async () => "0.137.0", h.env);
-    expect(again?.outcome).toBe("manual");
-    expect(h.reloads).toBe(1);
+    expect(res).toEqual({ outcome: "manual", daemonVersion: "0.137.0" });
+    expect(h.reloads).toBe(0);
   });
 
   test("hello 拒否 + ping も版数を返せなければ何もしない", async () => {
@@ -210,7 +205,7 @@ describe("reactToHandshakeVersion", () => {
     const res = await reactToHandshakeVersion({ ok: true }, async () => "0.137.0", h.env);
     expect(res?.daemonVersion).toBe("0.137.0");
     // hello 自体は通っているので即リロードはしない。
-    expect(res?.outcome).toBe("on-navigation");
+    expect(res?.outcome).toBe("manual");
     expect(h.reloads).toBe(0);
   });
 

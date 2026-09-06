@@ -1846,7 +1846,7 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer, reloadOnNavigation: true },
+      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
     });
   });
 
@@ -1872,7 +1872,7 @@ describe("createWsClient daemon version guard", () => {
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer, reloadOnNavigation: true },
+      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
     });
   });
 });

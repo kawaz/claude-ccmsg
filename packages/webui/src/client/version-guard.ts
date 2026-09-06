@@ -88,25 +88,12 @@ export function reactToDaemonVersion(
   if (diff === 0) return "match";
   if (diff < 0) return "bundle-newer";
 
-  // 2 回目の不一致 = リロードしても bundle が入れ替わらなかった (中間キャッシュ
-  // / Service Worker / daemon が古い build を掴んだまま等)。ここで自動の
-  // リロードを再び予約するとリロードループ (遷移するたびに読み直して、なお
-  // 古いまま) になるので、以後は導線だけ出してユーザの操作を待つ。
-  if (env.readReloadedVersion() === daemonVersion) return "manual";
-
-  if (!handshakeOk) {
-    // 書きかけを抱えたタブを黙って捨てない。壊れたタブでも、打ち込み中の
-    // 本文をユーザが取り出す時間は残す (導線のボタンから自分で読み直せる)。
-    if (env.hasUnsentInput()) return "manual";
-    env.writeReloadedVersion(daemonVersion);
-    env.reload();
-    return "reloaded";
-  }
-  // 予約の段階では書きかけの有無を見ない。実際に読み直すかは遷移の瞬間に
-  // navigation.ts が hasUnsentInput() を見て決めるので、検出時にたまたま
-  // 書きかけがあっただけで以後ずっと予約なしになる (送信して空になっても
-  // 追従しない) のを避ける。
-  return "on-navigation";
+  // 自動リロードはしない (kawaz r273m81)。不一致はリロードボタンの色と title で
+  // 知らせるだけで、読み直す瞬間はユーザが決める。hello が拒否された (この
+  // bundle は daemon と会話できない) 場合も同じ — 壊れたタブでも打ち込み中の
+  // 本文を取り出す時間を奪わない。
+  void handshakeOk;
+  return "manual";
 }
 
 /** Run the guard against a handshake that may not have completed.
