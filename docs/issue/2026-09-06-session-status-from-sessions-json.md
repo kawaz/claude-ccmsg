@@ -60,6 +60,11 @@ request started / response completed を送るようになってから。それ�
 
 gateway 側への起票先 (llm-gateway の docs/issue または r276 経由) は kawaz 裁定待ち。
 
+追記: kawaz r278m22 (2026-09-06) — llm-gateway 側でリングタイマー用の通知を改修中で、
+gateway 目線の Idle 通知も提供される見込み (r276 経由で連絡が来る)。Idle は状態として
+導出するが、UI での活用は当面「行のアイコン表示」に留める (セクション分け・並びには
+使わない、r278m21 の「ソート順でよく別なことはしない」と整合)。
+
 ## TODO
 
 関連: docs/QUESTIONS.md の SS-Q1 / SS-Q2 (セクション再設計、r278 の議論)。
