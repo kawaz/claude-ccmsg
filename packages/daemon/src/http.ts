@@ -295,13 +295,18 @@ export function startHttpListener(
       }
       // Page loads are logged so a webui reload can be told apart from an
       // in-page re-render from the daemon side alone (a reload shows up as
-      // ws close -> GET / -> hello; a re-render leaves no trace here).
-      if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-        daemon.log.info(
-          `http GET ${url.pathname} (webui page load) from ${remote?.address ?? "?"}`,
-        );
+      // ws close -> GET <page path> -> hello; a re-render leaves no trace here).
+      // Any path the SPA fallback answers with HTML counts (deep links like
+      // /s/<sid>/timeline are what open tabs actually reload).
+      if (fallback) {
+        const res = await fallback(req);
+        if (req.method === "GET" && res.headers.get("content-type")?.startsWith("text/html")) {
+          daemon.log.info(
+            `http GET ${url.pathname} (webui page load) from ${remote?.address ?? "?"}`,
+          );
+        }
+        return res;
       }
-      if (fallback) return fallback(req);
       return new Response("Not Found", { status: 404 });
     },
     websocket: {
