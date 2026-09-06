@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createWsClient } from "../src/client/ws.ts";
 import { initialState, type Action } from "../src/client/store.ts";
 import { VERSION } from "@ccmsg/protocol";
-import { registerUnsentInput, resetUnsentInput } from "../src/client/unsent-input.ts";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -107,8 +106,8 @@ let storage: Record<string, string> = {};
 const originalGlobals: Record<string, unknown> = {};
 const MOCKED_GLOBALS = ["WebSocket", "location", "localStorage", "sessionStorage"] as const;
 
-// version-guard の自動リロード観測用。location.reload() は実行せずここを
-// 数えるだけにして、テストプロセスが実ページ遷移を試みないようにする。
+// location.reload() は実行せずここを数えるだけにして、テストプロセスが実
+// ページ遷移を試みないようにする (version-guard がページを捨てないことの確認)。
 let reloads = 0;
 let sessionStore: Record<string, string> = {};
 
@@ -1825,10 +1824,6 @@ describe("createWsClient daemon version guard", () => {
     return `${major + 1}.0.0`;
   }
 
-  afterEach(() => {
-    resetUnsentInput();
-  });
-
   test("bundle と同じ version の daemon にはリロードも通知もしない", async () => {
     const actions: Action[] = [];
     await helloWith(VERSION, (a) => actions.push(a));
@@ -1839,40 +1834,15 @@ describe("createWsClient daemon version guard", () => {
     });
   });
 
-  test("daemon の方が新しければ、その場では読み直さず次の遷移に予約する", async () => {
+  // 読み直す瞬間はユーザが決める。検出しても reload は 0 回で、導線だけが立つ。
+  test("daemon の方が新しければ読み直さず導線だけ出す", async () => {
     const newer = newerThanBundle();
     const actions: Action[] = [];
     await helloWith(newer, (a) => actions.push(a));
     expect(reloads).toBe(0);
     expect(actions).toContainEqual({
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
-    });
-  });
-
-  test("同じ daemon version でリロード済みのタブは予約せず導線だけ出す", async () => {
-    const newer = newerThanBundle();
-    sessionStore["ccmsg:reloaded-for-daemon-version"] = newer;
-    const actions: Action[] = [];
-    await helloWith(newer, (a) => actions.push(a));
-    expect(reloads).toBe(0);
-    expect(actions).toContainEqual({
-      type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
-    });
-  });
-
-  // hello が通っている限り、検出時に書きかけがあっても予約は立てる。実際に
-  // 読み直すかは遷移の瞬間に navigation.ts が改めて判断する。
-  test("書きかけを抱えたタブでも予約は立つ", async () => {
-    const newer = newerThanBundle();
-    registerUnsentInput();
-    const actions: Action[] = [];
-    await helloWith(newer, (a) => actions.push(a));
-    expect(reloads).toBe(0);
-    expect(actions).toContainEqual({
-      type: "version-mismatch/detected",
-      mismatch: { daemonVersion: newer, reloadOnNavigation: false },
+      mismatch: { daemonVersion: newer },
     });
   });
 });

@@ -2215,11 +2215,11 @@ describe("fork availability", () => {
   });
 });
 
-// 再接続のたびに同じ不一致が再検出される。予約と導線は立ちっぱなしでよいので、
+// 再接続のたびに同じ不一致が再検出される。導線は立ちっぱなしでよいので、
 // 同じ中身なら state 自体を据え置いて再描画を起こさない。
 describe("version-mismatch/detected", () => {
   test("同じ不一致を再検出しても state は変わらない", () => {
-    const mismatch = { daemonVersion: "0.137.0", reloadOnNavigation: true };
+    const mismatch = { daemonVersion: "0.137.0" };
     const first = reducer(initialState(), { type: "version-mismatch/detected", mismatch });
     expect(first.versionMismatch).toEqual(mismatch);
     expect(reducer(first, { type: "version-mismatch/detected", mismatch: { ...mismatch } })).toBe(
@@ -2230,11 +2230,11 @@ describe("version-mismatch/detected", () => {
   test("version が上がれば差し替わり、解消すれば消える", () => {
     const first = reducer(initialState(), {
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: "0.137.0", reloadOnNavigation: true },
+      mismatch: { daemonVersion: "0.137.0" },
     });
     const next = reducer(first, {
       type: "version-mismatch/detected",
-      mismatch: { daemonVersion: "0.138.0", reloadOnNavigation: true },
+      mismatch: { daemonVersion: "0.138.0" },
     });
     expect(next.versionMismatch?.daemonVersion).toBe("0.138.0");
     expect(

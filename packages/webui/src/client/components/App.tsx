@@ -15,7 +15,7 @@ import { ServiceStatusBadge } from "./ServiceStatus.tsx";
 import { CatalogView } from "./CatalogView.tsx";
 import { parseUrl, usageHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
-import { markReloadedForVersion, reloadButtonTitle } from "../version-guard.ts";
+import { reloadButtonTitle } from "../version-guard.ts";
 import { useEffect, useRef } from "preact/hooks";
 import { writeSessionStorage } from "../storage.ts";
 import { layoutScrollsX, useLayoutScrollsX } from "../layout-mode.ts";
@@ -296,9 +296,6 @@ export function App() {
           class={versionMismatch !== null ? "app-reload-update" : undefined}
           title={reloadButtonTitle(versionMismatch)}
           onClick={() => {
-            // 押した = このタブはこの version のために読み直した。記録しないと
-            // 入れ替わらなかった時に同じ判定が何度でも成立する。
-            if (versionMismatch !== null) markReloadedForVersion(versionMismatch.daemonVersion);
             window.location.reload();
           }}
         >

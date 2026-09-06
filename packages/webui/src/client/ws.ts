@@ -77,8 +77,7 @@ import type {
 import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
-import { hasUnsentInput } from "./unsent-input.ts";
-import { browserVersionGuardEnv, mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
+import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
@@ -537,7 +536,7 @@ export function createWsClient(
           const probe = await send<PingResponse>({ op: "ping" }).catch(() => null);
           return probe?.ok ? probe.version : null;
         },
-        browserVersionGuardEnv(VERSION, hasUnsentInput),
+        VERSION,
       );
       if (guard) {
         dispatch({

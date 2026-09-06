@@ -1076,15 +1076,10 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "version-mismatch/detected": {
       // 再接続のたびに同じ不一致が再検出される。中身が同じなら state を
-      // 据え置いて、立っている予約と導線をそのまま使い回す。
+      // 据え置いて、立っている導線をそのまま使い回す。
       const next = action.mismatch;
       const current = state.versionMismatch;
-      if (
-        next?.daemonVersion === current?.daemonVersion &&
-        next?.reloadOnNavigation === current?.reloadOnNavigation
-      ) {
-        return state;
-      }
+      if (next?.daemonVersion === current?.daemonVersion) return state;
       return { ...state, versionMismatch: next };
     }
     case "translator/availability":
