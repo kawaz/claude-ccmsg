@@ -8902,37 +8902,64 @@ button.usage-reset:hover {
  * ので、位置指定はここでは構造の歪みにあたらない。 */
 .cache-ring-svg {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  /* 既定は枠のちょうど上。負の inset で枠の外へ広げると外接する輪になる
+   * (absolute なので、はみ出しても要素が占める箱は変わらない)。 */
+  inset: calc(-1 * var(--cache-ring-inset, 0px));
+  /* svg は置換要素なので、寸法は inset 任せにできず自分で持つ (auto だと
+   * 内在サイズになって潰れる)。 */
+  width: calc(100% + 2 * var(--cache-ring-inset, 0px));
+  height: calc(100% + 2 * var(--cache-ring-inset, 0px));
   pointer-events: none;
+  /* 矩形の周長を CSS だけで組めるよう、この 1 枚をサイズコンテナにする
+   * (子の rect が 100cqw / 100cqh で親の実寸を読む)。寸法は inset: 0 で
+   * 外から決まるので、size 型の包含で内容の寸法を切っても影響しない。 */
+  container-type: size;
 }
 
-/* 線を 1 本の破線にして、その「消えている先頭」を進行で伸ばす。dasharray の
- * 1 は pathLength で正規化した周長そのもの = 全周 1 本の線。offset を負に
- * するのは、始点側から消したいため (正だと終点側から消える)。 */
 .cache-ring-shape {
   fill: none;
   stroke: var(--cache-ring);
   stroke-width: var(--cache-ring-width, 1px);
-  stroke-dasharray: 1px 1px;
-  stroke-dashoffset: calc(var(--cache-ring-progress) * -1px);
 }
 
-/* 角丸の矩形は要素の枠のちょうど上に来るよう、線の太さの半分だけ内側に置く
- * (SVG 2 のジオメトリプロパティ)。 */
+/* 角丸の矩形は svg の枠のちょうど上に来るよう、線の太さの半分だけ内側に置く
+ * (SVG 2 のジオメトリプロパティ)。svg 自身が周長計算のコンテナなので、外接
+ * させて svg が広がった分は 100cqw / 100cqh がそのまま拾う。 */
 rect.cache-ring-shape {
+  /* 線の中心が描く角丸の半径。要素の角丸と同心にするため、線が枠から離れた
+   * 距離を足す (外接させないときは --cache-ring-inset が 0)。 */
+  --cache-ring-r: calc(
+    var(--cache-ring-radius, 0px) + var(--cache-ring-inset, 0px) - var(--cache-ring-width, 1px) / 2
+  );
+
   x: calc(var(--cache-ring-width, 1px) / 2);
   y: calc(var(--cache-ring-width, 1px) / 2);
-  width: calc(100% - var(--cache-ring-width, 1px));
-  height: calc(100% - var(--cache-ring-width, 1px));
-  rx: var(--cache-ring-radius, 0);
+  width: calc(100cqw - var(--cache-ring-width, 1px));
+  height: calc(100cqh - var(--cache-ring-width, 1px));
+  rx: var(--cache-ring-r);
+
+  /* 周長 = 直線 4 辺 (角丸に食われる 2r ずつを引く) + 四隅の円弧 (合わせて円
+   * 1 周)。線は svg の枠の半分内側にあるので、辺の長さは太さの分だけ短い。 */
+  --cache-ring-length: calc(
+    2 * (100cqw - var(--cache-ring-width, 1px)) + 2 * (100cqh - var(--cache-ring-width, 1px)) - 8 *
+      var(--cache-ring-r) + 6.2831853 * var(--cache-ring-r)
+  );
+  /* パスの始点 (上辺の左端 = 角丸の終わり) から上辺の中央までの距離。 */
+  --cache-ring-start: calc(50cqw - var(--cache-ring-width, 1px) / 2 - var(--cache-ring-r));
+  /* 残っている線 1 本と、消えた分ちょうどの隙間。合計が周長なので、閉じた輪の
+   * 上で模様が 1 周してぴったり繋がる (継ぎ目が出ない)。 */
+  stroke-dasharray:
+    calc((1 - var(--cache-ring-progress)) * var(--cache-ring-length)),
+    calc(var(--cache-ring-progress) * var(--cache-ring-length));
+  /* 線の終端を上辺の中央に固定する = 隙間の先頭が 0 時に来る。以後は進行に
+   * つれて隙間が時計回りに伸びる。 */
+  stroke-dashoffset: calc(
+    (1 - var(--cache-ring-progress)) * var(--cache-ring-length) - var(--cache-ring-start)
+  );
 }
 
-/* 円のパスは 3 時から始まるので、0 時起点で欠けるよう 90 度戻す。矩形の方は
- * パスの始点が上辺の左端 (角丸の終わり) で、そこから時計回りに欠ける — 角丸の
- * 矩形に「0 時」に当たるパスの継ぎ目は無く、上辺の中央から始めるには寸法を
- * 測ってパスを組む必要がある (この設計が避けている測定そのもの)。 */
+/* 円は 1 本の閉じた線で、パスの始点が 3 時なので 0 時起点には 90 度戻せばよい
+ * (周長は pathLength で 1 に正規化してあり、進行をそのまま offset に入れる)。 */
 circle.cache-ring-shape {
   cx: 50%;
   cy: 50%;
@@ -8940,6 +8967,8 @@ circle.cache-ring-shape {
   transform: rotate(-90deg);
   transform-origin: center;
   transform-box: fill-box;
+  stroke-dasharray: 1px 1px;
+  stroke-dashoffset: calc(var(--cache-ring-progress) * -1px);
 }
 
 /* SESSIONS 行のアイコン (kawaz r99m29: 行に要素は足さず、アイコンの枠で
@@ -8951,6 +8980,9 @@ circle.cache-ring-shape {
   flex: 0 0 auto;
   /* Avatar 自身の角丸に合わせる (avatar.tsx が 3px)。 */
   --cache-ring-radius: 3px;
+  /* アイコンの外に 1px 空けて外接させる (線 1px + 隙間 1px)。枠の上に重ねると
+   * アイコンの角がリングの丸みからはみ出て見える。 */
+  --cache-ring-inset: 2px;
 }
 
 /* FAB は本体が accent 色の円なので、線は少し太くして地の上で読めるようにする

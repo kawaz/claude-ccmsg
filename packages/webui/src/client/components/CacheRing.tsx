@@ -2,10 +2,10 @@
 // prompt cache の残り時間リングの描画 (進行の算術は llm-cache-view.ts)。
 //
 // 輪郭そのものを 1 本の線として描き、線の「見えている割合」を減らしていく。
-// `pathLength="1"` で周長を 1 に正規化してあるので、`stroke-dashoffset` に
-// 0→1 の進行をそのまま入れれば、始点から順に線が消える。等速で進むのは
-// 周長に沿って測っているからで、角度基準の扇形と違って辺の中央と角で速さが
-// 変わらない。
+// 上辺の中央 (= 0 時) から時計回りに消える。等速で進むのは周長に沿って
+// 測っているからで、角度基準の扇形と違って辺の中央と角で速さが変わらない。
+// 円は周長を `pathLength="1"` で正規化して進行をそのまま使い、矩形は周長が
+// 辺の比で変わるので CSS 側がコンテナクエリ単位で実寸から組む。
 //
 // **塗らない**のが要点: 塗りつぶした図形の内側を不透明な子で隠す作りだと、
 // 子が覆えない瞬間 (未レイアウト / 画像が未描画 / mask 未適用) にその塗りが
@@ -26,7 +26,7 @@ export function CacheRing({ shape }: { shape: CacheRingShape }): JSX.Element {
       {shape === "circle" ? (
         <circle class="cache-ring-shape" pathLength={1} />
       ) : (
-        <rect class="cache-ring-shape" pathLength={1} />
+        <rect class="cache-ring-shape" />
       )}
     </svg>
   );
