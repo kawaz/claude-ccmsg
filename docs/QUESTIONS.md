@@ -21,26 +21,20 @@
 
 ## 裁定待ち
 
-### SS-Q1: Stopped 分類の設計 (r273m6)
+### SS-Q2: セッション一覧のセクション構成と英語名 (r278m2〜m11 の議論の続き)
 
-「プロセスは終了するがセッションリストには残す」分類。統括案は「前回稼働中エントリの昇格」:
-`last-live-sessions.json` のエントリに `stopped_at` を足し、Busy の Status に一時停止ボタン
-(= `session_kill` に `retain: true`) を置く。消える条件は前回稼働中と同じ (同 sid 再接続 / ✕)。
-並び: Pinned → error/waiting → Busy → **Stopped** → 前回稼働中 → idle/inactive/done → ccmsg未起動。
-弱点: 前回稼働中の行を後から Stopped に昇格させる導線が無い。
+合意済み: 「ccmsg 未起動」セクションは廃止し、ccmsg の有無は分類・並びに使わず行のマークで示す
+(接続待ち = 過去に接続を見ていない / 途絶 = `last-live-sessions.json` に居る)。ccmsg も hyoui も
+無い行は「Busy (管理外)」として Busy の直後。Busy/Idle の判定元は llm-gateway の request/response
+イベント (gateway 側の start/complete 通知待ち、[issue](issue/2026-09-06-session-status-from-sessions-json.md))。
+Stopped (SS-Q1 = a+c 裁定済) の英語名は Docker の語彙で **Exited** を推す (終了・保持・resume 可)。
 
-- [ ] a: 統括案で実装
-- [ ] b: 別ファイル (`stopped-sessions.json`) に分ける (統括は二重管理になるので不採用推し)
-- [ ] c: 前回稼働中の行にも「Stopped へ移す」ボタンを足す (a に追加)
-
-### SS-Q2: 「前回稼働中」セクションの改名 (r273m6)
-
-実態は「daemon が最後に接続を見たセッション (再接続か ✕ で消えるまで残る)」。
-
-- [ ] a: 最終接続 (統括推し、短い)
-- [ ] b: 接続履歴
-- [ ] c: 前回接続中
-- [ ] d: 現状維持
+- [ ] α-a: Exited と Last seen (今の「前回稼働中」) を **1 セクションに統合** し、「daemon が見失った」
+  方は行のマークで区別 (統括推し: 違いは「誰が止めたか」だけ)
+- [ ] α-b: 2 セクションのまま (Exited / Last seen)
+- [ ] β-a: Busy と Idle は別セクションのまま (処理中を一目で見る用途を残す、統括推し)
+- [ ] β-b: 「生きているセッション」として 1 セクションに混ぜ、最終活動順で並べる
+- [ ] γ: セクション名は英語 (Pinned / Waiting / Busy / Idle / Exited / Last seen) で良い
 
 ### SG-Q1: 設定グループ化の置き場 (r259m7)
 
@@ -50,19 +44,6 @@
 - [ ] a: 統括案 (⚙ ポップオーバー集約、フロートパネル廃止)
 - [ ] b: フロートパネルを残し、中を 3 分類で区切る
 - [ ] c: 別案 (チャットで)
-
-### WA-Q1: webui 状態層の選定 (r273m92「signal で良さそう」の確定)
-
-土台: [docs/design/webui-architecture.md](design/webui-architecture.md) (Draft)。再描画の根本は
-「store が 1 値、購読が selector 無し」= どの更新でも全 component が再レンダーされること。
-必要なのは **独立に変わる単位ごとに購読できる仕組み**。
-
-- [ ] a: `@preact/signals` (統括推し)。購読粒度が signal 単位で、テキスト/属性は component の
-  再レンダー無しで更新される。依存 +1 は preact と同じ bun auto-install 経路。弱点: `signal.value`
-  はどこからでも書けるので、変更経路の規律 (WA-Q3) は規約とレビューで守ることになる
-- [ ] b: 自作 store 継続 + selector 付き購読 (`useStore(s => s.peers)`)。reducer は残る。弱点:
-  再レンダー単位は component のまま、selector の書き忘れが今の問題を再生産する
-- [ ] c: 外部 store (zustand / nanostores)。preact との結合が薄く a に対する利点が無い (不採用推し)
 
 ### WA-Q2: signal の単位 (要素単位をどこまで)
 
@@ -74,19 +55,6 @@ Draft §3 の表は「群単位」(接続 / 能力 / 一覧 / room / 現在地 /
   配列全体の値なので群単位のまま
 - [ ] b: 一覧の行も sid 単位にする (行の内容更新と並び替えを分離)。効果は大きいが構造が二重になる
 - [ ] c: まず群単位のみで始め、要素単位は移行段階 3 で判断 (WA-Q4 と連動)
-
-### WA-Q3: DR-0005 §1 (action + reducer) の読み替え
-
-一次資料 (vision statement) の原文は「各種アクションやメッセージが形式化してリデューサーで処理」。
-統括の解釈: 価値は **変更経路が一つで、サーバイベントと UI 操作が同じ形に乗ること**。
-型付き action + 単一 reducer という器は「状態が 1 値」を強制し、今回の粒度問題の原因になった。
-
-- [ ] a: 「形式化 = state module に集約した更新関数 (関数名が action 名、引数が payload)」と
-  読み替え、Transport と Intents だけがそれを呼ぶ。reducer の switch は消える。DR-0005 §1 を
-  新 DR で supersede (統括推し)
-- [ ] b: `dispatch({type, …})` の形を signals の上で維持 (action の union 型が一覧として残る)。
-  弱点: 1 つの switch が「1 値を返す」癖を再導入しやすい
-- [ ] c: 原文の「リデューサー」を字義通り要件とみなす (a/b とも不可、再検討)
 
 ### WA-Q4: 移行順と「再描画」の当面の手当て
 

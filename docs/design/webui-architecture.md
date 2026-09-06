@@ -1,6 +1,8 @@
 # webui 全体設計 (状態 / 描画 / レイアウト / URL / 永続化 / 通信)
 
-- Status: **Draft** (kawaz 裁定待ち、[docs/QUESTIONS.md](../QUESTIONS.md) の WA-Q1〜WA-Q4)
+- Status: **Draft** (裁定済み: 状態層は `@preact/signals` (WA-Q1 = a)、DR-0005 §1 の action/reducer は
+  「state module に集約した更新関数 = action」に読み替えて supersede (WA-Q3 = a)。裁定待ち:
+  [docs/QUESTIONS.md](../QUESTIONS.md) の WA-Q2 (signal の単位) / WA-Q4 (移行順)。実装着手は WA-Q2/Q4 の後)
 - 関係 DR: DR-0005 §1 (自作 store) を本設計の DR で supersede する予定。DR-0004 (daemon 内蔵 /
   WS 同一プロトコル / ロケータ)、DR-0005 §2-3 (preact + TSX、Bun.build によるサーブ時トランスパイル) は不変
 - 一次資料: 現状のコンポーネントツリー実測 (2026-09-05、[QUESTIONS.md](../QUESTIONS.md) 起票時の調査)、
