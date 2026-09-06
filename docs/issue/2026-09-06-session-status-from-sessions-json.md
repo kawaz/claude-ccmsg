@@ -22,7 +22,7 @@ origin: 自リポ TODO
 ## 概要
 
 daemon のセッション状態取得元を `claude agents --json` から `<config_dir>/sessions/<pid>.json`
-の直読みに変え、活動判定 (Busy/Idle) は daemon が既に持つ transcript の turn 状態に寄せる。
+の直読みに変え、活動判定 (Busy/Idle) は llm-gateway から届く request/response イベントに寄せる。
 
 ## 背景
 
@@ -36,13 +36,18 @@ idle だった。つまり busy/idle は「いま処理中か」の指標にな�
 ## 受け入れ条件
 
 - [ ] daemon の agents ポーリングを `sessions/*.json` の直読みに変える。生の status
-      (`shell` / `busy` / `idle` / `waiting`) と `statusUpdatedAt` / `waitingFor` を
-      webui に渡す (subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream
+      (`shell` / `busy` / `idle` / `waiting`) と `waitingFor`・pid・cwd を取る
+      (subprocess の 5 秒ポーリングも不要になる)。ファイル形式は upstream
       非公開なので変化に備えたフォールバックを残す
-- [ ] SessionList の Busy / Idle 判定は `claude agents` の値でなく、daemon が既に持つ
-      transcript の turn 状態 (`sessionStatuses`) を正にする
+- [ ] SessionList の Busy / Idle 判定は `claude agents` の値 (transcript の turn 状態)
+      でなく、llm-gateway から届く request/response イベント (cache ring のために
+      既に relay しているもの) を正にする。最後のリクエストのレスポンス完了 = Idle、
+      リクエスト進行中 = Busy (kawaz r278m10 の裁定)。transcript / jsonl は活動判定に
+      使わない
 - [ ] `claude agents` 由来の値は「プロセスの存在」「waiting (dialog)」「pid / cwd / name」
       にだけ使う
+- [ ] 生 status `"shell"` は Monitor 等の背景 shell が動いている待機中を示す (実測)。
+      この事実は活動判定の切替後も残す
 
 ## TODO
 
