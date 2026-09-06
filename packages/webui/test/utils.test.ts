@@ -2134,6 +2134,15 @@ describe("summarizeUserAgent", () => {
     ).toBe("Linux/Firefox");
   });
 
+  // iPadOS Safari は既定で Mac の UA を名乗る (実機 2026-09-06: kawaz の iPad が
+  // `Macintosh/Safari` と出た)。触れる画面を持つ Macintosh は iPad と読む。
+  test("names an iPad that presents itself as a Mac by its touch screen", () => {
+    const desktopSafari =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+    expect(summarizeUserAgent(desktopSafari, 5)).toBe("iPad/Safari");
+    expect(summarizeUserAgent(desktopSafari, 0)).toBe("Macintosh/Safari");
+  });
+
   test("guesses nothing about a client it does not recognize", () => {
     expect(summarizeUserAgent("Bun/1.3.13")).toBe("other/other");
     expect(summarizeUserAgent("")).toBe("other/other");

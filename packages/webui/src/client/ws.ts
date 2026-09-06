@@ -539,7 +539,7 @@ export function createWsClient(
         client_version: VERSION,
         protocol: PROTOCOL_VERSION,
         ...(navType !== undefined ? { nav_type: navType } : {}),
-        ...(ua ? { ua: summarizeUserAgent(ua) } : {}),
+        ...(ua ? { ua: summarizeUserAgent(ua, globalThis.navigator?.maxTouchPoints ?? 0) } : {}),
       });
       // bundle と daemon の version 照合は handshake の他の何よりも先。
       // 不一致のまま先へ進むと、wire protocol が動いた upgrade

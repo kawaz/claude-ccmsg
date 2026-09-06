@@ -756,11 +756,17 @@ export function sessionBadges(row: SessionRow): string[] {
  * and the raw user agent never leaves the page. Order matters — Edge and Chrome
  * both claim Safari's token, and Chrome on iPadOS claims Safari's platform, so
  * the more specific claim is tested first. Anything unrecognized reads
- * `other/other` rather than guessing. */
-export function summarizeUserAgent(ua: string): string {
-  const platform =
+ * `other/other` rather than guessing.
+ *
+ * iPadOS Safari presents itself as a Mac (`Macintosh` in the UA, the desktop
+ * site by default), which is the one device pair the UA alone cannot tell
+ * apart — so a Macintosh with a multi-touch screen (`maxTouchPoints`, which no
+ * Mac reports above 0) is named iPad. */
+export function summarizeUserAgent(ua: string, maxTouchPoints = 0): string {
+  const claimed =
     ["iPad", "iPhone", "Android", "Macintosh", "Windows", "Linux"].find((p) => ua.includes(p)) ??
     "other";
+  const platform = claimed === "Macintosh" && maxTouchPoints > 1 ? "iPad" : claimed;
   const browser = /Edg\//.test(ua)
     ? "Edge"
     : /Firefox\/|FxiOS\//.test(ua)
