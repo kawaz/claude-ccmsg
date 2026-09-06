@@ -21,21 +21,6 @@
 
 ## 裁定待ち
 
-### SS-Q2: セッション一覧のセクション構成と英語名 (r278m2〜m11 の議論の続き)
-
-合意済み: 「ccmsg 未起動」セクションは廃止し、ccmsg の有無は分類・並びに使わず行のマークで示す
-(接続待ち = 過去に接続を見ていない / 途絶 = `last-live-sessions.json` に居る)。ccmsg も hyoui も
-無い行は「Busy (管理外)」として Busy の直後。Busy/Idle の判定元は llm-gateway の request/response
-イベント (gateway 側の start/complete 通知待ち、[issue](issue/2026-09-06-session-status-from-sessions-json.md))。
-Stopped (SS-Q1 = a+c 裁定済) の英語名は Docker の語彙で **Exited** を推す (終了・保持・resume 可)。
-
-- [ ] α-a: Exited と Last seen (今の「前回稼働中」) を **1 セクションに統合** し、「daemon が見失った」
-  方は行のマークで区別 (統括推し: 違いは「誰が止めたか」だけ)
-- [ ] α-b: 2 セクションのまま (Exited / Last seen)
-- [ ] β-a: Busy と Idle は別セクションのまま (処理中を一目で見る用途を残す、統括推し)
-- [ ] β-b: 「生きているセッション」として 1 セクションに混ぜ、最終活動順で並べる
-- [ ] γ: セクション名は英語 (Pinned / Waiting / Busy / Idle / Exited / Last seen) で良い
-
 ### SG-Q1: 設定グループ化の置き場 (r259m7)
 
 3 分類 (Session / TL / TL-Message) は合意済み。置き場が未裁定。統括案: TL 対象の設定を
