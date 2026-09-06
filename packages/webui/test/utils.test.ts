@@ -58,6 +58,7 @@ import {
   sortPeers,
   treeRootPath,
   sortPinnedSessions,
+  summarizeUserAgent,
   splitRoomsByArchived,
   splitRoomsByKind,
   splitRoomsByLiveness,
@@ -2113,6 +2114,44 @@ describe("sortPinnedSessions", () => {
     const input = [older, newer];
     expect(sortPinnedSessions(input)).toEqual([newer, older]);
     expect(input).toEqual([older, newer]); // unmutated
+  });
+});
+
+describe("summarizeUserAgent", () => {
+  // 実機の UA 文字列 (kawaz の接続元端末) をそのまま入力にする。
+  test("names the device behind each browser kawaz connects from", () => {
+    expect(
+      summarizeUserAgent(
+        "Mozilla/5.0 (iPad; CPU OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/604.1",
+      ),
+    ).toBe("iPad/Safari");
+    expect(
+      summarizeUserAgent(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      ),
+    ).toBe("Macintosh/Chrome");
+    expect(
+      summarizeUserAgent(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/140.0.0.0 Mobile/15E148 Safari/604.1",
+      ),
+    ).toBe("iPhone/Chrome");
+  });
+
+  // Chrome も Edge も Safari の token を名乗るので、判定順が効いているかを見る。
+  test("prefers the more specific claim when browsers borrow each other's tokens", () => {
+    expect(
+      summarizeUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0",
+      ),
+    ).toBe("Windows/Edge");
+    expect(
+      summarizeUserAgent("Mozilla/5.0 (X11; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0"),
+    ).toBe("Linux/Firefox");
+  });
+
+  test("guesses nothing about a client it does not recognize", () => {
+    expect(summarizeUserAgent("Bun/1.3.13")).toBe("other/other");
+    expect(summarizeUserAgent("")).toBe("other/other");
   });
 });
 

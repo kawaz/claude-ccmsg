@@ -964,6 +964,18 @@ export interface HelloRequest {
    * `UNANNOUNCED_PROTOCOL_VERSION`, which is a statement about the client, not
    * an exemption: it is checked like any announced value. */
   protocol?: number;
+  /** How the browser arrived at the page this hello comes from
+   * (`PerformanceNavigationTiming.type`: navigate / reload / back_forward /
+   * prerender). Diagnostic only, and sent by the webui on the first hello of a
+   * page load alone — a hello without it is a socket the same page re-opened,
+   * which is exactly the distinction the daemon log needs to tell "kawaz
+   * reloaded the tab" from "the tab reconnected on its own". */
+  nav_type?: string;
+  /** Two-word summary of the browser this hello comes from
+   * (`<platform>/<browser>`, e.g. `iPad/Safari`), not the raw user agent —
+   * enough to name which device a connection belongs to in the daemon log,
+   * with no fingerprinting surface beyond that. Diagnostic only. */
+  ua?: string;
 }
 
 /** Post a new message. Session-authored posts to a 1on1 room are rejected

@@ -88,18 +88,31 @@ function pinHelloToUser(line: string): string {
     // correlation id is not — the reply still has to reach the caller that is
     // waiting for it — and neither is what it claimed about its own build,
     // which is not an identity claim at all: the generation check has to see
-    // it or a browser holding a stale bundle would be served silently.
+    // it or a browser holding a stale bundle would be served silently. The two
+    // diagnostic fields pass for the same reason: they say which device this
+    // connection is and how the page it runs in was loaded, claims that grant
+    // nothing and that only the daemon log reads.
     const {
       request_id: requestId,
       client_version: clientVersion,
       protocol,
-    } = req as { request_id?: unknown; client_version?: unknown; protocol?: unknown };
+      nav_type: navType,
+      ua,
+    } = req as {
+      request_id?: unknown;
+      client_version?: unknown;
+      protocol?: unknown;
+      nav_type?: unknown;
+      ua?: unknown;
+    };
     return JSON.stringify({
       op: "hello",
       role: "user",
       ...(requestId !== undefined ? { request_id: requestId } : {}),
       ...(clientVersion !== undefined ? { client_version: clientVersion } : {}),
       ...(protocol !== undefined ? { protocol } : {}),
+      ...(navType !== undefined ? { nav_type: navType } : {}),
+      ...(ua !== undefined ? { ua } : {}),
     });
   }
   return line;
@@ -194,6 +207,10 @@ async function frameAncestorsFor(
   return [...out];
 }
 
+/** Source of `Conn.id`. Process-wide rather than per-listener so two listeners
+ * in one process never hand out the same label to different sockets. */
+let nextConnSeq = 0;
+
 export function startHttpListener(
   daemon: Daemon,
   bindSpec: string,
@@ -261,7 +278,12 @@ export function startHttpListener(
       }
       const url = new URL(req.url);
       if (url.pathname === "/ws") {
-        const conn: Conn = { write: () => {}, identity: null, subscribed: false };
+        const conn: Conn = {
+          write: () => {},
+          identity: null,
+          subscribed: false,
+          id: `c${++nextConnSeq}`,
+        };
         const upgraded = srv.upgrade(req, { data: { conn, pending: [] } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade required", { status: 400 });
@@ -343,7 +365,10 @@ export function startHttpListener(
         flushWsPending(ws);
       },
       close(ws) {
-        if (ws.data.conn.identity?.role === "user") daemon.log.info("webui ws closed");
+        const closing = ws.data.conn;
+        if (closing.identity?.role === "user") {
+          daemon.log.info(`webui ${closing.id ?? "c?"} ws closed`);
+        }
         removeConn(daemon, ws.data.conn);
       },
     },

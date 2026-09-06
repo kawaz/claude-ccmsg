@@ -170,6 +170,12 @@ export interface Conn {
   write(line: string): void;
   identity: Identity | null;
   subscribed: boolean;
+  /** Log-only label for one socket, unique within this daemon process (`c12`).
+   * Present on WS connections, which are the ones the daemon log has to tell
+   * apart: several browsers hold one each at a time, and without it a `hello`
+   * line and the `ws closed` line that ends the same connection cannot be
+   * paired. UDS conns carry no label — the session they hello as names them. */
+  id?: string;
 }
 
 interface SessionEntry {
@@ -775,6 +781,17 @@ function protocolOf(client: ClientBuild): number {
 /** What a hello line claims about its own build, read defensively: this also
  * runs on requests rejected before they were ever typed as a `HelloRequest`,
  * so a field of the wrong type is treated as absent rather than trusted. */
+/** A hello's diagnostic string as it may appear in the log, or undefined when
+ * it says nothing usable. These fields arrive verbatim from a browser, so they
+ * are held to the shape the webui sends (a short word or two joined by `/`)
+ * rather than trusted: anything else would let a caller write its own lines
+ * into daemon.log. */
+function logToken(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.slice(0, 40);
+  return /^[A-Za-z0-9._/-]+$/.test(trimmed) ? trimmed : undefined;
+}
+
 function readClientBuild(req: { client_version?: unknown; protocol?: unknown }): ClientBuild {
   return {
     ...(typeof req.client_version === "string" && req.client_version !== ""
@@ -1814,7 +1831,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       let newId: Identity;
       if (req.role === "user") {
         newId = { role: "user" };
-        daemon.log.info(`webui hello client_version=${client.version ?? "?"}`);
+        const nav = logToken(req.nav_type);
+        const ua = logToken(req.ua);
+        daemon.log.info(
+          `webui ${conn.id ?? "c?"} hello client_version=${client.version ?? "?"}` +
+            (nav ? ` nav=${nav}` : "") +
+            (ua ? ` ua=${ua}` : ""),
+        );
       } else {
         if (!req.sid) {
           sendErr(conn, ErrorCode.invalid_args, "session hello requires sid");

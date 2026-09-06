@@ -755,6 +755,31 @@ export function sessionBadges(row: SessionRow): string[] {
   return badges;
 }
 
+/** Two words naming the device behind a webui connection —
+ * `<platform>/<browser>`, e.g. `iPad/Safari` — for the daemon log's hello line.
+ *
+ * Deliberately coarse: the question it answers is "which of kawaz's devices is
+ * this connection", so a fixed vocabulary of platforms and browsers is enough
+ * and the raw user agent never leaves the page. Order matters — Edge and Chrome
+ * both claim Safari's token, and Chrome on iPadOS claims Safari's platform, so
+ * the more specific claim is tested first. Anything unrecognized reads
+ * `other/other` rather than guessing. */
+export function summarizeUserAgent(ua: string): string {
+  const platform =
+    ["iPad", "iPhone", "Android", "Macintosh", "Windows", "Linux"].find((p) => ua.includes(p)) ??
+    "other";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /Firefox\/|FxiOS\//.test(ua)
+      ? "Firefox"
+      : /Chrome\/|CriOS\//.test(ua)
+        ? "Chrome"
+        : /Safari\//.test(ua)
+          ? "Safari"
+          : "other";
+  return `${platform}/${browser}`;
+}
+
 /** How a session's ccmsg client reads in the Status tab: the build it
  * announced, and the generation when it named one.
  *

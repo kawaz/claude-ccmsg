@@ -78,6 +78,7 @@ import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
+import { summarizeUserAgent } from "./utils.ts";
 import { activeTraceCollector, createTraceCollector, setActiveTraceCollector } from "./trace.ts";
 
 const SINCE_KEY = "ccmsg.since_seq";
@@ -90,6 +91,14 @@ export interface WsKeepaliveOptions {
   idleMs?: number;
   timeoutMs?: number;
   checkMs?: number;
+}
+
+/** How this page was arrived at, for the daemon log's hello line: `navigate` /
+ * `reload` / `back_forward` / `prerender`, or undefined where the browser
+ * keeps no navigation entry (and under the test runner, which has none). */
+function navigationType(): string | undefined {
+  const entry = performance.getEntriesByType?.("navigation")?.[0] as { type?: string } | undefined;
+  return typeof entry?.type === "string" && entry.type !== "" ? entry.type : undefined;
 }
 
 function loadSince(): Record<string, number> {
@@ -424,6 +433,11 @@ export function createWsClient(
    * requests (protocol doc), so a monotonic counter suffices — no UUID. */
   let nextRequestId = 0;
   let reconnectAttempt = 0;
+  /** Cleared by the first hello of this page. The navigation type describes the
+   * page load, not the socket, so repeating it on every reconnect would report
+   * a reload that happened minutes ago — and its absence is what lets the
+   * daemon log tell a reconnect apart from a genuine re-load. */
+  let firstHello = true;
   let closedByUs = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -515,12 +529,17 @@ export function createWsClient(
     // Rooms covered by `since_seq` still get their delta replay, so a room already
     // painted before an in-page reconnect stays caught up.
     const spaHasState = getState().rooms.size > 0;
+    const navType = firstHello ? navigationType() : undefined;
+    const ua = globalThis.navigator?.userAgent;
+    firstHello = false;
     try {
       const hello = await send<HelloResponse>({
         op: "hello",
         role: "user",
         client_version: VERSION,
         protocol: PROTOCOL_VERSION,
+        ...(navType !== undefined ? { nav_type: navType } : {}),
+        ...(ua ? { ua: summarizeUserAgent(ua) } : {}),
       });
       // bundle と daemon の version 照合は handshake の他の何よりも先。
       // 不一致のまま先へ進むと、wire protocol が動いた upgrade

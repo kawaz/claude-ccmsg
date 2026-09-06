@@ -553,6 +553,9 @@ describe("createWsClient pending queue on close/reconnect", () => {
       role: "user",
       client_version: VERSION,
       protocol: 1,
+      // no nav_type: the test runner has no navigation entry, and the UA it
+      // does have is not a browser this summary knows.
+      ua: "other/other",
     });
     expect(sentBody(ws1, 1)).toEqual({ op: "fs_list", sid: "sess-1" });
 
