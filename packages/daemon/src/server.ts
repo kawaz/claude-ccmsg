@@ -278,6 +278,8 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
+  /** last-live persistence input as of the last snapshot write. */
+  lastLiveSnapshot: string;
   /** Out-of-date ccmsg clients seen per sid (PeerInfo.stale_client), including
    * the ones whose hello was refused — those never reach `sessions`, so this
    * is the only record that they tried. Keyed by the sid the refused hello
@@ -921,6 +923,31 @@ function agentTitle(daemon: Daemon, sid: string): string | undefined {
  * them would mean a reboot loop quietly erasing exactly the sessions it
  * exists to remember. `last_seen_at` is stamped now for the live half: this
  * write is the moment those sessions are known to be alive. */
+/** The snapshot file exists to restore "who was connected" after a daemon
+ * restart, so it is rewritten only when that set (or a member's meta / title)
+ * changes. peersCompareKey also folds in tail-derived `last_user_input_at`,
+ * which moves on every user turn in any session — driving the write from that
+ * key rewrote an identical file on every keystroke-turn across all sessions. */
+function lastLiveCompareKey(daemon: Daemon): string {
+  return JSON.stringify([
+    [...daemon.sessions.values()]
+      .filter((s) => s.conns.size > 0)
+      .map((s) => ({
+        ...s.meta,
+        connected_at: s.connectedAt,
+        title: agentTitle(daemon, s.meta.sid),
+      })),
+    currentLastLive(daemon),
+  ]);
+}
+
+function maybePersistLastLive(daemon: Daemon): void {
+  const key = lastLiveCompareKey(daemon);
+  if (key === daemon.lastLiveSnapshot) return;
+  daemon.lastLiveSnapshot = key;
+  persistLastLive(daemon);
+}
+
 function persistLastLive(daemon: Daemon): void {
   const now = nowIso();
   const live = [...daemon.sessions.values()]
@@ -1105,14 +1132,10 @@ function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSo
  * terminates: the snapshot is stamped before the syncs below run, and a sync
  * that changes nothing fires no onChange. */
 function maybeBroadcastPeers(daemon: Daemon): void {
+  maybePersistLastLive(daemon);
   const key = peersCompareKey(daemon);
   if (key === daemon.peersSnapshot) return;
   daemon.peersSnapshot = key;
-  // Who is alive just changed, which is the whole content of the snapshot
-  // file — write it here rather than at each mutation point, so the disk
-  // record and the pushed list are produced from one observation of the
-  // registry (and an unchanged re-hello writes nothing at all).
-  persistLastLive(daemon);
   const payload = peersPayload(daemon);
   for (const sub of daemon.subscribers) {
     if (sub.identity?.role === "user") send(sub, { ev: "peers", ...payload });
@@ -3751,6 +3774,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
+    lastLiveSnapshot: "",
     staleClients: new Map(),
     lastLive: new Map(),
     llmRequests: new LlmRequestCache(),
