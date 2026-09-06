@@ -4689,8 +4689,9 @@ button.session-tab {
   display: flex;
   align-items: center;
   gap: var(--space-5);
+  /* 出入りは即時。メニューを外側クリックで畳んだ直後に ☰ 側がふわっと
+   * 消えるのは、閉じたことの余計な残像になる (kawaz r278m23)。 */
   opacity: 0;
-  transition: opacity 0.12s ease-out;
 }
 
 .tl-item:hover .tl-msg-toolbar,
