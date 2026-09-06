@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-09-06 | design | open | [exited-sessions-section](./2026-09-06-exited-sessions-section.md) | セッション一覧に Exited (終了・保持・resume 可) 分類を追加する。SS-Q1=a+c 裁定済、SS-Q2 (セクション構成) 裁定待ち |
 | 2026-09-06 | design | open | [session-status-from-sessions-json](./2026-09-06-session-status-from-sessions-json.md) | セッション状態の取得元を `claude agents --json` から `sessions/<pid>.json` 直読みに変え、活動判定を transcript の turn 状態に寄せる |
 | 2026-09-06 | task | open | [webui-connection-log-id](./2026-09-06-webui-connection-log-id.md) | webui 接続ログに接続 ID / User-Agent を付けて、古い bundle のまま残った端末を特定できるようにする |
 | 2026-09-05 | request | open | [keepalive-pause-button](./2026-09-05-keepalive-pause-button.md) | webui からセッション単位で llm-gateway の keepalive を止める。daemon が gateway HTTP API を叩く方式 |
