@@ -17,7 +17,7 @@ import {
   type SessionWorkflowStatus,
 } from "@ccmsg/protocol";
 import {
-  resolveConnectedTranscript,
+  resolveTranscript,
   subscribeTranscriptLines,
   unsubscribeTranscriptLines,
   type SessionLookup as TranscriptSessionLookup,
@@ -1840,7 +1840,7 @@ export async function getSessionStatus(
   sessions: SessionStatusLookup,
   sid: string,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = resolveConnectedTranscript(sessions, sid);
+  const resolved = await resolveTranscript(sessions, sid, { allowVirtual: true });
   if (!resolved.ok) return resolved;
   const root = await resolveExternalRoot(sessions, sid);
   const cwd = await resolveWorkspaceAnchor(sessions, sid);
@@ -1885,7 +1885,7 @@ export async function subscribeSessionStatus(
   conn: TailConn,
   log: TailLog,
 ): Promise<TranscriptResult<SessionStatusSnapshot>> {
-  const resolved = resolveConnectedTranscript(sessions, sid);
+  const resolved = await resolveTranscript(sessions, sid, { allowVirtual: true });
   if (!resolved.ok) return resolved;
   const root = await resolveExternalRoot(sessions, sid);
   const cwd = await resolveWorkspaceAnchor(sessions, sid);
@@ -1953,7 +1953,17 @@ export async function subscribeSessionStatus(
       if (changed) pushSnapshot(sid, live, log);
     },
   };
-  const subscribed = subscribeTranscriptLines(transcriptTail, sessions, sid, live.listener, log);
+  // `resolved.file` is only consulted when the sid has no connected session
+  // announcing a transcript (resolveTailTarget), so a session that connects
+  // between the resolve above and this call still drives its own Watch.
+  const subscribed = subscribeTranscriptLines(
+    transcriptTail,
+    sessions,
+    sid,
+    live.listener,
+    log,
+    resolved.file,
+  );
   if (!subscribed.ok) return subscribed;
   live.file = subscribed.data.file;
   live.sidDir = deriveSidDir(subscribed.data.file);

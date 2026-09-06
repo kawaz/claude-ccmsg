@@ -87,8 +87,9 @@ export async function adoptTranscriptPath(
 }
 
 export interface TranscriptResolveOptions {
-  /** Historical fallback is passed only by user-role transcript_read. Live tail
-   * and session-status callers intentionally keep the connected-session contract. */
+  /** Historical fallback, passed by the user-role read paths (transcript_read,
+   * fork_origin, session_dump_file, session_status). A session-role conn never
+   * gets it: its own contract is the connected session it announced. */
   allowVirtual?: boolean;
   /** Test seam; production omits this and uses daemon-detected config dirs. */
   configDirs?: readonly string[];
@@ -709,13 +710,38 @@ function teardownWatch(watch: Watch, reason: string): void {
   stopPolling(watch);
 }
 
+/** Which file a tail Watch should follow for `sid`.
+ *
+ * The connected session's announced path always wins, so a session that
+ * connects (or re-hellos onto another file) keeps driving the Watch. Only when
+ * no connection announces a transcript at all does `fallbackFile` — a path the
+ * caller already resolved with {@link resolveTranscript}'s allowVirtual pass,
+ * i.e. `<configDir>/projects/<project>/<sid>.jsonl` — take over, which is what
+ * lets a historical sid be tailed and folded.
+ *
+ * Design rationale: the fallback is passed in rather than resolved here so
+ * this stays synchronous. The Watch lifecycle runs from fs.watch/poll
+ * callbacks and must not yield (see `resolveConnectedTranscript`); async
+ * resolution belongs to the op handler, which is already async. */
+function resolveTailTarget(
+  sessions: SessionLookup,
+  sid: string,
+  fallbackFile: string | undefined,
+): TranscriptResolveResult {
+  const connected = resolveConnectedTranscript(sessions, sid);
+  if (connected.ok || fallbackFile === undefined) return connected;
+  if (connected.code !== ErrorCode.session_not_found) return connected;
+  return { ok: true, file: fallbackFile };
+}
+
 function getOrCreateWatch(
   store: TranscriptTailStore,
   sessions: SessionLookup,
   sid: string,
   log: TailLog,
+  fallbackFile?: string,
 ): TranscriptResult<Watch> {
-  const resolved = resolveConnectedTranscript(sessions, sid);
+  const resolved = resolveTailTarget(sessions, sid, fallbackFile);
   if (!resolved.ok) return resolved;
 
   let watch = store.watches.get(sid);
@@ -798,15 +824,20 @@ export function transcriptSubscribe(
 
 /** Internal consumers can share the transcript Watch without opening a second
  * fs.watch/poll loop. The returned size is the exact scan boundary: bytes after
- * it are delivered through `listener`, while callers synchronously scan [0,size). */
+ * it are delivered through `listener`, while callers synchronously scan [0,size).
+ *
+ * `fallbackFile` lets a caller that already resolved a historical transcript
+ * (allowVirtual) tail a sid with no connected session; see
+ * {@link resolveTailTarget}. */
 export function subscribeTranscriptLines(
   store: TranscriptTailStore,
   sessions: SessionLookup,
   sid: string,
   listener: TranscriptLineListener,
   log: TailLog,
+  fallbackFile?: string,
 ): TranscriptResult<{ sid: string; file: string; size: number }> {
-  const result = getOrCreateWatch(store, sessions, sid, log);
+  const result = getOrCreateWatch(store, sessions, sid, log, fallbackFile);
   if (!result.ok) return result;
   const watch = result.data;
   watch.lineListeners.add(listener);

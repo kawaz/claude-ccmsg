@@ -4,7 +4,7 @@
 // state.view is "session" or "timeline"). Files/Timeline/Rooms/Status all
 // share one sid-keyed SessionTreeState cache so switching tabs never
 // refetches what's already loaded.
-import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { SessionSearchHit } from "@ccmsg/protocol";
 import { DEFAULT_TIMELINE_SEARCH, type AppState, type SessionTreeState } from "../store.ts";
 import {
@@ -18,7 +18,7 @@ import {
   type SessionTab,
 } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
-import { sessionTranscriptGates } from "../utils.ts";
+import { hasSessionTranscript } from "../utils.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
@@ -31,7 +31,7 @@ import { TerminalPanel } from "./TerminalPanel.tsx";
 import { Tabs, type TabItem } from "./Tabs.tsx";
 
 /** Shown wherever `hasTranscript` is false. Names all three sources that came
- * up empty (see sessionTranscriptGates) and the one way left to open the
+ * up empty (see hasSessionTranscript) and the one way left to open the
  * session, since a sid with no peer, no pinned/searched file and no agents row
  * is one nothing on this screen can resolve to a jsonl. Exported so the style
  * catalog's disabled-tab specimen shows the same words the app does. */
@@ -148,9 +148,9 @@ export function SessionView({
     }
   }, [active]);
   // Status/Timeline の status データ源は transcript fold (DR-0020 §3.1) —
-  // hello 時に transcript_path を申告・検証済みのセッションでしか
-  // session_status_subscribe は成立しない (daemon の resolveTranscript が
-  // error を返す)。early return より前 = hooks 位置で要るのでここで引く。
+  // 接続中セッションが申告した transcript_path、無ければ sid から解決した
+  // `<configDir>/projects/<project>/<sid>.jsonl` (daemon の resolveTranscript
+  // allowVirtual)。early return より前 = hooks 位置で要るのでここで引く。
   const peer = state.peers.find((p) => p.sid === sid);
   // Terminal タブは agent の hyoui_session_id が解決済み かつ daemon の
   // config.json で terminal_gateway_url が設定されているセッションでのみ
@@ -161,24 +161,22 @@ export function SessionView({
   const hyouiSessionId = agentForSid?.hyoui_session_id;
   const terminalGatewayUrl = state.terminalGatewayUrl;
   const hasTerminal = !!hyouiSessionId && !!terminalGatewayUrl;
-  // Two distinct capabilities, gated separately (DR-0021 §2.4/§3.1) — the
-  // derivation and the reason the two differ live in sessionTranscriptGates.
-  // An agent-only row (no peer, present in `claude agents --json`) therefore
-  // gets a readable Timeline but no live feed: transcript_subscribe needs a
-  // connected session, so the pane is a static read that the Timeline's own
-  // refresh button re-issues. Should that session connect, the 5s agents poll
-  // and the peers push both re-render this component with a peer in hand and
-  // the ordinary subscribe path takes over.
+  // Timeline / Status が使えるかの単一ゲート (DR-0021 §2.4/§3.1) — 導出は
+  // hasSessionTranscript を見る。agent-only 行 (peer 無し、`claude agents
+  // --json` に居る) でも jsonl は読めるので両タブとも出す。Timeline の live
+  // tail だけは transcript_subscribe が接続中セッションを要求するため静的
+  // read になる (Timeline 自身の refresh ボタンで読み直す)。Status の fold は
+  // daemon 側が jsonl を直接 tail するので未接続でも更新が届く。接続したら
+  // 5s の agents poll と peers push がこの component を再描画し、通常の
+  // subscribe 経路に切り替わる。
   const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
-  const { statusFeed: hasStatusFeed, transcript: hasTranscript } = sessionTranscriptGates(
-    peer,
-    storedHit?.file,
-    !!agentForSid,
-  );
+  const hasTranscript = hasSessionTranscript(peer, storedHit?.file, !!agentForSid);
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
-  // Same condition as hasStatusFeed, spelled inline so TS narrows `peer`.
+  // A session with no peer folds from the sid alone (already a dep), so the
+  // null here is itself the "virtual source" value — and a later connect flips
+  // it to a string, re-subscribing onto the announced path.
   const statusSource = peer?.transcript_path
     ? `${peer.transcript_path}\n${peer.repo_root ?? peer.cwd}`
     : null;
@@ -203,9 +201,15 @@ export function SessionView({
   // 実装コストとのトレードオフでこちらを採用。全 peer 分の完全なバッジは
   // Phase 3 後続に持ち越す)。
   const needsStatus = tab === "files" || tab === "status" || tab === "timeline";
+  // 購読が失敗した理由。daemon が jsonl を解決できない (session_not_found /
+  // not_found) セッションでは snapshot が永久に来ないので、StatusPanel を
+  // 「読み込み中…」のまま固まらせずここで理由を出す。購読をやり直すたびに
+  // null へ戻す。
+  const [statusError, setStatusError] = useState<string | null>(null);
   useEffect(() => {
-    if (!active || !sid || !needsStatus || !hasStatusFeed) return;
+    if (!active || !sid || !needsStatus || !hasTranscript) return;
     if (state.connStatus !== "connected") return;
+    setStatusError(null);
     // Cancellation guard (same pattern as Timeline's scroll effect): without
     // it, a tab/session switch that tears this effect down BEFORE the
     // subscribe response resolves would dispatch `session-status/loaded`
@@ -221,7 +225,11 @@ export function SessionView({
     const subscribed = ws
       .sessionStatusSubscribe(sid)
       .then((res) => {
-        if (cancelled || !res.ok) return;
+        if (cancelled) return;
+        if (!res.ok) {
+          setStatusError(res.error.msg);
+          return;
+        }
         store.dispatch({
           type: "session-status/loaded",
           sid,
@@ -247,7 +255,7 @@ export function SessionView({
       void subscribed.then(() => ws.sessionStatusUnsubscribe(sid).catch(() => {}));
       store.dispatch({ type: "session-status/cleared", sid });
     };
-  }, [active, sid, needsStatus, hasStatusFeed, statusSource, state.connStatus]);
+  }, [active, sid, needsStatus, hasTranscript, statusSource, state.connStatus]);
 
   // Files タブのファイル選択の復元 (kawaz r17 mid=5、2026-07-14)。Files タブ
   // のリンクは `#s<sid>` (path なし) なので、Timeline↔Files のタブ往復や
@@ -365,7 +373,7 @@ export function SessionView({
       ) : null}
       {visitedTabs.current.has("status") ? (
         <div class="session-tab-panel" hidden={tab !== "status"} data-session-tab="status">
-          {hasStatusFeed ? (
+          {hasTranscript && !statusError ? (
             <StatusPanel
               snapshot={sessionStatus}
               sid={sid}
@@ -373,9 +381,7 @@ export function SessionView({
               onLoadEnv={() => ws.sessionEnv(sid)}
             />
           ) : hasTranscript ? (
-            <p id="empty-state">
-              Status は接続中のセッションのみ表示できます (このセッションは ccmsg 未接続)
-            </p>
+            <p id="empty-state">Status を読み込めません: {statusError}</p>
           ) : (
             <p id="empty-state">{NO_TRANSCRIPT_MESSAGE}</p>
           )}

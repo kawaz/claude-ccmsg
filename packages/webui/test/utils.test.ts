@@ -47,7 +47,7 @@ import {
   sessionSearchFormToTimelineSearch,
   sessionSearchHitLabel,
   sessionStatus,
-  sessionTranscriptGates,
+  hasSessionTranscript,
   sayUnreadBySid,
   PANE_MIN_PX,
   SESSION_PANE_DEFAULT_RATIO,
@@ -924,46 +924,31 @@ describe("indexAgentsBySid / toSessionRow", () => {
   });
 });
 
-describe("sessionTranscriptGates", () => {
-  test("a connected session announcing a transcript_path gets both capabilities", () => {
-    expect(sessionTranscriptGates({ transcript_path: "/p/s1.jsonl" }, undefined, false)).toEqual({
-      statusFeed: true,
-      transcript: true,
-    });
+describe("hasSessionTranscript", () => {
+  test("a connected session announcing a transcript_path is readable", () => {
+    expect(hasSessionTranscript({ transcript_path: "/p/s1.jsonl" }, undefined, false)).toBe(true);
   });
 
-  // The daemon resolves session_status_subscribe without allowVirtual, so
-  // every source below yields a readable transcript but never a live feed.
+  // Both transcript_read and session_status_subscribe resolve with allowVirtual
+  // for a user-role conn, so every source below is readable AND foldable.
   test("a pinned/searched hit's file makes the transcript readable with no peer", () => {
-    expect(sessionTranscriptGates(undefined, "/p/s1.jsonl", false)).toEqual({
-      statusFeed: false,
-      transcript: true,
-    });
+    expect(hasSessionTranscript(undefined, "/p/s1.jsonl", false)).toBe(true);
   });
 
   test("an agent-only sid makes the transcript readable via the daemon's virtual resolve", () => {
-    expect(sessionTranscriptGates(undefined, undefined, true)).toEqual({
-      statusFeed: false,
-      transcript: true,
-    });
+    expect(hasSessionTranscript(undefined, undefined, true)).toBe(true);
   });
 
-  test("a sid with no peer, no stored file and no agents row has neither", () => {
-    expect(sessionTranscriptGates(undefined, "", false)).toEqual({
-      statusFeed: false,
-      transcript: false,
-    });
+  test("a sid with no peer, no stored file and no agents row has no transcript", () => {
+    expect(hasSessionTranscript(undefined, "", false)).toBe(false);
   });
 
   // transcript.ts keeps the fallback keyed on "not connected", not on "no file
   // to read": a connected session that announced no transcript_path gets its
-  // own not_found even under allowVirtual, so offering Timeline for it (just
+  // own not_found even under allowVirtual, so offering the tabs for it (just
   // because `claude agents --json` lists the sid) would only render an error.
   test("a connected session without transcript_path is not widened by the agents row", () => {
-    expect(sessionTranscriptGates({}, undefined, true)).toEqual({
-      statusFeed: false,
-      transcript: false,
-    });
+    expect(hasSessionTranscript({}, undefined, true)).toBe(false);
   });
 });
 

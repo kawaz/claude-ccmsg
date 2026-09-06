@@ -278,6 +278,98 @@ describe("hello-time transcript adoption", () => {
     },
     T,
   );
+
+  // Guarantees Status is not gated on a live ccmsg connection: a sid nothing is
+  // connected as still folds from its jsonl on disk, and the tail keeps pushing
+  // as that file grows.
+  test(
+    "session_status_subscribe folds and tails a sid with no connected session",
+    async () => {
+      const home = fixtureRoot();
+      const config = path.join(home, ".claude");
+      fs.mkdirSync(config);
+      const cwd = path.join(fixtureRoot(), "project");
+      fs.mkdirSync(cwd);
+      const file = transcript(config, sid(), cwd, [
+        {
+          type: "assistant",
+          timestamp: "2026-07-16T00:00:01.000Z",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "tc1",
+                name: "TaskCreate",
+                input: { subject: "First task", description: "desc", activeForm: "Working" },
+              },
+            ],
+          },
+        },
+        {
+          type: "user",
+          timestamp: "2026-07-16T00:00:02.000Z",
+          message: { content: [{ type: "tool_result", tool_use_id: "tc1", content: "ok" }] },
+          toolUseResult: { task: { id: "1", subject: "First task" } },
+        },
+      ]);
+
+      const ctx = await startTestDaemon({ HOME: home });
+      try {
+        const user = await connect(ctx.sock);
+        await user.hello({ role: "user" });
+        const initial = await user.request<{
+          ok: true;
+          todos: { id: string; subject: string; status: string }[];
+        }>({ op: "session_status_subscribe", sid: sid() });
+        expect(initial.ok).toBe(true);
+        expect(initial.todos).toHaveLength(1);
+        expect(initial.todos[0]?.status).toBe("pending");
+
+        fs.appendFileSync(
+          file,
+          [
+            {
+              type: "assistant",
+              timestamp: "2026-07-16T00:00:03.000Z",
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "tu1",
+                    name: "TaskUpdate",
+                    input: { taskId: "1", status: "completed" },
+                  },
+                ],
+              },
+            },
+            {
+              type: "user",
+              timestamp: "2026-07-16T00:00:04.000Z",
+              message: { content: [{ type: "tool_result", tool_use_id: "tu1", content: "ok" }] },
+              toolUseResult: {
+                success: true,
+                taskId: "1",
+                updatedFields: ["status"],
+                statusChange: { from: "pending", to: "completed" },
+              },
+            },
+          ]
+            .map((row) => `${JSON.stringify(row)}\n`)
+            .join(""),
+        );
+        const { ev } = await user.readEventUntil<{ todos: { status: string }[] }>(
+          (event) => event.ev === "session_status",
+        );
+        expect(ev.todos[0]?.status).toBe("completed");
+        user.close();
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 });
 
 describe("session_search wire authorization", () => {

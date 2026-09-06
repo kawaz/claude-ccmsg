@@ -597,34 +597,27 @@ export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): Sessio
     }));
 }
 
-/** The two transcript-backed capabilities SessionView gates on, derived from
- * one session's three possible transcript sources. Separate booleans because
- * the daemon resolves them differently (transcript.ts's
- * `TranscriptResolveOptions`):
+/** Whether a session has a transcript the daemon can serve — the single gate
+ * behind SessionView's Timeline and Status tabs, derived from one session's
+ * three possible transcript sources. Both ops resolve the same way for a
+ * user-role conn (transcript.ts's `TranscriptResolveOptions` allowVirtual):
+ * the announced `transcript_path` of a connected session first, else
+ * `resolveVirtualTranscript`'s `<configDir>/projects/<project>/<sid>.jsonl`
+ * from the sid alone. So a selected/pinned search hit (which carries its
+ * resolved file) and an agent-only row — a sid `claude agents --json` reports
+ * with no ccmsg connection, hence no `transcript_path` to offer, but with a
+ * jsonl on disk — are both readable and foldable.
  *
- * - `statusFeed`: `session_status_subscribe` resolves WITHOUT the allowVirtual
- *   fallback, so a live folded status feed exists only for a connected session
- *   that announced a `transcript_path`. Subscribing without one gets
- *   `session_not_found` back and leaves StatusPanel loading forever.
- * - `transcript`: `transcript_read` DOES take the allowVirtual path for a
- *   user-role conn (server.ts), and `resolveVirtualTranscript` finds
- *   `<configDir>/projects/<project>/<sid>.jsonl` from the sid alone. So it is
- *   also readable for a selected/pinned search hit (which carries its resolved
- *   file) and for an agent-only row — a sid `claude agents --json` reports with
- *   no ccmsg connection, which has no `transcript_path` to offer but does have
- *   a jsonl on disk under one of the daemon's config dirs.
- *
- * `inAgentsList` only widens the gate while the session is absent from `peers`:
- * a connected session that announced no transcript_path keeps its own
- * `not_found` even under allowVirtual (transcript.ts), so offering Timeline for
+ * `inAgentsList` only widens the gate while the session is absent from
+ * `peers`: a connected session that announced no transcript_path keeps its own
+ * `not_found` even under allowVirtual (transcript.ts), so opening the tabs for
  * it would just render an error. */
-export function sessionTranscriptGates(
+export function hasSessionTranscript(
   peer: { transcript_path?: string } | undefined,
   storedFile: string | undefined,
   inAgentsList: boolean,
-): { statusFeed: boolean; transcript: boolean } {
-  const statusFeed = !!peer?.transcript_path;
-  return { statusFeed, transcript: statusFeed || !!storedFile || (!peer && inAgentsList) };
+): boolean {
+  return !!peer?.transcript_path || !!storedFile || (!peer && inAgentsList);
 }
 
 /** Sessions-list row label (U1 first line): `{repo, ws}` when the row has
