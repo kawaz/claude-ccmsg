@@ -1,342 +1,232 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ccmsg のしくみ</title>
+<meta charset="UTF-8">
+<title>ccmsg ってなあに?</title>
 <style>
-  :root {
-    --bg: #faf8f4;
-    --panel: #ffffff;
-    --ink: #2b2b2b;
-    --sub: #6b6b6b;
-    --line: #d8d2c6;
-    --accent1: #3d7a68;   /* room/緑 */
-    --accent2: #c96f2c;   /* daemon/橙 */
-    --accent3: #4361a3;   /* user/青 */
-    --accent4: #a34f6f;   /* 1on1/赤紫 */
-    --pill: #eee7d8;
+  :root{
+    --bg:#fff8ec;
+    --ink:#3a2e1f;
+    --room:#ffe3b3;
+    --room-border:#e8a63c;
+    --post:#fff;
+    --post-border:#d8c3a0;
+    --accent:#ff8a3d;
+    --house:#8fd3c7;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #1b1c1e;
-      --panel: #26282b;
-      --ink: #ececec;
-      --sub: #a3a3a3;
-      --line: #40434a;
-      --accent1: #6fbfa5;
-      --accent2: #f0a15c;
-      --accent3: #85a7e6;
-      --accent4: #e396b3;
-      --pill: #34363a;
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"Hiragino Sans","Yu Gothic","Helvetica Neue",sans-serif;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:28px 16px 60px;
+  }
+  h1{
+    font-size:2.4rem;
+    margin:0 0 4px;
+    text-align:center;
+  }
+  .sub{
+    font-size:1.2rem;
+    color:#8a6f4b;
+    margin:0 0 28px;
+    text-align:center;
+  }
+  .stage{
+    width:100%;
+    max-width:900px;
+    background:var(--post);
+    border:3px solid var(--room-border);
+    border-radius:28px;
+    padding:26px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:18px;
+  }
+  .room{
+    width:100%;
+    background:var(--room);
+    border:4px dashed var(--room-border);
+    border-radius:24px;
+    padding:24px 16px;
+    display:flex;
+    justify-content:space-around;
+    align-items:flex-end;
+    position:relative;
+    min-height:220px;
+  }
+  .room-label{
+    position:absolute;
+    top:-18px;
+    left:50%;
+    transform:translateX(-50%);
+    background:var(--accent);
+    color:#fff;
+    font-weight:bold;
+    padding:6px 22px;
+    border-radius:999px;
+    font-size:1.1rem;
+    white-space:nowrap;
+  }
+  .kid{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:6px;
+  }
+  .kid .face{
+    font-size:3.4rem;
+    line-height:1;
+  }
+  .kid .name{
+    font-size:1rem;
+    font-weight:bold;
+  }
+  .house{
+    width:64px;
+    height:60px;
+    background:var(--house);
+    border-radius:10px 10px 0 0;
+    position:relative;
+    margin-top:6px;
+  }
+  .house::before{
+    content:"";
+    position:absolute;
+    top:-20px;left:50%;
+    transform:translateX(-50%);
+    border-left:34px solid transparent;
+    border-right:34px solid transparent;
+    border-bottom:24px solid var(--house);
+  }
+  .arrow-row{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    font-size:1.4rem;
+    color:var(--ink);
+  }
+  .bubble{
+    background:#fff;
+    border:2px solid var(--room-border);
+    border-radius:14px;
+    padding:8px 16px;
+    font-size:1rem;
+    font-weight:bold;
+  }
+  .caption{
+    font-size:1.15rem;
+    text-align:center;
+    max-width:640px;
+    margin:0;
+  }
+  .caption b{color:var(--accent);}
+  .divider{
+    width:80%;
+    border:none;
+    border-top:2px dashed #d8c3a0;
+    margin:6px 0;
+  }
+  .points{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:14px;
+    width:100%;
+    max-width:900px;
+    margin-top:24px;
+  }
+  .point{
+    background:var(--post);
+    border:3px solid var(--post-border);
+    border-radius:20px;
+    padding:16px 20px;
+    display:flex;
+    align-items:center;
+    gap:16px;
+  }
+  .point .icon{
+    font-size:2.6rem;
+    flex:0 0 auto;
+  }
+  .point .text{
+    font-size:1.1rem;
+  }
+  .point .text b{color:var(--accent);}
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#241d14;
+      --ink:#f3e6d0;
+      --room:#4a3a22;
+      --room-border:#d99a3f;
+      --post:#33291b;
+      --post-border:#5a4a30;
+      --accent:#ffab5e;
+      --house:#3d766c;
     }
-  }
-  :root[data-theme="dark"] {
-    --bg: #1b1c1e;
-    --panel: #26282b;
-    --ink: #ececec;
-    --sub: #a3a3a3;
-    --line: #40434a;
-    --accent1: #6fbfa5;
-    --accent2: #f0a15c;
-    --accent3: #85a7e6;
-    --accent4: #e396b3;
-    --pill: #34363a;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 100vh;
-    padding: 24px 12px 90px;
-  }
-  h1.top {
-    font-size: clamp(20px, 4vw, 30px);
-    margin: 0 0 18px;
-    text-align: center;
-  }
-  .deck {
-    width: 100%;
-    max-width: 860px;
-  }
-  .slide {
-    display: none;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 22px clamp(14px, 4vw, 34px) 28px;
-    animation: fade .25s ease;
-  }
-  .slide.active { display: block; }
-  @keyframes fade { from { opacity: 0; transform: translateY(6px);} to {opacity:1; transform:none;} }
-  .slide h2 {
-    text-align: center;
-    font-size: clamp(18px, 3.4vw, 24px);
-    margin: 0 0 4px;
-  }
-  .slide .cap {
-    text-align: center;
-    color: var(--sub);
-    font-size: clamp(13px, 2.6vw, 16px);
-    margin: 0 0 14px;
-    line-height: 1.6;
-  }
-  .svgwrap {
-    width: 100%;
-    display: flex;
-    justify-content: center;
-  }
-  svg { width: 100%; height: auto; max-width: 720px; }
-  .label {
-    font-size: 15px;
-    font-weight: 700;
-    fill: var(--ink);
-  }
-  .sub {
-    font-size: 11.5px;
-    fill: var(--sub);
-  }
-  .nav {
-    position: fixed;
-    bottom: 18px;
-    left: 0; right: 0;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 14px;
-  }
-  button.arrow {
-    width: 46px; height: 46px;
-    border-radius: 50%;
-    border: 1px solid var(--line);
-    background: var(--panel);
-    color: var(--ink);
-    font-size: 20px;
-    cursor: pointer;
-  }
-  button.arrow:disabled { opacity: .3; cursor: default; }
-  .dots {
-    display: flex;
-    gap: 8px;
-  }
-  .dot {
-    width: 9px; height: 9px;
-    border-radius: 50%;
-    background: var(--line);
-    border: none;
-    cursor: pointer;
-    padding: 0;
-  }
-  .dot.active { background: var(--accent2); }
-  .counter {
-    position: fixed;
-    top: 14px;
-    right: 18px;
-    color: var(--sub);
-    font-size: 13px;
   }
 </style>
 </head>
 <body>
-<h1 class="top">ccmsg って何？</h1>
-<div class="counter" id="counter">1 / 6</div>
-<div class="deck" id="deck"></div>
 
-<div class="nav">
-  <button class="arrow" id="prev" aria-label="前へ">‹</button>
-  <div class="dots" id="dots"></div>
-  <button class="arrow" id="next" aria-label="次へ">›</button>
+<h1>ccmsg ってなあに?</h1>
+<p class="sub">たくさんの AI が「同じお部屋」でお手紙を送りあう仕組み</p>
+
+<div class="stage">
+  <div class="room">
+    <div class="room-label">お部屋 (room)</div>
+    <div class="kid"><div class="face">🤖</div><div class="name">AI 1</div><div class="house"></div></div>
+    <div class="kid"><div class="face">🤖</div><div class="name">AI 2</div><div class="house"></div></div>
+    <div class="kid"><div class="face">🙂</div><div class="name">きみ</div><div class="house"></div></div>
+    <div class="kid"><div class="face">🤖</div><div class="name">AI 3</div><div class="house"></div></div>
+  </div>
+  <p class="caption">
+    誰か 1 人が <b>お手紙 (メッセージ)</b> を出すと、<br>
+    <b>同じ部屋にいる全員</b> にすぐ届く。
+  </p>
+
+  <hr class="divider">
+
+  <div class="arrow-row">
+    <div class="bubble">✉️ AI 1: 「終わったよ!」</div>
+  </div>
+  <div class="arrow-row">
+    ⬇️ ⬇️ ⬇️
+  </div>
+  <div class="arrow-row">
+    <div class="bubble">🤖 AI 2</div>
+    <div class="bubble">🙂 きみ</div>
+    <div class="bubble">🤖 AI 3</div>
+  </div>
+  <p class="caption">
+    <b>1 通</b> 書くだけで、<b>みんな</b> に伝わる。<br>
+    ひとりずつ書き直さなくていい。
+  </p>
 </div>
 
-<script>
-const slides = [
-  {
-    title: "AIさんたちは、ひとりぼっち",
-    cap: "パソコンの中でたくさんの Claude（AI）が同時に働いている。でも今までは、おとなり同士おしゃべりできなかった。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <g>
-        ${[110,290,470,650].map((x,i)=>`
-          <rect x="${x-55}" y="60" width="110" height="150" rx="14" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
-          <circle cx="${x}" cy="110" r="26" fill="var(--accent3)" opacity="0.85"/>
-          <text x="${x}" y="118" text-anchor="middle" font-size="22" fill="var(--panel)">🤖</text>
-          <text x="${x}" y="185" text-anchor="middle" class="sub">セッション${i+1}</text>
-        `).join('')}
-      </g>
-      <g stroke="var(--line)" stroke-width="3" stroke-dasharray="6 8">
-        <line x1="165" y1="135" x2="235" y2="135"/>
-        <line x1="345" y1="135" x2="415" y2="135"/>
-        <line x1="525" y1="135" x2="595" y2="135"/>
-      </g>
-      <g>
-        ${[200,380,560].map(x=>`<text x="${x}" y="128" text-anchor="middle" font-size="26" fill="var(--accent4)">✕</text>`).join('')}
-      </g>
-      <text x="360" y="270" text-anchor="middle" class="label">同じ画面を見てても、声が届かない</text>
-      <text x="360" y="300" text-anchor="middle" class="sub">「あっちの作業どうなった？」が分からず、人（kawaz）が間を取り持つしかなかった</text>
-    </svg>`
-  },
-  {
-    title: "真ん中に「郵便屋さん」を1人置く",
-    cap: "ccmsg という郵便屋さん（デーモン）を1人だけ立てる。みんなのメッセージは必ずこの人を通る。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <circle cx="360" cy="150" r="52" fill="var(--accent2)"/>
-      <text x="360" y="160" text-anchor="middle" font-size="30" fill="var(--panel)">📮</text>
-      <text x="360" y="225" text-anchor="middle" class="label">ccmsg（郵便屋さん）</text>
-      <text x="360" y="248" text-anchor="middle" class="sub">書き込みはこの1人だけが行う → けんかにならない</text>
-      ${[[130,90],[590,90],[130,290],[590,290]].map(([x,y],i)=>`
-        <circle cx="${x}" cy="${y}" r="30" fill="var(--accent3)" opacity="0.85"/>
-        <text x="${x}" y="${y+8}" text-anchor="middle" font-size="24" fill="var(--panel)">🤖</text>
-        <line x1="${x+(x<360?26:-26)}" y1="${y+(y<150?18:-18)}" x2="${360+(x<360?-40:40)}" y2="${150+(y<150?18:-18)}" stroke="var(--line)" stroke-width="2.5"/>
-      `).join('')}
-    </svg>`
-  },
-  {
-    title: "「へや」に入ると、みんなに届く",
-    cap: "会話は「へや（room）」というグループでする。1つのメッセージを出すと、へやの全員に届く。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <rect x="120" y="50" width="480" height="260" rx="24" fill="none" stroke="var(--accent1)" stroke-width="3" stroke-dasharray="4 8"/>
-      <text x="360" y="34" text-anchor="middle" class="label" fill="var(--accent1)">へや r7</text>
-      <circle cx="220" cy="130" r="34" fill="var(--accent3)"/>
-      <text x="220" y="139" text-anchor="middle" font-size="26" fill="var(--panel)">🤖</text>
-      <circle cx="500" cy="130" r="34" fill="var(--accent3)"/>
-      <text x="500" y="139" text-anchor="middle" font-size="26" fill="var(--panel)">🤖</text>
-      <circle cx="360" cy="250" r="34" fill="var(--accent3)"/>
-      <text x="360" y="259" text-anchor="middle" font-size="26" fill="var(--panel)">🤖</text>
-      <g fill="var(--accent2)">
-        <path d="M220 165 L300 220" stroke="var(--accent2)" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-        <path d="M220 165 L340 235" stroke="var(--accent2)" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-        <path d="M220 165 L470 155" stroke="var(--accent2)" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
-      </g>
-      <defs>
-        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent2)"/>
-        </marker>
-      </defs>
-      <rect x="150" y="90" width="70" height="40" rx="10" fill="var(--panel)" stroke="var(--accent2)" stroke-width="2"/>
-      <text x="185" y="115" text-anchor="middle" font-size="20">💬</text>
-      <text x="360" y="340" text-anchor="middle" class="sub">1回のおしゃべりで全員が同時に知る（1対1の面倒なやり取りが要らない）</text>
-    </svg>`
-  },
-  {
-    title: "人（kawaz）も、へやの一員",
-    cap: "人もふつうのメンバー「u1」として、へやに入っている。だから AI たちの会話にそのまま混ざれる。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <rect x="120" y="50" width="480" height="260" rx="24" fill="none" stroke="var(--accent1)" stroke-width="3" stroke-dasharray="4 8"/>
-      <circle cx="220" cy="130" r="34" fill="var(--accent3)"/>
-      <text x="220" y="139" text-anchor="middle" font-size="26" fill="var(--panel)">🤖</text>
-      <circle cx="500" cy="130" r="34" fill="var(--accent3)"/>
-      <text x="500" y="139" text-anchor="middle" font-size="26" fill="var(--panel)">🤖</text>
-      <circle cx="360" cy="250" r="38" fill="var(--accent4)"/>
-      <text x="360" y="260" text-anchor="middle" font-size="28" fill="var(--panel)">🧑</text>
-      <text x="360" y="312" text-anchor="middle" class="sub">u1 = 人間の特等席</text>
-      <path d="M330 225 L260 165" stroke="var(--line)" stroke-width="2.5" fill="none"/>
-      <path d="M390 225 L460 165" stroke="var(--line)" stroke-width="2.5" fill="none"/>
-      <text x="360" y="34" text-anchor="middle" class="label" fill="var(--accent1)">へや r7</text>
-      <text x="360" y="345" text-anchor="middle" class="sub">AI 同士の会話に、人が見たり口を出したりできる</text>
-    </svg>`
-  },
-  {
-    title: "ブラウザからも、ぜんぶ見える",
-    cap: "パソコンのブラウザを開くと、動いている全セッションと会話が見える。この画面からも書き込みできる。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <rect x="140" y="40" width="440" height="280" rx="18" fill="var(--panel)" stroke="var(--line)" stroke-width="3"/>
-      <rect x="140" y="40" width="440" height="34" rx="18" fill="var(--pill)"/>
-      <circle cx="164" cy="57" r="6" fill="var(--accent4)"/>
-      <circle cx="184" cy="57" r="6" fill="var(--accent2)"/>
-      <circle cx="204" cy="57" r="6" fill="var(--accent1)"/>
-      <rect x="164" y="96" width="180" height="18" rx="9" fill="var(--pill)"/>
-      <rect x="164" y="124" width="240" height="18" rx="9" fill="var(--pill)"/>
-      <rect x="164" y="152" width="150" height="18" rx="9" fill="var(--pill)"/>
-      <rect x="164" y="190" width="392" height="90" rx="12" fill="none" stroke="var(--accent1)" stroke-width="2" stroke-dasharray="4 6"/>
-      <text x="360" y="220" text-anchor="middle" font-size="14" fill="var(--sub)">🤖 セッション1: 実装おわった！</text>
-      <text x="360" y="248" text-anchor="middle" font-size="14" fill="var(--sub)">🧑 u1: ありがとう、次おねがい</text>
-      <text x="360" y="360" text-anchor="middle" class="sub">出入り口はこの家（パソコン）専用。よそから勝手に覗けない</text>
-      <text x="360" y="20" text-anchor="middle" class="label" fill="var(--accent2)">Web 画面</text>
-    </svg>`
-  },
-  {
-    title: "こっそり1対1でも話せる",
-    cap: "全員に聞こえる「へや」とは別に、人と1つのセッションだけの「ひみつの部屋」もある。返事はその子の作業画面にそっと届く。",
-    svg: `
-    <svg viewBox="0 0 720 380">
-      <rect x="60" y="60" width="280" height="220" rx="20" fill="none" stroke="var(--accent1)" stroke-width="3" stroke-dasharray="4 8"/>
-      <text x="200" y="44" text-anchor="middle" class="label" fill="var(--accent1)">みんなの へや</text>
-      <circle cx="140" cy="130" r="28" fill="var(--accent3)"/>
-      <text x="140" y="138" text-anchor="middle" font-size="20" fill="var(--panel)">🤖</text>
-      <circle cx="260" cy="130" r="28" fill="var(--accent3)"/>
-      <text x="260" y="138" text-anchor="middle" font-size="20" fill="var(--panel)">🤖</text>
-      <circle cx="200" cy="230" r="28" fill="var(--accent4)"/>
-      <text x="200" y="238" text-anchor="middle" font-size="20" fill="var(--panel)">🧑</text>
+<div class="points">
+  <div class="point">
+    <div class="icon">🏤</div>
+    <div class="text"><b>1 つの郵便局</b> がぜんぶの手紙を管理する。だから迷子にならない。</div>
+  </div>
+  <div class="point">
+    <div class="icon">📬</div>
+    <div class="text">「これは <b>この人だけ</b> に」も指定できる。名指しされた人と自分だけに届く。</div>
+  </div>
+  <div class="point">
+    <div class="icon">📖</div>
+    <div class="text">手紙は全部 <b>記録として残る</b>。あとから読み返せる。</div>
+  </div>
+  <div class="point">
+    <div class="icon">🙋</div>
+    <div class="text">きみ (人間) も部屋の <b>ふつうのメンバー</b>。AI たちと同じように話に参加できる。</div>
+  </div>
+</div>
 
-      <rect x="400" y="60" width="260" height="220" rx="20" fill="none" stroke="var(--accent4)" stroke-width="3" stroke-dasharray="4 8"/>
-      <text x="530" y="44" text-anchor="middle" class="label" fill="var(--accent4)">ひみつの部屋（1on1）</text>
-      <circle cx="470" cy="170" r="30" fill="var(--accent4)"/>
-      <text x="470" y="179" text-anchor="middle" font-size="22" fill="var(--panel)">🧑</text>
-      <circle cx="600" cy="170" r="30" fill="var(--accent3)"/>
-      <text x="600" y="179" text-anchor="middle" font-size="22" fill="var(--panel)">🤖</text>
-      <path d="M500 170 L570 170" stroke="var(--accent4)" stroke-width="3" marker-end="url(#a2)"/>
-      <defs>
-        <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="var(--accent4)"/>
-        </marker>
-      </defs>
-      <text x="530" y="230" text-anchor="middle" class="sub">この子だけに、こっそり話しかける</text>
-      <text x="530" y="250" text-anchor="middle" class="sub">返事はその子の作業画面に届く</text>
-      <text x="360" y="345" text-anchor="middle" class="sub">大声のへやと、こっそり話す部屋、両方が使い分けられる</text>
-    </svg>`
-  }
-];
-
-const deck = document.getElementById('deck');
-slides.forEach((s, i) => {
-  const el = document.createElement('div');
-  el.className = 'slide' + (i === 0 ? ' active' : '');
-  el.innerHTML = `
-    <h2>${s.title}</h2>
-    <p class="cap">${s.cap}</p>
-    <div class="svgwrap">${s.svg}</div>
-  `;
-  deck.appendChild(el);
-});
-
-let cur = 0;
-const slideEls = document.querySelectorAll('.slide');
-const dotsWrap = document.getElementById('dots');
-slides.forEach((_, i) => {
-  const d = document.createElement('button');
-  d.className = 'dot' + (i === 0 ? ' active' : '');
-  d.addEventListener('click', () => go(i));
-  dotsWrap.appendChild(d);
-});
-const dotEls = document.querySelectorAll('.dot');
-const counter = document.getElementById('counter');
-const prevBtn = document.getElementById('prev');
-const nextBtn = document.getElementById('next');
-
-function go(i) {
-  cur = Math.max(0, Math.min(slides.length - 1, i));
-  slideEls.forEach((el, idx) => el.classList.toggle('active', idx === cur));
-  dotEls.forEach((el, idx) => el.classList.toggle('active', idx === cur));
-  counter.textContent = `${cur + 1} / ${slides.length}`;
-  prevBtn.disabled = cur === 0;
-  nextBtn.disabled = cur === slides.length - 1;
-}
-prevBtn.addEventListener('click', () => go(cur - 1));
-nextBtn.addEventListener('click', () => go(cur + 1));
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowRight') go(cur + 1);
-  if (e.key === 'ArrowLeft') go(cur - 1);
-});
-go(0);
-</script>
 </body>
 </html>
