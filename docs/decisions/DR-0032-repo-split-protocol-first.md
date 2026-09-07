@@ -38,12 +38,20 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 
 ### 2.2 進め方
 
-1. protocol を版付きの契約として切り出す。最初の契約変更として session 系オブジェクトに
-   `instance` を足す (クラスタ化の前提、現 webui には影響しない任意フィールド)
-2. 新 webui を別リポ・別 FQDN で並走させる (同じ daemon に接続)
-3. 画面ごとに新 webui へ移す。移す対象は棚卸しの一覧から「残す機能のチェックリスト」を
-   作って決め、参照 0 / テスト未 import の部品は移植せず落とす候補とする
-4. 日常利用が新 webui に移った時点で旧 webui (`packages/webui`) を削除
+新系 (protocol v2 の daemon + 新 webui + 新 plugin) は **別 instance として横に立て、旧系
+(現行 daemon + webui + plugin) は凍結して放置する** (kawaz r278m59)。instance ごとに socket /
+state dir / room の記録が `iss` 由来のパスで分離されるので、両系が共有するものは読み取り専用の
+外部資源 (`claude agents`、`sessions/<pid>.json`、transcript、hyoui) だけ。daemon が v1 と v2 を
+両受けする必要は無い。
+
+1. protocol を版付きの契約として切り出す。session 系オブジェクトは最初から `instance` を持つ
+2. 新 daemon を新 instance (別 FQDN / socket / state dir) として起動し、新 webui を別リポ・別 FQDN で繋ぐ
+3. 画面ごとに新 webui を作る。移す対象は [webui-rebuild-checklist](../design/webui-rebuild-checklist.md)
+   で決め、参照 0 / テスト未 import の部品は移植しない
+4. セッションは新規起動分から新 plugin (`ccmsg plugin install claude`) を使い、旧セッションは旧系の
+   まま寿命を終える。gateway の通知先 (webhook) は新 instance を追加登録する
+5. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の
+   履歴は移行しない (必要な間は旧 webui で読む)
 
 ### 2.3 コンポーネント整理に持ち込む規約 (クラスタ化由来)
 
@@ -80,8 +88,6 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 - room id の形式 (§2.3「instance を含意する」の具体形)。複数 daemon が同じ id を同じ意味に解釈する
   必要があるので、意図ではなく規則として固定する
 - DR / docs の振り分け (webui 固有の DR を新リポへ移し、INDEX に移管先を残す)
-- 旧 webui の削除時期と、それまでの並走の運用 (bump / release の 2 本立て)
-- 移行中の protocol 変更をどう扱うか (旧 webui は追従しない = 凍結、で足りるか)
 - instance の起動タイミング (常駐か、その config home のセッションが最初に `ccmsg` を呼んだ時か)
 - instance 間認証は kawaz 起草の [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md) を採用候補とする (自己識別の「全 peer 到達必須」の緩和は検討中)
 

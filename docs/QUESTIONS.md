@@ -84,15 +84,6 @@ peers / agents / session_status 等が「op で全量 + push で全量」の 2 �
   既存の 184 interface を出発点にできる)
 - [ ] b: JSON Schema を正本にし、TS 型を生成 (言語非依存だが、union / literal の表現が冗長)
 
-### PV-Q6: 並走期間の v1 / v2 両受け ([Draft §8](design/protocol-v2.md))
-
-旧 webui (v1) と新 webui (v2) を同じ daemon に繋ぐ期間の扱い。
-
-- [ ] a: daemon が hello の `protocol` で分岐し、v1 の dispatch を凍結したまま並存 (統括推し:
-  旧 webui を触らずに済む)
-- [ ] b: 旧 webui を v2 に最低限追従させ、daemon は v2 だけ受ける (両受けの実装は要らないが、
-  捨てる予定の webui に手を入れる)
-
 ### PV-Q7: role が可視範囲を変える 3 op ([op 表 §8-4](design/protocol-v2-op-table.md))
 
 `fs_list` / `fs_read` / `transcript_read` は role で「可否」でなく「見える範囲」(user なら

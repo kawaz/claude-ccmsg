@@ -1,6 +1,6 @@
 # protocol v2 設計 (規約ファーストの契約)
 
-- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q7)
+- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7)
 - 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
   [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
   DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
@@ -126,8 +126,8 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - `PROTOCOL_VERSION` は整数のまま (世代)。同一世代内の追加は任意フィールド・任意 op の追加のみ
   許し、削除・意味変更は世代を上げる
 - 世代が違う hello は拒否 (v1 と同じ)。mesh も同じ規則 (世代の違う instance とは繋がない)
-- 旧 webui は v1 のまま凍結 (v2 に追従しない)。並走期間中 daemon は v1 と v2 の両方を受ける
-  (PV-Q6: 両受けの期間と方法)
+- 旧系 (v1 の daemon / webui / plugin) は凍結し、新系は別 instance として横に立てる (DR-0032 §2.2)。
+  daemon が v1 と v2 を両受けする必要は無い
 
 ## 9. 裁定待ち (QUESTIONS.md)
 
@@ -136,6 +136,5 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - PV-Q3: 観測系の一本化 (§3.3) — one-shot op を全廃するか
 - PV-Q4: op の命名 (§5) — 名詞先頭に統一するか
 - PV-Q5: schema と TS 型のどちらを正本にするか (§7)
-- PV-Q6: 並走期間の v1/v2 両受け (§8)
 - PV-Q7: role が可否でなく可視範囲を変える 3 op (`fs_list` / `fs_read` / `transcript_read`) の
   扱い — 属性 `scope` を足すか、role ごとに別 op に割るか (op 表 §8-4)
