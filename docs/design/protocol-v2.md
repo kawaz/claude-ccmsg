@@ -125,8 +125,11 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 
 ## 6. instance と mesh
 
-- `instance` は名前 (例 `personal@mba`)。`hello` の応答に自 instance と、mesh で見えている
-  instance の一覧 (`instances: [{id, host, reachable}]`) を含める
+- `instance` の識別子は endpoint URL (`wss://…/…`。ローカル単独の instance は `ws://` も可、mesh に
+  出るのは `wss://` のみ = mesh-peer-auth P2)。表示名は config の別名。`hello` の応答に自 instance と、
+  mesh で見えている instance の一覧 (`instances: [{id, host, reachable}]`) を含める
+- `role: instance` の hello に mesh-peer-auth §5.3 のフィールド (`ver` / `iss` / `aud` / `kid`) を載せる
+  (認証を別チャネルにしない)
 - session 系オブジェクト (`PeerInfo` / `AgentInfo` / `LastLiveSession` / `SessionSearchHit`) は
   `instance` を持つ
 - `locality: instance-local` の op は、接続先が担当でなければ mesh で担当へ転送。到達できなければ
@@ -141,7 +144,11 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 
 - protocol リポは **schema (JSON Schema 相当) + TS 型 + op 属性表** を持ち、daemon / webui は
   同じ schema で検証する (daemon の手書き `typeof` 検査を置換)
-- schema から TS 型を生成するか、TS 型を正本に schema を生成するかは PV-Q5
+- 実装は TypeBox: schema を TS で書き、型は `Static<>` で導出、検証は `TypeCompiler`。正本が 1 つで
+  JSON Schema をそのまま出せる (PV-Q5 の「TS を正本に schema を持つ」をこの形で満たす)
+- topic にも op と同じ属性表 (`roles` / `capability`) を持つ。`llm_requests` topic の capability は
+  `llm_events` (gateway の webhook source が設定されている時だけ有効)
+- `hello` / `ping` は接続先そのものへの op なので locality は cluster (転送されない)
 - テストは protocol リポに「fixture (実 wire の JSON) が schema を通る」形で置き、daemon / webui
   の変更が契約に違反したら protocol のテストで落ちるようにする
 
