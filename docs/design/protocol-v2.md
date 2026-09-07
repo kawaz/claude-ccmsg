@@ -1,6 +1,6 @@
 # protocol v2 設計 (規約ファーストの契約)
 
-- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7、PV-Q8)
+- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7)
 - 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
   [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
   DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
@@ -36,8 +36,9 @@ transcript で全部見せている。よって v2 の messaging は **会話の
 - `message_send {to: sid, text}` と、受信側への配送 (返信経路の指示を含む)、`say`、`notify`
 - 会話ログの正本は transcript (Timeline)。ccmsg 側の永続ログ (room jsonl)、`mid` / `seq`、既読カーソル
   (BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
-- 新しい論点は **未配送メッセージの扱い** (相手が受信できない間どうするか): sid 単位の inbox を
-  持つか、届かなければ送信側にエラーを返すか (PV-Q8)
+- 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、
+  kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
+  Paused / Disappeared / instance に到達不能。送信側 (エージェント) はそれを見て待つか諦めるかを決める
 - 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ
   (`sessions/<pid>.json` の `messagingSocketPath`) に誘導できる可能性がある。daemon がその socket に
   直接配送できれば subscribe の Monitor 経由の注入自体が不要になる (スパイクで確認中)
@@ -152,6 +153,5 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - PV-Q3: 観測系の一本化 (§3.3) — one-shot op を全廃するか
 - PV-Q4: op の命名 (§5) — 名詞先頭に統一するか
 - PV-Q5: schema と TS 型のどちらを正本にするか (§7)
-- PV-Q8: 未配送メッセージの扱い (§2.1) — sid 単位の inbox か、即エラーか
 - PV-Q7: role が可否でなく可視範囲を変える 3 op (`fs_list` / `fs_read` / `transcript_read`) の
   扱い — 属性 `scope` を足すか、role ごとに別 op に割るか (op 表 §8-4)
