@@ -362,8 +362,9 @@ function sendErr(conn: Conn, code: string, msg: string): void {
 }
 
 function sendReplyViaTlError(conn: Conn, room: Room | null): void {
-  // `room=null` は create_room/next_room の pre-check 経路 (RL-Q1、kawaz r26
-  // mid=103) — 対象 room がまだ存在しないので room id を含めず「session 発の
+  // `room=null` は create_room/next_room の pre-check 経路 (session 発 1on1 post の
+  // reply_via_tl 拒否 (DR-0014 §2.1) を初期 --msg にも適用、issue
+  // 2026-07-17-one-on-one-initial-msg-guard) — 対象 room がまだ存在しないので room id を含めず「session 発の
   // 初期 --msg 自体を諦めろ」と誘導する。room 指定時は既存 post/reply ガードの
   // 文言 (room id 込み) を維持する。
   const suffix = room
@@ -404,8 +405,8 @@ function computeReplyVia(room: Room, ev: MsgEvent): string {
  * `<task-notification>` block: measured across ~140 real truncation samples
  * from `~/.claude-personal/projects/**` (docs/findings/2026-07-19-task-
  * notification-truncation.md). Two clusters appeared, ~500 chars of `<event>`
- * body and ~3000 chars. We conservatively assume the smaller cap since kawaz
- * r34 mid=18 is a recent hit; going below it guarantees no wire truncation
+ * body and ~3000 chars. We conservatively assume the smaller cap (it is the
+ * one observed most recently); going below it guarantees no wire truncation
  * regardless of which mode the harness is in.
  *
  * `WIRE_MSG_SAFE_BYTES` is the max serialized-JSON length we will emit for a
@@ -413,7 +414,8 @@ function computeReplyVia(room: Room, ev: MsgEvent): string {
  * it, we omit `msg` and end the frame with a `msg_via` fetch instruction.
  * Storage (`rooms/*.jsonl`) always keeps the full body. Override via env for
  * tuning: `CCMSG_WIRE_MSG_SAFE_BYTES=<positive integer>`. Default = 400 bytes
- * ≈ 80% of the 500-char empirical cap (kawaz spec: 8-9 割で予測遮断). */
+ * ≈ 80% of the 500-char empirical cap (spec: cut at 80-90% of the measured
+ * limit so normal variance in the wrapper's overhead never reaches it). */
 function readWireMsgSafeBytesEnv(): number {
   const raw = process.env.CCMSG_WIRE_MSG_SAFE_BYTES;
   if (raw === undefined || raw === "") return 400;
@@ -423,13 +425,16 @@ function readWireMsgSafeBytesEnv(): number {
 }
 const WIRE_MSG_SAFE_BYTES = readWireMsgSafeBytesEnv();
 
-/** Recent-replay window for the bare-default subscribe path (kawaz r46 mid=35).
+/** Recent-replay window for the bare-default subscribe path.
  * A subscriber that didn't set a `since_seq`/`backlog` cursor for a room still
  * receives msgs posted within the last N ms that would have been live-delivered
  * had they been present — with `replay: true` marking them as catch-up. Fixes
  * the "post → target hasn't wired their subscribe yet → msg silently dropped"
- * failure mode for freshly-spawned peer AI sessions. 3 min default; env override
- * exists purely for tests (production keeps the default). */
+ * failure mode for freshly-spawned peer AI sessions. 3 min default: long enough
+ * to cover a peer session's startup (spawn → first hook → subscribe wired,
+ * typically well under a minute), short enough that a stale room's history is
+ * not mistaken for live traffic. Env override exists purely for tests
+ * (production keeps the default). */
 function readRecentReplayMsEnv(): number {
   const raw = process.env.CCMSG_RECENT_REPLAY_MS;
   if (raw === undefined || raw === "") return 3 * 60 * 1000;
@@ -442,8 +447,7 @@ const RECENT_REPLAY_WINDOW_MS = readRecentReplayMsEnv();
 /** subscribe wire order for `msg` events: `msg` (the body) is placed last,
  * after every other field (docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md).
  * The harness's task-notification truncation cuts from the block's tail, so
- * with the old field order (msg mid-way, `seq`/response metadata after it) a
- * long `msg` silently ate the trailing fields (kawaz r26 mid=110). Putting
+ * any field placed after a long `msg` would be silently lost. Putting
  * `msg` last means truncation always lands inside the body — visibly incomplete —
  * instead of silently dropping `reply_via`/`seq`. `JSON.stringify` key order
  * follows insertion order, so this rebuilds the object explicitly rather than
@@ -475,7 +479,7 @@ function orderedMsgFrame(
   replay: boolean = false,
   echo: boolean = false,
 ): Record<string, unknown> {
-  // Field order is scope/importance order (kawaz r38 mid=23):
+  // Field order is scope/importance order [kawaz]:
   // type,r,seq,mid,from[,to,reply_to],msg|msg_via,reply_via,replay,ts.
   // `msg`/`msg_via` sits before the fixed-size tail so an inline body is as
   // late as possible while the trailing fields stay in a predictable place.
@@ -700,12 +704,10 @@ function registerSession(
 /** Stop counting `conn` under `sid`'s session entry — the shared tail end of both
  *  a full disconnect (removeConn) and a re-hello that moves this conn to a
  *  different sid or away from session role entirely (dispatch's "hello" case).
- *  Without this second caller, a conn that re-hellos under a new identity stayed
- *  in its *previous* sid's `conns` Set forever (that sid's entry.conns.size never
- *  dropped to 0 on its own), so the stale sid lingered in `peers`/ev:"peers" as a
- *  ghost peer until the conn closed entirely — adversarial review finding,
- *  2026-07-12, made externally visible by ev:"peers" push + the webui's live peer
- *  list (the underlying registry gap predates that push). */
+ *  Invariant: a conn is counted under at most one sid at a time. A re-hello that
+ *  skips this step leaves the conn in its *previous* sid's `conns` Set, so that
+ *  sid never reaches conns.size === 0 and lingers in `peers`/ev:"peers" as a
+ *  ghost peer until the conn closes entirely. */
 function detachSession(daemon: Daemon, conn: Conn, sid: string): void {
   const entry = daemon.sessions.get(sid);
   if (!entry) return;
@@ -1347,9 +1349,8 @@ function isSuppressedForBroadcastStream(room: Room, ev: StorageEvent): boolean {
   return room.kind === "broadcast" && (ev.type === "member" || ev.type === "leave");
 }
 
-/** `say` / `say_read` are観測用 events for the webui only (kawaz r244 m6:
- * 「webui とかが知りたいだけなのでセッションへの echo は不要、コンテキストの
- * 無駄」). A session's own speech is something it already knows about, and the
+/** `say` / `say_read` are observation events for the webui only [kawaz].
+ * A session's own speech is something it already knows about, and the
  * read-ack is a User-side gesture — delivering either into a session-role
  * subscribe stream would spend agent context to tell an agent what it did.
  * Applied on every delivery path (live deliver, since/backlog replay,
@@ -1407,8 +1408,7 @@ function isValidSeqCursor(v: number | undefined): v is number {
  *   (BBS replay, msg-only cursor, old-client compat).
  * - without either: present member state + title/link events + the last N=50 msgs
  *   (join snapshot); a user-role subscriber's conn gets every msg instead of just
- *   the last 50 (issue 2026-07-12-peers-live-update-protocol's sibling change —
- *   the cap only protects an agent session's context budget).
+ *   the last 50 (the cap only protects an agent session's context budget).
  * suppressAuthorId strips the body from the author's own just-posted msg in their
  * snapshot (echo rule; a session-role author still gets the bodyless echo frame).
  * All paths apply the same `to`-delivery filter as live `deliver` (DR-0011 §1-2): an
@@ -1493,8 +1493,7 @@ function sendBacklog(
 
   const presentIds = new Set(presentMembers(room).map((m) => m.id));
   const msgEvents = room.events.filter((e): e is MsgEvent => e.type === "msg");
-  // user role has no context budget to protect (kawaz 2026-07-12: "ユーザ向けは
-  // コンテキストとか気にする必要ないのでないなら全部流し直して") — only session
+  // user role has no context budget to protect [kawaz] — only session
   // (agent) subscribers keep the DEFAULT_JOIN_BACKLOG=50 cap that exists to bound
   // an agent's context cost. subscribe requires hello (IDENTITY_OPS), so
   // conn.identity is always set here.
@@ -1633,7 +1632,7 @@ function createRoom(
     createdAt: Date.now(),
     // broadcast rooms are always dedup-exempt regardless of the caller's request
     // — multiple broadcasts with the same member set (dev / debug / ...) are
-    // explicitly allowed (DR-0013 §2.1, r12 mid=3「一個限定である必要無し」)
+    // explicitly allowed (DR-0013 §2.1)
     // and would otherwise fold into the same room.
     dedupEligible: kind === "broadcast" ? false : dedupEligible,
     dedupKey: [...new Set(orderedSids)].sort().join(","),
@@ -1731,7 +1730,7 @@ const SET_TITLE_MAX_LEN = 200;
 /** Start handling one request. Requests of the same connection run
  * concurrently: a reply carries the `request_id` of the request it answers
  * (see RequestEnvelope), so a client settles it by id and an op that awaits IO
- * no longer holds back the cheap ops queued behind it. Each request swallows
+ * does not hold back the cheap ops queued behind it. Each request swallows
  * its own failure so one rejected op cannot take down the connection. */
 export function handleRequest(daemon: Daemon, conn: Conn, line: string): void {
   void handleOneRequest(daemon, conn, line).catch((e: unknown) => {
@@ -1868,7 +1867,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // Announced repo/ws always win; the cwd derivation only fills what the
         // session could not tell us. A fork/resume launch gets no hook-written
         // state file (same hole adoptTranscriptPath covers), so it announces
-        // neither and used to show blank columns in the webui's session list.
+        // neither; without the derivation its session-list columns stay blank.
         // Fail-open: unresolvable stays "" and hello proceeds regardless.
         // Not validated beyond "absolute path, canonically spelled": the value
         // is only ever compared with another session's announcement, never
@@ -2128,8 +2127,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           return;
         }
         const targetSid = targetSids[0]!;
-        // RL-Q1 (kawaz r26 mid=103, 「混ぜない」裁定): session 発の初期 --msg は
-        // 1on1 room に対して post ガード (§2.5 reply_via_tl) と同じ理由で拒否
+        // session 発の初期 --msg は 1on1 room に対して post ガード (DR-0014 §2.1
+        // reply_via_tl、issue 2026-07-17-one-on-one-initial-msg-guard) と同じ理由で拒否
         // する — 1on1 の返信レールは TL (transcript) で、room msg 経路ではない。
         // 副作用 (KindEvent/member 書き込み) を残さないため、room 作成前に落とす。
         // broadcast の初期 msg 例外 (§2.10) は unchanged: 1on1 のみに適用。
@@ -2315,9 +2314,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      // RL-Q1 (kawaz r26 mid=103): 1on1 の次スレも 1on1 (§2 kind inheritance)
+      // 1on1 の次スレも 1on1 (DR-0014 §2 kind inheritance)
       // なので、create_room 側と同じく session 発の初期 --msg は "tl" 経路に
-      // 誘導する (post ガード §2.5 と同じ理由)。next_room 自体 (msg なし) は
+      // 誘導する (post ガード DR-0014 §2.1 と同じ理由)。next_room 自体 (msg なし) は
       // 正当な操作なので通す。broadcast の初期 msg 例外 (§2.10) は unchanged。
       if (req.msg !== undefined && old.kind === "1on1" && conn.identity?.role === "session") {
         sendReplyViaTlError(conn, old);
@@ -2378,7 +2377,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "say": {
-      // kawaz r244 m5-m6: `ccmsg say` は say の実行そのものは CLI が必ず行う。
+      // `ccmsg say` は say の実行そのものは CLI が必ず行う。
       // ここは「どのセッションが喋ったか」を webui が答えられるようにするため
       // の記録だけを担う。session role 限定 — 「自分の 1on1 room」が宛先の
       // 全てなので、caller が room を名指しする余地はない。
@@ -2667,10 +2666,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "rooms": {
       // Sids with at least one open connection — the same liveness the `peers`
-      // op reports, computed once here instead of per room. Clients used to
-      // have to fetch `peers` separately and intersect it with each room's
-      // member list to tell an inhabited room from a dormant one; `live_members`
-      // (see RoomSummary) hands them that count directly.
+      // op reports, computed once here instead of per room. `live_members`
+      // (see RoomSummary) lets a client tell an inhabited room from a dormant
+      // one without fetching `peers` and intersecting it with each member list.
       const liveSids = new Set(
         [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid),
       );
@@ -2690,7 +2688,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
           // absence of the field.
           ...(r.kind !== "normal" ? { kind: r.kind } : {}),
-          // 📣 marker seed (kawaz r244 m5-m6): only 1on1 rooms ever carry say
+          // 📣 marker seed: only 1on1 rooms ever carry say
           // events, but the scan runs uniformly — a room's kind is not a reason
           // to special-case a walk that finds nothing on rooms without them.
           // Omitted when empty, per the field's contract.
@@ -2829,8 +2827,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       // Slow: the fresh `claude agents` run plus up to 3s of kill grace
-      // (DR-0028 addendum). DR-0028 addendum (r38 mid=6): forward force
-      // through to session-kill.ts for the SIGKILL escalation path.
+      // (DR-0028). `force` is forwarded to session-kill.ts for the SIGKILL
+      // escalation path.
       const killed = await sessionKill(req.session_id, productionKillDeps, {
         force: req.force === true,
       });
@@ -3079,7 +3077,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "fs_stat_batch": {
       // user-role only: fs_stat_batch is a viewer feature (the message-body
-      // path linkifier, kawaz r46 m55-m58). It reuses fs_read /
+      // path linkifier). It reuses fs_read /
       // fs_read_external / fs_read_workspace's authorization surfaces through
       // fsResolveForServe, so no new trust boundary is introduced — sessions
       // (AI) have no reason to probe file existence via the daemon, they read
@@ -3167,7 +3165,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "fs_delete": {
-      // user-role only: file deletion is a viewer feature (kawaz r46 m25),
+      // user-role only: file deletion is a viewer feature,
       // gated behind an explicit confirm() dialog on the client side. A
       // session (AI) does not delete files via the daemon.
       if (conn.identity?.role !== "user") {
@@ -3707,7 +3705,7 @@ function resolveHttpBinds(): string[] {
 }
 
 /** `CCMSG_HTTP_ALLOW`: comma-separated CIDR/IP source allowlist, default
- *  DEFAULT_HTTP_ALLOW (DR-0004 §3 addendum). Empty/whitespace-only falls back to the
+ *  DEFAULT_HTTP_ALLOW (DR-0004 §3). Empty/whitespace-only falls back to the
  *  default rather than "allow nothing" — an explicit empty allowlist isn't a supported
  *  way to lock the transport down; use CCMSG_HTTP_BIND=off for that. */
 function resolveHttpAllowSpec(): string {
@@ -3719,7 +3717,7 @@ function resolveHttpAllowSpec(): string {
  *  the request's own bind address (always implicitly allowed, see http.ts
  *  isAllowedOrigin). For a reverse proxy in front of this daemon (tailscale serve:
  *  `https://<machine>.<tailnet>.ts.net`) whose Origin doesn't match any bind literally
- *  (2026-07-10, DR-0004 trust-model addendum). Unset/empty = no extra origins. */
+ *  (DR-0004 §3). Unset/empty = no extra origins. */
 function resolveHttpAllowOrigin(): Set<string> {
   const raw = process.env.CCMSG_HTTP_ALLOW_ORIGIN;
   if (!raw || raw.trim() === "") return new Set();
@@ -3973,8 +3971,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   }
   daemon.httpListeners = httpListeners;
 
-  // Zero-config tailscale serve origin auto-allow (docs/issue/2026-07-11-tailscale-
-  // serve-origin-auto-allow.md, DR-0004 trust-model addendum): best-effort, async,
+  // Zero-config tailscale serve origin auto-allow (DR-0004 §3): best-effort, async,
   // never delays or blocks startup. `extraOrigins`/`httpAllowOrigin` is the very Set
   // instance each HTTP listener's closure already holds (see isAllowedOrigin in
   // http.ts) — mutating it after the fact is enough for future requests to see the
