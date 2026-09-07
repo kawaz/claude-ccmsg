@@ -32,7 +32,7 @@ p2p 方式の cmux-msg で複数セッション会話 (die / grapheme.mbt / time
 
 ### 1. Single host [kawaz]
 
-- daemon は 1 マシンで完結。multi-host sync / federation / CRDT は scope 外
+- daemon は 1 マシンで完結。multi-host sync / federation / CRDT は scope 外 (複数ホストを束ねる構想は [DR-0032](./DR-0032-repo-split-protocol-first.md) で別途扱う)
 - mobile / 外出先からのアクセスは webui を tailscale (LAN VPN) 経由で使う「LAN 内 remote access」として扱う
 - 出所: 一次資料 §4 回答 1
 
@@ -50,7 +50,7 @@ kawaz スケッチ (一次資料 §1-2) + 2026-07-03 決定 (同 §5) による:
 - **同時開設は daemon が直列化して重複排除**: 直近 room リストを daemon が把握しており、同一ペアの後発 create は無視する (先発の開設通知が両者に飛ぶので、どちらが作ったかは気にしなくてよい)
   - [提案] 後発 create に添えられた初期メッセージは捨てずに既存 room への post として追記する
 - **member identity = room 内参加順 seq** (`uid: 1, 2, 3...`)。`0` は **kawaz (User) の予約 uid**。sid は長いので room 内では seq で参照し、member イベントが `sid / repo / ws / cwd / joined_at` の対応を持つ
-  - [提案] `from` はクライアント自称ではなく daemon が接続 identity から刻印する (同 UID 内 trust は前提としつつ、なりすまし записи を構造的に防ぐ)
+  - [提案] `from` はクライアント自称ではなく daemon が接続 identity から刻印する (同 UID 内 trust は前提としつつ、なりすましを構造的に防ぐ)
 - **メンバーは後から増やせる** (room ID は member set からの単射である必要なし)。不要になったら **leave できる** (member イベントの対)
 - **次スレ/前スレリンク**: 会話が長くなったら次スレ (新 room) に分割できる。daemon が旧 room に `next`、新 room に `prev` のリンクイベントを対で書き、全 member に次スレ開設が通知される。移行は強制ではなく旧スレもそのまま使える (詳細は DR-0003)
 
