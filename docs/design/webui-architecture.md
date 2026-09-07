@@ -136,6 +136,6 @@ URL に載せる = 共有・戻る/進むの対象、storage に載せる = そ�
 hook で計測し、数値を残す。Timeline の分割 (行の種類ごとの component / fold・検索・自動追随の intent /
 transcript-model) は別 doc (`timeline-architecture.md`) を起こす。
 
-## 9. 裁定待ち ([QUESTIONS.md](../QUESTIONS.md))
+## 9. 未確定 (新 webui の実装時に統括が決める)
 
-- WA-Q2: signal の単位 (§3 の表で良いか、要素単位 signal の範囲)
+- signal の単位 (要素単位 signal の範囲)。まず群単位で始め、Timeline を作る段階で要素単位を判断する
