@@ -32,14 +32,14 @@
 
 ### WA-Q2: signal の単位 (要素単位をどこまで)
 
-Draft §3 の表は「群単位」(接続 / 能力 / 一覧 / room / 現在地 / …)。争点は Map を持つものを
+新 webui (DR-0032) の状態層。[webui-architecture Draft §3](design/webui-architecture.md) の表は「群単位」(接続 / 能力 / 一覧 / room / 現在地 / …)。争点は Map を持つものを
 **要素ごとの signal** (`Map<sid, Signal<tree>>`) にする範囲。
 
 - [ ] a: `sessionTrees` / `sessionStatuses` / `rooms` を要素単位 (統括推し)。1 セッションの
   transcript 更新が他セッションの Timeline を触らない。一覧 (`peers` / `agents`) は並び替えが
   配列全体の値なので群単位のまま
 - [ ] b: 一覧の行も sid 単位にする (行の内容更新と並び替えを分離)。効果は大きいが構造が二重になる
-- [ ] c: まず群単位のみで始め、要素単位は移行段階 3 で判断 (WA-Q4 と連動)
+- [ ] c: 新 webui はまず群単位のみで始め、要素単位は Timeline を作る段階で判断
 
 ### PV-Q1: protocol v2 の面 (plane) の分け方 ([Draft §2](design/protocol-v2.md))
 
