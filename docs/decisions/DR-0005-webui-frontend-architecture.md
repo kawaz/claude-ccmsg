@@ -1,6 +1,6 @@
 # DR-0005: webui フロントエンドアーキテクチャ (workspace 化を見込んだ器)
 
-- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)
+- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)。§1 の action/reducer と §3 の配信形態は [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.1 が supersede (状態層は `@preact/signals`、webui は別リポの静的サイト)
 - **Date**: 2026-07-09
 - **Author**: AI agent
 - **一次資料**: [docs/research/2026-07-09-kawaz-webui-vision-statement.md](../research/2026-07-09-kawaz-webui-vision-statement.md)
@@ -14,7 +14,7 @@ DR-0001 と同じ: **[kawaz]** = 一次資料に逐語あり / **[提案]** = �
 
 kawaz の長期 vision [kawaz]: webui はメッセージング UI にとどまらず、最終的に「セッション一覧 / セッション jsonl のリッチビューア / room 一覧 / プロジェクトのファイルツリー + ファイルビューア」を備えた **基本的な作業が全てできる workspace UI** に育てたい。一気に最終形は目指さないが、器はそこまで見込んだ設計であってほしい。構成の好みとして「雑にペラ1の詰め込み HTML+JS にせず、コンポーネント化 + 各種アクション/メッセージの形式化 + reducer で処理する構成」が明示された。
 
-DR-0004 §4 の vanilla ESM 直書きは「メッセージング MVP のスコープなら素の DOM で足りる」という判断で、この vision を知らない前提だった。手続き的 DOM 操作は画面種別が増えると状態管理が破綻するため、小さいうちに器を移行する。
+手続き的 DOM 操作は画面種別が増えると状態管理が破綻するため、小さいうちに器を移行する。
 
 ## Decision
 
@@ -32,7 +32,7 @@ DR-0004 §4 の vanilla ESM 直書きは「メッセージング MVP のスコ�
 ### 3. 配信: Bun.build によるサーブ時トランスパイル、ビルド成果物を持たない [提案]
 
 - リポに bundler 設定・dist を持たない方針 (DR-0004 §4) は維持する。daemon が `/assets/app.js` の初回リクエスト時に `Bun.build` (target: browser) で TSX をトランスパイル + バンドルし、メモリキャッシュする
-- 成立根拠: 配布は `bin/ccmsg` → `bun run` 前提で bun runtime が必ずある。外部依存 (hono) が plugin cache に node_modules 実体なしで bun auto-install により解決されることは v0.1.0 の配布物で実機確認済み (preact も同経路)
+- 成立根拠: 配布は `bin/ccmsg` → `bun run` 前提で bun runtime が必ずある。外部依存 (hono / preact) は plugin cache に node_modules 実体なしで bun auto-install により解決される (配布物で実機確認済み)
 - ビルド失敗はページ表示時にエラーとして可視化する (500 + メッセージ)。silent fallback はしない
 
 ### 4. 段階導入: 今やるのは器の移行のみ [提案]
@@ -43,7 +43,7 @@ DR-0004 §4 の vanilla ESM 直書きは「メッセージング MVP のスコ�
 
 ## Alternatives considered
 
-- **vanilla ESM 継続 (DR-0004 §4)**: 不採用。workspace 化 vision の下では手続き的 DOM 操作の状態管理が先に破綻する。「雑にペラ1」の明示否定 [kawaz]
+- **vanilla ESM 直書き (フレームワーク・bundler なし)**: 不採用。メッセージング MVP のスコープなら素の DOM で足りるが、workspace 化 vision の下では手続き的 DOM 操作の状態管理が先に破綻する。「雑にペラ1」の明示否定 [kawaz]
 - **React**: 不採用。preact で component model は同等、サイズ・依存が重いだけ
 - **htm (タグ付きテンプレート、無トランスパイル)**: 次点。ビルド完全不要だが TSX の型検査が効かない。リポ全体が strict TS である価値を client にも通す方を取った
 - **Svelte / Solid**: 不採用。専用コンパイラ前提でサーブ時トランスパイル (Bun.build) に乗らない
