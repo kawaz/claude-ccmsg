@@ -26,7 +26,7 @@ export const DEFAULT_JOIN_BACKLOG = 50;
 /** Default dedup window for create_room (DR-0003 §4, minute-order). */
 export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
 
-/** Default HTTP/WS bind for `/ws` (DR-0004 §3, 2026-07-10 trust-model addendum).
+/** Default HTTP/WS bind for `/ws` (DR-0004 §3).
  *  `CCMSG_HTTP_BIND=off` disables it. Loopback only — a browser's Same-Origin
  *  Policy does not gate WebSocket connections, so binding beyond loopback (or
  *  trusting source-IP alone, e.g. a shared tailnet CGNAT range) would let any
@@ -35,8 +35,8 @@ export const DEFAULT_DEDUP_WINDOW_MS = 60_000;
  *  for allowing that proxy's Origin through the check below. */
 export const DEFAULT_HTTP_BIND = "127.0.0.1:8642,[::1]:8642";
 
-/** Default source-IP allowlist for `/ws` and HTTP fallback (DR-0004 §3 addendum,
- *  2026-07-10 trust-model addendum). loopback only — override with `CCMSG_HTTP_ALLOW`
+/** Default source-IP allowlist for `/ws` and HTTP fallback (DR-0004 §3).
+ *  loopback only — override with `CCMSG_HTTP_ALLOW`
  *  (comma-separated CIDR/IP). This is a defense-in-depth belt against a misconfigured
  *  `CCMSG_HTTP_BIND`; the actual trust boundary for browser clients is the `Origin`
  *  header check (see `CCMSG_HTTP_ALLOW_ORIGIN`), since source IP alone can't
@@ -106,19 +106,19 @@ export interface SessionLauncherConfig {
   templates: SessionLauncherTemplate[];
   timeout_seconds: number;
   dir_tree_depth: number;
-  /** DR-0018 §3.1 addendum 2026-07-18: wildcard patterns naming environment
+  /** DR-0018 §3.1: wildcard patterns naming environment
    * variables to REMOVE from the daemon's own environment before a launched
    * child inherits it. The daemon itself is typically started from inside a
    * Claude session's shell, so its process.env carries that origin session's
    * variables (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ANTHROPIC_*
    * …) which would silently reconfigure every launched session. `*` matches
    * any substring of a key name (no separator semantics); everything else is
-   * literal, case-sensitive. Absent/empty = no cleaning (previous behavior).
+   * literal, case-sensitive. Absent/empty = no cleaning.
    * The launcher's own `ccmsg_new_session_*` carriers (which the launcher
    * shell turns into the template variables) are layered on AFTER
    * cleaning, so they can never be removed by a pattern. */
   clean_env?: string[];
-  /** DR-0018 §3.1 addendum 2026-07-18 (2nd): wildcard patterns naming
+  /** DR-0018 §3.1: wildcard patterns naming
    * environment variables to KEEP even when a `clean_env` pattern matches
    * them — keep_env takes precedence over clean_env. Same pattern grammar as
    * clean_env (`*` = any substring, otherwise literal, case-sensitive,
@@ -132,10 +132,10 @@ export interface SessionLauncherConfig {
 
 /** transcript_read (DR-0009) returns at most this many bytes of jsonl lines
  * per request; the viewer pages with byte offsets instead of asking for more.
- * 1 MB (kawaz r76 m107、2026-07-31。500KB を試して増量)。旧 2 MB (kawaz
- * r15 mid=18 の「older 連打を減らす」判断) は全項目 DOM 化の描画コストが
- * 実測で判明した後 (issue timeline-virtual-scroll) には初期表示の重さ側が
- * 勝つため縮小した。 */
+ * 1 MB balances two costs measured on real transcripts: a larger page makes
+ * the initial render heavier (every record is materialized into the DOM), a
+ * smaller one makes the reader press "older" more often (500 KB was too
+ * small, 2 MB too heavy). */
 export const TRANSCRIPT_READ_MAX_BYTES = 1024 * 1024;
 
 /** Historical session search response caps (DR-0021 Phase 1). These are wire
@@ -150,8 +150,8 @@ export const SESSION_SEARCH_MATCH_SUMMARY_MAX = 3;
 // types (msg, member, leave, next, prev, title, archive, kind, say,
 // say_read) — the cursor
 // coordinate for subscribe reconnect. Optional only for pre-append event
-// construction (caller hasn't been stamped yet) and legacy log rows written
-// before this field existed (in-memory backfilled by loadRoom, see storage.ts);
+// construction (caller hasn't been stamped yet) and persisted rows that carry
+// no seq (in-memory backfilled by loadRoom, see storage.ts);
 // every appended/delivered event carries one.
 // ---------------------------------------------------------------------------
 
@@ -250,7 +250,7 @@ export interface KindEvent {
   seq?: number;
 }
 
-/** A session spoke through `ccmsg say` (kawaz r244 m5-m6). Recorded in the
+/** A session spoke through `ccmsg say`. Recorded in the
  * session's 1on1 room so the webui can answer "which session just made my
  * speakers talk" — with several sessions running, macOS `say` alone is
  * anonymous. NOT a `msg`: it is paired with its own read-ack (`say_read`) and
@@ -353,7 +353,7 @@ export type DeliveredEvent = (StorageEvent & { r: string }) & {
  */
 /** Who a notify came from. `gateway` marks a relay of an automated event from
  * llm-gateway (the prompt-cache keepalive marker) — not a person and not a
- * peer session, so a reader must not take it for user input (r261m38). */
+ * peer session, so a reader must not take it for user input. */
 export type NotifyFrom = { role: "user" } | { role: "session"; sid: string } | { role: "gateway" };
 
 /** Ephemeral (non-persisted) stream events. Distinguished by `ev` (vs `type`). */
@@ -445,9 +445,8 @@ export interface LlmRequestInfo {
    * prompt block. A session's subagents travel under the SAME session_id but a
    * DIFFERENT prefix, and their cache entries are genuinely separate — so a
    * cache window belongs to (session_id, prefix), never to session_id alone.
-   * Empty string for events from a gateway older than v0.13.0, which reports
-   * no prefix; those collapse to one unnamed series per session, the behaviour
-   * ccmsg had before prefixes existed.
+   * Empty string when the gateway reports no prefix; those events collapse to
+   * one unnamed series per session.
    *
    * NOTE: prefixes are not globally unique — two different sessions can share
    * one (identical leading system block), which is why the pair is the key. */
@@ -550,7 +549,7 @@ export interface SessionTodo {
   /** "pending" | "in_progress" | "completed" — open set (upstream may add values). */
   status: string;
   owner?: string;
-  /** DR-0020 addendum (r38 mid=4): task ID list this task is blocked by, folded
+  /** DR-0020: task ID list this task is blocked by, folded
    * from TaskUpdate's `addBlockedBy` input (or task_reminder attachment when
    * present). Sorted numerically-first (id は文字列だが実データは "1", "2" 形式
    * が主なので数値順に見せた方が読み手が直感的)。Empty array is omitted
@@ -627,7 +626,7 @@ export interface SessionBackgroundStatus {
   status: string;
   started_at: string;
   ended_at?: string;
-  /** r44 m6: for kind=="agent", the spawn's `subagent_type` (`general-purpose`,
+  /** For kind=="agent", the spawn's `subagent_type` (`general-purpose`,
    * `Explore`, custom agent name...). Absent when the input row omitted it,
    * or when kind is not "agent". Not present for monitor/bash entries. */
   agent_type?: string;
@@ -664,7 +663,7 @@ export interface SessionTeammate {
    * including any `[1m]` suffix). Absent when no meta.json was found. */
   model?: string;
 }
-/** r44 m7: recursive agent tree rooted at the session, one node per
+/** Recursive agent tree rooted at the session, one node per
  * `subagents/agent-<agentId>.meta.json`. Direct children of the root session
  * appear at the top level of `SessionStatusSnapshot.agent_tree`; deeper
  * subagents nest under `children`. Depth is capped at 5 (root's direct
@@ -719,21 +718,21 @@ export interface AgentTreeNode {
   children: AgentTreeNode[];
 }
 
-/** r46 m8: エージェントツリーのルート集約。種別ごとに 3 グループに分ける
- * (kawaz「ルートはその辺で分けるべき」)。同一種別のノードは (親子関係が
+/** エージェントツリーのルート集約。種別ごとに 3 グループに分ける
+ * [kawaz]。同一種別のノードは (親子関係が
  * 通常はフラットなので) 各配列に並列で並ぶ。空カテゴリ (= 0 件) は空配列を
  * 返す — UI 側でヘッダごと非表示にする。 */
 export interface AgentTreeGroups {
   /** agent-teams の在住メンバー。root 直下 = depth 0。 */
   teammates: AgentTreeNode[];
   /** 単発 Agent 起動 (plugin/skill 由来含む)。親子関係がある場合は
-   * `children` にネストする (既存挙動)。 */
+   * `children` にネストする。 */
   agents: AgentTreeNode[];
   /** ワークフロー run 単位。1 run = 1 subgroup。 */
   workflows: AgentTreeWorkflowGroup[];
 }
 
-/** r46 m8 / m12: 1 workflow run 分の subgroup。フェーズ情報の出典は
+/** 1 workflow run 分の subgroup。フェーズ情報の出典は
  * `readWorkflowDrilldown` (state.json → journal.jsonl の 2 段フォールバック、
  * DR-0025 Phase 1)。既存 `SessionWorkflowStatus.phases` / `.agents` と同一
  * ソースを再利用する = TUI / SessionStatusView の phase 表示と数値が揃う。 */
@@ -755,7 +754,7 @@ export interface AgentTreeWorkflowGroup {
   last_activity_ms?: number;
 }
 
-/** r46 m12: workflow run 内の 1 フェーズ (title + 完了/総数 + 構成 member)。 */
+/** workflow run 内の 1 フェーズ (title + 完了/総数 + 構成 member)。 */
 export interface AgentTreeWorkflowPhase {
   /** 1-based (readWorkflowDrilldown の canonical index を踏襲)。 */
   index: number;
@@ -786,7 +785,7 @@ export interface SessionStatusSnapshot {
   context?: SessionContextUsage;
   /** Absent only for older/locally constructed snapshots; daemon snapshots carry an array. */
   teammates?: SessionTeammate[];
-  /** r44 m7 / r46 m8: セッションが起点となるエージェントツリーの種別別集約。
+  /** セッションが起点となるエージェントツリーの種別別集約。
    * `subagents/` が無い、または全カテゴリ空のセッションでは省略される。
    * カテゴリ内のノードは `AgentTreeNode` (深さ上限つきの再帰木) が並ぶ。
    * 完了 (state) 毎の 2 分割は UI 側で行い、daemon は state を保持して
@@ -1056,7 +1055,7 @@ export interface CreateRoomRequest {
   kind?: RoomKind;
 }
 
-/** Record that this session spoke through `ccmsg say` (kawaz r244 m5-m6).
+/** Record that this session spoke through `ccmsg say`.
  * Session role only. The daemon resolves the caller's own 1on1 room (u1 + this
  * sid), creating one if none exists, and appends a `SayEvent` there — the
  * caller names no room, because "the session's own 1on1" is the only place
@@ -1110,8 +1109,8 @@ export interface ArchiveRoomRequest {
 /** Force-remove a member from a room (DR-0012, webui の ✕ ボタン). Appends
  * the same LeaveEvent a voluntary `leave` would and broadcasts it. Admin
  * User only — a room's agents must not be able to evict each other. NOT a
- * ban: nothing prevents a later re-invite/re-join (deliberate, kawaz
- * 2026-07-12: 「再joinを制限までは今のとこ不要」). */
+ * ban: nothing prevents a later re-invite/re-join (deliberate: a re-join
+ * restriction has no use case yet). */
 export interface KickRequest {
   op: "kick";
   room: string;
@@ -1130,7 +1129,7 @@ export interface SubscribeRequest {
    * covers. Do NOT derive this from a stored `since` value: seq >= mid always
    * holds, so reinterpreting a mid as a seq would skip events. */
   since_seq?: Record<string, number>;
-  /** Opt into the legacy per-room snapshot/full-replay for any visible room
+  /** Opt into the per-room snapshot/full-replay for any visible room
    * NOT covered by `since`/`since_seq` (issue 2026-07-17-subscribe-no-backlog-default).
    * Without this, such a room gets no backlog at all — only a `room_cursors`
    * summary event — so a fresh CLI sidecar connect doesn't re-flood a room's
@@ -1222,8 +1221,8 @@ export interface SessionLaunchRequest {
    * strings — they travel as environment carriers, never interpolated into
    * shell text, so no value can inject shell syntax. */
   params: Record<string, string>;
-  /** Optional user-supplied command template override (DR-0018 §3.2 addendum
-   * 2026-07-17). When absent, the daemon uses the administrator-configured
+  /** Optional user-supplied command template override (DR-0018 §3.2).
+   * When absent, the daemon uses the administrator-configured
    * `session_launcher.command` verbatim. When present, it must be a non-empty
    * string; empty string is rejected as invalid_args. Rationale: user role
    * (webui = kawaz-in-person) editing the template is equivalent to typing
@@ -1264,8 +1263,8 @@ export interface SessionKillRequest {
    * intentionally carries NO pid — a client-asserted pid would be a weaker
    * basis for killing than the daemon's own fresh resolution (DR-0028). */
   session_id: string;
-  /** DR-0028 addendum (r38 mid=6): escalate to SIGKILL when true. Absent /
-   * false runs the normal two-shot SIGTERM sequence (DR-0028 original).
+  /** DR-0028: escalate to SIGKILL when true. Absent /
+   * false runs the normal two-shot SIGTERM sequence.
    * SIGKILL is irreversible and can break transcript flush, so the daemon
    * never chooses it on its own — the caller must explicitly opt in after
    * observing that a graceful attempt failed (webui: 「終了確認」で `terminated:
@@ -1276,7 +1275,7 @@ export interface SessionKillRequest {
 }
 
 /** Retitle a running Claude Code session by typing its own `/rename` command
- * into the terminal that session lives in (user role only, kawaz r135m16).
+ * into the terminal that session lives in (user role only).
  *
  * There is no API to set a session's title: `claude agents --json` reports
  * `name` but nothing writes it from outside, and the title kawaz wants to fix
@@ -1319,7 +1318,7 @@ export interface SessionRenameRequest {
 }
 
 /** Read the environment variables of a session's own process (user role
- * only, kawaz r55m133). The env is read from the resolved pid rather than
+ * only). The env is read from the resolved pid rather than
  * from the daemon's session connection: the subscribe helper the session
  * spawns carries whatever Claude Code added on the way down, which is not
  * the session process's environment. sid→pid resolution and the ps
@@ -1558,8 +1557,8 @@ export interface FsDeleteRequest {
 }
 
 /**
- * Batch file-existence probe for the message-body path linkifier (kawaz r46
- * m55-m58). Client extracts inline-code tokens shaped like
+ * Batch file-existence probe for the message-body path linkifier.
+ * Client extracts inline-code tokens shaped like
  * `filepath[:LINE[:COL]]` / `filepath[:L1-L2]` from an agent message, absolute-
  * resolves them against the sender's cwd / repo_root, and asks the daemon
  * which ones point at real regular files it is willing to serve. Only paths
@@ -2047,7 +2046,7 @@ export interface HelloResponse {
    * をエコーバックする。未設定 / スキーム不正 / role="session" の場合は
    * 省略。webui はこれを iframe embed の base URL として使い、未設定なら
    * Terminal タブ自体を出さない (= 設定していないユーザには存在しない機能
-   * に倒す。旧 localStorage `ccmsg.terminalGatewayUrl` 方式は廃止)。 */
+   * に倒す)。 */
   terminal_gateway_url?: string;
   /** True when the daemon has a usable `llm_usage_url` configured, echoed to
    * user-role hellos only (same posture as terminal_gateway_url). The URL
@@ -2172,7 +2171,7 @@ export interface RoomSummary {
    * treat liveness as unknown rather than as zero). */
   live_members?: number;
   /** `seq` of every `say` event in this room with no matching `say_read` ack
-   * (kawaz r244 m5-m6). Only ever non-empty on a 1on1 room; absent when there
+   * Only ever non-empty on a 1on1 room; absent when there
    * is nothing unread. Seeds the webui's sidebar 📣 marker, which then tracks
    * live `say` / `say_read` deliveries on the subscribe stream.
    *
@@ -2712,7 +2711,7 @@ export type LlmStatusResponse = { ok: true } & LlmStatusReport;
  * other declared parameter stay literal) plus the parameter declaration that
  * tells the form which inputs to render, in which order, with which initial
  * values; the webui surfaces the chosen template's command as an editable
- * textarea per DR-0018 §3.2 addendum 2026-07-17, and sends the edited value
+ * textarea per DR-0018 §3.2, and sends the edited value
  * back via SessionLaunchRequest.command override. Same
  * one-shot read as root_dirs — a re-fetch is only useful across a daemon
  * config reload + restart. */
@@ -2940,7 +2939,7 @@ export interface AgentInfo {
    *  that overlay's namespace even though the daemon runs under its own).
    *  A `hyoui input` call that omits this when the session actually has one
    *  looks in the wrong namespace and reports the session as gone even
-   *  though it is live (kawaz r135m40/41). */
+   *  though it is live. */
   hyoui_namespace?: string;
 }
 export interface AgentsResponse {
@@ -3008,8 +3007,7 @@ export interface PingResponse {
   /** provenance of the running daemon: the bun executable and the entry
    * script path (Bun.main). The entry script tells which face's plugin cache
    * (e.g. ~/.claude-personal vs a work overlay) this daemon actually runs
-   * from — version skew across faces is resolved by the newer-wins upgrade,
-   * but provenance was previously unobservable. */
+   * from; version skew across faces is resolved by the newer-wins upgrade. */
   exe?: string;
   script?: string;
   /** actual HTTP/WS bind addresses ("host:port"); empty when CCMSG_HTTP_BIND=off (DR-0004 §3). */
