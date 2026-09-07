@@ -38,7 +38,9 @@ transcript で全部見せている。よって v2 の messaging は **会話の
   (BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
 - 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、
   kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
-  Paused / Disappeared / instance に到達不能。送信側 (エージェント) はそれを見て待つか諦めるかを決める
+  Paused / Disappeared / instance に到達不能。送信側 (エージェント) はそれを見て待つか諦めるかを決める。
+  宛先が Paused / Disappeared の時は、**同じ cwd (repo / ws) で今動いているセッションがあれば候補 sid を
+  添える** (宛先が新しいセッションに世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
 - 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ
   (`sessions/<pid>.json` の `messagingSocketPath`) に誘導できる可能性がある。daemon がその socket に
   直接配送できれば subscribe の Monitor 経由の注入自体が不要になる (スパイクで確認中)
