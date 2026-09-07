@@ -559,7 +559,7 @@ function SessionRowItem({
             style={ring?.style}
           >
             <Avatar seed={row.sid} size={16} />
-            {ring ? <CacheRing shape="rect" dash={ring.tickDash} /> : null}
+            {ring ? <CacheRing shape="rect" /> : null}
           </span>
           {/* 未読 say の 📣 は repo 名の直前 (kawaz r244m13: 行末の弱い
            * badge 位置では絶対気づかない)。1 行目の視線の起点 = アイコンと

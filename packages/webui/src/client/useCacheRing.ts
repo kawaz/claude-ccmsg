@@ -27,8 +27,7 @@ import {
 export function useCacheRing(window: CacheWindow | null): CacheRingProps | null {
   const now = Date.now();
   const span = window === null ? null : cacheRingPhase(window, now);
-  const phase =
-    span === null ? "" : `${span.phase}:${span.start}:${span.end}:${span.ticks.join(",")}`;
+  const phase = span === null ? "" : `${span.phase}:${span.start}:${span.end}`;
   return useMemo(
     () => (window === null ? null : cacheRingProps(window, Date.now())),
     // The sweep identifies itself: two windows producing the same span produce

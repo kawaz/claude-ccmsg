@@ -46,10 +46,6 @@
    * としか読めない。警告色 (--warn) ではなく別トークンなのは、異常ではなく
    * 「別の資源を使っている」という区別だから。 */
   --cache-keepalive-ring: #eab308;
-  /* 延命リングの目盛り (1 つ = 1 つのキャッシュ)。線幅 1px の点なので、罫線
-   * 寄りの灰では黄の線の上で明度差が無く消える (実機で確認)。数える時に
-   * 拾える濃さまで文字色側に寄せるが、本文色そのものにはしない。 */
-  --cache-ring-tick: color-mix(in oklab, var(--fg-muted), var(--fg) 50%);
   /* 本文より濃い文字色。システムフォントの 400 と 700 の差は本文サイズでは
    * 小さく、太さだけの強調は地の文に沈む — 太さに濃さを足して初めて拾える
    * (kawaz r119 m13「bold って人には微妙な違いでしかなくわかりにくい」)。 */
@@ -8938,20 +8934,6 @@ button.usage-reset:hover {
   stroke-width: var(--cache-ring-width, 1px);
 }
 
-/* 目盛りは本体と同じ座標系にもう 1 本重ねた線で、合図 1 回 = 点 1 個。どこに
- * 打つかは等分では決まらない (最後の 1 区間だけキャッシュ 1 本分長い) ので、
- * 位置の算術は llm-cache-view.ts が持ち、ここには周長を割り当てるだけの
- * 破線パターンが降りてくる。dash 1 個の長さは線の太さ = 点として読める最小。
- * 本体の上に重ねるので、線が残っている側でも消えた側でも本数が数えられる。 */
-.cache-ring-ticks {
-  /* パターンは「,」区切りのリストなので、点の長さは fallback 付きの var() で
-   * 渡せない (fallback の「,」が項の区切りに化ける)。ここで一度受けておく。
-   * 破線そのものは要素側のインライン style が持つ (llm-cache-view.ts)。 */
-  --cache-ring-tick-width: var(--cache-ring-width, 1px);
-
-  stroke: var(--cache-ring-tick);
-}
-
 /* 角丸の矩形は svg の枠のちょうど上に来るよう、線の太さの半分だけ内側に置く
  * (SVG 2 のジオメトリプロパティ)。svg 自身が周長計算のコンテナなので、外接
  * させて svg が広がった分は 100cqw / 100cqh がそのまま拾う。 */
@@ -8974,8 +8956,6 @@ rect.cache-ring-shape {
     2 * (100cqw - var(--cache-ring-width, 1px)) + 2 * (100cqh - var(--cache-ring-width, 1px)) - 8 *
       var(--cache-ring-r) + 6.2831853 * var(--cache-ring-r)
   );
-  /* 目盛り側が形を問わず同じ名前で読めるよう、周長をこの名前でも公開する。 */
-  --cache-ring-perimeter: var(--cache-ring-length);
   /* パスの始点 (上辺の左端 = 角丸の終わり) から上辺の中央までの距離。 */
   --cache-ring-start: calc(50cqw - var(--cache-ring-width, 1px) / 2 - var(--cache-ring-r));
   /* 残っている線 1 本と、消えた分ちょうどの隙間。合計が周長なので、閉じた輪の
@@ -8990,12 +8970,6 @@ rect.cache-ring-shape {
   );
 }
 
-/* 矩形の目盛り。周長も始点補正も、上の rect.cache-ring-shape が同じ要素サイズ
- * から組んだものをそのまま使う (パターンの先頭 = 上辺の中央 = 掃き始め)。 */
-rect.cache-ring-ticks {
-  stroke-dashoffset: calc(-1 * var(--cache-ring-start));
-}
-
 /* 円は 1 本の閉じた線で、パスの始点が 3 時なので 0 時起点には 90 度戻せばよい
  * (周長は pathLength で 1 に正規化してあり、進行をそのまま offset に入れる)。 */
 circle.cache-ring-shape {
@@ -9007,17 +8981,6 @@ circle.cache-ring-shape {
   transform-box: fill-box;
   stroke-dasharray: 1px 1px;
   stroke-dashoffset: calc(var(--cache-ring-progress) * -1px);
-}
-
-/* 円の目盛り。本体と違って pathLength は使わず、周長を実寸で組む (点の長さを
- * 線の太さと同じにするには実寸の座標系が要る。正規化した比で持つと、小さな
- * 円では点が円弧の何分の一にもなって「目盛り」に見えない)。周長 = π×直径、
- * 直径は線が枠の半分内側にある分だけ短い。パスの始点は回転後の 0 時 = 掃き
- * 始めなので、始点補正は要らない。 */
-circle.cache-ring-ticks {
-  --cache-ring-perimeter: calc(3.14159265 * (100cqw - var(--cache-ring-width, 1px)));
-
-  stroke-dashoffset: 0;
 }
 
 /* SESSIONS 行のアイコン (kawaz r99m29: 行に要素は足さず、アイコンの枠で

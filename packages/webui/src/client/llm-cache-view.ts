@@ -38,16 +38,8 @@ export interface CacheWindow {
    * ring ends: the cache the conversation paid for is only its own until the
    * machinery takes over. */
   next_keepalive_at?: number;
-  /** Epoch ms the chain is projected to end at, and how many markers that
-   * takes — the second ring's far end and its tick count. `cache_until` is
-   * the LAST marker plus the cache it builds, so the stretch after the last
-   * tick is a whole TTL and longer than the intervals before it. */
+  /** Epoch ms the chain is projected to end at — the second ring's far end. */
   cache_until?: number;
-  cache_until_count?: number;
-  /** The cache length the gateway asks for, in seconds. Only the tick
-   * arithmetic reads it: it is what separates the final cache from the marker
-   * that built it. */
-  cache_ttl_secs?: number;
   /** While true the markers are not being sent, so there is no chain to draw
    * and the ring is the plain window again. */
   cache_paused?: boolean;
@@ -68,49 +60,6 @@ interface RingPhase {
   /** Epoch ms bounds of the span this ring sweeps. */
   start: number;
   end: number;
-  /** Epoch ms of each marker the chain is projected to send — one tick per
-   * marker, at the instant a new cache is built. Empty on the first ring,
-   * which no marker has touched yet. */
-  ticks: number[];
-}
-
-/** How far apart the gateway spaces its markers, in ms, or null when the
- * event does not say.
- *
- * Stated directly as `next_keepalive_at - ts` on any event that plans a next
- * marker. Where it does not, the projection still implies it: `cache_until`
- * is the last marker plus one cache, so backing that cache out leaves the
- * span the markers divide. */
-function keepaliveIntervalMs(window: CacheWindow, count: number): number | null {
-  if (window.next_keepalive_at !== undefined) {
-    const stated = window.next_keepalive_at - window.ts;
-    if (Number.isFinite(stated) && stated > 0) return stated;
-  }
-  if (window.cache_since === undefined || window.cache_until === undefined) return null;
-  if (window.cache_ttl_secs === undefined || !Number.isFinite(window.cache_ttl_secs)) return null;
-  const lastMarker = window.cache_until - window.cache_ttl_secs * 1000;
-  const span = lastMarker - window.cache_since;
-  return span > 0 ? span / count : null;
-}
-
-/** The instants the chain's markers are projected to land on, k = 1..N from
- * `cache_since`. Empty when the gateway plans none, or states too little to
- * place them.
- *
- * Deliberately NOT the sweep divided into N: the sweep runs to `cache_until`,
- * which is the last marker PLUS the cache it builds, so equal division would
- * put every tick short of the marker it stands for and the last one a whole
- * TTL early. */
-export function cacheKeepaliveTicks(window: CacheWindow): number[] {
-  const count = window.cache_until_count;
-  if (count === undefined || !Number.isFinite(count) || count < 1) return [];
-  if (window.cache_since === undefined) return [];
-  const total = Math.floor(count);
-  const interval = keepaliveIntervalMs(window, total);
-  if (interval === null) return [];
-  const ticks: number[] = [];
-  for (let k = 1; k <= total; k++) ticks.push(window.cache_since + k * interval);
-  return ticks;
 }
 
 /** The span the ring is currently sweeping, or null when the cache is cold.
@@ -131,20 +80,17 @@ export function cacheRingPhase(window: CacheWindow, now: number): RingPhase | nu
     window.cache_until > now &&
     window.cache_until > window.cache_since;
   if (chained) {
-    const start = window.cache_since as number;
-    const end = window.cache_until as number;
-    // A tick outside the sweep would be drawn by the dash pattern wrapping
-    // round, landing somewhere it means nothing — so a projection that does
-    // not add up costs the marks rather than the ring.
-    const projected = cacheKeepaliveTicks(window);
-    const inside = projected.every((at) => at > start && at < end);
-    return { phase: "extended", start, end, ticks: inside ? projected : [] };
+    return {
+      phase: "extended",
+      start: window.cache_since as number,
+      end: window.cache_until as number,
+    };
   }
   // The first cache runs out either when the machinery takes over from the
   // conversation or, with no marker planned, when the cache itself goes cold.
   const planned = window.cache_paused === true ? undefined : window.next_keepalive_at;
   const end = planned !== undefined && planned > window.ts ? planned : windowEnd;
-  return { phase: "window", start: window.ts, end, ticks: [] };
+  return { phase: "window", start: window.ts, end };
 }
 
 /** Milliseconds left in `window`. 0 once it has closed, so callers can treat
@@ -165,48 +111,6 @@ export interface CacheRingProps {
   /** Inline custom properties: where in the animation to start and how long
    * it runs (kept here so the TTL keeps its single source, the protocol). */
   style: Record<string, string>;
-  /** How many marks the ring carries, 0 for none — the count callers and
-   * tests read. */
-  ticks: number;
-  /** `stroke-dasharray` for the marks, or null when there are none.
-   *
-   * Handed to `<CacheRing>` for the mark element's own inline style rather
-   * than carried down as a custom property on the container: the pattern
-   * refers to the shape's perimeter and line width, and a custom property's
-   * `var()`s are resolved on the element that DECLARES it — where neither of
-   * those exists yet. */
-  tickDash: string | null;
-}
-
-/** The dash pattern that puts one mark at each of `fractions` (0..1 along the
- * sweep), as a CSS value.
- *
- * Lengths are written as fractions of `--cache-ring-perimeter`, which each
- * shape states in its own geometry — that is what lets one string serve both
- * the rounded rect and the circle. A mark is one line width long.
- *
- * The pattern spans the whole perimeter exactly once (it opens with a
- * zero-length dash and closes with the gap that reaches the end) rather than
- * being one interval repeated: a repeating pattern carries on past the last
- * marker, and the final stretch — the cache the last marker builds — is
- * longer than the intervals before it, so a repeat would draw a mark inside
- * it that stands for nothing. */
-export function cacheRingTickDash(fractions: number[]): string {
-  // A `var()` carrying its own fallback would smuggle a comma into one of the
-  // pattern's items, so the line width is taken plain — the shape's own rule
-  // states it.
-  const width = "var(--cache-ring-tick-width)";
-  const at = (f: number): string => `calc(${f.toFixed(6)} * var(--cache-ring-perimeter))`;
-  // Leading 0 dash: the pattern starts with a gap, which is where the sweep
-  // begins and no marker stands.
-  const parts = ["0"];
-  let previous = 0;
-  for (const fraction of fractions) {
-    parts.push(`calc(${at(fraction - previous)} - ${previous === 0 ? "0px" : width})`, width);
-    previous = fraction;
-  }
-  parts.push(`calc(${at(1 - previous)} - ${width})`);
-  return parts.join(", ");
 }
 
 /** Ring CSS for `window`, or null when there is nothing to draw (no request
@@ -236,14 +140,11 @@ export function cacheRingProps(window: CacheWindow | null, now: number): CacheRi
   const animation =
     RING_ANIMATIONS[(Math.floor(span.end / 1000) + phaseStep) % RING_ANIMATIONS.length];
   const tone = span.phase === "extended" ? " cache-ring-extended" : "";
-  const fractions = span.ticks.map((at) => (at - span.start) / (span.end - span.start));
   return {
     class: `cache-ring ${animation}${tone}`,
     style: {
       "--cache-ring-delay": `${-elapsedSeconds}s`,
       "--cache-ring-duration": `${durationSeconds}s`,
     },
-    ticks: span.ticks.length,
-    tickDash: fractions.length === 0 ? null : cacheRingTickDash(fractions),
   };
 }

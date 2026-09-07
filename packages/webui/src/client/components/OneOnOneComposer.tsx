@@ -474,7 +474,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         // 重ねた svg の線なので、併発しても互いを打ち消さない。
         style={{ ...fabDrag.style, ...cacheRing?.style }}
       >
-        +{cacheRing ? <CacheRing shape="circle" dash={cacheRing.tickDash} /> : null}
+        +{cacheRing ? <CacheRing shape="circle" /> : null}
       </button>
     );
   }
@@ -557,7 +557,7 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           disabled={sending}
           rows={4}
         />
-        {cacheRing ? <CacheRing shape="rect" dash={cacheRing.tickDash} /> : null}
+        {cacheRing ? <CacheRing shape="rect" /> : null}
       </div>
       <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
       {error !== null ? <p class="one-on-one-error">{error}</p> : null}
