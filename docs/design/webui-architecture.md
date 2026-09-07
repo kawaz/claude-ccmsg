@@ -139,4 +139,3 @@ transcript-model) は別 doc (`timeline-architecture.md`) を起こす。
 ## 9. 裁定待ち ([QUESTIONS.md](../QUESTIONS.md))
 
 - WA-Q2: signal の単位 (§3 の表で良いか、要素単位 signal の範囲)
-- WA-Q4: Timeline 分割を画面移設と同時にやるか後にするか
