@@ -17,11 +17,11 @@ cursor に反映されない。room の log 末尾が非 msg イベントで終�
 10 回以上 (cache-warden セッション、r8) 受信。常駐 AI セッションの
 ターン起床を無駄に発生させ、Monitor 通知チャネルを埋める実害。
 
-根本原因は「全 event 型を横断する dedup 座標が存在しない」こと:
+根本原因は「全 event 型を横断する dedup 座標が存在しない」こと: `mid` は msg 専用
+(per-room msg 連番)、`MemberEvent.id` / `LeaveEvent.id` は member id で意味が別、
+`ts` は座標にならない (§3)。
 
-- `mid` は msg 専用 (per-room msg 連番)
-- `ts` は同一 ms 衝突がありうる (kawaz r15 mid=19-20 で検討の上棄却)
-- `MemberEvent.id` / `LeaveEvent.id` は member id で意味が別
+目的: 再接続した subscriber が、切断中に room で起きた全 event を **1 回ずつ** 受け取れること。
 
 ## 2. Decision
 
@@ -31,25 +31,24 @@ cursor に反映されない。room の log 末尾が非 msg イベントで終�
 - per-room で 1 起点の単調増加。**全 event 型を横断**して振る
   (= room jsonl の行番号と一致するのが正常形)
 - 採番は storage.ts `appendEvent` (全 append の単一 choke point) が行う。
-  呼び出し元は seq を渡さない (event 構築側 ~20 call site の変更ゼロ)
+  呼び出し元は seq を渡さない — 採番の正しさを 1 箇所に閉じるため
 - appendEvent は **caller の event object を in-place で stamp** する —
-  append 後に同じ object を `deliver` に渡す既存 call site が、コード変更なしで
-  seq 付き配信になる。disk-first / memory-second の既存不変条件は維持
-  (`room.lastSeq` の前進は write 成功後)
-- 型上 optional (`seq?`) なのは旧 log 行 (§2.2) と event 構築時 (採番前) の
+  append 後に同じ object を `deliver` に渡す call site が、そのまま seq 付き配信になる。
+  disk-first / memory-second の不変条件は維持 (`room.lastSeq` の前進は write 成功後)
+- 型上 optional (`seq?`) なのは seq を持たない log 行 (§2.2) と event 構築時 (採番前) の
   ためで、**append 済み / 配信される event は常に seq を持つ**
 
-### 2.2 旧 log 行の backfill (in-memory、disk は不変)
+### 2.2 seq を持たない log 行の backfill (in-memory、disk は不変)
 
-- v0.32 以前の jsonl 行には seq が無い → `loadRoom` (computeDerived) が
+- seq 導入前に書かれた jsonl 行には seq が無い → `loadRoom` (computeDerived) が
   **行順から in-memory 補完**する (1 起点連番)。disk は書き換えない
   (append-only 原則の維持)
-- 混在 log (旧行 N 本 + 新行): 旧行は 1..N に補完、新行は persisted seq を採用。
+- 混在 log (seq 無し行 N 本 + seq 付き行): seq 無し行は 1..N に補完、seq 付き行は persisted seq を採用。
   persisted seq は「前回 load 時の lastSeq + 1」で採番されているため、**正常形では**
   両者は連続する
 - `Room` に `lastSeq: number` を追加、computeDerived / appendEvent が維持
-- 既知の限界: 補完後 (= 過去に配信済み) の旧行が後から破損して load skip される
-  と、以降の旧行の補完 seq がずれ、persisted seq の新行との間に gap / 重複が
+- 既知の限界: 補完後 (= 過去に配信済み) の seq 無し行が後から破損して load skip される
+  と、以降の seq 無し行の補完 seq がずれ、persisted seq の新行との間に gap / 重複が
   生じうる。破損 skip は error log される異常系で、影響は少数 event の重複配信
   or 欠落に留まるため許容。client cursor は単調 max (§2.4) なので、seq の重複・
   非単調はクラッシュせず「重複配信を 1 回受ける」側に安全に倒れる — この耐性
@@ -79,15 +78,12 @@ cursor に反映されない。room の log 末尾が非 msg イベントで終�
 ### 2.4 client cursor の更新規則 (CLI / webui 共通)
 
 - 受信した**全 StorageEvent 配信** (`r` + `seq` を持つ行) で per-room max seq を
-  更新する (従来は `type:"msg"` のみ)。ephemeral stream event (`ev:"notify"` 等)
-  は対象外
+  更新する。ephemeral stream event (`ev:"notify"` 等) は対象外
 - 再接続 subscribe には `since_seq` を渡す
-- CLI `--since` オプションの値も since_seq として送る (help 文言を
-  「per-room last-seen seq」に更新)
-- webui: localStorage key を `ccmsg.since` → `ccmsg.since_seq` に変更。
-  旧 key に残る mid 値を seq と誤解釈しないため (§2.3 の禁止事項と同根)。
-  切替直後の 1 回だけ full replay になるが、これは fresh reload と同じ経路で
-  UI 上は無害
+- CLI `--since` オプションの値も since_seq として送る (意味は per-room last-seen seq)
+- webui: cursor の localStorage key は `ccmsg.since_seq`。mid を保存していた key
+  (`ccmsg.since`) の値を seq として読まない (§2.3 の禁止事項と同根)。cursor が無い
+  room は fresh reload と同じ full replay 経路になる
 
 ### 2.5 since_seq の入力検証 (daemon 側)
 
