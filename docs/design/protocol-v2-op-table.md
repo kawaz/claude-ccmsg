@@ -339,7 +339,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | messaging | 4 | v1 15 − room 系廃止 11 (`post` / `reply` は `message_send` に統合) |
 | control | 25 | v1 37 − topic 化 9 − 統合 3 |
 | mesh | 0 | op を持たない (封筒 `to_instance` / `from_instance` / `hops` だけ、Draft §2) |
-| **合計** | **34** | 56 − 廃止 20 − 統合 3 + 新設 1 |
+| **合計** | **33** | 56 − 廃止 21 − 統合 3 + 新設 1 |
 
 | 指標 | 値 |
 |---|---|
@@ -348,7 +348,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | 廃止 (topic 化) | 9 |
 | 統合による減 | 3 (5 op → 2 op) |
 | 新設 | 1 (`topic_unsubscribe`) |
-| v2 op | 34 (-39%) |
+| v2 op | 33 (-41%) |
 | topic 数 | 9 (messaging 2 / control 7) |
 | v1 の重複経路 | 0 (すべて snapshot + delta 1 形へ) |
 | 畳まれる ErrorCode | 8 → 1 (`capability_unavailable`) |
