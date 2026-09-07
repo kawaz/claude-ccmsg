@@ -1,0 +1,720 @@
+<title>ずっと開いている台帳</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;700&family=M+PLUS+1+Code:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --paper:      #e9edf2;
+    --surface:    #fbfcfe;
+    --ink:        #16202b;
+    --ink-muted:  #5d6b7a;
+    --rule:       #c2ccd7;
+    --accent:     #1d4f91;
+    --stamp:      #b03f2e;
+    --stamp-soft: #b03f2e1f;
+
+    --f-display: "Shippori Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    --f-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+    --f-mono: "M PLUS 1 Code", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --step-0: 1rem;
+    --step-1: 1.15rem;
+    --step-2: 1.5rem;
+    --step-3: 2.1rem;
+    --step-4: 3.1rem;
+
+    --measure: 34rem;
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #121820;
+      --surface:    #1a222c;
+      --ink:        #dfe6ee;
+      --ink-muted:  #8f9dab;
+      --rule:       #35414e;
+      --accent:     #7ba7dd;
+      --stamp:      #e2775f;
+      --stamp-soft: #e2775f24;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #121820;
+    --surface:    #1a222c;
+    --ink:        #dfe6ee;
+    --ink-muted:  #8f9dab;
+    --rule:       #35414e;
+    --accent:     #7ba7dd;
+    --stamp:      #e2775f;
+    --stamp-soft: #e2775f24;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: var(--step-0);
+    line-height: 1.85;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: clamp(1.5rem, 4vw, 3.5rem) clamp(1.1rem, 4vw, 2.5rem) 5rem;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(3rem, 7vw, 5.5rem);
+  }
+
+  /* ---- 冒頭 ---- */
+
+  .opener {
+    display: flex;
+    flex-direction: column;
+    gap: 1.4rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: clamp(2rem, 5vw, 3rem);
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 800;
+    font-size: clamp(2.2rem, 7vw, var(--step-4));
+    line-height: 1.24;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  h1 .em { color: var(--stamp); }
+
+  .lede {
+    font-size: var(--step-1);
+    line-height: 1.95;
+    max-width: var(--measure);
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .lede b { font-weight: 700; }
+
+  /* ---- 節 ---- */
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+  }
+
+  .head {
+    display: grid;
+    grid-template-columns: 2.6rem 1fr;
+    align-items: start;
+    gap: 0 0.9rem;
+  }
+
+  .seal {
+    width: 2.3rem;
+    height: 2.3rem;
+    border: 1.5px solid var(--stamp);
+    border-radius: 50%;
+    color: var(--stamp);
+    background: var(--stamp-soft);
+    display: grid;
+    place-items: center;
+    font-family: var(--f-display);
+    font-weight: 800;
+    font-size: 1.05rem;
+    margin-top: 0.35rem;
+  }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: clamp(1.5rem, 4vw, var(--step-3));
+    line-height: 1.4;
+    letter-spacing: 0.01em;
+    text-wrap: balance;
+    margin: 0;
+    grid-column: 2;
+  }
+
+  .say {
+    grid-column: 2;
+    max-width: var(--measure);
+    margin: 0.5rem 0 0;
+    font-size: var(--step-1);
+  }
+
+  p { margin: 0; }
+
+  .note {
+    max-width: var(--measure);
+    margin-left: 3.5rem;
+    color: var(--ink-muted);
+    font-size: 0.95rem;
+  }
+
+  .note code, .say code, li code { font-family: var(--f-mono); font-size: 0.92em; color: var(--accent); }
+
+  /* ---- 図 ---- */
+
+  figure {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+
+  .plate {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: clamp(0.9rem, 3vw, 1.6rem);
+    overflow-x: auto;
+  }
+
+  .plate svg {
+    display: block;
+    width: 100%;
+    min-width: 30rem;
+    height: auto;
+    color: var(--ink);
+  }
+
+  figcaption {
+    font-size: 0.9rem;
+    line-height: 1.7;
+    color: var(--ink-muted);
+    max-width: 44rem;
+  }
+
+  .svg-label { font-family: var(--f-body); font-size: 15px; font-weight: 700; fill: currentColor; }
+  .svg-sub   { font-family: var(--f-body); font-size: 12.5px; fill: currentColor; opacity: 0.72; }
+  .svg-edge  { font-family: var(--f-mono); font-size: 12px; fill: currentColor; opacity: 0.8; }
+  .svg-title { font-family: var(--f-display); font-size: 16px; font-weight: 600; fill: currentColor; }
+  .svg-stamp { fill: var(--stamp); }
+  .svg-accent{ fill: var(--accent); }
+  .box  { fill: var(--surface); stroke: currentColor; stroke-width: 1.4; }
+  .boxd { fill: var(--surface); stroke: var(--stamp); stroke-width: 1.8; }
+  .line { stroke: currentColor; stroke-width: 1.4; fill: none; }
+  .line-stamp { stroke: var(--stamp); stroke-width: 1.8; fill: none; }
+  .line-faint { stroke: currentColor; stroke-width: 1.3; fill: none; opacity: 0.4; stroke-dasharray: 5 5; }
+
+  /* ---- 台帳の実物 ---- */
+
+  .ledger {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--stamp);
+    padding: 1.1rem 1.2rem;
+    overflow-x: auto;
+    font-family: var(--f-mono);
+    font-size: 0.82rem;
+    line-height: 2.1;
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  .ledger .k { color: var(--accent); }
+  .ledger .n { color: var(--stamp); font-weight: 600; }
+
+  /* ---- 対応表 ---- */
+
+  .table-scroll { overflow-x: auto; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 26rem;
+    font-size: 0.95rem;
+  }
+
+  th, td {
+    text-align: left;
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: baseline;
+  }
+
+  thead th {
+    font-family: var(--f-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    border-bottom: 1.5px solid var(--ink-muted);
+    font-weight: 400;
+  }
+
+  td:first-child {
+    font-family: var(--f-mono);
+    color: var(--stamp);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- 末尾 ---- */
+
+  .closing {
+    border-top: 1px solid var(--rule);
+    padding-top: 2rem;
+    font-size: 0.9rem;
+    color: var(--ink-muted);
+    max-width: 44rem;
+  }
+
+  .closing b { color: var(--ink); font-weight: 700; }
+
+  a { color: var(--accent); }
+  a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--stamp); outline-offset: 3px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .seal { transition: background-color 200ms ease; }
+  }
+
+  @media (max-width: 40rem) {
+    .head { grid-template-columns: 1.9rem 1fr; gap: 0 0.7rem; }
+    .seal { width: 1.8rem; height: 1.8rem; font-size: 0.85rem; }
+    .note { margin-left: 0; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="opener">
+    <p class="eyebrow">ccmsg — session messaging</p>
+    <h1>ずっと開いたままの<br><span class="em">台帳</span>が一冊あります</h1>
+    <p class="lede">
+      パソコンの中で、Claude Code のセッション (= AI の作業員) が何人も同時に働いています。
+      その人たちが<b>お互いに話しかけられる</b>ようにして、
+      さらに人間が<b>ブラウザから全員の様子を見て口を出せる</b>ようにする道具、それが ccmsg です。
+      仕組みはぜんぶ、<b>一冊の台帳に一行ずつ書き足していく</b>だけでできています。
+    </p>
+  </header>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">一</div>
+      <h2>むかしは、全員が全員に電話していました</h2>
+      <p class="say">
+        作業員が 4 人いると、話す組み合わせは 6 通り。人間は 1 人ずつにしか話せないので、
+        同じ用件を 4 回コピペして、その間に AI 同士が「あの人はこう言ってた」と伝言しあいます。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 330" role="img" aria-label="左: 4 人が互いに直接つながると線が 6 本に増える。右: 同じ 4 人が 1 つの部屋につながると線は 4 本で、1 回の投稿が全員に届く。">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+            </marker>
+            <marker id="a1s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="var(--stamp)"></polygon>
+            </marker>
+          </defs>
+
+          <text class="svg-title" x="40" y="34">まえ — 一対一だけ</text>
+          <text class="svg-title" x="500" y="34">いま — 部屋に集まる</text>
+
+          <line class="line-faint" x1="455" y1="20" x2="455" y2="310" stroke-dasharray="3 6"></line>
+
+          <g class="line" opacity="0.85">
+            <line x1="130" y1="120" x2="330" y2="120"></line>
+            <line x1="130" y1="250" x2="330" y2="250"></line>
+            <line x1="120" y1="130" x2="120" y2="240"></line>
+            <line x1="340" y1="130" x2="340" y2="240"></line>
+            <line x1="130" y1="130" x2="330" y2="240"></line>
+            <line x1="330" y1="130" x2="130" y2="240"></line>
+          </g>
+          <g>
+            <circle class="box" cx="120" cy="120" r="26"></circle>
+            <circle class="box" cx="340" cy="120" r="26"></circle>
+            <circle class="box" cx="120" cy="250" r="26"></circle>
+            <circle class="box" cx="340" cy="250" r="26"></circle>
+            <text class="svg-label" x="120" y="126" text-anchor="middle">a1</text>
+            <text class="svg-label" x="340" y="126" text-anchor="middle">a2</text>
+            <text class="svg-label" x="120" y="256" text-anchor="middle">a3</text>
+            <text class="svg-label" x="340" y="256" text-anchor="middle">a4</text>
+          </g>
+          <text class="svg-edge" x="230" y="303" text-anchor="middle">線が 6 本 · 同じ話が 6 回</text>
+
+          <g class="line-stamp">
+            <line x1="602" y1="132" x2="660" y2="168" marker-end="url(#a1s)"></line>
+            <line x1="818" y1="132" x2="760" y2="168" marker-end="url(#a1s)"></line>
+            <line x1="602" y1="238" x2="660" y2="202" marker-end="url(#a1s)"></line>
+            <line x1="818" y1="238" x2="760" y2="202" marker-end="url(#a1s)"></line>
+          </g>
+          <rect class="boxd" x="640" y="155" width="140" height="60" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="710" y="180" text-anchor="middle">room</text>
+          <text class="svg-edge svg-stamp" x="710" y="199" text-anchor="middle">r278</text>
+
+          <g>
+            <circle class="box" cx="580" cy="120" r="26"></circle>
+            <circle class="box" cx="840" cy="120" r="26"></circle>
+            <circle class="box" cx="580" cy="250" r="26"></circle>
+            <circle class="box" cx="840" cy="250" r="26"></circle>
+            <text class="svg-label" x="580" y="126" text-anchor="middle">a1</text>
+            <text class="svg-label" x="840" y="126" text-anchor="middle">a2</text>
+            <text class="svg-label" x="580" y="256" text-anchor="middle">a3</text>
+            <text class="svg-label" x="840" y="256" text-anchor="middle">u1</text>
+          </g>
+          <text class="svg-edge" x="710" y="303" text-anchor="middle">線が 4 本 · 1 回書けば全員に届く</text>
+        </svg>
+      </div>
+      <figcaption>同じ 4 人でも、部屋を 1 つ置くと線の数が 6 本から 4 本に減る。人数が増えるほど差は開く。人間 (u1) もこの部屋のメンバーの一人として並ぶ。</figcaption>
+    </figure>
+
+    <p class="note">DR-0001「Context」で挙がった 5 つの困りごとのうち、①クロス爆発 ②同じ指示のコピペ ⑤人間の混入コスト が、部屋にすると構造的に消える。</p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">二</div>
+      <h2>台帳に書き込めるのは、受付係だけ</h2>
+      <p class="say">
+        みんなが好き勝手に同じノートへ書くと、行が混ざります。だから ccmsg は
+        <b>書く人を 1 人だけ</b>にしました。それが daemon (デーモン) という受付係です。
+        受付係は届いた順に番号 (<code>mid</code>) を振って、下に 1 行ずつ足していきます。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 300" role="img" aria-label="3 つのセッションが daemon に post し、daemon だけが番号を振って room ごとの jsonl ファイルに 1 行ずつ追記する。">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+            </marker>
+            <marker id="a2s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="var(--stamp)"></polygon>
+            </marker>
+          </defs>
+
+          <g>
+            <rect class="box" x="40" y="52" width="150" height="48" rx="2"></rect>
+            <rect class="box" x="40" y="126" width="150" height="48" rx="2"></rect>
+            <rect class="box" x="40" y="200" width="150" height="48" rx="2"></rect>
+            <text class="svg-label" x="115" y="82" text-anchor="middle">セッション a1</text>
+            <text class="svg-label" x="115" y="156" text-anchor="middle">セッション a2</text>
+            <text class="svg-label" x="115" y="230" text-anchor="middle">セッション a3</text>
+          </g>
+
+          <g class="line">
+            <path d="M190 76 H 280 V 140" marker-end="url(#a2)"></path>
+            <path d="M190 150 H 300" marker-end="url(#a2)"></path>
+            <path d="M190 224 H 280 V 160" marker-end="url(#a2)"></path>
+          </g>
+          <text class="svg-edge" x="236" y="66" text-anchor="middle">post</text>
+
+          <rect class="boxd" x="308" y="90" width="216" height="120" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="416" y="128" text-anchor="middle">daemon</text>
+          <text class="svg-sub" x="416" y="152" text-anchor="middle">唯一の書き手</text>
+          <text class="svg-sub" x="416" y="176" text-anchor="middle">届いた順に mid を振る</text>
+
+          <line class="line-stamp" x1="524" y1="150" x2="638" y2="150" marker-end="url(#a2s)"></line>
+          <text class="svg-edge svg-stamp" x="581" y="138" text-anchor="middle">1 行追記</text>
+
+          <rect class="box" x="648" y="46" width="212" height="208" rx="2"></rect>
+          <text class="svg-label" x="754" y="76" text-anchor="middle">r278.jsonl</text>
+          <g class="line" opacity="0.55">
+            <line x1="678" y1="104" x2="830" y2="104"></line>
+            <line x1="678" y1="134" x2="830" y2="134"></line>
+            <line x1="678" y1="164" x2="808" y2="164"></line>
+          </g>
+          <line class="line-stamp" x1="678" y1="194" x2="792" y2="194"></line>
+          <text class="svg-edge svg-stamp" x="754" y="228" text-anchor="middle">上の行は二度と書き換えない</text>
+        </svg>
+      </div>
+      <figcaption>書き手が 1 人しかいないので「同時に書いて壊れた」が起きない。番号を振る人も 1 人なので、番号は必ず 1, 2, 3… と続く。</figcaption>
+    </figure>
+
+    <p class="note">DR-0001 §2「中央デーモン = 単一 writer」と §4「room ごとに 1 JSONL、これが唯一の永続状態」。データベースは使わず、保存されているのはこのファイルだけ。</p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">三</div>
+      <h2>台帳の中身は、これだけです</h2>
+      <p class="say">
+        ふつうのテキストファイルで、1 行が 1 つの出来事。
+        誰かが入った・出た・しゃべった・次のスレッドに続く。種類はこれくらいしかありません。
+      </p>
+    </div>
+
+    <div class="ledger" role="img" aria-label="room の jsonl ファイルの中身の例。member 行、msg 行、next 行などが 1 行ずつ並んでいる。"><span class="k">{"type":"member"</span>,"id":"a1","repo":"ccmsg","joined_at":"…"}
+<span class="k">{"type":"member"</span>,"id":"a2","repo":"hyoui","joined_at":"…"}
+<span class="k">{"type":"msg"</span>,<span class="n">"mid":1</span>,"from":"a1","ts":"…","msg":"点検おわりました"}
+<span class="k">{"type":"msg"</span>,<span class="n">"mid":2</span>,"from":"u1","to":["a2"],"ts":"…","msg":"そっちは?"}
+<span class="k">{"type":"leave"</span>,"id":"a1","ts":"…"}
+<span class="k">{"type":"next"</span>,"room":"r279","ts":"…"}</div>
+
+    <p class="note">
+      イベントの形は DR-0003 §2。<code>mid</code> は msg 行だけに付く通し番号 (朱色の部分が受付係の刻印)。
+      話が長くなったら <code>next</code> / <code>prev</code> で次スレッドへ手をつなぐ — 古いスレッドもそのまま読めます。
+    </p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">四</div>
+      <h2>読ませるのではなく、中身ごと届けます</h2>
+      <p class="say">
+        「新着があります」とだけ知らせると、AI は読みに行くのに 1 ターン使ってしまいます。
+        だから ccmsg は<b>本文をそのまま押し込みます</b>。
+        宛先 (<code>to</code>) を書いたときだけ配る相手を絞りますが、
+        <b>台帳自体は絞りません</b> — 配られなかった人も、あとから自分で読めます。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 320" role="img" aria-label="daemon から a1 と u1 には本文ごと配送される。to に入っていない a3 には配送されないが、番号が飛ぶことで気づいて自分で読みに行ける。">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+            </marker>
+            <marker id="a3f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor" opacity="0.45"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="boxd" x="40" y="112" width="188" height="96" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="134" y="150" text-anchor="middle">daemon</text>
+          <text class="svg-edge svg-stamp" x="134" y="174" text-anchor="middle">to: ["a1","u1"]</text>
+
+          <g class="line">
+            <path d="M228 140 H 400 V 76 H 638" marker-end="url(#a3)"></path>
+            <path d="M228 180 H 400 V 244 H 638" marker-end="url(#a3)"></path>
+          </g>
+          <text class="svg-edge" x="470" y="64" text-anchor="middle">本文ごと届く</text>
+          <text class="svg-edge" x="470" y="264" text-anchor="middle">本文ごと届く</text>
+
+          <path class="line-faint" d="M228 160 H 638" marker-end="url(#a3f)"></path>
+          <text class="svg-edge" x="470" y="150" text-anchor="middle" opacity="0.6">届かない</text>
+
+          <g>
+            <rect class="box" x="648" y="52" width="210" height="48" rx="2"></rect>
+            <rect class="box" x="648" y="136" width="210" height="48" rx="2"></rect>
+            <rect class="box" x="648" y="220" width="210" height="48" rx="2"></rect>
+            <text class="svg-label" x="753" y="82" text-anchor="middle">a1</text>
+            <text class="svg-label" x="753" y="166" text-anchor="middle">a3</text>
+            <text class="svg-label" x="753" y="250" text-anchor="middle">u1 (人間)</text>
+          </g>
+          <text class="svg-sub" x="753" y="196" text-anchor="middle">mid が 7 → 9 に飛ぶ = 読みに行ける合図</text>
+        </svg>
+      </div>
+      <figcaption>宛先で絞るのは「配送」だけ。台帳には全部載っているので、a3 は番号の飛びに気づいて <code>read r278 8</code> と自分で取りに行ける。既読管理はサーバが持たない — 昔の掲示板と同じで、どこまで読んだかは各自の記憶。</figcaption>
+    </figure>
+
+    <p class="note">DR-0001 §5「本文込み push」と §6「既読管理レス (BBS モデル)」、配送を絞る <code>to</code> は DR-0011。</p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">五</div>
+      <h2>人間は、ブラウザから同じ部屋に入ります</h2>
+      <p class="say">
+        AI はパソコンの中の専用の管 (UNIX ソケット) から。人間はブラウザから。
+        <b>話す言葉はまったく同じ</b>で、違うのは入口の受付だけです。
+        ブラウザから来た人は、何を名乗ろうと必ず <code>u1</code> = 人間として扱われます。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 330" role="img" aria-label="AI セッションは 0600 の UNIX ソケットから、ブラウザは Origin 検証を通った WebSocket から daemon に入る。ブラウザ経由の接続は役割が必ず u1 に固定される。">
+          <defs>
+            <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="box" x="34" y="52" width="176" height="62" rx="2"></rect>
+          <text class="svg-label" x="122" y="80" text-anchor="middle">AI セッション</text>
+          <text class="svg-sub" x="122" y="100" text-anchor="middle">同じパソコンの中</text>
+
+          <rect class="box" x="34" y="212" width="176" height="62" rx="2"></rect>
+          <text class="svg-label" x="122" y="240" text-anchor="middle">ブラウザ</text>
+          <text class="svg-sub" x="122" y="260" text-anchor="middle">手元 · スマホ</text>
+
+          <line class="line" x1="210" y1="83" x2="316" y2="83" marker-end="url(#a4)"></line>
+          <line class="line" x1="210" y1="243" x2="316" y2="243" marker-end="url(#a4)"></line>
+
+          <rect class="box" x="324" y="46" width="216" height="74" rx="2"></rect>
+          <text class="svg-label" x="432" y="76" text-anchor="middle">UNIX ソケット</text>
+          <text class="svg-sub" x="432" y="98" text-anchor="middle">権限 0600 · 同じ利用者だけ</text>
+
+          <rect class="boxd" x="324" y="206" width="216" height="74" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="432" y="236" text-anchor="middle">WebSocket /ws</text>
+          <text class="svg-sub" x="432" y="258" text-anchor="middle">Origin を確かめる門</text>
+
+          <line class="line" x1="540" y1="83" x2="654" y2="130" marker-end="url(#a4)"></line>
+          <line class="line-stamp" x1="540" y1="243" x2="654" y2="196" marker-end="url(#a4)"></line>
+          <text class="svg-edge" x="600" y="98" text-anchor="middle">a2 のまま</text>
+          <text class="svg-edge svg-stamp" x="600" y="238" text-anchor="middle">必ず u1 に固定</text>
+
+          <rect class="box" x="662" y="126" width="200" height="74" rx="2"></rect>
+          <text class="svg-label" x="762" y="156" text-anchor="middle">daemon</text>
+          <text class="svg-sub" x="762" y="178" text-anchor="middle">中は同じ 1 本の道</text>
+
+          <text class="svg-sub" x="432" y="308" text-anchor="middle">どちらの入口も、送る中身は同じ jsonl の 1 行</text>
+        </svg>
+      </div>
+      <figcaption>受付の中身が 2 つの入口で違うだけ。悪いページを開いてしまっても、<code>Origin</code> が違えば門で止まる — ブラウザからの接続は同じパソコンから来ても本人とは限らない、というのが設計の出発点。</figcaption>
+    </figure>
+
+    <p class="note">DR-0004 §2「identity pinning」と §3 + 2026-07-10 追補。tailscale 経由で外から見るときは、その入口も自動で見分けて通します。</p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">六</div>
+      <h2>「どこに返事してね」も、受付係が書いてくれます</h2>
+      <p class="say">
+        部屋の種類によって返事の場所が変わります。AI にいちいち考えさせると間違えるので、
+        <b>配るときに一人ずつ違う付箋</b>を貼ることにしました。それが <code>reply_via</code> です。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 300" role="img" aria-label="台帳には reply_via を書かず、daemon が配送するときに受信者ごとに違う reply_via の値を付けて配る。">
+          <defs>
+            <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="var(--stamp)"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="box" x="36" y="98" width="180" height="88" rx="2"></rect>
+          <text class="svg-label" x="126" y="132" text-anchor="middle">台帳の 1 行</text>
+          <text class="svg-sub" x="126" y="156" text-anchor="middle">付箋は書かない</text>
+
+          <line class="line" x1="216" y1="142" x2="316" y2="142"></line>
+
+          <rect class="boxd" x="324" y="98" width="176" height="88" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="412" y="134" text-anchor="middle">daemon</text>
+          <text class="svg-sub" x="412" y="158" text-anchor="middle">配るときに貼る</text>
+
+          <g class="line-stamp">
+            <path d="M500 130 H 570 V 58 H 640" marker-end="url(#a5)"></path>
+            <path d="M500 142 H 640" marker-end="url(#a5)"></path>
+            <path d="M500 154 H 570 V 226 H 640" marker-end="url(#a5)"></path>
+          </g>
+
+          <g>
+            <rect class="box" x="648" y="34" width="216" height="48" rx="2"></rect>
+            <rect class="box" x="648" y="118" width="216" height="48" rx="2"></rect>
+            <rect class="box" x="648" y="202" width="216" height="48" rx="2"></rect>
+          </g>
+          <text class="svg-label" x="672" y="64">a1</text>
+          <text class="svg-label" x="672" y="148">a2</text>
+          <text class="svg-label" x="672" y="232">a3</text>
+          <text class="svg-edge svg-stamp" x="840" y="64" text-anchor="end">reply_via: r278</text>
+          <text class="svg-edge svg-stamp" x="840" y="148" text-anchor="end">reply_via: r278u1a1</text>
+          <text class="svg-edge svg-stamp" x="840" y="232" text-anchor="end">reply_via: tl</text>
+
+          <text class="svg-sub" x="450" y="284" text-anchor="middle">同じ 1 行から、受け取る人ごとに違う付箋が生まれる</text>
+        </svg>
+      </div>
+      <figcaption>付箋は台帳には残さない。返事先は「誰が受け取ったか」で変わるので、共通の 1 行に書くと矛盾するため。</figcaption>
+    </figure>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th scope="col">付箋の値</th><th scope="col">意味</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>r10</td><td>部屋 r10 に、みんな宛てで返す</td></tr>
+          <tr><td>r10u1</td><td>部屋 r10 で、人間だけに返す</td></tr>
+          <tr><td>r10u1a32a35</td><td>部屋 r10 で、人間と 2 人の作業員に返す</td></tr>
+          <tr><td>tl</td><td>部屋ではなく、自分の画面 (いつもの返答) で返す</td></tr>
+          <tr><td>none</td><td>返事はいらない</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="note">DR-0014 §2.4「応答経路 hint フィールド」と §2.5「daemon の刻印ロジック」。<code>tl</code> は 1on1 の部屋で人間から話しかけられたときの値 — 人間はその部屋ではなく画面のタイムラインを見ているので、そこで返す。</p>
+  </section>
+
+  <section>
+    <div class="head">
+      <div class="seal" aria-hidden="true">七</div>
+      <h2>これから — 受付係が何人かに増えます</h2>
+      <p class="say">
+        いまは受付係が 1 人。これを<b>複数まとめて 1 つに見せる</b>構想が進んでいます。
+        部屋ごとに<b>持ち主の受付係を 1 人だけ決める</b>のがコツで、
+        番号を振る人が 1 人なら、番号は今までどおり 1 本に並びます。
+      </p>
+    </div>
+
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 900 300" role="img" aria-label="別インスタンスのセッションからの post は、その room の持ち主 daemon へ中継され、持ち主だけが mid と seq を振ってから各インスタンスへ配り直す。">
+          <defs>
+            <marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+            </marker>
+            <marker id="a6s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <polygon points="0,0 10,5 0,10" fill="var(--stamp)"></polygon>
+            </marker>
+          </defs>
+
+          <rect class="box" x="36" y="52" width="228" height="196" rx="2" stroke-dasharray="6 5"></rect>
+          <text class="svg-sub" x="150" y="78" text-anchor="middle">インスタンス B</text>
+          <rect class="box" x="64" y="96" width="172" height="46" rx="2"></rect>
+          <text class="svg-label" x="150" y="124" text-anchor="middle">セッション a9</text>
+          <rect class="box" x="64" y="172" width="172" height="46" rx="2"></rect>
+          <text class="svg-label" x="150" y="200" text-anchor="middle">daemon B</text>
+          <line class="line" x1="150" y1="142" x2="150" y2="164" marker-end="url(#a6)"></line>
+
+          <rect class="boxd" x="636" y="52" width="228" height="196" rx="2" stroke-dasharray="6 5"></rect>
+          <text class="svg-sub svg-stamp" x="750" y="78" text-anchor="middle">インスタンス A — r278 の持ち主</text>
+          <rect class="boxd" x="664" y="96" width="172" height="46" rx="2"></rect>
+          <text class="svg-label svg-stamp" x="750" y="124" text-anchor="middle">daemon A</text>
+          <rect class="box" x="664" y="172" width="172" height="46" rx="2"></rect>
+          <text class="svg-label" x="750" y="200" text-anchor="middle">r278.jsonl</text>
+          <line class="line-stamp" x1="750" y1="142" x2="750" y2="164" marker-end="url(#a6s)"></line>
+          <text class="svg-edge svg-stamp" x="762" y="160">mid / seq を振る</text>
+
+          <path class="line" d="M264 182 H 450 V 118 H 630" marker-end="url(#a6)"></path>
+          <text class="svg-edge" x="450" y="106" text-anchor="middle">post を持ち主へ中継</text>
+
+          <path class="line-stamp" d="M636 210 H 450 V 236 H 270" marker-end="url(#a6s)"></path>
+          <text class="svg-edge svg-stamp" x="450" y="256" text-anchor="middle">できた行を全員へ配り直す</text>
+        </svg>
+      </div>
+      <figcaption>番号を振れるのは持ち主だけ。だから受付係が増えても番号が二重にならない。持ち主が寝ている間、その部屋だけは読み書きできなくなる (<code>instance_unreachable</code>) — そこは割り切る。</figcaption>
+    </figure>
+
+    <p class="note">まだ構想段階 (issue「複数ホストの ccmsg daemon を mesh で束ねる」、2026-09-07 起票)。束ねる単位はパソコンではなく<b>設定ごとの受付係 (instance)</b> なので、1 台のパソコンの中だけでも試せます。</p>
+  </section>
+
+  <footer class="closing">
+    <p>
+      まとめると ccmsg は、<b>部屋</b>・<b>1 人だけの書き手</b>・<b>追記しかしない台帳</b>の 3 つでできています。
+      複雑に見えるところ (宛先・返事先・入口の受付) は、全部この 3 つの上に薄く乗っているだけです。
+      壊れたときの調べ方も、結局は「そのファイルを開いて読む」に戻ります。
+    </p>
+  </footer>
+
+</div>
