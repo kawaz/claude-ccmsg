@@ -41,16 +41,57 @@ Draft §3 の表は「群単位」(接続 / 能力 / 一覧 / room / 現在地 /
 - [ ] b: 一覧の行も sid 単位にする (行の内容更新と並び替えを分離)。効果は大きいが構造が二重になる
 - [ ] c: まず群単位のみで始め、要素単位は移行段階 3 で判断 (WA-Q4 と連動)
 
-### WA-Q4: 移行順と「再描画」の当面の手当て
+### PV-Q1: protocol v2 の面 (plane) の分け方 ([Draft §2](design/protocol-v2.md))
 
-r273m97「今は再描画を何とかして」への統括案: **Draft §8 の段階 1 (購読層の signal 化) 自体が
-再描画の根本対処**なので、並び替え throttle 等の場当たりは入れず段階 1 を最初に出す。
-再接続時の全状態作り直し (§7) は段階 1 に含める。Timeline 分割 (4900 行) は再描画に直結しない
-ので後段。
+op 56 のうち user-only が 36。エージェントに見せる語彙 (room / notify / say) と、daemon の
+内部状態を読む・操作する API (session / transcript / fs / llm) を同じ面に置くと、CLI の help と
+skill が後者まで背負う。
 
-- [ ] a: 統括案 (段階 1 → 2 → 3 → Timeline 分割 → layout/persistence 分離)
-- [ ] b: Timeline 分割を先に (最大ファイルを先に割ってから状態層を入れ替える)
-- [ ] c: 段階 1 の前に小手当て (一覧の並び替え throttle / 選択行の固定) を 1 リリース出す
+- [ ] a: messaging / control / mesh の 3 面 (統括推し)。同じ型システム・封筒・エラーを共有し、
+  面は op 属性表の 1 列。mesh は control の op を封筒で転送するだけ
+- [ ] b: messaging / control の 2 面 (mesh は control の一部として扱う)
+- [ ] c: 面を分けず、role で見せる op を絞るだけ (現状の延長)
+
+### PV-Q2: 能力 (capability) の表現 ([Draft §3.2](design/protocol-v2.md))
+
+hello の `*_available` boolean 6 個 + op ハンドラの `<x>_not_configured` 6 種の二重管理を解消する。
+
+- [ ] a: hello が `capabilities: string[]` を返し、op 属性表の `capability` 列と突き合わせて
+  「押せる op」を導く。未設定は `capability_unavailable` 1 コード (統括推し)
+- [ ] b: hello は何も返さず、op を呼んで `capability_unavailable` が返るかで判断 (導線が出ない)
+
+### PV-Q3: 観測系の一本化 ([Draft §3.3](design/protocol-v2.md))
+
+peers / agents / session_status 等が「op で全量 + push で全量」の 2 経路 (最大 4 経路)。
+
+- [ ] a: `subscribe <topic>` の snapshot + delta に一本化し、one-shot op は置かない
+  (CLI は subscribe → 即 unsubscribe)。統括推し
+- [ ] b: one-shot op も残す (CLI の単発取得のため)。ただし response は subscribe の snapshot と
+  同じ型にする
+
+### PV-Q4: op の命名 ([Draft §5](design/protocol-v2.md))
+
+現状は `create_room` (動詞先頭) と `session_kill` (名詞先頭) が混在。
+
+- [ ] a: 名詞先頭 `<名詞>_<動詞>` に統一 (`room_create` / `room_post` / `session_kill`)。
+  同じ名詞の op がソートで隣接する (統括推し)
+- [ ] b: 動詞先頭に統一
+- [ ] c: 混在のまま (v1 の名前を温存)
+
+### PV-Q5: 契約の正本 ([Draft §7](design/protocol-v2.md))
+
+- [ ] a: TS 型を正本にし、schema (実行時検証) を型から生成 (統括推し: 型の表現力が高く、
+  既存の 184 interface を出発点にできる)
+- [ ] b: JSON Schema を正本にし、TS 型を生成 (言語非依存だが、union / literal の表現が冗長)
+
+### PV-Q6: 並走期間の v1 / v2 両受け ([Draft §8](design/protocol-v2.md))
+
+旧 webui (v1) と新 webui (v2) を同じ daemon に繋ぐ期間の扱い。
+
+- [ ] a: daemon が hello の `protocol` で分岐し、v1 の dispatch を凍結したまま並存 (統括推し:
+  旧 webui を触らずに済む)
+- [ ] b: 旧 webui を v2 に最低限追従させ、daemon は v2 だけ受ける (両受けの実装は要らないが、
+  捨てる予定の webui に手を入れる)
 
 ## 確認待ち
 
