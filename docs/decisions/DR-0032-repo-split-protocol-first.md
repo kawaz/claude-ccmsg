@@ -71,8 +71,14 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 を同梱し、分離は protocol と webui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` /
 `kawaz/ccmsg-webui`。
 
+裁定済み (r278m58): **互換経路は持たない**。版 (protocol の世代) が違う相手とは話さず、webui には
+更新 / リロードの警告を出す (DR-0002 §4 と同じ方針を mesh にも適用)。v1 の `since` (mid) 互換経路
+は削除対象。
+
 - protocol の配布形態 (パッケージレジストリで publish するか、`ccmsg` リポからの export か)
-- protocol の版付け規則 (`PROTOCOL_VERSION` の整数か semver か、互換の判定)
+- protocol の版付け規則 (`PROTOCOL_VERSION` の整数か semver か、不一致の検知と警告の出し方)
+- room id の形式 (§2.3「instance を含意する」の具体形)。複数 daemon が同じ id を同じ意味に解釈する
+  必要があるので、意図ではなく規則として固定する
 - DR / docs の振り分け (webui 固有の DR を新リポへ移し、INDEX に移管先を残す)
 - 旧 webui の削除時期と、それまでの並走の運用 (bump / release の 2 本立て)
 - 移行中の protocol 変更をどう扱うか (旧 webui は追従しない = 凍結、で足りるか)
@@ -91,4 +97,5 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 
 - 契約変更が 2〜3 リポをまたぐ。「先に protocol で決める」を守らないとモノリポより遅くなる
 - release / bump / CI が 3 本になる
-- DR-0004 (origin 制限)、DR-0005 (配信形態と state 層) の一部を supersede する
+- DR-0004 (origin 制限)、DR-0005 (配信形態と state 層) の一部を supersede する。DR-0001 §1
+  (single host) と DR-0002 §4 (後方互換なし) の前提も、mesh の契約方針 (§3) が決まった時点で変わる
