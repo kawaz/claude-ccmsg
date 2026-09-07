@@ -111,7 +111,7 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - event の relay: 発生元 instance を event に付け (`instance` フィールド)、全量置換の意味論を
   持つ topic (peers / agents) は **instance ごとの全量置換** にする (複数 instance の全量が
   衝突しない)
-- instance 間の認証は v2 の範囲外 (tailnet 前提。DR-0032 §3)
+- instance 間の認証は [mesh-peer-auth.md](./mesh-peer-auth.md) (Web PKI + 接続ごとの使い捨て鍵の JWS、`iss` / `aud` は endpoint URL の完全一致)。`role: instance` の hello がその手順を担う。自 instance の URL (`self`) は [mesh-self-identification.md](./mesh-self-identification.md) で起動時に確定する。instance の識別子は endpoint URL (表示名は config の別名)
 
 ## 7. 契約を実行可能にする
 

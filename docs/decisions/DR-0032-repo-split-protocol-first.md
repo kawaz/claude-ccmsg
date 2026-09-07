@@ -77,6 +77,7 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 - 旧 webui の削除時期と、それまでの並走の運用 (bump / release の 2 本立て)
 - 移行中の protocol 変更をどう扱うか (旧 webui は追従しない = 凍結、で足りるか)
 - instance の起動タイミング (常駐か、その config home のセッションが最初に `ccmsg` を呼んだ時か)
+- instance 間認証は kawaz 起草の [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md) を採用候補とする (自己識別の「全 peer 到達必須」の緩和は検討中)
 
 ## 4. 却下した案
 
