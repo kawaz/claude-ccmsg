@@ -35,3 +35,4 @@
 | [DR-0029](./DR-0029-async-io-principle.md) | Accepted | IO を伴うイベント/メッセージ処理は全て非同期化する原則 (まとめ処理は要承認) |
 | [DR-0030](./DR-0030-sandbox-origin-serving.md) | Accepted | canddy sandbox origin 経由の非信頼コンテンツ配信 (生ファイル / HTML / 大出力) |
 | [DR-0031](./DR-0031-webui-design-tokens-and-catalog.md) | Accepted | webui デザイントークンと自作コンポーネントカタログ |
+| [DR-0032](./DR-0032-repo-split-protocol-first.md) | Proposed | リポ分離と規約ファーストの作り直し (daemon / protocol / webui) |
