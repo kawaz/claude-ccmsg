@@ -25,7 +25,7 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 | リポ | 責務 | 含むもの |
 |---|---|---|
 | **protocol** | 契約の正本。型・op・event・エラーコード・版 | schema と TS 型、互換規則、変更手順 |
-| **daemon** | セッション管理・通信制御・API (UDS / WS / HTTP) | daemon、cli、plugin 配布 |
+| **ccmsg** (daemon) | セッション管理・通信制御・API (UDS / WS / HTTP) | daemon、cli、`plugins/claude`、`plugins/codex` |
 | **webui** | 表示と操作。daemon とは契約だけで話す | preact + `@preact/signals` の SPA (静的サイト) |
 
 - **規約ファースト**: 変更はまず protocol で決め、daemon と webui はそれに従う。protocol の
@@ -39,7 +39,7 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 ### 2.2 進め方
 
 1. protocol を版付きの契約として切り出す。最初の契約変更として session 系オブジェクトに
-   `host` を足す (クラスタ化の前提、現 webui には影響しない任意フィールド)
+   `instance` を足す (クラスタ化の前提、現 webui には影響しない任意フィールド)
 2. 新 webui を別リポ・別 FQDN で並走させる (同じ daemon に接続)
 3. 画面ごとに新 webui へ移す。移す対象は棚卸しの一覧から「残す機能のチェックリスト」を
    作って決め、参照 0 / テスト未 import の部品は移植せず落とす候補とする
@@ -47,9 +47,13 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 
 ### 2.3 コンポーネント整理に持ち込む規約 (クラスタ化由来)
 
-- session 系オブジェクトは `host` 属性を持つ (紐付けは最低 1 回で足りる)
-- per-host の値 (接続状態・hello の能力フラグ) と全体の値を混ぜない
-- room id はホストを含意する
+クラスタの単位は **instance** (= 1 config home につき 1 daemon、kawaz r278m41)。同じ PC の
+複数 instance (personal / emrd …) もメンバーになる。host は instance の属性の 1 つ。
+
+- session 系オブジェクトは `instance` 属性を持つ (紐付けは最低 1 回で足りる)
+- per-instance の値 (接続状態・hello の能力フラグ) と全体の値を混ぜない
+- room id は instance を含意する
+- instance は自分の config home だけを見る (`~/.claude*` の自動検出は廃止)
 
 ### 2.4 配布 (kawaz r278m40)
 
@@ -57,23 +61,22 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 - エージェント側の plugin は `ccmsg plugin <install|update> <claude|codex> [--config-home <dir>]`
   で ccmsg が配る。Claude Code はローカルパスの marketplace として登録し、codex はその
   拡張機構に合わせる
-- config home が複数ある場合は ccmsg の config に列挙 (install 時の `--config-home` で追加)。
-  daemon の `~/.claude*` 自動検出と一本化する
+- config home は instance が 1 つずつ持つ (§2.3)。install 時の `--config-home` はその
+  instance の対象を指定する
 - これにより plugin cache 内のソースを `bun run` する構造 (DR-0007 の PATH 自己更新含む) は不要になる
 
 ## 3. 未確定 (棚卸し後に確定)
 
-- **plugin の置き場**: (a) `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を
-  同梱し、分離は protocol と webui だけにする (統括推し: hooks は CLI の引数仕様に密結合で、
-  同じリリース単位が自然。リポ名も `ccmsg-daemon` でなく `ccmsg`)、(b) plugin を別リポにして
-  ビルド時に取り込む
+裁定済み (r278m41): plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex`
+を同梱し、分離は protocol と webui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` /
+`kawaz/ccmsg-webui`。
 
-- リポ名と配置 (`kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui` 等)、protocol の配布形態
-  (npm package か、daemon リポからの export か)
+- protocol の配布形態 (パッケージレジストリで publish するか、`ccmsg` リポからの export か)
 - protocol の版付け規則 (`PROTOCOL_VERSION` の整数か semver か、互換の判定)
 - DR / docs の振り分け (webui 固有の DR を新リポへ移し、INDEX に移管先を残す)
 - 旧 webui の削除時期と、それまでの並走の運用 (bump / release の 2 本立て)
 - 移行中の protocol 変更をどう扱うか (旧 webui は追従しない = 凍結、で足りるか)
+- instance の起動タイミング (常駐か、その config home のセッションが最初に `ccmsg` を呼んだ時か)
 
 ## 4. 却下した案
 
