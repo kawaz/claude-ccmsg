@@ -48,9 +48,14 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
 2. 新 daemon を新 instance (別 FQDN / socket / state dir) として起動し、新 webui を別リポ・別 FQDN で繋ぐ
 3. 画面ごとに新 webui を作る。移す対象は [webui-rebuild-checklist](../design/webui-rebuild-checklist.md)
    で決め、参照 0 / テスト未 import の部品は移植しない
-4. セッションは新規起動分から新 plugin (`ccmsg plugin install claude`) を使い、旧セッションは旧系の
-   まま寿命を終える。gateway の通知先 (webhook) は新 instance を追加登録する
-5. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の
+4. 新系を入れる前に、旧 plugin の最終 patch で **PATH への symlink と「PATH の新版へ self-exec」
+   (DR-0007) を止める**。旧系は plugin cache 内の絶対パスで閉じ、PATH の `ccmsg` は新系が専有する
+   (旧セッションの hook / skill / `reply_via` は既に絶対パスを使っている)
+5. **切替は config home (= instance) 単位で一気に**行う: その config home で旧 marketplace の plugin を
+   disable し、`ccmsg plugin install claude --config-home <dir>` を入れる。同じ config home に 2 種類の
+   plugin が同時に有効な期間を作らない。走行中の旧セッションは subscribe の Monitor と絶対パスで寿命まで
+   旧系と話せる。gateway の通知先 (webhook) は新 instance を追加登録する
+6. 日常利用が新系に移った時点で旧系 (daemon / `packages/webui` / 旧 plugin) を停止・削除。旧 room の
    履歴は移行しない (必要な間は旧 webui で読む)
 
 ### 2.3 コンポーネント整理に持ち込む規約 (クラスタ化由来)
