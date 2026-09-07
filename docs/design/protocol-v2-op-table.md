@@ -129,7 +129,7 @@ v2 は room jsonl を持たないので、`say_post` は「今どのセッショ
 push するだけで、ccmsg 側の永続ログを作らない。`say_mark_read` が操作する未読フラグは
 daemon の揮発状態 (再起動で消えてよい)。
 
-## 3. control 面 — 25 op
+## 3. control 面 — 24 op
 
 ### 3.1 セッション観測・操作 (8)
 
@@ -169,7 +169,7 @@ daemon の揮発状態 (再起動で消えてよい)。
 (`contained` / `workspace` / `external`) を引数に取る (棚卸し §2.6)。読み・一覧だけが
 op 名で面を分けているのが非対称。`kind` に寄せると 5 op → 2 op (-3)。
 
-### 3.3 launcher / sandbox / 翻訳 / llm / 診断 (8)
+### 3.3 launcher / sandbox / 翻訳 / llm (7)
 
 | v1 | v2 | roles | hello | cap | loc | scope | errors (固有) |
 |---|---|---|---|---|---|---|---|
@@ -180,13 +180,11 @@ op 名で面を分けているのが非対称。`kind` に寄せると 5 op → 
 | `translate` | `translate_run` | user | 要 | `translate` | L | — | `translate_helper_failed` (→cap: `translate_unavailable`) |
 | `llm_usage` | `llm_usage_read` | user | 要 | `llm_usage` | L | — | (→cap: `llm_usage_not_configured` / `_unavailable`) |
 | `llm_stats` | `llm_stats_read` | user | 要 | `llm_stats` | L | — | (→cap: `llm_stats_*`) |
-| `client_trace` | `trace_write` | user | 要 | — | L | — | — |
+| `client_trace` | — (v2 に持たない。webui の計測は新 webui の実装時に要れば同一世代内で追加) | | | | | | |
 
 - `translate` の v1 「空配列 = 能力プローブ」(棚卸し §2.7) は capability 集合で置き換わるので、
   空配列の特別扱いが消える
 - `llm_status` はここに無い。push を持つので topic 化 (§4)
-- `trace_write` は v1 で `comp: "webui"` の名指し (棚卸し §5.3) を含む。plane=control に
-  置くだけでは解消しないが、面の分離により「control 面の診断 op」と位置づけが確定する
 
 ## 4. topic 表 (Draft §3.3)
 
@@ -358,6 +356,6 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | 新設 ErrorCode | 4 (`forbidden` / `capability_unavailable` / `instance_unreachable` / `topic_unknown`) |
 | capability 名 | 8 (`llm_usage` / `llm_stats` / `sandbox` / `fork` / `terminal` / `launcher` / `translate` / `llm_status`) |
 | `scope: role` の op | 3 (`transcript_read` / `dir_list` / `file_read`) |
-| loc=L の op | 28 (control 25 + `hello` / `instance_ping` / `instance_shutdown`) |
+| loc=L の op | 25 (control 24 + `instance_shutdown`。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
 | loc=C の op | 6 (`topic_subscribe` / `topic_unsubscribe` + messaging 4) |
 

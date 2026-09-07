@@ -118,7 +118,12 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
   別名)、`mid` は `<instance>/<連番>` (配送 frame の識別子、発行 instance が採番)
 - **命名**: フィールドは snake_case、op は `<名詞>_<動詞>` (`room_create` / `session_kill`) で
   名詞先頭に統一 (現状の `create_room` と `session_kill` の混在を解消。裁定 PV-Q4)
-- **省略の意味**: 「不明」は省略、「無い」は空配列。型ごとに doc で例外を書かない (規約で固定)
+- **省略の意味**: 「不明」は省略、「無い」は空配列。型ごとに doc で例外を書かない (規約で固定)。
+  唯一の例外は要求と 1:1 対応する位置配列 (`file_stat_batch.results`) の `null` で、対応を保つために
+  失敗を 1 値に潰す (理由を出さないのが存在オラクル防止でもある)
+- **前方互換**: 同一世代内では未知フィールドを拒否せず通す (§8 の「追加は許す」と一致)。既知フィールドは
+  型どおりに検査する
+- webui の計測 (`client_trace`) は契約に置かない。要るなら新 webui の実装時に同一世代内の任意 op として足す
 - **wire に乗らない型は契約に置かない** (HTTP multipart の `AttachmentUploadResponse` 等は
   HTTP API の節に分ける)、daemon の運用既定値 (`DEFAULT_*`) や paths / config-migration は
   daemon リポへ移す
