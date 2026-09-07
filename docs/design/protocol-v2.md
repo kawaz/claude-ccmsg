@@ -1,6 +1,6 @@
 # protocol v2 設計 (規約ファーストの契約)
 
-- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q6)
+- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q7)
 - 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
   [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
   DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
