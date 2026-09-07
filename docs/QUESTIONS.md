@@ -103,10 +103,3 @@ peers / agents / session_status 等が「op で全量 + push で全量」の 2 �
 - [ ] c: 可視範囲の差を無くす (session role にも仮想解決を許す)
 
 ## 確認待ち
-
-### SB-C1: v0.150.0 のスマホ実機確認
-
-- [ ] footer の `daemon v…` が iPhone の丸い角に隠れず読める (viewport-fit=cover + safe-area)
-- [ ] composer の FAB がホームインジケータに被らない
-- [ ] main のスワイプ (Timeline のコードブロック横スクロール含む) で Layout が意図せず動かない
-- [ ] スプリッターの grip の濃さ・位置が実機で読める
