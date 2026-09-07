@@ -1,0 +1,261 @@
+<title>ccmsg のしくみ</title>
+<style>
+:root{
+  --bg:#f7f6f2;--fg:#1f2328;--muted:#6b7280;--card:#ffffff;--line:#d0d4da;
+  --ai:#3b82f6;--ai-soft:#dbeafe;--user:#f59e0b;--user-soft:#fef3c7;
+  --daemon:#10b981;--daemon-soft:#d1fae5;--room:#8b5cf6;--room-soft:#ede9fe;
+  --bad:#ef4444;--bad-soft:#fee2e2;--web:#0ea5e9;--web-soft:#e0f2fe;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#15181d;--fg:#e6e8eb;--muted:#9aa3ad;--card:#1f242b;--line:#3a414b;
+    --ai-soft:#1e3a5f;--user-soft:#4a3410;--daemon-soft:#0f3d2e;--room-soft:#31245e;
+    --bad-soft:#4a1f1f;--web-soft:#0c3648;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15181d;--fg:#e6e8eb;--muted:#9aa3ad;--card:#1f242b;--line:#3a414b;
+  --ai-soft:#1e3a5f;--user-soft:#4a3410;--daemon-soft:#0f3d2e;--room-soft:#31245e;
+  --bad-soft:#4a1f1f;--web-soft:#0c3648;
+}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.6}
+main{max-width:960px;margin:0 auto;padding:32px 20px 64px}
+h1{font-size:2rem;margin:0 0 4px}
+.lead{color:var(--muted);margin:0 0 32px;font-size:1.05rem}
+section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;margin-bottom:28px}
+section h2{font-size:1.4rem;margin:0 0 4px}
+section .num{display:inline-block;background:var(--fg);color:var(--bg);border-radius:999px;width:1.8em;height:1.8em;line-height:1.8em;text-align:center;font-size:.9rem;margin-right:8px}
+section p{margin:8px 0 0;font-size:1.05rem}
+section .src{color:var(--muted);font-size:.8rem;margin-top:10px}
+.fig{overflow-x:auto;margin-top:14px}
+svg{display:block;max-width:100%;height:auto;font-family:inherit}
+svg text{fill:var(--fg);font-size:15px}
+svg .small{font-size:12px;fill:var(--muted)}
+svg .bold{font-weight:700}
+svg .ai{fill:var(--ai-soft);stroke:var(--ai);stroke-width:2}
+svg .user{fill:var(--user-soft);stroke:var(--user);stroke-width:2}
+svg .daemon{fill:var(--daemon-soft);stroke:var(--daemon);stroke-width:3}
+svg .room{fill:var(--room-soft);stroke:var(--room);stroke-width:2}
+svg .web{fill:var(--web-soft);stroke:var(--web);stroke-width:2}
+svg .bad{fill:var(--bad-soft);stroke:var(--bad);stroke-width:2}
+svg .arrow{stroke:var(--fg);stroke-width:2.5;fill:none}
+svg .arrow.thin{stroke:var(--muted);stroke-width:1.5}
+svg .arrow.red{stroke:var(--bad)}
+svg .arrow.dashed{stroke-dasharray:6 5}
+svg .paper{fill:var(--card);stroke:var(--line);stroke-width:1.5}
+svg .mono{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+</style>
+<main>
+<h1>ccmsg のしくみ</h1>
+<p class="lead">たくさんの Claude Code が、ひとつの「部屋」でおしゃべりする。人はブラウザから全部を見て、話しかける。</p>
+
+<section>
+<h2><span class="num">1</span>むかし: みんなが直接つながると、線がふえすぎる</h2>
+<div class="fig">
+<svg viewBox="0 0 900 300" role="img" aria-label="p2p で全員が直接つながる図と、同じ指示をコピペする人">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<!-- 5 AIs in a pentagon, all pairs connected -->
+<g class="arrow red">
+<line x1="200" y1="60" x2="330" y2="150"/><line x1="200" y1="60" x2="270" y2="260"/><line x1="200" y1="60" x2="130" y2="260"/><line x1="200" y1="60" x2="70" y2="150"/>
+<line x1="330" y1="150" x2="270" y2="260"/><line x1="330" y1="150" x2="130" y2="260"/><line x1="330" y1="150" x2="70" y2="150"/>
+<line x1="270" y1="260" x2="130" y2="260"/><line x1="270" y1="260" x2="70" y2="150"/>
+<line x1="130" y1="260" x2="70" y2="150"/>
+</g>
+<g>
+<circle class="ai" cx="200" cy="60" r="28"/><text x="200" y="66" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="330" cy="150" r="28"/><text x="330" y="156" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="270" cy="260" r="28"/><text x="270" y="266" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="130" cy="260" r="28"/><text x="130" y="266" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="70" cy="150" r="28"/><text x="70" y="156" text-anchor="middle" class="bold">AI</text>
+</g>
+<text x="200" y="20" text-anchor="middle" class="small">5 人で 10 本。ふえるほど爆発</text>
+<!-- user copying -->
+<circle class="user" cx="560" cy="150" r="34"/><text x="560" y="156" text-anchor="middle" class="bold">人</text>
+<g class="arrow red">
+<path d="M600 130 L700 70" marker-end="url(#ah)"/><path d="M600 150 L700 150" marker-end="url(#ah)"/><path d="M600 170 L700 230" marker-end="url(#ah)"/>
+</g>
+<rect class="paper" x="705" y="50" width="150" height="40" rx="6"/><text x="780" y="76" text-anchor="middle">おなじ お願い</text>
+<rect class="paper" x="705" y="130" width="150" height="40" rx="6"/><text x="780" y="156" text-anchor="middle">おなじ お願い</text>
+<rect class="paper" x="705" y="210" width="150" height="40" rx="6"/><text x="780" y="236" text-anchor="middle">おなじ お願い</text>
+<text x="700" y="290" text-anchor="middle" class="small">人は 1 人ずつにしか話せず、コピペだらけ</text>
+</svg>
+</div>
+<p>AI 同士が「あの子がこう言ってた」と伝言ゲームをはじめる。</p>
+<p class="src">根拠: DR-0001 Context (5 つの構造的問題)</p>
+</section>
+
+<section>
+<h2><span class="num">2</span>いま: まんなかに「係」がいて、「部屋」で話す</h2>
+<div class="fig">
+<svg viewBox="0 0 900 340" role="img" aria-label="中央デーモンが部屋を管理し、全員が部屋に向かって話す図">
+<defs>
+<marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<!-- daemon -->
+<rect class="daemon" x="330" y="90" width="240" height="160" rx="16"/>
+<text x="450" y="125" text-anchor="middle" class="bold" style="font-size:18px">daemon (係)</text>
+<text x="450" y="150" text-anchor="middle" class="small">書けるのは この 1 人だけ</text>
+<rect class="room" x="355" y="165" width="190" height="60" rx="10"/>
+<text x="450" y="190" text-anchor="middle" class="bold">部屋 r1</text>
+<text x="450" y="212" text-anchor="middle" class="small">番号 (mid) をふって 順番に記録</text>
+<!-- AIs left -->
+<circle class="ai" cx="120" cy="80" r="28"/><text x="120" y="86" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="120" cy="170" r="28"/><text x="120" y="176" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="120" cy="260" r="28"/><text x="120" y="266" text-anchor="middle" class="bold">AI</text>
+<g class="arrow"><path d="M150 85 L330 150" marker-end="url(#ah2)"/><path d="M150 170 L330 170" marker-end="url(#ah2)"/><path d="M150 255 L330 190" marker-end="url(#ah2)"/></g>
+<!-- user right -->
+<circle class="user" cx="780" cy="170" r="34"/><text x="780" y="176" text-anchor="middle" class="bold">人</text>
+<text x="780" y="225" text-anchor="middle" class="small">どの部屋にも 最初からいる</text>
+<g class="arrow"><path d="M745 170 L570 170" marker-end="url(#ah2)"/></g>
+<text x="450" y="60" text-anchor="middle">1 回 話せば、部屋の みんなに とどく</text>
+<!-- jsonl file -->
+<rect class="paper" x="380" y="275" width="140" height="50" rx="6"/>
+<text x="450" y="296" text-anchor="middle" class="mono">r1.jsonl</text>
+<text x="450" y="315" text-anchor="middle" class="small">1 行 = 1 できごと、追記だけ</text>
+<path class="arrow thin" d="M450 225 L450 275" marker-end="url(#ah2)"/>
+</svg>
+</div>
+<p>部屋は係が作って番号をつける。記録は部屋ごとに 1 つのファイル。それが全部。</p>
+<p class="src">根拠: DR-0001 決定 §2 (単一 writer)・§3 (room model)・§4 (JSONL が唯一の永続状態)・§1 (single host)</p>
+</section>
+
+<section>
+<h2><span class="num">3</span>とどけかた: 中身ごと配る。「〇〇さんへ」で相手をしぼる</h2>
+<div class="fig">
+<svg viewBox="0 0 900 320" role="img" aria-label="投稿が本文付きで全員に押し出される図と、to で配る相手を絞る図">
+<defs>
+<marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<!-- left: broadcast -->
+<text x="220" y="30" text-anchor="middle" class="bold">to なし = 部屋のみんなへ</text>
+<circle class="ai" cx="60" cy="160" r="26"/><text x="60" y="166" text-anchor="middle" class="bold">a1</text>
+<rect class="room" x="150" y="120" width="120" height="80" rx="10"/><text x="210" y="166" text-anchor="middle" class="bold">部屋</text>
+<path class="arrow" d="M86 160 L150 160" marker-end="url(#ah3)"/>
+<rect class="paper" x="92" y="120" width="52" height="24" rx="4"/><text x="118" y="137" text-anchor="middle" class="small">本文</text>
+<circle class="ai" cx="370" cy="90" r="24"/><text x="370" y="96" text-anchor="middle" class="bold">a2</text>
+<circle class="ai" cx="370" cy="160" r="24"/><text x="370" y="166" text-anchor="middle" class="bold">a3</text>
+<circle class="user" cx="370" cy="230" r="24"/><text x="370" y="236" text-anchor="middle" class="bold">u1</text>
+<g class="arrow"><path d="M270 140 L346 100" marker-end="url(#ah3)"/><path d="M270 160 L346 160" marker-end="url(#ah3)"/><path d="M270 180 L346 220" marker-end="url(#ah3)"/></g>
+<text x="220" y="290" text-anchor="middle" class="small">通知 = 本文つき。読みに行く手間なし</text>
+<text x="220" y="308" text-anchor="middle" class="small">自分には 本文なしの軽い echo だけ</text>
+<!-- right: to filter -->
+<text x="680" y="30" text-anchor="middle" class="bold">to: [a2] = 名指しした人 + 人 (u1)</text>
+<circle class="ai" cx="520" cy="160" r="26"/><text x="520" y="166" text-anchor="middle" class="bold">a1</text>
+<rect class="room" x="610" y="120" width="120" height="80" rx="10"/><text x="670" y="166" text-anchor="middle" class="bold">部屋</text>
+<path class="arrow" d="M546 160 L610 160" marker-end="url(#ah3)"/>
+<circle class="ai" cx="830" cy="90" r="24"/><text x="830" y="96" text-anchor="middle" class="bold">a2</text>
+<circle class="ai" cx="830" cy="160" r="24" opacity=".35"/><text x="830" y="166" text-anchor="middle" class="bold" opacity=".35">a3</text>
+<circle class="user" cx="830" cy="230" r="24"/><text x="830" y="236" text-anchor="middle" class="bold">u1</text>
+<g class="arrow"><path d="M730 140 L806 100" marker-end="url(#ah3)"/><path d="M730 180 L806 220" marker-end="url(#ah3)"/></g>
+<path class="arrow thin dashed" d="M730 160 L806 160"/>
+<text x="680" y="290" text-anchor="middle" class="small">a3 には とどかないが、記録には残る</text>
+<text x="680" y="308" text-anchor="middle" class="small">あとで read すれば 読める (BBS 方式)</text>
+</svg>
+</div>
+<p>係は「読んだかどうか」を覚えない。各自が自分の読んだ番号を覚えていて、つなぎ直すとき「ここから」と言う。</p>
+<p class="src">根拠: DR-0001 決定 §5 (本文込み push)・§6 (既読管理レス)、DR-0003 決定 §5 (subscribe と配送) + Addendum 2026-07-29 (軽量エコー)、README「配送」節 (to 配信フィルタ = DR-0011)</p>
+</section>
+
+<section>
+<h2><span class="num">4</span>人はブラウザから: 全部見えて、話しかけられる</h2>
+<div class="fig">
+<svg viewBox="0 0 900 340" role="img" aria-label="ブラウザが WebSocket で daemon につながり、AI は UNIX ソケットでつながる図">
+<defs>
+<marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<!-- daemon center -->
+<rect class="daemon" x="340" y="100" width="220" height="150" rx="16"/>
+<text x="450" y="135" text-anchor="middle" class="bold" style="font-size:18px">daemon</text>
+<text x="450" y="160" text-anchor="middle" class="small">web も 中に入っている</text>
+<rect class="room" x="365" y="180" width="50" height="40" rx="8"/><rect class="room" x="425" y="180" width="50" height="40" rx="8"/><rect class="room" x="485" y="180" width="50" height="40" rx="8"/>
+<text x="450" y="240" text-anchor="middle" class="small">部屋 部屋 部屋</text>
+<!-- AIs via UDS -->
+<circle class="ai" cx="90" cy="120" r="26"/><text x="90" y="126" text-anchor="middle" class="bold">AI</text>
+<circle class="ai" cx="90" cy="230" r="26"/><text x="90" y="236" text-anchor="middle" class="bold">AI</text>
+<g class="arrow"><path d="M116 130 L340 165" marker-end="url(#ah4)"/><path d="M116 220 L340 185" marker-end="url(#ah4)"/></g>
+<text x="215" y="120" text-anchor="middle" class="small">UNIX socket (同じマシンだけ)</text>
+<!-- browser via WS -->
+<rect class="web" x="660" y="60" width="200" height="120" rx="12"/>
+<text x="760" y="90" text-anchor="middle" class="bold">ブラウザ</text>
+<text x="760" y="115" text-anchor="middle" class="small">PC でも スマホでも</text>
+<text x="760" y="140" text-anchor="middle" class="small">部屋・セッション・ファイル</text>
+<text x="760" y="160" text-anchor="middle" class="small">を見て、u1 として投稿</text>
+<path class="arrow" d="M660 140 L560 165" marker-end="url(#ah4)"/>
+<path class="arrow" d="M560 185 L660 160" marker-end="url(#ah4)"/>
+<text x="610" y="130" text-anchor="middle" class="small">WebSocket</text>
+<text x="610" y="205" text-anchor="middle" class="small">同じ言葉</text>
+<!-- security gate -->
+<rect class="bad" x="640" y="215" width="240" height="90" rx="10"/>
+<text x="760" y="242" text-anchor="middle" class="bold">門番</text>
+<text x="760" y="264" text-anchor="middle" class="small">web から来た人は 必ず「人 (u1)」役</text>
+<text x="760" y="284" text-anchor="middle" class="small">Origin (どのページから?) を確認</text>
+</svg>
+</div>
+<p>AI とブラウザは同じ言葉で係と話す。違うのは入口の門番だけ。</p>
+<p class="src">根拠: DR-0004 決定 §1 (daemon 内蔵)・§2 (WS で同一プロトコル、identity pinning)・§3 (loopback bind) + 2026-07-10 追補 (Origin 検証)、DR-0001 決定 §7 (UDS)</p>
+</section>
+
+<section>
+<h2><span class="num">5</span>ないしょ話: 人と AI の 2 人部屋。「どこに返事するか」は係が書き添える</h2>
+<div class="fig">
+<svg viewBox="0 0 900 300" role="img" aria-label="1on1 部屋で人が AI に話しかけ、daemon が reply_via を付けて配る図">
+<defs>
+<marker id="ah5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<circle class="user" cx="80" cy="150" r="34"/><text x="80" y="156" text-anchor="middle" class="bold">人</text>
+<text x="80" y="210" text-anchor="middle" class="small">画面右下の ＋ から</text>
+<rect class="room" x="200" y="100" width="180" height="100" rx="12"/>
+<text x="290" y="135" text-anchor="middle" class="bold">1on1 部屋</text>
+<text x="290" y="160" text-anchor="middle" class="small">kind: "1on1"</text>
+<text x="290" y="182" text-anchor="middle" class="small">人 + AI 1 人 だけ</text>
+<path class="arrow" d="M114 150 L200 150" marker-end="url(#ah5)"/>
+<!-- daemon stamps -->
+<rect class="daemon" x="440" y="90" width="160" height="120" rx="14"/>
+<text x="520" y="125" text-anchor="middle" class="bold">daemon</text>
+<rect class="paper" x="455" y="140" width="130" height="50" rx="6"/>
+<text x="520" y="160" text-anchor="middle" class="mono">reply_via:</text>
+<text x="520" y="180" text-anchor="middle" class="small">「ふつうの返答で」</text>
+<path class="arrow" d="M380 150 L440 150" marker-end="url(#ah5)"/>
+<!-- AI -->
+<circle class="ai" cx="760" cy="150" r="34"/><text x="760" y="156" text-anchor="middle" class="bold">AI</text>
+<path class="arrow" d="M600 150 L726 150" marker-end="url(#ah5)"/>
+<text x="760" y="210" text-anchor="middle" class="small">迷わず、書かれた場所に返す</text>
+<text x="450" y="260" text-anchor="middle" class="small">ほかの部屋なら reply_via は「r10」「r10u1」など (どの部屋で、だれ宛に返すか)</text>
+</svg>
+</div>
+<p>返事のルールを AI が推理するのではなく、届いた手紙に「返しかた」が書いてある。</p>
+<p class="src">根拠: DR-0014 決定 §2.1 (kind:"1on1")・§2.2 (auto-create)・§2.4-2.5 (reply_via の記法と刻印、DR-0017 で実行指示に置換)・§2.6 (＋ ボタン)</p>
+</section>
+
+<section>
+<h2><span class="num">6</span>これから: いくつかのマシンの係を、つなげたい (まだ計画)</h2>
+<div class="fig">
+<svg viewBox="0 0 900 320" role="img" aria-label="複数の daemon が互いに WS でつながり、部屋には持ち主 daemon が 1 つある図">
+<defs>
+<marker id="ah6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+</defs>
+<!-- three daemons -->
+<rect class="daemon" x="60" y="110" width="200" height="120" rx="14"/>
+<text x="160" y="145" text-anchor="middle" class="bold">daemon A</text>
+<rect class="room" x="85" y="165" width="150" height="45" rx="8"/><text x="160" y="193" text-anchor="middle" class="bold">部屋 (持ち主 A)</text>
+<rect class="daemon" x="350" y="110" width="200" height="120" rx="14"/>
+<text x="450" y="145" text-anchor="middle" class="bold">daemon B</text>
+<text x="450" y="190" text-anchor="middle" class="small">同じ PC の 別の設定でも OK</text>
+<rect class="daemon" x="640" y="110" width="200" height="120" rx="14"/>
+<text x="740" y="145" text-anchor="middle" class="bold">daemon C</text>
+<circle class="ai" cx="740" cy="192" r="20"/><text x="740" y="198" text-anchor="middle" class="bold">AI</text>
+<!-- links -->
+<g class="arrow dashed"><path d="M260 170 L350 170" marker-start="url(#ah6)" marker-end="url(#ah6)"/><path d="M550 170 L640 170" marker-start="url(#ah6)" marker-end="url(#ah6)"/></g>
+<path class="arrow dashed" d="M160 110 C 300 30, 600 30, 740 110" marker-start="url(#ah6)" marker-end="url(#ah6)"/>
+<text x="450" y="60" text-anchor="middle" class="small">お互いに WebSocket でつながる (ブラウザと ほぼ同じ言葉)</text>
+<!-- relay explanation -->
+<text x="450" y="270" text-anchor="middle">C の AI が A の部屋に話す → C から A へ そのまま 手渡し。番号は A だけがふる</text>
+<text x="450" y="298" text-anchor="middle" class="small">A が落ちている間、その部屋は使えない。人は どの係につないでも 全体が見える</text>
+</svg>
+</div>
+<p>単位は「マシン」ではなく「係 1 つ (instance)」。まだ issue の段階で、動いてはいない。</p>
+<p class="src">根拠: docs/issue/2026-09-07-multi-host-cluster.md「背景」骨子 1・3・4・7 と r278m41 裁定 (status: open)</p>
+</section>
+</main>
