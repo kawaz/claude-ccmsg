@@ -3,7 +3,7 @@ title: 複数ホストの ccmsg daemon を mesh で束ねる (クラスタ化)
 status: open
 category: design
 created: 2026-09-07T16:08:43+09:00
-last_read: 2026-09-07T18:57:33+09:00
+last_read: 2026-09-07T18:57:49+09:00
 open_entered: 2026-09-07T16:08:43+09:00
 wip_entered:
 blocked_entered:
