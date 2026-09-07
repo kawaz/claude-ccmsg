@@ -1,10 +1,8 @@
 # webui 全体設計 (状態 / 描画 / レイアウト / URL / 永続化 / 通信)
 
-- Status: **Draft** (裁定済み: 状態層は `@preact/signals` (WA-Q1 = a)、DR-0005 §1 の action/reducer は
-  「state module に集約した更新関数 = action」に読み替えて supersede (WA-Q3 = a)。裁定待ち:
-  [docs/QUESTIONS.md](../QUESTIONS.md) の WA-Q2 (signal の単位) / WA-Q4 (移行順)。実装着手は WA-Q2/Q4 の後)
-- 関係 DR: DR-0005 §1 (自作 store) を本設計の DR で supersede する予定。DR-0004 (daemon 内蔵 /
-  WS 同一プロトコル / ロケータ)、DR-0005 §2-3 (preact + TSX、Bun.build によるサーブ時トランスパイル) は不変
+- Status: **Draft**。状態層と action の読み替えは [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) §2.1 で
+  裁定済み。裁定待ちは §9。実装着手は DR-0032 確定と §9 の後で、本文書はその時点で新 webui リポ向けに再構成する
+- 関係 DR: DR-0032 (リポ分離、webui は別リポの静的サイト)。DR-0004 §2 (WS 同一プロトコル) は不変
 - 一次資料: 現状のコンポーネントツリー実測 (2026-09-05、[QUESTIONS.md](../QUESTIONS.md) 起票時の調査)、
   `packages/webui/src/client/` の実装
 
@@ -18,7 +16,7 @@ Timeline / Files / Status / 検索 / usage) に育ったため、層の境界が
   selector 無し (`useStoreState` = 全 action で全購読者を再レンダー)。App がルートで全状態を購読して
   props で配るので、どの action でもツリー全体が再レンダーされる
 - **幅で構造が変わる**: 720px を CSS と JS の両方が知っていて、同じ概念 (サイドバー幅、フォームの
-  親) が幅で別要素・別キーになる。構造を揃える改修で減ったが、まだ JS が幅を知っている箇所がある
+  親) が幅で別要素・別キーになる箇所が残る
 - **layout の都合が state に漏れる**: `sidebarOpen` のような描画都合の値が、ドメイン状態
   (rooms / peers / sessions) と同じ store に同居し、同じ reducer を通る
 - **1 ファイルの肥大**: `Timeline.tsx` が 4900 行、`store.ts` が 1300 行、`ws.ts` が 1060 行
@@ -109,7 +107,7 @@ Transport が、UI 操作は Intents が、どちらも **state への書き込�
   cache ring の重ね描き。**ペインや列の配置には使わない**
 - スプリッターは `PaneSplitter` (ドラッグの配管のみ) + 呼び出し側の「位置 → 一覧側のサイズ」変換
   (`pane-axis.ts`)。下限は `PANE_MIN_PX`、上限はコンテナ幅から導く
-- z-index は用途別トークン (`--z-composer` 等) に集約し、リテラルを散らさない (現状 6 段)
+- z-index は用途別トークン (`--z-composer` 等) に集約し、リテラルを散らさない
 
 ## 6. 永続化の 3 分類
 
@@ -126,31 +124,19 @@ URL に載せる = 共有・戻る/進むの対象、storage に載せる = そ�
 
 - 受信イベントは種類ごとに **対応する signal だけ**を更新する (`ev:agents` → `agents`、
   `ev:llm_requests` → `llmRequests`、transcript push → その sid の tree signal)
-- 再接続時の再取得も同じ経路。**再接続で全状態を作り直さない** (現状は onOpen で rooms / peers /
-  agents / errors / status を一斉に dispatch し、全体再レンダーの引き金になっている)
+- 再接続時の再取得も同じ経路。**再接続で全状態を作り直さない** (onOpen で全 signal を一斉に書くと
+  全体再レンダーの引き金になる。§1 の症状の一つ)
 - 差分判定は daemon 側が担う (peers の compare key、agents の stableKey)。webui 側は届いた
   ものを信じて書く。同値の再書き込みは signal が弾く (`===` なら購読者に通知しない)
 
 ## 8. 移行計画
 
-段階ごとに「再レンダー component 数 / 1 イベント」を Preact の debug hook で計測し、数値を残す。
+進め方は DR-0032 §2.2 (新 webui を別リポで並走させ、画面ごとに移す)。本文書の層の定義 (§2〜§7) は
+新 webui 側の規約として使う。段階ごとに「再レンダー component 数 / 1 イベント」を Preact の debug
+hook で計測し、数値を残す。Timeline の分割 (行の種類ごとの component / fold・検索・自動追随の intent /
+transcript-model) は別 doc (`timeline-architecture.md`) を起こす。
 
-1. **購読層の置換**: `createStore` を signal ベースに置き換え、`useStoreState` を廃止。既存の
-   action / reducer は「更新関数」に機械的に変換 (この段階では signal は群単位、§3 の表)
-2. **App の props 配りを解体**: App は骨格のみ。SessionList / Timeline / StatusPanel / Composer が
-   signal を直接読む
-3. **要素単位 signal**: `sessionTrees` / `rooms` を Map<id, Signal> に。Timeline の行を要素 component に
-4. **Timeline.tsx の分割**: 4900 行を「行の種類ごとの component」「fold / 検索 / 自動追随の
-   intent」「transcript-model (既存)」に分ける。設計は別 doc (`timeline-architecture.md`) を起こす
-5. **layout-state / persistence の分離**: `sidebarOpen` と寸法を `layout-state.ts` に移し、
-   Persistence の effect で追随
+## 9. 裁定待ち ([QUESTIONS.md](../QUESTIONS.md))
 
-各段階は独立に commit・release できる粒度にし、段階の途中で両方式が共存する期間は「新規 component は
-signal のみ」を規約にする。
-
-## 9. 裁定待ち (QUESTIONS.md)
-
-- WA-Q1: 状態層の選定 (signals 推し)
 - WA-Q2: signal の単位 (§3 の表で良いか、要素単位 signal の範囲)
-- WA-Q3: action / reducer の器を「更新関数」に読み替えることの可否 (DR-0005 §1 の supersede)
-- WA-Q4: 移行順 (§8) と、Timeline 分割を同時にやるか後にするか
+- WA-Q4: Timeline 分割を画面移設と同時にやるか後にするか
