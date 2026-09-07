@@ -93,4 +93,14 @@ peers / agents / session_status 等が「op で全量 + push で全量」の 2 �
 - [ ] b: role ごとに別 op に割る (`transcript_read` は session 用、`transcript_read_any` は user 用 等)
 - [ ] c: 可視範囲の差を無くす (session role にも仮想解決を許す)
 
+### PV-Q8: 未配送メッセージの扱い ([Draft §2.1](design/protocol-v2.md))
+
+v2 の messaging は room (永続ログ + 既読カーソル) を持たない。相手セッションが受信できない間
+(subscribe していない / 途絶) に届いたメッセージをどうするか。
+
+- [ ] a: sid 単位の inbox に溜め、受信できるようになった時に配送 (統括推し: v1 の「post → 相手がまだ
+  subscribe していない → 黙って落ちる」を replay 窓で塞いでいた場当たりを、正面から解く)
+- [ ] b: 届かなければ送信側に `undeliverable` を返し、溜めない (状態を持たないが、送信側が再送を考える)
+- [ ] c: 会話は transcript が正本なので、届かなかったことを送信側の transcript に残すだけで良い
+
 ## 確認待ち

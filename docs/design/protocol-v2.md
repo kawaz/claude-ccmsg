@@ -1,6 +1,6 @@
 # protocol v2 設計 (規約ファーストの契約)
 
-- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7)
+- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7、PV-Q8)
 - 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
   [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
   DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
@@ -24,12 +24,28 @@
 
 | 面 | 誰が使うか | 中身 | 輸送 |
 |---|---|---|---|
-| **messaging** | エージェント (session role) | room の作成 / post / reply / read / subscribe、notify、say | UDS (同一 instance) |
+| **messaging** | エージェント (session role)、人 (webui 経由) | **1 対 1 の配送だけ** (user ↔ session、session ↔ session)、返信経路、notify、say | UDS (同一 instance) / WS |
 | **control** | webui、CLI の管理コマンド (user role) | セッション観測・操作、transcript、fs、launcher、sandbox、llm-* | WS / HTTP |
 | **mesh** | instance 同士 | 他 instance への op 転送、event の relay、instance の生死 | WS (instance 間) |
 
-- messaging は v1 の 20 op を整理した小さな面。エージェントに見せる語彙をここに閉じる
-  (CLI の `--help` と skill が参照する範囲 = この面だけ)
+### 2.1 messaging は room を持たない (kawaz r278m63/m64)
+
+複数メンバーの会話 (room) は初期に数回使われた後は使われておらず、会話の様子は webui が
+transcript で全部見せている。よって v2 の messaging は **会話の器を持たず、sid 宛の配送に縮める**:
+
+- `message_send {to: sid, text}` と、受信側への配送 (返信経路の指示を含む)、`say`、`notify`
+- 会話ログの正本は transcript (Timeline)。ccmsg 側の永続ログ (room jsonl)、`mid` / `seq`、既読カーソル
+  (BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
+- 新しい論点は **未配送メッセージの扱い** (相手が受信できない間どうするか): sid 単位の inbox を
+  持つか、届かなければ送信側にエラーを返すか (PV-Q8)
+- 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ
+  (`sessions/<pid>.json` の `messagingSocketPath`) に誘導できる可能性がある。daemon がその socket に
+  直接配送できれば subscribe の Monitor 経由の注入自体が不要になる (スパイクで確認中)
+
+v1 の room 系 op (`create_room` / `next_room` / `invite` / `leave` / `kick` / `set_title` /
+`archive_room` / `rooms` / `room_history` / `read` / `reply`) は v2 に持たない。op 表の messaging 13 op は
+この節に合わせて作り直す。
+
 - control は「daemon の内部状態を読む・操作する API」。webui が唯一の利用者ではない
   (CLI の `ccmsg session kill` 等も同じ面)
 - mesh は control の op を封筒に包んで転送する面。control と同じ op 定義を再利用し、
@@ -136,5 +152,6 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - PV-Q3: 観測系の一本化 (§3.3) — one-shot op を全廃するか
 - PV-Q4: op の命名 (§5) — 名詞先頭に統一するか
 - PV-Q5: schema と TS 型のどちらを正本にするか (§7)
+- PV-Q8: 未配送メッセージの扱い (§2.1) — sid 単位の inbox か、即エラーか
 - PV-Q7: role が可否でなく可視範囲を変える 3 op (`fs_list` / `fs_read` / `transcript_read`) の
   扱い — 属性 `scope` を足すか、role ごとに別 op に割るか (op 表 §8-4)
