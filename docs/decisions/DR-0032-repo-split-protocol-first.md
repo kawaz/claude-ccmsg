@@ -51,7 +51,22 @@ webui の棚卸しで、client 37k 行のうち TSX 側に負債が集中して�
 - per-host の値 (接続状態・hello の能力フラグ) と全体の値を混ぜない
 - room id はホストを含意する
 
+### 2.4 配布 (kawaz r278m40)
+
+- `ccmsg` (daemon + CLI) を `bun install -g` / `brew install` で入れ、これを入口にする
+- エージェント側の plugin は `ccmsg plugin <install|update> <claude|codex> [--config-home <dir>]`
+  で ccmsg が配る。Claude Code はローカルパスの marketplace として登録し、codex はその
+  拡張機構に合わせる
+- config home が複数ある場合は ccmsg の config に列挙 (install 時の `--config-home` で追加)。
+  daemon の `~/.claude*` 自動検出と一本化する
+- これにより plugin cache 内のソースを `bun run` する構造 (DR-0007 の PATH 自己更新含む) は不要になる
+
 ## 3. 未確定 (棚卸し後に確定)
+
+- **plugin の置き場**: (a) `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を
+  同梱し、分離は protocol と webui だけにする (統括推し: hooks は CLI の引数仕様に密結合で、
+  同じリリース単位が自然。リポ名も `ccmsg-daemon` でなく `ccmsg`)、(b) plugin を別リポにして
+  ビルド時に取り込む
 
 - リポ名と配置 (`kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui` 等)、protocol の配布形態
   (npm package か、daemon リポからの export か)
