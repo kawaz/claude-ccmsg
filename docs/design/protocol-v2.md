@@ -33,7 +33,8 @@
 - control は「daemon の内部状態を読む・操作する API」。webui が唯一の利用者ではない
   (CLI の `ccmsg session kill` 等も同じ面)
 - mesh は control の op を封筒に包んで転送する面。control と同じ op 定義を再利用し、
-  封筒 (`to_instance` / `from_instance` / `hops`) だけを足す
+  封筒 (`to_instance` / `from_instance` / `hops`) だけを足す。mesh 固有の op は持たない
+  (転送も relay も封筒のフィールドで表す)
 - 3 面は **同じ型システム・同じ封筒・同じエラー体系** を共有する (別プロトコルにしない)。
   面は「op 属性表の 1 列」であって、別々のスキーマではない
 
@@ -45,7 +46,7 @@
 |---|---|---|
 | `plane` | messaging / control / mesh | 面の所属 |
 | `roles` | session / user / instance の集合 | 認可 (daemon の 35 個の分岐を表に置換) |
-| `needs_hello` | bool | hello 必須 (`IDENTITY_OPS` の Set を表に置換) |
+| `needs_hello` | bool | hello 必須 (`IDENTITY_OPS` の Set を表に置換)。v2 では `hello` / `ping` 以外は全て必須 (v1 の例外 6 op に根拠が無いため) |
 | `capability` | 能力名 (無ければ常時) | hello の能力フラグ 6 個を「op の可用性」に一本化。hello は「この instance で有効な capability の集合」を返す |
 | `locality` | instance-local / cluster | instance-local な op (fs / pid / sandbox / hyoui) は担当 instance へ転送される |
 | `errors` | 返しうる `ErrorCode` の集合 | op ↔ error の対応表 (現在は doc コメントに散在) |
@@ -67,7 +68,10 @@ peers / agents / session_errors / llm_requests / session_status / rooms の「op
 全量」を、**`subscribe <topic>` で snapshot を 1 回返し、以後 delta を push** の 1 形に揃える。
 topic = `peers` / `agents` / `session_status:<sid>` / `transcript:<sid>` / `room:<id>` …。
 one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で表現できるので、
-`peers` / `agents` / `session_status` の one-shot op は置かない (裁定 PV-Q3)。
+`peers` / `agents` / `session_status` の one-shot op は置かない (裁定 PV-Q3)。snapshot の
+frame には `snapshot: true` の印を付け、受け手が「snapshot が届いた」を判別できるようにする
+(v1 の `room_history` sentinel を topic 全体に一般化)。具体表は
+[protocol-v2-op-table.md](./protocol-v2-op-table.md)。
 
 ## 4. 型に「正本」を宣言する
 
@@ -133,3 +137,5 @@ one-shot の取得が要る場面 (CLI) は `subscribe` + 即 `unsubscribe` で�
 - PV-Q4: op の命名 (§5) — 名詞先頭に統一するか
 - PV-Q5: schema と TS 型のどちらを正本にするか (§7)
 - PV-Q6: 並走期間の v1/v2 両受け (§8)
+- PV-Q7: role が可否でなく可視範囲を変える 3 op (`fs_list` / `fs_read` / `transcript_read`) の
+  扱い — 属性 `scope` を足すか、role ごとに別 op に割るか (op 表 §8-4)

@@ -93,6 +93,15 @@ peers / agents / session_status 等が「op で全量 + push で全量」の 2 �
 - [ ] b: 旧 webui を v2 に最低限追従させ、daemon は v2 だけ受ける (両受けの実装は要らないが、
   捨てる予定の webui に手を入れる)
 
+### PV-Q7: role が可視範囲を変える 3 op ([op 表 §8-4](design/protocol-v2-op-table.md))
+
+`fs_list` / `fs_read` / `transcript_read` は role で「可否」でなく「見える範囲」(user なら
+`allowVirtual` で sid から jsonl を探す) が変わる。op 属性表の `roles` 列 (可否) では表せない。
+
+- [ ] a: 属性 `scope` (role ごとの可視範囲) を表に足す (統括推し: op は 1 つのまま、表で挙動が読める)
+- [ ] b: role ごとに別 op に割る (`transcript_read` は session 用、`transcript_read_any` は user 用 等)
+- [ ] c: 可視範囲の差を無くす (session role にも仮想解決を許す)
+
 ## 確認待ち
 
 ### SB-C1: v0.150.0 のスマホ実機確認
