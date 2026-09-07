@@ -1,6 +1,6 @@
 # protocol v2 設計 (規約ファーストの契約)
 
-- Status: **Draft** (裁定待ち: [docs/QUESTIONS.md](../QUESTIONS.md) の PV-Q1〜PV-Q5、PV-Q7)
+- Status: **Draft** (統括判断で確定して進める。§9 の判断に異論があれば kawaz が直す)
 - 関係: [DR-0032](../decisions/DR-0032-repo-split-protocol-first.md) (リポ分離・規約ファースト)、
   [issue multi-host-cluster](../issue/2026-09-07-multi-host-cluster.md) (instance / mesh)、
   DR-0003 (wire v1)、DR-0016 (per-room seq)、DR-0029 追補 (request_id)
@@ -148,12 +148,14 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
 - 旧系 (v1 の daemon / webui / plugin) は凍結し、新系は別 instance として横に立てる (DR-0032 §2.2)。
   daemon が v1 と v2 を両受けする必要は無い
 
-## 9. 裁定待ち (QUESTIONS.md)
+## 9. 統括判断 (kawaz r278m67「溜めずに決めて進めろ」に従い確定)
 
-- PV-Q1: 面の分離 (§2) の粒度 — 3 面で良いか、messaging と control を 1 つにするか
-- PV-Q2: capability の表現 (§3.2) — 集合か、op 属性表から導くだけか
-- PV-Q3: 観測系の一本化 (§3.3) — one-shot op を全廃するか
-- PV-Q4: op の命名 (§5) — 名詞先頭に統一するか
-- PV-Q5: schema と TS 型のどちらを正本にするか (§7)
-- PV-Q7: role が可否でなく可視範囲を変える 3 op (`fs_list` / `fs_read` / `transcript_read`) の
-  扱い — 属性 `scope` を足すか、role ごとに別 op に割るか (op 表 §8-4)
+| # | 論点 | 判断 | 理由 |
+|---|---|---|---|
+| PV-Q1 | 面の粒度 | **3 面** (messaging / control / mesh) | room 廃止で messaging は小さくなるが、「エージェント語彙」と「管理 API」を分ける目的は残る。mesh は封筒だけなので表の 1 列で済む |
+| PV-Q2 | capability | **hello が集合を返す** | UI が押せる op を事前に導ける。op 属性表と二重にならない (表が唯一の正本) |
+| PV-Q3 | 観測系 | **one-shot 全廃、snapshot に `snapshot: true`** | CLI の往復増 (1→3) は許容。重複経路を残す方が高い |
+| PV-Q4 | op 命名 | **名詞先頭** (`room_*` は消えるので実質 `session_*` / `fs_*` / `message_*` / `instance_*`) | topic 名 (名詞) と揃う。改名コストは新系なので無い |
+| PV-Q5 | 契約の正本 | **TS 型を正本、schema を生成** | 既存 184 interface を出発点にできる。生成器は実装時に選ぶ (未検証) |
+| PV-Q7 | role で可視範囲が変わる 3 op | **属性 `scope` を足す** | op を割ると messaging / control の両面に同じ op が要る。表で挙動が読める方を取る |
+| PV-Q8 | 未配送 | **sid 単位 inbox + 理由 + 同 cwd の候補 sid** | kawaz 裁定 (r278m65/m66) |
