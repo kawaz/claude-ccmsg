@@ -1,6 +1,6 @@
 ---
 title: protocol v2 に汎用 kv op を追加
-status: open
+status: resolved
 category: request
 created: 2026-09-08T11:05:51+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-08T11:13:51+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done:op表§3.4とtopic表にkv_read/kv_write/kv_deleteとtopic kv:<ns>を追加 (v2 36 op / topic 10)","done:ccmsg-protocol/mainにschema・fixture・属性表を実装 (117 test green)","done:案からの変更点 - nsは識別子に限定(^[a-z][a-z0-9_]{0,63}$)、keyは1-256文字・制御文字禁止、deltaはentry型共有+deleted:true"]
 blocked_by:
 origin: 自リポ TODO
 ---
