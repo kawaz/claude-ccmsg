@@ -370,6 +370,6 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | 新設 ErrorCode | 4 (`forbidden` / `capability_unavailable` / `instance_unreachable` / `topic_unknown`) |
 | capability 名 | 8 (`llm_usage` / `llm_stats` / `sandbox` / `fork` / `terminal` / `launcher` / `translate` / `llm_status`) |
 | `scope: role` の op | 3 (`transcript_read` / `dir_list` / `file_read`) |
-| loc=L の op | 25 (control 27 + `instance_shutdown`。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
+| loc=L の op | 25 (control 27 のうち loc=L 24 + `instance_shutdown`。kv 3 op は C。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
 | loc=C の op | 6 (`topic_subscribe` / `topic_unsubscribe` + messaging 4) |
 
