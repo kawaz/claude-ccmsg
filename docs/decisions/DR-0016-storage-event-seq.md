@@ -66,6 +66,7 @@ cursor に反映されない。room の log 末尾が非 msg イベントで終�
   は since のみ、新 client は since_seq のみ) ので優先順位が効くのは
   防御的ケースだけ
 - 既存 `since` (mid) は**旧 client 互換のためサーバ側処理を残す**
+  (v2 では削除。互換経路を持たないため — [DR-0032](./DR-0032-repo-split-protocol-first.md) §3)
 - cursor 値の流用は双方向とも禁止:
   - mid 値を since_seq に渡す (旧 cursor の流用) — seq >= mid が常に成り立つ
     ため過小申告になり、既読 event の重複再配信を再生産する (安全側だが

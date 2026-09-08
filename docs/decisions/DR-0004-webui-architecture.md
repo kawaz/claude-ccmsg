@@ -1,6 +1,6 @@
 # DR-0004: webui アーキテクチャ (HTTP/WS transport + UI)
 
-- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)。§4 のクライアント実装方式は [DR-0005](./DR-0005-webui-frontend-architecture.md) が、§5 の locator 記法は [docs/design/webui-url-grammar.md](../design/webui-url-grammar.md) が supersede
+- **Status**: Accepted (2026-07-10、kawaz レビュー裁定「何でも良い」= 一任により承認)。§4 のクライアント実装方式は [DR-0005](./DR-0005-webui-frontend-architecture.md) が、§5 の locator 記法は [docs/design/webui-url-grammar.md](../design/webui-url-grammar.md) が supersede。§4 の「webui のための protocol 拡張はしない」は実態と乖離しており (webui 専用 op が多数)、v2 では面の分離 ([protocol-v2](../design/protocol-v2.md) §2 の messaging / control) が同じ目的を担う
 - **Date**: 2026-07-09
 - **Author**: AI agent (一次資料の kawaz 発言に基づく)
 - **一次資料**: [docs/research/2026-06-29-kawaz-design-statements.md](../research/2026-06-29-kawaz-design-statements.md) §3, §4 回答 1・3, §7
