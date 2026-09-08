@@ -43,7 +43,9 @@ function customPropertyDeclarations(): { name: string; value: string; line: numb
 describe("app.css custom properties", () => {
   test("no custom property is derived from itself", () => {
     const cycles = customPropertyDeclarations()
-      .filter((d) => new RegExp(`var\\(\\s*${d.name}\\b`).test(d.value))
+      // `\b` だと `--success` が `--success-9` の頭に一致する (`-` は非単語文字)
+      // ので、名前の直後が `)` / `,` / 空白であることまで見る
+      .filter((d) => new RegExp(`var\\(\\s*${d.name}(?=[\\s,)])`).test(d.value))
       .map((d) => `line ${d.line}: ${d.name}: ${d.value.trim()}`);
     expect(cycles).toEqual([]);
   });

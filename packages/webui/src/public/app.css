@@ -51,6 +51,166 @@
    * (kawaz r119 m13「bold って人には微妙な違いでしかなくわかりにくい」)。 */
   --fg-strong: #000000;
 
+  /* DR-0033 の 3 層 (入力 → 段 → 意味名)。コンポーネントは意味名だけを参照する。 */
+  --brand: oklch(0.54613 0.215194 262.885);
+  --neutral-tint: 0.01;
+  --hue-success: 145;
+  --hue-warn: 80;
+  --hue-error: 27;
+  --hue-info: 250;
+  --hue-self: 300.763;
+  --hue-user: 131.511;
+  --c-base: 0.19;
+  --c-member: 0.15;
+  --l-1: 0.995;
+  --l-2: 0.98;
+  --l-3: 0.955;
+  --l-4: 0.93;
+  --l-5: 0.9;
+  --l-6: 0.86;
+  --l-7: 0.8;
+  --l-8: 0.72;
+  --l-9: 0.6;
+  --l-10: 0.55;
+  --l-11: 0.48;
+  --l-12: 0.22;
+  --c-1: 0.05;
+  --c-2: 0.1;
+  --c-3: 0.2;
+  --c-4: 0.3;
+  --c-5: 0.4;
+  --c-6: 0.5;
+  --c-7: 0.65;
+  --c-8: 0.8;
+  --c-9: 1;
+  --c-10: 1;
+  --c-11: 0.8;
+  --c-12: 0.5;
+
+  --gray-1: oklch(from var(--brand) var(--l-1) var(--neutral-tint) h);
+  --gray-2: oklch(from var(--brand) var(--l-2) var(--neutral-tint) h);
+  --gray-3: oklch(from var(--brand) var(--l-3) var(--neutral-tint) h);
+  --gray-4: oklch(from var(--brand) var(--l-4) var(--neutral-tint) h);
+  --gray-5: oklch(from var(--brand) var(--l-5) var(--neutral-tint) h);
+  --gray-6: oklch(from var(--brand) var(--l-6) var(--neutral-tint) h);
+  --gray-7: oklch(from var(--brand) var(--l-7) var(--neutral-tint) h);
+  --gray-8: oklch(from var(--brand) var(--l-8) var(--neutral-tint) h);
+  --gray-9: oklch(from var(--brand) var(--l-9) var(--neutral-tint) h);
+  --gray-10: oklch(from var(--brand) var(--l-10) var(--neutral-tint) h);
+  --gray-11: oklch(from var(--brand) var(--l-11) var(--neutral-tint) h);
+  --gray-12: oklch(from var(--brand) var(--l-12) var(--neutral-tint) h);
+  --brand-1: oklch(from var(--brand) var(--l-1) calc(c * var(--c-1)) h);
+  --brand-2: oklch(from var(--brand) var(--l-2) calc(c * var(--c-2)) h);
+  --brand-3: oklch(from var(--brand) var(--l-3) calc(c * var(--c-3)) h);
+  --brand-4: oklch(from var(--brand) var(--l-4) calc(c * var(--c-4)) h);
+  --brand-5: oklch(from var(--brand) var(--l-5) calc(c * var(--c-5)) h);
+  --brand-6: oklch(from var(--brand) var(--l-6) calc(c * var(--c-6)) h);
+  --brand-7: oklch(from var(--brand) var(--l-7) calc(c * var(--c-7)) h);
+  --brand-8: oklch(from var(--brand) var(--l-8) calc(c * var(--c-8)) h);
+  --brand-9: oklch(from var(--brand) var(--l-9) calc(c * var(--c-9)) h);
+  --brand-10: oklch(from var(--brand) var(--l-10) calc(c * var(--c-10)) h);
+  --brand-11: oklch(from var(--brand) var(--l-11) calc(c * var(--c-11)) h);
+  --brand-12: oklch(from var(--brand) var(--l-12) calc(c * var(--c-12)) h);
+  --success-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-success));
+  --success-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-success));
+  --success-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-success));
+  --success-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-success));
+  --success-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-success));
+  --success-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-success));
+  --success-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-success));
+  --success-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-success));
+  --success-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-success));
+  --success-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-success));
+  --success-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-success));
+  --success-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-success));
+  --warn-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-warn));
+  --warn-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-warn));
+  --warn-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-warn));
+  --warn-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-warn));
+  --warn-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-warn));
+  --warn-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-warn));
+  --warn-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-warn));
+  --warn-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-warn));
+  --warn-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-warn));
+  --warn-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-warn));
+  --warn-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-warn));
+  --warn-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-warn));
+  --error-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-error));
+  --error-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-error));
+  --error-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-error));
+  --error-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-error));
+  --error-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-error));
+  --error-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-error));
+  --error-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-error));
+  --error-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-error));
+  --error-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-error));
+  --error-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-error));
+  --error-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-error));
+  --error-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-error));
+  --info-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-info));
+  --info-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-info));
+  --info-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-info));
+  --info-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-info));
+  --info-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-info));
+  --info-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-info));
+  --info-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-info));
+  --info-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-info));
+  --info-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-info));
+  --info-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-info));
+  --info-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-info));
+  --info-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-info));
+  --self-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-self));
+  --self-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-self));
+  --self-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-self));
+  --self-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-self));
+  --self-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-self));
+  --self-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-self));
+  --self-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-self));
+  --self-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-self));
+  --self-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-self));
+  --self-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-self));
+  --self-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-self));
+  --self-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-self));
+  --user-1: oklch(var(--l-1) calc(var(--c-base) * var(--c-1)) var(--hue-user));
+  --user-2: oklch(var(--l-2) calc(var(--c-base) * var(--c-2)) var(--hue-user));
+  --user-3: oklch(var(--l-3) calc(var(--c-base) * var(--c-3)) var(--hue-user));
+  --user-4: oklch(var(--l-4) calc(var(--c-base) * var(--c-4)) var(--hue-user));
+  --user-5: oklch(var(--l-5) calc(var(--c-base) * var(--c-5)) var(--hue-user));
+  --user-6: oklch(var(--l-6) calc(var(--c-base) * var(--c-6)) var(--hue-user));
+  --user-7: oklch(var(--l-7) calc(var(--c-base) * var(--c-7)) var(--hue-user));
+  --user-8: oklch(var(--l-8) calc(var(--c-base) * var(--c-8)) var(--hue-user));
+  --user-9: oklch(var(--l-9) calc(var(--c-base) * var(--c-9)) var(--hue-user));
+  --user-10: oklch(var(--l-10) calc(var(--c-base) * var(--c-10)) var(--hue-user));
+  --user-11: oklch(var(--l-11) calc(var(--c-base) * var(--c-11)) var(--hue-user));
+  --user-12: oklch(var(--l-12) calc(var(--c-base) * var(--c-12)) var(--hue-user));
+
+  --surface: var(--gray-3);
+  --surface-hover: var(--gray-4);
+  --surface-active: var(--gray-5);
+  --border-strong: var(--gray-7);
+  --border-focus: var(--gray-8);
+  --accent-hover: var(--brand-10);
+  --accent-surface: var(--brand-3);
+  --accent-border: var(--brand-7);
+  --accent-fg-muted: var(--brand-11);
+  --success: var(--success-9);
+  --success-surface: var(--success-3);
+  --success-border: var(--success-7);
+  --fg-success: var(--success-11);
+  --warn-surface: var(--warn-3);
+  --warn-border: var(--warn-7);
+  --fg-warn: var(--warn-11);
+  --error: var(--error-9);
+  --error-surface: var(--error-3);
+  --error-border: var(--error-7);
+  --fg-error: var(--error-11);
+  --info: var(--info-9);
+  --info-surface: var(--info-3);
+  --info-border: var(--info-7);
+  --fg-info: var(--info-11);
+  --overlay: oklch(from var(--gray-12) l c h / 85%);
+  --shadow: oklch(from var(--gray-12) l c h / 25%);
+
   /* markdown 装飾が基準にする「いま自分が載っている面の色」。inline code の
    * 地や blockquote の罫のような装飾は、絶対色で持つと面ごとに効き方が変わる —
    * 白地のプレビューで --bg-alt を敷いても地の文とほぼ同じ色にしかならず、
@@ -179,6 +339,30 @@
     --cache-keepalive-ring: #facc15;
     /* 暗い地では太字が明るく滲んで見える分、濃さの差は光の側に振る。 */
     --fg-strong: #ffffff;
+    --l-1: 0.18;
+    --l-2: 0.21;
+    --l-3: 0.25;
+    --l-4: 0.29;
+    --l-5: 0.33;
+    --l-6: 0.38;
+    --l-7: 0.45;
+    --l-8: 0.55;
+    --l-9: 0.62;
+    --l-10: 0.67;
+    --l-11: 0.78;
+    --l-12: 0.95;
+    --c-1: 0.0425;
+    --c-2: 0.085;
+    --c-3: 0.17;
+    --c-4: 0.255;
+    --c-5: 0.34;
+    --c-6: 0.425;
+    --c-7: 0.5525;
+    --c-8: 0.68;
+    --c-9: 0.85;
+    --c-10: 0.85;
+    --c-11: 0.68;
+    --c-12: 0.425;
     /* 暗い面ではコードの地を光の側へずらす (色相と比率はライトと共通)。 */
     --md-code-l-shift: 0.1;
     --md-code-accent: #fdba74;
@@ -9199,6 +9383,86 @@ circle.cache-ring-shape {
 .catalog-color-table th {
   color: var(--fg-muted);
   font-weight: 600;
+}
+
+.catalog-color-scale {
+  margin-top: var(--space-12);
+  overflow-x: auto;
+}
+
+.catalog-color-scale-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(48rem, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+  margin-top: var(--space-8);
+}
+
+.catalog-color-scale-hue {
+  padding-top: var(--space-8);
+  font-size: var(--font-size-xs);
+}
+
+.catalog-color-scale-steps {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(3.8rem, 1fr));
+  gap: var(--space-3);
+}
+
+.catalog-color-scale-cell {
+  min-width: 0;
+}
+
+.catalog-color-scale-chip {
+  display: grid;
+  place-items: center;
+  min-height: 3rem;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  color: var(--fg-strong);
+  font-weight: 700;
+  text-shadow: 0 1px var(--shadow);
+}
+
+.catalog-color-scale-value {
+  display: block;
+  margin-top: var(--space-3);
+  overflow: hidden;
+  color: var(--fg-muted);
+  font-size: var(--font-size-3xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-subtitle {
+  margin: var(--space-15) 0 var(--space-8);
+  font-size: var(--font-size-xl);
+}
+
+.catalog-color-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--space-6) var(--space-13);
+  margin: 0;
+  font-size: var(--font-size-xs);
+}
+
+.catalog-color-inputs > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.catalog-color-inputs dd {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+.catalog-contrast-warning {
+  color: var(--warn);
+  font-weight: 700;
 }
 
 .catalog-color-prop,

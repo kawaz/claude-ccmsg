@@ -22,6 +22,7 @@ import { ErrorView } from "./ErrorView.tsx";
 import { FileTypeIcon, type FileIconKind } from "./FileIcon.tsx";
 import { MarkdownView } from "../markdown-view.tsx";
 import { MdAllSection, MdColorSection } from "./CatalogMdColors.tsx";
+import { ColorSystemSection } from "./CatalogColorSystem.tsx";
 import { MemberChip } from "./MemberChip.tsx";
 import { NO_TRANSCRIPT_MESSAGE } from "./SessionView.tsx";
 import { Fold } from "./Fold.tsx";
@@ -40,6 +41,11 @@ interface SectionDef {
  * in the index. */
 const SECTIONS: SectionDef[] = [
   { id: "color", title: "色", note: "テーマ切替の単位。CSS はこの名前だけを参照する。" },
+  {
+    id: "color-system",
+    title: "カラーシステム (DR-0033)",
+    note: "8 色相 × 12 段と、ブラウザが解決した実色・コントラスト。",
+  },
   { id: "space", title: "余白", note: "padding / margin / gap の全段。棒の長さが実値。" },
   { id: "type", title: "文字サイズ", note: "各行はその段自身のサイズで組んである。" },
   {
@@ -802,6 +808,7 @@ function ErrorSection() {
 
 const SECTION_BODIES: Record<string, () => ComponentChildren> = {
   color: ColorSection,
+  "color-system": ColorSystemSection,
   space: SpaceSection,
   type: TypeSection,
   avatar: AvatarSection,
