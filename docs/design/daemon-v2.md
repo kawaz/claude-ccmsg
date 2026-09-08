@@ -301,12 +301,17 @@ topic の仕組みに内蔵するので「この topic には抑制がない」�
 |---|---|
 | instance ごとの全量置換 | `peers` / `agents` / `session_errors` |
 | 全量置換 | `session_status:<sid>` / `llm_status` |
-| 要素の追加・更新 | `inbox` / `notify` / `llm_requests` |
+| 要素の追加・更新 | `inbox` / `llm_requests` / `kv:<ns>` |
 | 追記 (byte offset) | `transcript:<sid>` |
+| event (保持なし) | `notify` |
 
 **instance ごとの全量置換**が mesh の要。frame は発生元 `instance` を必ず伴い、購読側は
 「その instance 分だけ」を置き換える。他 instance の分は残る。この規則があるので、
 複数 instance の全量が同じ topic 名で衝突しない。
+
+**event** は値を保持しない粒度。購読時の snapshot も抑制も無く、起きた通知がそのまま届く
+(契約の `notify` が「snapshot するものは無い」と定めるのに対応する)。粒度は topic の属性であり、
+topic ごとの分岐ではない (§6.1)。
 
 ### 6.3 購読の管理
 
