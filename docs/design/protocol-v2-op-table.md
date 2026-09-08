@@ -129,7 +129,7 @@ v2 は room jsonl を持たないので、`say_post` は「今どのセッショ
 push するだけで、ccmsg 側の永続ログを作らない。`say_mark_read` が操作する未読フラグは
 daemon の揮発状態 (再起動で消えてよい)。
 
-## 3. control 面 — 24 op
+## 3. control 面 — 27 op
 
 ### 3.1 セッション観測・操作 (8)
 
@@ -180,6 +180,20 @@ op 名で面を分けているのが非対称。`kind` に寄せると 5 op → 
 | `translate` | `translate_run` | user | 要 | `translate` | L | — | `translate_helper_failed` (→cap: `translate_unavailable`) |
 | `llm_usage` | `llm_usage_read` | user | 要 | `llm_usage` | L | — | (→cap: `llm_usage_not_configured` / `_unavailable`) |
 | `llm_stats` | `llm_stats_read` | user | 要 | `llm_stats` | L | — | (→cap: `llm_stats_*`) |
+
+### 3.4 汎用 kv (3、[DR-0033 §7.1](../decisions/DR-0033-webui-color-system.md))
+
+| v1 | v2 | roles | hello | cap | loc | scope | errors (固有) |
+|---|---|---|---|---|---|---|---|
+| — | `kv_read` | user | 要 | — | C | — | `not_found` |
+| — | `kv_write` | user | 要 | — | C | — | — |
+| — | `kv_delete` | user | 要 | — | C | — | — |
+
+- `kv_read {ns, key}` → `{value, updated_at}`、`kv_write {ns, key, value, updated_at?}` (省略時は daemon の
+  現在時刻)、`kv_delete {ns, key}`。`value` は JSON、`ns` / `key` は文字列
+- 契約が約束するのは「ns 内で key が一意」だけ。instance 間のミラーは daemon の責務で、決着は `updated_at`
+  の LWW。デバイス固有の値は key に端末名を含める (契約に device の概念を足さない)
+- topic `kv:<ns>` (snapshot + delta) で他端末の保存が即時に見える (§4)
 | `client_trace` | — (v2 に持たない。webui の計測は新 webui の実装時に要れば同一世代内で追加) | | | | | | |
 
 - `translate` の v1 「空配列 = 能力プローブ」(棚卸し §2.7) は capability 集合で置き換わるので、
@@ -339,7 +353,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | messaging | 4 | v1 15 − room 系廃止 11 (`post` / `reply` は `message_send` に統合) |
 | control | 25 | v1 37 − topic 化 9 − 統合 3 |
 | mesh | 0 | op を持たない (封筒 `to_instance` / `from_instance` / `hops` だけ、Draft §2) |
-| **合計** | **33** | 56 − 廃止 21 − 統合 3 + 新設 1 |
+| **合計** | **36** | 56 − 廃止 21 − 統合 3 + 新設 4 (`topic_unsubscribe`、`kv_*` 3) |
 
 | 指標 | 値 |
 |---|---|
@@ -348,7 +362,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | 廃止 (topic 化) | 9 |
 | 統合による減 | 3 (5 op → 2 op) |
 | 新設 | 1 (`topic_unsubscribe`) |
-| v2 op | 33 (-41%) |
+| v2 op | 36 (-36%) |
 | topic 数 | 9 (messaging 2 / control 7) |
 | v1 の重複経路 | 0 (すべて snapshot + delta 1 形へ) |
 | 畳まれる ErrorCode | 8 → 1 (`capability_unavailable`) |
@@ -356,6 +370,6 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | 新設 ErrorCode | 4 (`forbidden` / `capability_unavailable` / `instance_unreachable` / `topic_unknown`) |
 | capability 名 | 8 (`llm_usage` / `llm_stats` / `sandbox` / `fork` / `terminal` / `launcher` / `translate` / `llm_status`) |
 | `scope: role` の op | 3 (`transcript_read` / `dir_list` / `file_read`) |
-| loc=L の op | 25 (control 24 + `instance_shutdown`。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
+| loc=L の op | 25 (control 27 + `instance_shutdown`。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
 | loc=C の op | 6 (`topic_subscribe` / `topic_unsubscribe` + messaging 4) |
 
