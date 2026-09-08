@@ -209,6 +209,7 @@ snapshot frame には `snapshot: true` の印が付く (PV-Q3)。
 |---|---|---|---|---|---|---|---|
 | `inbox` | messaging | 未配送メッセージの配列 (自 sid 宛) | 配送 frame (§2.2) | (v1 は subscribe の backlog) | `DeliveredEvent` | 要素追加 | session, user |
 | `notify` | messaging | (なし、delta 専用) | `notify` event | — | `notify` | — | session, user |
+| `kv:<ns>` | control | `{entries: [{key, value, updated_at}]}` | 同型 (変化した entry、削除は `deleted: true`) | (なし) | (なし) | 要素差分 | user |
 | `peers` | control | `{peers[], last_live[]}` | 同型 | `peers` | `peers` | **instance ごと全量置換** (Draft §6) | session, user |
 | `agents` | control | `{agents[], polled_at}` | 同型 | `agents` | `agents` | instance ごと全量置換 | user |
 | `session_status:<sid>` | control | `SessionStatusSnapshot` | 全量置換 | `session_status`, `session_status_subscribe`, `session_status_unsubscribe` | `session_status` | 全量置換 | user |
@@ -351,7 +352,7 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 |---|---|---|
 | 共通 (接続・購読) | 5 | v1 4 + `topic_unsubscribe` 新設 1 |
 | messaging | 4 | v1 15 − room 系廃止 11 (`post` / `reply` は `message_send` に統合) |
-| control | 25 | v1 37 − topic 化 9 − 統合 3 |
+| control | 27 | v1 37 − topic 化 9 − 統合 3 − `client_trace` 1 + `kv_*` 新設 3 |
 | mesh | 0 | op を持たない (封筒 `to_instance` / `from_instance` / `hops` だけ、Draft §2) |
 | **合計** | **36** | 56 − 廃止 21 − 統合 3 + 新設 4 (`topic_unsubscribe`、`kv_*` 3) |
 
@@ -360,16 +361,17 @@ transcript で全部見せている。messaging を「sid 宛の 1 対 1 配送�
 | v1 op | 56 |
 | 廃止 (room 系) | 11 |
 | 廃止 (topic 化) | 9 |
+| 廃止 (契約に置かない) | 1 (`client_trace`) |
 | 統合による減 | 3 (5 op → 2 op) |
-| 新設 | 1 (`topic_unsubscribe`) |
+| 新設 | 4 (`topic_unsubscribe`、`kv_read` / `kv_write` / `kv_delete`) |
 | v2 op | 36 (-36%) |
-| topic 数 | 9 (messaging 2 / control 7) |
+| topic 数 | 10 (messaging 2 / control 8) |
 | v1 の重複経路 | 0 (すべて snapshot + delta 1 形へ) |
 | 畳まれる ErrorCode | 8 → 1 (`capability_unavailable`) |
 | 消滅する ErrorCode (room 系) | 7 |
 | 新設 ErrorCode | 4 (`forbidden` / `capability_unavailable` / `instance_unreachable` / `topic_unknown`) |
-| capability 名 | 8 (`llm_usage` / `llm_stats` / `sandbox` / `fork` / `terminal` / `launcher` / `translate` / `llm_status`) |
+| capability 名 | 9 (`llm_usage` / `llm_stats` / `sandbox` / `fork` / `terminal` / `launcher` / `translate` / `llm_status` / `llm_events`) |
 | `scope: role` の op | 3 (`transcript_read` / `dir_list` / `file_read`) |
 | loc=L の op | 25 (control 27 のうち loc=L 24 + `instance_shutdown`。kv 3 op は C。`hello` / `instance_ping` は接続先そのものへの op なので転送されない) |
-| loc=C の op | 6 (`topic_subscribe` / `topic_unsubscribe` + messaging 4) |
+| loc=C の op | 11 (`hello` / `instance_ping` / `topic_subscribe` / `topic_unsubscribe` + messaging 4 + kv 3) |
 
