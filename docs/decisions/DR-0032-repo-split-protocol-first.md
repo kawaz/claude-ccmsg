@@ -84,8 +84,9 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
   webui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui` (r278m41)
 - **互換経路は持たない**。protocol の世代が違う相手とは話さず、webui には更新 / リロードの警告を出す
   (r278m58)
-- **protocol の配布**: npm registry に publish する (`ccmsg-protocol`。`ccmsg` 本体も `bun install -g` の
-  経路が npm なので揃う)。`ccmsg` と `ccmsg-webui` は package.json で版を固定して依存する
+- **protocol の配布**: npm registry の `@ccmsg` org 配下に publish する (`@ccmsg/protocol`。`ccmsg` 本体も
+  `bun install -g` の経路が npm なので揃う。unscoped の `ccmsg` は第三者が取得済みなので本体・webui も
+  `@ccmsg/*` に置く)。`ccmsg` と `ccmsg-webui` は package.json で版を固定して依存する
 - **版付け**: 契約の世代は `PROTOCOL_VERSION` (整数)。package の版は semver で、世代を上げる変更は
   major を上げる。同一世代内の追加 (任意フィールド・任意 op) は minor
 - **DR / docs の振り分け**: リポを分ける時点で、webui 固有の DR (0005 / 0010 / 0014 の UI 部 / 0015 /
