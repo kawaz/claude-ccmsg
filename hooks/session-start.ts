@@ -430,7 +430,7 @@ export function detectPathInstallCandidate(
 // Two things differ from the ccmsg case:
 //
 //   - the shim is COPIED, not symlinked. A symlink would point into the
-//     versioned plugin cache (`.../cache/ccmsg/ccmsg/<version>/bin/say`), a
+//     versioned plugin cache (`.../cache/claude-ccmsg/claude-ccmsg/<version>/bin/say`), a
 //     path that disappears on the next plugin update and leaves a dangling
 //     `say` on PATH — and a broken `say` is exactly the failure the shim's own
 //     fallback logic is written to avoid. `ccmsg`'s symlink can afford that

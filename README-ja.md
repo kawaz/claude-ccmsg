@@ -17,14 +17,14 @@ Claude Code セッション間メッセージング用の**中央デーモン方
 
 ```
 claude plugin marketplace add kawaz/claude-ccmsg
-claude plugin install ccmsg@ccmsg
+claude plugin install claude-ccmsg@claude-ccmsg
 ```
 
 アップデート:
 
 ```
 claude plugin marketplace update ccmsg
-claude plugin update ccmsg@ccmsg
+claude plugin update claude-ccmsg@claude-ccmsg
 ```
 
 plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では
