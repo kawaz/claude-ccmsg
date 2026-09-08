@@ -1,6 +1,6 @@
 # DR-0032: リポ分離と規約ファーストの作り直し (daemon / protocol / webui)
 
-Status: Proposed (骨子は kawaz 裁定済み、細部は棚卸し後に確定)
+Status: Accepted (2026-09-08。骨子は kawaz 裁定 r278m37〜m67、細部は統括判断)
 Date: 2026-09-07
 Sponsor: kawaz r278m37/m38 (2026-09-07)「この機に抜本的な作り直し」「リポ分離を基本方針」「規約ファーストで」「プロトコルも一度見直す」
 関連: [docs/findings/2026-09-07-webui-component-inventory.md](../findings/2026-09-07-webui-component-inventory.md)、
@@ -78,23 +78,23 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
   instance の対象を指定する
 - これにより plugin cache 内のソースを `bun run` する構造 (DR-0007 の PATH 自己更新含む) は不要になる
 
-## 3. 未確定 (棚卸し後に確定)
+## 3. 細部の確定 (統括判断、異論があれば直す)
 
-裁定済み (r278m41): plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex`
-を同梱し、分離は protocol と webui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` /
-`kawaz/ccmsg-webui`。
-
-裁定済み (r278m58): **互換経路は持たない**。版 (protocol の世代) が違う相手とは話さず、webui には
-更新 / リロードの警告を出す (DR-0002 §4 と同じ方針を mesh にも適用)。v1 の `since` (mid) 互換経路
-は削除対象。
-
-- protocol の配布形態 (パッケージレジストリで publish するか、`ccmsg` リポからの export か)
-- protocol の版付け規則 (`PROTOCOL_VERSION` の整数か semver か、不一致の検知と警告の出し方)
-- room id の形式 (§2.3「instance を含意する」の具体形)。複数 daemon が同じ id を同じ意味に解釈する
-  必要があるので、意図ではなく規則として固定する
-- DR / docs の振り分け (webui 固有の DR を新リポへ移し、INDEX に移管先を残す)
-- instance の起動タイミング (常駐か、その config home のセッションが最初に `ccmsg` を呼んだ時か)
-- instance 間認証は kawaz 起草の [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md) を採用候補とする (自己識別の「全 peer 到達必須」の緩和は検討中)
+- plugin は `ccmsg` 1 リポに daemon + cli + `plugins/claude` + `plugins/codex` を同梱、分離は protocol と
+  webui だけ。リポは `kawaz/ccmsg` / `kawaz/ccmsg-protocol` / `kawaz/ccmsg-webui` (r278m41)
+- **互換経路は持たない**。protocol の世代が違う相手とは話さず、webui には更新 / リロードの警告を出す
+  (r278m58)
+- **protocol の配布**: npm registry に publish する (`ccmsg-protocol`。`ccmsg` 本体も `bun install -g` の
+  経路が npm なので揃う)。`ccmsg` と `ccmsg-webui` は package.json で版を固定して依存する
+- **版付け**: 契約の世代は `PROTOCOL_VERSION` (整数)。package の版は semver で、世代を上げる変更は
+  major を上げる。同一世代内の追加 (任意フィールド・任意 op) は minor
+- **DR / docs の振り分け**: リポを分ける時点で、webui 固有の DR (0005 / 0010 / 0014 の UI 部 / 0015 /
+  0018 / 0020〜0022 / 0024〜0026 / 0031) は新 webui リポの設計文書へ内容を移し、本リポの INDEX には
+  移管先を残す。protocol 固有 (0003 / 0006 / 0011 / 0016 / 0017 / 0029) は contract リポの DESIGN と
+  op 表に吸収済みのものから Superseded にする
+- **instance の起動**: 常駐 (`ccmsg plugin install` 時に起動登録、[daemon-v2 §8.4](../design/daemon-v2.md))
+- **instance 間認証**: [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md)
+  (自己識別の「全 peer 到達必須」は緩和して採用)
 
 ## 4. 却下した案
 
