@@ -177,7 +177,8 @@ member 色は「h を段表に通す関数」として持つ。avatar・吹き�
 | 新設 | `kv_delete` | control | user | 要 | — | C | — | — |
 
 - payload: `kv_read {ns, key}` → `{value, updated_at}`、`kv_write {ns, key, value, updated_at?}`、`kv_delete {ns, key}`。`ns` は文字列、`value` は JSON、`updated_at` は ms 整数 (省略時は daemon が現在時刻)
-- push topic `kv:<ns>` (snapshot + delta) で他端末の保存が即時に見える
+- `ns` は topic 名に入るので識別子に限定 (`^[a-z][a-z0-9_]{0,63}$`)。`key` は 1〜256 文字・制御文字禁止のみ (`device:<端末名>` のような人が打つ文字列を許す)
+- push topic `kv:<ns>` (snapshot + delta) で他端末の保存が即時に見える。delta の entry 型は snapshot と共有し、削除は `deleted: true` で表す
 - 契約が約束するのは「ns 内で key が一意」だけ。instance 間ミラーは daemon の責務で、決着は `updated_at` の LWW
 - テーマの使い方: `ns = "theme"`、`key = "default"` (ユーザデフォルト) / `key = "device:<端末名>"` (デバイス固有)。契約に device の概念は足さない
 - v1 daemon に足す場合も同じ名前・同じ payload で足し、v2 契約を正本とする (旧系は DR-0032 §2.2 で凍結方針。v1 側は使い捨て)
