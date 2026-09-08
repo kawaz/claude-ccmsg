@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-09-08 | request | open | [protocol-v2-kv-op](./2026-09-08-protocol-v2-kv-op.md) | v2 に汎用 kv op (kv_read / kv_write / kv_delete + topic kv:<ns>) を追加する。用途は DR-0033 §7 のテーマ永続化 |
 | 2026-09-07 | design | open | [multi-host-cluster](./2026-09-07-multi-host-cluster.md) | 複数ホストの ccmsg daemon を mesh で束ねる (クラスタ化)。room はクラスタ横断、持ち主 daemon が mid/seq 発行 |
 | 2026-09-06 | design | open | [session-list-sections](./2026-09-06-session-list-sections.md) | セッション一覧のセクション再設計 (Paused/Disappeared/生存統合)。r278 裁定済、実装待ち |
 | 2026-09-06 | design | open | [session-status-from-sessions-json](./2026-09-06-session-status-from-sessions-json.md) | セッション状態の取得元を `claude agents --json` から `sessions/<pid>.json` 直読みに変え、活動判定を transcript の turn 状態に寄せる |
