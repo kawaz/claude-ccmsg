@@ -166,7 +166,21 @@ member 色は「h を段表に通す関数」として持つ。avatar・吹き�
   - 典型フロー: ある端末で調整 → ユーザデフォルトに保存 → 他端末で「デバイス固有を消す」リセット → ユーザデフォルトが載る
   - デバイスの同定は localStorage に持つ device id ではなく、ユーザが付ける端末名 (例: "ipad") で行う。localStorage を消すリセットで id まで消えるとデバイス固有ファイルが孤児になるため。端末名未設定の端末はデバイス固有を持たず、ユーザデフォルトから始まる
   - 複数 instance (DR-0032 の mesh) 間ではユーザテーマ dir を丸ごとミラーする (選択なし、kawaz r280m21)。決着はファイル単位の last-write-wins。そのためテーマファイルは `updated_at` を最初から持つ (ミラー自体は v2 で実装、本 DR は形式だけ規定)
-  - daemon 側に必要なのはユーザデフォルト / デバイス固有 (固定名) の read / write / delete の op。組み込みテーマは webui バンドル内の JSON
+  - daemon 側の永続化はテーマ専用 op でなく **汎用 kv op** (protocol v2 の control 面、main ws と合意 r281m9)。組み込みテーマは webui バンドル内の JSON
+
+### 7.1 kv op 案 (protocol v2 op 表の書式)
+
+| v1 | v2 | plane | roles | hello | cap | loc | scope | errors |
+|---|---|---|---|---|---|---|---|---|
+| 新設 | `kv_read` | control | user | 要 | — | C | — | `not_found` |
+| 新設 | `kv_write` | control | user | 要 | — | C | — | — |
+| 新設 | `kv_delete` | control | user | 要 | — | C | — | — |
+
+- payload: `kv_read {ns, key}` → `{value, updated_at}`、`kv_write {ns, key, value, updated_at?}`、`kv_delete {ns, key}`。`ns` は文字列、`value` は JSON、`updated_at` は ms 整数 (省略時は daemon が現在時刻)
+- push topic `kv:<ns>` (snapshot + delta) で他端末の保存が即時に見える
+- 契約が約束するのは「ns 内で key が一意」だけ。instance 間ミラーは daemon の責務で、決着は `updated_at` の LWW
+- テーマの使い方: `ns = "theme"`、`key = "default"` (ユーザデフォルト) / `key = "device:<端末名>"` (デバイス固有)。契約に device の概念は足さない
+- v1 daemon に足す場合も同じ名前・同じ payload で足し、v2 契約を正本とする (旧系は DR-0032 §2.2 で凍結方針。v1 側は使い捨て)
 
 ## 8. 移行
 
