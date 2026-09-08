@@ -87,7 +87,8 @@ persistence 落ちて上がっても失われては困るものだけを書く
 
 frame 1 個に対して、順に:
 
-1. `op` 名が契約にあるか。無ければ `invalid_args`
+0. frame が JSON object で `op` と `request_id` を持つか。持たなければ `bad_request`
+1. `op` 名が契約にあるか。無ければ `unknown_op`
 2. schema 検証 (protocol の compile 済み検証器)。落ちれば `invalid_args`
 3. `needs_hello` と接続の identity。未確定なら `hello_required`
 4. `roles` と接続の role。外なら `forbidden`
