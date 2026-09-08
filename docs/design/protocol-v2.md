@@ -38,12 +38,16 @@ transcript で全部見せている。よって v2 の messaging は **会話の
   (BBS モデル、DR-0001 §4〜§6)、replay 窓は持たない
 - 未配送メッセージは **sid 単位の inbox に溜め、受信できるようになった時に配送する** (PV-Q8 = a、
   kawaz r278m65)。即時配送されなかった時は送信側の応答に理由を返す: 相手が準備中 (subscribe 未起動) /
-  Paused / Disappeared / instance に到達不能。送信側 (エージェント) はそれを見て待つか諦めるかを決める。
+  Paused / Disappeared / instance に到達不能 / 受信側の一時的な拒否 (throttled) / inbox 上限 (inbox_full)。
+  送信側 (エージェント) はそれを見て待つか諦めるかを決める。
   宛先が Paused / Disappeared の時は、**同じ repo root で今動いているセッションがあれば候補 sid を
   添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに
   世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
 - inbox の保持: 宛先 sid が一覧から消える (Disappeared 行を ✕ で消す / 再接続で配送し切る) まで、または
-  7 日。1 sid あたり 256 件を上限とし、超えた分は古い方から落として送信側に `reason: inbox_full` を返す
+  7 日 (last-live の保持と同じ窓)。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との
+  対称、[findings 2026-09-08](../findings/2026-09-08-claude-code-messaging-socket.md) §6)、超えた分は古い方
+  から落として送信側に `reason: inbox_full` を返す。受信側で一時的に受け付けられなかった (rate limit /
+  queue full / duplicate) ものは inbox に残して再送し、応答は `reason: throttled`
 - 配送 frame の識別子 `mid` は `<instance>/<連番>` (発行 instance 内の連番)。`reply_to` はこれを指す。
   既読カーソル・`seq`・replay 窓は持たない
 - 同一 config home 内の session ↔ session は Claude Code 本体の cross-session メッセージ
