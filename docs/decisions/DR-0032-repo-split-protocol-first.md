@@ -93,7 +93,11 @@ state dir / room の記録が `iss` 由来のパスで分離されるので、�
   0018 / 0020〜0022 / 0024〜0026 / 0031) は新 webui リポの設計文書へ内容を移し、本リポの INDEX には
   移管先を残す。protocol 固有 (0003 / 0006 / 0011 / 0016 / 0017 / 0029) は contract リポの DESIGN と
   op 表に吸収済みのものから Superseded にする
-- **instance の起動**: 常駐 (`ccmsg plugin install` 時に起動登録、[daemon-v2 §8.4](../design/daemon-v2.md))
+- **instance の起動**: 常駐。`ccmsg daemon add <config home>` で登録し、`ccmsg service register` が監督者
+  (`ccmsg daemon supervise`) を launchd / systemd に登録して instance を子として保つ (r284 m25〜m34)
+- **エージェント側 plugin の配布**: marketplace ではなく `ccmsg plugin install <agent>` が正本 (対称な
+  `status` / `uninstall`、receipt で自分が書いた変更だけを戻す)。Claude Code にはローカル marketplace 経由で
+  ネイティブの plugin 機構に乗せる。先行事例調査は kawaz/ccmsg `docs/research/2026-09-08-plugin-distribution-survey.md`
 - **instance 間認証**: [mesh-peer-auth](../design/mesh-peer-auth.md) / [mesh-self-identification](../design/mesh-self-identification.md)
   (自己識別の「全 peer 到達必須」は緩和して採用)
 
