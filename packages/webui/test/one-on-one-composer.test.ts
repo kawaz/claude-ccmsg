@@ -7,7 +7,7 @@
 // persistence). A tiny in-memory `localStorage` polyfill lets the sweep run
 // under bun test where `window.localStorage` isn't available.
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { PeerInfo } from "@ccmsg/protocol";
+import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import {
   cleanupStaleDrafts,
   clearDraft,
@@ -55,6 +55,19 @@ function makePeer(sid: string, opts: { lastActivityAt?: string; repo?: string } 
     ws: "test-ws",
     cwd: "/test",
     ...(opts.lastActivityAt ? { last_activity_at: opts.lastActivityAt } : {}),
+  };
+}
+
+/** `claude agents --json` の 1 行 (ccmsg 未起動セッション)。sweep が見るのは
+ * sessionId だけなので他は最小の妥当値で埋める。 */
+function makeAgent(sid: string): AgentInfo {
+  return {
+    pid: 1234,
+    cwd: "/test",
+    kind: "interactive",
+    startedAt: Date.parse("2026-07-01T00:00:00Z"),
+    sessionId: sid,
+    config_dir: "/test/.claude",
   };
 }
 
@@ -197,6 +210,30 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
 
     expect(localStorage.getItem("ccmsg.since_seq")).toBe('{"r1":5}');
     expect(loadDraft("sid-fresh")?.text).toBe("keep me");
+  });
+
+  // 何を保証するか: ccmsg 未起動セッション (peers に居ないが `claude agents`
+  // に居る = プロセスは生きている) 宛の下書きは (a) 規則で消さない。composer
+  // をそのセッションでも出す以上、書いた下書きが次の mount で消えては困る。
+  // 経過時間の判定は draft 自身の updatedAt に落ちるので、古い下書きは従来
+  // どおり (b) 規則で消える。
+  test("keeps drafts for agents-only sids, still purging stale ones", () => {
+    saveDraft("sid-agent-fresh", "keep me");
+    saveDraft("sid-agent-stale", "drop me");
+    localStorage.setItem(
+      `${LOCAL_STORAGE_PREFIX}sid-agent-stale`,
+      JSON.stringify({ text: "drop me", updatedAt: "2026-07-01T00:00:00Z" }),
+    );
+
+    const state: AppState = {
+      ...initialState(),
+      peers: [],
+      agents: [makeAgent("sid-agent-fresh"), makeAgent("sid-agent-stale")],
+    };
+    cleanupStaleDrafts(state, new Date("2026-07-20T00:00:00Z").getTime());
+
+    expect(loadDraft("sid-agent-fresh")?.text).toBe("keep me");
+    expect(loadDraft("sid-agent-stale")).toBeNull();
   });
 });
 

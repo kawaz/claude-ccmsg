@@ -113,7 +113,9 @@ export function listStorageKeys(prefix: string): string[] {
 /** `ccmsg.filesView.<sid>` / `ccmsg.1on1.<sid>` の mount-time sweep が共有する
  * per-sid stale 判定 (files-view-store.ts の cleanupStaleFilesViews と
  * OneOnOneComposer.tsx の cleanupStaleDrafts で行単位同一だったロジックを
- * 統一)。2 規則: (a) sid が `state.peers` に居ない record は無条件削除、
+ * 統一)。2 規則: (a) sid が `state.peers` にも `state.agents` にも居ない
+ * record は無条件削除 (= セッション自体が消えている。ccmsg 未起動でプロセスが
+ * 生きているだけの sid は agents 側に居るので残す)、
  * (b) peer は居るが `peer.last_activity_at` (無ければ `loadUpdatedAt(sid)`
  * が返す record 自身の updatedAt) から `staleMs` 超経過していれば削除。
  * 両方 NaN (peer に activity stamp が無く record も見つからない) なら
@@ -132,12 +134,13 @@ export function sweepStaleBySid(
   for (const key of keys) {
     const sid = key.slice(prefix.length);
     const peer = state.peers.find((p) => p.sid === sid);
-    if (!peer) {
+    const agent = peer ? undefined : state.agents.find((a) => a.sessionId === sid);
+    if (!peer && !agent) {
       removeStorage(key);
       continue;
     }
     const recordUpdatedAt = loadUpdatedAt(sid);
-    const peerActivityMs = peer.last_activity_at ? Date.parse(peer.last_activity_at) : NaN;
+    const peerActivityMs = peer?.last_activity_at ? Date.parse(peer.last_activity_at) : NaN;
     const recordMs = recordUpdatedAt ? Date.parse(recordUpdatedAt) : NaN;
     // peer の activity stamp を優先 (セッションが最近使われたかの直接
     // signal)、無ければ record の updatedAt。両方 NaN なら比較不成立で残す。

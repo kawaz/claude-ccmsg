@@ -6931,6 +6931,14 @@ a.tl-attachment-file-path {
   color: #d0324c;
 }
 
+/* ccmsg 未起動セッション宛の composer に出す待機表示。エラーではないので
+   赤ではなく控えめな二次テキスト色。 */
+.one-on-one-awaiting {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--fg-muted);
+}
+
 .one-on-one-actions {
   display: flex;
   justify-content: space-between;

@@ -398,10 +398,14 @@ export function SessionView({
        * コンテンツと干渉しない。tab 切替を跨いでも同じ OneOnOneComposer
        * instance が生き続けるので、書きかけ text / attachments state も
        * 保たれる (関連: draft は localStorage 保存 §2.6)。
-       * kawaz r26 mid=65: ccmsg 未接続セッション (pinned/仮想閲覧、agents-only
-       * 行) では 1on1 送信先が存在しないため FAB 自体を出さない — daemon 側
-       * でも配送不能なのでガード。 */}
-      {peer ? <OneOnOneComposer sid={sid} state={state} /> : null}
+       * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
+       * (ccmsg 接続済み) か `claude agents` に居る (ccmsg 未起動だがプロセスは
+       * 動いている)。後者宛の 1on1 room は daemon が sid だけで作れ、member
+       * 判定も sid 一致なので、そのセッションが subscribe した時点で受け取れる
+       * (配送タイミングの注意は OneOnOneComposer のヘッダ表示)。どちらにも
+       * 居ない sid (pinned / 仮想閲覧の死んだセッション) は宛先が存在しない
+       * のでガードのまま。 */}
+      {peer || agentForSid ? <OneOnOneComposer sid={sid} state={state} /> : null}
     </main>
   );
 }

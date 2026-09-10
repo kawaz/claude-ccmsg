@@ -201,8 +201,18 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // パネルヘッダの宛先ラベル (kawaz r17 mid=1): repo → ws → cwd 末尾 → sid8。
   const targetPeer = state.peers.find((p) => p.sid === sid);
+  // ccmsg 未起動セッション (peers に居ない = daemon に subscribe していない)
+  // でも `claude agents` に居ればプロセスは生きており、宛先として成立する。
+  // ラベルは agents 行の cwd 末尾に fallback。
+  const targetAgent = targetPeer ? undefined : state.agents.find((a) => a.sessionId === sid);
   const targetLabel =
-    targetPeer?.repo || targetPeer?.ws || lastPathSegment(targetPeer?.cwd ?? "") || sid.slice(0, 8);
+    targetPeer?.repo ||
+    targetPeer?.ws ||
+    lastPathSegment(targetPeer?.cwd ?? targetAgent?.cwd ?? "") ||
+    sid.slice(0, 8);
+  // 未接続宛の投稿は room には確実に残るが、届くのは相手が subscribe した時。
+  // その差をヘッダに出す (送ったのに反応が無い理由が UI から分かるように)。
+  const awaitingConnect = !targetPeer;
 
   // Mount-time cleanup — depends on peers.length so the sweep waits for the
   // peers list to hydrate (empty on the very first render before ws.ts's
@@ -422,7 +432,8 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
         // gives a stable per-session tag: sids are UUIDs, first 8 chars are
         // distinctive enough to disambiguate the room title in the sidebar.
         const peer = state.peers.find((p) => p.sid === sid);
-        const repo = peer?.repo ?? "(unknown)";
+        const agent = peer ? undefined : state.agents.find((a) => a.sessionId === sid);
+        const repo = peer?.repo || lastPathSegment(agent?.cwd ?? "") || "(unknown)";
         const sid8 = sid.slice(0, 8);
         const title = `${repo} 1on1 ${sid8}`;
         const created = await ws.createOneOnOneRoom(sid, title);
@@ -465,7 +476,13 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           (hasDraft ? " composer-fab-draft" : "") +
           (cacheRing ? ` ${cacheRing.class}` : "")
         }
-        title={hasDraft ? "書きかけの下書きがあります" : "このセッションに 1on1 で priv 送信"}
+        title={
+          hasDraft
+            ? "書きかけの下書きがあります"
+            : awaitingConnect
+              ? "このセッションに 1on1 で priv 送信 (ccmsg 未起動: 繋ぐまで待機)"
+              : "このセッションに 1on1 で priv 送信"
+        }
         onClick={openPanel}
         ref={onFabRef}
         onPointerDown={fabDrag.onPointerDown}
@@ -521,6 +538,12 @@ export function OneOnOneComposer({ sid, state }: { sid: string; state: AppState 
           ✕
         </button>
       </header>
+      {awaitingConnect ? (
+        <p class="one-on-one-awaiting">
+          このセッションは ccmsg 未起動です。投稿は 1on1 room に残り、セッションが ccmsg に繋ぐまで
+          待機します。
+        </p>
+      ) : null}
       {/* 入力欄の枠に cache リングを重ねる (kawaz r99m26: 展開中は FAB が
        * 消えるので装飾の置き場が textarea になる)。textarea は子を持てないので
        * 重ねる 1 枚の置き場として入れ物が要る — 余白も背景も持たない。
