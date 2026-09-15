@@ -1,6 +1,6 @@
 ---
 title: room の member 情報の `cwd` が直前の Bash ツールの一時 cwd を拾う
-status: resolved
+status: wip
 category: bug
 created: 2026-09-15T11:57:36+09:00
 last_read:
@@ -9,7 +9,7 @@ wip_entered: 2026-09-15T16:58:10+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered: 2026-09-15T16:58:40+09:00
+resolved_entered:
 discard_reason:
 pending_reason:
 close_reason:
