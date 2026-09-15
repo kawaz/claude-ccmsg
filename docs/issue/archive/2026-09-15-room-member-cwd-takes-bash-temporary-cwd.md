@@ -1,6 +1,6 @@
 ---
 title: room の member 情報の `cwd` が直前の Bash ツールの一時 cwd を拾う
-status: open
+status: resolved
 category: bug
 created: 2026-09-15T11:57:36+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-15T16:57:03+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["duplicate-of: kawaz/ccmsg (v2) issue session-cwd-from-hook-event-drifts, commit 46f7ba40 (unpushed) — fixed the same design issue in v2. v1 (this repo, kawaz/claude-ccmsg) code was not touched by that fix; no v1-specific change was made. Closing per explicit direction, not per a v1 code fix."]
 blocked_by:
 origin: 依頼元セッション (emrd 統括 sid d9a14568) からの報告
 ---
