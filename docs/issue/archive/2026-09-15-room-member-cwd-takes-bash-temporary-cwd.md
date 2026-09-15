@@ -1,6 +1,6 @@
 ---
 title: room の member 情報の `cwd` が直前の Bash ツールの一時 cwd を拾う
-status: wip
+status: resolved
 category: bug
 created: 2026-09-15T11:57:36+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-09-15T16:58:10+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-15T17:20:00+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["dr/DR-0003","implemented","done:0.153.0 で修正 (commit 788ad1ea)。真因は CLI が hello に process.cwd() を載せていたこと。所在の出所を CCMSG_CWD 明示 → session state file (SessionStart hook が CLAUDE_PROJECT_DIR / event cwd で書く) → CLAUDE_PROJECT_DIR の 3 つに限定、post / create-room / UserPromptSubmit は所在を名乗らず、daemon は空 cwd の hello で登録済み所在を保持。release 済み、daemon は newer-wins で置き換わった (pid 76651)。v2 は kawaz/ccmsg の session-cwd-from-hook-event-drifts (v1.0.2)"]
 blocked_by:
 origin: 依頼元セッション (emrd 統括 sid d9a14568) からの報告
 ---
