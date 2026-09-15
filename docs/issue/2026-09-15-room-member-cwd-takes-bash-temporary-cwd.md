@@ -1,6 +1,6 @@
 ---
 title: room の member 情報の `cwd` が直前の Bash ツールの一時 cwd を拾う
-status: wip
+status: resolved
 category: bug
 created: 2026-09-15T11:57:36+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered: 2026-09-15T16:58:10+09:00
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered: 2026-09-15T16:57:03+09:00
+resolved_entered: 2026-09-15T16:58:40+09:00
 discard_reason:
 pending_reason:
-close_reason: ["duplicate-of: kawaz/ccmsg (v2) issue session-cwd-from-hook-event-drifts, commit 46f7ba40 (unpushed) — fixed the same design issue in v2. v1 (this repo, kawaz/claude-ccmsg) code was not touched by that fix; no v1-specific change was made. Closing per explicit direction, not per a v1 code fix."]
+close_reason:
 blocked_by:
 origin: 依頼元セッション (emrd 統括 sid d9a14568) からの報告
 ---
@@ -43,8 +43,12 @@ r294 の member イベント (2026-09-10T01:38:05Z、sid d9a14568) と前後の 
 
 ## 受け入れ条件
 
-- [ ] member 情報の `cwd` の取得元を特定し、固定値 (`CLAUDE_PROJECT_DIR` 等) から取るよう修正する
-- [ ] r294 のような「直前の Bash 一時 cwd を拾う」再現がなくなることを確認する
+- [x] member 情報の `cwd` の取得元を特定し、固定値 (`CLAUDE_PROJECT_DIR` 等) から取るよう修正する
+- [ ] r294 のような「直前の Bash 一時 cwd を拾う」再現がなくなることを確認する (本番 daemon を新版に入れ替えた後、統括が確認)
+
+## 対応 (commit 788ad1ea)
+
+実際に効いていた経路は CLI の `resolveSessionIdentity` が hello に `process.cwd()` を載せていたこと。所在の出所を `CCMSG_CWD` / hook が書く session state file / `CLAUDE_PROJECT_DIR` の 3 つに限り、SessionStart 以外の hook は所在を名乗らず、所在を名乗らない hello に対しては daemon が登録済みの所在 (cwd/repo/ws/repo_root/branch の 5 つで 1 組) を保つようにした。正本は DR-0003 §3 「所在の正本」。
 
 ## TODO
 
