@@ -180,22 +180,32 @@ describe("ensureSessionFile", () => {
   // 「timed out after 5000ms」が 100% 再現した)。subprocess を spawn する test に付ける。
   const spawnTest = (name: string, fn: () => Promise<void>) => test(name, fn, 30_000);
 
+  // この hook は所在を event の cwd から名乗らない (DR-0003 §3 「所在の正本」)。
+  // 救済ファイルに書ける所在は CLAUDE_PROJECT_DIR だけなので、各 test が自分で
+  // 立てる。実プロセスの値が漏れ込まないよう毎回消してから始める。
+  let savedProjectDir: string | undefined;
+
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-ensuresf-"));
+    savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
   });
 
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
+    if (savedProjectDir === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+    else process.env.CLAUDE_PROJECT_DIR = savedProjectDir;
   });
 
   function writeFakeBumpSemver(script: string): string {
     return writeMockBin(path.join(dir, "fake-bump-semver"), script);
   }
 
-  // ファイルが存在しない場合は新規に書く。repo/ws/repo_root/branch は cwd から
-  // bump-semver 経由で導出される (SessionStart の書き込みロジックと同じ
-  // getRepoWsFromVcs を使う)。
+  // ファイルが存在しない場合は新規に書く。repo/ws/repo_root/branch は
+  // CLAUDE_PROJECT_DIR から bump-semver 経由で導出される (SessionStart の
+  // 書き込みロジックと同じ getRepoWsFromVcs を使う)。
   spawnTest("ファイルが無ければ transcript_path/cwd/repo/ws/repo_root/branch を書く", async () => {
+    process.env.CLAUDE_PROJECT_DIR = dir;
     const bin = writeFakeBumpSemver(`#!/bin/sh
 case "$3" in
   backend) echo jj ;;
@@ -209,7 +219,7 @@ esac
     await ensureSessionFile(
       dir,
       "sess-1",
-      { transcriptPath: "/home/u/.claude/proj/sess-1.jsonl", cwd: dir },
+      { transcriptPath: "/home/u/.claude/proj/sess-1.jsonl" },
       { bin, timeoutMs: NORMAL_TIMEOUT_MS },
     );
     const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
@@ -231,14 +241,15 @@ esac
     fs.mkdirSync(path.dirname(sessionFilePath(dir, "sess-1")), { recursive: true });
     fs.writeFileSync(sessionFilePath(dir, "sess-1"), JSON.stringify({ repo: "existing" }));
     const bin = writeFakeBumpSemver(`#!/bin/sh\necho SHOULD_NOT_BE_CALLED >&2\nexit 1\n`);
-    await ensureSessionFile(dir, "sess-1", { cwd: dir }, { bin });
+    process.env.CLAUDE_PROJECT_DIR = dir;
+    await ensureSessionFile(dir, "sess-1", {}, { bin });
     const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
     expect(written).toEqual({ repo: "existing" });
   });
 
-  // cwd が無ければ repo/ws 導出を試みず (bump-semver 呼び出しなし)、
-  // transcript_path だけを書く。
-  test("cwd が無ければ repo/ws は導出されない", async () => {
+  // 所在を名乗れなければ (CLAUDE_PROJECT_DIR なし) repo/ws 導出を試みず
+  // (bump-semver 呼び出しなし)、transcript_path だけを書く。
+  test("CLAUDE_PROJECT_DIR が無ければ cwd も repo/ws も書かれない", async () => {
     await ensureSessionFile(dir, "sess-1", { transcriptPath: "/tmp/sess-1.jsonl" });
     const written = JSON.parse(fs.readFileSync(sessionFilePath(dir, "sess-1"), "utf8"));
     expect(written).toEqual({

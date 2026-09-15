@@ -41,6 +41,8 @@ UDS 上のプロトコルと room イベントの詳細、および DR-0001 が�
 - **write 系 op (`post` / `create_room` / `next_room` / `leave` / `notify`) は identity 無しなら CLI が error 終了**する [kawaz 2026-07-12]。sid の無い CLI が u1 (User) 名義で書けると、受信側の「`from: "u1"` = ユーザ発言」判定が狂う。u1 発行経路は webui backend の `role: "user"` hello 一本に絞る
 - **subscribe だけは identity 無しでも許容**し、CLI は stderr に警告を出しつつ `role: "user"` で hello する。kawaz が素のターミナルから u1 として観測する経路
 - daemon 側: `IDENTITY_OPS` (post/create_room/next_room/…/subscribe/notify) が hello 必須ゲート、`role: "user"` hello は webui backend の合法経路として受理する。CLI 経由の u1 化を塞ぐ責任は CLI 側にある (指示側 client のポリシーであって、wire protocol の禁則ではない)
+- **所在の正本** [kawaz 2026-09-15、`docs/issue/2026-09-15-room-member-cwd-takes-bash-temporary-cwd.md`]: hello が名乗る `cwd` (と一緒に動く `repo` / `ws` / `repo_root` / `branch`) の出所は **固定値 3 つに限る** — (1) `CCMSG_CWD` の明示指定、(2) `CLAUDE_PROJECT_DIR` (ハーネスがセッション起動時に固定する)、(3) SessionStart hook の event cwd (セッションが何も実行する前の値なので、まだ「置かれた場所」を指す)。`process.cwd()` は出所にしない: CLI は Bash ツールの子プロセスとして走るので、その作業ディレクトリは直前の `cd` が行った先であり、それを名乗ると room の member イベントや `peers` 上でセッションが一時ディレクトリへ「引っ越して」しまう。SessionStart 以外の hook (UserPromptSubmit 等) も同じ理由で所在を名乗らない
+- 所在を名乗れない hello は `cwd` を空で送り、**daemon は登録済みの所在を保持する** (5 フィールドは 1 組で動く)。空でない `cwd` を名乗る hello は 5 フィールドを丸ごと置き換える (組の内側では preserve-on-omit をしない — workspace 層の無い checkout へ移ったセッションが古い `repo_root` を持ち続けると fs-access の containment が広がったままになる)
 - daemon は connection → identity を保持し、**post の `from` は daemon が刻印** する (DR-0001 [提案]、自称 `from` を書かせない)。自称 sid の真正性検証はしない (同 UID trust、DR-0001 §5)
 
 ### 4. Room 開設と重複排除 [kawaz 2026-07-03 + 詳細確定]

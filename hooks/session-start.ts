@@ -33,7 +33,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolvePaths } from "@ccmsg/protocol";
+import { resolvePaths, sessionProjectDir } from "@ccmsg/protocol";
 import { armHookDeadline, exitHook } from "./deadline.ts";
 
 interface SessionStartInput {
@@ -45,7 +45,9 @@ interface SessionStartInput {
   /** event-time cwd, present on SessionStart/UserPromptSubmit/PreToolUse/Stop
    *  per the hooks common-field table. Not necessarily this hook process's own
    *  cwd (verified to diverge from it), so repo/ws derivation must read this
-   *  field rather than call process.cwd(). */
+   *  field rather than call process.cwd(). On SessionStart it still names where
+   *  the session was put, which is why this hook alone may state it as the
+   *  session's location (see `sessionLocation`). */
   cwd?: string;
 }
 
@@ -242,6 +244,23 @@ export async function getRepoWsFromVcs(
  *  hooks resolve the same way. */
 export function resolveBumpSemverBin(): string {
   return process.env.CCMSG_BUMP_SEMVER_BIN ?? "bump-semver";
+}
+
+/** Where the session is working, from the sources that cannot drift (DR-0003
+ *  §3 「所在の正本」): `CLAUDE_PROJECT_DIR`, and — only for SessionStart, which
+ *  fires before the session has run anything — the event-time cwd it is handed,
+ *  which is still where the session was put rather than where a Bash tool has
+ *  since gone. Callers that are not SessionStart pass no event cwd and get the
+ *  environment's answer alone.
+ *
+ *  `undefined` when neither says so: a session whose location nobody can name
+ *  leaves the daemon holding what it registered earlier, which beats
+ *  overwriting it with a passing directory. */
+export function sessionLocation(
+  eventCwd?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return sessionProjectDir(env) ?? (eventCwd !== "" ? eventCwd : undefined);
 }
 
 // --- session state file (transcript_path/cwd/repo/ws handoff to the CLI) ---
@@ -574,12 +593,13 @@ async function main(): Promise<void> {
   // UserPromptSubmit's "only if missing" — this is the fresh, authoritative source
   // per session start, e.g. a `/cd` or `claude --resume` should refresh it).
   if (input.session_id) {
-    const { repo, ws, repoRoot, branch } = input.cwd
-      ? await getRepoWsFromVcs(input.cwd, { bin: resolveBumpSemverBin() })
+    const stationed = sessionLocation(input.cwd);
+    const { repo, ws, repoRoot, branch } = stationed
+      ? await getRepoWsFromVcs(stationed, { bin: resolveBumpSemverBin() })
       : { repo: "", ws: "", repoRoot: "", branch: "" };
     writeSessionFile(stateDir, input.session_id, {
       ...(input.transcript_path ? { transcript_path: input.transcript_path } : {}),
-      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(stationed ? { cwd: stationed } : {}),
       ...(repo ? { repo } : {}),
       ...(ws ? { ws } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),

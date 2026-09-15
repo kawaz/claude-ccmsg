@@ -908,6 +908,11 @@ export interface SessionIdentity {
   sid: string;
   repo: string;
   ws: string;
+  /** absolute path the session is working in, from the fixed sources alone
+   * (DR-0003 §3 「所在の正本」): `CCMSG_CWD`, the hook-written session state
+   * file, `CLAUDE_PROJECT_DIR`. Empty means the caller could not name it, and
+   * the daemon then keeps the location it registered earlier instead of
+   * blanking it — `repo`/`ws`/`repo_root`/`branch` move with it as one group. */
   cwd: string;
   /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
    * Sourced by the CLI's resolveIdentity from the SessionStart/UserPromptSubmit

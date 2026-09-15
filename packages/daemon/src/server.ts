@@ -633,27 +633,40 @@ function registerSession(
   // kill the webui's Timeline view for a session that never stopped having a
   // transcript.
   //
-  // repo_root (DR-0008 addendum) follows the repo/ws/cwd rule instead
-  // (latest-hello-wins, no preserve-on-omit): unlike transcript_path's
-  // historical env-prefix-only sourcing, repo_root rides in the very same
-  // per-hello session-state-file payload the CLI's resolveIdentity already
-  // reads fresh for repo/ws on every hello (see hooks/session-start.ts's
-  // SessionFileData) — so it's just as reliably present on every re-hello.
-  // If a later hello genuinely omits/rejects it (e.g. cwd moved to a plain
-  // checkout with no workspace layer), that reflects the session's *current*
-  // state; silently keeping a stale, wider containment root across such a
-  // change would be a fs-access scoping regression, not a UX nicety worth
-  // preserving. branch rides the same per-hello payload, so it follows the
-  // same latest-hello-wins, no-preserve-on-omit rule.
+  // repo_root (DR-0008 addendum) and branch ride the same per-hello payload as
+  // repo/ws/cwd (the hook-written session state file, read fresh by the CLI's
+  // resolveIdentity), so all five move as one: a hello either states where the
+  // session is or says nothing about it.
+  //
+  // Stating nothing is what a caller that cannot know does (DR-0003 §3
+  // 「所在の正本」) — the location comes from fixed sources, and a `post` run
+  // from a Bash tool that `cd`'d elsewhere has none of them — so an empty cwd
+  // preserves the whole registered location rather than replacing it with
+  // blanks. A hello that does state a location replaces all five at once, with
+  // no preserve-on-omit within the group: a session that moved to a plain
+  // checkout with no workspace layer must lose its repo_root, or fs-access
+  // keeps scoping it to a stale, wider containment root.
   const transcriptPath = id.transcript_path ?? entry?.meta.transcript_path;
+  const location =
+    id.cwd !== ""
+      ? {
+          repo: id.repo,
+          ws: id.ws,
+          cwd: id.cwd,
+          ...(id.repo_root ? { repo_root: id.repo_root } : {}),
+          ...(id.branch ? { branch: id.branch } : {}),
+        }
+      : {
+          repo: entry?.meta.repo ?? "",
+          ws: entry?.meta.ws ?? "",
+          cwd: entry?.meta.cwd ?? "",
+          ...(entry?.meta.repo_root ? { repo_root: entry.meta.repo_root } : {}),
+          ...(entry?.meta.branch ? { branch: entry.meta.branch } : {}),
+        };
   const meta = {
     sid: id.sid,
-    repo: id.repo,
-    ws: id.ws,
-    cwd: id.cwd,
+    ...location,
     ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
-    ...(id.repo_root ? { repo_root: id.repo_root } : {}),
-    ...(id.branch ? { branch: id.branch } : {}),
   };
   // A process's CLAUDE_CONFIG_DIR cannot change while it runs, so a hello that
   // omits it is telling us nothing new — an older CLI, or one invoked from a
@@ -1862,7 +1875,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // there the raw cwd *is* the containment root the webui hands back to
         // the daemon. Unresolvable cwd keeps its literal spelling (fail-open,
         // same as before) and resolveRoot rejects it later as it always did.
-        const cwd = await realpathOrSelf(req.cwd ?? "");
+        // Empty stays empty — that is the hello saying it cannot name the
+        // session's location (DR-0003 §3 「所在の正本」), and realpath would
+        // answer it with this daemon process's own working directory.
+        const cwd = req.cwd ? await realpathOrSelf(req.cwd) : "";
         const repoRoot = await validateRepoRoot(cwd, req.repo_root);
         // Announced repo/ws always win; the cwd derivation only fills what the
         // session could not tell us. A fork/resume launch gets no hook-written
@@ -1877,7 +1893,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         const announcedRepo = req.repo ?? "";
         const announcedWs = req.ws ?? "";
         const derived =
-          announcedRepo === "" || announcedWs === ""
+          cwd !== "" && (announcedRepo === "" || announcedWs === "")
             ? await deriveRepoWs(cwd)
             : { repo: "", ws: "" };
         newId = {

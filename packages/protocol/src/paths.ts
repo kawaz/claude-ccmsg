@@ -110,3 +110,19 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     lastLiveSessions: path.join(stateDir, "last-live-sessions.json"),
   };
 }
+
+/** Where the session is working, as Claude Code fixed it when the session
+ * started (`CLAUDE_PROJECT_DIR`, exported to hooks and to the subprocesses of
+ * the Bash/Monitor tools alike).
+ *
+ * This is one of the three sources allowed to name a session's location (see
+ * DR-0003 §3 「所在の正本」); `process.cwd()` is not among them, because a
+ * command a session runs is run wherever its last Bash tool went.
+ *
+ * Absolute or nothing: a relative path is read against the working directory,
+ * which is the very thing this exists not to depend on.
+ */
+export function sessionProjectDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const dir = env.CLAUDE_PROJECT_DIR;
+  return dir !== undefined && dir !== "" && path.isAbsolute(dir) ? dir : undefined;
+}

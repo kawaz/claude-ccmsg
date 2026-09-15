@@ -668,6 +668,10 @@ describe("ccmsg CLI end-to-end", () => {
       path.join(sessionsDir, "S1.json"),
       JSON.stringify({
         transcript_path: transcriptFile,
+        // 所在 (cwd/repo/ws/repo_root/branch) は 1 組で動くので、hook が書く形に
+        // 合わせて cwd も入れる。cwd を名乗らない hello は repo/ws も述べない
+        // (DR-0003 §3 「所在の正本」)。
+        cwd: os.tmpdir(),
         repo: "claude-ccmsg",
         ws: "main",
         updated_at: "2026-07-11T00:00:00.000Z",
@@ -696,6 +700,7 @@ describe("ccmsg CLI end-to-end", () => {
     fs.writeFileSync(
       path.join(sessionsDir, "S1.json"),
       JSON.stringify({
+        cwd: os.tmpdir(),
         repo: "from-file",
         ws: "from-file-ws",
         updated_at: "2026-07-11T00:00:00.000Z",
@@ -729,7 +734,11 @@ describe("ccmsg CLI end-to-end", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionsDir, "S1.json"),
-      JSON.stringify({ branch: "feat/branch-label", updated_at: "2026-07-11T00:00:00.000Z" }),
+      JSON.stringify({
+        cwd: os.tmpdir(),
+        branch: "feat/branch-label",
+        updated_at: "2026-07-11T00:00:00.000Z",
+      }),
     );
     try {
       const peers = JSON.parse((await runCli(["peers"], { ...env, CCMSG_SID: "S1" })).out) as {
@@ -751,7 +760,11 @@ describe("ccmsg CLI end-to-end", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionsDir, "S1.json"),
-      JSON.stringify({ branch: "from-file", updated_at: "2026-07-11T00:00:00.000Z" }),
+      JSON.stringify({
+        cwd: os.tmpdir(),
+        branch: "from-file",
+        updated_at: "2026-07-11T00:00:00.000Z",
+      }),
     );
     try {
       const peers = JSON.parse(
@@ -794,7 +807,7 @@ describe("ccmsg CLI end-to-end", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionsDir, "S1.json"),
-      JSON.stringify({ repo_root: repoRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
+      JSON.stringify({ cwd, repo_root: repoRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
     );
     try {
       const proc = Bun.spawn([process.execPath, CLI, "peers"], {
@@ -827,7 +840,7 @@ describe("ccmsg CLI end-to-end", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(
       path.join(sessionsDir, "S1.json"),
-      JSON.stringify({ repo_root: fileRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
+      JSON.stringify({ cwd, repo_root: fileRoot, updated_at: "2026-07-11T00:00:00.000Z" }),
     );
     try {
       const proc = Bun.spawn([process.execPath, CLI, "peers"], {
@@ -881,8 +894,8 @@ describe("ccmsg CLI end-to-end", () => {
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(path.join(sessionsDir, "S1.json"), "{not valid json");
     // VCS 配下でない cwd で走らせる: repo/ws が空であることが「CLI が未申告」の
-    // 証拠であり続けるため (daemon は申告が空の hello に対し cwd から repo/ws を
-    // 導出するので、リポジトリ内で走らせると導出値が入って区別できなくなる)。
+    // 証拠であり続けるため (daemon は cwd を名乗る hello に対してだけ repo/ws を
+    // 導出するので、導出値が紛れ込む余地を残さない)。
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-cli-novcs-"));
     try {
       const res = await runCli(["peers"], { ...env, CCMSG_SID: "S1" }, outside);
@@ -1348,8 +1361,9 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
     try {
       // 3 session を立ててそれぞれ異なる cwd で subscribe を張っておく (peers は
       // 接続中 session を返すので、常駐 subscribe を noise なく差し込む)。
-      // CLI は hello の cwd に process.cwd() を送るため、Bun.spawn の cwd で
-      // 実 dir を渡す (作成しないと spawn が失敗する)。base dir 配下に mkdir。
+      // CLI が hello で名乗る所在は固定値 3 つからしか来ない (DR-0003 §3
+      // 「所在の正本」) ので、各 peer の cwd は CCMSG_CWD で明示する。Bun.spawn
+      // の cwd は実 dir が要る (作成しないと spawn が失敗する)。base dir 配下に mkdir。
       const peerBase = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-peers-"));
       const alphaOne = path.join(peerBase, "alpha", "one");
       const alphaTwo = path.join(peerBase, "alpha", "two");
@@ -1360,7 +1374,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       const spawnPeer = (sid: string, cwd: string) =>
         Bun.spawn([process.execPath, CLI, "--sid", sid, "subscribe"], {
           cwd,
-          env: { ...process.env, ...env },
+          env: { ...process.env, ...env, CCMSG_CWD: cwd },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -1472,6 +1486,83 @@ describe("ccmsg CLI stop <session-id> (DR-0028 session_kill wiring)", () => {
       expect(parsed.error?.code).toBe("not_found");
     } finally {
       await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+});
+
+// セッションの所在 (DR-0003 §3 「所在の正本」): hello の cwd は CCMSG_CWD →
+// hook が書いた session state file → CLAUDE_PROJECT_DIR の順に固定値から取る。
+// CLI が走っている場所 (= 直前の Bash ツールが cd した先) は出所にならない。
+describe("hello が名乗る所在", () => {
+  interface PeerLite {
+    sid: string;
+    cwd?: string;
+  }
+
+  test("固定値だけから来て、CLI が走っている場所では動かない", async () => {
+    const { env, cleanup } = makeEnv();
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-loc-"));
+    // 実在ディレクトリが要る (spawn の cwd に渡すため)。daemon は hello 時に
+    // cwd を realpath するので、期待値も realpath で突き合わせる。
+    const mk = (name: string): string => {
+      const dir = path.join(base, name);
+      fs.mkdirSync(dir, { recursive: true });
+      return fs.realpathSync(dir);
+    };
+    const drifted = mk("drifted");
+    const stationed = mk("stationed");
+    const project = mk("project");
+    const override = mk("override");
+    // state file は SessionStart hook が書くもの。ここでは hook を回す代わりに
+    // 同じ形を直接置く (hooks/session-start.ts の SessionFileData)。
+    fs.mkdirSync(path.join(env.CCMSG_STATE_DIR, "sessions"), { recursive: true });
+    fs.writeFileSync(
+      path.join(env.CCMSG_STATE_DIR, "sessions", "LOC-FILE.json"),
+      JSON.stringify({ cwd: stationed, updated_at: new Date().toISOString() }),
+    );
+    // 問い合わせ側は identity なし (自分が peer 一覧に紛れないように)。
+    const readEnv: Record<string, string> = {
+      ...env,
+      CCMSG_SID: "",
+      CLAUDE_CODE_SESSION_ID: "",
+      CLAUDE_PROJECT_DIR: "",
+    };
+    // peer は全員 drifted で走らせる = CLI の process.cwd() は常に drifted。
+    const spawnPeer = (sid: string, peerEnv: Record<string, string>) =>
+      Bun.spawn([process.execPath, CLI, "--sid", sid, "subscribe"], {
+        cwd: drifted,
+        env: { ...process.env, ...env, CLAUDE_PROJECT_DIR: "", ...peerEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const procs = [
+      spawnPeer("LOC-FILE", {}),
+      spawnPeer("LOC-ENV", { CLAUDE_PROJECT_DIR: project }),
+      spawnPeer("LOC-OVERRIDE", { CLAUDE_PROJECT_DIR: project, CCMSG_CWD: override }),
+      spawnPeer("LOC-NONE", {}),
+    ];
+    try {
+      const waitPeers = async (): Promise<PeerLite[]> => {
+        for (let i = 0; i < 40; i++) {
+          const res = JSON.parse((await runCli(["peers"], readEnv)).out) as { peers?: PeerLite[] };
+          if (Array.isArray(res.peers) && res.peers.length >= 4) return res.peers;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error("timed out waiting for 4 peers");
+      };
+      const peers = await waitPeers();
+      const cwdOf = (sid: string): string | undefined => peers.find((p) => p.sid === sid)?.cwd;
+      expect(cwdOf("LOC-FILE")).toBe(stationed);
+      expect(cwdOf("LOC-ENV")).toBe(project);
+      // CCMSG_CWD は CLAUDE_PROJECT_DIR より強い明示指定。
+      expect(cwdOf("LOC-OVERRIDE")).toBe(override);
+      // 出所が 1 つも無ければ何も名乗らない (drifted を名乗ってしまわない)。
+      expect(cwdOf("LOC-NONE") ?? "").toBe("");
+    } finally {
+      for (const p of procs) p.kill();
+      await runCli(["daemon", "stop"], readEnv).catch(() => {});
+      fs.rmSync(base, { recursive: true, force: true });
       cleanup();
     }
   }, 30000);

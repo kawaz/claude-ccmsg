@@ -19,6 +19,7 @@ import {
   pruneOldSessionFiles,
   sayShimDeclineMarkerPath,
   sessionFilePath,
+  sessionLocation,
   writeSessionFile,
 } from "./session-start.ts";
 
@@ -535,6 +536,29 @@ describe("buildSubscribeCommand", () => {
 
   test("裸コマンドになる", () => {
     expect(buildSubscribeCommand(bin)).toBe(`${bin} subscribe`);
+  });
+});
+
+// sessionLocation: 所在の出所は固定値だけ (DR-0003 §3 「所在の正本」)。
+// SessionStart は event の cwd を渡してよい (セッションが何も実行する前の値)。
+describe("sessionLocation", () => {
+  test("CLAUDE_PROJECT_DIR が event の cwd より優先される", () => {
+    expect(sessionLocation("/drifted", { CLAUDE_PROJECT_DIR: "/project" })).toBe("/project");
+  });
+
+  test("CLAUDE_PROJECT_DIR が無ければ event の cwd を使う", () => {
+    expect(sessionLocation("/stationed", {})).toBe("/stationed");
+  });
+
+  test("相対パス・空の CLAUDE_PROJECT_DIR は所在として採らない", () => {
+    expect(sessionLocation("/stationed", { CLAUDE_PROJECT_DIR: "rel/dir" })).toBe("/stationed");
+    expect(sessionLocation("/stationed", { CLAUDE_PROJECT_DIR: "" })).toBe("/stationed");
+  });
+
+  test("event の cwd を渡さない呼び出し側 (SessionStart 以外) は env だけが答える", () => {
+    expect(sessionLocation(undefined, { CLAUDE_PROJECT_DIR: "/project" })).toBe("/project");
+    expect(sessionLocation(undefined, {})).toBeUndefined();
+    expect(sessionLocation("", {})).toBeUndefined();
   });
 });
 

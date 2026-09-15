@@ -27,6 +27,7 @@ import {
   getRepoWsFromVcs,
   resolveBumpSemverBin,
   sessionFilePath,
+  sessionLocation,
   writeSessionFile,
 } from "./session-start.ts";
 
@@ -139,9 +140,6 @@ interface UserPromptSubmitInput {
    *  in the nag's suggested command (kawaz decision 2026-07-11, see
    *  session-start.ts's module header). */
   transcript_path?: string;
-  /** event-time cwd (hooks common-field table); fed to ensureSessionFile so a
-   *  rescued state file also gets repo/ws via getRepoWsFromVcs. */
-  cwd?: string;
 }
 
 /**
@@ -168,6 +166,12 @@ export function buildNagMessage(bin: string): string {
  * turn. Best-effort: any failure (unwritable stateDir, bump-semver absent, ...)
  * is swallowed by the caller, same as the rest of this hook.
  *
+ * The location it rescues comes from `CLAUDE_PROJECT_DIR` alone: this hook fires
+ * mid-session, so the cwd its event carries is wherever the last Bash tool went
+ * (DR-0003 §3 「所在の正本」). Without that variable the rescued file names no
+ * location at all and only carries transcript_path, which is the field the
+ * rescue exists for.
+ *
  * `opts.timeoutMs` forwards to `getRepoWsFromVcs`'s shared deadline; omitted (as
  * the hook itself does) it keeps that function's 1000ms production default. It
  * exists so tests, whose fake `sh` fixtures are far slower to spawn than the real
@@ -177,16 +181,17 @@ export function buildNagMessage(bin: string): string {
 export async function ensureSessionFile(
   stateDir: string,
   sid: string,
-  input: { transcriptPath?: string; cwd?: string },
+  input: { transcriptPath?: string },
   opts: { bin?: string; timeoutMs?: number } = {},
 ): Promise<void> {
   if (fs.existsSync(sessionFilePath(stateDir, sid))) return;
-  const { repo, ws, repoRoot, branch } = input.cwd
-    ? await getRepoWsFromVcs(input.cwd, { bin: opts.bin, timeoutMs: opts.timeoutMs })
+  const stationed = sessionLocation();
+  const { repo, ws, repoRoot, branch } = stationed
+    ? await getRepoWsFromVcs(stationed, { bin: opts.bin, timeoutMs: opts.timeoutMs })
     : { repo: "", ws: "", repoRoot: "", branch: "" };
   writeSessionFile(stateDir, sid, {
     ...(input.transcriptPath ? { transcript_path: input.transcriptPath } : {}),
-    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(stationed ? { cwd: stationed } : {}),
     ...(repo ? { repo } : {}),
     ...(ws ? { ws } : {}),
     ...(repoRoot ? { repo_root: repoRoot } : {}),
@@ -225,12 +230,10 @@ function subscribeRunning(): boolean {
 async function main(): Promise<void> {
   let sessionId: string | undefined;
   let transcriptPath: string | undefined;
-  let cwd: string | undefined;
   try {
     const input = JSON.parse(await Bun.stdin.text()) as UserPromptSubmitInput;
     sessionId = input.session_id;
     transcriptPath = input.transcript_path;
-    cwd = input.cwd;
   } catch {
     // Non-JSON stdin: still useful to nag, just without the sid, and no session
     // file rescue to attempt.
@@ -241,7 +244,7 @@ async function main(): Promise<void> {
       await ensureSessionFile(
         resolvePaths().stateDir,
         sessionId,
-        { transcriptPath, cwd },
+        { transcriptPath },
         { bin: resolveBumpSemverBin() },
       );
     } catch {

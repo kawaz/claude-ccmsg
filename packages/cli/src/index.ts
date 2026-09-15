@@ -4,7 +4,13 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { VERSION, migrateLegacyConfigFiles, resolvePaths, type Identity } from "@ccmsg/protocol";
+import {
+  VERSION,
+  migrateLegacyConfigFiles,
+  resolvePaths,
+  sessionProjectDir,
+  type Identity,
+} from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
   dumpSession,
@@ -130,6 +136,7 @@ function parseReadArgs(args: string[], usage: string): { room: string; mids: str
  *  change's footprint small (see the delegation report). */
 interface StoredSessionFile {
   transcript_path?: unknown;
+  cwd?: unknown;
   repo?: unknown;
   ws?: unknown;
   repo_root?: unknown;
@@ -226,12 +233,23 @@ function resolveSessionIdentity(
     // than "unknown" (both ends of a comparison fall back to the same path),
     // so the flag still works for the common single-config-dir setup.
     const configDir = strField(process.env.CLAUDE_CONFIG_DIR) ?? path.join(os.homedir(), ".claude");
+    // Where the session is, from the fixed sources alone (DR-0003 §3
+    // 「所在の正本」): the CCMSG_CWD override knob, then the hook-written state
+    // file (SessionStart's cwd, taken before the session ran anything), then
+    // CLAUDE_PROJECT_DIR for a session whose state file never got written.
+    // `process.cwd()` is deliberately not among them: this CLI runs as a child
+    // of whichever Bash tool invocation called it, so its working directory is
+    // wherever that tool last `cd`'d to — announcing it would move the session
+    // there for everyone reading `peers` or a room's member events. Empty means
+    // "not stated" and leaves the daemon holding what it registered before.
+    const cwd =
+      strField(process.env.CCMSG_CWD) ?? strField(stored?.cwd) ?? sessionProjectDir() ?? "";
     return {
       role: "session",
       sid,
       repo: strField(process.env.CCMSG_REPO) ?? strField(stored?.repo) ?? "",
       ws: strField(process.env.CCMSG_WS) ?? strField(stored?.ws) ?? "",
-      cwd: process.cwd(),
+      cwd,
       ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
       ...(repoRoot ? { repo_root: repoRoot } : {}),
       ...(branch ? { branch } : {}),
