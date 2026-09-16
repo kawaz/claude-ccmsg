@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-09-16 | bug | open | [webui-terminal-tab-config-parse-error](./2026-09-16-webui-terminal-tab-config-parse-error.md) | webui の Terminal タブが出ない: 本番 config.ts の構文エラーで daemon の設定が空になっている |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
 | 2026-09-08 | bug | open | [launcher-version-regex-after-rename](./2026-09-08-launcher-version-regex-after-rename.md) | `__ccmsg_extract_version` が改名後の cache パスに一致せず self-update/self-exec が無効化。DR-0032 §2.2-4 の意図的停止か regex 修正かの判断含む |
 | 2026-09-08 | idea | open | [messaging-socket-direct-write](./2026-09-08-messaging-socket-direct-write.md) | messaging socket へ直接書けば subscribe / Monitor 経路なしで idle セッションを即座に起こせる (実測 2026-09-08) |
