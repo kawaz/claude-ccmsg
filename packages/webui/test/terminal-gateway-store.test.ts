@@ -4,7 +4,47 @@
 // 純関数の URL 組み立てだけを検証し、AppState 反映は ws.ts のハンドシェイク
 // テスト側で見る。
 import { describe, expect, test } from "bun:test";
-import { buildTerminalEmbedUrl } from "../src/client/terminal-gateway-store.ts";
+import {
+  buildTerminalEmbedUrl,
+  buildTerminalPageUrl,
+} from "../src/client/terminal-gateway-store.ts";
+
+describe("buildTerminalPageUrl", () => {
+  test("returns null when gateway or sessionId is missing", () => {
+    expect(buildTerminalPageUrl(null, "sid-1")).toBeNull();
+    expect(buildTerminalPageUrl("https://gw", null)).toBeNull();
+    expect(buildTerminalPageUrl("https://gw", "")).toBeNull();
+    expect(buildTerminalPageUrl("https://gw", undefined)).toBeNull();
+  });
+
+  test("returns null for invalid / non-http URL", () => {
+    expect(buildTerminalPageUrl("not-a-url", "sid")).toBeNull();
+    expect(buildTerminalPageUrl("ftp://gw.example", "sid")).toBeNull();
+    expect(buildTerminalPageUrl("javascript:alert(1)", "sid")).toBeNull();
+  });
+
+  test("builds /sessions/<id> with no embed query", () => {
+    expect(buildTerminalPageUrl("https://hyoui.example", "run-34816-f05d6019")).toBe(
+      "https://hyoui.example/sessions/run-34816-f05d6019",
+    );
+    expect(buildTerminalPageUrl("http://127.0.0.1:43690", "sid-42")).toBe(
+      "http://127.0.0.1:43690/sessions/sid-42",
+    );
+  });
+
+  test("base の trailing slash / path / query / hash は落として path を差し替える", () => {
+    expect(buildTerminalPageUrl("https://gw.example/", "s")).toBe("https://gw.example/sessions/s");
+    expect(buildTerminalPageUrl("https://gw.example/old/path?a=1#frag", "s")).toBe(
+      "https://gw.example/sessions/s",
+    );
+  });
+
+  test("sessionId is percent-encoded", () => {
+    expect(buildTerminalPageUrl("https://gw.example", "a b/c")).toBe(
+      "https://gw.example/sessions/a%20b%2Fc",
+    );
+  });
+});
 
 describe("buildTerminalEmbedUrl", () => {
   test("returns null when gateway or sessionId is missing", () => {

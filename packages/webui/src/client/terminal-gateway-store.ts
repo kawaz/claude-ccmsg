@@ -7,15 +7,20 @@
 // webui 側にはもはや設定 UI / localStorage は無い (「他タブに設定 UI が
 // 無いのに Terminal だけあるのは中途半端」r46m7 で撤去、config ファイル方式へ)。
 
-/** gateway base URL + HYOUI_SESSION_ID から iframe に流し込む embed URL を
- * 組み立てる純関数。gateway URL の末尾スラッシュの有無・path ありの
- * base URL のいずれも受けられるよう、URL コンストラクタで正規化する
- * (base 末尾に `/` がなくても pathname 差し替えは URL 側で確定的に動く)。
+/** gateway base URL + HYOUI_SESSION_ID から、その端末の hyoui web ページ
+ * (`/sessions/<id>`) を指す URL を組み立てる純関数。gateway URL の末尾
+ * スラッシュの有無・path ありの base URL のいずれも受けられるよう、URL
+ * コンストラクタで正規化する (base 末尾に `/` がなくても pathname 差し替えは
+ * URL 側で確定的に動く)。base に path が付いていても hyoui gateway の URL
+ * 仕様どおり常に `/sessions/<id>` を指す。
  *
  * 不正な gateway URL (parse 失敗 / http|https 以外) や空の sessionId の
- * 場合は null を返す — 呼び出し側は「Terminal タブ自体を出さない」で
- * フォールバックする (設定 UI は廃止済み)。 */
-export function buildTerminalEmbedUrl(
+ * 場合は null を返す — 呼び出し側は導線自体を出さないでフォールバックする。
+ *
+ * embed の query を付けないのが Terminal タブ (buildTerminalEmbedUrl) との
+ * 差。embed=1 は iframe 用にヘッダを落とした版で、別タブで開く人向けの
+ * ページとしてはヘッダのある素の `/sessions/<id>` が正しい。 */
+export function buildTerminalPageUrl(
   gatewayBase: string | null,
   hyouiSessionId: string | null | undefined,
 ): string | null {
@@ -27,11 +32,27 @@ export function buildTerminalEmbedUrl(
     return null;
   }
   if (base.protocol !== "http:" && base.protocol !== "https:") return null;
-  // base の pathname を全置換して sessions/<id> を組む。base に path が
-  // 付いていても Terminal embed の src は常に `/sessions/<id>` を指す
-  // (hyoui gateway の URL 仕様)。
-  const embedded = new URL(base.toString());
-  embedded.pathname = `/sessions/${encodeURIComponent(hyouiSessionId)}`;
+  const page = new URL(base.toString());
+  page.pathname = `/sessions/${encodeURIComponent(hyouiSessionId)}`;
+  page.search = "";
+  page.hash = "";
+  return page.toString();
+}
+
+/** gateway base URL + HYOUI_SESSION_ID から iframe に流し込む embed URL を
+ * 組み立てる純関数。URL の骨格は buildTerminalPageUrl と同じで、iframe 用の
+ * query だけを足す。
+ *
+ * 不正な gateway URL (parse 失敗 / http|https 以外) や空の sessionId の
+ * 場合は null を返す — 呼び出し側は「Terminal タブ自体を出さない」で
+ * フォールバックする (設定 UI は廃止済み)。 */
+export function buildTerminalEmbedUrl(
+  gatewayBase: string | null,
+  hyouiSessionId: string | null | undefined,
+): string | null {
+  const page = buildTerminalPageUrl(gatewayBase, hyouiSessionId);
+  if (!page) return null;
+  const embedded = new URL(page);
   // resize=1: iframe サイズに合わせた PTY 自動 resize (hyoui r45m11。embed は
   // UI トグルが無く iframe の localStorage も分離されるため URL パラメータ方式)
   // fab=...: hyoui embed の入力フォーム呼び出しボタン (fab) のデザインヒント

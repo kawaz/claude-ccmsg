@@ -31,6 +31,7 @@ import {
   type EnvRow,
 } from "../env-filter.ts";
 import { agentTimelineHref } from "../locator.ts";
+import { buildTerminalPageUrl } from "../terminal-gateway-store.ts";
 import {
   clientBuildLabel,
   formatClockTime,
@@ -436,6 +437,11 @@ export function StatusPanel({
   const pinned = state.pinnedSessions.get(sid);
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
   const namespace = formatHyouiNamespace(agent);
+  // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
+  // 設定されている環境ではその端末のページへのリンクにする (Terminal タブと
+  // 同じ gateway URL 源 = hello の terminal_gateway_url)。gateway 未設定なら
+  // リンクにせず値をそのまま出す。
+  const terminalPageUrl = buildTerminalPageUrl(state.terminalGatewayUrl, agent?.hyoui_session_id);
   // このセッションの ccmsg クライアント。CWD や PID と同じ「今この session が
   // 何で動いているか」の一部なので identity 表に並べる。古い client が居るとき
   // だけ警告に変わり、それ以外は版数だけを黙って出す。
@@ -498,7 +504,18 @@ export function StatusPanel({
         <dd class="status-meta-value">
           {agent?.hyoui_session_id ? (
             <>
-              <span>{agent.hyoui_session_id}</span>
+              {terminalPageUrl ? (
+                <a
+                  href={terminalPageUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="この端末を hyoui web で開く"
+                >
+                  {agent.hyoui_session_id}
+                </a>
+              ) : (
+                <span>{agent.hyoui_session_id}</span>
+              )}
               <CopyButton value={agent.hyoui_session_id} label="HYOUI_SESSION_ID" />
             </>
           ) : (
