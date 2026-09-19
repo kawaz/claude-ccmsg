@@ -21,7 +21,7 @@ origin: 依頼元セッション (emrd 統括 sid d9a14568) からの報告
 
 ## 概要
 
-emrd 統括セッション (sid d9a14568) の報告 (2026-09-15、事象は 2026-09-10 10:38 JST、room r294 の member イベント): kawaz 側が create-room した時の member 情報の `cwd` が `…/github.com/emeradaco` (直前の Bash `cd … && direnv exec . gh issue view …` の一時 cwd) になっていた。セッションの実体 (`ccmsg peers` の cwd) は `kawaz123/emrd-workboard/main` で正しい。自分で create-room した room (r295 / r296 / r302 / r305 / r306) は正しい cwd。`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1` 設定済み。
+業務環境の統括セッション (sid d9a14568) の報告 (2026-09-15、事象は 2026-09-10 10:38 JST、room r294 の member イベント): kawaz 側が create-room した時の member 情報の `cwd` が `…/github.com/<organization>` (直前の Bash `cd … && direnv exec . gh issue view …` の一時 cwd) になっていた。セッションの実体 (`ccmsg peers` の cwd) は `<work-account>/<work-repo>/main` で正しい。自分で create-room した room (r295 / r296 / r302 / r305 / r306) は正しい cwd。`CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1` 設定済み。
 
 ## 背景
 

@@ -33,9 +33,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
   ```
   ~/.local/share/repos/github.com/kawaz/
   ~/.local/share/repos/github.com/zunsystem/
-  ~/.local/share/repos/github.com/emeradaco/
-  ~/.local/share/repos/github.com/syun/
-  ~/.local/share/repos/github.com/tfabworks/
+  ~/.local/share/repos/github.com/<organization>/
   ```
 - 各ルート配下を展開 → リポジトリ (dir) → その配下の worktree/workspace (dir) を選択
 - **ディレクトリのみ表示** (ドットファイル/ファイル非表示)
@@ -60,7 +58,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
 session_launcher:
   root_dirs:
     - ~/.local/share/repos/github.com/kawaz/
-    - ~/.local/share/repos/github.com/emeradaco/
+    - ~/.local/share/repos/github.com/<organization>/
     # ...
   default_prompt: |
     ccmsg subscribe起動。このセッションではultracode許可。pre-clear出力があればロード
