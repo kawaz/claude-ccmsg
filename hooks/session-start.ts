@@ -2,7 +2,7 @@
 /**
  * SessionStart hook.
  *
- * Three jobs:
+ * Four jobs:
  *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
  *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
  *       hello time, so no command the AI runs needs an env prefix for identity.

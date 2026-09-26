@@ -83,7 +83,7 @@ room は (1)(2) を構造的に解決する (1 post が全員に届く)。(3) �
 - **ストレージ** — room ごとに 1 つの append-only `jsonl` (`member` / `leave` / `msg` / 次スレリンク `next`/`prev` / … イベント) が**唯一の永続状態**。server 側の既読 cursor は持たない — BBS モデル: 読者が自分の位置を把握し、再接続時に since-mid を渡す
 - **配送** — `to` なしの msg は room 全メンバーに**本文込みで push** する。`to` を付けると配信対象は列挙メンバー + 送信者自身 + admin User (`u1`、常時配信の例外) に絞られる (可視性フィルタ、DR-0011)。ストレージ自体は絞らない — 配信されなかった member も `read` で任意に読める (mid の飛びが「読みに行けば読める」シグナル)。自分の post の echo back なし
 - **トランスポート** — ローカルクライアントは UNIX Domain Socket (`0600` + UID check)。webui は WebSocket (`/ws`) で同一プロトコル: セキュリティ層 = role を User に固定する identity pinning、接続元は loopback 限定 bind + source-IP allowlist (loopback、`CCMSG_HTTP_ALLOW`) + ブラウザ `Origin` 検証 (既定は loopback origin のみ、tailscale serve 等の追加は `CCMSG_HTTP_ALLOW_ORIGIN`) で審査
-- **クライアント** — セッションごとの `subscribe` sidecar (Claude Code の Monitor ツールに流す)、kawaz が直接叩くユーザ CLI (人間は全 room の予約メンバー `u1`)、後 phase の web UI。全クライアントが daemon を静寂にヘルスチェック + 自動起動する
+- **クライアント** — Claude Code セッションの peer messaging socket に直接書き込む単体の `ccmsg` バイナリ (常駐不要)、Claude Code 以外の受け手向けの `subscribe` コマンド、kawaz が直接叩くユーザ CLI (人間は全 room の予約メンバー `u1`)、web UI。全クライアントが daemon を静寂にヘルスチェック + 自動起動する
 
 ## ディレクトリ構成
 
