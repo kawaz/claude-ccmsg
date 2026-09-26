@@ -98,7 +98,6 @@ export interface SessionStatusLookup extends TranscriptSessionLookup {
   get(sid: string):
     | {
         meta: { transcript_path?: string; cwd: string; repo_root?: string };
-        conns: { size: number };
       }
     | undefined;
 }
@@ -157,7 +156,7 @@ async function resolveExternalRoot(
   sid: string,
 ): Promise<string | undefined> {
   const entry = sessions.get(sid);
-  if (!entry || entry.conns.size === 0) return undefined;
+  if (!entry) return undefined;
   const base = entry.meta.repo_root ?? entry.meta.cwd;
   if (!base || !path.isAbsolute(base)) return undefined;
   try {
@@ -177,7 +176,7 @@ async function resolveWorkspaceAnchor(
   sid: string,
 ): Promise<string | undefined> {
   const entry = sessions.get(sid);
-  if (!entry || entry.conns.size === 0) return undefined;
+  if (!entry) return undefined;
   const cwd = entry.meta.cwd;
   if (!cwd || !path.isAbsolute(cwd)) return undefined;
   try {

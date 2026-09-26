@@ -50,12 +50,10 @@ function makeEnv(): { env: Record<string, string>; cleanup: () => void } {
   };
 }
 
-/** Open a session connection and keep it open, so the daemon counts `sid` as
- * connected (`rooms`' `live_members`, and hence what `ccmsg rooms` shows by
- * default). A one-shot `runCli` can't stand in for this: it exits as soon as
- * it prints, so the sid it registered is already disconnected by the time the
- * next command asks. Resolves once the daemon has replied to the hello — the
- * connection is registered by then. Returns a closer. */
+/** Open a session connection so the daemon knows `sid` (`rooms`'
+ * `live_members`, and hence what `ccmsg rooms` shows by default). Resolves
+ * once the daemon has replied to the hello — the session is registered by
+ * then. Returns a closer. */
 async function holdSession(sock: string, sid: string): Promise<() => void> {
   return await new Promise<() => void>((resolve, reject) => {
     void Bun.connect({
@@ -1242,14 +1240,17 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       return { ...made, sock: path.join(made.env.CCMSG_STATE_DIR!, "daemon.sock") };
     })();
     try {
-      // 繋ぎっぱなしにする S1 の room と、作った直後に切断した S3 の room。
-      // member set が違うので create-room の dedup では 1 つにならない。
+      // S1 の room と S3 の room。member set が違うので create-room の dedup
+      // では 1 つにならない。daemon を再起動すると、どのセッションも daemon に
+      // とって未知になり、再び hello した S1 の room だけが live になる。
       const attended = JSON.parse(
         (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
       ) as { room: string };
       const deserted = JSON.parse(
         (await runCli(["--sid", "S3", "create-room", "--members", "S4"], env)).out,
       ) as { room: string };
+      await runCli(["daemon", "stop"], env);
+      await runCli(["rooms", "--all"], env);
 
       const releaseS1 = await holdSession(sock, "S1");
       try {
@@ -1260,7 +1261,7 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
           hint?: string;
         };
         expect(dflt.rooms.map((r) => r.id)).toEqual([attended.room]);
-        // 4 人の member 宣言があっても、繋がっているのは S1 だけ。
+        // 4 人の member 宣言があっても、daemon が知っているのは S1 だけ。
         expect(dflt.rooms[0]!.live_members).toBe(1);
         expect(dflt.inactive_omitted).toBe(1);
         expect(dflt.archived_omitted).toBeUndefined();

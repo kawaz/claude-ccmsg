@@ -20,7 +20,7 @@ import type { TraceWriter } from "./trace.ts";
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
  *  dependency edge back to server.ts. */
 export interface SessionLookup {
-  get(sid: string): { meta: { transcript_path?: string }; conns: { size: number } } | undefined;
+  get(sid: string): { meta: { transcript_path?: string } } | undefined;
 }
 
 export type TranscriptResult<T> =
@@ -109,8 +109,8 @@ export function resolveConnectedTranscript(
   sid: string,
 ): TranscriptResolveResult {
   const entry = sessions.get(sid);
-  if (!entry || entry.conns.size === 0) {
-    return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
+  if (!entry) {
+    return { ok: false, code: ErrorCode.session_not_found, msg: `unknown session: ${sid}` };
   }
   const file = entry.meta.transcript_path;
   if (!file) {

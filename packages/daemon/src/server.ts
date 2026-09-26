@@ -204,12 +204,11 @@ interface SessionEntry {
    * has to be resumed. */
   clientVersion?: string;
   clientProtocol?: number;
-  conns: Set<Conn>;
   /** ISO time this entry was first created in this daemon process; a later
    * hello for the same sid reuses the existing entry and never touches this
    * (DR: webui session-list ordering wants a stable "connected since", not a
-   * value that jumps on every reconnect). Only a full sid removal (conns
-   * drops to zero, see removeConn) followed by a fresh hello resets it. */
+   * value that jumps on every reconnect). Only forgetting the sid (see
+   * forgetSession) followed by a fresh hello resets it. */
   connectedAt: string;
   /** ISO time of this sid's most recent request on any of its connections;
    * unset until the first request after hello. Updated from the single
@@ -581,13 +580,9 @@ function joinAllBroadcasts(daemon: Daemon, sid: string): void {
 
 /**
  * DR-0013 §2.2 auto-populate: append a LeaveEvent to every broadcast room
- * this sid was a member of. Called from the "session entry fully removed"
- * side of detachSession — a partial detach (this conn moved to a different sid
- * but the sid still has other conns open, e.g. the user opened a second webui
- * tab as an observer of the same session) must NOT leave the room, so we key
- * off "did the sessions map entry disappear?" rather than "did this conn go
- * away?". Same "storage only, not delivered" treatment as the join side
- * (§2.3).
+ * this sid was a member of. Called only when the session entry itself is
+ * forgotten (forgetSession); a connection closing is not a session leaving.
+ * Same "storage only, not delivered" treatment as the join side (§2.3).
  */
 function leaveAllBroadcasts(daemon: Daemon, sid: string): void {
   for (const room of daemon.rooms.values()) {
@@ -609,12 +604,7 @@ interface ClientBuild {
   protocol?: number;
 }
 
-function registerSession(
-  daemon: Daemon,
-  conn: Conn,
-  id: SessionIdentity,
-  client: ClientBuild,
-): void {
+function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuild): void {
   // This sid is back, so it is no longer "前回稼働中" — whether it came back
   // via the launcher's resume or was simply started again by hand, the row
   // has done its job. maybeBroadcastPeers at the end of this function pushes
@@ -687,7 +677,7 @@ function registerSession(
     );
   }
   if (!entry) {
-    entry = { meta, ...(configDir ? { configDir } : {}), conns: new Set(), connectedAt: nowIso() };
+    entry = { meta, ...(configDir ? { configDir } : {}), connectedAt: nowIso() };
     daemon.sessions.set(id.sid, entry);
   } else {
     entry.meta = meta;
@@ -699,7 +689,6 @@ function registerSession(
   // connection's answer as if it were this one's.
   entry.clientVersion = client.version;
   entry.clientProtocol = client.protocol;
-  entry.conns.add(conn);
   // DR-0013 §2.2 auto-populate: first hello for this sid → add it to every
   // broadcast room. A re-hello (isNewEntry === false) is deliberately a no-op:
   // this sid is already a member of every broadcast room from its earlier
@@ -714,33 +703,19 @@ function registerSession(
   maybeBroadcastPeers(daemon);
 }
 
-/** Stop counting `conn` under `sid`'s session entry — the shared tail end of both
- *  a full disconnect (removeConn) and a re-hello that moves this conn to a
- *  different sid or away from session role entirely (dispatch's "hello" case).
- *  Invariant: a conn is counted under at most one sid at a time. A re-hello that
- *  skips this step leaves the conn in its *previous* sid's `conns` Set, so that
- *  sid never reaches conns.size === 0 and lingers in `peers`/ev:"peers" as a
- *  ghost peer until the conn closes entirely. */
-function detachSession(daemon: Daemon, conn: Conn, sid: string): void {
-  const entry = daemon.sessions.get(sid);
-  if (!entry) return;
-  entry.conns.delete(conn);
-  if (entry.conns.size === 0) {
-    daemon.sessions.delete(sid);
-    // DR-0013 §2.2 auto-populate: session fully gone → append LeaveEvent to
-    // every broadcast room it was in. A partial detach (this conn is closing
-    // but the sid still has other conns) must NOT leave, hence the size===0
-    // gate — the sid is still "connected" as far as the broadcast contract is
-    // concerned. Same "not delivered to subscribers" treatment as the join
-    // side (see leaveAllBroadcasts's doc comment / §2.3).
-    leaveAllBroadcasts(daemon, sid);
-  }
-  // Deliberately does NOT call maybeBroadcastPeers itself: both callers (removeConn,
-  // dispatch's "hello" case) may follow this with a registerSession/further mutation
-  // of their own in the same turn, and pushing here too would mean two ev:"peers"
-  // frames (one showing the stale mid-transition state) for what's semantically one
-  // registry change. Each caller pushes once, after every mutation it's going to make
-  // is done.
+/** Drop `sid` from the registry once its session is known to have ended.
+ *
+ * Design rationale: a session's connections say nothing about whether it is
+ * alive — a Claude Code session talks to the daemon only for the moment a
+ * `ccmsg` command runs, so an entry outlives every connection of its session.
+ * The one end signal the daemon has first-hand is `session_kill` terminating
+ * the process; every other session stays listed until the daemon restarts.
+ * Callers push ev:"peers" themselves. */
+function forgetSession(daemon: Daemon, sid: string): void {
+  if (!daemon.sessions.delete(sid)) return;
+  // DR-0013 §2.2 auto-populate: session gone → append LeaveEvent to every
+  // broadcast room it was in (see leaveAllBroadcasts's doc comment / §2.3).
+  leaveAllBroadcasts(daemon, sid);
 }
 
 export function removeConn(daemon: Daemon, conn: Conn): void {
@@ -753,16 +728,6 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
   syncSessionUserInputs(daemon);
   sessionStatusUnsubscribeAll(daemon.sessionStatus, daemon.transcriptTail, conn);
   transcriptUnsubscribeAll(daemon.transcriptTail, conn);
-  const id = conn.identity;
-  if (id && id.role === "session") {
-    detachSession(daemon, conn, id.sid);
-    // full disconnect (last conn for this sid gone, not just one of several)
-    // (issue 2026-07-12-peers-live-update-protocol) — a session with another
-    // still-open conn stays in the peers list, so maybeBroadcastPeers itself
-    // no-ops via its snapshot compare when detachSession didn't actually remove
-    // the sessions entry.
-    maybeBroadcastPeers(daemon);
-  }
 }
 
 /** File the "this sid has an out-of-date ccmsg client" record the session list
@@ -824,19 +789,17 @@ function withUserInput(daemon: Daemon, sid: string): { last_user_input_at?: stri
   return at ? { last_user_input_at: at } : {};
 }
 
-/** Compute the peers list exactly as the `peers` op returns it (only sessions
- * with at least one live connection) — shared by that op and the ev:"peers"
+/** Compute the peers list exactly as the `peers` op returns it (every session
+ * the daemon knows, see forgetSession) — shared by that op and the ev:"peers"
  * push below so the two never drift apart. */
 function currentPeers(daemon: Daemon): PeerInfo[] {
-  return [...daemon.sessions.values()]
-    .filter((s) => s.conns.size > 0)
-    .map((s) => ({
-      ...s.meta,
-      connected_at: s.connectedAt,
-      ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
-      ...withUserInput(daemon, s.meta.sid),
-      ...clientBuildFields(daemon, s),
-    }));
+  return [...daemon.sessions.values()].map((s) => ({
+    ...s.meta,
+    connected_at: s.connectedAt,
+    ...(s.lastActivityAt ? { last_activity_at: s.lastActivityAt } : {}),
+    ...withUserInput(daemon, s.meta.sid),
+    ...clientBuildFields(daemon, s),
+  }));
 }
 
 /** The build half of a peer row: what its latest hello announced, plus the
@@ -884,23 +847,21 @@ function peersFor(daemon: Daemon, asker: Identity | null): PeerInfo[] {
  * it) and only differs across a genuine full-disconnect-then-rejoin. */
 function peersCompareKey(daemon: Daemon): string {
   return JSON.stringify([
-    [...daemon.sessions.values()]
-      .filter((s) => s.conns.size > 0)
-      .map((s) => {
-        // `stale_client.last_seen` is deliberately dropped here for the same
-        // reason `last_activity_at` is: a refused client retries every few
-        // seconds, and comparing its timestamp would turn one stale process
-        // into an endless push loop. Whether a warning is showing, and what it
-        // says, is what a client re-renders on — the exact instant of the last
-        // attempt only has to be right in a `peers` reply, which reads it live.
-        const { stale_client: stale, ...build } = clientBuildFields(daemon, s);
-        return {
-          ...s.meta,
-          connected_at: s.connectedAt,
-          ...build,
-          ...(stale ? { stale_client: { version: stale.version, protocol: stale.protocol } } : {}),
-        };
-      }),
+    [...daemon.sessions.values()].map((s) => {
+      // `stale_client.last_seen` is deliberately dropped here for the same
+      // reason `last_activity_at` is: a refused client retries every few
+      // seconds, and comparing its timestamp would turn one stale process
+      // into an endless push loop. Whether a warning is showing, and what it
+      // says, is what a client re-renders on — the exact instant of the last
+      // attempt only has to be right in a `peers` reply, which reads it live.
+      const { stale_client: stale, ...build } = clientBuildFields(daemon, s);
+      return {
+        ...s.meta,
+        connected_at: s.connectedAt,
+        ...build,
+        ...(stale ? { stale_client: { version: stale.version, protocol: stale.protocol } } : {}),
+      };
+    }),
     // Tail-derived, so it changes without any registry mutation — the fold's
     // own onChange is what re-enters maybeBroadcastPeers for it, and this entry
     // is what stops that re-entry from being a no-op push.
@@ -962,13 +923,11 @@ function agentTitle(daemon: Daemon, sid: string): string | undefined {
  * key rewrote an identical file on every keystroke-turn across all sessions. */
 function lastLiveCompareKey(daemon: Daemon): string {
   return JSON.stringify([
-    [...daemon.sessions.values()]
-      .filter((s) => s.conns.size > 0)
-      .map((s) => ({
-        ...s.meta,
-        connected_at: s.connectedAt,
-        title: agentTitle(daemon, s.meta.sid),
-      })),
+    [...daemon.sessions.values()].map((s) => ({
+      ...s.meta,
+      connected_at: s.connectedAt,
+      title: agentTitle(daemon, s.meta.sid),
+    })),
     currentLastLive(daemon),
   ]);
 }
@@ -982,17 +941,15 @@ function maybePersistLastLive(daemon: Daemon): void {
 
 function persistLastLive(daemon: Daemon): void {
   const now = nowIso();
-  const live = [...daemon.sessions.values()]
-    .filter((s) => s.conns.size > 0)
-    .map((s) => {
-      const title = agentTitle(daemon, s.meta.sid);
-      return {
-        ...s.meta,
-        ...(title ? { title } : {}),
-        connected_at: s.connectedAt,
-        last_seen_at: now,
-      };
-    });
+  const live = [...daemon.sessions.values()].map((s) => {
+    const title = agentTitle(daemon, s.meta.sid);
+    return {
+      ...s.meta,
+      ...(title ? { title } : {}),
+      connected_at: s.connectedAt,
+      last_seen_at: now,
+    };
+  });
   writeLastLiveSessions(
     daemon.paths.lastLiveSessions,
     [...live, ...daemon.lastLive.values()],
@@ -1214,9 +1171,7 @@ function syncSessionErrors(daemon: Daemon): void {
   // which sessions are stopped at the moment the link returns, and a stall
   // that happened while no webui was open is exactly the one worth waking.
   const wanted = hasUserSubscriber(daemon) || daemon.networkWatch?.enabled === true;
-  const sids = wanted
-    ? [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid)
-    : [];
+  const sids = wanted ? [...daemon.sessions.values()].map((s) => s.meta.sid) : [];
   syncSessionErrorWatches(
     daemon.sessionErrors,
     daemon.transcriptTail,
@@ -1234,7 +1189,7 @@ function syncSessionErrors(daemon: Daemon): void {
  * stops folding the moment the last tab closes. */
 function syncSessionUserInputs(daemon: Daemon): void {
   const sids = hasUserSubscriber(daemon)
-    ? [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid)
+    ? [...daemon.sessions.values()].map((s) => s.meta.sid)
     : [];
   syncUserInputWatches(
     daemon.sessionUserInputs,
@@ -1821,7 +1776,6 @@ async function handleOneRequest(daemon: Daemon, conn: Conn, line: string): Promi
 async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
   switch (req.op) {
     case "hello": {
-      const prevId = conn.identity;
       const client = readClientBuild(req);
       // A client speaking another generation is refused, not adapted to: ccmsg
       // evolves per host, all at once (DR-0002 §4). Announcing no generation is
@@ -1908,23 +1862,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           ...(configDir ? { config_dir: configDir } : {}),
         };
       }
-      // A re-hello that moves this conn away from its previous sid (a different
-      // sid, or role no longer "session") must stop counting it there first, or
-      // the old sid's entry never reaches conns.size===0 on its own and lingers
-      // as a ghost peer (see detachSession's doc comment).
-      const movedAwayFromSession =
-        prevId?.role === "session" && (newId.role !== "session" || newId.sid !== prevId.sid);
-      if (movedAwayFromSession) detachSession(daemon, conn, prevId.sid);
       conn.identity = newId;
-      if (newId.role === "session") {
-        // pushes ev:"peers" itself, covering both the detach above and this
-        // registration as one combined change (see detachSession's doc comment).
-        registerSession(daemon, conn, newId, client);
-      } else if (movedAwayFromSession) {
-        // detach-only change (session -> user role): still need the push detachSession
-        // deliberately didn't make.
-        maybeBroadcastPeers(daemon);
-      }
+      // pushes ev:"peers" itself.
+      if (newId.role === "session") registerSession(daemon, newId, client);
       // user role の hello にだけ terminal_gateway_url を返す (issue
       // 2026-07-21): session role は Terminal タブを持たないので不要。
       // config.json 未設定なら省略 → webui は Terminal タブを出さない。
@@ -2214,10 +2154,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // Sorting by sid keeps the a1/a2/... assignment deterministic across
         // daemon restarts / test runs so a downstream that reads member.id
         // sees a stable order.
-        const activeSids = [...daemon.sessions.values()]
-          .filter((s) => s.conns.size > 0)
-          .map((s) => s.meta.sid)
-          .sort();
+        const activeSids = [...daemon.sessions.values()].map((s) => s.meta.sid).sort();
         let seq = 1;
         for (const sid of activeSids) {
           const meta = daemon.sessions.get(sid)!.meta;
@@ -2685,9 +2622,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // op reports, computed once here instead of per room. `live_members`
       // (see RoomSummary) lets a client tell an inhabited room from a dormant
       // one without fetching `peers` and intersecting it with each member list.
-      const liveSids = new Set(
-        [...daemon.sessions.values()].filter((s) => s.conns.size > 0).map((s) => s.meta.sid),
-      );
+      const liveSids = new Set([...daemon.sessions.values()].map((s) => s.meta.sid));
       const rooms = [...daemon.rooms.values()].map((r) => {
         const members = presentMembers(r);
         const sayUnread = sayUnreadSeqs(r);
@@ -2854,6 +2789,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         // (anymore) — DR-0028 maps both to not_found.
         sendErr(conn, ErrorCode.not_found, `no process for session ${req.session_id}`);
         return;
+      }
+      if (killed.terminated) {
+        forgetSession(daemon, req.session_id);
+        maybeBroadcastPeers(daemon);
       }
       send(conn, { ok: true, terminated: killed.terminated });
       return;

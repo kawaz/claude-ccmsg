@@ -200,10 +200,9 @@ describe("session_errors daemon op / push", () => {
   );
 
   test(
-    "切断したセッションは一覧から消える",
+    "接続が切れたセッションもエラー一覧に残る",
     async () => {
-      // peers が減っただけで transcript イベントは起きないので、購読解除の側でも
-      // 変化を push しないとサイドバーに幽霊のエラー行が残る。
+      // 接続の有無はセッションの生存を意味しないので、切断後もエラー行を出し続ける。
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
@@ -215,10 +214,8 @@ describe("session_errors daemon op / push", () => {
         expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toHaveLength(1);
 
         session.close();
-        const gone = await user.readEventUntil<ErrorsEvent>(
-          (event) => event.ev === "session_errors" && event.errors.length === 0,
-        );
-        expect(gone.ev.errors).toEqual([]);
+        await new Promise((r) => setTimeout(r, 50));
+        expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toHaveLength(1);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

@@ -408,15 +408,13 @@ describe("DR-0013 broadcast room", () => {
     T,
   );
 
-  // 何を保証するか (§2.2 「disconnect (session 終了) → 全 broadcast room から
-  // 自動 leave」+ §2.3 stream suppression): when a session closes its last
-  // conn, the daemon appends LeaveEvents to every broadcast room the sid was
-  // in, but doesn't stream those to subscribers. Observable proof: the next
-  // `rooms` snapshot shows the sid dropped, AND a subscribed u1 sees no
-  // leave event before its next post-close signal (a fresh archive toggle,
-  // which is NOT suppressed).
+  // 何を保証するか: a session closing its connection has not ended — the
+  // daemon keeps it in every broadcast room it joined, and appends no
+  // LeaveEvent. Observable proof: the next `rooms` snapshot still lists the
+  // sid, AND a subscribed u1 sees no leave event before its next post-close
+  // signal (a fresh archive toggle).
   test(
-    "session disconnect auto-leaves every broadcast; the leave is NOT streamed",
+    "session disconnect keeps its broadcast membership; no leave is written",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -433,24 +431,16 @@ describe("DR-0013 broadcast room", () => {
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe" });
 
-        // A closes — its sole conn disappears, sessions.delete(sid=A) fires,
-        // leaveAllBroadcasts appends the LeaveEvent (in-jsonl but not
-        // streamed).
         a.close();
-        // Give the daemon a chance to observe the close event and process
-        // detachSession → leaveAllBroadcasts. connectable-based sync would be
-        // overkill here; the follow-up archive toggle below provides a
-        // deterministic barrier: it must land AFTER the daemon has fully
-        // processed A's close (both operate on daemon.sessions/daemon.rooms
-        // through the same request queue).
+        // Give the daemon a chance to observe the close event.
         await new Promise((r) => setTimeout(r, 50));
 
-        // Post-close snapshot: A dropped from the broadcast member list
+        // Post-close snapshot: A still on the broadcast member list
         const rooms = await creator.request<{
           rooms: { id: string; members: { sid: string }[] }[];
         }>({ op: "rooms" });
         const members = rooms.rooms.find((r) => r.id === room)!.members;
-        expect(members.map((m) => m.sid)).toEqual(["B"]);
+        expect(members.map((m) => m.sid).sort()).toEqual(["A", "B"]);
 
         // Nothing streamed in the meantime that mentions the broadcast leave.
         // Send a fresh archive toggle as the "next synchronous stream marker"
@@ -614,13 +604,9 @@ describe("DR-0013 broadcast room", () => {
   );
 
   // 何を保証するか (data quality, real production path): 同一 sid が
-  // disconnect (leaveAllBroadcasts → LeaveEvent) してから re-hello しても、
-  // broadcast room jsonl に MemberEvent を二重追記しない。実運用の r*.jsonl で
-  // 大量に観測された蓄積経路は「daemon restart」ではなく「短命 CLI 接続 or
-  // subscribe drop で detachSession → leave が書かれた後の re-hello」。
-  // guard は memberIdBySid ベースだが、broadcast 特別扱いで leave を無視する
-  // ので、かつて join した sid は永続的に「member 扱い」となり join guard が
-  // 発動する (issue 2026-07-22-joinallbroadcasts-duplicate-member-rows)。
+  // 短命 CLI 接続の disconnect + re-hello を繰り返しても、broadcast room jsonl
+  // に MemberEvent も LeaveEvent も追記しない (issue
+  // 2026-07-22-joinallbroadcasts-duplicate-member-rows)。
   test(
     "disconnect + re-hello does not append duplicate member rows to broadcast jsonl",
     async () => {
@@ -641,15 +627,11 @@ describe("DR-0013 broadcast room", () => {
           .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
         expect(initial.length).toBe(1);
 
-        // Drive several disconnect + rehello cycles — the exact live shape of
-        // the production dup source (transient ccmsg CLI calls that hello,
-        // do work, then close; each cycle detachSession → leaveAllBroadcasts
-        // → LeaveEvent, then the next hello historically triggered a new
-        // MemberEvent append).
+        // Drive several disconnect + rehello cycles — the live shape of
+        // transient ccmsg CLI calls that hello, do work, then close.
         a1.close();
         for (let i = 0; i < 4; i++) {
-          // let the daemon observe the previous close (detachSession →
-          // leaveAllBroadcasts is synchronous inside removeConn)
+          // let the daemon observe the previous close
           await Bun.sleep(30);
           const c = await session(ctx, "A");
           await Bun.sleep(10);
@@ -661,18 +643,12 @@ describe("DR-0013 broadcast room", () => {
           .readFileSync(file, "utf8")
           .split("\n")
           .filter((l) => l.includes('"type":"member"') && l.includes('"sid":"A"'));
-        // Sanity: leaves were actually written (that's the whole point of the
-        // guard — without leaves, memberIdBySid would still show A present and
-        // there'd be no bug to fix). Multiple leave rows for a1 prove we hit
-        // the "sid was removed from presentMembers" path that the old guard
-        // failed to handle.
         const leaves = fs
           .readFileSync(file, "utf8")
           .split("\n")
           .filter((l) => l.includes('"type":"leave"'));
-        expect(leaves.length).toBeGreaterThan(0);
-        // Core assertion: still only ONE member row for sid=A even after all
-        // the leave/rehello churn.
+        expect(leaves).toEqual([]);
+        // Still only ONE member row for sid=A after all the reconnect churn.
         expect(after.length).toBe(1);
       } finally {
         await stopTestDaemon(ctx);

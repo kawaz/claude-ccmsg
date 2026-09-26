@@ -127,7 +127,7 @@ describe("peers timestamps", () => {
   );
 
   test(
-    "conn が切れて sid のエントリが消えた後、別 conn で hello し直すと connected_at は新しくなる",
+    "conn が切れた後に別 conn で hello し直しても connected_at は変わらない",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -139,7 +139,7 @@ describe("peers timestamps", () => {
         await new Promise((res) => setTimeout(res, 10));
         const c2 = await sessionHello(ctx, "A");
         const second = await getPeer(admin, "A");
-        expect(second.connected_at).not.toBe(first.connected_at);
+        expect(second.connected_at).toBe(first.connected_at);
         c2.close();
       } finally {
         await stopTestDaemon(ctx);

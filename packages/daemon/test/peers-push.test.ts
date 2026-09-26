@@ -93,16 +93,21 @@ describe("ev:peers push", () => {
   );
 
   test(
-    "完全切断 (sid のエントリ消滅) で user-role subscriber に ev:peers が届き、peers から消える",
+    "sid の接続が全て切れても peers に残り、ev:peers も送らない",
     async () => {
       const ctx = await startTestDaemon();
       try {
         const a = await sessionHello(ctx, "A");
+        const m = await sessionHello(ctx, "M"); // marker poster, connected before u subscribes
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         a.close();
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        expect(ev.peers.some((p) => p.sid === "A")).toBe(false);
+        await postMarkerVia(m, "marker");
+        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
+        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
+        m.close();
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -227,13 +232,8 @@ describe("ev:peers push", () => {
   );
 
   test(
-    "同一 conn 上で sid を変えて re-hello すると旧 sid が peers から消える (ghost peer 防止)",
+    "同一 conn 上で sid を変えて re-hello すると新 sid が加わり、旧 sid も残る",
     async () => {
-      // adversarial review finding (2026-07-12): registerSession only ever added
-      // conn to the *new* sid's entry, never removed it from a *previous* sid's
-      // entry on the same conn — so re-helloing under a different sid left the
-      // old sid's entry.conns.size stuck > 0 forever, and it never disappeared
-      // from `peers`/ev:"peers" (detachSession in server.ts is the fix).
       const ctx = await startTestDaemon();
       try {
         const u = await userConn(ctx);
@@ -252,12 +252,12 @@ describe("ev:peers push", () => {
           cwd: "/tmp",
         });
         const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        expect(ev.peers.some((p) => p.sid === "A")).toBe(false);
+        expect(ev.peers.some((p) => p.sid === "A")).toBe(true);
         expect(ev.peers.some((p) => p.sid === "B")).toBe(true);
 
-        // op:"peers" one-shot poll agrees: A is gone, B is present
+        // op:"peers" one-shot poll agrees
         const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
-        expect(res.peers.some((p) => p.sid === "A")).toBe(false);
+        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
         expect(res.peers.some((p) => p.sid === "B")).toBe(true);
         a.close();
       } finally {
@@ -268,10 +268,8 @@ describe("ev:peers push", () => {
   );
 
   test(
-    "同一 conn 上で session role -> user role へ re-hello すると旧 sid が peers から消える",
+    "同一 conn 上で session role -> user role へ re-hello しても旧 sid は peers に残る",
     async () => {
-      // same ghost-peer gap as above, but the boundary crossed is role (session ->
-      // user) instead of sid — detachSession's condition covers both.
       const ctx = await startTestDaemon();
       try {
         const u = await userConn(ctx);
@@ -281,8 +279,8 @@ describe("ev:peers push", () => {
 
         // same conn, re-hello as user role instead of session
         await a.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
-        expect(ev.peers.some((p) => p.sid === "A")).toBe(false);
+        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        expect(res.peers.some((p) => p.sid === "A")).toBe(true);
         a.close();
       } finally {
         await stopTestDaemon(ctx);

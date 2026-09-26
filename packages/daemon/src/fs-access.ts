@@ -40,7 +40,6 @@ export interface SessionLookup extends SessionStatusLookup {
   get(sid: string):
     | {
         meta: { cwd: string; repo_root?: string; transcript_path?: string };
-        conns: { size: number };
       }
     | undefined;
 }
@@ -141,9 +140,9 @@ async function resolveRoot(
   opts: FsAccessOptions = {},
 ): Promise<RootOk | RootErr> {
   const entry = sessions.get(sid);
-  if (!entry || entry.conns.size === 0) {
+  if (!entry) {
     if (opts.allowVirtual) return await resolveVirtualRoot(sid, opts.configDirs);
-    return { ok: false, code: ErrorCode.session_not_found, msg: `session not connected: ${sid}` };
+    return { ok: false, code: ErrorCode.session_not_found, msg: `unknown session: ${sid}` };
   }
   const base = entry.meta.repo_root ?? entry.meta.cwd;
   if (!base || !path.isAbsolute(base)) {

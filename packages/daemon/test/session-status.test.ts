@@ -2688,9 +2688,8 @@ describe("session_status event loop yielding (DR-0029)", () => {
   test(
     "cold scan 中に切断した接続のキュー済み op はレジストリを汚さない",
     async () => {
-      // 重い scan と並行して走る hello / subscribe 系が切断後に完了すると、
-      // 読み手のいない peer と watch が残り daemon 再起動まで消えない。
-      // 受信済みでも、切断した接続の op は登録を残さない。
+      // 重い scan と並行して走る subscribe 系が切断後に完了しても、daemon は
+      // 他の接続に応答し続け、切断側の op がレジストリに余計な行を足さない。
       const ctx = await startTestDaemon();
       const dir = fixtureDir();
       try {
@@ -2703,31 +2702,12 @@ describe("session_status event loop yielding (DR-0029)", () => {
         const leaving = await userHello(ctx);
         leaving.write({ op: "session_status", sid, request_id: "s1" });
         leaving.write({ op: "subscribe", request_id: "s2" });
-        leaving.write({
-          op: "hello",
-          protocol: PROTOCOL_VERSION,
-          request_id: "s3",
-          role: "session",
-          sid: "ghost",
-          repo: "r",
-          ws: "w",
-          cwd: "/tmp",
-        });
         leaving.close();
 
         const user = await userHello(ctx);
-        // 同じ transcript を別接続から fold しきる = 切断側の scan が終わるだけの
-        // 時間が daemon 上で経過したことの目印。ガードが無ければこの時点で
-        // キュー済みの hello は既に走っている。
         await user.request<StatusOk>({ op: "session_status", sid });
-
-        // ghost は「出ないこと」の主張なので、遅れて現れないかを数往復ぶん見る。
-        // 上の session_status で scan 相当の時間は既に経過しており、ここは
-        // キュー末尾が流れ切るまでの猶予。
-        for (let i = 0; i < 20; i++) {
-          const peers = await user.request<{ ok: true; peers: { sid: string }[] }>({ op: "peers" });
-          expect(peers.peers.map((p) => p.sid)).not.toContain("ghost");
-        }
+        const peers = await user.request<{ ok: true; peers: { sid: string }[] }>({ op: "peers" });
+        expect(peers.peers.map((p) => p.sid)).toEqual([sid]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

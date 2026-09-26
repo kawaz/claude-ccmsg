@@ -187,15 +187,13 @@ interface PeersReply {
 
 describe("daemon restart recovery", () => {
   test(
-    "接続中セッションが snapshot に書かれ、切断で消える",
+    "既知のセッションが snapshot に書かれ、切断しても残る",
     async () => {
       const ctx = await startTestDaemon();
       try {
-        // Both the connect and the disconnect are observed through the
-        // ev:"peers" the daemon pushes for them — that push is emitted right
-        // after the snapshot write, so waiting for it is what makes reading
-        // the file deterministic (no sleep, and no guessing when a socket
-        // close reached the daemon).
+        // The connect is observed through the ev:"peers" the daemon pushes for
+        // it — that push is emitted right after the snapshot write, so waiting
+        // for it is what makes reading the file deterministic.
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const s = await sessionHello(ctx, "s-live");
@@ -204,10 +202,9 @@ describe("daemon restart recovery", () => {
         );
         expect(snapshotSids(ctx)).toEqual(["s-live"]);
         s.close();
-        await u.readEventUntil<{ peers: unknown[] }>(
-          (e) => e.ev === "peers" && e.peers.length === 0,
-        );
-        expect(snapshotSids(ctx)).toEqual([]);
+        const after = await u.request<PeersReply>({ op: "peers" });
+        expect(after.peers.map((p) => p.sid)).toEqual(["s-live"]);
+        expect(snapshotSids(ctx)).toEqual(["s-live"]);
         u.close();
       } finally {
         await stopTestDaemon(ctx);
