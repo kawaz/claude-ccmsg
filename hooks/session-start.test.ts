@@ -8,12 +8,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 import {
-  buildSubscribeCommand,
   candidateBinDirs,
-  declineMarkerPath,
   deriveRepoRoot,
   deriveWs,
-  detectPathInstallCandidate,
   detectSayShimCandidate,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
@@ -312,111 +309,6 @@ esac
   });
 });
 
-describe("detectPathInstallCandidate", () => {
-  let base: string;
-  let home: string;
-  let stateDir: string;
-
-  beforeEach(() => {
-    base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-sshook-"));
-    home = path.join(base, "home");
-    stateDir = path.join(base, "state");
-    fs.mkdirSync(home);
-    fs.mkdirSync(stateDir);
-  });
-
-  afterEach(() => {
-    fs.rmSync(base, { recursive: true, force: true });
-  });
-
-  // 正常系: PATH に ccmsg が無く、候補 dir (~/.local/bin) が PATH に含まれ書き込み可能
-  // なら、その dir を候補として返す。
-  test("PATH に ccmsg が無く候補 dir が書き込み可能なら検出する", () => {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    const pathEnv = [localBin, "/usr/bin", "/bin"].join(path.delimiter);
-
-    const got = detectPathInstallCandidate(pathEnv, home, stateDir);
-    expect(got).toEqual({ dir: localBin, binPath: path.join(localBin, "ccmsg") });
-  });
-
-  // PATH に既に `ccmsg` という名の実行可能ファイルがあれば、候補 dir が条件を満たして
-  // いても提案しない (= 二重 install 提案の防止)。
-  test("PATH に既に ccmsg があれば null", () => {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    const alreadyBinDir = path.join(base, "already");
-    fs.mkdirSync(alreadyBinDir);
-    fs.writeFileSync(path.join(alreadyBinDir, "ccmsg"), "#!/bin/sh\n");
-    const pathEnv = [alreadyBinDir, localBin].join(path.delimiter);
-
-    expect(detectPathInstallCandidate(pathEnv, home, stateDir)).toBeNull();
-  });
-
-  // decline マーカーが立っていれば、条件を満たしていても二度と提案しない
-  // (= 毎セッション nag 防止、DR-0007 §1)。
-  test("decline マーカーがあれば null", () => {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(declineMarkerPath(stateDir), "");
-    const pathEnv = [localBin].join(path.delimiter);
-
-    expect(detectPathInstallCandidate(pathEnv, home, stateDir)).toBeNull();
-  });
-
-  // 候補 dir が PATH に含まれない場合は対象外 (安定パスとして機能しないため)。
-  test("候補 dir が PATH に含まれなければ null", () => {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true }); // 存在するが PATH には無い
-    const pathEnv = ["/usr/bin", "/bin"].join(path.delimiter);
-
-    expect(detectPathInstallCandidate(pathEnv, home, stateDir)).toBeNull();
-  });
-
-  // 候補 dir が PATH にあっても書き込み不可 (read-only) なら対象外
-  // (symlink 作成が失敗するだけの無意味な提案を防ぐ)。
-  test("候補 dir が書き込み不可なら null", () => {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.chmodSync(localBin, 0o500); // r-x, 書き込み不可
-    const pathEnv = [localBin].join(path.delimiter);
-    try {
-      expect(detectPathInstallCandidate(pathEnv, home, stateDir)).toBeNull();
-    } finally {
-      fs.chmodSync(localBin, 0o700); // rmSync (afterEach) のため復元
-    }
-  });
-
-  // 候補 dir が PATH にあっても、実体が存在しない (mkdir されていない) なら対象外
-  // (存在しない dir への書き込み可否は判定できないので安全側に倒す)。
-  test("候補 dir が存在しなければ null", () => {
-    const localBin = path.join(home, ".local", "bin"); // mkdir しない
-    const pathEnv = [localBin].join(path.delimiter);
-
-    expect(detectPathInstallCandidate(pathEnv, home, stateDir)).toBeNull();
-  });
-
-  // ~/.local/bin が使えない (書き込み不可) が ~/bin が使える場合、次点の ~/bin を返す
-  // (= 優先順位フォールバック、DR-0007 §1 の「次点」)。
-  test("~/.local/bin が不可でも ~/bin が使えればそちらを返す", () => {
-    const localBin = path.join(home, ".local", "bin");
-    const homeBin = path.join(home, "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(homeBin, { recursive: true });
-    fs.chmodSync(localBin, 0o500);
-    const pathEnv = [localBin, homeBin].join(path.delimiter);
-    try {
-      const got = detectPathInstallCandidate(pathEnv, home, stateDir);
-      expect(got).toEqual({ dir: homeBin, binPath: path.join(homeBin, "ccmsg") });
-    } finally {
-      fs.chmodSync(localBin, 0o700);
-    }
-  });
-});
-
-// detectSayShimCandidate: `say` shim を PATH に配る/更新する提案の検出。
-// 「乗っ取らない」(= 他人の say があれば黙る) と「効かない場所に置かない」
-// (= system say より後ろの dir なら黙る) の 2 つが安全側の輪郭。
 describe("detectSayShimCandidate", () => {
   let base: string;
   let home: string;
@@ -524,18 +416,6 @@ describe("detectSayShimCandidate", () => {
   test("plugin の bin/say が読めなければ null", () => {
     fs.rmSync(path.join(pluginRoot, "bin", "say"));
     expect(detect(withSystem(localBin))).toBeNull();
-  });
-});
-
-// buildSubscribeCommand: 提示コマンドは launcher + subscribe の裸コマンドのみ。
-// sid は CLAUDE_CODE_SESSION_ID 自動検出に任せる。transcript_path/repo/ws は
-// session state file 経由で CLI 側が自分で読む (= writeSessionFile /
-// sessionFilePath 参照)。
-describe("buildSubscribeCommand", () => {
-  const bin = "/opt/ccmsg/bin/ccmsg";
-
-  test("裸コマンドになる", () => {
-    expect(buildSubscribeCommand(bin)).toBe(`${bin} subscribe`);
   });
 });
 

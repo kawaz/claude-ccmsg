@@ -2,28 +2,14 @@
 /**
  * UserPromptSubmit hook.
  *
- * A `ccmsg subscribe` stream dies with the claude process that launched it (a
- * `claude --resume` starts a fresh process where it does not come back), and
- * SessionStart does not fire on `/cd`. So on every prompt we re-check whether a
- * subscribe process is still live in *this* session's process tree and, only if
- * it is missing, nag the AI to re-open it under the Monitor tool. When it is
- * running we stay silent (the quiet principle).
- *
- * Detection is process-tree based: this hook runs as a descendant of the claude
- * process, so we walk our own ppid chain up to claude, then look for a
- * `ccmsg subscribe` process among claude's descendants. Any failure (no ps, no
- * claude ancestor) falls to the safe side — nag — rather than staying silent.
- *
- * It also rescues a session whose SessionStart never wrote a state file (see
+ * Rescues a session whose SessionStart never wrote a state file (see
  * ensureSessionFile below) — but only ever fills in a *missing* file, never
- * overwrites the fresher one SessionStart already wrote.
+ * overwrites the fresher one SessionStart already wrote. Otherwise silent.
  */
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { resolvePaths } from "@ccmsg/protocol";
 import { armHookDeadline, exitHook } from "./deadline.ts";
 import {
-  buildSubscribeCommand,
   getRepoWsFromVcs,
   resolveBumpSemverBin,
   sessionFilePath,
@@ -31,130 +17,12 @@ import {
   writeSessionFile,
 } from "./session-start.ts";
 
-interface ProcRow {
-  pid: number;
-  ppid: number;
-  command: string;
-}
-
-/** Parse `ps -axww -o pid=,ppid=,command=` output (headerless): "<pid> <ppid> <command...>". */
-export function parsePs(raw: string): ProcRow[] {
-  const rows: ProcRow[] = [];
-  for (const line of raw.split("\n")) {
-    const s = line.trimStart();
-    if (s === "") continue;
-    const m = s.match(/^(\d+)\s+(\d+)\s+(.*)$/);
-    if (!m) continue;
-    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3]! });
-  }
-  return rows;
-}
-
-/** argv[0] basename === "claude". */
-function isClaudeCommand(command: string): boolean {
-  const argv0 = command.trim().split(/\s+/)[0];
-  if (!argv0) return false;
-  return argv0.split("/").pop() === "claude";
-}
-
-/** Walk ppid from startPid until a `claude` process is found; null if none (cycle/PID 1 guarded). */
-export function findClaudeAncestor(
-  rows: ProcRow[],
-  startPid: number,
-  maxDepth = 32,
-): number | null {
-  const byPid = new Map<number, ProcRow>();
-  for (const r of rows) byPid.set(r.pid, r);
-  const seen = new Set<number>();
-  let cur = startPid;
-  for (let i = 0; i < maxDepth; i++) {
-    if (cur <= 1 || seen.has(cur)) return null;
-    seen.add(cur);
-    const row = byPid.get(cur);
-    if (!row) return null;
-    if (isClaudeCommand(row.command)) return row.pid;
-    cur = row.ppid;
-  }
-  return null;
-}
-
-/** BFS the descendant pid set of rootPid (rootPid itself excluded, cycles guarded). */
-export function collectDescendants(rows: ProcRow[], rootPid: number): Set<number> {
-  const childrenByPpid = new Map<number, number[]>();
-  for (const r of rows) {
-    const arr = childrenByPpid.get(r.ppid);
-    if (arr) arr.push(r.pid);
-    else childrenByPpid.set(r.ppid, [r.pid]);
-  }
-  const result = new Set<number>();
-  const queue: number[] = [rootPid];
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    for (const child of childrenByPpid.get(cur) ?? []) {
-      if (child === rootPid || result.has(child)) continue;
-      result.add(child);
-      queue.push(child);
-    }
-  }
-  return result;
-}
-
-/**
- * Does this command line run `ccmsg subscribe`?
- *
- * The launcher `exec`s `bun run <root>/packages/cli/src/index.ts <args>`, so the
- * live process shows as either `.../bin/ccmsg subscribe` or
- * `bun run .../packages/cli/src/index.ts subscribe`. Match an entry token
- * (basename `ccmsg`, or the CLI entry `index.ts`) immediately followed by
- * `subscribe`. Descendant-of-claude scoping keeps false positives negligible.
- */
-export function isSubscribeCommand(command: string): boolean {
-  const tokens = command
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t !== "");
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const base = tokens[i]!.split("/").pop();
-    const isEntry = base === "ccmsg" || base === "index.ts";
-    if (isEntry && tokens[i + 1] === "subscribe") return true;
-  }
-  return false;
-}
-
-/** True iff a `ccmsg subscribe` process exists among rootPid's descendants. */
-export function detectSubscribeInTree(rows: ProcRow[], rootPid: number): boolean {
-  const descendants = collectDescendants(rows, rootPid);
-  return rows.some((r) => descendants.has(r.pid) && isSubscribeCommand(r.command));
-}
-
-function resolveBin(): string {
-  const root = process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, "..");
-  return path.join(root, "bin", "ccmsg");
-}
-
 interface UserPromptSubmitInput {
   session_id?: string;
   /** absolute path of this session's Claude Code transcript jsonl, same field
    *  SessionStart receives (DR-0009 addendum). Only used here to rescue a
-   *  missing session state file (see ensureSessionFile) — no longer embedded
-   *  in the nag's suggested command (kawaz decision 2026-07-11, see
-   *  session-start.ts's module header). */
+   *  missing session state file (see ensureSessionFile). */
   transcript_path?: string;
-}
-
-/**
- * Builds the nag message's suggested command via the same
- * `buildSubscribeCommand` SessionStart uses — a bare `<bin> subscribe`, since
- * the sid comes from CLAUDE_CODE_SESSION_ID auto-detection and
- * transcript_path/repo/ws ride through the session state file (see
- * session-start.ts) rather than the command line.
- */
-export function buildNagMessage(bin: string): string {
-  const cmd = buildSubscribeCommand(bin);
-  return (
-    `[ccmsg] subscribe stream not detected in this session's process tree. ` +
-    `Open it with the **Monitor tool** (persistent: true), not Bash: ${cmd}\n`
-  );
 }
 
 /**
@@ -200,33 +68,6 @@ export async function ensureSessionFile(
   });
 }
 
-/** Detect a live subscribe in the current session's tree; false on any uncertainty (safe side = nag). */
-function subscribeRunning(): boolean {
-  let rows: ProcRow[];
-  try {
-    const proc = Bun.spawnSync({
-      cmd: ["ps", "-axww", "-o", "pid=,ppid=,command="],
-      stdout: "pipe",
-      stderr: "ignore",
-      // This is a synchronous call, so the hook's own watchdog cannot interrupt
-      // it — `Bun.spawnSync`'s timeout is the only bound on it (verified
-      // honoured: a 500ms timeout against `sleep 3` returned at 503ms with
-      // SIGTERM). Sized off the measurement rather than a round guess: the real
-      // `ps` takes ~50ms across ~1000 processes on this machine, so 1000ms is a
-      // 20x margin, and overshooting it merely nags on the safe side.
-      timeout: 1000,
-      env: { ...process.env, LC_ALL: "C", LANG: "C" },
-    });
-    if (proc.exitCode !== 0) return false;
-    rows = parsePs(new TextDecoder().decode(proc.stdout));
-  } catch {
-    return false;
-  }
-  const claudePid = findClaudeAncestor(rows, process.pid);
-  if (claudePid === null) return false;
-  return detectSubscribeInTree(rows, claudePid);
-}
-
 async function main(): Promise<void> {
   let sessionId: string | undefined;
   let transcriptPath: string | undefined;
@@ -235,8 +76,7 @@ async function main(): Promise<void> {
     sessionId = input.session_id;
     transcriptPath = input.transcript_path;
   } catch {
-    // Non-JSON stdin: still useful to nag, just without the sid, and no session
-    // file rescue to attempt.
+    // Non-JSON stdin: no session file rescue to attempt.
   }
 
   if (sessionId) {
@@ -252,25 +92,15 @@ async function main(): Promise<void> {
     }
   }
 
-  if (subscribeRunning()) {
-    // Quiet principle: nothing to say when the stream is healthy.
-    await exitHook();
-  }
-
-  // Bare `ccmsg subscribe` is enough: CLAUDE_CODE_SESSION_ID is exported into
-  // Monitor subprocesses, so the CLI auto-detects this session. See
-  // session-start.ts / buildSubscribeCommand.
-  // stdout is injected into the next turn as a <system-reminder>.
-  await exitHook(buildNagMessage(resolveBin()));
+  await exitHook();
 }
 
 /** Wall-clock cap for this hook (see deadline.ts). This one runs before every
  *  turn, so the cap is set against what the work actually costs rather than
- *  against what Claude Code tolerates: ~70ms for the steady-state path (bun
- *  startup + `ps`), and a few hundred more on the once-per-session turn that
- *  rescues a missing state file. 1500ms leaves that whole budget intact while
+ *  against what Claude Code tolerates: bun startup for the steady-state path, and a
+ *  few hundred more on the once-per-session turn that rescues a missing state file. 1500ms leaves that whole budget intact while
  *  turning the pathological cases — a subprocess stuck behind a repo lock, a
- *  stdin that is never closed — from an unbounded stall into a dropped nag. */
+ *  stdin that is never closed — from an unbounded stall into a skipped rescue. */
 const USER_PROMPT_SUBMIT_DEADLINE_MS = 1500;
 
 if (import.meta.main) {

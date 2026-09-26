@@ -2,29 +2,15 @@
 /**
  * SessionStart hook.
  *
- * Four jobs:
+ * Three jobs:
  *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
  *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
- *       hello time. A state file the CLI reads on its own keeps the suggested
- *       command a constant bare `ccmsg subscribe` regardless of how much
- *       identity metadata accumulates (kawaz decision, 2026-07-11) — env
- *       prefixes on the suggested command would make every session's *first*
- *       turn re-teach the AI an ever-growing command line purely for the
- *       daemon's benefit.
- *   (b) Tell the AI to hold a bare `ccmsg subscribe` stream open under the
- *       Monitor tool. `CLAUDE_CODE_SESSION_ID` is exported into Bash/Monitor
- *       subprocesses by Claude Code, so the CLI's own identity auto-detection
- *       (packages/cli/src/index.ts's resolveIdentity) picks it up without any
- *       env prefix on the suggested command; CCMSG_SID stays available as an
- *       explicit override for manual invocation and tests.
- *       That subscribe call is the first client action of this session and it goes
- *       through `ensureDaemon`, which spawns/upgrades the daemon on demand — so no
- *       separate pre-warm from this hook is needed (DR-0002 §5 lazy ensure).
- *   (c) When PATH has no `ccmsg` but a stable, writable candidate dir does, tell
- *       the AI to ask the user (AskUserQuestion) whether to symlink one in.
- *       The hook itself never writes the symlink or the decline marker — only
- *       detects and instructs; the AI performs the confirmed action. (DR-0007 §1)
- *   (d) Likewise for the `say` shim: when PATH's effective `say` is the plain
+ *       hello time, so no command the AI runs needs an env prefix for identity.
+ *   (b) Tell the AI how to reach other sessions: sending and replying go through
+ *       the `ccmsg` on PATH, and incoming messages are injected into the
+ *       conversation directly. The plugin launcher's absolute path is still
+ *       given for the commands only it provides (say, dump, ...).
+ *   (c) For the `say` shim: when PATH's effective `say` is the plain
  *       system one (or our own copy, gone stale) and a writable dir ahead of it
  *       is available, tell the AI to ask whether to copy `bin/say` there.
  *
@@ -240,7 +226,7 @@ export async function getRepoWsFromVcs(
 }
 
 /** `CCMSG_BUMP_SEMVER_BIN` overrides the `bump-semver` binary looked up on
- *  PATH (test seam); shared with user-prompt-submit.ts's nag path so both
+ *  PATH (test seam); shared with user-prompt-submit.ts's session file rescue so both
  *  hooks resolve the same way. */
 export function resolveBumpSemverBin(): string {
   return process.env.CCMSG_BUMP_SEMVER_BIN ?? "bump-semver";
@@ -265,12 +251,9 @@ export function sessionLocation(
 
 // --- session state file (transcript_path/cwd/repo/ws handoff to the CLI) ---
 //
-// The suggested subscribe command carries no env prefix at all (see
-// buildSubscribeCommand below): the sid comes from CLAUDE_CODE_SESSION_ID,
-// which the CLI auto-detects, and everything else identity-related that the
-// CLI's resolveIdentity wants (transcript_path/repo/ws) rides through this
-// file instead, so the command the AI re-types every session stays short
-// regardless of how much metadata accumulates.
+// Identity-related fields the CLI's resolveIdentity wants (transcript_path/
+// repo/ws) ride through this file, so no command the AI runs needs an env
+// prefix for them.
 
 /** Shape written by this hook / user-prompt-submit.ts, and read by
  *  packages/cli/src/index.ts's resolveIdentity. All fields but `updated_at` are
@@ -339,19 +322,6 @@ export function pruneOldSessionFiles(stateDir: string, now: number = Date.now())
   }
 }
 
-/**
- * Builds the `ccmsg subscribe` command line suggested to the AI: a bare
- * `<bin> subscribe`, no env prefix. The CLI auto-detects the session identity
- * from `CLAUDE_CODE_SESSION_ID`, which Claude Code exports into Bash/Monitor
- * subprocesses; transcript_path/repo/ws ride along via the session state file
- * (see writeSessionFile) and are read by the CLI's own resolveIdentity. This
- * keeps the suggested command constant regardless of how much identity
- * metadata accumulates.
- */
-export function buildSubscribeCommand(bin: string): string {
-  return `${bin} subscribe`;
-}
-
 /** Absolute path of this plugin's root, robust to a missing CLAUDE_PLUGIN_ROOT
  *  (a dev checkout runs the hook straight from `hooks/`). */
 function resolvePluginRoot(): string {
@@ -363,14 +333,9 @@ function resolveBin(): string {
   return path.join(resolvePluginRoot(), "bin", "ccmsg");
 }
 
-// --- PATH install candidate detection (DR-0007 §1) --------------------------
-//
-// Candidates in priority order: ~/.local/bin, then ~/bin. Exported (and
-// parameterized on pathEnv/home/stateDir rather than reading process.env
-// directly) so the branch logic is unit-testable without touching the real
-// filesystem/PATH.
+// --- bin dir candidates -------------------------------------------------------
 
-/** Stable bin dirs to consider for the PATH symlink, in priority order. */
+/** Stable bin dirs to consider for the `say` shim, in priority order. */
 export function candidateBinDirs(home: string): string[] {
   return [path.join(home, ".local", "bin"), path.join(home, "bin")];
 }
@@ -406,55 +371,17 @@ function isWritableDir(dir: string): boolean {
   }
 }
 
-export interface PathInstallCandidate {
-  dir: string;
-  binPath: string; // dir/ccmsg
-}
-
-/** Absolute path of the decline marker inside `stateDir` (DR-0007 §1). */
-export function declineMarkerPath(stateDir: string): string {
-  return path.join(stateDir, "path-install-declined");
-}
-
-/**
- * Returns the PATH-install candidate iff every DR-0007 §1 condition holds:
- * PATH has no `ccmsg` entry, PATH contains a writable stable dir (priority
- * order from candidateBinDirs), and the user hasn't previously declined.
- * Returns null (silently) otherwise — this must never be the thing that adds
- * noise to a session that already has ccmsg on PATH or already said no.
- */
-export function detectPathInstallCandidate(
-  pathEnv: string | undefined,
-  home: string,
-  stateDir: string,
-): PathInstallCandidate | null {
-  const dirs = pathDirs(pathEnv);
-  if (findCcmsgDir(dirs) !== null) return null;
-  if (fs.existsSync(declineMarkerPath(stateDir))) return null;
-
-  for (const cand of candidateBinDirs(home)) {
-    if (dirs.includes(cand) && isWritableDir(cand)) {
-      return { dir: cand, binPath: path.join(cand, "ccmsg") };
-    }
-  }
-  return null;
-}
-
 // --- `say` shim install detection --------------------------------------------
 //
-// The same "detect, ask, let the AI do it" shape as the ccmsg PATH install
-// above (DR-0007 §1): the hook never writes anything, it only reports what it
-// found and what command would fix it.
-//
-// Two things differ from the ccmsg case:
+// "Detect, ask, let the AI do it" (DR-0007 §1): the hook never writes
+// anything, it only reports what it found and what command would fix it.
 //
 //   - the shim is COPIED, not symlinked. A symlink would point into the
 //     versioned plugin cache (`.../cache/claude-ccmsg/claude-ccmsg/<version>/bin/say`), a
 //     path that disappears on the next plugin update and leaves a dangling
 //     `say` on PATH — and a broken `say` is exactly the failure the shim's own
-//     fallback logic is written to avoid. `ccmsg`'s symlink can afford that
-//     dependency because the launcher repairs it (DR-0007 §2); a shim with no
-//     self-update path cannot, so it is copied and re-copied when stale.
+//     fallback logic is written to avoid. With no self-update path, it is
+//     copied and re-copied when stale.
 //   - it must not hijack someone else's `say`. Only a PATH where the effective
 //     `say` is the system one (or our own shim) is eligible; anything else is
 //     left alone, silently.
@@ -609,42 +536,16 @@ async function main(): Promise<void> {
   }
   pruneOldSessionFiles(stateDir);
 
-  // (b) Guide the AI. subscribe is a long-running blocking stream, so it must run
-  // under the Monitor tool (persistent), never the Bash tool.
-  //
-  // No env prefix needed: CLAUDE_CODE_SESSION_ID is exported into Bash/Monitor
-  // subprocesses, and the CLI's identity auto-detection picks it up on its own
-  // (packages/cli/src/index.ts's resolveIdentity). CCMSG_SID remains available
-  // as an explicit override for manual invocation and tests.
-  const subscribeCmd = buildSubscribeCommand(bin);
+  // (b) Guide the AI.
   const contextLines = [
-    "ccmsg is available: file-backed messaging between Claude Code sessions via a central daemon.",
-    `Launcher (use this absolute path, not PATH): ${bin}`,
-    "",
-    "Start the new-message stream now with the **Monitor tool** (persistent: true):",
-    `  ${subscribeCmd}`,
-    "subscribe is long-running and blocking — running it in the Bash tool will hang the turn.",
-    "Its stdout is JSONL (one room event per line) for Monitor / jq to consume.",
-    "Without it you cannot proactively notice incoming messages (the UserPromptSubmit hook only nags you on your next turn).",
+    "ccmsg is available: messaging between Claude Code sessions.",
+    "To message another session, reply to a received message, or notify the user, use `ccmsg post` / `ccmsg reply` / `ccmsg notify` (the `ccmsg` on PATH). Incoming messages are delivered straight into this conversation; no listener needs to run.",
+    `For say, dump and the other plugin commands, use this absolute path: ${bin}`,
   ];
 
-  // (c) PATH install suggestion (DR-0007 §1) and (d) `say` shim suggestion,
-  // each only when detected.
+  // (c) `say` shim suggestion, only when detected.
   try {
     const home = process.env.HOME ?? os.homedir();
-    const candidate = detectPathInstallCandidate(process.env.PATH, home, stateDir);
-    if (candidate) {
-      const decline = declineMarkerPath(stateDir);
-      contextLines.push(
-        "",
-        `ccmsg is not on PATH, but ${candidate.dir} is on PATH and writable. Ask the user ` +
-          "with AskUserQuestion whether to add a stable `ccmsg` command there:",
-        `  - If they agree: ln -sfn '${bin}' '${candidate.binPath}'`,
-        `  - If they decline: touch '${decline}'`,
-        "Do this at most once per session, and only after an explicit answer — don't run either command without asking first.",
-      );
-    }
-
     const shim = detectSayShimCandidate(process.env.PATH, home, stateDir, {
       pluginRoot: resolvePluginRoot(),
     });
