@@ -14,6 +14,7 @@ import {
   detectSayShimCandidate,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
+  renderSayShim,
   sayShimDeclineMarkerPath,
   sessionFilePath,
   sessionLocation,
@@ -317,7 +318,10 @@ describe("detectSayShimCandidate", () => {
   let systemSay: string;
   let localBin: string;
 
-  const SHIM_BODY = '#!/bin/bash\n# ccmsg-say-shim\nexec /usr/bin/say "$@"\n';
+  const LAUNCHER = "/opt/ccmsg/1.2.3/bin/ccmsg";
+  const SHIM_TEMPLATE =
+    "#!/bin/bash\n# ccmsg-say-shim\nlauncher='@CCMSG_LAUNCHER@'\nexec /usr/bin/say \"$@\"\n";
+  const SHIM_BODY = renderSayShim(SHIM_TEMPLATE, LAUNCHER);
 
   beforeEach(() => {
     base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-sayshim-"));
@@ -328,7 +332,7 @@ describe("detectSayShimCandidate", () => {
     fs.mkdirSync(stateDir);
     fs.mkdirSync(localBin, { recursive: true });
     fs.mkdirSync(path.join(pluginRoot, "bin"), { recursive: true });
-    fs.writeFileSync(path.join(pluginRoot, "bin", "say"), SHIM_BODY);
+    fs.writeFileSync(path.join(pluginRoot, "bin", "say"), SHIM_TEMPLATE);
     // 実 /usr/bin/say に依存せず「system say」を模す。
     const usrBin = path.join(base, "usr", "bin");
     fs.mkdirSync(usrBin, { recursive: true });
@@ -341,7 +345,7 @@ describe("detectSayShimCandidate", () => {
   });
 
   const detect = (pathEnv: string) =>
-    detectSayShimCandidate(pathEnv, home, stateDir, { pluginRoot, systemSay });
+    detectSayShimCandidate(pathEnv, home, stateDir, { pluginRoot, launcher: LAUNCHER, systemSay });
 
   const withSystem = (...dirs: string[]) => [...dirs, path.dirname(systemSay)].join(path.delimiter);
 
@@ -351,7 +355,7 @@ describe("detectSayShimCandidate", () => {
     expect(detect(withSystem(localBin))).toEqual({
       dir: localBin,
       shimPath: path.join(localBin, "say"),
-      source: path.join(pluginRoot, "bin", "say"),
+      content: SHIM_BODY,
       action: "install",
     });
   });
@@ -379,7 +383,7 @@ describe("detectSayShimCandidate", () => {
     expect(detect(withSystem(localBin))).toEqual({
       dir: localBin,
       shimPath: stale,
-      source: path.join(pluginRoot, "bin", "say"),
+      content: SHIM_BODY,
       action: "update",
     });
   });
@@ -412,6 +416,15 @@ describe("detectSayShimCandidate", () => {
     }
   });
 
+  // launcher の場所が変わった (plugin 更新) 旧 shim は update を提案する。
+  test("埋め込まれた launcher が現在のものと違えば update を提案する", () => {
+    fs.writeFileSync(
+      path.join(localBin, "say"),
+      renderSayShim(SHIM_TEMPLATE, "/opt/ccmsg/1.2.2/bin/ccmsg"),
+    );
+    expect(detect(withSystem(localBin))?.action).toBe("update");
+  });
+
   // plugin が bin/say を配っていない (読めない) なら提案のしようがない。
   test("plugin の bin/say が読めなければ null", () => {
     fs.rmSync(path.join(pluginRoot, "bin", "say"));
@@ -421,6 +434,16 @@ describe("detectSayShimCandidate", () => {
 
 // sessionLocation: 所在の出所は固定値だけ (DR-0003 §3 「所在の正本」)。
 // SessionStart は event の cwd を渡してよい (セッションが何も実行する前の値)。
+describe("renderSayShim", () => {
+  test("placeholder を launcher の絶対パスで置き換える", () => {
+    expect(renderSayShim("l='@CCMSG_LAUNCHER@'", "/a/b/ccmsg")).toBe("l='/a/b/ccmsg'");
+  });
+
+  test("launcher の single quote をエスケープする", () => {
+    expect(renderSayShim("l='@CCMSG_LAUNCHER@'", "/a'b/ccmsg")).toBe("l='/a'\\''b/ccmsg'");
+  });
+});
+
 describe("sessionLocation", () => {
   test("CLAUDE_PROJECT_DIR が event の cwd より優先される", () => {
     expect(sessionLocation("/drifted", { CLAUDE_PROJECT_DIR: "/project" })).toBe("/project");

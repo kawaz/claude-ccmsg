@@ -12,10 +12,14 @@
  *       given for the commands only it provides (say, dump, ...).
  *   (c) For the `say` shim: when PATH's effective `say` is the plain
  *       system one (or our own copy, gone stale) and a writable dir ahead of it
- *       is available, tell the AI to ask whether to copy `bin/say` there.
+ *       is available, stage `bin/say` rendered with this launcher's absolute
+ *       path and tell the AI to ask whether to install it there.
+ *   (d) Bring the daemon up (`daemon start`, detached) so the web UI and the
+ *       session's 1on1 room are live without waiting for a plugin command.
  *
  * Failure here never blocks the turn: parse errors and ensure failures exit 0 quietly.
  */
+import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -376,12 +380,16 @@ function isWritableDir(dir: string): boolean {
 // "Detect, ask, let the AI do it" (DR-0007 §1): the hook never writes
 // anything, it only reports what it found and what command would fix it.
 //
-//   - the shim is COPIED, not symlinked. A symlink would point into the
+//   - the shim is RENDERED and COPIED, not symlinked. `bin/say` is a template
+//     whose launcher placeholder is filled with this plugin's absolute
+//     launcher path; the rendered copy is staged in stateDir for install.
+//     A symlink would point into the
 //     versioned plugin cache (`.../cache/claude-ccmsg/claude-ccmsg/<version>/bin/say`), a
 //     path that disappears on the next plugin update and leaves a dangling
 //     `say` on PATH — and a broken `say` is exactly the failure the shim's own
 //     fallback logic is written to avoid. With no self-update path, it is
-//     copied and re-copied when stale.
+//     re-rendered and re-copied when stale — which a plugin update causes by
+//     changing the launcher path baked into it.
 //   - it must not hijack someone else's `say`. Only a PATH where the effective
 //     `say` is the system one (or our own shim) is eligible; anything else is
 //     left alone, silently.
@@ -389,6 +397,20 @@ function isWritableDir(dir: string): boolean {
 /** Marker line carried by `bin/say`, used to tell our own shim apart from an
  *  unrelated `say` a user put on PATH. */
 const SAY_SHIM_MARKER = "ccmsg-say-shim";
+
+/** Placeholder in `bin/say` that {@link renderSayShim} replaces. */
+const SAY_SHIM_LAUNCHER_PLACEHOLDER = "@CCMSG_LAUNCHER@";
+
+/** `bin/say` with its launcher placeholder filled. The value sits inside
+ *  single quotes in the shim, so embedded single quotes are escaped. */
+export function renderSayShim(template: string, launcher: string): string {
+  return template.replaceAll(SAY_SHIM_LAUNCHER_PLACEHOLDER, launcher.replaceAll("'", "'\\''"));
+}
+
+/** Where the rendered shim is staged for the AI's `install` command. */
+export function sayShimStagePath(stateDir: string): string {
+  return path.join(stateDir, "say-shim");
+}
 
 /** The macOS `say` the shim ultimately execs. Overridable only so the
  *  detection can be unit-tested without a real /usr/bin/say. */
@@ -398,15 +420,17 @@ export interface SayShimCandidate {
   dir: string;
   /** dir/say — where the copy goes. */
   shimPath: string;
-  /** source file to copy from (the plugin's own bin/say). */
-  source: string;
+  /** rendered shim body to install. */
+  content: string;
   /** "install": no shim there yet. "update": our shim is there but stale. */
   action: "install" | "update";
 }
 
 export interface SayShimOptions {
-  /** plugin root holding `bin/say`; the copy's source. */
+  /** plugin root holding `bin/say`, the shim template. */
   pluginRoot: string;
+  /** absolute launcher path rendered into the shim. */
+  launcher: string;
   /** test seam for {@link SYSTEM_SAY}. */
   systemSay?: string;
 }
@@ -444,9 +468,9 @@ function realpathOrNull(file: string): string | null {
  *   - the *effective* `say` on PATH (first PATH dir with such an entry) is
  *     either the system binary or our own shim — a third party's `say` means
  *     hands off;
- *   - the target dir (where `ccmsg` already lives on PATH, else the ccmsg
- *     install candidate) is writable and sits ahead of the system `say`, so the
- *     copy would actually take effect.
+ *   - the target dir (where `ccmsg` already lives on PATH, else the first
+ *     writable candidateBinDirs entry) is writable and sits ahead of the
+ *     system `say`, so the copy would actually take effect.
  *
  * An up-to-date shim already in place returns null: nothing to say.
  */
@@ -458,9 +482,9 @@ export function detectSayShimCandidate(
 ): SayShimCandidate | null {
   if (fs.existsSync(sayShimDeclineMarkerPath(stateDir))) return null;
 
-  const source = path.join(opts.pluginRoot, "bin", "say");
-  const wanted = readFileOrNull(source);
-  if (wanted === null) return null;
+  const template = readFileOrNull(path.join(opts.pluginRoot, "bin", "say"));
+  if (template === null) return null;
+  const wanted = renderSayShim(template, opts.launcher);
 
   const systemSay = realpathOrNull(opts.systemSay ?? SYSTEM_SAY);
   const dirs = pathDirs(pathEnv);
@@ -487,7 +511,7 @@ export function detectSayShimCandidate(
     return {
       dir: effectiveDir,
       shimPath: path.join(effectiveDir, "say"),
-      source,
+      content: wanted,
       action: "update",
     };
   }
@@ -500,7 +524,7 @@ export function detectSayShimCandidate(
   // A copy placed behind the system `say` on PATH would never run.
   if (effectiveDir !== null && dirs.indexOf(target) > dirs.indexOf(effectiveDir)) return null;
 
-  return { dir: target, shimPath: path.join(target, "say"), source, action: "install" };
+  return { dir: target, shimPath: path.join(target, "say"), content: wanted, action: "install" };
 }
 
 async function main(): Promise<void> {
@@ -548,8 +572,11 @@ async function main(): Promise<void> {
     const home = process.env.HOME ?? os.homedir();
     const shim = detectSayShimCandidate(process.env.PATH, home, stateDir, {
       pluginRoot: resolvePluginRoot(),
+      launcher: bin,
     });
     if (shim) {
+      const staged = sayShimStagePath(stateDir);
+      fs.writeFileSync(staged, shim.content);
       const decline = sayShimDeclineMarkerPath(stateDir);
       const what =
         shim.action === "install"
@@ -558,14 +585,22 @@ async function main(): Promise<void> {
       contextLines.push(
         "",
         `${what}. Ask the user with AskUserQuestion whether to ${shim.action} it:`,
-        `  - If they agree: install -m 0755 '${shim.source}' '${shim.shimPath}'`,
+        `  - If they agree: install -m 0755 '${staged}' '${shim.shimPath}'`,
         `  - If they decline: touch '${decline}'`,
-        "The shim is a copy, not a symlink, on purpose — the source lives in a versioned plugin cache dir that disappears on the next update.",
+        "The shim is a copy, not a symlink, on purpose — the plugin lives in a versioned cache dir that disappears on the next update.",
         "Do this at most once per session, and only after an explicit answer — don't run either command without asking first.",
       );
     }
   } catch {
     // best-effort detection; never block the turn over an install suggestion
+  }
+
+  // (d) Detached so the daemon's spawn/upgrade wait never counts against this
+  // hook's deadline; `daemon start` is idempotent.
+  try {
+    spawn(bin, ["daemon", "start"], { detached: true, stdio: "ignore" }).unref();
+  } catch {
+    // best-effort; say/dump etc. still bring the daemon up on first use
   }
 
   await exitHook(
@@ -581,7 +616,7 @@ async function main(): Promise<void> {
 /** Wall-clock cap for this hook (see deadline.ts). Roomier than
  *  UserPromptSubmit's: this fires once per session rather than once per turn,
  *  and losing its output costs the session its ccmsg guidance entirely, where
- *  the nag merely reappears on the next prompt. Still far below the 30s Claude
+ *  nothing else would repeat it later in the session. Still far below the 30s Claude
  *  Code would otherwise allow. */
 const SESSION_START_DEADLINE_MS = 3000;
 
