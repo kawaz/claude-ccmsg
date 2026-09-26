@@ -66,3 +66,26 @@ lazy read にそのまま乗る。
 - kawaz r26 mid=122 (方針)
 - v0.42.1 (truncated room 欠落救済) / v0.53.1 (msg-last カラム順) — 本 DR で救済 parse は
   フォールバックに降格
+
+## 6. Addendum 2026-09-26: 単体 ccmsg (peer messaging socket 注入) の受信・送信・PushNotification
+
+メッセージの配送は単体の ccmsg (別リポ) が Claude Code の peer messaging socket へ直接書き込む経路に移った。この経路では subscribe の `<task-notification><event>` は transcript に載らず、代わりに以下の形が載る。TL と daemon (session-user-input / session-dump) はこれらを room を介さずそのまま描く。照合パターンは `packages/protocol/src/ccmsg-direct-transcript.ts` の 1 モジュールに集約し、webui と daemon の双方がそれを使う (形が変わったらここだけ直す)。
+
+### 6.1 受信 (封筒)
+
+- `type:"user"` 行 (`isMeta:true`, `promptSource:"system"`, `origin.kind:"peer"`) の文字列 content に `<cross-session-message from="ccmsg" from-name=… from-mode="prompting" ccmsg-mid="<instance>/<n>" ccmsg-from="user|<sid>" [ccmsg-reply-to=…]>` 封筒が埋まる。封筒本文の末尾 `Reply with: ccmsg reply …` 行は取り除いたものを本文とする。閉じタグは次の封筒の手前で最後に現れるものを取る (本文中の閉じタグ文字列を許す)
+- `ccmsg-mid` / `ccmsg-from` を持たない `<cross-session-message>` (Claude Code 本来の peer message) は対象外
+- 直前の `queue-operation` enqueue 行にも同じ封筒が載るが、配送行だけを数える
+- `ccmsg-from="user"` は人 (TL では u1 の右寄せバブル、境界行、👤 nav 対象。daemon では「最後のユーザ入力」に算入)。sid はセッション発 (TL では fold 内の peer バブル)
+- 本文は封筒内に全文あるので daemon read は行わない。dedup キーは mid (`direct-in|<mid>`)
+
+### 6.2 送信 (Bash の `ccmsg post|reply|notify`)
+
+- Bash tool_use の command 先頭 (またはシェル区切りの後) の `ccmsg`・パス付き `…/ccmsg` + `post <sid> <text>` / `reply <mid> <text> [--to <sid>]` / `notify <text> [--about <sid>]`。本文は `'…'` / `"…"` / `\` を剥がす。`$(…)`・バッククォート・heredoc など解釈しない構文は引数文字列をそのまま本文にする。`--help` 呼び出しは送信ではない
+- 対になる tool_result が `{}` / `{"delivered":…}` なら送信済み、`{"ok":…}` は room CLI の応答なので §4 の経路に任せて対象外、それ以外 (is_error 含む) は失敗として本文とともに理由を表示。tool_result 未着は送信中
+- TL では「このセッション →」の peer バブルとして fold 内に出す。dedup キーは tool_use id (`direct-out|<id>`)。宛先は post の sid、reply の `--to` (無ければ人)
+- session-dump では `ccmsg-sent` (`meta.source:"direct"`, `op`, `status`, 失敗時 `error`)。受信は `ccmsg-received` (`meta.source:"direct"`, `mid`)
+
+### 6.3 PushNotification
+
+- tool_use `{name:"PushNotification", input:{message}}` を、1on1 room の `say` と同じ見た目の 📣 バブルとして境界行に出す (`say` の代替となる通知)。既読ボタンは持たない (既読管理の対象外)

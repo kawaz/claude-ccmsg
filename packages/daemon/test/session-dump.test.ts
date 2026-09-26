@@ -1155,3 +1155,87 @@ describe("dump file output", () => {
     expect(fs.readFileSync(file, "utf8")).toBe(formatTextDump(dump()));
   });
 });
+
+// Standalone-ccmsg rows. The received rows are copied from a real transcript
+// (Claude Code 2.1.282, 2026-09-26; path-bearing fields dropped).
+describe("standalone ccmsg in the dump", () => {
+  test("received envelopes and sent Bash calls are ccmsg entries with source direct", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const mid = "bfa02646e898a279fa4fea0065b06797/1";
+    const other = "99999999-2222-4333-8444-555555555555";
+    const envelope = `<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="${mid}" ccmsg-from="user">\nv2でのユーザメッセージ\n\nReply with: ccmsg reply ${mid} <text>\n</cross-session-message>`;
+    const lines = [
+      row("2026-09-26T07:46:00Z", "user", "start", { origin: { kind: "human" } }),
+      JSON.stringify({
+        timestamp: "2026-09-26T07:46:39.045Z",
+        type: "queue-operation",
+        operation: "enqueue",
+        content: envelope,
+      }),
+      row(
+        "2026-09-26T07:46:39.054Z",
+        "user",
+        `Another Claude session sent a message:\n${envelope}\n\nThis came from another Claude session — not typed by your user.`,
+        { isMeta: true, promptSource: "system", origin: { kind: "peer" } },
+      ),
+      row("2026-09-26T07:47:00Z", "assistant", [
+        {
+          type: "tool_use",
+          id: "t1",
+          name: "Bash",
+          input: { command: `ccmsg reply ${mid} 'サンプル受領'`, description: "返信" },
+        },
+      ]),
+      row("2026-09-26T07:47:01Z", "user", [
+        { type: "tool_result", tool_use_id: "t1", content: "{}" },
+      ]),
+      row("2026-09-26T07:47:10Z", "assistant", [
+        {
+          type: "tool_use",
+          id: "t2",
+          name: "Bash",
+          input: { command: `ccmsg post ${other} 'hi'`, description: "送信" },
+        },
+      ]),
+      row("2026-09-26T07:47:11Z", "user", [
+        {
+          type: "tool_result",
+          tool_use_id: "t2",
+          content: "Exit code 1\nno such session",
+          is_error: true,
+        },
+      ]),
+    ];
+    fs.writeFileSync(transcript, lines.join("\n") + "\n");
+
+    const { entries } = await dumpSession(SID, { dataDir, configDirs: [configDir] });
+    const received = entries.filter((entry) => entry.kind === "ccmsg-received");
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      from: "user",
+      text: "v2でのユーザメッセージ",
+      meta: { source: "direct", mid, transcript_line: 3 },
+    });
+    expect(entries.filter((entry) => entry.kind === "ccmsg-sent")).toMatchObject([
+      {
+        from: "self",
+        to: "user",
+        text: "サンプル受領",
+        meta: { source: "direct", op: "reply", reply_to: mid, status: "sent", tool_use_id: "t1" },
+      },
+      {
+        to: other,
+        text: "hi",
+        meta: {
+          source: "direct",
+          op: "post",
+          status: "failed",
+          error: "Exit code 1\nno such session",
+        },
+      },
+    ]);
+    expect(entries.filter((entry) => entry.kind === "user").map((entry) => entry.text)).toEqual([
+      "start",
+    ]);
+  });
+});

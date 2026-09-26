@@ -264,6 +264,51 @@ describe("classifyUserInputRow", () => {
   });
 });
 
+// Standalone-ccmsg envelope rows, copied from a real transcript (Claude Code
+// 2.1.282, 2026-09-26; path-bearing fields dropped).
+const DIRECT_MID = "bfa02646e898a279fa4fea0065b06797/1";
+function directEnvelope(from: string): string {
+  const to = from === "user" ? "" : ` --to ${from}`;
+  return `<cross-session-message from="ccmsg" from-name="${from}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${from}">\nv2でのユーザメッセージはこんな感じで届きます。\n\nReply with: ccmsg reply ${DIRECT_MID}${to} <text>\n</cross-session-message>`;
+}
+function directDeliveryLine(from: string, timestamp: string): string {
+  return JSON.stringify({
+    type: "user",
+    isMeta: true,
+    promptSource: "system",
+    turnOrigin: "peer",
+    origin: { kind: "peer" },
+    timestamp,
+    message: {
+      role: "user",
+      content: `Another Claude session sent a message:\n${directEnvelope(from)}\n\nThis came from another Claude session — not typed by your user.`,
+    },
+  });
+}
+
+describe("standalone ccmsg envelopes", () => {
+  test("a person's envelope is user input", () => {
+    const line = directDeliveryLine("user", T2);
+    expect(isUserInputCandidate(line)).toBe(true);
+    expect(classifyUserInputRow(row(line))).toBe(T2);
+  });
+
+  test("a session's envelope is not", () => {
+    const line = directDeliveryLine("11111111-2222-4333-8444-555555555555", T2);
+    expect(classifyUserInputRow(row(line))).toBeUndefined();
+  });
+
+  test("the queue-operation copy is not counted", () => {
+    const line = JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: T2,
+      content: directEnvelope("user"),
+    });
+    expect(classifyUserInputRow(row(line))).toBeUndefined();
+  });
+});
+
 describe("isUserInputCandidate", () => {
   // プレフィルタは「取りこぼさない」ことだけが要件 (通し過ぎは classify が弾く)。
   test("admits both counted kinds", () => {

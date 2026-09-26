@@ -9,6 +9,12 @@ import type {
   SessionWorkflowStatus,
   StorageEvent,
 } from "@ccmsg/protocol";
+import {
+  classifyCcmsgSendResult,
+  DIRECT_DELIVERY_USER_SENDER,
+  parseCcmsgSendCommand,
+  parseDirectDeliveries,
+} from "@ccmsg/protocol";
 import { AGENT_ID_RE } from "./agent-transcripts.ts";
 import { createSessionStatusState, foldLine, snapshot } from "./session-status.ts";
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
@@ -471,6 +477,69 @@ function peerEntries(
   return out;
 }
 
+/** Standalone-ccmsg envelopes delivered in one user row. `from` is `"user"`
+ * for a person, the sender's sid otherwise. */
+function directReceivedEntries(
+  session: string,
+  ts: string,
+  text: string,
+  sourceIndex: number,
+): RawSessionDumpEntry[] {
+  return parseDirectDeliveries(text).map((envelope) => ({
+    ts,
+    session,
+    kind: "ccmsg-received",
+    from: envelope.from,
+    to: session,
+    text: envelope.text,
+    meta: {
+      source: "direct",
+      mid: envelope.mid,
+      ...(envelope.replyTo !== undefined ? { reply_to: envelope.replyTo } : {}),
+      transcript_line: sourceIndex + 1,
+    },
+  }));
+}
+
+/** A standalone-ccmsg `post|reply|notify` Bash call with its result, or null
+ * when the call is not one (or was answered by the room CLI, which the
+ * canonical room path records). */
+function directSentEntry(
+  session: string,
+  use: ToolUse,
+  command: string,
+  result: Record<string, unknown>,
+): RawSessionDumpEntry | null {
+  const send = parseCcmsgSendCommand(command);
+  if (!send) return null;
+  const outcome = classifyCcmsgSendResult(toolResultText(result), result.is_error === true);
+  if (outcome.status === "other-ccmsg") return null;
+  const to =
+    send.verb === "post"
+      ? (send.to ?? null)
+      : send.verb === "reply"
+        ? (send.to ?? DIRECT_DELIVERY_USER_SENDER)
+        : (send.about ?? null);
+  return {
+    ts: use.ts,
+    session,
+    kind: "ccmsg-sent",
+    from: session,
+    to,
+    text: send.text,
+    meta: {
+      source: "direct",
+      op: send.verb,
+      ...(send.replyTo !== undefined ? { reply_to: send.replyTo } : {}),
+      status: outcome.status,
+      ...(outcome.status === "failed" ? { error: outcome.detail } : {}),
+      tool_use_id: use.id,
+      command,
+      transcript_line: use.index + 1,
+    },
+  };
+}
+
 function isHumanPrompt(row: Record<string, unknown>, text: string): boolean {
   if (row.promptSource === "system") return false;
   if (row.isMeta === true) return false;
@@ -883,6 +952,11 @@ export async function dumpSession(
       const use = toolUses.get(value.tool_use_id);
       if (use?.name !== "Bash") continue;
       const command = typeof use.input.command === "string" ? use.input.command : "";
+      const direct = directSentEntry(session, use, command, value);
+      if (direct) {
+        sentEntries.push(direct);
+        continue;
+      }
       const commandMatch = command.match(CCMSG_COMMAND_RE);
       if (!commandMatch) continue;
       const response = parseResponse(toolResultText(value));
@@ -1000,6 +1074,13 @@ export async function dumpSession(
         : textContent(item.row);
     for (const entry of peerEntries(session, item.ts, text, canonical, sentRefs, item.index)) {
       entries.push({ ...entry, _index: item.index });
+    }
+    // The queue-operation row repeats the envelope of the user row that
+    // delivers it; the delivered row is the one recorded.
+    if (item.row.type === "user") {
+      for (const entry of directReceivedEntries(session, item.ts, text, item.index)) {
+        entries.push({ ...entry, _index: item.index });
+      }
     }
     if (item.row.type === "user" && isHumanPrompt(item.row, text)) {
       entries.push({

@@ -1,4 +1,5 @@
 import type { DeliveredEvent, PeerInfo } from "@ccmsg/protocol";
+import type { ComponentChildren } from "preact";
 import { ADMIN_ID } from "../store.ts";
 import type { RoomState } from "../store.ts";
 import { anchorId, messageHref, roomHref } from "../locator.ts";
@@ -204,28 +205,61 @@ function SayItem({
 }) {
   const seq = event.seq;
   return (
-    <div class={unread ? "say say-unread" : "say"}>
-      <div class="say-meta">
-        <span class="say-icon" aria-hidden="true">
-          📣
-        </span>
-        <span class="say-from">say</span>
-      </div>
-      {/* Rendered as plain text: this is argv handed to /usr/bin/say, so
-          markdown-ish characters in it are literal, not formatting. */}
-      <div class="say-body">{event.text}</div>
-      {/* 時刻は本文の下 (kawaz r244 m16): TL の吹き出し (.tl-bubble-footer) も
-          ROOM 側の慣習も「発言のあとに時刻」で読むので、say だけ右上に置くと
-          浮く。既読の操作も時刻と同じ足元の行に置いて 1 行にまとめる。 */}
-      <div class="say-footer">
-        <span class="say-time">{formatMsgTime(event.ts, now)}</span>
-        {seq !== undefined && unread ? (
+    <SayBubble
+      label="say"
+      text={event.text}
+      ts={event.ts}
+      now={now}
+      unread={unread}
+      read={
+        seq !== undefined && unread ? (
           <button type="button" class="say-read-btn" onClick={() => onRead?.(seq)}>
             既読
           </button>
         ) : (
           <span class="say-read-done">既読</span>
-        )}
+        )
+      }
+    />
+  );
+}
+
+/** The 📣 bubble itself, shared by the room's `say` event and the
+ * transcript's PushNotification call. `read` is the footer's read control;
+ * a bubble outside read tracking passes none. */
+export function SayBubble({
+  label,
+  text,
+  ts,
+  now,
+  unread = false,
+  read,
+}: {
+  label: string;
+  text: string;
+  ts: string;
+  now: number;
+  unread?: boolean;
+  read?: ComponentChildren;
+}) {
+  return (
+    <div class={unread ? "say say-unread" : "say"}>
+      <div class="say-meta">
+        <span class="say-icon" aria-hidden="true">
+          📣
+        </span>
+        <span class="say-from">{label}</span>
+      </div>
+      {/* Rendered as plain text: this is the literal text handed to the
+          speech / notification, so markdown-ish characters in it are literal,
+          not formatting. */}
+      <div class="say-body">{text}</div>
+      {/* 時刻は本文の下 (kawaz r244 m16): TL の吹き出し (.tl-bubble-footer) も
+          ROOM 側の慣習も「発言のあとに時刻」で読むので、say だけ右上に置くと
+          浮く。既読の操作も時刻と同じ足元の行に置いて 1 行にまとめる。 */}
+      <div class="say-footer">
+        <span class="say-time">{formatMsgTime(ts, now)}</span>
+        {read}
       </div>
     </div>
   );

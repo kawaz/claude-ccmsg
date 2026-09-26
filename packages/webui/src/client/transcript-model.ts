@@ -1,3 +1,11 @@
+import {
+  classifyCcmsgSendResult,
+  DIRECT_DELIVERY_USER_SENDER,
+  mayContainDirectDelivery,
+  parseCcmsgSendCommand,
+  parseDirectDeliveries,
+  pushNotificationText,
+} from "@ccmsg/protocol";
 // Pure jsonl-line -> renderable-event transform for the Timeline view
 // (DR-0009). Kept out of Timeline.tsx so the fold logic is unit-testable
 // without preact/DOM, mirroring store.ts's reducer/effect split (DR-0005 §1).
@@ -1272,7 +1280,8 @@ export type BoundaryKind =
   | { kind: "api-error" }
   | { kind: "bash-command"; segment: Extract<Segment, { kind: "bash-command" }> }
   | { kind: "bash-command-output"; segment: Extract<Segment, { kind: "bash-command-output" }> }
-  | { kind: "ccmsg"; messages: CcmsgMessage[] };
+  | { kind: "ccmsg"; messages: CcmsgMessage[] }
+  | { kind: "push-notification"; text: string };
 
 /**
  * Classifies a boundary line (kawaz spec order, first match wins): a real
@@ -1320,6 +1329,8 @@ export function classifyBoundaryLine(line: ParsedLine): BoundaryKind | null {
     !isCacheKeepaliveReplyLine(line)
   )
     return { kind: "assistant-response" };
+  const pushText = pushNotificationOf(line);
+  if (pushText !== null) return { kind: "push-notification", text: pushText };
   const ccmsgMessages = extractCcmsgMessages(line);
   if (ccmsgMessages.length === 0) return null;
   // r55 m14: peer 発 ccmsg のみの line は boundary にせず fold group へ流す。
@@ -1854,7 +1865,31 @@ export interface CcmsgMessage {
    * still render with the recovered body (救済 parse), just without the
    * canonical read-fallback path. */
   mid?: number;
+  /** Present for a message the standalone ccmsg delivered or the session sent
+   * with it (`@ccmsg/protocol`'s ccmsg-direct-transcript). Such a message has
+   * no room: `room` is `""`, `mid` is absent, and `msg` is already the full
+   * body, so nothing is looked up. */
+  direct?: CcmsgDirect;
 }
+
+/** The standalone-ccmsg half of a `CcmsgMessage`.
+ *
+ * - `in`: an envelope delivered to this session; `id` is its mid
+ *   (`<instance>/<n>`)
+ * - `out`: this session's `ccmsg post|reply|notify` Bash call; `id` is the
+ *   tool_use id, `status` what its tool_result said (`pending` until one
+ *   arrives), `command` the Bash command as written */
+export type CcmsgDirect =
+  | { direction: "in"; id: string; replyTo?: string }
+  | {
+      direction: "out";
+      id: string;
+      verb: "post" | "reply" | "notify";
+      replyTo?: string;
+      status: "sent" | "failed" | "pending";
+      error?: string;
+      command: string;
+    };
 
 /** Dedup key for a `CcmsgMessage` (kawaz r15 mid=21: the same room event can
  * be extracted twice from one transcript — a `queue-operation` enqueue line
@@ -1875,6 +1910,7 @@ export interface CcmsgMessage {
  * old `${room}|${ts}|${from}|${msg}` form for pre-DR-0027 extractions and
  * for fragments that lost their mid to truncation. */
 export function ccmsgDedupKey(m: CcmsgMessage): string {
+  if (m.direct) return `direct-${m.direct.direction}|${m.direct.id}`;
   if (m.mid !== undefined) return `${m.room}|m${m.mid}`;
   return `${m.room}|${m.ts}|${m.from}|${m.msg}`;
 }
@@ -2064,7 +2100,8 @@ function tryParseTruncatedCcmsgMessage(
  * last-closing-tag-wins) rather than a regex tweak.
  */
 export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
-  if (line.kind !== "turn" || line.role !== "user") return [];
+  if (line.kind !== "turn") return [];
+  if (line.role === "assistant") return extractDirectSends(line);
   const text = line.segments
     .filter((s): s is Extract<Segment, { kind: "text" }> => s.kind === "text")
     .map((s) => s.text)
@@ -2075,8 +2112,26 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
   // コスト自体は避けられないが、この関数は classifyBoundaryLine 経由で
   // groups が変わるたび (load older / tail 追記 / refresh, Timeline.tsx)
   // に呼ばれるので、軽いほど再分類コストが下がる。
-  if (!text.includes("<teammate-message") && !text.includes("<event>")) return [];
+  const direct = mayContainDirectDelivery(text);
+  if (!direct && !text.includes("<teammate-message") && !text.includes("<event>")) return [];
   const results: CcmsgMessage[] = [];
+  // The queued copy of an envelope is the same message as the delivered row
+  // that follows it; only the delivered one counts.
+  if (direct && line.queuedContent === undefined) {
+    for (const envelope of parseDirectDeliveries(text)) {
+      results.push({
+        from: envelope.from === DIRECT_DELIVERY_USER_SENDER ? "u1" : envelope.from,
+        room: "",
+        msg: envelope.text,
+        ts: line.ts ?? "",
+        direct: {
+          direction: "in",
+          id: envelope.mid,
+          ...(envelope.replyTo !== undefined ? { replyTo: envelope.replyTo } : {}),
+        },
+      });
+    }
+  }
   for (const m of text.matchAll(TEAMMATE_MESSAGE_RE)) {
     const parsed = tryParseCcmsgMessage(m[1]!);
     if (parsed) results.push(parsed);
@@ -2099,6 +2154,52 @@ export function extractCcmsgMessages(line: ParsedLine): CcmsgMessage[] {
     }
   }
   return results;
+}
+
+/** This session's own `ccmsg post|reply|notify` Bash calls on an assistant
+ * line, as outgoing bubbles. A call answered by the room CLI's `{ok:…}` is
+ * left alone: that message reaches the timeline through the room path. */
+function extractDirectSends(line: TurnLine): CcmsgMessage[] {
+  const out: CcmsgMessage[] = [];
+  for (const segment of line.segments) {
+    if (segment.kind !== "bash-use") continue;
+    const send = parseCcmsgSendCommand(segment.command);
+    if (!send) continue;
+    const outcome = segment.result
+      ? classifyCcmsgSendResult(segment.result.text, segment.result.isError)
+      : null;
+    if (outcome?.status === "other-ccmsg") continue;
+    const to =
+      send.verb === "post" ? send.to : send.verb === "reply" ? (send.to ?? "u1") : undefined;
+    out.push({
+      from: "",
+      ...(to !== undefined ? { to: [to] } : {}),
+      room: "",
+      msg: send.text,
+      ts: line.ts ?? "",
+      direct: {
+        direction: "out",
+        id: segment.toolUseId,
+        verb: send.verb,
+        ...(send.replyTo !== undefined ? { replyTo: send.replyTo } : {}),
+        status: outcome === null ? "pending" : outcome.status,
+        ...(outcome?.status === "failed" ? { error: outcome.detail } : {}),
+        command: segment.command,
+      },
+    });
+  }
+  return out;
+}
+
+/** The text of a PushNotification call on an assistant line, or null. */
+export function pushNotificationOf(line: ParsedLine): string | null {
+  if (line.kind !== "turn" || line.role !== "assistant") return null;
+  for (const segment of line.segments) {
+    if (segment.kind !== "tool-use") continue;
+    const text = pushNotificationText(segment.name, segment.input);
+    if (text !== null) return text;
+  }
+  return null;
 }
 
 // --- rich|raw タブの rich 側パース (U2 kawaz spec: 「分類済みシステム

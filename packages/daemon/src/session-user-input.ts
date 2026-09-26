@@ -10,13 +10,20 @@
 //
 //   1. a prompt the human typed into that session (`origin.kind === "human"`),
 //   2. a ccmsg room message authored by the User admin (`from: "u1"`) arriving
-//      through the session's `ccmsg subscribe` Monitor.
+//      through the session's `ccmsg subscribe` Monitor,
+//   3. a standalone-ccmsg envelope from a person (`ccmsg-from="user"`), see
+//      @ccmsg/protocol's ccmsg-direct-transcript.
 //
 // Structurally this is session-errors.ts' twin: the same one-pattern fold over
 // the same shared transcript tail, for the same reason (DR-0020 §2.1 (a) — the
 // sidebar needs a field for *every* peer, so a per-sid session_status
 // subscription is too expensive a source). It tails rather than polls: a
 // prompt lands in the list as it is typed.
+import {
+  DIRECT_DELIVERY_USER_SENDER,
+  mayContainDirectDelivery,
+  parseDirectDeliveries,
+} from "@ccmsg/protocol";
 import { scanTranscriptLines } from "./session-status.ts";
 import {
   resolveConnectedTranscript,
@@ -70,7 +77,12 @@ function hasNonEmptyCommandArgs(content: string): boolean {
  * ccmsg deliveries (plus the `ccmsg read` echoes the classifier then rejects —
  * a prefilter is allowed to be generous, only cheap). */
 export function isUserInputCandidate(line: string): boolean {
-  return line.includes('"kind":"human"') || line.includes("u1") || line.includes("<command-args>");
+  return (
+    line.includes('"kind":"human"') ||
+    line.includes("u1") ||
+    line.includes("<command-args>") ||
+    mayContainDirectDelivery(line)
+  );
 }
 
 /** The timestamp to credit `row` with as user input, or undefined when the row
@@ -92,6 +104,10 @@ export function isUserInputCandidate(line: string): boolean {
  *     speaking through the web UI. `promptSource === "system"` is required so
  *     the session's own `ccmsg read` tool_result — which quotes the very same
  *     event JSON — is not counted a second time as fresh input.
+ *   - a standalone-ccmsg envelope with `ccmsg-from="user"` in a
+ *     system-injected row is a person speaking through that route. The
+ *     queue-operation copy of the same envelope is not a `type:"user"` row, so
+ *     it is never counted.
  *
  * Transcripts written before Claude Code carried `origin`/`promptSource` at
  * all (observed through 2026-01) yield nothing here. That is the honest answer
@@ -131,7 +147,10 @@ export function classifyUserInputRow(row: Record<string, unknown>): string | und
   if (row.promptSource !== "system") return undefined;
   const content = isRecord(row.message) ? row.message.content : undefined;
   if (typeof content !== "string") return undefined;
-  return U1_MSG_EVENT_RE.test(content) || U1_MSG_EVENT_RAW_RE.test(content) ? timestamp : undefined;
+  if (U1_MSG_EVENT_RE.test(content) || U1_MSG_EVENT_RAW_RE.test(content)) return timestamp;
+  return parseDirectDeliveries(content).some((d) => d.from === DIRECT_DELIVERY_USER_SENDER)
+    ? timestamp
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

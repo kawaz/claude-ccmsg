@@ -28,7 +28,13 @@ import { emptyLineMapCache, mapLinesIncrementally } from "../incremental-line-ma
 import { crossLineIncrementally, emptyCrossLineCache } from "../incremental-cross-line.ts";
 import { Avatar, UserAvatar, hueForSeed } from "../avatar.tsx";
 import { errorMessage, formatClockTime, formatMsgTime, memberLabel } from "../utils.ts";
-import { bubbleHue, filePathCtxForSender, MemberAvatar, TimelineItem } from "./TimelineItem.tsx";
+import {
+  bubbleHue,
+  filePathCtxForSender,
+  MemberAvatar,
+  SayBubble,
+  TimelineItem,
+} from "./TimelineItem.tsx";
 import { useNow } from "../useNow.ts";
 import { useDismissOnOutsidePointer } from "../useDismissOnOutsidePointer.ts";
 import { miniSummaryLines } from "../session-status-view.ts";
@@ -2657,6 +2663,7 @@ function CcmsgBubble({
     (lookup === "failed" ? `(本文を取得できません — #${message.room} は消えた可能性)` : "");
   const ts = body?.ts || message.ts;
   const isUser = from === ADMIN_ID;
+  const direct = message.direct;
   // バルーン配色は ROOM 側 MsgItem と同一の bubbleHue (room 基準色 + room 内
   // member の nth 等分割、kawaz r55m54/m56)。同じ room の同じ発言者なら ROOM /
   // TL で同色になる。room 未解決なら undefined = 無彩色 degrade。
@@ -2690,6 +2697,8 @@ function CcmsgBubble({
               <UserAvatar size={16} />
               {memberLabel(ADMIN_ID, room)}
             </>
+          ) : direct ? (
+            <DirectSenderLabel from={from} direct={direct} peers={peers} />
           ) : from ? (
             <>
               <MemberAvatar id={from} room={room} />
@@ -2711,16 +2720,32 @@ function CcmsgBubble({
                   // あっても衝突しないよう `${id}-${i}` を key に混ぜる。
                   <span key={`${id}-${i}`} class="msg-to-item">
                     {i > 0 ? ", " : null}
-                    <MemberAvatar id={id} room={room} />
-                    {memberLabel(id, room)}
+                    {direct ? (
+                      <DirectSessionLabel sid={id} peers={peers} />
+                    ) : (
+                      <>
+                        <MemberAvatar id={id} room={room} />
+                        {memberLabel(id, room)}
+                      </>
+                    )}
                   </span>
                 ))}
               </span>
             );
           })()}
-          {" · #"}
-          {message.room}
-          {message.mid === undefined ? null : `m${message.mid}`}
+          {direct ? (
+            <span class="tl-ccmsg-direct-id">
+              {direct.direction === "in"
+                ? ` · ${direct.id}`
+                : ` · ${direct.verb}${direct.replyTo ? ` ${direct.replyTo}` : ""}`}
+            </span>
+          ) : (
+            <>
+              {" · #"}
+              {message.room}
+              {message.mid === undefined ? null : `m${message.mid}`}
+            </>
+          )}
         </div>
         <Tabs
           class="tl-thinking-tabs"
@@ -2743,8 +2768,11 @@ function CcmsgBubble({
             <LinkedMarkdownView source={msgBody} ctx={filePathCtx} restricted={isUser} />
           </div>
         ) : (
-          <pre class="tl-fold-body">{rawText}</pre>
+          <pre class="tl-fold-body">{direct?.direction === "out" ? direct.command : rawText}</pre>
         )}
+        {direct?.direction === "out" && direct.status === "failed" ? (
+          <p class="tl-say-error">送信失敗: {direct.error}</p>
+        ) : null}
       </div>
       <span class="tl-bubble-time">{formatMsgTime(ts, now)}</span>
     </div>
@@ -2788,9 +2816,23 @@ function CcmsgBubble({
            * カードを出さない (「ウザい/デカい」対処)。 */}
           <span class="tl-fold-label tl-summary-decoration tl-ccmsg-summary-body">
             <span>ccmsg</span>
-            <span class="tl-direction-badge tl-direction-inbound">←</span>
-            {from ? <MemberAvatar id={from} room={room} /> : null}
-            <strong class="tl-ccmsg-summary-name">{from ? memberLabel(from, room) : "…"}</strong>
+            {direct?.direction === "out" ? (
+              <span class="tl-direction-badge tl-direction-outbound">→</span>
+            ) : (
+              <span class="tl-direction-badge tl-direction-inbound">←</span>
+            )}
+            {direct ? (
+              <strong class="tl-ccmsg-summary-name">
+                <DirectSenderLabel from={from} direct={direct} peers={peers} />
+              </strong>
+            ) : (
+              <>
+                {from ? <MemberAvatar id={from} room={room} /> : null}
+                <strong class="tl-ccmsg-summary-name">
+                  {from ? memberLabel(from, room) : "…"}
+                </strong>
+              </>
+            )}
           </span>
         </summary>
       )}
@@ -2810,6 +2852,35 @@ function CcmsgBubble({
       {bubble}
     </div>
   );
+}
+
+/** A session named by its sid in a standalone-ccmsg bubble: the connected
+ * peer's repo/ws label when the web UI knows it, the short sid otherwise. */
+function DirectSessionLabel({ sid, peers }: { sid: string; peers: readonly PeerInfo[] }) {
+  if (sid === ADMIN_ID) return <>{memberLabel(ADMIN_ID, undefined)}</>;
+  const peer = peers.find((p) => p.sid === sid);
+  const repo = peer?.repo ? peer.repo.split("/").filter(Boolean).pop() : undefined;
+  return (
+    <>
+      <Avatar seed={sid} size={16} />
+      {repo ? (peer!.ws ? `${repo}/${peer!.ws}` : repo) : sid.slice(0, 8)}
+    </>
+  );
+}
+
+/** Sender half of a standalone-ccmsg bubble header: this session for its own
+ * sends, the delivering session (or the person) for received ones. */
+function DirectSenderLabel({
+  from,
+  direct,
+  peers,
+}: {
+  from: string;
+  direct: NonNullable<CcmsgMessage["direct"]>;
+  peers: readonly PeerInfo[];
+}) {
+  if (direct.direction === "out") return <>このセッション</>;
+  return <DirectSessionLabel sid={from} peers={peers} />;
 }
 
 /** One line of the raw view: its cache position and absolute byte offset in
@@ -4769,6 +4840,23 @@ export function Timeline({
                                           command={null}
                                           output={boundary.segment}
                                           ts={line.ts}
+                                        />
+                                      </ItemRawToggle>
+                                    );
+                                  case "push-notification":
+                                    return (
+                                      <ItemRawToggle
+                                        key={offset}
+                                        offset={offset}
+                                        uuid={line.uuid}
+                                        selectedPosition={currentPosition === line.uuid}
+                                        onSelectPosition={selectPosition}
+                                      >
+                                        <SayBubble
+                                          label="PushNotification"
+                                          text={boundary.text}
+                                          ts={line.ts ?? ""}
+                                          now={now}
                                         />
                                       </ItemRawToggle>
                                     );

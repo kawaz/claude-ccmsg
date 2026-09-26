@@ -16,6 +16,7 @@ export * from "./paths.ts";
 export * from "./config-migration.ts";
 export * from "./search-query.ts";
 export * from "./file-search-query.ts";
+export * from "./ccmsg-direct-transcript.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
 export const ADMIN_ID = "u1";
