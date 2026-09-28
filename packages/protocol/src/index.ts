@@ -893,7 +893,7 @@ export interface SessionIdentity {
    * blanking it — `repo`/`ws`/`repo_root`/`branch` move with it as one group. */
   cwd: string;
   /** absolute path of this session's Claude Code transcript jsonl (DR-0009).
-   * Sourced by the CLI's resolveIdentity from the SessionStart/UserPromptSubmit
+   * Sourced by the CLI's resolveIdentity from the SessionStart hook
    * hooks' session state file (`<stateDir>/sessions/<sid>.json`), or from
    * CCMSG_TRANSCRIPT_PATH as an override; the daemon validates it at hello time
    * and it is the ONLY file transcript_read serves for this sid. */

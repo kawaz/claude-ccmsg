@@ -2,14 +2,12 @@
 
 > 🇯🇵 [README-ja.md](./README-ja.md)
 
-Central-daemon messenger for Claude Code sessions.
-A rewrite of [kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p): all writes go through a single daemon, messaging happens in rooms, and the human user participates as a first-class member.
+Central daemon behind the ccmsg web UI.
+The plugin's only job is to keep the daemon running: its SessionStart hook starts the daemon if it isn't up, and adds nothing to the session's context. The daemon stays resident for the web UI, where the human user browses rooms, sessions, and transcripts, and injects posts from the web UI directly into Claude Code sessions. Messaging between sessions is handled by [kawaz/ccmsg](https://github.com/kawaz/ccmsg).
 
 ## Status
 
 **MVP + web UI implemented.** Architecture is captured in [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) / [DR-0002](./docs/decisions/DR-0002-daemon-supervision.md) / [DR-0003](./docs/decisions/DR-0003-wire-protocol.md) / [DR-0004](./docs/decisions/DR-0004-webui-architecture.md), grounded in the verbatim primary sources under [docs/research/](./docs/research/). The daemon, CLI, protocol, and webui packages under [packages/](./packages/) are implemented and tested.
-
-The predecessor (`cmux-msg`) remains the stable p2p tool for inter-session messaging until `claude-ccmsg` reaches feature parity.
 
 ## Install
 
@@ -28,10 +26,8 @@ claude plugin update claude-ccmsg@claude-ccmsg
 ```
 
 The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't
-on your shell `PATH` by default. If `PATH` has no `ccmsg` and a stable dir
-(`~/.local/bin`, then `~/bin`) is on `PATH` and writable, a Claude Code session
-will offer once to symlink one in (accept/decline via a prompt in-session; a
-decline is remembered and not asked again). You can also do it by hand:
+on your shell `PATH` by default. To put it there, symlink it into a stable dir
+on `PATH`:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
@@ -57,10 +53,9 @@ room shows what was said with a 既読 (read) button that clears the marker.
 Speech never depends on the recording: no session id, no running daemon, or a
 daemon that refuses the event all still speak. `bin/say` is a PATH shim that
 routes an ordinary `say` through this command, so every `say` on the machine —
-yours, a script's, an agent's — becomes attributable. The SessionStart hook
-offers to install it (as a copy, next to the `ccmsg` on your PATH) and asks
-first; declining once is remembered. A `say` on PATH that isn't ours is never
-touched.
+yours, a script's, an agent's — becomes attributable. Install it as a copy
+next to the `ccmsg` on your PATH (not a symlink: its target is a versioned
+plugin-cache dir that each update removes).
 
 ## Why a rewrite?
 

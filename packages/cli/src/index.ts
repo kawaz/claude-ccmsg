@@ -127,7 +127,7 @@ function parseReadArgs(args: string[], usage: string): { room: string; mids: str
 
 // --- identity --------------------------------------------------------------
 
-/** Shape the SessionStart/UserPromptSubmit hooks write to
+/** Shape the SessionStart hook writes to
  *  `<stateDir>/sessions/<sid>.json` (see hooks/session-start.ts's
  *  SessionFileData). Kept as a separate, loosely-typed mirror here rather than
  *  importing that type: hooks/ isn't a workspace package the CLI can depend on
@@ -200,7 +200,7 @@ function resolveSessionIdentity(
   if (sid) {
     // CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS env vars are an override knob
     // (manual invocation, tests) — when present they win over whatever the
-    // SessionStart/UserPromptSubmit hooks wrote to the session file. Absent,
+    // SessionStart hook wrote to the session file. Absent,
     // fall back to the file; absent there too, degrade to "" / no
     // transcript_path exactly like a session with no hook-derived metadata at
     // all always has.

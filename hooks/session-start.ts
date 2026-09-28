@@ -2,16 +2,12 @@
 /**
  * SessionStart hook.
  *
- * Three jobs:
+ * Two jobs, and no output (nothing enters the session's context):
  *   (a) Write a per-session state file (`<stateDir>/sessions/<sid>.json`) carrying
- *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity to pick up at
- *       hello time, so no command the AI runs needs an env prefix for identity.
- *   (b) Tell the AI how to reach other sessions: sending and replying go through
- *       the `ccmsg` on PATH, and incoming messages are injected into the
- *       conversation directly. The plugin launcher's absolute path is still
- *       given for the commands only it provides (dump, ...).
- *   (c) Bring the daemon up (`daemon start`, detached) so the web UI and the
- *       session's 1on1 room are live without waiting for a plugin command.
+ *       transcript_path/cwd/repo/ws, for the CLI's resolveIdentity and the
+ *       daemon's transcript resolution to pick up at hello time.
+ *   (b) Bring the daemon up (`daemon start`, detached) so the web UI is live and
+ *       can inject its posts into this session.
  *
  * Failure here never blocks the turn: parse errors and ensure failures exit 0 quietly.
  */
@@ -27,7 +23,7 @@ interface SessionStartInput {
   /** absolute path of this session's Claude Code transcript jsonl, per Claude
    *  Code's SessionStart hook input schema (DR-0009). */
   transcript_path?: string;
-  /** event-time cwd, present on SessionStart/UserPromptSubmit/PreToolUse/Stop
+  /** event-time cwd, present on SessionStart and later hook events
    *  per the hooks common-field table. Not necessarily this hook process's own
    *  cwd (verified to diverge from it), so repo/ws derivation must read this
    *  field rather than call process.cwd(). On SessionStart it still names where
@@ -225,8 +221,7 @@ export async function getRepoWsFromVcs(
 }
 
 /** `CCMSG_BUMP_SEMVER_BIN` overrides the `bump-semver` binary looked up on
- *  PATH (test seam); shared with user-prompt-submit.ts's session file rescue so both
- *  hooks resolve the same way. */
+ *  PATH (test seam). */
 export function resolveBumpSemverBin(): string {
   return process.env.CCMSG_BUMP_SEMVER_BIN ?? "bump-semver";
 }
@@ -254,7 +249,7 @@ export function sessionLocation(
 // repo/ws) ride through this file, so no command the AI runs needs an env
 // prefix for them.
 
-/** Shape written by this hook / user-prompt-submit.ts, and read by
+/** Shape written by this hook, and read by
  *  packages/cli/src/index.ts's resolveIdentity. All fields but `updated_at` are
  *  optional because any of them may be undiscoverable (no cwd from stdin, no VCS
  *  facts, no transcript_path announced) without that being an error. */
@@ -298,7 +293,7 @@ const SESSION_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 /** Best-effort GC for `<stateDir>/sessions/*.json`: a session ends when the Claude
  *  Code process exits, which fires no hook — nothing else ever removes these, so
  *  left unchecked they'd accumulate forever (one file per sid, forever). Age is
- *  judged by mtime (last SessionStart/UserPromptSubmit write), not by whether the
+ *  judged by mtime (last SessionStart write), not by whether the
  *  session is still alive, so a stale entry survives at most ~30 days past its
  *  last hook fire. Missing sessions/ dir, unreadable dir, or a single file's
  *  stat/unlink failing are all swallowed — this must never be the thing that
@@ -321,15 +316,14 @@ export function pruneOldSessionFiles(stateDir: string, now: number = Date.now())
   }
 }
 
-/** Absolute path of this plugin's root, robust to a missing CLAUDE_PLUGIN_ROOT
- *  (a dev checkout runs the hook straight from `hooks/`). */
-function resolvePluginRoot(): string {
-  return process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, "..");
-}
-
-/** Absolute path to the launcher. */
+/** Absolute path to the launcher, robust to a missing CLAUDE_PLUGIN_ROOT (a
+ *  dev checkout runs the hook straight from `hooks/`). */
 function resolveBin(): string {
-  return path.join(resolvePluginRoot(), "bin", "ccmsg");
+  return path.join(
+    process.env.CLAUDE_PLUGIN_ROOT ?? path.resolve(import.meta.dir, ".."),
+    "bin",
+    "ccmsg",
+  );
 }
 
 async function main(): Promise<void> {
@@ -345,9 +339,9 @@ async function main(): Promise<void> {
   const stateDir = resolvePaths().stateDir;
 
   // (a) Write this session's state file (transcript_path/cwd/repo/ws) for the CLI
-  // to pick up at hello time (see the module header). Always overwrite (unlike
-  // UserPromptSubmit's "only if missing" — this is the fresh, authoritative source
-  // per session start, e.g. a `/cd` or `claude --resume` should refresh it).
+  // to pick up at hello time (see the module header). Always overwrite: this is
+  // the fresh, authoritative source per session start, e.g. a `/cd` or
+  // `claude --resume` should refresh it.
   if (input.session_id) {
     const stationed = sessionLocation(input.cwd);
     const { repo, ws, repoRoot, branch } = stationed
@@ -365,36 +359,20 @@ async function main(): Promise<void> {
   }
   pruneOldSessionFiles(stateDir);
 
-  // (b) Guide the AI.
-  const contextLines = [
-    "ccmsg is available: messaging between Claude Code sessions.",
-    "To message another session, reply to a received message, or notify the user, use `ccmsg post` / `ccmsg reply` / `ccmsg notify` (the `ccmsg` on PATH). Incoming messages are delivered straight into this conversation; no listener needs to run.",
-    `For dump and the other plugin commands, use this absolute path: ${bin}`,
-  ];
-
-  // (c) Detached so the daemon's spawn/upgrade wait never counts against this
+  // (b) Detached so the daemon's spawn/upgrade wait never counts against this
   // hook's deadline; `daemon start` is idempotent.
   try {
     spawn(bin, ["daemon", "start"], { detached: true, stdio: "ignore" }).unref();
   } catch {
-    // best-effort; dump etc. still bring the daemon up on first use
+    // best-effort; every CLI command still brings the daemon up on first use
   }
 
-  await exitHook(
-    `${JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: "SessionStart",
-        additionalContext: contextLines.join("\n"),
-      },
-    })}\n`,
-  );
+  await exitHook();
 }
 
-/** Wall-clock cap for this hook (see deadline.ts). Roomier than
- *  UserPromptSubmit's: this fires once per session rather than once per turn,
- *  and losing its output costs the session its ccmsg guidance entirely, where
- *  nothing else would repeat it later in the session. Still far below the 30s Claude
- *  Code would otherwise allow. */
+/** Wall-clock cap for this hook (see deadline.ts). Fires once per session, so
+ *  it leaves the VCS lookup its full 1000ms budget; still far below what
+ *  Claude Code would otherwise allow. */
 const SESSION_START_DEADLINE_MS = 3000;
 
 if (import.meta.main) {

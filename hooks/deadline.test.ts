@@ -53,8 +53,7 @@ function marker(stderr: string, key: string): number {
 describe("hook プロセスの寿命", () => {
   // 修正前: getRepoWsFromVcs は 87ms で返るのにプロセスは 1003ms 生きていた
   // (raceExit が負けた側の setTimeout を clear していなかったため、共通デッド
-  // ラインいっぱいまで event loop が保持される)。SessionStart 毎回と、state file
-  // 救済が走る UserPromptSubmit のターンが丸ごとこれを払っていた。
+  // ラインいっぱいまで event loop が保持される)。SessionStart 毎回がこれを払っていた。
   spawnTest("getRepoWsFromVcs は応答後に event loop を掴み続けない", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-deadline-bin-"));
     try {

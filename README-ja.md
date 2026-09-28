@@ -2,14 +2,12 @@
 
 > 🇬🇧 [README.md](./README.md)
 
-Claude Code セッション間メッセージング用の**中央デーモン方式**ツール。
-[kawaz/claude-cmux-msg](https://github.com/kawaz/claude-cmux-msg) (p2p) の rewrite で、書き込みを単一デーモンに集約し、会話を room 単位にし、人間 (kawaz) も一級メンバーとして参加できるようにする。
+ccmsg web UI を支える中央デーモン。
+この plugin の役目は daemon を起こしておくことだけで、SessionStart hook は daemon が落ちていれば起動し、セッションのコンテキストには何も足さない。daemon は web UI のために常駐し (人間が room・セッション・transcript を閲覧する)、web UI からの投稿を Claude Code セッションへ直接注入する。セッション間のメッセージ配送は [kawaz/ccmsg](https://github.com/kawaz/ccmsg) が担う。
 
 ## Status
 
 **MVP + web UI 実装済み。** アーキテクチャは [DR-0001](./docs/decisions/DR-0001-central-daemon-architecture.md) / [DR-0002](./docs/decisions/DR-0002-daemon-supervision.md) / [DR-0003](./docs/decisions/DR-0003-wire-protocol.md) / [DR-0004](./docs/decisions/DR-0004-webui-architecture.md) に記録し、その根拠は [docs/research/](./docs/research/) の逐語一次資料に置いてある。daemon / CLI / protocol / webui は `packages/` 配下に実装・テスト済み。
-
-旧来の `cmux-msg` (p2p) は `claude-ccmsg` が feature parity に達するまで安定維持されたまま使用可能。
 
 ## インストール
 
@@ -28,10 +26,7 @@ claude plugin update claude-ccmsg@claude-ccmsg
 ```
 
 plugin の `bin/ccmsg` は version 付きの plugin cache パス配下にあるため、既定では
-shell の `PATH` に無い。`PATH` に `ccmsg` が無く、かつ安定パス (`~/.local/bin`、
-次点 `~/bin`) が `PATH` に含まれ書き込み可能なら、Claude Code セッションが一度だけ
-symlink を張ってよいか提案する (セッション内で許可/拒否、拒否は記憶され再提案しない)。
-手動で入れることも可能:
+shell の `PATH` に無い。`PATH` 上の安定パスに symlink を張って入れる:
 
 ```
 ln -sfn <plugin-cache>/bin/ccmsg ~/.local/bin/ccmsg
@@ -58,11 +53,9 @@ Sessions 一覧では喋ったセッションに 📣 が付き、その 1on1 ro
 daemon がイベントを拒否しても発声は行われる。`bin/say` は通常の `say` を
 このコマンドに委譲する PATH shim で、これを PATH 上で `/usr/bin` より前に
 置けばマシン上のすべての `say` (自分・スクリプト・エージェント) が
-どのセッションのものか分かるようになる。配置は SessionStart hook が
-ユーザ確認の上で案内する (PATH 上の `ccmsg` と同じ dir に **コピー** で置く。
-symlink にしないのは、参照先が version 付き plugin cache dir で update のたびに
-消えるため)。一度断れば以後は提案しない。自分の物でない `say` が PATH に
-居る場合は何もしない。
+どのセッションのものか分かるようになる。PATH 上の `ccmsg` と同じ dir に
+**コピー** で置く (symlink にしないのは、参照先が version 付き plugin cache dir で
+update のたびに消えるため)。
 
 ## rewrite した理由
 

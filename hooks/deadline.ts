@@ -12,8 +12,8 @@
  *     at its 1000ms deadline and the process exited at 8328ms, held by the
  *     abandoned read of the killed child's stdout.
  *
- * UserPromptSubmit runs before every single turn, so it pays that lifetime
- * every turn. Two halves, and both are needed:
+ * SessionStart pays that lifetime on every session start. Two halves, and
+ * both are needed:
  *
  *   - `armHookDeadline` is the backstop for hangs we cannot enumerate (stdin
  *     that is never closed, a subprocess that outlives its kill()). It cannot
@@ -22,10 +22,8 @@
  *   - `exitHook` is the normal path: finish, flush, leave. Without it a healthy
  *     run waits out the watchdog instead of the work.
  *
- * Both exit 0 unconditionally. A hook whose only job is advisory output must
- * never turn a slow moment into a broken turn — dropping one turn's message is
- * cheaper than delaying every turn, and UserPromptSubmit's nag repeats on the
- * next turn anyway.
+ * Both exit 0 unconditionally. A hook whose work is best-effort must never
+ * turn a slow moment into a broken session start.
  */
 
 /**

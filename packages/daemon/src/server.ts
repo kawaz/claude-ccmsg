@@ -496,10 +496,10 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
   // exception (DR-0009 addendum): unlike repo/ws/cwd, it arrives via the
-  // hook-supplied session state file (session-start.ts / user-prompt-submit.ts)
+  // hook-supplied session state file (session-start.ts)
   // or, when that never got written, adoptTranscriptPath's disk lookup — and a
   // re-subscribe after the stream died is a
-  // common, legitimate path that omits it (e.g. a UserPromptSubmit-suggested
+  // common, legitimate path that omits it (e.g. a
   // `CCMSG_SID=<sid> ccmsg subscribe` typed without the transcript prefix). A
   // hello that omits transcript_path preserves whatever was already adopted
   // instead of clearing it — otherwise every such re-subscribe would silently
