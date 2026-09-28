@@ -3442,10 +3442,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // (storage.ts appendEvent), applied here since a plain "member" event can't be
       // distinguished from an initial create_room member by type alone.
       room.dedupEligible = false;
-      // the invited target, if already subscribed, gets a full room snapshot (title,
-      // member list, recent history) just like a brand-new create_room/next_room member
-      // (deliverNewRoom) — this is genuinely new context to them, not an incremental
-      // update. Existing members only need the single MemberEvent line.
+      // the invited target, if already subscribed, gets the room snapshot (title,
+      // member list; no msgs, which reach a session only through peer-inject) just
+      // like a brand-new create_room/next_room member (deliverNewRoom) — this is
+      // genuinely new context to them, not an incremental update. Existing members
+      // only need the single MemberEvent line.
       const targetSub = [...daemon.subscribers].find(
         (s) => s.identity?.role === "session" && s.identity.sid === targetSid,
       );
