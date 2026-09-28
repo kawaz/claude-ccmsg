@@ -1,6 +1,6 @@
 ---
 title: plugin を v1 daemon を起こすだけの hook に削る (SKILL・案内・subscribe 誘導を全部消す)
-status: open
+status: resolved
 category: task
 created: 2026-09-28T16:18:55+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-09-28T16:27:56+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["done: v0.155.0 で実装・push済み (SessionStart は state file 書き出しと daemon start のみで無出力、UserPromptSubmit と skills/ccmsg を削除、hooks.json は SessionStart のみ、README 英日改訂)"]
 blocked_by:
 origin: kawaz/ccmsg (v2, クロスプロジェクト起票)
 ---
