@@ -14,6 +14,7 @@ import {
   DIRECT_DELIVERY_USER_SENDER,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
+  queuedCommandPrompt,
 } from "@ccmsg/protocol";
 import { AGENT_ID_RE } from "./agent-transcripts.ts";
 import { createSessionStatusState, foldLine, snapshot } from "./session-status.ts";
@@ -1067,6 +1068,13 @@ export async function dumpSession(
       }
       continue;
     }
+    const queuedPrompt = queuedCommandPrompt(item.row);
+    if (queuedPrompt !== null) {
+      for (const entry of directReceivedEntries(session, item.ts, queuedPrompt, item.index)) {
+        entries.push({ ...entry, _index: item.index });
+      }
+      continue;
+    }
     if (item.row.type !== "user" && item.row.type !== "queue-operation") continue;
     const text =
       item.row.type === "queue-operation" && typeof item.row.content === "string"
@@ -1075,8 +1083,9 @@ export async function dumpSession(
     for (const entry of peerEntries(session, item.ts, text, canonical, sentRefs, item.index)) {
       entries.push({ ...entry, _index: item.index });
     }
-    // The queue-operation row repeats the envelope of the user row that
-    // delivers it; the delivered row is the one recorded.
+    // The queue-operation row repeats the envelope of the user (or
+    // queued_command attachment) row that delivers it; the delivered row is
+    // the one recorded.
     if (item.row.type === "user") {
       for (const entry of directReceivedEntries(session, item.ts, text, item.index)) {
         entries.push({ ...entry, _index: item.index });

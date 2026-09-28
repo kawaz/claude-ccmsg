@@ -75,6 +75,7 @@ lazy read にそのまま乗る。
 
 - `type:"user"` 行 (`isMeta:true`, `promptSource:"system"`, `origin.kind:"peer"`) の文字列 content に `<cross-session-message from="ccmsg" from-name=… from-mode="prompting" ccmsg-mid="<instance>/<n>" ccmsg-from="user|<sid>" [ccmsg-reply-to=…]>` 封筒が埋まる。封筒本文の末尾 `Reply with: ccmsg reply …` 行は取り除いたものを本文とする。閉じタグは次の封筒の手前で最後に現れるものを取る (本文中の閉じタグ文字列を許す)
 - `ccmsg-mid` / `ccmsg-from` を持たない `<cross-session-message>` (Claude Code 本来の peer message) は対象外
+- 受け手がターン実行中に届いた場合は `type:"user"` 行ではなく `type:"attachment"` 行 (`attachment.type:"queued_command"`, `attachment.origin.kind:"peer"`) の `attachment.prompt` に封筒が載る。これも配送行として扱い、ts はその行の timestamp。同じ行の `rendered` (system-reminder) にも封筒が繰り返されるが読まない
 - 直前の `queue-operation` enqueue 行にも同じ封筒が載るが、配送行だけを数える
 - `ccmsg-from="user"` は人 (TL では u1 の右寄せバブル、境界行、👤 nav 対象。daemon では「最後のユーザ入力」に算入)。sid はセッション発 (TL では fold 内の peer バブル)
 - 本文は封筒内に全文あるので daemon read は行わない。dedup キーは mid (`direct-in|<mid>`)

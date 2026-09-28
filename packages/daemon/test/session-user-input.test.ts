@@ -309,6 +309,41 @@ describe("standalone ccmsg envelopes", () => {
   });
 });
 
+// Real row (Claude Code, 2026-09-28): a standalone-ccmsg message that arrived
+// while the session was mid-turn, reduced to the fields read here.
+const QUEUED_PROMPT =
+  '<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r349m12" ccmsg-from="user">\n両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？\n\nReply in your normal assistant response.\n</cross-session-message>';
+const queuedAttachmentRow = JSON.stringify({
+  type: "attachment",
+  timestamp: "2026-09-28T06:44:03.962Z",
+  attachment: {
+    type: "queued_command",
+    prompt: QUEUED_PROMPT,
+    commandMode: "prompt",
+    origin: { kind: "peer" },
+    isMeta: true,
+  },
+  rendered: [
+    {
+      content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+    },
+  ],
+});
+const queuedEnqueueRow = JSON.stringify({
+  type: "queue-operation",
+  operation: "enqueue",
+  timestamp: "2026-09-28T06:44:03.962Z",
+  content: QUEUED_PROMPT,
+});
+
+describe("standalone ccmsg delivered mid-turn", () => {
+  test("a person's queued_command attachment is user input; its enqueue copy is not", () => {
+    expect(isUserInputCandidate(queuedAttachmentRow)).toBe(true);
+    expect(classifyUserInputRow(row(queuedAttachmentRow))).toBe("2026-09-28T06:44:03.962Z");
+    expect(classifyUserInputRow(row(queuedEnqueueRow))).toBeUndefined();
+  });
+});
+
 describe("isUserInputCandidate", () => {
   // プレフィルタは「取りこぼさない」ことだけが要件 (通し過ぎは classify が弾く)。
   test("admits both counted kinds", () => {

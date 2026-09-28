@@ -8,6 +8,7 @@ import {
   parseCcmsgSendCommand,
   parseDirectDeliveries,
   pushNotificationText,
+  queuedCommandPrompt,
 } from "../src/index.ts";
 
 const MID = "bfa02646e898a279fa4fea0065b06797/1";
@@ -150,5 +151,52 @@ describe("pushNotificationText", () => {
     ).toBe("終わりました");
     expect(pushNotificationText("Bash", { message: "x" })).toBeNull();
     expect(pushNotificationText("PushNotification", {})).toBeNull();
+  });
+});
+
+// Real row (Claude Code, 2026-09-28): a standalone-ccmsg message that arrived
+// while the session was mid-turn, reduced to the fields read here.
+const QUEUED_PROMPT =
+  '<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r349m12" ccmsg-from="user">\n両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？\n\nReply in your normal assistant response.\n</cross-session-message>';
+const QUEUED_BODY =
+  "両方publishしたよ。\noidcでリリースするやつはworkflowファイル名を設定する必要があったと思うが同じでOK？";
+const queuedAttachmentRow = JSON.stringify({
+  type: "attachment",
+  timestamp: "2026-09-28T06:44:03.962Z",
+  attachment: {
+    type: "queued_command",
+    prompt: QUEUED_PROMPT,
+    commandMode: "prompt",
+    origin: { kind: "peer" },
+    isMeta: true,
+  },
+  rendered: [
+    {
+      content: `<system-reminder>\nAnother Claude session sent a message while you were working:\n${QUEUED_PROMPT}\n\nThis came from another Claude session.\n</system-reminder>`,
+    },
+  ],
+});
+const queuedEnqueueRow = JSON.stringify({
+  type: "queue-operation",
+  operation: "enqueue",
+  timestamp: "2026-09-28T06:44:03.962Z",
+  content: QUEUED_PROMPT,
+});
+
+describe("queuedCommandPrompt", () => {
+  test("reads the prompt of a peer queued_command attachment; the envelope parses", () => {
+    const prompt = queuedCommandPrompt(JSON.parse(queuedAttachmentRow));
+    expect(prompt).toBe(QUEUED_PROMPT);
+    expect(parseDirectDeliveries(prompt!)).toEqual([
+      { mid: "r349m12", from: "user", fromLabel: "user", text: QUEUED_BODY },
+    ]);
+  });
+
+  test("other rows are not one", () => {
+    expect(queuedCommandPrompt(JSON.parse(queuedEnqueueRow))).toBeNull();
+    const human = JSON.parse(queuedAttachmentRow);
+    human.attachment.origin = { kind: "human" };
+    expect(queuedCommandPrompt(human)).toBeNull();
+    expect(queuedCommandPrompt({ type: "attachment", attachment: { type: "todo" } })).toBeNull();
   });
 });

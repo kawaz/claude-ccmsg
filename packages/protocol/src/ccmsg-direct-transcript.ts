@@ -6,11 +6,17 @@
 //
 // Three row shapes are recognized:
 //
-//   1. received: a `type:"user"` row (`promptSource:"system"`, `origin.kind:
-//      "peer"`) whose string content embeds one or more
+//   1. received: one or more
 //      `<cross-session-message from="ccmsg" … ccmsg-mid="…" ccmsg-from="…">`
-//      envelopes. The same envelope is also written, bare, into the
-//      `queue-operation` enqueue row just before it; callers skip that copy.
+//      envelopes, carried by either
+//      - a `type:"user"` row (`promptSource:"system"`, `origin.kind:"peer"`)
+//        whose string content embeds them (the session was idle), or
+//      - a `type:"attachment"` row whose `attachment` is
+//        `{type:"queued_command", prompt, origin:{kind:"peer"}}` (the session
+//        was mid-turn); `queuedCommandPrompt` reads it. The row's `rendered`
+//        system-reminder repeats the envelope and is not read.
+//      The same envelope is also written, bare, into a `queue-operation`
+//      enqueue row before either; callers skip that copy.
 //   2. sent: a Bash tool_use whose command is `ccmsg post|reply|notify …`,
 //      paired with its tool_result (`{}` / `{"delivered":true}` on success).
 //   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`.
@@ -82,6 +88,21 @@ function stripReplyLine(body: string, mid: string, from: string): string {
  * quote, so JSON escaping does not hide it). */
 export function mayContainDirectDelivery(text: string): boolean {
   return text.includes(`<${TAG}`) && text.includes("ccmsg-mid=");
+}
+
+/** The prompt of a transcript row that queued a peer message while the
+ * session was mid-turn (`type:"attachment"`, `attachment.type:
+ * "queued_command"`), or null for any other row. A present `origin` must be a
+ * peer's. */
+export function queuedCommandPrompt(row: Record<string, unknown>): string | null {
+  if (row.type !== "attachment") return null;
+  const a = row.attachment;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return null;
+  const attachment = a as Record<string, unknown>;
+  if (attachment.type !== "queued_command" || typeof attachment.prompt !== "string") return null;
+  const origin = attachment.origin;
+  if (origin !== undefined && (origin as { kind?: unknown } | null)?.kind !== "peer") return null;
+  return attachment.prompt;
 }
 
 /** Every envelope in `text`, in order. An envelope's body runs to the last

@@ -23,6 +23,7 @@ import {
   DIRECT_DELIVERY_USER_SENDER,
   mayContainDirectDelivery,
   parseDirectDeliveries,
+  queuedCommandPrompt,
 } from "@ccmsg/protocol";
 import { scanTranscriptLines } from "./session-status.ts";
 import {
@@ -107,7 +108,8 @@ export function isUserInputCandidate(line: string): boolean {
  *   - a standalone-ccmsg envelope with `ccmsg-from="user"` in a
  *     system-injected row is a person speaking through that route. The
  *     queue-operation copy of the same envelope is not a `type:"user"` row, so
- *     it is never counted.
+ *     it is never counted. A message that arrived mid-turn is delivered by a
+ *     `queued_command` attachment row instead, which counts the same way.
  *
  * Transcripts written before Claude Code carried `origin`/`promptSource` at
  * all (observed through 2026-01) yield nothing here. That is the honest answer
@@ -120,9 +122,12 @@ export function isUserInputCandidate(line: string): boolean {
  * what the reader is ordering by. The two differ by the subscribe delivery
  * latency (~200ms in practice). */
 export function classifyUserInputRow(row: Record<string, unknown>): string | undefined {
-  if (row.type !== "user" || row.isSidechain === true) return undefined;
+  if (row.isSidechain === true) return undefined;
   const timestamp = row.timestamp;
   if (typeof timestamp !== "string" || timestamp === "") return undefined;
+  const queued = queuedCommandPrompt(row);
+  if (queued !== null) return isFromUser(queued) ? timestamp : undefined;
+  if (row.type !== "user") return undefined;
 
   const origin = isRecord(row.origin) ? row.origin : null;
   if (origin?.kind === "human") return timestamp;
@@ -148,9 +153,11 @@ export function classifyUserInputRow(row: Record<string, unknown>): string | und
   const content = isRecord(row.message) ? row.message.content : undefined;
   if (typeof content !== "string") return undefined;
   if (U1_MSG_EVENT_RE.test(content) || U1_MSG_EVENT_RAW_RE.test(content)) return timestamp;
-  return parseDirectDeliveries(content).some((d) => d.from === DIRECT_DELIVERY_USER_SENDER)
-    ? timestamp
-    : undefined;
+  return isFromUser(content) ? timestamp : undefined;
+}
+
+function isFromUser(text: string): boolean {
+  return parseDirectDeliveries(text).some((d) => d.from === DIRECT_DELIVERY_USER_SENDER);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

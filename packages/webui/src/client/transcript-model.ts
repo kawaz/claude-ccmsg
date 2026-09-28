@@ -5,6 +5,7 @@ import {
   parseCcmsgSendCommand,
   parseDirectDeliveries,
   pushNotificationText,
+  queuedCommandPrompt,
 } from "@ccmsg/protocol";
 // Pure jsonl-line -> renderable-event transform for the Timeline view
 // (DR-0009). Kept out of Timeline.tsx so the fold logic is unit-testable
@@ -2674,6 +2675,29 @@ function parseTranscriptObject(o: Record<string, unknown>, raw: string): ParsedL
   // して queue 側を落とす — `parseTranscriptLines` の cross-line パスが行う。
   // ここでは単独行としての最善 (= 本文 prefix カタログの再利用) を返しつつ、
   // その判断材料を `queuedContent` に残す。
+  // A standalone-ccmsg message that arrived mid-turn is delivered by this
+  // attachment row rather than a `type:"user"` one, so it becomes the
+  // delivered user turn itself — which also lets `pairQueuedTurns` drop the
+  // queue-operation copy against it. `rendered` repeats the envelope inside a
+  // system-reminder and is not read.
+  const queuedPrompt = queuedCommandPrompt(o);
+  if (queuedPrompt !== null && mayContainDirectDelivery(queuedPrompt)) {
+    return {
+      kind: "turn",
+      ts,
+      ...(uuid ? { uuid } : {}),
+      ...(parentUuid ? { parentUuid } : {}),
+      role: "user",
+      segments: [{ kind: "text", role: "user", text: queuedPrompt }],
+      userMessageKind: classifyUserMessage({
+        type: "user",
+        isMeta: true,
+        promptSource: "system",
+        origin: { kind: "peer" },
+        message: { role: "user", content: queuedPrompt },
+      }),
+    };
+  }
   if (o.type === "queue-operation" && o.operation === "enqueue" && typeof o.content === "string") {
     const content = o.content;
     const userMessageKind = classifyUserMessage({
