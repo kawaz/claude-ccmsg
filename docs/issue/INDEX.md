@@ -6,6 +6,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 |---|---|---|---|---|
 | 2026-09-28 | task | open | [msgvisibleto-dead-user-only-subscribe](./2026-09-28-msgvisibleto-dead-user-only-subscribe.md) | msgVisibleTo が subscribe stream 上で死んだ判定になっている (user role only 化の帰結) |
 | 2026-09-28 | bug | open | [peer-inject](./2026-09-28-peer-inject.md) | peer-inject の同一セッション宛て連続 post の到着順が非保証。sid ごとの直列化を検討 |
+| 2026-09-28 | task | open | [reduce-plugin-to-daemon-starting-hook](./2026-09-28-reduce-plugin-to-daemon-starting-hook.md) | plugin を v1 daemon を起こすだけの hook に削る (SKILL・案内・subscribe 誘導を全部消す) |
 | 2026-09-18 | bug | open | [markdown-code-span-url-becomes-link](./2026-09-18-markdown-code-span-url-becomes-link.md) | markdown code span 内の URL がリンクにならない (v2 webui にも同issue起票済み) |
 | 2026-09-16 | bug | open | [webui-terminal-tab-config-parse-error](./2026-09-16-webui-terminal-tab-config-parse-error.md) | webui の Terminal タブが出ない: 本番 config.ts の構文エラーで daemon の設定が空になっている |
 | 2026-09-10 | task | open | [ecosystem-review-2026-09](./2026-09-10-ecosystem-review-2026-09.md) | エコシステム外部レビュー (2026-09) の指摘への対応検討 |
