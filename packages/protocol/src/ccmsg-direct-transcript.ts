@@ -50,6 +50,33 @@ function replyLine(mid: string, from: string): string {
   return `Reply with: ccmsg reply ${mid}${to} <text>`;
 }
 
+/** The reply instruction a room message delivered into a session ends with:
+ * `Reply with: <path>/ccmsg reply r<N>m<M> <text>`, or the instruction to
+ * answer in the transcript for a 1on1 message from the User. */
+const ROOM_REPLY_LINE_RE =
+  /^(?:Reply with: (?:\S*\/)?ccmsg reply r\d+m\d+ <text>|Reply in your normal assistant response\.)$/;
+
+function isRoomMid(mid: string): boolean {
+  return /^r\d+m\d+$/.test(mid);
+}
+
+/** The sender's text, with the reply line the envelope added removed. */
+function stripReplyLine(body: string, mid: string, from: string): string {
+  const own = replyLine(mid, from);
+  if (body.endsWith(`\n\n${own}`)) return body.slice(0, -own.length - 2);
+  if (body === own) return "";
+  if (!isRoomMid(mid)) return body;
+  const cut = body.lastIndexOf("\n\n");
+  const last = cut === -1 ? body : body.slice(cut + 2);
+  if (
+    !ROOM_REPLY_LINE_RE.test(last) ||
+    (last.startsWith("Reply with:") && !last.includes(` ${mid} `))
+  ) {
+    return body;
+  }
+  return cut === -1 ? "" : body.slice(0, cut);
+}
+
 /** Cheap test before `parseDirectDeliveries`: true for any text that could
  * hold an envelope. Works on raw jsonl lines too (the attribute name carries no
  * quote, so JSON escaping does not hide it). */
@@ -78,10 +105,7 @@ export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
     const mid = attributes.get("ccmsg-mid");
     const from = attributes.get("ccmsg-from");
     if (mid === undefined || from === undefined) return;
-    let body = end >= bodyStart ? text.slice(bodyStart, end) : "";
-    const suffix = `\n\n${replyLine(mid, from)}`;
-    if (body.endsWith(suffix)) body = body.slice(0, -suffix.length);
-    else if (body === replyLine(mid, from)) body = "";
+    const body = stripReplyLine(end >= bodyStart ? text.slice(bodyStart, end) : "", mid, from);
     const replyTo = attributes.get("ccmsg-reply-to");
     out.push({
       mid,

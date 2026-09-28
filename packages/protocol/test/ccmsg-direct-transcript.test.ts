@@ -20,6 +20,27 @@ const SID = "11111111-2222-4333-8444-555555555555";
 const SESSION_ENVELOPE = `<cross-session-message from="ccmsg" from-name="${SID}" from-mode="prompting" ccmsg-mid="abc/7" ccmsg-from="${SID}" ccmsg-reply-to="abc/3">\nfirst line\n</cross-session-message> quoted\n\nReply with: ccmsg reply abc/7 --to ${SID} <text>\n</cross-session-message>`;
 
 describe("parseDirectDeliveries", () => {
+  test("room message delivered by the daemon: r<N>m<M> mid, launcher-path reply line removed", () => {
+    const envelope = `<cross-session-message from="ccmsg" from-name="a2" from-mode="prompting" ccmsg-mid="r353m1" ccmsg-from="${SID}">\nhello\n\nReply with: /opt/ccmsg/bin/ccmsg reply r353m1 <text>\n</cross-session-message>`;
+    expect(parseDirectDeliveries(envelope)).toEqual([
+      { mid: "r353m1", from: SID, fromLabel: "a2", text: "hello" },
+    ]);
+  });
+
+  test("room message: 1on1 transcript instruction removed, archived (no line) kept whole", () => {
+    const tl = `<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r4m2" ccmsg-from="user">\nhi\n\nReply in your normal assistant response.\n</cross-session-message>`;
+    const archived = `<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r4m3" ccmsg-from="user">\nbye\n</cross-session-message>`;
+    expect(parseDirectDeliveries(tl).map((d) => d.text)).toEqual(["hi"]);
+    expect(parseDirectDeliveries(archived).map((d) => d.text)).toEqual(["bye"]);
+  });
+
+  test("room message: a reply line naming another mid stays in the body", () => {
+    const envelope = `<cross-session-message from="ccmsg" from-name="user" from-mode="prompting" ccmsg-mid="r4m5" ccmsg-from="user">\nquote\n\nReply with: ccmsg reply r4m1 <text>\n</cross-session-message>`;
+    expect(parseDirectDeliveries(envelope).map((d) => d.text)).toEqual([
+      "quote\n\nReply with: ccmsg reply r4m1 <text>",
+    ]);
+  });
+
   test("delivered user row: body without the reply line, from=user", () => {
     expect(parseDirectDeliveries(DELIVERED)).toEqual([
       { mid: MID, from: "user", fromLabel: "user", text: BODY },
