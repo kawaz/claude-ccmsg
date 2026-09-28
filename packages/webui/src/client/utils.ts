@@ -848,20 +848,12 @@ export function badgeLabel(kind: string): string {
 // waiting と同じく人間の介入待ちだが、waiting は Claude 側が能動的に待っている
 // のに対し error は誰も何も待っていない (放置すると永久に止まったまま) ため、
 // 気付く優先度が一段高い。
-const SESSION_SECTION_KNOWN_ORDER: string[] = [
-  "error",
-  "waiting",
-  "busy",
-  "idle",
-  "inactive",
-  "done",
-];
+const SESSION_SECTION_KNOWN_ORDER: string[] = ["error", "waiting", "busy", "inactive", "done"];
 
 const SESSION_SECTION_LABELS: Record<string, string> = {
   error: "Error",
   waiting: "Waiting",
-  busy: "Busy",
-  idle: "Idle",
+  busy: "Active",
   inactive: "Inactive",
   done: "Done",
   offline: "ccmsg未起動",
@@ -873,6 +865,16 @@ const SESSION_SECTION_LABELS: Record<string, string> = {
  * lowercase — matches the capitalization style of every known label above. */
 function capitalizeStatus(status: string): string {
   return status.length > 0 ? status[0]!.toUpperCase() + status.slice(1) : status;
+}
+
+/** Statuses that share another status's section. Busy and idle are both
+ * running sessions, so they form one section; each row still shows its own
+ * idle time. */
+const SESSION_SECTION_MERGE: Record<string, string> = { idle: "busy" };
+
+function sectionKeyOf(row: SessionRow): string {
+  const status = sessionStatus(row);
+  return SESSION_SECTION_MERGE[status] ?? status;
 }
 
 function sectionLabel(key: string): string {
@@ -915,7 +917,7 @@ export interface SessionSection {
 export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
   const buckets = new Map<string, SessionRow[]>();
   for (const row of rows) {
-    const key = sessionStatus(row);
+    const key = sectionKeyOf(row);
     const bucket = buckets.get(key);
     if (bucket) bucket.push(row);
     else buckets.set(key, [row]);

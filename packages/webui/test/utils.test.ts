@@ -1345,8 +1345,8 @@ describe("groupSessionsBySection", () => {
       sessionRow({ sid: "d", connected: false, agent: agent({}) }),
     ];
     const sections = groupSessionsBySection(rows);
-    expect(sections.map((s) => s.key)).toEqual(["busy", "idle", "done", "offline"]);
-    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a"], ["b"], ["c"], ["d"]]);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "done", "offline"]);
+    expect(sections.map((s) => s.rows.map((r) => r.sid))).toEqual([["a", "b"], ["c"], ["d"]]);
   });
 
   // "実データに存在するセクションだけ表示" (task spec): a section with zero
@@ -1361,11 +1361,11 @@ describe("groupSessionsBySection", () => {
     expect(groupSessionsBySection([])).toEqual([]);
   });
 
-  // Section order for the known statuses is fixed (busy, idle, inactive,
-  // done), offline always last, regardless of the input array's row order —
+  // Section order for the known statuses is fixed (busy (with idle merged
+  // in), inactive, done), offline always last, regardless of the input array's row order —
   // this is a *section* ordering, independent of the name/created/recent
   // row-level sort the input already carries.
-  test("section order is fixed: busy, idle, inactive, done, offline", () => {
+  test("section order is fixed: busy, inactive, done, offline", () => {
     const rows = [
       sessionRow({ sid: "off", connected: false, agent: agent({}) }),
       sessionRow({ sid: "done", connected: true, agent: agent({ state: "done" }) }),
@@ -1375,7 +1375,6 @@ describe("groupSessionsBySection", () => {
     ];
     expect(groupSessionsBySection(rows).map((s) => s.key)).toEqual([
       "busy",
-      "idle",
       "inactive",
       "done",
       "offline",
@@ -1436,8 +1435,21 @@ describe("groupSessionsBySection", () => {
     expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["z", "a", "m"]);
   });
 
+  // Idle rows share the busy section, keeping the input row order across
+  // both statuses.
+  test("idle rows merge into the busy section in input order", () => {
+    const rows = [
+      sessionRow({ sid: "i1", connected: true, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "b1", connected: true, agent: agent({ status: "busy" }) }),
+      sessionRow({ sid: "i2", connected: true }),
+    ];
+    const sections = groupSessionsBySection(rows);
+    expect(sections.map((s) => s.key)).toEqual(["busy"]);
+    expect(sections[0]?.rows.map((r) => r.sid)).toEqual(["i1", "b1", "i2"]);
+  });
+
   // Section label text, used verbatim by SessionList.tsx's <summary>.
-  test("labels: Busy / Idle / Inactive / Done / ccmsg未起動", () => {
+  test("labels: Active / Inactive / Done / ccmsg未起動", () => {
     const rows = [
       sessionRow({ sid: "busy", connected: true, agent: agent({ status: "busy" }) }),
       sessionRow({ sid: "idle", connected: true, agent: agent({ status: undefined }) }),
@@ -1447,8 +1459,7 @@ describe("groupSessionsBySection", () => {
     ];
     const labels = Object.fromEntries(groupSessionsBySection(rows).map((s) => [s.key, s.label]));
     expect(labels).toEqual({
-      busy: "Busy",
-      idle: "Idle",
+      busy: "Active",
       inactive: "Inactive",
       done: "Done",
       offline: "ccmsg未起動",
