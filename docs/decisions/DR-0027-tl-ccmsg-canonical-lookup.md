@@ -69,7 +69,7 @@ lazy read にそのまま乗る。
 
 ## 6. Addendum 2026-09-26: 単体 ccmsg (peer messaging socket 注入) の受信・送信・PushNotification
 
-メッセージの配送は単体の ccmsg (別リポ) が Claude Code の peer messaging socket へ直接書き込む経路に移った。この経路では subscribe の `<task-notification><event>` は transcript に載らず、代わりに以下の形が載る。TL と daemon (session-user-input / session-dump) はこれらを room を介さずそのまま描く。照合パターンは `packages/protocol/src/ccmsg-direct-transcript.ts` の 1 モジュールに集約し、webui と daemon の双方がそれを使う (形が変わったらここだけ直す)。
+メッセージの配送は Claude Code の peer messaging socket へ直接書き込む経路に移った (単体の ccmsg (別リポ) に加え、v1 daemon 自身も同じ経路で注入する。daemon 側の封筒生成・宛先解決の正本は [DR-0034](./DR-0034-peer-socket-injection.md))。この経路では subscribe の `<task-notification><event>` は transcript に載らず、代わりに以下の形が載る。TL と daemon (session-user-input / session-dump) はこれらを room を介さずそのまま描く。照合パターンは `packages/protocol/src/ccmsg-direct-transcript.ts` の 1 モジュールに集約し、webui と daemon の双方がそれを使う (形が変わったらここだけ直す)。
 
 ### 6.1 受信 (封筒)
 

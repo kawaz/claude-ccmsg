@@ -34,13 +34,18 @@ Claude Code の Monitor tool から `persistent` オプションが無くなり�
 
 単体 ccmsg 経由の受信・送信・PushNotification をどう TL / daemon に反映するかは、Bash tool_use の command 文字列パターンマッチ (`ccmsg post|reply|notify` の呼び出し検出) と tool_result の形 (`{}` / `{"delivered":…}` で送信済み、`{"ok":…}` は room CLI 応答として対象外) に依存する設計にした。これは DR-0027 §4 Addendum で既に一度「パターンマッチは壊れやすい」と反省した経緯があるため、照合ロジックを 1 モジュールに集約して「形が変わったらここだけ直す」構造にすることで同じ轍を避けた。
 
+## 続報 2026-09-28
+
+u1 の webui 投稿 (= room msg 一般) を宛先セッションへ届ける注入を daemon 本体に実装した (change id `qwyqnpovmmtp` / `sqmvystxqsyz`)。`deliver` / `deliverNewRoom` が結果を待たずに `peer-inject.ts` の `PeerInjector` を呼び、成否は log にのみ残す。subscribe 配信とは独立した経路として並行に走る。詳細は `docs/decisions/DR-0034-peer-socket-injection.md`。
+
+`say` shim と `bin/say` は復旧せず削除する方針に変更した (change id `vuwqmxlv`)。音声通知は Claude Code の PushNotification を別 plugin の hook が扱う形に統一されたため。既存の `~/.local/bin/say` の旧 shim は用済みで、ユーザが手元で削除する対象。
+
 ## 次にやること
 
-- [ ] u1 の webui 投稿を v2 経由で届ける実装。auto mode classifier の Credential Exploration 判定で委譲が拒否されており、進め方は kawaz の裁定待ち
-- [ ] 既存の `~/.local/bin/say` shim は旧形式のままなので更新が必要
 - [ ] daemon 再起動までは、kill されずに終わったセッションが一覧に残り続ける
 
 ## 関連
 
-- `docs/decisions/DR-0027.md` §6 Addendum 2026-09-26 (配送経路の正本)
-- change id `ollsvxmwzvzs` / `ptuxutxrpwwz` / `pyzsnznxrltq` / `vxovmvlkppkv`
+- `docs/decisions/DR-0027.md` §6 Addendum 2026-09-26 (受信封筒の正本)
+- `docs/decisions/DR-0034-peer-socket-injection.md` (daemon 自身の注入の正本)
+- change id `ollsvxmwzvzs` / `ptuxutxrpwwz` / `pyzsnznxrltq` / `vxovmvlkppkv` / `qwyqnpovmmtp` / `sqmvystxqsyz` / `vuwqmxlv`
