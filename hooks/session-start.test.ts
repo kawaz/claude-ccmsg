@@ -8,28 +8,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../packages/testkit/src/mock-bin.ts";
 import {
-  candidateBinDirs,
   deriveRepoRoot,
   deriveWs,
-  detectSayShimCandidate,
   getRepoWsFromVcs,
   pruneOldSessionFiles,
-  renderSayShim,
-  sayShimDeclineMarkerPath,
   sessionFilePath,
   sessionLocation,
   writeSessionFile,
 } from "./session-start.ts";
-
-describe("candidateBinDirs", () => {
-  // 優先順位: ~/.local/bin が ~/bin より先 (DR-0007 §1)。
-  test("~/.local/bin が ~/bin より優先される順で並ぶ", () => {
-    expect(candidateBinDirs("/home/u")).toEqual([
-      path.join("/home/u", ".local", "bin"),
-      path.join("/home/u", "bin"),
-    ]);
-  });
-});
 
 // deriveWs: `bump-semver vcs get` の実測結果 (root / worktree-name /
 // current-branch) から ws だけを組み立てる純関数。repo はもう path 由来では
@@ -307,140 +293,6 @@ esac
     const elapsed = Date.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(250);
     expect(elapsed).toBeLessThan(2000);
-  });
-});
-
-describe("detectSayShimCandidate", () => {
-  let base: string;
-  let home: string;
-  let stateDir: string;
-  let pluginRoot: string;
-  let systemSay: string;
-  let localBin: string;
-
-  const LAUNCHER = "/opt/ccmsg/1.2.3/bin/ccmsg";
-  const SHIM_TEMPLATE =
-    "#!/bin/bash\n# ccmsg-say-shim\nlauncher='@CCMSG_LAUNCHER@'\nexec /usr/bin/say \"$@\"\n";
-  const SHIM_BODY = renderSayShim(SHIM_TEMPLATE, LAUNCHER);
-
-  beforeEach(() => {
-    base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-sayshim-"));
-    home = path.join(base, "home");
-    stateDir = path.join(base, "state");
-    pluginRoot = path.join(base, "plugin");
-    localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(stateDir);
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(path.join(pluginRoot, "bin"), { recursive: true });
-    fs.writeFileSync(path.join(pluginRoot, "bin", "say"), SHIM_TEMPLATE);
-    // 実 /usr/bin/say に依存せず「system say」を模す。
-    const usrBin = path.join(base, "usr", "bin");
-    fs.mkdirSync(usrBin, { recursive: true });
-    systemSay = path.join(usrBin, "say");
-    fs.writeFileSync(systemSay, "#!/bin/sh\n# the real thing\n");
-  });
-
-  afterEach(() => {
-    fs.rmSync(base, { recursive: true, force: true });
-  });
-
-  const detect = (pathEnv: string) =>
-    detectSayShimCandidate(pathEnv, home, stateDir, { pluginRoot, launcher: LAUNCHER, systemSay });
-
-  const withSystem = (...dirs: string[]) => [...dirs, path.dirname(systemSay)].join(path.delimiter);
-
-  // 正常系: PATH の実効 say が system の物だけで、その前に書き込み可能な dir が
-  // あるなら install を提案する。
-  test("system say だけの PATH なら install を提案する", () => {
-    expect(detect(withSystem(localBin))).toEqual({
-      dir: localBin,
-      shimPath: path.join(localBin, "say"),
-      content: SHIM_BODY,
-      action: "install",
-    });
-  });
-
-  // ccmsg が既に PATH に居るなら、shim は同じ dir に置く (= 2 箇所に散らさない)。
-  test("PATH 上の ccmsg と同じ dir を配置先に選ぶ", () => {
-    const otherBin = path.join(base, "other");
-    fs.mkdirSync(otherBin);
-    fs.writeFileSync(path.join(otherBin, "ccmsg"), "#!/bin/sh\n");
-    const got = detect(withSystem(otherBin, localBin));
-    expect(got?.dir).toBe(otherBin);
-  });
-
-  // 既に自分の shim が最新の内容で置かれているなら、何も言わない。
-  test("最新の shim が既に置かれていれば null", () => {
-    fs.writeFileSync(path.join(localBin, "say"), SHIM_BODY);
-    expect(detect(withSystem(localBin))).toBeNull();
-  });
-
-  // 自分の shim (marker 有り) だが内容が古いなら update を提案する
-  // (= shim は自己更新経路を持たないので、内容 drift の再コピーが更新手段)。
-  test("自分の shim が古ければ update を提案する", () => {
-    const stale = path.join(localBin, "say");
-    fs.writeFileSync(stale, "#!/bin/bash\n# ccmsg-say-shim\n# old\n");
-    expect(detect(withSystem(localBin))).toEqual({
-      dir: localBin,
-      shimPath: stale,
-      content: SHIM_BODY,
-      action: "update",
-    });
-  });
-
-  // PATH の実効 say が他人の物 (marker 無し) なら、上書き案内をしない (乗っ取り防止)。
-  test("他人の say が PATH に居れば null", () => {
-    fs.writeFileSync(path.join(localBin, "say"), "#!/bin/sh\n# somebody else's say\n");
-    expect(detect(withSystem(localBin))).toBeNull();
-  });
-
-  // 書き込み可能な候補 dir が system say より後ろにしか無いなら、置いても効かない
-  // ので提案しない。
-  test("候補 dir が system say より後ろなら null", () => {
-    expect(detect(withSystem() + path.delimiter + localBin)).toBeNull();
-  });
-
-  // decline マーカーが立っていれば二度と提案しない (毎セッション nag 防止)。
-  test("decline マーカーがあれば null", () => {
-    fs.writeFileSync(sayShimDeclineMarkerPath(stateDir), "");
-    expect(detect(withSystem(localBin))).toBeNull();
-  });
-
-  // 候補 dir が書き込み不可なら提案しない (失敗するだけの案内を出さない)。
-  test("候補 dir が書き込み不可なら null", () => {
-    fs.chmodSync(localBin, 0o500);
-    try {
-      expect(detect(withSystem(localBin))).toBeNull();
-    } finally {
-      fs.chmodSync(localBin, 0o700);
-    }
-  });
-
-  // launcher の場所が変わった (plugin 更新) 旧 shim は update を提案する。
-  test("埋め込まれた launcher が現在のものと違えば update を提案する", () => {
-    fs.writeFileSync(
-      path.join(localBin, "say"),
-      renderSayShim(SHIM_TEMPLATE, "/opt/ccmsg/1.2.2/bin/ccmsg"),
-    );
-    expect(detect(withSystem(localBin))?.action).toBe("update");
-  });
-
-  // plugin が bin/say を配っていない (読めない) なら提案のしようがない。
-  test("plugin の bin/say が読めなければ null", () => {
-    fs.rmSync(path.join(pluginRoot, "bin", "say"));
-    expect(detect(withSystem(localBin))).toBeNull();
-  });
-});
-
-// sessionLocation: 所在の出所は固定値だけ (DR-0003 §3 「所在の正本」)。
-// SessionStart は event の cwd を渡してよい (セッションが何も実行する前の値)。
-describe("renderSayShim", () => {
-  test("placeholder を launcher の絶対パスで置き換える", () => {
-    expect(renderSayShim("l='@CCMSG_LAUNCHER@'", "/a/b/ccmsg")).toBe("l='/a/b/ccmsg'");
-  });
-
-  test("launcher の single quote をエスケープする", () => {
-    expect(renderSayShim("l='@CCMSG_LAUNCHER@'", "/a'b/ccmsg")).toBe("l='/a'\\''b/ccmsg'");
   });
 });
 

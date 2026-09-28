@@ -5,7 +5,7 @@ description: ccmsg で別 Claude Code セッションと通信する時に使う
 
 # ccmsg
 
-送信・返信・通知は PATH 上の `ccmsg` で行う。`say` / `dump` など下記の plugin 固有コマンドは `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg ...` で実行する。
+送信・返信・通知は PATH 上の `ccmsg` で行う。`dump` など下記の plugin 固有コマンドは `${CLAUDE_PLUGIN_ROOT}/bin/ccmsg ...` で実行する。
 
 ## 受信
 
@@ -61,9 +61,3 @@ web UI の room 投稿には daemon が英語の実行指示 `reply_via` を付�
 AI が直接読む用途では `--format text` を使える。人間可読ヘッダ直後に Session context の JSON、続いて `[+<経過ms>ms <kind> <from>→<to>]` と本文を空行区切りで出し、会話 entry の `meta` は省略する。`agents_past` は JSON でなく `Agents outside this range (<件数>):` に続く `  <agent_id> <name> — <description>` の平坦な 1 行リストとして出る。
 
 `kind` は `ccmsg-received`, `ccmsg-sent`, `agent-spawn`, `agent-send`, `peer-message`, `user`, `assistant`, `thinking`。ccmsg の本文は transcript 内の短縮表現でなく daemon 保存原本から復元される。
-
-## say
-
-`${CLAUDE_PLUGIN_ROOT}/bin/ccmsg say [args...]` は引数をそのまま `/usr/bin/say` に渡して発声する (say のオプションはすべて生きる)。発声と同時に自セッションの 1on1 room へ発話が記録され、web UI がどのセッションの音かを表示できる。自分の発話が受信メッセージとして返ってくることはない。
-
-`bin/say` は素の `say` をこのコマンドに委譲する PATH shim。配置は SessionStart hook が検出した時だけ案内する (launcher の絶対パスを埋め込んだものを PATH 上の `ccmsg` と同じ dir へ `install -m 0755` でコピー、symlink 不可: 参照先の plugin cache dir は update で消える。update 後は古い launcher を指すので、hook が更新を案内するまでは素の `say` として鳴る)。**ユーザ確認なしに置かない**、断られたら decline マーカーを置いて二度と提案しない。
