@@ -314,10 +314,6 @@ export interface Daemon {
   /** Room messages handed to a session through its peer messaging socket
    * (peer-inject.ts). */
   peerInjector: PeerInjector;
-  /** `${sid}|${room}|${mid}` of every message that reached its session through
-   * the socket: the subscribe stream of that session never carries it again,
-   * live or on a cursor replay. */
-  injected: Set<string>;
   /** Absolute launcher path the injected envelope's reply line names. */
   launcher: string;
 }
@@ -534,16 +530,8 @@ interface DeliverOpts {
   echo?: boolean;
 }
 
-function writeDelivered(
-  daemon: Daemon,
-  conn: Conn,
-  room: Room,
-  ev: StorageEvent,
-  opts: DeliverOpts = {},
-): void {
+function writeDelivered(conn: Conn, room: Room, ev: StorageEvent, opts: DeliverOpts = {}): void {
   if (ev.type === "msg") {
-    const id = conn.identity;
-    if (id?.role === "session" && daemon.injected.has(`${id.sid}|${room.id}|${ev.mid}`)) return;
     const echo = opts.echo === true;
     const rid = recipientId(conn, room);
     // reply_via is a delivery-time wire instruction, never stored in the room's
@@ -1356,7 +1344,7 @@ function isSuppressedForSubscriber(conn: Conn, room: Room, ev: StorageEvent): bo
  * (DR-0011 §1: the `to`-delivery filter below is msg-only too, same reasoning).
  */
 function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): void {
-  const injecting = ev.type === "msg" ? injectToSessions(daemon, room, ev, author) : new Map();
+  if (ev.type === "msg") injectToSessions(daemon, room, ev, author);
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
     if (isSuppressedForSubscriber(sub, room, ev)) continue;
@@ -1364,40 +1352,23 @@ function deliver(daemon: Daemon, room: Room, ev: StorageEvent, author: Author): 
       if (isAuthorSub(sub, author)) {
         // The `to` filter is not applied: it decides who *else* receives the
         // msg, and the author is never excluded from their own post.
-        if (sub.identity?.role === "session") writeDelivered(daemon, sub, room, ev, { echo: true });
+        if (sub.identity?.role === "session") writeDelivered(sub, room, ev, { echo: true });
         continue;
       }
       if (!msgVisibleTo(sub, room, ev)) continue;
-      const pending =
-        sub.identity?.role === "session" ? injecting.get(sub.identity.sid) : undefined;
-      if (pending !== undefined) {
-        // The stream frame waits for the socket's answer: sent only when the
-        // socket did not carry the message (writeDelivered skips it otherwise).
-        void pending.then(() => {
-          if (daemon.subscribers.has(sub)) writeDelivered(daemon, sub, room, ev);
-        });
-        continue;
-      }
     }
-    writeDelivered(daemon, sub, room, ev);
+    writeDelivered(sub, room, ev);
   }
 }
 
 /** Hand a room message to every recipient session through its peer messaging
- * socket (peer-inject.ts). Answers, per recipient sid, the attempt still in
- * flight; a sid that reached its session lands in `daemon.injected`.
+ * socket (peer-inject.ts), alongside the subscribe stream. The outcome is only
+ * logged.
  *
  * Recipients are the room's member sessions other than the author, narrowed
- * by `to` exactly as msgVisibleTo narrows subscribers. A session never
- * announced a CLAUDE_CONFIG_DIR has no state file to look in and is left to
- * the subscribe stream. */
-function injectToSessions(
-  daemon: Daemon,
-  room: Room,
-  ev: MsgEvent,
-  author: Author,
-): Map<string, Promise<void>> {
-  const attempts = new Map<string, Promise<void>>();
+ * by `to` exactly as msgVisibleTo narrows subscribers. A session that never
+ * announced a CLAUDE_CONFIG_DIR has no state file to look in and is skipped. */
+function injectToSessions(daemon: Daemon, room: Room, ev: MsgEvent, author: Author): void {
   const members = memberIdBySid(room);
   const fromSid =
     ev.from === ADMIN_ID ? undefined : [...members].find(([, id]) => id === ev.from)?.[0];
@@ -1408,21 +1379,11 @@ function injectToSessions(
     const configDir = daemon.sessions.get(sid)?.configDir;
     if (configDir === undefined) continue;
     const message = injectMessage(daemon, room, ev, fromSid);
-    const key = `${sid}|${room.id}|${ev.mid}`;
-    attempts.set(
-      sid,
-      daemon.peerInjector.send(configDir, sid, message).then(
-        (outcome) => {
-          if (outcome === "delivered") daemon.injected.add(key);
-          daemon.log.info(`peer-inject ${message.mid} -> ${sid}: ${outcome}`);
-        },
-        (e: unknown) => {
-          daemon.log.warn(`peer-inject ${message.mid} -> ${sid}: ${String(e)}`);
-        },
-      ),
+    daemon.peerInjector.send(configDir, sid, message).then(
+      (outcome) => daemon.log.info(`peer-inject ${message.mid} -> ${sid}: ${outcome}`),
+      (e: unknown) => daemon.log.warn(`peer-inject ${message.mid} -> ${sid}: ${String(e)}`),
     );
   }
-  return attempts;
 }
 
 /** The envelope's reply line follows computeReplyVia: none for an archived
@@ -1491,7 +1452,6 @@ function isValidSeqCursor(v: number | undefined): v is number {
  * and history legitimately includes one's own messages.
  */
 function sendBacklog(
-  daemon: Daemon,
   conn: Conn,
   room: Room,
   sinceMid?: number,
@@ -1518,12 +1478,12 @@ function sendBacklog(
       if (ev.type === "msg") {
         if (ev.from === selfId) {
           // echo rule (see docstring): own post replayed bodyless
-          writeDelivered(daemon, conn, room, ev, { echo: true });
+          writeDelivered(conn, room, ev, { echo: true });
           continue;
         }
         if (!msgVisibleTo(conn, room, ev)) continue;
       }
-      writeDelivered(daemon, conn, room, ev);
+      writeDelivered(conn, room, ev);
     }
     return;
   }
@@ -1546,12 +1506,12 @@ function sendBacklog(
       if (ev.type === "msg") {
         if (ev.from === selfId) {
           // echo rule (see docstring): own post replayed bodyless
-          writeDelivered(daemon, conn, room, ev, { echo: true });
+          writeDelivered(conn, room, ev, { echo: true });
           continue;
         }
         if (!msgVisibleTo(conn, room, ev)) continue;
       }
-      writeDelivered(daemon, conn, room, ev);
+      writeDelivered(conn, room, ev);
     }
     return;
   }
@@ -1580,13 +1540,12 @@ function sendBacklog(
       if (suppressAuthorId !== undefined && ev.from === suppressAuthorId) {
         // echo rule: a session-role author sees the fact of their own post
         // without its body; the webui (user role) keeps getting nothing here.
-        if (conn.identity?.role === "session")
-          writeDelivered(daemon, conn, room, ev, { echo: true });
+        if (conn.identity?.role === "session") writeDelivered(conn, room, ev, { echo: true });
         continue;
       }
       if (!msgVisibleTo(conn, room, ev)) continue;
     }
-    writeDelivered(daemon, conn, room, ev);
+    writeDelivered(conn, room, ev);
   }
 }
 
@@ -1611,24 +1570,13 @@ function supersedeOlderSessionSubscribers(daemon: Daemon, conn: Conn): void {
 
 /** Deliver a brand-new room's snapshot to every subscriber that sees it. */
 function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: string | null): void {
-  const injecting = new Map<string, Promise<void>[]>();
   for (const ev of room.events) {
-    if (ev.type !== "msg") continue;
-    for (const [sid, attempt] of injectToSessions(daemon, room, ev, author)) {
-      injecting.set(sid, [...(injecting.get(sid) ?? []), attempt]);
-    }
+    if (ev.type === "msg") injectToSessions(daemon, room, ev, author);
   }
   for (const sub of daemon.subscribers) {
     if (!subscriberSeesRoom(sub, room)) continue;
     const suppress = isAuthorSub(sub, author) && authorId !== null ? authorId : undefined;
-    const pending = sub.identity?.role === "session" ? injecting.get(sub.identity.sid) : undefined;
-    if (pending !== undefined) {
-      void Promise.all(pending).then(() => {
-        if (daemon.subscribers.has(sub)) sendBacklog(daemon, sub, room, undefined, suppress);
-      });
-      continue;
-    }
-    sendBacklog(daemon, sub, room, undefined, suppress);
+    sendBacklog(sub, room, undefined, suppress);
   }
 }
 
@@ -1649,7 +1597,7 @@ function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): 
   // `{ok:true, reused:true}` with no mid — a swallowed post disguised as
   // success.
   room.dedupEligible = false;
-  for (const r of recipients) writeDelivered(daemon, r, room, ev);
+  for (const r of recipients) writeDelivered(r, room, ev);
 }
 
 // --- room creation ---------------------------------------------------------
@@ -2660,17 +2608,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
               // session that just posted and then subscribed needs the post on
               // record, not its body re-read (parity with live-deliver's echo).
               if (ev.from === selfId) {
-                writeDelivered(daemon, conn, room, ev, { replay: true, echo: true });
+                writeDelivered(conn, room, ev, { replay: true, echo: true });
                 continue;
               }
               if (!msgVisibleTo(conn, room, ev)) continue;
-              writeDelivered(daemon, conn, room, ev, { replay: true });
+              writeDelivered(conn, room, ev, { replay: true });
             }
           }
           cursors.push({ room: room.id, last_mid: room.lastMid });
           continue;
         }
-        sendBacklog(daemon, conn, room, sinceMid, undefined, sinceSeq);
+        sendBacklog(conn, room, sinceMid, undefined, sinceSeq);
       }
       if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
       // agents polling (DR-0009-agents addendum) only ever runs while a user-role
@@ -2724,7 +2672,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // Same no-cursor join snapshot the `backlog: true` subscribe path builds,
       // for this one room. The reply goes last so the client can treat it as
       // the "snapshot complete" sentinel (frames on one connection keep order).
-      sendBacklog(daemon, conn, room);
+      sendBacklog(conn, room);
       send(conn, { ok: true, room: room.id });
       return;
     }
@@ -3666,11 +3614,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const targetSub = [...daemon.subscribers].find(
         (s) => s.identity?.role === "session" && s.identity.sid === targetSid,
       );
-      if (targetSub) sendBacklog(daemon, targetSub, room);
+      if (targetSub) sendBacklog(targetSub, room);
       for (const sub of daemon.subscribers) {
         if (sub === targetSub) continue; // already covered by their snapshot above
         if (!subscriberSeesRoom(sub, room)) continue;
-        writeDelivered(daemon, sub, room, ev);
+        writeDelivered(sub, room, ev);
       }
       send(conn, { ok: true, room: room.id, id, already: false });
       return;
@@ -3876,7 +3824,6 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     llmStatusRefresher: null,
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
-    injected: new Set(),
     launcher: resolveLauncher(),
   };
 

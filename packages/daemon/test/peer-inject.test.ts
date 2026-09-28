@@ -177,7 +177,7 @@ async function sessionWithConfig(ctx: DaemonCtx, sid: string, configDir?: string
 
 describe("daemon delivery through the peer socket", () => {
   test(
-    "an injected msg stays off the subscribe stream; a msg the socket cannot take falls back to it",
+    "a msg reaches the session socket, and the subscribe stream as before",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -201,11 +201,9 @@ describe("daemon delivery through the peer socket", () => {
           new RegExp(`\\nvia socket\\n\\nReply with: \\S+ reply ${room}m${first.mid} <text>\\n`),
         );
 
-        h.stop();
-        const second = await a.request<{ mid: number }>({ op: "post", room, msg: "via stream" });
         const { ev } = await b.readEventUntil((e) => e.type === "msg");
-        expect(ev.mid).toBe(second.mid);
-        expect(ev.msg).toBe("via stream");
+        expect(ev.mid).toBe(first.mid);
+        expect(ev.msg).toBe("via socket");
       } finally {
         await stopTestDaemon(ctx);
       }
