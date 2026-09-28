@@ -525,7 +525,7 @@ exit 1
 
 interface PeersEv {
   ev: string;
-  peers: { sid: string; repo: string; ws: string; cwd: string }[];
+  peers: { sid: string; repo: string; ws: string; cwd: string; transcript_path?: string }[];
 }
 
 function row(sessionId: string, cwd: string, extra: Record<string, unknown> = {}): unknown {
@@ -689,6 +689,30 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         await u.readEventUntil((e) => e.ev === "agents" && e.agents.length === 0);
         const res = await u.request<{ peers: { sid: string }[] }>({ op: "peers" });
         expect(res.peers.map((p) => p.sid)).toEqual(["sA"]);
+      });
+    },
+    T,
+  );
+
+  test(
+    "登録時に無かった transcript が後で書かれたら次の poll で peers に載る",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const sid = "231e3d3d-1aed-4050-be17-7e5cdf2f7402";
+        const u = await watcher(ctx);
+        setRows(dirA, [row(sid, cwd)]);
+        const first = await u.readEventUntil<PeersEv>(hasPeer(sid));
+        expect(first.ev.peers.find((p) => p.sid === sid)?.transcript_path).toBeUndefined();
+        const projectDir = path.join(dirA, "projects", "-some-project");
+        fs.mkdirSync(projectDir, { recursive: true });
+        const file = path.join(projectDir, `${sid}.jsonl`);
+        fs.writeFileSync(file, "");
+        const { ev } = await u.readEventUntil<PeersEv>(
+          (e) =>
+            e.ev === "peers" &&
+            (e as PeersEv).peers.some((p) => p.sid === sid && p.transcript_path !== undefined),
+        );
+        expect(ev.peers.find((p) => p.sid === sid)?.transcript_path).toBe(file);
       });
     },
     T,

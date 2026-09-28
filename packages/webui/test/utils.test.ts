@@ -1003,6 +1003,7 @@ function sessionRow(overrides: Partial<SessionRow>): SessionRow {
     ws: "main",
     cwd: "/repos/claude-ccmsg/main",
     connected: true,
+    transcript_path: "/p/s1.jsonl",
     ...overrides,
   };
 }
@@ -1335,6 +1336,21 @@ describe("sessionStatus", () => {
 });
 
 describe("groupSessionsBySection", () => {
+  // A session with no transcript (never typed into, SDK / IDE launches) has
+  // nothing to open, so it gets its own section after every other one — even
+  // though `claude agents` reports it as idle.
+  test("a connected row without transcript_path goes to a last 'No transcript' section", () => {
+    const rows = [
+      sessionRow({ sid: "blank", transcript_path: undefined, agent: agent({ status: undefined }) }),
+      sessionRow({ sid: "off", connected: false, agent: agent({}) }),
+      sessionRow({ sid: "done", agent: agent({ state: "done" }) }),
+      sessionRow({ sid: "busy", agent: agent({ status: "busy" }) }),
+    ];
+    const sections = groupSessionsBySection(rows);
+    expect(sections.map((s) => s.key)).toEqual(["busy", "done", "offline", "unobserved"]);
+    expect(sections.at(-1)).toMatchObject({ label: "No transcript", rows: [{ sid: "blank" }] });
+  });
+
   // Core U3 behavior (kawaz: "リスト側に busy とかのやつでセクション切って"):
   // rows land in the section matching sessionStatus(row).
   test("partitions rows into their sessionStatus section", () => {

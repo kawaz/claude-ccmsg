@@ -701,6 +701,12 @@ export function sessionRowTitle(row: SessionRow): string {
  *   connected row anyway (the daemon folds it over connected peers only), so
  *   testing it first would be a second way to say the same thing while
  *   weakening the "disconnected ⇒ offline" invariant.
+ * - A connected row with no `transcript_path` is `"unobserved"`: nothing about
+ *   it can be viewed (Timeline, Status and the terminal all read the
+ *   transcript), which is the case for a session nobody has typed into yet
+ *   and for launches the daemon has no transcript for. Checked ahead of the
+ *   agent's status because `claude agents` reports such a session as idle,
+ *   which would put an unopenable row among the running ones.
  * - `api_error` (harness API-error row ended the latest main-context turn)
  *   outranks everything `claude agents` reports for a connected row. Such a
  *   session still looks busy from the outside but is actually stopped waiting
@@ -719,6 +725,7 @@ export type SessionStatus = string;
 export function sessionStatus(row: SessionRow): SessionStatus {
   if (!row.connected) return "offline";
   if (row.api_error) return "error";
+  if (!row.transcript_path) return "unobserved";
   if (!row.agent) return "idle";
   if (row.agent.state === "done") return "done";
   return row.agent.status || "idle";
@@ -850,6 +857,9 @@ export function badgeLabel(kind: string): string {
 // 気付く優先度が一段高い。
 const SESSION_SECTION_KNOWN_ORDER: string[] = ["error", "waiting", "busy", "inactive", "done"];
 
+/** Sections kept after every other one, in this order. */
+const SESSION_SECTION_TAIL: string[] = ["offline", "unobserved"];
+
 const SESSION_SECTION_LABELS: Record<string, string> = {
   error: "Error",
   waiting: "Waiting",
@@ -857,6 +867,7 @@ const SESSION_SECTION_LABELS: Record<string, string> = {
   inactive: "Inactive",
   done: "Done",
   offline: "ccmsg未起動",
+  unobserved: "No transcript",
 };
 
 /** Capitalizes an unrecognized `sessionStatus` value for its section heading
@@ -883,17 +894,18 @@ function sectionLabel(key: string): string {
 
 /** Orders a set of section keys (as found in the data, any order): known
  * statuses first in `SESSION_SECTION_KNOWN_ORDER`'s order, then any
- * unrecognized status alphabetically, then `"offline"` always last. Keeping
+ * unrecognized status alphabetically, then `"offline"`, then `"unobserved"`
+ * — rows with nothing to open — always last. Keeping
  * this separate from `groupSessionsBySection` lets each rule (fixed known
  * order / alphabetical unknowns / offline-always-last) be tested and read on
  * its own. */
 function orderedSectionKeys(keys: string[]): string[] {
   const known = SESSION_SECTION_KNOWN_ORDER.filter((k) => keys.includes(k));
   const unknown = keys
-    .filter((k) => k !== "offline" && !SESSION_SECTION_KNOWN_ORDER.includes(k))
+    .filter((k) => !SESSION_SECTION_TAIL.includes(k) && !SESSION_SECTION_KNOWN_ORDER.includes(k))
     .sort((a, b) => a.localeCompare(b));
-  const offline = keys.includes("offline") ? ["offline"] : [];
-  return [...known, ...unknown, ...offline];
+  const tail = SESSION_SECTION_TAIL.filter((k) => keys.includes(k));
+  return [...known, ...unknown, ...tail];
 }
 
 export interface SessionSection {

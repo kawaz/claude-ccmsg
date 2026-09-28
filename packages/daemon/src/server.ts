@@ -655,6 +655,26 @@ async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise
   if (changed) maybeBroadcastPeers(daemon);
 }
 
+/** Give a registry-derived session its transcript once the harness writes
+ * one (DR-0034 §5). A session registered before anything was typed into it
+ * has no `<sid>.jsonl` yet, and the rows `claude agents --json` returns do not
+ * change when the first prompt creates it, so this runs on every poll rather
+ * than only when the rows change. */
+async function resolvePendingTranscripts(daemon: Daemon, poll: AgentsPoll): Promise<void> {
+  let changed = false;
+  for (const agent of poll.agents) {
+    const entry = daemon.sessions.get(agent.sessionId);
+    if (!entry || entry.meta.transcript_path) continue;
+    const found = await adoptTranscriptPath(agent.sessionId, undefined, [agent.config_dir]);
+    const current = daemon.sessions.get(agent.sessionId);
+    if (found && current && !current.meta.transcript_path) {
+      current.meta.transcript_path = found;
+      changed = true;
+    }
+  }
+  if (changed) maybeBroadcastPeers(daemon);
+}
+
 export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
@@ -3583,14 +3603,19 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
 
   if (agentsPollEnabled()) {
-    startAgentsPoller(daemon.agentsPoller, log, async (poll, polledAt) => {
-      await syncSessionsFromAgents(daemon, poll);
-      for (const sub of daemon.subscribers) {
-        if (sub.identity?.role === "user") {
-          send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
+    startAgentsPoller(
+      daemon.agentsPoller,
+      log,
+      async (poll, polledAt) => {
+        await syncSessionsFromAgents(daemon, poll);
+        for (const sub of daemon.subscribers) {
+          if (sub.identity?.role === "user") {
+            send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
+          }
         }
-      }
-    });
+      },
+      (poll) => resolvePendingTranscripts(daemon, poll),
+    );
   }
 
   // `CCMSG_NETWORK_WATCH=off` turns the wake off — the switch exists for test

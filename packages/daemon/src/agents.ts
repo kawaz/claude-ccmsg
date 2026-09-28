@@ -304,11 +304,14 @@ export function agentsPollEnabled(): boolean {
  * `onChange` fires only when the merged rows differ from the previous poll
  * (order-independent compare), and is awaited before the next poll may start,
  * so a slow registry update can never interleave with a newer poll's.
+ * `onPoll` fires after every poll, changed or not, for work whose input is
+ * not in the rows themselves (a transcript file appearing on disk).
  */
 export function startAgentsPoller(
   poller: AgentsPoller,
   log: AgentsLog,
   onChange: (poll: AgentsPoll, polledAt: string) => void | Promise<void>,
+  onPoll?: (poll: AgentsPoll) => void | Promise<void>,
 ): void {
   if (poller.timer !== null) return;
 
@@ -332,6 +335,7 @@ export function startAgentsPoller(
         // will not repeat.
         if (changed) await onChange(poll, polledAt);
         poller.cache = { agents: poll.agents, polledAt };
+        await onPoll?.(poll);
       } catch (e) {
         log.error(`agents poll: ${String(e)}`);
       } finally {
