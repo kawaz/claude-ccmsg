@@ -6,6 +6,7 @@
 - **Date**: 2026-07-14
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model、[DR-0003](./DR-0003-wire-protocol.md) の post/subscribe semantics、[DR-0006](./DR-0006-id-scheme-v2.md) の u1/aN namespace、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0013](./DR-0013-broadcast-room.md) の broadcast room を前提とする
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
+- **補足**: セッションへの msg 配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer-inject に一本化されており、本 DR の subscribe stream 上の msg フレームに関する記述 (reply_via / msg_via / echo 等) は DR-0034 に置き換えられている。返信指示は封筒の返信行が担う
 
 ## 1. Context / 動機
 

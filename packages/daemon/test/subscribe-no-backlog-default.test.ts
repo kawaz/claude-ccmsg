@@ -5,6 +5,10 @@
 // since/since_seq (even with an invalid value, e.g. old-client compat), or set
 // `backlog: true` (the webui's unconditional choice, since it paints room
 // history from the backlog).
+//
+// The cursor rules are role-agnostic; the msg frames themselves only ever reach
+// a user-role subscriber (a session hears room messages through peer-inject),
+// so the msg-bearing cases subscribe as the user.
 import { describe, expect, test } from "bun:test";
 import {
   connect,
@@ -50,7 +54,7 @@ describe("subscribe: no-backlog bare default", () => {
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" }); // mid 2, room.lastMid = 2
 
-        const bSub = await session(ctx, "B");
+        const bSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
         // the very first pushed frame must be the cursors summary, carrying this
         // room's current last_mid — not a replayed `type:"msg"` backlog line.
@@ -121,7 +125,7 @@ describe("subscribe: no-backlog bare default", () => {
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
 
-        const bSub = await session(ctx, "B");
+        const bSub = await user(ctx);
         await bSub.request({ op: "subscribe", since_seq: { [room]: 0 } });
         // `since_seq: 0` is a positional-delta replay from the start (DR-0016), not
         // the room_cursors summary — both pre-existing msgs arrive as real events

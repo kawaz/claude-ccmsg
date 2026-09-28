@@ -4,6 +4,7 @@
 - **Date**: 2026-07-03
 - **前提**: [DR-0001](./DR-0001-central-daemon-architecture.md) の room model を実装可能な粒度に確定する。一次資料は DR-0001 と同じ
 - **記述規約**: DR-0001 と同じ ([kawaz] / [提案] / [保留])
+- **補足**: セッションへの msg 配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer-inject に一本化されており、本 DR の subscribe stream 上の msg フレームに関する記述 (reply_via / msg_via / echo 等) は DR-0034 に置き換えられている。返信指示は封筒の返信行が担う
 
 ## Context
 

@@ -668,7 +668,7 @@ function printHelp(): void {
   process.stdout.write(`Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
-  read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
+  read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
@@ -689,19 +689,19 @@ Usage:
 
 Commands:
   post <room> <msg>            Post a message to a room (--to to filter delivery)
-  reply <rNmN> <msg>           Reply using the target named by the received
-                               reply_via instruction; the daemon builds targets
+  reply <rNmN> <msg>           Reply to a received message; the daemon builds
+                               targets
   create-room [<title>]        Open a room with peers (--members, --msg, --title
                                or positional <title>; --title wins when both given,
                                --exclude-self to keep the caller out of the room,
                                --kind broadcast for a session-broadcast room,
                                --kind 1on1 --members <sid> for a webui 1on1 priv room)
   next-room <room>             Spawn the next thread of a room (--msg, --title)
-  subscribe                    Stream live room events as jsonl to stdout. Startup
+  subscribe                    Stream live room events (membership, notify, ...)
+                               as jsonl to stdout. Room messages are not on this
+                               stream; a session receives them directly. Startup
                                and reconnect are silent; the bare default replays
-                               no backlog. Use read to catch up when needed, or
-                               --since to replay history for named rooms; each msg
-                               carries its reply_via instruction
+                               no backlog
   read <rNmN[,mN...]>          Fetch messages by compact reference ("r7m10,m11")
   read <room> <mids>           Existing form ("r7" + "10-15,18" or "10,11")
   dump <session-id>            Export session handoff context (todos, agents, rooms) +

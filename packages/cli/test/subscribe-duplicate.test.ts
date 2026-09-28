@@ -5,7 +5,7 @@
 //      (= 二重通知の解消をエージェントの規律に頼らない、kawaz r90m3 裁定)。
 //   2. 終了する側は理由が読める文言を stderr に出す (stdout は Monitor 用の
 //      イベント wire なので汚さない)。
-//   3. 収束後、msg は新しい subscribe にだけ 1 回届く。
+//   3. 収束後、room イベントは新しい subscribe に届く。
 //
 // 手法は reconnect.test.ts と同型 (実バイナリを subprocess で起動し、実 daemon
 // を相手にする)。
@@ -76,10 +76,10 @@ interface LineReader {
   read(): Promise<{ value?: Uint8Array; done: boolean }>;
   releaseLock(): void;
 }
-async function waitForMsgLine(
+async function waitForLeaveLine(
   reader: LineReader,
   accum: { buf: string; lines: string[] },
-  text: string,
+  room: string,
 ): Promise<void> {
   const dec = new TextDecoder();
   for (;;) {
@@ -90,8 +90,8 @@ async function waitForMsgLine(
       accum.buf = accum.buf.slice(idx + 1);
       accum.lines.push(line);
       try {
-        const ev = JSON.parse(line) as { type?: string; msg?: string };
-        if (ev.type === "msg" && ev.msg === text) return;
+        const ev = JSON.parse(line) as { type?: string; r?: string };
+        if (ev.type === "leave" && ev.r === room) return;
       } catch {
         // 非 JSON 行は無視 (現契約では発生しない)
       }
@@ -143,14 +143,12 @@ describe("ccmsg subscribe: 同一 sid の二重起動", () => {
       const firstOut = await new Response(first.stdout).text();
       expect(firstOut).not.toContain("subscribe_superseded");
 
-      // 収束後の配信は後発だけが受け取る。
-      const posted = JSON.parse(
-        (await runCli(["--sid", "S1", "post", room, "after-dup"], env)).out,
-      ) as {
+      // 収束後の配信 (S1 の leave) は後発が受け取る。
+      const left = JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out) as {
         ok: boolean;
       };
-      expect(posted.ok).toBe(true);
-      await waitForMsgLine(secondReader, secondAccum, "after-dup");
+      expect(left.ok).toBe(true);
+      await waitForLeaveLine(secondReader, secondAccum, room);
       expect(second.exitCode).toBeNull();
       secondReader.releaseLock();
     } finally {

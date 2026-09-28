@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { writeMockBin } from "../../testkit/src/mock-bin.ts";
 import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { fakeHarness, parseEnvelope, sessionWithConfig } from "./peer-harness.ts";
 import { tryAcquireLock } from "../src/flock.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
@@ -279,18 +280,14 @@ describe("HTTP/WS transport (DR-0004)", () => {
     "cross-transport delivery: a UDS session and a WS user share live delivery in the same room",
     async () => {
       const ctx = await startHttpDaemon();
+      const harness = fakeHarness("S");
       try {
-        const udsSession = await connect(ctx.sock);
-        await udsSession.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
+        const udsSession = await sessionWithConfig(ctx, "S", harness.configDir);
         const created = await udsSession.request<{ ok: true; room: string }>({
           op: "create_room",
           members: [],
         });
         const room = created.room;
-
-        const udsSub = await connect(ctx.sock);
-        await udsSub.hello({ role: "session", sid: "S", repo: "", ws: "", cwd: "" });
-        await udsSub.request({ op: "subscribe" });
 
         const wsUser = await connectWs(ctx);
         await wsUser.hello({ role: "user" });
@@ -303,17 +300,17 @@ describe("HTTP/WS transport (DR-0004)", () => {
         );
         expect(fromUds.r).toBe(room);
 
-        // WS user posts -> UDS subscriber (a different connection, so no echo suppression applies) receives it live
-        await wsUser.request({ op: "post", room, msg: "from ws" });
-        const { ev: fromWs } = await udsSub.readEventUntil(
-          (e) => e.type === "msg" && e.msg === "from ws",
-        );
-        expect(fromWs.from).toBe("u1"); // the WS poster, pinned to user
+        // WS user posts -> the UDS session receives it through its peer socket
+        const posted = await wsUser.request<{ mid: number }>({ op: "post", room, msg: "from ws" });
+        const { attrs, body } = parseEnvelope(await harness.nextContent());
+        expect(attrs["ccmsg-mid"]).toBe(`${room}m${posted.mid}`);
+        expect(attrs["ccmsg-from"]).toBe("user"); // the WS poster, pinned to user
+        expect(body).toStartWith("from ws\n");
 
         udsSession.close();
-        udsSub.close();
         wsUser.close();
       } finally {
+        harness.dispose();
         await stopTestDaemon(ctx);
       }
     },

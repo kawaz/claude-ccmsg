@@ -5,6 +5,10 @@
 // events (docs/issue/2026-07-15-subscribe-reconnect-nonmsg-redelivery.md —
 // observed as 6-10+ duplicate archive deliveries waking idle agent sessions).
 // These tests pin the seq cursor semantics end-to-end over a real daemon UDS.
+// The cursor rules are role-agnostic; cases that need `msg` frames in the
+// replay subscribe as the user (a session's stream carries no msg — room
+// messages reach it through peer-inject), the non-msg tail repro stays on a
+// session subscriber, the origin bug's victim.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -27,20 +31,18 @@ async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   return c;
 }
 
-/** Drain every already-queued line from a subscriber without blocking: post a
- * sentinel msg from a co-member and read until it arrives. Everything seen
- * before the sentinel is the complete backlog for the preceding subscribe. */
-async function drainUntilSentinel(
-  sub: TestClient,
-  poster: TestClient,
-  room: string,
-  tag: string,
-): Promise<any[]> {
-  await poster.request({ op: "post", room, msg: `sentinel-${tag}` });
-  const { seen } = await sub.readEventUntil(
-    (ev) => ev.type === "msg" && ev.msg === `sentinel-${tag}`,
-  );
-  return seen.slice(0, -1); // everything before the sentinel
+async function user(ctx: DaemonCtx): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.hello({ role: "user" });
+  return c;
+}
+
+/** Everything a subscribe pushed as its backlog. The backlog is written before
+ * the subscribe reply, so after one more round trip on the same connection the
+ * complete backlog is already queued and is read without waiting. */
+async function drainBacklog(sub: TestClient): Promise<any[]> {
+  await sub.request({ op: "rooms" });
+  return sub.pendingEvents();
 }
 
 describe("DR-0016 seq: assignment and delivery", () => {
@@ -68,10 +70,9 @@ describe("DR-0016 seq: assignment and delivery", () => {
         // issue 2026-07-17-subscribe-no-backlog-default) → join snapshot
         // backlog. Every delivered StorageEvent must carry a number seq,
         // strictly increasing in delivery order (delivery preserves file order).
-        const sub = await connect(ctx.sock);
-        await sub.hello({ role: "session", sid: "B" });
+        const sub = await user(ctx);
         await sub.request({ op: "subscribe", backlog: true });
-        const backlog = await drainUntilSentinel(sub, a, room, "t1");
+        const backlog = await drainBacklog(sub);
         const roomEvents = backlog.filter((ev) => ev.r === room && typeof ev.type === "string");
         expect(roomEvents.length).toBeGreaterThanOrEqual(4); // 2 member + msg + title + archive
         const types = new Set(roomEvents.map((ev) => ev.type));
@@ -137,12 +138,11 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         sub1.close();
 
         // Reconnect with since_seq = the tail's seq (client saw everything).
-        // Expected replay for this room: nothing at all. A sentinel posted
-        // AFTER the reconnect is the first thing that may arrive.
+        // Expected replay for this room: nothing at all.
         const sub2 = await connect(ctx.sock);
         await sub2.hello({ role: "session", sid: "B" });
         await sub2.request({ op: "subscribe", since_seq: { [room]: tailSeq } });
-        const replayed = await drainUntilSentinel(sub2, a, room, "t2");
+        const replayed = await drainBacklog(sub2);
         expect(replayed.filter((ev) => ev.r === room)).toEqual([]);
         sub2.close();
         a.close();
@@ -173,8 +173,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const room = created.room;
 
         // Learn the msg's seq first (`backlog: true` to get the join snapshot).
-        const sub1 = await connect(ctx.sock);
-        await sub1.hello({ role: "session", sid: "B" });
+        const sub1 = await user(ctx);
         await sub1.request({ op: "subscribe", backlog: true });
         const { ev: msgEv } = await sub1.readEventUntil(
           (ev) => ev.type === "msg" && ev.r === room && ev.msg === "m1",
@@ -186,26 +185,19 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         await a.request({ op: "archive_room", room, archived: true });
 
         // Reconnect with the cursor at the msg: the archive must arrive once.
-        const sub2 = await connect(ctx.sock);
-        await sub2.hello({ role: "session", sid: "B" });
+        const sub2 = await user(ctx);
         await sub2.request({ op: "subscribe", since_seq: { [room]: msgSeq } });
-        const replayed = await drainUntilSentinel(sub2, a, room, "t3");
+        const replayed = await drainBacklog(sub2);
         const archives = replayed.filter((ev) => ev.r === room && ev.type === "archive");
         expect(archives.length).toBe(1);
         const archiveSeq = archives[0]!.seq as number;
         sub2.close();
 
         // Cursor advanced past the archive → clean reconnect, zero replay.
-        const sub3 = await connect(ctx.sock);
-        await sub3.hello({ role: "session", sid: "B" });
+        const sub3 = await user(ctx);
         await sub3.request({ op: "subscribe", since_seq: { [room]: archiveSeq } });
-        const replayed2 = await drainUntilSentinel(sub3, a, room, "t4");
-        // (the t3 sentinel msg sits between archive and t4 sentinel — it has
-        // seq > archiveSeq, so exactly that one msg is a legitimate replay)
-        const unexpected = replayed2.filter(
-          (ev) => ev.r === room && !(ev.type === "msg" && ev.msg === "sentinel-t3"),
-        );
-        expect(unexpected).toEqual([]);
+        const replayed2 = await drainBacklog(sub3);
+        expect(replayed2.filter((ev) => ev.r === room)).toEqual([]);
         sub3.close();
         a.close();
       } finally {
@@ -234,11 +226,10 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const room = created.room;
         await a.request({ op: "post", room, msg: "m2" });
 
-        const sub = await connect(ctx.sock);
-        await sub.hello({ role: "session", sid: "B" });
+        const sub = await user(ctx);
         // mid cursor at m1 → replay must contain m2 (and not m1).
         await sub.request({ op: "subscribe", since: { [room]: 1 } });
-        const replayed = await drainUntilSentinel(sub, a, room, "t5");
+        const replayed = await drainBacklog(sub);
         const msgs = replayed.filter((ev) => ev.r === room && ev.type === "msg");
         expect(msgs.map((m) => m.msg)).toEqual(["m2"]);
         sub.close();
@@ -271,28 +262,23 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const room = created.room;
 
         // negative → invalid → join snapshot (m1 present)
-        const subNeg = await connect(ctx.sock);
-        await subNeg.hello({ role: "session", sid: "B" });
+        const subNeg = await user(ctx);
         await subNeg.request({ op: "subscribe", since_seq: { [room]: -5 } });
-        const negReplay = await drainUntilSentinel(subNeg, a, room, "neg");
+        const negReplay = await drainBacklog(subNeg);
         expect(negReplay.some((ev) => ev.r === room && ev.msg === "m1")).toBe(true);
         subNeg.close();
 
         // non-number (string) → invalid → join snapshot
-        const subStr = await connect(ctx.sock);
-        await subStr.hello({ role: "session", sid: "B" });
+        const subStr = await user(ctx);
         await subStr.request({ op: "subscribe", since_seq: { [room]: "nope" } });
-        const strReplay = await drainUntilSentinel(subStr, a, room, "str");
+        const strReplay = await drainBacklog(subStr);
         expect(strReplay.some((ev) => ev.r === room && ev.msg === "m1")).toBe(true);
         subStr.close();
 
-        // huge but valid → caught up → nothing from this room (except the
-        // sentinel-neg/str msgs which are themselves ≤ the huge cursor, so
-        // truly nothing).
-        const subBig = await connect(ctx.sock);
-        await subBig.hello({ role: "session", sid: "B" });
+        // huge but valid → caught up → nothing from this room.
+        const subBig = await user(ctx);
         await subBig.request({ op: "subscribe", since_seq: { [room]: 1e12 } });
-        const bigReplay = await drainUntilSentinel(subBig, a, room, "big");
+        const bigReplay = await drainBacklog(subBig);
         expect(bigReplay.filter((ev) => ev.r === room)).toEqual([]);
         subBig.close();
         a.close();

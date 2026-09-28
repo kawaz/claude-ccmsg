@@ -1,10 +1,8 @@
-// kawaz r46 mid=35: subscribe の bare default (since/backlog なし) で「直近 N ms
-// 以内かつ自分向けに live 配信されたはず」の msg を replay:true マーカー付きで
-// 流す。post → 相手セッションがまだ subscribe を張っていない → 相手が subscribe
-// した時に 3 分以内の自分宛メッセージを受け取れる、という穴を塞ぐ。
+// subscribe の bare default (since/backlog なし) で、user role の subscriber には
+// 「直近 N ms 以内かつ live 配信されたはず」の msg を replay:true マーカー付きで流す。
 // - since_seq / backlog:true 経路には影響しない (opt-in 既定の delta/full replay 側)
 // - broadcast room の member/leave suppression と msgVisibleTo は live 配信と同じルール
-// - 自 authored msg は軽量エコー化 (本文なしの msg_via + echo:true、DR-0003 §5 Addendum)
+// - session role の subscribe stream には msg を流さない (msg は peer-inject で届く)
 import { describe, expect, test } from "bun:test";
 import {
   connect,
@@ -19,6 +17,11 @@ const T = 15000;
 async function session(ctx: DaemonCtx, sid: string): Promise<TestClient> {
   const c = await connect(ctx.sock);
   await c.hello({ role: "session", sid, repo: `repo-${sid}`, ws: `ws-${sid}`, cwd: `/tmp/${sid}` });
+  return c;
+}
+async function user(ctx: DaemonCtx): Promise<TestClient> {
+  const c = await connect(ctx.sock);
+  await c.hello({ role: "user" });
   return c;
 }
 
@@ -37,7 +40,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
 
-        const bSub = await session(ctx, "B");
+        const bSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
         // Recent-replay msgs arrive first (replay:true), then the room_cursors summary.
         const { seen } = await bSub.readEventUntil((ev) => ev.ev === "room_cursors");
@@ -70,7 +73,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
 
-        const bSub = await session(ctx, "B");
+        const bSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
         const first = await bSub.readEvent<{ ev?: string; type?: string }>();
         expect(first?.ev).toBe("room_cursors");
@@ -88,41 +91,25 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
   );
 
   test(
-    "recent replay respects `to` filter: msg addressed to another member is not replayed",
+    "recent replay to the user includes `to`-addressed msgs, as live delivery does",
     async () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, "A");
         await session(ctx, "B");
         await session(ctx, "C");
-        const created = await a.request<{ room: string; ids?: Record<string, string> }>({
+        const created = await a.request<{ room: string }>({
           op: "create_room",
           members: ["B", "C"],
         });
         const room = created.room;
-        // Discover ids: use rooms op to inspect present members and map sid → member id.
-        const rs = await a.request<{
-          rooms: { id: string; members: { id: string; sid?: string }[] }[];
-        }>({ op: "rooms" });
-        const roomInfo = rs.rooms.find((r) => r.id === room)!;
-        const memberBId = roomInfo.members.find((m) => m.sid === "B")!.id;
-        // Post to B only (C excluded).
-        await a.request({ op: "post", room, msg: "for-B-only", to: [memberBId] });
+        await a.request({ op: "post", room, msg: "for-B-only", to: ["a2"] });
 
-        // C subscribes bare-default: must NOT see the `to:[memberB]` msg in recent-replay.
-        const cSub = await session(ctx, "C");
-        await cSub.request({ op: "subscribe" });
-        const first = await cSub.readEvent<{ ev?: string; type?: string }>();
-        expect(first?.ev).toBe("room_cursors");
-
-        // Confirm B does see it via recent-replay (positive case on same window).
-        const bSub = await session(ctx, "B");
-        await bSub.request({ op: "subscribe" });
-        const { seen } = await bSub.readEventUntil((ev) => ev.ev === "room_cursors");
+        const uSub = await user(ctx);
+        await uSub.request({ op: "subscribe" });
+        const { seen } = await uSub.readEventUntil((ev) => ev.ev === "room_cursors");
         const msgs = seen.filter((e) => e.type === "msg");
-        expect(msgs.length).toBe(1);
-        expect(msgs[0].mid).toBe(1);
-        expect(msgs[0].replay).toBe(true);
+        expect(msgs.map((e) => [e.mid, e.to, e.replay])).toEqual([[1, ["a2"], true]]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -144,7 +131,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         await a.request({ op: "post", room, msg: "m1" });
 
         // First subscribe: recent-replay fires and gives us the msg + cursors.
-        const bSub1 = await session(ctx, "B");
+        const bSub1 = await user(ctx);
         await bSub1.request({ op: "subscribe" });
         const first = await bSub1.readEventUntil((ev) => ev.ev === "room_cursors");
         const firstSeq = first.seen.find((e) => e.type === "msg")?.seq;
@@ -152,7 +139,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
 
         // Second subscribe with since_seq at that cursor: delta path, no recent-replay,
         // no room_cursors summary (since_seq counts as a cursor for the room).
-        const bSub2 = await session(ctx, "B");
+        const bSub2 = await user(ctx);
         await bSub2.request({ op: "subscribe", since_seq: { [room]: firstSeq! } });
         // Nothing to read up to a terminator we can force: post m2 live and assert
         // that only m2 arrives, with no replay flag.
@@ -171,7 +158,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
   );
 
   test(
-    "subscriber's own past post comes back through recent-replay bodyless (echo), never with its body",
+    "a session-role subscriber gets no recent replay, only room_cursors",
     async () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
@@ -181,19 +168,16 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
           members: ["B"],
         });
         const room = created.room;
-        // A posts, then A subscribes bare-default: it gets the post's *record*
-        // (msg_via + echo, replay-marked) but never the body it already wrote.
-        await a.request({ op: "post", room, msg: "own-post" });
+        await a.request({ op: "post", room, msg: "m1" });
 
-        const aSub = await session(ctx, "A");
-        await aSub.request({ op: "subscribe" });
-        const { ev } = await aSub.readEventUntil((e) => e.type === "msg");
-        expect(ev.from).toBe("a1");
-        expect(ev.echo).toBe(true);
-        expect(ev.replay).toBe(true);
-        expect(ev.msg).toBeUndefined();
-        expect(ev.msg_via).toBe(`Use \`ccmsg read ${room}m1\``);
-        expect(ev.reply_via).toBeUndefined();
+        for (const sid of ["A", "B"]) {
+          const sub = await session(ctx, sid);
+          await sub.request({ op: "subscribe" });
+          const first = await sub.readEvent<{ ev?: string; rooms?: unknown }>();
+          expect(first).toEqual({ ev: "room_cursors", rooms: [{ room, last_mid: 1 }] });
+          await sub.request({ op: "rooms" });
+          expect(await sub.pendingEvents()).toEqual([]);
+        }
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -214,7 +198,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
 
-        const bSub = await session(ctx, "B");
+        const bSub = await user(ctx);
         await bSub.request({ op: "subscribe", backlog: true });
         const { seen } = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 1);
         const msgs = seen.filter((e) => e.type === "msg");

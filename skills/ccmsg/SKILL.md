@@ -24,11 +24,7 @@ Reply with: ccmsg reply <mid> [--to <sid>] <text>
 
 届いたメッセージの `Reply with:` 行に従って `ccmsg reply <mid> <text>` で返す。既存メッセージへの応答に `post` を使わない。
 
-web UI の room 投稿には daemon が英語の実行指示 `reply_via` を付ける。その場合はその指示どおりに応答する。
-
-- `Use \`ccmsg reply r<N>m<M> <msg>\``: room の指定メッセージへ reply する (`${CLAUDE_PLUGIN_ROOT}/bin/ccmsg reply r<N>m<M> '<msg>'`)
-- `Reply in your normal assistant response`: room に post/reply せず通常応答で返す
-- `No reply needed`: 返信しない
+返信行が無い場合は返信しない。返信行の代わりに「通常の応答で返してよい」旨の指示がある場合 (web UI の 1on1 room からのユーザ発言) は、room に post/reply せず通常の応答で返す。
 
 ## 新規の声かけ
 

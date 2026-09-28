@@ -5,7 +5,7 @@
 //      編集後の設定が反映される (= 稼働中 daemon に設定変更を届ける手段が
 //      成立している。設定は起動時 1 回読み (DR-0018 LN-Q4) なので、restart
 //      でしか反映されない)。
-//   2. restart を跨いで subscribe が生存し、跨ぎ後の post を受け取る (= 意図的
+//   2. restart を跨いで subscribe が生存し、跨ぎ後の room イベントを受け取る (= 意図的
 //      な `daemon stop` と違い、restart は接続中クライアントを切り捨てない)。
 //   3. daemon が居ない状態の restart は起動として成功する (restarted:false,
 //      started:true) — 「現行設定の daemon が動いている状態にする」が要求。
@@ -162,17 +162,6 @@ describe("ccmsg daemon restart", () => {
   test("restart を跨いで subscribe が生存する", async () => {
     const { env, cleanup } = makeEnv();
     try {
-      const created = JSON.parse(
-        (
-          await runCli(
-            ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
-            env,
-          )
-        ).out,
-      ) as { ok: boolean; room: string };
-      expect(created.ok).toBe(true);
-      const room = created.room;
-
       const sub = Bun.spawn([process.execPath, CLI, "subscribe"], {
         env: {
           ...process.env,
@@ -197,25 +186,48 @@ describe("ccmsg daemon restart", () => {
           await sleep(25);
         }
 
+        // subscribe 中に room を作ると SUB に member snapshot (seq 付き) が届き、
+        // 再接続の since_seq cursor がこの room を含む。跨ぎ後の leave は、再接続が
+        // leave より先でも後でも (live / delta replay のどちらかで) 届く。
+        const created = JSON.parse(
+          (
+            await runCli(
+              ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
+              env,
+            )
+          ).out,
+        ) as { ok: boolean; room: string };
+        expect(created.ok).toBe(true);
+        const room = created.room;
+        await waitForLine(reader, accum, (l) => {
+          try {
+            const ev = JSON.parse(l) as { type?: string; r?: string };
+            return ev.type === "member" && ev.r === room;
+          } catch {
+            return false;
+          }
+        });
+
         const restarted = JSON.parse((await runCli(["daemon", "restart"], env)).out) as {
           restarted?: boolean;
         };
         expect(restarted.restarted).toBe(true);
 
-        // 跨ぎ後の post が subscribe に届く = 自動再接続が成立している。
-        const posted = JSON.parse(
-          (await runCli(["--sid", "S1", "post", room, "after-restart"], env)).out,
-        ) as { ok: boolean };
-        expect(posted.ok).toBe(true);
+        // 跨ぎ後の room イベント (S1 の leave) が subscribe に届く = 自動再接続が
+        // 成立している。
+        const left = JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out) as {
+          ok: boolean;
+        };
+        expect(left.ok).toBe(true);
         const line = await waitForLine(reader, accum, (l) => {
           try {
-            const ev = JSON.parse(l) as { type?: string; msg?: string };
-            return ev.type === "msg" && ev.msg === "after-restart";
+            const ev = JSON.parse(l) as { type?: string; r?: string };
+            return ev.type === "leave" && ev.r === room;
           } catch {
             return false;
           }
         });
-        expect(JSON.parse(line).msg).toBe("after-restart");
+        expect(JSON.parse(line).r).toBe(room);
         expect(sub.exitCode).toBeNull();
       } finally {
         reader.releaseLock();

@@ -12,7 +12,7 @@ Claude Code は非公式プロトコルとして `<config home>/sessions/<pid>.j
 
 ## 2. 決定
 
-daemon が room の msg イベントを配送するとき (`deliver` / `deliverNewRoom`)、既存の subscribe 配信に加えて、room の member セッションそれぞれへ peer messaging socket 経由の注入を試みる (`packages/daemon/src/peer-inject.ts` の `PeerInjector`)。
+daemon が room の msg イベントを配送するとき (`deliver` / `deliverNewRoom`)、room の member セッションそれぞれへ peer messaging socket 経由で注入する (`packages/daemon/src/peer-inject.ts` の `PeerInjector`)。セッションへの msg の配送経路はこの注入だけで、session role の subscribe stream には msg イベントを流さない (ライブ配信・cursor replay・recent-replay・自投稿の echo・新 room の snapshot のいずれも)。subscribe の msg イベントは user role の購読者 (webui) にのみ配信する。
 
 - **対象**: msg イベントのみ。member のうち投稿者本人以外、かつ `to` で絞られていれば絞り込み後の宛先。`daemon.sessions` にその sid の `configDir` が無い (= セッションが一度も CLAUDE_CONFIG_DIR を名乗っていない) 場合はスキップする
 - **手順**: `<configDir>/sessions/<pid>.json` を走査して `sessionId` が一致する行から `pid` / `messagingSocketPath` を取り、`peerProtocol` が本 daemon の話す世代 (`PEER_PROTOCOL = 1`) と一致することを確認する。続けて同じ `sessions/` から `<pid>.<hex>.key` を探し `peerToken` を得る。両方揃って初めてソケットへ `auth` フレーム→ `user` フレームの順に書く
@@ -20,7 +20,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
   - archived な room: 返信行なし (`No reply needed` と同じ扱い)
   - 1on1 room で User 発の msg: 「通常の応答で返してよい」という指示文 (`computeReplyVia` の `Reply in your normal assistant response` をそのまま文にする)
   - それ以外: `Reply with: <launcher> reply <room.id>m<mid> <text>` (`<launcher>` は `resolveLauncher()` が解決する、この daemon が動くツリーの `bin/ccmsg` 絶対パス。無ければ `ccmsg` の裸名)
-- **成否の扱い**: 注入と subscribe 配信は完全に独立した経路として並行に走らせる。注入の成否は待たず、結果は `daemon.log` に `peer-inject <mid> -> <sid>: <outcome>` として記録するのみで、呼び出し元の処理やレスポンスには一切影響しない (`outcome` は `delivered` / `unavailable` / `refused`)
+- **成否の扱い**: 注入の成否は待たず、結果は `daemon.log` に `peer-inject <mid> -> <sid>: <outcome>` として記録するのみで、呼び出し元の処理やレスポンスには一切影響しない (`outcome` は `delivered` / `unavailable` / `refused`)
 - **期限値**: ソケット接続とフレーム書き込みの flush 完了まで 2 秒 (`INJECT_WRITE_MS`)。受け手が拒否 (`peer_message_status` で `refused`/`denied`/`dropped`/`expired`/`held`) を返してくるかを待つ猶予は 250ms (`INJECT_STATUS_MS`)。`sessions/` ディレクトリの走査 (`readdir` + 各 JSON の読み取り) 全体に 1 秒 (`INJECT_SCAN_MS`)。いずれも超過は `unavailable` 扱いで、待たずに次の処理へ進む
 - **config dir の限定**: 注入先は、そのセッションが hello 等で daemon に自己申告した `configDir` を持つ member に限る。daemon が推測で config dir を組み立てることはしない
 
@@ -33,7 +33,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
 
 ## 4. Consequences
 
-- 受け手が一度も CLAUDE_CONFIG_DIR を daemon に申告していない場合 (= `sessions/*.json` の手掛かりが daemon に無い場合) は、従来どおり subscribe 配信のみに頼ることになる
-- 注入と subscribe 配信は独立した経路なので、両方が同じ msg を届ける (受け手が両方の口を持つ場合) ことがあり得る。順序の保証もない
+- 受け手が一度も CLAUDE_CONFIG_DIR を daemon に申告していない場合 (= `sessions/*.json` の手掛かりが daemon に無い場合) は、msg がそのセッションに届かない
+- `reply_via` / `msg_via` / `echo` といった subscribe の msg フレーム専用の付加情報は無い。返信方法は封筒の返信行が伝える
 - 注入の成否は log にしか残らないため、届かなかったことを daemon 側から利用者に能動的に知らせる仕組みは無い (受け手からの明示的な拒否のみ 250ms 以内に拾える)
 - webui 側の表示は本 DR の対象外。DR-0027 §6 の封筒表示ロジックがそのまま使われる

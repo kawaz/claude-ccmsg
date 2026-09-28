@@ -2,11 +2,12 @@
 // 仕様正本: docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md
 //
 // 何を保証するか:
-//   1. daemon が再起動しても subscribe プロセスが exit せず、跨ぎ前後で
-//      post された msg が **漏れなく重複なく** stdout に現れる (= since 状態を
+//   1. daemon が再起動しても subscribe プロセスが exit せず、跨ぎ前後の
+//      room イベントが **漏れなく重複なく** stdout に現れる (= since 状態を
 //      維持した再 subscribe で BBS delta が成立する)。
 //   2. `restarting` / `room_cursors` は stdout に流れない (= 上流 Monitor に
-//      接続制御ノイズを見せない)。
+//      接続制御ノイズを見せない)。room の msg も流れない (session には
+//      peer-inject で届く)。
 //   3. daemon stop 後の subscribe は daemon を **spawn しない** (= 意図的な
 //      停止を長寿命 subscribe が resurrection しない no-spawn 契約)。
 //
@@ -105,17 +106,16 @@ async function waitForLine(
 }
 
 describe("ccmsg subscribe daemon restart transparency", () => {
-  test("daemon 再起動を跨いで subscribe が生存し、post だけが stdout に出る", async () => {
+  test("daemon 再起動を跨いで subscribe が生存し、room イベントが漏れなく重複なく stdout に出る", async () => {
     const { env, sock, cleanup } = makeEnv();
     try {
-      // Setup: 別 session CREATOR が --exclude-self で S1 と SUB が member の room を
-      // 作成する (CLI の write ops は identity 必須になったので、u1 として
-      // create-room する経路は廃止。u1 は暗黙参加のため subscribe には引き続き
-      // 届く)。改修前は --as-user create-room で同型の room を作っていた。
+      // Setup: 別 session CREATOR が --exclude-self で S1, S2, SUB が member の room を
+      // 作成する。跨ぎ前に S1、跨ぎ後に S2 が leave し、その leave イベント (seq 付きの
+      // room イベント) で配信を観測する。
       const created = JSON.parse(
         (
           await runCli(
-            ["--sid", "CREATOR", "create-room", "--members", "S1,SUB", "--exclude-self"],
+            ["--sid", "CREATOR", "create-room", "--members", "S1,S2,SUB", "--exclude-self"],
             env,
           )
         ).out,
@@ -138,10 +138,21 @@ describe("ccmsg subscribe daemon restart transparency", () => {
       });
       const reader = (sub.stdout as ReadableStream<Uint8Array>).getReader();
       const accum = { buf: "", lines: [] as string[] };
+      const parsed = (l: string): { type?: string; ev?: string; r?: string; id?: string } => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return {};
+        }
+      };
+      const isLeave = (l: string): boolean => {
+        const ev = parsed(l);
+        return ev.type === "leave" && ev.r === room;
+      };
 
       try {
         // peers に SUB が現れれば hello は完了済み。別 CLI request が往復する間に
-        // 同じ socket の subscribe request も処理されるため、以降の post は live
+        // 同じ socket の subscribe request も処理されるため、以降のイベントは live
         // delivery 対象になる。room_cursors 自体は stdout readiness signal に使わない。
         for (let i = 0; i < 100; i++) {
           const peers = JSON.parse((await runCli(["peers"], env)).out) as {
@@ -155,21 +166,15 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         };
         expect(peers.peers.some((p) => p.sid === "SUB")).toBe(true);
 
-        // 跨ぎ前: S1 が post。SUB の subscribe stdout に msg が現れることを確認。
-        const posted1 = JSON.parse(
+        // 跨ぎ前: S1 が post してから leave。leave は stdout に現れ、post は現れない
+        // (同じ stream 上で post の後に書かれる leave が見えた時点で、post が流れて
+        // いればその行は既に accum に入っている)。
+        const posted = JSON.parse(
           (await runCli(["--sid", "S1", "post", room, "hello-before"], env)).out,
-        ) as { ok: boolean; mid: number };
-        expect(posted1.ok).toBe(true);
-        expect(posted1.mid).toBe(1);
-        const line1 = await waitForLine(reader, accum, (l) => {
-          try {
-            const ev = JSON.parse(l) as { type?: string; msg?: string };
-            return ev.type === "msg" && ev.msg === "hello-before";
-          } catch {
-            return false;
-          }
-        });
-        expect(JSON.parse(line1).mid).toBe(1);
+        ) as { ok: boolean };
+        expect(posted.ok).toBe(true);
+        expect(JSON.parse((await runCli(["--sid", "S1", "leave", room], env)).out).ok).toBe(true);
+        const leave1 = parsed(await waitForLine(reader, accum, isLeave));
 
         // 跨ぎ: daemon を stop → 別コマンドで re-spawn する (ensureDaemon 経路)。
         // subscribe subprocess は生存し続けるはず。
@@ -177,9 +182,8 @@ describe("ccmsg subscribe daemon restart transparency", () => {
           stopped?: boolean;
         };
         expect(stopped.stopped).toBe(true);
-        // subscribe の再接続 backoff を跨ぐため少し待つ (initial 250ms)。
-        // ここで socket 消失を確認: daemon.sock が無い状態で subscribe が
-        // 再接続失敗を吸収して spawn しないことも兼ねて観測する。
+        // socket 消失を確認: daemon.sock が無い状態で subscribe が再接続失敗を
+        // 吸収して spawn しないことも兼ねて観測する。
         expect(fs.existsSync(sock)).toBe(false);
 
         // 再 spawn: `rooms` 呼び出しの ensureDaemon が新 daemon を起動する。
@@ -194,50 +198,31 @@ describe("ccmsg subscribe daemon restart transparency", () => {
         expect(roomsAfter.ok).toBe(true);
         expect(roomsAfter.rooms.map((r) => r.id)).toContain(room);
 
-        // 跨ぎ後: S1 が別の post。subscribe が自動再接続で受信することを確認。
-        const posted2 = JSON.parse(
-          (await runCli(["--sid", "S1", "post", room, "hello-after"], env)).out,
-        ) as { ok: boolean; mid: number };
-        expect(posted2.ok).toBe(true);
-        expect(posted2.mid).toBe(2);
-        const line2 = await waitForLine(reader, accum, (l) => {
-          try {
-            const ev = JSON.parse(l) as { type?: string; msg?: string };
-            return ev.type === "msg" && ev.msg === "hello-after";
-          } catch {
-            return false;
-          }
-        });
-        expect(JSON.parse(line2).mid).toBe(2);
+        // 跨ぎ後: S2 が leave。subscribe が自動再接続で受信することを確認。
+        expect(JSON.parse((await runCli(["--sid", "S2", "leave", room], env)).out).ok).toBe(true);
+        const leave2 = parsed(
+          await waitForLine(reader, accum, (l) => isLeave(l) && parsed(l).id !== leave1.id),
+        );
+        expect(leave2.id).not.toBe(leave1.id);
 
         // 契約 (a): subscribe subprocess が exit していない (= 透過再接続が成功)。
         expect(sub.exitCode).toBeNull();
 
-        // 契約 (b): `hello-before` の重複配信が起きていない。since 状態を維持
+        // 契約 (b): 跨ぎ前の leave の重複配信が起きていない。since 状態を維持
         // した再 subscribe が daemon 側の sendBacklog を「未受信ぶんだけ」に絞る
-        // ことの検証 (BBS delta model)。lines 全体を走査して mid=1 の msg が
-        // 1 回だけ現れる (=重複なし) ことを確認する。
-        const msg1Count = accum.lines.filter((l) => {
-          try {
-            const ev = JSON.parse(l) as { type?: string; mid?: number };
-            return ev.type === "msg" && ev.mid === 1;
-          } catch {
-            return false;
-          }
-        }).length;
-        expect(msg1Count).toBe(1);
+        // ことの検証 (BBS delta model)。
+        expect(accum.lines.filter((l) => isLeave(l) && parsed(l).id === leave1.id).length).toBe(1);
 
         // 契約 (c): 接続制御イベントが stdout に流れていない。
         // restarting と接続 snapshot の room_cursors はどちらも Monitor 通知ではない。
         const controlEventCount = accum.lines.filter((l) => {
-          try {
-            const ev = JSON.parse(l) as { ev?: string };
-            return ev.ev === "restarting" || ev.ev === "room_cursors";
-          } catch {
-            return false;
-          }
+          const ev = parsed(l);
+          return ev.ev === "restarting" || ev.ev === "room_cursors";
         }).length;
         expect(controlEventCount).toBe(0);
+
+        // 契約 (d): room の msg は stdout に流れない。
+        expect(accum.lines.filter((l) => parsed(l).type === "msg")).toEqual([]);
       } finally {
         reader.releaseLock();
         try {

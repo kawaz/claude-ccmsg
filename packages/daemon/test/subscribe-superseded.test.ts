@@ -1,4 +1,4 @@
-// 同一セッションに対する `subscribe` が 2 本並走すると、同じ msg がその AI に
+// 同一セッションに対する `subscribe` が 2 本並走すると、同じイベントがその AI に
 // 二重に届く (実例: Monitor で張った古い subscribe が生きたまま新しい subscribe
 // を張った)。エージェント側に「二重起動するな」と求めても守らせようがないので、
 // daemon が検出して古い方に `ev:"subscribe_superseded"` を送り、以降その conn へは
@@ -27,7 +27,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
 
 describe("subscribe: duplicate session subscribe", () => {
   test(
-    "a second subscribe for the same sid supersedes the first, and only the newer one receives msgs",
+    "a second subscribe for the same sid supersedes the first, and only the newer one receives events",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -45,20 +45,21 @@ describe("subscribe: duplicate session subscribe", () => {
         expect(superseded.ev.ev).toBe("subscribe_superseded");
         expect(superseded.ev.sid).toBe("B");
 
-        // 配信は新しい方だけに届く (= 二重通知が消えている)。
+        // 配信は新しい方だけに届く (= 二重通知が消えている)。session の
+        // subscribe stream に流れる room イベント (新 room の member snapshot) で見る。
         const created = await a.request<{ room: string }>({ op: "create_room", members: ["B"] });
-        await a.request({ op: "post", room: created.room, msg: "hello" });
-        const delivered = await newSub.readEventUntil<{ type?: string; msg?: string }>(
-          (ev) => ev?.type === "msg",
+        const delivered = await newSub.readEventUntil<{ type?: string; r?: string }>(
+          (ev) => ev?.type === "member" && ev?.r === created.room,
         );
-        expect(delivered.ev.msg).toBe("hello");
+        expect(delivered.ev.r).toBe(created.room);
 
         // 古い conn は superseded 以降なにも push されない (room 作成の snapshot
         // も含め subscriber 集合から外れている)。「届かないこと」は待ち時間で
         // なく往復で確かめる: 配信が漏れていればこの request の応答より先に
-        // その行が読まれる。
+        // その行が stream に積まれている。
         const roundTrip = await oldSub.request<{ ok?: boolean; type?: string }>({ op: "rooms" });
         expect(roundTrip.ok).toBe(true);
+        expect(await oldSub.pendingEvents()).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
       }

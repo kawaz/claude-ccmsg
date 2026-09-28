@@ -62,15 +62,11 @@ interface PeersEv {
  *  fresh hello — a new hello is itself a peers-changing event and would
  *  contaminate the "no ev:'peers' arrived" tests below). Used to prove no
  *  ev:"peers" snuck in by collecting every event up to the marker and asserting
- *  none of them was ev:"peers", rather than a blind timeout sleep. For a
- *  user-role subscriber `room` may be a fresh no-member room (admin sees every
- *  room regardless); for a session-role subscriber the room must already
- *  include that session (subscriberSeesRoom), so callers targeting a session
- *  subscriber pass a room the target is already a member of. */
-async function postMarkerVia(poster: TestClient, text: string, room?: string): Promise<void> {
-  const roomId =
-    room ?? (await poster.request<{ room: string }>({ op: "create_room", members: [] })).room;
-  await poster.request({ op: "post", room: roomId, msg: text });
+ *  none of them was ev:"peers", rather than a blind timeout sleep. The reader
+ *  is a user-role subscriber (admin sees every room, and its stream carries msg). */
+async function postMarkerVia(poster: TestClient, text: string): Promise<void> {
+  const room = (await poster.request<{ room: string }>({ op: "create_room", members: [] })).room;
+  await poster.request({ op: "post", room, msg: text });
 }
 
 describe("ev:peers push", () => {
@@ -121,19 +117,21 @@ describe("ev:peers push", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await sessionHello(ctx, "S");
-        const m = await sessionHello(ctx, "M"); // marker poster, already connected
-        const markerRoom = (
-          await m.request<{ room: string }>({ op: "create_room", members: ["S"] })
-        ).room;
+        const u = await userConn(ctx);
+        await u.request({ op: "subscribe" });
         await s.request({ op: "subscribe" });
-        // trigger two peers-changing events while S is subscribed: a new hello
-        // and a full disconnect.
+        // A new sid's hello pushes ev:peers. The user subscriber receiving it
+        // is the ordering anchor (the daemon writes every subscriber's copy in
+        // one synchronous loop); a round trip on S then orders its stream past it.
         const b = await sessionHello(ctx, "B");
-        b.close();
-        await postMarkerVia(m, "marker", markerRoom);
-        const { seen } = await s.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        await u.readEventUntil<PeersEv>(
+          (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === "B"),
+        );
+        await s.request({ op: "rooms" });
+        const seen = await s.pendingEvents();
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
-        m.close();
+        b.close();
+        u.close();
       } finally {
         await stopTestDaemon(ctx);
       }

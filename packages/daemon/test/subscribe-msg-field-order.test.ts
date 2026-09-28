@@ -1,10 +1,9 @@
-// docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: the harness's
-// task-notification truncation cuts from the block's tail. With the old wire
-// order (`msg` mid-way through the object, `seq`/`reply_via` after it), a
-// long `msg` silently ate the trailing fields (kawaz r26 mid=110 — an agent
-// never noticed `reply_via` had gone missing). Pinning `msg` as the LAST key
-// on the subscribe wire means truncation always lands inside the body itself
-// — visibly incomplete — instead of silently dropping other fields.
+// docs/issue/2026-07-17-subscribe-jsonl-msg-last-column.md: a consumer that
+// truncates a long line cuts from its tail. Pinning `msg` as the LAST key on
+// the subscribe wire means truncation always lands inside the body itself —
+// visibly incomplete — instead of silently dropping other fields. The wire
+// order is type,r,mid,from[,seq,to,reply_to][,replay],ts,msg, observed on the
+// user-role subscriber (the only role whose stream carries `msg`).
 //
 // These tests read the raw JSON *line* (not the parsed object — key order is
 // invisible after JSON.parse) and assert the field order directly, plus that
@@ -64,9 +63,19 @@ function topLevelKeyOrder(line: string): string[] {
   return keys;
 }
 
+/** Reads raw lines on `sub` until the msg frame whose body is `body`. */
+async function readMsgLine(sub: TestClient, body: string): Promise<string> {
+  for (;;) {
+    const line = await sub.readLine();
+    if (line === null) throw new Error("connection closed before msg arrived");
+    const parsed = JSON.parse(line);
+    if (parsed.type === "msg" && parsed.msg === body) return line;
+  }
+}
+
 describe("subscribe wire order: msg events place `msg` last", () => {
   test(
-    "plain post: scope/importance order type,r,mid,from,seq,msg,reply_via,ts",
+    "plain post: type,r,mid,from,seq,ts,msg",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -77,36 +86,13 @@ describe("subscribe wire order: msg events place `msg` last", () => {
         });
         const room = created.room;
 
-        const sub = await connect(ctx.sock);
-        await sub.hello({ role: "session", sid: "B" });
+        const sub = await user(ctx);
         await sub.request({ op: "subscribe" });
 
         await a.request({ op: "post", room, msg: "hello there" });
 
-        // Drain lines until the msg line for this post arrives.
-        let line: string | null = null;
-        for (;;) {
-          line = await sub.readLine();
-          if (line === null) throw new Error("connection closed before msg arrived");
-          const parsed = JSON.parse(line);
-          if (parsed.type === "msg" && parsed.msg === "hello there") break;
-        }
-        const keys = topLevelKeyOrder(line);
-        // Scope/importance order (kawaz r38 mid=23): msg sits before the
-        // fixed tail (reply_via, ts) so ts is always last.
-        expect(keys[keys.length - 1]).toBe("ts");
-        // And the leading keys are in the documented order (to/seq/reply_via
-        // are optional — this recipient does get a reply_via since it's a
-        // real member of a non-1on1... actually 2-member create_room is a
-        // 1on1, but from is a session, so reply_via directs `ccmsg reply`.
-        // Assert prefix
-        // order strictly, tolerating to?/reply_via presence.
-        const withoutOptional = keys.filter((k) => !["to", "reply_via"].includes(k));
-        expect(withoutOptional).toEqual(["type", "r", "mid", "from", "seq", "msg", "ts"]);
-        // r must come before seq and reply_via (structural fix for the
-        // webui truncated-parse room recovery — DR issue §"webui 側の
-        // truncated 救済 parse").
-        expect(keys.indexOf("r")).toBeLessThan(keys.indexOf("msg"));
+        const keys = topLevelKeyOrder(await readMsgLine(sub, "hello there"));
+        expect(keys).toEqual(["type", "r", "mid", "from", "seq", "ts", "msg"]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -114,7 +100,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
     T,
   );
 
-  test("post with explicit `to`: `to` still precedes `msg`", async () => {
+  test("post with explicit `to`: `to` follows seq and precedes ts,msg", async () => {
     const ctx = await startTestDaemon();
     try {
       const u = await user(ctx);
@@ -127,29 +113,19 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       });
       const room = created.room;
 
-      const sub = await connect(ctx.sock);
-      await sub.hello({ role: "session", sid: "B" });
+      const sub = await user(ctx);
       await sub.request({ op: "subscribe" });
 
       await a.request({ op: "post", room, msg: "targeted", to: ["a2", "a3"] });
 
-      let line: string | null = null;
-      for (;;) {
-        line = await sub.readLine();
-        if (line === null) throw new Error("connection closed before msg arrived");
-        const parsed = JSON.parse(line);
-        if (parsed.type === "msg" && parsed.msg === "targeted") break;
-      }
-      const keys = topLevelKeyOrder(line);
-      expect(keys[keys.length - 1]).toBe("ts");
-      expect(keys).toContain("to");
-      expect(keys.indexOf("to")).toBeLessThan(keys.indexOf("msg"));
+      const keys = topLevelKeyOrder(await readMsgLine(sub, "targeted"));
+      expect(keys).toEqual(["type", "r", "mid", "from", "seq", "to", "ts", "msg"]);
     } finally {
       await stopTestDaemon(ctx);
     }
   });
 
-  test("reply carries reply_to before msg on the wire", async () => {
+  test("reply carries reply_to before ts,msg on the wire", async () => {
     const ctx = await startTestDaemon();
     try {
       const u = await user(ctx);
@@ -162,27 +138,41 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       const room = created.room;
       const posted = await a.request<{ mid: number }>({ op: "post", room, msg: "question" });
 
-      const sub = await connect(ctx.sock);
-      await sub.hello({ role: "user" });
+      const sub = await user(ctx);
       await sub.request({ op: "subscribe" });
 
       await b.request({ op: "reply", room, mid: posted.mid, msg: "answer" });
 
-      let line: string | null = null;
-      for (;;) {
-        line = await sub.readLine();
-        if (line === null) throw new Error("connection closed before reply arrived");
-        const parsed = JSON.parse(line);
-        if (parsed.type === "msg" && parsed.msg === "answer") break;
-      }
-      const keys = topLevelKeyOrder(line);
-      expect(keys[keys.length - 1]).toBe("ts");
-      expect(keys).toContain("reply_to");
-      expect(keys.indexOf("reply_to")).toBeLessThan(keys.indexOf("msg"));
+      const keys = topLevelKeyOrder(await readMsgLine(sub, "answer"));
+      expect(keys).toEqual(["type", "r", "mid", "from", "seq", "to", "reply_to", "ts", "msg"]);
     } finally {
       await stopTestDaemon(ctx);
     }
   });
+
+  test(
+    "recent-replay frame: `replay` sits before ts,msg",
+    async () => {
+      const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
+      try {
+        const a = await session(ctx, "A");
+        const created = await a.request<{ room: string }>({
+          op: "create_room",
+          members: ["B"],
+        });
+        await a.request({ op: "post", room: created.room, msg: "before subscribe" });
+
+        const sub = await user(ctx);
+        await sub.request({ op: "subscribe" });
+
+        const keys = topLevelKeyOrder(await readMsgLine(sub, "before subscribe"));
+        expect(keys).toEqual(["type", "r", "mid", "from", "seq", "replay", "ts", "msg"]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
 
   test("storage (rooms/*.jsonl) keeps its own field order, unaffected by wire reshaping", async () => {
     const ctx = await startTestDaemon();

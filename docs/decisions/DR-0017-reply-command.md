@@ -3,6 +3,7 @@
 - **Status**: Accepted (2026-07-15、REPLY-Q1=a / Q3=a / Q4=a 裁定)
 - **Date**: 2026-07-15
 - **前提**: [DR-0003](./DR-0003-wire-protocol.md) の post semantics、[DR-0011](./DR-0011-to-delivery-filter.md) の to=配信フィルタ、[DR-0014](./DR-0014-1on1-room-and-reply-via.md) の reply_via (本 DR が置換)、[DR-0016](./DR-0016-storage-event-seq.md) の seq
+- **補足**: セッションへの msg 配送は [DR-0034](./DR-0034-peer-socket-injection.md) の peer-inject に一本化されており、本 DR の subscribe stream 上の msg フレームに関する記述 (reply_via / msg_via / echo 等) は DR-0034 に置き換えられている。返信指示は封筒の返信行が担う
 
 ## 1. Context / 動機
 

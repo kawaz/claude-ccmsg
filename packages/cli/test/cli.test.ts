@@ -80,7 +80,7 @@ async function holdSession(sock: string, sid: string): Promise<() => void> {
 const MINIMAL_HELP = `Commands:
   reply <rNmN> <msg>                        返信用
   post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
-  read <rNmN[,mN...]>                       メッセージ全文取得 (msg_via 指示時など)
+  read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
   create-room --members <sid[,sid...]> <title>  ルーム作成
@@ -1101,51 +1101,6 @@ describe("ccmsg CLI --version / version (DR-0007 §3)", () => {
       expect(res.code).not.toBe(0);
       expect(res.err).toContain("r<N>m<M>");
     } finally {
-      cleanup();
-    }
-  }, 30000);
-
-  // reply_via is the single response instruction channel. subscribe emits the
-  // daemon's JSONL frame unchanged and never appends an extra prose line.
-  test("subscribe emits reply_via in pure JSONL without an extra instruction line", async () => {
-    const { env, cleanup } = makeEnv();
-    try {
-      const created = JSON.parse(
-        (await runCli(["--sid", "S1", "create-room", "--members", "S2"], env)).out,
-      ) as { room: string };
-
-      const runSub = async (extra: string[]): Promise<string[]> => {
-        const sub = Bun.spawn([process.execPath, CLI, "subscribe", ...extra], {
-          env: { ...process.env, ...env, CCMSG_SID: "S2" },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        // --since replay (呼び出し側が渡す) に S1 の既存 post が載って指示文行が付く。
-        // 起動 → backlog 受信を待って kill、stdout を読み切る。
-        await new Promise<void>((r) => setTimeout(r, 1500));
-        sub.kill();
-        await sub.exited;
-        const out = await new Response(sub.stdout).text();
-        return out.split("\n").filter((l) => l !== "");
-      };
-
-      const posted = JSON.parse(
-        (await runCli(["--sid", "S1", "post", created.room, "need reply"], env)).out,
-      ) as { mid: number };
-
-      // subscribe's bare default no longer replays backlog (issue
-      // 2026-07-17-subscribe-no-backlog-default) — `--since '{"<room>":0}'` is the
-      // explicit opt-in this test needs to see S1's pre-existing post.
-      const sinceAll = JSON.stringify({ [created.room]: 0 });
-      const lines = await runSub(["--since", sinceAll]);
-      const msgLine = lines.find((l) => l.includes('"need reply"'));
-      expect(msgLine).toBeDefined();
-      expect(JSON.parse(msgLine!) as Record<string, unknown>).toMatchObject({
-        reply_via: `Use \`ccmsg reply ${created.room}m${posted.mid} <msg>\``,
-      });
-      for (const line of lines) JSON.parse(line);
-    } finally {
-      await runCli(["daemon", "stop"], env).catch(() => {});
       cleanup();
     }
   }, 30000);

@@ -1,30 +1,23 @@
-// Room messages reach a Claude Code session through its peer messaging socket.
-// A fake harness stands in for the session: `sessions/<pid>.json` and the
-// `<pid>.<hex>.key` beside it in a temp config dir, and a UDS bound under
-// /tmp that records the frames it is sent.
+// Room messages reach a Claude Code session through its peer messaging socket,
+// never through its subscribe stream. A fake harness (peer-harness.ts) stands
+// in for the session: `sessions/<pid>.json` and the `<pid>.<hex>.key` beside it
+// in a temp config dir, and a UDS bound under /tmp that records the frames it
+// is sent.
 import { afterEach, describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 import { PeerInjector, renderEnvelope, type InjectMessage } from "../src/peer-inject.ts";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import {
+  PEER_TOKEN,
+  fakeHarness as spawnHarness,
+  parseEnvelope,
+  replyWith,
+  sessionWithConfig,
+  type FakeHarness,
+} from "./peer-harness.ts";
 
 const T = 15000;
 const SID = "11111111-2222-4333-8444-555555555555";
-const TOKEN = "tok-abc";
-
-interface FakeHarness {
-  configDir: string;
-  socketPath: string;
-  /** Every line the socket received, parsed. */
-  frames: Record<string, any>[];
-  /** Resolves each time a `user` frame arrives. */
-  nextUser(): Promise<Record<string, any>>;
-  /** Answer the next `user` frame with this status on its `from` socket. */
-  refuseWith?: string;
-  stop(): void;
-}
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -32,75 +25,9 @@ afterEach(() => {
 });
 
 function fakeHarness(opts: { peerProtocol?: number; sid?: string } = {}): FakeHarness {
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
-  const sockDir = fs.mkdtempSync("/tmp/pi-");
-  const socketPath = path.join(sockDir, "s.sock");
-  const pid = 424242;
-  fs.mkdirSync(path.join(configDir, "sessions"));
-  fs.writeFileSync(
-    path.join(configDir, "sessions", `${pid}.json`),
-    JSON.stringify({
-      pid,
-      sessionId: opts.sid ?? SID,
-      messagingSocketPath: socketPath,
-      peerProtocol: opts.peerProtocol ?? 1,
-    }),
-  );
-  fs.writeFileSync(
-    path.join(configDir, "sessions", `${pid}.0123abcd.key`),
-    JSON.stringify({ peerToken: TOKEN }),
-  );
-  const waiters: ((f: Record<string, any>) => void)[] = [];
-  const users: Record<string, any>[] = [];
-  let buf = "";
-  const harness: FakeHarness = {
-    configDir,
-    socketPath,
-    frames: [],
-    nextUser: () =>
-      users.length > 0
-        ? Promise.resolve(users.shift()!)
-        : new Promise((resolve) => waiters.push(resolve)),
-    stop: () => server.stop(true),
-  };
-  const server = Bun.listen({
-    unix: socketPath,
-    socket: {
-      data(_s, chunk) {
-        buf += Buffer.from(chunk).toString("utf8");
-        const parts = buf.split("\n");
-        buf = parts.pop() ?? "";
-        for (const line of parts) {
-          const frame = JSON.parse(line);
-          harness.frames.push(frame);
-          if (frame.type !== "user") continue;
-          if (harness.refuseWith !== undefined && typeof frame.from === "string") {
-            void Bun.connect({
-              unix: frame.from.slice("uds:".length),
-              socket: {
-                open(s) {
-                  s.write(
-                    `${JSON.stringify({ action: "peer_message_status", status: harness.refuseWith, orig_msg_id: frame.msg_id })}\n`,
-                  );
-                  s.end();
-                },
-                data() {},
-              },
-            });
-          }
-          const w = waiters.shift();
-          if (w) w(frame);
-          else users.push(frame);
-        }
-      },
-    },
-  });
-  cleanups.push(() => {
-    server.stop(true);
-    fs.rmSync(configDir, { recursive: true, force: true });
-    fs.rmSync(sockDir, { recursive: true, force: true });
-  });
-  return harness;
+  const h = spawnHarness(opts.sid ?? SID, opts);
+  cleanups.push(() => h.dispose());
+  return h;
 }
 
 const MESSAGE: InjectMessage = {
@@ -117,7 +44,7 @@ describe("PeerInjector", () => {
     const injector = new PeerInjector();
     cleanups.push(() => injector.close());
     expect(await injector.send(h.configDir, SID, MESSAGE)).toBe("delivered");
-    expect(h.frames[0]).toEqual({ type: "auth", token: TOKEN });
+    expect(h.frames[0]).toEqual({ type: "auth", token: PEER_TOKEN });
     const user = h.frames[1]!;
     expect(user.type).toBe("user");
     expect(user.session_id).toBe(SID);
@@ -160,24 +87,9 @@ describe("PeerInjector", () => {
   });
 });
 
-async function sessionWithConfig(ctx: DaemonCtx, sid: string, configDir?: string) {
-  const c = await connect(ctx.sock);
-  await c.request({
-    op: "hello",
-    protocol: PROTOCOL_VERSION,
-    role: "session",
-    sid,
-    repo: "r",
-    ws: "w",
-    cwd: "/tmp",
-    ...(configDir ? { config_dir: configDir } : {}),
-  });
-  return c;
-}
-
 describe("daemon delivery through the peer socket", () => {
   test(
-    "a msg reaches the session socket, and the subscribe stream as before",
+    "a msg reaches the session socket and never its subscribe stream",
     async () => {
       const ctx = await startTestDaemon();
       try {
@@ -192,18 +104,95 @@ describe("daemon delivery through the peer socket", () => {
         await b.request({ op: "subscribe" });
 
         const first = await a.request<{ mid: number }>({ op: "post", room, msg: "via socket" });
-        const user = await h.nextUser();
-        const content = user.message.content as string;
-        expect(content).toContain(`ccmsg-mid="${room}m${first.mid}"`);
-        expect(content).toContain(`ccmsg-from="SENDER"`);
-        expect(content).toContain(`from-name="a1"`);
-        expect(content).toMatch(
-          new RegExp(`\\nvia socket\\n\\nReply with: \\S+ reply ${room}m${first.mid} <text>\\n`),
-        );
+        const { attrs, body } = parseEnvelope(await h.nextContent());
+        expect(attrs["ccmsg-mid"]).toBe(`${room}m${first.mid}`);
+        expect(attrs["ccmsg-from"]).toBe("SENDER");
+        expect(attrs["from-name"]).toBe("a1");
+        expect(body).toBe(`via socket\n\n${replyWith(`${room}m${first.mid}`)}`);
 
-        const { ev } = await b.readEventUntil((e) => e.type === "msg");
-        expect(ev.mid).toBe(first.mid);
-        expect(ev.msg).toBe("via socket");
+        // Live delivery to subscribers happens before the post is answered, so
+        // a round trip on b orders its stream past the moment in question.
+        await b.request({ op: "rooms" });
+        const pushed = await b.pendingEvents();
+        expect(pushed.filter((e) => e.type === "msg")).toEqual([]);
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a session subscriber gets no msg on any replay path, only the room's other events",
+    async () => {
+      const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
+      try {
+        const a = await sessionWithConfig(ctx, "SENDER");
+        await sessionWithConfig(ctx, SID);
+        const room = (
+          await a.request<{ room: string }>({
+            op: "create_room",
+            members: ["SENDER", SID],
+            msg: "opening",
+          })
+        ).room;
+        await a.request({ op: "post", room, msg: "second" });
+
+        const paths: Record<string, Record<string, unknown>> = {
+          since_seq: { since_seq: { [room]: 0 } },
+          since: { since: { [room]: 0 } },
+          backlog: { backlog: true },
+          recent: {},
+        };
+        for (const [name, extra] of Object.entries(paths)) {
+          const sub = await sessionWithConfig(ctx, SID);
+          await sub.request({ op: "subscribe", ...extra });
+          await sub.request({ op: "rooms" });
+          const pushed = await sub.pendingEvents();
+          const inRoom = pushed.filter((e) => e.r === room || e.ev === "room_cursors");
+          expect({ name, msgs: inRoom.filter((e) => e.type === "msg") }).toEqual({
+            name,
+            msgs: [],
+          });
+          // The path did run: the cursor replays and the snapshot carry the
+          // room's member events, the bare default its cursor summary.
+          if (name === "recent") {
+            expect(inRoom.some((e) => e.ev === "room_cursors")).toBe(true);
+          } else {
+            expect({ name, member: inRoom.some((e) => e.type === "member") }).toEqual({
+              name,
+              member: true,
+            });
+          }
+        }
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
+    "a subscribed member of a new room gets its snapshot without the opening msg",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const h = fakeHarness();
+        const a = await sessionWithConfig(ctx, "SENDER");
+        const b = await sessionWithConfig(ctx, SID, h.configDir);
+        await b.request({ op: "subscribe" });
+        const room = (
+          await a.request<{ room: string }>({
+            op: "create_room",
+            members: ["SENDER", SID],
+            msg: "opening",
+          })
+        ).room;
+        expect(parseEnvelope(await h.nextContent()).attrs["ccmsg-mid"]).toBe(`${room}m1`);
+        await b.request({ op: "rooms" });
+        const pushed = (await b.pendingEvents()).filter((e) => e.r === room);
+        expect(pushed.some((e) => e.type === "member")).toBe(true);
+        expect(pushed.filter((e) => e.type === "msg")).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -222,9 +211,9 @@ describe("daemon delivery through the peer socket", () => {
         await u.hello({ role: "user" });
         const created = await u.request<{ room: string }>({ op: "create_room", members: [SID] });
         await u.request({ op: "post", room: created.room, msg: "from kawaz" });
-        const content = (await h.nextUser()).message.content as string;
-        expect(content).toContain(`from-name="user"`);
-        expect(content).toContain(`ccmsg-from="user"`);
+        const { attrs } = parseEnvelope(await h.nextContent());
+        expect(attrs["from-name"]).toBe("user");
+        expect(attrs["ccmsg-from"]).toBe("user");
       } finally {
         await stopTestDaemon(ctx);
       }

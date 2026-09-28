@@ -309,41 +309,22 @@ export type StorageEvent =
  *   the subscribe stream.
  * - `"1on1"` = a fixed 2-party room (u1 + a single session), created by the
  *   webui's SessionView floating composer for kawaz→session priv. No
- *   auto-populate. u1 posts carry a reply_via instruction directing the agent
+ *   auto-populate. u1 posts carry a reply instruction directing the agent
  *   to its assistant response; session posts are rejected (§2.5). */
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
- * `msg` events additionally carry `reply_via` (DR-0017 addendum) — a concise,
- * directly actionable English instruction for the receiving agent. The three
- * forms direct it to `ccmsg reply`, its normal assistant response, or no reply.
- * Injected at delivery time, NOT persisted in the room jsonl: room state and
- * recipient determine the instruction. Only present on `type:"msg"` deliveries.
+ * `msg` events go only to user-role subscribers (the webui); a session receives
+ * room messages through peer-inject instead.
  *
  * `replay: true` marks a msg emitted as a **recent-replay** at `subscribe`
  * time: the bare-default subscribe (no `since`/`since_seq` cursor for the room
  * and no `backlog: true`) additionally surfaces msgs from the last few minutes
  * that would have been live-delivered had the subscriber been present
- * (window default 3 min, `CCMSG_RECENT_REPLAY_MS` for tests). Lets the
- * receiver distinguish a fresh live delivery from a short-window catch-up
- * without changing the msg body or subscriber-side dispatch: `to`, `from`,
- * `reply_via` still hold their normal meanings, only the framing marker
- * differs. Never present on live-delivered msgs or the since/backlog replay
- * paths — those never re-flag past events.
- *
- * `msg_via` replaces the `msg` body with a `ccmsg read r<N>m<M>` instruction.
- * Two independent causes, both session-role only: an oversize body that the
- * harness's task-notification wrapper would truncate, and — together with
- * `echo: true` — the author's own post coming back to them (DR-0003 §5
- * Addendum). An `echo` frame carries no `reply_via`: it is a local echo that
- * records the post in the author's own stream, needing no read and no reply.
- * The user role (webui) never receives either form, so the room-view code
- * paths that consume this type always see a `msg`. */
+ * (window default 3 min, `CCMSG_RECENT_REPLAY_MS` for tests). Never present on
+ * live-delivered msgs or the since/backlog replay paths. */
 export type DeliveredEvent = (StorageEvent & { r: string }) & {
-  reply_via?: string;
   replay?: true;
-  msg_via?: string;
-  echo?: true;
 };
 
 /**

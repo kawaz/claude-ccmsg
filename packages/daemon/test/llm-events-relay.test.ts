@@ -117,9 +117,9 @@ interface LlmRequestsEv {
 }
 
 /** Connect a session that exists only to post a marker msg (peers-push.test.ts's
- * pattern): the room is created BY the poster so it is a member of it. A msg
- * from another connection is delivered with its body, whereas a self-post comes
- * back bodyless — which is why the anchor can't be a self-post. */
+ * pattern): the room is created BY the poster so it is a member of it. The
+ * reader is a user-role subscriber — the only role whose stream carries msgs —
+ * and never the poster itself, whose own post does not come back to it. */
 async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, string]> {
   const c = await connect(ctx.sock);
   await c.request({
@@ -342,11 +342,11 @@ describe("webhook → ev:llm_requests", () => {
         // The user connection receiving the push is the ordering anchor: the
         // daemon writes both sends in one synchronous loop, so once the user
         // side has it, a session-side copy would already be on the socket.
+        // A round trip on the session connection then orders its stream past it.
         await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
-        const [marker, room] = await markerSession(ctx, ["S9"]);
-        const seen = await seenBeforeMarker(marker, s, room);
+        await s.request({ op: "rooms" });
+        const seen = await s.pendingEvents();
         expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);
-        marker.close();
         u.close();
         s.close();
       } finally {
