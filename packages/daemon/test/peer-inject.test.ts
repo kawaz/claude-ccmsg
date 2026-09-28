@@ -177,6 +177,41 @@ async function sessionWithConfig(ctx: DaemonCtx, sid: string, configDir?: string
 
 describe("daemon delivery through the peer socket", () => {
   test(
+    "a msg reaches the session socket, and the subscribe stream as before",
+    async () => {
+      const ctx = await startTestDaemon();
+      try {
+        const h = fakeHarness();
+        const a = await sessionWithConfig(ctx, "SENDER");
+        const b = await sessionWithConfig(ctx, SID, h.configDir);
+        const created = await a.request<{ room: string }>({
+          op: "create_room",
+          members: ["SENDER", SID],
+        });
+        const room = created.room;
+        await b.request({ op: "subscribe" });
+
+        const first = await a.request<{ mid: number }>({ op: "post", room, msg: "via socket" });
+        const user = await h.nextUser();
+        const content = user.message.content as string;
+        expect(content).toContain(`ccmsg-mid="${room}m${first.mid}"`);
+        expect(content).toContain(`ccmsg-from="SENDER"`);
+        expect(content).toContain(`from-name="a1"`);
+        expect(content).toMatch(
+          new RegExp(`\\nvia socket\\n\\nReply with: \\S+ reply ${room}m${first.mid} <text>\\n`),
+        );
+
+        const { ev } = await b.readEventUntil((e) => e.type === "msg");
+        expect(ev.mid).toBe(first.mid);
+        expect(ev.msg).toBe("via socket");
+      } finally {
+        await stopTestDaemon(ctx);
+      }
+    },
+    T,
+  );
+
+  test(
     "a message from the User names user as sender",
     async () => {
       const ctx = await startTestDaemon();
