@@ -30,8 +30,7 @@
 | セッション行のクリックで TL を開く | `SessionList.tsx` → `locator.ts` | DR-0004 | 移す | 主動線 |
 | agents (subagent) 行の表示 | `SessionList.tsx` / `op:agents` | DR-0025 | 移す | Timeline の agent 切替と対で使われる |
 | pinned セッション (過去セッションの常設) | `pinned-sessions.ts` + `AppState.pinnedSessions` | DR-0021 | 移す | 検索結果を手元に残す唯一の手段 |
-| 「前回稼働中」セクション | `last-live-sessions.ts` / `op:last_live_remove` | issue 2026-09-06-session-list-sections | 移す | daemon 側 op があり、削除操作まで実装済み |
-| セクション分け (稼働 / agents / pinned / 前回稼働) | `utils.ts` + `SessionList` の `useMemo` 9 個 | 同上 | 移す | ただし派生の置き場は実装判断 |
+| セクション分け (稼働 / agents / pinned) | `utils.ts` + `SessionList` の `useMemo` 9 個 | 同上 | 移す | ただし派生の置き場は実装判断 |
 | 並び替えキーの切替 (`peerSortKey`) | `AppState.peerSortKey` + localStorage | — (DR なし) | 移す | 永続化済み = 使われている前提が立つ |
 | セッション行の D&D で room へ招待 | `dnd.ts` + `op:invite` | DR-0011 | 移す | DR-0011 が明示的に導入した操作 |
 | セッション行の mini ステータスバッジ | `session-status-view.ts` | DR-0020 | 移す | Status タブと同じ派生を共有 |
@@ -395,7 +394,7 @@ DR-0032 §2.1 が状態層を `@preact/signals` にすると決めているた�
 
 | 領域 | 含む機能 |
 |---|---|
-| Sessions 一覧 | peers / agents / pinned / 前回稼働のセクション表示、行クリックで TL、並び替え、mini ステータスバッジ、エラー表示 |
+| Sessions 一覧 | peers / agents / pinned のセクション表示、行クリックで TL、並び替え、mini ステータスバッジ、エラー表示 |
 | Timeline | 購読と追記表示、`transcript-model` + cross-line、Markdown レンダリング (DR-0010 一式)、Shiki、thinking、行種別の表示部品、fold 一式、ccmsg バブル (DR-0027)、fork 境界、位置 pin と着地、自動追随、in-view 検索、raw モード |
 | Files | ツリー遅延ロード、本文表示、Shiki、ファイル内検索、markdown プレビュー、選択の per-sid 記憶、プロジェクト外 (DR-0024)、パスリンク (`filepath-ref` + `fs_stat_batch`) |
 | Rooms | 一覧、チャット表示、投稿、seq cursor 付き再接続 (DR-0016)、作成、改名、招待、配信フィルタ (`to`) |

@@ -163,10 +163,9 @@ describe("initialSessionCreatorForm", () => {
     expect(form.params).toMatchObject({ CWD: "/repos/app", MODEL: "opus", EFFORT: "high" });
   });
 
-  // A fork of a session that is no longer connected (the sidebar's 前回稼働中
-  // row, kawaz r259 m42) has no live AppState to read its context out of, so
-  // it carries the daemon's frozen record on the prefill instead — same fields
-  // a resume carries, mapped the same way.
+  // A fork of a session that is no longer connected has no live AppState to
+  // read its context out of, so it carries what the caller knows on the
+  // prefill instead — same fields a resume carries, mapped the same way.
   test("a fork prefill can carry its own cwd/model/effort/title", () => {
     const forkWithTitle = template("fork", "run-fork", {
       CWD: "",
@@ -642,10 +641,10 @@ describe("prefillSidebarState", () => {
     });
   });
 
-  // 前回稼働中の行は切断済みで live state から何も読めないので、行が持って
-  // いる cwd/model/effort/title を全部リンクに載せる。fork 地点だけは行が
-  // 知らないので空のまま (= フォームで貼れる)。
-  test("前回稼働中の ⑂ は行の持ち物を全部リンクに載せる", () => {
+  // 切断済みのセッションは live state から何も読めないので、呼び出し側が
+  // 持っている cwd/model/effort/title を全部リンクに載せる。fork 地点を
+  // 知らなければ空のまま (= フォームで貼れる)。
+  test("切断済みセッションの fork は呼び出し側の持ち物を全部リンクに載せる", () => {
     expect(
       prefillSidebarState({
         kind: "fork",

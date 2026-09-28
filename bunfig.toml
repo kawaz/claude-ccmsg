@@ -1,0 +1,2 @@
+[test]
+preload = ["./packages/testkit/src/test-env.ts"]

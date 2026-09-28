@@ -142,7 +142,6 @@ daemon の揮発状態 (再起動で消えてよい)。
 | `session_dump_file` | `session_dump_write` | user | 要 | — | L | — | `not_found` |
 | `transcript_read` | `transcript_read` | session, user | 要 | — | L | **role** | `not_found` |
 | `fork_origin` | `session_fork_origin` | user | 要 | `fork` | L | — | `not_found` |
-| `last_live_remove` | `session_last_live_remove` | user | 要 | — | L | — | — |
 
 - 全 op が loc=L (pid / 絶対パス / hyoui ハンドルに依存、棚卸し §5.6)。
   よって全 op が `instance_unreachable` を返しうる
@@ -210,7 +209,7 @@ snapshot frame には `snapshot: true` の印が付く (PV-Q3)。
 | `inbox` | messaging | 未配送メッセージの配列 (自 sid 宛) | 配送 frame (§2.2) | (v1 は subscribe の backlog) | `DeliveredEvent` | 要素追加 | session, user |
 | `notify` | messaging | (なし、delta 専用) | `notify` event | — | `notify` | — | session, user |
 | `kv:<ns>` | control | `{entries: [{key, value, updated_at}]}` | 同型 (変化した entry、削除は `deleted: true`) | (なし) | (なし) | 要素差分 | user |
-| `peers` | control | `{peers[], last_live[]}` | 同型 | `peers` | `peers` | **instance ごと全量置換** (Draft §6) | session, user |
+| `peers` | control | `{peers[]}` | 同型 | `peers` | `peers` | **instance ごと全量置換** (Draft §6) | session, user |
 | `agents` | control | `{agents[], polled_at}` | 同型 | `agents` | `agents` | instance ごと全量置換 | user |
 | `session_status:<sid>` | control | `SessionStatusSnapshot` | 全量置換 | `session_status`, `session_status_subscribe`, `session_status_unsubscribe` | `session_status` | 全量置換 | user |
 | `transcript:<sid>` | control | `{sid, size}` | 追記バイト列 (offset 整合) | `transcript_subscribe`, `transcript_unsubscribe` | `transcript` | 追記 (byte offset) | user |

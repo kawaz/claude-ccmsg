@@ -44,7 +44,7 @@ transcript で全部見せている。よって v2 の messaging は **会話の
   添える** (worktree が違ってもリポが同じなら候補にし、ws 名を添えて区別する。宛先が新しいセッションに
   世代交代している場合、送信側がそちらへ送り直せる。kawaz r278m66)
 - inbox の保持: 宛先 sid が一覧から消える (Disappeared 行を ✕ で消す / 再接続で配送し切る) まで、または
-  7 日 (last-live の保持と同じ窓)。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との
+  7 日。1 sid あたり 256 件を上限とし (Claude Code 側の受信 queue 上限 256 との
   対称、[findings 2026-09-08](../findings/2026-09-08-claude-code-messaging-socket.md) §6)、超えた分は古い方
   から落として送信側に `reason: inbox_full` を返す。受信側で一時的に受け付けられなかった (rate limit /
   queue full / duplicate) ものは inbox に残して再送し、応答は `reason: throttled`
@@ -139,7 +139,7 @@ frame には `snapshot: true` の印を付け、受け手が「snapshot が届�
   mesh で見えている instance の一覧 (`instances: [{id, host, reachable}]`) を含める
 - `role: instance` の hello に mesh-peer-auth §5.3 のフィールド (`ver` / `iss` / `aud` / `kid`) を載せる
   (認証を別チャネルにしない)
-- session 系オブジェクト (`PeerInfo` / `AgentInfo` / `LastLiveSession` / `SessionSearchHit`) は
+- session 系オブジェクト (`PeerInfo` / `AgentInfo` / `SessionSearchHit`) は
   `instance` を持つ
 - `locality: instance-local` の op は、接続先が担当でなければ mesh で担当へ転送。到達できなければ
   `instance_unreachable`

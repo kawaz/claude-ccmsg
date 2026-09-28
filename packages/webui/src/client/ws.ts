@@ -52,7 +52,6 @@ import type {
   SessionErrorsResponse,
   SessionErrorsStreamEvent,
   SessionKillResponse,
-  LastLiveRemoveResponse,
   SessionRenameResponse,
   SessionLaunchRequest,
   SessionLaunchResponse,
@@ -377,11 +376,6 @@ export interface WsHandle {
    * "terminal_unavailable"` means the session runs outside hyoui and can only
    * be renamed by hand. Slow like sessionKill. */
   sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
-  /** Forget one "前回稼働中" row (user role only): the user has decided not to
-   * bring that session back. The shortened list arrives on its own through the
-   * normal peers push, so callers need not update anything from the reply —
-   * `removed: false` only means another tab got there first. */
-  lastLiveRemove(sid: string): Promise<LastLiveRemoveResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -635,14 +629,7 @@ export function createWsClient(
       await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
       const peers = await send<PeersResponse>({ op: "peers" });
       if (peers.ok) {
-        dispatch({
-          type: "peers/loaded",
-          peers: peers.peers,
-          // Sessions the daemon saw running before its last restart ("前回
-          // 稼働中"); absent on an older daemon or once every one of them is
-          // back, which the reducer reads as the empty list.
-          ...(peers.last_live ? { lastLive: peers.last_live } : {}),
-        });
+        dispatch({ type: "peers/loaded", peers: peers.peers });
       }
       // U1: initial `claude agents --json` paint + daemon provenance for the
       // footer. Neither failure here should abort the handshake above (both
@@ -750,11 +737,7 @@ export function createWsClient(
     // 2026-07-12-peers-live-update-protocol).
     if ("ev" in streamEv && streamEv.ev === "peers") {
       const ev = streamEv as PeersStreamEvent;
-      dispatch({
-        type: "peers/loaded",
-        peers: ev.peers,
-        ...(ev.last_live ? { lastLive: ev.last_live } : {}),
-      });
+      dispatch({ type: "peers/loaded", peers: ev.peers });
       return;
     }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
@@ -1053,7 +1036,6 @@ export function createWsClient(
         session_id: sessionId,
         title,
       }),
-    lastLiveRemove: (sid) => send({ op: "last_live_remove", sid }),
     sessionEnv: (sessionId) =>
       send({
         op: "session_env",

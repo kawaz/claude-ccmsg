@@ -66,6 +66,8 @@ export function spawnDaemonProc(
       // No route-monitor child and no api-error folds per test daemon; tests
       // that exercise the wake drive createNetworkWatch directly.
       CCMSG_NETWORK_WATCH: "off",
+      // No `claude agents` poll registering the machine's real sessions.
+      CCMSG_AGENTS_POLL: "off",
       ...extraEnv,
     },
   });
@@ -105,6 +107,7 @@ export async function startTestDaemon(extraEnv: Record<string, string> = {}): Pr
     CCMSG_NO_SELF_EXEC: "1",
     CCMSG_HTTP_BIND: "off",
     CCMSG_NETWORK_WATCH: "off",
+    CCMSG_AGENTS_POLL: "off",
     ...extraEnv,
   };
   const proc = spawnDaemonProc(stateDir, dataDir, extraEnv);

@@ -22,7 +22,7 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
   - それ以外: `Reply with: <launcher> reply <room.id>m<mid> <text>` (`<launcher>` は `resolveLauncher()` が解決する、この daemon が動くツリーの `bin/ccmsg` 絶対パス。無ければ `ccmsg` の裸名)
 - **成否の扱い**: 注入の成否は待たず、結果は `daemon.log` に `peer-inject <mid> -> <sid>: <outcome>` として記録するのみで、呼び出し元の処理やレスポンスには一切影響しない (`outcome` は `delivered` / `unavailable` / `refused`)
 - **期限値**: ソケット接続とフレーム書き込みの flush 完了まで 2 秒 (`INJECT_WRITE_MS`)。受け手が拒否 (`peer_message_status` で `refused`/`denied`/`dropped`/`expired`/`held`) を返してくるかを待つ猶予は 250ms (`INJECT_STATUS_MS`)。`sessions/` ディレクトリの走査 (`readdir` + 各 JSON の読み取り) 全体に 1 秒 (`INJECT_SCAN_MS`)。いずれも超過は `unavailable` 扱いで、待たずに次の処理へ進む
-- **config dir の限定**: 注入先は、そのセッションが hello 等で daemon に自己申告した `configDir` を持つ member に限る。daemon が推測で config dir を組み立てることはしない
+- **config dir の限定**: 注入先は、daemon が `configDir` を知っている member に限る。`configDir` の出どころは、セッションが hello で自己申告した値か、そのセッションを列挙した harness の登録簿の config dir (§5) のどちらか。daemon が推測で config dir を組み立てることはしない
 
 ## 3. Alternatives Considered
 
@@ -33,7 +33,20 @@ daemon が room の msg イベントを配送するとき (`deliver` / `deliverN
 
 ## 4. Consequences
 
-- 受け手が一度も CLAUDE_CONFIG_DIR を daemon に申告していない場合 (= `sessions/*.json` の手掛かりが daemon に無い場合) は、msg がそのセッションに届かない
+- daemon が受け手の config dir を知らない場合 (hello で申告しておらず、harness の登録簿にも載っていない場合) は、msg がそのセッションに届かない
 - `reply_via` / `msg_via` / `echo` といった subscribe の msg フレーム専用の付加情報は無い。返信方法は封筒の返信行が伝える
 - 注入の成否は log にしか残らないため、届かなかったことを daemon 側から利用者に能動的に知らせる仕組みは無い (受け手からの明示的な拒否のみ 250ms 以内に拾える)
 - webui 側の表示は本 DR の対象外。DR-0027 §6 の封筒表示ロジックがそのまま使われる
+
+## 5. セッションの登録は harness の登録簿から導出する
+
+注入の宛先は daemon の session registry (`daemon.sessions`) にあるセッションである。この registry を、セッションが v1 CLI で hello したかどうかではなく、harness 自身の登録簿から導出する。既に起動しているセッションは、ccmsg を一度も実行していなくても生きているものとして扱う。
+
+- **登録簿**: 検出した全 config dir (`$HOME/.claude*` のディレクトリ) それぞれで `claude agents --json` を実行した結果を合わせたもの (`packages/daemon/src/agents.ts`)。間隔は 5 秒で、daemon の起動から停止まで常時回す
+- **登録**: 登録簿に載っていて registry に無い sid を登録する。cwd は realpath に正規化し、repo/ws は cwd から導出する (`repo-derive.ts`。cwd だけを名乗った hello と同じ扱い)。transcript は、その行を返した config dir の `projects/` から `<sid>.jsonl` を引けた時だけ持たせる。`configDir` はその行を返した config dir とする。broadcast room への自動 join (DR-0013 §2.2) は hello による登録と同じく行う。`state` が `done` の行は終わったセッションなので登録しない
+- **hello との関係**: 既に registry にある sid は登録簿の値で上書きしない。hello はセッション自身が名乗るもので、行よりも詳しい (branch、repo_root、申告された transcript)。登録簿で登録した後に届いた hello は、通常どおり registry を更新する
+- **忘却**: 登録簿に載ったことのある sid が、その sid を列挙した config dir の回答から消えたら、セッションは終わったとみなして registry から外す (`forgetSession`。broadcast room に leave が書かれる)。その回の `claude agents --json` が失敗した config dir は何も言っていないので、その config dir のセッションは外さない。登録簿に一度も載ったことのない sid (codex などの harness 外の peer、テスト用クライアント) は、登録簿の変化では外さない
+- **常時ポーリングにする理由**: room member への注入 (§2) と 1on1 room の作成は、registry にセッションが居ることを前提にする。これは webui の有無に関係なく成り立つ必要がある。webui が居る間だけ回すと、webui が居ない間に起動したセッションには webui を開くまで msg が届かない。`claude agents --json` の実行費用 (config dir の数 × 5 秒ごと) は、配送が成り立つことに比べて小さい
+- **テスト**: テストが起こす daemon は `CCMSG_AGENTS_POLL=off` でポーリングを止める (`bunfig.toml` の preload がテストプロセス全体に既定値として入れる)。止めないと開発機で実際に動いているセッションがテストの registry に登録される。ポーリング自体を検証するテストは、偽の `$HOME` と偽の `claude` を用意して `on` に戻す
+
+この導出により、daemon が再起動しても、生きているセッションは次のポーリングで registry に戻る。再起動前に稼働していたセッションを daemon 側で別に記録して見せる必要は無い。

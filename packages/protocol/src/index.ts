@@ -384,10 +384,6 @@ export interface AgentsStreamEvent {
 export interface PeersStreamEvent {
   ev: "peers";
   peers: PeerInfo[];
-  /** The `peers` op's `last_live` list, pushed on the same event: a session
-   * registering is exactly what removes it from that list, so the two always
-   * move together and one frame carries both. Same omit-when-empty rule. */
-  last_live?: LastLiveSession[];
 }
 /** Appended transcript lines for a session the subscriber asked to follow via
  * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
@@ -1337,26 +1333,6 @@ export interface SessionLauncherConfigRequest {
   op: "session_launcher_config";
 }
 
-/** Drop one entry from the "前回稼働中" list (user role only): the session it
- * names is one the user has decided not to bring back, so the row has no
- * further job to do.
- *
- * Removal is confined to that list — the transcript, the launcher and anything
- * else keyed by the sid are untouched, and the sid remains resumable by every
- * other route. It is also not a permanent exclusion: the entry describes a
- * past observation, so a daemon that later sees the session connected records
- * it again. That is why the op needs no confirmation step on the client —
- * nothing it does is unrecoverable.
- *
- * An unknown sid is not an error (`removed: false`): two tabs pressing ✕ on
- * the same row is the ordinary case, and the caller's goal — "this sid is not
- * in the list" — holds either way. */
-export interface LastLiveRemoveRequest {
-  op: "last_live_remove";
-  /** The Claude Code session UUID whose "前回稼働中" record to forget. */
-  sid: string;
-}
-
 /** Per-credential LLM quota snapshot, proxied from the gateway named by
  * `<configDir>/config.json`'s `llm_usage_url` (user role only — quota is an
  * operator's view of the host's credentials, not something a session's agent
@@ -1967,7 +1943,6 @@ export type RequestBody =
   | SessionRenameRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
-  | LastLiveRemoveRequest
   | LlmUsageRequest
   | LlmStatsRequest
   | LlmStatusRequest
@@ -2255,57 +2230,9 @@ export interface StaleClientInfo {
    * the missing correlation envelope. */
   protocol?: number;
 }
-/** One session that was connected when the daemon last saw it alive, replayed
- * after a daemon (or whole machine) restart it did not come back from — the
- * "前回稼働中" list.
- *
- * The connection fields are a frozen copy of that session's `PeerInfo` as of
- * the daemon's last snapshot write, not a live reading: the session is by
- * definition not connected while it appears here. `model`/`effort` are the
- * exception — they are read back from the transcript's last turn at load time
- * (readSessionLaunchContext), because "what it must resume as" is a property
- * of where the session actually ended, not of when the daemon last wrote a
- * snapshot. Both are absent when the transcript could not establish them,
- * exactly as in SessionSearchHit.
- *
- * An entry leaves the list the moment its sid registers again (resumed, or
- * simply restarted by hand), so a fully recovered machine shows nothing. */
-export interface LastLiveSession {
-  sid: string;
-  repo: string;
-  ws: string;
-  cwd: string;
-  /** transcript the session had announced, if any — also what `model`/`effort`
-   * below were read from. */
-  transcript_path?: string;
-  /** repo container the session had announced, if any (PeerInfo.repo_root). */
-  repo_root?: string;
-  /** branch / bookmark at snapshot time, if known. */
-  branch?: string;
-  /** the session's own title (`claude agents --json`'s `name`, what `/rename`
-   * sets) as of the snapshot write, when the daemon knew one — the agents poll
-   * only runs while a webui is connected, so absence means "not known", never
-   * "untitled". */
-  title?: string;
-  /** ISO time the session registered with the daemon that recorded it. */
-  connected_at?: string;
-  /** ISO time of the snapshot write that last saw this session connected — the
-   * newest instant it is known to have been alive. */
-  last_seen_at: string;
-  /** what the session's last turn ran as, in raw transcript spellings (same
-   * pair, same source and same purpose as SessionSearchHit.model/effort: a
-   * resume must not silently switch the session to another model). */
-  model?: string;
-  effort?: string;
-}
 export interface PeersResponse {
   ok: true;
   peers: PeerInfo[];
-  /** Sessions that were live under a previous daemon and have not registered
-   * again (see LastLiveSession). Omitted — not `[]` — when there are none, so
-   * a client that never reads it is unaffected and an older daemon looks the
-   * same as a fully recovered one. */
-  last_live?: LastLiveSession[];
 }
 export interface NotifyResponse {
   ok: true;
@@ -2345,13 +2272,6 @@ export interface SessionRenameResponse {
   ok: true;
   hyoui_session_id: string;
   title: string;
-}
-/** Payload of a completed last_live_remove. `removed` says whether the sid was
- * actually in the list, so a client can tell "I removed it" from "someone
- * already had" — neither is a failure (see the request's doc comment). */
-export interface LastLiveRemoveResponse {
-  ok: true;
-  removed: boolean;
 }
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
@@ -3048,7 +2968,6 @@ export type ResponseBody =
   | SessionLaunchResponse
   | SessionKillResponse
   | SessionRenameResponse
-  | LastLiveRemoveResponse
   | SessionEnvResponse
   | SessionSearchResponse
   | ForkOriginResponse

@@ -133,10 +133,9 @@ export interface SessionCreatorForm {
  * The launch-context fields below are optional because the two callers know
  * different amounts. A Timeline fork knows none of them and does not need to:
  * the session is on screen, so it is connected, and SessionCreator reads cwd /
- * model / effort out of live AppState (`forkSourceDefaults`). A 前回稼働中 row
- * has no live state to read — "not connected" is what puts it in that section
- * — so it carries the daemon's frozen record here instead, exactly as a
- * ResumePrefill does. */
+ * model / effort out of live AppState (`forkSourceDefaults`). A caller forking
+ * a session that is not connected has no live state to read, so it carries
+ * what it knows here instead, exactly as a ResumePrefill does. */
 export interface ForkPrefill {
   kind: "fork";
   sessionId: string;

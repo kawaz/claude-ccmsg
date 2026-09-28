@@ -14,10 +14,10 @@ import {
   PROTOCOL_VERSION,
   UNANNOUNCED_PROTOCOL_VERSION,
   resolvePaths,
+  type AgentInfo,
   type ArchiveEvent,
   type Identity,
   type KindEvent,
-  type LastLiveSession,
   type LeaveEvent,
   type LlmStatusReport,
   type MemberEvent,
@@ -56,11 +56,6 @@ import {
 } from "./fs-access.ts";
 import { fsFind } from "./fs-find.ts";
 import { executeSessionLaunch, validateSessionLaunch } from "./session-launch.ts";
-import {
-  readLastLiveSessions,
-  withLaunchContext,
-  writeLastLiveSessions,
-} from "./last-live-sessions.ts";
 import { createForkOriginCache } from "./fork-origin.ts";
 import { productionKillDeps, sessionKill } from "./session-kill.ts";
 import { productionRenameDeps, sessionRename, validateRenameTitle } from "./session-rename.ts";
@@ -118,10 +113,11 @@ import {
   type TranscriptTailStore,
 } from "./transcript.ts";
 import {
+  agentsPollEnabled,
   createAgentsPoller,
-  maybeStartAgentsPoller,
-  maybeStopAgentsPoller,
+  startAgentsPoller,
   stopAgentsPoller,
+  type AgentsPoll,
   type AgentsPoller,
 } from "./agents.ts";
 import { isIgnoredGatewayItem, LlmRequestCache, parseLlmRequestEvent } from "./llm-events.ts";
@@ -195,14 +191,12 @@ interface SessionEntry {
   /** Normalized CLAUDE_CONFIG_DIR this session runs under, when a hello
    * announced one. Deliberately outside `meta`: it exists only to answer
    * `PeerInfo.send_message` for a session asking about its peers, and `meta`
-   * is copied verbatim onto the wire (peers, ev:"peers", the last-live
-   * snapshot) where a bare config dir path would be noise nobody reads. */
+   * is copied verbatim onto the wire (peers, ev:"peers") where a bare config
+   * dir path would be noise nobody reads. */
   configDir?: string;
   /** ccmsg build / wire generation the latest hello for this sid announced
    * (PeerInfo.client_version / .protocol). Outside `meta` for the same reason
-   * configDir is: `meta` is also the last-live snapshot's payload, and which
-   * build was running when a daemon died says nothing about the session that
-   * has to be resumed. */
+   * configDir is. */
   clientVersion?: string;
   clientProtocol?: number;
   /** ISO time this entry was first created in this daemon process; a later
@@ -244,6 +238,12 @@ export interface Daemon {
   shuttingDown: boolean;
   /** `claude agents --json` merged poll state (DR-0009-agents addendum). */
   agentsPoller: AgentsPoller;
+  /** Sessions the agents poll has listed, keyed by sid, valued by the config
+   * dir whose poll listed them (syncSessionsFromAgents). Only these are ever
+   * forgotten for vanishing from that poll: a session the harness never
+   * listed (a codex peer, a test client) has no harness record whose absence
+   * could mean anything. */
+  agentsSeen: Map<string, string>;
   /** live-tail Watch state per sid (DR-0009 live-tail addendum). */
   transcriptTail: TranscriptTailStore;
   /** component-boundary timestamps for transcript latency diagnosis, from the
@@ -284,18 +284,11 @@ export interface Daemon {
    * hello re-send (or any other registerSession/removeConn call) didn't actually
    * change the peers list. "" before the first push. */
   peersSnapshot: string;
-  /** last-live persistence input as of the last snapshot write. */
-  lastLiveSnapshot: string;
   /** Out-of-date ccmsg clients seen per sid (PeerInfo.stale_client), including
    * the ones whose hello was refused — those never reach `sessions`, so this
    * is the only record that they tried. Keyed by the sid the refused hello
    * claimed; a hello speaking the current generation deletes its own entry. */
   staleClients: Map<string, StaleClientInfo>;
-  /** Sessions a previous daemon last saw connected and that have not
-   * registered again (last-live-sessions.ts), keyed by sid. Loaded once at
-   * startup and only ever shrinks while this daemon runs — the one thing that
-   * removes an entry is that sid coming back. */
-  lastLive: Map<string, LastLiveSession>;
   /** Latest LLM gateway request per conversation series, for the webui's
    * prompt-cache ring (llm-events.ts). Filled by the gateway posting to
    * `/webhook/llm-gateway`; with no such webhook configured it stays empty and
@@ -500,11 +493,6 @@ interface ClientBuild {
 }
 
 function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuild): void {
-  // This sid is back, so it is no longer "前回稼働中" — whether it came back
-  // via the launcher's resume or was simply started again by hand, the row
-  // has done its job. maybeBroadcastPeers at the end of this function pushes
-  // the shortened list and rewrites the snapshot.
-  daemon.lastLive.delete(id.sid);
   let entry = daemon.sessions.get(id.sid);
   // latest hello wins for repo/ws/cwd metadata. transcript_path is the one
   // exception (DR-0009 addendum): unlike repo/ws/cwd, it arrives via the
@@ -603,8 +591,8 @@ function registerSession(daemon: Daemon, id: SessionIdentity, client: ClientBuil
  * Design rationale: a session's connections say nothing about whether it is
  * alive — a Claude Code session talks to the daemon only for the moment a
  * `ccmsg` command runs, so an entry outlives every connection of its session.
- * The one end signal the daemon has first-hand is `session_kill` terminating
- * the process; every other session stays listed until the daemon restarts.
+ * The end signals are the harness's register no longer listing the session
+ * (syncSessionsFromAgents) and `session_kill` terminating the process.
  * Callers push ev:"peers" themselves. */
 function forgetSession(daemon: Daemon, sid: string): void {
   if (!daemon.sessions.delete(sid)) return;
@@ -613,10 +601,63 @@ function forgetSession(daemon: Daemon, sid: string): void {
   leaveAllBroadcasts(daemon, sid);
 }
 
+/** Bring the session registry in line with the harness's register of live
+ * sessions (DR-0034 「セッションの登録は harness の登録簿から導出する」).
+ *
+ * A listed sid the daemon does not know is registered from the row alone —
+ * cwd canonicalized and repo/ws derived exactly as a hello that announced only
+ * a cwd would be. A sid already registered keeps what its hello established:
+ * a hello speaks for the session itself and knows more (branch, repo_root,
+ * the announced transcript) than a row does.
+ *
+ * A sid that was listed and is no longer listed by a config dir that answered
+ * this round has ended, and is forgotten. A dir that failed to answer says
+ * nothing, so its sessions are left alone. */
+async function syncSessionsFromAgents(daemon: Daemon, poll: AgentsPoll): Promise<void> {
+  const answered = new Set(poll.answeredDirs);
+  const listed = new Map<string, AgentInfo>();
+  for (const agent of poll.agents) {
+    if (!agent.sessionId || agent.state === "done") continue;
+    listed.set(agent.sessionId, agent);
+  }
+  let changed = false;
+  for (const [sid, configDir] of daemon.agentsSeen) {
+    if (listed.has(sid) || !answered.has(configDir)) continue;
+    daemon.agentsSeen.delete(sid);
+    if (daemon.sessions.has(sid)) {
+      forgetSession(daemon, sid);
+      changed = true;
+    }
+  }
+  for (const [sid, agent] of listed) {
+    daemon.agentsSeen.set(sid, agent.config_dir);
+    if (daemon.sessions.has(sid)) continue;
+    const cwd = agent.cwd ? await realpathOrSelf(agent.cwd) : "";
+    const derived = cwd !== "" ? await deriveRepoWs(cwd) : { repo: "", ws: "" };
+    const transcriptPath = await adoptTranscriptPath(sid, undefined, [agent.config_dir]);
+    const configDir = normalizeConfigDir(agent.config_dir);
+    // A hello may have registered this sid while the lookups above yielded.
+    if (daemon.sessions.has(sid) || !daemon.agentsSeen.has(sid)) continue;
+    registerSession(
+      daemon,
+      {
+        role: "session",
+        sid,
+        repo: derived.repo,
+        ws: derived.ws,
+        cwd,
+        ...(transcriptPath ? { transcript_path: transcriptPath } : {}),
+        ...(configDir ? { config_dir: configDir } : {}),
+      },
+      {},
+    );
+  }
+  if (changed) maybeBroadcastPeers(daemon);
+}
+
 export function removeConn(daemon: Daemon, conn: Conn): void {
   daemon.connections.delete(conn);
   daemon.subscribers.delete(conn);
-  maybeStopAgentsPoller(daemon.agentsPoller, daemon.subscribers);
   // The departing conn may have been the last user-role subscriber, in which
   // case syncSessionErrors drops every watch (see its doc comment).
   syncSessionErrors(daemon);
@@ -761,95 +802,7 @@ function peersCompareKey(daemon: Daemon): string {
     // own onChange is what re-enters maybeBroadcastPeers for it, and this entry
     // is what stops that re-entry from being a no-op push.
     userInputEntries(daemon.sessionUserInputs),
-    // The "前回稼働中" half travels in the same frame, so a change confined to
-    // it (a sid recovering, or the startup launch-context fill landing) has to
-    // be able to trigger the push on its own.
-    currentLastLive(daemon),
   ]);
-}
-
-/** The `last_live` list on the wire: sessions a previous daemon saw connected
- * that have not registered again. Newest sighting first — after a reboot the
- * reader is looking for what they were in the middle of — with sid as the
- * tiebreak so the order is stable enough to compare. */
-function currentLastLive(daemon: Daemon): LastLiveSession[] {
-  return [...daemon.lastLive.values()].sort(
-    (a, b) => b.last_seen_at.localeCompare(a.last_seen_at) || a.sid.localeCompare(b.sid),
-  );
-}
-
-/** The body both the `peers` op reply and the ev:"peers" push carry, so the
- * two can never disagree about the pair. `last_live` is omitted rather than
- * sent as `[]` when nothing is pending (protocol contract: a client that never
- * reads it is unaffected, and a fully recovered machine looks the same as an
- * older daemon). */
-function peersPayload(daemon: Daemon): { peers: PeerInfo[]; last_live?: LastLiveSession[] } {
-  const lastLive = currentLastLive(daemon);
-  return {
-    peers: currentPeers(daemon),
-    ...(lastLive.length > 0 ? { last_live: lastLive } : {}),
-  };
-}
-
-/** The session's own title as the agents poll currently reports it, if at all.
- * That poll only runs while a webui is watching (DR-0009-agents), so this is
- * genuinely best-effort — a snapshot written with no webui connected simply
- * carries no title, and the row falls back to its cwd leaf like any untitled
- * session row does. */
-function agentTitle(daemon: Daemon, sid: string): string | undefined {
-  for (const agent of daemon.agentsPoller.cache.agents) {
-    if (agent.sessionId === sid && agent.name) return agent.name;
-  }
-  return undefined;
-}
-
-/** Rewrite the on-disk record of who was alive: every session connected right
- * now, plus the entries still waiting to be recovered.
- *
- * Carrying the unrecovered entries forward is what lets the list survive a
- * second restart before the user got round to resuming anything — dropping
- * them would mean a reboot loop quietly erasing exactly the sessions it
- * exists to remember. `last_seen_at` is stamped now for the live half: this
- * write is the moment those sessions are known to be alive. */
-/** The snapshot file exists to restore "who was connected" after a daemon
- * restart, so it is rewritten only when that set (or a member's meta / title)
- * changes. peersCompareKey also folds in tail-derived `last_user_input_at`,
- * which moves on every user turn in any session — driving the write from that
- * key rewrote an identical file on every keystroke-turn across all sessions. */
-function lastLiveCompareKey(daemon: Daemon): string {
-  return JSON.stringify([
-    [...daemon.sessions.values()].map((s) => ({
-      ...s.meta,
-      connected_at: s.connectedAt,
-      title: agentTitle(daemon, s.meta.sid),
-    })),
-    currentLastLive(daemon),
-  ]);
-}
-
-function maybePersistLastLive(daemon: Daemon): void {
-  const key = lastLiveCompareKey(daemon);
-  if (key === daemon.lastLiveSnapshot) return;
-  daemon.lastLiveSnapshot = key;
-  persistLastLive(daemon);
-}
-
-function persistLastLive(daemon: Daemon): void {
-  const now = nowIso();
-  const live = [...daemon.sessions.values()].map((s) => {
-    const title = agentTitle(daemon, s.meta.sid);
-    return {
-      ...s.meta,
-      ...(title ? { title } : {}),
-      connected_at: s.connectedAt,
-      last_seen_at: now,
-    };
-  });
-  writeLastLiveSessions(
-    daemon.paths.lastLiveSessions,
-    [...live, ...daemon.lastLive.values()],
-    daemon.log,
-  );
 }
 
 /** Push the current prompt-cache snapshot to one connection. Sent as the full
@@ -1021,13 +974,12 @@ function buildWebhookSources(daemon: Daemon, log: Logger): Map<string, WebhookSo
  * terminates: the snapshot is stamped before the syncs below run, and a sync
  * that changes nothing fires no onChange. */
 function maybeBroadcastPeers(daemon: Daemon): void {
-  maybePersistLastLive(daemon);
   const key = peersCompareKey(daemon);
   if (key === daemon.peersSnapshot) return;
   daemon.peersSnapshot = key;
-  const payload = peersPayload(daemon);
+  const peers = currentPeers(daemon);
   for (const sub of daemon.subscribers) {
-    if (sub.identity?.role === "user") send(sub, { ev: "peers", ...payload });
+    if (sub.identity?.role === "user") send(sub, { ev: "peers", peers });
   }
   // The connected set just changed, so the set of transcripts worth folding
   // for api_error — and for last_user_input_at — did too.
@@ -1056,9 +1008,8 @@ function broadcastSessionErrors(daemon: Daemon): void {
 }
 
 /** Follow every connected session's transcript for api_error — but only while
- * a user-role subscriber is connected, the same "webui-only work costs nothing
- * when no webui is watching" rule the agents poller follows (DR-0009-agents
- * addendum). With no such subscriber the wanted set is empty, which tears every
+ * a user-role subscriber is connected: webui-only work costs nothing when no
+ * webui is watching. With no such subscriber the wanted set is empty, which tears every
  * watch down. Called from the three places that can change either input: peers
  * changing (maybeBroadcastPeers), a user subscribing, and a subscriber leaving. */
 function syncSessionErrors(daemon: Daemon): void {
@@ -1078,8 +1029,8 @@ function syncSessionErrors(daemon: Daemon): void {
 }
 
 /** Watch exactly the connected sessions, and only while a webui is open to
- * read the result — the same gate the agents poller uses, for the same reason
- * (DR-0009-agents: no work on behalf of nobody). Unlike syncSessionErrors this
+ * read the result — the same gate as syncSessionErrors, for the same reason
+ * (no work on behalf of nobody). Unlike syncSessionErrors this
  * has no second consumer: nothing but the sidebar's ordering reads it, so it
  * stops folding the moment the last tab closes. */
 function syncSessionUserInputs(daemon: Daemon): void {
@@ -1566,7 +1517,6 @@ const IDENTITY_OPS = new Set([
   "session_kill",
   "session_rename",
   "session_launcher_config",
-  "last_live_remove",
   "leave",
   "invite",
   "fs_list",
@@ -2456,23 +2406,12 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendBacklog(conn, room, sinceMid, undefined, sinceSeq, streamsMsgs(conn));
       }
       if (cursors.length > 0) send(conn, { ev: "room_cursors", rooms: cursors });
-      // agents polling (DR-0009-agents addendum) only ever runs while a user-role
-      // subscriber is connected — a session subscribing never starts it.
       if (conn.identity?.role === "user") {
-        maybeStartAgentsPoller(
-          daemon.agentsPoller,
-          daemon.subscribers,
-          daemon.log,
-          (agents, polledAt) => {
-            for (const sub of daemon.subscribers) {
-              if (sub.identity?.role === "user") {
-                send(sub, { ev: "agents", agents, polled_at: polledAt });
-              }
-            }
-          },
-        );
-        // Same "only while a webui is watching" gate as the agents poller:
-        // this conn may be the first user subscriber, which is what makes the
+        // Catch-up for the agents list the poller already holds; later polls
+        // reach this conn through the poller's own push.
+        const { agents, polledAt } = daemon.agentsPoller.cache;
+        if (polledAt !== null) send(conn, { ev: "agents", agents, polled_at: polledAt });
+        // This conn may be the first user subscriber, which is what makes the
         // per-peer api_error and user-input watches worth holding.
         syncSessionErrors(daemon);
         syncSessionUserInputs(daemon);
@@ -2546,18 +2485,11 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
     }
 
     case "peers": {
-      // `last_live` rides along for the webui only, the same posture its push
-      // event has: a session-role client gets no ev:"peers" updates, so handing
-      // it a list that would silently go stale is worse than not answering.
-      const forUser = conn.identity?.role === "user";
       // Same settled-answer contract as `session_errors`: a watch started when
       // this tab subscribed moments ago may still be folding, and a peers list
       // whose ordering key fills in afterwards would sort wrong on first paint.
-      if (forUser) await sessionUserInputsReady(daemon.sessionUserInputs);
-      send(conn, {
-        ok: true,
-        ...(forUser ? peersPayload(daemon) : { peers: peersFor(daemon, conn.identity) }),
-      });
+      if (conn.identity?.role === "user") await sessionUserInputsReady(daemon.sessionUserInputs);
+      send(conn, { ok: true, peers: peersFor(daemon, conn.identity) });
       return;
     }
 
@@ -2606,22 +2538,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           params,
         })),
       });
-      return;
-    }
-
-    case "last_live_remove": {
-      if (conn.identity?.role !== "user") {
-        sendErr(conn, ErrorCode.bad_request, "op 'last_live_remove' requires user role");
-        return;
-      }
-      const removed = daemon.lastLive.delete(req.sid);
-      // The list is half of the peers frame, so the ordinary push path both
-      // rewrites the snapshot and tells every watching tab — there is no
-      // separate "last_live changed" event to reach for, and going through
-      // maybeBroadcastPeers is what keeps the file and the pushed list produced
-      // from one observation of the registry (see persistLastLive).
-      if (removed) maybeBroadcastPeers(daemon);
-      send(conn, { ok: true, removed });
       return;
     }
 
@@ -3641,6 +3557,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     dedupWindowMs: resolveDedupWindow(),
     shuttingDown: false,
     agentsPoller: createAgentsPoller(),
+    agentsSeen: new Map(),
     transcriptTail: createTranscriptTailStore(trace),
     trace,
     sessionStatus: createSessionStatusStore(),
@@ -3654,9 +3571,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     forkOrigins: createForkOriginCache(),
     translator: createTranslateService(),
     peersSnapshot: "",
-    lastLiveSnapshot: "",
     staleClients: new Map(),
-    lastLive: new Map(),
     llmRequests: new LlmRequestCache(),
     llmStatusRefresher: null,
     webhooks: new Map(),
@@ -3667,24 +3582,14 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
   daemon.webhooks = buildWebhookSources(daemon, log);
   daemon.llmStatusRefresher = createStatusRefresher(daemon);
 
-  // "前回稼働中": what the previous daemon last saw connected (last-live-
-  // sessions.ts). Loaded before anything can connect, so the first webui to
-  // ask already has the list. Filling in each entry's model/effort means
-  // reading transcripts, so it runs async and best-effort exactly like the
-  // tailscale origin lookup below — the list is useful without it, just less
-  // pre-filled.
-  for (const entry of readLastLiveSessions(paths.lastLiveSessions, log)) {
-    daemon.lastLive.set(entry.sid, entry);
-  }
-  if (daemon.lastLive.size > 0) {
-    log.info(`last live sessions: ${daemon.lastLive.size} not recovered yet`);
-    void withLaunchContext([...daemon.lastLive.values()]).then((enriched) => {
-      for (const entry of enriched) {
-        // A sid that registered while we were reading is already recovered;
-        // putting it back would resurrect a row the client just dropped.
-        if (daemon.lastLive.has(entry.sid)) daemon.lastLive.set(entry.sid, entry);
+  if (agentsPollEnabled()) {
+    startAgentsPoller(daemon.agentsPoller, log, async (poll, polledAt) => {
+      await syncSessionsFromAgents(daemon, poll);
+      for (const sub of daemon.subscribers) {
+        if (sub.identity?.role === "user") {
+          send(sub, { ev: "agents", agents: poll.agents, polled_at: polledAt });
+        }
       }
-      maybeBroadcastPeers(daemon);
     });
   }
 

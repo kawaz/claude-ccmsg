@@ -197,7 +197,7 @@ export function formatContextUsage(ctx: SessionContextUsage): { text: string; ti
 
 /** 「そのセッションが何で走っているか」を 1 か所から読むための候補。sidebar の
  * 行ごとに供給元が違う (購読中セッションだけが持つ context 観測、gateway の
- * 直近リクエスト、検索ヒットや「前回稼働中」記録に凍結された値) ので、生の
+ * 直近リクエスト、検索ヒットに凍結された値) ので、生の
  * 綴りだけを共通の形にして渡す。 */
 export interface ModelEffortSource {
   /** Raw transcript / gateway spelling, e.g. "claude-fable-5[1m]". */

@@ -64,7 +64,7 @@ Transport が、UI 操作は Intents が、どちらも **state への書き込�
 |---|---|---|
 | 接続 | `connStatus`, `daemonInfo`, `versionMismatch` | hello / 切断 |
 | 能力 | `capabilities` = {translator, terminalGatewayUrl, llmUsage, llmStats, llmStatus, sandbox, fork} | hello 直後の 1 回 |
-| セッション一覧 | `peers`, `agents`, `lastLiveSessions`, `sessionErrors`, `llmRequests`, `pinnedSessions` | それぞれ別の push / ポーリング |
+| セッション一覧 | `peers`, `agents`, `sessionErrors`, `llmRequests`, `pinnedSessions` | それぞれ別の push / ポーリング |
 | room | `rooms` (Map<id, RoomState>) | msg / member push |
 | 現在地 | `locator` = {view, sid, roomId, tab, mid, agent, unknownPath, missingTarget} | Navigation |
 | サイドバー | `sidebar` (= `sb.*` の URL 状態) | Navigation |

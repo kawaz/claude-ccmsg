@@ -1,15 +1,7 @@
-import { Fragment } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type {
-  AgentInfo,
-  LastLiveSession,
-  LlmRequestInfo,
-  PeerInfo,
-  SessionSearchHit,
-} from "@ccmsg/protocol";
+import type { AgentInfo, LlmRequestInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import { sessionHref } from "../locator.ts";
 import { pushNavigation } from "../navigation.ts";
-import { prefillSidebarState } from "../session-creator.ts";
 import { useApp } from "../context.ts";
 import { useStoreState } from "../useStore.ts";
 import { setSidDragPayload } from "../dnd.ts";
@@ -23,7 +15,6 @@ import {
 import {
   badgeLabel,
   formatDuration,
-  formatRelativeAge,
   groupSessionsBySection,
   indexAgentsBySid,
   lastPathSegment,
@@ -38,13 +29,6 @@ import {
   type SessionRow,
 } from "../utils.ts";
 import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
-import {
-  lastLiveRemoveAction,
-  lastLiveResumePrefill,
-  lastLiveSessionTitle,
-  sortLastLiveSessions,
-  visibleLastLiveSessions,
-} from "../last-live-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
@@ -839,181 +823,6 @@ function PinnedSessionsSection({
   );
 }
 
-/** One row of the sidebar's "前回稼働中" section: a session that was running
- * when the daemon last saw it and has not come back (issue 2026-08-25-restart-
- * recovery-last-live-sessions).
- *
- * Shares the four-element layout every other session row uses (`repo@ws` /
- * title / full sid / path, kawaz r135m16) and nothing else — unlike a pinned
- * row there is no live `PeerInfo`/`AgentInfo` to prefer, because "not
- * connected" is the definition of belonging here: every field is the daemon's
- * frozen record. That is also why the title is plain text rather than the
- * editable `SessionTitle` — `/rename` needs a running session to type into.
- *
- * The row still links to the session view (its transcript is on disk and
- * readable through the daemon's virtual-session path, the same way an offline
- * pin's is); the resume button is the row's point, and opens the launcher on
- * this session rather than starting anything itself. */
-function LastLiveSessionRow({
-  entry,
-  currentSid,
-  onResume,
-  onRemove,
-}: {
-  entry: LastLiveSession;
-  currentSid: string | null;
-  onResume: () => void;
-  /** Forget this row (see the last_live_remove op). What is dropped is a record
-   * of a past observation, not the session — but the button sits next to
-   * resume, so the confirmation in `lastLiveRemoveAction` still stands between
-   * a stray click and a row that disappears. */
-  onRemove: () => void;
-}) {
-  const title = lastLiveSessionTitle(entry);
-  // 削除ボタンだけ Shift+hover で見た目が変わる (行の sid / タイトルと同じ
-  // 仕掛け): 押した時に確認が挟まるかどうかを、押す前の字で見せる。
-  const { armed, handlers } = useShiftHover();
-  const remove = lastLiveRemoveAction(entry, armed);
-  const hasRepoWs = Boolean(entry.repo || entry.ws);
-  // 止まっているセッションなので live な供給元は存在しない: 出せるのは daemon が
-  // transcript の最後の turn から読み戻した凍結値だけ (LastLiveSession の doc)。
-  const modelEffort = formatSessionModelEffort([entry]);
-  return (
-    <li
-      class={entry.sid === currentSid ? "active session-row" : "session-row"}
-      title={entry.cwd}
-      onClick={selectSessionOnRowClick(entry.sid)}
-    >
-      <div class="session-line1">
-        <a href={sessionHref(entry.sid)} class="session-main-link">
-          <Avatar seed={entry.sid} size={16} />
-          {entry.repo ? <span class="session-line1-repo">{entry.repo}</span> : null}
-          {entry.ws ? (
-            <span class="session-line1-ws">{entry.repo ? `@${entry.ws}` : entry.ws}</span>
-          ) : null}
-          {hasRepoWs ? null : (
-            <span class="session-title" title={title}>
-              {title}
-            </span>
-          )}
-        </a>
-        <span class="session-idle" title={`最終確認 ${entry.last_seen_at}`}>
-          {formatRelativeAge(entry.last_seen_at)}
-        </span>
-        {/* 2 つとも常時表示 — hover でしか出ない操作はタッチで押せない
-         * (kawaz r259 m2)。並びは「よく使う順」ではなく「取り返しの付く順」に
-         * しない: ✕ を端に置くのは、隣を狙った指が消す方に当たらないため。 */}
-        <button
-          type="button"
-          class="last-live-action-btn"
-          aria-label="このセッションを resume"
-          title="このセッションを resume (ランチャーを開く)"
-          onClick={onResume}
-        >
-          ▶
-        </button>
-        <button
-          type="button"
-          class={`last-live-action-btn last-live-remove-btn${armed ? " armed" : ""}`}
-          aria-label="この行を前回稼働中から削除"
-          title={
-            "この行を前回稼働中から削除 (セッション自体は消えません)\n" +
-            "Shift+クリックで確認なしに削除"
-          }
-          // 表示は hover 中の Shift、実行は click 自身の shiftKey で決める
-          // (hover を経ずに届く click — キーボード操作等 — でも確認側に倒れる)。
-          onClick={(e) => {
-            const { confirm } = lastLiveRemoveAction(entry, e.shiftKey);
-            if (confirm && !window.confirm(confirm)) return;
-            onRemove();
-          }}
-          {...handlers}
-        >
-          {remove.mark}
-        </button>
-      </div>
-      {hasRepoWs ? (
-        <div class="session-line2">
-          <span class="session-title" title={title}>
-            {title}
-          </span>
-        </div>
-      ) : null}
-      <div class="session-line3">
-        <SessionIdText sid={entry.sid} />
-        <SessionModelEffort info={modelEffort} />
-      </div>
-      <div class="session-line4" title={entry.cwd}>
-        <span class="session-cwd">
-          <bdi dir="ltr">{entry.cwd}</bdi>
-        </span>
-      </div>
-    </li>
-  );
-}
-
-/** Sidebar "前回稼働中" section: the sessions a previous daemon saw connected
- * that have not registered again — what was running when the machine went
- * down, which is otherwise unrecoverable once the daemon's memory-only peers
- * registry dies with it.
- *
- * Sits below Pinned and above the status sections: pins are a standing choice
- * and stay first, while these rows are transient (each disappears the moment
- * its session comes back) and are about sessions that are NOT in any status
- * section — they belong on the boundary between the two. Renders nothing at
- * all when the list is empty, which is what a fully recovered machine looks
- * like. */
-function LastLiveSessionsSection({
-  lastLiveSessions,
-  peers,
-  currentSid,
-}: {
-  lastLiveSessions: LastLiveSession[];
-  peers: PeerInfo[];
-  currentSid: string | null;
-}) {
-  const { ws } = useApp();
-  const rows = useMemo(
-    () => sortLastLiveSessions(visibleLastLiveSessions(lastLiveSessions, peers)),
-    [lastLiveSessions, peers],
-  );
-  // No `useTick` of its own: SessionList already ticks and re-renders this
-  // subtree, which is what keeps the "最終確認" age below moving.
-  if (rows.length === 0) return null;
-  return (
-    <Fold
-      open
-      class="session-section last-live-section"
-      summaryClass="session-section-summary"
-      summary={`前回稼働中 (${rows.length})`}
-    >
-      <ul class="session-section-list">
-        {rows.map((entry) => (
-          <LastLiveSessionRow
-            key={entry.sid}
-            entry={entry}
-            currentSid={currentSid}
-            // ランチャーを「この行のセッションで」開く = URL を書き換える
-            // 遷移 (sidebar-url.ts)。行が持つ cwd/model/effort/title は
-            // そのままリンクに乗るので、切断済みで live state から読めない
-            // このセクションでも値が揃う。
-            onResume={() =>
-              pushNavigation(
-                `${location.pathname}${location.search}`,
-                prefillSidebarState(lastLiveResumePrefill(entry)),
-              )
-            }
-            // 応答は待たない: 消えた行は daemon の peers push で届く
-            // (last_live はその frame の片割れ)。失敗しても行が残るだけなので、
-            // ここで握るのは reject だけにして送信自体は撃ちっぱなしにする。
-            onRemove={() => void ws.lastLiveRemove(entry.sid).catch(() => {})}
-          />
-        ))}
-      </ul>
-    </Fold>
-  );
-}
-
 /** Extra class for a status section's `<Fold>`, for the two sections that
  * need the reader's attention:
  * - `waiting`: ユーザ対応を促す強調 (warn 色 + 跳ねアニメーション、
@@ -1057,15 +866,8 @@ export function SessionList({
 }) {
   useTick(TICK_MS);
   const { store } = useApp();
-  const {
-    agents,
-    sessionStatuses,
-    sessionErrors,
-    llmRequests,
-    pinnedSessions,
-    lastLiveSessions,
-    rooms,
-  } = useStoreState(store);
+  const { agents, sessionStatuses, sessionErrors, llmRequests, pinnedSessions, rooms } =
+    useStoreState(store);
   // 1on1 room 由来なので rooms が変わった時だけ引き直す。room を開いていなく
   // ても say/say_read は subscribe で届き store が畳むので、未読は「まだ開いて
   // いないセッション」でも正しく出る (store.ts applyProtocolEvent の say 分岐)。
@@ -1083,9 +885,6 @@ export function SessionList({
   // prompt 順 (最後にユーザ入力した順) になったことで、status セクション側の
   // 位置にも読む価値が戻った (ピンは固定表示、こちらは時系列の位置)。
   const sections = useMemo(() => groupSessionsBySection(rows), [rows]);
-  // 「前回稼働中」は Busy セクションの直後に置く (kawaz r259m64): 走っている
-  // ものの次に「さっきまで走っていたもの」が来る並びで、Busy が無い時は先頭。
-  const lastLiveAfter = sections.findIndex((section) => section.key === "busy");
   // 行に出す model/effort の供給元は 3 つあり、確度の高い順に並べる:
   //   1. context 観測 — model と effort の両方を持つが、entry があるのは
   //      SessionView が Status/Timeline を開いている sid だけ (statusBadge と
@@ -1113,56 +912,41 @@ export function SessionList({
         sayUnreadBy={sayUnreadBy}
         resolveModelEffort={resolveModelEffort}
       />
-      {lastLiveAfter < 0 ? (
-        <LastLiveSessionsSection
-          lastLiveSessions={lastLiveSessions}
-          peers={peers}
-          currentSid={currentSid}
-        />
-      ) : null}
-      {sections.map((section, index) => (
-        <Fragment key={section.key}>
-          <Fold
-            open
-            class={sectionClass(section.key)}
-            summaryClass="session-section-summary"
-            summary={`${section.label} (${section.rows.length})`}
-          >
-            <ul class="session-section-list">
-              {section.rows.map((row) => (
-                <SessionRowItem
-                  key={row.sid}
-                  row={row}
-                  currentSid={currentSid}
-                  // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
-                  // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
-                  // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
-                  // subscribe すると常駐コストが人数分乗るため、SessionView が
-                  // 実際に Status/Timeline タブを開いているセッションだけ
-                  // sessionStatuses に entry を持つ (SessionView.tsx の購読
-                  // effect 参照)。よってバッジが出るのは currentSid の行だけ
-                  // — 他行は subscribe していないので常に null (「ゼロ件」で
-                  // はなく「未購読」、意図的にバッジ非表示のまま)。
-                  statusBadge={
-                    row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
-                  }
-                  // statusBadge と違い全行に出す: prompt cache は daemon 側で
-                  // 全 sid 分まとめて届くので、購読の有無に左右されない。
-                  modelEffort={resolveModelEffort(row.sid)}
-                  cacheRequest={llmRequests.get(row.sid) ?? null}
-                  sayUnread={sayUnreadBy.get(row.sid) ?? 0}
-                />
-              ))}
-            </ul>
-          </Fold>
-          {index === lastLiveAfter ? (
-            <LastLiveSessionsSection
-              lastLiveSessions={lastLiveSessions}
-              peers={peers}
-              currentSid={currentSid}
-            />
-          ) : null}
-        </Fragment>
+      {sections.map((section) => (
+        <Fold
+          key={section.key}
+          open
+          class={sectionClass(section.key)}
+          summaryClass="session-section-summary"
+          summary={`${section.label} (${section.rows.length})`}
+        >
+          <ul class="session-section-list">
+            {section.rows.map((row) => (
+              <SessionRowItem
+                key={row.sid}
+                row={row}
+                currentSid={currentSid}
+                // kawaz r99m1: Pinned にも同じ sid が出ている場合、選択中の
+                // 二重ハイライトが紛らわしいので、こちら (下側) を弱める。
+                // DR-0020 §2.1 (a) 実装コスト判断: 全 peer 分を常時
+                // subscribe すると常駐コストが人数分乗るため、SessionView が
+                // 実際に Status/Timeline タブを開いているセッションだけ
+                // sessionStatuses に entry を持つ (SessionView.tsx の購読
+                // effect 参照)。よってバッジが出るのは currentSid の行だけ
+                // — 他行は subscribe していないので常に null (「ゼロ件」で
+                // はなく「未購読」、意図的にバッジ非表示のまま)。
+                statusBadge={
+                  row.sid === currentSid ? formatSidebarBadge(sessionStatuses.get(row.sid)) : null
+                }
+                // statusBadge と違い全行に出す: prompt cache は daemon 側で
+                // 全 sid 分まとめて届くので、購読の有無に左右されない。
+                modelEffort={resolveModelEffort(row.sid)}
+                cacheRequest={llmRequests.get(row.sid) ?? null}
+                sayUnread={sayUnreadBy.get(row.sid) ?? 0}
+              />
+            ))}
+          </ul>
+        </Fold>
       ))}
     </div>
   );

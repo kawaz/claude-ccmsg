@@ -1,7 +1,7 @@
 // agents polling (DR-0009-agents addendum): CLAUDE_CONFIG_DIR auto-detection
-// under a fake $HOME, per-dir `claude agents --json` merge, poll-while-watched
-// lifecycle driven by user-role subscriber count, and the user-only permission
-// gate. Each test spawns a real daemon over UDS with a mock `claude` binary on
+// under a fake $HOME, per-dir `claude agents --json` merge, the always-on poll
+// lifecycle, the session registry derived from it (DR-0034), and the user-only
+// permission gate. Each test spawns a real daemon over UDS with a mock `claude` binary on
 // PATH so no real Claude CLI or real ~/.claude* dirs are ever touched.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
@@ -84,6 +84,7 @@ async function startAgentsTestDaemon(
     CCMSG_CONFIG_DIR: testConfigDir(dataDir),
     CCMSG_DATA_DIR: dataDir,
     CCMSG_HTTP_BIND: "off",
+    CCMSG_AGENTS_POLL: "on",
     CCMSG_AGENTS_POLL_MS: String(POLL_MS),
     HOME: home,
     PATH: `${binDir}:${process.env.PATH ?? ""}`,
@@ -220,7 +221,7 @@ describe("agents polling: config dir detection", () => {
   );
 
   test(
-    "config dir が1つも無い場合、subscribe しても agents は空のまま (poll 自体は起動する)",
+    "config dir が1つも無い場合、agents は空のまま",
     async () => {
       const { base, home, binDir, callLog } = mkFixture();
       try {
@@ -230,7 +231,6 @@ describe("agents polling: config dir detection", () => {
           const u = await userConn(ctx);
           const res = await u.request<AgentsOk>({ op: "agents" });
           expect(res.agents).toEqual([]);
-          expect(res.polled_at).toBeNull(); // nothing polled yet: no subscriber has connected
         } finally {
           await stopAgentsTestDaemon(ctx);
         }
@@ -264,9 +264,11 @@ describe("agents polling: permission (user role only)", () => {
     },
     T,
   );
+});
 
+describe("agents polling: lifecycle", () => {
   test(
-    "session role の subscribe は agents poller を起動しない (op:'agents' は空キャッシュのまま)",
+    "webui が一度も繋がらなくても daemon 起動直後から poll する",
     async () => {
       const { base, home, binDir, callLog } = mkFixture();
       try {
@@ -277,11 +279,14 @@ describe("agents polling: permission (user role only)", () => {
         });
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
-          const s = await sessionConn(ctx, "A");
-          await s.request({ op: "subscribe" });
-          // give the (absent) poller a few periods worth of time to prove it never fired
-          await new Promise((r) => setTimeout(r, POLL_MS * 3));
-          expect(callCount(callLog)).toBe(0);
+          // A session-role conn only asks for peers; nothing here starts a poll.
+          const s = await sessionConn(ctx, "S");
+          for (;;) {
+            const res = await s.request<{ peers: { sid: string }[] }>({ op: "peers" });
+            if (res.peers.some((p) => p.sid === "sA")) break;
+            await new Promise((r) => setTimeout(r, POLL_MS));
+          }
+          expect(callCount(callLog)).toBeGreaterThan(0);
         } finally {
           await stopAgentsTestDaemon(ctx);
         }
@@ -291,11 +296,9 @@ describe("agents polling: permission (user role only)", () => {
     },
     T,
   );
-});
 
-describe("agents polling: lifecycle driven by subscriber count", () => {
   test(
-    "user subscribe で即時 1 回 poll + ev:'agents' が届き、op:'agents' で同じ結果が読める",
+    "user subscribe で ev:'agents' が届き、op:'agents' で同じ結果が読める",
     async () => {
       const { base, home, binDir, callLog } = mkFixture();
       try {
@@ -325,43 +328,6 @@ describe("agents polling: lifecycle driven by subscriber count", () => {
           expect(new Date(cached.polled_at as string).getTime()).toBeGreaterThanOrEqual(
             new Date(ev.polled_at as string).getTime(),
           );
-        } finally {
-          await stopAgentsTestDaemon(ctx);
-        }
-      } finally {
-        fs.rmSync(base, { recursive: true, force: true });
-      }
-    },
-    T,
-  );
-
-  test(
-    "最後の user subscriber が切断すると poll が止まる (切断後の呼び出し回数が増え続けない)",
-    async () => {
-      const { base, home, binDir, callLog } = mkFixture();
-      try {
-        const dirA = path.join(home, ".claude-a");
-        fs.mkdirSync(dirA);
-        writeMockClaude(binDir, callLog, {
-          [dirA]: [{ pid: 1, cwd: "/a", kind: "interactive", startedAt: 1, sessionId: "sA" }],
-        });
-        const ctx = await startAgentsTestDaemon(home, binDir);
-        try {
-          const u = await userConn(ctx);
-          await u.request({ op: "subscribe" });
-          await u.readEventUntil((e) => e.ev === "agents"); // confirm polling really started
-          u.close();
-
-          // poller teardown happens synchronously inside the socket close handler
-          // (removeConn -> maybeStopAgentsPoller); give the OS a moment to deliver
-          // the close event, then sample the call count twice a poll-period apart —
-          // two equal samples is the observable proof the interval stopped, not
-          // just that it hasn't fired yet by luck.
-          await new Promise((r) => setTimeout(r, POLL_MS * 2));
-          const sample1 = callCount(callLog);
-          await new Promise((r) => setTimeout(r, POLL_MS * 3));
-          const sample2 = callCount(callLog);
-          expect(sample2).toBe(sample1);
         } finally {
           await stopAgentsTestDaemon(ctx);
         }
@@ -535,6 +501,195 @@ exit 1
       } finally {
         fs.rmSync(base, { recursive: true, force: true });
       }
+    },
+    T,
+  );
+});
+
+/** Mock `claude` whose rows per config dir are read from `<rowsDir>/<dir
+ *  basename>.json` on every call, so a test can change what the harness lists
+ *  between polls. A file holding `FAIL` makes that dir's call exit non-zero. */
+function writeFileDrivenMockClaude(binDir: string, rowsDir: string): void {
+  const script = `#!/usr/bin/env bash
+if [ "$1" = "agents" ] && [ "$2" = "--json" ]; then
+  f="${rowsDir}/$(basename "$CLAUDE_CONFIG_DIR").json"
+  if [ ! -f "$f" ]; then echo '[]'; exit 0; fi
+  if [ "$(cat "$f")" = "FAIL" ]; then echo boom >&2; exit 1; fi
+  cat "$f"
+  exit 0
+fi
+exit 1
+`;
+  writeMockBin(path.join(binDir, "claude"), script);
+}
+
+interface PeersEv {
+  ev: string;
+  peers: { sid: string; repo: string; ws: string; cwd: string }[];
+}
+
+function row(sessionId: string, cwd: string, extra: Record<string, unknown> = {}): unknown {
+  return { pid: 1, cwd, kind: "interactive", startedAt: 1, sessionId, ...extra };
+}
+
+describe("session registry derived from the agents poll (DR-0034)", () => {
+  async function withRegistryFixture(
+    body: (f: {
+      ctx: DaemonCtx;
+      dirA: string;
+      setRows: (dir: string, rows: unknown[] | "FAIL") => void;
+      cwd: string;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const { base, home, binDir } = mkFixture();
+    const rowsDir = path.join(base, "rows");
+    fs.mkdirSync(rowsDir);
+    const dirA = path.join(home, ".claude-a");
+    fs.mkdirSync(dirA);
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-agents-cwd-")));
+    const setRows = (dir: string, rows: unknown[] | "FAIL"): void => {
+      const file = path.join(rowsDir, `${path.basename(dir)}.json`);
+      fs.writeFileSync(`${file}.tmp`, rows === "FAIL" ? "FAIL" : JSON.stringify(rows));
+      fs.renameSync(`${file}.tmp`, file);
+    };
+    writeFileDrivenMockClaude(binDir, rowsDir);
+    try {
+      const ctx = await startAgentsTestDaemon(home, binDir);
+      try {
+        await body({ ctx, dirA, setRows, cwd });
+      } finally {
+        await stopAgentsTestDaemon(ctx);
+      }
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  }
+
+  async function watcher(ctx: DaemonCtx): Promise<TestClient> {
+    const u = await userConn(ctx);
+    await u.request({ op: "subscribe" });
+    return u;
+  }
+
+  function hasPeer(sid: string): (e: any) => boolean {
+    return (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === sid);
+  }
+  function lacksPeer(sid: string): (e: any) => boolean {
+    return (e) => e.ev === "peers" && !(e as PeersEv).peers.some((p) => p.sid === sid);
+  }
+
+  test(
+    "agents に出た sid が hello なしで peers に載る (cwd から repo/ws を導出)",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        for (const args of [
+          ["init", "-q", "-b", "feat"],
+          ["remote", "add", "origin", "https://github.com/someone/somerepo.git"],
+        ]) {
+          expect(Bun.spawnSync(["git", ...args], { cwd }).exitCode).toBe(0);
+        }
+        const u = await watcher(ctx);
+        setRows(dirA, [row("sA", cwd)]);
+        const { ev } = await u.readEventUntil<PeersEv>(hasPeer("sA"));
+        expect(ev.peers.find((p) => p.sid === "sA")).toMatchObject({
+          cwd,
+          repo: expect.stringContaining("somerepo"),
+          ws: "feat",
+        });
+      });
+    },
+    T,
+  );
+
+  test(
+    "agents から消えた sid は peers から消え、broadcast room に leave が書かれる",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        setRows(dirA, [row("sA", cwd), row("sB", cwd)]);
+        await u.readEventUntil((e) => hasPeer("sA")(e) && hasPeer("sB")(e));
+        const created = await u.request<{ room: string }>({
+          op: "create_room",
+          members: [],
+          kind: "broadcast",
+        });
+        const rooms = await u.request<{
+          rooms: { id: string; members: { id: string; sid: string }[] }[];
+        }>({ op: "rooms" });
+        const room = rooms.rooms.find((r) => r.id === created.room);
+        const aId = room?.members.find((m) => m.sid === "sA")?.id;
+        expect(aId).toBeDefined();
+        setRows(dirA, [row("sB", cwd)]);
+        const { ev } = await u.readEventUntil<PeersEv>(lacksPeer("sA"));
+        expect(ev.peers.map((p) => p.sid)).toEqual(["sB"]);
+        const lines = fs
+          .readFileSync(path.join(ctx.roomsDir, `${created.room}.jsonl`), "utf-8")
+          .split("\n")
+          .filter((l) => l.trim() !== "")
+          .map((l) => JSON.parse(l));
+        expect(lines.some((l) => l.type === "leave" && l.id === aId)).toBe(true);
+      });
+    },
+    T,
+  );
+
+  test(
+    "hello 済みの sid は agents 由来の値で上書きされない",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        const s = await connect(ctx.sock);
+        await s.hello({ role: "session", sid: "sA", repo: "hello-repo", ws: "hello-ws", cwd });
+        await u.readEventUntil(hasPeer("sA"));
+        setRows(dirA, [row("sA", os.tmpdir()), row("sMarker", cwd)]);
+        const { ev } = await u.readEventUntil<PeersEv>(hasPeer("sMarker"));
+        expect(ev.peers.find((p) => p.sid === "sA")).toMatchObject({
+          repo: "hello-repo",
+          ws: "hello-ws",
+          cwd,
+        });
+      });
+    },
+    T,
+  );
+
+  test(
+    "agents に一度も出ていない hello 由来の sid は agents の変化で消えない",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        const s = await connect(ctx.sock);
+        await s.hello({ role: "session", sid: "sHello", repo: "r", ws: "w", cwd });
+        setRows(dirA, [row("sA", cwd)]);
+        await u.readEventUntil(hasPeer("sA"));
+        setRows(dirA, []);
+        const { ev } = await u.readEventUntil<PeersEv>(lacksPeer("sA"));
+        expect(ev.peers.map((p) => p.sid)).toEqual(["sHello"]);
+      });
+    },
+    T,
+  );
+
+  test(
+    "poll に失敗した config dir のセッションは消さない",
+    async () => {
+      await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
+        const u = await watcher(ctx);
+        const dirB = path.join(path.dirname(dirA), ".claude-b");
+        fs.mkdirSync(dirB);
+        setRows(dirA, [row("sA", cwd)]);
+        setRows(dirB, [row("sB", cwd)]);
+        await u.readEventUntil((e) => hasPeer("sA")(e) && hasPeer("sB")(e));
+        // dirA fails while dirB drops sB: only the answered dir's loss counts.
+        setRows(dirA, "FAIL");
+        setRows(dirB, []);
+        // The push that follows the registry update for a poll in which dirA
+        // failed and dirB listed nothing.
+        await u.readEventUntil((e) => e.ev === "agents" && e.agents.length === 0);
+        const res = await u.request<{ peers: { sid: string }[] }>({ op: "peers" });
+        expect(res.peers.map((p) => p.sid)).toEqual(["sA"]);
+      });
     },
     T,
   );

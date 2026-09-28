@@ -1,5 +1,7 @@
 // `claude agents --json` polling across every detected CLAUDE_CONFIG_DIR
-// candidate (webui "Agents" panel).
+// candidate: the harness's own register of live sessions, which the daemon's
+// session registry is derived from (DR-0034) and the webui "Agents" panel
+// shows.
 //
 // Detection re-scans `$HOME/.claude*` on every poll instead of trusting a
 // fixed env var: the daemon process's own environment can lose a
@@ -16,10 +18,9 @@ import type { AgentInfo } from "@ccmsg/protocol";
  *  config dir must not stall the poll of the others or the poll cycle itself. */
 const POLL_TIMEOUT_MS = 5000;
 
-/** Default poll period while at least one user-role subscriber is connected
- *  (DR-0009-agents addendum). `CCMSG_AGENTS_POLL_MS` override exists purely
- *  for test determinism (real usage never needs sub-5s freshness); it is not
- *  part of the wire protocol. */
+/** Poll period. `CCMSG_AGENTS_POLL_MS` override exists purely for test
+ *  determinism (real usage never needs sub-5s freshness); it is not part of
+ *  the wire protocol. */
 function resolvePollIntervalMs(): number {
   const raw = process.env.CCMSG_AGENTS_POLL_MS;
   if (raw) {
@@ -179,9 +180,10 @@ export function _resetPidHyouiCacheForTests(): void {
 
 /** Run `claude agents --json` with CLAUDE_CONFIG_DIR=configDir, tag every row
  *  with `config_dir`. Any failure (spawn error, non-zero exit, timeout,
- *  unparseable output) logs and returns `[]` — one bad config dir must not
- *  fail the merged poll. */
-async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[]> {
+ *  unparseable output) logs and returns null — one bad config dir must not
+ *  fail the merged poll, and must not read as "that dir has no sessions"
+ *  either: the registry forgets a session when it vanishes from its dir. */
+async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[] | null> {
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
   try {
     proc = Bun.spawn(["claude", "agents", "--json"], {
@@ -193,7 +195,7 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[]> 
     });
   } catch (e) {
     log.error(`agents poll: failed to spawn 'claude' for ${configDir}: ${String(e)}`);
-    return [];
+    return null;
   }
   let code: number | null;
   let text: string;
@@ -214,7 +216,7 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[]> 
     log.error(
       `agents poll: failed reading 'claude agents --json' output for ${configDir}: ${String(e)}`,
     );
-    return [];
+    return null;
   }
   if (code !== 0) {
     const errSnippet = errText.trim().slice(0, 500);
@@ -222,28 +224,41 @@ async function pollOne(configDir: string, log: AgentsLog): Promise<AgentInfo[]> 
       `agents poll: 'claude agents --json' exited ${code} for ${configDir}` +
         (errSnippet ? `: ${errSnippet}` : ""),
     );
-    return [];
+    return null;
   }
   let rows: unknown;
   try {
     rows = JSON.parse(text);
   } catch {
     log.error(`agents poll: invalid JSON from 'claude agents --json' for ${configDir}`);
-    return [];
+    return null;
   }
-  if (!Array.isArray(rows)) return [];
+  if (!Array.isArray(rows)) {
+    log.error(`agents poll: 'claude agents --json' for ${configDir} did not return an array`);
+    return null;
+  }
   return rows
     .filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null)
     .map((r) => ({ ...r, config_dir: configDir }) as AgentInfo);
 }
 
+export interface AgentsPoll {
+  agents: AgentInfo[];
+  /** Config dirs whose `claude agents --json` answered this round. A session
+   *  missing from one of these is known to have ended; a session whose dir is
+   *  not here is simply unobserved this round. */
+  answeredDirs: string[];
+}
+
 /** Poll every detected config dir in parallel and merge the results. Each
  *  merged row is annotated with `hyoui_session_id` when the underlying
  *  process's env exposes it (`ps eww` lookup, cached per pid). */
-export async function pollAgents(log: AgentsLog): Promise<AgentInfo[]> {
+export async function pollAgents(log: AgentsLog): Promise<AgentsPoll> {
   const dirs = detectConfigDirs();
   const results = await Promise.all(dirs.map((d) => pollOne(d, log)));
-  return await augmentWithHyoui(results.flat());
+  const answeredDirs = dirs.filter((_, i) => results[i] !== null);
+  const agents = await augmentWithHyoui(results.flatMap((r) => r ?? []));
+  return { agents, answeredDirs };
 }
 
 /** Order-independent identity for change detection: sort by a stable key
@@ -273,56 +288,52 @@ export function createAgentsPoller(): AgentsPoller {
   return { cache: { agents: [], polledAt: null }, timer: null };
 }
 
-/** Minimal shape needed from a subscriber connection to count user-role
- *  subscribers — kept structural (same rationale as fs-access.ts's
- *  SessionLookup) so this module has no dependency edge back to server.ts. */
-export interface SubscriberLike {
-  identity: { role: string } | null;
-}
-
-export function userSubscriberCount(subscribers: Iterable<SubscriberLike>): number {
-  let n = 0;
-  for (const sub of subscribers) if (sub.identity?.role === "user") n++;
-  return n;
+/** `CCMSG_AGENTS_POLL=off` leaves the poller unstarted — the switch exists for
+ *  test daemons, which would otherwise register every live session on the
+ *  developer's machine into their own registry. */
+export function agentsPollEnabled(): boolean {
+  return process.env.CCMSG_AGENTS_POLL !== "off";
 }
 
 /**
- * Start the poll timer iff it isn't already running AND at least one
- * user-role subscriber is connected (DR-0009-agents: the daemon never spawns
- * `claude` processes just because nobody happens to be watching). Runs one
- * poll immediately (not just on the first interval tick) so a fresh
- * subscriber doesn't wait a full period for its first `op:"agents"` /
- * `ev:"agents"` to have real data. `onChange` fires only when the merged
- * result differs from the previous poll (order-independent compare).
+ * Start polling for the daemon's whole lifetime. The poll is the source of
+ * the session registry (DR-0034), and delivering a room message to a member
+ * needs that registry whether or not a webui is watching — so unlike a
+ * display-only feed it cannot wait for a viewer.
+ *
+ * `onChange` fires only when the merged rows differ from the previous poll
+ * (order-independent compare), and is awaited before the next poll may start,
+ * so a slow registry update can never interleave with a newer poll's.
  */
-export function maybeStartAgentsPoller(
+export function startAgentsPoller(
   poller: AgentsPoller,
-  subscribers: Iterable<SubscriberLike>,
   log: AgentsLog,
-  onChange: (agents: AgentInfo[], polledAt: string) => void,
+  onChange: (poll: AgentsPoll, polledAt: string) => void | Promise<void>,
 ): void {
   if (poller.timer !== null) return;
-  if (userSubscriberCount(subscribers) === 0) return;
 
-  // In-flight guard (adversarial review finding): the poll interval and
-  // POLL_TIMEOUT_MS are the same 5s, so a slow/hung `claude` call can still
-  // be running when the next tick fires. Without this guard, overlapping
-  // polls can resolve out of order and a slower (stale) poll's result
-  // overwrites a faster (newer) one already in poller.cache, which then
-  // looks like a "change" on the next tick and flaps ev:"agents" back and
-  // forth. `let` (not part of AgentsPoller) is enough — this closure is the
-  // only place that ever ticks this poller.
+  // In-flight guard: the poll interval and POLL_TIMEOUT_MS are the same 5s, so
+  // a slow/hung `claude` call can still be running when the next tick fires.
+  // Without this guard, overlapping polls can resolve out of order and a
+  // slower (stale) poll's result overwrites a faster (newer) one already in
+  // poller.cache, which then looks like a "change" on the next tick and flaps
+  // back and forth.
   let inFlight = false;
   const tick = (): void => {
     if (inFlight) return;
     inFlight = true;
     void (async () => {
       try {
-        const agents = await pollAgents(log);
-        const changed = stableKey(agents) !== stableKey(poller.cache.agents);
+        const poll = await pollAgents(log);
+        const changed = stableKey(poll.agents) !== stableKey(poller.cache.agents);
         const polledAt = new Date().toISOString();
-        poller.cache = { agents, polledAt };
-        if (changed) onChange(agents, polledAt);
+        // The cache moves only after onChange has pushed, so a subscriber
+        // catching up from the cache in between is handed the rows the push
+        // will not repeat.
+        if (changed) await onChange(poll, polledAt);
+        poller.cache = { agents: poll.agents, polledAt };
+      } catch (e) {
+        log.error(`agents poll: ${String(e)}`);
       } finally {
         inFlight = false;
       }
@@ -332,17 +343,6 @@ export function maybeStartAgentsPoller(
   poller.timer = setInterval(tick, resolvePollIntervalMs());
   poller.timer.unref?.();
   tick();
-}
-
-/** Stop the poll timer iff it's running AND no user-role subscriber remains. */
-export function maybeStopAgentsPoller(
-  poller: AgentsPoller,
-  subscribers: Iterable<SubscriberLike>,
-): void {
-  if (poller.timer === null) return;
-  if (userSubscriberCount(subscribers) > 0) return;
-  clearInterval(poller.timer);
-  poller.timer = null;
 }
 
 /** Unconditional stop, for daemon shutdown. */
