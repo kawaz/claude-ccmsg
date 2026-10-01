@@ -4,7 +4,6 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
-| 2026-10-01 | request | open | [daemon-not-restored-after-reboot](./2026-10-01-daemon-not-restored-after-reboot.md) | OS 再起動後、Claude セッションを開くまで daemon が起動せず web UI に繋がらない。opt-in の launchd 登録を提案 (DR-0002 保留の発動) |
 | 2026-09-28 | task | open | [msgvisibleto-dead-user-only-subscribe](./2026-09-28-msgvisibleto-dead-user-only-subscribe.md) | msgVisibleTo が subscribe stream 上で死んだ判定になっている (user role only 化の帰結) |
 | 2026-09-28 | bug | open | [peer-inject](./2026-09-28-peer-inject.md) | peer-inject の同一セッション宛て連続 post の到着順が非保証。sid ごとの直列化を検討 |
 | 2026-09-18 | bug | open | [markdown-code-span-url-becomes-link](./2026-09-18-markdown-code-span-url-becomes-link.md) | markdown code span 内の URL がリンクにならない (v2 webui にも同issue起票済み) |

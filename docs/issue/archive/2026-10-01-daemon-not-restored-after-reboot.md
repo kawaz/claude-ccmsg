@@ -1,6 +1,6 @@
 ---
 title: OS 再起動後、Claude セッションを開くまで daemon が起動せず web UI に繋がらない
-status: open
+status: resolved
 category: request
 created: 2026-10-01T14:49:06+09:00
 last_read:
@@ -9,10 +9,10 @@ wip_entered:
 blocked_entered:
 pending_entered:
 discarded_entered:
-resolved_entered:
+resolved_entered: 2026-10-01T15:02:43+09:00
 discard_reason:
 pending_reason:
-close_reason:
+close_reason: ["wontfix","done:v2 (kawaz/ccmsg) で解消予定。当面は再起動後に plugin cache の bin/ccmsg daemon start を手動実行"]
 blocked_by:
 origin: 自リポ TODO
 ---
