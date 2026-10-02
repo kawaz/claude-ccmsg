@@ -18,7 +18,7 @@ webui 側から「サイドバー SESSIONS 付近の『新規』ボタン → �
 - クリック → **セッション設定ビュー** (新規 view 種別 `session-creator`)
 - ビュー内の設定項目:
   - **cwd**: クリック → ディレクトリツリー展開 → 選択
-  - **model**: dropdown (`sonnet` / `opus` / `fable` / `gpt-5.6-luna` / `gpt-5.6-terra` / `gpt-5.6-sol`)、デフォルト `fable`
+  - **model**: dropdown (`fable[1m]` / `opus[1m]` / `sonnet[1m]` / `astra` / `sol` / `luna`)。値は `claude --model` にそのまま渡す alias で、実モデルへの解決は llm-gateway 側の責務
   - **effort**: dropdown (`claude --effort` が受ける値そのまま: `low` / `medium` / `high` / `xhigh` / `max`)、デフォルト `medium`
   - **プロンプト**: multiline 入力欄 + 「default」ボタン (押すと設定ファイルの default 文字列に戻す)
 - **実行ボタン**: 押したら

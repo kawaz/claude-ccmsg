@@ -20,12 +20,12 @@ import type { SidebarUrlState } from "./sidebar-url.ts";
  * than sourced from config. They decide what the MODEL / EFFORT widgets offer;
  * whether those inputs appear at all is the template's `params` declaration. */
 export const SESSION_CREATOR_MODELS = [
-  "sonnet",
-  "opus",
-  "fable",
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
+  "fable[1m]",
+  "opus[1m]",
+  "sonnet[1m]",
+  "astra",
+  "sol",
+  "luna",
 ] as const;
 /** The effort levels `claude --effort` accepts, verbatim. An unknown value is
  * not an error there — the CLI warns on stderr and silently runs at its default
@@ -267,18 +267,21 @@ export interface ForkSourceInfo {
 }
 
 /** The dropdown option a raw transcript model maps to, or undefined when none
- * does. The launch form's models are families ("fable", "opus", "gpt-5.6-sol")
- * while a transcript records the concrete model the API answered as, so the
- * `[1m]` launch suffix is dropped and a `claude-<family>-<version...>` id is
- * reduced to its family. Ids that already are an option (the gpt-5.6-* ones,
- * and bare "opus"-style values) match directly. Anything else — "<synthetic>"
- * rows, a family with no option such as haiku — has no honest answer. */
+ * does. The launch form's models are aliases ("fable[1m]", "opus[1m]", "sol")
+ * while a transcript records the concrete model the API answered as, so a
+ * `claude-<family>-<version...>` id is reduced to its family and then matched
+ * against the options with their `[1m]` launch suffix (the form only ever
+ * launches claude models with it, so the suffix is the option, not a
+ * variant). Ids that already are an option (the gpt aliases) match directly.
+ * Anything else — "<synthetic>" rows, a family with no option such as haiku —
+ * has no honest answer. */
 export function launcherModelFromTranscript(raw: string): string | undefined {
-  const model = raw.replace(/\[[^\]]*\]$/, "");
   const options: readonly string[] = SESSION_CREATOR_MODELS;
-  if (options.includes(model)) return model;
-  const family = /^claude-([a-z0-9.]+)-/.exec(model)?.[1];
-  if (family && options.includes(family)) return family;
+  if (options.includes(raw)) return raw;
+  const model = raw.replace(/\[[^\]]*\]$/, "");
+  const family = /^claude-([a-z0-9.]+)-/.exec(model)?.[1] ?? model;
+  const suffixed = `${family}[1m]`;
+  if (options.includes(suffixed)) return suffixed;
   return undefined;
 }
 

@@ -187,7 +187,7 @@ describe("initialSessionCreatorForm", () => {
     expect(form.template).toBe("fork");
     expect(form.params).toMatchObject({
       CWD: "/repos/app",
-      MODEL: "opus",
+      MODEL: "opus[1m]",
       EFFORT: "high",
       TITLE: "案件メモ",
       SESSION_ID: "sid-1",
@@ -219,7 +219,7 @@ describe("initialSessionCreatorForm", () => {
       model: "claude-opus-5[1m]",
       effort: "high",
     });
-    expect(form.params).toMatchObject({ MODEL: "opus", EFFORT: "high" });
+    expect(form.params).toMatchObject({ MODEL: "opus[1m]", EFFORT: "high" });
   });
 
   // `claude --resume` comes back under a name it derives from the directory
@@ -419,7 +419,7 @@ describe("forkSourceDefaults", () => {
 
   test("maps model and effort into the form's vocabulary", () => {
     expect(forkSourceDefaults({ model: "claude-fable-5[1m]", effort: "medium" }, ROOTS)).toEqual({
-      MODEL: "fable",
+      MODEL: "fable[1m]",
       EFFORT: "medium",
     });
   });
@@ -429,15 +429,15 @@ describe("launcherModelFromTranscript", () => {
   // The form offers families; a transcript records the concrete model, with a
   // launch-only [1m] suffix on long-context sessions.
   test("reduces a claude model id to its family, suffix included", () => {
-    expect(launcherModelFromTranscript("claude-fable-5")).toBe("fable");
-    expect(launcherModelFromTranscript("claude-opus-5[1m]")).toBe("opus");
-    expect(launcherModelFromTranscript("claude-sonnet-5")).toBe("sonnet");
-    expect(launcherModelFromTranscript("claude-opus-4-7")).toBe("opus");
+    expect(launcherModelFromTranscript("claude-fable-5")).toBe("fable[1m]");
+    expect(launcherModelFromTranscript("claude-opus-5[1m]")).toBe("opus[1m]");
+    expect(launcherModelFromTranscript("claude-sonnet-5")).toBe("sonnet[1m]");
+    expect(launcherModelFromTranscript("claude-opus-4-7")).toBe("opus[1m]");
   });
 
   test("ids that already are an option pass through", () => {
-    expect(launcherModelFromTranscript("gpt-5.6-sol")).toBe("gpt-5.6-sol");
-    expect(launcherModelFromTranscript("opus")).toBe("opus");
+    expect(launcherModelFromTranscript("sol")).toBe("sol");
+    expect(launcherModelFromTranscript("opus[1m]")).toBe("opus[1m]");
   });
 
   // Synthetic harness rows and families with no dropdown entry have no honest
@@ -657,7 +657,7 @@ describe("prefillSidebarState", () => {
       }).params,
     ).toEqual({
       CWD: "/repos/app",
-      MODEL: "opus",
+      MODEL: "opus[1m]",
       EFFORT: "high",
       TITLE: "案件メモ",
       RESUME_AT: "",
@@ -689,12 +689,12 @@ describe("SESSION_CREATOR_MODELS / SESSION_CREATOR_EFFORTS", () => {
   // which the form renders as-is (no client-side sort).
   test("model list matches the DR-0018 §2.1 spec, in order", () => {
     expect(SESSION_CREATOR_MODELS).toEqual([
-      "sonnet",
-      "opus",
-      "fable",
-      "gpt-5.6-luna",
-      "gpt-5.6-terra",
-      "gpt-5.6-sol",
+      "fable[1m]",
+      "opus[1m]",
+      "sonnet[1m]",
+      "astra",
+      "sol",
+      "luna",
     ]);
   });
 
