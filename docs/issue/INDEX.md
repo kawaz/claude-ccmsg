@@ -4,6 +4,7 @@ active な issue の一覧。close 済みは `archive/` にあり、ここには
 
 | date | category | status | slug | 概要 |
 |---|---|---|---|---|
+| 2026-10-02 | bug | open | [host-translation-mixed-text-counterexamples](./2026-10-02-host-translation-mixed-text-counterexamples.md) | host 翻訳が findings の「日英混在の日本語保持」「改行保持」と食い違う観測 (敬体化・インラインコード翻訳・空行挿入) |
 | 2026-09-28 | task | open | [msgvisibleto-dead-user-only-subscribe](./2026-09-28-msgvisibleto-dead-user-only-subscribe.md) | msgVisibleTo が subscribe stream 上で死んだ判定になっている (user role only 化の帰結) |
 | 2026-09-28 | bug | open | [peer-inject](./2026-09-28-peer-inject.md) | peer-inject の同一セッション宛て連続 post の到着順が非保証。sid ごとの直列化を検討 |
 | 2026-09-18 | bug | open | [markdown-code-span-url-becomes-link](./2026-09-18-markdown-code-span-url-becomes-link.md) | markdown code span 内の URL がリンクにならない (v2 webui にも同issue起票済み) |
