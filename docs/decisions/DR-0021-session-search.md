@@ -41,6 +41,10 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 ### 2.4 選択 → pinned session
 
 - クリックでそのセッションを選択 → **pinned SESSIONS リスト**に保存・マーキング
+- pin の identity はセッションの **作業ディレクトリ (`cwd`)** (kawaz 2026-10-02)。同じディレクトリで動くセッションは基本 1 つで、世代交代すると新しい sid が同じディレクトリで動き出すため、pin はディレクトリに付ける (新セッションで pin を付け直さずに済む)。repo 単位 (`repo_root`) には束ねない — 同じ repo でも worktree / workspace ごとに役割が違うため
+- key は接続中 peer の `PeerInfo.cwd` と検索結果の `SessionSearchHit.cwd` の文字列そのもの (両者は同じ「セッションの作業ディレクトリ」を指すので導出なしで揃う)。`cwd` が null の検索結果 (jsonl から復元できなかった) は pin できない (pin ボタンを出さない)
+- Files ツリーのお気に入りも同じ `cwd` を key にする (同じ理由で worktree ごとに分ける)
+- 表示規則: pin したディレクトリに接続中 peer が 1 つ以上あれば、その全員を pin の下に列挙する (世代交代中の旧・新セッションをどちらも落とさない)。0 なら pin 時に凍結した検索ヒットを表示する
 - SESSIONS サイドバーに表示され、Files (パスが現存するなら) / TL 等が閲覧可能
 - ccmsg 接続なしで daemon 仲介のみで動く (transcript_read は path ベースで拡張が要る —
   現行は hello 済みセッションの announce した path しか読めない、§ 3 設計判断)
@@ -58,6 +62,9 @@ webui は ccmsg 接続中セッション + `claude agents --json` 検出分し�
 ### 3.2 pinned list の保存先 (**SS-Q2=a**)
 
 webui localStorage。daemon 側の永続化はしない。
+
+- key `ccmsg.pinnedSessions`、値は pin 時に凍結した `SessionSearchHit` の配列 (pin 1 つにつき 1 件)。読み込み時に `cwd` で索引し、同じ `cwd` の記録が複数あれば `updated_at` が最新のものを採り、`cwd` が null の記録は捨てる
+- 凍結した記録の repo/ws・title は、その sid のセッションが接続中・稼働中の間 live 側の値で補修する
 
 ## 4. Phase 分割
 

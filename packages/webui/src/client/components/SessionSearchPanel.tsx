@@ -38,6 +38,7 @@ import {
 import { prefillSidebarState } from "../session-creator.ts";
 import { parseSearchQuery, splitTextForHighlight, type SearchWord } from "../in-view-search.ts";
 import { SearchModeToggles } from "./SearchBar.tsx";
+import { isSessionPinned } from "../pinned-sessions.ts";
 
 /** One search-result "block" (DR-0021 §2.3: repo/wt·ws/SID/created/updated/
  * size/match-summary, clickable as a whole). A `<div role="button">` rather
@@ -49,6 +50,7 @@ import { SearchModeToggles } from "./SearchBar.tsx";
 function SearchResultRow({
   hit,
   pinned,
+  pinnable,
   active,
   words,
   onSelect,
@@ -57,6 +59,9 @@ function SearchResultRow({
 }: {
   hit: SessionSearchHit;
   pinned: boolean;
+  /** A pin belongs to the session's cwd (DR-0021 §2.4), so a hit whose cwd
+   * Session Search could not restore has nothing to pin and shows no button. */
+  pinnable: boolean;
   /** This hit's sid is the sidebar's current selection (kawaz r99m2 相当: 検索
    * 結果をクリックして Timeline を開いた後、マウスが離れてもどれを見ているか
    * 分かるように) — same source of truth SessionList/RoomList use
@@ -90,22 +95,24 @@ function SearchResultRow({
           {/* Sits inside the whole-block click target, so its own click has to
            * stop there — toggling the pin is a different answer to "what did
            * the user ask for" than navigating to the Timeline. */}
-          <button
-            type="button"
-            class={"session-search-hit-pin" + (pinned ? " active" : "")}
-            aria-pressed={pinned}
-            aria-label={pinned ? "ピン解除" : "ピン留め"}
-            title={pinned ? "ピン解除" : "ピン留め"}
-            onClick={(e) => {
-              e.stopPropagation();
-              onTogglePin();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-            }}
-          >
-            {pinned ? "⭐" : "☆"}
-          </button>
+          {pinnable ? (
+            <button
+              type="button"
+              class={"session-search-hit-pin" + (pinned ? " active" : "")}
+              aria-pressed={pinned}
+              aria-label={pinned ? "ピン解除" : "ピン留め"}
+              title={pinned ? "ピン解除" : "ピン留め"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePin();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+              }}
+            >
+              {pinned ? "⭐" : "☆"}
+            </button>
+          ) : null}
           {/* Sits inside the whole-block click target, so its own click has to
            * stop there — opening the launcher and navigating to the Timeline
            * are two different answers to "what did the user ask for". */}
@@ -389,7 +396,8 @@ export function SessionSearchPanel({
               <SearchResultRow
                 key={hit.sid}
                 hit={hit}
-                pinned={state.pinnedSessions.has(hit.sid)}
+                pinned={isSessionPinned(state.pinnedSessions, hit.cwd)}
+                pinnable={hit.cwd !== null}
                 active={hit.sid === currentSid}
                 words={resultWords}
                 onSelect={() => openResult(hit)}

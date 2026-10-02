@@ -16,6 +16,7 @@ import type { AppState, RoomState } from "./store.ts";
 import { ADMIN_ID } from "./store.ts";
 import { parseUrl } from "./locator.ts";
 import { viewerPathForAbsolute } from "./filepath-ref.ts";
+import { pinnedHitForSid } from "./pinned-sessions.ts";
 
 /** Relative age of an ISO timestamp, e.g. "5s" / "3m" / "2h" / "1d". */
 export function relTime(iso: string | null): string {
@@ -652,7 +653,7 @@ export function resolveSessionTopbar(
   if (peer && (peer.repo || peer.ws)) {
     return { repo: peer.repo, ws: peer.ws, cwd: peer.cwd };
   }
-  const pinned = state.pinnedSessions.get(sid);
+  const pinned = pinnedHitForSid(state.pinnedSessions, sid);
   if (pinned && (pinned.repo || pinned.ws)) {
     return { repo: pinned.repo ?? "", ws: pinned.ws ?? "", cwd: pinned.cwd };
   }
@@ -944,11 +945,12 @@ export function groupSessionsBySection(rows: SessionRow[]): SessionSection[] {
 // --- FileTree favorites (U-fav) --- //
 
 /** localStorage key for a session's Files-tree favorites, namespaced per
- * project root — FileTree.tsx passes `peer.repo_root ?? peer.cwd` as `root`
- * so two different projects (or two unrelated cwds with no repo_root) never
- * share a favorites list, while every session/tab open on the *same* project
- * root does (kawaz: favorites should follow the project, not the individual
- * session). Kept as a plain string-formatting function (not reading `peer`
+ * session directory — FileTree.tsx passes `peer.cwd` as `root`, so every
+ * session/tab working in the same directory shares one favorites list while
+ * two directories never do, including two workspaces/worktrees of one repo
+ * (kawaz: worktrees of one repo often serve different roles, so their
+ * favorites are kept apart; the same key the sidebar's pins use, DR-0021
+ * §2.4). Kept as a plain string-formatting function (not reading `peer`
  * itself) so it stays testable without a PeerInfo fixture, mirroring
  * `favoritesStorageKey`'s sibling helpers above (`treeRootPath` etc.)
  * that narrow their input to just the fields they need. */
@@ -1341,7 +1343,7 @@ function isSessionSearchHit(value: unknown): value is SessionSearchHit {
 }
 
 /** Parses a raw `localStorage.getItem(PINNED_SESSIONS_STORAGE_KEY)` result
- * into a pinned-hit list, same tolerant-of-garbage posture as
+ * into a pinned-hit list (the store keys it by cwd, pinsFromHits), same tolerant-of-garbage posture as
  * `parseFavorites`: absent key, non-JSON, non-array JSON, or an array with
  * malformed entries all resolve to (at worst a partial) valid list rather
  * than throwing. A malformed individual entry is dropped, not treated as
@@ -1357,15 +1359,6 @@ export function parsePinnedSessions(raw: string | null): SessionSearchHit[] {
   }
   if (!Array.isArray(parsed)) return [];
   return parsed.filter(isSessionSearchHit);
-}
-
-/** Display order for the sidebar's Pinned section: most recently updated
- * first — matches search results' own natural "freshest session first"
- * expectation better than pin-registration order, since a pinned session's
- * *content* (not the pin itself) is what a returning viewer cares about.
- * Never mutates its input (same posture as `sortFavorites`/`sortPeers`). */
-export function sortPinnedSessions(pins: SessionSearchHit[]): SessionSearchHit[] {
-  return [...pins].sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
 /** textarea の視覚行数 = 改行 + 1 (空文字でも 1 行、末尾改行はその後ろの

@@ -614,15 +614,16 @@ export function FileTree({
   const rootEntries = tree.dirs.get(rootPath);
   const rootError = tree.dirErrors.get(rootPath);
 
-  // Favorites (U-fav): keyed on peer.repo_root ?? peer.cwd (kawaz), so every
-  // session/tab open on the same project shares one favorites list. `peer`
+  // Favorites (U-fav): keyed on peer.cwd (kawaz), so every session/tab working
+  // in the same directory shares one favorites list, and sibling worktrees of
+  // one repo keep their own. `peer`
   // undefined means the daemon hasn't told us this sid's cwd yet at all — the
   // key would be undefined too, so favorites stay off (`favRoot === null`)
   // rather than briefly keying on nothing and losing/overwriting the real
   // list once `peer` arrives. State lives here (useState + localStorage
   // effect), not the reducer, per DR-0005 §1 — same split as FilesPanes'
   // pane-ratio persistence, which this mirrors deliberately.
-  const favRoot = peer ? (peer.repo_root ?? peer.cwd) : null;
+  const favRoot = peer ? peer.cwd : null;
   const [favorites, setFavorites] = useState<string[]>([]);
 
   useEffect(() => {

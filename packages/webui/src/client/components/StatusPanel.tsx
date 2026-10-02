@@ -22,7 +22,7 @@ import {
   formatContextUsage,
   formatHyouiNamespace,
 } from "../session-status-view.ts";
-import { pinnedSessionTitle } from "../pinned-sessions.ts";
+import { pinnedHitForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
   filterEnvRows,
   isSensitiveEnvName,
@@ -434,7 +434,7 @@ export function StatusPanel({
   // there is no cwd/sid tail here: CWD and SESSION_ID are their own rows right
   // below, and repeating one of them under a "TITLE" label would read as a
   // title the session doesn't have.
-  const pinned = state.pinnedSessions.get(sid);
+  const pinned = pinnedHitForSid(state.pinnedSessions, sid);
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
   const namespace = formatHyouiNamespace(agent);
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が

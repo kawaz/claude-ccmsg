@@ -57,7 +57,6 @@ import {
   sortFavorites,
   sortPeers,
   treeRootPath,
-  sortPinnedSessions,
   summarizeUserAgent,
   splitRoomsByArchived,
   splitRoomsByKind,
@@ -1033,7 +1032,7 @@ describe("resolveSessionTopbar", () => {
       ...initialState(),
       pinnedSessions: new Map<string, SessionSearchHit>([
         [
-          "s1",
+          "/repos/pinned/main",
           {
             sid: "s1",
             config_dir: "/home/kawaz/.claude",
@@ -1507,9 +1506,8 @@ describe("toSessionRow: transcript_path passthrough (U3)", () => {
 });
 
 describe("favoritesStorageKey", () => {
-  // Guarantees favorites never leak across two different project roots
-  // (or two unrelated cwds when neither has a repo_root) sharing the same
-  // browser's localStorage — each root gets its own namespaced key.
+  // Guarantees favorites never leak across two session directories sharing
+  // the same browser's localStorage — each directory gets its own key.
   test("keys are namespaced per root, distinct roots never collide", () => {
     const a = favoritesStorageKey("/Users/kawaz/repos/proj-a");
     const b = favoritesStorageKey("/Users/kawaz/repos/proj-b");
@@ -2116,16 +2114,6 @@ describe("parsePinnedSessions", () => {
     const good = searchHit({});
     const garbage = [good, { sid: "only-a-sid" }, "not even an object", 42, null];
     expect(parsePinnedSessions(JSON.stringify(garbage))).toEqual([good]);
-  });
-});
-
-describe("sortPinnedSessions", () => {
-  test("orders most-recently-updated first, without mutating the input", () => {
-    const older = searchHit({ sid: "a", updated_at: "2026-07-01T00:00:00.000Z" });
-    const newer = searchHit({ sid: "b", updated_at: "2026-07-15T00:00:00.000Z" });
-    const input = [older, newer];
-    expect(sortPinnedSessions(input)).toEqual([newer, older]);
-    expect(input).toEqual([older, newer]); // unmutated
   });
 });
 

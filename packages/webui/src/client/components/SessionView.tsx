@@ -19,6 +19,7 @@ import {
 } from "../locator.ts";
 import { BEFORE_NAVIGATION_EVENT, replaceNavigation } from "../navigation.ts";
 import { hasSessionTranscript } from "../utils.ts";
+import { hitFromLive, isSessionPinned, pinnedHitForSid } from "../pinned-sessions.ts";
 import { cleanupStaleFilesViews, loadFilesView } from "../files-view-store.ts";
 import { useApp } from "../context.ts";
 import { FilesPanes } from "./FilesPanes.tsx";
@@ -78,29 +79,11 @@ const EMPTY_TREE: SessionTreeState = {
 };
 
 function pinCandidate(state: AppState, sid: string, tree: SessionTreeState): SessionSearchHit {
-  const stored = state.pinnedSessions.get(sid) ?? tree.searchHit;
+  const stored = pinnedHitForSid(state.pinnedSessions, sid) ?? tree.searchHit;
   if (stored) return stored;
   const peer = state.peers.find((item) => item.sid === sid);
   const agent = state.agents.find((item) => item.sessionId === sid);
-  const cwd = peer?.cwd ?? agent?.cwd ?? null;
-  const agentCreatedAt =
-    agent && Number.isFinite(agent.startedAt) && Math.abs(agent.startedAt) <= 8.64e15
-      ? new Date(agent.startedAt).toISOString()
-      : "1970-01-01T00:00:00.000Z";
-  const createdAt = peer?.connected_at ?? agentCreatedAt;
-  return {
-    sid,
-    config_dir: agent?.config_dir ?? "",
-    file: peer?.transcript_path ?? "",
-    cwd,
-    repo: peer?.repo ?? null,
-    ws: peer?.ws ?? null,
-    created_at: createdAt,
-    updated_at: peer?.last_activity_at ?? createdAt,
-    size: 0,
-    matches: [],
-    title: agent?.name ?? null,
-  };
+  return hitFromLive(sid, peer, agent);
 }
 
 export function SessionView({
@@ -169,8 +152,17 @@ export function SessionView({
   // daemon 側が jsonl を直接 tail するので未接続でも更新が届く。接続したら
   // 5s の agents poll と peers push がこの component を再描画し、通常の
   // subscribe 経路に切り替わる。
-  const storedHit = sid ? (state.pinnedSessions.get(sid) ?? tree.searchHit) : undefined;
+  const storedHit = sid
+    ? (pinnedHitForSid(state.pinnedSessions, sid) ?? tree.searchHit)
+    : undefined;
   const hasTranscript = hasSessionTranscript(peer, storedHit?.file, !!agentForSid);
+  // The pin button acts on this session's directory (DR-0021 §2.4): the live
+  // peer's cwd when connected, else whatever record the session left. No cwd
+  // means nothing to pin, so the button is not shown.
+  const candidate = pinCandidate(state, sid, tree);
+  const pinCwd = peer?.cwd ?? candidate.cwd;
+  const pinHit = { ...candidate, cwd: pinCwd };
+  const pinned = isSessionPinned(state.pinnedSessions, pinCwd);
   // Re-hello may keep the same sid while changing transcript/root metadata.
   // Include the concrete fold source in the subscription effect deps so the
   // daemon's subscribe path can invalidate/rebuild its DR-0020/DR-0024 cache.
@@ -306,18 +298,18 @@ export function SessionView({
           selected={tab}
           items={sessionTabItems(sid, hasTranscript, hasTerminal)}
         />
-        <button
-          type="button"
-          class={"session-pin-toggle" + (state.pinnedSessions.has(sid) ? " active" : "")}
-          aria-pressed={state.pinnedSessions.has(sid)}
-          aria-label={state.pinnedSessions.has(sid) ? "ピン解除" : "ピン留め"}
-          title={state.pinnedSessions.has(sid) ? "ピン解除" : "ピン留め"}
-          onClick={() =>
-            store.dispatch({ type: "pinned/toggled", hit: pinCandidate(state, sid, tree) })
-          }
-        >
-          {state.pinnedSessions.has(sid) ? "⭐" : "☆"}
-        </button>
+        {pinCwd ? (
+          <button
+            type="button"
+            class={"session-pin-toggle" + (pinned ? " active" : "")}
+            aria-pressed={pinned}
+            aria-label={pinned ? "ピン解除" : "ピン留め"}
+            title={pinned ? "ピン解除" : "ピン留め"}
+            onClick={() => store.dispatch({ type: "pinned/toggled", hit: pinHit })}
+          >
+            {pinned ? "⭐" : "☆"}
+          </button>
+        ) : null}
       </div>
       {visitedTabs.current.has("files") ? (
         <div class="session-tab-panel" hidden={tab !== "files"} data-session-tab="files">

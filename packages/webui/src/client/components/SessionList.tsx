@@ -23,12 +23,11 @@ import {
   sessionBadges,
   staleClientWarning,
   shortSid,
-  sortPinnedSessions,
   toSessionRow,
   sayUnreadBySid,
   type SessionRow,
 } from "../utils.ts";
-import { pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
+import { pinnedRows, pinnedSessionLabel, pinnedSessionTitle } from "../pinned-sessions.ts";
 import { Avatar } from "../avatar.tsx";
 import { CacheRing } from "./CacheRing.tsx";
 import { useCacheRing } from "../useCacheRing.ts";
@@ -764,7 +763,7 @@ function PinnedSessionRow({
 }
 
 /** Sidebar "Pinned" section (DR-0021 §2.4/§3.2): always shown when at least
- * one session is pinned, positioned above the status-grouped sections below
+ * one directory is pinned, positioned above the status-grouped sections below
  * — pins are a deliberate user choice ("I want to keep finding this one"),
  * so they stay visible regardless of the search panel being open/closed
  * (see Sidebar.tsx's doc comment).
@@ -772,7 +771,11 @@ function PinnedSessionRow({
  * A pinned sid appears here and nowhere else among the status sections below:
  * SessionList filters them out before grouping (kawaz 2026-08-31), because a
  * pinned row already prefers the live PeerInfo/AgentInfo when the session is
- * connected, so the second copy carried no information the first one lacked. */
+ * connected, so the second copy carried no information the first one lacked.
+ *
+ * A pin is a directory, and the rows under it are pinnedRows' answer: every
+ * connected session in that directory, else the session frozen at pin time.
+ * The count in the summary is of pinned directories. */
 function PinnedSessionsSection({
   pinnedSessions,
   peers,
@@ -795,18 +798,21 @@ function PinnedSessionsSection({
   resolveModelEffort: (sid: string, frozen?: ModelEffortSource) => ModelEffortInfo | null;
 }) {
   const { store } = useApp();
-  const pins = useMemo(() => sortPinnedSessions([...pinnedSessions.values()]), [pinnedSessions]);
+  const rows = useMemo(
+    () => pinnedRows(pinnedSessions, peers, agentsBySid),
+    [pinnedSessions, peers, agentsBySid],
+  );
   const peersBySid = useMemo(() => new Map(peers.map((p) => [p.sid, p] as const)), [peers]);
-  if (pins.length === 0) return null;
+  if (rows.length === 0) return null;
   return (
     <Fold
       open
       class="session-section pinned-section"
       summaryClass="session-section-summary"
-      summary={`Pinned (${pins.length})`}
+      summary={`Pinned (${pinnedSessions.size})`}
     >
       <ul class="session-section-list">
-        {pins.map((hit) => (
+        {rows.map(({ key, hit }) => (
           <PinnedSessionRow
             key={hit.sid}
             hit={hit}
@@ -815,7 +821,7 @@ function PinnedSessionsSection({
             agent={agentsBySid.get(hit.sid)}
             modelEffort={resolveModelEffort(hit.sid, hit)}
             sayUnread={sayUnreadBy.get(hit.sid) ?? 0}
-            onUnpin={() => store.dispatch({ type: "pinned/removed", sid: hit.sid })}
+            onUnpin={() => store.dispatch({ type: "pinned/removed", key })}
           />
         ))}
       </ul>

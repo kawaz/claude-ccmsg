@@ -37,7 +37,12 @@ import {
 import { readSessionStorage, readStorage } from "./storage.ts";
 import type { VersionMismatch } from "./version-guard.ts";
 import type { PeerSortKey } from "./utils.ts";
-import { refreshPinsFromAgents, refreshPinsFromPeers } from "./pinned-sessions.ts";
+import {
+  pinKey,
+  pinsFromHits,
+  refreshPinsFromAgents,
+  refreshPinsFromPeers,
+} from "./pinned-sessions.ts";
 
 export const SIDEBAR_OPEN_KEY = "ccmsg.sidebarOpen";
 
@@ -344,7 +349,10 @@ export interface AppState {
    * gateway does not post to, which is what makes the ring absent rather than
    * stuck at zero. */
   llmRequests: Map<string, LlmRequestInfo>;
-  /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by sid.
+  /** Pinned sessions (DR-0021 §2.4/§3.2, SS-Q2=a), keyed by the session's
+   * cwd (pinKey): one entry per pinned directory, holding the hit frozen when
+   * it was pinned. Which sessions a pin lists is derived at render time
+   * (pinnedRows) from this and the live peers.
    * Source of truth is webui localStorage, NOT the daemon — main.tsx hydrates
    * this from `parsePinnedSessions(localStorage...)` once at startup
    * (`pinned/hydrated`) and persists it whenever a pin action — or a
@@ -553,11 +561,13 @@ export type Action =
   // Pinned sessions (DR-0021 §2.4/§3.2). "hydrated" is a full replace, fired
   // once at startup from main.tsx after reading localStorage — never
   // dispatched again afterward (unlike rooms/loaded, which can legitimately
-  // re-fire on reconnect). "toggled" is SessionView's sid-keyed header action;
-  // "removed" also supports the sidebar Pinned section's explicit unpin.
+  // re-fire on reconnect). Every action keys on the hit's cwd (pinKey); a hit
+  // with no cwd cannot be pinned and leaves the state unchanged. "toggled" is
+  // the pin buttons' action; "removed" is the sidebar Pinned section's unpin,
+  // by pin key.
   | { type: "pinned/hydrated"; hits: SessionSearchHit[] }
   | { type: "pinned/added"; hit: SessionSearchHit }
-  | { type: "pinned/removed"; sid: string }
+  | { type: "pinned/removed"; key: string }
   | { type: "pinned/toggled"; hit: SessionSearchHit };
 
 /** Which room the sidebar's RoomList should highlight as "active" (kawaz
@@ -1261,25 +1271,27 @@ export function reducer(state: AppState, action: Action): AppState {
       sessionStatuses.delete(action.sid);
       return { ...state, sessionStatuses };
     }
-    case "pinned/hydrated": {
-      const pinnedSessions = new Map(action.hits.map((hit) => [hit.sid, hit] as const));
-      return { ...state, pinnedSessions };
-    }
+    case "pinned/hydrated":
+      return { ...state, pinnedSessions: pinsFromHits(action.hits) };
     case "pinned/added": {
+      const key = pinKey(action.hit);
+      if (key === null) return state;
       const pinnedSessions = new Map(state.pinnedSessions);
-      pinnedSessions.set(action.hit.sid, action.hit);
+      pinnedSessions.set(key, action.hit);
       return { ...state, pinnedSessions };
     }
     case "pinned/removed": {
-      if (!state.pinnedSessions.has(action.sid)) return state;
+      if (!state.pinnedSessions.has(action.key)) return state;
       const pinnedSessions = new Map(state.pinnedSessions);
-      pinnedSessions.delete(action.sid);
+      pinnedSessions.delete(action.key);
       return { ...state, pinnedSessions };
     }
     case "pinned/toggled": {
+      const key = pinKey(action.hit);
+      if (key === null) return state;
       const pinnedSessions = new Map(state.pinnedSessions);
-      if (pinnedSessions.has(action.hit.sid)) pinnedSessions.delete(action.hit.sid);
-      else pinnedSessions.set(action.hit.sid, action.hit);
+      if (pinnedSessions.has(key)) pinnedSessions.delete(key);
+      else pinnedSessions.set(key, action.hit);
       return { ...state, pinnedSessions };
     }
     default:

@@ -2,16 +2,21 @@
 // used to print the stored pin's own repo/ws, which made one connected session
 // render two different first lines at once: the full `repo@ws` in its status
 // section (live PeerInfo) and whatever half pair the pin was frozen with above
-// it. The reducer-side fold is exercised through `peers/loaded` in
+// it. Pins are keyed by cwd (pinKey); the refresh tests key by the fixture's
+// cwd accordingly. The reducer-side fold is exercised through `peers/loaded` in
 // store.test.ts; these cover the two functions directly.
 import { describe, expect, test } from "bun:test";
 import type { AgentInfo, PeerInfo, SessionSearchHit } from "@ccmsg/protocol";
 import {
+  pinnedRows,
+  pinsFromHits,
   pinnedSessionLabel,
   pinnedSessionTitle,
   refreshPinsFromAgents,
   refreshPinsFromPeers,
 } from "../src/client/pinned-sessions.ts";
+
+const CWD = "/repos/claude-ccmsg/main";
 
 function hit(overrides: Partial<SessionSearchHit> = {}): SessionSearchHit {
   return {
@@ -122,43 +127,43 @@ describe("pinnedSessionTitle", () => {
 describe("refreshPinsFromAgents", () => {
   test("writes a renamed session's title back into its pin", () => {
     const stored = hit({ title: "古いタイトル" });
-    const pins = new Map([["s1", stored]]);
+    const pins = new Map([[CWD, stored]]);
     const next = refreshPinsFromAgents(pins, [agent({ name: "新しい名前" })]);
-    expect(next.get("s1")).toEqual({ ...stored, title: "新しい名前" });
+    expect(next.get(CWD)).toEqual({ ...stored, title: "新しい名前" });
   });
 
   test("returns the same Map when the pin's title already matches", () => {
-    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    const pins = new Map([[CWD, hit({ title: "Issue管理" })]]);
     expect(refreshPinsFromAgents(pins, [agent({ name: "Issue管理" })])).toBe(pins);
   });
 
   test("does not blank a stored title from an agent that has no name", () => {
-    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    const pins = new Map([[CWD, hit({ title: "Issue管理" })]]);
     expect(refreshPinsFromAgents(pins, [agent({ name: undefined })])).toBe(pins);
   });
 
   test("fills a pin that stored no title at all", () => {
-    const pins = new Map([["s1", hit({ title: null })]]);
-    expect(refreshPinsFromAgents(pins, [agent()])?.get("s1")?.title).toBe("Issue管理");
+    const pins = new Map([[CWD, hit({ title: null })]]);
+    expect(refreshPinsFromAgents(pins, [agent()])?.get(CWD)?.title).toBe("Issue管理");
   });
 
   test("ignores agents whose session is not pinned, and never mutates its input", () => {
-    const pins = new Map([["s1", hit({ title: "Issue管理" })]]);
+    const pins = new Map([[CWD, hit({ title: "Issue管理" })]]);
     expect(refreshPinsFromAgents(pins, [agent({ sessionId: "s2", name: "別物" })])).toBe(pins);
-    expect(pins.get("s1")?.title).toBe("Issue管理");
+    expect(pins.get(CWD)?.title).toBe("Issue管理");
   });
 });
 
 describe("refreshPinsFromPeers", () => {
   test("replaces a stale pin's repo/ws as one pair, leaving its other fields", () => {
     const stale = hit({ repo: null, ws: "wip-issue-board", title: "Issue管理", size: 4242 });
-    const pins = new Map([["s1", stale]]);
+    const pins = new Map([[CWD, stale]]);
     const next = refreshPinsFromPeers(pins, [peer({ ws: "wip-issue-board" })]);
-    expect(next.get("s1")).toEqual({ ...stale, repo: "kawaz/claude-ccmsg", ws: "wip-issue-board" });
+    expect(next.get(CWD)).toEqual({ ...stale, repo: "kawaz/claude-ccmsg", ws: "wip-issue-board" });
   });
 
   test("returns the same Map when every pin already agrees with its peer", () => {
-    const pins = new Map([["s1", hit()]]);
+    const pins = new Map([[CWD, hit()]]);
     expect(refreshPinsFromPeers(pins, [peer()])).toBe(pins);
   });
 
@@ -168,25 +173,119 @@ describe("refreshPinsFromPeers", () => {
   });
 
   test("never mutates the Map it was given", () => {
-    const pins = new Map([["s1", hit({ repo: null })]]);
+    const pins = new Map([[CWD, hit({ repo: null })]]);
     refreshPinsFromPeers(pins, [peer()]);
-    expect(pins.get("s1")?.repo).toBeNull();
+    expect(pins.get(CWD)?.repo).toBeNull();
   });
 
   // One peers push can carry several sessions; each pinned sid it names is
   // repaired in the single copy that push produces.
   test("repairs every pinned sid the peers list names", () => {
     const pins = new Map([
-      ["s1", hit({ repo: null })],
-      ["s2", hit({ sid: "s2", repo: null, ws: "wip" })],
-      ["s3", hit({ sid: "s3" })],
+      [CWD, hit({ repo: null })],
+      ["/repos/two", hit({ sid: "s2", cwd: "/repos/two", repo: null, ws: "wip" })],
+      ["/repos/three", hit({ sid: "s3", cwd: "/repos/three" })],
     ]);
     const next = refreshPinsFromPeers(pins, [
       peer(),
       peer({ sid: "s2", repo: "kawaz/other", ws: "wip" }),
     ]);
-    expect(next.get("s1")?.repo).toBe("kawaz/claude-ccmsg");
-    expect(next.get("s2")?.repo).toBe("kawaz/other");
-    expect(next.get("s3")).toEqual(hit({ sid: "s3" }));
+    expect(next.get(CWD)?.repo).toBe("kawaz/claude-ccmsg");
+    expect(next.get("/repos/two")?.repo).toBe("kawaz/other");
+    expect(next.get("/repos/three")).toEqual(hit({ sid: "s3", cwd: "/repos/three" }));
+  });
+});
+
+describe("pinsFromHits", () => {
+  test("keys each stored hit by its cwd", () => {
+    const pins = pinsFromHits([hit(), hit({ sid: "s2", cwd: "/repos/two" })]);
+    expect([...pins.keys()]).toEqual([CWD, "/repos/two"]);
+  });
+
+  // Stored per-sid records may hold a retired session and its successor in
+  // one directory; the newest stands for the directory.
+  test("keeps the most recently updated hit when several share a cwd", () => {
+    const older = hit({ sid: "old", updated_at: "2026-07-01T00:00:00.000Z" });
+    const newer = hit({ sid: "new", updated_at: "2026-07-20T00:00:00.000Z" });
+    expect(pinsFromHits([newer, older]).get(CWD)).toBe(newer);
+    expect(pinsFromHits([older, newer]).get(CWD)).toBe(newer);
+  });
+
+  test("drops hits with no cwd", () => {
+    expect(pinsFromHits([hit({ cwd: null })]).size).toBe(0);
+  });
+});
+
+describe("pinnedRows", () => {
+  const noAgents = new Map<string, AgentInfo>();
+
+  test("a pin with no connected peer lists the hit frozen at pin time", () => {
+    const frozen = hit({ title: "凍結" });
+    expect(pinnedRows(new Map([[CWD, frozen]]), [], noAgents)).toEqual([{ key: CWD, hit: frozen }]);
+  });
+
+  // Peers in other directories are not this pin's sessions.
+  test("ignores peers outside the pinned directory", () => {
+    const frozen = hit();
+    const rows = pinnedRows(
+      new Map([[CWD, frozen]]),
+      [peer({ sid: "s9", cwd: "/repos/else" })],
+      noAgents,
+    );
+    expect(rows).toEqual([{ key: CWD, hit: frozen }]);
+  });
+
+  test("a pin whose own session is connected lists its frozen record", () => {
+    const frozen = hit({ title: "凍結" });
+    expect(pinnedRows(new Map([[CWD, frozen]]), [peer()], noAgents)).toEqual([
+      { key: CWD, hit: frozen },
+    ]);
+  });
+
+  // The point of a directory pin: a new session in the pinned directory shows
+  // up under the pin without being pinned itself.
+  test("a successor session in the pinned directory replaces the frozen row", () => {
+    const rows = pinnedRows(
+      new Map([[CWD, hit({ sid: "retired" })]]),
+      [peer({ sid: "s2" })],
+      new Map([["s2", agent({ sessionId: "s2", name: "後継" })]]),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.key).toBe(CWD);
+    expect(rows[0]?.hit).toMatchObject({ sid: "s2", cwd: CWD, title: "後継" });
+  });
+
+  // During a handover both sessions run in the directory; neither is dropped.
+  test("lists every connected session of the directory, newest first", () => {
+    const rows = pinnedRows(
+      new Map([[CWD, hit()]]),
+      [
+        peer({ sid: "s1", last_activity_at: "2026-07-01T00:00:00.000Z" }),
+        peer({ sid: "s2", last_activity_at: "2026-07-20T00:00:00.000Z" }),
+      ],
+      noAgents,
+    );
+    expect(rows.map((row) => [row.key, row.hit.sid])).toEqual([
+      [CWD, "s2"],
+      [CWD, "s1"],
+    ]);
+  });
+
+  test("orders pins most recently updated first", () => {
+    const rows = pinnedRows(
+      new Map([
+        [
+          "/repos/old",
+          hit({ sid: "a", cwd: "/repos/old", updated_at: "2026-07-01T00:00:00.000Z" }),
+        ],
+        [
+          "/repos/new",
+          hit({ sid: "b", cwd: "/repos/new", updated_at: "2026-07-20T00:00:00.000Z" }),
+        ],
+      ]),
+      [],
+      noAgents,
+    );
+    expect(rows.map((row) => row.key)).toEqual(["/repos/new", "/repos/old"]);
   });
 });
