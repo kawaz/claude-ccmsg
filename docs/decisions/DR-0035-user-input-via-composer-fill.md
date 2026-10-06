@@ -57,7 +57,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 ### 6. 未決
 
-- **Q3. Enter を誰が送るか**: DR-0016 §2.2 は「Enter を送るのは instance の責務」とし、module は fill の結果を instance に返して instance が端末に Enter を送る。統括推しは「module が fill の成功を見て、自分のセッションの端末に Enter を送る (`$.process.run(["hyoui", "input", <自分の HYOUI_SESSION_ID>, "key:Enter"])`)」。fill の結果を daemon に返す往復と daemon 側の端末解決が消え、fill から Enter までの間 (人の打鍵が混ざる窓) が短くなる。daemon が知る必要があるのは成否だけで、それは module からの報告で足りる。module が自分の端末の id を読めること (`$.env.get` で `HYOUI_SESSION_ID` が見えるか) は未確認
+- **Q3. Enter を誰が送るか**: DR-0016 §2.2 は「Enter を送るのは instance の責務」とし、module は fill の結果を instance に返して instance が端末に Enter を送る。統括推しは「module が fill の成功を見て、自分のセッションの端末に Enter を送る (`$.process.run(["hyoui", "input", <自分の HYOUI_SESSION_ID>, "key:Enter"])`)」。fill の結果を daemon に返す往復と daemon 側の端末解決が消え、fill から Enter までの間 (人の打鍵が混ざる窓) が短くなる。daemon が知る必要があるのは成否だけで、それは module からの報告で足りる。2.1.291 で実測済み: module の `$.env.get` で `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` が読め、fill 成功後に module から `hyoui input --namespace=<ns> <id> key:Enter` を送ると、`prompt.submit` は `composer`、transcript は `origin:{kind:"human"}`, `promptSource:"typed"` で、fill から `classic.UserPromptSubmit` まで 55ms。permission ダイアログ表示中の fill は `refusal:"dialog"` で拒否され、ダイアログが閉じた後 (`tool.call` の `next` の resolve、`turn.complete`) に再試行すると成功する
 - fill の成否を daemon (と webui) に返す経路の形 (module からの `$.process.run(["ccmsg", ...])` か、daemon の UDS への直接接続か)
 
 ## Alternatives Considered
