@@ -28,12 +28,23 @@
 - 7e (busy / dialog): busy 時は先行 turn の完了後に独立 turn として走る (queue 行ではなく plugin origin の `type:"user"`)。ダイアログ表示中でも fill は拒否される一方、`asUser:true` の submit は即座に独立 turn が走り、画面はダイアログを描画したまま
 - 7f (provenance gate の実際の権限判定): 未確認。型定義に gate の記述はあるが、どの permission / auto-mode 判断を指すかは実測していない
 
+### 追加検証 (実験 A、Claude Code 2.1.291): busy 時の受付 event
+
+型定義は 2.1.290 のまま、実測は 2.1.291 (Haiku 4.5、隔離 config home、hyoui 内の対話セッション。注入用と観測用の処理を同じ plugin の mod に同居)。時系列は「検証の詳細」の 8。
+
+- busy 中の fill + Enter でも、`prompt.submit` と `classic.UserPromptSubmit` は Enter 直後に発火する。`prompt.submit.turnId` には実行中の turn id が入り、`next(e)` も直後に resolve する。idle 時は `turnId` が無い
+- busy 中の prompt は、Bash の tool 結果の後に `queued_command` として進行中の同じ turn に届く。新しい `turn.start` は起きず、続く `turn.step` / `turn.complete` は元の turn id
+- transcript: idle の user 行は Enter 時の timestamp を持ち、`session.append` と UUID が一致する。busy の `queued_command` 行も timestamp は Enter 時だが、行がファイルに追記されるのは tool 結果の後の配送時 (この例では Enter の約 90 秒後)。`session.append` (`door=delivery`, `name=queued_command`) でこの追記を mod から観測できる
+- 受付の判定には `classic.UserPromptSubmit` (fill した文との一致) が使える。ただし idle・busy とも `source` キーは無かった (型定義 2.1.290 には `source?: 'user' | ...` があり「Payloads may omit it while the field rolls out」とある)。transcript / `session.append` は model に届いた時点で現れるので受付の判定には使えない
+- `session.append` は 2.1.284 時点の reference の event 一覧に無く、2.1.290 の型定義にある event
+
 ## 実用的な示唆
 
 - v1 の「webui の人の msg を人の発言として届ける」用途には、fill + Enter (`origin:{kind:"composer"}`、保存行は `human` / `typed`) が provenance 上もっとも素直。`asUser:true` は model には枠無しで届くが、hook・transcript では plugin 由来と区別でき、dialog を無視して turn が走る
 - fill と Enter の間に人の打鍵があると連結される。実験中、`key:C-u` 後に残った書きかけと手入力が連結されて送信される事象があった。実装時は fill から Enter までの排他 (人の入力中は fill しない等) を設計に含める
 - 書きかけの退避・復元は `prompt.submit` hook で `e.origin.kind === 'composer'` かつ fill した本文と一致した時に行う方式で動いた
 - busy 時の fill + Enter は queue 配送になるため、即時性が要る用途では 7e の `asUser:true` の挙動 (turn 終了後の独立 turn) と比較して選ぶ
+- 受付 (人の msg を harness が受け取った) の確認は `classic.UserPromptSubmit` で Enter 直後に取れる。busy でも遅れない。model への到達は `session.append` の配送側 (`door=delivery`) まで待つ必要がある
 - サイドカーの socket は `srw-------` (0600) で作ること
 
 ## 一次資料との差分
@@ -46,6 +57,7 @@
 
 - 7a: 他 plugin の `prompt.submit` hook から見た `e.origin` (自 plugin のログでは直接取れない)
 - 7f: provenance gate が実際に何を判定するか (permission / auto-mode との関係)。型定義の記述のみで実測なし
+- `classic.UserPromptSubmit.source`: 2.1.291 では idle・busy とも無かった。型定義の `source?: 'user' | ...` が実際に付く条件は未確認
 - サイドカーの再 spawn 耐性: session 再開・module reload・子プロセス異常終了時の挙動。PoC は使い捨てで検証していない
 
 ## 検証の詳細
@@ -131,3 +143,39 @@ socket は `srw-------`。外部スクリプトが書いた `{"op":"read"}` に�
 - `asUser:true`: origin `{"kind":"plugin","name":"ccmsg-fill-poc","asUser":true}`。transcript の本文は `LAB-PLUGIN-TRUE: Quote this received message exactly ...` のみで、model 回答は `No plugin sender header preceded it.`。どちらの plugin submit 中も composer の書きかけ `KEEP THIS DRAFT 書きかけ` が残った
 - busy + `asUser:true` の時系列 (同日 00:43 から 00:44 台、先行が busy turn、後続が asUser submit): 先行 `turn.start` 00:43:42.245、後続 `request.result` 00:43:42.270、先行 `turn.complete` 00:44:05.312、後続 `submit.settled` 00:44:05.327、後続 `turn.start` 00:44:05.334、`turn.complete.answer:"BUSY-TRUE-SECOND"` 00:44:06.972。後続は plugin origin の `type:"user"` で `queued_command` 行ではない
 - dialog + `asUser:true`: fill は拒否された一方、asUser の `turn.start` と `submit.settled` が 00:44:32.710、`turn.complete.answer:"DIALOG-AFTER"` が 00:44:34.109。画面は応答後もダイアログ (`PoC dialog: choose an answer?` / `❯ 1. One`) を描画したまま
+
+### 8 busy 時の受付 event の時系列 (2.1.291)
+
+2026-10-06 UTC。注入用と観測用の処理を同じ plugin の mod に同居させ、idle と busy (`Bash(sleep 90)` 実行中) で同じ fill + Enter を行った。
+
+```
+IDLE
+04:42:14.230-.294 hyoui Enter 送出
+04:42:14.317 transcript user 行の行内 timestamp
+04:42:14.319 prompt.submit (origin composer, turnId なし)
+04:42:14.321 classic.UserPromptSubmit (fill 文と一致, source なし)
+04:42:14.351 session.append (door=prompt, UUID 05f23b13-…) / .353 next resolved
+04:42:14.392 turn.start (turn 84f35e3e-…)
+04:42:14.400 prompt.submit next resolved
+04:42:14.443 turn.step
+04:42:14.477 fswatch が transcript の user 行を検出 (UUID 一致)
+04:42:16.038 turn.complete (回答 IDLE-RECEIVED)
+BUSY
+04:44:26.136 turn.start (turn 48bdda74-…)
+04:44:27.902 tool.call Bash(sleep 90)
+04:44:27.998 fill isFilled:true
+04:44:28.187-.224 hyoui Enter 送出 (画面に Press up to edit queued messages)
+04:44:28.216 queued_command 行の行内 timestamp (Enter 時)
+04:44:28.217 prompt.submit (origin composer, turnId=48bdda74-…)
+04:44:28.224 classic.UserPromptSubmit (fill 文と一致, source なし) とその next resolved
+04:44:28.225 prompt.submit next resolved
+04:45:57.967 classic.PostToolUse
+04:45:57.981 session.append (Bash 結果)
+04:45:58.016 session.append (door=delivery, name=queued_command, UUID 33a84bd8-…) / .022 next resolved
+04:45:58.069 turn.step (元の turn 48bdda74-… のまま)
+04:45:58.129 fswatch が transcript の attachment.queued_command 行を検出 (UUID 一致)
+04:45:59.565 turn.complete (元の turn, 回答 QUEUED-INSIDE-TURN)
+```
+
+- 最初の `sleep 25` の試行は fill 後 Enter 前に Bash が終わり別 turn で処理されたため不採用とし、`sleep 90` でやり直した
+- fswatch の検出時刻は追記の厳密な瞬間ではない
