@@ -38,6 +38,16 @@
 - 受付の判定には `classic.UserPromptSubmit` (fill した文との一致) が使える。ただし idle・busy とも `source` キーは無かった (型定義 2.1.290 には `source?: 'user' | ...` があり「Payloads may omit it while the field rolls out」とある)。transcript / `session.append` は model に届いた時点で現れるので受付の判定には使えない
 - `session.append` は 2.1.284 時点の reference の event 一覧に無く、2.1.290 の型定義にある event
 
+### 追加検証 (実験 B、Claude Code 2.1.291): module 自身による Enter とダイアログ中の fill
+
+実測は 2.1.291 (Haiku 4.5、隔離 workspace・隔離 config home の 1 セッション、hyoui 内)。時系列は「検証の詳細」の 9。
+
+- mod の `$.env.get` は `HYOUI_SESSION_ID` と `HYOUI_NAMESPACE` を返した (hyoui の中で起動したセッション)。`claude plugin validate` もこの 2 名を env の読み取り対象として列挙する
+- mod 自身による Enter が成立した。fill 成功後、宛先が自セッションであることを照合してから `$.process.run(["hyoui","input","--namespace=<ns>","<id>","key:Enter"])` を実行し、終了コード 0。`prompt.submit` は `origin:{kind:"composer"}`、`classic.UserPromptSubmit` が発火、transcript は `origin:{kind:"human"}`, `promptSource:"typed"`。fill 結果から `classic.UserPromptSubmit` まで 55 ms。外部スクリプトを介さず mod だけで fill から Enter まで完結する
+- permission ダイアログ (Bash の Yes/No) 表示中の fill は `{"isFilled":false,"refusal":"dialog","text":"","cursor":0}`。`$.ui.ask` のダイアログ (項目 6) と同じ拒否が permission ダイアログでも起きる
+- 「ダイアログが閉じた」ことを専用に知らせる event は今回の観測では見当たらなかった (不存在の証明ではない)。`classic.PermissionRequest` はダイアログ表示前に発火し、その `next` も表示前に resolve した。No を選んだ後、`tool.call` の `next` が `isError:true` で resolve し、`turn.complete`、`ui.render` (component `AbovePrompt`) が続き、直後の fill 再試行は成功した。この並びは閉じた後の再試行の契機の候補
+- 実験上の注意: permission ダイアログを確実に出すため、実験 mod の `tool.check` で Bash の判定を `ask` に変えた。`classic.UserPromptSubmit` のキーに `source` は無かった (実験 A と同じ)
+
 ## 実用的な示唆
 
 - v1 の「webui の人の msg を人の発言として届ける」用途には、fill + Enter (`origin:{kind:"composer"}`、保存行は `human` / `typed`) が provenance 上もっとも素直。`asUser:true` は model には枠無しで届くが、hook・transcript では plugin 由来と区別でき、dialog を無視して turn が走る
@@ -46,6 +56,9 @@
 - busy 時の fill + Enter は queue 配送になるため、即時性が要る用途では 7e の `asUser:true` の挙動 (turn 終了後の独立 turn) と比較して選ぶ
 - 受付 (人の msg を harness が受け取った) の確認は `classic.UserPromptSubmit` で Enter 直後に取れる。busy でも遅れない。model への到達は `session.append` の配送側 (`door=delivery`) まで待つ必要がある
 - サイドカーの socket は `srw-------` (0600) で作ること
+- Enter は mod 自身が `hyoui input --namespace=<ns> <id> key:Enter` を `$.process.run` で実行すればよい。`<id>` と `<ns>` は `$.env.get` で `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` から取る。fill 成功後、宛先が自セッションであることを照合してから送る
+- ダイアログ中は fill が拒否される (`refusal:"dialog"`) ので、msg を保留して再試行する設計にする。再試行の契機は専用 event が見当たらないため、`tool.call` の `next` resolve から `turn.complete`、`ui.render` (`AbovePrompt`) の並びを候補に、fill を再試行する
+- 隔離 claude の認証は、起動元の環境変数を名前で `env -i` に引き継いで渡し、隔離 config の settings.json には認証の値を書かない形で通った。lab-setup の手順 (認証値を隔離 settings に写す) よりこの形を推奨する
 
 ## 一次資料との差分
 
@@ -57,7 +70,8 @@
 
 - 7a: 他 plugin の `prompt.submit` hook から見た `e.origin` (自 plugin のログでは直接取れない)
 - 7f: provenance gate が実際に何を判定するか (permission / auto-mode との関係)。型定義の記述のみで実測なし
-- `classic.UserPromptSubmit.source`: 2.1.291 では idle・busy とも無かった。型定義の `source?: 'user' | ...` が実際に付く条件は未確認
+- `classic.UserPromptSubmit.source`: 2.1.291 では idle・busy・mod 自身の Enter のいずれでも無かった。型定義の `source?: 'user' | ...` が実際に付く条件は未確認
+- ダイアログが閉じたことを知らせる専用 event の有無: 今回の観測では見当たらなかったが不存在の証明ではない。`tool.call` の `next` resolve、`turn.complete`、`ui.render` (`AbovePrompt`) の並びを再試行の契機とする案は、No 選択 1 例のみの観測 (Yes 選択、`$.ui.ask` 等の別種ダイアログ、複数回連続は未検証)
 - サイドカーの再 spawn 耐性: session 再開・module reload・子プロセス異常終了時の挙動。PoC は使い捨てで検証していない
 
 ## 検証の詳細
@@ -179,3 +193,29 @@ BUSY
 
 - 最初の `sleep 25` の試行は fill 後 Enter 前に Bash が終わり別 turn で処理されたため不採用とし、`sleep 90` でやり直した
 - fswatch の検出時刻は追記の厳密な瞬間ではない
+
+### 9 module 自身による Enter とダイアログ中の fill (2.1.291)
+
+2026-10-06 UTC。実験 mod が session と namespace を env から取得し、fill 後に mod 自身が hyoui で Enter を送った。続けて permission ダイアログを出して fill を試し、No を選んで閉じた後に fill を再試行した。
+
+```
+04:53:37.294 experiment.session.start (session と namespace を env から取得)
+04:54:07.927 request.result(env): session / namespace を返す
+04:54:07.976 fill.result: isFilled=true
+04:54:07.989 self-enter.start: hyoui input --namespace=<ns> <id> key:Enter
+04:54:08.018 prompt.submit: origin={"kind":"composer"}
+04:54:08.030 self-enter.result: exitCode=0
+04:54:08.031 classic.UserPromptSubmit
+04:54:35.641 classic.PermissionRequest: tool_name=Bash
+04:54:35.642 classic.PermissionRequest.next.resolved
+04:54:49.298 fill.result(dialog 中): isFilled=false, refusal="dialog"
+04:55:01.437 tool.call.next.resolved: isError=true (No を選択)
+04:55:01.479 turn.complete
+04:55:01.494 ui.render: component="AbovePrompt"
+04:55:01.506 fill.result(閉じた後): isFilled=true
+```
+
+- transcript の行: `{"timestamp":"2026-10-06T04:54:08.016Z","origin":{"kind":"human"},"promptSource":"typed","content":"EXP-B-SELF: answer exactly B2-RECEIVED"}`
+- fill 結果 (04:54:07.976) から `classic.UserPromptSubmit` (04:54:08.031) まで 55 ms
+- permission ダイアログを確実に出すため、実験 mod の `tool.check` で Bash の判定を `ask` に変えた
+- 認証: 隔離 claude には起動元の環境変数を名前で `env -i` に引き継いで渡し、隔離 config の settings.json には認証の値を書かなかった。それで認証が通った
