@@ -51,6 +51,7 @@
 | [DR-0033](./DR-0033-webui-color-system.md) | Proposed | webui へ移管 | webui カラーシステム (少数の入力から全色を導出する 3 層構造 + テーマエディタ) |
 | [DR-0034](./DR-0034-peer-socket-injection.md) | Accepted / 実装済 | 置き換わる予定 | v1 daemon による room msg の peer messaging socket 直接注入 — v2 の配送経路は protocol-v2 が別途定める |
 | [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Proposed | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を廃止する — v2 の DR-0016 §2.2 / §5 と同じ方式。DR-0014 の 1on1 room を置き換える予定 |
+| [DR-0036](./DR-0036-retire-rooms-for-p2p.md) | Proposed | 据え置き | room を廃止し、セッション間メッセージを sid 宛の直送 (v2 の契約の封筒・mid・返信行) にする — DR-0001 §3-§6 / 0003 / 0011 / 0012 / 0013 / 0016 / 0017 の room 前提部分を置き換える予定 |
 
 ## Superseded (一部)
 
