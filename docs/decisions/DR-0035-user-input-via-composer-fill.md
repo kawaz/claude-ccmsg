@@ -50,7 +50,8 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 - fill できない時 (ダイアログ表示中、hyoui の外で起動したセッション、headless、module が読まれていない環境) は別の経路に落とさず、理由 (ダイアログ中 / 端末なし / module なし) を webui に返す。人の入力が信用度の低い経路に黙って落ちるより、届かなかったことが分かる方を取る
 - webui は送信した文を、成功の確認が取れるまで入力欄 (textarea) と localStorage から消さない。送ったつもりで入力欄が消え、実は届いていなかった、という負担を人に負わせない (kawaz 2026-10-06)
-- 成功は「module の `prompt.submit` hook が、fill した文が composer から submit されたのを見た」時点とする。fill の成功や Enter の送出は、文が session に入った証拠にならない。module はこの時点で daemon に成功を報告し、daemon が webui に返す
+- 成功は、fill した文で `classic.UserPromptSubmit` (command hook の UserPromptSubmit と同じ event) が起きた時点とする (kawaz 2026-10-06)。fill の成功や Enter の送出は、文が session に入った証拠にならない。module はこの時点で daemon に成功を報告し、daemon が webui に返す
+- turn 実行中に送って queue に積まれた時、`classic.UserPromptSubmit` が Enter の時点で起きるか、queue から取り出される時点で起きるかは未確認。後者なら成功の報告が今の turn の終わりまで遅れるので、その時は `prompt.submit` (Enter の時点で起きる。findings 項目 2) を見て「queue に積まれた」を先に webui へ返す段を足す
 - 一定時間内に成功も失敗も返らない時、webui は「未確認」と示し、文は残したまま送信済みかもしれないことが分かるようにする (実際には届いていて報告だけが失われた場合に、人の再送で二重になるのを避ける判断材料。届いていれば TL に人の発言として現れる)
 
 ### 6. 未決
