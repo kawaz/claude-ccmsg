@@ -31,6 +31,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 - `create_room` の `kind:"1on1"`、webui の 1on1 room の自動作成、1on1 向けの `reply_via` 分岐 (`Reply in your normal assistant response`)、session 発の 1on1 post の `reply_via_tl` 拒否を削る
 - 既存の 1on1 room は archive 扱いで読み取り専用として残し、新規には作らない (過去の会話は webui で読める)
+- room そのもの (通常 room / broadcast room) も廃止し、セッション間のメッセージは p2p にする (kawaz 2026-10-06: 複数セッションで見える部屋は初期に数回使っただけで、セッション間メッセージは p2p で足りる。room を作った動機だった「人との直接会話を他セッションへ無駄にリレーする」問題は、セッション間メッセージの規約で起きなくなった)。room の廃止と p2p への移行は範囲が大きいので別の DR で扱い、本 DR は人の入力の経路と 1on1 の廃止に限る。したがって、人が room に書いた msg を fill + Enter にするかは問わない
 
 ### 3. サイドカーと hooks module
 
@@ -54,7 +55,6 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 ### 6. 未決
 
-- **Q2. 通常 room に人が書いた msg**: 統括推しは「今の封筒 (DR-0034) のまま」。人がセッションに指示する入口は §1 の入力欄に一本化し、room はセッション同士の会話に人も書き込める場所と位置付ける。対案は各 member セッションに fill + Enter で入れること (broadcast では全セッションで同時に turn が始まる)
 - **Q3. Enter を誰が送るか**: DR-0016 §2.2 は「Enter を送るのは instance の責務」とし、module は fill の結果を instance に返して instance が端末に Enter を送る。統括推しは「module が fill の成功を見て、自分のセッションの端末に Enter を送る (`$.process.run(["hyoui", "input", <自分の HYOUI_SESSION_ID>, "key:Enter"])`)」。fill の結果を daemon に返す往復と daemon 側の端末解決が消え、fill から Enter までの間 (人の打鍵が混ざる窓) が短くなる。daemon が知る必要があるのは成否だけで、それは module からの報告で足りる。module が自分の端末の id を読めること (`$.env.get` で `HYOUI_SESSION_ID` が見えるか) は未確認
 - fill の成否を daemon (と webui) に返す経路の形 (module からの `$.process.run(["ccmsg", ...])` か、daemon の UDS への直接接続か)
 
