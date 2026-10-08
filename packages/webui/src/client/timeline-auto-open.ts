@@ -36,7 +36,7 @@ export function toggleTimelineAutoOpen(
 
 /** localStorage key for a Timeline's auto-open toggle state, namespaced per
  * session and (for a subagent drilldown) per agent — mirrors
- * `favoritesStorageKey` / `ccmsg.1on1.<sid>` in utils.ts/SessionInputComposer.tsx
+ * `favoritesStorageKey` / `ccmsg.1on1.<sid>` in utils.ts/session-input-store.ts
  * (`ccmsg.<feature>.<scope>` convention). The parent Timeline passes
  * `agentKey: undefined`; a drilldown Timeline passes the agent's
  * `agentId ?? runId ?? teammate` so each subagent remembers its own toggle

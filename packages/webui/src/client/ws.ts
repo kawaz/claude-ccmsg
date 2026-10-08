@@ -93,6 +93,18 @@ export interface WsKeepaliveOptions {
   checkMs?: number;
 }
 
+/** How long sessionInput waits for its reply. The daemon always answers a
+ * session_input within its own 12 s deadline (`unconfirmed` at worst,
+ * SESSION_INPUT_DEADLINE_MS in the daemon), so this only fires when that
+ * answer is lost on a socket that still looks alive. The 3 s on top covers
+ * the daemon's event loop running late and the transport (a phone over the
+ * tailnet) without making a lost answer hold the input panel much longer. */
+export const SESSION_INPUT_REPLY_TIMEOUT_MS = 15_000;
+
+export interface WsRequestTimeouts {
+  sessionInputMs?: number;
+}
+
 /** How this page was arrived at, for the daemon log's hello line: `navigate` /
  * `reload` / `back_forward` / `prerender`, or undefined where the browser
  * keeps no navigation entry (and under the test runner, which has none). */
@@ -371,9 +383,10 @@ export interface WsHandle {
    * §1, user role only — SessionView's input panel). The daemon has the
    * session's hooks module fill its composer and press Enter, then replies
    * with the module's answer, or `unconfirmed` once its own wait runs out, so
-   * this call can take several seconds. An `error.code === "connection_closed"`
-   * reply means the request was written but its answer was lost: the text may
-   * be in the session. */
+   * this call can take several seconds. An `error.code` of `connection_closed`
+   * or `request_timeout` (no answer within SESSION_INPUT_REPLY_TIMEOUT_MS)
+   * means the request was written but its answer was lost: the text may be in
+   * the session. */
   sessionInput(sessionId: string, text: string): Promise<SessionInputResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
@@ -409,6 +422,7 @@ export function createWsClient(
   dispatch: (action: Action) => void,
   getState: () => AppState,
   keepalive: WsKeepaliveOptions = {},
+  timeouts: WsRequestTimeouts = {},
 ): WsHandle {
   let ws: WebSocket | null = null;
   /** Outstanding replies, keyed by the request_id we stamped on the way out.
@@ -441,31 +455,80 @@ export function createWsClient(
   const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
   const since = loadSince();
 
-  function write(socket: WebSocket, req: RequestInput, resolve: (value: Response) => void): void {
+  function write(socket: WebSocket, req: RequestInput, resolve: (value: Response) => void): string {
     const rid = `q${++nextRequestId}`;
     pending.set(rid, resolve);
     socket.send(JSON.stringify({ ...req, request_id: rid }));
+    return rid;
   }
 
-  function send<T extends Response>(req: RequestInput): Promise<T> {
+  /** `timeoutMs` bounds the wait for this one request. A request already
+   * written then settles with `request_timeout` (it may have been acted on,
+   * and a late reply is dropped like any unknown request_id); one still queued
+   * behind a connecting socket was never sent and is rejected instead. */
+  function send<T extends Response>(
+    req: RequestInput,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
+      const settle = resolve as (value: Response) => void;
+      let rid: string | null = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (value: Response) => {
+        if (timer !== null) clearTimeout(timer);
+        settle(value);
+      };
+      const writeNow = (socket: WebSocket) => {
+        rid = write(socket, req, finish);
+      };
       const socket = ws;
       if (!socket) {
         reject(new Error("ws not open"));
         return;
       }
       if (socket.readyState === WebSocket.CONNECTING) {
-        connecting.push({
-          write: (opened) => write(opened, req, resolve as (value: Response) => void),
-          reject,
-        });
+        const queued = {
+          write: writeNow,
+          reject: (reason: unknown) => {
+            if (timer !== null) clearTimeout(timer);
+            reject(reason);
+          },
+        };
+        connecting.push(queued);
+        if (opts.timeoutMs !== undefined) {
+          timer = setTimeout(() => {
+            timer = null;
+            if (rid === null) {
+              connecting = connecting.filter((q) => q !== queued);
+              reject(new Error("ws not open"));
+              return;
+            }
+            expire(rid, opts.timeoutMs!);
+          }, opts.timeoutMs);
+        }
         return;
       }
       if (socket.readyState !== WebSocket.OPEN) {
         reject(new Error("ws not open"));
         return;
       }
-      write(socket, req, resolve as (value: Response) => void);
+      writeNow(socket);
+      if (opts.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          timer = null;
+          expire(rid!, opts.timeoutMs!);
+        }, opts.timeoutMs);
+      }
+    });
+  }
+
+  function expire(rid: string, timeoutMs: number): void {
+    const settle = pending.get(rid);
+    if (!settle) return;
+    pending.delete(rid);
+    settle({
+      ok: false,
+      error: { code: "request_timeout", msg: `no reply within ${timeoutMs} ms` },
     });
   }
 
@@ -1029,11 +1092,14 @@ export function createWsClient(
         title,
       }),
     sessionInput: (sessionId, text) =>
-      send({
-        op: "session_input",
-        session_id: sessionId,
-        text,
-      }),
+      send(
+        {
+          op: "session_input",
+          session_id: sessionId,
+          text,
+        },
+        { timeoutMs: timeouts.sessionInputMs ?? SESSION_INPUT_REPLY_TIMEOUT_MS },
+      ),
     sessionEnv: (sessionId) =>
       send({
         op: "session_env",

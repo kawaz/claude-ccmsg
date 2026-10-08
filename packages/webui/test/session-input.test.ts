@@ -4,6 +4,8 @@ import { describe, expect, test } from "bun:test";
 import type { SessionInputReason } from "@ccmsg/protocol";
 import {
   classifySessionInputReply,
+  formatSentAt,
+  sendExcerpt,
   sessionInputNotice,
   sessionInputSendFailure,
   shouldClearAfter,
@@ -42,6 +44,17 @@ describe("classifySessionInputReply", () => {
       classifySessionInputReply({
         ok: false,
         error: { code: "connection_closed", msg: "ws connection closed" },
+      }),
+    ).toEqual({ kind: "unconfirmed" });
+  });
+
+  // 何を保証するか: webui 側の期限切れ (request_timeout) も、依頼は書いた後
+  // なので unconfirmed。
+  test("treats a reply lost to the client's timeout as unconfirmed", () => {
+    expect(
+      classifySessionInputReply({
+        ok: false,
+        error: { code: "request_timeout", msg: "no reply within 15000 ms" },
       }),
     ).toEqual({ kind: "unconfirmed" });
   });
@@ -100,16 +113,35 @@ describe("sessionInputNotice", () => {
     expect(details.size).toBe(ALL_REASONS.length);
   });
 
-  // 何を保証するか: 人が次に取れる行動を reason ごとに示す (委譲元の例示:
-  // dialog → ダイアログを閉じて送り直す、no_terminal → hyoui の外では送れない、
-  // no_module → plugin が古い / hooks module が読まれていない)。
-  test("names the next step for the reasons a person can act on", () => {
+  // 何を保証するか: 人が次に取れる行動を reason ごとに示す。その場で直せる
+  // もの (ダイアログを閉じる) はその操作を、環境の対処が要るもの (plugin の
+  // 更新、hyoui での起動、対話モード) は具体的な手順を書く。
+  test("names the next step for each reason", () => {
     const detail = (reason: SessionInputReason) =>
       sessionInputNotice({ kind: "not_delivered", reason })!.detail;
     expect(detail("dialog")).toContain("ダイアログを閉じてから送り直して");
-    expect(detail("no_terminal")).toContain("hyoui の外");
-    expect(detail("no_module")).toContain("plugin が古い");
-    expect(detail("no_module")).toContain("hooks module");
+    expect(detail("no_terminal")).toContain("hyoui で起動したセッションだけ");
+    expect(detail("no_terminal")).toContain("端末から直接入力して");
+    expect(detail("no_module")).toContain("セッションが終了していないか");
+    expect(detail("no_module")).toContain("ccmsg plugin を更新してからセッションを起動し直して");
+    expect(detail("no_composer")).toContain("対話モードで起動したセッションに送って");
+    expect(detail("refused")).toContain("送り直して");
+    expect(detail("refused")).toContain("他の plugin を確認して");
+    expect(detail("not_submitted")).toContain("送り直して");
+    expect(detail("enter_failed")).toContain("送り直して");
+  });
+
+  // 何を保証するか: この webui が知らない reason でも、理由コードだけで終わらず
+  // 次の行動 (確かめて送り直す、続けば更新) を示す。
+  test("gives an unknown reason a next step too", () => {
+    const notice = sessionInputNotice({
+      kind: "not_delivered",
+      reason: "brand_new" as SessionInputReason,
+    });
+    expect(notice?.tone).toBe("danger");
+    expect(notice?.detail).toContain("brand_new");
+    expect(notice?.detail).toContain("送り直して");
+    expect(notice?.detail).toContain("ccmsg plugin を更新して");
   });
 
   // 何を保証するか: unconfirmed は danger でなく warn で、「送信済みかもしれない」
@@ -128,5 +160,30 @@ describe("sessionInputNotice", () => {
     expect(notice?.tone).toBe("danger");
     expect(notice?.title).toBe("送れませんでした");
     expect(notice?.detail).toContain("再接続");
+  });
+});
+
+describe("formatSentAt", () => {
+  // 何を保証するか: 同じ日の送信は時:分だけ、日を跨いだら月/日を前に付ける
+  // (注記の「(HH:MM の送信)」が別の日の送信を今日のものと誤読させない)。
+  test("omits the date on the same day and adds it across days", () => {
+    const sent = new Date(2026, 9, 8, 9, 5).toISOString();
+    const sameDay = new Date(2026, 9, 8, 23, 0).getTime();
+    const nextDay = new Date(2026, 9, 9, 1, 0).getTime();
+    expect(formatSentAt(sent, sameDay)).not.toContain("10/8");
+    expect(formatSentAt(sent, sameDay)).toMatch(/09.05|9.05/);
+    expect(formatSentAt(sent, nextDay)).toMatch(/^10\/8 /);
+  });
+});
+
+describe("sendExcerpt", () => {
+  // 何を保証するか: 未確認の注記でどの送信かを見分けられるよう、最初の行の
+  // 冒頭を出し、続きがあれば … を付ける。
+  test("shows the head of the first line", () => {
+    expect(sendExcerpt("短い文")).toBe("短い文");
+    expect(sendExcerpt("1 行目\n2 行目")).toBe("1 行目…");
+    expect(sendExcerpt("あ".repeat(50))).toBe(`${"あ".repeat(40)}…`);
+    // 絵文字 (複数の code point からなる書記素) を途中で切らない。
+    expect(sendExcerpt("👨‍👩‍👧".repeat(41))).toBe(`${"👨‍👩‍👧".repeat(40)}…`);
   });
 });

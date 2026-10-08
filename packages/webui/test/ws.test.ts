@@ -981,6 +981,85 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
+  // A written session_input whose answer never comes on a socket that stays
+  // open settles with request_timeout once its own deadline passes, so the
+  // input panel's lock is released; the late answer is then dropped.
+  test("sessionInput settles with request_timeout when no reply comes", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+      {},
+      { sessionInputMs: 20 },
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionInput("sid-1", "hello");
+    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    expect(await req).toEqual({
+      ok: false,
+      error: { code: "request_timeout", msg: "no reply within 20 ms" },
+    });
+    // The late answer has nothing left to settle and must not throw.
+    ws1.triggerMessage(
+      JSON.stringify({ request_id: sent.request_id, ok: true, outcome: "accepted" }),
+    );
+  });
+
+  // A reply inside the deadline wins; the deadline firing afterwards changes
+  // nothing.
+  test("sessionInput resolves from a reply that beats its deadline", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+      {},
+      { sessionInputMs: 30 },
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionInput("sid-1", "hello");
+    const sent = JSON.parse(ws1.sent[0] ?? "") as { request_id: string };
+    ws1.triggerMessage(
+      JSON.stringify({ request_id: sent.request_id, ok: true, outcome: "accepted" }),
+    );
+    expect(await req).toEqual({ ok: true, outcome: "accepted" });
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // Still queued behind a connecting socket at the deadline means it was never
+  // sent: it rejects (the panel reads that as "could not send") and is not
+  // written when the socket opens later.
+  test("sessionInput still queued at its deadline rejects and is never written", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+      {},
+      { sessionInputMs: 20 },
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    expect(ws1.readyState).toBe(MockWebSocket.CONNECTING);
+
+    const req = handle.sessionInput("sid-1", "hello");
+    let rejected: unknown = null;
+    try {
+      await req;
+    } catch (err) {
+      rejected = err;
+    }
+    expect(rejected).toBeInstanceOf(Error);
+    expect((rejected as Error).message).toBe("ws not open");
+    ws1.readyState = MockWebSocket.OPEN;
+    ws1.triggerOpen();
+    expect(ws1.sent.some((frame) => frame.includes('"session_input"'))).toBe(false);
+  });
+
   // The failure path the row's editor renders inline.
   test("sessionRename surfaces a terminal_unavailable reply as an error", async () => {
     const handle = createWsClient(

@@ -9,7 +9,8 @@ import type { ErrorResponse, SessionInputReason, SessionInputResponse } from "@c
  * - `accepted`: セッションが人の入力として受け取った。文を消してよい唯一の結果
  * - `not_delivered`: 届かなかった (`reason`)。別の経路には落ちていない
  * - `unconfirmed`: 届いたかどうか分からない。daemon の待ちが切れたか、依頼を
- *   書いた後に接続が切れて返事を失った。届いていれば Timeline に人の発言として出る
+ *   書いた後に返事を失った (接続が切れた、webui 側の期限までに返事が来なかった)。
+ *   届いていれば Timeline に人の発言として出る
  * - `failed`: 依頼がセッションまで行っていない (daemon に繋がっていない、daemon が
  *   依頼を受け付けなかった)。セッションには何も入っていない */
 export type SessionInputOutcome =
@@ -18,18 +19,22 @@ export type SessionInputOutcome =
   | { kind: "unconfirmed" }
   | { kind: "failed"; message: string };
 
+/** ws.ts が「依頼を書いた後、返事を受け取れなかった」時に返すエラーコード。
+ * `connection_closed` は返事の前に接続が切れた、`request_timeout` は接続は
+ * 生きているが期限までに返事が来なかった。どちらも daemon は依頼を受け取って
+ * セッションに渡したかもしれない。 */
+const REPLY_LOST_CODES = new Set(["connection_closed", "request_timeout"]);
+
 /** daemon の返事を結果に分類する。
  *
- * `connection_closed` は ws.ts が「依頼を書いた後、返事が来る前に接続が切れた」
- * 時に返すもので、daemon は依頼を受け取ってサイドカーに書いたかもしれない。
- * 届いた可能性を消せないので `unconfirmed` に入れる (DR-0035 §5 の「成功も失敗も
- * 返らない時」)。それ以外のエラーは daemon が依頼を拒んだもので、セッションには
- * 何も届いていない。 */
+ * 依頼を書いた後に返事を失ったものは、届いた可能性を消せないので
+ * `unconfirmed` に入れる (DR-0035 §5 の「成功も失敗も返らない時」)。それ以外の
+ * エラーは daemon が依頼を拒んだもので、セッションには何も届いていない。 */
 export function classifySessionInputReply(
   reply: SessionInputResponse | ErrorResponse,
 ): SessionInputOutcome {
   if (!reply.ok) {
-    if (reply.error.code === "connection_closed") return { kind: "unconfirmed" };
+    if (REPLY_LOST_CODES.has(reply.error.code)) return { kind: "unconfirmed" };
     return { kind: "failed", message: `daemon が受け付けませんでした: ${reply.error.msg}` };
   }
   switch (reply.outcome) {
@@ -61,21 +66,24 @@ export function shouldClearAfter(outcome: SessionInputOutcome): boolean {
   return outcome.kind === "accepted";
 }
 
-/** 届かなかった理由ごとの、何が起きたかと次に人が取れる行動。 */
+/** 届かなかった理由ごとの、何が起きたかと次の行動。人がその場で直せるもの
+ * (ダイアログを閉じる等) は先にそれを書き、環境の対処が要るもの (plugin の
+ * 更新、起動のし直し) はその具体的な手順を書く。 */
 const REASON_DETAIL: Record<SessionInputReason, string> = {
   dialog:
-    "セッションでダイアログが開いていたため、入力欄に入れられませんでした。Terminal タブなどでダイアログを閉じてから送り直してください。",
-  no_composer: "このセッションは入力欄を持たない起動 (-p / SDK) のため、人の入力を受け付けません。",
+    "セッションで選択や確認のダイアログが開いていたため、入力できませんでした。セッションの画面 (Terminal タブなど) でダイアログを閉じてから送り直してください。",
+  no_composer:
+    "このセッションは入力欄の無い起動 (-p など) のため、人の入力を受け付けません。対話モードで起動したセッションに送ってください。",
   refused:
-    "別の plugin の hook が入力欄への書き込みを止めました。セッションに入っている plugin を確かめてから送り直してください。",
+    "セッション側で入力が拒否されました。セッションの画面で入力できる状態か確かめてから送り直してください。続く場合は、セッションに入っている他の plugin を確認してください (入力欄への書き込みを止める hook があります)。",
   no_terminal:
-    "このセッションは hyoui の外で起動されたため、Enter を送る端末がありません。hyoui で起動したセッションにだけ送れます。",
+    "このセッションには webui から入力を届ける端末がありません。webui から送れるのは hyoui で起動したセッションだけです。このセッションへは端末から直接入力してください。",
   not_submitted:
-    "入力欄に入れた文が Enter で送信されませんでした (入力欄は元に戻してあります)。セッションの様子を確かめてから送り直してください。",
+    "入力した文が送信されませんでした (セッションの入力欄は元に戻してあります)。セッションの画面を確かめてから送り直してください。",
   enter_failed:
-    "端末への Enter の送出に失敗しました (入力欄は元に戻してあります)。セッションの端末が動いているか確かめてから送り直してください。",
+    "セッションの端末に送信の操作を届けられませんでした (入力欄は元に戻してあります)。セッションの端末 (Terminal タブなど) が動いているか確かめてから送り直してください。",
   no_module:
-    "セッション側で入力を受け取る仕組みが動いていません。ccmsg plugin が古いか hooks module が読まれていない、またはセッションが終了しています。plugin を更新してセッションを起動し直してください。",
+    "セッション側に入力の受け口がありません。セッションが終了していないか確かめてください。動いている場合は、ccmsg plugin を更新してからセッションを起動し直してください (古い plugin のままでは受け取れません)。",
 };
 
 export interface SessionInputNotice {
@@ -97,7 +105,7 @@ export function sessionInputNotice(outcome: SessionInputOutcome): SessionInputNo
         title: "届きませんでした",
         detail:
           REASON_DETAIL[outcome.reason] ??
-          `セッションが入力を受け取れませんでした (${outcome.reason})。`,
+          `セッションが入力を受け取れませんでした (理由: ${outcome.reason})。セッションの画面を確かめてから送り直してください。続く場合は、この画面を再読み込みし、ccmsg plugin を更新してください。`,
       };
     case "unconfirmed":
       return {
@@ -109,4 +117,26 @@ export function sessionInputNotice(outcome: SessionInputOutcome): SessionInputNo
     case "failed":
       return { tone: "danger", title: "送れませんでした", detail: outcome.message };
   }
+}
+
+/** 時刻を注記に出す形 (同じ日なら時:分、日を跨いだら月/日 時:分)。 */
+export function formatSentAt(iso: string, now: number = Date.now()): string {
+  const at = new Date(iso);
+  const hm = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(now).toDateString() === at.toDateString()
+    ? hm
+    : `${at.getMonth() + 1}/${at.getDate()} ${hm}`;
+}
+
+const EXCERPT_MAX = 40;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** 送った文を注記の中で見分けるための冒頭 (最初の行、長ければ省略)。文字数は
+ * 書記素で数え、絵文字などを途中で切らない。 */
+export function sendExcerpt(text: string): string {
+  const firstLine = text.trim().split("\n", 1)[0] ?? "";
+  const chars = Array.from(graphemes.segment(firstLine), (s) => s.segment);
+  const more = chars.length > EXCERPT_MAX || text.trim().includes("\n");
+  return chars.slice(0, EXCERPT_MAX).join("") + (more ? "…" : "");
 }

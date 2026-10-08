@@ -1,5 +1,5 @@
 // Files タブ表示状態 (選択ファイル + viewMode) の per-sid 永続化ヘルパ
-// (kawaz r17 mid=5)。1on1 draft (session-input-composer.test.ts) と同じ
+// (kawaz r17 mid=5)。1on1 draft (session-input-store.test.ts) と同じ
 // 保存・削除ルールを踏襲していることをテストで固定する: round-trip、
 // 壊れた record の拒否、mount-time sweep の 2 規則 (peers 不在 / 10 日超
 // 非アクティブ)、誤爆防止 (無関係 key と fresh record を残す)。
@@ -16,7 +16,7 @@ import {
 } from "../src/client/files-view-store.ts";
 import { initialState, type AppState } from "../src/client/store.ts";
 
-// session-input-composer.test.ts と同じ最小 localStorage shim (helpers が
+// session-input-store.test.ts と同じ最小 localStorage shim (helpers が
 // 直接 browser global を読むため、bun test では自前で生やす)。
 class MemStorage {
   private data = new Map<string, string>();

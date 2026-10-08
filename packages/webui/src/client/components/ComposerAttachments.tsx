@@ -25,9 +25,12 @@ function previewHref(a: ComposerAttachment): string | null {
 export function ComposerAttachments({
   attachments,
   onRemove,
+  disabled = false,
 }: {
   attachments: ComposerAttachment[];
   onRemove: (n: number) => void;
+  /** 削除を止める (送信中、送る添付を変えさせない時)。 */
+  disabled?: boolean;
 }) {
   if (attachments.length === 0) return null;
   return (
@@ -73,6 +76,7 @@ export function ComposerAttachments({
               type="button"
               class="composer-attachment-remove"
               aria-label={`FILE${a.n} を削除`}
+              disabled={disabled}
               onClick={() => onRemove(a.n)}
             >
               ×

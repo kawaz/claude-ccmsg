@@ -6,17 +6,12 @@
 // 端末で打ったのと同じ prompt としてセッションに入り、返事はセッションの通常の
 // 応答として Timeline に出る。
 //
-// 文を消すのは daemon が `accepted` を返した時だけ。`not_delivered` は理由と
-// 次に取れる行動を示し、`unconfirmed` は「送信済みかもしれない」と示して、
-// どちらも入力欄の文と下書きを残す。返事を待つ間 (daemon の待ちが切れるまで
-// 数秒) は入力欄と送信ボタンを止め、同じ文が二重に入るのを防ぐ。
-//
-// 下書き:
-//  - 文は localStorage の `<DRAFT_STORAGE_PREFIX><sid>` に保存し、タブ切替や
-//    画面遷移で書きかけを失わない。`unconfirmed` に終わった送信の時刻も一緒に
-//    保存し、リロード後も「送信済みかもしれない」ことが分かるようにする
-//  - mount 時の sweep で古い下書きを消す: (a) sid が peers にも agents にも
-//    居ない、(b) 対象セッションが 10 日以上動いていない
+// 下書きと送信の記録は session-input-store.ts が localStorage に持ち、この部品は
+// それを映す。文を消すのは daemon が `accepted` を返し、保存されている下書きが
+// 送った文と同じ時だけ。届かなかった・送れなかった時は理由と次の行動を、
+// `unconfirmed` は送信ごとに「送信済みかもしれない」と示し、どちらも下書きを
+// 残す。返事を待つ間 (daemon の待ちが切れるまで数秒) は本文・添付を変えさせず、
+// 同じ文が二重に入るのを防ぐ。別タブでの変更は storage event で映す。
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { useApp } from "../context.ts";
 import type { AppState } from "../store.ts";
@@ -35,150 +30,43 @@ import {
 import { shouldSendOnKeyDown } from "./composer-keydown.ts";
 import { ComposerAttachments } from "./ComposerAttachments.tsx";
 import { uploadAttachment } from "./composer-upload.ts";
+import { formatSentAt, sendExcerpt, sessionInputNotice } from "./session-input.ts";
 import {
-  classifySessionInputReply,
-  sessionInputNotice,
-  sessionInputSendFailure,
-  shouldClearAfter,
-  type SessionInputOutcome,
-} from "./session-input.ts";
-import { readStorage, removeStorage, sweepStaleBySid, writeStorage } from "../storage.ts";
+  cleanupStaleSessionInputs,
+  clearLastFailure,
+  discardSend,
+  draftKey,
+  isSending,
+  lastFailure,
+  loadDraft,
+  loadSends,
+  sameContent,
+  saveDraft,
+  sendSessionInput,
+  sendsKey,
+  subscribeSessionInput,
+  unconfirmedSends,
+  type InputContent,
+} from "./session-input-store.ts";
 import { useFabPopup } from "../useFabPopup.ts";
 import { isPanelDragHandle, useDraggable, useFabPanelPositionLink } from "../useDraggable.ts";
 import { useCacheRing } from "../useCacheRing.ts";
 import { CacheRing } from "./CacheRing.tsx";
 
-/** Design rationale: キーの文字列は、ブラウザに既に保存されている未送信の下書きと
- * 同じものを使う。変えるとそれらが読めなくなり、人が書いた文を失わせる
- * (DR-0035 §5 が避けている負担そのもの)。 */
-export const DRAFT_STORAGE_PREFIX = "ccmsg.1on1.";
-export const CLEANUP_STALE_DAYS = 10;
-export const CLEANUP_STALE_MS = CLEANUP_STALE_DAYS * 24 * 60 * 60 * 1000;
-
-export interface StoredDraft {
-  text: string;
-  /** upload 完了済み (status:"done") の添付メタ。upload は選択時に即完了し
-   * ファイルは TMPDIR に残るので、メタを draft に含めれば close→reopen や
-   * リロードの後も本文の [FILE<N>] がそのまま送信時に解決できる。uploading /
-   * error の途中状態は保存しない (XHR は復元できない)。 */
-  attachments?: ComposerAttachment[];
-  /** この文を送って `unconfirmed` に終わった時刻 (ISO-8601)。セッションに既に
-   * 入っているかもしれないことを、リロード後も入力欄に示すために持つ。 */
-  unconfirmedAt?: string;
-  /** ISO-8601 wall-clock stamp of the last edit; used by the cleanup sweep
-   * as a fallback when peers.last_activity_at isn't available. */
-  updatedAt: string;
-}
-
-export function keyFor(sid: string): string {
-  return `${DRAFT_STORAGE_PREFIX}${sid}`;
-}
-
-export function loadDraft(sid: string): StoredDraft | null {
-  const raw = readStorage(keyFor(sid));
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (
-    !parsed ||
-    typeof parsed !== "object" ||
-    typeof (parsed as StoredDraft).text !== "string" ||
-    typeof (parsed as StoredDraft).updatedAt !== "string"
-  ) {
-    return null;
-  }
-  // 付属の項目は shape が崩れていたら黙って落とす (text だけの復元に degrade)
-  // — 壊れたメタで送信経路を詰まらせない。
-  const { attachments: att, unconfirmedAt, ...rest } = parsed as StoredDraft;
-  const draft: StoredDraft = rest;
-  if (
-    Array.isArray(att) &&
-    att.every(
-      (a) =>
-        a &&
-        typeof a === "object" &&
-        typeof a.n === "number" &&
-        a.status === "done" &&
-        typeof a.path === "string",
-    )
-  ) {
-    draft.attachments = att;
-  }
-  if (typeof unconfirmedAt === "string" && Number.isFinite(Date.parse(unconfirmedAt))) {
-    draft.unconfirmedAt = unconfirmedAt;
-  }
-  return draft;
-}
-
-export function saveDraft(
-  sid: string,
-  text: string,
-  attachments?: ComposerAttachment[],
-  unconfirmedAt?: string | null,
-): void {
-  // 添付は done (upload 完了、path 確定) だけ保存 — uploading の XHR や
-  // error 表示は復元不能な transient state。storage unavailable (private
-  // mode / quota) 時は drop silently — 次回 reopen が空 textarea に戻る。
-  const done = (attachments ?? []).filter((a) => a.status === "done");
-  const payload: StoredDraft = {
-    text,
-    ...(done.length > 0 ? { attachments: done } : {}),
-    ...(unconfirmedAt ? { unconfirmedAt } : {}),
-    updatedAt: new Date().toISOString(),
-  };
-  writeStorage(keyFor(sid), JSON.stringify(payload));
-}
-
-export function clearDraft(sid: string): void {
-  removeStorage(keyFor(sid));
-}
-
-/** Mount-time sweep. Two purge rules:
- *  - (a) sid absent from both `state.peers` and `state.agents`: the target
- *    session is gone, the draft can never be delivered — drop.
- *  - (b) the target session has been idle > 10 days (uses peers'
- *    `last_activity_at` when present, falls back to the draft's own
- *    `updatedAt` if the peer entry has no activity stamp).
- *
- * Runs once per SessionView mount, guarded by a `state.peers.length > 0`
- * check upstream — a mount that fires before peers arrives skips the sweep
- * (no reference to compare against) and re-runs on the next visit. */
-export function cleanupStaleDrafts(state: AppState, now: number = Date.now()): void {
-  sweepStaleBySid(
-    DRAFT_STORAGE_PREFIX,
-    state,
-    CLEANUP_STALE_MS,
-    (sid) => loadDraft(sid)?.updatedAt,
-    now,
-  );
-}
-
-/** 時刻を入力欄の注記に出す形 (同じ日なら時:分、日を跨いだら月/日 時:分)。 */
-export function formatSentAt(iso: string, now: number = Date.now()): string {
-  const at = new Date(iso);
-  const hm = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return new Date(now).toDateString() === at.toDateString()
-    ? hm
-    : `${at.getMonth() + 1}/${at.getDate()} ${hm}`;
-}
-
 export function SessionInputComposer({ sid, state }: { sid: string; state: AppState }) {
   const { ws } = useApp();
-  const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
-  // render をまたがず同期的に見る送信中フラグ。⌘+Enter の連打は再 render の前に
-  // 2 回目の handleSubmit を呼びうるので、state だけでは二重送信を止められない。
-  const sendingRef = useRef(false);
-  // 直前の送信がどう終わったか (accepted 以外)。次の送信を始めるか、人が注記を
-  // 閉じるまで出し続ける。
-  const [outcome, setOutcome] = useState<SessionInputOutcome | null>(null);
-  // `unconfirmed` に終わった送信の時刻。下書きと一緒に保存し、リロード後も
-  // 「送信済みかもしれない」と示す。
-  const [unconfirmedAt, setUnconfirmedAt] = useState<string | null>(null);
+  // 下書きは初期化の時に同期で読む。開いた後に effect で戻すと、戻す前の空の
+  // text を保存の effect が先に見て下書きを消してしまう。SessionView は sid
+  // ごとの instance なので sid は変わらない。
+  const [text, setText] = useState(() => loadDraft(sid)?.text ?? "");
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>(
+    () => loadDraft(sid)?.attachments ?? [],
+  );
+  const [sends, setSends] = useState(() => loadSends(sid));
+  const [sending, setSending] = useState(() => isSending(sid));
+  const [failure, setFailure] = useState(() => lastFailure(sid));
+  const contentRef = useRef({ text, attachments });
+  contentRef.current = { text, attachments };
   // 送信中は外側クリックでも閉じない: 返事が来た時にパネルが閉じていると、
   // 届かなかった理由を人が見ないまま終わる。
   const { open, openPanel, closePanel, panelRef } = useFabPopup(sending);
@@ -194,7 +82,6 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // 送信 UI そのものに出せる。
   const cacheRequest = state.llmRequests.get(sid);
   const cacheRing = useCacheRing(cacheRequest ?? null);
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const pendingCaretRef = useRef<number | null>(null);
   // placeholder 挿入直後に復元すべき caret 位置: controlled textarea は value が
   // プログラム的に変わると caret が末尾に飛ぶため、DOM 反映後の effect で
@@ -219,22 +106,48 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
   // one sweep per component instance is enough; navigating away and back
   // remounts and re-sweeps.
   useEffect(() => {
-    if (state.peers.length > 0) cleanupStaleDrafts(state);
+    if (state.peers.length > 0) cleanupStaleSessionInputs(state);
     // We deliberately do NOT depend on `state` itself (would re-run on every
     // action) or on `state.peers` array identity (recreated by peers/loaded
     // even when the underlying set didn't change).
   }, [state.peers.length]);
 
-  // パネルを開いた時にこの sid の下書きを戻す (SessionView は sid ごとの
-  // instance なので sid は変わらない)。直前の送信結果の注記は開閉をまたいで
-  // 残し、閉じて開き直した人が理由を読み返せるようにする。
+  // 保存領域から読み直す。送信の結果 (この部品が unmount 中に届いたものも)、
+  // 別タブでの下書きの書き換えや記録の変化をここで映す。下書きは中身が違う時
+  // だけ置き換え、入力中の state を無駄に作り直さない。
+  const refresh = useCallback(() => {
+    setSends(loadSends(sid));
+    setSending(isSending(sid));
+    setFailure(lastFailure(sid));
+    const draft: InputContent = loadDraft(sid) ?? { text: "" };
+    if (!sameContent(draft, contentRef.current)) {
+      setText(draft.text);
+      setAttachments(draft.attachments ?? []);
+    }
+  }, [sid]);
+
   useEffect(() => {
-    if (!open) return;
-    const draft = loadDraft(sid);
-    setText(draft?.text ?? "");
-    setAttachments(draft?.attachments ?? []);
-    setUnconfirmedAt(draft?.unconfirmedAt ?? null);
-  }, [open, sid]);
+    const off = subscribeSessionInput((changed) => {
+      if (changed === sid) refresh();
+    });
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === draftKey(sid) || e.key === sendsKey(sid)) refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    // 初回 render から購読までの間に起きた変化を拾う。
+    refresh();
+    return () => {
+      off();
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [sid, refresh]);
+
+  // 書いた文と upload 済みの添付を保存する。空の本文は下書きを消す。保存済みと
+  // 同じ中身なら saveDraft は書かないので、refresh で映した別タブの下書きを
+  // タブ同士で書き戻し合うことはない。
+  useEffect(() => {
+    saveDraft(sid, text, attachments);
+  }, [sid, text, attachments]);
 
   // open 時に textarea へ自動フォーカス + 前回離脱時のカーソル位置を復元。
   // 位置の保存は textarea の onBlur (close 前に必ず発火)。draft 復元 effect の
@@ -270,20 +183,6 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
       restoreCaretRef.current = null;
     }
   }, [text]);
-
-  // Persist text + done attachments as the user types/uploads. Empty text
-  // explicitly clears the entry rather than storing an empty draft — an
-  // unused compose that never gets typed shouldn't count as a draft needing
-  // later cleanup. A per-keystroke localStorage.setItem is cheap enough not
-  // to need debouncing here.
-  useEffect(() => {
-    if (!open) return;
-    if (text === "") {
-      clearDraft(sid);
-      return;
-    }
-    saveDraft(sid, text, attachments, unconfirmedAt);
-  }, [open, sid, text, attachments, unconfirmedAt]);
 
   // 添付 upload 開始 (通常 Composer と同じロジック)。caret 位置にプレースホルダ
   // 挿入 + XHR upload、progress は state に反映、送信ボタン disable は
@@ -363,35 +262,40 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     [text, attachments],
   );
 
-  const removeAttachment = useCallback((n: number) => {
-    setAttachments((prev) => prev.filter((a) => a.n !== n));
-    setText((current) => removePlaceholder(current, n));
-  }, []);
+  const removeAttachment = useCallback(
+    (n: number) => {
+      // 送信中は送る添付を変えさせない (× は disabled だが、ここでも止める)。
+      if (isSending(sid)) return;
+      setAttachments((prev) => prev.filter((a) => a.n !== n));
+      setText((current) => removePlaceholder(current, n));
+    },
+    [sid],
+  );
 
   // paste は画像に加え Finder コピーのファイル (mime 不問) も添付に、
   // drop は Finder からの drag & drop 添付。
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
-      if (!e.clipboardData || sendingRef.current) return;
+      if (!e.clipboardData || isSending(sid)) return;
       const files = extractTransferFiles(e.clipboardData.items);
       if (files.length === 0) return; // 通常テキスト paste は default に任せる
       e.preventDefault();
       for (const f of files) beginUpload(f);
     },
-    [beginUpload],
+    [beginUpload, sid],
   );
   const onDragOver = useCallback((e: DragEvent) => {
     if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
   }, []);
   const onDrop = useCallback(
     (e: DragEvent) => {
-      if (!e.dataTransfer || sendingRef.current) return;
+      if (!e.dataTransfer || isSending(sid)) return;
       const files = extractTransferFiles(e.dataTransfer.items);
       if (files.length === 0) return;
       e.preventDefault();
       for (const f of files) beginUpload(f);
     },
-    [beginUpload],
+    [beginUpload, sid],
   );
 
   const onFilesPicked = useCallback(
@@ -403,19 +307,10 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     [beginUpload],
   );
 
-  // 入力欄と保存済みの下書きを空にする。accepted の後と、人が「送信済みかも
-  // しれない」文を Timeline で確かめて捨てる時に使う。下書きは明示的に消す:
-  // 保存の effect はパネルが開いている間しか走らない。
-  const discard = useCallback(() => {
-    clearDraft(sid);
-    setText("");
-    setAttachments([]);
-    setUnconfirmedAt(null);
-    setOutcome(null);
-  }, [sid]);
-
   const handleSubmit = useCallback(async () => {
-    if (sendingRef.current) return;
+    // 同期で見る: ⌘+Enter の連打は再 render の前に 2 回目を呼びうる。記録は
+    // sendSessionInput が最初の await より前に書く。
+    if (isSending(sid)) return;
     const body = text.trim();
     if (body === "") return;
     if (hasPendingUpload(attachments)) return; // safety net (ボタン disable 済)
@@ -424,46 +319,36 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     // リテラル [FILE<N>] が残る (upload 中は上で送信自体を止めている。error は
     // × で消してから送る運用)。
     const finalText = substitutePlaceholders(body, attachments);
-    sendingRef.current = true;
-    setSending(true);
-    setOutcome(null);
-    let result: SessionInputOutcome;
-    try {
-      result = classifySessionInputReply(await ws.sessionInput(sid, finalText));
-    } catch {
-      result = sessionInputSendFailure();
-    }
-    sendingRef.current = false;
-    setSending(false);
-    if (shouldClearAfter(result)) {
-      discard();
-      closePanel();
-      return;
-    }
-    setOutcome(result);
-    if (result.kind === "unconfirmed") setUnconfirmedAt(new Date().toISOString());
-  }, [ws, sid, text, attachments, closePanel, discard]);
+    // 送る文を下書きとして確定させてから記録を作る。accepted の時に「下書きが
+    // 送った文のままか」を比べる相手になる。
+    saveDraft(sid, text, attachments);
+    const outcome = await sendSessionInput(sid, { text, attachments }, finalText, (t) =>
+      ws.sessionInput(sid, t),
+    );
+    // 下書きが消えた (= 送った文のままだった) 時だけ閉じる。返事を待つ間に
+    // 別タブで書き換わっていれば、その文を見せたまま残す。
+    if (outcome.kind === "accepted" && loadDraft(sid) === null) closePanel();
+  }, [ws, sid, text, attachments, closePanel]);
 
   if (!open) {
-    // close 中に下書きが残っていれば FAB を「下書きあり」表示 (色 + 跳ね) に。
-    // 下書きは localStorage 保存なので close 中の情報源は loadDraft — render 時
-    // 読みで十分 (close 遷移ごとにここを通り、draft は open 中にしか変化しない)。
-    const draft = loadDraft(sid);
-    const hasDraft = !!draft && draft.text.trim().length > 0;
+    // close 中に下書きか未確認の送信が残っていれば FAB を「下書きあり」表示
+    // (色 + 跳ね) にする。
+    const hasDraft = text.trim().length > 0;
+    const hasUnconfirmed = unconfirmedSends(sends).length > 0;
     return (
       <button
         type="button"
         class={
           "session-input-fab" +
-          (hasDraft ? " composer-fab-draft" : "") +
+          (hasDraft || hasUnconfirmed ? " composer-fab-draft" : "") +
           (cacheRing ? ` ${cacheRing.class}` : "")
         }
         title={
-          hasDraft
-            ? draft.unconfirmedAt
-              ? "送信済みかもしれない下書きがあります"
-              : "書きかけの下書きがあります"
-            : "このセッションに入力を送る"
+          hasUnconfirmed
+            ? "届いたか確認できていない送信があります"
+            : hasDraft
+              ? "書きかけの下書きがあります"
+              : "このセッションに入力を送る"
         }
         aria-label="このセッションに入力を送る"
         onClick={openPanel}
@@ -479,21 +364,20 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
     );
   }
 
-  // 直前の結果の注記。結果が無くても、下書きに未確認の印があれば (リロード後・
-  // 開き直し後) 未確認の注記を出す。
-  const notice = outcome
-    ? sessionInputNotice(outcome)
-    : unconfirmedAt && text.trim() !== ""
-      ? sessionInputNotice({ kind: "unconfirmed" })
-      : null;
-  const showDiscard =
-    !sending && unconfirmedAt !== null && text.trim() !== "" && notice?.tone === "warn";
+  // 直近の送信が届かなかった・送れなかった時の注記と、未確認の送信ごとの注記を
+  // 並べて出す (失敗の注記が未確認の警告を隠さない)。
+  const failureNotice = failure ? sessionInputNotice(failure) : null;
+  const unconfirmed = unconfirmedSends(sends);
+  const unconfirmedNotice = sessionInputNotice({ kind: "unconfirmed" });
   const uploading = hasPendingUpload(attachments);
+  // 今の下書きが未確認の送信と同じ文なら、送り直すと二重に入りうることを
+  // ボタンの文言でも示す。
+  const draftMaybeSent = unconfirmed.some((r) => sameContent(r, { text, attachments }));
   const sendLabel = sending
     ? "送信中..."
     : uploading
       ? "アップロード中..."
-      : unconfirmedAt !== null
+      : draftMaybeSent
         ? "もう一度送信"
         : "送信";
 
@@ -559,12 +443,9 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
           onInput={(e) => {
             const value = (e.currentTarget as HTMLTextAreaElement).value;
             setText(value);
-            // 文を全部消したら、未確認の印も結果の注記も対象を失う。次に書く文は
-            // 別の文なので引き継がない。
-            if (value.trim() === "") {
-              setUnconfirmedAt(null);
-              setOutcome(null);
-            }
+            // 文を全部消したら、届かなかった理由の注記も対象を失う。未確認の
+            // 送信の注記は送った文に付いているので消さない。
+            if (value.trim() === "") clearLastFailure(sid);
           }}
           // close 前に必ず発火する blur でカーソル位置を保存
           onBlur={(e) => {
@@ -588,33 +469,50 @@ export function SessionInputComposer({ sid, state }: { sid: string; state: AppSt
         />
         {cacheRing ? <CacheRing shape="rect" /> : null}
       </div>
-      <ComposerAttachments attachments={attachments} onRemove={removeAttachment} />
+      <ComposerAttachments
+        attachments={attachments}
+        onRemove={removeAttachment}
+        disabled={sending}
+      />
       {sending ? (
         <p class="session-input-status" role="status">
           セッションに渡しています。受け取ったかの確認を待っています...
         </p>
       ) : null}
-      {notice ? (
-        <div class={`session-input-notice session-input-notice-${notice.tone}`} role="alert">
-          <p class="session-input-notice-title">
-            {notice.title}
-            {notice.tone === "warn" && unconfirmedAt ? (
-              <span class="session-input-notice-time"> ({formatSentAt(unconfirmedAt)} の送信)</span>
-            ) : null}
-          </p>
-          <p class="session-input-notice-detail">{notice.detail}</p>
-          {showDiscard ? (
-            <button
-              type="button"
-              class="session-input-discard"
-              onClick={discard}
-              title="入力欄と保存した下書きを消します"
-            >
-              届いていたので消す
-            </button>
-          ) : null}
+      {failureNotice ? (
+        <div class={`session-input-notice session-input-notice-${failureNotice.tone}`} role="alert">
+          <p class="session-input-notice-title">{failureNotice.title}</p>
+          <p class="session-input-notice-detail">{failureNotice.detail}</p>
         </div>
       ) : null}
+      {unconfirmedNotice
+        ? unconfirmed.map((record) => (
+            <div
+              key={record.id}
+              class={`session-input-notice session-input-notice-${unconfirmedNotice.tone}`}
+              role="alert"
+            >
+              <p class="session-input-notice-title">
+                {unconfirmedNotice.title}
+                <span class="session-input-notice-time">
+                  {" "}
+                  ({formatSentAt(record.sentAt)} の送信)
+                </span>
+              </p>
+              <p class="session-input-notice-excerpt">「{sendExcerpt(record.text)}」</p>
+              <p class="session-input-notice-detail">{unconfirmedNotice.detail}</p>
+              <button
+                type="button"
+                class="session-input-discard"
+                onClick={() => discardSend(sid, record.id)}
+                disabled={sending}
+                title="この注記を消します。入力欄が送った文のままなら入力欄も空にします"
+              >
+                届いていたので消す
+              </button>
+            </div>
+          ))
+        : null}
       <div class="session-input-actions">
         <div class="composer-attach-buttons">
           {/* 画像/ファイルボタンの区別は不要、クリップマーク 1 個に統一。

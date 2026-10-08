@@ -112,7 +112,7 @@ export function listStorageKeys(prefix: string): string[] {
 
 /** `ccmsg.filesView.<sid>` / `ccmsg.1on1.<sid>` の mount-time sweep が共有する
  * per-sid stale 判定 (files-view-store.ts の cleanupStaleFilesViews と
- * SessionInputComposer.tsx の cleanupStaleDrafts で行単位同一だったロジックを
+ * session-input-store.ts の cleanupStaleSessionInputs で行単位同一だったロジックを
  * 統一)。2 規則: (a) sid が `state.peers` にも `state.agents` にも居ない
  * record は無条件削除 (= セッション自体が消えている。ccmsg 未起動でプロセスが
  * 生きているだけの sid は agents 側に居るので残す)、

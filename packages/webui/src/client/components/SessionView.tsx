@@ -264,7 +264,7 @@ export function SessionView({
     if (saved) replaceNavigation(fileHref(sid, saved.path));
   }, [active, sid, tab, selectedPath]);
 
-  // 保存 record の mount-time sweep (SessionInputComposer の draft sweep と同じ
+  // 保存 record の mount-time sweep (session-input-store.ts の下書き sweep と同じ
   // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
   // (空) は比較対象がないので待つ — 以降の peers 増減では再実行しない
   // (mount あたり 1 回で十分、再訪時にまた走る)。
