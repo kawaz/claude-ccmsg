@@ -5,11 +5,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  SESSION_INPUT_MODULE_REASONS,
   VERSION,
+  isSessionIdShape,
   migrateLegacyConfigFiles,
   resolvePaths,
   sessionProjectDir,
   type Identity,
+  type SessionInputModuleReason,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
@@ -27,6 +30,7 @@ import {
   waitDaemonGone,
 } from "./client.ts";
 import { watchSubscribeOwner } from "./subscribe-owner.ts";
+import { harnessPid, type Sidecar, startSidecar } from "./sidecar.ts";
 
 // --- arg parsing -----------------------------------------------------------
 
@@ -317,6 +321,106 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   const res = await client.request<{ ok?: boolean } & Record<string, unknown>>(req);
   client.close();
   process.exit(output(res));
+}
+
+// --- sidecar ---------------------------------------------------------------
+
+const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
+session. Not for direct use.
+`;
+
+/** `ccmsg sidecar` and `ccmsg sidecar report` (DR-0035 §3). Both are the
+ * hooks module's: it starts the first for its session's life and runs the
+ * second to tell the daemon what became of a request the first copied to it.
+ * The help says no more than that on purpose (DR-0035 §4). */
+async function runSidecarCommand(args: string[]): Promise<void> {
+  const { positionals, opts } = parseArgs(args);
+  if (opts.help === true) {
+    process.stdout.write(SIDECAR_HELP);
+    return;
+  }
+  if (positionals[0] === "report") {
+    await runSidecarReport(opts);
+    return;
+  }
+  if (positionals.length > 0) {
+    process.stderr.write(`ccmsg sidecar: unexpected argument '${positionals[0]}'\n`);
+    process.exit(2);
+  }
+  await runSidecar(opts);
+}
+
+/** Standard input is not read: the module's spawn closes it at once, so its
+ * end says nothing about whether anybody still reads. What does is a write to
+ * standard output failing, and the signal the harness sends the child when
+ * the module goes. */
+async function runSidecar(opts: Record<string, string | boolean>): Promise<never> {
+  const sid =
+    str(opts, "sid") ??
+    strField(process.env.CCMSG_SID) ??
+    strField(process.env.CLAUDE_CODE_SESSION_ID);
+  if (sid === undefined || !isSessionIdShape(sid)) {
+    process.stderr.write(`ccmsg sidecar: --sid must be a session id (got ${sid ?? "nothing"})\n`);
+    process.exit(2);
+  }
+  const given = str(opts, "pid");
+  const pid = given === undefined ? harnessPid() : Number(given);
+  if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 0) {
+    process.stderr.write(
+      given === undefined
+        ? "ccmsg sidecar: no claude process among the ancestors; pass --pid\n"
+        : `ccmsg sidecar: --pid must be a positive integer (got ${given})\n`,
+    );
+    process.exit(2);
+  }
+  let running: Sidecar;
+  try {
+    running = startSidecar({
+      dir: resolvePaths().sidecars,
+      sid,
+      pid,
+      out: (line, done) => {
+        process.stdout.write(line, done);
+      },
+    });
+  } catch (e) {
+    process.stderr.write(
+      `ccmsg sidecar: cannot bind: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    process.exit(1);
+  }
+  const stop = (): void => running.stop();
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(signal, stop);
+  process.stdout.on("error", stop);
+  process.stderr.write(`ready ${running.path}\n`);
+  const why = await running.stopped;
+  process.stderr.write(`${why} ${running.path}\n`);
+  process.exit(0);
+}
+
+async function runSidecarReport(opts: Record<string, string | boolean>): Promise<never> {
+  const usage =
+    "ccmsg sidecar report --sid <sid> --id <id> --outcome accepted|not_delivered [--reason <reason>]";
+  const id = requireArg(str(opts, "id"), "id", usage);
+  const outcome = requireArg(str(opts, "outcome"), "outcome", usage);
+  if (outcome !== "accepted" && outcome !== "not_delivered") {
+    throw new Error(`--outcome must be accepted or not_delivered\n  usage: ${usage}`);
+  }
+  const reason = str(opts, "reason");
+  if (
+    reason !== undefined &&
+    !(SESSION_INPUT_MODULE_REASONS as readonly string[]).includes(reason)
+  ) {
+    throw new Error(`--reason must be one of ${SESSION_INPUT_MODULE_REASONS.join(", ")}`);
+  }
+  const identity = resolveSessionIdentity(opts, "sidecar");
+  if (identity === null) refuseWriteWithoutSid("sidecar report");
+  return runOnce(identity, {
+    op: "session_input_result",
+    id,
+    outcome,
+    ...(reason !== undefined ? { reason: reason as SessionInputModuleReason } : {}),
+  });
 }
 
 // --- say -------------------------------------------------------------------
@@ -738,6 +842,8 @@ Commands:
                                single SIGKILL instead (irreversible — only
                                after a graceful stop reported
                                terminated:false)
+  sidecar                      The child process the ccmsg hooks module starts for
+                               its session. Not for direct use
   origins [list]               List persisted extra allowed Origins (webui reverse proxy)
   origins add <origin>         Allow an Origin (e.g. "https://ccmsg.example.com"), effective immediately
   origins remove <origin>      Remove a persisted Origin
@@ -860,6 +966,12 @@ async function main(): Promise<void> {
   // intentional, the shim contract is "same arguments as say".
   if (argv[0] === "say") {
     await runSay(argv.slice(1));
+    return;
+  }
+  // Ahead of the shared help handling, so `ccmsg sidecar --help` prints the
+  // sidecar's own line rather than the command rail.
+  if (argv[0] === "sidecar") {
+    await runSidecarCommand(argv.slice(1));
     return;
   }
   // Parse the whole argv so options may appear before or after the command (kawaz
