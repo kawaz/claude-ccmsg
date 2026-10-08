@@ -14,7 +14,7 @@
 // markdown ファイル選択では `viewMode` を上書きせず継承する (= 途中で .ts を
 // 見ても markdown モードの記憶を失わない、resolveFilesViewSave の役割)。
 //
-// 1on1 draft (OneOnOneComposer) と同じ保存・削除ルールで localStorage に持つ:
+// セッション入力欄の draft (SessionInputComposer) と同じ保存・削除ルールで localStorage に持つ:
 //  - key は `ccmsg.filesView.<sid>`、値は { path, viewMode, updatedAt }
 //  - mount-time sweep で (a) peers に居ない sid、(b) 10 日超非アクティブ
 //    (peers.last_activity_at、無ければ record 自身の updatedAt) を削除
@@ -23,7 +23,7 @@ import { readStorage, sweepStaleBySid, writeStorage } from "./storage.ts";
 import { isMarkdownPath } from "./utils.ts";
 
 export const FILES_VIEW_PREFIX = "ccmsg.filesView.";
-// 1on1 draft (OneOnOneComposer.CLEANUP_STALE_MS) と同じ 10 日。値を import
+// セッション入力欄の draft (SessionInputComposer.CLEANUP_STALE_MS) と同じ 10 日。値を import
 // せず独立定義なのは意図的 — 「同じルール」は現時点の仕様の一致であって、
 // 片方の将来変更が黙ってもう片方に波及してよい結合ではない。
 export const FILES_VIEW_STALE_DAYS = 10;
@@ -115,7 +115,7 @@ export function saveFilesView(sid: string, state: Omit<FilesViewState, "updatedA
   writeStorage(filesViewKey(sid), JSON.stringify(payload));
 }
 
-/** OneOnOneComposer.cleanupStaleDrafts と同じ 2 規則の mount-time sweep:
+/** SessionInputComposer.cleanupStaleDrafts と同じ 2 規則の mount-time sweep:
  *  (a) sid が peers に居ない — 対象セッションが消えており復元先がない
  *  (b) 対象セッションが 10 日超非アクティブ (peers.last_activity_at、
  *      無ければ record 自身の updatedAt を fallback)

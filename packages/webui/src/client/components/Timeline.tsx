@@ -144,7 +144,7 @@ import { forkActionState, liveChain, type ForkActionState } from "../fork-point.
 import { isScopedDump, sessionDumpRequest } from "../session-dump-action.ts";
 import { forkDividerGroupIndex } from "../fork-divider.ts";
 import { saySlots } from "../say-merge.ts";
-import { findExistingOneOnOne } from "./OneOnOneComposer.tsx";
+import { findExistingOneOnOne } from "../one-on-one-room.ts";
 import {
   defaultTimelineAutoOpen,
   foldGroupShouldAutoOpen,

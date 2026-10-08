@@ -294,7 +294,7 @@
   --search-current-color: #111827;
 
   /* UNIF-Q1=b (kawaz r15 mid=3、2026-07-14): floating "+" fab + popup panel
-   * を SessionView 1on1 と RoomView 通常/broadcast の Composer で共通化。
+   * を SessionView のセッション入力欄と RoomView 通常/broadcast の Composer で共通化。
    * 位置・寸法値をここで 1 箇所に集約し、両 fab class から参照する。
    * RoomView と SessionView は App.tsx で排他表示 (同時に画面に出ない) の
    * ため、両方右下 (--composer-fab-offset) で被らない。 */
@@ -6627,11 +6627,11 @@ a.tl-attachment-file-path {
   display: none;
 }
 
-/* DR-0014 §2.6 1on1 floating composer for SessionView + UNIF-Q1=b の RoomView
+/* SessionView のセッション宛の入力欄 (DR-0035) + UNIF-Q1=b の RoomView
  * floating composer 共通スタイル。position:fixed で bottom-right pin、
  * SessionView と RoomView は App.tsx で排他表示なので同座標でも被らない。
  * 位置・寸法値は :root の --composer-fab-* 変数 1 箇所で管理。 */
-.one-on-one-fab,
+.session-input-fab,
 .room-composer-fab {
   position: fixed;
   /* viewport-fit=cover (index.html) で viewport が画面の端まで広がるので、
@@ -6659,7 +6659,7 @@ a.tl-attachment-file-path {
   -webkit-user-select: none;
 }
 
-.one-on-one-fab:hover,
+.session-input-fab:hover,
 .room-composer-fab:hover {
   filter: brightness(1.05);
 }
@@ -6715,7 +6715,7 @@ a.tl-attachment-file-path {
   }
 }
 
-.one-on-one-panel {
+.session-input-panel {
   position: fixed;
   right: max(var(--composer-fab-offset), env(safe-area-inset-right));
   bottom: max(var(--composer-fab-offset), env(safe-area-inset-bottom));
@@ -6747,17 +6747,17 @@ a.tl-attachment-file-path {
 /* 入力・操作系の子はブラウザ標準のタッチ挙動 (textarea 内スクロール、
  * タップ選択) と text 選択を保つ。user-select は親の none を継承するので
  * text へ戻さないと textarea 内の選択やコピーが効かなくなる。 */
-.one-on-one-panel textarea,
-.one-on-one-panel input,
-.one-on-one-panel button,
-.one-on-one-panel select,
-.one-on-one-panel a {
+.session-input-panel textarea,
+.session-input-panel input,
+.session-input-panel button,
+.session-input-panel select,
+.session-input-panel a {
   touch-action: auto;
   user-select: text;
   -webkit-user-select: text;
 }
 
-/* UNIF-Q1=b: RoomView 通常/broadcast の Composer を 1on1 と同じ floating
+/* UNIF-Q1=b: RoomView 通常/broadcast の Composer をセッション入力欄と同じ floating
  * popup に統一 (kawaz r15 mid=1/mid=3、2026-07-14)。panel は常時 mount
  * (display 切替) で内包 Composer の text/attachments state を close 中も
  * 維持する — kawaz 明示指定: 入力途中で外部タップされても書きかけは残す
@@ -6793,7 +6793,7 @@ a.tl-attachment-file-path {
   background: transparent;
 }
 
-.one-on-one-panel-header {
+.session-input-panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -6808,9 +6808,9 @@ a.tl-attachment-file-path {
   cursor: grab;
 }
 
-/* RoomComposerFab のパネルヘッダ (kawaz r55 mid=70)。1on1 と違って宛先
+/* RoomComposerFab のパネルヘッダ (kawaz r55 mid=70)。セッション入力欄と違って宛先
  * ラベルを持たないので ✕ ボタンだけを右端に置く。ドラッグハンドル面としても
- * 機能させるため touch-action / user-select は 1on1 ヘッダと同じ扱い。 */
+ * 機能させるため touch-action / user-select は セッション入力欄のヘッダと同じ扱い。 */
 .room-composer-panel-header {
   display: flex;
   justify-content: flex-end;
@@ -6834,7 +6834,7 @@ a.tl-attachment-file-path {
   line-height: 1;
   padding: var(--space-6);
   border-radius: 0.25rem;
-  /* 宛先ラベル (1on1 ヘッダ) が長い時に潰されないよう縮小を禁じる。 */
+  /* 宛先ラベル (セッション入力欄のヘッダ) が長い時に潰されないよう縮小を禁じる。 */
   flex: none;
 }
 
@@ -6843,24 +6843,24 @@ a.tl-attachment-file-path {
   background: var(--bg-alt);
 }
 
-.one-on-one-panel-header code {
+.session-input-panel-header code {
   color: var(--fg);
   background: var(--bg-alt);
   padding: 0 var(--space-4);
   border-radius: 0.2rem;
 }
 
-/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): "1on1 to" テキストと
+/* 宛先ラベル (アイコン + リポ名、kawaz r17 mid=1): "入力先" テキストと
  * AvatarLabel (アイコン + 名前の一体、gap は .avatar-label が管理) を
  * 中央揃えで横並びに。長い repo 名は ellipsis。 */
-.one-on-one-target {
+.session-input-target {
   display: inline-flex;
   align-items: center;
   gap: var(--space-5);
   min-width: 0;
 }
 
-.one-on-one-target code {
+.session-input-target code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6869,7 +6869,7 @@ a.tl-attachment-file-path {
   padding-left: var(--space-2);
 }
 
-.one-on-one-textarea {
+.session-input-textarea {
   resize: vertical;
   /* 初期高さ (kawaz r15 mid=9、2026-07-14): 5rem では作業分に足りなかった。
    * 通常 Composer と同じ 7rem で作業分を確保。ユーザは resize:vertical で
@@ -6883,28 +6883,73 @@ a.tl-attachment-file-path {
   color: var(--fg);
 }
 
-.one-on-one-error {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: #d0324c;
-}
-
-/* ccmsg 未起動セッション宛の composer に出す待機表示。エラーではないので
-   赤ではなく控えめな二次テキスト色。 */
-.one-on-one-awaiting {
+/* 返事を待っている間の表示。エラーではないので控えめな二次テキスト色。 */
+.session-input-status {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--fg-muted);
 }
 
-.one-on-one-actions {
+/* 送信結果の注記 (DR-0035 §5)。届いていないことが確定した時 (danger) と、
+ * 届いたか分からない時 (warn) を地と罫の色で分ける。文言で次の行動を示すので、
+ * 色は区別の手掛かりに留める。 */
+.session-input-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-7) var(--space-8);
+  border: 1px solid;
+  border-radius: 0.4rem;
+  font-size: var(--font-size-sm);
+}
+
+.session-input-notice p {
+  margin: 0;
+}
+
+.session-input-notice-danger {
+  background: var(--error-surface);
+  border-color: var(--error-border);
+  color: var(--fg-error);
+}
+
+.session-input-notice-warn {
+  background: var(--warn-surface);
+  border-color: var(--warn-border);
+  color: var(--fg-warn);
+}
+
+.session-input-notice-title {
+  font-weight: 700;
+}
+
+.session-input-notice-time {
+  font-weight: 400;
+}
+
+.session-input-discard {
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 0.3rem;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: var(--space-2) var(--space-7);
+}
+
+.session-input-discard:hover {
+  background: var(--bg);
+}
+
+.session-input-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: var(--space-8);
 }
 
-.one-on-one-send {
+.session-input-send {
   background: var(--accent);
   color: var(--accent-fg);
   border: none;
@@ -6914,7 +6959,7 @@ a.tl-attachment-file-path {
   font: inherit;
 }
 
-.one-on-one-send:disabled {
+.session-input-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -9140,7 +9185,7 @@ circle.cache-ring-shape {
 
 /* FAB は本体が accent 色の円なので、線は少し太くして地の上で読めるようにする
  * (実機で 1px は円周が長いぶん埋もれた)。 */
-.one-on-one-fab {
+.session-input-fab {
   --cache-ring-width: 2px;
 }
 
@@ -9148,14 +9193,14 @@ circle.cache-ring-shape {
  * textarea になる)。textarea は子を持てないので、重ねる 1 枚を置くためだけの
  * 入れ物が要る — 余白も背景も持たない。リングの有無に関わらず常設: 条件付きで
  * 包むと textarea が remount され、入力中の caret とフォーカスが飛ぶ。 */
-.one-on-one-textarea-ring {
+.session-input-textarea-ring {
   position: relative;
   display: flex;
-  /* textarea 自身の角丸 (.one-on-one-textarea)。 */
+  /* textarea 自身の角丸 (.session-input-textarea)。 */
   --cache-ring-radius: 0.4rem;
 }
 
-.one-on-one-textarea-ring > .one-on-one-textarea {
+.session-input-textarea-ring > .session-input-textarea {
   flex: 1 1 auto;
   min-width: 0;
 }

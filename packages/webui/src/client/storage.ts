@@ -92,7 +92,7 @@ export function writeLayoutStorage(key: string, value: string): void {
 }
 
 /** `prefix` で始まる localStorage の全 key を列挙する。files-view-store.ts の
- * sweep と OneOnOneComposer の sweep が同一の `localStorage.length` /
+ * sweep と SessionInputComposer の sweep が同一の `localStorage.length` /
  * `localStorage.key(i)` ループを持っていたのを統一。列挙中の例外
  * (private mode 等) は空配列に degrade — 呼び出し側の sweep は「対象なし」
  * として扱われ、次回 mount で再試行される。 */
@@ -112,7 +112,7 @@ export function listStorageKeys(prefix: string): string[] {
 
 /** `ccmsg.filesView.<sid>` / `ccmsg.1on1.<sid>` の mount-time sweep が共有する
  * per-sid stale 判定 (files-view-store.ts の cleanupStaleFilesViews と
- * OneOnOneComposer.tsx の cleanupStaleDrafts で行単位同一だったロジックを
+ * SessionInputComposer.tsx の cleanupStaleDrafts で行単位同一だったロジックを
  * 統一)。2 規則: (a) sid が `state.peers` にも `state.agents` にも居ない
  * record は無条件削除 (= セッション自体が消えている。ccmsg 未起動でプロセスが
  * 生きているだけの sid は agents 側に居るので残す)、

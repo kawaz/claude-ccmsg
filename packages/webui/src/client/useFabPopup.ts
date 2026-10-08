@@ -1,10 +1,10 @@
 // FAB + floating popup panel の共通配管 (webui simplify componentization、
-// issue 2026-07-17)。RoomComposerFab.tsx と OneOnOneComposer.tsx が同一の
+// issue 2026-07-17)。RoomComposerFab.tsx と SessionInputComposer.tsx が同一の
 // open state / openTicket カウンタ / 「open 中 (かつ blocked でない) だけ
 // document click で外側クリック close」パターンを重複させていた
-// (OneOnOneComposer 側コメントで「RoomComposerFab と同じ pattern」と明記
+// (SessionInputComposer 側コメントで「RoomComposerFab と同じ pattern」と明記
 // 済み)。見た目 (fab button / panel markup) は各所で構造が違う (RoomComposerFab
-// は Composer 委譲、OneOnOneComposer は独自 form) ので統合しない — ここは
+// は Composer 委譲、SessionInputComposer は独自 form) ので統合しない — ここは
 // state + イベント配管だけを担う。
 //
 // `useDismissOnOutsidePointer` (RoomTitle のインライン編集等) とは別物:
@@ -25,14 +25,12 @@ export interface FabPopup {
   panelRef: { current: HTMLDivElement | null };
 }
 
-/** `blocked` が true の間は外側クリック listener を張らない (post 送信中の
- * 誤操作による中断を避ける用途、RoomComposerFab の sending ガード)。常時
- * listener で構わない呼び出し側は `false` を渡す (OneOnOneComposer は元々
- * sending ガードを持たなかった — 挙動不変のためここも false 固定)。
+/** `blocked` が true の間は外側クリック listener を張らない (送信中の
+ * 誤操作による中断を避ける用途、RoomComposerFab / SessionInputComposer の
+ * sending ガード)。常時 listener で構わない呼び出し側は `false` を渡す。
  *
  * `onClose` は close (外側クリック / 明示 close 呼び出しの両方) のたびに
- * 呼ばれる — OneOnOneComposer の handleClose が close と同時に
- * `setError(null)` していた副作用を、close 経路を一本化した後も保つため。 */
+ * 呼ばれる — close と同時に片付けたい state (エラー表示等) がある呼び出し側用。 */
 /** window blur 時に「cross-origin iframe がクリックされた」と見なすか。
  * `activeElement` が IFRAME かつ panel の外側にある時だけ true。
  * 判定を pure 関数に切り出してあるのは、hook 本体が DOM + focus 挙動前提で
@@ -52,8 +50,8 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
   const [open, setOpen] = useState(false);
   const [openTicket, setOpenTicket] = useState(0);
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // onClose はインライン関数で渡されうる (OneOnOneComposer の
-  // `() => setError(null)`) — deps に直接入れると closePanel の identity が
+  // onClose はインライン関数で渡されうる (`() => setError(null)` 等) —
+  // deps に直接入れると closePanel の identity が
   // 毎 render 変わり、外側クリック listener の effect / 呼び出し側の
   // useCallback deps 連鎖を毎 render 無効化してしまう。ref 経由で最新を
   // 参照し、closePanel は安定 identity を保つ (抽出前の handleClose /
@@ -152,7 +150,7 @@ export function useFabPopup(blocked: boolean, onClose?: () => void): FabPopup {
   // ことは既に iframe をクリック済み = その時点で閉じているので二重に
   // 閉じるだけ (実害なし)。panel は close されても unmount されないため
   // 書きかけの本文・添付は保持される (RoomComposerFab は display 切替、
-  // OneOnOneComposer は state + localStorage 保存)。
+  // SessionInputComposer は state + localStorage 保存)。
   useEffect(() => {
     if (!open) return;
     if (blocked) return;

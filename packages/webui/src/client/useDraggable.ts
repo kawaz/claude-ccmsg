@@ -1,4 +1,4 @@
-// Floating element の D&D 移動 (kawaz r46 m44、2026-07-23): OneOnOneComposer /
+// Floating element の D&D 移動 (kawaz r46 m44、2026-07-23): SessionInputComposer /
 // RoomComposerFab の FAB とパネルを自由配置できるようにする。位置は
 // **永続化しない** (kawaz 明言「リロードしたら初期位置に戻ってくれて良い」)。
 //

@@ -51,6 +51,7 @@ import type {
   SessionEnvResponse,
   SessionErrorsResponse,
   SessionErrorsStreamEvent,
+  SessionInputResponse,
   SessionKillResponse,
   SessionRenameResponse,
   SessionLaunchRequest,
@@ -149,16 +150,6 @@ export interface WsHandle {
     members: string[],
     title?: string,
     kind?: "broadcast",
-  ): Promise<CreateRoomResponse | ErrorResponse>;
-  /** Create a `kind:"1on1"` priv room for `memberSid` (DR-0014 §2.2 auto-
-   * create, called by SessionView's floating composer when no existing 1on1
-   * exists for this session). The daemon enforces exactly one member (empty
-   * or multiple returns `one_on_one_requires_single_member`) and the returned
-   * room carries `kind:"1on1"` in its rooms-response entry, so subsequent
-   * lookups can dedupe by that field rather than trusting the title string. */
-  createOneOnOneRoom(
-    memberSid: string,
-    title?: string,
   ): Promise<CreateRoomResponse | ErrorResponse>;
   peers(): Promise<PeersResponse | ErrorResponse>;
   read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
@@ -376,6 +367,14 @@ export interface WsHandle {
    * "terminal_unavailable"` means the session runs outside hyoui and can only
    * be renamed by hand. Slow like sessionKill. */
   sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
+  /** Put what the person wrote into a session as their own prompt (DR-0035
+   * §1, user role only — SessionView's input panel). The daemon has the
+   * session's hooks module fill its composer and press Enter, then replies
+   * with the module's answer, or `unconfirmed` once its own wait runs out, so
+   * this call can take several seconds. An `error.code === "connection_closed"`
+   * reply means the request was written but its answer was lost: the text may
+   * be in the session. */
+  sessionInput(sessionId: string, text: string): Promise<SessionInputResponse | ErrorResponse>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
@@ -952,13 +951,6 @@ export function createWsClient(
         ...(title ? { title } : {}),
         ...(kind ? { kind } : {}),
       }),
-    createOneOnOneRoom: (memberSid, title) =>
-      send({
-        op: "create_room",
-        members: [memberSid],
-        kind: "1on1",
-        ...(title ? { title } : {}),
-      }),
     peers: () => send({ op: "peers" }),
     read: (room, mids) => send({ op: "read", room, mids }),
     roomHistory: (room) => send({ op: "room_history", room }),
@@ -1035,6 +1027,12 @@ export function createWsClient(
         op: "session_rename",
         session_id: sessionId,
         title,
+      }),
+    sessionInput: (sessionId, text) =>
+      send({
+        op: "session_input",
+        session_id: sessionId,
+        text,
       }),
     sessionEnv: (sessionId) =>
       send({

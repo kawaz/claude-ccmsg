@@ -1,22 +1,21 @@
-// DR-0014 §2.6 1on1 floating composer — reducer-adjacent helpers.
+// SessionView のセッション宛の入力欄 (SessionInputComposer) — 下書きの helpers.
 //
-// The component itself (React-like Preact tree) is exercised through its
-// pure helpers rather than a DOM render pass: `findExistingOneOnOne` (§2.2
-// kind-based lookup), `cleanupStaleDrafts` (§2.6 mount-time sweep with two
-// purge rules), and the save/load/clear draft trio (§2.6 localStorage
-// persistence). A tiny in-memory `localStorage` polyfill lets the sweep run
+// The component itself (Preact tree) is exercised through its pure helpers
+// rather than a DOM render pass: `cleanupStaleDrafts` (mount-time sweep with
+// two purge rules) and the save/load/clear draft trio (localStorage
+// persistence). The send outcome handling lives in session-input.test.ts. A tiny in-memory `localStorage` polyfill lets the sweep run
 // under bun test where `window.localStorage` isn't available.
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { AgentInfo, PeerInfo } from "@ccmsg/protocol";
 import {
   cleanupStaleDrafts,
   clearDraft,
-  findExistingOneOnOne,
+  DRAFT_STORAGE_PREFIX,
+  formatSentAt,
   loadDraft,
-  LOCAL_STORAGE_PREFIX,
   saveDraft,
-} from "../src/client/components/OneOnOneComposer.tsx";
-import { initialState, type AppState, type RoomState } from "../src/client/store.ts";
+} from "../src/client/components/SessionInputComposer.tsx";
+import { initialState, type AppState } from "../src/client/store.ts";
 
 // Minimal in-memory localStorage shim. Bun runs each test file in its own
 // module scope, but `localStorage` is a browser global — the composer's
@@ -71,24 +70,7 @@ function makeAgent(sid: string): AgentInfo {
   };
 }
 
-function makeRoomState(overrides: Partial<RoomState> & { id: string }): RoomState {
-  return {
-    id: overrides.id,
-    title: overrides.title,
-    membersById: overrides.membersById ?? new Map(),
-    memberOrder: overrides.memberOrder ?? [],
-    msgs: overrides.msgs ?? new Map(),
-    timeline: overrides.timeline ?? [],
-    lastMid: overrides.lastMid ?? 0,
-    lastTs: overrides.lastTs ?? null,
-    sayUnread: overrides.sayUnread ?? new Set<number>(),
-    archived: overrides.archived,
-    kind: overrides.kind ?? "normal",
-    history: overrides.history ?? "loaded",
-  };
-}
-
-describe("DR-0014 1on1 draft save/load/clear", () => {
+describe("draft save/load/clear", () => {
   // 何を保証するか (§2.6 「入力中メッセージは localStorage に保存」): a
   // saved draft is retrievable verbatim by sid — the trip through
   // JSON.stringify/parse preserves both text and updatedAt shape.
@@ -120,15 +102,15 @@ describe("DR-0014 1on1 draft save/load/clear", () => {
   // path in loadDraft.
   test("loadDraft returns null for malformed JSON without throwing", () => {
     // Bypass saveDraft to plant a raw value
-    localStorage.setItem(`${LOCAL_STORAGE_PREFIX}sid-corrupt`, "{not json");
+    localStorage.setItem(`${DRAFT_STORAGE_PREFIX}sid-corrupt`, "{not json");
     expect(loadDraft("sid-corrupt")).toBeNull();
     // Valid JSON but wrong shape
-    localStorage.setItem(`${LOCAL_STORAGE_PREFIX}sid-badshape`, '{"foo":"bar"}');
+    localStorage.setItem(`${DRAFT_STORAGE_PREFIX}sid-badshape`, '{"foo":"bar"}');
     expect(loadDraft("sid-badshape")).toBeNull();
   });
 });
 
-describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
+describe("cleanupStaleDrafts (purge rules)", () => {
   // 何を保証するか (§2.6 (a) 「対応するセッションが無ければ消す」): a draft
   // whose sid isn't in the peers list gets swept — the target can't receive
   // it. Regression guard for the (a) branch of the mount-time sweep.
@@ -179,7 +161,7 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
     // stamp so we can control the age).
     const oldStamp = new Date("2026-06-01T00:00:00Z").toISOString();
     localStorage.setItem(
-      `${LOCAL_STORAGE_PREFIX}sid-quiet`,
+      `${DRAFT_STORAGE_PREFIX}sid-quiet`,
       JSON.stringify({ text: "old draft", updatedAt: oldStamp }),
     );
 
@@ -221,7 +203,7 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
     saveDraft("sid-agent-fresh", "keep me");
     saveDraft("sid-agent-stale", "drop me");
     localStorage.setItem(
-      `${LOCAL_STORAGE_PREFIX}sid-agent-stale`,
+      `${DRAFT_STORAGE_PREFIX}sid-agent-stale`,
       JSON.stringify({ text: "drop me", updatedAt: "2026-07-01T00:00:00Z" }),
     );
 
@@ -234,141 +216,6 @@ describe("DR-0014 1on1 cleanupStaleDrafts (§2.6 purge rules)", () => {
 
     expect(loadDraft("sid-agent-fresh")?.text).toBe("keep me");
     expect(loadDraft("sid-agent-stale")).toBeNull();
-  });
-});
-
-describe("DR-0014 findExistingOneOnOne (§2.2 kind-based lookup)", () => {
-  // 何を保証するか (§2.2 「判別は kind フィールドで行う」): the lookup
-  // matches by room.kind === "1on1" AND its single non-u1 member sid. A
-  // room whose title merely contains "1on1" but has kind "normal" is NOT
-  // treated as a 1on1 (§2.1 「title 文字列一致は typo に弱い」).
-  test("matches only by kind:'1on1' + sole member sid, not by title", () => {
-    const state: AppState = {
-      ...initialState(),
-      rooms: new Map<string, RoomState>([
-        [
-          "r1",
-          makeRoomState({
-            id: "r1",
-            kind: "normal",
-            title: "misleading 1on1 title",
-            membersById: new Map([
-              [
-                "a1",
-                {
-                  type: "member",
-                  id: "a1",
-                  sid: "sid-A",
-                  repo: "repo-a",
-                  ws: "ws",
-                  cwd: "/cwd",
-                  joined_at: "2026-07-14T00:00:00Z",
-                  left: false,
-                },
-              ],
-            ]),
-            memberOrder: ["a1"],
-          }),
-        ],
-        [
-          "r2",
-          makeRoomState({
-            id: "r2",
-            kind: "1on1",
-            title: "repo-a 1on1 sid-A",
-            membersById: new Map([
-              [
-                "a1",
-                {
-                  type: "member",
-                  id: "a1",
-                  sid: "sid-A",
-                  repo: "repo-a",
-                  ws: "ws",
-                  cwd: "/cwd",
-                  joined_at: "2026-07-14T00:00:00Z",
-                  left: false,
-                },
-              ],
-            ]),
-            memberOrder: ["a1"],
-          }),
-        ],
-      ]),
-    };
-    const found = findExistingOneOnOne(state, "sid-A");
-    expect(found?.id).toBe("r2");
-  });
-
-  // 何を保証するか (§2.1 dedup: 対象 sid の 1on1 が無ければ null): a broadcast
-  // that happens to contain the sid as a member does NOT count — auto-create
-  // would spin up a fresh 1on1 in that case.
-  test("returns null when no kind:'1on1' room has the target sid as its sole member", () => {
-    const state: AppState = {
-      ...initialState(),
-      rooms: new Map<string, RoomState>([
-        [
-          "r1",
-          makeRoomState({
-            id: "r1",
-            kind: "broadcast",
-            membersById: new Map([
-              [
-                "a1",
-                {
-                  type: "member",
-                  id: "a1",
-                  sid: "sid-A",
-                  repo: "r",
-                  ws: "w",
-                  cwd: "/",
-                  joined_at: "2026-07-14T00:00:00Z",
-                  left: false,
-                },
-              ],
-            ]),
-            memberOrder: ["a1"],
-          }),
-        ],
-      ]),
-    };
-    expect(findExistingOneOnOne(state, "sid-A")).toBeNull();
-  });
-
-  // 何を保証するか (left member skip): a member who has left the 1on1 room
-  // (kicked, or voluntarily left — unusual for 1on1 but possible) doesn't
-  // match, so a fresh compose against that sid would auto-create a new
-  // 1on1 room rather than resurrecting the dead one.
-  test("skips rooms where the sole member has left", () => {
-    const state: AppState = {
-      ...initialState(),
-      rooms: new Map<string, RoomState>([
-        [
-          "r1",
-          makeRoomState({
-            id: "r1",
-            kind: "1on1",
-            membersById: new Map([
-              [
-                "a1",
-                {
-                  type: "member",
-                  id: "a1",
-                  sid: "sid-A",
-                  repo: "r",
-                  ws: "w",
-                  cwd: "/",
-                  joined_at: "2026-07-14T00:00:00Z",
-                  left: true,
-                },
-              ],
-            ]),
-            memberOrder: ["a1"],
-          }),
-        ],
-      ]),
-    };
-    expect(findExistingOneOnOne(state, "sid-A")).toBeNull();
   });
 });
 
@@ -409,5 +256,54 @@ describe("draft attachments round-trip (kawaz r17 mid=36)", () => {
     const got = loadDraft("sid-bad");
     expect(got?.text).toBe("hello [FILE1]");
     expect(got?.attachments).toBeUndefined();
+  });
+});
+
+describe("draft unconfirmedAt (DR-0035 §5 送信済みかもしれない印)", () => {
+  // 何を保証するか: unconfirmed に終わった送信の時刻が下書きと一緒に保存され、
+  // リロード後の loadDraft で戻る (入力欄が「送信済みかもしれない」と示せる)。
+  test("saveDraft persists unconfirmedAt and loadDraft restores it", () => {
+    saveDraft("sid-u", "maybe sent", [], "2026-10-08T10:00:00.000Z");
+    expect(loadDraft("sid-u")).toMatchObject({
+      text: "maybe sent",
+      unconfirmedAt: "2026-10-08T10:00:00.000Z",
+    });
+  });
+
+  // 何を保証するか (対極): 印の無い保存では unconfirmedAt キー自体を書かない。
+  // null を渡しても同じ (送り直して届かなかった等、印を外す経路)。
+  test("saveDraft omits unconfirmedAt when absent or null", () => {
+    saveDraft("sid-n", "plain");
+    expect(loadDraft("sid-n")?.unconfirmedAt).toBeUndefined();
+    saveDraft("sid-n", "plain", [], null);
+    expect(loadDraft("sid-n")?.unconfirmedAt).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem(`${DRAFT_STORAGE_PREFIX}sid-n`)!)).not.toHaveProperty(
+      "unconfirmedAt",
+    );
+  });
+
+  // 何を保証するか (壊れた record への degrade): 日時として読めない印は落とし、
+  // 文は残す。文を失わせないことが印より優先。
+  test("loadDraft drops a malformed unconfirmedAt but keeps the text", () => {
+    localStorage.setItem(
+      `${DRAFT_STORAGE_PREFIX}sid-bad-u`,
+      JSON.stringify({ text: "keep", unconfirmedAt: "not a date", updatedAt: "t" }),
+    );
+    const got = loadDraft("sid-bad-u");
+    expect(got?.text).toBe("keep");
+    expect(got?.unconfirmedAt).toBeUndefined();
+  });
+});
+
+describe("formatSentAt", () => {
+  // 何を保証するか: 同じ日の送信は時:分だけ、日を跨いだら月/日を前に付ける
+  // (注記の「(HH:MM の送信)」が別の日の送信を今日のものと誤読させない)。
+  test("omits the date on the same day and adds it across days", () => {
+    const sent = new Date(2026, 9, 8, 9, 5).toISOString();
+    const sameDay = new Date(2026, 9, 8, 23, 0).getTime();
+    const nextDay = new Date(2026, 9, 9, 1, 0).getTime();
+    expect(formatSentAt(sent, sameDay)).not.toContain("10/8");
+    expect(formatSentAt(sent, sameDay)).toMatch(/09.05|9.05/);
+    expect(formatSentAt(sent, nextDay)).toMatch(/^10\/8 /);
   });
 });

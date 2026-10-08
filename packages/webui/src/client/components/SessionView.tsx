@@ -27,7 +27,7 @@ import { Timeline } from "./Timeline.tsx";
 import { TimelinePanes } from "./TimelinePanes.tsx";
 import { SessionRooms } from "./SessionRooms.tsx";
 import { StatusPanel } from "./StatusPanel.tsx";
-import { OneOnOneComposer } from "./OneOnOneComposer.tsx";
+import { SessionInputComposer } from "./SessionInputComposer.tsx";
 import { TerminalPanel } from "./TerminalPanel.tsx";
 import { Tabs, type TabItem } from "./Tabs.tsx";
 
@@ -264,7 +264,7 @@ export function SessionView({
     if (saved) replaceNavigation(fileHref(sid, saved.path));
   }, [active, sid, tab, selectedPath]);
 
-  // 保存 record の mount-time sweep (OneOnOneComposer の draft sweep と同じ
+  // 保存 record の mount-time sweep (SessionInputComposer の draft sweep と同じ
   // 2 規則: peers 不在 sid / 10 日超非アクティブ)。peers が hydrate する前
   // (空) は比較対象がないので待つ — 以降の peers 増減では再実行しない
   // (mount あたり 1 回で十分、再訪時にまた走る)。
@@ -384,20 +384,17 @@ export function SessionView({
           <SessionRooms sid={sid} state={state} />
         </div>
       ) : null}
-      {/* DR-0014 §2.6 floating 1on1 composer. kawaz r46 m44 (2026-07-23):
-       * セッション選択中は tab (files/timeline/status/rooms/terminal) に
-       * よらず常時表示する — position:fixed の floating FAB なので裏のタブ
-       * コンテンツと干渉しない。tab 切替を跨いでも同じ OneOnOneComposer
-       * instance が生き続けるので、書きかけ text / attachments state も
-       * 保たれる (関連: draft は localStorage 保存 §2.6)。
+      {/* DR-0035 §1 セッション宛の入力欄 (floating)。セッション選択中は tab
+       * (files/timeline/status/rooms/terminal) によらず常時表示する —
+       * position:fixed の floating FAB なので裏のタブコンテンツと干渉しない。
+       * tab 切替を跨いでも同じ instance が生き続けるので、書きかけ text /
+       * attachments state も保たれる (draft は localStorage にも保存)。
        * 出す条件は「その sid のセッションが今も生きていること」= peers に居る
        * (ccmsg 接続済み) か `claude agents` に居る (ccmsg 未起動だがプロセスは
-       * 動いている)。後者宛の 1on1 room は daemon が sid だけで作れ、member
-       * 判定も sid 一致なので、そのセッションが subscribe した時点で受け取れる
-       * (配送タイミングの注意は OneOnOneComposer のヘッダ表示)。どちらにも
-       * 居ない sid (pinned / 仮想閲覧の死んだセッション) は宛先が存在しない
-       * のでガードのまま。 */}
-      {peer || agentForSid ? <OneOnOneComposer sid={sid} state={state} /> : null}
+       * 動いている)。入力はセッションの hooks module が受けるので、subscribe
+       * の有無は関係しない。どちらにも居ない sid (pinned / 仮想閲覧の死んだ
+       * セッション) は宛先が存在しないのでガードのまま。 */}
+      {peer || agentForSid ? <SessionInputComposer sid={sid} state={state} /> : null}
     </main>
   );
 }

@@ -1,6 +1,6 @@
 // DR-0015 §2.2 attachment upload helper. Extracted from Composer.tsx so both
-// the room Composer and the 1on1 OneOnOneComposer can share the same XHR
-// upload path (kawaz r15 mid=5: 1on1 も添付機能を持つべき、2026-07-14)。
+// the room Composer and SessionView's SessionInputComposer can share the same
+// XHR upload path (kawaz r15 mid=5、2026-07-14)。
 //
 // XHR (not fetch) は Composer 側の doc comment 参照 — `fetch` に upload
 // progress hook が無いため、`xhr.upload.onprogress` で bytes-sent を chip に

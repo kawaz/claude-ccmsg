@@ -923,6 +923,64 @@ describe("createWsClient agents/ping (U1)", () => {
     });
   });
 
+  // DR-0035 §1: the input panel sends the text verbatim as session_input (no
+  // room is created or posted to) and the daemon's answer pairs by request_id.
+  test("sessionInput sends session_input with the text and resolves from the reply", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionInput("sid-1", "1 行目\n2 行目");
+    expect(ws1.sent).toHaveLength(1);
+    const sent = JSON.parse(ws1.sent[0] ?? "") as Record<string, unknown> & {
+      request_id: string;
+    };
+    expect(sent).toEqual({
+      op: "session_input",
+      request_id: sent.request_id,
+      session_id: "sid-1",
+      text: "1 行目\n2 行目",
+    });
+
+    ws1.triggerMessage(
+      JSON.stringify({
+        request_id: sent.request_id,
+        ok: true,
+        outcome: "not_delivered",
+        reason: "dialog",
+      }),
+    );
+    expect(await req).toEqual({ ok: true, outcome: "not_delivered", reason: "dialog" });
+  });
+
+  // A session_input written before the socket closed settles with
+  // connection_closed — the panel reads that as "maybe delivered", not as a
+  // failure, so this must not hang or reject.
+  test("sessionInput written before a close settles with connection_closed", async () => {
+    const handle = createWsClient(
+      () => {},
+      () => initialState(),
+    );
+    openHandles.push(handle);
+    handle.connect();
+    const ws1 = instances[0];
+    ws1.readyState = MockWebSocket.OPEN;
+
+    const req = handle.sessionInput("sid-1", "hello");
+    expect(ws1.sent).toHaveLength(1);
+    ws1.triggerClose();
+
+    expect(await req).toEqual({
+      ok: false,
+      error: { code: "connection_closed", msg: "ws connection closed" },
+    });
+  });
+
   // The failure path the row's editor renders inline.
   test("sessionRename surfaces a terminal_unavailable reply as an error", async () => {
     const handle = createWsClient(

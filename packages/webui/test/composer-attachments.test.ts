@@ -190,7 +190,7 @@ describe("maxPlaceholderNumber", () => {
   // 何を保証するか (kawaz r17 mid=33 の実事故対策): 採番は attachments 配列
   // だけでなく本文中の [FILE<N>] とも衝突してはいけない。1on1 の draft 復元は
   // text ([FILE1] 入り) を戻すが attachments は空リセットするため、本文側の
-  // max を採番の下限に使う (Composer/OneOnOneComposer の beginUpload)。
+  // max を採番の下限に使う (Composer/SessionInputComposer の beginUpload)。
   // stale placeholder は番号がずれることで substitute の global regex に
   // 巻き込まれず、設計通りリテラルのまま残る。
   test("returns the largest [FILE<N>] in the text", () => {

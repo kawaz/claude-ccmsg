@@ -21,7 +21,7 @@
 //     失敗時は開いたまま = text は残っている = 再送 UI 維持)。
 //
 // 外部タップ判定 (mousedown + touchstart、panelRef.contains) は
-// OneOnOneComposer と同じ pattern。加えてヘッダ右端に ✕ ボタンを常設する
+// SessionInputComposer と同じ pattern。加えてヘッダ右端に ✕ ボタンを常設する
 // (kawaz r55 mid=70): Terminal タブでは panel の外側 = cross-origin iframe
 // なので外側タップが親 document に届かず、確実な close 動線が要る。
 import { useState } from "preact/hooks";
@@ -40,7 +40,7 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
   // にそのまま焼き付けて focusOnOpen として渡す。値が変わった時だけ
   // textarea.focus() が走る (Composer 側 useEffect の deps 判定)。
   //
-  // フォーム外の **click** で閉じる (OneOnOneComposer と同じ pattern、
+  // フォーム外の **click** で閉じる (SessionInputComposer と同じ pattern、
   // kawaz r17 mid=8,10,11) — 配管は useFabPopup 共有。`blocked: sending` で
   // post 送信中は外部クリック無視 (中断リスク回避、sending が false に戻れば
   // 再び listener が張られる)。
@@ -79,7 +79,7 @@ export function RoomComposerFab({ room, mentionTo }: { room: RoomState; mentionT
       <div
         ref={(el) => {
           // useFabPopup と useDraggable (経由: onPanelRef) の両方に同じ DOM
-          // を届ける (callback ref 経由の relay。OneOnOneComposer 側と同型)。
+          // を届ける (callback ref 経由の relay。SessionInputComposer 側と同型)。
           // onPanelRef 側で size 計測も行う (r46m51 位置連動用)。
           panelRef.current = el;
           onPanelRef(el);
