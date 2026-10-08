@@ -99,6 +99,8 @@ function fakeEngine(
     logs: [] as string[],
     catches: new Set<string>(),
   } as Fake;
+  // HYOUI_NAMESPACE is still exported by environments set up for older hyoui;
+  // the default env carries it so every Enter below shows it is not passed on.
   const env = options.env ?? { HYOUI_SESSION_ID: "term-1", HYOUI_NAMESPACE: "ns-1" };
   let now = 0;
   fake.$ = {
@@ -205,7 +207,7 @@ describe("handleFill", () => {
     const state = registerOn(fake);
     const report = await handleFill(fake.$, state, queued(fake, state, "from the web"));
     expect(report).toEqual({ outcome: "accepted" });
-    expect(fake.runs).toEqual([["hyoui", "input", "--namespace=ns-1", "term-1", "key:Enter"]]);
+    expect(fake.runs).toEqual([["hyoui", "input", "term-1", "key:Enter"]]);
     expect(fake.composer.text).toBe("half typed 書きかけ");
     expect(state.awaiting).toBeUndefined();
     expect(state.restoring).toBeUndefined();
@@ -303,7 +305,7 @@ describe("the sidecar the module keeps", () => {
     fake.spawns[0]!.stream.push('"text":"hello"}\n');
     for (let i = 0; i < 10 && fake.runs.length < 2; i++) await settle();
     expect(fake.runs).toEqual([
-      ["hyoui", "input", "--namespace=ns-1", "term-1", "key:Enter"],
+      ["hyoui", "input", "term-1", "key:Enter"],
       [
         "/plugin/bin/ccmsg",
         "sidecar",
@@ -511,15 +513,8 @@ describe("pure helpers", () => {
     expect(parseFillRequest("not json")).toBeUndefined();
   });
 
-  test("hyouiEnterArgv leaves the namespace out when there is none", () => {
-    expect(hyouiEnterArgv("t", undefined)).toEqual(["hyoui", "input", "t", "key:Enter"]);
-    expect(hyouiEnterArgv("t", "ns")).toEqual([
-      "hyoui",
-      "input",
-      "--namespace=ns",
-      "t",
-      "key:Enter",
-    ]);
+  test("hyouiEnterArgv names the terminal by its session id alone", () => {
+    expect(hyouiEnterArgv("t")).toEqual(["hyoui", "input", "t", "key:Enter"]);
   });
 
   test("reportArgv carries the reason only with not_delivered", () => {

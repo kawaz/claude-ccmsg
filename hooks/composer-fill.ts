@@ -116,17 +116,11 @@ export function parseFillRequest(line: string): FillRequest | undefined {
   return { id, text };
 }
 
-/** `hyoui input` for one Enter on this session's terminal. Without a
- * namespace of its own the option is left out and hyoui uses its default,
- * as the daemon's rename does. */
-export function hyouiEnterArgv(hyouiSessionId: string, namespace: string | undefined): string[] {
-  return [
-    "hyoui",
-    "input",
-    ...(namespace ? [`--namespace=${namespace}`] : []),
-    hyouiSessionId,
-    "key:Enter",
-  ];
+/** `hyoui input` for one Enter on this session's terminal. The session id
+ * alone names the terminal: hyoui ids are unique across the sessions it can
+ * see, so nothing else goes with it. */
+export function hyouiEnterArgv(hyouiSessionId: string): string[] {
+  return ["hyoui", "input", hyouiSessionId, "key:Enter"];
 }
 
 /** Whether a submitted prompt is the filled text. The harness drops trailing
@@ -223,7 +217,6 @@ export async function handleFill(
   request: QueuedFill,
 ): Promise<Report | undefined> {
   const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
-  const namespace = await $.env.get("HYOUI_NAMESPACE");
   // Checked before the composer is touched: a session outside hyoui has no
   // terminal to press Enter on, and the person's draft is left as it is.
   if (!hyouiSessionId) return { outcome: "not_delivered", reason: "no_terminal" };
@@ -242,7 +235,7 @@ export async function handleFill(
   state.restoring = { text: request.text, draft };
   let entered: boolean;
   try {
-    const run = await $.process.run(hyouiEnterArgv(hyouiSessionId, namespace), {
+    const run = await $.process.run(hyouiEnterArgv(hyouiSessionId), {
       timeoutMs: HYOUI_TIMEOUT_MS,
     });
     entered = run.exitCode === 0;
