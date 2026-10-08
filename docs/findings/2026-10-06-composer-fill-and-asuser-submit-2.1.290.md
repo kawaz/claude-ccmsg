@@ -48,6 +48,19 @@
 - 「ダイアログが閉じた」ことを専用に知らせる event は今回の観測では見当たらなかった (不存在の証明ではない)。`classic.PermissionRequest` はダイアログ表示前に発火し、その `next` も表示前に resolve した。No を選んだ後、`tool.call` の `next` が `isError:true` で resolve し、`turn.complete`、`ui.render` (component `AbovePrompt`) が続き、直後の fill 再試行は成功した。この並びは閉じた後の再試行の契機の候補
 - 実験上の注意: permission ダイアログを確実に出すため、実験 mod の `tool.check` で Bash の判定を `ask` に変えた。`classic.UserPromptSubmit` のキーに `source` は無かった (実験 A と同じ)
 
+### 追加検証 (実装した module での e2e、Claude Code 2.1.293)
+
+DR-0035 段 1 の実装 (claude-ccmsg plugin の hooks module) を、隔離 config・隔離 workspace・隔離 daemon、hyoui 0.14.0 の中で動かした実測。plugin は `--plugin-dir` で読み込み。時系列は「検証の詳細」の 10。
+
+- 2.1.293 では `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` を付けなくても hooks module が読まれた (debug に "not turned on" の行が出ない)
+- `-p` (`claude -p "reply exactly P-OK"`) でも module は読まれ、`classic.SessionStart` が `session.start` より先に決着した。`$.session.surfaces()` は `[]` を返した (debug `nothing attached draws; []`)。`-p` の判定は `session.start` の `isInteractive` / `surface` だけでは間に合わず、`classic.SessionStart` の時点で `$.session.surfaces()` が空かを見る必要がある
+- `/clear` の後は `session.end` (reason clear) → `classic.SessionStart` の順で起き、間は約 150ms。/clear の Enter 直後に旧 sid 宛の入力を投げると、module は世代を進めた後に旧サイドカー宛の依頼を fill せず捨てた。旧 sid 宛の文はどの transcript にも入らず、新しいセッションの composer も空だった。新 sid への依頼は受け付けられた (202ms)。旧サイドカーの `$.process.spawn` は abort で停止し、新しい sid で sidecar が bind された
+- 人の打鍵との競合の実例: `/clear` を打っただけで Enter を送る前に依頼が届いた回は、module が依頼の文を送り、打ちかけの `/clear` を書きかけとして戻した
+- `classic.UserPromptSubmit` の `prompt` と transcript の文は、末尾の空白が削られる。削られた文字はどれも JS の `trimEnd` が削る範囲に入る。fill した文との照合は「完全一致、または fill した文の `trimEnd()` と一致」にすると受け付けを判定できる (完全一致だけだと末尾に改行がある文が受け付けを確認できない)
+- `$.process.spawn` の子の親プロセスは claude 本体の pid
+- engine が `--plugin-dir` の plugin dir に `.claude-plugin/types/` (中に `.gitignore *`) を書く
+- hyoui 0.14.0 では `--namespace` / `HYOUI_NAMESPACE` が廃止 (警告して無視、2026-11 に削除予告)、session id は UUID 必須で `--session` は廃止 (`--session-id UUID` と `--tag`)、端末の無い起動元からの起動には `--pty-stdin` が要る
+
 ## 実用的な示唆
 
 - v1 の「webui の人の msg を人の発言として届ける」用途には、fill + Enter (`origin:{kind:"composer"}`、保存行は `human` / `typed`) が provenance 上もっとも素直。`asUser:true` は model には枠無しで届くが、hook・transcript では plugin 由来と区別でき、dialog を無視して turn が走る
@@ -58,7 +71,7 @@
 - サイドカーの socket は `srw-------` (0600) で作ること
 - Enter は mod 自身が `hyoui input --namespace=<ns> <id> key:Enter` を `$.process.run` で実行すればよい。`<id>` と `<ns>` は `$.env.get` で `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` から取る。fill 成功後、宛先が自セッションであることを照合してから送る
 - ダイアログ中は fill が拒否される (`refusal:"dialog"`) ので、msg を保留して再試行する設計にする。再試行の契機は専用 event が見当たらないため、`tool.call` の `next` resolve から `turn.complete`、`ui.render` (`AbovePrompt`) の並びを候補に、fill を再試行する
-- 隔離 claude の認証は、起動元の環境変数を名前で `env -i` に引き継いで渡し、隔離 config の settings.json には認証の値を書かない形で通った。lab-setup の手順 (認証値を隔離 settings に写す) よりこの形を推奨する
+- 隔離 claude の認証は、起動コマンドの `--settings` に `apiKeyHelper` と `env.ANTHROPIC_BASE_URL` をセットで渡す形が通った (ヘルパの鍵は llm-gateway 用なので BASE_URL も同じ gateway を指す必要がある)。隔離 config の settings.json には何も書かない。env を名前で引き継ぐ形や lab-setup の手順 (認証値を隔離 settings に写す) よりこの形を推奨する
 
 ## 一次資料との差分
 
@@ -72,7 +85,7 @@
 - 7f: provenance gate が実際に何を判定するか (permission / auto-mode との関係)。型定義の記述のみで実測なし
 - `classic.UserPromptSubmit.source`: 2.1.291 では idle・busy・mod 自身の Enter のいずれでも無かった。型定義の `source?: 'user' | ...` が実際に付く条件は未確認
 - ダイアログが閉じたことを知らせる専用 event の有無: 今回の観測では見当たらなかったが不存在の証明ではない。`tool.call` の `next` resolve、`turn.complete`、`ui.render` (`AbovePrompt`) の並びを再試行の契機とする案は、No 選択 1 例のみの観測 (Yes 選択、`$.ui.ask` 等の別種ダイアログ、複数回連続は未検証)
-- サイドカーの再 spawn 耐性: session 再開・module reload・子プロセス異常終了時の挙動。PoC は使い捨てで検証していない
+- サイドカーの再 spawn 耐性: `/clear` では旧サイドカーが abort で停止し新 sid で再 bind されることを 2.1.293 で確認済み (詳細 10)。session 再開・module reload・子プロセス異常終了時の挙動は未検証
 
 ## 検証の詳細
 
@@ -219,3 +232,39 @@ BUSY
 - fill 結果 (04:54:07.976) から `classic.UserPromptSubmit` (04:54:08.031) まで 55 ms
 - permission ダイアログを確実に出すため、実験 mod の `tool.check` で Bash の判定を `ask` に変えた
 - 認証: 隔離 claude には起動元の環境変数を名前で `env -i` に引き継いで渡し、隔離 config の settings.json には認証の値を書かなかった。それで認証が通った
+
+### 10 実装した module での e2e (2.1.293)
+
+2026-10-08 UTC。Claude Code 2.1.293、隔離 config・隔離 workspace・隔離 daemon、hyoui 0.14.0 の中。plugin は claude-ccmsg を `--plugin-dir` で読み込み、認証は起動コマンドの `--settings` に `apiKeyHelper` と `env.ANTHROPIC_BASE_URL` をセットで渡した (隔離 config の settings.json は空)。
+
+`-p` (`claude -p "reply exactly P-OK"`):
+
+```
+09:43:46.931Z hooks module claude-ccmsg@inline loaded (worker, environment 1, tier user); events: session.start,session.end,classic.SessionStart,…
+09:43:47.160Z $.session.surfaces (claude-ccmsg): nothing attached draws; []
+09:43:47.161Z hooks module claude-ccmsg@inline classic.SessionStart settled in 166.2ms
+09:43:47.177Z hooks module claude-ccmsg@inline session.start settled in 7.2ms
+```
+
+`/clear` (Enter 直後に旧 sid 宛の入力を投げた):
+
+```
+09:43:10.648 (直前) /clear の Enter を送出
+09:43:10.726Z session.end settled (module が世代を進める)
+09:43:10.746Z module: 旧サイドカーに届いた依頼を fill せずに捨てた (the session changed its id)
+09:43:10.874Z classic.SessionStart settled
+09:43:10.875Z 旧サイドカーの $.process.spawn が abort で停止
+09:43:10.967Z 新しい sid で sidecar が bind (ready)
+```
+
+末尾空白の実測 (7 種。`classic.UserPromptSubmit` の `prompt` と transcript の文):
+
+| 送った文 | UserPromptSubmit / transcript に届いた文 |
+|---|---|
+| 末尾に改行 | 改行が削られた |
+| 末尾にスペース 3 つ | 削られた |
+| 末尾に全角空白 U+3000 | 削られた |
+| 末尾にタブ | 削られた |
+| 先頭にスペース 3 つ | そのまま |
+| 途中に空行 | そのまま |
+| 途中にタブ | そのまま |
