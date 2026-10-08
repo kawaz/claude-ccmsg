@@ -51,6 +51,26 @@ plugin 名を `ccmsg-v1` に改名する (kawaz 提案、統括賛成)。
 
 - [x] reserved とされる規則を validate の出力で確認する (`claude-` 始まり等、上記 error 文言)
 - [x] plugin 名の変更が要るか判断する (`ccmsg-v1` へ改名)
-- [ ] `renames` による移行、hooks marker など plugin 名依存箇所、marketplace 名の扱いを確かめて決める
+- [x] `renames` による移行、hooks marker など plugin 名依存箇所、marketplace 名の扱いを確かめて決める
 - [ ] 改名を DR-0035 段 1 と同じリリースに載せる
-- [ ] `claude plugin validate .` が通る (または通らないままで良い根拠が記録されている)
+- [x] `claude plugin validate .` が通る (または通らないままで良い根拠が記録されている)
+
+## 結果
+
+commit 96baae2d で plugin 名を `ccmsg-v1` に改名した。
+
+- `marketplace.json` の `renames` を `{"ccmsg": "claude-ccmsg", "claude-ccmsg": "ccmsg-v1"}` の連鎖にした。公式 docs の host-marketplace "Migrate users with a renames map" と marketplace-reference によると、renames は append-only の履歴として書き、Claude Code は最古の名前から連鎖を辿る。user / project / local scope の `enabledPlugins` と `pluginConfigs` の key が新名に書き換わる。git から追加した marketplace では、一度 `/plugin install <new>@<marketplace>` するまで "not cached" が出続ける
+- `hooks/hooks.json` の `#ccmsg` marker は plugin 名に依存せず、どこからも読まれていないので据え置き
+- marketplace 名 `claude-ccmsg` は validate で error にならないので据え置き
+- Claude Code 2.1.295 で `claude plugin validate .` が passed
+
+## リリース時の移行手順
+
+personal / emrd / bare の 3 config home ごとに行う。
+
+1. `marketplace update claude-ccmsg`
+2. settings.json の `enabledPlugins` が `ccmsg-v1@claude-ccmsg` に書き換わったか確認
+3. `claude plugin install ccmsg-v1@claude-ccmsg` で cache を作る
+4. 旧 cache `plugins/cache/claude-ccmsg/claude-ccmsg/` が残れば、移行確認後に消すか判断 (自動で消えるかは未確認)
+
+残る受け入れ条件: リリースに載せる。
