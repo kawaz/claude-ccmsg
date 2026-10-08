@@ -309,9 +309,9 @@ export type StorageEvent =
  *   the subscribe stream.
  * - `"1on1"` = a fixed 2-party room (u1 + a single session). Not created by
  *   `create_room` (DR-0035 §2); the daemon's `say` op creates one to record
- *   a session's says. No auto-populate. u1 posts carry a reply instruction
- *   directing the agent to its assistant response; session posts are
- *   rejected (§2.5). */
+ *   a session's says. No auto-populate. Read-only: post / reply / next_room
+ *   are refused for every role, so it holds only says and the messages it
+ *   already had. */
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
@@ -992,9 +992,8 @@ export interface HelloRequest {
   ua?: string;
 }
 
-/** Post a new message. Session-authored posts to a 1on1 room are rejected
- * with `reply_via_tl`; that room's response path is the assistant transcript.
- * User-authored webui posts remain allowed. */
+/** Post a new message. A 1on1 room is read-only (DR-0035 §2): a post to one
+ * is refused with `invalid_args` for every role. */
 export interface PostRequest {
   op: "post";
   room: string;
@@ -1008,8 +1007,8 @@ export interface PostRequest {
  * targets from the referenced msg — `to` = original from + (original to −
  * replier) + u1 — so the replier never assembles a `to` list. The appended
  * MsgEvent records `reply_to: "r<N>m<M>"` (thread material). Errors:
- * msg_not_found / self_reply / reply_via_tl (the msg's route is the assistant
- * transcript, not the room). */
+ * msg_not_found / self_reply / invalid_args (the room is a read-only 1on1
+ * room, DR-0035 §2). */
 export interface ReplyRequest {
   op: "reply";
   room: string;
@@ -1062,6 +1061,8 @@ export interface SayReadRequest {
   seq: number;
 }
 
+/** Spawn the next thread of a room. A 1on1 room is read-only (DR-0035 §2)
+ * and has no next thread: next_room on one is refused with `invalid_args`. */
 export interface NextRoomRequest {
   op: "next_room";
   room: string;
@@ -3169,10 +3170,6 @@ export const ErrorCode = {
   // reply (DR-0017 §2.2): replying to your own msg is meaningless — the
   // constructed target list would collapse to just u1 + yourself.
   self_reply: "self_reply",
-  // 1on1 response rail (DR-0017 §2.5): the response route is the assistant
-  // transcript ("tl"), not the room. Both reply to a u1 msg and any plain post
-  // from the member session are rejected with guidance at the wire boundary.
-  reply_via_tl: "reply_via_tl",
   // DR-0023 host translation: the daemon is not running on macOS, the helper
   // cannot be built/found, or its persistent process failed.
   translate_unavailable: "translate_unavailable",

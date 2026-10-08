@@ -913,6 +913,8 @@ Notes:
   User admin identity is issued by the webui backend only; the CLI cannot act
   as u1 for write ops. subscribe still runs without a sid (with a stderr
   warning), giving kawaz a plain-terminal observation path until the webui.
+  A 1on1 room (where say records) is read-only: post, reply and next-room
+  into it are refused; use a normal room instead.
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)

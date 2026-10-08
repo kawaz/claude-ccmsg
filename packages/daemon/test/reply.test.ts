@@ -143,45 +143,6 @@ describe("DR-0017 reply op", () => {
     T,
   );
 
-  // 何を保証するか (§2.5 tl 経路の矯正): 1on1 room の u1 msg (reply_via
-  // "tl") への reply は error で弾き、error msg で「transcript 出力で返す」
-  // を案内する。hint 素通り (r17 mid=16 の実事故) を、間違った経路を選んだ
-  // 瞬間に矯正する仕組み — 黙って room post に変換すると kawaz が TL で
-  // 読む前提と表示経路がずれる。
-  test(
-    "replying to a tl-routed msg (1on1, u1-authored) is rejected with guidance",
-    async () => {
-      const ctx = await startTestDaemon();
-      try {
-        const u = await user(ctx);
-        const a = await session(ctx, "A");
-        // The say op is the only path that still opens a 1on1 room.
-        const created = await a.request<{ room: string }>({ op: "say", text: "hello" });
-        const posted = await u.request<{ mid: number }>({
-          op: "post",
-          room: created.room,
-          msg: "priv from u1",
-        });
-        const res = await a.request<{ ok: false; error: { code: string; msg: string } }>({
-          op: "reply",
-          room: created.room,
-          mid: posted.mid,
-          msg: "should be tl",
-        });
-        expect(res.ok).toBe(false);
-        expect(res.error).toEqual({
-          code: "reply_via_tl",
-          msg:
-            `this 1on1 room is routed "tl": respond via your normal assistant output ` +
-            `(transcript) — do not post/reply into ${created.room}`,
-        });
-      } finally {
-        await stopTestDaemon(ctx);
-      }
-    },
-    T,
-  );
-
   // 何を保証するか (§2.2 × DR-0013): broadcast room の u1 msg への agent
   // reply が成立する — 元 msg の from が u1 なので reply の to に u1 が
   // 入り、broadcast の「agent post は to に u1 必須」制約 (DR-0013 §2.4) を

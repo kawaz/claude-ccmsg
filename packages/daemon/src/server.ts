@@ -365,24 +365,18 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
-function sendReplyViaTlError(conn: Conn, room: Room): void {
+/** A 1on1 room is read-only (DR-0035 §2): it keeps the says recorded into it
+ * and its past messages, and takes no new message from anyone. The person
+ * reaches a session through session_input, so post / reply / next_room are
+ * refused for every role. */
+function refuseOneOnOneWrite(conn: Conn, room: Room, op: string): boolean {
+  if (room.kind !== "1on1") return false;
   sendErr(
     conn,
-    ErrorCode.reply_via_tl,
-    `this 1on1 room is routed "tl": respond via your normal assistant output ` +
-      `(transcript) — do not post/reply into ${room.id}`,
+    ErrorCode.invalid_args,
+    `${room.id} is a read-only 1on1 room and takes no ${op}; use a normal room instead`,
   );
-}
-
-/** DR-0017 addendum: instruction telling the receiving session exactly how
- * to respond, rendered as the reply line of the peer-inject envelope. The daemon computes it at delivery time because archive and
- * 1on1 routing are room-state dependent. */
-function computeReplyVia(room: Room, ev: MsgEvent): string {
-  if (room.archived) return "No reply needed";
-  if (room.kind === "1on1" && ev.from === ADMIN_ID) {
-    return "Reply in your normal assistant response";
-  }
-  return `Use \`ccmsg reply ${room.id}m${ev.mid} <msg>\``;
+  return true;
 }
 
 /** Recent-replay window for the bare-default subscribe path.
@@ -1227,9 +1221,10 @@ function injectToSessions(daemon: Daemon, room: Room, ev: MsgEvent, author: Auth
   }
 }
 
-/** The envelope's reply line follows computeReplyVia: none for an archived
- * room, the transcript for a 1on1 message from the User, `ccmsg reply`
- * otherwise. */
+/** DR-0017 addendum: the envelope's reply line tells the receiving session
+ * exactly how to respond — the `ccmsg reply` command for this msg, or none for
+ * an archived room. It is computed at delivery time because archive is
+ * room-state dependent. */
 function injectMessage(
   daemon: Daemon,
   room: Room,
@@ -1237,12 +1232,9 @@ function injectMessage(
   fromSid: string | undefined,
 ): InjectMessage {
   const mid = `${room.id}m${ev.mid}`;
-  const via = computeReplyVia(room, ev);
   const replyLine = room.archived
     ? undefined
-    : via.startsWith("Use ")
-      ? `Reply with: ${daemon.launcher} reply ${mid} <text>`
-      : `${via}.`;
+    : `Reply with: ${daemon.launcher} reply ${mid} <text>`;
   return {
     mid,
     from: ev.from === ADMIN_ID || fromSid === undefined ? "user" : fromSid,
@@ -1816,15 +1808,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      // A session's response to u1 in a 1on1 room belongs in its normal
-      // assistant transcript, which the webui SessionView already follows.
-      // Reject every session-authored 1on1 post at the room boundary rather
-      // than trying to infer which prior msg it answers or track pending state.
-      // u1/webui posts remain the legitimate incoming-message path.
-      if (room.kind === "1on1" && conn.identity?.role === "session") {
-        sendReplyViaTlError(conn, room);
-        return;
-      }
+      if (refuseOneOnOneWrite(conn, room, "post")) return;
       const to = normalizeTo(req.to);
       // DR-0013 §2.4: broadcast room では role:"session" (agent) からの post は
       // `to` に "u1" (ADMIN_ID) を含めることが必須。「u1 に届かない agent の
@@ -1886,6 +1870,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
+      if (refuseOneOnOneWrite(conn, room, "reply")) return;
       const target = room.events.find((e): e is MsgEvent => e.type === "msg" && e.mid === req.mid);
       if (!target) {
         sendErr(conn, ErrorCode.msg_not_found, `no msg m${req.mid} in ${req.room}`);
@@ -1897,15 +1882,6 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           ErrorCode.self_reply,
           `m${req.mid} is your own msg — reply targets someone else's`,
         );
-        return;
-      }
-      // §2.5: a "tl"-routed msg (1on1, u1-authored) is answered on the
-      // replier's own transcript, not in the room. Rejecting with guidance
-      // corrects the wrong-channel choice the moment it happens, instead of
-      // silently rerouting to a room post kawaz would then read in the wrong
-      // surface.
-      if (room.kind === "1on1" && target.from === ADMIN_ID) {
-        sendReplyViaTlError(conn, room);
         return;
       }
       // Targets = original author + everyone the original msg addressed,
@@ -2098,23 +2074,16 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.not_a_member, `not a member of ${req.room}`);
         return;
       }
-      // 1on1 の次スレも 1on1 (DR-0014 §2 kind inheritance)
-      // なので、session 発の初期 --msg は "tl" 経路に誘導する (post ガード
-      // DR-0014 §2.1 と同じ理由)。next_room 自体 (msg なし) は
-      // 正当な操作なので通す。broadcast の初期 msg 例外 (§2.10) は unchanged。
-      if (req.msg !== undefined && old.kind === "1on1" && conn.identity?.role === "session") {
-        sendReplyViaTlError(conn, old);
-        return;
-      }
+      if (refuseOneOnOneWrite(conn, old, "next_room")) return;
       const inherited = presentMembers(old);
       const room = createRoom(
         daemon,
         inherited.map((m) => m.sid),
         false,
-        // DR-0013 §2.8 / DR-0014 §2 next_room inherits kind: broadcast の
-        // 次スレは broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
-        // 適用され、以降の hello/disconnect が新 room も拾う)、1on1 の次スレは
-        // 1on1 の assistant-response routing も維持。normal はそのまま normal。
+        // DR-0013 §2.8 next_room inherits kind: broadcast の次スレは
+        // broadcast (auto-populate と §2.4 post 制約もそのまま新 room に
+        // 適用され、以降の hello/disconnect が新 room も拾う)。normal は
+        // そのまま normal。1on1 は上で拒否済み。
         old.kind,
       );
       // KindEvent must be written BEFORE members / prev so a mid-creation crash
