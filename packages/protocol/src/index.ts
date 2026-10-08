@@ -1300,6 +1300,81 @@ export interface SessionRenameRequest {
   title: string;
 }
 
+/** Put what the person wrote into a session as their own prompt (user role
+ * only, DR-0035 §1).
+ *
+ * The daemon writes one SidecarFillRequest line to the sidecar of every live
+ * run of the session. The session's hooks module fills the composer with the
+ * text and sends Enter to its own terminal, so the harness records the prompt
+ * as typed by a person (`origin: { kind: "human" }`, `promptSource: "typed"`),
+ * not as a message from a peer. The module answers with
+ * SessionInputResultRequest, and the reply to this op is that answer — or
+ * `unconfirmed` when none came in time. */
+export interface SessionInputRequest {
+  op: "session_input";
+  session_id: string;
+  /** The prompt, verbatim. Several lines become one prompt. Must hold
+   * something other than whitespace (invalid_args otherwise). */
+  text: string;
+}
+
+/** Why a session_input did not reach the session (DR-0035 §5). Nothing is
+ * sent by another route in any of these cases.
+ *
+ * - `dialog`: a dialog holds the keys, so the composer refused the text
+ * - `no_composer`: the session draws no composer (headless)
+ * - `refused`: another plugin's hook kept the text out of the composer
+ * - `no_terminal`: the session was not started under hyoui, so there is no
+ *   terminal to send Enter to
+ * - `not_submitted`: Enter did not submit the text; the composer was put back
+ *   to what the person had typed
+ * - `enter_failed`: sending Enter to the terminal failed, and the text never
+ *   left the composer; the composer was put back as for `not_submitted`
+ * - `no_module`: no run of the session has a sidecar that took the request
+ *   (hooks modules not enabled, the plugin not loaded, the session gone) */
+export type SessionInputReason =
+  | "dialog"
+  | "no_composer"
+  | "refused"
+  | "no_terminal"
+  | "not_submitted"
+  | "enter_failed"
+  | "no_module";
+
+/** The reasons a session's hooks module reports; `no_module` is the daemon's
+ * own conclusion when no sidecar took the request. */
+export type SessionInputModuleReason = Exclude<SessionInputReason, "no_module">;
+
+export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] = [
+  "dialog",
+  "no_composer",
+  "refused",
+  "no_terminal",
+  "not_submitted",
+  "enter_failed",
+];
+
+/** What a session's hooks module reports for one SidecarFillRequest
+ * (DR-0035 §1, §5). `accepted` means the harness raised `UserPromptSubmit`
+ * for the filled text: the prompt is in the session, idle or busy. */
+export interface SessionInputResultRequest {
+  op: "session_input_result";
+  /** The SidecarFillRequest's id. */
+  id: string;
+  outcome: "accepted" | "not_delivered";
+  /** Required with `not_delivered`. */
+  reason?: SessionInputModuleReason;
+}
+
+/** One line the daemon writes to a session run's sidecar socket, which the
+ * sidecar copies to the hooks module unread (DR-0035 §3). `id` is what the
+ * module's SessionInputResultRequest names. */
+export interface SidecarFillRequest {
+  kind: "prompt.fill";
+  id: string;
+  text: string;
+}
+
 /** Read the environment variables of a session's own process (user role
  * only). The env is read from the resolved pid rather than
  * from the daemon's session connection: the subscribe helper the session
@@ -1941,6 +2016,8 @@ export type RequestBody =
   | SessionLaunchRequest
   | SessionKillRequest
   | SessionRenameRequest
+  | SessionInputRequest
+  | SessionInputResultRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
   | LlmUsageRequest
@@ -2272,6 +2349,22 @@ export interface SessionRenameResponse {
   ok: true;
   hyoui_session_id: string;
   title: string;
+}
+/** Payload of a completed session_input (DR-0035 §5).
+ *
+ * - `accepted`: the session took the text as a person's prompt
+ * - `not_delivered`: it did not, for `reason`; the text went nowhere else
+ * - `unconfirmed`: a sidecar took the request but no answer came within the
+ *   daemon's wait. The text may or may not be in the session — it shows in the
+ *   session's timeline if it is — so a caller keeps it rather than sending it
+ *   again blindly */
+export type SessionInputResponse =
+  | { ok: true; outcome: "accepted" }
+  | { ok: true; outcome: "not_delivered"; reason: SessionInputReason }
+  | { ok: true; outcome: "unconfirmed" };
+/** Payload of a session_input_result the daemon was waiting for. */
+export interface SessionInputResultResponse {
+  ok: true;
 }
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
@@ -2968,6 +3061,8 @@ export type ResponseBody =
   | SessionLaunchResponse
   | SessionKillResponse
   | SessionRenameResponse
+  | SessionInputResponse
+  | SessionInputResultResponse
   | SessionEnvResponse
   | SessionSearchResponse
   | ForkOriginResponse

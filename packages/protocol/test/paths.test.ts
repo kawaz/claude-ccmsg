@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { resolvePaths } from "../src/index.ts";
+import {
+  resolvePaths,
+  resolveSidecarDir,
+  sidecarSocketName,
+  sidecarSocketPid,
+} from "../src/index.ts";
 
 describe("resolvePaths (DR-0002 §1)", () => {
   // CCMSG_STATE_DIR / CCMSG_CONFIG_DIR / CCMSG_DATA_DIR are direct overrides that tests
@@ -38,5 +43,37 @@ describe("resolvePaths (DR-0002 §1)", () => {
     expect(p.stateDir).toBe("/xs/ccmsg");
     expect(p.configDir).toBe("/xc/ccmsg");
     expect(p.dataDir).toBe("/xd/ccmsg");
+  });
+});
+
+describe("sidecar sockets (DR-0035 §3)", () => {
+  const sid = "11111111-2222-4333-8444-555555555555";
+
+  test("live under the state dir when the widest name fits sun_path", () => {
+    expect(resolvePaths({ CCMSG_STATE_DIR: "/s" } as NodeJS.ProcessEnv).sidecars).toBe(
+      "/s/sidecars",
+    );
+  });
+
+  test("fall back to a short per-uid directory when it would not fit", () => {
+    const deep = `/${"x".repeat(60)}`;
+    expect(resolveSidecarDir(deep)).toBe(
+      `/tmp/claude-ccmsg-${String(process.getuid?.() ?? 0)}/sidecars`,
+    );
+  });
+
+  test("are named <sid>.<pid>.sock and read back for that sid only", () => {
+    const name = sidecarSocketName(sid, 4242);
+    expect(name).toBe(`${sid}.4242.sock`);
+    expect(sidecarSocketPid(name, sid)).toBe(4242);
+    expect(sidecarSocketPid(name, "99999999-2222-4333-8444-555555555555")).toBeUndefined();
+    expect(sidecarSocketPid(`${sid}.0.sock`, sid)).toBeUndefined();
+    expect(sidecarSocketPid(`${sid}.12.sock.old`, sid)).toBeUndefined();
+  });
+
+  test("refuse what is not a session id or a pid", () => {
+    expect(() => sidecarSocketName("../etc", 1)).toThrow(RangeError);
+    expect(() => sidecarSocketName(sid, 0)).toThrow(RangeError);
+    expect(() => sidecarSocketName(sid, 1.5)).toThrow(RangeError);
   });
 });

@@ -4,6 +4,7 @@
 //
 //   state:  ${CCMSG_STATE_DIR:-${XDG_STATE_HOME:-~/.local/state}/ccmsg}
 //             daemon.sock / daemon.lock / daemon.pid / daemon.log
+//             sidecars/<sid>.<pid>.sock (DR-0035 §3)
 //   config: ${CCMSG_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/ccmsg}
 //             config.ts / config.js / config.json
 //             allowed-origins.json
@@ -56,6 +57,63 @@ export interface Paths {
    * path is meant to be pasted somewhere and read back later, possibly after
    * a daemon restart. */
   dumps: string;
+  /** Where each session run's sidecar binds `<sid>.<pid>.sock` (DR-0035 §3);
+   * see resolveSidecarDir. */
+  sidecars: string;
+}
+
+/** macOS `sun_path` holds 104 bytes including the terminating NUL. */
+const MAX_SOCKET_PATH = 104;
+
+/** The directory under the state dir where sidecars bind.
+ *
+ * Plural on purpose: kawaz/ccmsg (v2) keeps its own sidecars in `sidecar/`
+ * under the same `~/.local/state/ccmsg` this daemon uses, and both plugins can
+ * be loaded into one session run. Sharing a directory would have the two
+ * sidecars of one run unlink each other's `<sid>.<pid>.sock` (DR-0035 §3). */
+export const SIDECAR_DIR = "sidecars";
+
+/** A session id as it may become part of a socket name: a separator in it
+ * would name a file outside the directory. */
+const SID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function isSessionIdShape(sid: string): boolean {
+  return SID_SHAPE.test(sid);
+}
+
+/** `<sid>.<pid>.sock`: one socket per run of a session, the pid being the
+ * harness process's, so two runs of one session (a resume started twice) do
+ * not take each other's socket. */
+export function sidecarSocketName(sid: string, pid: number): string {
+  if (!isSessionIdShape(sid)) throw new RangeError(`not a session id: ${sid}`);
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new RangeError(`not a pid: ${String(pid)}`);
+  return `${sid}.${String(pid)}.sock`;
+}
+
+/** The harness pid a socket name in the sidecar directory carries for `sid`,
+ * or undefined when the name belongs to another session or is not a socket
+ * name at all. */
+export function sidecarSocketPid(name: string, sid: string): number | undefined {
+  const prefix = `${sid}.`;
+  if (!name.startsWith(prefix)) return undefined;
+  const match = /^([1-9][0-9]*)\.sock$/.exec(name.slice(prefix.length));
+  if (match === null) return undefined;
+  const pid = Number(match[1]);
+  return Number.isSafeInteger(pid) ? pid : undefined;
+}
+
+/** `<stateDir>/sidecars`, or the short per-uid directory under `/tmp` when the
+ * widest socket name would not fit in `sun_path` there. The daemon and every
+ * sidecar derive it from the same state dir, so neither registers anything
+ * with the other. */
+export function resolveSidecarDir(stateDir: string): string {
+  const beside = path.join(stateDir, SIDECAR_DIR);
+  const widest = path.join(
+    beside,
+    sidecarSocketName("00000000-0000-0000-0000-000000000000", 9_999_999),
+  );
+  if (Buffer.byteLength(widest) < MAX_SOCKET_PATH) return beside;
+  return path.join("/tmp", `claude-ccmsg-${String(process.getuid?.() ?? 0)}`, SIDECAR_DIR);
 }
 
 function home(): string {
@@ -99,6 +157,7 @@ export function resolvePaths(env: NodeJS.ProcessEnv = process.env): Paths {
     configJs: path.join(configDir, "config.js"),
     configTs: path.join(configDir, "config.ts"),
     dumps: path.join(dataDir, "dumps"),
+    sidecars: resolveSidecarDir(stateDir),
   };
 }
 
