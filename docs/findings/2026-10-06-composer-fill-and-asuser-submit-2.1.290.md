@@ -59,7 +59,7 @@ DR-0035 段 1 の実装 (claude-ccmsg plugin の hooks module) を、隔離 conf
 - `classic.UserPromptSubmit` の `prompt` と transcript の文は、末尾の空白が削られる。削られた文字はどれも JS の `trimEnd` が削る範囲に入る。fill した文との照合は「完全一致、または fill した文の `trimEnd()` と一致」にすると受け付けを判定できる (完全一致だけだと末尾に改行がある文が受け付けを確認できない)
 - `$.process.spawn` の子の親プロセスは claude 本体の pid
 - engine が `--plugin-dir` の plugin dir に `.claude-plugin/types/` (中に `.gitignore *`) を書く
-- hyoui 0.14.0 では `--namespace` / `HYOUI_NAMESPACE` が廃止 (警告して無視、2026-11 に削除予告)、session id は UUID 必須で `--session` は廃止 (`--session-id UUID` と `--tag`)、端末の無い起動元からの起動には `--pty-stdin` が要る
+- hyoui 0.14.0 では `--namespace` / `HYOUI_NAMESPACE` が廃止 (警告して無視、2026-11 に削除予告)、session id は UUID 必須で `--session` は廃止 (`--session-id UUID` と `--tag`)。`--pty-stdin` は端末の無い起動元から shell / REPL を起動する時だけ要る。claude などの TUI はキーを `/dev/tty` (hyoui の PTY) から読むので付けない
 
 ## 実用的な示唆
 
