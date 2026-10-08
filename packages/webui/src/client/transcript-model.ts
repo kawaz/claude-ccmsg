@@ -1678,17 +1678,17 @@ export function classifyUserMessage(entry: Record<string, unknown>): UserMessage
   const isMeta = entry.isMeta === true;
 
   // Agent (subagent) transcript の先頭 user 行 = Agent tool の spawn prompt
-  // (親セッションから渡された指示書)。wire signal: `parentUuid` field が
-  // 明示的に `null` — 通常セッションの `type:"user"` 行は必ず親 uuid を持ち
-  // (最初の real prompt は `type:"last-prompt"` として書かれ、`type:"user"` の
-  // 側では常に parent-linked)、agent 転写だけがこの形になる (2026-07-21 実観測、
-  // ~/.claude-personal/projects/*/subagents/*.jsonl の全件で unique)。
+  // (親セッションから渡された指示書)。wire signal は `isSidechain: true` と
+  // `parentUuid: null` の組。`isSidechain` は subagent 転写の全行で true、通常
+  // セッションの全行で false (agentId を持つのも subagent 転写の行だけ)。
+  // `parentUuid: null` だけでは足りない: 通常セッションの最初の user 行 (人の
+  // prompt も sdk 経由の prompt も) も `parentUuid: null` で書かれることがある。
   // string 直接値 + プレフィックスマッチではなく wire フィールドで判定して、
   // 「plain text spawn」「<teammate-message> wrapper 付き spawn」の両ケースを
   // 同一 kind に落とす (peer-message 経路は「会話中に届いた relay」用として
-  // 温存)。property 自体が欠落しているケース (= 手組みテストフィクスチャや
-  // 旧形式) は判定を skip し、以下の既存分類に委ねる。
-  if ("parentUuid" in entry && entry.parentUuid === null) return "spawn-prompt";
+  // 温存)。どちらかの property が欠落しているケース (= 手組みテストフィクスチャ)
+  // は spawn と判定せず、以下の既存分類に委ねる。
+  if (entry.isSidechain === true && entry.parentUuid === null) return "spawn-prompt";
 
   if (entry.promptSource === "system") {
     const origin =
@@ -2576,7 +2576,7 @@ export function parseSystemMessageFields(
       // 同じカードに載せる — 送り主は wire 上に無いが、agent 転写の先頭行は
       // 定義上「親セッションからの指示書」なので SPAWN_PROMPT_FROM が唯一の
       // 正しい送り主であり、推測ではない (classifyUserMessage の
-      // parentUuid === null 判定がこの前提を保証している)。
+      // isSidechain === true && parentUuid === null 判定がこの前提を保証している)。
       return (
         parsePeerMessage(rawText) ?? {
           display: "peer",

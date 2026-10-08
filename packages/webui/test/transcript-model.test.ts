@@ -2576,27 +2576,71 @@ describe("classifyUserMessage", () => {
   });
 
   // Agent (subagent) 転写の先頭 user 行 — Agent tool の spawn prompt (親からの
-  // 指示書)。wire signal は `parentUuid` field が明示的に `null` で、通常
-  // セッションの `type:"user"` 行 (常に parent-linked) と区別できる。plain text
-  // spawn / <teammate-message> wrapper 付き spawn の両方を同じ kind に落として
+  // 指示書)。wire signal は `isSidechain: true` と `parentUuid: null` の組。
+  // 通常セッションの最初の user 行も `parentUuid: null` になりうるが、
+  // `isSidechain` は false なので人の発言として残る。plain text spawn /
+  // <teammate-message> wrapper 付き spawn の両方を同じ kind に落として
   // 「親からの指示」と分かる fold 表示に載せる (kawaz r46m28 2026-07-21)。
-  describe("agent spawn prompt (parentUuid === null) — report category F", () => {
-    test("parentUuid:null with plain text -> spawn-prompt", () => {
-      const entry = {
-        type: "user",
-        parentUuid: null,
-        message: {
-          role: "user",
-          content: "~/.claude/skills/thorough-review/reviewers/api-design.md を読み...",
-        },
-      };
-      expect(classifyUserMessage(entry)).toBe("spawn-prompt");
+  describe("agent spawn prompt (isSidechain && parentUuid === null) — report category F", () => {
+    // subagent 転写の先頭 user 行の実物に近い形 (キー構成は実 transcript に
+    // 合わせ、値は無害なものに置き換えている)。
+    const realSpawnLine = {
+      parentUuid: null,
+      isSidechain: true,
+      promptId: "00000000-0000-4000-8000-000000000001",
+      agentId: "a0000000000000001",
+      type: "user",
+      message: { role: "user", content: "Summarize the files in the src directory." },
+      uuid: "00000000-0000-4000-8000-000000000002",
+      timestamp: "2026-10-01T00:00:00.000Z",
+      userType: "external",
+      entrypoint: "cli",
+      cwd: "/work/project",
+      sessionId: "00000000-0000-4000-8000-000000000003",
+      version: "2.1.294",
+      gitBranch: "main",
+      slug: "example-slug",
+    };
+
+    // 通常セッションの最初の user 行の実物に近い形。人が打った最初の prompt も
+    // `parentUuid: null` で書かれる。
+    const realFirstHumanLine = {
+      parentUuid: null,
+      isSidechain: false,
+      promptId: "00000000-0000-4000-8000-000000000011",
+      type: "user",
+      message: { role: "user", content: "Please check the build." },
+      uuid: "00000000-0000-4000-8000-000000000012",
+      timestamp: "2026-10-01T00:00:00.000Z",
+      permissionMode: "default",
+      origin: { kind: "human" },
+      promptSource: "typed",
+      userType: "external",
+      entrypoint: "cli",
+      cwd: "/work/project",
+      sessionId: "00000000-0000-4000-8000-000000000013",
+      version: "2.1.295",
+      gitBranch: "main",
+    };
+
+    test("real-shaped subagent first user line -> spawn-prompt", () => {
+      expect(classifyUserMessage(realSpawnLine)).toBe("spawn-prompt");
     });
 
-    test("parentUuid:null with <teammate-message> wrapper (team-lead spawn) -> spawn-prompt", () => {
+    test("real-shaped first human prompt of a normal session (parentUuid:null, isSidechain:false) -> user-prompt", () => {
+      expect(classifyUserMessage(realFirstHumanLine)).toBe("user-prompt");
+    });
+
+    // sdk 経由の最初の prompt は origin / promptSource を持たないことがあるが、
+    // isSidechain:false なので spawn には落ちない。
+    test("first sdk prompt of a normal session without origin -> user-prompt", () => {
+      const { origin: _o, promptSource: _p, permissionMode: _m, ...rest } = realFirstHumanLine;
+      expect(classifyUserMessage(rest)).toBe("user-prompt");
+    });
+
+    test("isSidechain + parentUuid:null with <teammate-message> wrapper (team-lead spawn) -> spawn-prompt", () => {
       const entry = {
-        type: "user",
-        parentUuid: null,
+        ...realSpawnLine,
         message: {
           role: "user",
           content:
@@ -2606,30 +2650,30 @@ describe("classifyUserMessage", () => {
       expect(classifyUserMessage(entry)).toBe("spawn-prompt");
     });
 
-    // parentUuid が string (通常の user 行) の時は spawn 判定に落ちてはならず、
-    // 既存分類が引き続き適用される。
-    test("parentUuid:string with plain text -> user-prompt", () => {
+    // subagent 転写でも 2 行目以降 (parentUuid が string) は spawn 判定に
+    // 落ちず、既存分類が引き続き適用される。
+    test("isSidechain with parentUuid:string -> user-prompt", () => {
       const entry = {
-        type: "user",
+        ...realSpawnLine,
         parentUuid: "a3eb3a8a-9c46-4d5a-93e9-5ceb24fe6957",
         message: { role: "user", content: "hello" },
       };
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
-    // parentUuid property そのものが欠落しているケース (手組みフィクスチャ /
-    // 旧形式) は既存分類にフォールバックする — 既存 classifier テスト群を
-    // 破らないための境界。
-    test("parentUuid property missing entirely -> falls through to existing classification", () => {
+    // property そのものが欠落しているケース (手組みフィクスチャ) は既存分類に
+    // フォールバックする。
+    test("parentUuid / isSidechain missing entirely -> falls through to existing classification", () => {
       const entry = { message: { role: "user", content: "hello" } };
       expect(classifyUserMessage(entry)).toBe("user-prompt");
     });
 
-    // parentUuid:null が最優先で走ることの確認: たとえ content が
-    // <teammate-message>/isMeta:true など既存分類のトリガを持っていても、
-    // spawn 判定が勝つ (agent 転写の先頭は文脈的に spawn 指示書として扱う)。
-    test("parentUuid:null overrides isMeta:true classification -> spawn-prompt", () => {
+    // spawn 判定が最優先で走ることの確認: たとえ content が isMeta:true など
+    // 既存分類のトリガを持っていても、spawn 判定が勝つ (agent 転写の先頭は
+    // 文脈的に spawn 指示書として扱う)。
+    test("isSidechain + parentUuid:null overrides isMeta:true classification -> spawn-prompt", () => {
       const entry = {
+        isSidechain: true,
         parentUuid: null,
         isMeta: true,
         message: { role: "user", content: "<command-name>/foo</command-name>" },
@@ -2962,13 +3006,14 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
     expect(isUserTextTurn(line)).toBe(false);
   });
 
-  // Agent spawn prompt (parentUuid:null) も system-origin と同じく boundary
-  // 化させず fold に落とす — SystemMessageFold 経由で「spawn prompt (親からの
-  // 指示)」として表示される (green user bubble にはしない、kawaz r46m28)。
-  test("agent spawn prompt (parentUuid:null) -> isUserTextTurn false, folds into surrounding group", () => {
+  // Agent spawn prompt (isSidechain + parentUuid:null) も system-origin と同じく
+  // boundary 化させず fold に落とす — SystemMessageFold 経由で「spawn prompt
+  // (親からの指示)」として表示される (green user bubble にはしない、kawaz r46m28)。
+  test("agent spawn prompt (isSidechain + parentUuid:null) -> isUserTextTurn false, folds into surrounding group", () => {
     const spawnLine = parseTranscriptLine(
       JSON.stringify({
         type: "user",
+        isSidechain: true,
         parentUuid: null,
         message: { role: "user", content: "spawned task: investigate X" },
       }),
@@ -2978,6 +3023,25 @@ describe("isUserTextTurn / groupTimelineLines — system-origin user messages fo
     expect(spawnLine.userMessageKind).toBe("spawn-prompt");
     expect(spawnLine.segments.some((s) => s.kind === "text")).toBe(true);
     expect(isUserTextTurn(spawnLine)).toBe(false);
+  });
+
+  // 通常セッションの最初の人の prompt は parentUuid:null でも isSidechain:false
+  // なので、人の発言 (boundary になる user bubble) として残る。
+  test("first human prompt of a normal session (parentUuid:null, isSidechain:false) -> isUserTextTurn true", () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: "user",
+        parentUuid: null,
+        isSidechain: false,
+        origin: { kind: "human" },
+        promptSource: "typed",
+        message: { role: "user", content: "Please check the build." },
+      }),
+    );
+    expect(line.kind).toBe("turn");
+    if (line.kind !== "turn") return;
+    expect(line.userMessageKind).toBe("user-prompt");
+    expect(isUserTextTurn(line)).toBe(true);
   });
 
   // Explicit userMessageKind:"user-prompt" (as parseTranscriptLine actually
