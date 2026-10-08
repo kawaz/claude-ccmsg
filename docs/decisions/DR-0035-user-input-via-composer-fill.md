@@ -1,6 +1,6 @@
 # DR-0035: webui からセッションへの人の入力は composer への fill + Enter で届け、1on1 room を廃止する
 
-- Status: Proposed (2026-10-06、方針は kawaz 決定済み、§6 の未決が残る)
+- Status: Accepted (2026-10-08、kawaz 裁定) — ⬜ 未実装
 - Date: 2026-10-06
 
 ## Context
@@ -23,7 +23,8 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 ### 1. 人からセッションへの入力は composer に入れる
 
 - webui がセッションに書く入力は、room への post ではなく、セッション宛の新しい op (仮称 `session_input`、user role 限定) で daemon に渡す
-- daemon はそのセッションのサイドカーに fill の依頼を書き、module が composer の書きかけを退避して fill し、Enter が送られ、`prompt.submit` の直後に書きかけを fill し直す (手順は kawaz/ccmsg の DR-0016 §2.2 と同じ)
+- daemon はそのセッションのサイドカーに fill の依頼を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` を宛先に `$.process.run(["hyoui", "input", "--namespace=<ns>", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
+- module は結果 (成功、または届かなかった理由) を `$.process.run(["ccmsg", …])` で daemon に返す。`$` には socket を直接開く口が無く、v2 の DR-0016 §5 も同じ形を取る
 - 入った文は人の入力そのものなので、返信はセッションの通常の応答 (TL) になる。返信方法の指示行は付けない
 - 人の入力の記録の正本はセッションの transcript であり、daemon の room jsonl には残らない
 
@@ -55,11 +56,6 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - `classic.UserPromptSubmit` の `source` は型定義にあるが 2.1.291 では付かない (段階導入中)。人の入力かどうかを `source` で見分けず、fill した文との一致で判定する
 - 一定時間内に成功も失敗も返らない時、webui は「未確認」と示し、文は残したまま送信済みかもしれないことが分かるようにする (実際には届いていて報告だけが失われた場合に、人の再送で二重になるのを避ける判断材料。届いていれば TL に人の発言として現れる)
 
-### 6. 未決
-
-- **Q3. Enter を誰が送るか**: DR-0016 §2.2 は「Enter を送るのは instance の責務」とし、module は fill の結果を instance に返して instance が端末に Enter を送る。統括推しは「module が fill の成功を見て、自分のセッションの端末に Enter を送る (`$.process.run(["hyoui", "input", <自分の HYOUI_SESSION_ID>, "key:Enter"])`)」。fill の結果を daemon に返す往復と daemon 側の端末解決が消え、fill から Enter までの間 (人の打鍵が混ざる窓) が短くなる。daemon が知る必要があるのは成否だけで、それは module からの報告で足りる。2.1.291 で実測済み: module の `$.env.get` で `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` が読め、fill 成功後に module から `hyoui input --namespace=<ns> <id> key:Enter` を送ると、`prompt.submit` は `composer`、transcript は `origin:{kind:"human"}`, `promptSource:"typed"` で、fill から `classic.UserPromptSubmit` まで 55ms。permission ダイアログ表示中の fill は `refusal:"dialog"` で拒否され、ダイアログが閉じた後 (`tool.call` の `next` の resolve、`turn.complete`) に再試行すると成功する
-- fill の成否を daemon (と webui) に返す経路の形 (module からの `$.process.run(["ccmsg", ...])` か、daemon の UDS への直接接続か)
-
 ## Alternatives Considered
 
 - 案 A: 1on1 room を残し、room 配送の中で人の msg だけ fill + Enter に切り替える
@@ -75,8 +71,8 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - daemon: `session_input` op、サイドカーへの書き込み、fill の成否の受け取りを持つ。1on1 room の作成・配送・`reply_via` の 1on1 分岐を削る
 - plugin: hooks module と `ccmsg sidecar` サブコマンドが入る。function hooks が無効な環境では §1 の経路は使えない (§5 のとおり理由を返す)
 - 封筒を前提にしていた読み取り (`packages/protocol/src/ccmsg-direct-transcript.ts`、`packages/daemon/src/session-user-input.ts`、`packages/daemon/src/session-dump.ts`、webui の `transcript-model.ts` の u1 バブル化) は、1on1 の封筒が来なくなる前提で見直す。人の入力は transcript 上で手入力と同じ形になるので、u1 バブル化の特別扱いは不要になる
-- DR-0014 の 1on1 room 本体 (§2.1-2.3, §2.6) と DR-0017 の 1on1 分岐は本 DR が置き換える。本 DR が Accepted になった時点で DR-0014 を Superseded として archive に移す
-- fill と Enter の間に人が端末で打鍵すると文が混ざる (findings の実用的な示唆)。Q3 の推しはこの窓を短くする
+- DR-0014 の 1on1 room 本体 (§2.1-2.3, §2.6) と DR-0017 の 1on1 分岐は本 DR が置き換える。本 DR の実装が入った時点で DR-0014 を Superseded として archive に移す (それまでは DR-0014 が動いているコードの説明)
+- fill と Enter の間に人が端末で打鍵すると文が混ざる (findings の実用的な示唆)。module が fill の成功を見てすぐ Enter を送ることで、この間を数十 ms に縮める (§1)
 
 ## 関連
 

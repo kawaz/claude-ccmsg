@@ -1,6 +1,6 @@
 # DR-0036: room を廃止し、セッション間メッセージを p2p (sid 宛の直送) にする
 
-- Status: Proposed (2026-10-06、廃止の方針は kawaz 決定済み、§3 の未決が残る)
+- Status: Proposed (2026-10-06、廃止の方針は kawaz 決定済み、細部が裁定待ち)
 - Date: 2026-10-06
 
 ## Context
@@ -27,17 +27,6 @@ v2 (kawaz/ccmsg と契約 kawaz/ccmsg-protocol) は room を持たず、sid 宛�
 - 通常 room、broadcast room、room 系 op (`create_room` / `next_room` / `read` / `room_history` / `rooms` / `leave` / `invite` / `kick` / `archive_room` / `set_title`)、`to` の配信フィルタ、room id の mid、per-room `seq`、room storage を削る
 - 順序は「直送の送り口を足す → 利用側 (CLI・webui の TL・dump・say) を移す → room を削る」。送り口より先に room を削ると、動いているセッション同士のやり取りが途切れる
 - subscribe の stream は room の配送を持たなくなり、notify / net_online / keepalive だけになる
-
-### 3. 未決
-
-各問いに統括推しを付ける。
-
-- **Q1. 届かなかった直送の扱い**: 統括推しは「理由を送り主に返すだけで、daemon は預からない」。送り主の agent が理由を見て再送か断念を決める。v2 の inbox (永続、再提示) は価値があるが、v1 で作ると v1 だけの永続状態がまた 1 つ増える。対案は v2 の inbox を v1 に移すこと
-- **Q2. セッションから人への経路**: 統括推しは「新しい経路を作らない」。DR-0035 で人の入力は composer から入り返信は TL に出るので、人宛の返信の op は要らない。セッションから人へ自発的に知らせるのは PushNotification (TL に 📣 で出る、DR-0027 §6.3) で足りる。対案は v2 と同じく `ccmsg reply <mid>` の `--to` なしを人宛の notify にし、webui に通知一覧を作ること
-- **Q3. 全セッションへの一斉送信 (broadcast の代わり)**: 統括推しは「持たない」。使われた実績が少なく、必要になったら送り主が `ccmsg peers` の結果に順に送ればよい
-- **Q4. `ccmsg say` の記録**: 発声自体は room に依存しないが、記録と未読が 1on1 room に載っている (webui の say バブル・未読表示)。統括推しは「v2 と同じく notify の流れに載せ、未読は daemon のメモリだけで持つ」(daemon 再起動で未読が消えるのは許容)。対案は say 専用の小さな記録ファイルを持つこと
-- **Q5. 既存の room データ (384 ファイル、約 6MB)**: 統括推しは「ファイルは消さずに残し、webui の閲覧 UI とコードは削る」。読む必要が出たら jsonl を直接読めばよい。対案は読み取り専用の最小の閲覧 (room 一覧と本文表示) を残すこと
-- **Q6. room 一覧に代わる横断ビュー**: 統括推しは「作らない」。セッションごとの TL が送受信の封筒を描くので、やり取りの記録は各セッションの TL で足りる。対案は v2 webui の inbox / 通知一覧に相当するビューを作ること
 
 ## Alternatives Considered
 
