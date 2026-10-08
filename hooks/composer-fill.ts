@@ -129,9 +129,13 @@ export function hyouiEnterArgv(hyouiSessionId: string, namespace: string | undef
   ];
 }
 
-/** Whether a submitted prompt is the filled text. */
+/** Whether a submitted prompt is the filled text. The harness drops trailing
+ * whitespace from a prompt before raising UserPromptSubmit (measured on
+ * 2.1.293 with a trailing newline, spaces, a tab and an ideographic space,
+ * the set `trimEnd` removes); leading whitespace, blank lines inside and tabs
+ * inside reach it as filled. That one change is allowed for, nothing else. */
 export function samePrompt(submitted: unknown, filled: string): boolean {
-  return submitted === filled;
+  return submitted === filled || submitted === filled.trimEnd();
 }
 
 /** Split a stream of text pieces into lines; a piece may end mid-line. */

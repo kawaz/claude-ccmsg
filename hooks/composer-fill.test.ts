@@ -528,9 +528,15 @@ describe("pure helpers", () => {
     ).toEqual(["--outcome", "not_delivered", "--reason", "dialog"]);
   });
 
-  test("samePrompt is exact", () => {
+  // As measured: the harness hands UserPromptSubmit the prompt with trailing
+  // whitespace dropped, and nothing else changed.
+  test("samePrompt allows only trailing whitespace dropped by the harness", () => {
     expect(samePrompt("a b\n", "a b\n")).toBe(true);
+    expect(samePrompt("a b", "a b\n")).toBe(true);
+    expect(samePrompt("a b", "a b \t\u3000")).toBe(true);
     expect(samePrompt("a b\n", "a b")).toBe(false);
+    expect(samePrompt("a b", "  a b")).toBe(false);
+    expect(samePrompt("a\nb", "a\n\nb")).toBe(false);
     expect(samePrompt("a  b", "a b")).toBe(false);
     expect(samePrompt(undefined, "a")).toBe(false);
   });
