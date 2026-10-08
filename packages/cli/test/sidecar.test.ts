@@ -67,6 +67,34 @@ describe("startSidecar", () => {
     expect(fs.existsSync(sidecar.path)).toBe(false);
   });
 
+  // A character whose bytes arrive in separate writes is still one character.
+  test("a multi-byte character split across writes arrives whole", async () => {
+    const dir = path.join(shortBase(), "sc");
+    const got = Promise.withResolvers<string>();
+    const sidecar = startSidecar({
+      dir,
+      sid: SID,
+      pid: 4245,
+      out: (line, done) => {
+        got.resolve(line);
+        done();
+      },
+    });
+    try {
+      const bytes = new TextEncoder().encode("書き\n");
+      const socket = await Bun.connect({ unix: sidecar.path, socket: { data() {} } });
+      for (const byte of bytes) {
+        socket.write(new Uint8Array([byte]));
+        socket.flush();
+        await Bun.sleep(1);
+      }
+      socket.end();
+      expect(await got.promise).toBe("書き\n");
+    } finally {
+      sidecar.stop();
+    }
+  });
+
   test("a failing out is the reader gone, and ends the sidecar", async () => {
     const dir = path.join(shortBase(), "sc");
     const sidecar = startSidecar({

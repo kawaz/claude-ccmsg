@@ -55,8 +55,10 @@ describe("sidecar sockets (DR-0035 §3)", () => {
     );
   });
 
+  // The widest name carries a pid of MAX_SAFE_INTEGER's 16 digits: a state
+  // dir that fits a 7-digit pid but not that one still falls back.
   test("fall back to a short per-uid directory when it would not fit", () => {
-    const deep = `/${"x".repeat(60)}`;
+    const deep = `/${"x".repeat(39)}`;
     expect(resolveSidecarDir(deep)).toBe(
       `/tmp/claude-ccmsg-${String(process.getuid?.() ?? 0)}/sidecars`,
     );

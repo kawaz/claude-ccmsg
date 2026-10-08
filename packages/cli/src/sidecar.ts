@@ -47,7 +47,10 @@ export function startSidecar(options: SidecarOptions): Sidecar {
   unlink(socketPath);
 
   const settled = Promise.withResolvers<Stopped>();
-  const buffers = new Map<object, string>();
+  // One streaming decoder per connection: a write may end inside a multi-byte
+  // character, and decoding each chunk on its own would turn both halves into
+  // replacement characters.
+  const buffers = new Map<object, { decoder: TextDecoder; rest: string }>();
   let finished = false;
 
   const emit = (line: string): void => {
@@ -61,18 +64,18 @@ export function startSidecar(options: SidecarOptions): Sidecar {
     unix: socketPath,
     socket: {
       data: (socket, chunk) => {
-        const parts = ((buffers.get(socket) ?? "") + Buffer.from(chunk).toString("utf8")).split(
-          "\n",
-        );
-        buffers.set(socket, parts.pop() ?? "");
+        const buffer = buffers.get(socket) ?? { decoder: new TextDecoder(), rest: "" };
+        buffers.set(socket, buffer);
+        const parts = (buffer.rest + buffer.decoder.decode(chunk, { stream: true })).split("\n");
+        buffer.rest = parts.pop() ?? "";
         for (const line of parts) emit(line);
       },
       open: () => {},
       // A writer that closed without a last newline still ended its line.
       close: (socket) => {
-        const rest = buffers.get(socket);
+        const buffer = buffers.get(socket);
         buffers.delete(socket);
-        if (rest !== undefined) emit(rest);
+        if (buffer !== undefined) emit(buffer.rest + buffer.decoder.decode());
       },
       error: () => {},
     },

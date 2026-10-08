@@ -105,12 +105,15 @@ export function sidecarSocketPid(name: string, sid: string): number | undefined 
 /** `<stateDir>/sidecars`, or the short per-uid directory under `/tmp` when the
  * widest socket name would not fit in `sun_path` there. The daemon and every
  * sidecar derive it from the same state dir, so neither registers anything
- * with the other. */
+ * with the other — which is why the widest name is judged by the largest pid
+ * a name can carry rather than by any one run's pid: a run whose pid happened
+ * to fit would bind where a run with a longer pid could not, and the daemon
+ * would have to look in both. */
 export function resolveSidecarDir(stateDir: string): string {
   const beside = path.join(stateDir, SIDECAR_DIR);
   const widest = path.join(
     beside,
-    sidecarSocketName("00000000-0000-0000-0000-000000000000", 9_999_999),
+    sidecarSocketName("00000000-0000-0000-0000-000000000000", Number.MAX_SAFE_INTEGER),
   );
   if (Buffer.byteLength(widest) < MAX_SOCKET_PATH) return beside;
   return path.join("/tmp", `claude-ccmsg-${String(process.getuid?.() ?? 0)}`, SIDECAR_DIR);
