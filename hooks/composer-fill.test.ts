@@ -8,7 +8,9 @@ import {
   handleFill,
   hyouiEnterArgv,
   lineSplitter,
+  type ModuleState,
   type On,
+  type QueuedFill,
   parseFillRequest,
   register,
   reportArgv,
@@ -71,6 +73,8 @@ interface Fake {
   hooks: Map<string, Hook>;
   sid: { value: string };
   fills: string[];
+  logs: string[];
+  catches: Set<string>;
 }
 
 /** An engine whose composer, environment and clock the test holds. `onEnter`
@@ -80,6 +84,7 @@ function fakeEngine(
     draft?: string;
     env?: Record<string, string>;
     refusal?: "dialog" | "no_composer";
+    surfaces?: readonly string[];
     onEnter?: (fake: Fake) => Promise<number>;
   } = {},
 ): Fake {
@@ -91,12 +96,17 @@ function fakeEngine(
     hooks: new Map<string, Hook>(),
     sid: { value: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" },
     fills: [] as string[],
+    logs: [] as string[],
+    catches: new Set<string>(),
   } as Fake;
   const env = options.env ?? { HYOUI_SESSION_ID: "term-1", HYOUI_NAMESPACE: "ns-1" };
   let now = 0;
   fake.$ = {
     plugin: { root: "/plugin" },
-    session: { id: async () => fake.sid.value },
+    session: {
+      id: async () => fake.sid.value,
+      surfaces: async () => options.surfaces ?? ["terminal"],
+    },
     prompt: {
       read: async () => ({ text: fake.composer.text, cursor: fake.composer.text.length }),
       fill: async ({ text }) => {
@@ -136,7 +146,7 @@ function fakeEngine(
         };
       },
     },
-    ui: { log: () => {} },
+    ui: { log: (text) => fake.logs.push(text) },
   };
   return fake;
 }
@@ -161,8 +171,15 @@ async function submitComposer(fake: Fake): Promise<number> {
 function registerOn(fake: Fake) {
   const on = ((event: string, hook: Hook) => {
     fake.hooks.set(event, hook);
+    return { catch: () => fake.catches.add(event) };
   }) as unknown as On;
   return register(on);
+}
+
+/** A fill as the module queues it, for the session as it is now. */
+function queued(fake: Fake, state: ModuleState, text: string): QueuedFill {
+  state.sid ??= fake.sid.value;
+  return { id: "r1", text, sid: fake.sid.value, generation: state.generation };
 }
 
 async function settle(): Promise<void> {
@@ -186,17 +203,18 @@ describe("handleFill", () => {
   test("accepted: Enter on its own terminal, then the draft goes back", async () => {
     const fake = fakeEngine({ draft: "half typed 書きかけ", onEnter: submitComposer });
     const state = registerOn(fake);
-    const report = await handleFill(fake.$, state.fill, { id: "r1", text: "from the web" });
+    const report = await handleFill(fake.$, state, queued(fake, state, "from the web"));
     expect(report).toEqual({ outcome: "accepted" });
     expect(fake.runs).toEqual([["hyoui", "input", "--namespace=ns-1", "term-1", "key:Enter"]]);
     expect(fake.composer.text).toBe("half typed 書きかけ");
-    expect(state.fill).toEqual({ awaiting: undefined, restoring: undefined });
+    expect(state.awaiting).toBeUndefined();
+    expect(state.restoring).toBeUndefined();
   });
 
   test("accepted with an empty composer leaves it empty", async () => {
     const fake = fakeEngine({ onEnter: submitComposer });
     const state = registerOn(fake);
-    expect(await handleFill(fake.$, state.fill, { id: "r1", text: "hi" })).toEqual({
+    expect(await handleFill(fake.$, state, queued(fake, state, "hi"))).toEqual({
       outcome: "accepted",
     });
     expect(fake.composer.text).toBe("");
@@ -206,7 +224,7 @@ describe("handleFill", () => {
   test("no hyoui terminal: no_terminal, and the composer is never touched", async () => {
     const fake = fakeEngine({ draft: "keep", env: {} });
     const state = registerOn(fake);
-    expect(await handleFill(fake.$, state.fill, { id: "r1", text: "x" })).toEqual({
+    expect(await handleFill(fake.$, state, queued(fake, state, "x"))).toEqual({
       outcome: "not_delivered",
       reason: "no_terminal",
     });
@@ -217,7 +235,7 @@ describe("handleFill", () => {
   test("a dialog refuses the fill: no Enter, the reason is reported", async () => {
     const fake = fakeEngine({ draft: "keep", refusal: "dialog" });
     const state = registerOn(fake);
-    expect(await handleFill(fake.$, state.fill, { id: "r1", text: "x" })).toEqual({
+    expect(await handleFill(fake.$, state, queued(fake, state, "x"))).toEqual({
       outcome: "not_delivered",
       reason: "dialog",
     });
@@ -228,7 +246,7 @@ describe("handleFill", () => {
   test("Enter that submits nothing: not_submitted, the draft goes back", async () => {
     const fake = fakeEngine({ draft: "keep" });
     const state = registerOn(fake);
-    const report = handleFill(fake.$, state.fill, { id: "r1", text: "x" });
+    const report = handleFill(fake.$, state, queued(fake, state, "x"));
     await expireAcceptWait(fake);
     expect(await report).toEqual({ outcome: "not_delivered", reason: "not_submitted" });
     expect(fake.composer.text).toBe("keep");
@@ -237,7 +255,7 @@ describe("handleFill", () => {
   test("hyoui failing with the text still in the composer: enter_failed", async () => {
     const fake = fakeEngine({ draft: "keep", onEnter: async () => 1 });
     const state = registerOn(fake);
-    const report = handleFill(fake.$, state.fill, { id: "r1", text: "x" });
+    const report = handleFill(fake.$, state, queued(fake, state, "x"));
     await expireAcceptWait(fake);
     expect(await report).toEqual({ outcome: "not_delivered", reason: "enter_failed" });
     expect(fake.composer.text).toBe("keep");
@@ -253,7 +271,7 @@ describe("handleFill", () => {
       },
     });
     const state = registerOn(fake);
-    const report = handleFill(fake.$, state.fill, { id: "r1", text: "x" });
+    const report = handleFill(fake.$, state, queued(fake, state, "x"));
     await expireAcceptWait(fake);
     expect(await report).toBeUndefined();
   });
@@ -261,14 +279,14 @@ describe("handleFill", () => {
   test("a prompt.submit of other text does not put the draft back", async () => {
     const fake = fakeEngine();
     const state = registerOn(fake);
-    state.fill.restoring = { text: "mine", draft: "draft" };
+    state.restoring = { text: "mine", draft: "draft" };
     await fake.hooks.get("prompt.submit")!(
       fake.$,
       { text: "someone else's", origin: { kind: "composer" } },
       async () => ({}),
     );
     expect(fake.fills).toEqual([]);
-    expect(state.fill.restoring).toEqual({ text: "mine", draft: "draft" });
+    expect(state.restoring).toEqual({ text: "mine", draft: "draft" });
   });
 });
 
@@ -348,6 +366,139 @@ describe("the sidecar the module keeps", () => {
   });
 });
 
+describe("sessions without a composer get no sidecar", () => {
+  for (const [name, e] of [
+    ["isInteractive false (-p)", { isInteractive: false, surface: null }],
+    ["surface null", { isInteractive: true, surface: null }],
+  ] as const) {
+    test(`session.start with ${name}`, async () => {
+      const fake = fakeEngine();
+      registerOn(fake);
+      await fake.hooks.get("session.start")!(fake.$, e, async () => ({}));
+      await fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({}));
+      await settle();
+      expect(fake.spawns).toEqual([]);
+    });
+  }
+
+  // After a reload the first event may be classic.SessionStart: the session
+  // itself is asked whether it draws anywhere.
+  test("classic.SessionStart first, in a session that draws nowhere", async () => {
+    const fake = fakeEngine({ surfaces: [] });
+    registerOn(fake);
+    await fake.hooks.get("classic.SessionStart")!(fake.$, {}, async () => ({}));
+    await settle();
+    expect(fake.spawns).toEqual([]);
+  });
+
+  test("an interactive session.start does start one", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    await fake.hooks.get("session.start")!(
+      fake.$,
+      { isInteractive: true, surface: "terminal" },
+      async () => ({}),
+    );
+    await settle();
+    expect(fake.spawns.length).toBe(1);
+  });
+});
+
+describe("a session that changes its id (/clear)", () => {
+  const NEW_SID = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+  test("session.end(clear) moves on a generation", async () => {
+    const fake = fakeEngine();
+    const state = registerOn(fake);
+    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await settle();
+    const before = state.generation;
+    await fake.hooks.get("session.end")!(fake.$, { reason: "other" }, async () => ({}));
+    expect(state.generation).toBe(before);
+    await fake.hooks.get("session.end")!(fake.$, { reason: "clear" }, async () => ({}));
+    expect(state.generation).toBe(before + 1);
+  });
+
+  // The id changed between the fill and Enter: no Enter, the draft goes
+  // back, and nothing is reported.
+  test("a changed id before Enter keeps the text out", async () => {
+    const fake = fakeEngine({ draft: "keep", onEnter: submitComposer });
+    const state = registerOn(fake);
+    const request = queued(fake, state, "for the old session");
+    const prompt = fake.$.prompt;
+    const fill = (input: Parameters<typeof prompt.fill>[0]) => prompt.fill(input);
+    fake.$.prompt = { ...prompt };
+    fake.$.prompt.fill = async (input) => {
+      const filled = await fill(input);
+      fake.sid.value = NEW_SID;
+      return filled;
+    };
+    expect(await handleFill(fake.$, state, request)).toBeUndefined();
+    expect(fake.runs).toEqual([]);
+    expect(fake.composer.text).toBe("keep");
+  });
+
+  // Enter went out, then the session moved on before the event: not this
+  // request's to report.
+  test("a new generation after Enter is not reported", async () => {
+    const fake = fakeEngine({
+      onEnter: async (f) => {
+        state.generation += 1;
+        return submitComposer(f);
+      },
+    });
+    const state = registerOn(fake);
+    expect(await handleFill(fake.$, state, queued(fake, state, "x"))).toBeUndefined();
+  });
+
+  test("a fill queued under the old id is dropped, unfilled and unreported", async () => {
+    const fake = fakeEngine({ onEnter: submitComposer });
+    registerOn(fake);
+    await fake.hooks.get("session.start")!(fake.$, {}, async () => ({}));
+    await settle();
+    fake.spawns[0]!.stream.push('{"kind":"prompt.fill","id":"old","text":"late"}\n');
+    await fake.hooks.get("session.end")!(fake.$, { reason: "clear" }, async () => ({}));
+    await settle();
+    expect(fake.fills).toEqual([]);
+    expect(fake.runs).toEqual([]);
+  });
+});
+
+describe("putting the draft back", () => {
+  // The person started typing something new while the filled prompt went in:
+  // what they type now wins, and the old draft goes to the debug log.
+  test("does not overwrite text typed meanwhile", async () => {
+    const fake = fakeEngine({
+      draft: "old draft",
+      onEnter: async (f) => {
+        const text = f.composer.text;
+        await f.hooks.get("prompt.submit")!(
+          f.$,
+          { text, origin: { kind: "composer" } },
+          async () => {
+            f.composer.text = "typed meanwhile";
+            return {};
+          },
+        );
+        await f.hooks.get("classic.UserPromptSubmit")!(f.$, { prompt: text }, async () => ({}));
+        return 0;
+      },
+    });
+    const state = registerOn(fake);
+    expect(await handleFill(fake.$, state, queued(fake, state, "x"))).toEqual({
+      outcome: "accepted",
+    });
+    expect(fake.composer.text).toBe("typed meanwhile");
+    expect(fake.logs.some((l) => l.includes("old draft"))).toBe(true);
+  });
+
+  test("every hook carries a .catch that passes the event on", () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    expect([...fake.catches].toSorted()).toEqual([...fake.hooks.keys()].toSorted());
+  });
+});
+
 describe("pure helpers", () => {
   test("parseFillRequest takes only well-formed fill lines", () => {
     expect(parseFillRequest('{"kind":"prompt.fill","id":"1","text":"a"}')).toEqual({
@@ -377,8 +528,9 @@ describe("pure helpers", () => {
     ).toEqual(["--outcome", "not_delivered", "--reason", "dialog"]);
   });
 
-  test("samePrompt ignores surrounding whitespace only", () => {
-    expect(samePrompt("a b\n", "a b")).toBe(true);
+  test("samePrompt is exact", () => {
+    expect(samePrompt("a b\n", "a b\n")).toBe(true);
+    expect(samePrompt("a b\n", "a b")).toBe(false);
     expect(samePrompt("a  b", "a b")).toBe(false);
     expect(samePrompt(undefined, "a")).toBe(false);
   });

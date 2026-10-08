@@ -10,6 +10,10 @@
 // outcome goes back to the daemon through `ccmsg sidecar report`. The draft
 // is filled back right after the submit.
 //
+// A session without a composer (`-p`, the SDK) gets no sidecar. When the
+// session changes its id (/clear, /resume) the module moves on a generation:
+// a request that arrived under the old id is not put into the new session.
+//
 // This file is read by Claude Code's module loader, which allows no imports
 // that run, and `claude plugin validate` reads every `$` call off the source:
 // each call is spelled out as `$.noun.method(...)` with literal arguments
@@ -20,7 +24,7 @@
  * lays them beside a loaded mod. */
 export interface Engine {
   plugin: { root: string };
-  session: { id(): Promise<string> };
+  session: { id(): Promise<string>; surfaces(): Promise<readonly string[]> };
   prompt: {
     read(): Promise<{ text: string; cursor: number }>;
     fill(input: {
@@ -47,22 +51,36 @@ export interface Engine {
 
 type Next<E, R> = (e: E) => Promise<R>;
 type Hook<E> = ($: Engine, e: E, next: Next<E, unknown>) => Promise<unknown>;
+/** What `on(...)` returns: one `.catch`, whose answer stands for the hook's
+ * when the hook throws or overruns its budget. */
+interface Registration<E> {
+  catch(handler: Hook<E>): void;
+}
+type SessionStartEvent = { isInteractive?: unknown; surface?: unknown };
+type PromptSubmitEvent = { text?: unknown; origin?: { kind?: unknown } };
 export interface On {
-  (event: "session.start", hook: Hook<unknown>): void;
-  (event: "classic.SessionStart", hook: Hook<unknown>): void;
-  (event: "classic.UserPromptSubmit", hook: Hook<{ prompt?: unknown }>): void;
-  (event: "prompt.submit", hook: Hook<{ text?: unknown; origin?: { kind?: unknown } }>): void;
+  (event: "session.start", hook: Hook<SessionStartEvent>): Registration<SessionStartEvent>;
+  (event: "session.end", hook: Hook<{ reason?: unknown }>): Registration<{ reason?: unknown }>;
+  (event: "classic.SessionStart", hook: Hook<unknown>): Registration<unknown>;
+  (
+    event: "classic.UserPromptSubmit",
+    hook: Hook<{ prompt?: unknown }>,
+  ): Registration<{ prompt?: unknown }>;
+  (event: "prompt.submit", hook: Hook<PromptSubmitEvent>): Registration<PromptSubmitEvent>;
 }
 
-/** `hyoui input` budget, the same as the daemon's rename: hyoui serializes
- * input holders, and an Enter that cannot get through in this window is
- * better reported than waited on. */
-export const HYOUI_TIMEOUT_MS = 5_000;
+/** `hyoui input` budget. One try of the module costs at most
+ * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPORT_TIMEOUT_MS (9 s), which fits the
+ * daemon's 12 s deadline for a session_input with room for a second run's
+ * quick answer. Enter itself takes tens of milliseconds; the margin
+ * is hyoui's own lock when another client is mid-input. */
+export const HYOUI_TIMEOUT_MS = 3_000;
 /** How long after Enter UserPromptSubmit may take. Measured at about 30 ms
  * idle and a few ms busy; the margin is for a loaded machine. */
 export const ACCEPT_WAIT_MS = 3_000;
-/** The report is one `ccmsg` process and one round trip to the daemon. */
-export const REPORT_TIMEOUT_MS = 10_000;
+/** The report is one `ccmsg` process and one round trip to the daemon,
+ * measured at about 0.3 s. */
+export const REPORT_TIMEOUT_MS = 3_000;
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar
  * has lived STABLE_MS. */
@@ -73,6 +91,13 @@ export const STABLE_MS = 10_000;
 export interface FillRequest {
   id: string;
   text: string;
+}
+
+/** A fill request as the module queues it: under which session id and which
+ * generation of it the line arrived. */
+export interface QueuedFill extends FillRequest {
+  sid: string;
+  generation: number;
 }
 
 /** One line of the sidecar's output as a fill request, or undefined for
@@ -104,10 +129,9 @@ export function hyouiEnterArgv(hyouiSessionId: string, namespace: string | undef
   ];
 }
 
-/** Whether a submitted prompt is the filled text. The harness may trim what
- * it hands on, so surrounding whitespace is not held against it. */
+/** Whether a submitted prompt is the filled text. */
 export function samePrompt(submitted: unknown, filled: string): boolean {
-  return typeof submitted === "string" && submitted.trim() === filled.trim();
+  return submitted === filled;
 }
 
 /** Split a stream of text pieces into lines; a piece may end mid-line. */
@@ -133,12 +157,47 @@ export type Report =
         | "enter_failed";
     };
 
-/** What the module keeps between a fill and the events it waits for. */
-export interface FillState {
+/** The module's state for one load. */
+export interface ModuleState {
   /** The text whose UserPromptSubmit is awaited, and who to tell. */
   awaiting?: { text: string; accept: () => void };
   /** The text whose submit puts the draft back, and the draft. */
   restoring?: { text: string; draft: string };
+  /** The session id the module serves, and how many times it has changed
+   * (/clear, /resume). A fill belongs to the generation it arrived in. */
+  sid?: string;
+  generation: number;
+  /** Whether the session has a composer to fill; undefined until known. */
+  interactive?: boolean;
+  /** Fills run one at a time: two at once would trade drafts. */
+  queue: Promise<void>;
+  sidecar?: { sid: string; child: AsyncGenerator<unknown, unknown> };
+  delay: number;
+  /** Sidecar starts run one at a time, so session.start and
+   * classic.SessionStart arriving together cannot each start one. */
+  starting: Promise<void>;
+}
+
+export function newState(): ModuleState {
+  return {
+    generation: 0,
+    queue: Promise.resolve(),
+    delay: RESPAWN_MIN_MS,
+    starting: Promise.resolve(),
+  };
+}
+
+/** The session moved to another id: what was waiting for the old one is
+ * dropped, so nothing of it reaches the new session. */
+function nextGeneration(state: ModuleState): void {
+  state.generation += 1;
+  state.awaiting = undefined;
+}
+
+/** Whether `request` still belongs to the session as it is now. */
+async function stillCurrent($: Engine, state: ModuleState, request: QueuedFill): Promise<boolean> {
+  if (request.generation !== state.generation || request.sid !== state.sid) return false;
+  return (await $.session.id()) === request.sid;
 }
 
 /** Put the draft back if the composer still holds the filled text, which
@@ -150,13 +209,14 @@ async function putBackUnsent($: Engine, text: string, draft: string): Promise<bo
   return true;
 }
 
-/** One fill request, start to finish. Undefined when nothing decisive can be
- * said: Enter went out, no UserPromptSubmit came, and the composer no longer
- * holds the text — the daemon then answers unconfirmed. */
+/** One fill request, start to finish. Undefined when nothing should be
+ * reported: Enter went out but no UserPromptSubmit came and the composer no
+ * longer holds the text, or the session changed its id under the request —
+ * the daemon then answers unconfirmed. */
 export async function handleFill(
   $: Engine,
-  state: FillState,
-  request: FillRequest,
+  state: ModuleState,
+  request: QueuedFill,
 ): Promise<Report | undefined> {
   const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
   const namespace = await $.env.get("HYOUI_NAMESPACE");
@@ -167,6 +227,12 @@ export async function handleFill(
   const filled = await $.prompt.fill({ text: request.text, mode: "replace" });
   if (!filled.isFilled) return { outcome: "not_delivered", reason: filled.refusal ?? "refused" };
 
+  // The last moment the request can still be kept out of a session it was
+  // not meant for.
+  if (!(await stillCurrent($, state, request))) {
+    await putBackUnsent($, request.text, draft);
+    return undefined;
+  }
   const accepted = Promise.withResolvers<boolean>();
   state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
   state.restoring = { text: request.text, draft };
@@ -185,12 +251,29 @@ export async function handleFill(
   const isAccepted = await accepted.promise;
   timer.cancel();
   if (state.awaiting?.text === request.text) state.awaiting = undefined;
+  // Enter went out under an id that is no longer the session's: whatever it
+  // did, it is not this request's to report.
+  if (request.generation !== state.generation) return undefined;
   if (isAccepted) return { outcome: "accepted" };
   if (state.restoring?.text === request.text) state.restoring = undefined;
   if (await putBackUnsent($, request.text, draft)) {
     return { outcome: "not_delivered", reason: entered ? "not_submitted" : "enter_failed" };
   }
   return undefined;
+}
+
+/** After a filled prompt went in: give the person their draft back, unless
+ * they have started a new one meanwhile — what they are typing now is not
+ * overwritten, and the old draft goes to the debug log instead. */
+async function putBackDraft($: Engine, submitted: string, draft: string): Promise<void> {
+  const box = await $.prompt.read();
+  if (box.text !== "" && box.text !== submitted) {
+    $.ui.log(`ccmsg: kept the newly typed text; the earlier draft was: ${draft}`, {
+      to: "debug",
+    });
+    return;
+  }
+  await $.prompt.fill({ text: draft, mode: "replace" });
 }
 
 export function reportArgv(root: string, sid: string, id: string, report: Report): string[] {
@@ -208,34 +291,21 @@ export function reportArgv(root: string, sid: string, id: string, report: Report
   ];
 }
 
-/** The module's state for one load: the running sidecar, the fill in
- * progress, and the queues that keep fills and sidecar starts one at a time
- * (two fills at once would trade drafts; session.start and
- * classic.SessionStart arriving together must not each start a sidecar). */
-export interface ModuleState {
-  fill: FillState;
-  queue: Promise<void>;
-  sidecar?: { sid: string; child: AsyncGenerator<unknown, unknown> };
-  delay: number;
-  starting: Promise<void>;
-}
-
-async function serve(
-  $: Engine,
-  state: ModuleState,
-  sid: string,
-  request: FillRequest,
-): Promise<void> {
+async function serve($: Engine, state: ModuleState, request: QueuedFill): Promise<void> {
+  if (request.generation !== state.generation || request.sid !== state.sid) {
+    $.ui.log(`ccmsg: fill ${request.id} dropped: the session changed its id`, { to: "debug" });
+    return;
+  }
   let report: Report | undefined;
   try {
-    report = await handleFill($, state.fill, request);
+    report = await handleFill($, state, request);
   } catch (e) {
     $.ui.log(`ccmsg: fill ${request.id} failed: ${String(e)}`, { to: "debug" });
     return;
   }
   if (report === undefined) return;
   try {
-    const done = await $.process.run(reportArgv($.plugin.root, sid, request.id, report), {
+    const done = await $.process.run(reportArgv($.plugin.root, request.sid, request.id, report), {
       timeoutMs: REPORT_TIMEOUT_MS,
     });
     if (done.exitCode !== 0) {
@@ -262,7 +332,8 @@ async function runSidecar($: Engine, state: ModuleState, sid: string): Promise<v
   const onLine = lineSplitter((line) => {
     const request = parseFillRequest(line);
     if (request === undefined) return;
-    state.queue = state.queue.then(() => serve($, state, sid, request));
+    const queued = { ...request, sid, generation: state.generation };
+    state.queue = state.queue.then(() => serve($, state, queued));
   });
   try {
     for await (const piece of child) {
@@ -295,7 +366,13 @@ function startSidecar($: Engine, state: ModuleState): void {
  * changed its id (/clear, /resume) is written to under the new one, and the
  * old sidecar would never be asked again. */
 async function replaceSidecar($: Engine, state: ModuleState): Promise<void> {
+  // classic.SessionStart can be the first to arrive after a reload; whether
+  // the session draws a composer is then asked of the session itself.
+  state.interactive ??= (await $.session.surfaces()).length > 0;
+  if (!state.interactive) return;
   const sid = await $.session.id();
+  if (state.sid !== undefined && state.sid !== sid) nextGeneration(state);
+  state.sid = sid;
   if (state.sidecar?.sid === sid) return;
   const old = state.sidecar;
   state.sidecar = undefined;
@@ -304,50 +381,63 @@ async function replaceSidecar($: Engine, state: ModuleState): Promise<void> {
 }
 
 export function register(on: On): ModuleState {
-  const state: ModuleState = {
-    fill: {},
-    queue: Promise.resolve(),
-    delay: RESPAWN_MIN_MS,
-    starting: Promise.resolve(),
-  };
+  const state = newState();
+  // Every hook here observes and passes the event on; if one fails, the
+  // event goes on as if it were not there.
   on("session.start", async ($, e, next) => {
     const started = await next(e);
+    // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
+    state.interactive = e.isInteractive !== false && e.surface !== null;
     startSidecar($, state);
     return started;
-  });
+  }).catch(async (_$, e, next) => next(e));
+  on("session.end", async (_$, e, next) => {
+    if (e.reason === "clear" && state.sid !== undefined) {
+      nextGeneration(state);
+      state.sid = undefined;
+    }
+    return next(e);
+  }).catch(async (_$, e, next) => next(e));
   on("classic.SessionStart", async ($, e, next) => {
     const started = await next(e);
     startSidecar($, state);
     return started;
-  });
-  on("classic.UserPromptSubmit", async (_$, e, next) => {
-    const awaiting = state.fill.awaiting;
-    if (awaiting !== undefined && samePrompt(e.prompt, awaiting.text)) {
-      state.fill.awaiting = undefined;
-      awaiting.accept();
+  }).catch(async (_$, e, next) => next(e));
+  on("classic.UserPromptSubmit", async ($, e, next) => {
+    const awaiting = state.awaiting;
+    if (awaiting !== undefined) {
+      if (samePrompt(e.prompt, awaiting.text)) {
+        state.awaiting = undefined;
+        awaiting.accept();
+      } else {
+        $.ui.log(
+          `ccmsg: UserPromptSubmit ${JSON.stringify(e.prompt)} is not the filled ${JSON.stringify(awaiting.text)}`,
+          { to: "debug" },
+        );
+      }
     }
     return next(e);
-  });
+  }).catch(async (_$, e, next) => next(e));
   on("prompt.submit", async ($, e, next) => {
     const submitted = await next(e);
-    const restoring = state.fill.restoring;
+    const restoring = state.restoring;
     if (
       restoring !== undefined &&
       e.origin?.kind === "composer" &&
       samePrompt(e.text, restoring.text)
     ) {
-      state.fill.restoring = undefined;
+      state.restoring = undefined;
       // The prompt is in by now; a failed put-back must not read as a failed
       // hook on a submit that went through.
       if (restoring.draft !== "") {
         try {
-          await $.prompt.fill({ text: restoring.draft, mode: "replace" });
+          await putBackDraft($, restoring.text, restoring.draft);
         } catch (error) {
           $.ui.log(`ccmsg: draft put-back failed: ${String(error)}`, { to: "debug" });
         }
       }
     }
     return submitted;
-  });
+  }).catch(async (_$, e, next) => next(e));
   return state;
 }
