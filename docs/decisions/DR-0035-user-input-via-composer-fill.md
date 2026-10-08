@@ -38,7 +38,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 
 - plugin に hooks module を 1 本足す。読まれるのは function hooks が有効な環境だけで、既存の SessionStart command hook はそのまま動く
 - module は `session.start` で `ccmsg sidecar` を spawn し、その stdout を読む。サイドカーは自分の Unix socket を bind し、書かれた行を stdout に写すだけで、判断・状態・protocol の解釈を持たない
-- socket の規約 path とサブコマンド名は kawaz/ccmsg の DR-0016 §5 に揃える (`<sid>.<pid>.sock`、0600、`<pid>` は harness の pid)。v2 に戻る時にそのまま持っていけるようにするため
+- socket の名前の規約とサブコマンド名は kawaz/ccmsg の DR-0016 §5 に揃える (`<sid>.<pid>.sock`、0600、`<pid>` は harness の pid)。v2 に戻る時にそのまま持っていけるようにするため。ただし置き場は v1 の daemon の dir の下にし、v2 の sidecar dir とは分ける。v1 と v2 の plugin は同じ環境に並んで入りうる (kawaz の環境では両方入っている) ので、同じ dir だと同じ run の 2 つのサイドカーが互いの socket を unlink し合う
 - サイドカーが死んだら module が spawn し直す (連続即死は backoff)。module の unload では再起動しない
 
 ### 4. agent が人の入力を作る公式の経路は作らない
