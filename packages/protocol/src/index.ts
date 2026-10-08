@@ -1303,13 +1303,18 @@ export interface SessionRenameRequest {
 /** Put what the person wrote into a session as their own prompt (user role
  * only, DR-0035 §1).
  *
- * The daemon writes one SidecarFillRequest line to the sidecar of every live
- * run of the session. The session's hooks module fills the composer with the
- * text and sends Enter to its own terminal, so the harness records the prompt
- * as typed by a person (`origin: { kind: "human" }`, `promptSource: "typed"`),
+ * The daemon writes one SidecarFillRequest line to a sidecar of a live run of
+ * the session. The session's hooks module fills the composer with the text
+ * and sends Enter to its own terminal, so the harness records the prompt as
+ * typed by a person (`origin: { kind: "human" }`, `promptSource: "typed"`),
  * not as a message from a peer. The module answers with
  * SessionInputResultRequest, and the reply to this op is that answer — or
- * `unconfirmed` when none came in time. */
+ * `unconfirmed` when none came in time.
+ *
+ * Runs are asked one at a time, each try under an id of its own: the next run
+ * is asked only after one answers `no_composer` or `no_terminal`, which say it
+ * cannot take a person's input at all. Asking two runs that both have a
+ * composer would put the text in twice (DR-0035 §3). */
 export interface SessionInputRequest {
   op: "session_input";
   session_id: string;
@@ -1331,7 +1336,10 @@ export interface SessionInputRequest {
  * - `enter_failed`: sending Enter to the terminal failed, and the text never
  *   left the composer; the composer was put back as for `not_submitted`
  * - `no_module`: no run of the session has a sidecar that took the request
- *   (hooks modules not enabled, the plugin not loaded, the session gone) */
+ *   (the plugin not loaded, a session without a composer, the session gone)
+ *
+ * With several runs, `no_composer` / `no_terminal` are the last run's answer
+ * after every run gave one of the two. */
 export type SessionInputReason =
   | "dialog"
   | "no_composer"
@@ -1356,7 +1364,8 @@ export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] =
 
 /** What a session's hooks module reports for one SidecarFillRequest
  * (DR-0035 §1, §5). `accepted` means the harness raised `UserPromptSubmit`
- * for the filled text: the prompt is in the session, idle or busy. */
+ * for the filled text: the prompt is in the session, idle or busy. Only the
+ * first report under an id counts. */
 export interface SessionInputResultRequest {
   op: "session_input_result";
   /** The SidecarFillRequest's id. */

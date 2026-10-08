@@ -1,13 +1,12 @@
-// session_input (DR-0035 §1, §5): hand what a person wrote to the sidecar of
-// every live run of a session, and wait for the session's hooks module to say
-// whether the harness took it as the person's prompt.
+// session_input (DR-0035 §1, §3, §5): hand what a person wrote to a sidecar of
+// the session, and wait for the session's hooks module to say whether the
+// harness took it as the person's prompt.
 //
 // The daemon neither resolves the session's terminal nor sends Enter: the
 // module fills its own composer and presses Enter on its own terminal, then
 // reports back with `ccmsg sidecar report`, which arrives here as
-// session_input_result. What this file owns is the correlation between the
-// two: the request is answered by the first report that decides it, or as
-// unconfirmed when none does in time.
+// session_input_result. What this file owns is which run is asked, the
+// correlation between a request and its report, and the deadline.
 import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -19,12 +18,16 @@ import {
 } from "@ccmsg/protocol";
 import { writeSocket } from "./peer-inject.ts";
 
-/** How long the daemon waits for the module's report once a sidecar took the
- * request. The module's own path is a fill, a `hyoui input` of at most 5 s,
- * up to 3 s for the harness to raise UserPromptSubmit, then one `ccmsg`
- * process to carry the report; an answer later than this is reported as
- * unconfirmed rather than holding the person's send open. */
-export const SESSION_INPUT_CONFIRM_MS = 10_000;
+/** The longest a session_input takes to answer, every run it tries included.
+ *
+ * One try on the module's side is at most a `hyoui input` (3 s), the wait for
+ * UserPromptSubmit (3 s) and the report process (3 s) — 9 s — plus the fill and
+ * the write, which take milliseconds. The rest of the 12 s leaves room for a
+ * second run after a first that answered at once that it cannot take input
+ * (no_composer / no_terminal, which needs no Enter and so comes back within a
+ * report's time). Past it the answer is unconfirmed: a person waiting on a
+ * send is told it may or may not have landed rather than kept waiting. */
+export const SESSION_INPUT_DEADLINE_MS = 12_000;
 
 /** Connect and flush one line to one sidecar. */
 export const SIDECAR_WRITE_MS = 2_000;
@@ -42,64 +45,50 @@ export interface ModuleReport {
 
 interface Pending {
   sid: string;
-  reports: ModuleReport[];
-  /** Set once the request knows how many runs took it. */
+  report?: ModuleReport;
   notify?: () => void;
 }
 
-/** The session_input requests waiting for their module's report, by the id
- * the sidecar line carries. */
+/** The tries waiting for their module's report, by the id the sidecar line
+ * carries. Every try has an id of its own, so a report decides that try and no
+ * other, and only the first report under an id counts. */
 export class PendingInputs {
   readonly #pending = new Map<string, Pending>();
 
   /** Register `id` before the line is written, so a report that beats the
    * write's own completion still finds it. */
   open(id: string, sid: string): void {
-    this.#pending.set(id, { sid, reports: [] });
+    this.#pending.set(id, { sid });
   }
 
   close(id: string): void {
     this.#pending.delete(id);
   }
 
-  /** Record a module's report. False when no request is waiting under `id`
-   * for `sid` — answered already, timed out, or never sent there — which
-   * the reporter cannot act on either way. */
+  /** Record a module's report. False when no try is waiting under `id` for
+   * `sid` — decided already, timed out, or never sent there. A second report
+   * under an id still waiting is taken as said and changes nothing. */
   report(id: string, sid: string, report: ModuleReport): boolean {
     const pending = this.#pending.get(id);
     if (pending === undefined || pending.sid !== sid) return false;
-    pending.reports.push(report);
-    pending.notify?.();
+    if (pending.report === undefined) {
+      pending.report = report;
+      pending.notify?.();
+    }
     return true;
   }
 
-  /** Settle `id` from the reports of the `runs` sidecars that took it.
-   *
-   * One `accepted` decides it: the prompt is in the session. `not_delivered`
-   * decides it only once every run has said so, because a run that has not
-   * answered yet may be the one holding the composer. Anything short of that
-   * when `withinMs` runs out is unconfirmed. */
-  async settle(id: string, runs: number, withinMs: number): Promise<SessionInputOutcome> {
+  /** The first report under `id`, or undefined when none came within `ms`.
+   * The id is forgotten either way. */
+  async wait(id: string, ms: number): Promise<ModuleReport | undefined> {
     const pending = this.#pending.get(id);
-    if (pending === undefined) return { outcome: "unconfirmed" };
-    const decided = Promise.withResolvers<SessionInputOutcome>();
-    const decide = (): void => {
-      if (pending.reports.some((r) => r.outcome === "accepted")) {
-        decided.resolve({ outcome: "accepted" });
-        return;
-      }
-      if (pending.reports.length >= runs) {
-        decided.resolve({
-          outcome: "not_delivered",
-          reason: pending.reports.find((r) => r.reason !== undefined)?.reason ?? "refused",
-        });
-      }
-    };
-    pending.notify = decide;
-    decide();
-    const deadline = setTimeout(() => decided.resolve({ outcome: "unconfirmed" }), withinMs);
+    if (pending === undefined) return undefined;
+    const reported = Promise.withResolvers<ModuleReport | undefined>();
+    pending.notify = () => reported.resolve(pending.report);
+    if (pending.report !== undefined) reported.resolve(pending.report);
+    const deadline = setTimeout(() => reported.resolve(undefined), Math.max(0, ms));
     try {
-      return await decided.promise;
+      return await reported.promise;
     } finally {
       clearTimeout(deadline);
       this.#pending.delete(id);
@@ -107,8 +96,8 @@ export class PendingInputs {
   }
 }
 
-/** Injectable effects, so a test can stand in for the filesystem and the
- * process table. */
+/** Injectable effects, so a test can stand in for the filesystem, the process
+ * table and the clock. */
 export interface SessionInputDeps {
   sidecarDir: string;
   pending: PendingInputs;
@@ -119,11 +108,16 @@ export interface SessionInputDeps {
    * output fails), so a socket of a gone run is skipped instead of taking a
    * request nobody will answer. */
   isAlive(pid: number): boolean;
-  write(socketPath: string, line: string): Promise<"delivered" | "unavailable" | "refused">;
-  confirmMs: number;
+  write(
+    socketPath: string,
+    line: string,
+    ms: number,
+  ): Promise<"delivered" | "unavailable" | "refused">;
+  now(): number;
+  deadlineMs: number;
 }
 
-/** The sockets of the live runs of `sid`. */
+/** The sockets of the live runs of `sid`, in a stable order. */
 export async function liveSidecars(sid: string, deps: SessionInputDeps): Promise<string[]> {
   let names: string[];
   try {
@@ -132,30 +126,66 @@ export async function liveSidecars(sid: string, deps: SessionInputDeps): Promise
     return [];
   }
   const sockets: string[] = [];
-  for (const name of names) {
+  for (const name of names.toSorted()) {
     const pid = sidecarSocketPid(name, sid);
     if (pid !== undefined && deps.isAlive(pid)) sockets.push(path.join(deps.sidecarDir, name));
   }
   return sockets;
 }
 
+/** Reasons that say the run cannot take a person's input at all, so asking
+ * another run of the session cannot put the text in twice. Any other answer —
+ * or none — may mean the text is in, or that this run is the one with the
+ * composer and simply could not now; trying the next run then risks a second
+ * copy, which is what one-at-a-time exists to prevent (DR-0035 §3). */
+const TRY_NEXT: ReadonlySet<SessionInputModuleReason> = new Set(["no_composer", "no_terminal"]);
+
+/** What became of one try, for the daemon log. */
+export interface SessionInputTry {
+  id: string;
+  socket: string;
+  result: "unwritten" | "accepted" | "unconfirmed" | `not_delivered:${SessionInputModuleReason}`;
+}
+
 export async function sessionInput(
   sid: string,
   text: string,
   deps: SessionInputDeps,
-): Promise<SessionInputOutcome & { id: string; runs: number }> {
-  const id = deps.newId();
-  const request: SidecarFillRequest = { kind: "prompt.fill", id, text };
-  const line = `${JSON.stringify(request)}\n`;
-  deps.pending.open(id, sid);
-  const sockets = await liveSidecars(sid, deps);
-  const written = await Promise.all(sockets.map((socket) => deps.write(socket, line)));
-  const runs = written.filter((w) => w === "delivered").length;
-  if (runs === 0) {
-    deps.pending.close(id);
-    return { id, runs, outcome: "not_delivered", reason: "no_module" };
+): Promise<SessionInputOutcome & { tries: SessionInputTry[] }> {
+  const until = deps.now() + deps.deadlineMs;
+  const tries: SessionInputTry[] = [];
+  let unable: SessionInputModuleReason | undefined;
+  for (const socket of await liveSidecars(sid, deps)) {
+    const remaining = until - deps.now();
+    if (remaining <= 0) return { outcome: "unconfirmed", tries };
+    const id = deps.newId();
+    const request: SidecarFillRequest = { kind: "prompt.fill", id, text };
+    deps.pending.open(id, sid);
+    const written = await deps.write(
+      socket,
+      `${JSON.stringify(request)}\n`,
+      Math.min(SIDECAR_WRITE_MS, remaining),
+    );
+    if (written !== "delivered") {
+      deps.pending.close(id);
+      tries.push({ id, socket, result: "unwritten" });
+      continue;
+    }
+    const report = await deps.pending.wait(id, until - deps.now());
+    if (report === undefined) {
+      tries.push({ id, socket, result: "unconfirmed" });
+      return { outcome: "unconfirmed", tries };
+    }
+    if (report.outcome === "accepted") {
+      tries.push({ id, socket, result: "accepted" });
+      return { outcome: "accepted", tries };
+    }
+    const reason = report.reason ?? "refused";
+    tries.push({ id, socket, result: `not_delivered:${reason}` });
+    if (!TRY_NEXT.has(reason)) return { outcome: "not_delivered", reason, tries };
+    unable = reason;
   }
-  return { id, runs, ...(await deps.pending.settle(id, runs, deps.confirmMs)) };
+  return { outcome: "not_delivered", reason: unable ?? "no_module", tries };
 }
 
 function isAlive(pid: number): boolean {
@@ -176,7 +206,8 @@ export function productionInputDeps(sidecarDir: string, pending: PendingInputs):
     newId: randomUUID,
     listDir: (dir) => readdir(dir),
     isAlive,
-    write: (socketPath, line) => writeSocket(socketPath, line, SIDECAR_WRITE_MS),
-    confirmMs: SESSION_INPUT_CONFIRM_MS,
+    write: (socketPath, line, ms) => writeSocket(socketPath, line, ms),
+    now: Date.now,
+    deadlineMs: SESSION_INPUT_DEADLINE_MS,
   };
 }

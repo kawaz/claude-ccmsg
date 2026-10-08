@@ -1,6 +1,7 @@
 // UDS + HTTP/WS server + wire protocol dispatch + delivery (DR-0003, DR-0004).
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import {
   ADMIN_ID,
   DEFAULT_DEDUP_WINDOW_MS,
@@ -2708,17 +2709,17 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       // Slow reply: it waits for the session's hooks module to report, up to
-      // SESSION_INPUT_CONFIRM_MS. Other requests on this connection run on
+      // SESSION_INPUT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
-      const input = await sessionInput(
+      const { tries, ...outcome } = await sessionInput(
         req.session_id,
         req.text,
         productionInputDeps(daemon.paths.sidecars, daemon.pendingInputs),
       );
-      const { id, runs, ...outcome } = input;
       daemon.log.info(
-        `session-input ${id} -> ${req.session_id}: runs=${runs} ${outcome.outcome}` +
-          (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : ""),
+        `session-input -> ${req.session_id}: ${outcome.outcome}` +
+          (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : "") +
+          ` tries=[${tries.map((t) => `${t.id} ${path.basename(t.socket)} ${t.result}`).join(", ")}]`,
       );
       send(conn, { ok: true, ...outcome });
       return;

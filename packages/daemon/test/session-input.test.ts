@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveSidecarDir, sidecarSocketName } from "@ccmsg/protocol";
 import {
+  type ModuleReport,
   PendingInputs,
   liveSidecars,
   sessionInput,
@@ -22,124 +23,197 @@ import {
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
-describe("PendingInputs.settle", () => {
-  test("one accepted decides it, even after another run said not_delivered", async () => {
+describe("PendingInputs", () => {
+  test("the first report under an id is the one that counts", async () => {
     const pending = new PendingInputs();
     pending.open("i1", SID);
-    const settled = pending.settle("i1", 2, 5_000);
-    expect(pending.report("i1", SID, { outcome: "not_delivered", reason: "no_terminal" })).toBe(
-      true,
-    );
+    const waited = pending.wait("i1", 5_000);
+    expect(pending.report("i1", SID, { outcome: "not_delivered", reason: "dialog" })).toBe(true);
     expect(pending.report("i1", SID, { outcome: "accepted" })).toBe(true);
-    expect(await settled).toEqual({ outcome: "accepted" });
+    expect(await waited).toEqual({ outcome: "not_delivered", reason: "dialog" });
   });
 
-  test("not_delivered decides it only once every run has said so", async () => {
+  test("a report that arrives before the wait still counts", async () => {
     const pending = new PendingInputs();
     pending.open("i2", SID);
-    const settled = pending.settle("i2", 2, 5_000);
-    pending.report("i2", SID, { outcome: "not_delivered", reason: "dialog" });
-    pending.report("i2", SID, { outcome: "not_delivered", reason: "no_terminal" });
-    expect(await settled).toEqual({ outcome: "not_delivered", reason: "dialog" });
+    pending.report("i2", SID, { outcome: "accepted" });
+    expect(await pending.wait("i2", 5_000)).toEqual({ outcome: "accepted" });
   });
 
-  test("a report that arrives before settle is called still counts", async () => {
+  test("silence until the deadline is no report, and the id is forgotten", async () => {
     const pending = new PendingInputs();
     pending.open("i3", SID);
-    pending.report("i3", SID, { outcome: "accepted" });
-    expect(await pending.settle("i3", 1, 5_000)).toEqual({ outcome: "accepted" });
-  });
-
-  test("silence until the deadline is unconfirmed, and the id is forgotten", async () => {
-    const pending = new PendingInputs();
-    pending.open("i4", SID);
-    expect(await pending.settle("i4", 1, 20)).toEqual({ outcome: "unconfirmed" });
-    expect(pending.report("i4", SID, { outcome: "accepted" })).toBe(false);
+    expect(await pending.wait("i3", 20)).toBeUndefined();
+    expect(pending.report("i3", SID, { outcome: "accepted" })).toBe(false);
   });
 
   test("a report naming another session is not taken", () => {
     const pending = new PendingInputs();
-    pending.open("i5", SID);
+    pending.open("i4", SID);
     expect(
-      pending.report("i5", "99999999-2222-4333-8444-555555555555", { outcome: "accepted" }),
+      pending.report("i4", "99999999-2222-4333-8444-555555555555", { outcome: "accepted" }),
     ).toBe(false);
   });
 });
 
-function fakeDeps(overrides: Partial<SessionInputDeps>): SessionInputDeps {
-  return {
+/** What one run does with the line written to it: not take it, answer with a
+ * report, or stay silent. */
+type RunBehaviour = "unwritten" | "silent" | ModuleReport;
+
+/** Deps over a fake sidecar directory whose runs behave as `runs` says, in
+ * socket-name order. Records every line written, by socket. */
+function scripted(
+  runs: Record<string, RunBehaviour>,
+  extra: Partial<SessionInputDeps> = {},
+): { deps: SessionInputDeps; written: { socket: string; line: Record<string, unknown> }[] } {
+  const pending = new PendingInputs();
+  let n = 0;
+  const written: { socket: string; line: Record<string, unknown> }[] = [];
+  const deps: SessionInputDeps = {
     sidecarDir: "/sidecars",
-    pending: new PendingInputs(),
-    newId: () => "fixed-id",
-    listDir: async () => [],
+    pending,
+    newId: () => `id${++n}`,
+    listDir: async () => Object.keys(runs).map((pid) => `${SID}.${pid}.sock`),
     isAlive: () => true,
-    write: async () => "delivered",
-    confirmMs: 5_000,
-    ...overrides,
+    write: async (socket, line) => {
+      const pid = /\.(\d+)\.sock$/.exec(socket)![1]!;
+      const behaviour = runs[pid]!;
+      if (behaviour === "unwritten") return "unavailable";
+      const parsed = JSON.parse(line) as Record<string, unknown>;
+      written.push({ socket: path.basename(socket), line: parsed });
+      if (behaviour !== "silent") pending.report(parsed.id as string, SID, behaviour);
+      return "delivered";
+    },
+    now: Date.now,
+    deadlineMs: 5_000,
+    ...extra,
   };
+  return { deps, written };
 }
 
 describe("liveSidecars", () => {
-  test("takes the session's sockets of live harness pids only", async () => {
-    const deps = fakeDeps({
-      listDir: async () => [
-        `${SID}.100.sock`,
-        `${SID}.200.sock`,
-        `99999999-2222-4333-8444-555555555555.100.sock`,
-        `${SID}.abc.sock`,
-        `${SID}.100.sock.tmp`,
-      ],
-      isAlive: (pid) => pid === 100,
-    });
-    expect(await liveSidecars(SID, deps)).toEqual([`/sidecars/${SID}.100.sock`]);
+  test("takes the session's sockets of live harness pids only, in name order", async () => {
+    const { deps } = scripted(
+      {},
+      {
+        listDir: async () => [
+          `${SID}.200.sock`,
+          `${SID}.100.sock`,
+          `${SID}.300.sock`,
+          `99999999-2222-4333-8444-555555555555.100.sock`,
+          `${SID}.abc.sock`,
+          `${SID}.100.sock.tmp`,
+        ],
+        isAlive: (pid) => pid !== 300,
+      },
+    );
+    expect(await liveSidecars(SID, deps)).toEqual([
+      `/sidecars/${SID}.100.sock`,
+      `/sidecars/${SID}.200.sock`,
+    ]);
   });
 
   test("a missing directory is no sidecar", async () => {
-    const deps = fakeDeps({
-      listDir: async () => {
-        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    const { deps } = scripted(
+      {},
+      {
+        listDir: async () => {
+          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        },
       },
-    });
+    );
     expect(await liveSidecars(SID, deps)).toEqual([]);
   });
 });
 
-describe("sessionInput", () => {
-  test("no sidecar took the line: not_delivered no_module, nothing left waiting", async () => {
-    const pending = new PendingInputs();
-    const deps = fakeDeps({
-      pending,
-      listDir: async () => [`${SID}.100.sock`],
-      write: async () => "unavailable",
-    });
-    expect(await sessionInput(SID, "hello", deps)).toEqual({
-      id: "fixed-id",
-      runs: 0,
+describe("sessionInput asks one run at a time", () => {
+  test("no live run: not_delivered no_module", async () => {
+    const { deps } = scripted({});
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
       reason: "no_module",
     });
-    expect(pending.report("fixed-id", SID, { outcome: "accepted" })).toBe(false);
   });
 
-  test("writes one fill line carrying the id and the text verbatim", async () => {
-    const lines: string[] = [];
-    const pending = new PendingInputs();
-    const deps = fakeDeps({
-      pending,
-      listDir: async () => [`${SID}.100.sock`],
-      write: async (_socket, line) => {
-        lines.push(line);
-        pending.report("fixed-id", SID, { outcome: "accepted" });
-        return "delivered";
-      },
+  test("a run that cannot take input passes the text to the next, under a new id", async () => {
+    const { deps, written } = scripted({
+      "100": { outcome: "not_delivered", reason: "no_terminal" },
+      "200": { outcome: "accepted" },
     });
     const text = "two\nlines  ";
-    expect(await sessionInput(SID, text, deps)).toEqual({
-      id: "fixed-id",
-      runs: 1,
-      outcome: "accepted",
+    expect(await sessionInput(SID, text, deps)).toMatchObject({ outcome: "accepted" });
+    expect(written).toEqual([
+      { socket: `${SID}.100.sock`, line: { kind: "prompt.fill", id: "id1", text } },
+      { socket: `${SID}.200.sock`, line: { kind: "prompt.fill", id: "id2", text } },
+    ]);
+  });
+
+  test("a run that did not take the line is passed over", async () => {
+    const { deps, written } = scripted({ "100": "unwritten", "200": { outcome: "accepted" } });
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
+    expect(written.map((w) => w.socket)).toEqual([`${SID}.200.sock`]);
+  });
+
+  // Each of these may mean the run holding the composer answered: asking the
+  // next run could put the text in twice.
+  for (const reason of ["dialog", "refused", "not_submitted", "enter_failed"] as const) {
+    test(`${reason} stops at that run`, async () => {
+      const { deps, written } = scripted({
+        "100": { outcome: "not_delivered", reason },
+        "200": { outcome: "accepted" },
+      });
+      expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+        outcome: "not_delivered",
+        reason,
+      });
+      expect(written.length).toBe(1);
     });
-    expect(lines).toEqual([`${JSON.stringify({ kind: "prompt.fill", id: "fixed-id", text })}\n`]);
+  }
+
+  test("silence stops at that run and is unconfirmed", async () => {
+    const { deps, written } = scripted(
+      { "100": "silent", "200": { outcome: "accepted" } },
+      { deadlineMs: 30 },
+    );
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+    expect(written.length).toBe(1);
+  });
+
+  test("every run unable: not_delivered with the last run's reason", async () => {
+    const { deps } = scripted({
+      "100": { outcome: "not_delivered", reason: "no_terminal" },
+      "200": { outcome: "not_delivered", reason: "no_composer" },
+    });
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+      outcome: "not_delivered",
+      reason: "no_composer",
+    });
+  });
+
+  // The deadline covers every try: a next run is not asked once it has passed.
+  test("the deadline is one budget for all tries", async () => {
+    let clock = 0;
+    const { deps, written } = scripted(
+      {
+        "100": { outcome: "not_delivered", reason: "no_terminal" },
+        "200": { outcome: "accepted" },
+      },
+      {
+        now: () => clock,
+        deadlineMs: 1_000,
+        write: async (socket, line) => {
+          written.push({ socket: path.basename(socket), line: JSON.parse(line) });
+          clock += 1_000;
+          deps.pending.report(JSON.parse(line).id, SID, {
+            outcome: "not_delivered",
+            reason: "no_terminal",
+          });
+          return "delivered";
+        },
+      },
+    );
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+    expect(written.length).toBe(1);
   });
 });
 
