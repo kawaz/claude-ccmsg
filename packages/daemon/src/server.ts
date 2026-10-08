@@ -12,6 +12,7 @@ import {
   LLM_STATS_DAYS_MIN,
   VERSION,
   PROTOCOL_VERSION,
+  SESSION_INPUT_MODULE_REASONS,
   UNANNOUNCED_PROTOCOL_VERSION,
   resolvePaths,
   type AgentInfo,
@@ -101,6 +102,7 @@ import {
 import { deriveRepoWs } from "./repo-derive.ts";
 import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
+import { PendingInputs, productionInputDeps, sessionInput } from "./session-input.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -309,6 +311,9 @@ export interface Daemon {
   peerInjector: PeerInjector;
   /** Absolute launcher path the injected envelope's reply line names. */
   launcher: string;
+  /** session_input requests waiting for their hooks module's report
+   * (session-input.ts, DR-0035). */
+  pendingInputs: PendingInputs;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -1536,6 +1541,8 @@ const IDENTITY_OPS = new Set([
   "session_launch",
   "session_kill",
   "session_rename",
+  "session_input",
+  "session_input_result",
   "session_launcher_config",
   "leave",
   "invite",
@@ -2685,6 +2692,80 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
+    case "session_input": {
+      // user role only (DR-0035 §4): what this op puts into a session is
+      // recorded as a person's typing, so no session-role agent may call it.
+      if (conn.identity?.role !== "user") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_input' requires user role");
+        return;
+      }
+      if (typeof req.session_id !== "string" || req.session_id === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_input requires a non-empty session_id");
+        return;
+      }
+      if (typeof req.text !== "string" || req.text.trim() === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_input requires a non-empty text");
+        return;
+      }
+      // Slow reply: it waits for the session's hooks module to report, up to
+      // SESSION_INPUT_CONFIRM_MS. Other requests on this connection run on
+      // meanwhile (DR-0029).
+      const input = await sessionInput(
+        req.session_id,
+        req.text,
+        productionInputDeps(daemon.paths.sidecars, daemon.pendingInputs),
+      );
+      const { id, runs, ...outcome } = input;
+      daemon.log.info(
+        `session-input ${id} -> ${req.session_id}: runs=${runs} ${outcome.outcome}` +
+          (outcome.outcome === "not_delivered" ? ` (${outcome.reason})` : ""),
+      );
+      send(conn, { ok: true, ...outcome });
+      return;
+    }
+
+    case "session_input_result": {
+      // The reporter is the session the request went to: its hooks module
+      // runs `ccmsg sidecar report`, which hellos as that session.
+      if (conn.identity?.role !== "session") {
+        sendErr(conn, ErrorCode.bad_request, "op 'session_input_result' requires session role");
+        return;
+      }
+      if (typeof req.id !== "string" || req.id === "") {
+        sendErr(conn, ErrorCode.invalid_args, "session_input_result requires a non-empty id");
+        return;
+      }
+      if (req.outcome !== "accepted" && req.outcome !== "not_delivered") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "session_input_result outcome must be 'accepted' or 'not_delivered'",
+        );
+        return;
+      }
+      if (
+        req.outcome === "not_delivered" &&
+        (req.reason === undefined || !SESSION_INPUT_MODULE_REASONS.includes(req.reason))
+      ) {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          `session_input_result with not_delivered requires a reason (${SESSION_INPUT_MODULE_REASONS.join(", ")})`,
+        );
+        return;
+      }
+      const known = daemon.pendingInputs.report(req.id, conn.identity.sid, {
+        outcome: req.outcome,
+        ...(req.reason !== undefined ? { reason: req.reason } : {}),
+      });
+      if (!known) {
+        sendErr(conn, ErrorCode.not_found, `no session_input is waiting under id ${req.id}`);
+        return;
+      }
+      send(conn, { ok: true });
+      return;
+    }
+
     case "session_env": {
       // user role only, same posture as session_kill and the fs ops: a
       // session-role agent must not be able to read another session's
@@ -3597,6 +3678,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
     launcher: resolveLauncher(),
+    pendingInputs: new PendingInputs(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);

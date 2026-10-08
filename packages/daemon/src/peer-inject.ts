@@ -198,7 +198,7 @@ export class PeerInjector {
     const inbox = await this.#inbox(target.socketPath);
     const watching = inbox?.status(m.mid, this.#statusMs);
     const from = inbox === undefined ? undefined : `uds:${inbox.path}`;
-    const written = await write(
+    const written = await writeSocket(
       target.socketPath,
       injectFrames(sid, token, m, from),
       this.#writeMs,
@@ -290,8 +290,13 @@ export class PeerInjector {
 }
 
 /** Connect and flush. The connection carries nothing back, so the budget covers
- * connect and flush only. */
-async function write(socketPath: string, payload: string, ms: number): Promise<InjectOutcome> {
+ * connect and flush only. Shared with the sidecar writes of session_input,
+ * whose sockets answer nothing either. */
+export async function writeSocket(
+  socketPath: string,
+  payload: string,
+  ms: number,
+): Promise<InjectOutcome> {
   const started = Date.now();
   const settled = Promise.withResolvers<InjectOutcome>();
   const bytes = Buffer.from(payload, "utf8");
