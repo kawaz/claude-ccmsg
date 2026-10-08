@@ -2446,6 +2446,14 @@ a {
   color: var(--fg-muted);
 }
 
+/* DR-0035 §2: a 1on1 room is read-only; this line replaces its composer and
+ * points at the session's input box. */
+.room-readonly-note {
+  margin: var(--space-5) 0 0;
+  font-size: var(--font-size-lg);
+  color: var(--fg-muted);
+}
+
 /* DR-0012: wraps RoomTitle + the archive toggle button on one line, title
  * taking the remaining width (RoomTitle's own inner flex handles its own
  * name/edit-button layout; this is one level up). */

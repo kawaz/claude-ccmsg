@@ -7,6 +7,7 @@ import { hasSidDragPayload, parseSidDragPayload } from "../dnd.ts";
 import { MemberChip } from "./MemberChip.tsx";
 import { TimelineItem } from "./TimelineItem.tsx";
 import { RoomComposerFab } from "./RoomComposerFab.tsx";
+import { RoomReadOnlyNote } from "./RoomReadOnlyNote.tsx";
 import { RoomTitle } from "./RoomTitle.tsx";
 import { isAtBottom } from "./timeline-autoscroll.ts";
 import { useNow } from "../useNow.ts";
@@ -254,6 +255,7 @@ export function RoomView({ state }: { state: AppState }) {
             {notice.text}
           </span>
         )}
+        <RoomReadOnlyNote room={room} />
       </header>
       <div
         class={dragOver ? "timeline timeline-drop-active" : "timeline"}
@@ -285,10 +287,12 @@ export function RoomView({ state }: { state: AppState }) {
         ))}
       </div>
       {/* UNIF-Q1=b (kawaz r15 mid=1/mid=3、2026-07-14): RoomView の Composer
-       *  を 1on1 と同じ「右下 + fab → floating popup」に統一。inline
-       *  Composer は廃止。attachment / broadcast / mention の全機能は
-       *  RoomComposerFab 内の Composer にそのまま委譲される。 */}
-      <RoomComposerFab room={room} mentionTo={state.mentionTo} />
+       *  を SessionView の入力欄と同じ「右下 + fab → floating popup」に統一。
+       *  attachment / broadcast / mention の全機能は RoomComposerFab 内の
+       *  Composer にそのまま委譲される。1on1 room は読み取り専用 (DR-0035 §2、
+       *  daemon も post を拒否する) なので Composer を出さず、代わりに
+       *  header の RoomReadOnlyNote がセッション画面の入力欄を示す。 */}
+      {room.kind !== "1on1" && <RoomComposerFab room={room} mentionTo={state.mentionTo} />}
     </main>
   );
 }
