@@ -121,7 +121,7 @@ check-versions:
 [private]
 _local-plugin-reload:
     -claude plugin marketplace update claude-ccmsg
-    -claude plugin update claude-ccmsg@claude-ccmsg
+    -claude plugin update ccmsg-v1@claude-ccmsg
     -@just _local-daemon-upgrade
     @echo ""
     @echo "[hint] /reload-plugins to apply in this session without restart"
@@ -133,7 +133,7 @@ _local-plugin-reload:
 [private]
 [script]
 _local-daemon-upgrade:
-    cache_dir="$HOME/.claude-personal/plugins/cache/claude-ccmsg/claude-ccmsg"
+    cache_dir="$HOME/.claude-personal/plugins/cache/claude-ccmsg/ccmsg-v1"
     latest=$(ls "$cache_dir" | sort -V | tail -1)
     [ -x "$cache_dir/$latest/bin/ccmsg" ] || exit 0
     "$cache_dir/$latest/bin/ccmsg" rooms > /dev/null 2>&1 || true

@@ -15,14 +15,14 @@ Requires [bun](https://bun.sh/) (the CLI and daemon run on bun).
 
 ```
 claude plugin marketplace add kawaz/claude-ccmsg
-claude plugin install claude-ccmsg@claude-ccmsg
+claude plugin install ccmsg-v1@claude-ccmsg
 ```
 
 Update:
 
 ```
-claude plugin marketplace update ccmsg
-claude plugin update claude-ccmsg@claude-ccmsg
+claude plugin marketplace update claude-ccmsg
+claude plugin update ccmsg-v1@claude-ccmsg
 ```
 
 The plugin's `bin/ccmsg` lives under a versioned plugin-cache path, so it isn't

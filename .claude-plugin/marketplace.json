@@ -8,11 +8,12 @@
     "version": "0.155.0"
   },
   "renames": {
-    "ccmsg": "claude-ccmsg"
+    "ccmsg": "claude-ccmsg",
+    "claude-ccmsg": "ccmsg-v1"
   },
   "plugins": [
     {
-      "name": "claude-ccmsg",
+      "name": "ccmsg-v1",
       "description": "Central-daemon messenger for Claude Code sessions (rewrite of cmux-msg)",
       "source": "./"
     }
