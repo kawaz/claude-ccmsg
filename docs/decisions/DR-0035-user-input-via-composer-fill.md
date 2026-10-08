@@ -1,6 +1,6 @@
 # DR-0035: webui からセッションへの人の入力は composer への fill + Enter で届け、1on1 room を廃止する
 
-- Status: Accepted (2026-10-08、kawaz 裁定) — 🚧 進行中 (段 1 = daemon の op・サイドカー・hooks module は実装済み。webui・1on1 の削除・読み取り側の整理が残る)
+- Status: Accepted (2026-10-08、kawaz 裁定) — ✅ 実装済み (daemon の `session_input`・サイドカー・hooks module、webui の入力欄、1on1 room の作成の停止と既存 1on1 room の読み取り専用化)
 - Date: 2026-10-06
 
 ## Context
@@ -73,7 +73,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - daemon: `session_input` op、サイドカーへの書き込み、fill の成否の受け取りを持つ。1on1 room の作成・配送・`reply_via` の 1on1 分岐を削る
 - plugin: hooks module と `ccmsg sidecar` サブコマンドが入る。function hooks が無効な環境では §1 の経路は使えない (§5 のとおり理由を返す)
 - 封筒を前提にしていた読み取り (`packages/protocol/src/ccmsg-direct-transcript.ts`、`packages/daemon/src/session-user-input.ts`、`packages/daemon/src/session-dump.ts`、webui の `transcript-model.ts` の u1 バブル化) は、1on1 の封筒が来なくなる前提で見直す。人の入力は transcript 上で手入力と同じ形になるので、u1 バブル化の特別扱いは不要になる
-- DR-0014 の 1on1 room 本体 (§2.1-2.3, §2.6) と DR-0017 の 1on1 分岐は本 DR が置き換える。本 DR の実装が入った時点で DR-0014 を Superseded として archive に移す (それまでは DR-0014 が動いているコードの説明)
+- DR-0014 の 1on1 room の作成・書き込み・返信の分岐と、DR-0017 の 1on1 分岐は本 DR が置き換えた。DR-0014 に残る `kind: "1on1"` の定義は `say` の記録先として使われているので、DR-0014 の archive は room を廃止する [DR-0036](./DR-0036-retire-rooms-for-p2p.md) と一緒に行う
 - fill と Enter の間に人が端末で打鍵すると文が混ざる (findings の実用的な示唆)。module が fill の成功を見てすぐ Enter を送ることで、この間を数十 ms に縮める (§1)
 
 ## 関連

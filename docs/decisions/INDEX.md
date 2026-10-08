@@ -50,7 +50,7 @@
 | [DR-0032](./DR-0032-repo-split-protocol-first.md) | Accepted | 据え置き (v2 の起点) | リポ分離と規約ファーストの作り直し (daemon / protocol / webui) |
 | [DR-0033](./DR-0033-webui-color-system.md) | Proposed | webui へ移管 | webui カラーシステム (少数の入力から全色を導出する 3 層構造 + テーマエディタ) |
 | [DR-0034](./DR-0034-peer-socket-injection.md) | Accepted / 実装済 | 置き換わる予定 | v1 daemon による room msg の peer messaging socket 直接注入 — v2 の配送経路は protocol-v2 が別途定める |
-| [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (🚧 進行中) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を廃止する — v2 の DR-0016 §2.2 / §5 の方式で、Enter は module が自分の端末に送る。DR-0014 の 1on1 room を置き換える予定 |
+| [DR-0035](./DR-0035-user-input-via-composer-fill.md) | Accepted (✅ 実装済み) | 据え置き | webui からセッションへの人の入力を composer への fill + Enter で届け、1on1 room を作らず既存の 1on1 room を読み取り専用にする — v2 の DR-0016 §2.2 / §5 の方式で、Enter は module が自分の端末に送る |
 | [DR-0036](./DR-0036-retire-rooms-for-p2p.md) | Proposed | 据え置き | room を廃止し、セッション間メッセージを sid 宛の直送 (v2 の契約の封筒・mid・返信行) にする — DR-0001 §3-§6 / 0003 / 0011 / 0012 / 0013 / 0016 / 0017 の room 前提部分を置き換える予定 |
 
 ## Superseded (一部)
@@ -61,7 +61,7 @@
 |---|---|---|---|
 | [DR-0004](./DR-0004-webui-architecture.md) | §4 実装方式 → [DR-0005](./DR-0005-webui-frontend-architecture.md) / §5 locator → [webui-url-grammar](../design/webui-url-grammar.md) | 置き換わる予定 | webui architecture (HTTP/WS transport + UI) — origin 制限は DR-0032 §2.1 の「許可 origin の設定」へ。§4「protocol 拡張はしない」は面の分離 (protocol-v2 §2) が引き取る |
 | [DR-0005](./DR-0005-webui-frontend-architecture.md) | §1 action/reducer・§3 配信形態 → [DR-0032](./DR-0032-repo-split-protocol-first.md) §2.1 | webui へ移管 | webui frontend architecture (workspace 化を見込んだ器) |
-| [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | reply_via 部 → [DR-0017](./DR-0017-reply-command.md) | 置き換わる予定 / UI 部は webui へ移管 | 1on1 room + msg 応答経路 hint (reply_via) — 1on1 room は protocol-v2 §2.1 の sid 宛配送へ |
+| [DR-0014](./DR-0014-1on1-room-and-reply-via.md) | reply_via 部 → [DR-0017](./DR-0017-reply-command.md) / 1on1 room の作成・書き込み → [DR-0035](./DR-0035-user-input-via-composer-fill.md) §2 | 置き換わる予定 | 1on1 room + msg 応答経路 hint (reply_via) — 残るのは `kind: "1on1"` の定義 (say の記録先、読み取り専用)。room の廃止 (DR-0036) で archive へ |
 
 ## Archived
 
