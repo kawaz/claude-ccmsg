@@ -85,8 +85,8 @@ describe("DR-0014 findExistingOneOnOne (§2.2 kind-based lookup)", () => {
   });
 
   // 何を保証するか (§2.1 dedup: 対象 sid の 1on1 が無ければ null): a broadcast
-  // that happens to contain the sid as a member does NOT count — auto-create
-  // would spin up a fresh 1on1 in that case.
+  // that happens to contain the sid as a member does NOT count, so the
+  // session's says are not overlaid from it.
   test("returns null when no kind:'1on1' room has the target sid as its sole member", () => {
     const state: AppState = {
       ...initialState(),
@@ -121,8 +121,7 @@ describe("DR-0014 findExistingOneOnOne (§2.2 kind-based lookup)", () => {
 
   // 何を保証するか (left member skip): a member who has left the 1on1 room
   // (kicked, or voluntarily left — unusual for 1on1 but possible) doesn't
-  // match, so a fresh compose against that sid would auto-create a new
-  // 1on1 room rather than resurrecting the dead one.
+  // match, so the dead room is not treated as that session's 1on1 room.
   test("skips rooms where the sole member has left", () => {
     const state: AppState = {
       ...initialState(),

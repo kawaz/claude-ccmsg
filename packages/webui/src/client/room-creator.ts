@@ -17,8 +17,7 @@ export interface RoomCreatorForm {
   title: string;
   memberSids: string[];
   /** kawaz r26 mid=118: broadcast rooms had no webui creation path (CLI-only
-   * `--kind broadcast`). "1on1" is deliberately absent — that kind is
-   * auto-created by the session-view composer (DR-0014 §2.2), not this form. */
+   * `--kind broadcast`). create_room does not open 1on1 rooms (DR-0035 §2). */
   kind: "normal" | "broadcast";
 }
 

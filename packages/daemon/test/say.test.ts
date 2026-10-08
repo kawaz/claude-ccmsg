@@ -66,8 +66,8 @@ describe("say op", () => {
         const mine = rooms.filter((r) => r.kind === "1on1");
         expect(mine).toHaveLength(1);
         expect(mine[0].id).toBe(first.room);
-        // webui の auto-create と同じ `<repo> 1on1 <sid8>` 形。どちらが先に
-        // 作っても sidebar の見え方が変わらないことの保証。
+        // 既存の 1on1 room と同じ `<repo> 1on1 <sid8>` 形で、sidebar の見え方を
+        // 揃える。
         expect(mine[0].title).toBe("repo-sid-say-1 1on1 sid-say-");
         expect(mine[0].members.map((m: any) => m.sid)).toEqual(["sid-say-1"]);
         expect(mine[0].say_unread_seqs).toEqual([first.seq, second.seq]);
@@ -80,30 +80,58 @@ describe("say op", () => {
     T,
   );
 
-  // 何を保証するか: webui が既に 1on1 room を開いていれば say はそこへ入る
-  // (別の room に分岐しない)。「今開いている会話の続き」として読めることが
-  // 1on1 に置く理由なので、ここが割れると設計目的を失う。
+  // 何を保証するか: そのセッションの 1on1 room が既に storage にあれば say は
+  // そこへ入る (別の room に分岐しない)。「今までの会話の続き」として読める
+  // ことが 1on1 に置く理由なので、ここが割れると設計目的を失う。create_room
+  // では 1on1 room を開けないので、既存の room は storage に置いた jsonl を
+  // daemon の起動で読み込ませて用意する。
   test(
-    "reuses a 1on1 room the webui created for this sid",
+    "reuses an existing 1on1 room loaded from storage",
     async () => {
       const ctx = await startTestDaemon();
       try {
+        // Stop the daemon, place the room file, start it again so scanRooms
+        // loads the room the same way it loads rooms left by a previous run.
+        const c = await connect(ctx.sock);
+        await c.request({ op: "shutdown" });
+        c.close();
+        await ctx.proc.exited;
+        try {
+          fs.unlinkSync(ctx.sock);
+        } catch {
+          // shutdown usually cleans it up
+        }
+        const ts = "2026-01-01T00:00:00.000Z";
+        fs.mkdirSync(ctx.roomsDir, { recursive: true });
+        fs.writeFileSync(
+          `${ctx.roomsDir}/r1.jsonl`,
+          [
+            { type: "kind", kind: "1on1", ts },
+            { type: "title", title: "existing 1on1", ts },
+            {
+              type: "member",
+              id: "a1",
+              sid: "sid-say-2",
+              repo: "",
+              ws: "",
+              cwd: "",
+              joined_at: ts,
+            },
+          ]
+            .map((e) => `${JSON.stringify(e)}\n`)
+            .join(""),
+        );
+        ctx.proc = spawnDaemonProc(ctx.stateDir, ctx.dataDir);
+        await waitConnectable(ctx.sock);
+
         const s = await session(ctx, "sid-say-2");
         const u = await user(ctx);
-        const created = await u.request<any>({
-          op: "create_room",
-          members: ["sid-say-2"],
-          kind: "1on1",
-          title: "webui made this",
-        });
-        expect(created.ok).toBe(true);
-
         const said = await s.request<any>({ op: "say", text: "yo" });
         expect(said.created).toBe(false);
-        expect(said.room).toBe(created.room);
+        expect(said.room).toBe("r1");
         // 既存 room の title は say が上書きしない。
         const rooms = await roomsOf(u);
-        expect(rooms.find((r) => r.id === created.room).title).toBe("webui made this");
+        expect(rooms.find((r) => r.id === "r1").title).toBe("existing 1on1");
         u.close();
         s.close();
       } finally {

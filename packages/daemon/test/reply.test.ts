@@ -155,11 +155,8 @@ describe("DR-0017 reply op", () => {
       try {
         const u = await user(ctx);
         const a = await session(ctx, "A");
-        const created = await u.request<{ room: string }>({
-          op: "create_room",
-          members: ["A"],
-          kind: "1on1",
-        });
+        // The say op is the only path that still opens a 1on1 room.
+        const created = await a.request<{ room: string }>({ op: "say", text: "hello" });
         const posted = await u.request<{ mid: number }>({
           op: "post",
           room: created.room,

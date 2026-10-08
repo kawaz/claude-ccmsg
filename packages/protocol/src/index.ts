@@ -307,10 +307,11 @@ export type StorageEvent =
  * - `"broadcast"` = auto-populated by session lifecycle, agent post is
  *   restricted to `to: ["u1", ...]`, member/leave events are suppressed from
  *   the subscribe stream.
- * - `"1on1"` = a fixed 2-party room (u1 + a single session), created by the
- *   webui's SessionView floating composer for kawaz→session priv. No
- *   auto-populate. u1 posts carry a reply instruction directing the agent
- *   to its assistant response; session posts are rejected (§2.5). */
+ * - `"1on1"` = a fixed 2-party room (u1 + a single session). Not created by
+ *   `create_room` (DR-0035 §2); the daemon's `say` op creates one to record
+ *   a session's says. No auto-populate. u1 posts carry a reply instruction
+ *   directing the agent to its assistant response; session posts are
+ *   rejected (§2.5). */
 export type RoomKind = "normal" | "broadcast" | "1on1";
 
 /** A storage event as delivered over a subscribe stream: flattened with room id.
@@ -1028,14 +1029,13 @@ export interface CreateRoomRequest {
    * a room that observes without participating. Ignored for user-role callers
    * (who never auto-include either way). */
   include_self?: boolean;
-  /** Room kind (DR-0013 broadcast / DR-0014 1on1). Default `"normal"`.
+  /** Room kind (DR-0013 broadcast). Default `"normal"`.
    * - `"broadcast"` opens a broadcast room whose members are auto-populated
    *   from the live session registry — `members` is ignored and the daemon
    *   returns a `warning` field explaining so (§2.9).
-   * - `"1on1"` opens a 2-party priv room (u1 + a single session). `members`
-   *   MUST contain exactly one sid; empty or multiple returns
-   *   `one_on_one_requires_single_member` (DR-0014 §2.1). */
-  kind?: RoomKind;
+   * A `"1on1"` room is not created through this op (DR-0035 §2); the daemon
+   * refuses it with `invalid_args`. */
+  kind?: "normal" | "broadcast";
 }
 
 /** Record that this session spoke through `ccmsg say`.
@@ -3164,11 +3164,6 @@ export const ErrorCode = {
   // Broadcast room (DR-0013 §2.4): agent post to a broadcast room must include
   // "u1" in `to`. "u1 に届かない agent 発話" を broadcast の意味論で禁じるため。
   broadcast_agent_target_required: "broadcast_agent_target_required",
-  // 1on1 room (DR-0014 §2.1): create_room --kind 1on1 requires exactly one sid
-  // in `members`. Empty or multiple is refused up front — a 1on1 room's
-  // meaning is "u1 と 1 session の 2 者確定"、複数 session なら通常 room /
-  // broadcast room を使う。
-  one_on_one_requires_single_member: "one_on_one_requires_single_member",
   // reply (DR-0017 §2.2): the mid the reply points at doesn't exist in the room.
   msg_not_found: "msg_not_found",
   // reply (DR-0017 §2.2): replying to your own msg is meaningless — the

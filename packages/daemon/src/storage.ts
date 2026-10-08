@@ -235,10 +235,9 @@ function computeDerived(room: Room): void {
   // - broadcast: kawaz needs multiple parallel broadcast rooms (dev / debug /
   //   ...) — a same-sid-set dedup key would fold every create_room{kind:"broadcast"}
   //   call into the very first one (DR-0013 §2.1, r12 mid=3).
-  // - 1on1: pairing is (u1, target_sid); another create_room --kind 1on1 for
-  //   the same sid must NOT fold into a different room's dedup entry, and
-  //   webui's "reuse-if-exists" auto-create (DR-0014 §2.2) does its own lookup
-  //   by kind === "1on1" instead of trusting the dedup index.
+  // - 1on1: pairing is (u1, target_sid); the say op looks up a session's 1on1
+  //   room by kind === "1on1" instead of trusting the dedup index, and a
+  //   normal create_room for the same sid set must not fold into the 1on1 room.
   // `dedupEligible: false` here matches next_room's prev-linked room treatment.
   room.dedupEligible = prev.length === 0 && kind === "normal";
   room.dedupKey = [...sids].sort().join(",");

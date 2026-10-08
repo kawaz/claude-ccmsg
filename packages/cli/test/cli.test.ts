@@ -998,9 +998,29 @@ describe("ccmsg CLI create-room --kind broadcast (DR-0013)", () => {
         env,
       );
       expect(res.code).not.toBe(0);
-      expect(res.err).toContain("--kind must be 'normal', 'broadcast', or '1on1'");
+      expect(res.err).toContain("--kind must be 'normal' or 'broadcast'");
       expect(res.out).toBe("");
       // daemon には接続しないこと (前段で早期 reject)
+      const st = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(st.running).toBe(false);
+    } finally {
+      await runCli(["daemon", "stop"], env).catch(() => {});
+      cleanup();
+    }
+  }, 30000);
+
+  // 何を保証するか (DR-0035 §2): create-room では 1on1 room を作らない。
+  // `--kind 1on1` は不正値と同じく CLI 側で落とし、daemon には接続しない。
+  test("--kind 1on1 は exit 非零で拒否される", async () => {
+    const { env, cleanup } = makeEnv();
+    try {
+      const res = await runCli(
+        ["--sid", "S1", "create-room", "--kind", "1on1", "--members", "S2"],
+        env,
+      );
+      expect(res.code).not.toBe(0);
+      expect(res.err).toContain("--kind must be 'normal' or 'broadcast' (got '1on1')");
+      expect(res.out).toBe("");
       const st = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
       expect(st.running).toBe(false);
     } finally {

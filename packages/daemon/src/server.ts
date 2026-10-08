@@ -365,20 +365,12 @@ function sendErr(conn: Conn, code: string, msg: string): void {
   send(conn, { ok: false, error: { code, msg } });
 }
 
-function sendReplyViaTlError(conn: Conn, room: Room | null): void {
-  // `room=null` は create_room/next_room の pre-check 経路 (session 発 1on1 post の
-  // reply_via_tl 拒否 (DR-0014 §2.1) を初期 --msg にも適用、issue
-  // 2026-07-17-one-on-one-initial-msg-guard) — 対象 room がまだ存在しないので room id を含めず「session 発の
-  // 初期 --msg 自体を諦めろ」と誘導する。room 指定時は既存 post/reply ガードの
-  // 文言 (room id 込み) を維持する。
-  const suffix = room
-    ? `do not post/reply into ${room.id}`
-    : `do not attach --msg on a session-initiated 1on1 create_room/next_room`;
+function sendReplyViaTlError(conn: Conn, room: Room): void {
   sendErr(
     conn,
     ErrorCode.reply_via_tl,
     `this 1on1 room is routed "tl": respond via your normal assistant output ` +
-      `(transcript) — ${suffix}`,
+      `(transcript) — do not post/reply into ${room.id}`,
   );
 }
 
@@ -1948,71 +1940,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
 
     case "create_room": {
       const explicitMembers = Array.isArray(req.members) ? req.members : [];
-      const kind: RoomKind =
-        req.kind === "broadcast" ? "broadcast" : req.kind === "1on1" ? "1on1" : "normal";
-
-      if (kind === "1on1") {
-        // DR-0014 §2.1 1on1 room = "u1 + 単一 session の 2 者 room".
-        // members must be exactly one non-empty sid string. Empty / multiple /
-        // non-string entries all fail with one_on_one_requires_single_member so
-        // the caller can't accidentally open a 3-party or 0-party priv room —
-        // 1on1's whole point is "2 者確定なので配信対象は必然的に絞られる".
-        const targetSids = explicitMembers.filter(
-          (s): s is string => typeof s === "string" && s !== "",
+      // The wire value is unchecked JSON, so it is read as unknown. A 1on1 room
+      // is not opened through create_room (DR-0035 §2): the person reaches a
+      // session through session_input, and the say op opens the room it
+      // records into on its own.
+      const kindRaw: unknown = req.kind;
+      if (kindRaw === "1on1") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "create_room cannot open a 1on1 room; omit kind for a normal room",
         );
-        if (targetSids.length !== 1) {
-          sendErr(
-            conn,
-            ErrorCode.one_on_one_requires_single_member,
-            "create_room --kind 1on1 requires exactly one member sid",
-          );
-          return;
-        }
-        const targetSid = targetSids[0]!;
-        // session 発の初期 --msg は 1on1 room に対して post ガード (DR-0014 §2.1
-        // reply_via_tl、issue 2026-07-17-one-on-one-initial-msg-guard) と同じ理由で拒否
-        // する — 1on1 の返信レールは TL (transcript) で、room msg 経路ではない。
-        // 副作用 (KindEvent/member 書き込み) を残さないため、room 作成前に落とす。
-        // broadcast の初期 msg 例外 (§2.10) は unchanged: 1on1 のみに適用。
-        if (req.msg !== undefined && conn.identity?.role === "session") {
-          sendReplyViaTlError(conn, null);
-          return;
-        }
-        // include_self is deliberately NOT honored for 1on1 (§2.1: session-role
-        // caller does NOT auto-prepend). If a session creates a 1on1 with its
-        // OWN sid, the resulting room has member.sid == self.sid, member.id = a1,
-        // and u1 stays implicit — the same 2-party shape as a webui-created one.
-        const room = createRoom(daemon, [targetSid], false, "1on1");
-        // Kind marker first (same rationale as broadcast: mid-creation crash
-        // recovery must not resurface a 1on1 as "normal" and then start
-        // dedup-folding future creates into it).
-        appendEvent(room, { type: "kind", kind: "1on1", ts: nowIso() } satisfies KindEvent);
-        if (req.title)
-          appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
-        writeMembers(daemon, room, [targetSid]);
-        let mid: number | undefined;
-        let authorId: string | null = null;
-        if (req.msg) {
-          authorId = resolveFrom(conn, room);
-          if (authorId !== null) {
-            mid = room.lastMid + 1;
-            appendEvent(room, { type: "msg", mid, from: authorId, ts: nowIso(), msg: req.msg });
-          }
-        }
-        // 1on1 rooms are dedup-exempt (createRoom seeded dedupEligible=false,
-        // storage.ts's computeDerived enforces the same on restart) — the
-        // webui's "reuse existing 1on1 with this sid, else create" auto-create
-        // (§2.2) does its own lookup by kind==="1on1" instead of relying on
-        // the dedup index. So we deliberately do NOT populate dedupIndex here.
-        deliverNewRoom(daemon, room, authorOf(conn), authorId);
-        send(conn, {
-          ok: true,
-          room: room.id,
-          reused: false,
-          ...(mid !== undefined ? { mid } : {}),
-        });
         return;
       }
+      if (kindRaw !== undefined && kindRaw !== "normal" && kindRaw !== "broadcast") {
+        sendErr(conn, ErrorCode.invalid_args, 'create_room kind must be "normal" or "broadcast"');
+        return;
+      }
+      const kind: RoomKind = kindRaw === "broadcast" ? "broadcast" : "normal";
 
       if (kind === "broadcast") {
         // DR-0013 §2.2 broadcast rooms auto-populate from the live session
@@ -2154,8 +2099,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         return;
       }
       // 1on1 の次スレも 1on1 (DR-0014 §2 kind inheritance)
-      // なので、create_room 側と同じく session 発の初期 --msg は "tl" 経路に
-      // 誘導する (post ガード DR-0014 §2.1 と同じ理由)。next_room 自体 (msg なし) は
+      // なので、session 発の初期 --msg は "tl" 経路に誘導する (post ガード
+      // DR-0014 §2.1 と同じ理由)。next_room 自体 (msg なし) は
       // 正当な操作なので通す。broadcast の初期 msg 例外 (§2.10) は unchanged。
       if (req.msg !== undefined && old.kind === "1on1" && conn.identity?.role === "session") {
         sendReplyViaTlError(conn, old);
@@ -2232,11 +2177,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       let room = findOneOnOneRoomForSid(daemon, sid);
       const created = room === null;
       if (room === null) {
-        // 同じ形の room を webui の §2.2 auto-create と揃える (kind marker を
-        // 先に書く理由は create_room の 1on1 分岐と同一: 作成途中でクラッシュ
-        // しても restart 後に "normal" として復活させない)。title も webui と
-        // 同じ `<repo> 1on1 <sid8>` にして、どちらが先に作っても見た目が同じに
-        // なるようにする。
+        // kind marker を先に書く: 作成途中でクラッシュしても restart 後に
+        // "normal" として復活させない。title は既存の 1on1 room と同じ
+        // `<repo> 1on1 <sid8>` にして見た目を揃える。
         room = createRoom(daemon, [sid], false, "1on1");
         appendEvent(room, { type: "kind", kind: "1on1", ts: nowIso() } satisfies KindEvent);
         const repo = daemon.sessions.get(sid)?.meta.repo || "(unknown)";
@@ -2497,9 +2440,8 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
           last_ts: lastTs(r),
           ...(r.archived ? { archived: true } : {}),
           // DR-0013 broadcast / DR-0014 1on1: surface non-`"normal"` kind so
-          // CLI can badge and webui can pick the right Composer variant (or
-          // reuse an existing 1on1 room, §2.2 auto-create). "normal" is the
-          // absence of the field.
+          // CLI can badge and webui can pick the right Composer variant and
+          // group 1on1 rooms. "normal" is the absence of the field.
           ...(r.kind !== "normal" ? { kind: r.kind } : {}),
           // 📣 marker seed: only 1on1 rooms ever carry say
           // events, but the scan runs uniformly — a room's kind is not a reason
