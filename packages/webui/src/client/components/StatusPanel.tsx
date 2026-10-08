@@ -20,7 +20,6 @@ import {
   buildStatusSections,
   formatAgentLiveState,
   formatContextUsage,
-  formatHyouiNamespace,
 } from "../session-status-view.ts";
 import { pinnedHitForSid, pinnedSessionTitle } from "../pinned-sessions.ts";
 import {
@@ -436,7 +435,6 @@ export function StatusPanel({
   // title the session doesn't have.
   const pinned = pinnedHitForSid(state.pinnedSessions, sid);
   const title = pinned ? pinnedSessionTitle(pinned, agent) : (agent?.name ?? "");
-  const namespace = formatHyouiNamespace(agent);
   // HYOUI_SESSION_ID の値はその端末そのものの名前なので、hyoui web gateway が
   // 設定されている環境ではその端末のページへのリンクにする (Terminal タブと
   // 同じ gateway URL 源 = hello の terminal_gateway_url)。gateway 未設定なら
@@ -517,26 +515,6 @@ export function StatusPanel({
                 <span>{agent.hyoui_session_id}</span>
               )}
               <CopyButton value={agent.hyoui_session_id} label="HYOUI_SESSION_ID" />
-            </>
-          ) : (
-            "—"
-          )}
-        </dd>
-        <dt>HYOUI_NAMESPACE</dt>
-        <dd class="status-meta-value">
-          {namespace ? (
-            <>
-              <span
-                class={namespace.inferred ? "status-meta-inferred" : undefined}
-                title={
-                  namespace.inferred
-                    ? "HYOUI_NAMESPACE 未設定 — hyoui はこれを default namespace として扱う"
-                    : undefined
-                }
-              >
-                {namespace.text}
-              </span>
-              <CopyButton value={namespace.text} label="HYOUI_NAMESPACE" />
             </>
           ) : (
             "—"

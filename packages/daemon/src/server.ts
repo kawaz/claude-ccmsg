@@ -2659,16 +2659,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const renamed = await sessionRename(
         req.session_id,
         titleCheck.title,
-        productionRenameDeps(
-          (sid) => {
-            const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
-            return agent?.hyoui_session_id ?? null;
-          },
-          (sid) => {
-            const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
-            return agent?.hyoui_namespace ?? null;
-          },
-        ),
+        productionRenameDeps((sid) => {
+          const agent = daemon.agentsPoller.cache.agents.find((a) => a.sessionId === sid);
+          return agent?.hyoui_session_id ?? null;
+        }),
       );
       if (renamed.ok) {
         send(conn, {
