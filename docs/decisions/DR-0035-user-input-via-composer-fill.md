@@ -23,7 +23,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 ### 1. 人からセッションへの入力は composer に入れる
 
 - webui がセッションに書く入力は、room への post ではなく、セッション宛の新しい op (仮称 `session_input`、user role 限定) で daemon に渡す
-- daemon はそのセッションのサイドカーに fill の依頼を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` / `HYOUI_NAMESPACE` を宛先に `$.process.run(["hyoui", "input", "--namespace=<ns>", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
+- daemon はそのセッションのサイドカーに fill の依頼を書く。module は composer の書きかけを退避して fill し、fill が成功したら**自分のセッションの端末に Enter を送り** (`$.env.get` で読んだ `HYOUI_SESSION_ID` を宛先に `$.process.run(["hyoui", "input", <id>, "key:Enter"])`)、`prompt.submit` の直後に書きかけを fill し直す (kawaz 2026-10-08)。daemon は端末を解決せず、Enter も送らない。fill から Enter までが module の中で閉じるので、daemon との往復が要らず、人の打鍵が混ざりうる間も短い (2.1.291 実測で fill から `classic.UserPromptSubmit` まで 55ms。[findings](../findings/2026-10-06-composer-fill-and-asuser-submit-2.1.290.md) §9)
 - module は結果 (成功、または届かなかった理由) を `$.process.run(["ccmsg", …])` で daemon に返す。`$` には socket を直接開く口が無く、v2 の DR-0016 §5 も同じ形を取る
 - 入った文は人の入力そのものなので、返信はセッションの通常の応答 (TL) になる。返信方法の指示行は付けない
 - 人の入力の記録の正本はセッションの transcript であり、daemon の room jsonl には残らない
