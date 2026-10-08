@@ -28,7 +28,7 @@ const FORCE_KILL_GRACE_MS = 500;
 /** After the direct child exits, wait at most this long for the stdout/stderr
  * pipes to reach EOF before returning what was captured so far. A launcher
  * command that backgrounds/detaches a grandchild (the DR-0018 template does
- * exactly this via `hyoui run --dettach`) can leave that grandchild holding
+ * exactly this via `hyoui run --detached`) can leave that grandchild holding
  * the inherited pipe write end, so EOF may never arrive — without this bound
  * the reply would stall until the grandchild dies. On a clean exit every fd
  * is closed at exit time, EOF races ahead of the timer, and this grace adds

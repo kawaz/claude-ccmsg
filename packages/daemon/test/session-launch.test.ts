@@ -532,7 +532,7 @@ describe("session launch validation", () => {
   }, 5000);
 
   // DR-0018's very command template detaches a grandchild (`hyoui run
-  // --dettach`). That grandchild inherits the stdout/stderr pipe write ends, so
+  // --detached`). That grandchild inherits the stdout/stderr pipe write ends, so
   // EOF never arrives while it lives — the reply must still return promptly
   // after the direct child exits, carrying the output captured so far, instead
   // of stalling on pipe EOF for the grandchild's whole lifetime. The launcher
