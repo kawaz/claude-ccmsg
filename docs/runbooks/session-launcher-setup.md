@@ -54,7 +54,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
            name: "new",
            command: `
              name="\${$(bump-semver vcs get repository):t1}@$(date +%Y%m%dT%H%M)"
-             direnv exec "$CWD" hyoui run --detached --pty-stdin -- \\
+             direnv exec "$CWD" hyoui run --detached -- \\
                claude --model "$MODEL" --effort "$EFFORT" --name "$name" "$PROMPT"
            `,
            params: {
@@ -83,7 +83,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
    export const templates = [
      {
        name: "new",
-       command: `direnv exec "$CWD" hyoui run --detached --pty-stdin -- claude --model "$MODEL" --effort "$EFFORT" "$PROMPT"`,
+       command: `direnv exec "$CWD" hyoui run --detached -- claude --model "$MODEL" --effort "$EFFORT" "$PROMPT"`,
        params: { CWD: "", MODEL: "fable", EFFORT: "low", PROMPT: "" },
      },
    ];
@@ -131,7 +131,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
            // テンプレートリテラルなので改行も引用符もそのまま書ける
            command: `
              name="\${$(bump-semver vcs get repository):t1}@$(date +%Y%m%dT%H%M)"
-             direnv exec "$CWD" hyoui run --detached --pty-stdin -- \\
+             direnv exec "$CWD" hyoui run --detached -- \\
                claude --model "$MODEL" --effort "$EFFORT" --name "$name" "$PROMPT"
            `,
            params: {
@@ -176,7 +176,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
        "templates": [
          {
            "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --detached --pty-stdin -- claude --model \"$MODEL\" --effort \"$EFFORT\" --name \"${$(bump-semver vcs get repository):t1}@$(bump-semver vcs get worktree-name) $(date +%Y%m%dT%H%M)\" \"$PROMPT\"",
+           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" --name \"${$(bump-semver vcs get repository):t1}@$(bump-semver vcs get worktree-name) $(date +%Y%m%dT%H%M)\" \"$PROMPT\"",
            "params": {
              "CWD": "",
              "MODEL": "fable",
@@ -238,12 +238,12 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
        "templates": [
          {
            "name": "new",
-           "command": "direnv exec \"$CWD\" hyoui run --detached --pty-stdin -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
+           "command": "direnv exec \"$CWD\" hyoui run --detached -- claude --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
            "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "ccmsg subscribe起動" }
          },
          {
            "name": "fork",
-           "command": "fork_args=(--resume \"$SESSION_ID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached --pty-stdin -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
+           "command": "fork_args=(--resume \"$SESSION_ID\" --fork-session)\nif [[ -n \"$RESUME_AT\" ]]; then fork_args+=(--resume-session-at \"$RESUME_AT\"); fi\nfork_json=\"$(direnv exec \"$CWD\" claude -p \"${fork_args[@]}\" --output-format json '/exit')\"\nfork_sid=\"$(printf '%s' \"$fork_json\" | jq -r '.session_id // empty')\"\nif [[ -z \"$fork_sid\" ]]; then print -u2 \"fork bootstrap failed (no session_id): $fork_json\"; exit 1; fi\ndirenv exec \"$CWD\" hyoui run --detached -- claude --resume \"$fork_sid\" --model \"$MODEL\" --effort \"$EFFORT\" \"$PROMPT\"",
            "params": { "CWD": "", "MODEL": "fable", "EFFORT": "low", "PROMPT": "", "SESSION_ID": "", "RESUME_AT": "" }
          }
        ]
@@ -300,7 +300,7 @@ webui のサイドバー SESSIONS 見出し付近にある「+ 新規」ボタ�
 | 「+ 新規」を押しても未設定の案内のまま | `config.ts` / `config.js` / `config.json` の構文エラー、または `session_launcher.root_dirs` / `command` が空・不正 | daemon の起動ログ (`config: <file>: ...` の warn 行) を確認。`root_dirs` は非空の絶対パス配列、各 template は非空の `command` を持つ必要がある |
 | cwd ツリーが空 | `root_dirs` の各パスが実在しない、または権限がない | パスを `ls` で確認、`~/` 展開後の絶対パスであることを確認 |
 | 実行ボタンを押しても反応がない/エラーになる | `command` のシェル構文エラー、`shell` の指定ミス | config の `shell` と同じ起動形 (`bash -eu -o pipefail -c "<command>"` / `zsh -e -u -o pipefail -c "<command>"`) の `<command>` の頭に 宣言した各変数への代入 (`CWD=...; MODEL=...; ...`) を書いた状態で手元で試して構文を確認 |
-| hyoui で起動した対話の子 (shell / REPL 等) がすぐ終わる、外からの入力が子に届かない | daemon は端末の無い起動元で、`hyoui run` は呼び出し元の stdin が端末でないとき、それを子の stdin にそのまま渡す (hyoui DR-0042)。子は stdin の EOF を読む | `hyoui run` に `--pty-stdin` を付け、子の stdin も PTY にする (上の例はすべて付けている) |
+| テンプレートで起動した shell / REPL がすぐ終わる、外からの入力が届かない | daemon は端末の無い起動元で、`hyoui run` は呼び出し元の stdin が端末でないとき、それを子の stdin にそのまま渡す (hyoui DR-0042)。shell / REPL は stdin (`/dev/null`) の EOF を読んで終わる | shell / REPL を起動するテンプレートだけ `hyoui run` に `--pty-stdin` を付ける。claude などの TUI はキーを `/dev/tty` (hyoui の PTY) から読むので付けない (付けると pipe で渡した最初の入力が使われない) |
 | 実行結果が `timed_out: true` で返る | `command` が `timeout_seconds` 以内に終わらない (例: フォアグラウンドで待ち続けるプロセス) | `command` に `--detached` 相当のバックグラウンド化オプションを使う (DR-0018 §2.3: webui はプロセス管理をしない、起動だけを担う設計) |
 
 ## 関連
