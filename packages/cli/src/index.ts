@@ -14,14 +14,15 @@ import {
   migrateLegacyConfigFiles,
   parseWith,
   SidecarReplyTextSchema,
+  SinceSeqTextSchema,
   splitSendWords,
   resolvePaths,
   sessionProjectDir,
-  type ErrorResponse,
   type Identity,
   type MessageSendReason,
   type MessageSendRequest,
-  type MessageSendResponse,
+  type ReplyOf,
+  type RequestInput,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
@@ -340,9 +341,9 @@ function warnSubscribingAsUser(): void {
 
 // --- output ----------------------------------------------------------------
 
-function output(res: { ok?: boolean } & Record<string, unknown>): number {
+function output<R extends { readonly ok?: boolean }>(res: R): number {
   const line = `${JSON.stringify(res)}\n`;
-  if (res && res.ok === false) {
+  if (res.ok === false) {
     process.stderr.write(line);
     return 1;
   }
@@ -351,7 +352,7 @@ function output(res: { ok?: boolean } & Record<string, unknown>): number {
   // 残しているので、pipeline consumer は JSON 側だけを見ていれば従来通り動く
   // — stderr 側は kawaz や AI が対話中に「その --members は意味がなかった」と
   // 気付くための誘導。
-  if (res && typeof res.warning === "string" && res.warning !== "") {
+  if ("warning" in res && typeof res.warning === "string" && res.warning !== "") {
     process.stderr.write(`ccmsg: ${res.warning}\n`);
   }
   process.stdout.write(line);
@@ -360,10 +361,10 @@ function output(res: { ok?: boolean } & Record<string, unknown>): number {
 
 // --- commands --------------------------------------------------------------
 
-async function runOnce(identity: Identity, req: Record<string, unknown>): Promise<never> {
+async function runOnce(identity: Identity, req: RequestInput): Promise<never> {
   const paths = resolvePaths();
   const client = await ensureDaemon(paths, identity);
-  const res = await client.request<{ ok?: boolean } & Record<string, unknown>>(req);
+  const res = await client.request(req);
   client.close();
   process.exit(output(res));
 }
@@ -419,7 +420,7 @@ async function runDirectSend(
   req: Omit<MessageSendRequest, "op">,
 ): Promise<never> {
   const client = await ensureDaemon(resolvePaths(), identity);
-  const res = await client.request<MessageSendResponse | ErrorResponse>({
+  const res = await client.request({
     op: "message_send",
     ...req,
   });
@@ -595,8 +596,8 @@ async function recordSayEvent(args: string[]): Promise<void> {
   try {
     client = await connectIfRunning(resolvePaths());
     if (!client) return;
-    const hello = await client.request<{ ok?: boolean }>(helloRequest(identity));
-    if (hello.ok !== true) return;
+    const hello = await client.request(helloRequest(identity));
+    if (!hello.ok) return;
     await client.request({ op: "say", text: args.join(" ") });
   } catch {
     // daemon down / socket closed under us / op rejected — the speech below is
@@ -643,7 +644,14 @@ async function runSubscribe(
   // the connection is up. stdout is pure jsonl for the downstream Monitor.
   const paths = resolvePaths();
   const sinceStr = str(opts, "since");
-  const initialSince = sinceStr ? (JSON.parse(sinceStr) as Record<string, number>) : undefined;
+  const sinceRead = sinceStr ? parseWith(SinceSeqTextSchema, sinceStr) : undefined;
+  if (sinceRead !== undefined && !sinceRead.ok) {
+    process.stderr.write(
+      `ccmsg subscribe: --since must be a JSON object of room id to seq (${sinceRead.failure.summary})\n`,
+    );
+    process.exit(2);
+  }
+  const initialSince = sinceRead?.value;
   // sinceMap は「stdout に出した event の per-room 最大 seq」(DR-0016 §2.4)。
   // 再接続時に daemon へ since_seq として渡し、backlog を「未受信ぶんだけ」に絞る
   // (BBS delta model, DR-0003 §5)。ユーザ指定の --since を初期値として seed し、
@@ -671,11 +679,11 @@ async function runSubscribe(
     return result as T;
   };
   let client: Client = await ensureDaemon(paths, identity);
-  const ack = await client.request<{ ok?: boolean }>({
+  const ack = await client.request({
     op: "subscribe",
     ...(initialSince ? { since_seq: initialSince } : {}),
   });
-  if (ack.ok === false) process.exit(output(ack as Record<string, unknown>));
+  if (!ack.ok) process.exit(output(ack));
   // 再接続 backoff: 250ms から指数で上限 5s、無期限リトライ。subscribe は
   // Monitor 相当のセッション寿命プロセスなので、上限に達したら fixed 5s で
   // 回り続ける (docs/issue/2026-07-10-subscribe-daemon-restart-transparent-reconnect.md)。
@@ -683,45 +691,45 @@ async function runSubscribe(
   let attempt = 0;
   outer: for (;;) {
     for (;;) {
-      const line = await raceOwner(client.readLine());
-      if (line === null) break; // socket closed → 再接続へ
-      // 1 行 parse して 2 つの副作用を掛ける:
+      const next = await raceOwner(client.readLine());
+      if (next === null) break; // socket closed → 再接続へ
+      const { line, frame } = next;
+      // 1 行を 1 回 frame のスキーマで読み、2 つの副作用を掛ける:
       //   (a) 接続制御イベント (`restarting` / `room_cursors`) は stdout に流さない。
       //       前者は透過再接続の内部信号、後者は接続ごとの初期 snapshot であり、
       //       Monitor へ通知して AI の応答を発生させる対象ではない。
-      //   (b) r + seq を持つ全 StorageEvent 配信で sinceMap を更新し、再接続
+      //   (b) seq を持つ全 StorageEvent 配信で sinceMap を更新し、再接続
       //       subscribe の since_seq 引数に反映する (DR-0016 §2.4、全 event 型
       //       横断)。`ev:"notify"` 等の ephemeral stream event は seq を持たない
       //       ので自然に対象外。
-      let filtered = false;
-      try {
-        const ev = JSON.parse(line) as {
-          ev?: string;
-          r?: string;
-          seq?: number;
-        };
-        if (ev.ev === "subscribe_superseded") {
-          // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
-          // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
-          // 契約なので、古いこちらは再接続せず正常終了する。
-          process.stderr.write(
-            "ccmsg subscribe: a newer subscribe started for this session " +
-              "(duplicate detected). Exiting this older one so messages are not " +
-              "delivered twice; the newer subscribe now receives them.\n",
-          );
-          ownerWatch?.close();
-          process.exit(0);
-        }
-        if (ev.ev === "restarting" || ev.ev === "room_cursors") {
-          filtered = true;
-        } else if (typeof ev.r === "string" && typeof ev.seq === "number") {
-          const prev = sinceMap[ev.r] ?? 0;
-          if (ev.seq > prev) sinceMap[ev.r] = ev.seq;
-        }
-      } catch {
-        // 非 JSON 行 (現契約では発生しないが、防御的に素通し)
+      // スキーマで読めない行は stdout に流さず、stderr に理由を残して捨てる。
+      if (frame.kind === "invalid") {
+        process.stderr.write(
+          `ccmsg subscribe: dropped a line the daemon wrote outside the wire's schema (${frame.failure.summary})\n`,
+        );
+        continue;
       }
-      if (!filtered) process.stdout.write(`${line}\n`);
+      if (frame.kind === "event") {
+        const ev = frame.event;
+        if ("ev" in ev) {
+          if (ev.ev === "subscribe_superseded") {
+            // 同一セッションに subscribe が 2 本立った状態は異常で、放置すると
+            // 同じメッセージが二重に通知される。新しい方 (= 意図した起動) を残す
+            // 契約なので、古いこちらは再接続せず正常終了する。
+            process.stderr.write(
+              "ccmsg subscribe: a newer subscribe started for this session " +
+                "(duplicate detected). Exiting this older one so messages are not " +
+                "delivered twice; the newer subscribe now receives them.\n",
+            );
+            ownerWatch?.close();
+            process.exit(0);
+          }
+          if (ev.ev === "restarting" || ev.ev === "room_cursors") continue;
+        } else if (ev.seq !== undefined && ev.seq > (sinceMap[ev.r] ?? 0)) {
+          sinceMap[ev.r] = ev.seq;
+        }
+      }
+      process.stdout.write(`${line}\n`);
     }
     // 再接続ループ: no-spawn で daemon に接触できるまで backoff。意図的な
     // `ccmsg daemon stop` を subscribe が resurrection しない契約。
@@ -750,10 +758,12 @@ async function runSubscribe(
 async function pingRunningStatus(
   client: Client,
   paths: ReturnType<typeof resolvePaths>,
-): Promise<Record<string, unknown>> {
-  const pong = await client.request<Record<string, unknown>>({ op: "ping" });
+): Promise<
+  ReplyOf<"ping"> & { readonly running: true; readonly stateDir: string; readonly dataDir: string }
+> {
+  const pong = await client.request({ op: "ping" });
   client.close();
-  return { ok: true, running: true, ...pong, stateDir: paths.stateDir, dataDir: paths.dataDir };
+  return { running: true, ...pong, stateDir: paths.stateDir, dataDir: paths.dataDir };
 }
 
 async function runStatus(): Promise<never> {
@@ -853,14 +863,13 @@ async function runDaemonStop(): Promise<never> {
 async function runSessionKill(sessionId: string, force: boolean): Promise<never> {
   const paths = resolvePaths();
   const client = await ensureDaemon(paths, { role: "user" });
-  const reply = await client.request<Record<string, unknown>>({
+  const reply = await client.request({
     op: "session_kill",
     session_id: sessionId,
     ...(force ? { force: true } : {}),
   });
   client.close();
-  const { request_id: _rid, ...rest } = reply;
-  process.exit(output(rest));
+  process.exit(output(reply));
 }
 
 function handleDaemon(positionals: string[], opts: Record<string, string | boolean>): void {
@@ -1352,14 +1361,9 @@ async function main(): Promise<void> {
       }
       const paths = resolvePaths();
       const client = await ensureDaemon(paths, identity);
-      const res = await client.request<
-        {
-          ok?: boolean;
-          rooms?: Array<{ archived?: boolean; live_members?: number }>;
-        } & Record<string, unknown>
-      >({ op: "rooms" });
+      const res = await client.request({ op: "rooms" });
       client.close();
-      if (res.ok && Array.isArray(res.rooms)) {
+      if (res.ok) {
         const live = res.rooms.filter((r) => !r.archived);
         const archivedOmitted = res.rooms.length - live.length;
         // live_members === 0 = present member の誰一人 session を繋いでいない
@@ -1399,14 +1403,10 @@ async function main(): Promise<void> {
       }
       const paths = resolvePaths();
       const client = await ensureDaemon(paths, identity);
-      const res = await client.request<
-        { ok?: boolean; peers?: Array<{ cwd?: string }> } & Record<string, unknown>
-      >({ op: "peers" });
+      const res = await client.request({ op: "peers" });
       client.close();
-      if (res.ok && Array.isArray(res.peers)) {
-        const peers = res.peers.filter(
-          (p) => typeof p.cwd === "string" && p.cwd.includes(cwdFilter),
-        );
+      if (res.ok) {
+        const peers = res.peers.filter((p) => p.cwd.includes(cwdFilter));
         process.exit(output({ ...res, peers }));
       }
       process.exit(output(res));

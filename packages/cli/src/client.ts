@@ -10,23 +10,37 @@ import type { Socket } from "bun";
 import {
   compareVersions,
   PROTOCOL_VERSION,
+  readDaemonFrame,
   VERSION,
+  type DaemonFrame,
   type Identity,
   type Paths,
+  type ReplyOf,
+  type RequestInput,
 } from "@ccmsg/protocol";
 
+type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
+
+/** A line the daemon wrote that is not the reply to a request of this client
+ * (a subscribed connection's pushes and delivered events): the line as it
+ * came, and what it reads as. */
+export interface StreamLine {
+  readonly line: string;
+  readonly frame: DaemonFrame;
+}
+
 export class Client {
-  private socket!: Socket;
+  private socket: Socket | undefined;
   private decoder = new TextDecoder();
   private buf = "";
-  private lines: string[] = [];
-  private waiters: Array<(line: string | null) => void> = [];
+  private lines: StreamLine[] = [];
+  private waiters: Array<(line: StreamLine | null) => void> = [];
   private ended = false;
   /** request_ids only have to be unique among this connection's in-flight
    * requests, so a counter is enough. */
   private nextRequestId = 0;
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
-  private pendingReplies = new Map<string, (line: string | null) => void>();
+  private pendingReplies = new Map<string, (frame: ReplyFrame | null) => void>();
   /** Lines written but not yet taken by the socket, oldest first; the head
    * may be a line's remainder. Bun's `write` takes what the socket has room
    * for and keeps nothing, so a request bigger than that (a long message
@@ -59,69 +73,67 @@ export class Client {
     return client;
   }
 
+  /** Each line is read once, by the wire's frame schema: a reply goes to the
+   * request waiting for it, anything else joins the readable stream. */
   private onData(chunk: Uint8Array): void {
     this.buf += this.decoder.decode(chunk, { stream: true });
     let idx: number;
     while ((idx = this.buf.indexOf("\n")) >= 0) {
       const line = this.buf.slice(0, idx);
       this.buf = this.buf.slice(idx + 1);
-      // A reply an in-flight request is waiting for goes straight to it;
-      // everything else (stream events on a subscribed connection) joins the
-      // readable stream.
-      const claimant = this.replyWaiter(line);
-      if (claimant) claimant(line);
-      else this.lines.push(line);
+      const frame = readDaemonFrame(line);
+      if (frame.kind === "reply" && this.settle(frame)) continue;
+      this.lines.push({ line, frame });
     }
     this.drain();
   }
 
-  /** The `request` call this frame answers, if it is a reply at all.
+  /** Hand a reply to the request it answers; false when no request waits.
    *
    * A reply with no `request_id` is handed to the oldest in-flight request:
-   * that is a daemon older than the correlation envelope, and completing a
-   * hello against one is how `ensureDaemon` discovers the version it has to
-   * replace. */
-  private replyWaiter(line: string): ((line: string) => void) | undefined {
-    if (this.pendingReplies.size === 0) return undefined;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      return undefined;
-    }
-    if (typeof parsed !== "object" || parsed === null || !Object.hasOwn(parsed, "ok")) {
-      return undefined;
-    }
-    const rid = (parsed as { request_id?: unknown }).request_id;
-    const key = typeof rid === "string" ? rid : this.pendingReplies.keys().next().value!;
-    const settle = this.pendingReplies.get(key);
-    if (settle) this.pendingReplies.delete(key);
-    return settle;
+   * that is the refusal of a line the daemon could not read as a request (it
+   * names none), or a daemon older than the correlation envelope, and
+   * completing a hello against one is how `ensureDaemon` discovers the
+   * version it has to replace. */
+  private settle(frame: ReplyFrame): boolean {
+    const key = frame.requestId ?? this.pendingReplies.keys().next().value;
+    if (key === undefined) return false;
+    const resolve = this.pendingReplies.get(key);
+    if (resolve === undefined) return false;
+    this.pendingReplies.delete(key);
+    resolve(frame);
+    return true;
   }
 
   /** Hand buffered lines to whoever is waiting, oldest first. */
   private drain(): void {
-    while (this.waiters.length > 0 && this.lines.length > 0) {
-      this.waiters.shift()!(this.lines.shift()!);
+    for (;;) {
+      if (this.waiters.length === 0 || this.lines.length === 0) return;
+      const waiter = this.waiters.shift();
+      const line = this.lines.shift();
+      if (waiter !== undefined && line !== undefined) waiter(line);
     }
   }
 
   private onClose(): void {
     this.ended = true;
-    while (this.waiters.length) this.waiters.shift()!(null);
-    for (const settle of this.pendingReplies.values()) settle(null);
+    for (const waiter of this.waiters.splice(0)) waiter(null);
+    for (const resolve of this.pendingReplies.values()) resolve(null);
     this.pendingReplies.clear();
   }
 
-  readLine(): Promise<string | null> {
-    if (this.lines.length) return Promise.resolve(this.lines.shift()!);
+  /** The next line that is not a reply to this client's requests, or null
+   * once the connection has closed. */
+  readLine(): Promise<StreamLine | null> {
+    const buffered = this.lines.shift();
+    if (buffered !== undefined) return Promise.resolve(buffered);
     if (this.ended) return Promise.resolve(null);
     return new Promise((res) => this.waiters.push(res));
   }
 
-  write(obj: unknown): void {
+  private writeLine(line: string): void {
     // Behind lines still waiting, so lines never interleave.
-    this.unsent.push(new TextEncoder().encode(`${JSON.stringify(obj)}\n`));
+    this.unsent.push(new TextEncoder().encode(`${line}\n`));
     this.flush();
   }
 
@@ -130,11 +142,12 @@ export class Client {
    * is closed (`write` answers -1) settles everyone waiting at once: no close
    * event may follow to do it. */
   private flush(): void {
-    while (this.unsent.length > 0) {
-      const head = this.unsent[0]!;
+    const socket = this.socket;
+    if (socket === undefined) return;
+    for (let head = this.unsent[0]; head !== undefined; head = this.unsent[0]) {
       let taken: number;
       try {
-        taken = this.socket.write(head);
+        taken = socket.write(head);
       } catch {
         taken = -1;
       }
@@ -152,23 +165,29 @@ export class Client {
     if (this.closing && this.unsent.length === 0) this.end();
   }
 
-  /** Send one request and wait for the reply carrying its `request_id`. The
+  /** Send one request and wait for the reply carrying its `request_id`, read
+   * as the answer to the request's op: its success reply or an error. The
    * daemon answers a connection's requests concurrently, so replies may come
    * back in any order and several requests may be outstanding at once;
    * anything that is not a reply (a subscribed connection's stream events)
-   * stays in the readable stream for `readLine`. */
-  async request<T = Record<string, unknown>>(obj: unknown): Promise<T> {
-    const body = obj as Record<string, unknown>;
-    // A caller may supply the id itself; everyone else gets one from the counter.
-    const rid = typeof body.request_id === "string" ? body.request_id : `r${++this.nextRequestId}`;
+   * stays in the readable stream for `readLine`. A reply that is not its op's
+   * answer is an error thrown, like a connection that closes first. */
+  async request<B extends RequestInput>(body: B): Promise<ReplyOf<B["op"]>> {
+    const rid = `r${++this.nextRequestId}`;
     // A closed connection gets no close event again to settle the wait.
     if (this.ended) throw new Error("connection closed before response");
-    const line = await new Promise<string | null>((resolve) => {
+    const frame = await new Promise<ReplyFrame | null>((resolve) => {
       this.pendingReplies.set(rid, resolve);
-      this.write({ ...body, request_id: rid });
+      this.writeLine(JSON.stringify({ ...body, request_id: rid }));
     });
-    if (line === null) throw new Error("connection closed before response");
-    return JSON.parse(line) as T;
+    if (frame === null) throw new Error("connection closed before response");
+    const read = frame.reply(body.op);
+    if (!read.ok) {
+      throw new Error(
+        `the daemon's reply to ${body.op} is not its answer: ${read.failure.summary}`,
+      );
+    }
+    return read.value;
   }
 
   /** End the connection once everything written has gone out. */
@@ -179,7 +198,7 @@ export class Client {
 
   private end(): void {
     try {
-      this.socket.end();
+      this.socket?.end();
     } catch {
       // already closing
     }
@@ -275,9 +294,9 @@ async function waitDaemonGone(sockPath: string): Promise<void> {
 /** What every hello says about the process sending it, regardless of role: the
  * build, so a stale client can be named, and the wire generation, so a daemon
  * that no longer speaks it refuses instead of half-serving it. */
-const clientBuild = { client_version: VERSION, protocol: PROTOCOL_VERSION };
+const clientBuild = { client_version: VERSION, protocol: PROTOCOL_VERSION } as const;
 
-export function helloRequest(identity: Identity): Record<string, unknown> {
+export function helloRequest(identity: Identity): Extract<RequestInput, { op: "hello" }> {
   if (identity.role === "user") return { op: "hello", role: "user", ...clientBuild };
   return {
     op: "hello",
@@ -297,8 +316,8 @@ export function helloRequest(identity: Identity): Record<string, unknown> {
 /** Connect (spawning + upgrading the daemon as needed) and complete the hello handshake. */
 export async function ensureDaemon(paths: Paths, identity: Identity): Promise<Client> {
   let client = await connectWithSpawn(paths.sock);
-  let hello = await client.request<{ ok: boolean; version?: string }>(helloRequest(identity));
-  if (hello.ok && hello.version && compareVersions(VERSION, hello.version) > 0) {
+  let hello = await client.request(helloRequest(identity));
+  if (hello.ok && compareVersions(VERSION, hello.version) > 0) {
     // we are strictly newer than the running daemon: shut it down and spawn ours.
     // A same-or-newer daemon is left running (newer-wins, see file header).
     try {
@@ -344,17 +363,17 @@ export async function connectIfRunning(paths: Paths): Promise<Client | null> {
 export async function reconnectSubscribeNoSpawn(
   paths: Paths,
   identity: Identity,
-  since: Record<string, number>,
+  since: Readonly<Record<string, number>>,
 ): Promise<Client | null> {
   const client = await tryConnect(paths.sock);
   if (!client) return null;
   try {
-    const hello = await client.request<{ ok?: boolean }>(helloRequest(identity));
+    const hello = await client.request(helloRequest(identity));
     if (!hello.ok) {
       client.close();
       return null;
     }
-    const ack = await client.request<{ ok?: boolean }>({
+    const ack = await client.request({
       op: "subscribe",
       ...(Object.keys(since).length > 0 ? { since_seq: since } : {}),
     });

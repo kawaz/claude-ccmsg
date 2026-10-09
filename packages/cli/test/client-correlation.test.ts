@@ -51,28 +51,40 @@ test("a reply is paired by request_id, not by arrival order", async () => {
     if (held.length < 2) return [];
     const [first, second] = held;
     return [
-      { ok: true, which: "second", request_id: second.request_id },
-      { ok: true, which: "first", request_id: first.request_id },
+      { ok: true, room: "r2", request_id: second.request_id },
+      { ok: true, room: "r1", request_id: first.request_id },
     ];
   });
   const client = await Client.connect(sock);
-  const a = client.request<{ which: string }>({ op: "ping" });
-  const b = client.request<{ which: string }>({ op: "peers" });
-  expect((await a).which).toBe("first");
-  expect((await b).which).toBe("second");
+  const a = client.request({ op: "leave", room: "r1" });
+  const b = client.request({ op: "leave", room: "r2" });
+  expect(await a).toEqual({ ok: true, room: "r1" });
+  expect(await b).toEqual({ ok: true, room: "r2" });
   client.close();
 });
 
-test("a reply with no request_id is accepted, so a pre-correlation daemon can still be talked to", async () => {
-  // This is the version-mismatch path: ensureDaemon has to complete a hello
-  // against an older daemon before it can decide to replace it, and that
-  // daemon echoes nothing.
-  const sock = await fakeDaemon(() => [{ ok: true, version: "0.0.1" }]);
+test("a reply with no request_id settles the oldest request", async () => {
+  // The refusal of a line the daemon could not read as a request names no
+  // request, and neither does a daemon older than the correlation envelope:
+  // ensureDaemon has to complete a hello against one before it can decide to
+  // replace it.
+  const refusal = { ok: false as const, error: { code: "bad_request", msg: "m" } };
+  const sock = await fakeDaemon(() => [refusal]);
   const client = await Client.connect(sock);
-  expect(await client.request<{ version: string }>({ op: "hello", role: "user" })).toMatchObject({
-    ok: true,
-    version: "0.0.1",
-  });
+  expect(await client.request({ op: "hello", role: "user" })).toEqual(refusal);
+  client.close();
+});
+
+test("a reply that is not its op's answer fails the request", async () => {
+  const sock = await fakeDaemon((req) => [{ ok: true, request_id: req.request_id }]);
+  const client = await Client.connect(sock);
+  const failure = await client.request({ op: "leave", room: "r1" }).then(
+    () => "answered",
+    (e: Error) => e.message,
+  );
+  expect(failure).toBe(
+    'the daemon\'s reply to leave is not its answer: room: Invalid key: Expected "room" but received undefined',
+  );
   client.close();
 });
 
@@ -130,7 +142,7 @@ test("large requests arrive whole, in the order written", async () => {
           const req = JSON.parse(buf.slice(0, at));
           buf = buf.slice(at + 1);
           socket.write(
-            `${JSON.stringify({ ok: true, size: req.text.length, request_id: req.request_id })}\n`,
+            `${JSON.stringify({ ok: true, room: String(req.msg.length), mid: 1, request_id: req.request_id })}\n`,
           );
         }
       },
@@ -146,9 +158,9 @@ test("large requests arrive whole, in the order written", async () => {
   const client = await Client.connect(sock);
   const sizes = [1_000_000, 300_000, 10];
   const answers = await Promise.all(
-    sizes.map((size) => client.request<{ size: number }>({ op: "x", text: "y".repeat(size) })),
+    sizes.map((size) => client.request({ op: "post", room: "r1", msg: "y".repeat(size) })),
   );
-  expect(answers.map((a) => a.size)).toEqual(sizes);
+  expect(answers.map((a) => (a.ok ? a.room : a.error.msg))).toEqual(sizes.map(String));
   client.close();
 });
 

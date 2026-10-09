@@ -154,10 +154,10 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       // ensureDaemon が完了した時点で、繋がっている daemon の version は現行 VERSION
       // でなければならない (= mismatch を検知 → shutdown → respawn が完走した証拠)。
       // ping で version を確認するのが自然 (hello の応答値は ensureDaemon 内部で消費済み)。
-      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+      const pong = await client.request({
         op: "ping",
       });
-      expect(pong.ok).toBe(true);
+      if (!pong.ok) throw new Error(pong.error.msg);
       expect(pong.version).toBe(VERSION);
 
       // 旧 daemon プロセスが実際に exit していること (= graceful shutdown が届いた)。
@@ -245,10 +245,10 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       });
 
       // version 一致経路: ping の pid が起動時の PID と同一 = 同一プロセス継続。
-      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+      const pong = await client.request({
         op: "ping",
       });
-      expect(pong.ok).toBe(true);
+      if (!pong.ok) throw new Error(pong.error.msg);
       expect(pong.version).toBe(VERSION);
       expect(pong.pid).toBe(pidBefore!);
 
@@ -295,10 +295,10 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       });
 
       // daemon はそのまま (= 降格されず FUTURE_VERSION を名乗り続け、pid も不変)。
-      const pong = await client.request<{ ok: boolean; version: string; pid: number }>({
+      const pong = await client.request({
         op: "ping",
       });
-      expect(pong.ok).toBe(true);
+      if (!pong.ok) throw new Error(pong.error.msg);
       expect(pong.version).toBe(FUTURE_VERSION);
       expect(pong.pid).toBe(pidBefore!);
 

@@ -5,6 +5,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import { jsonText } from "./parse.ts";
 
 /** Post a new message. A 1on1 room is read-only (DR-0035 §2): a post to one
  * is refused with `invalid_args` for every role. */
@@ -137,6 +138,14 @@ export type KickRequest = v.InferOutput<typeof KickRequestSchema>;
 /** A `since_seq` cursor: a seq is a finite, non-negative position. */
 const SinceSeqCursorSchema = v.pipe(v.number(), v.finite(), v.minValue(0));
 
+/** `since_seq`: each room's last-seen seq, by room id. */
+export const SinceSeqSchema = v.record(v.string(), SinceSeqCursorSchema);
+export type SinceSeq = v.InferOutput<typeof SinceSeqSchema>;
+
+/** `since_seq` as JSON text, as `ccmsg subscribe --since` and the webui's
+ * stored cursor hold it. */
+export const SinceSeqTextSchema = jsonText(SinceSeqSchema);
+
 export const SubscribeRequestSchema = v.object({
   op: v.literal("subscribe"),
   /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). Retained
@@ -147,7 +156,7 @@ export const SubscribeRequestSchema = v.object({
    * (DR-0016 §2.3) — supersedes `since` (mid, msg-only) for any room key it
    * covers. Do NOT derive this from a stored `since` value: seq >= mid always
    * holds, so reinterpreting a mid as a seq would skip events. */
-  since_seq: v.optional(v.record(v.string(), SinceSeqCursorSchema)),
+  since_seq: v.optional(SinceSeqSchema),
   /** Opt into the per-room snapshot/full-replay for any visible room
    * NOT covered by `since`/`since_seq` (issue 2026-07-17-subscribe-no-backlog-default).
    * Without this, such a room gets no backlog at all — only a `room_cursors`
