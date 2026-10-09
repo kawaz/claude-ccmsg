@@ -1,6 +1,6 @@
 # DR-0037: エージェント間のメッセージは harness の SendMessage に乗せ、`ccmsg:` 宛を hooks module が横取りして届ける
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ⬜ 未実装 (§4 の実験を先に行う)
+- Status: Accepted (2026-10-09、kawaz 裁定) — ⬜ 未実装
 - Date: 2026-10-09
 
 ## Context
@@ -27,7 +27,7 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 ### 2. 送る側: hooks module が SendMessage を横取りする
 
 - plugin の hooks module ([DR-0035](./DR-0035-user-input-via-composer-fill.md) §3 の module) が `session.send` を hook し、`to` が `ccmsg:` で始まる送信を横取りする (`next` を呼ばない)。それ以外の `to` は `next(e)` で harness に任せる
-- 横取りした送信は、module が daemon に渡して宛先を実際のセッションに解決させ、届け終わるまで await する。結果を `{ isDelivered: true }` / `{ isDelivered: false, reason }` で返し、本来の SendMessage の結果と同じ形で model に見せる
+- 横取りした送信は、module が daemon に渡して宛先を実際のセッションに解決させ、届け終わるまで await する。結果を `{ isDelivered: true }` / `{ isDelivered: false, reason }` で返す
 - 相手を探す入口は `ccmsg peers` (宛先の綴りを出す)
 
 ### 3. 受ける側: socket 経由で SendMessage として注入する
@@ -35,13 +35,15 @@ kawaz 2026-10-09: 「エージェント間は SendMessage を使う。`ccmsg:<se
 - daemon は解決した各セッションの harness の messaging socket に、別セッションからのメッセージとして注入する ([DR-0034](./DR-0034-peer-socket-injection.md) の peer 注入)。本文の `from` は `ccmsg:<送り主 sid>` にする
 - 受け手は、届いたメッセージの `from` をそのまま SendMessage の `to` に書けば返信できる。その送信は受け手側の module が同じく横取りするので、config home をまたいで往復が閉じる
 
-### 4. 実装前に実験で確かめること
+### 4. 実機で確かめた前提と、そこから決めたこと (Claude Code 2.1.295)
 
-1. 本来の SendMessage の結果の文面 (存在しない宛先 / 成功 / 相手が拒否) と、hook が返した `isDelivered` / `reason` の見え方が揃うか
-2. hook の中で数秒 await した時の扱い (hook の時間予算、その間の turn の見え方)
-3. 注入したメッセージの `from` (`ccmsg:<sid>`) を受け手が `to` に写して返すと往復が閉じるか。受け手の model からどう見えるか
-4. `ccmsg:path:<dir>` で複数に届けた時、結果を 1 つの `isDelivered` / `reason` にどうまとめるか
-5. `ccmsg:path:<dir>` の一致の取り方 (realpath による正規化、サブディレクトリを含めるか)
+- **model に見える結果の文面は harness が決める**: hook が `{ isDelivered: true }` を返すと model は `{"success":true,"message":"Delivered by a plugin hook; nothing else was sent."}` を、`{ isDelivered: false, reason }` を返すと `{"success":false,"message":"Not sent: a plugin hook refused it (<reason>)."}` を読む。本来の SendMessage の成功の文面 (宛先・inbox の状態・`msg_id`) とは揃わない。`reason` は括弧の中に入るので、何が原因で次に何をすればよいかが分かる 1 文にする (例: 宛先のセッションが見つからない、`ccmsg peers` で確かめる)
+- **本来の SendMessage も受け手の拒否を送り手に返さない**: 受け手の `session.receive` hook が握りつぶしても、送り手の結果は成功だった。ccmsg も、相手の socket に書けた時点で成功を返してよい。peer 注入が受け手の拒否 (`peer_message_status`) を期限内に受け取れた時だけ失敗にする
+- **hook は throw させない**: `session.send` hook が throw すると、harness は本来の宛先の解決に戻り、`ccmsg:...` を宛先として探して「No agent named ... is reachable」を返す。失敗はすべて捕まえて `{ isDelivered: false, reason }` で返す。`.catch` で `next` に流す形はこの hook には使わない
+- **待ちには期限を明示する**: hook の中で 3 秒・10 秒の await は成功し、その間 turn の進行表示が続く。`$.process.run` の既定の期限は 30 秒で、超えると上の throw になる。daemon への送信には `timeoutMs` を明示し、全体を十数秒に収め、超えたら「届いたか確かめられなかった」の `reason` で返す
+- **config home をまたぐ往復は閉じる**: X の hook が横取りして Y の socket に `from="ccmsg:<X の sid>"` で注入すると、Y には peer として届き (`origin.kind: "peer"`、「Another Claude session sent a message」の枠)、Y の model が `from` をそのまま `to` に書いた SendMessage を Y の hook が横取りして X に戻る
+- **複数宛の一部失敗は `isDelivered: true`**: `false` にすると、既に届いた相手がいても model には `Not sent` と見え、送り直して二重に届く。届かなかった相手の内訳を送り手に伝える手段は実装時に決める
+- **`ccmsg:path:<dir>` は realpath で正規化して完全一致**: harness の state file と `claude agents --json` の cwd は、起動のパスに symlink (`/tmp` → `/private/tmp`、workspace の symlink) や末尾 `/` があっても realpath に揃っていた。宛先の path も realpath にしてから完全一致で比べる。サブディレクトリは含めない (同じ作業ディレクトリのセッションへの broadcast という意図に合わせる)
 
 ### 5. 対象外
 
