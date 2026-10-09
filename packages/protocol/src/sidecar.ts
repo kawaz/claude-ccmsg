@@ -10,7 +10,7 @@
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
 import * as v from "valibot";
-import { type ParseFailure, parseJsonWith } from "./parse.ts";
+import { JsonTextSchema, jsonText, type ParseFailure, parseWith } from "./parse.ts";
 
 /** The version of the request line. A module answers a line of another
  * version with `unsupported_version` rather than guessing at it. */
@@ -111,10 +111,24 @@ export type SidecarResult<Op extends SidecarOp> = v.InferOutput<(typeof SIDECAR_
 /** The ops, in the order describe lists them. */
 export const SIDECAR_OP_NAMES = ["describe", "prompt.send"] as const satisfies readonly SidecarOp[];
 
+/** The schema of a request of `op` with args read by `args`. */
+type RequestSchema<
+  Op extends SidecarOp,
+  A extends (typeof SIDECAR_OPS)[Op]["args"],
+> = v.ObjectSchema<
+  {
+    readonly v: v.LiteralSchema<typeof SIDECAR_REQUEST_VERSION, undefined>;
+    readonly op: v.LiteralSchema<Op, undefined>;
+    readonly id: typeof SidecarRequestIdSchema;
+    readonly args: A;
+  },
+  undefined
+>;
+
 function requestSchema<const Op extends SidecarOp, A extends (typeof SIDECAR_OPS)[Op]["args"]>(
   op: Op,
   args: A,
-) {
+): RequestSchema<Op, A> {
   return v.object({
     v: v.literal(SIDECAR_REQUEST_VERSION),
     op: v.literal(op),
@@ -162,8 +176,25 @@ const FailedReplySchema = v.object({
 });
 export type FailedSidecarReply = v.InferOutput<typeof FailedReplySchema>;
 
+/** The schema of a reply whose result `R` reads. */
+export type SidecarReplySchemaOf<R extends v.GenericSchema> = v.VariantSchema<
+  "ok",
+  [
+    v.ObjectSchema<
+      {
+        readonly id: typeof SidecarRequestIdSchema;
+        readonly ok: v.LiteralSchema<true, undefined>;
+        readonly result: R;
+      },
+      undefined
+    >,
+    typeof FailedReplySchema,
+  ],
+  undefined
+>;
+
 /** A reply to one request of an op whose result is read by `result`. */
-export function sidecarReplySchema<R extends v.GenericSchema>(result: R) {
+export function sidecarReplySchema<R extends v.GenericSchema>(result: R): SidecarReplySchemaOf<R> {
   return v.variant("ok", [
     v.object({ id: SidecarRequestIdSchema, ok: v.literal(true), result }),
     FailedReplySchema,
@@ -179,6 +210,9 @@ export function sidecarReplySchema<R extends v.GenericSchema>(result: R) {
  * for in vain. */
 export const SidecarReplySchema = sidecarReplySchema(v.unknown());
 export type SidecarReply = v.InferOutput<typeof SidecarReplySchema>;
+
+/** A reply as `ccmsg sidecar reply` takes it on standard input: JSON text. */
+export const SidecarReplyTextSchema = jsonText(SidecarReplySchema);
 
 /** The reply to a request of `Op`, with its result read. */
 export type SidecarReplyOf<Op extends SidecarOp> =
@@ -204,18 +238,22 @@ const VersionedLineSchema = v.object({ v: v.literal(SIDECAR_REQUEST_VERSION) });
 const KnownOpLineSchema = v.object({ op: v.picklist(SIDECAR_OP_NAMES) });
 
 /** Read one request line. A line that is not a request of this version and
- * of a known op with its args says which of those it is not, in that order,
- * so the answer names the first thing a sender of another version would
- * change. */
+ * of a known op with its args says which of those it is not — its id, then
+ * its version, then its op, then its args — so the answer names the first
+ * thing a sender of another version would change. The JSON is decoded once,
+ * and the decoded value read against each schema in turn. */
 export function readSidecarRequest(line: string): SidecarRequestRead {
-  const read = parseJsonWith(SidecarRequestSchema, line);
+  const json = parseWith(JsonTextSchema, line);
+  if (!json.ok) return { ok: false, id: undefined, failure: json.failure };
+  const decoded = json.value;
+  const read = parseWith(SidecarRequestSchema, decoded);
   if (read.ok) return { ok: true, request: read.value };
-  const named = parseJsonWith(NamedLineSchema, line);
+  const named = parseWith(NamedLineSchema, decoded);
   if (!named.ok) return { ok: false, id: undefined, failure: named.failure };
   const { id } = named.value;
-  const version = parseJsonWith(VersionedLineSchema, line);
+  const version = parseWith(VersionedLineSchema, decoded);
   if (!version.ok) return { ok: false, id, code: "unsupported_version", failure: version.failure };
-  const op = parseJsonWith(KnownOpLineSchema, line);
+  const op = parseWith(KnownOpLineSchema, decoded);
   if (!op.ok) return { ok: false, id, code: "unknown_op", failure: op.failure };
   return { ok: false, id, code: "invalid_args", failure: read.failure };
 }

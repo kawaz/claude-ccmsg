@@ -2,9 +2,10 @@
 // a typed value or a typed failure, never a throw.
 import { describe, expect, test } from "bun:test";
 import * as v from "valibot";
-import { errorText, parseJsonWith, parseWith } from "../src/parse.ts";
+import { errorText, JsonTextSchema, jsonText, parseWith } from "../src/parse.ts";
 
 const Point = v.object({ x: v.number(), y: v.number() });
+const PointText = jsonText(Point);
 
 describe("parseWith", () => {
   test("a value of the shape is the typed value, extra fields left out", () => {
@@ -33,15 +34,15 @@ describe("parseWith", () => {
   });
 });
 
-describe("parseJsonWith", () => {
+describe("jsonText", () => {
   test("JSON text of the shape is the typed value", () => {
-    expect(parseJsonWith(Point, '{"x":1,"y":2}')).toEqual({ ok: true, value: { x: 1, y: 2 } });
+    expect(parseWith(PointText, '{"x":1,"y":2}')).toEqual({ ok: true, value: { x: 1, y: 2 } });
   });
 
   // Not JSON at all is a failure like a wrong shape, not a throw.
   for (const text of ["", "{", "not json", '{"x":1,}']) {
     test(`text that is not JSON (${JSON.stringify(text)}) is a failure`, () => {
-      const read = parseJsonWith(Point, text);
+      const read = parseWith(PointText, text);
       expect(read.ok).toBe(false);
       if (read.ok) return;
       expect(read.failure.summary).toStartWith("Invalid JSON");
@@ -49,8 +50,22 @@ describe("parseJsonWith", () => {
   }
 
   test("JSON of another shape is a failure", () => {
-    expect(parseJsonWith(Point, "[1,2]").ok).toBe(false);
-    expect(parseJsonWith(Point, '"x"').ok).toBe(false);
+    expect(parseWith(PointText, "[1,2]").ok).toBe(false);
+    expect(parseWith(PointText, '"x"').ok).toBe(false);
+  });
+
+  test("a value that is not text is a failure", () => {
+    expect(parseWith(PointText, { x: 1, y: 2 }).ok).toBe(false);
+  });
+});
+
+describe("JsonTextSchema", () => {
+  test("decodes JSON text without reading its shape", () => {
+    expect(parseWith(JsonTextSchema, '[1,{"a":null}]')).toEqual({
+      ok: true,
+      value: [1, { a: null }],
+    });
+    expect(parseWith(JsonTextSchema, "{").ok).toBe(false);
   });
 });
 

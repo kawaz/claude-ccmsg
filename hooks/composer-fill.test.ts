@@ -4,17 +4,17 @@
 // refuses it, is the protocol's (packages/protocol/test/sidecar.test.ts); here
 // it is how the module answers.
 import { describe, expect, test } from "bun:test";
-import { parseJsonWith } from "@ccmsg/protocol/parse";
+import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
   SIDECAR_OP_NAMES,
   type SidecarReply,
-  SidecarReplySchema,
+  SidecarReplyTextSchema,
 } from "@ccmsg/protocol/sidecar";
 import {
   ACCEPT_WAIT_MS,
   type Engine,
-  type Events,
+  type HookedEvent,
   type Hook,
   answer,
   handlePromptSend,
@@ -31,8 +31,8 @@ import {
   type SpawnEnd,
 } from "./composer-fill.ts";
 
-const START: Events["session.start"] = { isInteractive: true, surface: "terminal" };
-const CLASSIC_START: Events["classic.SessionStart"] = {
+const START = { cwd: "/w", isInteractive: true, surface: "terminal" };
+const CLASSIC_START = {
   session_id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
 };
 
@@ -81,7 +81,7 @@ function controlledStream() {
 }
 
 /** The hooks the module registered, by event. */
-type HookTable = { [K in keyof Events]?: Hook<Events[K]> };
+type HookTable = Partial<Record<HookedEvent, Hook>>;
 
 interface Fake {
   $: Engine;
@@ -94,10 +94,11 @@ interface Fake {
   spawns: { argv: readonly string[]; stream: ReturnType<typeof controlledStream> }[];
   timers: Timer[];
   hooks: HookTable;
+  /** The `.catch` handler of each hook, by event. */
+  catchers: HookTable;
   sid: { value: string };
   fills: string[];
   logs: string[];
-  catches: Set<string>;
 }
 
 /** An engine whose composer, environment and clock the test holds. `onEnter`
@@ -199,21 +200,35 @@ function fakeEngine(
     sid,
     fills,
     logs,
-    catches: new Set<string>(),
+    catchers: {},
   };
   return fake;
 }
 
-/** Run the module's hook on `event` as the engine would. */
-function fire<K extends keyof Events, R>(
+/** Run the module's hook on `event` as the engine would: when the hook
+ * throws, its `.catch` handler runs in its place with a replay-safe `next`,
+ * which answers what the hook's own call settled to and runs nothing beneath
+ * again (the engine's `Caught`). */
+async function fire<E, R>(
   fake: Fake,
-  event: K,
-  e: Events[K],
-  next: (e: Events[K]) => Promise<R>,
+  event: HookedEvent,
+  e: E,
+  next: (e: E) => Promise<R>,
 ): Promise<R> {
-  const hook: Hook<Events[K]> | undefined = fake.hooks[event];
+  const hook = fake.hooks[event];
   if (hook === undefined) throw new Error(`no hook on ${event}`);
-  return hook(fake.$, e, next);
+  let called: Promise<R> | undefined;
+  const once = (input: E): Promise<R> => {
+    called ??= next(input);
+    return called;
+  };
+  try {
+    return await hook(fake.$, e, once);
+  } catch (error) {
+    const handler = fake.catchers[event];
+    if (handler === undefined) throw error;
+    return handler(fake.$, e, once);
+  }
 }
 
 /** The `index`th sidecar the module spawned. */
@@ -233,7 +248,7 @@ function lastTimer(fake: Fake): Timer {
 function stdinReply(fake: Fake, index: number): SidecarReply {
   const stdin = fake.stdins[index];
   if (stdin === undefined) throw new Error(`run #${index} got no standard input`);
-  const read = parseJsonWith(SidecarReplySchema, stdin);
+  const read = parseWith(SidecarReplyTextSchema, stdin);
   if (!read.ok) throw new Error(`run #${index} got no reply: ${read.failure.summary}`);
   return read.value;
 }
@@ -251,22 +266,12 @@ async function submitComposer(fake: Fake): Promise<number> {
   return 0;
 }
 
-/** Keep `hook` under `event`. The table is typed by the one event here, so
- * the hook stored is the one its key says. */
-function keep<K extends keyof Events>(
-  hooks: { [P in K]?: Hook<Events[P]> },
-  event: K,
-  hook: Hook<Events[K]>,
-): void {
-  hooks[event] = hook;
-}
-
 function registerOn(fake: Fake): ModuleState {
   const on: On = (event, hook) => {
-    keep(fake.hooks, event, hook);
+    fake.hooks[event] = hook;
     return {
-      catch: () => {
-        fake.catches.add(event);
+      catch: (handler) => {
+        fake.catchers[event] = handler;
       },
     };
   };
@@ -746,6 +751,109 @@ describe("requests the module answers without running prompt.send", () => {
   });
 });
 
+/** A `next` that counts how often the event went on beneath the hook. */
+function countingNext(result: object = {}) {
+  const calls = { count: 0 };
+  const next = async (): Promise<object> => {
+    calls.count += 1;
+    return result;
+  };
+  return { calls, next };
+}
+
+describe("each hook passes the event on once", () => {
+  // The engine's input is read by a schema: a prompt.submit without `origin`
+  // is not a composer submit, and is passed on untouched.
+  test("a prompt.submit without origin goes on once, and no draft is put back", async () => {
+    const fake = fakeEngine();
+    const state = registerOn(fake);
+    state.restoring = { text: "mine", draft: "draft" };
+    const { calls, next } = countingNext({ entered: true });
+    expect(await fire(fake, "prompt.submit", { text: "mine" }, next)).toEqual({ entered: true });
+    expect(calls.count).toBe(1);
+    expect(fake.fills).toEqual([]);
+    expect(state.restoring).toEqual({ text: "mine", draft: "draft" });
+  });
+
+  test("an input that does not read is logged and goes on once", async () => {
+    const fake = fakeEngine();
+    const state = registerOn(fake);
+    state.restoring = { text: "mine", draft: "draft" };
+    const { calls, next } = countingNext();
+    await fire(fake, "prompt.submit", { text: "mine", origin: "composer" }, next);
+    expect(calls.count).toBe(1);
+    expect(fake.fills).toEqual([]);
+    expect(fake.logs.some((l) => l.startsWith("ccmsg: prompt.submit not read: origin"))).toBe(true);
+  });
+
+  // The draft put-back runs after the prompt went in: its failure is logged,
+  // the submit's result stands, and nothing beneath runs again.
+  test("a failure after next is logged and next is not run again", async () => {
+    const fake = fakeEngine();
+    fake.$.prompt = {
+      ...fake.$.prompt,
+      read: async () => {
+        throw new Error("engine gone");
+      },
+    };
+    const state = registerOn(fake);
+    state.restoring = { text: "mine", draft: "draft" };
+    const { calls, next } = countingNext({ entered: true });
+    const e = { text: "mine", origin: { kind: "composer" } };
+    expect(await fire(fake, "prompt.submit", e, next)).toEqual({ entered: true });
+    expect(calls.count).toBe(1);
+    expect(
+      fake.logs.some(
+        (l) => l === "ccmsg: prompt.submit failed after the event: Error: engine gone",
+      ),
+    ).toBe(true);
+  });
+
+  test("a failure before next is logged and the event goes on once", async () => {
+    const fake = fakeEngine();
+    const state = registerOn(fake);
+    state.awaiting = {
+      text: "x",
+      accept: () => {
+        throw new Error("accept broke");
+      },
+    };
+    const { calls, next } = countingNext();
+    await fire(fake, "classic.UserPromptSubmit", { prompt: "x" }, next);
+    expect(calls.count).toBe(1);
+    expect(fake.logs.some((l) => l.includes("failed before the event: Error: accept broke"))).toBe(
+      true,
+    );
+  });
+
+  // Only `next` failing makes the hook throw; the `.catch` then answers with
+  // that same failure instead of running the event a second time.
+  test("a next that fails runs once, and its failure is the event's", async () => {
+    const fake = fakeEngine();
+    registerOn(fake);
+    let count = 0;
+    const failing = async (): Promise<object> => {
+      count += 1;
+      throw new Error("beneath failed");
+    };
+    for (const event of [
+      "session.start",
+      "session.end",
+      "classic.SessionStart",
+      "classic.UserPromptSubmit",
+      "prompt.submit",
+    ] as const) {
+      count = 0;
+      const outcome = await fire(fake, event, {}, failing).then(
+        () => "resolved",
+        (e: unknown) => errorText(e),
+      );
+      expect(outcome).toBe("Error: beneath failed");
+      expect(count).toBe(1);
+    }
+  });
+});
+
 describe("putting the draft back", () => {
   // The person started typing something new while the filled prompt went in:
   // what they type now wins, and the old draft goes to the debug log.
@@ -773,7 +881,7 @@ describe("putting the draft back", () => {
   test("every hook carries a .catch that passes the event on", () => {
     const fake = fakeEngine();
     registerOn(fake);
-    expect([...fake.catches].toSorted()).toEqual(Object.keys(fake.hooks).toSorted());
+    expect(Object.keys(fake.catchers).toSorted()).toEqual(Object.keys(fake.hooks).toSorted());
   });
 });
 

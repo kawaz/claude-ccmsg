@@ -87,7 +87,8 @@ validate: lint
 build-hooks:
     bun hooks/bundle.ts
 
-# 配る bundle (hooks/composer-fill.bundle.js) が今の source の bundle か確かめる
+# 配る bundle (hooks/composer-fill.bundle.js) が今の source の bundle か確かめる。
+# GitHub CI は bundle の 1 行目が記録している bun でこれを走らせる (.github/workflows/ci.yml の hooks-bundle)
 check-hooks-bundle:
     bun hooks/bundle.ts --check
 

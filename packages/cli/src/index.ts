@@ -12,8 +12,8 @@ import {
   isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
-  parseJsonWith,
-  SidecarReplySchema,
+  parseWith,
+  SidecarReplyTextSchema,
   splitSendWords,
   resolvePaths,
   sessionProjectDir,
@@ -526,7 +526,7 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
  * and closed, so the end of input is the end of the reply. */
 async function runSidecarReply(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar reply --sid <sid> < reply.json";
-  const read = parseJsonWith(SidecarReplySchema, await Bun.stdin.text());
+  const read = parseWith(SidecarReplyTextSchema, await Bun.stdin.text());
   if (!read.ok) {
     throw new Error(
       `standard input must be one JSON reply: ${read.failure.summary}\n  usage: ${usage}`,

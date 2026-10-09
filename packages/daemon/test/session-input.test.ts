@@ -6,7 +6,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
   type Parsed,
-  parseJsonWith,
+  jsonText,
+  parseWith,
   type PromptSendResult,
   resolveSidecarDir,
   type SidecarErrorCode,
@@ -34,10 +35,11 @@ import {
 } from "./helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
+const RequestTextSchema = jsonText(SidecarRequestSchema);
 
 /** A line the daemon wrote to a sidecar, read as the request it must be. */
 function requestIn(line: string): SidecarRequest {
-  const read = parseJsonWith(SidecarRequestSchema, line);
+  const read = parseWith(RequestTextSchema, line);
   if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}`);
   return read.value;
 }

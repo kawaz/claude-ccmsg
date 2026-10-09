@@ -2,7 +2,7 @@
 // no op in particular: the line written, the reply matched to its request.
 import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
-import { parseJsonWith, type SidecarRequest, SidecarRequestSchema } from "@ccmsg/protocol";
+import { jsonText, parseWith, type SidecarRequest, SidecarRequestSchema } from "@ccmsg/protocol";
 import {
   callSidecar,
   liveSidecars,
@@ -96,9 +96,11 @@ describe("liveSidecars", () => {
   });
 });
 
+const RequestTextSchema = jsonText(SidecarRequestSchema);
+
 /** The request in a line the daemon wrote. */
 function requestIn(line: string): SidecarRequest {
-  const read = parseJsonWith(SidecarRequestSchema, line);
+  const read = parseWith(RequestTextSchema, line);
   if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}`);
   return read.value;
 }

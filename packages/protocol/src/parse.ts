@@ -7,10 +7,14 @@
 //
 // The house rules every boundary follows:
 //
-// - Text goes through `parseJsonWith(Schema, text)`: the JSON and its shape are
-//   read in one step, so no untyped value exists even for a line. A value that
-//   is already decoded (a field of an envelope read elsewhere) goes through
-//   `parseWith(Schema, value)`, the one place an `unknown` is taken.
+// - Everything goes through `parseWith(Schema, input)`, the one place an
+//   `unknown` is taken. For text, the schema is `jsonText(Schema)`, which reads
+//   the JSON and its shape in one step, so no untyped value exists even for a
+//   line. A boundary that reads one value against several schemas in turn (to
+//   say which part does not fit) decodes it once with `JsonTextSchema`.
+// - A schema is built once, when its module loads, and used for every value:
+//   `jsonText(...)` and every other schema is a module-level constant, never
+//   built inside a function that reads a value.
 // - Failure is a value, not a throw: `Parsed<T>` is either the typed value or
 //   a `ParseFailure`. What a boundary does with a failure — refuse with the
 //   reason, drop the one line and go on, show less — is the boundary's call;
@@ -71,13 +75,21 @@ export function parseWith<S extends v.GenericSchema>(
     : { ok: false, failure: failureOf(read.issues) };
 }
 
-/** JSON text read with `schema`: text that is not JSON is a failure like any
- * other shape. */
-export function parseJsonWith<S extends v.GenericSchema>(
+/** A schema of JSON text: text that is not JSON is a failure like any other
+ * shape. Its output is not typed; it is for a boundary that reads the one
+ * decoded value against several schemas in turn. */
+export const JsonTextSchema: v.SchemaWithPipe<
+  readonly [v.StringSchema<undefined>, v.ParseJsonAction<string, undefined, undefined>]
+> = v.pipe(v.string(), v.parseJson());
+
+/** The schema of JSON text whose value `schema` reads. Built once per schema,
+ * as a module-level constant beside it. */
+export function jsonText<S extends v.GenericSchema>(
   schema: S,
-  text: string,
-): Parsed<v.InferOutput<S>> {
-  return parseWith(v.pipe(v.string(), v.parseJson(), schema), text);
+): v.SchemaWithPipe<
+  readonly [v.StringSchema<undefined>, v.ParseJsonAction<string, undefined, undefined>, S]
+> {
+  return v.pipe(v.string(), v.parseJson(), schema);
 }
 
 /** A value caught by `catch`, as text for a log or an answer: an Error by its

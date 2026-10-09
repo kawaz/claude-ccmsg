@@ -22,13 +22,17 @@
 // Claude Code's module loader allows no imports that run, so this file is not
 // what hooks.json names: `just build-hooks` bundles it, with valibot and the
 // protocol's sidecar schemas it reads requests by, into the one file
-// composer-fill.bundle.js, and `just check-hooks-bundle` (part of `just ci`)
-// fails while that file is not this source's bundle. Every line from the
-// sidecar is read by the protocol's schema (`readSidecarRequest`) into a typed
-// request or a typed refusal. `claude plugin validate` reads every `$` call
-// off the bundle: each call is spelled out as `$.noun.method(...)` with
-// literal arguments where the engine requires them.
-import { errorText } from "@ccmsg/protocol/parse";
+// composer-fill.bundle.js, and `just check-hooks-bundle` (in `just ci` and
+// GitHub CI) fails while that file is not this source's bundle. Every line
+// from the sidecar is read by the protocol's schema (`readSidecarRequest`)
+// into a typed request or a typed refusal, and every engine input a hook uses
+// by a schema of the fields it reads. The module loader and `claude plugin
+// validate` read the bundle statically: each call is spelled out as
+// `$.noun.method(...)` with literal arguments where the engine requires them,
+// each hook is a function literal, and `$` is passed only to functions
+// declared at the top of the file.
+import * as v from "valibot";
+import { errorText, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
   type FailedSidecarReply,
@@ -81,28 +85,89 @@ export interface Engine {
   ui: { log(text: string, options?: { to?: "debug" }): void };
 }
 
-/** The events this module hooks, with the fields of each it reads, as the
- * engine's `claude-code.d.ts` states them. */
-export interface Events {
-  "session.start": { isInteractive: boolean; surface: string | null };
-  "session.end": { reason: string };
-  "classic.SessionStart": { session_id: string };
-  "classic.UserPromptSubmit": { prompt: string };
-  "prompt.submit": { text: string; origin: { kind: string } };
+/** The events this module hooks. */
+export type HookedEvent =
+  | "session.start"
+  | "session.end"
+  | "classic.SessionStart"
+  | "classic.UserPromptSubmit"
+  | "prompt.submit";
+
+/** A hook: generic in the event's input and in its result, so all it can do
+ * with either is read the input through a schema and pass both on as
+ * received. */
+export type Hook = <E, R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promise<R>;
+/** What `on(...)` returns: one `.catch`, run in the hook's place when the
+ * hook throws or overruns its budget. The engine's `next` there is
+ * replay-safe: after the hook called it, it answers what that call settled
+ * to and runs nothing beneath again. */
+export interface Registration {
+  catch(handler: Hook): void;
+}
+export type On = (event: HookedEvent, hook: Hook) => Registration;
+
+// The engine's input for each event, as far as this module reads it. The
+// engine is another program, and its inputs change between its versions, so
+// they are read like any data from outside (DR-0038 §1): the fields used, each
+// one allowed to be absent, the rest let through. The shapes follow the
+// engine's `claude-code.d.ts`.
+const SessionStartInputSchema = v.looseObject({
+  isInteractive: v.optional(v.boolean()),
+  surface: v.optional(v.nullable(v.string())),
+});
+const SessionEndInputSchema = v.looseObject({ reason: v.optional(v.string()) });
+const ClassicSessionStartInputSchema = v.looseObject({});
+const UserPromptSubmitInputSchema = v.looseObject({ prompt: v.optional(v.string()) });
+const PromptSubmitInputSchema = v.looseObject({
+  text: v.optional(v.string()),
+  origin: v.optional(v.looseObject({ kind: v.optional(v.string()) })),
+});
+
+/** What a hook of this module does with an event it observes: `before` runs
+ * ahead of the event, `after` once the event went through. */
+interface Observer<T> {
+  before?: (e: T) => void;
+  after?: (e: T) => Promise<void> | void;
 }
 
-/** A hook passes on what `next` resolves to without reading it, whatever the
- * event's result is: the hook is generic in it. */
-export type Hook<E> = <R>($: Engine, e: E, next: (e: E) => Promise<R>) => Promise<R>;
-/** What `on(...)` returns: one `.catch`, whose answer stands for the hook's
- * when the hook throws or overruns its budget. */
-export interface Registration<E> {
-  catch(handler: Hook<E>): void;
+/** The body of a hook that observes `event`: pass it on exactly once, as
+ * received. The input is read with `schema`; one that does not read is logged
+ * and the event goes on without this module's part. A failure of `before`
+ * lets the event go on as if this hook were not there; a failure of `after` is
+ * logged and the event's result stands. Neither reaches the engine as a
+ * failed hook, so the only thing that can make the hook throw is `next`
+ * itself.
+ *
+ * The module loader and `claude plugin validate` follow `$` statically: each
+ * `on(...)` spells its hook as a function literal that calls this, and `$`
+ * goes only to functions declared at the top of the file, so `before` and
+ * `after` take the input alone and reach `$` through the hook's literal. */
+async function observe<E, R, S extends v.GenericSchema>(
+  $: Engine,
+  e: E,
+  next: (e: E) => Promise<R>,
+  event: HookedEvent,
+  schema: S,
+  observer: Observer<v.InferOutput<S>>,
+): Promise<R> {
+  const read = parseWith(schema, e);
+  if (!read.ok) $.ui.log(`ccmsg: ${event} not read: ${read.failure.summary}`, { to: "debug" });
+  const run = async (
+    when: "before" | "after",
+    part: ((e: v.InferOutput<S>) => Promise<void> | void) | undefined,
+  ): Promise<void> => {
+    if (!read.ok || part === undefined) return;
+    try {
+      await part(read.value);
+    } catch (error) {
+      $.ui.log(`ccmsg: ${event} failed ${when} the event: ${errorText(error)}`, { to: "debug" });
+    }
+  };
+  await run("before", observer.before);
+  const result = await next(e);
+  await run("after", observer.after);
+  return result;
 }
-export type On = <K extends keyof Events>(
-  event: K,
-  hook: Hook<Events[K]>,
-) => Registration<Events[K]>;
 
 /** `hyoui input` budget. One prompt.send costs at most
  * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPLY_TIMEOUT_MS (9 s), which fits the
@@ -497,62 +562,67 @@ async function replaceSidecar($: Engine, state: ModuleState): Promise<void> {
 
 export function register(on: On): ModuleState {
   const state = newState();
-  // Every hook here observes and passes the event on; if one fails, the
-  // event goes on as if it were not there.
-  on("session.start", async ($, e, next) => {
-    const started = await next(e);
-    // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
-    state.interactive = e.isInteractive !== false && e.surface !== null;
-    startSidecar($, state);
-    return started;
-  }).catch(async (_$, e, next) => next(e));
-  on("session.end", async (_$, e, next) => {
-    if (e.reason === "clear" && state.sid !== undefined) {
-      nextGeneration(state);
-      state.sid = undefined;
-    }
-    return next(e);
-  }).catch(async (_$, e, next) => next(e));
-  on("classic.SessionStart", async ($, e, next) => {
-    const started = await next(e);
-    startSidecar($, state);
-    return started;
-  }).catch(async (_$, e, next) => next(e));
-  on("classic.UserPromptSubmit", async ($, e, next) => {
-    const awaiting = state.awaiting;
-    if (awaiting !== undefined) {
-      if (samePrompt(e.prompt, awaiting.text)) {
-        state.awaiting = undefined;
-        awaiting.accept();
-      } else {
+  // Every hook here observes the event and passes it on once (`observe`). The
+  // `.catch` covers what is left, `next` failing or the budget running out:
+  // the engine's `next` there runs nothing beneath twice.
+  on("session.start", async ($, e, next) =>
+    observe($, e, next, "session.start", SessionStartInputSchema, {
+      after: (input) => {
+        // No composer to fill (`-p`, the SDK): no sidecar to keep (DR-0035 §3).
+        state.interactive = input.isInteractive !== false && input.surface !== null;
+        startSidecar($, state);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("session.end", async ($, e, next) =>
+    observe($, e, next, "session.end", SessionEndInputSchema, {
+      before: (input) => {
+        if (input.reason === "clear" && state.sid !== undefined) {
+          nextGeneration(state);
+          state.sid = undefined;
+        }
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("classic.SessionStart", async ($, e, next) =>
+    observe($, e, next, "classic.SessionStart", ClassicSessionStartInputSchema, {
+      after: () => startSidecar($, state),
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("classic.UserPromptSubmit", async ($, e, next) =>
+    observe($, e, next, "classic.UserPromptSubmit", UserPromptSubmitInputSchema, {
+      before: (input) => {
+        const awaiting = state.awaiting;
+        if (awaiting === undefined) return;
+        if (input.prompt !== undefined && samePrompt(input.prompt, awaiting.text)) {
+          state.awaiting = undefined;
+          awaiting.accept();
+          return;
+        }
         $.ui.log(
-          `ccmsg: UserPromptSubmit ${JSON.stringify(e.prompt)} is not the filled ${JSON.stringify(awaiting.text)}`,
+          `ccmsg: UserPromptSubmit ${JSON.stringify(input.prompt ?? null)} is not the filled ${JSON.stringify(awaiting.text)}`,
           { to: "debug" },
         );
-      }
-    }
-    return next(e);
-  }).catch(async (_$, e, next) => next(e));
-  on("prompt.submit", async ($, e, next) => {
-    const submitted = await next(e);
-    const restoring = state.restoring;
-    if (
-      restoring !== undefined &&
-      e.origin.kind === "composer" &&
-      samePrompt(e.text, restoring.text)
-    ) {
-      state.restoring = undefined;
-      // The prompt is in by now; a failed put-back must not read as a failed
-      // hook on a submit that went through.
-      if (restoring.draft !== "") {
-        try {
-          await putBackDraft($, restoring.text, restoring.draft);
-        } catch (error) {
-          $.ui.log(`ccmsg: draft put-back failed: ${errorText(error)}`, { to: "debug" });
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
+  on("prompt.submit", async ($, e, next) =>
+    observe($, e, next, "prompt.submit", PromptSubmitInputSchema, {
+      // The prompt is in by now: the person gets their draft back.
+      after: async (input) => {
+        const restoring = state.restoring;
+        if (
+          restoring === undefined ||
+          input.origin?.kind !== "composer" ||
+          input.text === undefined ||
+          !samePrompt(input.text, restoring.text)
+        ) {
+          return;
         }
-      }
-    }
-    return submitted;
-  }).catch(async (_$, e, next) => next(e));
+        state.restoring = undefined;
+        if (restoring.draft !== "") await putBackDraft($, restoring.text, restoring.draft);
+      },
+    }),
+  ).catch(async (_$, e, next) => next(e));
   return state;
 }

@@ -1,7 +1,7 @@
 // The sidecar's request and reply lines (DR-0035 §3) as their schemas say
 // them (DR-0038): what the module runs, what it refuses with which code, and
 // what a reply in transit must carry.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { parseWith } from "../src/parse.ts";
 import {
   DescribeResultSchema,
@@ -77,6 +77,27 @@ describe("readSidecarRequest", () => {
       expect(read).toMatchObject({ ok: false, id: "q", code });
     });
   }
+
+  // Read against id, version, op and args in turn, the line's JSON is still
+  // decoded once.
+  test("a line is decoded once, however far its refusal is read", () => {
+    const parse = spyOn(JSON, "parse");
+    try {
+      for (const value of [
+        { v: 1, op: "prompt.send", id: "q", args: { text: "x" } },
+        { v: 1, op: "prompt.send", id: "q", args: {} },
+        { v: 1, op: "nope", id: "q", args: {} },
+        { v: 2, op: "describe", id: "q", args: {} },
+        { op: "describe", args: {} },
+      ]) {
+        parse.mockClear();
+        readSidecarRequest(line(value));
+        expect(parse).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      parse.mockRestore();
+    }
+  });
 
   test("a refusal says what was read", () => {
     expect(readSidecarRequest(line({ v: 2, op: "describe", id: "q", args: {} }))).toMatchObject({
