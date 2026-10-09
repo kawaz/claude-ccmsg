@@ -6,12 +6,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   DIRECT_DELIVERY_USER_SENDER,
-  SESSION_INPUT_MODULE_REASONS,
   VERSION,
   directAddressSid,
   isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
+  parseSidecarReply,
   resolvePaths,
   sessionProjectDir,
   type ErrorResponse,
@@ -19,7 +19,6 @@ import {
   type MessageSendReason,
   type MessageSendRequest,
   type MessageSendResponse,
-  type SessionInputModuleReason,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
 import {
@@ -411,21 +410,21 @@ async function runDirectSend(
 // --- sidecar ---------------------------------------------------------------
 
 const SIDECAR_HELP = `ccmsg sidecar — the child process the ccmsg hooks module starts for its
-session. Not for direct use.
+session, and the way the module's replies go back. Not for direct use.
 `;
 
-/** `ccmsg sidecar` and `ccmsg sidecar report` (DR-0035 §3). Both are the
+/** `ccmsg sidecar` and `ccmsg sidecar reply` (DR-0035 §3). Both are the
  * hooks module's: it starts the first for its session's life and runs the
- * second to tell the daemon what became of a request the first copied to it.
- * The help says no more than that on purpose (DR-0035 §4). */
+ * second to answer a request the first copied to it. The help says no more
+ * than that on purpose (DR-0035 §4). */
 async function runSidecarCommand(args: string[]): Promise<void> {
   const { positionals, opts } = parseArgs(args);
   if (opts.help === true) {
     process.stdout.write(SIDECAR_HELP);
     return;
   }
-  if (positionals[0] === "report") {
-    await runSidecarReport(opts);
+  if (positionals[0] === "reply") {
+    await runSidecarReply(opts);
     return;
   }
   if (positionals.length > 0) {
@@ -483,29 +482,24 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
   process.exit(0);
 }
 
-async function runSidecarReport(opts: Record<string, string | boolean>): Promise<never> {
-  const usage =
-    "ccmsg sidecar report --sid <sid> --id <id> --outcome accepted|not_delivered [--reason <reason>]";
-  const id = requireArg(str(opts, "id"), "id", usage);
-  const outcome = requireArg(str(opts, "outcome"), "outcome", usage);
-  if (outcome !== "accepted" && outcome !== "not_delivered") {
-    throw new Error(`--outcome must be accepted or not_delivered\n  usage: ${usage}`);
+/** The reply is read from standard input, not taken as an argument: a reply
+ * carries whatever its op returns, which may be long, and an argument is
+ * bounded by the system's argument size and shown to every user by `ps`. The
+ * module writes it there with `$.process.run`'s `stdin`, which is written once
+ * and closed, so the end of input is the end of the reply. */
+async function runSidecarReply(opts: Record<string, string | boolean>): Promise<never> {
+  const usage = "ccmsg sidecar reply --sid <sid> < reply.json";
+  let value: unknown;
+  try {
+    value = JSON.parse(await Bun.stdin.text());
+  } catch {
+    throw new Error(`standard input must be one JSON reply\n  usage: ${usage}`);
   }
-  const reason = str(opts, "reason");
-  if (
-    reason !== undefined &&
-    !(SESSION_INPUT_MODULE_REASONS as readonly string[]).includes(reason)
-  ) {
-    throw new Error(`--reason must be one of ${SESSION_INPUT_MODULE_REASONS.join(", ")}`);
-  }
+  const reply = parseSidecarReply(value);
+  if ("invalid" in reply) throw new Error(`${reply.invalid}\n  usage: ${usage}`);
   const identity = resolveSessionIdentity(opts, "sidecar");
-  if (identity === null) refuseWriteWithoutSid("sidecar report");
-  return runOnce(identity, {
-    op: "session_input_result",
-    id,
-    outcome,
-    ...(reason !== undefined ? { reason: reason as SessionInputModuleReason } : {}),
-  });
+  if (identity === null) refuseWriteWithoutSid("sidecar reply");
+  return runOnce(identity, { op: "sidecar_reply", reply });
 }
 
 // --- say -------------------------------------------------------------------
@@ -943,7 +937,8 @@ Commands:
                                after a graceful stop reported
                                terminated:false)
   sidecar                      The child process the ccmsg hooks module starts for
-                               its session. Not for direct use
+                               its session, and the way its replies go back.
+                               Not for direct use
   origins [list]               List persisted extra allowed Origins (webui reverse proxy)
   origins add <origin>         Allow an Origin (e.g. "https://ccmsg.example.com"), effective immediately
   origins remove <origin>      Remove a persisted Origin

@@ -1,6 +1,6 @@
 // `ccmsg sidecar` (DR-0035 §3): bind the run's socket, copy lines to stdout,
-// leave on a signal or when stdout's reader is gone; `ccmsg sidecar report`
-// carries the module's answer to the daemon.
+// leave on a signal or when stdout's reader is gone; `ccmsg sidecar reply`
+// carries the module's reply to the daemon.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -182,9 +182,10 @@ describe("ccmsg sidecar (process)", () => {
     const ready = await readUntil(err, (t) => t.includes("\n"));
     const socketPath = path.join(resolveSidecarDir(stateDir), sidecarSocketName(SID, process.pid));
     expect(ready).toBe(`ready ${socketPath}\n`);
-    await writeTo(socketPath, '{"kind":"prompt.fill","id":"1","text":"t"}\n');
+    const request = '{"v":1,"op":"prompt.send","id":"1","args":{"text":"t"}}\n';
+    await writeTo(socketPath, request);
     const out = await readUntil(proc.stdout.getReader(), (t) => t.includes("\n"));
-    expect(out).toBe('{"kind":"prompt.fill","id":"1","text":"t"}\n');
+    expect(out).toBe(request);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(0);
     expect(fs.existsSync(socketPath)).toBe(false);
@@ -226,7 +227,8 @@ describe("ccmsg sidecar (process)", () => {
     expect(await proc.exited).toBe(0);
     expect(out).toContain("hooks module");
     expect(out).not.toContain(".sock");
-    expect(out).not.toContain("prompt.fill");
+    expect(out).not.toContain("prompt.send");
+    expect(out).not.toContain('"op"');
   });
 
   test("a non-session-id --sid is refused", async () => {
@@ -239,7 +241,18 @@ describe("ccmsg sidecar (process)", () => {
   });
 });
 
-describe("ccmsg sidecar report", () => {
+/** `ccmsg sidecar reply --sid SID` with `stdin` on its standard input, as the
+ * module's `$.process.run` runs it. */
+function runReply(stdin: string, env: Record<string, string>) {
+  return Bun.spawn([process.execPath, CLI, "sidecar", "reply", "--sid", SID], {
+    env: { ...(process.env as Record<string, string>), ...env },
+    stdin: new TextEncoder().encode(stdin),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+describe("ccmsg sidecar reply", () => {
   async function startShortDaemon(): Promise<DaemonCtx> {
     const base = shortBase();
     const stateDir = path.join(base, "s");
@@ -267,8 +280,8 @@ describe("ccmsg sidecar report", () => {
   }
 
   // The whole route the module uses: the daemon writes to the sidecar, the
-  // sidecar copies the line out, and `sidecar report` answers the request.
-  test("answers the session_input the sidecar copied out", async () => {
+  // sidecar copies the request out, and `sidecar reply` answers it.
+  test("answers the session_input request the sidecar copied out", async () => {
     const ctx = await startShortDaemon();
     const sidecar = Bun.spawn(
       [process.execPath, CLI, "sidecar", "--sid", SID, "--pid", String(process.pid)],
@@ -283,32 +296,24 @@ describe("ccmsg sidecar report", () => {
       await readUntil(sidecar.stderr.getReader(), (t) => t.includes("\n"));
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const reply = user.request({ op: "session_input", session_id: SID, text: "from the web" });
+      const answer = user.request({ op: "session_input", session_id: SID, text: "from the web" });
       const line = JSON.parse(await readUntil(sidecar.stdout.getReader(), (t) => t.includes("\n")));
-      expect(line).toEqual({ kind: "prompt.fill", id: line.id, text: "from the web" });
-      const report = Bun.spawn(
-        [
-          process.execPath,
-          CLI,
-          "sidecar",
-          "report",
-          "--sid",
-          SID,
-          "--id",
-          line.id,
-          "--outcome",
-          "not_delivered",
-          "--reason",
-          "no_terminal",
-        ],
-        {
-          env: { ...(process.env as Record<string, string>), ...ctx.env },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
+      expect(line).toEqual({
+        v: 1,
+        op: "prompt.send",
+        id: line.id,
+        args: { text: "from the web" },
+      });
+      const reply = runReply(
+        JSON.stringify({
+          id: line.id,
+          ok: true,
+          result: { outcome: "not_delivered", reason: "no_terminal" },
+        }),
+        ctx.env,
       );
-      expect(await report.exited).toBe(0);
-      expect(await reply).toEqual({ ok: true, outcome: "not_delivered", reason: "no_terminal" });
+      expect(await reply.exited).toBe(0);
+      expect(await answer).toEqual({ ok: true, outcome: "not_delivered", reason: "no_terminal" });
       user.close();
     } finally {
       sidecar.kill("SIGTERM");
@@ -317,25 +322,20 @@ describe("ccmsg sidecar report", () => {
     }
   });
 
-  test("an unknown reason is refused before reaching the daemon", async () => {
-    const proc = Bun.spawn(
-      [
-        process.execPath,
-        CLI,
-        "sidecar",
-        "report",
-        "--sid",
-        SID,
-        "--id",
-        "x",
-        "--outcome",
-        "not_delivered",
-        "--reason",
-        "bogus",
-      ],
-      { env: sidecarEnv(path.join(shortBase(), "s")), stdout: "pipe", stderr: "pipe" },
-    );
-    expect(await proc.exited).toBe(1);
-    expect(await new Response(proc.stderr).text()).toContain("--reason must be one of");
-  });
+  // Refused before a daemon is looked for: the state dir has none.
+  for (const [name, stdin, says] of [
+    ["input that is not JSON", "accepted", "must be one JSON reply"],
+    ["a reply without an id", '{"ok":true,"result":{}}', "needs the request's id"],
+    [
+      "an error code nobody defined",
+      '{"id":"x","ok":false,"error":{"code":"bogus","message":""}}',
+      "code one of",
+    ],
+  ] as const) {
+    test(`${name} is refused before reaching the daemon`, async () => {
+      const proc = runReply(stdin, sidecarEnv(path.join(shortBase(), "s")));
+      expect(await proc.exited).toBe(1);
+      expect(await new Response(proc.stderr).text()).toContain(says);
+    });
+  }
 });

@@ -1,6 +1,6 @@
 // `ccmsg sidecar` (DR-0035 §3): the child a session's hooks module keeps for
-// the session's life. It binds `<sid>.<pid>.sock` and copies every line
-// written there to its standard output, which the module reads.
+// the session's life. It binds `<sid>.<pid>.sock` and copies every request
+// line written there to its standard output, which the module reads.
 import { chmodSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import { sidecarSocketName } from "@ccmsg/protocol";
@@ -30,10 +30,11 @@ export interface Sidecar {
 /** Bind the run's socket and copy every line written to it onto `out`.
  *
  * Nothing here reads what a line says. The daemon that writes and the module
- * that reads agree on the lines between themselves; a sidecar that parsed
- * them would need changing whenever they add a kind, and it is a process
+ * that reads agree on the requests between themselves; a sidecar that parsed
+ * them would need changing whenever they add an op, and it is a process
  * started once per session and kept for its life. Nothing is answered on the
- * connection either: a line written is a line taken.
+ * connection either: a line written is a line taken, and the module's reply
+ * goes back by `ccmsg sidecar reply`.
  *
  * The path is unlinked before binding because whatever is there is this run's
  * own: the pid is the run's, so another run's socket has another name, and a
