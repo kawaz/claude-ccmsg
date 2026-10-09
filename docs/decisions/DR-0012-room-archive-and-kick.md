@@ -37,4 +37,4 @@
 
 - ArchiveEvent は StorageEvent の追加 variant。旧 client は未知 type の storage
   イベントを無視する (寛容パース) ため log 互換。旧 daemon には archive_room /
-  kick op が無く unknown_op を返すだけ (newer-wins upgrade で収束)。
+  kick op が無く `invalid_args` を返すだけ (newer-wins upgrade で収束)。

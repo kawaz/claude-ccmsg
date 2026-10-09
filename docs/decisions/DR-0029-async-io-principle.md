@@ -69,6 +69,8 @@ parse 不能な JSON / `op` 欠落 / `request_id` 欠落の 3 つだけは、応
 られない (= どの要求への答えか名指しできない)。これらは `bad_request` を返すが、
 client は誰も settle できない — log するだけ。正常な client は必ず id を送る。
 
+`request_id` が読めた依頼のうち、知らない op と field の型違いは `request_id` を付けて `invalid_args` で返す ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)。
+
 ### subscribe 経路の互換を切る意図的な変更
 
 本追補は DR-0002 §4「設計意図」でいう **subscribe 経路の互換を意図的に切る変更**。

@@ -88,10 +88,9 @@ cursor に反映されない。room の log 末尾が非 msg イベントで終�
 
 ### 2.5 since_seq の入力検証 (daemon 側)
 
-- room ごとの値が **有限の非負 number でなければその room の since_seq を無視**
-  (= 未指定扱い → §2.3 の優先順位で次の cursor へ: since (mid) があればそれ、
-  無ければ join snapshot。安全側 = 重複配信側に倒す)。負値・NaN・Infinity・
-  非 number (JSON 経由でも生 socket 書き込みで到達しうる) が対象
+- `since_seq` / `since` は request のスキーマで読み、room ごとの値が **有限の非負 number でなければ依頼ごと型の失敗として拒否**する
+  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6: 型に合わない入力はエラーで弾いて終わり、cursor 無しに読み替えない)。
+  負値・NaN・Infinity・非 number が対象
 - 巨大値 (lastSeq 超) は「全て配信済み」として replay ゼロ — cursor 走査は
   既存 sendBacklog と同じ O(room.events) の単一 pass で、DoS ベクタにならない
 
