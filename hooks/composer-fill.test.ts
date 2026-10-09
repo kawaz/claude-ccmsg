@@ -94,6 +94,8 @@ interface Fake {
   spawns: { argv: readonly string[]; stream: ReturnType<typeof controlledStream> }[];
   timers: Timer[];
   hooks: HookTable;
+  /** The events the module hooked, in the order it hooked them. */
+  registered: HookedEvent[];
   /** The `.catch` handler of each hook, by event. */
   catchers: HookTable;
   sid: { value: string };
@@ -197,6 +199,7 @@ function fakeEngine(
     spawns,
     timers,
     hooks: {},
+    registered: [],
     sid,
     fills,
     logs,
@@ -269,6 +272,7 @@ async function submitComposer(fake: Fake): Promise<number> {
 function registerOn(fake: Fake): ModuleState {
   const on: On = (event, hook) => {
     fake.hooks[event] = hook;
+    fake.registered.push(event);
     return {
       catch: (handler) => {
         fake.catchers[event] = handler;
@@ -810,6 +814,29 @@ describe("each hook passes the event on once", () => {
       expect(count).toBe(1);
     }
   });
+
+  // The hook itself throwing, before the event went on: the `.catch` passes
+  // it on in the hook's place, once.
+  test("every hook that fails still passes the event on once", async () => {
+    const fake = fakeEngine();
+    let logged = 0;
+    fake.$.ui = {
+      log: () => {
+        logged += 1;
+        throw new Error("log broke");
+      },
+    };
+    registerOn(fake);
+    expect(fake.registered.length).toBeGreaterThan(0);
+    for (const event of fake.registered) {
+      logged = 0;
+      const { calls, next } = countingNext({ passed: event });
+      // No hook reads this input; logging that is what throws.
+      expect(await fire(fake, event, "not an event", next)).toEqual({ passed: event });
+      expect(calls.count).toBe(1);
+      expect(logged).toBe(1);
+    }
+  });
 });
 
 describe("putting the draft back", () => {
@@ -834,12 +861,6 @@ describe("putting the draft back", () => {
     });
     expect(fake.composer.text).toBe("typed meanwhile");
     expect(fake.logs.some((l) => l.includes("old draft"))).toBe(true);
-  });
-
-  test("every hook carries a .catch that passes the event on", () => {
-    const fake = fakeEngine();
-    registerOn(fake);
-    expect(Object.keys(fake.catchers).toSorted()).toEqual(Object.keys(fake.hooks).toSorted());
   });
 });
 
