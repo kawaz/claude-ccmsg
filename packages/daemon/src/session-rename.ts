@@ -29,10 +29,7 @@ export type TitleValidation = { ok: true; title: string } | { ok: false; msg: st
  * sequences. Rejecting is deliberate over stripping — silently renaming a
  * session to something the user did not type is worse than an error they can
  * act on. */
-export function validateRenameTitle(raw: unknown): TitleValidation {
-  if (typeof raw !== "string") {
-    return { ok: false, msg: "session_rename requires a string title" };
-  }
+export function validateRenameTitle(raw: string): TitleValidation {
   const title = raw.trim();
   if (title === "") {
     return { ok: false, msg: "session_rename requires a non-empty title" };

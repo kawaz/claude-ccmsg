@@ -35,13 +35,8 @@ export type LlmStatsResult =
   | { ok: true; data: LlmStatsResponse }
   | { ok: false; code: ErrorCodeType; msg: string };
 
-export function isValidDays(days: unknown): days is number {
-  return (
-    typeof days === "number" &&
-    Number.isInteger(days) &&
-    days >= LLM_STATS_DAYS_MIN &&
-    days <= LLM_STATS_DAYS_MAX
-  );
+export function isValidDays(days: number): boolean {
+  return Number.isInteger(days) && days >= LLM_STATS_DAYS_MIN && days <= LLM_STATS_DAYS_MAX;
 }
 
 /** Put `days` on the configured URL, leaving it alone when the caller named

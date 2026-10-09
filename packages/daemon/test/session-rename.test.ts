@@ -48,11 +48,6 @@ describe("validateRenameTitle", () => {
     expect(validateRenameTitle("").ok).toBe(false);
   });
 
-  test("rejects a non-string title", () => {
-    expect(validateRenameTitle(undefined).ok).toBe(false);
-    expect(validateRenameTitle(42).ok).toBe(false);
-  });
-
   // The reason the whole validation exists: hyoui does no escape processing,
   // so a raw newline inside the `text:` spec would reach the TUI as Enter and
   // submit a half-typed `/rename`.

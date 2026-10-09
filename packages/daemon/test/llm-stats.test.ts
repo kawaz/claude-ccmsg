@@ -87,13 +87,11 @@ describe("isValidDays", () => {
     expect(isValidDays(36_524)).toBe(true);
   });
 
-  test("rejects out-of-range, fractional and non-numeric windows", () => {
+  test("rejects out-of-range, fractional and NaN windows", () => {
     expect(isValidDays(0)).toBe(false);
     expect(isValidDays(36_525)).toBe(false);
     expect(isValidDays(1.5)).toBe(false);
     expect(isValidDays(Number.NaN)).toBe(false);
-    expect(isValidDays("30")).toBe(false);
-    expect(isValidDays(undefined)).toBe(false);
   });
 });
 

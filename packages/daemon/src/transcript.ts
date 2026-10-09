@@ -46,8 +46,11 @@ const TRANSCRIPT_LINE_SCAN_MAX = 4 * 1024 * 1024;
  * the entire trust boundary: a client can never name an arbitrary file, only
  * the one whose name is pinned to its own sid.
  */
-export function validateTranscriptPath(sid: string, transcriptPath: unknown): string | undefined {
-  if (typeof transcriptPath !== "string" || transcriptPath === "") return undefined;
+export function validateTranscriptPath(
+  sid: string,
+  transcriptPath: string | undefined,
+): string | undefined {
+  if (transcriptPath === undefined || transcriptPath === "") return undefined;
   if (!path.isAbsolute(transcriptPath)) return undefined;
   if (path.extname(transcriptPath) !== ".jsonl") return undefined;
   if (path.basename(transcriptPath) !== `${sid}.jsonl`) return undefined;
@@ -75,7 +78,7 @@ export function validateTranscriptPath(sid: string, transcriptPath: unknown): st
  */
 export async function adoptTranscriptPath(
   sid: string,
-  announced: unknown,
+  announced: string | undefined,
   configDirs?: readonly string[],
 ): Promise<string | undefined> {
   const validated = validateTranscriptPath(sid, announced);

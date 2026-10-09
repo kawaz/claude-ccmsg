@@ -16,6 +16,7 @@ import {
   FS_FIND_VISIT_MAX,
   fileSearchQueryIsEmpty,
   type FsFindHit,
+  type FsFindRequest,
   type FsFindResponse,
   matchesFileSearchQuery,
   parseFileSearchQuery,
@@ -82,8 +83,8 @@ async function walkFind(
     { dir: absRoot, layers: rootLayers },
   ];
 
-  while (queue.length > 0) {
-    const { dir, layers } = queue.shift()!;
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    const { dir, layers } = next;
     let dirents: fs.Dirent[];
     try {
       dirents = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -192,32 +193,12 @@ export async function fsFind(
   sessions: SessionLookup,
   statusStore: SessionStatusStore,
   sid: string,
-  kind: unknown,
-  reqRoot: unknown,
-  query: unknown,
-  respectGitignore: unknown,
+  kind: FsFindRequest["kind"],
+  reqRoot: string | undefined,
+  query: string,
+  respectGitignore: boolean | undefined,
   opts: FsAccessOptions = {},
 ): Promise<FsAccessResult<Omit<FsFindResponse, "ok">>> {
-  if (kind !== "contained" && kind !== "workspace") {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "fs_find kind must be 'contained' or 'workspace'",
-    };
-  }
-  if (typeof query !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_find query must be a string" };
-  }
-  if (reqRoot !== undefined && typeof reqRoot !== "string") {
-    return { ok: false, code: ErrorCode.invalid_args, msg: "fs_find root must be a string" };
-  }
-  if (respectGitignore !== undefined && typeof respectGitignore !== "boolean") {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "fs_find respect_gitignore must be a boolean",
-    };
-  }
   // Absent means "apply .gitignore" — see FsFindRequest's doc comment for why
   // filtering is the default rather than the opt-in.
   const applyIgnore = respectGitignore ?? true;
