@@ -3,6 +3,7 @@
 // to `session_status` / `session_status_subscribe` and pushed as
 // `ev:"session_status"`.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 /** DR-0020 Phase 1: folded current status of a session's transcript. */
 export const SessionTodoSchema = v.object({
@@ -21,7 +22,7 @@ export const SessionTodoSchema = v.object({
    * `addBlocks`)。UI では現状表示していないが、fold は対称に保つ。 */
   blocks: v.optional(v.array(v.string())),
 });
-export type SessionTodo = v.InferOutput<typeof SessionTodoSchema>;
+export type SessionTodo = Output<typeof SessionTodoSchema>;
 
 /** DR-0025 Phase 1: one row of a workflow's phase progress (name + done/total
  * count). Present only when the workflow's state json (written on completion)
@@ -33,7 +34,7 @@ export const WorkflowPhaseStatusSchema = v.object({
   done: v.number(),
   total: v.number(),
 });
-export type WorkflowPhaseStatus = v.InferOutput<typeof WorkflowPhaseStatusSchema>;
+export type WorkflowPhaseStatus = Output<typeof WorkflowPhaseStatusSchema>;
 
 /** DR-0025 Phase 1: one agent belonging to a workflow. `agent_id` is the
  * `a<...>` slug that `transcript_read`'s `agent_id`/`run_id` resolver accepts
@@ -62,7 +63,7 @@ export const WorkflowAgentStatusSchema = v.object({
   started_at: v.optional(v.number()),
   duration_ms: v.optional(v.number()),
 });
-export type WorkflowAgentStatus = v.InferOutput<typeof WorkflowAgentStatusSchema>;
+export type WorkflowAgentStatus = Output<typeof WorkflowAgentStatusSchema>;
 
 export const SessionWorkflowStatusSchema = v.object({
   /** task-notification correlation id (Workflow result taskId). */
@@ -85,7 +86,7 @@ export const SessionWorkflowStatusSchema = v.object({
    * find anything readable in the run directory. */
   agents: v.optional(v.array(WorkflowAgentStatusSchema)),
 });
-export type SessionWorkflowStatus = v.InferOutput<typeof SessionWorkflowStatusSchema>;
+export type SessionWorkflowStatus = Output<typeof SessionWorkflowStatusSchema>;
 
 export const SessionBackgroundStatusSchema = v.object({
   /** Monitor/Bash taskId or Agent agentId. */
@@ -101,7 +102,7 @@ export const SessionBackgroundStatusSchema = v.object({
    * or when kind is not "agent". Not present for monitor/bash entries. */
   agent_type: v.optional(v.string()),
 });
-export type SessionBackgroundStatus = v.InferOutput<typeof SessionBackgroundStatusSchema>;
+export type SessionBackgroundStatus = Output<typeof SessionBackgroundStatusSchema>;
 
 /** Main-context observation from the latest non-sidechain, non-synthetic
  * assistant row. Environment overrides are not recorded in transcripts, so
@@ -118,7 +119,7 @@ export const SessionContextUsageSchema = v.object({
   /** Timestamp of the assistant row carrying this observation. */
   timestamp: v.string(),
 });
-export type SessionContextUsage = v.InferOutput<typeof SessionContextUsageSchema>;
+export type SessionContextUsage = Output<typeof SessionContextUsageSchema>;
 
 /** Last transcript-observed activity for one agent-teams teammate. The TUI's
  * internal liveness state is unavailable, so `state` is an open-set estimate. */
@@ -137,7 +138,7 @@ export const SessionTeammateSchema = v.object({
    * including any `[1m]` suffix). Absent when no meta.json was found. */
   model: v.optional(v.string()),
 });
-export type SessionTeammate = v.InferOutput<typeof SessionTeammateSchema>;
+export type SessionTeammate = Output<typeof SessionTeammateSchema>;
 
 /** The fields of one agent tree node beside its children. */
 const AgentTreeNodeFieldsSchema = v.object({
@@ -198,9 +199,9 @@ const AgentTreeNodeFieldsSchema = v.object({
  * itself (TypeScript reports the circularity), so the recursive part — and
  * only it — is written as an interface that the schema is annotated with.
  * Every other field is the inferred type of AgentTreeNodeFieldsSchema. */
-export interface AgentTreeNode extends v.InferOutput<typeof AgentTreeNodeFieldsSchema> {
+export interface AgentTreeNode extends Output<typeof AgentTreeNodeFieldsSchema> {
   /** child nodes, already depth-capped and dedup-guarded by transcript path. */
-  children: AgentTreeNode[];
+  readonly children: readonly AgentTreeNode[];
 }
 export const AgentTreeNodeSchema: v.GenericSchema<AgentTreeNode> = v.object({
   ...AgentTreeNodeFieldsSchema.entries,
@@ -217,7 +218,7 @@ export const AgentTreeWorkflowPhaseSchema = v.object({
   /** 当該フェーズに割当てられた member (順序は drilldown 出現順)。 */
   members: v.array(AgentTreeNodeSchema),
 });
-export type AgentTreeWorkflowPhase = v.InferOutput<typeof AgentTreeWorkflowPhaseSchema>;
+export type AgentTreeWorkflowPhase = Output<typeof AgentTreeWorkflowPhaseSchema>;
 
 /** 1 workflow run 分の subgroup。フェーズ情報の出典は
  * `readWorkflowDrilldown` (state.json → journal.jsonl の 2 段フォールバック、
@@ -240,7 +241,7 @@ export const AgentTreeWorkflowGroupSchema = v.object({
   /** run 内 member で最も新しい `last_activity_ms`。run 単位のソート用。 */
   last_activity_ms: v.optional(v.number()),
 });
-export type AgentTreeWorkflowGroup = v.InferOutput<typeof AgentTreeWorkflowGroupSchema>;
+export type AgentTreeWorkflowGroup = Output<typeof AgentTreeWorkflowGroupSchema>;
 
 /** エージェントツリーのルート集約。種別ごとに 3 グループに分ける
  * [kawaz]。同一種別のノードは (親子関係が
@@ -255,7 +256,7 @@ export const AgentTreeGroupsSchema = v.object({
   /** ワークフロー run 単位。1 run = 1 subgroup。 */
   workflows: v.array(AgentTreeWorkflowGroupSchema),
 });
-export type AgentTreeGroups = v.InferOutput<typeof AgentTreeGroupsSchema>;
+export type AgentTreeGroups = Output<typeof AgentTreeGroupsSchema>;
 
 /** Which kind of transcript record named a DR-0024 external file. The webui
  * groups the "プロジェクト外" section by it; authorization ignores it (every
@@ -264,13 +265,13 @@ export type AgentTreeGroups = v.InferOutput<typeof AgentTreeGroupsSchema>;
  * sidecar; `attachment` covers file-shaped attachment rows. A path named by
  * both is reported as `tool`, whichever came first. */
 export const ExternalFileOriginSchema = v.picklist(["tool", "attachment"]);
-export type ExternalFileOrigin = v.InferOutput<typeof ExternalFileOriginSchema>;
+export type ExternalFileOrigin = Output<typeof ExternalFileOriginSchema>;
 
 export const ExternalFileSchema = v.object({
   path: v.string(),
   origin: ExternalFileOriginSchema,
 });
-export type ExternalFile = v.InferOutput<typeof ExternalFileSchema>;
+export type ExternalFile = Output<typeof ExternalFileSchema>;
 
 /** A harness-synthesized API-error row observed as the last thing the main
  * context did (`{"type":"assistant","isApiErrorMessage":true,...}` with
@@ -291,14 +292,14 @@ export const SessionApiErrorSchema = v.object({
   /** ISO timestamp of the error row. */
   timestamp: v.string(),
 });
-export type SessionApiError = v.InferOutput<typeof SessionApiErrorSchema>;
+export type SessionApiError = Output<typeof SessionApiErrorSchema>;
 
 /** One entry of the session-error list: which session is stopped, and on what. */
 export const SessionErrorEntrySchema = v.object({
   ...SessionApiErrorSchema.entries,
   sid: v.string(),
 });
-export type SessionErrorEntry = v.InferOutput<typeof SessionErrorEntrySchema>;
+export type SessionErrorEntry = Output<typeof SessionErrorEntrySchema>;
 
 /** DR-0026 workspace folder descriptor: one entry from the `folders[]` array
  * of a `*.code-workspace` file discovered under the session cwd, resolved to
@@ -313,7 +314,7 @@ export const WorkspaceFolderSchema = v.object({
    * root itself). */
   path: v.string(),
 });
-export type WorkspaceFolder = v.InferOutput<typeof WorkspaceFolderSchema>;
+export type WorkspaceFolder = Output<typeof WorkspaceFolderSchema>;
 
 export const SessionStatusSnapshotSchema = v.object({
   todos: v.array(SessionTodoSchema),
@@ -347,4 +348,4 @@ export const SessionStatusSnapshotSchema = v.object({
    * Absent for a healthy session (see SessionApiError for the exact rule). */
   api_error: v.optional(SessionApiErrorSchema),
 });
-export type SessionStatusSnapshot = v.InferOutput<typeof SessionStatusSnapshotSchema>;
+export type SessionStatusSnapshot = Output<typeof SessionStatusSnapshotSchema>;

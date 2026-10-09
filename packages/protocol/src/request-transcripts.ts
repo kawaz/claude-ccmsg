@@ -6,6 +6,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 /**
  * Session transcript access (DR-0009 / DR-0021): read a slice of a connected
@@ -40,7 +41,7 @@ export const TranscriptReadRequestSchema = v.object({
    * exclusive with `agent_id`. */
   teammate: v.optional(v.string()),
 });
-export type TranscriptReadRequest = v.InferOutput<typeof TranscriptReadRequestSchema>;
+export type TranscriptReadRequest = Output<typeof TranscriptReadRequestSchema>;
 
 /** Follow a connected session's transcript live (user role only): after this,
  * appended complete lines arrive as `ev:"transcript"` events on this
@@ -51,13 +52,13 @@ export const TranscriptSubscribeRequestSchema = v.object({
   op: v.literal("transcript_subscribe"),
   sid: v.string(),
 });
-export type TranscriptSubscribeRequest = v.InferOutput<typeof TranscriptSubscribeRequestSchema>;
+export type TranscriptSubscribeRequest = Output<typeof TranscriptSubscribeRequestSchema>;
 
 export const TranscriptUnsubscribeRequestSchema = v.object({
   op: v.literal("transcript_unsubscribe"),
   sid: v.string(),
 });
-export type TranscriptUnsubscribeRequest = v.InferOutput<typeof TranscriptUnsubscribeRequestSchema>;
+export type TranscriptUnsubscribeRequest = Output<typeof TranscriptUnsubscribeRequestSchema>;
 
 /** One boundary the browser timed: when a transcript delivery reached the
  * socket (`ws_receive`), the store (`store_dispatch`) and the DOM
@@ -68,7 +69,7 @@ export const ClientTracePointSchema = v.object({
   edge: v.picklist(["in", "out"]),
   kind: v.picklist(["ws_receive", "store_dispatch", "dom_commit"]),
 });
-export type ClientTracePoint = v.InferOutput<typeof ClientTracePointSchema>;
+export type ClientTracePoint = Output<typeof ClientTracePointSchema>;
 
 /** Browser-side transcript boundary timestamps returned to the daemon so one
  * trace.jsonl contains the complete file-to-DOM path. User role only. */
@@ -82,4 +83,4 @@ export const ClientTraceRequestSchema = v.object({
   elapsed_ms: v.number(),
   points: v.array(ClientTracePointSchema),
 });
-export type ClientTraceRequest = v.InferOutput<typeof ClientTraceRequestSchema>;
+export type ClientTraceRequest = Output<typeof ClientTraceRequestSchema>;

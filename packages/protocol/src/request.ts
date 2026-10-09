@@ -18,7 +18,7 @@
 // the generation it speaks. The fields the daemon reads are all typed, so a
 // field it does not read can do nothing.
 import * as v from "valibot";
-import { JsonTextSchema, type ParseFailure, parseWith } from "./parse.ts";
+import { JsonTextSchema, type ParseFailure, parseWith, type Output } from "./parse.ts";
 import {
   AnyGenerationHelloRequestSchema,
   HelloRequestSchema,
@@ -117,7 +117,7 @@ export * from "./request-host.ts";
 export const RequestEnvelopeSchema = v.object({
   request_id: v.pipe(v.string(), v.nonEmpty("Expected a request id, not an empty string")),
 });
-export type RequestEnvelope = v.InferOutput<typeof RequestEnvelopeSchema>;
+export type RequestEnvelope = Output<typeof RequestEnvelopeSchema>;
 
 /** Every op's request but hello's, which comes in a shape per generation. */
 const OP_REQUEST_SCHEMAS = [
@@ -187,7 +187,7 @@ export const RequestBodySchema = v.variant("op", [
   AnyGenerationHelloRequestSchema,
   ...OP_REQUEST_SCHEMAS,
 ]);
-export type RequestBody = v.InferOutput<typeof RequestBodySchema>;
+export type RequestBody = Output<typeof RequestBodySchema>;
 
 /** A request on the wire: one of the bodies above plus its correlation id.
  * The intersection distributes over the union, so `req.op` still narrows. */
@@ -225,7 +225,7 @@ export const RequestFrameSchema = v.object({
   ...RequestEnvelopeSchema.entries,
   op: v.string(),
 });
-export type RequestFrame = v.InferOutput<typeof RequestFrameSchema>;
+export type RequestFrame = Output<typeof RequestFrameSchema>;
 
 /** A request of this generation, or a hello of another, with its correlation
  * id. */

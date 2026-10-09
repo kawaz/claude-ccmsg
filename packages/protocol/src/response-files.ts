@@ -6,6 +6,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 /** One resolved entry in `FsStatBatchResponse.results`. `path` is the shape
  * the client passes to `fileHref` / FileViewer — relative to the session's
@@ -17,7 +18,7 @@ export const FsStatEntrySchema = v.object({
   kind: v.picklist(["contained", "workspace", "external"]),
   path: v.string(),
 });
-export type FsStatEntry = v.InferOutput<typeof FsStatEntrySchema>;
+export type FsStatEntry = Output<typeof FsStatEntrySchema>;
 
 export const FsStatBatchResponseSchema = v.object({
   ok: v.literal(true),
@@ -27,7 +28,7 @@ export const FsStatBatchResponseSchema = v.object({
    *   - `null` otherwise (client renders that token as plain inline code). */
   results: v.array(v.nullable(FsStatEntrySchema)),
 });
-export type FsStatBatchResponse = v.InferOutput<typeof FsStatBatchResponseSchema>;
+export type FsStatBatchResponse = Output<typeof FsStatBatchResponseSchema>;
 
 /** One fs_find hit. `path` is directly usable as a locator/FileViewer key:
  * root-relative for `kind:"contained"`, absolute for `kind:"workspace"` —
@@ -36,7 +37,7 @@ export const FsFindHitSchema = v.object({
   path: v.string(),
   type: v.picklist(["file", "dir", "symlink"]),
 });
-export type FsFindHit = v.InferOutput<typeof FsFindHitSchema>;
+export type FsFindHit = Output<typeof FsFindHitSchema>;
 
 export const FsFindResponseSchema = v.object({
   ok: v.literal(true),
@@ -47,7 +48,7 @@ export const FsFindResponseSchema = v.object({
    * says so instead of implying "these are all the matches". */
   truncated: v.boolean(),
 });
-export type FsFindResponse = v.InferOutput<typeof FsFindResponseSchema>;
+export type FsFindResponse = Output<typeof FsFindResponseSchema>;
 
 /** One directory entry from fs_list. `type:"symlink"` is reported as-is for
  * links whose target stays inside the root (out-of-root links are listed but
@@ -60,7 +61,7 @@ export const FsEntrySchema = v.object({
   /** ISO 8601 mtime, best-effort */
   mtime: v.optional(v.string()),
 });
-export type FsEntry = v.InferOutput<typeof FsEntrySchema>;
+export type FsEntry = Output<typeof FsEntrySchema>;
 
 /** Reply to fs_list and fs_list_workspace. */
 export const FsListResponseSchema = v.object({
@@ -70,7 +71,7 @@ export const FsListResponseSchema = v.object({
   path: v.string(),
   entries: v.array(FsEntrySchema),
 });
-export type FsListResponse = v.InferOutput<typeof FsListResponseSchema>;
+export type FsListResponse = Output<typeof FsListResponseSchema>;
 
 /** Reply to fs_read, fs_read_external and fs_read_workspace. */
 export const FsReadResponseSchema = v.object({
@@ -90,7 +91,7 @@ export const FsReadResponseSchema = v.object({
    * `file_conflict` instead of silently clobbered. */
   mtime: v.string(),
 });
-export type FsReadResponse = v.InferOutput<typeof FsReadResponseSchema>;
+export type FsReadResponse = Output<typeof FsReadResponseSchema>;
 
 export const FsWriteResponseSchema = v.object({
   ok: v.literal(true),
@@ -98,7 +99,7 @@ export const FsWriteResponseSchema = v.object({
   /** normalized path relative to the session root */
   path: v.string(),
 });
-export type FsWriteResponse = v.InferOutput<typeof FsWriteResponseSchema>;
+export type FsWriteResponse = Output<typeof FsWriteResponseSchema>;
 
 export const FsCreateResponseSchema = v.object({
   ok: v.literal(true),
@@ -108,7 +109,7 @@ export const FsCreateResponseSchema = v.object({
    * FsListWorkspace echo). */
   path: v.string(),
 });
-export type FsCreateResponse = v.InferOutput<typeof FsCreateResponseSchema>;
+export type FsCreateResponse = Output<typeof FsCreateResponseSchema>;
 
 export const FsDeleteResponseSchema = v.object({
   ok: v.literal(true),
@@ -116,7 +117,7 @@ export const FsDeleteResponseSchema = v.object({
   /** echoed request path (relative for contained, absolute for workspace) */
   path: v.string(),
 });
-export type FsDeleteResponse = v.InferOutput<typeof FsDeleteResponseSchema>;
+export type FsDeleteResponse = Output<typeof FsDeleteResponseSchema>;
 
 export const FsEditResponseSchema = v.object({
   ok: v.literal(true),
@@ -129,7 +130,7 @@ export const FsEditResponseSchema = v.object({
    * so a subsequent edit in the same viewer session doesn't need a full refetch. */
   mtime: v.string(),
 });
-export type FsEditResponse = v.InferOutput<typeof FsEditResponseSchema>;
+export type FsEditResponse = Output<typeof FsEditResponseSchema>;
 
 export const SandboxGrantResponseSchema = v.object({
   ok: v.literal(true),
@@ -147,9 +148,9 @@ export const SandboxGrantResponseSchema = v.object({
   /** Epoch ms the grant expires at (30 minutes from this mint). */
   exp: v.number(),
 });
-export type SandboxGrantResponse = v.InferOutput<typeof SandboxGrantResponseSchema>;
+export type SandboxGrantResponse = Output<typeof SandboxGrantResponseSchema>;
 
 export const SandboxRevokeResponseSchema = v.object({
   ok: v.literal(true),
 });
-export type SandboxRevokeResponse = v.InferOutput<typeof SandboxRevokeResponseSchema>;
+export type SandboxRevokeResponse = Output<typeof SandboxRevokeResponseSchema>;

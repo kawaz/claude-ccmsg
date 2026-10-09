@@ -6,6 +6,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 export const TranscriptReadResponseSchema = v.object({
   ok: v.literal(true),
@@ -21,7 +22,7 @@ export const TranscriptReadResponseSchema = v.object({
    * `before` later to page content that appeared after this read) */
   size: v.number(),
 });
-export type TranscriptReadResponse = v.InferOutput<typeof TranscriptReadResponseSchema>;
+export type TranscriptReadResponse = Output<typeof TranscriptReadResponseSchema>;
 
 export const TranscriptSubscribeResponseSchema = v.object({
   ok: v.literal(true),
@@ -29,15 +30,13 @@ export const TranscriptSubscribeResponseSchema = v.object({
   /** current transcript size — tail events start from here */
   size: v.number(),
 });
-export type TranscriptSubscribeResponse = v.InferOutput<typeof TranscriptSubscribeResponseSchema>;
+export type TranscriptSubscribeResponse = Output<typeof TranscriptSubscribeResponseSchema>;
 
 export const TranscriptUnsubscribeResponseSchema = v.object({
   ok: v.literal(true),
   sid: v.string(),
 });
-export type TranscriptUnsubscribeResponse = v.InferOutput<
-  typeof TranscriptUnsubscribeResponseSchema
->;
+export type TranscriptUnsubscribeResponse = Output<typeof TranscriptUnsubscribeResponseSchema>;
 
 export const ClientTraceResponseSchema = v.object({
   ok: v.literal(true),
@@ -46,4 +45,4 @@ export const ClientTraceResponseSchema = v.object({
    * batch, so a client that sends more learns its extras were dropped). */
   written: v.number(),
 });
-export type ClientTraceResponse = v.InferOutput<typeof ClientTraceResponseSchema>;
+export type ClientTraceResponse = Output<typeof ClientTraceResponseSchema>;

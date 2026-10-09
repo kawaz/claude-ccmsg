@@ -187,7 +187,7 @@ export function loadDir(
 
 // Directories first, then everything else, alphabetical within each group —
 // the ordering every conventional file-manager / editor tree uses.
-function sortEntries(entries: FsEntry[]): FsEntry[] {
+function sortEntries(entries: readonly FsEntry[]): FsEntry[] {
   return [...entries].sort((a, b) => {
     const rank = (e: FsEntry) => (e.type === "dir" ? 0 : 1);
     const r = rank(a) - rank(b);
@@ -442,7 +442,7 @@ function Nodes({
 }: {
   sid: string;
   parentPath: string;
-  entries: FsEntry[];
+  entries: readonly FsEntry[];
   depth: number;
   tree: SessionTreeState;
   selectedPath: string | null;

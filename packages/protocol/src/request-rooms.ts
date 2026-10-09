@@ -5,7 +5,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
-import { jsonText } from "./parse.ts";
+import { jsonText, type Output } from "./parse.ts";
 
 /** Post a new message. A 1on1 room is read-only (DR-0035 §2): a post to one
  * is refused with `invalid_args` for every role. */
@@ -17,7 +17,7 @@ export const PostRequestSchema = v.object({
    * absent = deliver to everyone. An empty id names nobody and is left out. */
   to: v.optional(v.union([v.string(), v.array(v.string())])),
 });
-export type PostRequest = v.InferOutput<typeof PostRequestSchema>;
+export type PostRequest = Output<typeof PostRequestSchema>;
 
 /** Reply to an existing msg (DR-0017 §2.2): the daemon computes the delivery
  * targets from the referenced msg — `to` = original from + (original to −
@@ -31,7 +31,7 @@ export const ReplyRequestSchema = v.object({
   mid: v.number(),
   msg: v.string(),
 });
-export type ReplyRequest = v.InferOutput<typeof ReplyRequestSchema>;
+export type ReplyRequest = Output<typeof ReplyRequestSchema>;
 
 /** The kinds create_room opens. A `"1on1"` room is not one of them
  * (DR-0035 §2), and asking for one is answered with where it comes from. */
@@ -61,7 +61,7 @@ export const CreateRoomRequestSchema = v.object({
    * refuses it with `invalid_args`. */
   kind: v.optional(CreateRoomKindSchema),
 });
-export type CreateRoomRequest = v.InferOutput<typeof CreateRoomRequestSchema>;
+export type CreateRoomRequest = Output<typeof CreateRoomRequestSchema>;
 
 /** Record that this session spoke through `ccmsg say`.
  * Session role only. The daemon resolves the caller's own 1on1 room (u1 + this
@@ -75,7 +75,7 @@ export const SayRequestSchema = v.object({
   /** The argv forwarded to `/usr/bin/say`, joined by spaces (see SayEvent.text). */
   text: v.string(),
 });
-export type SayRequest = v.InferOutput<typeof SayRequestSchema>;
+export type SayRequest = Output<typeof SayRequestSchema>;
 
 /** Ack one `say` event as read (webui 既読 button). User role only: the
  * unread count exists for the person watching the session list, and a session
@@ -87,7 +87,7 @@ export const SayReadRequestSchema = v.object({
    * ack target is `seq` and not a `mid`). */
   seq: v.number(),
 });
-export type SayReadRequest = v.InferOutput<typeof SayReadRequestSchema>;
+export type SayReadRequest = Output<typeof SayReadRequestSchema>;
 
 /** Spawn the next thread of a room. A 1on1 room is read-only (DR-0035 §2)
  * and has no next thread: next_room on one is refused with `invalid_args`. */
@@ -97,7 +97,7 @@ export const NextRoomRequestSchema = v.object({
   msg: v.optional(v.string()),
   title: v.optional(v.string()),
 });
-export type NextRoomRequest = v.InferOutput<typeof NextRoomRequestSchema>;
+export type NextRoomRequest = Output<typeof NextRoomRequestSchema>;
 
 /** Rename a room: appends a TitleEvent to the room log (the log's LAST title
  * event wins, same rule create_room/next_room titles already follow) and
@@ -109,7 +109,7 @@ export const SetTitleRequestSchema = v.object({
   room: v.string(),
   title: v.string(),
 });
-export type SetTitleRequest = v.InferOutput<typeof SetTitleRequestSchema>;
+export type SetTitleRequest = Output<typeof SetTitleRequestSchema>;
 
 /** Toggle a room's archived flag (DR-0012). Same permission as set_title
  * (admin User or member session). Appends an ArchiveEvent + broadcasts it;
@@ -120,7 +120,7 @@ export const ArchiveRoomRequestSchema = v.object({
   room: v.string(),
   archived: v.boolean(),
 });
-export type ArchiveRoomRequest = v.InferOutput<typeof ArchiveRoomRequestSchema>;
+export type ArchiveRoomRequest = Output<typeof ArchiveRoomRequestSchema>;
 
 /** Force-remove a member from a room (DR-0012, webui の ✕ ボタン). Appends
  * the same LeaveEvent a voluntary `leave` would and broadcasts it. Admin
@@ -133,14 +133,14 @@ export const KickRequestSchema = v.object({
   /** member id (e.g. "a2") as shown in the room's member list */
   id: v.string(),
 });
-export type KickRequest = v.InferOutput<typeof KickRequestSchema>;
+export type KickRequest = Output<typeof KickRequestSchema>;
 
 /** A `since_seq` cursor: a seq is a finite, non-negative position. */
 const SinceSeqCursorSchema = v.pipe(v.number(), v.finite(), v.minValue(0));
 
 /** `since_seq`: each room's last-seen seq, by room id. */
 export const SinceSeqSchema = v.record(v.string(), SinceSeqCursorSchema);
-export type SinceSeq = v.InferOutput<typeof SinceSeqSchema>;
+export type SinceSeq = Output<typeof SinceSeqSchema>;
 
 /** `since_seq` as JSON text, as `ccmsg subscribe --since` and the webui's
  * stored cursor hold it. */
@@ -166,7 +166,7 @@ export const SubscribeRequestSchema = v.object({
    * cheaper delta-replay path regardless of this flag. */
   backlog: v.optional(v.boolean()),
 });
-export type SubscribeRequest = v.InferOutput<typeof SubscribeRequestSchema>;
+export type SubscribeRequest = Output<typeof SubscribeRequestSchema>;
 
 export const ReadRequestSchema = v.object({
   op: v.literal("read"),
@@ -174,7 +174,7 @@ export const ReadRequestSchema = v.object({
   /** "10-15,18" range/list string, or explicit mid list. */
   mids: v.union([v.string(), v.array(v.number())]),
 });
-export type ReadRequest = v.InferOutput<typeof ReadRequestSchema>;
+export type ReadRequest = Output<typeof ReadRequestSchema>;
 
 /**
  * "Paint me this room's history" — the room's full join snapshot (present
@@ -193,18 +193,18 @@ export const RoomHistoryRequestSchema = v.object({
   op: v.literal("room_history"),
   room: v.string(),
 });
-export type RoomHistoryRequest = v.InferOutput<typeof RoomHistoryRequestSchema>;
+export type RoomHistoryRequest = Output<typeof RoomHistoryRequestSchema>;
 
 export const RoomsRequestSchema = v.object({
   op: v.literal("rooms"),
 });
-export type RoomsRequest = v.InferOutput<typeof RoomsRequestSchema>;
+export type RoomsRequest = Output<typeof RoomsRequestSchema>;
 
 export const LeaveRequestSchema = v.object({
   op: v.literal("leave"),
   room: v.string(),
 });
-export type LeaveRequest = v.InferOutput<typeof LeaveRequestSchema>;
+export type LeaveRequest = Output<typeof LeaveRequestSchema>;
 
 /** Add a connected session to an existing room (webui drag-a-session-onto-
  * the-chat, or a member session pulling in a collaborator). Appends a
@@ -218,4 +218,4 @@ export const InviteRequestSchema = v.object({
   /** sid of the session to add */
   sid: v.pipe(v.string(), v.nonEmpty("Expected a session id, not an empty string")),
 });
-export type InviteRequest = v.InferOutput<typeof InviteRequestSchema>;
+export type InviteRequest = Output<typeof InviteRequestSchema>;

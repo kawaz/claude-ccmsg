@@ -17,7 +17,7 @@ describe("translate op", () => {
   // One correlated reply carries the whole helper outcome: order-preserving
   // results, per-item failures included.
   test("a user request is answered with one reply preserving text order and per-item helper failures", async () => {
-    const seen: string[][] = [];
+    const seen: (readonly string[])[] = [];
     const translator: TranslateService = {
       async translate(texts) {
         seen.push(texts);

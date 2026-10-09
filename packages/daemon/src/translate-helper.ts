@@ -8,7 +8,7 @@ export type TranslateBatchResult =
   | { ok: false; code: string; msg: string };
 
 export interface TranslateService {
-  translate(texts: string[]): Promise<TranslateBatchResult>;
+  translate(texts: readonly string[]): Promise<TranslateBatchResult>;
   stop(): void;
 }
 
@@ -111,7 +111,7 @@ class TranslationHelperService implements TranslateService {
     this.watchdogTimeoutMs = opts.watchdogTimeoutMs ?? translateWatchdogTimeoutMs;
   }
 
-  async translate(texts: string[]): Promise<TranslateBatchResult> {
+  async translate(texts: readonly string[]): Promise<TranslateBatchResult> {
     if (this.stopped) {
       return { ok: false, code: "translate_unavailable", msg: "translation helper is stopped" };
     }
@@ -137,7 +137,7 @@ class TranslationHelperService implements TranslateService {
     return run;
   }
 
-  private async performRequest(texts: string[]): Promise<TranslateBatchResult> {
+  private async performRequest(texts: readonly string[]): Promise<TranslateBatchResult> {
     // Re-check under the chain: stop() may have run while queued, and the
     // helper an earlier link used may have been watchdog-killed — ensureProcess
     // below respawns in that case.

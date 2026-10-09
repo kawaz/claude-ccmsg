@@ -21,7 +21,7 @@ export function roomsForSession(rooms: Map<string, RoomState>, sid: string): Roo
  * found in `peers` (e.g. it disconnected) yields an empty list rather than
  * throwing — same "peer absent = nothing to show" policy SessionView already
  * applies to `hasTranscript`. */
-export function sameCwdSids(peers: PeerInfo[], sid: string): string[] {
+export function sameCwdSids(peers: readonly PeerInfo[], sid: string): string[] {
   const self = peers.find((p) => p.sid === sid);
   if (!self) return [];
   return peers.filter((p) => p.sid !== sid && p.cwd === self.cwd).map((p) => p.sid);

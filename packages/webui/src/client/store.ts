@@ -136,7 +136,7 @@ export interface FileViewState {
 export interface TimelineState {
   status: "idle" | "loading" | "loaded" | "error";
   /** raw jsonl lines currently cached, oldest first (client parses each as JSON) */
-  lines: string[];
+  lines: readonly string[];
   /** byte offset of the earliest loaded line — pass as `before` to page older */
   start: number;
   /** byte offset just past the last loaded line's newline, as of the last
@@ -172,7 +172,7 @@ export const DEFAULT_TIMELINE_SEARCH = {
 
 export interface SessionTreeState {
   /** loaded directory listings, keyed by relpath ("" = session root) */
-  dirs: Map<string, FsEntry[]>;
+  dirs: Map<string, readonly FsEntry[]>;
   /** fs_list error message for a relpath that failed to load, keyed the same as `dirs` */
   dirErrors: Map<string, string>;
   /** relpaths currently expanded in the tree UI */
@@ -213,13 +213,13 @@ export interface DaemonInfo {
 export interface AppState {
   rooms: Map<string, RoomState>;
   roomsLoaded: boolean;
-  peers: PeerInfo[];
+  peers: readonly PeerInfo[];
   peersLoaded: boolean;
   /** `claude agents --json` rows, merged with `peers` by sessionId in the
    * Sidebar Sessions list (U1, see utils.ts's toSessionRow/offlineAgentRows).
    * Populated by ws.ts's onOpen `op:"agents"` fetch and kept live via
    * `ev:"agents"` push — no manual refresh needed. */
-  agents: AgentInfo[];
+  agents: readonly AgentInfo[];
   agentsLoaded: boolean;
   daemonInfo: DaemonInfo | null;
   /** hello が名乗った daemon version が、この bundle より新しかったときの
@@ -420,7 +420,7 @@ export function initialState(): AppState {
 
 export type Action =
   | { type: "conn/status"; status: ConnStatus }
-  | { type: "rooms/loaded"; rooms: RoomSummary[] }
+  | { type: "rooms/loaded"; rooms: readonly RoomSummary[] }
   // One room's `op:"room_history"` round trip (RoomView opens a room). The
   // snapshot events themselves arrive as ordinary delivered events and fold in
   // through applyProtocolEvent; these two only move the room's `history` flag.
@@ -431,20 +431,20 @@ export type Action =
   | { type: "rooms/history-reset"; rooms: string[] }
   | { type: "room-history/loading"; room: string }
   | { type: "room-history/loaded"; room: string; error?: string }
-  | { type: "peers/loaded"; peers: PeerInfo[] }
+  | { type: "peers/loaded"; peers: readonly PeerInfo[] }
   // Both the one-shot `op:"agents"` reply (initial paint) and the pushed
   // `ev:"agents"` stream event (subsequent changes) fold in here — the
   // reducer just replaces the list either way, same as peers/loaded.
-  | { type: "agents/loaded"; agents: AgentInfo[] }
+  | { type: "agents/loaded"; agents: readonly AgentInfo[] }
   // Both the one-shot `op:"session_errors"` reply and the pushed
   // `ev:"session_errors"` stream event fold in here (same pairing as
   // agents/loaded). The wire shape is a flat list keyed by `sid`; the reducer
   // is the one place that turns it into the by-sid Map the sidebar looks rows
   // up in, so ws.ts stays a verbatim relay.
-  | { type: "session-errors/loaded"; errors: SessionErrorEntry[] }
+  | { type: "session-errors/loaded"; errors: readonly SessionErrorEntry[] }
   // Full replacement, same as session-errors/loaded: the daemon sends the
   // whole non-expired set on both the live push and the subscribe catch-up.
-  | { type: "llm-requests/loaded"; requests: LlmRequestInfo[] }
+  | { type: "llm-requests/loaded"; requests: readonly LlmRequestInfo[] }
   | { type: "daemon-info/loaded"; version: string; exe?: string }
   // 自動リロードを見送った不一致だけが届く (リロードした場合はページごと
   // 消えるので dispatch する意味がない)。`null` は解消 — 再接続先の daemon が
@@ -478,7 +478,13 @@ export type Action =
   | { type: "fs/dirs-expanded"; sid: string; paths: readonly string[] }
   // entries on success, error on fs_list failure — never both (mirrors
   // fs/file-loaded's success/error split one line below).
-  | { type: "fs/dir-loaded"; sid: string; path: string; entries?: FsEntry[]; error?: string }
+  | {
+      type: "fs/dir-loaded";
+      sid: string;
+      path: string;
+      entries?: readonly FsEntry[];
+      error?: string;
+    }
   | { type: "fs/file-loading"; sid: string; path: string }
   | {
       type: "fs/file-loaded";
@@ -533,7 +539,7 @@ export type Action =
   | {
       type: "timeline/tail";
       sid: string;
-      lines: string[];
+      lines: readonly string[];
       start: number;
       end: number;
       size: number;
@@ -662,7 +668,7 @@ function upsertMember(room: RoomState, m: MemberEvent): RoomState {
   return { ...room, membersById, memberOrder };
 }
 
-function applyRoomsLoaded(state: AppState, summaries: RoomSummary[]): AppState {
+function applyRoomsLoaded(state: AppState, summaries: readonly RoomSummary[]): AppState {
   let rooms = state.rooms;
   for (const summary of summaries) {
     let room: RoomState;

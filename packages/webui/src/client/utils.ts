@@ -165,7 +165,7 @@ export function sayUnreadBySid(rooms: Map<string, RoomState>): Map<string, numbe
   return out;
 }
 
-export function liveAgentCount(room: RoomState, peers: PeerInfo[]): number {
+export function liveAgentCount(room: RoomState, peers: readonly PeerInfo[]): number {
   let n = 0;
   for (const m of room.membersById.values()) {
     if (m.id === ADMIN_ID || m.left) continue;
@@ -185,7 +185,7 @@ export function liveAgentCount(room: RoomState, peers: PeerInfo[]): number {
  * connect/disconnect without any stored per-room flag. */
 export function splitRoomsByLiveness(
   rooms: RoomState[],
-  peers: PeerInfo[],
+  peers: readonly PeerInfo[],
 ): { active: RoomState[]; inactive: RoomState[] } {
   const active: RoomState[] = [];
   const inactive: RoomState[] = [];
@@ -201,7 +201,7 @@ export function splitRoomsByLiveness(
  * without having left the room). Pure over the narrow `{sid}` shape (mirrors
  * `ownWorkspaceSegment`'s narrowing) so it doesn't need the full MemberInfo
  * import just to read one field. */
-export function isMemberConnected(member: { sid: string }, peers: PeerInfo[]): boolean {
+export function isMemberConnected(member: { sid: string }, peers: readonly PeerInfo[]): boolean {
   return peers.some((p) => p.sid === member.sid);
 }
 
@@ -309,7 +309,7 @@ function cmpByTsDesc(
  * rows out from under a pointer mid-click (the daemon's own `peers` order is
  * Map insertion order, which shifts on reconnect — see server.ts's
  * `sessions` Map). Never mutates its input. */
-export function sortPeers(peers: PeerInfo[], key: PeerSortKey): PeerInfo[] {
+export function sortPeers(peers: readonly PeerInfo[], key: PeerSortKey): PeerInfo[] {
   const sorted = [...peers];
   switch (key) {
     case "prompt":
@@ -523,7 +523,7 @@ export interface SessionRow {
  * merging — built once per peers/agents pair (e.g. in a `useMemo`), not
  * per-row, since AgentsResponse.agents can be large across every
  * CLAUDE_CONFIG_DIR the daemon polls. */
-export function indexAgentsBySid(agents: AgentInfo[]): Map<string, AgentInfo> {
+export function indexAgentsBySid(agents: readonly AgentInfo[]): Map<string, AgentInfo> {
   const bySid = new Map<string, AgentInfo>();
   for (const a of agents) bySid.set(a.sessionId, a);
   return bySid;
@@ -571,7 +571,10 @@ export function toSessionRow(
  * reachable via ccmsg yet" rows together — instead of scattering them among
  * live sessions — reads as the more useful default. Sorted newest-started
  * first (the closest available proxy for "worth noticing"). */
-export function offlineAgentRows(peers: PeerInfo[], agents: AgentInfo[]): SessionRow[] {
+export function offlineAgentRows(
+  peers: readonly PeerInfo[],
+  agents: readonly AgentInfo[],
+): SessionRow[] {
   const peerSids = new Set(peers.map((p) => p.sid));
   // De-dup by sessionId (Map.set, last-wins — same policy as
   // indexAgentsBySid) before building rows: `claude agents --json` from more
@@ -1276,21 +1279,21 @@ export const DEFAULT_SESSION_SEARCH_FORM: SessionSearchForm = {
 export function buildSessionSearchRequest(
   form: SessionSearchForm,
 ): Omit<SessionSearchRequest, "op" | "request_id"> {
-  const req: Omit<SessionSearchRequest, "op" | "request_id"> = {};
   const query = form.query.trim();
-  if (query) req.query = query;
-  if (form.caseSensitive) req.case_sensitive = true;
-  if (form.regex) req.regex = true;
-  if (!form.targetUser) req.target_user = false;
-  if (!form.targetAgent) req.target_agent = false;
   const cwd = form.cwd.trim();
-  if (cwd) req.cwd = cwd;
   const sid = form.sid.trim();
-  if (sid) req.sid = sid;
-  if (form.configDirs.length > 0) req.config_dirs = form.configDirs;
   const mtime = form.mtimeWithin.trim();
-  if (mtime && mtime !== DEFAULT_SESSION_SEARCH_FORM.mtimeWithin) req.mtime_within = mtime;
-  return req;
+  return {
+    ...(query ? { query } : {}),
+    ...(form.caseSensitive ? { case_sensitive: true } : {}),
+    ...(form.regex ? { regex: true } : {}),
+    ...(!form.targetUser ? { target_user: false } : {}),
+    ...(!form.targetAgent ? { target_agent: false } : {}),
+    ...(cwd ? { cwd } : {}),
+    ...(sid ? { sid } : {}),
+    ...(form.configDirs.length > 0 ? { config_dirs: form.configDirs } : {}),
+    ...(mtime && mtime !== DEFAULT_SESSION_SEARCH_FORM.mtimeWithin ? { mtime_within: mtime } : {}),
+  };
 }
 
 /** Converts the submitted Session Search query controls into Timeline's

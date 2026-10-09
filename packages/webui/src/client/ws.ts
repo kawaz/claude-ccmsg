@@ -324,7 +324,7 @@ export interface WsHandle {
    * `depth` omitted uses the daemon's configured `dir_tree_depth`; CwdTree's
    * lazy-expansion re-fetch of a boundary node passes 1. */
   dirTree(
-    roots: string[],
+    roots: readonly string[],
     opts?: { depth?: number; filter?: string },
   ): Promise<ReplyOf<"dir_tree">>;
   /** Launch a new session via the configured command template (DR-0018 §3.2,
@@ -433,7 +433,7 @@ export function createWsClient(
   const keepaliveIdleMs = keepalive.idleMs ?? KEEPALIVE_IDLE_MS;
   const keepaliveTimeoutMs = keepalive.timeoutMs ?? KEEPALIVE_TIMEOUT_MS;
   const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
-  const since = loadSince();
+  let since = loadSince();
 
   function write(socket: WebSocket, req: RequestInput, settle: PendingReply): string {
     const rid = `q${++nextRequestId}`;
@@ -462,7 +462,7 @@ export function createWsClient(
       };
       const settle: PendingReply = {
         reply: (frame) => {
-          const read = frame.reply(req.op);
+          const read = frame.reply<B["op"]>(req.op);
           finish(read.ok ? read.value : invalidReply(req.op, read.failure));
         },
         fail: finish,
@@ -851,7 +851,7 @@ export function createWsClient(
     // (notify/restarting/agents/peers/transcript) are handled above and never
     // reach here.
     if (delivered.seq !== undefined) {
-      since[delivered.r] = Math.max(since[delivered.r] ?? 0, delivered.seq);
+      since = { ...since, [delivered.r]: Math.max(since[delivered.r] ?? 0, delivered.seq) };
       saveSince(since);
     }
     dispatch({ type: "protocol-event", event: delivered });

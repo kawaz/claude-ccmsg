@@ -49,7 +49,7 @@ import {
  * を持つ場合に備えて dedup 後の workflows から作る。呼び出し側 (TimelinePanes)
  * が snapshot.workflows を渡さない場合は空 Map (enrichment 無し)。 */
 function buildAgentDrillLookup(
-  workflows: SessionWorkflowStatus[] | undefined,
+  workflows: readonly SessionWorkflowStatus[] | undefined,
 ): Map<string, WorkflowDrilldownAgentView> {
   const map = new Map<string, WorkflowDrilldownAgentView>();
   if (!workflows) return map;
@@ -208,7 +208,7 @@ function effectiveState(node: AgentTreeNode): string {
 
 /** state ごとにグループ化。STATE_ORDER に載っている state を先頭順で、
  * 載っていない state は初回登場順で末尾に並べる。 */
-function groupByState(nodes: AgentTreeNode[]): Array<[string, AgentTreeNode[]]> {
+function groupByState(nodes: readonly AgentTreeNode[]): Array<[string, AgentTreeNode[]]> {
   const buckets = new Map<string, AgentTreeNode[]>();
   for (const n of nodes) {
     const key = effectiveState(n);
@@ -272,7 +272,7 @@ function StandardGroup({
 }: {
   sid: string;
   label: string;
-  nodes: AgentTreeNode[];
+  nodes: readonly AgentTreeNode[];
 }) {
   if (nodes.length === 0) return null;
   const liveCount = nodes.reduce((acc, n) => acc + (isLive(n.state) ? 1 : 0), 0);
@@ -464,7 +464,7 @@ function WorkflowsGroup({
   drillLookup,
 }: {
   sid: string;
-  runs: AgentTreeWorkflowGroup[];
+  runs: readonly AgentTreeWorkflowGroup[];
   drillLookup?: Map<string, WorkflowDrilldownAgentView>;
 }) {
   const [showCompleted, setShowCompleted] = useState(false);
@@ -528,7 +528,7 @@ export function AgentTreePanel({
   /** issue 2026-07-21 (workflow TUI parity): Status タブの workflow drilldown と
    * 同じ SessionWorkflowStatus[] を渡すと、workflow member 行に model / tokens /
    * state 注記が付く (無ければ従来通り [dot label] だけ)。 */
-  workflows?: SessionWorkflowStatus[];
+  workflows?: readonly SessionWorkflowStatus[];
   /** kawaz r46 mid=29: 選択中の agent TL (locator の AgentRef)。一致する
    * ノード行がハイライトされる。 */
   currentAgent?: AgentRef | null;

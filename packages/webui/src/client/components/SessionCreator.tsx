@@ -72,12 +72,12 @@ type LauncherProbe =
   | { status: "error"; message: string }
   | {
       status: "ready";
-      rootDirs: string[];
+      rootDirs: readonly string[];
       /** Configured launch recipes in config order. Each carries its raw shell
        * command (verbatim, no variable substitution) and prompt, which are the
        * textarea initial values and the "default" buttons' restore targets —
        * DR-0018 §3.2 addendum 2026-07-17. */
-      templates: SessionLauncherConfigTemplate[];
+      templates: readonly SessionLauncherConfigTemplate[];
     };
 
 type LaunchState =
@@ -107,7 +107,7 @@ function CwdPicker({
   cwd: string;
   mode: CwdPickerMode;
   setMode: (mode: CwdPickerMode) => void;
-  rootDirs: string[];
+  rootDirs: readonly string[];
   onCwdChange: (cwd: string) => void;
 }) {
   const [filterInput, setFilterInput] = useState("");
@@ -191,7 +191,7 @@ function ParamField({
   param: LauncherParam;
   value: string;
   onChange: (value: string) => void;
-  rootDirs: string[];
+  rootDirs: readonly string[];
   cwdMode: CwdPickerMode;
   setCwdMode: (mode: CwdPickerMode) => void;
 }) {
@@ -296,7 +296,7 @@ function LaunchResultPanel({ state }: { state: LaunchState }) {
 /** The template the form is currently on — the "default" buttons restore from
  * it, so a template switch also switches what "default" means. */
 function selectedTemplate(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
   form: SessionCreatorForm,
 ): SessionLauncherConfigTemplate | undefined {
   return templates.find((t) => t.name === form.template);

@@ -58,7 +58,7 @@ kawaz 2026-10-09: 「immutable なデータオブジェクトであるべきで�
 kawaz 2026-10-09: 「validator は外部データを JSON.parse したら何もせずそのまま渡すもんだろう。あと fallback? デフォルト値が必要ならスキーマで定義すべき」。
 
 - `JSON.parse` の出力は、何も加工せずにそのままスキーマに渡す。スキーマに通す前に形を変えない (entries に分解する、object を組み立て直す等をしない)
-- スキーマの出力の型は不変にする (`Readonly` / `ReadonlyArray`、valibot の `v.readonly()`)。受け取った側は値を書き換えない
+- スキーマの出力の型は不変にする。出力の型は `v.InferOutput` を深く readonly にしたもの (parse.ts の `Output<S>`) で書く。valibot の `v.readonly()` は pipe した 1 段しか readonly にせず、variant の option には pipe を付けられないので使わない。受け取った側は値を書き換えない
 - 値を名前で引かない (`params[name]` のような、外から来た object を任意の名前で引く書き方をしない)。kawaz 2026-10-09:「そもそも params[name] なんてものが存在することがおかしい。params を validator にかけて型付きオブジェクトにして扱うべき」
 - どの名前が来うるかが設定で決まる値 (例: session launcher のテンプレートが宣言する params) は、その宣言からスキーマを組み立てる (宣言された名前ごとの field を持つ `v.strictObject`。既定値は `v.optional(schema, default)`)。依頼はそのスキーマに通し、出力の型付きの値をそのまま使う。宣言に無い名前は strict で失敗になる
 - 設定で宣言させる名前は、`__proto__` / `constructor` / `prototype` を名前の規則で禁じる (valibot の object 系のスキーマはこれらのキーを扱わないので、宣言できないようにしておく)。キーを落とさないための特別なスキーマは作らない

@@ -7,6 +7,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 import { SidecarReplySchema } from "./sidecar.ts";
 import { PROTOCOL_VERSION } from "./version.ts";
 
@@ -58,7 +59,7 @@ export const HelloRequestSchema = v.object({
    * with no fingerprinting surface beyond that. Diagnostic only. */
   ua: v.optional(v.string()),
 });
-export type HelloRequest = v.InferOutput<typeof HelloRequestSchema>;
+export type HelloRequest = Output<typeof HelloRequestSchema>;
 
 /** A hello of a generation this daemon does not speak (DR-0002 §4). Only what
  * the refusal needs is read: the generation, and which session's client it is
@@ -71,7 +72,7 @@ export const OtherGenerationHelloRequestSchema = v.object({
   sid: v.optional(v.string()),
   client_version: v.optional(v.string()),
 });
-export type OtherGenerationHelloRequest = v.InferOutput<typeof OtherGenerationHelloRequestSchema>;
+export type OtherGenerationHelloRequest = Output<typeof OtherGenerationHelloRequestSchema>;
 
 /** A hello of any generation, told apart by the generation it announces. */
 export const AnyGenerationHelloRequestSchema = v.variant("protocol", [
@@ -82,7 +83,7 @@ export const AnyGenerationHelloRequestSchema = v.variant("protocol", [
 export const PeersRequestSchema = v.object({
   op: v.literal("peers"),
 });
-export type PeersRequest = v.InferOutput<typeof PeersRequestSchema>;
+export type PeersRequest = Output<typeof PeersRequestSchema>;
 
 export const NotifyRequestSchema = v.object({
   op: v.literal("notify"),
@@ -90,7 +91,7 @@ export const NotifyRequestSchema = v.object({
   sid: v.optional(v.string()),
   text: v.string(),
 });
-export type NotifyRequest = v.InferOutput<typeof NotifyRequestSchema>;
+export type NotifyRequest = Output<typeof NotifyRequestSchema>;
 
 /** Send a message straight to one session, without a room (session role
  * only, DR-0036 §1).
@@ -109,7 +110,7 @@ export const MessageSendRequestSchema = v.object({
   /** The mid (`<instance id>/<n>`) of the direct message this answers. */
   reply_to: v.optional(v.string()),
 });
-export type MessageSendRequest = v.InferOutput<typeof MessageSendRequestSchema>;
+export type MessageSendRequest = Output<typeof MessageSendRequestSchema>;
 
 /** Session-launcher cwd tree (DR-0018 §3.2, user role only). Requested roots
  * may be configured roots or any descendants: descendant roots are required
@@ -122,7 +123,7 @@ export const DirTreeRequestSchema = v.object({
   /** Root-relative path substring; matching nodes and their ancestors survive. */
   filter: v.optional(v.string()),
 });
-export type DirTreeRequest = v.InferOutput<typeof DirTreeRequestSchema>;
+export type DirTreeRequest = Output<typeof DirTreeRequestSchema>;
 
 /** Session launch request (DR-0018 §3.2, user role only). The daemon validates
  * the opaque values, builds env/argv, and executes the configured command.
@@ -170,7 +171,7 @@ export const SessionLaunchRequestSchema = v.object({
    * overrides it. */
   template: v.optional(v.string()),
 });
-export type SessionLaunchRequest = v.InferOutput<typeof SessionLaunchRequestSchema>;
+export type SessionLaunchRequest = Output<typeof SessionLaunchRequestSchema>;
 
 /** Session-launcher capability probe (DR-0018 §3.4 webui addendum, user role
  * only). Neither `dir_tree` (roots required, containment-checked against
@@ -186,7 +187,7 @@ export type SessionLaunchRequest = v.InferOutput<typeof SessionLaunchRequestSche
 export const SessionLauncherConfigRequestSchema = v.object({
   op: v.literal("session_launcher_config"),
 });
-export type SessionLauncherConfigRequest = v.InferOutput<typeof SessionLauncherConfigRequestSchema>;
+export type SessionLauncherConfigRequest = Output<typeof SessionLauncherConfigRequestSchema>;
 
 /** Terminate the OS process behind a Claude Code session (DR-0028, user role
  * only — session-role agents must never be able to kill each other). The
@@ -218,7 +219,7 @@ export const SessionKillRequestSchema = v.object({
    * だけは絶対に外さない。 */
   force: v.optional(v.boolean()),
 });
-export type SessionKillRequest = v.InferOutput<typeof SessionKillRequestSchema>;
+export type SessionKillRequest = Output<typeof SessionKillRequestSchema>;
 
 /** Retitle a running Claude Code session by typing its own `/rename` command
  * into the terminal that session lives in (user role only).
@@ -262,7 +263,7 @@ export const SessionRenameRequestSchema = v.object({
    * trimmed; control characters are rejected (invalid_args). */
   title: v.string(),
 });
-export type SessionRenameRequest = v.InferOutput<typeof SessionRenameRequestSchema>;
+export type SessionRenameRequest = Output<typeof SessionRenameRequestSchema>;
 
 /** Put what the person wrote into a session as their own prompt (user role
  * only, DR-0035 §1).
@@ -289,7 +290,7 @@ export const SessionInputRequestSchema = v.object({
     v.check((text) => text.trim() !== "", "Expected text with something other than whitespace"),
   ),
 });
-export type SessionInputRequest = v.InferOutput<typeof SessionInputRequestSchema>;
+export type SessionInputRequest = Output<typeof SessionInputRequestSchema>;
 
 /** Hand the daemon a session's hooks module's SidecarReply (session role,
  * DR-0035 §1). Taken only from the session the request was written to, and
@@ -299,7 +300,7 @@ export const SidecarReplyRequestSchema = v.object({
   op: v.literal("sidecar_reply"),
   reply: SidecarReplySchema,
 });
-export type SidecarReplyRequest = v.InferOutput<typeof SidecarReplyRequestSchema>;
+export type SidecarReplyRequest = Output<typeof SidecarReplyRequestSchema>;
 
 /** Read the environment variables of a session's own process (user role
  * only). The env is read from the resolved pid rather than
@@ -318,7 +319,7 @@ export const SessionEnvRequestSchema = v.object({
    * is a weaker basis than the daemon's own fresh resolution. */
   session_id: SessionIdSchema,
 });
-export type SessionEnvRequest = v.InferOutput<typeof SessionEnvRequestSchema>;
+export type SessionEnvRequest = Output<typeof SessionEnvRequestSchema>;
 
 /** Search historical Claude Code session transcripts under daemon-detected
  * config dirs (DR-0021 Phase 1, user role only). */
@@ -344,7 +345,7 @@ export const SessionSearchRequestSchema = v.object({
   /** `<number>m`, `<number>h`, or `<number>d`; default `5d` */
   mtime_within: v.optional(v.string()),
 });
-export type SessionSearchRequest = v.InferOutput<typeof SessionSearchRequestSchema>;
+export type SessionSearchRequest = Output<typeof SessionSearchRequestSchema>;
 
 /**
  * Ask where a forked session stopped being a copy of its ancestor (user role
@@ -360,7 +361,7 @@ export const ForkOriginRequestSchema = v.object({
   op: v.literal("fork_origin"),
   sid: v.string(),
 });
-export type ForkOriginRequest = v.InferOutput<typeof ForkOriginRequestSchema>;
+export type ForkOriginRequest = Output<typeof ForkOriginRequestSchema>;
 
 /**
  * Write a session's dump to a file under the daemon's `dumps/` directory and
@@ -391,7 +392,7 @@ export const SessionDumpFileRequestSchema = v.object({
   /** Drop in-process agent machinery (`ccmsg dump --no-agent`). */
   no_agent: v.optional(v.boolean()),
 });
-export type SessionDumpFileRequest = v.InferOutput<typeof SessionDumpFileRequestSchema>;
+export type SessionDumpFileRequest = Output<typeof SessionDumpFileRequestSchema>;
 
 /** One-shot fetch of the latest `claude agents --json` poll result (user role
  * only). The webui uses this for the initial paint; subsequent changes arrive
@@ -399,29 +400,25 @@ export type SessionDumpFileRequest = v.InferOutput<typeof SessionDumpFileRequest
 export const AgentsRequestSchema = v.object({
   op: v.literal("agents"),
 });
-export type AgentsRequest = v.InferOutput<typeof AgentsRequestSchema>;
+export type AgentsRequest = Output<typeof AgentsRequestSchema>;
 
 export const SessionStatusRequestSchema = v.object({
   op: v.literal("session_status"),
   sid: v.string(),
 });
-export type SessionStatusRequest = v.InferOutput<typeof SessionStatusRequestSchema>;
+export type SessionStatusRequest = Output<typeof SessionStatusRequestSchema>;
 
 export const SessionStatusSubscribeRequestSchema = v.object({
   op: v.literal("session_status_subscribe"),
   sid: v.string(),
 });
-export type SessionStatusSubscribeRequest = v.InferOutput<
-  typeof SessionStatusSubscribeRequestSchema
->;
+export type SessionStatusSubscribeRequest = Output<typeof SessionStatusSubscribeRequestSchema>;
 
 export const SessionStatusUnsubscribeRequestSchema = v.object({
   op: v.literal("session_status_unsubscribe"),
   sid: v.string(),
 });
-export type SessionStatusUnsubscribeRequest = v.InferOutput<
-  typeof SessionStatusUnsubscribeRequestSchema
->;
+export type SessionStatusUnsubscribeRequest = Output<typeof SessionStatusUnsubscribeRequestSchema>;
 
 /** One-shot fetch of every connected session currently stopped on a harness
  * API error (user role only). The webui uses this for the initial paint;
@@ -433,4 +430,4 @@ export type SessionStatusUnsubscribeRequest = v.InferOutput<
 export const SessionErrorsRequestSchema = v.object({
   op: v.literal("session_errors"),
 });
-export type SessionErrorsRequest = v.InferOutput<typeof SessionErrorsRequestSchema>;
+export type SessionErrorsRequest = Output<typeof SessionErrorsRequestSchema>;

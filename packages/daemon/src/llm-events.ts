@@ -41,46 +41,64 @@ export function parseLlmRequestEvent(value: unknown): LlmRequestObservation | nu
   // rejecting the event — the timestamp is still usable.
   const rawPrefix = raw.prefix;
   const prefix = typeof rawPrefix === "string" ? rawPrefix : "";
-  const info: LlmRequestObservation = { ts, session_id: sid, prefix };
-  // The origin vocabulary is the gateway's to grow ("oneshot" arrived in its
-  // v0.34.0); any string is kept as stated, and everything downstream asks
-  // only "is it main?" — so a new word behaves like sub without a change here.
-  if (typeof raw.origin === "string" && raw.origin !== "") {
-    info.origin = raw.origin;
-  }
   // Only a deadline in the future of its own request opens a window; anything
   // else (a null from a request that cached nothing, a value at or before
   // `ts`) is dropped so the fallback length applies instead of a window that
   // was never open.
   const expires = raw.cache_expires_at;
-  if (typeof expires === "number" && Number.isFinite(expires) && expires > ts) {
-    info.cache_expires_at = expires;
-  }
-  // The keepalive strategy's own bookkeeping, relayed as stated: these are
-  // projections the gateway recomputes per event, so a client reads the
-  // newest event and never merges two. Each is carried only when it is a
-  // usable number, which is also how a series the strategy does not cover
-  // (a subagent's, a passthrough) arrives — with the whole group absent.
-  for (const key of [
-    "cache_ttl_secs",
-    "cache_since",
-    "cache_count",
-    "next_keepalive_at",
-    "cache_until",
-    "cache_until_count",
-    "cache_breakeven_until",
-    "cache_breakeven_count",
-  ] as const) {
-    const num = raw[key];
-    if (typeof num === "number" && Number.isFinite(num)) info[key] = num;
-  }
-  if (typeof raw.cache_paused === "boolean") info.cache_paused = raw.cache_paused;
-  if (typeof raw.keepalive === "string" && raw.keepalive !== "") info.keepalive = raw.keepalive;
-  if (typeof raw.ns === "string" && raw.ns !== "") info.ns = raw.ns;
-  if (typeof raw.model === "string" && raw.model !== "") info.model = raw.model;
-  if (typeof raw.credential === "string" && raw.credential !== "") info.credential = raw.credential;
-  if (typeof raw.status === "number" && Number.isFinite(raw.status)) info.status = raw.status;
-  return info;
+  return {
+    ts,
+    session_id: sid,
+    prefix,
+    // The origin vocabulary is the gateway's to grow ("oneshot" arrived in its
+    // v0.34.0); any string is kept as stated, and everything downstream asks
+    // only "is it main?" — so a new word behaves like sub without a change here.
+    ...(typeof raw.origin === "string" && raw.origin !== "" ? { origin: raw.origin } : {}),
+    ...(typeof expires === "number" && Number.isFinite(expires) && expires > ts
+      ? { cache_expires_at: expires }
+      : {}),
+    // The keepalive strategy's own bookkeeping, relayed as stated: these are
+    // projections the gateway recomputes per event, so a client reads the
+    // newest event and never merges two. Each is carried only when it is a
+    // usable number, which is also how a series the strategy does not cover
+    // (a subagent's, a passthrough) arrives — with the whole group absent.
+    ...(typeof raw.cache_ttl_secs === "number" && Number.isFinite(raw.cache_ttl_secs)
+      ? { cache_ttl_secs: raw.cache_ttl_secs }
+      : {}),
+    ...(typeof raw.cache_since === "number" && Number.isFinite(raw.cache_since)
+      ? { cache_since: raw.cache_since }
+      : {}),
+    ...(typeof raw.cache_count === "number" && Number.isFinite(raw.cache_count)
+      ? { cache_count: raw.cache_count }
+      : {}),
+    ...(typeof raw.next_keepalive_at === "number" && Number.isFinite(raw.next_keepalive_at)
+      ? { next_keepalive_at: raw.next_keepalive_at }
+      : {}),
+    ...(typeof raw.cache_until === "number" && Number.isFinite(raw.cache_until)
+      ? { cache_until: raw.cache_until }
+      : {}),
+    ...(typeof raw.cache_until_count === "number" && Number.isFinite(raw.cache_until_count)
+      ? { cache_until_count: raw.cache_until_count }
+      : {}),
+    ...(typeof raw.cache_breakeven_until === "number" && Number.isFinite(raw.cache_breakeven_until)
+      ? { cache_breakeven_until: raw.cache_breakeven_until }
+      : {}),
+    ...(typeof raw.cache_breakeven_count === "number" && Number.isFinite(raw.cache_breakeven_count)
+      ? { cache_breakeven_count: raw.cache_breakeven_count }
+      : {}),
+    ...(typeof raw.cache_paused === "boolean" ? { cache_paused: raw.cache_paused } : {}),
+    ...(typeof raw.keepalive === "string" && raw.keepalive !== ""
+      ? { keepalive: raw.keepalive }
+      : {}),
+    ...(typeof raw.ns === "string" && raw.ns !== "" ? { ns: raw.ns } : {}),
+    ...(typeof raw.model === "string" && raw.model !== "" ? { model: raw.model } : {}),
+    ...(typeof raw.credential === "string" && raw.credential !== ""
+      ? { credential: raw.credential }
+      : {}),
+    ...(typeof raw.status === "number" && Number.isFinite(raw.status)
+      ? { status: raw.status }
+      : {}),
+  };
 }
 
 /** Event kinds the gateway posts that ccmsg reads nothing from: the answer's

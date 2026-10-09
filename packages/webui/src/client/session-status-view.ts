@@ -22,7 +22,7 @@ export interface TodoSections {
   completed: SessionTodo[];
 }
 
-export function splitTodos(todos: SessionTodo[]): TodoSections {
+export function splitTodos(todos: readonly SessionTodo[]): TodoSections {
   return {
     pending: todos.filter((t) => t.status === "pending"),
     inProgress: todos.filter((t) => t.status === "in_progress"),
@@ -41,7 +41,7 @@ export interface RunSections<T> {
 }
 
 export function splitBackground(
-  background: SessionBackgroundStatus[],
+  background: readonly SessionBackgroundStatus[],
 ): RunSections<SessionBackgroundStatus> {
   return {
     running: background.filter((b) => b.status === "running"),
@@ -105,7 +105,7 @@ export function canonicalModelId(raw: string): string {
  * run_id 未設定 (旧型 workflow / RUN_ID_RE 不合致) は元の entry を落とさず並列で通す。
  * 出現順は「run_id グループの初回登場位置」を保つ (fold 順を大きく崩さない)。 */
 export function dedupeWorkflowRunsByRunId(
-  workflows: SessionWorkflowStatus[],
+  workflows: readonly SessionWorkflowStatus[],
 ): SessionWorkflowStatus[] {
   const groupsByRun = new Map<string, SessionWorkflowStatus[]>();
   const orderKeys: string[] = [];
@@ -232,7 +232,7 @@ export interface MiniSummaryLine {
 /** 活動中 (state === "active") と判定する teammate だけを要約行にまとめる
  * (workflow が status === "running" だけをカウントするのと同じ「厳密一致」
  * 方針)。3 名を超えたら残数を畳んで 1 行に収める。 */
-function formatTeammatesLine(teammates: SessionTeammate[]): string | null {
+function formatTeammatesLine(teammates: readonly SessionTeammate[]): string | null {
   const active = teammates.filter((t) => t.state === "active");
   if (active.length === 0) return null;
   if (active.length <= 3) return active.map((t) => t.name).join(", ");

@@ -97,24 +97,22 @@ async function walkDirectory(
       continue;
     }
 
-    const entry: DirTreeEntry = { path: entryPath, is_dir: true };
-    if (remainingDepth > 1) {
-      entry.children = await walkDirectory(
-        cfg,
-        requestRoot,
-        entryPath,
-        remainingDepth - 1,
-        filterTokens,
-      );
-    }
+    const children =
+      remainingDepth > 1
+        ? await walkDirectory(cfg, requestRoot, entryPath, remainingDepth - 1, filterTokens)
+        : undefined;
 
     if (filterTokens !== undefined) {
       const relativePath = path.relative(requestRoot, entryPath);
       const matches = matchesAllTokens(relativePath, filterTokens);
-      const descendantMatches = entry.children !== undefined && entry.children.length > 0;
+      const descendantMatches = children !== undefined && children.length > 0;
       if (!matches && !descendantMatches) continue;
     }
-    entries.push(entry);
+    entries.push({
+      path: entryPath,
+      is_dir: true,
+      ...(children !== undefined ? { children } : {}),
+    });
   }
 
   entries.sort(compareEntries);
@@ -123,7 +121,7 @@ async function walkDirectory(
 
 export async function dirTree(
   cfg: SessionLauncherConfig | undefined,
-  roots: string[],
+  roots: readonly string[],
   depth: number | undefined,
   filter: string | undefined,
 ): Promise<FsAccessResult<Omit<DirTreeResponse, "ok">>> {

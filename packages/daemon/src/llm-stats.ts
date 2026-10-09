@@ -49,19 +49,24 @@ export function statsUrlWithDays(base: string, days?: number): string {
  * coerced: a counter the UI sums has to be a number or absent, never NaN. */
 function parseModelUsage(value: unknown): LlmStatsModelUsage | null {
   if (!isRecord(value)) return null;
-  const usage: LlmStatsModelUsage = {};
-  for (const key of [
-    "requests",
-    "input_tokens",
-    "output_tokens",
-    "cache_creation_input_tokens",
-    "cache_read_input_tokens",
-    "usd",
-  ] as const) {
-    const num = optionalNumber(value[key]);
-    if (num !== undefined) usage[key] = num;
-  }
-  return usage;
+  const requests = optionalNumber(value.requests);
+  const inputTokens = optionalNumber(value.input_tokens);
+  const outputTokens = optionalNumber(value.output_tokens);
+  const cacheCreationInputTokens = optionalNumber(value.cache_creation_input_tokens);
+  const cacheReadInputTokens = optionalNumber(value.cache_read_input_tokens);
+  const usd = optionalNumber(value.usd);
+  return {
+    ...(requests !== undefined ? { requests } : {}),
+    ...(inputTokens !== undefined ? { input_tokens: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { output_tokens: outputTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined
+      ? { cache_creation_input_tokens: cacheCreationInputTokens }
+      : {}),
+    ...(cacheReadInputTokens !== undefined
+      ? { cache_read_input_tokens: cacheReadInputTokens }
+      : {}),
+    ...(usd !== undefined ? { usd } : {}),
+  };
 }
 
 /** One day. A day whose `credentials` is not an object still renders as an

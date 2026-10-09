@@ -33,7 +33,7 @@
 // each hook is a function literal, and `$` is passed only to functions
 // declared at the top of the file.
 import * as v from "valibot";
-import { errorText, parseWith } from "@ccmsg/protocol/parse";
+import { errorText, type Output, parseWith } from "@ccmsg/protocol/parse";
 import {
   type DescribeResult,
   type FailedSidecarReply,
@@ -148,13 +148,13 @@ async function observe<E, R, S extends v.GenericSchema>(
   next: (e: E) => Promise<R>,
   event: HookedEvent,
   schema: S,
-  observer: Observer<v.InferOutput<S>>,
+  observer: Observer<Output<S>>,
 ): Promise<R> {
   const read = parseWith(schema, e);
   if (!read.ok) $.ui.log(`ccmsg: ${event} not read: ${read.failure.summary}`, { to: "debug" });
   const run = async (
     when: "before" | "after",
-    part: ((e: v.InferOutput<S>) => Promise<void> | void) | undefined,
+    part: ((e: Output<S>) => Promise<void> | void) | undefined,
   ): Promise<void> => {
     if (!read.ok || part === undefined) return;
     try {

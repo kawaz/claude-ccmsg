@@ -6,17 +6,18 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 export const PingRequestSchema = v.object({
   op: v.literal("ping"),
 });
-export type PingRequest = v.InferOutput<typeof PingRequestSchema>;
+export type PingRequest = Output<typeof PingRequestSchema>;
 
 export const ShutdownRequestSchema = v.object({
   op: v.literal("shutdown"),
   reason: v.optional(v.string()),
 });
-export type ShutdownRequest = v.InferOutput<typeof ShutdownRequestSchema>;
+export type ShutdownRequest = Output<typeof ShutdownRequestSchema>;
 
 /** Local en→ja translation through the daemon host (DR-0023, user role only).
  * An empty batch is a capability probe: it verifies the helper can be found or
@@ -29,7 +30,7 @@ export const TranslateRequestSchema = v.object({
   op: v.literal("translate"),
   texts: v.array(v.string()),
 });
-export type TranslateRequest = v.InferOutput<typeof TranslateRequestSchema>;
+export type TranslateRequest = Output<typeof TranslateRequestSchema>;
 
 /** Per-credential LLM quota snapshot, proxied from the gateway named by
  * `<configDir>/config.json`'s `llm_usage_url` (user role only — quota is an
@@ -51,7 +52,7 @@ export const LlmUsageRequestSchema = v.object({
    * action and never for polling. */
   refresh: v.optional(v.boolean()),
 });
-export type LlmUsageRequest = v.InferOutput<typeof LlmUsageRequestSchema>;
+export type LlmUsageRequest = Output<typeof LlmUsageRequestSchema>;
 
 /** Per-day LLM spend, proxied from the gateway named by `<configDir>/config.json`'s
  * `llm_stats_url` (user role only, same posture as `llm_usage`: what the host's
@@ -70,7 +71,7 @@ export const LlmStatsRequestSchema = v.object({
    * supported way to say "everything you have". */
   days: v.optional(v.number()),
 });
-export type LlmStatsRequest = v.InferOutput<typeof LlmStatsRequestSchema>;
+export type LlmStatsRequest = Output<typeof LlmStatsRequestSchema>;
 
 /** Upstream service health, proxied from the gateway named by
  * `<configDir>/config.json`'s `llm_status_url` (user role only, same posture
@@ -90,4 +91,4 @@ export const LlmStatusRequestSchema = v.object({
    * belongs to an explicit user action. */
   refresh: v.optional(v.boolean()),
 });
-export type LlmStatusRequest = v.InferOutput<typeof LlmStatusRequestSchema>;
+export type LlmStatusRequest = Output<typeof LlmStatusRequestSchema>;

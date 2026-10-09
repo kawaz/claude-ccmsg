@@ -60,7 +60,7 @@ export interface FileSearchGroup {
    * shorten its own path without the renderer having to re-pair groups with
    * the folder list they came from. */
   folder: WorkspaceFolder | null;
-  hits: FsFindHit[];
+  hits: readonly FsFindHit[];
   /** This group's walk was cut short (daemon result cap / visit budget). */
   truncated: boolean;
   /** This target failed outright; its hits are unknown, not empty. Rendered

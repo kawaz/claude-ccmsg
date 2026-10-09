@@ -123,7 +123,7 @@ export interface ServiceRow {
   tone: StatusTone;
   mark: string;
   severityText: string;
-  routes: string[];
+  routes: readonly string[];
   official: {
     label: string;
     /** True when the provider's page has not been read recently enough for
@@ -142,7 +142,7 @@ export interface ServiceRow {
      * the observed state is a failure. */
     failure?: string;
   } | null;
-  incidents: LlmStatusIncident[];
+  incidents: readonly LlmStatusIncident[];
 }
 
 function failureText(failure: NonNullable<LlmStatusService["observed"]>["last_failure"]): string {

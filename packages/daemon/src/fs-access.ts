@@ -340,9 +340,12 @@ async function statEntries(dir: string, names: string[]): Promise<FsEntry[]> {
       continue;
     }
     const type = lstatType(stat);
-    const entry: FsEntry = { name, type, mtime: stat.mtime.toISOString() };
-    if (type === "file") entry.size = stat.size;
-    entries.push(entry);
+    entries.push({
+      name,
+      type,
+      mtime: stat.mtime.toISOString(),
+      ...(type === "file" ? { size: stat.size } : {}),
+    });
   }
   entries.sort(compareEntries);
   return entries;

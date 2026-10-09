@@ -1173,9 +1173,9 @@ function msgVisibleTo(sub: Conn, room: Room, ev: MsgEvent): boolean {
   return ev.to.includes(memberId);
 }
 
-function normalizeTo(to: string | string[] | undefined): string[] | undefined {
+function normalizeTo(to: string | readonly string[] | undefined): string[] | undefined {
   if (to === undefined) return undefined;
-  const arr = Array.isArray(to) ? to : [to];
+  const arr = typeof to === "string" ? [to] : to;
   const ids = arr.filter((s) => s.length > 0);
   return ids.length > 0 ? ids : undefined;
 }
@@ -1428,7 +1428,7 @@ function deliverNewRoom(daemon: Daemon, room: Room, author: Author, authorId: st
 function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): void {
   const ev: LeaveEvent = { type: "leave", id: memberId, ts: nowIso() };
   const recipients = [...daemon.subscribers].filter((s) => subscriberSeesRoom(s, room));
-  appendEvent(room, ev);
+  const stored = appendEvent(room, ev);
   // membership shrank below the sid set that seeded room.dedupKey (invite's
   // mirror image, see the identical comment on the `invite` case below): a
   // same-sid create_room within the dedup window must no longer fold into
@@ -1437,7 +1437,7 @@ function appendLeaveAndBroadcast(daemon: Daemon, room: Room, memberId: string): 
   // `{ok:true, reused:true}` with no mid — a swallowed post disguised as
   // success.
   room.dedupEligible = false;
-  for (const r of recipients) writeDelivered(r, room, ev);
+  for (const r of recipients) writeDelivered(r, room, stored);
 }
 
 // --- room creation ---------------------------------------------------------
@@ -1897,8 +1897,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         ts: nowIso(),
         msg: req.msg,
       };
-      appendEvent(room, ev);
-      deliver(daemon, room, ev, authorOf(conn));
+      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
       send(conn, { ok: true, room: room.id, mid });
       return;
     }
@@ -1955,8 +1954,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         msg: req.msg,
         reply_to: `${room.id}m${req.mid}`,
       };
-      appendEvent(room, ev);
-      deliver(daemon, room, ev, authorOf(conn));
+      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
       send(conn, { ok: true, room: room.id, mid, to });
       return;
     }
@@ -2109,8 +2107,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
           if (from !== null) {
             mid = existing.lastMid + 1;
             const ev: MsgEvent = { type: "msg", mid, from, ts: nowIso(), msg: req.msg };
-            appendEvent(existing, ev);
-            deliver(daemon, existing, ev, authorOf(conn));
+            deliver(daemon, existing, appendEvent(existing, ev), authorOf(conn));
           }
         }
         send(conn, {
@@ -2186,8 +2183,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         } satisfies MemberEvent);
       }
       appendEvent(room, { type: "prev", room: old.id, ts: nowIso() });
-      const nextEv: StorageEvent = { type: "next", room: room.id, ts: nowIso() };
-      appendEvent(old, nextEv);
+      const nextEv = appendEvent(old, { type: "next", room: room.id, ts: nowIso() });
       if (req.title)
         appendEvent(room, { type: "title", title: req.title, ts: nowIso() } satisfies TitleEvent);
       let mid: number | undefined;
@@ -2233,13 +2229,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         writeMembers(daemon, room, [sid]);
       }
       const ev: SayEvent = { type: "say", sid, text: req.text, ts: nowIso() };
-      appendEvent(room, ev);
+      const stored = appendEvent(room, ev);
       if (created) {
         // 新規 room は snapshot ごと配信する (create_room と同じ経路)。say
         // 自体もその snapshot に含まれるので、ここで個別 deliver はしない。
         deliverNewRoom(daemon, room, authorOf(conn), null);
       } else {
-        deliver(daemon, room, ev, authorOf(conn));
+        deliver(daemon, room, stored, authorOf(conn));
       }
       // appendEvent stamped the event with the room's new last seq.
       send(conn, { ok: true, room: room.id, seq: room.lastSeq, created });
@@ -2271,10 +2267,10 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       const ev: SayReadEvent = { type: "say_read", ref: req.seq, ts: nowIso() };
-      appendEvent(room, ev);
+      const stored = appendEvent(room, ev);
       // 他タブの webui にも既読を伝える (session role には届かない —
       // isSuppressedForSubscriber)。
-      deliver(daemon, room, ev, authorOf(conn));
+      deliver(daemon, room, stored, authorOf(conn));
       send(conn, { ok: true, room: room.id, ref: req.seq });
       return;
     }
@@ -2305,8 +2301,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       const ev: TitleEvent = { type: "title", title, ts: nowIso() };
-      appendEvent(room, ev);
-      deliver(daemon, room, ev, authorOf(conn));
+      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
       send(conn, { ok: true, room: room.id, title });
       return;
     }
@@ -2331,8 +2326,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         return;
       }
       const ev: ArchiveEvent = { type: "archive", archived, ts: nowIso() };
-      appendEvent(room, ev);
-      deliver(daemon, room, ev, authorOf(conn));
+      deliver(daemon, room, appendEvent(room, ev), authorOf(conn));
       send(conn, { ok: true, room: room.id, archived });
       return;
     }
@@ -3388,7 +3382,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
         cwd: targetEntry.meta.cwd,
         joined_at: nowIso(),
       };
-      appendEvent(room, ev);
+      const stored = appendEvent(room, ev);
       // invite changes membership outside the create_room([...]) sid set that seeded
       // room.dedupKey, so a same-sid create_room within the dedup window (DR-0003 §4)
       // must no longer fold into this room — same treatment as next_room's `prev` link
@@ -3408,7 +3402,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       for (const sub of daemon.subscribers) {
         if (sub === targetSub) continue; // already covered by their snapshot above
         if (!subscriberSeesRoom(sub, room)) continue;
-        writeDelivered(sub, room, ev);
+        writeDelivered(sub, room, stored);
       }
       send(conn, { ok: true, room: room.id, id, already: false });
       return;

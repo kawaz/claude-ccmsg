@@ -7,6 +7,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 export const PingResponseSchema = v.object({
   ok: v.literal(true),
@@ -33,19 +34,19 @@ export const PingResponseSchema = v.object({
    * depends on it. */
   network: v.picklist(["off", "unknown", "online", "offline"]),
 });
-export type PingResponse = v.InferOutput<typeof PingResponseSchema>;
+export type PingResponse = Output<typeof PingResponseSchema>;
 
 export const ShutdownResponseSchema = v.object({
   ok: v.literal(true),
   stopping: v.literal(true),
 });
-export type ShutdownResponse = v.InferOutput<typeof ShutdownResponseSchema>;
+export type ShutdownResponse = Output<typeof ShutdownResponseSchema>;
 
 export const TranslateResultSchema = v.variant("ok", [
   v.object({ ok: v.literal(true), text: v.string() }),
   v.object({ ok: v.literal(false), error: v.string() }),
 ]);
-export type TranslateResult = v.InferOutput<typeof TranslateResultSchema>;
+export type TranslateResult = Output<typeof TranslateResultSchema>;
 
 export const TranslateResponseSchema = v.object({
   ok: v.literal(true),
@@ -53,7 +54,7 @@ export const TranslateResponseSchema = v.object({
    * the helper's Translation.framework error text (including notInstalled). */
   results: v.array(TranslateResultSchema),
 });
-export type TranslateResponse = v.InferOutput<typeof TranslateResponseSchema>;
+export type TranslateResponse = Output<typeof TranslateResponseSchema>;
 
 // --- llm_usage ---------------------------------------------------------------
 
@@ -82,7 +83,7 @@ export const LlmUsageWindowSchema = v.object({
    * quota right now, which is the misreading this flag exists to prevent. */
   expired: v.optional(v.boolean()),
 });
-export type LlmUsageWindow = v.InferOutput<typeof LlmUsageWindowSchema>;
+export type LlmUsageWindow = Output<typeof LlmUsageWindowSchema>;
 
 /** Extra-credit spending state, which is per credential rather than per
  * window (a credential can be out of credits while both windows are still
@@ -91,7 +92,7 @@ export const LlmUsageOverageSchema = v.object({
   status: v.string(),
   disabled_reason: v.optional(v.string()),
 });
-export type LlmUsageOverage = v.InferOutput<typeof LlmUsageOverageSchema>;
+export type LlmUsageOverage = Output<typeof LlmUsageOverageSchema>;
 
 /** One observation of a credential's quota, as of `observed_at` — which can
  * lag the response's own `generated_at` by minutes when the gateway has not
@@ -107,7 +108,7 @@ export const LlmUsageSnapshotSchema = v.object({
    * so a future non-window sibling key is dropped rather than mis-rendered. */
   windows: v.record(v.string(), LlmUsageWindowSchema),
 });
-export type LlmUsageSnapshot = v.InferOutput<typeof LlmUsageSnapshotSchema>;
+export type LlmUsageSnapshot = Output<typeof LlmUsageSnapshotSchema>;
 
 /** One named limit the upstream provider enforces on a credential, beside the
  * rolling quota windows. Upstream's vocabulary is passed through untranslated
@@ -142,7 +143,7 @@ export const LlmUsageLimitSchema = v.object({
    * one, which means unknown — not a licence to guess. */
   window_seconds: v.optional(v.number()),
 });
-export type LlmUsageLimit = v.InferOutput<typeof LlmUsageLimitSchema>;
+export type LlmUsageLimit = Output<typeof LlmUsageLimitSchema>;
 
 /** State of the credential's own authentication, as the gateway last observed
  * it while refreshing a token. Separate from `support` and from the quota
@@ -171,7 +172,7 @@ export const LlmUsageAuthSchema = v.object({
    * new enough to offer it. */
   login_url: v.optional(v.string()),
 });
-export type LlmUsageAuth = v.InferOutput<typeof LlmUsageAuthSchema>;
+export type LlmUsageAuth = Output<typeof LlmUsageAuthSchema>;
 
 export const LlmUsageCredentialSchema = v.object({
   name: v.string(),
@@ -198,7 +199,7 @@ export const LlmUsageCredentialSchema = v.object({
    * observation, and its `observed_at` says how old that is. */
   probe_error: v.optional(v.string()),
 });
-export type LlmUsageCredential = v.InferOutput<typeof LlmUsageCredentialSchema>;
+export type LlmUsageCredential = Output<typeof LlmUsageCredentialSchema>;
 
 /** Payload of a completed llm_usage.
  * The gateway's own top-level fields are passed through; only `credentials`
@@ -209,7 +210,7 @@ export const LlmUsageResponseSchema = v.object({
   generated_at: v.optional(v.number()),
   credentials: v.array(LlmUsageCredentialSchema),
 });
-export type LlmUsageResponse = v.InferOutput<typeof LlmUsageResponseSchema>;
+export type LlmUsageResponse = Output<typeof LlmUsageResponseSchema>;
 
 // --- llm_stats ---------------------------------------------------------------
 
@@ -226,7 +227,7 @@ export const LlmStatsModelUsageSchema = v.object({
   /** Spend in USD. The one field the screen is built around. */
   usd: v.optional(v.number()),
 });
-export type LlmStatsModelUsage = v.InferOutput<typeof LlmStatsModelUsageSchema>;
+export type LlmStatsModelUsage = Output<typeof LlmStatsModelUsageSchema>;
 
 /** One day's spend, credential → model → counters. Credential names are
  * verbatim from upstream, including the literal "-" the gateway uses for
@@ -238,7 +239,7 @@ export const LlmStatsDaySchema = v.object({
    * from the sum when the gateway counts something it does not break out. */
   total_usd: v.optional(v.number()),
 });
-export type LlmStatsDay = v.InferOutput<typeof LlmStatsDaySchema>;
+export type LlmStatsDay = Output<typeof LlmStatsDaySchema>;
 
 /** Payload of a completed llm_stats.
  * Keyed by "YYYY-MM-DD" in the gateway's own timezone — the daemon does not
@@ -249,7 +250,7 @@ export const LlmStatsResponseSchema = v.object({
   generated_at: v.optional(v.number()),
   days: v.record(v.string(), LlmStatsDaySchema),
 });
-export type LlmStatsResponse = v.InferOutput<typeof LlmStatsResponseSchema>;
+export type LlmStatsResponse = Output<typeof LlmStatsResponseSchema>;
 
 // --- llm_status --------------------------------------------------------------
 
@@ -260,7 +261,7 @@ export type LlmStatsResponse = v.InferOutput<typeof LlmStatsResponseSchema>;
  * set normalizes to "unknown" rather than being passed through, so a future
  * vocabulary cannot reach the UI as a word it has no colour for. */
 export const LlmStatusSeveritySchema = v.picklist(["ok", "warning", "critical", "unknown"]);
-export type LlmStatusSeverity = v.InferOutput<typeof LlmStatusSeveritySchema>;
+export type LlmStatusSeverity = Output<typeof LlmStatusSeveritySchema>;
 
 /** What the provider's own status page says. Fixed vocabulary; anything else
  * (a state the gateway added, or a malformed document) is "unknown". */
@@ -272,12 +273,12 @@ export const LlmStatusOfficialStateSchema = v.picklist([
   "maintenance",
   "unknown",
 ]);
-export type LlmStatusOfficialState = v.InferOutput<typeof LlmStatusOfficialStateSchema>;
+export type LlmStatusOfficialState = Output<typeof LlmStatusOfficialStateSchema>;
 
 /** What this gateway saw on the wire. Deliberately disjoint from the official
  * vocabulary so a reader can never mistake one signal for the other. */
 export const LlmStatusObservedStateSchema = v.picklist(["reachable", "failing", "unknown"]);
-export type LlmStatusObservedState = v.InferOutput<typeof LlmStatusObservedStateSchema>;
+export type LlmStatusObservedState = Output<typeof LlmStatusObservedStateSchema>;
 
 /** One status-page component the gateway watches for this service. */
 export const LlmStatusComponentSchema = v.object({
@@ -285,7 +286,7 @@ export const LlmStatusComponentSchema = v.object({
   name: v.string(),
   state: LlmStatusOfficialStateSchema,
 });
-export type LlmStatusComponent = v.InferOutput<typeof LlmStatusComponentSchema>;
+export type LlmStatusComponent = Output<typeof LlmStatusComponentSchema>;
 
 /** One unresolved incident from the provider's status page. Every field but
  * the title is optional: the gateway passes through what the page gave it,
@@ -308,7 +309,7 @@ export const LlmStatusIncidentSchema = v.object({
    * shown for reference and did not raise this service's severity. */
   scope: v.optional(v.string()),
 });
-export type LlmStatusIncident = v.InferOutput<typeof LlmStatusIncidentSchema>;
+export type LlmStatusIncident = Output<typeof LlmStatusIncidentSchema>;
 
 /** The provider's published state for one service. */
 export const LlmStatusOfficialSchema = v.object({
@@ -328,7 +329,7 @@ export const LlmStatusOfficialSchema = v.object({
    * kept beside it rather than being replaced by the failure. */
   error: v.optional(v.string()),
 });
-export type LlmStatusOfficial = v.InferOutput<typeof LlmStatusOfficialSchema>;
+export type LlmStatusOfficial = Output<typeof LlmStatusOfficialSchema>;
 
 /** What this gateway itself observed for the service's routes. */
 export const LlmStatusObservedSchema = v.object({
@@ -350,7 +351,7 @@ export const LlmStatusObservedSchema = v.object({
     }),
   ),
 });
-export type LlmStatusObserved = v.InferOutput<typeof LlmStatusObservedSchema>;
+export type LlmStatusObserved = Output<typeof LlmStatusObservedSchema>;
 
 /** One upstream service, with the two signals kept apart. Both are optional
  * because a gateway may report a service it has neither read nor exercised;
@@ -366,7 +367,7 @@ export const LlmStatusServiceSchema = v.object({
   official: v.optional(LlmStatusOfficialSchema),
   observed: v.optional(LlmStatusObservedSchema),
 });
-export type LlmStatusService = v.InferOutput<typeof LlmStatusServiceSchema>;
+export type LlmStatusService = Output<typeof LlmStatusServiceSchema>;
 
 /** Top-level roll-up: the worst service severity, plus the breakdown that
  * keeps "one critical among many ok" from reading as "everything is down". */
@@ -376,7 +377,7 @@ export const LlmStatusOverallSchema = v.object({
    * named fields so a future severity does not need a protocol change. */
   service_counts: v.record(v.string(), v.number()),
 });
-export type LlmStatusOverall = v.InferOutput<typeof LlmStatusOverallSchema>;
+export type LlmStatusOverall = Output<typeof LlmStatusOverallSchema>;
 
 /** The gateway's upstream-service report (DR-0021 in the gateway repo), as it
  * reaches the webui — the same document whether it arrives as the answer to
@@ -392,11 +393,11 @@ export const LlmStatusReportSchema = v.object({
   overall: LlmStatusOverallSchema,
   services: v.array(LlmStatusServiceSchema),
 });
-export type LlmStatusReport = v.InferOutput<typeof LlmStatusReportSchema>;
+export type LlmStatusReport = Output<typeof LlmStatusReportSchema>;
 
 /** Payload of a completed llm_status. */
 export const LlmStatusResponseSchema = v.object({
   ok: v.literal(true),
   ...LlmStatusReportSchema.entries,
 });
-export type LlmStatusResponse = v.InferOutput<typeof LlmStatusResponseSchema>;
+export type LlmStatusResponse = Output<typeof LlmStatusResponseSchema>;

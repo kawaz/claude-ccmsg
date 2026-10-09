@@ -165,25 +165,29 @@ export function lastTs(room: Room): string | null {
 }
 
 /**
- * Assign `seq` (DR-0016 §2.2) to every event in line order, in-place on the
- * already-loaded event objects. Legacy (pre-DR-0016) rows carry no `seq` and
- * are backfilled 1-origin from the running counter; rows that already carry a
- * persisted `seq` (post-DR-0016 daemon writes) keep that value and advance the
+ * Give `seq` (DR-0016 §2.2) to every event in line order. Legacy
+ * (pre-DR-0016) rows carry no `seq` and are backfilled 1-origin from the
+ * running counter, as new event values; rows that already carry a persisted
+ * `seq` (post-DR-0016 daemon writes) are kept as they are and advance the
  * counter to match. Disk is never rewritten — this is purely an in-memory
  * reconstruction so old logs behave as if they'd always had `seq`. Returns the
- * final counter value, i.e. the room's `lastSeq` high-water mark.
+ * events with their `seq` and the final counter value, i.e. the room's
+ * `lastSeq` high-water mark.
  */
-function backfillSeq(events: StorageEvent[]): number {
+function backfillSeq(events: readonly StorageEvent[]): {
+  events: StorageEvent[];
+  lastSeq: number;
+} {
   let seq = 0;
-  for (const ev of events) {
+  const backfilled = events.map((ev): StorageEvent => {
     if (typeof ev.seq === "number" && Number.isFinite(ev.seq)) {
       seq = ev.seq;
-    } else {
-      seq += 1;
-      ev.seq = seq;
+      return ev;
     }
-  }
-  return seq;
+    seq += 1;
+    return { ...ev, seq };
+  });
+  return { events: backfilled, lastSeq: seq };
 }
 
 function computeDerived(room: Room): void {
@@ -195,7 +199,9 @@ function computeDerived(room: Room): void {
   let kind: RoomKind = "normal";
   const next: string[] = [];
   const prev: string[] = [];
-  room.lastSeq = backfillSeq(room.events);
+  const backfilled = backfillSeq(room.events);
+  room.events = backfilled.events;
+  room.lastSeq = backfilled.lastSeq;
   for (const ev of room.events) {
     switch (ev.type) {
       case "msg":
@@ -359,21 +365,19 @@ function tryParse(line: string): StorageEvent | null {
  * what was requested turns a short write into the same throw-before-mutating
  * path as any other write failure.
  *
- * `seq` (DR-0016) is the one field stamped BEFORE the write rather than after
+ * `seq` (DR-0016) is the one field given BEFORE the write rather than after
  * — it has to be baked into the serialized line, not just the in-memory
- * mirror. It's stamped in-place onto the caller's `ev` object (not a copy) so
- * that call sites which pass this same object on to `deliver` afterward
- * automatically broadcast a seq-bearing event with zero changes at each call
- * site. `room.lastSeq` itself still only advances after a successful write,
- * preserving the disk-first invariant above: if the write throws, `ev.seq`
- * is left stamped with a value that was never durably assigned, but that's
- * harmless — the event was never pushed to `room.events` (never delivered),
- * and a retried `appendEvent` call recomputes `room.lastSeq + 1` fresh,
- * overwriting the stale stamp.
+ * mirror. The event as stored, `ev` with its `seq`, is a new value returned
+ * to the caller, which delivers that one rather than the `ev` it passed in.
+ * `room.lastSeq` itself still only advances after a successful write,
+ * preserving the disk-first invariant above: if the write throws, the `seq`
+ * it was given was never durably assigned, and a retried `appendEvent` call
+ * recomputes `room.lastSeq + 1` fresh.
  */
-export function appendEvent(room: Room, ev: StorageEvent): void {
-  ev.seq = room.lastSeq + 1;
-  const line = `${JSON.stringify(ev)}\n`;
+export function appendEvent(room: Room, ev: StorageEvent): StorageEvent {
+  const seq = room.lastSeq + 1;
+  const stored: StorageEvent = { ...ev, seq };
+  const line = `${JSON.stringify(stored)}\n`;
   if (room.fd === null) room.fd = fs.openSync(room.file, "a");
   const expected = Buffer.byteLength(line);
   const written = fs.writeSync(room.fd, line);
@@ -383,25 +387,26 @@ export function appendEvent(room: Room, ev: StorageEvent): void {
     );
   }
 
-  room.events.push(ev);
-  room.lastSeq = ev.seq;
-  if (ev.type === "msg" && ev.mid > room.lastMid) room.lastMid = ev.mid;
-  if (ev.type === "title") room.title = ev.title;
-  if (ev.type === "archive") room.archived = ev.archived;
-  if (ev.type === "kind") {
-    room.kind = ev.kind;
+  room.events.push(stored);
+  room.lastSeq = seq;
+  if (stored.type === "msg" && stored.mid > room.lastMid) room.lastMid = stored.mid;
+  if (stored.type === "title") room.title = stored.title;
+  if (stored.type === "archive") room.archived = stored.archived;
+  if (stored.type === "kind") {
+    room.kind = stored.kind;
     // Non-`"normal"` rooms (broadcast / 1on1) are dedup-exempt (see
     // computeDerived's identical comment) — createRoom already seeds
     // dedupEligible=false for these, but a later kind mutation must never
     // re-enable folding either.
     room.dedupEligible = false;
   }
-  if (ev.type === "next") room.next.push(ev.room);
-  if (ev.type === "prev") {
-    room.prev.push(ev.room);
+  if (stored.type === "next") room.next.push(stored.room);
+  if (stored.type === "prev") {
+    room.prev.push(stored.room);
     room.dedupEligible = false;
   }
   scheduleFsync(room);
+  return stored;
 }
 
 // fsync is not per-record: debounce 100ms so a burst of writes syncs once
@@ -459,9 +464,9 @@ export function readMsgs(room: Room, mids: Set<number>): MsgEvent[] {
 }
 
 /** Parse a mids selector ("10-15,18" or [10,11]) into a concrete set. */
-export function parseMidSelector(sel: string | number[]): Set<number> {
+export function parseMidSelector(sel: string | readonly number[]): Set<number> {
   const out = new Set<number>();
-  if (Array.isArray(sel)) {
+  if (typeof sel !== "string") {
     for (const n of sel) if (Number.isInteger(n)) out.add(n);
     return out;
   }

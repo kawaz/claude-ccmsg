@@ -785,7 +785,7 @@ function PinnedSessionsSection({
   resolveModelEffort,
 }: {
   pinnedSessions: Map<string, SessionSearchHit>;
-  peers: PeerInfo[];
+  peers: readonly PeerInfo[];
   /** `claude agents --json` rows keyed by sid — the section's source for a
    * live session's title, indexed once by SessionList for both it and the
    * status sections below. */
@@ -867,7 +867,7 @@ export function SessionList({
   peers,
   currentSid,
 }: {
-  peers: PeerInfo[];
+  peers: readonly PeerInfo[];
   currentSid: string | null;
 }) {
   useTick(TICK_MS);

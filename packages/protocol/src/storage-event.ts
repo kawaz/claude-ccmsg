@@ -11,6 +11,7 @@
 // The same events travel the wire as delivered events (stream-event.ts), each
 // with the room it belongs to.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 const SeqSchema = v.optional(v.number());
 
@@ -27,7 +28,7 @@ export const MemberEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type MemberEvent = v.InferOutput<typeof MemberEventSchema>;
+export type MemberEvent = Output<typeof MemberEventSchema>;
 
 export const LeaveEventSchema = v.object({
   type: v.literal("leave"),
@@ -36,7 +37,7 @@ export const LeaveEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type LeaveEvent = v.InferOutput<typeof LeaveEventSchema>;
+export type LeaveEvent = Output<typeof LeaveEventSchema>;
 
 export const MsgEventSchema = v.object({
   type: v.literal("msg"),
@@ -61,7 +62,7 @@ export const MsgEventSchema = v.object({
    * Persisted in the room jsonl — future thread-display material. */
   reply_to: v.optional(v.string()),
 });
-export type MsgEvent = v.InferOutput<typeof MsgEventSchema>;
+export type MsgEvent = Output<typeof MsgEventSchema>;
 
 export const NextEventSchema = v.object({
   type: v.literal("next"),
@@ -70,7 +71,7 @@ export const NextEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type NextEvent = v.InferOutput<typeof NextEventSchema>;
+export type NextEvent = Output<typeof NextEventSchema>;
 
 export const PrevEventSchema = v.object({
   type: v.literal("prev"),
@@ -79,7 +80,7 @@ export const PrevEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type PrevEvent = v.InferOutput<typeof PrevEventSchema>;
+export type PrevEvent = Output<typeof PrevEventSchema>;
 
 export const TitleEventSchema = v.object({
   type: v.literal("title"),
@@ -88,7 +89,7 @@ export const TitleEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type TitleEvent = v.InferOutput<typeof TitleEventSchema>;
+export type TitleEvent = Output<typeof TitleEventSchema>;
 
 /** Room archive toggle (DR-0012): a display-organization flag, NOT a lifecycle
  * change — an archived room still accepts posts and still delivers events.
@@ -100,7 +101,7 @@ export const ArchiveEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type ArchiveEvent = v.InferOutput<typeof ArchiveEventSchema>;
+export type ArchiveEvent = Output<typeof ArchiveEventSchema>;
 
 /** Room kind marker (DR-0013 broadcast / DR-0014 1on1). Written exactly once
  * at room creation for non-`"normal"` rooms — a normal room carries no `kind`
@@ -115,7 +116,7 @@ export const KindEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type KindEvent = v.InferOutput<typeof KindEventSchema>;
+export type KindEvent = Output<typeof KindEventSchema>;
 
 /** A session spoke through `ccmsg say`. Recorded in the
  * session's 1on1 room so the webui can answer "which session just made my
@@ -140,7 +141,7 @@ export const SayEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type SayEvent = v.InferOutput<typeof SayEventSchema>;
+export type SayEvent = Output<typeof SayEventSchema>;
 
 /** Read-ack for one `say` event, from the webui's per-bubble 既読 button.
  * `ref` is the acked SayEvent's `seq`. Per-say rather than a "everything up
@@ -156,7 +157,7 @@ export const SayReadEventSchema = v.object({
   /** per-room sequence number (DR-0016), see file banner above. */
   seq: SeqSchema,
 });
-export type SayReadEvent = v.InferOutput<typeof SayReadEventSchema>;
+export type SayReadEvent = Output<typeof SayReadEventSchema>;
 
 /** Every storage event, told apart by `type`. */
 export const StorageEventSchema = v.variant("type", [
@@ -171,7 +172,7 @@ export const StorageEventSchema = v.variant("type", [
   SayEventSchema,
   SayReadEventSchema,
 ]);
-export type StorageEvent = v.InferOutput<typeof StorageEventSchema>;
+export type StorageEvent = Output<typeof StorageEventSchema>;
 
 /** Room kind (DR-0013 broadcast / DR-0014 1on1).
  * - `"normal"` = every other room (default).
@@ -184,4 +185,4 @@ export type StorageEvent = v.InferOutput<typeof StorageEventSchema>;
  *   are refused for every role, so it holds only says and the messages it
  *   already had. */
 export const RoomKindSchema = v.picklist(["normal", "broadcast", "1on1"]);
-export type RoomKind = v.InferOutput<typeof RoomKindSchema>;
+export type RoomKind = Output<typeof RoomKindSchema>;

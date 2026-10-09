@@ -191,7 +191,10 @@ export type SidecarCall<Op extends SidecarOp> =
  * answers is known here, where the request was made, and nowhere on the way. */
 function readReply<Op extends SidecarOp>(op: Op, reply: SidecarReply): Parsed<SidecarReplyOf<Op>> {
   if (!reply.ok) return { ok: true, value: reply };
-  const result = parseWith(SIDECAR_OPS[op].result, reply.result);
+  const result = parseWith<(typeof SIDECAR_OPS)[Op]["result"]>(
+    SIDECAR_OPS[op].result,
+    reply.result,
+  );
   if (!result.ok) return result;
   return { ok: true, value: { id: reply.id, ok: true, result: result.value } };
 }

@@ -13,6 +13,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 import { LlmStatusReportSchema } from "./response-host.ts";
 import { AgentInfoSchema, PeerInfoSchema } from "./response-sessions.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
@@ -71,7 +72,7 @@ export const DeliveredEventSchema = v.variant("type", [
   delivered(SayEventSchema),
   delivered(SayReadEventSchema),
 ]);
-export type DeliveredEvent = v.InferOutput<typeof DeliveredEventSchema>;
+export type DeliveredEvent = Output<typeof DeliveredEventSchema>;
 
 // --- the daemon's own pushes --------------------------------------------------
 
@@ -87,20 +88,20 @@ export const NotifyFromSchema = v.variant("role", [
   v.object({ role: v.literal("session"), sid: v.string() }),
   v.object({ role: v.literal("gateway") }),
 ]);
-export type NotifyFrom = v.InferOutput<typeof NotifyFromSchema>;
+export type NotifyFrom = Output<typeof NotifyFromSchema>;
 
 export const NotifyStreamEventSchema = v.object({
   ev: v.literal("notify"),
   text: v.string(),
   from: NotifyFromSchema,
 });
-export type NotifyStreamEvent = v.InferOutput<typeof NotifyStreamEventSchema>;
+export type NotifyStreamEvent = Output<typeof NotifyStreamEventSchema>;
 
 export const RestartingStreamEventSchema = v.object({
   ev: v.literal("restarting"),
   reason: v.optional(v.string()),
 });
-export type RestartingStreamEvent = v.InferOutput<typeof RestartingStreamEventSchema>;
+export type RestartingStreamEvent = Output<typeof RestartingStreamEventSchema>;
 
 /** Sent to an older session-role subscribe stream when a newer `subscribe` for
  * the same sid arrives. Two live subscribe streams for one session double every
@@ -110,9 +111,7 @@ export const SubscribeSupersededStreamEventSchema = v.object({
   ev: v.literal("subscribe_superseded"),
   sid: v.string(),
 });
-export type SubscribeSupersededStreamEvent = v.InferOutput<
-  typeof SubscribeSupersededStreamEventSchema
->;
+export type SubscribeSupersededStreamEvent = Output<typeof SubscribeSupersededStreamEventSchema>;
 
 /** Emitted once at `subscribe` time for every visible room that did NOT get a
  * backlog/delta replay (no `since`/`since_seq` entry for it and the request
@@ -126,7 +125,7 @@ export const RoomCursorsStreamEventSchema = v.object({
   ev: v.literal("room_cursors"),
   rooms: v.array(v.object({ room: v.string(), last_mid: v.number() })),
 });
-export type RoomCursorsStreamEvent = v.InferOutput<typeof RoomCursorsStreamEventSchema>;
+export type RoomCursorsStreamEvent = Output<typeof RoomCursorsStreamEventSchema>;
 
 /** Push update of the `claude agents --json` poll result (user-role subscribers
  * only). Emitted when the merged agent list changes; the daemon polls only
@@ -136,7 +135,7 @@ export const AgentsStreamEventSchema = v.object({
   agents: v.array(AgentInfoSchema),
   polled_at: v.string(),
 });
-export type AgentsStreamEvent = v.InferOutput<typeof AgentsStreamEventSchema>;
+export type AgentsStreamEvent = Output<typeof AgentsStreamEventSchema>;
 
 /** Push update of the connected-session list (user-role subscribers only,
  * same shape the `peers` op returns). Emitted whenever a session registers
@@ -147,7 +146,7 @@ export const PeersStreamEventSchema = v.object({
   ev: v.literal("peers"),
   peers: v.array(PeerInfoSchema),
 });
-export type PeersStreamEvent = v.InferOutput<typeof PeersStreamEventSchema>;
+export type PeersStreamEvent = Output<typeof PeersStreamEventSchema>;
 
 /** Appended transcript lines for a session the subscriber asked to follow via
  * transcript_subscribe (DR-0009 live-tail addendum). Only complete jsonl lines
@@ -161,7 +160,7 @@ export const TranscriptStreamEventSchema = v.object({
   end: v.number(),
   size: v.number(),
 });
-export type TranscriptStreamEvent = v.InferOutput<typeof TranscriptStreamEventSchema>;
+export type TranscriptStreamEvent = Output<typeof TranscriptStreamEventSchema>;
 
 /** One upstream LLM request as the gateway observed it (its
  * `event: request` SSE payload, minus the fields ccmsg has no use for).
@@ -245,7 +244,7 @@ export const LlmRequestInfoSchema = v.object({
   credential: v.optional(v.string()),
   status: v.optional(v.number()),
 });
-export type LlmRequestInfo = v.InferOutput<typeof LlmRequestInfoSchema>;
+export type LlmRequestInfo = Output<typeof LlmRequestInfoSchema>;
 
 /** Push of the most recent LLM request per conversation series (user-role
  * only, same webui-only posture as ev:"agents"/ev:"peers"). Always the full
@@ -260,7 +259,7 @@ export const LlmRequestsStreamEventSchema = v.object({
   ev: v.literal("llm_requests"),
   requests: v.array(LlmRequestInfoSchema),
 });
-export type LlmRequestsStreamEvent = v.InferOutput<typeof LlmRequestsStreamEventSchema>;
+export type LlmRequestsStreamEvent = Output<typeof LlmRequestsStreamEventSchema>;
 
 /** Full recomputed snapshot pushed after a status-changing transcript event. */
 export const SessionStatusStreamEventSchema = v.object({
@@ -268,7 +267,7 @@ export const SessionStatusStreamEventSchema = v.object({
   ev: v.literal("session_status"),
   sid: v.string(),
 });
-export type SessionStatusStreamEvent = v.InferOutput<typeof SessionStatusStreamEventSchema>;
+export type SessionStatusStreamEvent = Output<typeof SessionStatusStreamEventSchema>;
 
 /** Push update of the set of connected sessions stopped on a harness API
  * error (user-role subscribers only, same shape the `session_errors` op
@@ -279,7 +278,7 @@ export const SessionErrorsStreamEventSchema = v.object({
   ev: v.literal("session_errors"),
   errors: v.array(SessionErrorEntrySchema),
 });
-export type SessionErrorsStreamEvent = v.InferOutput<typeof SessionErrorsStreamEventSchema>;
+export type SessionErrorsStreamEvent = Output<typeof SessionErrorsStreamEventSchema>;
 
 /** Sent to a single session whose last turn stopped on a harness API error,
  * when the host's network comes back. It carries no room and no seq: the point
@@ -295,7 +294,7 @@ export const NetworkOnlineStreamEventSchema = v.object({
    * reader) can tell which stall it answers. */
   error_ts: v.string(),
 });
-export type NetworkOnlineStreamEvent = v.InferOutput<typeof NetworkOnlineStreamEventSchema>;
+export type NetworkOnlineStreamEvent = Output<typeof NetworkOnlineStreamEventSchema>;
 
 /** Unsolicited push of a freshly fetched status report (user-role subscribers
  * only, same posture as ev:"llm_requests"). Sent when the gateway's webhook
@@ -307,7 +306,7 @@ export const LlmStatusStreamEventSchema = v.object({
   ev: v.literal("llm_status"),
   report: LlmStatusReportSchema,
 });
-export type LlmStatusStreamEvent = v.InferOutput<typeof LlmStatusStreamEventSchema>;
+export type LlmStatusStreamEvent = Output<typeof LlmStatusStreamEventSchema>;
 
 /** Every push of the daemon's own, told apart by `ev`. */
 export const PushStreamEventSchema = v.variant("ev", [
@@ -324,7 +323,7 @@ export const PushStreamEventSchema = v.variant("ev", [
   LlmRequestsStreamEventSchema,
   LlmStatusStreamEventSchema,
 ]);
-export type PushStreamEvent = v.InferOutput<typeof PushStreamEventSchema>;
+export type PushStreamEvent = Output<typeof PushStreamEventSchema>;
 
 /** Anything the daemon pushes: a delivered storage event or a push of its own. */
 export type StreamEvent = DeliveredEvent | PushStreamEvent;

@@ -3,15 +3,16 @@
 // A JSON value from outside — a socket line, standard input, a file, another
 // command's output — is given its type where it arrives, by a valibot schema,
 // and nowhere further in. The shape is written once, as the schema; its type
-// is `v.InferOutput<typeof Schema>`, never a second hand-written interface.
+// is `Output<typeof Schema>` (the schema's output, immutable), never a second
+// hand-written interface.
 //
 // The house rules every boundary follows:
 //
 // - Everything goes through `parseWith(Schema, input)`, the one place an
 //   `unknown` is taken. For text, the schema is `jsonText(Schema)`, which reads
 //   the JSON and its shape in one step, so no untyped value exists even for a
-//   line. A boundary that reads one value against several schemas in turn (to
-//   say which part does not fit) decodes it once with `JsonTextSchema`.
+//   line. A boundary that reads one value in layers (a frame, then what the
+//   frame holds) decodes it once with `JsonTextSchema`.
 // - A schema is built once, when its module loads, and used for every value:
 //   `jsonText(...)` and every other schema is a module-level constant, never
 //   built inside a function that reads a value.
@@ -24,6 +25,9 @@
 //   are fixed. A schema is strict only where an unknown field is an error of
 //   the sender; a shape another program owns (Claude Code's) lists the fields
 //   used and lets the rest through.
+// - A value read is immutable data: its type is `Immutable` all the way down,
+//   so a reader cannot write into what it was given. What it needs changed it
+//   builds anew.
 // - A value caught by `catch` is `unknown` by the language's rules. It is told
 //   apart only by whether it is an Error (`errorText`); no other value is made
 //   into text.
@@ -32,6 +36,18 @@
 // module that cannot load imports at run time (the hooks module) can bundle
 // them.
 import * as v from "valibot";
+
+/** `T` with every property and element read-only, all the way down: the
+ * type of a value read from outside (DR-0038 §6). valibot's `v.readonly()`
+ * makes only the one level it is piped onto read-only, and a variant's
+ * options take no pipe, so the depth is given by the type instead. A mapped
+ * type over an array is a read-only array, and over a primitive the
+ * primitive itself. `unknown` (a value read as any JSON) stays `unknown`: a
+ * mapped type over it would be `{}`, which says the value is not null. */
+export type Immutable<T> = unknown extends T ? T : { readonly [K in keyof T]: Immutable<T[K]> };
+
+/** What a schema reads, as immutable data. */
+export type Output<S extends v.GenericSchema> = Immutable<v.InferOutput<S>>;
 
 /** One thing wrong with a value: where (a dot path, `""` for the value
  * itself) and what. */
@@ -71,7 +87,7 @@ export function parseWith<S extends v.GenericSchema>(
   schema: S,
   input: unknown,
   options: { readonly firstIssue?: boolean } = {},
-): Parsed<v.InferOutput<S>> {
+): Parsed<Output<S>> {
   const read = v.safeParse(
     schema,
     input,

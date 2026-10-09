@@ -64,7 +64,10 @@ export type NodeStateResolver = (node: AgentTreeNode) => string;
 
 /** 子孫を含む error 数。祖先行 (phase / run / セクション見出し) に「畳んだ
  * ままでも異常が分かる」表示を出すための集計 (kawaz r99 m34)。 */
-export function countNodeErrors(nodes: AgentTreeNode[], resolveState: NodeStateResolver): number {
+export function countNodeErrors(
+  nodes: readonly AgentTreeNode[],
+  resolveState: NodeStateResolver,
+): number {
   let n = 0;
   for (const node of nodes) {
     if (isErrorState(resolveState(node))) n++;
@@ -91,7 +94,7 @@ export function countRunErrors(
 }
 
 export function countRunsErrors(
-  runs: AgentTreeWorkflowGroup[],
+  runs: readonly AgentTreeWorkflowGroup[],
   resolveState: NodeStateResolver,
 ): number {
   return runs.reduce((n, run) => n + countRunErrors(run, resolveState), 0);

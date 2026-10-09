@@ -35,7 +35,7 @@ interface RawSessionDumpEntry {
   session: string;
   kind: SessionDumpKind;
   from: string | null;
-  to: string | string[] | null;
+  to: string | readonly string[] | null;
   text: string;
   meta: Record<string, unknown>;
 }
@@ -101,7 +101,7 @@ export interface SessionDumpContext {
    * are kept: a rewound session that only sees the open items risks redoing
    * finished work, which is the costlier failure mode. `status` distinguishes
    * them, so a journal consumer can filter cheaply. */
-  todos: SessionTodo[];
+  todos: readonly SessionTodo[];
   /** Agents this dump's range actually involves, in full. Omitted entirely
    * under `--no-agent`. */
   agents?: SessionContextAgent[];
@@ -112,7 +112,7 @@ export interface SessionDumpContext {
    * that expands one. Absent when empty, and under `--no-agent`. */
   agents_past?: SessionContextAgentBrief[];
   /** Omitted entirely under `--no-agent`. */
-  workflows?: SessionWorkflowStatus[];
+  workflows?: readonly SessionWorkflowStatus[];
   background: SessionContextBackground[];
   schedules: SessionContextSchedule[];
   rooms: SessionContextRoom[];
@@ -128,7 +128,7 @@ export interface SessionDumpEntry {
   t: number;
   kind: SessionDumpKind;
   from: string | null;
-  to: string | string[] | null;
+  to: string | readonly string[] | null;
   text: string;
   meta: Record<string, unknown>;
 }
@@ -1202,7 +1202,7 @@ export function formatJsonlDump(dump: SessionDump): string {
 
 function dumpEndpoint(value: SessionDumpEntry["to"] | SessionDumpEntry["from"]): string {
   if (value === null) return "-";
-  return Array.isArray(value) ? value.join(",") : value;
+  return typeof value === "string" ? value : value.join(",");
 }
 
 /** One `SessionTodo` as a single line: `[status] #id subject (owner: X) blocked

@@ -18,9 +18,9 @@ import type { DirTreeEntry } from "@ccmsg/protocol";
  * trigger a lazy fetch, which is fine on user click but not as a bulk default.
  * Real empty directories (`children: []`) are also excluded since there's
  * nothing to show. */
-export function collectPathsWithPreloadedChildren(entries: DirTreeEntry[]): Set<string> {
+export function collectPathsWithPreloadedChildren(entries: readonly DirTreeEntry[]): Set<string> {
   const paths = new Set<string>();
-  const walk = (list: DirTreeEntry[]): void => {
+  const walk = (list: readonly DirTreeEntry[]): void => {
     for (const entry of list) {
       if (entry.children === undefined || entry.children.length === 0) continue;
       paths.add(entry.path);
@@ -47,10 +47,10 @@ export function isDirTreeBoundary(entry: DirTreeEntry): boolean {
  * raced a filter-driven root reload becomes a no-op instead of resurrecting
  * a path that's no longer in the tree. */
 export function attachDirTreeChildren(
-  entries: DirTreeEntry[],
+  entries: readonly DirTreeEntry[],
   path: string,
-  children: DirTreeEntry[],
-): DirTreeEntry[] {
+  children: readonly DirTreeEntry[],
+): readonly DirTreeEntry[] {
   let changed = false;
   const next = entries.map((entry) => {
     if (entry.path === path) {

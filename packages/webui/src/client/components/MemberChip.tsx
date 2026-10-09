@@ -32,7 +32,7 @@ export function MemberChip({
   id: string;
   room: RoomState | undefined;
   selected: boolean;
-  peers: PeerInfo[];
+  peers: readonly PeerInfo[];
   /** The chip body was clicked — in the room view, toggles the mention. */
   onSelect: (id: string) => void;
   /** The ✕ was clicked. Confirm and send from the caller. */

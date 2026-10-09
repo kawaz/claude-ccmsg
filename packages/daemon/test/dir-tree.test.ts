@@ -24,7 +24,7 @@ function config(root: string, depth = 2): SessionLauncherConfig {
   };
 }
 
-function names(entries: DirTreeEntry[]): string[] {
+function names(entries: readonly DirTreeEntry[]): string[] {
   return entries.map((entry) => path.basename(entry.path));
 }
 

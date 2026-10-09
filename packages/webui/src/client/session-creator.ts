@@ -94,7 +94,7 @@ const TRAILING_PARAM = "COMMAND";
 /** The order the form renders a template's parameters in (kawaz r259 m47).
  * Declaration order otherwise, so a recipe that declares nothing special reads
  * exactly as its config does. */
-export function orderedParams(params: LauncherParam[]): LauncherParam[] {
+export function orderedParams(params: readonly LauncherParam[]): LauncherParam[] {
   const rank = (param: LauncherParam): number => {
     if (param.name === TRAILING_PARAM) return LEADING_PARAMS.length + 1;
     const leading = LEADING_PARAMS.indexOf(param.name);
@@ -201,7 +201,7 @@ export function templateDeclares(template: SessionLauncherConfigTemplate, name: 
  * of the asked-for kind, and a `sb.template` naming nothing is ignored rather
  * than emptying the form. */
 export function initialTemplate(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
   template: string | null,
   params: Readonly<Record<string, string>> = {},
 ): SessionLauncherConfigTemplate | undefined {
@@ -217,7 +217,7 @@ export function initialTemplate(
  * chose elsewhere to mean anything, so such a recipe is never what "+ 新規"
  * asked for. */
 export function plainTemplate(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
   return templates.find(
     (t) => !templateDeclares(t, RESUME_AT_PARAM) && !templateDeclares(t, SESSION_ID_PARAM),
@@ -228,7 +228,7 @@ export function plainTemplate(
  * point. Read from the declaration rather than from a naming convention or the
  * command text — the config says what a recipe takes. */
 export function forkTemplate(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
   return templates.find((t) => templateDeclares(t, RESUME_AT_PARAM));
 }
@@ -240,7 +240,7 @@ export function forkTemplate(
  * Same rule as `forkTemplate` otherwise — the declaration decides, not the
  * recipe's name. */
 export function resumeTemplate(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
 ): SessionLauncherConfigTemplate | undefined {
   return templates.find(
     (t) => templateDeclares(t, SESSION_ID_PARAM) && !templateDeclares(t, RESUME_AT_PARAM),
@@ -300,7 +300,7 @@ export function launcherEffortFromTranscript(raw: string): string | undefined {
  * re-checks by realpath at launch (launcher-paths.ts), and the webui has no
  * way to resolve symlinks, so this only avoids seeding a value the daemon is
  * certain to reject. */
-export function cwdWithinRoots(cwd: string, rootDirs: string[]): boolean {
+export function cwdWithinRoots(cwd: string, rootDirs: readonly string[]): boolean {
   if (!cwd.startsWith("/")) return false;
   return rootDirs.some(
     (root) => cwd === root || cwd.startsWith(root.endsWith("/") ? root : `${root}/`),
@@ -315,7 +315,7 @@ export function cwdWithinRoots(cwd: string, rootDirs: string[]): boolean {
  * path the daemon will refuse. */
 export function forkSourceDefaults(
   info: ForkSourceInfo | null,
-  rootDirs: string[],
+  rootDirs: readonly string[],
 ): Record<string, string> {
   if (!info) return {};
   const cwd = info.cwd?.trim();
@@ -350,7 +350,7 @@ export function launchDefaultsFromTranscript(source: {
  * carry declared values, and an input the user cannot see should not decide
  * anything. */
 function paramValues(
-  params: LauncherParam[],
+  params: readonly LauncherParam[],
   seed: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   const values: Record<string, string> = {};
@@ -402,7 +402,7 @@ export function prefillSidebarState(prefill: SessionCreatorPrefill): SidebarUrlS
  * a name the chosen template does not declare is dropped rather than carried
  * invisibly, and everything the template does declare stays editable. */
 export function initialSessionCreatorForm(
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
   template: string | null = null,
   params: Readonly<Record<string, string>> = {},
   defaults: Record<string, string> = {},
@@ -427,7 +427,7 @@ export function initialSessionCreatorForm(
  * form untouched. */
 export function selectSessionCreatorTemplate(
   form: SessionCreatorForm,
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
   name: string,
 ): SessionCreatorForm {
   const template = templates.find((t) => t.name === name);
@@ -505,7 +505,7 @@ export function sessionCreatorFormValid(form: SessionCreatorForm): boolean {
  * error rather than a silent fallback to the config value. */
 export function buildSessionLaunchRequest(
   form: SessionCreatorForm,
-  templates: SessionLauncherConfigTemplate[],
+  templates: readonly SessionLauncherConfigTemplate[],
 ): Omit<SessionLaunchRequest, "op" | "request_id"> | null {
   if (!sessionCreatorFormValid(form)) return null;
   const selected = templates.find((t) => t.name === form.template);

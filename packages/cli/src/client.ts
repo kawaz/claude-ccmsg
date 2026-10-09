@@ -181,7 +181,7 @@ export class Client {
       this.writeLine(JSON.stringify({ ...body, request_id: rid }));
     });
     if (frame === null) throw new Error("connection closed before response");
-    const read = frame.reply(body.op);
+    const read = frame.reply<B["op"]>(body.op);
     if (!read.ok) {
       throw new Error(
         `the daemon's reply to ${body.op} is not its answer: ${read.failure.summary}`,

@@ -10,7 +10,7 @@
 // The hooks module bundles this file, so it imports nothing but valibot and
 // parse.ts.
 import * as v from "valibot";
-import { jsonText, type Parsed, parseWith } from "./parse.ts";
+import { jsonText, type Parsed, parseWith, type Output } from "./parse.ts";
 
 /** The version of the request line. A module reads a line of this version
  * only. */
@@ -32,7 +32,7 @@ export const PromptSendArgsSchema = v.object({
     v.check((text) => text.trim() !== "", "text holds something other than whitespace"),
   ),
 });
-export type PromptSendArgs = v.InferOutput<typeof PromptSendArgsSchema>;
+export type PromptSendArgs = Output<typeof PromptSendArgsSchema>;
 
 /** The reasons a session's hooks module gives for a prompt.send it could not
  * put in (the wire's SessionInputReason, but for `no_module`, which is the
@@ -58,7 +58,7 @@ export const SessionInputModuleReasonSchema = v.picklist([
   "enter_failed",
   "session_changed",
 ]);
-export type SessionInputModuleReason = v.InferOutput<typeof SessionInputModuleReasonSchema>;
+export type SessionInputModuleReason = Output<typeof SessionInputModuleReasonSchema>;
 
 /** What a `prompt.send` that ran says. `accepted` means the harness raised
  * `UserPromptSubmit` for the filled text: the prompt is in the session, idle
@@ -71,7 +71,7 @@ export const PromptSendResultSchema = v.variant("outcome", [
   v.object({ outcome: v.literal("not_delivered"), reason: SessionInputModuleReasonSchema }),
   v.object({ outcome: v.literal("unconfirmed") }),
 ]);
-export type PromptSendResult = v.InferOutput<typeof PromptSendResultSchema>;
+export type PromptSendResult = Output<typeof PromptSendResultSchema>;
 
 // --- describe --------------------------------------------------------------
 
@@ -84,7 +84,7 @@ export const DescribeArgsSchema = v.pipe(
   v.check((args) => !Array.isArray(args), "args is an object, not an array"),
   v.strictObject({}),
 );
-export type DescribeArgs = v.InferOutput<typeof DescribeArgsSchema>;
+export type DescribeArgs = Output<typeof DescribeArgsSchema>;
 
 export const DescribeResultSchema = v.object({
   /** The request versions (`v`) the module reads. */
@@ -95,7 +95,7 @@ export const DescribeResultSchema = v.object({
    * the module could not tell. */
   version: v.optional(v.string()),
 });
-export type DescribeResult = v.InferOutput<typeof DescribeResultSchema>;
+export type DescribeResult = Output<typeof DescribeResultSchema>;
 
 // --- the ops ---------------------------------------------------------------
 
@@ -105,8 +105,8 @@ export const SIDECAR_OPS = {
   "prompt.send": { args: PromptSendArgsSchema, result: PromptSendResultSchema },
 } as const;
 export type SidecarOp = keyof typeof SIDECAR_OPS;
-export type SidecarArgs<Op extends SidecarOp> = v.InferOutput<(typeof SIDECAR_OPS)[Op]["args"]>;
-export type SidecarResult<Op extends SidecarOp> = v.InferOutput<(typeof SIDECAR_OPS)[Op]["result"]>;
+export type SidecarArgs<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["args"]>;
+export type SidecarResult<Op extends SidecarOp> = Output<(typeof SIDECAR_OPS)[Op]["result"]>;
 
 /** The ops, in the order describe lists them. */
 export const SIDECAR_OP_NAMES = ["describe", "prompt.send"] as const satisfies readonly SidecarOp[];
@@ -143,7 +143,7 @@ export const SidecarRequestSchema = v.variant("op", [
   requestSchema("describe", SIDECAR_OPS.describe.args),
   requestSchema("prompt.send", SIDECAR_OPS["prompt.send"].args),
 ]);
-export type SidecarRequest = v.InferOutput<typeof SidecarRequestSchema>;
+export type SidecarRequest = Output<typeof SidecarRequestSchema>;
 export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { op: Op }>;
 
 // --- replies ---------------------------------------------------------------
@@ -152,20 +152,20 @@ export type SidecarRequestOf<Op extends SidecarOp> = Extract<SidecarRequest, { o
  * reports how it went inside its `result`: `internal`, the op started and
  * failed, and what it changed is unknown. */
 export const SidecarErrorCodeSchema = v.picklist(["internal"]);
-export type SidecarErrorCode = v.InferOutput<typeof SidecarErrorCodeSchema>;
+export type SidecarErrorCode = Output<typeof SidecarErrorCodeSchema>;
 
 export const SidecarErrorSchema = v.object({
   code: SidecarErrorCodeSchema,
   message: v.string(),
 });
-export type SidecarError = v.InferOutput<typeof SidecarErrorSchema>;
+export type SidecarError = Output<typeof SidecarErrorSchema>;
 
 const FailedReplySchema = v.object({
   id: SidecarRequestIdSchema,
   ok: v.literal(false),
   error: SidecarErrorSchema,
 });
-export type FailedSidecarReply = v.InferOutput<typeof FailedReplySchema>;
+export type FailedSidecarReply = Output<typeof FailedReplySchema>;
 
 /** The schema of a reply whose result `R` reads. */
 export type SidecarReplySchemaOf<R extends v.GenericSchema> = v.VariantSchema<
@@ -200,7 +200,7 @@ export function sidecarReplySchema<R extends v.GenericSchema>(result: R): Sideca
  * asker can act on at once, rather than a reply refused in transit and waited
  * for in vain. */
 export const SidecarReplySchema = sidecarReplySchema(v.unknown());
-export type SidecarReply = v.InferOutput<typeof SidecarReplySchema>;
+export type SidecarReply = Output<typeof SidecarReplySchema>;
 
 /** A reply as `ccmsg sidecar reply` takes it on standard input: JSON text. */
 export const SidecarReplyTextSchema = jsonText(SidecarReplySchema);

@@ -454,9 +454,9 @@ function compareTaskIds(a: string, b: string): number {
 }
 
 function mergeTaskIdList(
-  current: string[] | undefined,
+  current: readonly string[] | undefined,
   add: unknown,
-): { list: string[] | undefined; changed: boolean } {
+): { list: readonly string[] | undefined; changed: boolean } {
   if (!Array.isArray(add)) return { list: current, changed: false };
   const additions = add.filter((v): v is string => typeof v === "string" && v.length > 0);
   if (additions.length === 0) return { list: current, changed: false };
@@ -472,7 +472,10 @@ function mergeTaskIdList(
   return { list: [...set].sort(compareTaskIds), changed: true };
 }
 
-function taskIdListEquals(a: string[] | undefined, b: string[] | undefined): boolean {
+function taskIdListEquals(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined,
+): boolean {
   if (a === b) return true;
   if (!a || !b) return (a?.length ?? 0) === 0 && (b?.length ?? 0) === 0;
   if (a.length !== b.length) return false;
@@ -503,22 +506,17 @@ function applyTodoUpdate(
   if (status === "deleted") return state.todos.delete(taskId);
 
   const current = state.todos.get(taskId);
-  const next: SessionTodo = current
-    ? { ...current }
-    : { id: taskId, subject: subject ?? "(unknown)", status: status ?? "pending" };
-  if (status !== undefined) next.status = status;
-  if (owner !== undefined) next.owner = owner;
-  if (subject !== undefined) next.subject = subject;
-  const mergedBlockedBy = mergeTaskIdList(next.blocked_by, input.addBlockedBy);
-  if (mergedBlockedBy.list !== undefined) {
-    if (mergedBlockedBy.list.length > 0) next.blocked_by = mergedBlockedBy.list;
-    else delete next.blocked_by;
-  }
-  const mergedBlocks = mergeTaskIdList(next.blocks, input.addBlocks);
-  if (mergedBlocks.list !== undefined) {
-    if (mergedBlocks.list.length > 0) next.blocks = mergedBlocks.list;
-    else delete next.blocks;
-  }
+  const nextOwner = owner ?? current?.owner;
+  const blockedBy = mergeTaskIdList(current?.blocked_by, input.addBlockedBy).list;
+  const blocks = mergeTaskIdList(current?.blocks, input.addBlocks).list;
+  const next: SessionTodo = {
+    id: taskId,
+    subject: subject ?? current?.subject ?? "(unknown)",
+    status: status ?? current?.status ?? "pending",
+    ...(nextOwner !== undefined ? { owner: nextOwner } : {}),
+    ...(blockedBy !== undefined && blockedBy.length > 0 ? { blocked_by: blockedBy } : {}),
+    ...(blocks !== undefined && blocks.length > 0 ? { blocks } : {}),
+  };
   if (
     current &&
     current.status === next.status &&
@@ -538,7 +536,7 @@ function applyTodoUpdate(
  * the `blocks` back-edges `addBlockedBy` never states), so it replaces rather
  * than merges. Anything but a non-empty string array collapses to undefined,
  * matching the "no field when empty" invariant snapshot relies on. */
-function taskIdListFrom(value: unknown): string[] | undefined {
+function taskIdListFrom(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const ids = value.filter((v): v is string => typeof v === "string" && v.length > 0);
   return ids.length > 0 ? [...new Set(ids)].sort(compareTaskIds) : undefined;
@@ -573,17 +571,17 @@ function foldTaskReminder(state: SessionStatusState, attachment: Record<string, 
     const id = stringValue(item.id);
     if (!id) continue;
     const current = state.todos.get(id);
+    const owner = stringValue(item.owner) ?? current?.owner;
+    const blockedBy = taskIdListFrom(item.blockedBy);
+    const blocks = taskIdListFrom(item.blocks);
     const next: SessionTodo = {
       id,
       subject: stringValue(item.subject) ?? current?.subject ?? "(unknown)",
       status: stringValue(item.status) ?? current?.status ?? "pending",
+      ...(owner !== undefined ? { owner } : {}),
+      ...(blockedBy ? { blocked_by: blockedBy } : {}),
+      ...(blocks ? { blocks } : {}),
     };
-    const owner = stringValue(item.owner) ?? current?.owner;
-    if (owner !== undefined) next.owner = owner;
-    const blockedBy = taskIdListFrom(item.blockedBy);
-    if (blockedBy) next.blocked_by = blockedBy;
-    const blocks = taskIdListFrom(item.blocks);
-    if (blocks) next.blocks = blocks;
     if (
       current &&
       current.status === next.status &&
@@ -1043,15 +1041,15 @@ export async function snapshot(
   const agentTree = sidDir ? await readAgentTree(sidDir, `${sidDir}.jsonl`, state) : undefined;
   const workflows: SessionWorkflowStatus[] = [];
   for (const workflow of state.workflows.values()) {
-    const copy: SessionWorkflowStatus = { ...workflow };
-    if (sidDir && copy.run_id && RUN_ID_RE.test(copy.run_id)) {
-      const drilldown = await readWorkflowDrilldown(sidDir, copy.run_id);
-      if (drilldown) {
-        if (drilldown.phases) copy.phases = drilldown.phases;
-        if (drilldown.agents) copy.agents = drilldown.agents;
-      }
-    }
-    workflows.push(copy);
+    const drilldown =
+      sidDir && workflow.run_id && RUN_ID_RE.test(workflow.run_id)
+        ? await readWorkflowDrilldown(sidDir, workflow.run_id)
+        : undefined;
+    workflows.push({
+      ...workflow,
+      ...(drilldown?.phases ? { phases: drilldown.phases } : {}),
+      ...(drilldown?.agents ? { agents: drilldown.agents } : {}),
+    });
   }
   // Teammate model comes from meta.json at snapshot time (see
   // readTeammateModels). The scan only runs when there is at least one
@@ -1471,21 +1469,22 @@ export async function readAgentTree(
     working.set(m.agentId, { node, parent: parentAgentId, isTeammate });
   }
 
-  // Wire children under parents; unknown-parent nodes stay at root as
-  // orphan fallback (already resolved to `null` above).
+  // Group nodes under their parents (by the parent's agentId); the children
+  // are given to each node when the tree is assembled below (capAndSort).
+  // Unknown-parent nodes stay at root as orphan fallback (already resolved to
+  // `null` above).
   const teammateRoots: AgentTreeNode[] = [];
   const agentRoots: AgentTreeNode[] = [];
+  const childrenOf = new Map<string, AgentTreeNode[]>();
   for (const w of working.values()) {
-    if (w.parent === null) {
+    if (w.parent === null || !working.has(w.parent)) {
+      // A parent that is not in `working`: its meta.json disappeared while we
+      // were reading — treat as root.
       (w.isTeammate ? teammateRoots : agentRoots).push(w.node);
     } else {
-      const parent = working.get(w.parent);
-      if (!parent) {
-        // parent's meta.json disappeared while we were reading — treat as root.
-        (w.isTeammate ? teammateRoots : agentRoots).push(w.node);
-      } else {
-        parent.node.children.push(w.node);
-      }
+      const siblings = childrenOf.get(w.parent);
+      if (siblings) siblings.push(w.node);
+      else childrenOf.set(w.parent, [w.node]);
     }
   }
 
@@ -1588,11 +1587,11 @@ export async function readAgentTree(
   // Depth cap via BFS (teammate / agents 側のみ。workflow member はフェーズ
   // 内で常に depth 0 相当のフラット列挙なので対象外)。root direct 子 =
   // depth 0、上限 MAX_AGENT_TREE_DEPTH。
-  function capAndSort(nodes: AgentTreeNode[], depth: number): AgentTreeNode[] {
+  function capAndSort(nodes: readonly AgentTreeNode[], depth: number): AgentTreeNode[] {
     if (depth > MAX_AGENT_TREE_DEPTH) return [];
     const capped = nodes.map((n) => ({
       ...n,
-      children: capAndSort(n.children, depth + 1),
+      children: capAndSort(childrenOf.get(n.agent_id) ?? [], depth + 1),
     }));
     capped.sort((a, b) => (b.last_activity_ms ?? 0) - (a.last_activity_ms ?? 0));
     return capped;

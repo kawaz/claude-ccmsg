@@ -99,16 +99,25 @@ function parseIncident(value: unknown): LlmStatusIncident | null {
   if (!isRecord(value)) return null;
   const name = optionalString(value.name);
   if (name === undefined) return null;
-  const incident: LlmStatusIncident = { name };
-  for (const key of ["id", "state", "impact", "url", "latest_update", "scope"] as const) {
-    const text = optionalString(value[key]);
-    if (text !== undefined) incident[key] = text;
-  }
-  for (const key of ["created_at", "updated_at"] as const) {
-    const at = optionalNumber(value[key]);
-    if (at !== undefined) incident[key] = at;
-  }
-  return incident;
+  const id = optionalString(value.id);
+  const state = optionalString(value.state);
+  const impact = optionalString(value.impact);
+  const url = optionalString(value.url);
+  const latestUpdate = optionalString(value.latest_update);
+  const scope = optionalString(value.scope);
+  const createdAt = optionalNumber(value.created_at);
+  const updatedAt = optionalNumber(value.updated_at);
+  return {
+    name,
+    ...(id !== undefined ? { id } : {}),
+    ...(state !== undefined ? { state } : {}),
+    ...(impact !== undefined ? { impact } : {}),
+    ...(url !== undefined ? { url } : {}),
+    ...(latestUpdate !== undefined ? { latest_update: latestUpdate } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+    ...(createdAt !== undefined ? { created_at: createdAt } : {}),
+    ...(updatedAt !== undefined ? { updated_at: updatedAt } : {}),
+  };
 }
 
 function parseOfficial(value: unknown): LlmStatusOfficial | undefined {
@@ -135,24 +144,28 @@ function parseOfficial(value: unknown): LlmStatusOfficial | undefined {
 
 function parseObserved(value: unknown): LlmStatusObserved | undefined {
   if (!isRecord(value)) return undefined;
-  const observed: LlmStatusObserved = {
+  const observedAt = optionalNumber(value.observed_at);
+  const expiresAt = optionalNumber(value.expires_at);
+  const lastSuccessAt = optionalNumber(value.last_success_at);
+  const failure = isRecord(value.last_failure) ? value.last_failure : undefined;
+  const failureAt = optionalNumber(failure?.at);
+  const failureKind = optionalString(failure?.kind);
+  const failureStatus = optionalNumber(failure?.status);
+  return {
     state: oneOf(value.state, OBSERVED_STATES, "unknown"),
+    ...(observedAt !== undefined ? { observed_at: observedAt } : {}),
+    ...(expiresAt !== undefined ? { expires_at: expiresAt } : {}),
+    ...(lastSuccessAt !== undefined ? { last_success_at: lastSuccessAt } : {}),
+    ...(failure !== undefined
+      ? {
+          last_failure: {
+            ...(failureAt !== undefined ? { at: failureAt } : {}),
+            ...(failureKind !== undefined ? { kind: failureKind } : {}),
+            ...(failureStatus !== undefined ? { status: failureStatus } : {}),
+          },
+        }
+      : {}),
   };
-  for (const key of ["observed_at", "expires_at", "last_success_at"] as const) {
-    const num = optionalNumber(value[key]);
-    if (num !== undefined) observed[key] = num;
-  }
-  if (isRecord(value.last_failure)) {
-    const at = optionalNumber(value.last_failure.at);
-    const kind = optionalString(value.last_failure.kind);
-    const status = optionalNumber(value.last_failure.status);
-    observed.last_failure = {
-      ...(at !== undefined ? { at } : {}),
-      ...(kind !== undefined ? { kind } : {}),
-      ...(status !== undefined ? { status } : {}),
-    };
-  }
-  return observed;
 }
 
 /** A service without an id cannot be keyed or told apart from its

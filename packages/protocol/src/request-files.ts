@@ -10,6 +10,7 @@
 // Unknown fields are left out rather than refused (`v.object`): see
 // request.ts for why.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 
 /**
  * Workspace file access (DR-0008 / DR-0021): read-only browsing from a
@@ -26,7 +27,7 @@ export const FsListRequestSchema = v.object({
   /** directory path relative to the session root; "" / "." / absent = root */
   path: v.optional(v.string()),
 });
-export type FsListRequest = v.InferOutput<typeof FsListRequestSchema>;
+export type FsListRequest = Output<typeof FsListRequestSchema>;
 
 export const FsReadRequestSchema = v.object({
   op: v.literal("fs_read"),
@@ -34,7 +35,7 @@ export const FsReadRequestSchema = v.object({
   /** file path relative to the session root */
   path: v.string(),
 });
-export type FsReadRequest = v.InferOutput<typeof FsReadRequestSchema>;
+export type FsReadRequest = Output<typeof FsReadRequestSchema>;
 
 /** DR-0024 allowlist read for one transcript-observed file outside the
  * session containment root. Unlike fs_read, this path is absolute and grants
@@ -45,7 +46,7 @@ export const FsReadExternalRequestSchema = v.object({
   /** absolute path — must exactly match the session's external_files allowlist */
   path: v.string(),
 });
-export type FsReadExternalRequest = v.InferOutput<typeof FsReadExternalRequestSchema>;
+export type FsReadExternalRequest = Output<typeof FsReadExternalRequestSchema>;
 
 /**
  * DR-0026 workspace-folder allowlist list/read for `.code-workspace` folders
@@ -65,7 +66,7 @@ export const FsListWorkspaceRequestSchema = v.object({
    * or a descendant of one (realpath-checked). */
   path: v.string(),
 });
-export type FsListWorkspaceRequest = v.InferOutput<typeof FsListWorkspaceRequestSchema>;
+export type FsListWorkspaceRequest = Output<typeof FsListWorkspaceRequestSchema>;
 
 export const FsReadWorkspaceRequestSchema = v.object({
   op: v.literal("fs_read_workspace"),
@@ -74,7 +75,7 @@ export const FsReadWorkspaceRequestSchema = v.object({
    * entry (realpath-checked); a bare folder root refuses as "not a file". */
   path: v.string(),
 });
-export type FsReadWorkspaceRequest = v.InferOutput<typeof FsReadWorkspaceRequestSchema>;
+export type FsReadWorkspaceRequest = Output<typeof FsReadWorkspaceRequestSchema>;
 
 /**
  * Inbox file creation (DR-0019 Phase W1): create one new UTF-8 text file under
@@ -90,7 +91,7 @@ export const FsWriteRequestSchema = v.object({
   /** UTF-8 text content */
   content: v.string(),
 });
-export type FsWriteRequest = v.InferOutput<typeof FsWriteRequestSchema>;
+export type FsWriteRequest = Output<typeof FsWriteRequestSchema>;
 
 /**
  * Create a new empty (or short-content) text file at `path` under the same
@@ -114,7 +115,7 @@ export const FsCreateRequestSchema = v.object({
    * (the common case — the UI creates an empty file and lets the user edit). */
   content: v.string(),
 });
-export type FsCreateRequest = v.InferOutput<typeof FsCreateRequestSchema>;
+export type FsCreateRequest = Output<typeof FsCreateRequestSchema>;
 
 /**
  * Delete an existing regular file under fs_edit's authorization surfaces
@@ -132,7 +133,7 @@ export const FsDeleteRequestSchema = v.object({
   path: v.string(),
   kind: v.picklist(["contained", "workspace"]),
 });
-export type FsDeleteRequest = v.InferOutput<typeof FsDeleteRequestSchema>;
+export type FsDeleteRequest = Output<typeof FsDeleteRequestSchema>;
 
 /**
  * Overwrite an existing text file in place (webui file viewer's edit action).
@@ -164,7 +165,7 @@ export const FsEditRequestSchema = v.object({
    * preserve the mtime (mtime resolution differs by filesystem). */
   expected_size: v.number(),
 });
-export type FsEditRequest = v.InferOutput<typeof FsEditRequestSchema>;
+export type FsEditRequest = Output<typeof FsEditRequestSchema>;
 
 /**
  * Batch file-existence probe for the message-body path linkifier.
@@ -196,7 +197,7 @@ export const FsStatBatchRequestSchema = v.object({
    * that is not a string is not a path, and refuses the request. */
   paths: v.array(v.string()),
 });
-export type FsStatBatchRequest = v.InferOutput<typeof FsStatBatchRequestSchema>;
+export type FsStatBatchRequest = Output<typeof FsStatBatchRequestSchema>;
 
 /**
  * Recursive file-name search under one of the browsable roots (Files pane's
@@ -241,7 +242,7 @@ export const FsFindRequestSchema = v.object({
    * "search build output too". */
   respect_gitignore: v.optional(v.boolean()),
 });
-export type FsFindRequest = v.InferOutput<typeof FsFindRequestSchema>;
+export type FsFindRequest = Output<typeof FsFindRequestSchema>;
 
 /**
  * Mint a capability URL on the sandbox origin (DR-0030 §4.1). The webui calls
@@ -270,7 +271,7 @@ export const SandboxGrantRequestSchema = v.object({
   path: v.string(),
   kind: v.picklist(["contained", "external", "workspace"]),
 });
-export type SandboxGrantRequest = v.InferOutput<typeof SandboxGrantRequestSchema>;
+export type SandboxGrantRequest = Output<typeof SandboxGrantRequestSchema>;
 
 /**
  * Drop a grant early (DR-0030 §4.3). The webui fires this when a preview tab
@@ -284,4 +285,4 @@ export const SandboxRevokeRequestSchema = v.object({
   /** The `gid` a previous `sandbox_grant` returned. */
   gid: v.string(),
 });
-export type SandboxRevokeRequest = v.InferOutput<typeof SandboxRevokeRequestSchema>;
+export type SandboxRevokeRequest = Output<typeof SandboxRevokeRequestSchema>;

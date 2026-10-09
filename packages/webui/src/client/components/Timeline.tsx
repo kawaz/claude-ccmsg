@@ -2505,7 +2505,7 @@ function ApiErrorNotice({ line }: { line: TurnLine }) {
 // same key space is used for dedup and for look-up.
 interface CcmsgReadBody {
   from: string;
-  to?: string[];
+  to?: readonly string[];
   msg: string;
   ts: string;
 }

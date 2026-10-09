@@ -6,6 +6,7 @@
 // (`v.object`): ccmsg owns both ends of the wire, and a daemon of the same
 // generation may add one.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 import { MemberEventSchema, MsgEventSchema, RoomKindSchema } from "./storage-event.ts";
 
 export const PostResponseSchema = v.object({
@@ -13,7 +14,7 @@ export const PostResponseSchema = v.object({
   room: v.string(),
   mid: v.number(),
 });
-export type PostResponse = v.InferOutput<typeof PostResponseSchema>;
+export type PostResponse = Output<typeof PostResponseSchema>;
 
 /** Reply to `reply`: the posted msg, like PostResponse, and the delivery
  * targets the daemon computed for it (see ReplyRequest), sorted. */
@@ -21,7 +22,7 @@ export const ReplyResponseSchema = v.object({
   ...PostResponseSchema.entries,
   to: v.array(v.string()),
 });
-export type ReplyResponse = v.InferOutput<typeof ReplyResponseSchema>;
+export type ReplyResponse = Output<typeof ReplyResponseSchema>;
 
 export const CreateRoomResponseSchema = v.object({
   ok: v.literal(true),
@@ -35,7 +36,7 @@ export const CreateRoomResponseSchema = v.object({
    * Absent when there's nothing to warn about. */
   warning: v.optional(v.string()),
 });
-export type CreateRoomResponse = v.InferOutput<typeof CreateRoomResponseSchema>;
+export type CreateRoomResponse = Output<typeof CreateRoomResponseSchema>;
 
 export const SayResponseSchema = v.object({
   ok: v.literal(true),
@@ -47,7 +48,7 @@ export const SayResponseSchema = v.object({
   /** true when this call is what created the 1on1 room. */
   created: v.boolean(),
 });
-export type SayResponse = v.InferOutput<typeof SayResponseSchema>;
+export type SayResponse = Output<typeof SayResponseSchema>;
 
 export const SayReadResponseSchema = v.object({
   ok: v.literal(true),
@@ -55,48 +56,48 @@ export const SayReadResponseSchema = v.object({
   /** echo of the acked SayEvent's seq */
   ref: v.number(),
 });
-export type SayReadResponse = v.InferOutput<typeof SayReadResponseSchema>;
+export type SayReadResponse = Output<typeof SayReadResponseSchema>;
 
 export const NextRoomResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
   mid: v.optional(v.number()),
 });
-export type NextRoomResponse = v.InferOutput<typeof NextRoomResponseSchema>;
+export type NextRoomResponse = Output<typeof NextRoomResponseSchema>;
 
 export const SetTitleResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
   title: v.string(),
 });
-export type SetTitleResponse = v.InferOutput<typeof SetTitleResponseSchema>;
+export type SetTitleResponse = Output<typeof SetTitleResponseSchema>;
 
 export const ArchiveRoomResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
   archived: v.boolean(),
 });
-export type ArchiveRoomResponse = v.InferOutput<typeof ArchiveRoomResponseSchema>;
+export type ArchiveRoomResponse = Output<typeof ArchiveRoomResponseSchema>;
 
 export const KickResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
   id: v.string(),
 });
-export type KickResponse = v.InferOutput<typeof KickResponseSchema>;
+export type KickResponse = Output<typeof KickResponseSchema>;
 
 export const SubscribeAckSchema = v.object({
   ok: v.literal(true),
   subscribed: v.literal(true),
 });
-export type SubscribeAck = v.InferOutput<typeof SubscribeAckSchema>;
+export type SubscribeAck = Output<typeof SubscribeAckSchema>;
 
 export const ReadResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
   msgs: v.array(MsgEventSchema),
 });
-export type ReadResponse = v.InferOutput<typeof ReadResponseSchema>;
+export type ReadResponse = Output<typeof ReadResponseSchema>;
 
 /** Sent after the room's snapshot events (see RoomHistoryRequest): receiving it
  * means the history for `room` has been fully delivered on this connection. */
@@ -104,7 +105,7 @@ export const RoomHistoryResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
 });
-export type RoomHistoryResponse = v.InferOutput<typeof RoomHistoryResponseSchema>;
+export type RoomHistoryResponse = Output<typeof RoomHistoryResponseSchema>;
 
 export const RoomSummarySchema = v.object({
   id: v.string(),
@@ -138,19 +139,19 @@ export const RoomSummarySchema = v.object({
    * very ordinary path. */
   say_unread_seqs: v.optional(v.array(v.number())),
 });
-export type RoomSummary = v.InferOutput<typeof RoomSummarySchema>;
+export type RoomSummary = Output<typeof RoomSummarySchema>;
 
 export const RoomsResponseSchema = v.object({
   ok: v.literal(true),
   rooms: v.array(RoomSummarySchema),
 });
-export type RoomsResponse = v.InferOutput<typeof RoomsResponseSchema>;
+export type RoomsResponse = Output<typeof RoomsResponseSchema>;
 
 export const LeaveResponseSchema = v.object({
   ok: v.literal(true),
   room: v.string(),
 });
-export type LeaveResponse = v.InferOutput<typeof LeaveResponseSchema>;
+export type LeaveResponse = Output<typeof LeaveResponseSchema>;
 
 export const InviteResponseSchema = v.object({
   ok: v.literal(true),
@@ -160,4 +161,4 @@ export const InviteResponseSchema = v.object({
   /** true = the session was already a member, nothing appended */
   already: v.boolean(),
 });
-export type InviteResponse = v.InferOutput<typeof InviteResponseSchema>;
+export type InviteResponse = Output<typeof InviteResponseSchema>;

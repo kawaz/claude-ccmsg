@@ -118,7 +118,7 @@ export function CwdTree({
 }: {
   /** session_launcher_config's root_dirs — the daemon containment-checks
    * every dir_tree request (initial and lazy) against these. */
-  roots: string[];
+  roots: readonly string[];
   /** the form's current cwd value, so the matching row shows "✓ 選択中". */
   selected: string;
   /** Raw (undebounced) filter text — SessionCreator's unified cwd input,
@@ -128,7 +128,7 @@ export function CwdTree({
   onSelect: (path: string) => void;
 }) {
   const { ws } = useApp();
-  const [entries, setEntries] = useState<DirTreeEntry[] | null>(null);
+  const [entries, setEntries] = useState<readonly DirTreeEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

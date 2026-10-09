@@ -6,6 +6,7 @@
 // (`ok: false`). This file joins them by op, so a client that knows which op
 // it asked reads the reply with that op's schema (frame.ts).
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 import type { RequestOp } from "./request.ts";
 import {
   FsCreateResponseSchema,
@@ -85,14 +86,14 @@ export const ErrorBodySchema = v.object({
   code: v.string(),
   msg: v.string(),
 });
-export type ErrorBody = v.InferOutput<typeof ErrorBodySchema>;
+export type ErrorBody = Output<typeof ErrorBodySchema>;
 
 /** The reply to a request the daemon did not serve, whatever its op. */
 export const ErrorResponseSchema = v.object({
   ok: v.literal(false),
   error: ErrorBodySchema,
 });
-export type ErrorResponse = v.InferOutput<typeof ErrorResponseSchema>;
+export type ErrorResponse = Output<typeof ErrorResponseSchema>;
 
 /** Each op's success reply. An op that answers with the same shape as
  * another names the same schema (fs_read_external, fs_read_workspace and
@@ -160,7 +161,7 @@ export const RESPONSE_SCHEMAS = {
 } as const satisfies { readonly [Op in RequestOp]: v.GenericSchema };
 
 /** The success reply to a request of `Op`, without the correlation envelope. */
-export type ResponseOf<Op extends RequestOp> = v.InferOutput<(typeof RESPONSE_SCHEMAS)[Op]>;
+export type ResponseOf<Op extends RequestOp> = Output<(typeof RESPONSE_SCHEMAS)[Op]>;
 
 /** Either reply a request of `Op` can get. */
 export type ReplyOf<Op extends RequestOp> = ResponseOf<Op> | ErrorResponse;

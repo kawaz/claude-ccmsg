@@ -26,7 +26,13 @@ import {
   type RoomCreatorForm,
 } from "../room-creator.ts";
 
-export function RoomCreator({ peers, onClose }: { peers: PeerInfo[]; onClose: () => void }) {
+export function RoomCreator({
+  peers,
+  onClose,
+}: {
+  peers: readonly PeerInfo[];
+  onClose: () => void;
+}) {
   const { ws } = useApp();
   const [form, setForm] = useState<RoomCreatorForm>(initialRoomCreatorForm);
   const [saving, setSaving] = useState(false);

@@ -378,7 +378,7 @@ export function supportDescription(support: string): string {
  * itself — carries neither field, so without this the limits would flash up
  * once and vanish at the next poll. */
 export interface ProbeRecord {
-  limits: LlmUsageLimit[];
+  limits: readonly LlmUsageLimit[];
   probeError?: string;
   /** `observed_at` of the snapshot the probe produced (epoch ms), which is
    * what dates the retained figures. */
@@ -401,7 +401,7 @@ export function probeRecordOf(credential: LlmUsageCredential): ProbeRecord | nul
 }
 
 export interface ProbeView {
-  limits: LlmUsageLimit[];
+  limits: readonly LlmUsageLimit[];
   probeError: string | null;
   /** Age of the retained reading — of its `observed_at`, not of the request
    * that fetched it, since a probe upstream refused returns an observation

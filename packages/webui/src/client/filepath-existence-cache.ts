@@ -26,7 +26,7 @@ import type { FsStatEntry } from "@ccmsg/protocol";
  * forbidden, directory, ...). */
 export type FilePathStatus = "pending" | FsStatEntry | null;
 
-type SendBatch = (sid: string, paths: string[]) => Promise<(FsStatEntry | null)[]>;
+type SendBatch = (sid: string, paths: string[]) => Promise<readonly (FsStatEntry | null)[]>;
 
 const cache = new Map<string, Map<string, FilePathStatus>>();
 const pendingQueue = new Map<string, Set<string>>();
@@ -88,7 +88,7 @@ function scheduleFlush(): void {
 
 async function flushOne(sid: string, paths: string[]): Promise<void> {
   if (!sender) return;
-  let results: (FsStatEntry | null)[];
+  let results: readonly (FsStatEntry | null)[];
   try {
     results = await sender(sid, paths);
   } catch {

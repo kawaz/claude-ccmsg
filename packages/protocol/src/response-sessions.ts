@@ -6,6 +6,7 @@
 // Fields the client does not know are left out rather than refused
 // (`v.object`): see response-rooms.ts.
 import * as v from "valibot";
+import type { Output } from "./parse.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 import { SessionInputModuleReasonSchema } from "./sidecar.ts";
 
@@ -58,7 +59,7 @@ export const HelloResponseSchema = v.object({
    * launch form that answers launcher_not_configured. */
   fork_available: v.optional(v.boolean()),
 });
-export type HelloResponse = v.InferOutput<typeof HelloResponseSchema>;
+export type HelloResponse = Output<typeof HelloResponseSchema>;
 
 /** A ccmsg client for one sid whose hello the daemon refused. Overwritten,
  * never accumulated — the offending client reconnects every few seconds, so
@@ -81,7 +82,7 @@ export const StaleClientInfoSchema = v.object({
    * the missing correlation envelope. */
   protocol: v.optional(v.number()),
 });
-export type StaleClientInfo = v.InferOutput<typeof StaleClientInfoSchema>;
+export type StaleClientInfo = Output<typeof StaleClientInfoSchema>;
 
 export const PeerInfoSchema = v.object({
   sid: v.string(),
@@ -144,19 +145,19 @@ export const PeerInfoSchema = v.object({
    * Cleared by any hello from that sid the daemon accepts. */
   stale_client: v.optional(StaleClientInfoSchema),
 });
-export type PeerInfo = v.InferOutput<typeof PeerInfoSchema>;
+export type PeerInfo = Output<typeof PeerInfoSchema>;
 
 export const PeersResponseSchema = v.object({
   ok: v.literal(true),
   peers: v.array(PeerInfoSchema),
 });
-export type PeersResponse = v.InferOutput<typeof PeersResponseSchema>;
+export type PeersResponse = Output<typeof PeersResponseSchema>;
 
 export const NotifyResponseSchema = v.object({
   ok: v.literal(true),
   delivered: v.number(),
 });
-export type NotifyResponse = v.InferOutput<typeof NotifyResponseSchema>;
+export type NotifyResponse = Output<typeof NotifyResponseSchema>;
 
 /** Why a direct message did not arrive (DR-0036 §3). The message is not kept
  * anywhere in any of these cases.
@@ -182,7 +183,7 @@ export const MessageSendReasonSchema = v.picklist([
   "unreachable",
   "refused",
 ]);
-export type MessageSendReason = v.InferOutput<typeof MessageSendReasonSchema>;
+export type MessageSendReason = Output<typeof MessageSendReasonSchema>;
 
 /** Payload of a completed message_send (DR-0036 §1). `mid` is the id the
  * delivered envelope carries, what a reply to it names as `reply_to`.
@@ -199,7 +200,7 @@ export const MessageSendResponseSchema = v.variant("outcome", [
   }),
   v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed"), mid: v.string() }),
 ]);
-export type MessageSendResponse = v.InferOutput<typeof MessageSendResponseSchema>;
+export type MessageSendResponse = Output<typeof MessageSendResponseSchema>;
 
 /** The fields of one cwd-picker entry beside its children. */
 const DirTreeEntryFieldsSchema = v.object({
@@ -214,8 +215,8 @@ const DirTreeEntryFieldsSchema = v.object({
  * itself (TypeScript reports the circularity), so the recursive part — and
  * only it — is written as an interface that the schema is annotated with.
  * Every other field is the inferred type of DirTreeEntryFieldsSchema. */
-export interface DirTreeEntry extends v.InferOutput<typeof DirTreeEntryFieldsSchema> {
-  children?: DirTreeEntry[];
+export interface DirTreeEntry extends Output<typeof DirTreeEntryFieldsSchema> {
+  readonly children?: readonly DirTreeEntry[];
 }
 export const DirTreeEntrySchema: v.GenericSchema<DirTreeEntry> = v.object({
   ...DirTreeEntryFieldsSchema.entries,
@@ -226,7 +227,7 @@ export const DirTreeResponseSchema = v.object({
   ok: v.literal(true),
   entries: v.array(DirTreeEntrySchema),
 });
-export type DirTreeResponse = v.InferOutput<typeof DirTreeResponseSchema>;
+export type DirTreeResponse = Output<typeof DirTreeResponseSchema>;
 
 /** One launch parameter a template declares: the shell variable name its
  * command may read, and the value the form opens with. The declaration is the
@@ -243,7 +244,7 @@ export const LauncherParamSchema = v.object({
    * string is the normal "user fills this in" case. */
   default: v.string(),
 });
-export type LauncherParam = v.InferOutput<typeof LauncherParamSchema>;
+export type LauncherParam = Output<typeof LauncherParamSchema>;
 
 /** One template as seen by a client: the parsed template minus `shell`, which
  * is a daemon-side execution detail the form has no use for. */
@@ -252,9 +253,7 @@ export const SessionLauncherConfigTemplateSchema = v.object({
   command: v.string(),
   params: v.array(LauncherParamSchema),
 });
-export type SessionLauncherConfigTemplate = v.InferOutput<
-  typeof SessionLauncherConfigTemplateSchema
->;
+export type SessionLauncherConfigTemplate = Output<typeof SessionLauncherConfigTemplateSchema>;
 
 /** session_launcher_config reply — see its request doc comment.
  * `templates` is the configured recipe list in config order, each carrying its
@@ -271,9 +270,7 @@ export const SessionLauncherConfigResponseSchema = v.object({
   root_dirs: v.array(v.string()),
   templates: v.array(SessionLauncherConfigTemplateSchema),
 });
-export type SessionLauncherConfigResponse = v.InferOutput<
-  typeof SessionLauncherConfigResponseSchema
->;
+export type SessionLauncherConfigResponse = Output<typeof SessionLauncherConfigResponseSchema>;
 
 /** Payload of a completed session launch, delivered inside
  * the session_launch reply. Signal termination uses null exit_code. */
@@ -284,7 +281,7 @@ export const SessionLaunchResponseSchema = v.object({
   exit_code: v.nullable(v.number()),
   timed_out: v.boolean(),
 });
-export type SessionLaunchResponse = v.InferOutput<typeof SessionLaunchResponseSchema>;
+export type SessionLaunchResponse = Output<typeof SessionLaunchResponseSchema>;
 
 /** Payload of a completed session_kill (DR-0028), delivered inside
  * the session_kill reply. `terminated: true` = the process was observed gone
@@ -296,7 +293,7 @@ export const SessionKillResponseSchema = v.object({
   ok: v.literal(true),
   terminated: v.boolean(),
 });
-export type SessionKillResponse = v.InferOutput<typeof SessionKillResponseSchema>;
+export type SessionKillResponse = Output<typeof SessionKillResponseSchema>;
 
 /** Payload of a completed session_rename, delivered inside
  * the session_rename reply. `ok` here means "the `/rename <title>` keystrokes
@@ -310,7 +307,7 @@ export const SessionRenameResponseSchema = v.object({
   hyoui_session_id: v.string(),
   title: v.string(),
 });
-export type SessionRenameResponse = v.InferOutput<typeof SessionRenameResponseSchema>;
+export type SessionRenameResponse = Output<typeof SessionRenameResponseSchema>;
 
 /** Why a session_input did not reach the session (DR-0035 §5). Nothing is
  * sent by another route in any of these cases.
@@ -326,7 +323,7 @@ export const SessionInputReasonSchema = v.picklist([
   ...SessionInputModuleReasonSchema.options,
   "no_module",
 ]);
-export type SessionInputReason = v.InferOutput<typeof SessionInputReasonSchema>;
+export type SessionInputReason = Output<typeof SessionInputReasonSchema>;
 
 /** Payload of a completed session_input (DR-0035 §5).
  *
@@ -345,13 +342,13 @@ export const SessionInputResponseSchema = v.variant("outcome", [
   }),
   v.object({ ok: v.literal(true), outcome: v.literal("unconfirmed") }),
 ]);
-export type SessionInputResponse = v.InferOutput<typeof SessionInputResponseSchema>;
+export type SessionInputResponse = Output<typeof SessionInputResponseSchema>;
 
 /** Payload of a sidecar_reply the daemon was waiting for. */
 export const SidecarReplyResponseSchema = v.object({
   ok: v.literal(true),
 });
-export type SidecarReplyResponse = v.InferOutput<typeof SidecarReplyResponseSchema>;
+export type SidecarReplyResponse = Output<typeof SidecarReplyResponseSchema>;
 
 /** Payload of a completed session_env.
  * `env` is the session process's environment as name→value pairs.
@@ -371,14 +368,14 @@ export const SessionEnvResponseSchema = v.object({
   pid: v.number(),
   env: v.record(v.string(), v.string()),
 });
-export type SessionEnvResponse = v.InferOutput<typeof SessionEnvResponseSchema>;
+export type SessionEnvResponse = Output<typeof SessionEnvResponseSchema>;
 
 export const SessionSearchMatchSchema = v.object({
   role: v.picklist(["user", "agent"]),
   text: v.string(),
   timestamp: v.optional(v.string()),
 });
-export type SessionSearchMatch = v.InferOutput<typeof SessionSearchMatchSchema>;
+export type SessionSearchMatch = Output<typeof SessionSearchMatchSchema>;
 
 export const SessionSearchHitSchema = v.object({
   sid: v.string(),
@@ -410,14 +407,14 @@ export const SessionSearchHitSchema = v.object({
   model: v.optional(v.string()),
   effort: v.optional(v.string()),
 });
-export type SessionSearchHit = v.InferOutput<typeof SessionSearchHitSchema>;
+export type SessionSearchHit = Output<typeof SessionSearchHitSchema>;
 
 export const SessionSearchResponseSchema = v.object({
   ok: v.literal(true),
   hits: v.array(SessionSearchHitSchema),
   truncated: v.boolean(),
 });
-export type SessionSearchResponse = v.InferOutput<typeof SessionSearchResponseSchema>;
+export type SessionSearchResponse = Output<typeof SessionSearchResponseSchema>;
 
 /** Where a fork's copied history ends, when the session is a fork whose
  * ancestor transcript still exists. */
@@ -430,7 +427,7 @@ export const ForkOriginSchema = v.object({
    * client that wants to say so without holding the whole window. */
   copied: v.number(),
 });
-export type ForkOrigin = v.InferOutput<typeof ForkOriginSchema>;
+export type ForkOrigin = Output<typeof ForkOriginSchema>;
 
 /** `origin` is null both when the session is not a fork and when it is one
  * whose ancestor file is gone: neither case has a seam a viewer could place,
@@ -439,7 +436,7 @@ export const ForkOriginResponseSchema = v.object({
   ok: v.literal(true),
   origin: v.nullable(ForkOriginSchema),
 });
-export type ForkOriginResponse = v.InferOutput<typeof ForkOriginResponseSchema>;
+export type ForkOriginResponse = Output<typeof ForkOriginResponseSchema>;
 
 /** Where a `session_dump_file` dump landed. `entries` and `bytes` let a client
  * say how much was written without reading the file back. */
@@ -450,7 +447,7 @@ export const SessionDumpFileResponseSchema = v.object({
   entries: v.number(),
   bytes: v.number(),
 });
-export type SessionDumpFileResponse = v.InferOutput<typeof SessionDumpFileResponseSchema>;
+export type SessionDumpFileResponse = Output<typeof SessionDumpFileResponseSchema>;
 
 /** One row of `claude agents --json` output, annotated with which
  * CLAUDE_CONFIG_DIR produced it. Field names follow the upstream CLI output
@@ -484,7 +481,7 @@ export const AgentInfoSchema = v.object({
    *  the current env, not a stale start-time snapshot. */
   hyoui_session_id: v.optional(v.string()),
 });
-export type AgentInfo = v.InferOutput<typeof AgentInfoSchema>;
+export type AgentInfo = Output<typeof AgentInfoSchema>;
 
 export const AgentsResponseSchema = v.object({
   ok: v.literal(true),
@@ -492,14 +489,14 @@ export const AgentsResponseSchema = v.object({
   /** ISO time of the poll that produced `agents`; null when no poll has run yet */
   polled_at: v.nullable(v.string()),
 });
-export type AgentsResponse = v.InferOutput<typeof AgentsResponseSchema>;
+export type AgentsResponse = Output<typeof AgentsResponseSchema>;
 
 export const SessionStatusResponseSchema = v.object({
   ...SessionStatusSnapshotSchema.entries,
   ok: v.literal(true),
   sid: v.string(),
 });
-export type SessionStatusResponse = v.InferOutput<typeof SessionStatusResponseSchema>;
+export type SessionStatusResponse = Output<typeof SessionStatusResponseSchema>;
 
 export const SessionStatusSubscribeResponseSchema = SessionStatusResponseSchema;
 export type SessionStatusSubscribeResponse = SessionStatusResponse;
@@ -508,7 +505,7 @@ export const SessionStatusUnsubscribeResponseSchema = v.object({
   ok: v.literal(true),
   sid: v.string(),
 });
-export type SessionStatusUnsubscribeResponse = v.InferOutput<
+export type SessionStatusUnsubscribeResponse = Output<
   typeof SessionStatusUnsubscribeResponseSchema
 >;
 
@@ -519,4 +516,4 @@ export const SessionErrorsResponseSchema = v.object({
    * by sid for a stable compare on the daemon's change check. */
   errors: v.array(SessionErrorEntrySchema),
 });
-export type SessionErrorsResponse = v.InferOutput<typeof SessionErrorsResponseSchema>;
+export type SessionErrorsResponse = Output<typeof SessionErrorsResponseSchema>;
