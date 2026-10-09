@@ -568,17 +568,17 @@ describe("fs_list / fs_read", () => {
   );
 
   test(
-    "bad_request: fs_list with a non-string path is not read as a request",
+    "invalid_args: fs_list with a non-string path is refused under its request_id",
     async () => {
       const ctx = await startTestDaemon();
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const res = await c.requestRefused({ op: "fs_list", sid: A, path: 123 });
+        const res = await c.request({ op: "fs_list", sid: A, path: 123 });
         expect(res).toEqual({
           ok: false,
           error: {
-            code: "bad_request",
+            code: "invalid_args",
             msg: "path: Invalid type: Expected string but received 123",
           },
         });
@@ -817,7 +817,7 @@ describe("fs_read_external (DR-0024)", () => {
   );
 
   test(
-    "relative and empty paths are invalid_args, a non-string path bad_request",
+    "relative and empty paths are invalid_args, a non-string path too",
     async () => {
       // fs_read_external's wire shape is absolute-only; malformed shapes fail
       // before transcript scanning or filesystem existence checks.
@@ -832,8 +832,8 @@ describe("fs_read_external (DR-0024)", () => {
           });
           expect(res.error.code).toBe("invalid_args");
         }
-        const res = await user.requestRefused({ op: "fs_read_external", sid: A, path: 42 });
-        expect(res.error.code).toBe("bad_request");
+        const res = await user.request({ op: "fs_read_external", sid: A, path: 42 });
+        expect(res.error.code).toBe("invalid_args");
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -3023,8 +3023,8 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         });
         const user = await userAt(ctx);
         for (const paths of ["not-an-array", ["/abs/a", 42]]) {
-          const res1 = await user.requestRefused({ op: "fs_stat_batch", sid: A, paths });
-          expect(res1.error.code).toBe("bad_request");
+          const res1 = await user.request({ op: "fs_stat_batch", sid: A, paths });
+          expect(res1.error.code).toBe("invalid_args");
         }
         const oversized = Array.from({ length: 257 }, (_, i) => `/abs/${i}`);
         const res2 = await user.request<{ ok: false; error: { code: string } }>({

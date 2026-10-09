@@ -366,8 +366,17 @@ const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   },
 };
 
+/** A line read as a request: the typed request, or the failure of whichever
+ * layer did not read. */
+function readLine(text: string): Parsed<Request> {
+  const got = readRequest(text);
+  return got.kind === "request"
+    ? { ok: true, value: got.request }
+    : { ok: false, failure: got.failure };
+}
+
 const read = (body: object, requestId = "q1"): Parsed<Request> =>
-  readRequest(line({ ...body, request_id: requestId }));
+  readLine(line({ ...body, request_id: requestId }));
 
 /** The summary of a line that is not a request. */
 function refusal(read: Parsed<Request>): string {
@@ -397,7 +406,7 @@ describe("readRequest: every op", () => {
 
 describe("readRequest: a line that is not a request is a failure", () => {
   test("not JSON", () => {
-    expect(refusal(readRequest("{op:"))).toStartWith("Invalid JSON");
+    expect(refusal(readLine("{op:"))).toStartWith("Invalid JSON");
   });
 
   for (const value of [[1], { op: 1, request_id: "q1" }, { op: "teleport", request_id: "q1" }]) {
@@ -407,9 +416,9 @@ describe("readRequest: a line that is not a request is a failure", () => {
   }
 
   test("a request id that is missing or empty", () => {
-    expect(readRequest(line({ op: "ping" })).ok).toBe(false);
+    expect(readLine(line({ op: "ping" })).ok).toBe(false);
     expect(read({ op: "ping" }, "").ok).toBe(false);
-    expect(readRequest(line({ op: "hello", role: "session", sid: SID })).ok).toBe(false);
+    expect(readLine(line({ op: "hello", role: "session", sid: SID })).ok).toBe(false);
   });
 
   test("the field an op refuses is named in the failure", () => {
@@ -426,6 +435,29 @@ describe("readRequest: a line that is not a request is a failure", () => {
     expect(refused.failure.issues).toHaveLength(1);
     expect(refused.failure.summary).toBe("texts.0: Invalid type: Expected string but received 0");
   });
+});
+
+describe("readRequest: the frame and the request are read in turn", () => {
+  test("a line whose frame reads but whose request does not keeps its frame", () => {
+    expect(readRequest(line({ op: "fs_list", sid: SID, path: 1, request_id: "q7" }))).toEqual({
+      kind: "invalid_request",
+      frame: { op: "fs_list", request_id: "q7" },
+      failure: {
+        issues: [{ path: "path", message: "Invalid type: Expected string but received 1" }],
+        summary: "path: Invalid type: Expected string but received 1",
+      },
+    });
+    expect(readRequest(line({ op: "teleport", request_id: "q8" }))).toMatchObject({
+      kind: "invalid_request",
+      frame: { op: "teleport", request_id: "q8" },
+    });
+  });
+
+  for (const text of ["{op:", line([1]), line({ op: "ping" }), line({ request_id: "q9" })]) {
+    test(`a line whose frame does not read: ${text}`, () => {
+      expect(readRequest(text).kind).toBe("invalid_frame");
+    });
+  }
 });
 
 describe("readRequest: the forms beside each op's type", () => {
@@ -446,7 +478,7 @@ describe("readRequest: the forms beside each op's type", () => {
 
   // JSON text can spell a number past the finite range; it is not a seq.
   test("a since_seq cursor past the finite range is refused", () => {
-    expect(readRequest('{"op":"subscribe","request_id":"q1","since_seq":{"r3":1e999}}').ok).toBe(
+    expect(readLine('{"op":"subscribe","request_id":"q1","since_seq":{"r3":1e999}}').ok).toBe(
       false,
     );
   });

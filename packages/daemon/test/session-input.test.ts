@@ -488,14 +488,14 @@ describe("session_input over the wire", () => {
 
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const blank = await user.requestRefused({
+      const blank = await user.request({
         op: "session_input",
         session_id: SID,
         text: " \n ",
       });
-      expect(blank.error.code).toBe("bad_request");
-      const noSid = await user.requestRefused({ op: "session_input", text: "x" });
-      expect(noSid.error.code).toBe("bad_request");
+      expect(blank.error.code).toBe("invalid_args");
+      const noSid = await user.request({ op: "session_input", text: "x" });
+      expect(noSid.error.code).toBe("invalid_args");
       const replyAsUser = await user.request(sidecarReply({ id: "x", ok: true, result: {} }));
       expect(replyAsUser.error.code).toBe("bad_request");
 
@@ -503,14 +503,14 @@ describe("session_input over the wire", () => {
         sidecarReply({ id: "never-sent", ok: true, result: {} }),
       );
       expect(unknown.error.code).toBe("not_found");
-      const malformed = await session.requestRefused(sidecarReply({ id: "never-sent", ok: false }));
-      expect(malformed.error.code).toBe("bad_request");
-      const noReply = await session.requestRefused({ op: "sidecar_reply" });
-      expect(noReply.error.code).toBe("bad_request");
+      const malformed = await session.request(sidecarReply({ id: "never-sent", ok: false }));
+      expect(malformed.error.code).toBe("invalid_args");
+      const noReply = await session.request({ op: "sidecar_reply" });
+      expect(noReply.error.code).toBe("invalid_args");
       // A refused reply leaves a line in daemon.log, with its id when it has one.
       const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
       expect(log).toContain(`sidecar_reply never-sent from ${SID} refused: no request is waiting`);
-      expect(log).toContain(`request from ${SID} refused: reply.error: Invalid key`);
+      expect(log).toContain(`request sidecar_reply from ${SID} refused: reply.error: Invalid key`);
       user.close();
       session.close();
     } finally {

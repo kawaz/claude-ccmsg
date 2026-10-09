@@ -139,11 +139,11 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           [a, { members: [SID_A], msg: "session initial" }],
         ];
         for (const [c, extra] of attempts) {
-          const res = await c.requestRefused({ op: "create_room", kind: "1on1", ...extra });
+          const res = await c.request({ op: "create_room", kind: "1on1", ...extra });
           expect(res).toEqual({
             ok: false,
             error: {
-              code: "bad_request",
+              code: "invalid_args",
               msg: "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
             },
           });
@@ -167,11 +167,11 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const res = await u.requestRefused({ op: "create_room", members: [SID_A], kind: "group" });
+        const res = await u.request({ op: "create_room", members: [SID_A], kind: "group" });
         expect(res).toEqual({
           ok: false,
           error: {
-            code: "bad_request",
+            code: "invalid_args",
             msg: 'kind: Invalid type: Expected ("normal" | "broadcast") but received "group"',
           },
         });

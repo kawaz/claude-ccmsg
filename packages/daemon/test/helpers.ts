@@ -338,20 +338,6 @@ export class TestClient {
     const { request_id: _rid, ...payload } = JSON.parse(line);
     return payload as T;
   }
-  /** Send an op the daemon cannot read as a request, with a request_id like
-   * any other, and return its refusal: the next reply that names no request,
-   * since a line the request schema does not read names none. */
-  async requestRefused(obj: Record<string, unknown>): Promise<any> {
-    this.write({ request_id: `t${++this.nextRequestId}`, ...obj });
-    for (;;) {
-      const line = await this.readLine();
-      this.assertFrames();
-      if (line === null) throw new Error("connection closed before response");
-      const frame = readDaemonFrame(line);
-      if (frame.kind === "reply" && frame.requestId === undefined) return JSON.parse(line);
-      this.eventBacklog.push(line);
-    }
-  }
   /** Send a request exactly as given — no request_id stamped — and return the
    * next reply frame. For the malformed-request cases, whose reply carries no
    * request_id to correlate on. */

@@ -103,7 +103,7 @@ describe("translate op", () => {
     });
   });
 
-  test("a batch that is not of strings is not read as a request", async () => {
+  test("a batch that is not of strings is refused under its request_id", async () => {
     let calls = 0;
     const translator: TranslateService = {
       async translate() {
@@ -125,7 +125,11 @@ describe("translate op", () => {
     expect(calls).toBe(0);
     expect(response).toEqual({
       ok: false,
-      error: { code: "bad_request", msg: "texts.1: Invalid type: Expected string but received 42" },
+      error: {
+        code: "invalid_args",
+        msg: "texts.1: Invalid type: Expected string but received 42",
+      },
+      request_id: "q1",
     });
   });
 

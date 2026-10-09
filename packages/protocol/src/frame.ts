@@ -18,8 +18,8 @@ import { DeliveredEventSchema, PushStreamEventSchema, type StreamEvent } from ".
 /** One line from the daemon, as a client reads it.
  *
  * - `reply`: an answer to a request. `requestId` is the request it names, or
- *   undefined for a reply that names none (the answer to a line the daemon
- *   could not read as a request). `reply(op)` reads it as the answer to a
+ *   undefined for a reply that names none (the answer to a line whose frame the
+ *   daemon could not read). `reply(op)` reads it as the answer to a
  *   request of `op`: the op's success reply or an ErrorResponse, without the
  *   envelope
  * - `event`: a push or a delivered storage event

@@ -262,11 +262,11 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
 
         for (const cursor of [-5, "nope"]) {
           const sub = await user(ctx);
-          const refused = await sub.requestRefused({
+          const refused = await sub.request({
             op: "subscribe",
             since_seq: { [room]: cursor },
           });
-          expect(refused.error.code).toBe("bad_request");
+          expect(refused.error.code).toBe("invalid_args");
           sub.close();
         }
 

@@ -1631,22 +1631,29 @@ async function handleOneRequest(
   // request already running when the disconnect lands is cleaned up after
   // dispatch instead (see the end of this function).
   if (!daemon.connections.has(conn)) return;
-  // The line is read once, by the request schema (DR-0038): from here on it
-  // is a typed request, or a failure. A failure names no request it could be
-  // answered under, so its reply carries no id.
+  // The line is read once per layer (DR-0038): its frame, then its request.
+  // A line whose frame reads is answered under its request_id even when its
+  // request does not read, so the asker is settled; a line whose frame does
+  // not read names no request, and its reply carries no id.
   const read = readRequest(line);
-  if (!read.ok) {
+  if (read.kind !== "request") {
     // The refusal goes to a client that may only log it somewhere nobody
     // looks (a session's hooks module, a browser console), so it is logged
     // here too, under the connection it came on.
     const why = clipRefusal(read.failure.summary);
     const id = conn.identity;
     const from = id === null ? "a connection without hello" : id.role === "user" ? "user" : id.sid;
-    daemon.log.warn(`request from ${from} refused: ${why}`);
-    sendErr(conn, ErrorCode.bad_request, why);
+    if (read.kind === "invalid_frame") {
+      daemon.log.warn(`request from ${from} refused: ${why}`);
+      sendErr(conn, ErrorCode.bad_request, why);
+      return;
+    }
+    const { request_id: requestId, op } = read.frame;
+    daemon.log.warn(`request ${logToken(op) ?? "?"} from ${from} refused: ${why}`);
+    activeRequest.run({ conn, requestId }, () => sendErr(conn, ErrorCode.invalid_args, why));
     return;
   }
-  const request = read.value;
+  const request = read.request;
   await activeRequest.run({ conn, requestId: request.request_id }, async () => {
     if (isOtherGenerationHello(request)) {
       refuseGeneration(daemon, conn, readHello(claimedHello(request)), request.protocol);

@@ -18,7 +18,7 @@
 // the generation it speaks. The fields the daemon reads are all typed, so a
 // field it does not read can do nothing.
 import * as v from "valibot";
-import { jsonText, type Parsed, parseWith } from "./parse.ts";
+import { JsonTextSchema, type ParseFailure, parseWith } from "./parse.ts";
 import {
   AnyGenerationHelloRequestSchema,
   HelloRequestSchema,
@@ -106,10 +106,9 @@ export * from "./request-host.ts";
  *
  * Uniqueness only has to hold among one connection's in-flight requests; a
  * monotonic counter per socket is enough, and ids may be reused once settled.
- * A line the request schema does not read (not JSON, no op of this daemon, no
- * `request_id`, a field of another type) is the one class of reply that
- * carries no id — a client can only log those, never settle a caller with
- * them.
+ * A line whose frame does not read (not JSON, no `request_id`, no `op`) is the
+ * one class of reply that carries no id — a client can only log those, never
+ * settle a caller with them.
  *
  * A missing id is a `bad_request`, with no path that serves the older protocol
  * instead: breaking those clients was the deliberate choice (DR-0029 追補 /
@@ -215,15 +214,51 @@ export type ServedRequest = Exclude<Request, OtherGenerationHelloRequest>;
 
 // --- reading a request line -------------------------------------------------
 
-/** One request line: a request of this generation, or a hello of another,
- * with its correlation id. */
-const RequestLineSchema = jsonText(v.intersect([RequestBodySchema, RequestEnvelopeSchema]));
+// A line is read in two layers, each once. The frame is the wire's framing:
+// the correlation id a reply is sent under and the op the line names. The
+// request is the op's shape, read from the same decoded value. A line whose
+// frame does not read has no id to answer under; a line whose frame reads but
+// whose request does not is answered under its id, so the asker is settled.
 
-/** Read one request line, once, with the request schema. A line that is not
- * a request is a failure, and nothing more is read from it. A sender's value
- * can hold any number of wrong parts, so the read stops at the first. */
-export function readRequest(line: string): Parsed<Request> {
-  return parseWith(RequestLineSchema, line, { firstIssue: true });
+/** The frame every request line has, whatever its op. */
+export const RequestFrameSchema = v.object({
+  ...RequestEnvelopeSchema.entries,
+  op: v.string(),
+});
+export type RequestFrame = v.InferOutput<typeof RequestFrameSchema>;
+
+/** A request of this generation, or a hello of another, with its correlation
+ * id. */
+const RequestSchema = v.intersect([RequestBodySchema, RequestEnvelopeSchema]);
+
+/** One request line, as read:
+ *
+ * - `request`: the typed request
+ * - `invalid_request`: the frame reads but the request does not (an op this
+ *   daemon does not serve, a field of another type); answered under
+ *   `frame.request_id`
+ * - `invalid_frame`: not JSON, or no `request_id` / `op`; answered under no id */
+export type RequestRead =
+  | { readonly kind: "request"; readonly request: Request }
+  | {
+      readonly kind: "invalid_request";
+      readonly frame: RequestFrame;
+      readonly failure: ParseFailure;
+    }
+  | { readonly kind: "invalid_frame"; readonly failure: ParseFailure };
+
+/** Read one request line: its frame, then its request. A sender's value can
+ * hold any number of wrong parts, so each read stops at the first. */
+export function readRequest(line: string): RequestRead {
+  const json = parseWith(JsonTextSchema, line);
+  if (!json.ok) return { kind: "invalid_frame", failure: json.failure };
+  const decoded = json.value;
+  const frame = parseWith(RequestFrameSchema, decoded, { firstIssue: true });
+  if (!frame.ok) return { kind: "invalid_frame", failure: frame.failure };
+  const request = parseWith(RequestSchema, decoded, { firstIssue: true });
+  return request.ok
+    ? { kind: "request", request: request.value }
+    : { kind: "invalid_request", frame: frame.value, failure: request.failure };
 }
 
 /** Whether a request is a hello of a generation this daemon does not speak

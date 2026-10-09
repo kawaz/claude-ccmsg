@@ -109,14 +109,14 @@ describe("llm_stats op", () => {
       expect(reply?.ok).toBe(false);
       expect(reply?.error.code).toBe(ErrorCode.invalid_args);
     }
-    // A window that is not a number is not read as a request at all.
+    // A window that is not a number is refused the same way.
     const [reply] = await requestFrames(
       daemonWith(URL_OK),
       USER,
       { op: "llm_stats", request_id: "q4", days: "30" },
       1,
     );
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    expect(reply?.error.code).toBe(ErrorCode.invalid_args);
     expect(received.length).toBe(before);
   });
 

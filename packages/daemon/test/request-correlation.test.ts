@@ -50,6 +50,29 @@ describe("request correlation", () => {
     });
   });
 
+  test("a request whose fields do not fit its op is refused under its request_id", async () => {
+    await withDaemon(async (ctx) => {
+      const c = await connect(ctx.sock);
+      await c.hello({ role: "user" });
+      c.write({ op: "fs_list", sid: A, path: 123, request_id: "f1" });
+      expect(await c.readEvent()).toMatchObject({
+        ok: false,
+        error: {
+          code: "invalid_args",
+          msg: "path: Invalid type: Expected string but received 123",
+        },
+        request_id: "f1",
+      });
+      c.write({ op: "no_such_op", request_id: "u1" });
+      expect(await c.readEvent()).toMatchObject({
+        ok: false,
+        error: { code: "invalid_args" },
+        request_id: "u1",
+      });
+      c.close();
+    });
+  });
+
   test("a request with no request_id is refused as bad_request", async () => {
     await withDaemon(async (ctx) => {
       const c = await connect(ctx.sock);

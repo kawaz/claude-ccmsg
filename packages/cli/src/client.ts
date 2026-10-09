@@ -91,7 +91,7 @@ export class Client {
   /** Hand a reply to the request it answers; false when no request waits.
    *
    * A reply with no `request_id` is handed to the oldest in-flight request:
-   * that is the refusal of a line the daemon could not read as a request (it
+   * that is the refusal of a line whose frame the daemon could not read (it
    * names none), or a daemon older than the correlation envelope, and
    * completing a hello against one is how `ensureDaemon` discovers the
    * version it has to replace. */
