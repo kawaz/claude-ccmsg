@@ -44,7 +44,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
   - 知らない op・知らない版の依頼も黙って捨てず、その場で `ok:false` を返す。daemon は期限まで待たずに、その run では実行できないと分かる
 - 依頼を op 名で表すのは、mods の `$` からしか取れない情報や操作 (またはその経路で取る・触る方が簡単なもの) を、後からセッションの外から使う口として足せるようにするため (kawaz 2026-10-09)。書かれた文をそのまま fill + Enter する形を先に入れると、別の依頼を足したくなった時に行の形そのものを変えることになり、daemon と module の切り替えのタイミングに困る。op を足すのは daemon と module の間の取り決めで、サイドカーは変えない
 - op:
-  - `prompt.send` (args `{ text }`): §1 の人の入力。fill し、自分の端末に Enter を送り、`classic.UserPromptSubmit` で受け付けを確かめ、書きかけを戻すまでを行う。Enter まで行うので fill ではなく send を名乗る。result は `{ outcome: "accepted" }`、`{ outcome: "not_delivered", reason }`、`{ outcome: "unconfirmed" }` のどれか。`unconfirmed` は module 自身にも届いたか分からない時 (Enter の後に `UserPromptSubmit` が来ず composer からも文が消えていた、Enter の後にセッションの id が変わった、fill の後に id が変わり composer にもう文が無かった) で、daemon は webui に未確認として返す。Enter の前にセッションの id が変わって (/clear、/resume) 文を入れずに止めた時は、届いていないことが確かなので `not_delivered` / `session_changed` とする。op を実行できなかったこと (`ok:false`) と、op は動いたが人の入力が届かなかったこと (`not_delivered`) は分ける
+  - `prompt.send` (args `{ text }`): §1 の人の入力。fill し、自分の端末に Enter を送り、`classic.UserPromptSubmit` で受け付けを確かめ、書きかけを戻すまでを行う。Enter まで行うので fill ではなく send を名乗る。result は `{ outcome: "accepted" }`、`{ outcome: "not_delivered", reason }`、`{ outcome: "unconfirmed" }` のどれか。`unconfirmed` は module 自身にも届いたか分からない時 (Enter の後に `UserPromptSubmit` が来ず composer からも文が消えていた、Enter の後にセッションの id が変わった、fill の後に id が変わり書きかけを戻せたと確かめられなかった (composer にもう文が無い、戻す fill がダイアログ等で拒否された、戻した後も composer に文が残る)) で、daemon は webui に未確認として返す。Enter の前にセッションの id が変わって (/clear、/resume)、文を入れずに止めた時と、入れた文を書きかけに戻せたと確かめた時は、届いていないことが確かなので `not_delivered` / `session_changed` とする。戻せたと確かめられないまま `session_changed` と返すと、daemon が次の run に送り、composer に残った文が後の Enter でもう一度入りうるop を実行できなかったこと (`ok:false`) と、op は動いたが人の入力が届かなかったこと (`not_delivered`) は分ける
   - `describe` (args `{}`): module が読む `v` の一覧、実行できる op の一覧、module と同じ plugin の ccmsg の版を返す (`{ v: [1], ops: [...], version? }`)。daemon が「この module で何ができるか」を問い合わせるための op。module はセッションの起動時に読まれるので、plugin を更新した後も、動いているセッションには前の版の module が残りうる
 - 返事は module が `$.process.run([<plugin>/bin/ccmsg, "sidecar", "reply", "--sid", <sid>], { stdin: <返事の JSON> })` で渡し、CLI が daemon の op `sidecar_reply` (session role) で届ける。`$` には socket を直接開く口が無いので、往復 1 回の CLI を挟む
   - 返事の本体は引数でなく stdin で渡す。返事の大きさは op の結果次第で長くなりうるが、引数は大きさに上限があり、`ps` で他のユーザにも見える。`$.process.run` の `stdin` は文字列を 1 回書いて閉じる形 (2.1.295 の実装で確認) で、返事 1 つを渡すのにちょうど合う。module は shell を通さず argv で起動するので、引用の事故は引数でも stdin でも起きず、判断の軸にならない
@@ -55,7 +55,7 @@ kawaz 2026-10-06: 「1on1 という概念をなくす。webui からのユーザ
 - 同じ sid の生きている run が複数ある時、daemon は run に 1 つずつ依頼し、その run に文が入っていないことが確かな時だけ次の run へ進む。全部に同時に書くと、composer を持つ run が 2 つあれば同じ文が 2 回入る
   - 次へ進むのは、人の入力を受けられない理由 (`no_composer` / `no_terminal`) か `session_changed` で返した時、`prompt.send` を実行できなかった時 (`unknown_op` / `unsupported_version` / `invalid_args`、composer に触れていない)、サイドカーへの書き込みが 1 バイトも入らなかった時 (接続できない、期限までに何も書けない)
   - サイドカーへの書き込みが途中まで入って期限を過ぎた時は、残りが後から届いて module が依頼を読むことがありうるので、次の run へは送らない。その run の返事を期限まで待ち、来なければ未確認とする
-  - どの run も実行できなければ `no_module` とする
+  - どの run も実行できなければ `no_module` とする。ただし、その sid の run だった harness の pid が別の sid でサイドカーを bind している時 (`<別の sid>.<同じ pid>.sock` があり、その pid が生きている) は、セッションの id が変わった (/clear、/resume) ので `session_changed` とする。plugin の更新を勧める `no_module` の案内は当たらない。sid の run の pid は、daemon が agents の poll で見た sid と pid の対応を、その pid が生きている間覚えておいたものを使う。id が変わった後の poll とセッションの state file は新しい sid しか示さず、古い sid の pid は前に見たものからしか分からないため
 
 ### 4. agent が人の入力を作る公式の経路は作らない
 
