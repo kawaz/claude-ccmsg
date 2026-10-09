@@ -8,19 +8,22 @@
 //
 // Three row shapes are recognized:
 //
-//   1. received: one or more
+//   1. received: one delivery per row — one
 //      `<cross-session-message from="ccmsg" … ccmsg-mid="…" ccmsg-from="…">`
-//      envelopes, carried by either
+//      envelope, carried by either
 //      - a `type:"user"` row (`promptSource:"system"`, `origin.kind:"peer"`)
-//        whose string content embeds them (the session was idle), or
+//        whose string content embeds it (the session was idle), or
 //      - a `type:"attachment"` row whose `attachment` is
 //        `{type:"queued_command", prompt, origin:{kind:"peer"}}` (the session
-//        was mid-turn); `queuedCommandPrompt` reads it. The row's `rendered`
-//        system-reminder repeats the envelope and is not read.
+//        was mid-turn); `queuedCommandPrompt` reads it. Deliveries that
+//        arrive during one turn become one such row each, not one row
+//        holding several. The row's `rendered` system-reminder repeats the
+//        envelope and is not read.
 //      The same envelope is also written, bare, into a `queue-operation`
 //      enqueue row before either; callers skip that copy.
 //   2. sent: a Bash tool_use whose command is `ccmsg post|reply|notify …`,
-//      paired with its tool_result (`{}` / `{"delivered":true}` on success).
+//      paired with its tool_result (`{}` / `{"delivered":true}` on success,
+//      exit DIRECT_SEND_UNCONFIRMED_EXIT when arrival could not be told).
 //   3. PushNotification: a tool_use `{name:"PushNotification", input:{message}}`.
 //
 // Pure string work with no imports, so the browser bundle and the daemon share
@@ -361,6 +364,9 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
  *
  * - `sent`: `{}` or `{"delivered":…}` (the successful answers; this plugin's
  *   own direct send answers `{"delivered":true,"mid":…}`)
+ * - `unconfirmed`: this plugin's direct send exited
+ *   DIRECT_SEND_UNCONFIRMED_EXIT saying `(unconfirmed)` — the message may or
+ *   may not have arrived — with the result text as `detail`
  * - `failed`: anything else, with the result text as `detail` (this plugin's
  *   direct send reports a message that did not arrive as text on stderr,
  *   never as JSON carrying `ok`)
@@ -369,10 +375,22 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
 export type CcmsgSendOutcome =
   | { status: "sent" }
   | { status: "failed"; detail: string }
+  | { status: "unconfirmed"; detail: string }
   | { status: "other-ccmsg" };
+
+/** The exit status of `ccmsg post` / `ccmsg reply` for a direct message whose
+ * arrival could not be told (message_send `unconfirmed`): it may have arrived,
+ * so it is neither sent nor failed. A message that did not arrive exits 1. */
+export const DIRECT_SEND_UNCONFIRMED_EXIT = 3;
+
+/** How a Bash tool_result of a non-zero exit begins, with the status. */
+const UNCONFIRMED_RESULT_RE = new RegExp(`^Exit code ${DIRECT_SEND_UNCONFIRMED_EXIT}\\n`);
 
 export function classifyCcmsgSendResult(text: string, isError: boolean): CcmsgSendOutcome {
   const trimmed = text.trim();
+  if (isError && UNCONFIRMED_RESULT_RE.test(trimmed) && trimmed.includes("(unconfirmed)")) {
+    return { status: "unconfirmed", detail: trimmed };
+  }
   let value: unknown;
   try {
     value = JSON.parse(trimmed);

@@ -1047,7 +1047,8 @@ export interface MessageSendRequest {
  * - `no_status_socket`: the daemon could not open the socket the recipient
  *   would report a refusal to, so it wrote nothing rather than call an
  *   unconfirmable write delivered (a problem on the sending machine's side)
- * - `unreachable`: the socket is there but could not be written in time
+ * - `unreachable`: the socket took nothing (no connection, or not one byte in
+ *   time), so nothing arrived
  * - `refused`: the recipient's harness answered that it did not take it */
 export type MessageSendReason =
   | "session_not_found"
@@ -1377,12 +1378,14 @@ export interface SessionInputRequest {
  *   to what the person had typed
  * - `enter_failed`: sending Enter to the terminal failed, and the text never
  *   left the composer; the composer was put back as for `not_submitted`
+ * - `session_changed`: the run moved to another session id (/clear, /resume)
+ *   before Enter, so the text was not put in
  * - `no_module`: no run of the session has a hooks module that took the request
  *   (the plugin not loaded or of a ccmsg that does not know `prompt.send`, a
  *   session without a composer, the session gone)
  *
- * With several runs, `no_composer` / `no_terminal` are the last run's answer
- * after every run gave one of the two. */
+ * With several runs, `no_composer` / `no_terminal` / `session_changed` are
+ * the last run's answer after every run gave one of the three. */
 export type SessionInputReason =
   | "dialog"
   | "no_composer"
@@ -1390,6 +1393,7 @@ export type SessionInputReason =
   | "no_terminal"
   | "not_submitted"
   | "enter_failed"
+  | "session_changed"
   | "no_module";
 
 /** The reasons a session's hooks module gives in a prompt.send result;
@@ -1404,6 +1408,7 @@ export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] =
   "no_terminal",
   "not_submitted",
   "enter_failed",
+  "session_changed",
 ];
 
 // --- the sidecar's requests and replies (DR-0035 §3) -----------------------
@@ -1501,7 +1506,8 @@ export type PromptSendRequest = SidecarRequest<"prompt.send", { text: string }>;
  * `UserPromptSubmit` for the filled text: the prompt is in the session, idle
  * or busy. `unconfirmed` is the module not knowing: Enter went out but no
  * `UserPromptSubmit` came and the composer no longer holds the text, or the
- * session changed its id (/clear, /resume) under the request. */
+ * session changed its id (/clear, /resume) after Enter, or after the fill with
+ * the composer no longer holding the text. */
 export type PromptSendResult =
   | { outcome: "accepted" }
   | { outcome: "not_delivered"; reason: SessionInputModuleReason }
@@ -2517,10 +2523,15 @@ export type SessionInputResponse =
   | { ok: true; outcome: "not_delivered"; reason: SessionInputReason }
   | { ok: true; outcome: "unconfirmed" };
 /** Payload of a completed message_send (DR-0036 §1). `mid` is the id the
- * delivered envelope carries, what a reply to it names as `reply_to`. */
+ * delivered envelope carries, what a reply to it names as `reply_to`.
+ *
+ * `unconfirmed`: the write into the recipient's socket started and did not
+ * finish in time, so whether the message arrived cannot be told. Sending it
+ * again may deliver it twice; `mid` is the id it carries if it did arrive. */
 export type MessageSendResponse =
   | { ok: true; outcome: "delivered"; mid: string }
-  | { ok: true; outcome: "not_delivered"; reason: MessageSendReason };
+  | { ok: true; outcome: "not_delivered"; reason: MessageSendReason }
+  | { ok: true; outcome: "unconfirmed"; mid: string };
 /** Payload of a sidecar_reply the daemon was waiting for. */
 export interface SidecarReplyResponse {
   ok: true;

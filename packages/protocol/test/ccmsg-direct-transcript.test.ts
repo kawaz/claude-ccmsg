@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   classifyCcmsgSendResult,
+  DIRECT_SEND_UNCONFIRMED_EXIT,
   directAddressSid,
   shellQuote,
   isDirectMid,
@@ -272,6 +273,18 @@ describe("classifyCcmsgSendResult", () => {
       detail: "Exit code 1\nunknown mid",
     });
     expect(classifyCcmsgSendResult("{}", true)).toEqual({ status: "failed", detail: "{}" });
+  });
+
+  test("exit DIRECT_SEND_UNCONFIRMED_EXIT saying (unconfirmed) is unconfirmed, and only that", () => {
+    const text = `Exit code ${DIRECT_SEND_UNCONFIRMED_EXIT}\nccmsg: 届いたか確かめられなかった (unconfirmed)。`;
+    expect(classifyCcmsgSendResult(text, true)).toEqual({ status: "unconfirmed", detail: text });
+    // Another command's exit 3, or the words without the status, are failures.
+    expect(classifyCcmsgSendResult("Exit code 3\nno such file", true)).toMatchObject({
+      status: "failed",
+    });
+    expect(
+      classifyCcmsgSendResult("Exit code 1\nccmsg: 届いたか確かめられなかった (unconfirmed)", true),
+    ).toMatchObject({ status: "failed" });
   });
 });
 
