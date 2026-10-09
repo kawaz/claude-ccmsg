@@ -9,14 +9,19 @@ import * as v from "valibot";
 import type { Output } from "./parse.ts";
 import { SessionErrorEntrySchema, SessionStatusSnapshotSchema } from "./session-status.ts";
 import { SessionInputModuleReasonSchema } from "./sidecar.ts";
+import { UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 
 export const HelloResponseSchema = v.object({
   ok: v.literal(true),
   version: v.string(),
   /** The wire generation this daemon speaks (`PROTOCOL_VERSION`). A client
    * whose own generation differs never gets here — its hello is rejected —
-   * so this is for display, not for the client to branch on. */
-  protocol: v.number(),
+   * so this is for display, not for the client to branch on. A reply without
+   * the field comes from a daemon of generation `UNANNOUNCED_PROTOCOL_VERSION`:
+   * that is the number such a daemon means, the same definition the daemon
+   * applies to a hello without it, not a compatibility path. Reading it is
+   * what lets `ensureDaemon` see that daemon's version and replace it. */
+  protocol: v.optional(v.number(), UNANNOUNCED_PROTOCOL_VERSION),
   /** DR-0018 拡張 (issue 2026-07-21-webui-terminal-tab-embed): user role の
    * hello に対してのみ、`<configDir>/config.json` の `terminal_gateway_url`
    * トップレベルキー (http:// / https:// のみ、末尾スラッシュの有無問わず)

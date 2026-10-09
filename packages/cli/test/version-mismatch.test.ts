@@ -11,6 +11,8 @@
 //   4. daemon が client より新しい (= client が古い) 場合も daemon は再起動しない
 //      (= newer-wins ポリシー、docs/issue/2026-07-10-daemon-version-flapping-on-gradual-rollout.md。
 //      gradual rollout 中の新旧混在で降格・昇格の綱引きが起きないための不変条件)。
+//   5. hello 応答に wire の世代 (protocol) も request_id も載せない daemon も、
+//      hello を読んで 1. と同じく入れ替えられる。
 //
 // テスト用シームの根拠 (Design rationale):
 // - CCMSG_VERSION_OVERRIDE: 旧 version の実バイナリを別途用意しなくても
@@ -25,7 +27,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION, resolvePaths } from "@ccmsg/protocol";
+import { VERSION, readRequest, resolvePaths } from "@ccmsg/protocol";
 import { ensureDaemon } from "../src/client.ts";
 import {
   connect,
@@ -171,6 +173,56 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
       expect(newPid).not.toBe(oldPid);
       expect(pong.pid).toBe(newPid!);
 
+      client.close();
+    },
+    T,
+  );
+
+  test(
+    "hello 応答に protocol も request_id も無い旧 daemon も、hello を読んで入れ替える",
+    async () => {
+      // 「何を保証するか」: wire の世代 (protocol) を名乗らない daemon の hello 応答は
+      // 世代 UNANNOUNCED_PROTOCOL_VERSION の応答として読める。読めなければ
+      // ensureDaemon は version の比較に届かず、旧 daemon を入れ替えられない。
+      // そういう daemon の実バイナリは無いので、hello にその形で答え、shutdown で
+      // 居なくなる UDS の相手で代える。
+      const shutdownReasons: Array<string | undefined> = [];
+      const oldDaemon = Bun.listen<undefined>({
+        unix: env.sock,
+        socket: {
+          data(socket, chunk) {
+            for (const line of new TextDecoder().decode(chunk).split("\n")) {
+              if (line.trim() === "") continue;
+              const read = readRequest(line);
+              if (read.kind !== "request") continue;
+              if (read.request.op === "hello") {
+                socket.write(`${JSON.stringify({ ok: true, version: OLD_VERSION })}\n`);
+              } else if (read.request.op === "shutdown") {
+                shutdownReasons.push(read.request.reason);
+                oldDaemon.stop(true);
+                fs.rmSync(env.sock, { force: true });
+              }
+            }
+          },
+          open() {},
+          close() {},
+          error() {},
+        },
+      });
+
+      const paths = resolvePaths();
+      const client = await ensureDaemon(paths, {
+        role: "session",
+        sid: "5a000005-0000-4000-8000-000000000000",
+        repo: "r",
+        ws: "w",
+        cwd: "/tmp",
+      });
+
+      expect(shutdownReasons).toEqual(["upgrade"]);
+      const pong = await client.request({ op: "ping" });
+      if (!pong.ok) throw new Error(pong.error.msg);
+      expect(pong.version).toBe(VERSION);
       client.close();
     },
     T,

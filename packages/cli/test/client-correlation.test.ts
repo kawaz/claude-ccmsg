@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, expect, test } from "bun:test";
-import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import { Client, helloRequest } from "../src/client.ts";
 
 let cleanup: Array<() => void> = [];
@@ -72,6 +72,20 @@ test("a reply with no request_id settles the oldest request", async () => {
   const sock = await fakeDaemon(() => [refusal]);
   const client = await Client.connect(sock);
   expect(await client.request({ op: "hello", role: "user" })).toEqual(refusal);
+  client.close();
+});
+
+test("a hello reply with no request_id and no protocol is read, so a pre-correlation daemon can still be talked to", async () => {
+  // This is the version-mismatch path: ensureDaemon has to read the version in
+  // the hello reply of an older daemon before it can decide to replace it, and
+  // that daemon echoes no request_id and announces no generation.
+  const sock = await fakeDaemon(() => [{ ok: true, version: "0.0.1" }]);
+  const client = await Client.connect(sock);
+  expect(await client.request(helloRequest({ role: "user" }))).toEqual({
+    ok: true,
+    version: "0.0.1",
+    protocol: UNANNOUNCED_PROTOCOL_VERSION,
+  });
   client.close();
 });
 
