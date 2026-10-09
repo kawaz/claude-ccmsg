@@ -258,12 +258,18 @@ async function stillCurrent($: Engine, state: ModuleState, request: QueuedSend):
 }
 
 /** Put the draft back if the composer still holds the filled text, which
- * means Enter never submitted it. True when it did so. */
+ * means Enter never submitted it. True only when the text is known to be out
+ * of the composer afterwards: the put-back fill went in and the composer no
+ * longer holds the text. A refused put-back (a dialog opened meanwhile) leaves
+ * the text there for a later Enter to send, which is not "not delivered".
+ * A draft that itself contains the text also reads false: the two cannot be
+ * told apart, and false is the side that does not risk a second copy. */
 async function putBackUnsent($: Engine, text: string, draft: string): Promise<boolean> {
   const box = await $.prompt.read();
   if (box.text !== text) return false;
-  await $.prompt.fill({ text: draft, mode: "replace" });
-  return true;
+  const put = await $.prompt.fill({ text: draft, mode: "replace" });
+  if (!put.isFilled) return false;
+  return !(await $.prompt.read()).text.includes(text);
 }
 
 /** One prompt.send, start to finish. */

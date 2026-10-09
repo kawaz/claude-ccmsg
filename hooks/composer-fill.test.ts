@@ -288,6 +288,23 @@ describe("handlePromptSend", () => {
     expect(fake.composer.text).toBe("keep");
   });
 
+  // Enter submitted nothing, and the put-back is refused: the text is still
+  // in the composer, so nothing decisive can be said.
+  test("Enter that submits nothing with a refused put-back: unconfirmed", async () => {
+    const fake = fakeEngine({ draft: "keep" });
+    const state = registerOn(fake);
+    const prompt = fake.$.prompt;
+    const fill = (input: Parameters<typeof prompt.fill>[0]) => prompt.fill(input);
+    let fills = 0;
+    fake.$.prompt = { ...prompt };
+    fake.$.prompt.fill = async (input) =>
+      ++fills === 1 ? fill(input) : { isFilled: false, refusal: "dialog", text: "x" };
+    const report = handlePromptSend(fake.$, state, queued(fake, state, "x"));
+    await expireAcceptWait(fake);
+    expect(await report).toEqual({ outcome: "unconfirmed" });
+    expect(fake.composer.text).toBe("x");
+  });
+
   test("hyoui failing with the text still in the composer: enter_failed", async () => {
     const fake = fakeEngine({ draft: "keep", onEnter: async () => 1 });
     const state = registerOn(fake);
@@ -469,6 +486,31 @@ describe("a session that changes its id (/clear)", () => {
     });
     expect(fake.runs).toEqual([]);
     expect(fake.composer.text).toBe("keep");
+  });
+
+  // The put-back is refused (a dialog opened after the first fill): the text
+  // stays in the composer, where a later Enter would send it, so the module
+  // cannot say it was not delivered and the daemon must not try another run.
+  test("a changed id with a refused put-back is unconfirmed, the text left in", async () => {
+    const fake = fakeEngine({ draft: "keep", onEnter: submitComposer });
+    const state = registerOn(fake);
+    const request = queued(fake, state, "for the old session");
+    const prompt = fake.$.prompt;
+    const fill = (input: Parameters<typeof prompt.fill>[0]) => prompt.fill(input);
+    let fills = 0;
+    fake.$.prompt = { ...prompt };
+    fake.$.prompt.fill = async (input) => {
+      fills += 1;
+      if (fills === 1) {
+        const filled = await fill(input);
+        fake.sid.value = NEW_SID;
+        return filled;
+      }
+      return { isFilled: false, refusal: "dialog", text: fake.composer.text };
+    };
+    expect(await handlePromptSend(fake.$, state, request)).toEqual({ outcome: "unconfirmed" });
+    expect(fake.runs).toEqual([]);
+    expect(fake.composer.text).toBe("for the old session");
   });
 
   // Enter went out, then the session moved on before the event: whatever it
