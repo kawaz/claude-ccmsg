@@ -695,8 +695,8 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
 }
 
 /** File the "this sid has an out-of-date ccmsg client" record the session list
- * renders. Called from the two places a hello is refused: no correlation
- * envelope, and a generation this daemon does not speak.
+ * renders. Called where a session's hello is refused for speaking a
+ * generation this daemon does not speak (refuseGeneration).
  *
  * A client that simply predates the `protocol` field is NOT stale — it speaks
  * `UNANNOUNCED_PROTOCOL_VERSION`, gets served, and never reaches here. Every
@@ -706,8 +706,8 @@ export function removeConn(daemon: Daemon, conn: Conn): void {
  * The record is overwritten rather than accumulated — a refused subscribe
  * retries every few seconds, and "still trying as of `last_seen`" is the whole
  * signal; a counter would only turn one stale process into a number that keeps
- * moving. Pushing `ev:"peers"` is the caller's job: both callers refuse the
- * hello, so neither reaches the registerSession that normally pushes. */
+ * moving. Pushing `ev:"peers"` is the caller's job: the caller refuses the
+ * hello, so it never reaches the registerSession that normally pushes. */
 function markStaleClient(daemon: Daemon, sid: string, client: ClientBuild): void {
   // An id that is not a session id's shape names no session to warn about.
   if (!isSessionIdShape(sid)) return;
