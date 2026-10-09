@@ -78,8 +78,10 @@ async function holdSession(sock: string, sid: string): Promise<() => void> {
 }
 
 const MINIMAL_HELP = `Commands:
-  reply <rNmN> <msg>                        返信用
-  post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
+  post <sid> <text>                         セッションへ直送 (宛先の sid は peers で探す)
+  reply <mid> --to <sid> <text>             直送への返信 (届いた封筒の返信行どおり)
+  reply <rNmN> <msg>                        room への返信用
+  post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
@@ -237,6 +239,9 @@ describe("ccmsg CLI end-to-end", () => {
       expect(help.out).toContain("--no-agent");
       expect(help.out).toContain("--agent <id|name>");
       expect(help.out).toContain("next-room <room>");
+      expect(help.out).toContain("post <sid> <text>");
+      expect(help.out).toContain("reply <mid> --to <sid> <text>");
+      expect(help.out).toContain("PushNotification");
       expect(help.out).toContain("daemon run [--foreground]");
       expect(help.out).toContain("stop <session-id>");
       expect(help.out).toContain("Command Options:");

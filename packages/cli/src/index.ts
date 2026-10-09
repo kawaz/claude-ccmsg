@@ -5,13 +5,20 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  DIRECT_DELIVERY_USER_SENDER,
   SESSION_INPUT_MODULE_REASONS,
   VERSION,
+  directAddressSid,
+  isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
   resolvePaths,
   sessionProjectDir,
+  type ErrorResponse,
   type Identity,
+  type MessageSendReason,
+  type MessageSendRequest,
+  type MessageSendResponse,
   type SessionInputModuleReason,
 } from "@ccmsg/protocol";
 import { runDaemon } from "@ccmsg/daemon/run";
@@ -321,6 +328,73 @@ async function runOnce(identity: Identity, req: Record<string, unknown>): Promis
   const res = await client.request<{ ok?: boolean } & Record<string, unknown>>(req);
   client.close();
   process.exit(output(res));
+}
+
+// --- direct send (DR-0036 §1) ---------------------------------------------
+
+/** A room id (`r<N>`): `post` with one is a room post, with anything else a
+ * direct send to a session. */
+const ROOM_ID_RE = /^r\d+$/;
+
+/** The sid a recipient argument names: a bare sid or the `ccmsg:<sid>` address.
+ * The person is no recipient (DR-0036 §3), so `user` is refused with where
+ * that traffic goes instead. */
+function directRecipient(address: string): string {
+  const sid = directAddressSid(address);
+  if (sid === DIRECT_DELIVERY_USER_SENDER) {
+    throw new Error(
+      "セッションから人へは送れない。人の入力は webui から届き、人に知らせるには PushNotification を使う",
+    );
+  }
+  if (!isSessionIdShape(sid)) {
+    throw new Error(
+      `宛先はセッション ID (ccmsg peers に出る sid) か ccmsg:<sid> で書く: ${address}`,
+    );
+  }
+  return sid;
+}
+
+/** What a sender's agent reads when its message did not arrive: why, and what
+ * it can do next. The message is held nowhere, so resending is its call. */
+const NOT_DELIVERED: Record<MessageSendReason, (to: string) => string> = {
+  session_not_found: (to) =>
+    `宛先のセッション ${to} を daemon が知らない (終了したか、sid の誤り)。ccmsg peers で今いるセッションの sid を確かめて送り直すか、送るのをやめる`,
+  no_config_dir: () =>
+    "daemon が宛先のセッションの config dir を知らないため、peer socket を探せない。送り直しても同じ結果になるので、送るのをやめる",
+  no_peer_socket: () =>
+    "宛先のセッションの peer socket が見つからない (セッションが終了した、別の config dir で動いている、または peer messaging に対応しない Claude Code)。ccmsg peers で宛先がまだ居るか確かめ、居なければ送るのをやめる",
+  unreachable: () =>
+    "宛先のセッションの peer socket に書き込めなかった (終了した直後か、応答しない)。少し置いて一度だけ送り直すか、送るのをやめる",
+  refused: () =>
+    "宛先のセッションが受け取りを拒否した。送り直しても拒否されうるので、時間を置いて送り直すか、送るのをやめる",
+};
+
+/** One message_send. A delivered message prints `{"delivered":true,"mid":…}`
+ * on stdout. Anything else is a line of text on stderr and a non-zero exit —
+ * never JSON carrying `ok`, which the timeline and dump read as the room CLI's
+ * answer and leave out (classifyCcmsgSendResult). */
+async function runDirectSend(
+  identity: Identity,
+  req: Omit<MessageSendRequest, "op">,
+): Promise<never> {
+  const client = await ensureDaemon(resolvePaths(), identity);
+  const res = await client.request<MessageSendResponse | ErrorResponse>({
+    op: "message_send",
+    ...req,
+  });
+  client.close();
+  if (!res.ok) {
+    process.stderr.write(`ccmsg: 送れなかった (${res.error.code}): ${res.error.msg}\n`);
+    process.exit(1);
+  }
+  if (res.outcome === "delivered") {
+    process.stdout.write(`${JSON.stringify({ delivered: true, mid: res.mid })}\n`);
+    process.exit(0);
+  }
+  process.stderr.write(
+    `ccmsg: 届かなかった (${res.reason})。メッセージは daemon に残らない。${NOT_DELIVERED[res.reason](req.to)}\n`,
+  );
+  process.exit(1);
 }
 
 // --- sidecar ---------------------------------------------------------------
@@ -770,8 +844,10 @@ function handleDaemon(positionals: string[], opts: Record<string, string | boole
 
 function printHelp(): void {
   process.stdout.write(`Commands:
-  reply <rNmN> <msg>                        返信用
-  post <room> [--to <aN[,aN...]>] <msg>     新規メッセージ用
+  post <sid> <text>                         セッションへ直送 (宛先の sid は peers で探す)
+  reply <mid> --to <sid> <text>             直送への返信 (届いた封筒の返信行どおり)
+  reply <rNmN> <msg>                        room への返信用
+  post <room> [--to <aN[,aN...]>] <msg>     room への新規メッセージ用
   read <rNmN[,mN...]>                       メッセージ全文取得
   dump <session-id> [--since <ts>]          セッション会話を圧縮 JSONL/text で回収
   peers [cwd(partial)]                      セッション一覧取得
@@ -792,9 +868,17 @@ Usage:
   ccmsg <command> [args] [options]
 
 Commands:
+  post <sid> <text>            Send a message straight to one session, no room.
+                               <sid> is a session id as "peers" lists it, or
+                               ccmsg:<sid>. Prints {"delivered":true,"mid":...};
+                               a message that did not arrive exits non-zero with
+                               why, and is neither kept nor retried
   post <room> <msg>            Post a message to a room (--to to filter delivery)
-  reply <rNmN> <msg>           Reply to a received message; the daemon builds
-                               targets
+  reply <mid> --to <sid> <text>
+                               Answer a direct message: run the reply line of
+                               the envelope it arrived in as it is
+  reply <rNmN> <msg>           Reply to a received room message; the daemon
+                               builds targets
   create-room [<title>]        Open a room with peers (--members, --msg, --title
                                or positional <title>; --title wins when both given,
                                --exclude-self to keep the caller out of the room,
@@ -858,8 +942,9 @@ Commands:
                                Live "subscribe" clients reattach on their own
 
 Command Options:
-  --to <ids>                   post: deliver only to these agent member id(s) + sender,
-                               comma-separated (e.g. a2,a3); User delivery stays implicit
+  --to <ids>                   post <room>: deliver only to these agent member id(s) +
+                               sender, comma-separated (e.g. a2,a3); User delivery stays
+                               implicit. reply <mid>: the session the answer goes to
   --members <sids>             create-room: participant sids, comma-separated
                                (do NOT pass 'u1' — the User admin is always implicit)
   --exclude-self               create-room: don't auto-add the caller session as a
@@ -907,7 +992,7 @@ Global Options:
   --version                    Print the ccmsg version and exit
 
 Notes:
-  Write ops (post, create-room, next-room, leave, notify) require a session
+  Write ops (post, reply, create-room, next-room, leave, notify) require a session
   identity (CCMSG_SID / CLAUDE_CODE_SESSION_ID / --as-session). Without one the
   CLI exits with a non-zero status rather than posting as the User (u1). The
   User admin identity is issued by the webui backend only; the CLI cannot act
@@ -915,6 +1000,8 @@ Notes:
   warning), giving kawaz a plain-terminal observation path until the webui.
   A 1on1 room (where say records) is read-only: post, reply and next-room
   into it are refused; use a normal room instead.
+  No command sends to the person: their input reaches a session from the
+  webui, and a session tells them something with PushNotification.
 
 Environment Variables:
   CCMSG_STATE_DIR              Override runtime dir (sock/lock/pid/log)
@@ -1020,8 +1107,19 @@ async function main(): Promise<void> {
 
   switch (cmd) {
     case "post": {
-      const usage = "ccmsg post <room> <msg> [--to <ids>]";
-      const room = requireArg(args[0], "room", usage);
+      const usage = "ccmsg post <sid> <text>  |  ccmsg post <room> <msg> [--to <ids>]";
+      const target = requireArg(args[0], "sid|room", usage);
+      if (!ROOM_ID_RE.test(target)) {
+        const to = directRecipient(target);
+        const text = requireArg(args[1], "text", usage);
+        if (opts.to !== undefined) {
+          throw new Error(
+            "--to は room への post の配信先の指定で、セッションへの直送では使わない",
+          );
+        }
+        await runDirectSend(identity, { to, text });
+      }
+      const room = target;
       const msg = requireArg(args[1], "msg", usage);
       const to = parseIdList(str(opts, "to"));
       await runOnce(identity, { op: "post", room, msg, ...(to ? { to } : {}) });
@@ -1030,13 +1128,23 @@ async function main(): Promise<void> {
     case "reply": {
       // DR-0017 §2.1: 返信先 msg (rNmN) を指すだけで、宛先 (to) は daemon が
       // 元 msg から構成する — 受信 event の reply_via が指す target を渡す。
-      const usage = "ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
-      const ref = requireArg(args[0], "rNmN", usage);
+      const usage =
+        "ccmsg reply <mid> --to <sid> <text>  |  ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
+      const ref = requireArg(args[0], "mid", usage);
       const msg = requireArg(args[1], "msg", usage);
+      if (isDirectMid(ref)) {
+        const address = str(opts, "to");
+        if (address === undefined) {
+          throw new Error(
+            "reply <mid> には --to <送り主の sid> が要る (届いた封筒の返信行をそのまま実行する)。人へは返信しない: 人に知らせるには PushNotification を使う",
+          );
+        }
+        await runDirectSend(identity, { to: directRecipient(address), text: msg, reply_to: ref });
+      }
       const m = ref.match(/^(r\d+)m(\d+)$/);
       if (!m) {
         process.stderr.write(
-          `invalid reply target "${ref}" — expected r<N>m<M> (e.g. r17m16)\nusage: ${usage}\n`,
+          `invalid reply target "${ref}" — expected <instance id>/<n> (a direct message, with --to) or r<N>m<M> (a room message, e.g. r17m16)\nusage: ${usage}\n`,
         );
         process.exit(1);
       }
