@@ -64,12 +64,19 @@ function failureOf(issues: readonly v.BaseIssue<unknown>[]): ParseFailure {
 }
 
 /** `input` read with `schema`. The one function that takes an `unknown`: the
- * boundary itself. */
+ * boundary itself. `firstIssue` stops at the first thing wrong, for a
+ * boundary whose sender's value can hold any number of wrong parts: the
+ * failure then stays one issue however large the value is. */
 export function parseWith<S extends v.GenericSchema>(
   schema: S,
   input: unknown,
+  options: { readonly firstIssue?: boolean } = {},
 ): Parsed<v.InferOutput<S>> {
-  const read = v.safeParse(schema, input);
+  const read = v.safeParse(
+    schema,
+    input,
+    options.firstIssue === true ? { abortEarly: true, abortPipeEarly: true } : undefined,
+  );
   return read.success
     ? { ok: true, value: read.output }
     : { ok: false, failure: failureOf(read.issues) };

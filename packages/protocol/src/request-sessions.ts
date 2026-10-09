@@ -103,6 +103,22 @@ export const DirTreeRequestSchema = v.object({
 });
 export type DirTreeRequest = v.InferOutput<typeof DirTreeRequestSchema>;
 
+/** `session_launch` params: every name the request sent, with its value.
+ * `__proto__`, `constructor` and `prototype` are shell identifiers a template
+ * may declare, and an object schema leaves those keys out, so the params are
+ * read as their own entries and kept as such. The object they are kept in
+ * still has a prototype: look a name up with `Object.hasOwn` or through a
+ * Map, never with a plain index that would find an inherited member. */
+const LaunchParamsSchema = v.pipe(
+  v.custom<Readonly<Record<string, unknown>>>(
+    (input) => typeof input === "object" && input !== null && !Array.isArray(input),
+    "Expected an object of parameter values",
+  ),
+  v.transform((params) => Object.entries(params)),
+  v.array(v.tuple([v.string(), v.string()])),
+  v.transform((entries) => Object.fromEntries(entries)),
+);
+
 /** Session launch request (DR-0018 §3.2, user role only). The daemon validates
  * the opaque values, builds env/argv, and executes the configured command.
  *
@@ -124,7 +140,7 @@ export const SessionLaunchRequestSchema = v.object({
    * bug worth surfacing). CWD belongs in `cwd`, not here. Values are opaque
    * strings — they travel as environment carriers, never interpolated into
    * shell text, so no value can inject shell syntax. */
-  params: v.record(v.string(), v.string()),
+  params: LaunchParamsSchema,
   /** Optional user-supplied command template override (DR-0018 §3.2).
    * When absent, the daemon uses the administrator-configured
    * `session_launcher.command` verbatim. When present, it must be a non-empty

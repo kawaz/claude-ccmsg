@@ -137,7 +137,7 @@ export function validateSessionLaunch(
   // The user-role gate is enforced upstream in server.ts's session_launch
   // handler — session role never reaches this override at all.
   if (req.command !== undefined) {
-    if (typeof req.command !== "string" || req.command === "") {
+    if (req.command === "") {
       return {
         ok: false,
         code: ErrorCode.invalid_args,
@@ -167,16 +167,11 @@ export function validateSessionLaunch(
   // a valid `claude` invocation). What IS checked is that every value belongs
   // to a parameter this template declares — a value nothing will read means
   // the client and the config disagree about what the form is.
-  const params = req.params ?? {};
-  if (!isPlainObject(params)) {
-    return {
-      ok: false,
-      code: ErrorCode.invalid_args,
-      msg: "session_launch params must be an object",
-    };
-  }
+  // The request's values by name, as a Map: a name is found only if the
+  // request sent it, never as a member every object inherits (`constructor`).
+  const given = new Map(Object.entries(req.params));
   const declared = new Map(template.params.map((p) => [p.name, p.default]));
-  for (const [name, value] of Object.entries(params)) {
+  for (const name of given.keys()) {
     if (name === LAUNCHER_CWD_PARAM) {
       return {
         ok: false,
@@ -191,13 +186,6 @@ export function validateSessionLaunch(
         msg: `session_launch params has an undeclared parameter for template ${template.name}: ${name}`,
       };
     }
-    if (typeof value !== "string") {
-      return {
-        ok: false,
-        code: ErrorCode.invalid_args,
-        msg: `session_launch params.${name} must be a string`,
-      };
-    }
   }
   const command = req.command ?? template.command;
 
@@ -207,7 +195,7 @@ export function validateSessionLaunch(
   // it, so the command and the spawn always see the same directory.
   const env: Record<string, string> = {};
   for (const { name, default: fallback } of template.params) {
-    const value = name === LAUNCHER_CWD_PARAM ? cwd.data.realPath : (params[name] ?? fallback);
+    const value = name === LAUNCHER_CWD_PARAM ? cwd.data.realPath : (given.get(name) ?? fallback);
     env[launchVarCarrier(name)] = value;
   }
   return {
@@ -224,10 +212,6 @@ export function validateSessionLaunch(
     cleanEnv: cfg.clean_env ?? [],
     keepEnv: cfg.keep_env ?? [],
   };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Compile one clean_env wildcard pattern (DR-0018 §3.1 addendum 2026-07-18)

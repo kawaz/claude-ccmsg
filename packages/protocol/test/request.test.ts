@@ -9,6 +9,7 @@ import {
   type RequestOp,
   type RequestRead,
 } from "../src/request.ts";
+import { PROTOCOL_VERSION } from "../src/version.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
@@ -24,7 +25,14 @@ interface OpSamples<Op extends RequestOp> {
 
 const SAMPLES: { readonly [Op in RequestOp]: OpSamples<Op> } = {
   hello: {
-    ok: { op: "hello", role: "session", sid: SID, cwd: "/w", protocol: 3, client_version: "1" },
+    ok: {
+      op: "hello",
+      role: "session",
+      sid: SID,
+      cwd: "/w",
+      protocol: PROTOCOL_VERSION,
+      client_version: "1",
+    },
     bad: [{ op: "hello" }, { op: "hello", role: "admin" }, { op: "hello", role: "user", ua: 1 }],
   },
   post: {
@@ -406,7 +414,7 @@ describe("readRequest: a line that is not a request says the first thing it is n
       ok: false,
       reason: "no_request_id",
       op: "hello",
-      hello: { op: "hello", role: "session", sid: SID, client_version: "0.1" },
+      hello: { role: "session", sid: SID, client_version: "0.1" },
     });
   });
 
@@ -422,7 +430,7 @@ describe("readRequest: a line that is not a request says the first thing it is n
   test("the fields an op refuses are named in the failure", () => {
     const refused = read({ op: "translate", texts: ["ok", 42] });
     expect(refused.ok).toBe(false);
-    if (refused.ok) return;
+    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
     expect(refused.failure.summary).toBe("texts.1: Invalid type: Expected string but received 42");
   });
 });
@@ -440,7 +448,7 @@ describe("readRequest: the forms beside each op's type", () => {
   test("create_room says where a 1on1 room comes from", () => {
     const refused = read({ op: "create_room", members: [SID], kind: "1on1" });
     expect(refused.ok).toBe(false);
-    if (refused.ok) return;
+    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
     expect(refused.failure.summary).toBe(
       "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
     );
@@ -477,6 +485,56 @@ describe("readRequest: the forms beside each op's type", () => {
     expect(read({ op: "fs_stat_batch", sid: SID, paths: ["/a", 3, null, {}] })).toEqual({
       ok: true,
       request: { op: "fs_stat_batch", sid: SID, paths: ["/a", null, null, null], request_id: "q1" },
+    });
+  });
+});
+
+describe("readRequest: what a sender's value cannot do", () => {
+  // An object schema leaves out these keys; they are shell identifiers a
+  // launcher template may declare, so params keeps them as its own entries.
+  test("session_launch keeps params named __proto__ / constructor / prototype", () => {
+    const read = readRequest(
+      '{"op":"session_launch","request_id":"q","cwd":"/w","params":{"__proto__":"a","constructor":"b","prototype":"c"}}',
+    );
+    if (!read.ok || read.request.op !== "session_launch")
+      throw new Error("expected a session_launch");
+    const params = read.request.params;
+    expect(Object.entries(params)).toEqual([
+      ["__proto__", "a"],
+      ["constructor", "b"],
+      ["prototype", "c"],
+    ]);
+    expect(Object.hasOwn(params, "__proto__")).toBe(true);
+  });
+
+  test("session_launch refuses a parameter value that is not a string", () => {
+    expect(
+      readRequest('{"op":"session_launch","request_id":"q","cwd":"/w","params":{"constructor":7}}'),
+    ).toMatchObject({ ok: false, reason: "invalid_args" });
+  });
+
+  // However many parts of a value are wrong, the failure names one: its size
+  // does not grow with the value's.
+  test("a value with many wrong parts fails with one issue", () => {
+    const refused = read({ op: "translate", texts: Array.from({ length: 10_000 }, (_, i) => i) });
+    if (refused.ok || refused.reason !== "invalid_args") throw new Error("expected invalid_args");
+    expect(refused.failure.issues).toHaveLength(1);
+    expect(refused.failure.summary).toBe("texts.0: Invalid type: Expected string but received 0");
+  });
+
+  // The generation is read before the rest of a hello, whose shape is its
+  // generation's: a client of another one is told which to run.
+  test("a hello of another generation is told so before its fields are read", () => {
+    expect(read({ op: "hello", role: "observer", protocol: 999, cwd: ["/w"] })).toEqual({
+      ok: false,
+      reason: "other_generation",
+      requestId: "q1",
+      hello: { protocol: 999 },
+      generation: 999,
+    });
+    expect(read({ op: "hello", role: "session", sid: SID, protocol: 999 })).toMatchObject({
+      reason: "other_generation",
+      hello: { role: "session", sid: SID, protocol: 999 },
     });
   });
 });

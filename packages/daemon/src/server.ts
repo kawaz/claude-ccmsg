@@ -13,7 +13,6 @@ import {
   LLM_STATS_DAYS_MIN,
   VERSION,
   PROTOCOL_VERSION,
-  UNANNOUNCED_PROTOCOL_VERSION,
   isSessionIdShape,
   readRequest,
   resolvePaths,
@@ -29,6 +28,7 @@ import {
   type NotifyFrom,
   type Paths,
   type PeerInfo,
+  type HelloClaims,
   type HelloRequest,
   type Request,
   type RequestOp,
@@ -714,12 +714,6 @@ function markStaleClient(daemon: Daemon, sid: string, client: ClientBuild): void
   });
 }
 
-/** The generation a hello speaks: what it announced, or — for a client from
- * before the field existed — the generation that field was introduced in. */
-function protocolOf(client: ClientBuild): number {
-  return client.protocol ?? UNANNOUNCED_PROTOCOL_VERSION;
-}
-
 /** A hello's diagnostic string as it may appear in the log, or undefined when
  * it says nothing usable. These fields arrive verbatim from a browser, so they
  * are held to the shape the webui sends (a short word or two joined by `/`)
@@ -729,6 +723,44 @@ function logToken(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.slice(0, 40);
   return /^[A-Za-z0-9._/-]+$/.test(trimmed) ? trimmed : undefined;
+}
+
+/** A hello made of what a hello of any generation claims (HelloClaims), so
+ * the transport reads it as it reads a hello it serves (the WebSocket pins it
+ * to the user role, dropping its sid). A hello that names no role is taken
+ * at its sid alone. */
+function claimedHello(claims: HelloClaims): HelloRequest {
+  return {
+    op: "hello",
+    role: claims.role ?? "session",
+    ...(claims.sid !== undefined ? { sid: claims.sid } : {}),
+    ...(claims.client_version !== undefined ? { client_version: claims.client_version } : {}),
+    ...(claims.protocol !== undefined ? { protocol: claims.protocol } : {}),
+  };
+}
+
+/** Refuse a hello of another generation. A client speaking another
+ * generation is refused, not adapted to: ccmsg evolves per host, all at once
+ * (DR-0002 §4). Announcing no generation is not a way out of this check — it
+ * means generation UNANNOUNCED_PROTOCOL_VERSION and is compared like any
+ * other value. The rest of the hello is not read: its shape is its
+ * generation's, and the answer it needs is which generation to run. A
+ * session's hello files the stale client against its sid. */
+function refuseGeneration(
+  daemon: Daemon,
+  conn: Conn,
+  hello: HelloRequest,
+  generation: number,
+): void {
+  if (hello.role === "session" && hello.sid) {
+    markStaleClient(daemon, hello.sid, readClientBuild(hello));
+    maybeBroadcastPeers(daemon);
+  }
+  sendErr(
+    conn,
+    ErrorCode.bad_request,
+    `client speaks protocol ${generation}, this daemon speaks ${PROTOCOL_VERSION}`,
+  );
 }
 
 /** What a hello claims about its own build. An empty version names none. */
@@ -1621,7 +1653,7 @@ async function handleOneRequest(
     // never registers, so nothing in the session list ever mentions it. File
     // it against the sid its hello claimed, which is the only thing here that
     // ties the failing process back to a session kawaz can act on.
-    const hello = read.hello === undefined ? undefined : readHello(read.hello);
+    const hello = read.hello === undefined ? undefined : readHello(claimedHello(read.hello));
     if (hello?.sid) {
       markStaleClient(daemon, hello.sid, readClientBuild(hello));
       maybeBroadcastPeers(daemon);
@@ -1631,6 +1663,10 @@ async function handleOneRequest(
   }
   const requestId = read.ok ? read.request.request_id : read.requestId;
   await activeRequest.run({ conn, requestId }, async () => {
+    if (!read.ok && read.reason === "other_generation") {
+      refuseGeneration(daemon, conn, readHello(claimedHello(read.hello)), read.generation);
+      return;
+    }
     if (!read.ok) {
       refuseRequest(daemon, conn, read);
       return;
@@ -1689,33 +1725,28 @@ function refuseRequest(
   }
   const id = conn.identity;
   const from = id === null ? "a connection without hello" : id.role === "user" ? "user" : id.sid;
-  daemon.log.warn(`${read.op} from ${from} refused: ${read.failure.summary}`);
-  sendErr(conn, ErrorCode.invalid_args, `op '${read.op}': ${read.failure.summary}`);
+  const why = clipRefusal(read.failure.summary);
+  daemon.log.warn(`${read.op} from ${from} refused: ${why}`);
+  sendErr(conn, ErrorCode.invalid_args, `op '${read.op}': ${why}`);
+}
+
+/** The longest account of a refused request's fields that goes into a reply
+ * or the log. A failure quotes the value it refused, and that value is the
+ * sender's: as large as the sender likes. */
+const REFUSAL_MAX_CHARS = 400;
+
+function clipRefusal(summary: string): string {
+  return summary.length <= REFUSAL_MAX_CHARS
+    ? summary
+    : `${summary.slice(0, REFUSAL_MAX_CHARS)}… (${summary.length - REFUSAL_MAX_CHARS} more characters)`;
 }
 
 async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void> {
   switch (req.op) {
     case "hello": {
+      // A hello of another generation never reaches here: it is answered
+      // before its fields are read (refuseGeneration).
       const client = readClientBuild(req);
-      // A client speaking another generation is refused, not adapted to: ccmsg
-      // evolves per host, all at once (DR-0002 §4). Announcing no generation is
-      // not a way out of this check — it means generation
-      // UNANNOUNCED_PROTOCOL_VERSION and is compared like any other value —
-      // it just happens to be the current one while that constant and
-      // PROTOCOL_VERSION agree.
-      const generation = protocolOf(client);
-      if (generation !== PROTOCOL_VERSION) {
-        if (req.role === "session" && req.sid) {
-          markStaleClient(daemon, req.sid, client);
-          maybeBroadcastPeers(daemon);
-        }
-        sendErr(
-          conn,
-          ErrorCode.bad_request,
-          `client speaks protocol ${generation}, this daemon speaks ${PROTOCOL_VERSION}`,
-        );
-        return;
-      }
       // Served, so whatever this sid was flagged for is over. registerSession's
       // own push below carries the cleared warning out.
       if (req.role === "session" && req.sid) daemon.staleClients.delete(req.sid);

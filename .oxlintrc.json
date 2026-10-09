@@ -32,9 +32,12 @@
         "packages/protocol/test/request.test.ts",
         "packages/daemon/src/direct-send.ts",
         "packages/daemon/src/http.ts",
+        "packages/daemon/src/log.ts",
         "packages/daemon/src/server.ts",
+        "packages/daemon/src/session-launch.ts",
         "packages/daemon/src/session-input.ts",
         "packages/daemon/src/sidecar-call.ts",
+        "packages/daemon/test/log.test.ts",
         "packages/daemon/test/sidecar-call.test.ts"
       ],
       "rules": {

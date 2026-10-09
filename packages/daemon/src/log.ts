@@ -15,6 +15,24 @@ const ROTATE_BYTES = 10 * 1024 * 1024;
  * loop. TraceWriter, whose lines are diagnostics that may be lost, takes the
  * other side of this tradeoff.
  */
+/** One log call is one line: a line break or other control character in the
+ * message is written as its escape. Messages carry text from outside the
+ * daemon (a request's field, a client's error), and a raw line break in one
+ * would let that text stand as a log line of its own. */
+export function oneLine(msg: string): string {
+  let out = "";
+  for (const c of msg) {
+    const code = c.charCodeAt(0);
+    const control = code < 0x20 || code === 0x7f || code === 0x2028 || code === 0x2029;
+    if (!control) out += c;
+    else if (c === "\n") out += "\\n";
+    else if (c === "\r") out += "\\r";
+    else if (c === "\t") out += "\\t";
+    else out += `\\u${code.toString(16).padStart(4, "0")}`;
+  }
+  return out;
+}
+
 export class Logger {
   private path: string;
   private echoStderr: boolean;
@@ -27,7 +45,7 @@ export class Logger {
   }
 
   log(level: string, msg: string): void {
-    const line = `${new Date().toISOString()} [${level}] ${msg}\n`;
+    const line = `${new Date().toISOString()} [${level}] ${oneLine(msg)}\n`;
     try {
       this.rotateIfNeeded();
       const fd = this.open();

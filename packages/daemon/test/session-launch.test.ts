@@ -4,12 +4,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { LauncherParam, SessionLaunchRequest, SessionLauncherConfig } from "@ccmsg/protocol";
+import {
+  readRequest,
+  type LauncherParam,
+  type SessionLaunchRequest,
+  type SessionLauncherConfig,
+} from "@ccmsg/protocol";
 import {
   buildLaunchEnv,
   executeSessionLaunch,
   launchPrecode,
   launchShellProgram,
+  launchVarCarrier,
   shellArgv,
   validateSessionLaunch,
 } from "../src/session-launch.ts";
@@ -211,15 +217,35 @@ describe("session launch validation", () => {
     ).toMatchObject({ ok: false, code: "invalid_args" });
   });
 
-  // Wrong wire types are rejected at the daemon boundary rather than reaching
-  // spawn (where a non-string would stringify into something nobody asked for).
-  test("a non-string parameter value is invalid_args", () => {
-    expect(
-      validateSessionLaunch(config(root), {
-        ...request(cwd),
-        params: { MODEL: 7 as unknown as string },
-      }),
-    ).toMatchObject({ ok: false, code: "invalid_args" });
+  // A parameter may be named like a member every object inherits. Each one
+  // the request leaves out takes its default, and each one it sends takes
+  // that value — never the inherited member (a function, not a string).
+  test("parameters named __proto__ / constructor / prototype take their own values", () => {
+    const names = ["__proto__", "constructor", "prototype"];
+    const cfg: SessionLauncherConfig = {
+      ...config(root),
+      templates: [
+        {
+          name: "default",
+          command: "true",
+          shell: "bash",
+          params: [
+            { name: "CWD", default: "" },
+            ...names.map((name) => ({ name, default: `d-${name}` })),
+          ],
+        },
+      ],
+    };
+    const read = readRequest(
+      `{"op":"session_launch","request_id":"q","cwd":${JSON.stringify(cwd)},"params":{"__proto__":"v1","constructor":"v2"}}`,
+    );
+    if (!read.ok || read.request.op !== "session_launch")
+      throw new Error("expected a session_launch");
+    const validation = validateSessionLaunch(cfg, read.request);
+    if (!validation.ok) throw new Error(validation.msg);
+    expect(validation.env[launchVarCarrier("__proto__")]).toBe("v1");
+    expect(validation.env[launchVarCarrier("constructor")]).toBe("v2");
+    expect(validation.env[launchVarCarrier("prototype")]).toBe("d-prototype");
   });
 
   // DR-0018 §3.2 addendum 2026-07-17: user role may override the command

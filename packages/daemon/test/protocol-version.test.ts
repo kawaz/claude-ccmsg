@@ -122,6 +122,33 @@ describe("protocol version handshake", () => {
     T,
   );
 
+  // The generation is read before the rest of the hello: a client of another
+  // generation may shape its hello differently, and what it needs to hear is
+  // which generation to run, not which field it got wrong.
+  test(
+    "a hello of another generation is told so even when its other fields have another shape",
+    async () => {
+      await withDaemon(async (ctx) => {
+        const old = await connect(ctx.sock);
+        const err = await old.request<{ ok: boolean; error: { code: string; msg: string } }>({
+          op: "hello",
+          role: "observer",
+          sid: SID_S2,
+          cwd: ["/tmp"],
+          client_version: "0.1.0",
+          protocol: PROTOCOL_VERSION + 1,
+        });
+        expect(err.ok).toBe(false);
+        expect(err.error).toEqual({
+          code: "bad_request",
+          msg: `client speaks protocol ${PROTOCOL_VERSION + 1}, this daemon speaks ${PROTOCOL_VERSION}`,
+        });
+        old.close();
+      });
+    },
+    T,
+  );
+
   test(
     "a hello with no request_id is still refused, and its sid is flagged",
     async () => {

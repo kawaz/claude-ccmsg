@@ -19,7 +19,8 @@
 // field it does not read can do nothing.
 import * as v from "valibot";
 import { JsonTextSchema, type ParseFailure, parseWith } from "./parse.ts";
-import { HelloRequestSchema, type HelloRequest } from "./request-sessions.ts";
+import { HelloRequestSchema } from "./request-sessions.ts";
+import { PROTOCOL_VERSION, UNANNOUNCED_PROTOCOL_VERSION } from "./version.ts";
 import {
   ArchiveRoomRequestSchema,
   CreateRoomRequestSchema,
@@ -200,17 +201,41 @@ export type RequestInput = RequestBodyOf<Request>;
 
 // --- reading a request line -------------------------------------------------
 
+/** What a hello claims about the client behind it, read so that a hello of
+ * any generation yields it: each claim is its value when it has the type this
+ * generation gives it, and absent otherwise. It is what the daemon needs to
+ * answer a hello it will not serve — which generation the client speaks, and
+ * which session's client that is — before it knows the rest of the hello has
+ * this generation's shape. */
+export const HelloClaimsSchema = v.object({
+  role: v.fallback(v.optional(v.picklist(["session", "user"])), undefined),
+  sid: v.fallback(v.optional(v.string()), undefined),
+  client_version: v.fallback(v.optional(v.string()), undefined),
+  protocol: v.fallback(v.optional(v.number()), undefined),
+});
+export type HelloClaims = v.InferOutput<typeof HelloClaimsSchema>;
+
+/** The generation a hello speaks: what it announced, or — for a client from
+ * before the field existed — the generation that field was introduced in. */
+export function helloGeneration(hello: HelloClaims): number {
+  return hello.protocol ?? UNANNOUNCED_PROTOCOL_VERSION;
+}
+
 /** One request line as the daemon reads it: the request, or why it cannot be
  * handled. A failure that names a request id can be answered as that
  * request's reply; one that names none can only be answered uncorrelated.
  *
  * - `not_json`: the line is not JSON
  * - `no_op`: the value names no op (not an object, or `op` is not a string)
- * - `no_request_id`: the request carries no id to answer under; `hello` is the
- *   request read as a hello, when it is one, so the daemon can tell which
+ * - `no_request_id`: the request carries no id to answer under; `hello` is
+ *   what it claims as a hello, when it is one, so the daemon can tell which
  *   session's client is too old to send one
  * - `unknown_op`: the op is none this daemon has
- * - `invalid_args`: the op's fields are not what it takes */
+ * - `other_generation`: a hello of a generation this daemon does not speak
+ *   (DR-0002 §4); the rest of it is not read, since its shape is that
+ *   generation's
+ * - `invalid_args`: the op's fields are not what it takes. The failure names
+ *   the first field that is not, however many are */
 export type RequestRead =
   | { readonly ok: true; readonly request: Request }
   | { readonly ok: false; readonly reason: "not_json"; readonly failure: ParseFailure }
@@ -219,7 +244,7 @@ export type RequestRead =
       readonly ok: false;
       readonly reason: "no_request_id";
       readonly op: string;
-      readonly hello: HelloRequest | undefined;
+      readonly hello: HelloClaims | undefined;
       readonly failure: ParseFailure;
     }
   | {
@@ -228,6 +253,13 @@ export type RequestRead =
       readonly requestId: string;
       readonly op: string;
       readonly failure: ParseFailure;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: "other_generation";
+      readonly requestId: string;
+      readonly hello: HelloClaims;
+      readonly generation: number;
     }
   | {
       readonly ok: false;
@@ -242,32 +274,38 @@ const KnownOpLineSchema = v.object({ op: v.picklist(REQUEST_OPS) });
 
 /** Read one request line. A line that is not a request says the first thing
  * it is not — JSON, then an op, then a request id, then an op this daemon
- * has, then that op's fields — which is also the order in which a reply can
- * say more: from the request id on, it is answered as that request's reply.
- * The JSON is decoded once, and the decoded value read against each schema in
- * turn. */
+ * has, then (for a hello) a generation it speaks, then that op's fields —
+ * which is also the order in which a reply can say more: from the request id
+ * on, it is answered as that request's reply. The JSON is decoded once, and
+ * the decoded value read against each schema in turn. A sender's value can
+ * hold any number of wrong parts, so each read stops at the first. */
 export function readRequest(line: string): RequestRead {
-  const json = parseWith(JsonTextSchema, line);
+  const firstIssue = { firstIssue: true } as const;
+  const json = parseWith(JsonTextSchema, line, firstIssue);
   if (!json.ok) return { ok: false, reason: "not_json", failure: json.failure };
   const decoded = json.value;
-  const named = parseWith(OpLineSchema, decoded);
+  const named = parseWith(OpLineSchema, decoded, firstIssue);
   if (!named.ok) return { ok: false, reason: "no_op", failure: named.failure };
   const { op } = named.value;
-  const envelope = parseWith(RequestEnvelopeSchema, decoded);
+  const claims = op === "hello" ? parseWith(HelloClaimsSchema, decoded, firstIssue) : undefined;
+  const hello = claims?.ok ? claims.value : undefined;
+  const envelope = parseWith(RequestEnvelopeSchema, decoded, firstIssue);
   if (!envelope.ok) {
-    const hello = parseWith(HelloRequestSchema, decoded);
-    return {
-      ok: false,
-      reason: "no_request_id",
-      op,
-      hello: hello.ok ? hello.value : undefined,
-      failure: envelope.failure,
-    };
+    return { ok: false, reason: "no_request_id", op, hello, failure: envelope.failure };
   }
   const requestId = envelope.value.request_id;
-  const known = parseWith(KnownOpLineSchema, decoded);
+  const known = parseWith(KnownOpLineSchema, decoded, firstIssue);
   if (!known.ok) return { ok: false, reason: "unknown_op", requestId, op, failure: known.failure };
-  const body = parseWith(RequestBodySchema, decoded);
+  if (hello !== undefined && helloGeneration(hello) !== PROTOCOL_VERSION) {
+    return {
+      ok: false,
+      reason: "other_generation",
+      requestId,
+      hello,
+      generation: helloGeneration(hello),
+    };
+  }
+  const body = parseWith(RequestBodySchema, decoded, firstIssue);
   if (!body.ok) {
     return {
       ok: false,
