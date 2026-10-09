@@ -135,11 +135,12 @@ export const KickRequestSchema = v.object({
 });
 export type KickRequest = Output<typeof KickRequestSchema>;
 
-/** A `since_seq` cursor: a seq is a finite, non-negative position. */
-const SinceSeqCursorSchema = v.pipe(v.number(), v.finite(), v.minValue(0));
+/** A replay cursor, a mid in `since` or a seq in `since_seq`: a finite,
+ * non-negative position (DR-0016 §2.5). */
+const CursorSchema = v.pipe(v.number(), v.finite(), v.minValue(0));
 
 /** `since_seq`: each room's last-seen seq, by room id. */
-export const SinceSeqSchema = v.record(v.string(), SinceSeqCursorSchema);
+export const SinceSeqSchema = v.record(v.string(), CursorSchema);
 export type SinceSeq = Output<typeof SinceSeqSchema>;
 
 /** `since_seq` as JSON text, as `ccmsg subscribe --since` and the webui's
@@ -151,7 +152,7 @@ export const SubscribeRequestSchema = v.object({
   /** per-room last-seen mid for delta replay (BBS model, DR-0003 §5). Retained
    * for old-client compat; a room present in `since_seq` uses that cursor
    * instead (DR-0016 §2.3). */
-  since: v.optional(v.record(v.string(), v.number())),
+  since: v.optional(v.record(v.string(), CursorSchema)),
   /** per-room last-seen seq for delta replay, spanning ALL event types
    * (DR-0016 §2.3) — supersedes `since` (mid, msg-only) for any room key it
    * covers. Do NOT derive this from a stored `since` value: seq >= mid always

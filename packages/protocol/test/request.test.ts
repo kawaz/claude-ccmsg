@@ -474,6 +474,18 @@ describe("readRequest: the forms beside each op's type", () => {
     );
   });
 
+  // A mid is a position like a seq: a negative one is refused under the
+  // request's id, not read as "no cursor".
+  test("a since cursor that is not a mid is refused under the request's id", () => {
+    expect(
+      readRequest(line({ op: "subscribe", request_id: "q1", since: { r1: -1 } })),
+    ).toMatchObject({
+      kind: "invalid_request",
+      frame: { op: "subscribe", request_id: "q1" },
+      failure: { issues: [{ path: "since.r1" }] },
+    });
+  });
+
   test("session_launch reads params as names with text values", () => {
     expect(read({ op: "session_launch", cwd: "/w", params: { MODEL: "m", EMPTY: "" } })).toEqual({
       ok: true,
