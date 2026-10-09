@@ -11,70 +11,28 @@
 // requests concurrently, and a slow one no longer delays the rest. Slow ops
 // (translate / session_launch / session_search) are ordinary requests whose
 // reply simply takes seconds to come back.
-// Classification rule: a frame with `ev` is a push; a frame with `ok` and no
-// `ev` is a reply; anything else is a persisted subscribe delivery.
+// Every frame is read once, by the wire's frame schema (readDaemonFrame): a
+// push or a delivered storage event, a reply (read as the answer to the op of
+// the request it names), or a line no schema reads, which is dropped.
 import type {
-  AgentsResponse,
-  AgentsStreamEvent,
-  ArchiveRoomResponse,
-  CreateRoomResponse,
-  DeliveredEvent,
-  DirTreeResponse,
+  DaemonFrame,
   ErrorResponse,
-  FsCreateResponse,
-  FsDeleteResponse,
-  FsFindResponse,
-  FsListResponse,
-  FsEditResponse,
-  SandboxGrantResponse,
-  SandboxRevokeResponse,
-  FsReadResponse,
-  FsStatBatchResponse,
-  FsWriteResponse,
-  HelloResponse,
-  InviteResponse,
-  KickResponse,
-  LlmRequestsStreamEvent,
-  LlmStatsResponse,
-  LlmStatusResponse,
-  LlmStatusStreamEvent,
-  LlmUsageResponse,
-  PeersResponse,
-  PeersStreamEvent,
-  PingResponse,
-  PostResponse,
-  ReadResponse,
-  RoomHistoryResponse,
+  ParseFailure,
+  ReplyOf,
   RequestInput,
-  Response,
-  RoomsResponse,
-  SessionEnvResponse,
-  SessionErrorsResponse,
-  SessionErrorsStreamEvent,
-  SessionInputResponse,
-  SessionKillResponse,
-  SessionRenameResponse,
-  SessionLaunchRequest,
-  SessionLaunchResponse,
-  SessionLauncherConfigResponse,
-  SessionSearchRequest,
-  ForkOriginResponse,
   SessionDumpFileRequest,
-  SessionDumpFileResponse,
-  SessionSearchResponse,
-  SessionStatusResponse,
-  SessionStatusStreamEvent,
-  SessionStatusSubscribeResponse,
-  SayReadResponse,
-  SessionStatusUnsubscribeResponse,
-  SetTitleResponse,
+  SessionLaunchRequest,
+  SessionSearchRequest,
+  SinceSeq,
   StreamEvent,
-  TranslateResponse,
-  TranscriptReadResponse,
-  TranscriptSubscribeResponse,
-  TranscriptUnsubscribeResponse,
 } from "@ccmsg/protocol";
-import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
+import {
+  parseWith,
+  PROTOCOL_VERSION,
+  readDaemonFrame,
+  SinceSeqTextSchema,
+  VERSION,
+} from "@ccmsg/protocol";
 import type { Action, AppState } from "./store.ts";
 import { readStorage, writeStorage } from "./storage.ts";
 import { mismatchOf, reactToHandshakeVersion } from "./version-guard.ts";
@@ -109,50 +67,72 @@ export interface WsRequestTimeouts {
  * `reload` / `back_forward` / `prerender`, or undefined where the browser
  * keeps no navigation entry (and under the test runner, which has none). */
 function navigationType(): string | undefined {
-  const entry = performance.getEntriesByType?.("navigation")?.[0] as { type?: string } | undefined;
-  return typeof entry?.type === "string" && entry.type !== "" ? entry.type : undefined;
+  const entry = performance.getEntriesByType?.("navigation")?.[0];
+  if (entry === undefined || !("type" in entry)) return undefined;
+  return typeof entry.type === "string" && entry.type !== "" ? entry.type : undefined;
 }
 
-function loadSince(): Record<string, number> {
+/** The stored cursor, or none when nothing is stored or what is stored is
+ * not one: a reconnect then resyncs in full, which is still correct. */
+function loadSince(): SinceSeq {
   const raw = readStorage(SINCE_KEY);
   if (!raw) return {};
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  const read = parseWith(SinceSeqTextSchema, raw);
+  return read.ok ? read.value : {};
 }
 
-function saveSince(since: Record<string, number>): void {
+function saveSince(since: SinceSeq): void {
   // storage unavailable (private mode, quota) — since-tracking degrades to
   // full resync on reconnect, which is still correct, just more backlog.
   writeStorage(SINCE_KEY, JSON.stringify(since));
 }
 
+type ReplyFrame = Extract<DaemonFrame, { kind: "reply" }>;
+
+/** A request waiting for its reply: `reply` reads the reply's frame as the
+ * answer to the request's op, `fail` settles it with an error the client made
+ * up instead. */
+interface PendingReply {
+  reply(frame: ReplyFrame): void;
+  fail(error: ErrorResponse): void;
+}
+
+/** What a request is answered with when its reply is not its op's answer: the
+ * reply cannot be used, and the caller handles it like any error. */
+function invalidReply(op: string, failure: ParseFailure): ErrorResponse {
+  return {
+    ok: false,
+    error: {
+      code: "invalid_reply",
+      msg: `the reply to ${op} is not its answer: ${failure.summary}`,
+    },
+  };
+}
+
 export interface WsHandle {
   connect(): void;
   close(): void;
-  post(room: string, msg: string, to?: string[]): Promise<PostResponse | ErrorResponse>;
+  post(room: string, msg: string, to?: string[]): Promise<ReplyOf<"post">>;
   /** Rename a room (set_title); the new title reaches all clients (incl. this
    * one) via the broadcast title event on the subscribe stream, not this
    * response — callers don't need to dispatch anything themselves. */
-  setTitle(room: string, title: string): Promise<SetTitleResponse | ErrorResponse>;
+  setTitle(room: string, title: string): Promise<ReplyOf<"set_title">>;
   /** Toggle a room's archived flag (DR-0012 archive_room). The new flag
    * reaches all clients (incl. this one) via the broadcast archive event on
    * the subscribe stream, not this response — same non-optimistic-update
    * convention as setTitle above. */
-  archiveRoom(room: string, archived: boolean): Promise<ArchiveRoomResponse | ErrorResponse>;
+  archiveRoom(room: string, archived: boolean): Promise<ReplyOf<"archive_room">>;
   /** Force-remove a member from a room (DR-0012 kick, admin User only). The
    * removal reaches all clients via the broadcast leave event on the
    * subscribe stream (same LeaveEvent shape a voluntary leave produces), not
    * this response. */
-  kick(room: string, id: string): Promise<KickResponse | ErrorResponse>;
+  kick(room: string, id: string): Promise<ReplyOf<"kick">>;
   /** Ack one `say` event as read (kawaz r244 m5-m6): the 既読 button on a
    * 📣 bubble. `seq` is the SayEvent's own seq. Like every other room
    * mutation here the update is non-optimistic — the `say_read` event comes
    * back on the subscribe stream and the store clears the unread entry from
    * there, so every open tab converges on the same badge. */
-  sayRead(room: string, seq: number): Promise<SayReadResponse | ErrorResponse>;
+  sayRead(room: string, seq: number): Promise<ReplyOf<"say_read">>;
   /** Create a room whose initial members (besides the always-implicit
    * User/u1) are `members` (U3: SessionView's "+ 新規 Room" passes a single
    * sid; the sidebar ROOMS "+ 新規" (RoomCreator.tsx) passes an explicit
@@ -162,43 +142,43 @@ export interface WsHandle {
     members: string[],
     title?: string,
     kind?: "broadcast",
-  ): Promise<CreateRoomResponse | ErrorResponse>;
-  peers(): Promise<PeersResponse | ErrorResponse>;
-  read(room: string, mids: string | number[]): Promise<ReadResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"create_room">>;
+  peers(): Promise<ReplyOf<"peers">>;
+  read(room: string, mids: string | number[]): Promise<ReplyOf<"read">>;
   /** Fetch one room's history (`op:"room_history"`). The events themselves come
    * back on the subscribe stream and fold into the store like any other
    * delivered event; this promise resolves once they have all arrived, which is
    * what RoomView's fetch effect flips the room's `history` flag on. Subscribe
    * no longer carries every room's backlog, so this is how an opened room gets
    * painted. */
-  roomHistory(room: string): Promise<RoomHistoryResponse | ErrorResponse>;
+  roomHistory(room: string): Promise<ReplyOf<"room_history">>;
   /** Add a connected session to an existing room (DR-0011 §1-4: SessionList's
    * drag-a-session-row-onto-the-chat gesture, handled in RoomView's drop
    * zone). Success reaches this room's member list via the broadcast member
    * event on the subscribe stream (same as any other member join), not this
    * response — the caller only needs `already` to decide whether to show a
    * soft "already a member" notice. */
-  invite(room: string, sid: string): Promise<InviteResponse | ErrorResponse>;
+  invite(room: string, sid: string): Promise<ReplyOf<"invite">>;
   /** List a directory under a connected session's cwd (DR-0008 fs_list, "" / absent = root). */
-  fsList(sid: string, path?: string): Promise<FsListResponse | ErrorResponse>;
+  fsList(sid: string, path?: string): Promise<ReplyOf<"fs_list">>;
   /** Read a file under a connected session's cwd (DR-0008 fs_read). */
-  fsRead(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  fsRead(sid: string, path: string): Promise<ReplyOf<"fs_read">>;
   /** Read one exact absolute path from the session's transcript-derived
    * external_files allowlist (DR-0024 fs_read_external). */
-  fsReadExternal(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  fsReadExternal(sid: string, path: string): Promise<ReplyOf<"fs_read_external">>;
   /** DR-0026: list a directory under one of the session's workspace_folders
    * (from session_status). Path is absolute; the daemon requires realpath to
    * be inside an allowlisted folder root or a descendant. */
-  fsListWorkspace(sid: string, path: string): Promise<FsListResponse | ErrorResponse>;
+  fsListWorkspace(sid: string, path: string): Promise<ReplyOf<"fs_list_workspace">>;
   /** DR-0026: read a file under one of the session's workspace_folders. Same
    * directory-prefix allowlist as fsListWorkspace. */
-  fsReadWorkspace(sid: string, path: string): Promise<FsReadResponse | ErrorResponse>;
+  fsReadWorkspace(sid: string, path: string): Promise<ReplyOf<"fs_read_workspace">>;
   /** Batch existence probe for the message-body path linkifier (kawaz r46
    * m55-m58). `paths` must be absolute; the daemon returns a parallel array
    * of `FsStatEntry | null` — non-null when a real regular file is reachable
    * under one of the three read-op authorization surfaces. See
    * `FsStatBatchRequest` in @ccmsg/protocol for the full contract. */
-  fsStatBatch(sid: string, paths: string[]): Promise<FsStatBatchResponse | ErrorResponse>;
+  fsStatBatch(sid: string, paths: string[]): Promise<ReplyOf<"fs_stat_batch">>;
   /** Recursive file-name search under one browsable root (Files pane's search
    * box). `query` is whitespace-separated words ANDed against each path with
    * `-word` excluding, case-insensitively (parseFileSearchQuery's grammar);
@@ -212,12 +192,12 @@ export interface WsHandle {
     root: string | undefined,
     query: string,
     respectGitignore: boolean,
-  ): Promise<FsFindResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"fs_find">>;
   /** Create a new UTF-8 text file under docs/inbox/ relative to a connected
    * session's cwd (DR-0019 fs_write), while remaining inside its containment
    * root. Never overwrites — an existing path replies `file_exists`, a path
    * outside cwd/docs/inbox/ replies `path_not_writable`. */
-  fsWrite(sid: string, path: string, content: string): Promise<FsWriteResponse | ErrorResponse>;
+  fsWrite(sid: string, path: string, content: string): Promise<ReplyOf<"fs_write">>;
   /** Create a new empty (or short-content) text file at `path` under fs_edit's
    * authorization surfaces (kind ∈ {contained, workspace}). Symmetric partner
    * of fsEdit — used by the FileTree "+" affordance to create a file in the
@@ -227,7 +207,7 @@ export interface WsHandle {
     path: string,
     kind: "contained" | "workspace",
     content: string,
-  ): Promise<FsCreateResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"fs_create">>;
   /** Delete a regular file (viewer trash action, kawaz r46 m25). File-only,
    * never recursive; refuses directories/symlinks. The caller is expected to
    * confirm() before invoking — the daemon has no confirmation surface. */
@@ -235,7 +215,7 @@ export interface WsHandle {
     sid: string,
     path: string,
     kind: "contained" | "workspace",
-  ): Promise<FsDeleteResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"fs_delete">>;
   /** Overwrite an existing text file (viewer edit action). `kind` picks the
    * authorization surface — the same three the read ops use. `expectedMtime`
    * and `expectedSize` come from the FsReadResponse the viewer opened with;
@@ -248,7 +228,7 @@ export interface WsHandle {
     content: string,
     expectedMtime: string,
     expectedSize: number,
-  ): Promise<FsEditResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"fs_edit">>;
   /** Mint a capability URL on the sandbox origin (DR-0030) for one file, so it
    * can be opened with its real MIME type — `text/html` renders, binaries
    * download — which the same-origin `/fs-serve` refuses to serve. The reply's
@@ -259,10 +239,10 @@ export interface WsHandle {
     sid: string,
     path: string,
     kind: "contained" | "external" | "workspace",
-  ): Promise<SandboxGrantResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"sandbox_grant">>;
   /** Drop a grant early. Best-effort — the grant's 30-minute expiry is what
    * actually bounds its life, so a failure here needs no handling. */
-  sandboxRevoke(gid: string): Promise<SandboxRevokeResponse | ErrorResponse>;
+  sandboxRevoke(gid: string): Promise<ReplyOf<"sandbox_revoke">>;
   /** Read a slice of a connected session's transcript jsonl (DR-0009
    * transcript_read). `before` omitted = tail of the file; pass the previous
    * reply's `start` to page older. */
@@ -278,39 +258,39 @@ export interface WsHandle {
       run_id?: string;
       teammate?: string;
     },
-  ): Promise<TranscriptReadResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"transcript_read">>;
   /** Follow a connected session's transcript live (DR-0009 live-tail
    * addendum): appended complete lines arrive as `ev:"transcript"` pushes
    * (handled in onMessage below, folded into store as `timeline/tail`) until
    * transcriptUnsubscribe or disconnect. */
-  transcriptSubscribe(sid: string): Promise<TranscriptSubscribeResponse | ErrorResponse>;
-  transcriptUnsubscribe(sid: string): Promise<TranscriptUnsubscribeResponse | ErrorResponse>;
+  transcriptSubscribe(sid: string): Promise<ReplyOf<"transcript_subscribe">>;
+  transcriptUnsubscribe(sid: string): Promise<ReplyOf<"transcript_unsubscribe">>;
   /** One-shot fetch of a connected session's folded status snapshot (DR-0020
    * Phase 1 session_status) — todos/workflows/background as currently folded
    * by the daemon from its transcript jsonl. Not called by any component
    * today (subscribe's own response already carries the initial snapshot,
    * see below); kept for parity with the protocol's non-live op and any
    * future one-shot refresh need. */
-  sessionStatus(sid: string): Promise<SessionStatusResponse | ErrorResponse>;
+  sessionStatus(sid: string): Promise<ReplyOf<"session_status">>;
   /** Follow a connected session's folded status live (DR-0020 Phase 1
    * session_status_subscribe): the response itself carries the current
    * snapshot (unlike transcriptSubscribe, which only returns a size) —
    * callers dispatch `session-status/loaded` from the resolved response,
    * then again for every subsequent `ev:"session_status"` push (handled in
    * onMessage below) until sessionStatusUnsubscribe or disconnect. */
-  sessionStatusSubscribe(sid: string): Promise<SessionStatusSubscribeResponse | ErrorResponse>;
-  sessionStatusUnsubscribe(sid: string): Promise<SessionStatusUnsubscribeResponse | ErrorResponse>;
+  sessionStatusSubscribe(sid: string): Promise<ReplyOf<"session_status_subscribe">>;
+  sessionStatusUnsubscribe(sid: string): Promise<ReplyOf<"session_status_unsubscribe">>;
   /** One-shot fetch of the latest `claude agents --json` poll result (U1).
    * Called once in onOpen's handshake for the initial paint; subsequent
    * changes arrive unprompted as `ev:"agents"` pushes (see onMessage below). */
-  agents(): Promise<AgentsResponse | ErrorResponse>;
+  agents(): Promise<ReplyOf<"agents">>;
   /** One-shot fetch of every connected session currently stopped on a harness
    * API error. Called once in onOpen's handshake for the initial paint;
    * subsequent changes arrive unprompted as `ev:"session_errors"` pushes (see
    * onMessage below) — same one-shot + push pairing as `agents` above. Not
    * per-sid: the sidebar has to colour *other* sessions' rows, which a status
    * subscription per visible peer would cost far more to answer. */
-  sessionErrors(): Promise<SessionErrorsResponse | ErrorResponse>;
+  sessionErrors(): Promise<ReplyOf<"session_errors">>;
   /** Search historical Claude Code session transcripts under daemon-detected
    * config dirs (DR-0021 Phase 1 op, Phase 2 client wiring; user role only).
    * `params` excludes `op` and `request_id` — the wire shape (including the
@@ -318,35 +298,35 @@ export interface WsHandle {
    * fsList/transcriptRead's option-object callers. */
   sessionSearch(
     params: Omit<SessionSearchRequest, "op" | "request_id">,
-  ): Promise<SessionSearchResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"session_search">>;
   /** Ask where `sid`'s copied fork history ends (user role only). Slow for
    * the same reason as sessionSearch: the first ask for a session reads whole
    * sibling transcripts. `origin: null` means there is no seam to draw. */
-  forkOrigin(sid: string): Promise<ForkOriginResponse | ErrorResponse>;
+  forkOrigin(sid: string): Promise<ReplyOf<"fork_origin">>;
   /** Write `sid`'s dump to a file on the daemon host and answer where it
    * landed (user role only). Slow for the same reason as sessionSearch:
    * dumping reads the whole transcript plus its agent transcripts. `params`
    * excludes `op`/`request_id`, same convention as sessionSearch. */
   sessionDumpFile(
     params: Omit<SessionDumpFileRequest, "op" | "request_id">,
-  ): Promise<SessionDumpFileResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"session_dump_file">>;
   /** Round trip to the daemon, carrying provenance (exe/script/version, U1
    * footer) alongside the existing liveness fields. Called once in onOpen's
    * handshake, not polled — provenance only changes across a daemon restart,
    * which already re-runs the whole handshake. */
-  ping(): Promise<PingResponse | ErrorResponse>;
+  ping(): Promise<ReplyOf<"ping">>;
   /** Translate complete texts through the daemon host. Unlike browser
    * translation, callers must not split or skip Japanese-containing segments.
    * The reply takes seconds; concurrent daemon dispatch means it never blocks
    * other ops' replies. */
-  translate(texts: string[]): Promise<TranslateResponse | ErrorResponse>;
+  translate(texts: string[]): Promise<ReplyOf<"translate">>;
   /** Session-launcher directory-only cwd tree (DR-0018 §3.2, user role only).
    * `depth` omitted uses the daemon's configured `dir_tree_depth`; CwdTree's
    * lazy-expansion re-fetch of a boundary node passes 1. */
   dirTree(
     roots: string[],
     opts?: { depth?: number; filter?: string },
-  ): Promise<DirTreeResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"dir_tree">>;
   /** Launch a new session via the configured command template (DR-0018 §3.2,
    * user role only). The daemon awaits the whole run (bounded by
    * `timeout_seconds` + kill x2, §3.3) before replying, so this call is
@@ -354,22 +334,19 @@ export interface WsHandle {
    * flight rather than relying on a generic pending indicator. */
   sessionLaunch(
     req: Omit<SessionLaunchRequest, "op" | "request_id">,
-  ): Promise<SessionLaunchResponse | ErrorResponse>;
+  ): Promise<ReplyOf<"session_launch">>;
   /** Session-launcher config projection (DR-0018 §3.4 addendum, user role
    * only): `root_dirs` (CwdTree's initial fetch roots) and the `templates`
    * SessionCreator renders its form from. `error.code === "launcher_not_configured"`
    * is the signal SessionCreator uses to show setup guidance instead of the
    * form (§2.1 "launcher 未設定時"). */
-  sessionLauncherConfig(): Promise<SessionLauncherConfigResponse | ErrorResponse>;
+  sessionLauncherConfig(): Promise<ReplyOf<"session_launcher_config">>;
   /** Terminate the OS process behind a session (DR-0028, user role only —
    * StatusPanel's danger-zone button). The daemon resolves the pid fresh and
    * runs the two-shot SIGTERM sequence, so this is naturally slow (up to
    * ~4s), like sessionLaunch. `terminated: false` in a successful response
    * means "signals sent, termination unconfirmed". */
-  sessionKill(
-    sessionId: string,
-    opts?: { force?: boolean },
-  ): Promise<SessionKillResponse | ErrorResponse>;
+  sessionKill(sessionId: string, opts?: { force?: boolean }): Promise<ReplyOf<"session_kill">>;
   /** Retitle a session by having the daemon type `/rename <title>` into that
    * session's own terminal (user role only, kawaz r135m16 — the Sessions
    * list's pencil button). Best-effort: a successful response means the
@@ -378,7 +355,7 @@ export interface WsHandle {
    * the real one arrives with the next agents poll. `error.code ===
    * "terminal_unavailable"` means the session runs outside hyoui and can only
    * be renamed by hand. Slow like sessionKill. */
-  sessionRename(sessionId: string, title: string): Promise<SessionRenameResponse | ErrorResponse>;
+  sessionRename(sessionId: string, title: string): Promise<ReplyOf<"session_rename">>;
   /** Put what the person wrote into a session as their own prompt (DR-0035
    * §1, user role only — SessionView's input panel). The daemon has the
    * session's hooks module fill its composer and press Enter, then replies
@@ -387,11 +364,11 @@ export interface WsHandle {
    * or `request_timeout` (no answer within SESSION_INPUT_REPLY_TIMEOUT_MS)
    * means the request was written but its answer was lost: the text may be in
    * the session. */
-  sessionInput(sessionId: string, text: string): Promise<SessionInputResponse | ErrorResponse>;
+  sessionInput(sessionId: string, text: string): Promise<ReplyOf<"session_input">>;
   /** Read a session process's environment variables (user role only). The
    * daemon resolves sid→pid fresh and runs the same ps verification as
    * sessionKill, so this is slow. */
-  sessionEnv(sessionId: string): Promise<SessionEnvResponse | ErrorResponse>;
+  sessionEnv(sessionId: string): Promise<ReplyOf<"session_env">>;
   /** Per-credential LLM quota, proxied by the daemon from its configured
    * gateway (user role only). Slow, because the upstream fetch is.
    * `error.code === "llm_usage_not_configured"`
@@ -401,12 +378,12 @@ export interface WsHandle {
    * answering from its cache — the only response that carries `limits` and
    * `probe_error`, and the only one that can spend upstream rate limit, so it
    * belongs to an explicit user action and never to polling. */
-  llmUsage(opts?: { refresh?: boolean }): Promise<LlmUsageResponse | ErrorResponse>;
+  llmUsage(opts?: { refresh?: boolean }): Promise<ReplyOf<"llm_usage">>;
   /** Per-day LLM spend over the last `days` days, proxied by the daemon from
    * its configured stats gateway (user role only). Slow like llmUsage; `days`
    * omitted leaves the gateway's own default window. `error.code === "llm_stats_not_configured"` is the
    * hello capability seen after a config change under a live connection. */
-  llmStats(days?: number): Promise<LlmStatsResponse | ErrorResponse>;
+  llmStats(days?: number): Promise<ReplyOf<"llm_stats">>;
   /** Upstream service health as the gateway sees it, proxied by the daemon
    * (user role only). Slow like llmUsage.
    * `refresh` makes the gateway re-read the providers' status pages
@@ -415,7 +392,7 @@ export interface WsHandle {
    * after a config change under a live connection. The daemon also pushes the
    * same report unsolicited (ev:"llm_status") after a 529, so a client that
    * has asked once stays current without asking again. */
-  llmStatus(opts?: { refresh?: boolean }): Promise<LlmStatusResponse | ErrorResponse>;
+  llmStatus(opts?: { refresh?: boolean }): Promise<ReplyOf<"llm_status">>;
 }
 
 export function createWsClient(
@@ -428,13 +405,16 @@ export function createWsClient(
   /** Outstanding replies, keyed by the request_id we stamped on the way out.
    * An entry lives from the request being written until its reply arrives or
    * a disconnect flush settles it. */
-  let pending = new Map<string, (v: Response) => void>();
+  /** In-flight requests by request_id: each reads its reply's frame as the
+   * answer to its own op, or settles with an error the client made up (the
+   * connection closed, the reply did not come in time). */
+  let pending = new Map<string, PendingReply>();
   /** Requests made while the current socket is still connecting. They have no
    * request_id until they are written, so replies enter `pending` only when
    * the opened socket sends them. */
   let connecting: Array<{
     write(socket: WebSocket): void;
-    reject(reason: unknown): void;
+    reject(reason: Error): void;
   }> = [];
   /** request_ids only need to be unique among this client's in-flight
    * requests (protocol doc), so a monotonic counter suffices — no UUID. */
@@ -455,57 +435,67 @@ export function createWsClient(
   const keepaliveCheckMs = keepalive.checkMs ?? KEEPALIVE_CHECK_MS;
   const since = loadSince();
 
-  function write(socket: WebSocket, req: RequestInput, resolve: (value: Response) => void): string {
+  function write(socket: WebSocket, req: RequestInput, settle: PendingReply): string {
     const rid = `q${++nextRequestId}`;
-    pending.set(rid, resolve);
+    pending.set(rid, settle);
     socket.send(JSON.stringify({ ...req, request_id: rid }));
     return rid;
   }
 
-  /** `timeoutMs` bounds the wait for this one request. A request already
+  /** Send one request and resolve with its reply, read as the answer to its
+   * op: the op's success reply or an error.
+   *
+   * `timeoutMs` bounds the wait for this one request. A request already
    * written then settles with `request_timeout` (it may have been acted on,
    * and a late reply is dropped like any unknown request_id); one still queued
    * behind a connecting socket was never sent and is rejected instead. */
-  function send<T extends Response>(
-    req: RequestInput,
+  function send<B extends RequestInput>(
+    req: B,
     opts: { timeoutMs?: number } = {},
-  ): Promise<T> {
+  ): Promise<ReplyOf<B["op"]>> {
     return new Promise((resolve, reject) => {
-      const settle = resolve as (value: Response) => void;
       let rid: string | null = null;
       let timer: ReturnType<typeof setTimeout> | null = null;
-      const finish = (value: Response) => {
+      const finish = (value: ReplyOf<B["op"]>) => {
         if (timer !== null) clearTimeout(timer);
-        settle(value);
+        resolve(value);
+      };
+      const settle: PendingReply = {
+        reply: (frame) => {
+          const read = frame.reply(req.op);
+          finish(read.ok ? read.value : invalidReply(req.op, read.failure));
+        },
+        fail: finish,
       };
       const writeNow = (socket: WebSocket) => {
-        rid = write(socket, req, finish);
+        rid = write(socket, req, settle);
       };
       const socket = ws;
       if (!socket) {
         reject(new Error("ws not open"));
         return;
       }
+      const queued = {
+        write: writeNow,
+        reject: (reason: Error) => {
+          if (timer !== null) clearTimeout(timer);
+          reject(reason);
+        },
+      };
+      const expireAfter = (timeoutMs: number) => {
+        timer = setTimeout(() => {
+          timer = null;
+          if (rid === null) {
+            connecting = connecting.filter((q) => q !== queued);
+            reject(new Error("ws not open"));
+            return;
+          }
+          expire(rid, timeoutMs);
+        }, timeoutMs);
+      };
       if (socket.readyState === WebSocket.CONNECTING) {
-        const queued = {
-          write: writeNow,
-          reject: (reason: unknown) => {
-            if (timer !== null) clearTimeout(timer);
-            reject(reason);
-          },
-        };
         connecting.push(queued);
-        if (opts.timeoutMs !== undefined) {
-          timer = setTimeout(() => {
-            timer = null;
-            if (rid === null) {
-              connecting = connecting.filter((q) => q !== queued);
-              reject(new Error("ws not open"));
-              return;
-            }
-            expire(rid, opts.timeoutMs!);
-          }, opts.timeoutMs);
-        }
+        if (opts.timeoutMs !== undefined) expireAfter(opts.timeoutMs);
         return;
       }
       if (socket.readyState !== WebSocket.OPEN) {
@@ -513,12 +503,7 @@ export function createWsClient(
         return;
       }
       writeNow(socket);
-      if (opts.timeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          timer = null;
-          expire(rid!, opts.timeoutMs!);
-        }, opts.timeoutMs);
-      }
+      if (opts.timeoutMs !== undefined) expireAfter(opts.timeoutMs);
     });
   }
 
@@ -526,7 +511,7 @@ export function createWsClient(
     const settle = pending.get(rid);
     if (!settle) return;
     pending.delete(rid);
-    settle({
+    settle.fail({
       ok: false,
       error: { code: "request_timeout", msg: `no reply within ${timeoutMs} ms` },
     });
@@ -589,7 +574,7 @@ export function createWsClient(
     const ua = globalThis.navigator?.userAgent;
     firstHello = false;
     try {
-      const hello = await send<HelloResponse>({
+      const hello = await send({
         op: "hello",
         role: "user",
         client_version: VERSION,
@@ -608,7 +593,7 @@ export function createWsClient(
       const guard = await reactToHandshakeVersion(
         hello,
         async () => {
-          const probe = await send<PingResponse>({ op: "ping" }).catch(() => null);
+          const probe = await send({ op: "ping" }).catch(() => null);
           return probe?.ok ? probe.version : null;
         },
         VERSION,
@@ -653,7 +638,7 @@ export function createWsClient(
           available: hello.llm_status_available === true,
         });
         if (hello.llm_status_available === true) {
-          void send<LlmStatusResponse | ErrorResponse>({
+          void send({
             op: "llm_status",
           }).then((res) => {
             // 取れなければ badge が出ないだけ。ここで画面にエラーを出すと、
@@ -677,7 +662,7 @@ export function createWsClient(
           available: hello.fork_available === true,
         });
       }
-      const rooms = await send<RoomsResponse>({ op: "rooms" });
+      const rooms = await send({ op: "rooms" });
       if (rooms.ok) dispatch({ type: "rooms/loaded", rooms: rooms.rooms });
       // Rooms this connection has no cursor for get no delta replay below, so
       // any events the store still holds for them end at an unknown gap (an
@@ -689,7 +674,7 @@ export function createWsClient(
       const stale = [...getState().rooms.keys()].filter((id) => since[id] === undefined);
       if (stale.length > 0) dispatch({ type: "rooms/history-reset", rooms: stale });
       await send(spaHasState ? { op: "subscribe", since_seq: since } : { op: "subscribe" });
-      const peers = await send<PeersResponse>({ op: "peers" });
+      const peers = await send({ op: "peers" });
       if (peers.ok) {
         dispatch({ type: "peers/loaded", peers: peers.peers });
       }
@@ -697,16 +682,16 @@ export function createWsClient(
       // footer. Neither failure here should abort the handshake above (both
       // already landed) — a rejection just falls through to the catch below
       // and skips these two dispatches, same as any other mid-handshake drop.
-      const agentsRes = await send<AgentsResponse>({ op: "agents" });
+      const agentsRes = await send({ op: "agents" });
       if (agentsRes.ok) dispatch({ type: "agents/loaded", agents: agentsRes.agents });
       // Initial paint of the "stopped on an API error" set for the sidebar;
       // later changes arrive as `ev:"session_errors"` pushes. Same
       // failure-tolerance as the agents fetch above.
-      const errorsRes = await send<SessionErrorsResponse>({
+      const errorsRes = await send({
         op: "session_errors",
       });
       if (errorsRes.ok) dispatch({ type: "session-errors/loaded", errors: errorsRes.errors });
-      const ping = await send<PingResponse>({ op: "ping" });
+      const ping = await send({ op: "ping" });
       if (ping.ok)
         dispatch({
           type: "daemon-info/loaded",
@@ -716,7 +701,7 @@ export function createWsClient(
       // DR-0023 host capability probe. An empty batch verifies the daemon can
       // find/build its helper without starting TranslationSession or translating
       // dummy content; a later per-item model error hides the tab at first use.
-      const translate = await send<TranslateResponse>({
+      const translate = await send({
         op: "translate",
         texts: [],
       });
@@ -727,32 +712,22 @@ export function createWsClient(
   }
 
   function onMessage(data: string): void {
-    let obj: StreamEvent | Response;
-    try {
-      obj = JSON.parse(data);
-    } catch {
+    const frame = readDaemonFrame(data);
+    if (frame.kind === "invalid") {
+      console.warn(`ccmsg: dropped a frame outside the wire's schema: ${frame.failure.summary}`);
       return;
     }
-    // `ev` classified BEFORE `ok`, per the header comment's rule.
-    if (Object.hasOwn(obj, "ev")) {
-      onStreamEvent(obj as StreamEvent);
+    if (frame.kind === "event") {
+      onStreamEvent(frame.event);
       return;
     }
-    if (Object.hasOwn(obj, "ok")) {
-      const reply = obj as Response;
-      // A reply with no request_id answers no request we can name (the daemon
-      // sends one only for a frame it could not parse far enough to find an
-      // id). Nothing to settle, and guessing a caller would settle the wrong
-      // one — drop it.
-      const { request_id: rid, ...body } = reply;
-      if (rid === undefined) return;
-      const settle = pending.get(rid);
-      pending.delete(rid);
-      // Callers get the payload without the envelope.
-      settle?.(body as Response);
-      return;
-    }
-    onStreamEvent(obj as StreamEvent);
+    // A reply with no request_id answers no request we can name (the daemon
+    // sends one only for a line it could not read as a request). Nothing to
+    // settle, and guessing a caller would settle the wrong one — drop it.
+    if (frame.requestId === undefined) return;
+    const settle = pending.get(frame.requestId);
+    pending.delete(frame.requestId);
+    settle?.reply(frame);
   }
 
   function onStreamEvent(streamEv: StreamEvent): void {
@@ -774,7 +749,7 @@ export function createWsClient(
     if ("ev" in streamEv && streamEv.ev === "agents") {
       dispatch({
         type: "agents/loaded",
-        agents: (streamEv as AgentsStreamEvent).agents,
+        agents: streamEv.agents,
       });
       return;
     }
@@ -787,7 +762,7 @@ export function createWsClient(
     if ("ev" in streamEv && streamEv.ev === "session_errors") {
       dispatch({
         type: "session-errors/loaded",
-        errors: (streamEv as SessionErrorsStreamEvent).errors,
+        errors: streamEv.errors,
       });
       return;
     }
@@ -798,8 +773,7 @@ export function createWsClient(
     // (same pattern as ev:"agents" above; issue
     // 2026-07-12-peers-live-update-protocol).
     if ("ev" in streamEv && streamEv.ev === "peers") {
-      const ev = streamEv as PeersStreamEvent;
-      dispatch({ type: "peers/loaded", peers: ev.peers });
+      dispatch({ type: "peers/loaded", peers: streamEv.peers });
       return;
     }
     // Prompt-cache windows the daemon is tracking from the LLM gateway's
@@ -809,7 +783,7 @@ export function createWsClient(
     if ("ev" in streamEv && streamEv.ev === "llm_requests") {
       dispatch({
         type: "llm-requests/loaded",
-        requests: (streamEv as LlmRequestsStreamEvent).requests,
+        requests: streamEv.requests,
       });
       return;
     }
@@ -820,7 +794,7 @@ export function createWsClient(
     if ("ev" in streamEv && streamEv.ev === "llm_status") {
       dispatch({
         type: "llm-status/loaded",
-        report: (streamEv as LlmStatusStreamEvent).report,
+        report: streamEv.report,
       });
       return;
     }
@@ -853,7 +827,7 @@ export function createWsClient(
     // ev:"transcript" above, minus contiguity bookkeeping since this is
     // always a full recomputed snapshot, not an append).
     if ("ev" in streamEv && streamEv.ev === "session_status") {
-      const ev = streamEv as SessionStatusStreamEvent;
+      const ev = streamEv;
       dispatch({
         type: "session-status/loaded",
         sid: ev.sid,
@@ -870,12 +844,13 @@ export function createWsClient(
       });
       return;
     }
-    const delivered = streamEv as DeliveredEvent;
+    if ("ev" in streamEv) return;
+    const delivered = streamEv;
     // Cursor advances on every StorageEvent delivery that carries a seq
     // (DR-0016 §2.4: all event types, not just msg) — ephemeral stream events
     // (notify/restarting/agents/peers/transcript) are handled above and never
     // reach here.
-    if (typeof delivered.seq === "number") {
+    if (delivered.seq !== undefined) {
       since[delivered.r] = Math.max(since[delivered.r] ?? 0, delivered.seq);
       saveSince(since);
     }
@@ -893,7 +868,7 @@ export function createWsClient(
     };
     const stale = [...pending.values()];
     pending = new Map();
-    for (const settle of stale) settle(closed);
+    for (const settle of stale) settle.fail(closed);
   }
 
   function stopKeepalive(): void {
@@ -914,7 +889,7 @@ export function createWsClient(
       if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
       if (keepaliveTimeout !== null || Date.now() - lastReceivedAt < keepaliveIdleMs) return;
 
-      void send<PingResponse>({ op: "ping" }).then(() => {
+      void send({ op: "ping" }).then(() => {
         if (socket !== ws || keepaliveTimeout === null) return;
         clearTimeout(keepaliveTimeout);
         keepaliveTimeout = null;
@@ -971,7 +946,8 @@ export function createWsClient(
     socket.addEventListener("message", (e) => {
       if (socket !== ws) return;
       lastReceivedAt = Date.now();
-      onMessage(e.data as string);
+      // The daemon writes text frames only.
+      if (typeof e.data === "string") onMessage(e.data);
     });
     socket.addEventListener("close", () => {
       if (socket !== ws) return;

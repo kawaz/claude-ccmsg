@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createWsClient } from "../src/client/ws.ts";
 import { initialState, type Action } from "../src/client/store.ts";
-import { VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 
 class MockWebSocket {
   static readonly CONNECTING = 0;
@@ -309,6 +309,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
         truncated: false,
         binary: false,
         content: "hello",
+        mtime: "2026-01-01T00:00:00.000Z",
       }),
     );
     const res = await req;
@@ -344,6 +345,7 @@ describe("createWsClient pending queue on close/reconnect", () => {
         truncated: false,
         binary: false,
         content: "hello",
+        mtime: "2026-01-01T00:00:00.000Z",
       }),
     );
     const res = await req;
@@ -560,7 +562,9 @@ describe("createWsClient pending queue on close/reconnect", () => {
     expect(sentBody(ws1, 1)).toEqual({ op: "fs_list", sid: "sess-1" });
 
     const queuedRid = (JSON.parse(ws1.sent[1] ?? "{}") as { request_id: string }).request_id;
-    ws1.triggerMessage(JSON.stringify({ ok: true, entries: [], request_id: queuedRid }));
+    ws1.triggerMessage(
+      JSON.stringify({ ok: true, sid: "sess-1", path: "", entries: [], request_id: queuedRid }),
+    );
     const result = await queued;
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.entries).toEqual([]);
@@ -832,6 +836,7 @@ describe("createWsClient agents/ping (U1)", () => {
         script: "/repos/claude-ccmsg/main/packages/daemon/src/index.ts",
         http: [],
         httpAllow: [],
+        network: "online",
       }),
     );
     const res = await req;
@@ -1122,6 +1127,7 @@ describe("createWsClient agents/ping (U1)", () => {
         script: "",
         http: [],
         httpAllow: [],
+        network: "online",
       }),
     );
 
@@ -1249,6 +1255,7 @@ describe("createWsClient agents/ping (U1)", () => {
         script: "",
         http: [],
         httpAllow: [],
+        network: "online",
       }),
     );
     expect(await ping).toMatchObject({ ok: true, pong: true });
@@ -1298,6 +1305,7 @@ describe("createWsClient agents/ping (U1)", () => {
             cwd: "/repos/claude-ccmsg/main",
             repo: "kawaz/claude-ccmsg",
             ws: "main",
+            title: "",
             created_at: "2026-07-10T00:00:00.000Z",
             updated_at: "2026-07-15T00:00:00.000Z",
             size: 2048,
@@ -1346,7 +1354,7 @@ describe("createWsClient agents/ping (U1)", () => {
     const tick = () => Promise.resolve().then(() => Promise.resolve());
 
     // hello
-    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" }));
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION }));
     await tick();
     // rooms
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
@@ -1403,11 +1411,12 @@ describe("createWsClient agents/ping (U1)", () => {
         script: "entry.ts",
         http: [],
         httpAllow: [],
+        network: "online",
       }),
     );
     await tick();
-    // empty-batch host translation capability probe — 2-phase like every
-    // translate: ack on the positional lane, outcome on the result event.
+    // empty-batch host translation capability probe: one reply carries the
+    // outcome.
     const probe = JSON.parse(ws1.sent[7] ?? "{}") as Record<string, unknown> & {
       request_id: string;
     };
@@ -1416,22 +1425,7 @@ describe("createWsClient agents/ping (U1)", () => {
       request_id: probe.request_id,
       texts: [],
     });
-    ws1.triggerMessage(
-      JSON.stringify({
-        ok: true,
-        accepted: true,
-        request_id: probe.request_id,
-      }),
-    );
-    await tick();
-    ws1.triggerMessage(
-      JSON.stringify({
-        ev: "translate_result",
-        request_id: probe.request_id,
-        ok: true,
-        results: [],
-      }),
-    );
+    ws1.triggerMessage(JSON.stringify({ ok: true, results: [], request_id: probe.request_id }));
     await tick();
 
     const agentsAction = actions.find((a) => a.type === "agents/loaded");
@@ -1476,7 +1470,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerOpen();
 
     const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" })); // hello
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION })); // hello
     await tick();
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] })); // rooms
     await tick();
@@ -1517,7 +1511,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerOpen();
 
     const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" })); // hello
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION })); // hello
     await tick();
     // Server replies with a non-empty rooms list — rooms/loaded will fill
     // state.rooms *before* the subscribe request is composed.
@@ -1576,7 +1570,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerOpen();
 
     const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" }));
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION }));
     await tick();
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
     await tick();
@@ -1623,7 +1617,7 @@ describe("createWsClient agents/ping (U1)", () => {
     ws1.triggerOpen();
 
     const tick = () => Promise.resolve().then(() => Promise.resolve());
-    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0" }));
+    ws1.triggerMessage(JSON.stringify({ ok: true, version: "0.19.0", protocol: PROTOCOL_VERSION }));
     await tick();
     ws1.triggerMessage(JSON.stringify({ ok: true, rooms: [] }));
     await tick();
@@ -1955,7 +1949,7 @@ describe("createWsClient daemon version guard", () => {
     const ws1 = instances[instances.length - 1];
     ws1.readyState = MockWebSocket.OPEN;
     ws1.triggerOpen();
-    ws1.triggerMessage(JSON.stringify({ ok: true, version }));
+    ws1.triggerMessage(JSON.stringify({ ok: true, version, protocol: PROTOCOL_VERSION }));
     await Promise.resolve().then(() => Promise.resolve());
   }
 
