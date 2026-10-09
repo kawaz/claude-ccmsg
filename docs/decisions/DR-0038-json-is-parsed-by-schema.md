@@ -1,6 +1,6 @@
 # DR-0038: データの形はスキーマで定義して型を導き、外から来る JSON は境界でスキーマに通す (valibot)。`as` と `any` は使わない
 
-- Status: Accepted (2026-10-09、kawaz 裁定) — ⬜ 未実装
+- Status: Accepted (2026-10-09、kawaz 裁定) — 🟡 部分実装 (wire の依頼・応答・イベント、サイドカー、hooks module、session_launch の params は済み。Claude Code の transcript の行・外部コマンド・ファイル・localStorage・room の jsonl が残り)
 - Date: 2026-10-09
 
 ## Context
