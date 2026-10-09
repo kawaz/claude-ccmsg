@@ -2,7 +2,9 @@
 // Claude Code transcript, and nothing else. Every pattern that recognizes it —
 // the delivered envelope, the agent's `ccmsg post|reply|notify` Bash call and
 // its result, the PushNotification tool call — lives here, so the day that
-// shape changes there is one module to update (DR-0027 §6).
+// shape changes there is one module to update (DR-0027 §6). The direct
+// envelope this daemon writes itself (DR-0036 §1) is rendered here too, so
+// what is written and what is read back are one definition.
 //
 // Three row shapes are recognized:
 //
@@ -51,9 +53,76 @@ function unescapeAttribute(value: string): string {
     .replaceAll("&amp;", "&");
 }
 
-function replyLine(mid: string, from: string): string {
+function escapeAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/** The namespace a session is addressed in: `ccmsg:<sid>`. The envelope's
+ * `from` / `from-name` carry the sender in it, and a recipient may be written
+ * either this way or as the bare sid. */
+export const DIRECT_ADDRESS_PREFIX = "ccmsg:";
+
+/** The sid an address names: `ccmsg:<sid>` loses its prefix, a bare sid stays
+ * as written. */
+export function directAddressSid(address: string): string {
+  return address.startsWith(DIRECT_ADDRESS_PREFIX)
+    ? address.slice(DIRECT_ADDRESS_PREFIX.length)
+    : address;
+}
+
+/** `<instance id>/<counter>`: the id of one direct message, there so a reply's
+ * `reply_to` can point at it. Distinct from a room message's `r<N>m<M>`. */
+const DIRECT_MID_RE = /^[0-9a-f]{32}\/\d+$/;
+
+export function isDirectMid(mid: string): boolean {
+  return DIRECT_MID_RE.test(mid);
+}
+
+/** The instruction line a direct envelope ends with. `launcher` is the command
+ * the recipient runs; a message from a person names no `--to`. */
+export function directDeliveryReplyLine(mid: string, from: string, launcher = "ccmsg"): string {
   const to = from === DIRECT_DELIVERY_USER_SENDER ? "" : ` --to ${from}`;
-  return `Reply with: ccmsg reply ${mid}${to} <text>`;
+  return `Reply with: ${launcher} reply ${mid}${to} <text>`;
+}
+
+/** One direct message as `renderDirectDelivery` words it. `from` is the
+ * sender's sid. */
+export interface DirectDeliveryMessage {
+  mid: string;
+  from: string;
+  replyTo?: string;
+  text: string;
+}
+
+/** The envelope a direct message reaches its recipient in: the sender as
+ * `ccmsg:<sid>` in both `from` and `from-name`, the ccmsg identity attributes,
+ * the text untouched, then the reply line naming `launcher`. */
+export function renderDirectDelivery(m: DirectDeliveryMessage, launcher: string): string {
+  const address = `${DIRECT_ADDRESS_PREFIX}${m.from}`;
+  const attributes = [
+    `from="${escapeAttribute(address)}"`,
+    `from-name="${escapeAttribute(address)}"`,
+    `from-mode="prompting"`,
+    `ccmsg-mid="${escapeAttribute(m.mid)}"`,
+    `ccmsg-from="${escapeAttribute(m.from)}"`,
+    ...(m.replyTo !== undefined ? [`ccmsg-reply-to="${escapeAttribute(m.replyTo)}"`] : []),
+  ];
+  const body = `${m.text}\n\n${directDeliveryReplyLine(m.mid, m.from, launcher)}`;
+  return `<${TAG} ${attributes.join(" ")}>\n${body}\n</${TAG}>`;
+}
+
+/** True for the reply line of a direct envelope for `mid` from `from`, naming
+ * either the bare `ccmsg` or a launcher by absolute path. */
+function isDirectReplyLine(line: string, mid: string, from: string): boolean {
+  const bare = directDeliveryReplyLine(mid, from);
+  if (line === bare) return true;
+  const prefix = "Reply with: ";
+  const command = bare.slice(prefix.length);
+  return line.startsWith(`${prefix}/`) && line.endsWith(`/${command}`);
 }
 
 /** The reply instruction a room message delivered into a session ends with:
@@ -68,12 +137,10 @@ function isRoomMid(mid: string): boolean {
 
 /** The sender's text, with the reply line the envelope added removed. */
 function stripReplyLine(body: string, mid: string, from: string): string {
-  const own = replyLine(mid, from);
-  if (body.endsWith(`\n\n${own}`)) return body.slice(0, -own.length - 2);
-  if (body === own) return "";
-  if (!isRoomMid(mid)) return body;
   const cut = body.lastIndexOf("\n\n");
   const last = cut === -1 ? body : body.slice(cut + 2);
+  if (isDirectReplyLine(last, mid, from)) return cut === -1 ? "" : body.slice(0, cut);
+  if (!isRoomMid(mid)) return body;
   if (
     !ROOM_REPLY_LINE_RE.test(last) ||
     (last.startsWith("Reply with:") && !last.includes(` ${mid} `))
@@ -141,9 +208,10 @@ export function parseDirectDeliveries(text: string): DirectDeliveryEnvelope[] {
 
 /** A `ccmsg post|reply|notify` call as written in a Bash command.
  *
- * - post: `to` is the addressed session
- * - reply: `replyTo` is the mid answered; `to` is the `--to` session, absent
- *   when the answer goes to a person
+ * - post: `to` is the addressed session's sid (a `ccmsg:<sid>` address is
+ *   read as its sid)
+ * - reply: `replyTo` is the mid answered; `to` is the `--to` session's sid,
+ *   absent when the answer goes to a person
  * - notify: `about` is the `--about` session, absent for the caller itself */
 export interface CcmsgSendCommand {
   verb: "post" | "reply" | "notify";
@@ -237,11 +305,12 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
     case "post":
       return {
         verb,
-        ...(positional[0] !== undefined ? { to: positional[0] } : {}),
+        ...(positional[0] !== undefined ? { to: directAddressSid(positional[0]) } : {}),
         text: positional.slice(1).join(" "),
       };
     case "reply": {
-      const to = options.get("--to");
+      const address = options.get("--to");
+      const to = address === undefined ? undefined : directAddressSid(address);
       return {
         verb,
         ...(positional[0] !== undefined ? { replyTo: positional[0] } : {}),
@@ -258,8 +327,11 @@ export function parseCcmsgSendCommand(command: string): CcmsgSendCommand | null 
 
 /** What the paired tool_result says about a send.
  *
- * - `sent`: `{}` or `{"delivered":…}` (the successful answers)
- * - `failed`: anything else, with the result text as `detail`
+ * - `sent`: `{}` or `{"delivered":…}` (the successful answers; this plugin's
+ *   own direct send answers `{"delivered":true,"mid":…}`)
+ * - `failed`: anything else, with the result text as `detail` (this plugin's
+ *   direct send reports a message that did not arrive as text on stderr,
+ *   never as JSON carrying `ok`)
  * - `other-ccmsg`: `{"ok":…}` — the web UI's own room CLI answering, whose
  *   message reaches the timeline through the room path instead */
 export type CcmsgSendOutcome =

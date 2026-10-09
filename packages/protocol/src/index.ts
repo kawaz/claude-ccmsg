@@ -1016,6 +1016,43 @@ export interface ReplyRequest {
   msg: string;
 }
 
+/** Send a message straight to one session, without a room (session role
+ * only, DR-0036 §1).
+ *
+ * The daemon writes the envelope into the recipient's peer messaging socket
+ * (DR-0034) and answers whether it arrived. Nothing is held for later: a
+ * message that did not arrive is answered with why, and the sender decides
+ * whether to send it again. The daemon keeps no record of what it sent, so a
+ * reply names its recipient in `to` like any other message. */
+export interface MessageSendRequest {
+  op: "message_send";
+  /** The recipient's session id. */
+  to: string;
+  /** Non-empty; delivered exactly as written. */
+  text: string;
+  /** The mid (`<instance id>/<n>`) of the direct message this answers. */
+  reply_to?: string;
+}
+
+/** Why a direct message did not arrive (DR-0036 §3). The message is not kept
+ * anywhere in any of these cases.
+ *
+ * - `session_not_found`: the daemon knows no session by that id (it ended, or
+ *   the id is wrong)
+ * - `no_config_dir`: the daemon does not know which CLAUDE_CONFIG_DIR the
+ *   session runs under, so it cannot look for its socket
+ * - `no_peer_socket`: the session has no peer messaging socket this daemon can
+ *   write to (no state file for it in that config dir — it ended or runs under
+ *   another one — a harness speaking another peer protocol, or no token)
+ * - `unreachable`: the socket is there but could not be written in time
+ * - `refused`: the recipient's harness answered that it did not take it */
+export type MessageSendReason =
+  | "session_not_found"
+  | "no_config_dir"
+  | "no_peer_socket"
+  | "unreachable"
+  | "refused";
+
 export interface CreateRoomRequest {
   op: "create_room";
   /** participant sids. If the caller is a session and include_self is not false,
@@ -2009,6 +2046,7 @@ export type RequestBody =
   | HelloRequest
   | PostRequest
   | ReplyRequest
+  | MessageSendRequest
   | CreateRoomRequest
   | NextRoomRequest
   | SayRequest
@@ -2372,6 +2410,11 @@ export type SessionInputResponse =
   | { ok: true; outcome: "accepted" }
   | { ok: true; outcome: "not_delivered"; reason: SessionInputReason }
   | { ok: true; outcome: "unconfirmed" };
+/** Payload of a completed message_send (DR-0036 §1). `mid` is the id the
+ * delivered envelope carries, what a reply to it names as `reply_to`. */
+export type MessageSendResponse =
+  | { ok: true; outcome: "delivered"; mid: string }
+  | { ok: true; outcome: "not_delivered"; reason: MessageSendReason };
 /** Payload of a session_input_result the daemon was waiting for. */
 export interface SessionInputResultResponse {
   ok: true;
@@ -3043,6 +3086,7 @@ export type ResponseBody =
   | ErrorResponse
   | HelloResponse
   | PostResponse
+  | MessageSendResponse
   | CreateRoomResponse
   | NextRoomResponse
   | SayResponse

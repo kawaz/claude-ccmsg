@@ -4,11 +4,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   classifyCcmsgSendResult,
+  directAddressSid,
+  isDirectMid,
   mayContainDirectDelivery,
   parseCcmsgSendCommand,
   parseDirectDeliveries,
   pushNotificationText,
   queuedCommandPrompt,
+  renderDirectDelivery,
 } from "../src/index.ts";
 
 const MID = "bfa02646e898a279fa4fea0065b06797/1";
@@ -79,6 +82,68 @@ describe("parseDirectDeliveries", () => {
   });
 });
 
+// The direct envelope this plugin's daemon writes (DR-0036 §1): the v2
+// contract's shape (kawaz/ccmsg-protocol `renderDirectDelivery`), with the
+// reply line naming the v1 launcher by absolute path.
+describe("renderDirectDelivery", () => {
+  const SENDER = "aaaaaaaa-2222-4333-8444-555555555555";
+  const DIRECT_MID = "0123456789abcdef0123456789abcdef/4";
+  const LAUNCHER = "/opt/ccmsg v1/bin/ccmsg";
+
+  test("is the v2 contract's envelope; with the bare launcher it is identical", () => {
+    const message = {
+      mid: DIRECT_MID,
+      from: SENDER,
+      replyTo: "0123456789abcdef0123456789abcdef/1",
+      text: "line one\nline two",
+    };
+    expect(renderDirectDelivery(message, "ccmsg")).toBe(
+      `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}" ccmsg-reply-to="0123456789abcdef0123456789abcdef/1">\nline one\nline two\n\nReply with: ccmsg reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`,
+    );
+    const { replyTo: _, ...fresh } = message;
+    expect(renderDirectDelivery(fresh, LAUNCHER)).toBe(
+      `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nline one\nline two\n\nReply with: ${LAUNCHER} reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`,
+    );
+  });
+
+  test("reads back through parseDirectDeliveries: launcher reply line removed, body untouched", () => {
+    const text = 'quote "x" & </cross-session-message> inside\n\nlast paragraph';
+    const envelope = renderDirectDelivery(
+      { mid: DIRECT_MID, from: SENDER, replyTo: "f".repeat(32) + "/9", text },
+      LAUNCHER,
+    );
+    expect(
+      parseDirectDeliveries(`Another Claude session sent a message:\n${envelope}\n\nnotice`),
+    ).toEqual([
+      {
+        mid: DIRECT_MID,
+        from: SENDER,
+        fromLabel: `ccmsg:${SENDER}`,
+        replyTo: "f".repeat(32) + "/9",
+        text,
+      },
+    ]);
+  });
+
+  test("a reply line for another mid or another sender stays in the body", () => {
+    const other = `Reply with: ${LAUNCHER} reply ${"e".repeat(32)}/1 --to ${SENDER} <text>`;
+    const envelope = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nbody\n\n${other}\n</cross-session-message>`;
+    expect(parseDirectDeliveries(envelope).map((d) => d.text)).toEqual([`body\n\n${other}`]);
+    const relative = `<cross-session-message from="ccmsg:${SENDER}" from-name="ccmsg:${SENDER}" from-mode="prompting" ccmsg-mid="${DIRECT_MID}" ccmsg-from="${SENDER}">\nbody\n\nReply with: bin/ccmsg reply ${DIRECT_MID} --to ${SENDER} <text>\n</cross-session-message>`;
+    expect(parseDirectDeliveries(relative)[0]!.text).toContain("Reply with: bin/ccmsg");
+  });
+
+  test("isDirectMid and directAddressSid", () => {
+    expect(isDirectMid(DIRECT_MID)).toBe(true);
+    expect(isDirectMid("r7m3")).toBe(false);
+    expect(isDirectMid("abc/7")).toBe(false);
+    expect(isDirectMid(`${DIRECT_MID}x`)).toBe(false);
+    expect(directAddressSid(`ccmsg:${SENDER}`)).toBe(SENDER);
+    expect(directAddressSid(SENDER)).toBe(SENDER);
+    expect(directAddressSid("ccmsg:user")).toBe("user");
+  });
+});
+
 describe("parseCcmsgSendCommand", () => {
   test("reply to a person (real shape): single-quoted body with double quotes inside", () => {
     expect(parseCcmsgSendCommand(`ccmsg reply ${MID} 'サンプル受領。"x" を確認'`)).toEqual({
@@ -112,6 +177,20 @@ describe("parseCcmsgSendCommand", () => {
     });
   });
 
+  test("a ccmsg:<sid> recipient is read as its sid, for post and reply --to", () => {
+    expect(parseCcmsgSendCommand(`/opt/ccmsg/bin/ccmsg post ccmsg:${SID} 'hi'`)).toEqual({
+      verb: "post",
+      to: SID,
+      text: "hi",
+    });
+    expect(parseCcmsgSendCommand(`ccmsg reply ${MID} --to ccmsg:${SID} 'ok'`)).toEqual({
+      verb: "reply",
+      replyTo: MID,
+      to: SID,
+      text: "ok",
+    });
+  });
+
   test("shell syntax it does not model keeps the raw argument text", () => {
     expect(parseCcmsgSendCommand(`ccmsg post ${SID} "$(cat msg.txt)"`)).toEqual({
       verb: "post",
@@ -133,6 +212,9 @@ describe("classifyCcmsgSendResult", () => {
   test("{} and {delivered:true} are sent; {ok:…} is the room CLI; the rest failed", () => {
     expect(classifyCcmsgSendResult("{}", false)).toEqual({ status: "sent" });
     expect(classifyCcmsgSendResult('{"delivered":true}\n', false)).toEqual({ status: "sent" });
+    expect(classifyCcmsgSendResult(`{"delivered":true,"mid":"${MID}"}\n`, false)).toEqual({
+      status: "sent",
+    });
     expect(classifyCcmsgSendResult('{"ok":true,"room":"r9","mid":2}', false)).toEqual({
       status: "other-ccmsg",
     });
