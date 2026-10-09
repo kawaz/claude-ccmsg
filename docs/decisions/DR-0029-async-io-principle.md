@@ -65,11 +65,9 @@ transcript の cold scan 中、同一接続の `ping` が 1.15 秒待つ)。
 
 ### 相関できない失敗
 
-parse 不能な JSON / `op` 欠落 / `request_id` 欠落の 3 つだけは、応答に id を載せ
-られない (= どの要求への答えか名指しできない)。これらは `bad_request` を返すが、
-client は誰も settle できない — log するだけ。正常な client は必ず id を送る。
+parse 不能な JSON と、`request_id` (空でない文字列) か `op` (文字列) が読めない行だけは、応答に id を載せられない (= どの要求への答えか名指しできない)。これらは `bad_request` を返すが、client は誰も settle できない — log するだけ。正常な client は必ず id を送る。
 
-`request_id` が読めた依頼のうち、知らない op と field の型違いは `request_id` を付けて `invalid_args` で返す ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)。
+`request_id` と `op` が読めた依頼のうち、知らない op と field の型違いは `request_id` を付けて `invalid_args` で返す ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)。
 
 ### subscribe 経路の互換を切る意図的な変更
 

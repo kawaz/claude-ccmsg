@@ -150,9 +150,7 @@ launcher がテンプレ構造なのに既定値がテンプレの外にあり�
   自身が値に作用するため)。params 宣言に無ければ parse 時に先頭へ自動追加
 - wire の `model`/`effort`/`prompt`/`resume_sid`/`resume_at` は
   `params` に一本化。params はテンプレートの宣言から組み立てた strict なスキーマで読み
-  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、宣言に無い名前・CWD は
-  スキーマの失敗になる (黙って捨てない)。設定の param 名で `__proto__` / `constructor` /
-  `prototype` は禁じる。carrier は `ccmsg_new_session_param_<NAME>` に改名
+  ([DR-0038](./DR-0038-json-is-parsed-by-schema.md) §6)、宣言に無い名前はスキーマの失敗になる (黙って捨てない)。`CWD` は宣言されるが params のスキーマからは除く (値は wire の `cwd` で来る) ので、params に `CWD` を入れた依頼も失敗になる。`__proto__` / `constructor` / `prototype` の名前は wire の `params` (`v.record`) を読む時点で落ち、失敗にはならない。設定の param 名でこの 3 つは禁じる。carrier は `ccmsg_new_session_param_<NAME>` に改名
   (変数名は `[A-Za-z_][A-Za-z0-9_]*` を config 検査済み)
 **Addendum 2026-09-02 (kawaz r259m19): 移行経路の撤去**: 上の supersede に
 伴う正規化経路 (トップレベル `command`/`default_prompt`、テンプレの
