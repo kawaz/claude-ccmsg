@@ -27,7 +27,8 @@ import {
   replyArgv,
   RESPAWN_MIN_MS,
   samePrompt,
-  shown,
+  errorText,
+  fieldText,
 } from "./composer-fill.ts";
 
 /** The module states the wire's shapes itself (it may import nothing that
@@ -737,15 +738,17 @@ describe("pure helpers", () => {
     expect(parseRequest("not json")).toBeUndefined();
   });
 
-  test("shown prints any value without throwing", () => {
-    expect(shown("a")).toBe("a");
-    expect(shown(2)).toBe("2");
-    expect(shown({ toString: null })).toBe('{"toString":null}');
-    expect(shown(undefined)).toBe("undefined");
-    expect(shown(new TypeError("bad"))).toBe("TypeError: bad");
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
-    expect(shown(cyclic)).toBe("[object Object]");
+  test("fieldText writes a request field back as JSON, and an absent one as (none)", () => {
+    expect(fieldText("nope")).toBe('"nope"');
+    expect(fieldText(2)).toBe("2");
+    expect(fieldText({ toString: null })).toBe('{"toString":null}');
+    expect(fieldText(undefined)).toBe("(none)");
+  });
+
+  test("errorText names an Error and does not stringify anything else", () => {
+    expect(errorText(new TypeError("bad"))).toBe("TypeError: bad");
+    expect(errorText({ toString: null })).toBe("a thrown object");
+    expect(errorText("x")).toBe("a thrown string");
   });
 
   test("promptSendText takes a text other than whitespace, as given", () => {

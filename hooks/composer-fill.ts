@@ -200,18 +200,16 @@ export type PromptSendResult =
 const UNCONFIRMED: PromptSendResult = { outcome: "unconfirmed" };
 const SESSION_CHANGED: PromptSendResult = { outcome: "not_delivered", reason: "session_changed" };
 
-/** `value` as text for a message, whatever it is: a request is parsed JSON,
- * but a thrown value or an object whose `toString` is not a function would
- * make `String` itself throw. */
-export function shown(value: unknown): string {
-  try {
-    if (typeof value === "string") return value;
-    // An Error's fields are not its own enumerable ones: JSON would say {}.
-    if (value instanceof Error) return `${value.name}: ${value.message}`;
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return Object.prototype.toString.call(value);
-  }
+/** A field of a request as text for a message. A request is the output of
+ * `JSON.parse`, which `JSON.stringify` always takes back; the one value it
+ * answers with `undefined` is a field the request does not have. */
+export function fieldText(value: unknown): string {
+  return JSON.stringify(value) ?? "(none)";
+}
+
+/** A caught value as text for a log line or an `internal` answer. */
+export function errorText(e: unknown): string {
+  return e instanceof Error ? `${e.name}: ${e.message}` : `a thrown ${typeof e}`;
 }
 
 /** The module's state for one load. */
@@ -357,7 +355,7 @@ async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
       });
     }
   } catch (e) {
-    $.ui.log(`ccmsg: reply ${reply.id} failed: ${shown(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg: reply ${reply.id} failed: ${errorText(e)}`, { to: "debug" });
   }
 }
 
@@ -387,7 +385,7 @@ async function describe($: Engine): Promise<{ v: number[]; ops: string[]; versio
     const version = run.stdout.trim();
     if (run.exitCode === 0 && version !== "") return { ...described, version };
   } catch (e) {
-    $.ui.log(`ccmsg: describe could not read the version: ${shown(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg: describe could not read the version: ${errorText(e)}`, { to: "debug" });
   }
   return described;
 }
@@ -417,7 +415,7 @@ async function replyTo(
       return failed(
         id,
         "unsupported_version",
-        `request version ${shown(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
+        `request version ${fieldText(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
       );
     }
     if (request.op === "describe") {
@@ -446,11 +444,11 @@ async function replyTo(
     return failed(
       id,
       "unknown_op",
-      `no op ${shown(request.op)}; this module has ${OPS.join(", ")}`,
+      `no op ${fieldText(request.op)}; this module has ${OPS.join(", ")}`,
     );
   } catch (e) {
-    $.ui.log(`ccmsg: request ${id} failed: ${shown(e)}`, { to: "debug" });
-    return failed(id, "internal", shown(e));
+    $.ui.log(`ccmsg: request ${id} failed: ${errorText(e)}`, { to: "debug" });
+    return failed(id, "internal", errorText(e));
   }
 }
 
@@ -475,7 +473,7 @@ export function answer(
   return replyTo($, state, sid, generation, request)
     .then((reply) => sendReply($, sid, reply))
     .catch((e: unknown) => {
-      $.ui.log(`ccmsg: request ${request.id} not answered: ${shown(e)}`, { to: "debug" });
+      $.ui.log(`ccmsg: request ${request.id} not answered: ${errorText(e)}`, { to: "debug" });
     });
 }
 
