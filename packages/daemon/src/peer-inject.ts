@@ -1,6 +1,6 @@
-// Delivery of a room message straight into a Claude Code session through the
-// harness's own peer messaging socket, so the receiving session needs no
-// `ccmsg subscribe` running to hear it.
+// Delivery of a message (a room message, or a direct one, DR-0036) straight
+// into a Claude Code session through the harness's own peer messaging socket,
+// so the receiving session needs no `ccmsg subscribe` running to hear it.
 //
 // The session is found by its state file `<config dir>/sessions/<pid>.json`
 // (`sessionId`, `pid`, `messagingSocketPath`, `peerProtocol`), authenticated
@@ -15,6 +15,23 @@ import { chmod, readdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
 
 export type InjectOutcome = "delivered" | "unavailable" | "refused";
+
+/** What one delivery came to, with why for a message that did not arrive.
+ *
+ * - `no_peer_socket`: nothing to write to — no state file for the session in
+ *   that config dir, a harness speaking another peer protocol, or no token
+ * - `unreachable`: the socket did not take both frames in time */
+export type InjectResult =
+  | { outcome: "delivered" }
+  | { outcome: "unavailable"; cause: "no_peer_socket" | "unreachable" }
+  | { outcome: "refused" };
+
+/** One `user` frame's payload: `mid` names it to the harness (and to the
+ * refusal it may answer), `content` is the envelope the model reads. */
+export interface InjectFrame {
+  mid: string;
+  content: string;
+}
 
 /** The `peerProtocol` generation this speaks. */
 export const PEER_PROTOCOL = 1;
@@ -65,14 +82,19 @@ export function renderEnvelope(m: InjectMessage): string {
 /** `session_id` rides along because the harness drops a frame whose id is not
  * its own: a state file read just before its pid was reused yields a message
  * nobody receives rather than one the wrong session does. */
-export function injectFrames(sid: string, token: string, m: InjectMessage, from?: string): string {
+export function injectFrames(
+  sid: string,
+  token: string,
+  frame: InjectFrame,
+  from?: string,
+): string {
   const auth = { type: "auth", token };
   const user = {
     type: "user",
     ...(from === undefined ? {} : { from }),
     session_id: sid,
-    msg_id: m.mid,
-    message: { content: renderEnvelope(m) },
+    msg_id: frame.mid,
+    message: { content: frame.content },
   };
   return `${JSON.stringify(auth)}\n${JSON.stringify(user)}\n`;
 }
@@ -188,24 +210,35 @@ export class PeerInjector {
     this.#scanMs = options.scanMs ?? INJECT_SCAN_MS;
   }
 
-  /** `configDir` is the CLAUDE_CONFIG_DIR the target session runs under. */
+  /** A room message, in the room envelope. `configDir` is the
+   * CLAUDE_CONFIG_DIR the target session runs under. */
   async send(configDir: string, sid: string, m: InjectMessage): Promise<InjectOutcome> {
+    const result = await this.deliver(configDir, sid, { mid: m.mid, content: renderEnvelope(m) });
+    return result.outcome;
+  }
+
+  /** Any envelope, already rendered, answered with why when it did not
+   * arrive. `configDir` is the CLAUDE_CONFIG_DIR the target session runs
+   * under. */
+  async deliver(configDir: string, sid: string, frame: InjectFrame): Promise<InjectResult> {
     const sessionsDir = path.join(configDir, "sessions");
     const target = await this.#target(sessionsDir, sid);
-    if (target === undefined) return "unavailable";
+    if (target === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
     const token = await this.#token(sessionsDir, target.pid);
-    if (token === undefined) return "unavailable";
+    if (token === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
     const inbox = await this.#inbox(target.socketPath);
-    const watching = inbox?.status(m.mid, this.#statusMs);
+    const watching = inbox?.status(frame.mid, this.#statusMs);
     const from = inbox === undefined ? undefined : `uds:${inbox.path}`;
     const written = await writeSocket(
       target.socketPath,
-      injectFrames(sid, token, m, from),
+      injectFrames(sid, token, frame, from),
       this.#writeMs,
     );
-    if (written !== "delivered") return written;
+    if (written !== "delivered") return { outcome: "unavailable", cause: "unreachable" };
     const status = await watching;
-    return status !== undefined && REFUSING.has(status) ? "refused" : "delivered";
+    return status !== undefined && REFUSING.has(status)
+      ? { outcome: "refused" }
+      : { outcome: "delivered" };
   }
 
   close(): void {

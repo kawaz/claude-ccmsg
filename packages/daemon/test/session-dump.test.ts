@@ -11,6 +11,7 @@ import {
   type ContextAgentRecord,
   type SessionDump,
 } from "../src/session-dump.ts";
+import { renderDirectDelivery } from "@ccmsg/protocol";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const roots: string[] = [];
@@ -1236,6 +1237,58 @@ describe("standalone ccmsg in the dump", () => {
     ]);
     expect(entries.filter((entry) => entry.kind === "user").map((entry) => entry.text)).toEqual([
       "start",
+    ]);
+  });
+});
+
+// The direct messages this plugin's daemon writes and its CLI sends
+// (DR-0036 §1): the envelope with the launcher-path reply line, and
+// `post <sid>` / `reply <mid> --to` answered by `{"delivered":true,"mid":…}`.
+describe("this plugin's direct messages in the dump", () => {
+  test("received and sent direct messages are ccmsg entries with source direct", async () => {
+    const { configDir, dataDir, transcript } = fixture();
+    const peer = "99999999-2222-4333-8444-555555555555";
+    const inMid = "0123456789abcdef0123456789abcdef/5";
+    const outMid = "0123456789abcdef0123456789abcdef/6";
+    const envelope = renderDirectDelivery(
+      { mid: inMid, from: peer, text: "レビューお願いします" },
+      "/plugin/bin/ccmsg",
+    );
+    const lines = [
+      row("2026-10-09T09:00:00Z", "user", "start", { origin: { kind: "human" } }),
+      row(
+        "2026-10-09T09:00:10Z",
+        "user",
+        `Another Claude session sent a message:\n${envelope}\n\nThis came from another Claude session.`,
+        { isMeta: true, promptSource: "system", origin: { kind: "peer" } },
+      ),
+      row("2026-10-09T09:01:00Z", "assistant", [
+        {
+          type: "tool_use",
+          id: "t1",
+          name: "Bash",
+          input: {
+            command: `/plugin/bin/ccmsg reply ${inMid} --to ${peer} '見ました'`,
+            description: "返信",
+          },
+        },
+      ]),
+      row("2026-10-09T09:01:01Z", "user", [
+        { type: "tool_result", tool_use_id: "t1", content: `{"delivered":true,"mid":"${outMid}"}` },
+      ]),
+    ];
+    fs.writeFileSync(transcript, lines.join("\n") + "\n");
+
+    const { entries } = await dumpSession(SID, { dataDir, configDirs: [configDir] });
+    expect(entries.filter((entry) => entry.kind === "ccmsg-received")).toMatchObject([
+      { from: peer, text: "レビューお願いします", meta: { source: "direct", mid: inMid } },
+    ]);
+    expect(entries.filter((entry) => entry.kind === "ccmsg-sent")).toMatchObject([
+      {
+        to: peer,
+        text: "見ました",
+        meta: { source: "direct", op: "reply", reply_to: inMid, status: "sent" },
+      },
     ]);
   });
 });

@@ -103,6 +103,7 @@ import {
 import { deriveRepoWs } from "./repo-derive.ts";
 import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
+import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { PendingInputs, productionInputDeps, sessionInput } from "./session-input.ts";
 import {
   adoptTranscriptPath,
@@ -307,11 +308,13 @@ export interface Daemon {
    * source whose token could not be read simply isn't here — and its route
    * 404s. */
   webhooks: Map<string, WebhookSource>;
-  /** Room messages handed to a session through its peer messaging socket
-   * (peer-inject.ts). */
+  /** Room and direct messages handed to a session through its peer
+   * messaging socket (peer-inject.ts). */
   peerInjector: PeerInjector;
   /** Absolute launcher path the injected envelope's reply line names. */
   launcher: string;
+  /** Issues the mid of each direct message this daemon sends (direct-send.ts). */
+  issueDirectMid: () => string;
   /** session_input requests waiting for their hooks module's report
    * (session-input.ts, DR-0035). */
   pendingInputs: PendingInputs;
@@ -1512,6 +1515,7 @@ function writeMembers(daemon: Daemon, room: Room, orderedSids: string[]): void {
 // sole unauthenticated readers of another session's filesystem/transcript.
 const IDENTITY_OPS = new Set([
   "post",
+  "message_send",
   "say",
   "say_read",
   "create_room",
@@ -1911,6 +1915,44 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       appendEvent(room, ev);
       deliver(daemon, room, ev, authorOf(conn));
       send(conn, { ok: true, room: room.id, mid, to });
+      return;
+    }
+
+    case "message_send": {
+      // Session role only (DR-0036 §3): the person's input reaches a session
+      // through session_input, and no session-to-person route exists.
+      const id = conn.identity;
+      if (id?.role !== "session") {
+        sendErr(
+          conn,
+          ErrorCode.invalid_args,
+          "message_send is sent by a session; a person's input reaches a session through session_input",
+        );
+        return;
+      }
+      const invalid = messageSendArgsError(req, id.sid);
+      if (invalid !== undefined) {
+        sendErr(conn, ErrorCode.invalid_args, invalid);
+        return;
+      }
+      // Waits for the write and the refusal window (DR-0034 §2); other
+      // requests on this connection run on meanwhile (DR-0029).
+      const outcome = await sendDirect(
+        {
+          from: id.sid,
+          to: req.to,
+          text: req.text,
+          ...(req.reply_to !== undefined ? { replyTo: req.reply_to } : {}),
+        },
+        {
+          session: (sid) => daemon.sessions.get(sid),
+          issueMid: daemon.issueDirectMid,
+          deliver: (configDir, sid, frame) => daemon.peerInjector.deliver(configDir, sid, frame),
+          launcher: daemon.launcher,
+          log: (line) => daemon.log.info(line),
+        },
+      );
+      send(conn, { ok: true, ...outcome });
       return;
     }
 
@@ -3584,6 +3626,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     webhooks: new Map(),
     peerInjector: new PeerInjector(),
     launcher: resolveLauncher(),
+    issueDirectMid: createMidIssuer(),
     pendingInputs: new PendingInputs(),
   };
 
