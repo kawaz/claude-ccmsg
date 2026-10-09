@@ -2,13 +2,18 @@
 // into this session as their own prompt.
 //
 // At session.start it starts `ccmsg sidecar`, which binds this run's socket
-// and copies each line the daemon writes there to its standard output. For a
-// fill request the module keeps the person's half-typed draft, fills the
-// composer with the text, and presses Enter on its own terminal through hyoui,
-// so the harness takes the prompt exactly as if it had been typed. The prompt
-// counts as accepted when classic.UserPromptSubmit fires for that text; the
-// outcome goes back to the daemon through `ccmsg sidecar report`. The draft
-// is filled back right after the submit.
+// and copies each line the daemon writes there to its standard output. A line
+// is a request naming an op (`{ v, op, id, args }`); every request with an id
+// gets one reply (`{ id, ok, result }` or `{ id, ok: false, error }`), which
+// goes back to the daemon through `ccmsg sidecar reply`. An op this module does
+// not have is answered `unknown_op` at once, so the daemon is not left waiting.
+//
+// `prompt.send` puts a person's text in: the module keeps the person's
+// half-typed draft, fills the composer with the text, and presses Enter on its
+// own terminal through hyoui, so the harness takes the prompt exactly as if it
+// had been typed. The prompt counts as accepted when classic.UserPromptSubmit
+// fires for that text. The draft is filled back right after the submit.
+// `describe` says which ops the module has.
 //
 // A session without a composer (`-p`, the SDK) gets no sidecar. When the
 // session changes its id (/clear, /resume) the module moves on a generation:
@@ -35,7 +40,7 @@ export interface Engine {
   process: {
     run(
       argv: readonly string[],
-      init?: { timeoutMs?: number },
+      init?: { stdin?: string; timeoutMs?: number },
     ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
     spawn(request: {
       argv: readonly string[];
@@ -69,8 +74,8 @@ export interface On {
   (event: "prompt.submit", hook: Hook<PromptSubmitEvent>): Registration<PromptSubmitEvent>;
 }
 
-/** `hyoui input` budget. One try of the module costs at most
- * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPORT_TIMEOUT_MS (9 s), which fits the
+/** `hyoui input` budget. One prompt.send costs at most
+ * HYOUI_TIMEOUT_MS + ACCEPT_WAIT_MS + REPLY_TIMEOUT_MS (9 s), which fits the
  * daemon's 12 s deadline for a session_input with room for a second run's
  * quick answer. Enter itself takes tens of milliseconds; the margin
  * is hyoui's own lock when another client is mid-input. */
@@ -78,9 +83,10 @@ export const HYOUI_TIMEOUT_MS = 3_000;
 /** How long after Enter UserPromptSubmit may take. Measured at about 30 ms
  * idle and a few ms busy; the margin is for a loaded machine. */
 export const ACCEPT_WAIT_MS = 3_000;
-/** The report is one `ccmsg` process and one round trip to the daemon,
- * measured at about 0.3 s. */
-export const REPORT_TIMEOUT_MS = 3_000;
+/** A reply is one `ccmsg` process and one round trip to the daemon, measured
+ * at about 0.3 s. `ccmsg version` for describe is the same process without
+ * the round trip. */
+export const REPLY_TIMEOUT_MS = 3_000;
 /** Respawn delays for a sidecar that keeps dying young: doubled per death
  * from the first value up to the last, and back to the first once a sidecar
  * has lived STABLE_MS. */
@@ -88,32 +94,60 @@ export const RESPAWN_MIN_MS = 500;
 export const RESPAWN_MAX_MS = 30_000;
 export const STABLE_MS = 10_000;
 
-export interface FillRequest {
+/** The request line version this module reads. */
+export const REQUEST_VERSION = 1;
+/** The ops this module runs, as describe tells them. */
+export const OPS = ["describe", "prompt.send"] as const;
+
+/** A request line as far as the module reads it before choosing the op: its
+ * id, which a reply needs, and the rest unchecked. */
+export interface RawRequest {
   id: string;
-  text: string;
+  v: unknown;
+  op: unknown;
+  args: unknown;
 }
 
-/** A fill request as the module queues it: under which session id and which
+export type ErrorCode = "unknown_op" | "unsupported_version" | "invalid_args" | "internal";
+
+export type Reply =
+  | { id: string; ok: true; result: unknown }
+  | { id: string; ok: false; error: { code: ErrorCode; message: string } };
+
+/** A prompt.send, as the module queues it: under which session id and which
  * generation of it the line arrived. */
-export interface QueuedFill extends FillRequest {
+export interface QueuedSend {
+  id: string;
+  text: string;
   sid: string;
   generation: number;
 }
 
-/** One line of the sidecar's output as a fill request, or undefined for
- * anything else (another kind, a broken line). */
-export function parseFillRequest(line: string): FillRequest | undefined {
+/** One line of the sidecar's output as a request, or undefined for a line
+ * that names no request id (broken, or not a request) and so cannot be
+ * answered. */
+export function parseRequest(line: string): RawRequest | undefined {
   let value: unknown;
   try {
     value = JSON.parse(line);
   } catch {
     return undefined;
   }
-  if (typeof value !== "object" || value === null) return undefined;
-  const { kind, id, text } = value as Record<string, unknown>;
-  if (kind !== "prompt.fill" || typeof id !== "string" || id === "") return undefined;
-  if (typeof text !== "string" || text.trim() === "") return undefined;
-  return { id, text };
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { id, v, op, args } = value as Record<string, unknown>;
+  if (typeof id !== "string" || id === "") return undefined;
+  return { id, v, op, args };
+}
+
+function failed(id: string, code: ErrorCode, message: string): Reply {
+  return { id, ok: false, error: { code, message } };
+}
+
+/** The text a prompt.send's args carry, or undefined when they carry none. */
+export function promptSendText(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const { text } = args as Record<string, unknown>;
+  return typeof text === "string" && text.trim() !== "" ? text : undefined;
 }
 
 /** `hyoui input` for one Enter on this session's terminal. The session id
@@ -142,7 +176,11 @@ export function lineSplitter(onLine: (line: string) => void): (piece: string) =>
   };
 }
 
-export type Report =
+/** What a prompt.send that ran says. `unconfirmed` is the module not
+ * knowing whether the text went in: Enter went out but no UserPromptSubmit
+ * came and the composer no longer holds the text, or the session changed its
+ * id (/clear, /resume) under the request. */
+export type PromptSendResult =
   | { outcome: "accepted" }
   | {
       outcome: "not_delivered";
@@ -153,7 +191,10 @@ export type Report =
         | "no_terminal"
         | "not_submitted"
         | "enter_failed";
-    };
+    }
+  | { outcome: "unconfirmed" };
+
+const UNCONFIRMED: PromptSendResult = { outcome: "unconfirmed" };
 
 /** The module's state for one load. */
 export interface ModuleState {
@@ -162,12 +203,12 @@ export interface ModuleState {
   /** The text whose submit puts the draft back, and the draft. */
   restoring?: { text: string; draft: string };
   /** The session id the module serves, and how many times it has changed
-   * (/clear, /resume). A fill belongs to the generation it arrived in. */
+   * (/clear, /resume). A prompt.send belongs to the generation it arrived in. */
   sid?: string;
   generation: number;
   /** Whether the session has a composer to fill; undefined until known. */
   interactive?: boolean;
-  /** Fills run one at a time: two at once would trade drafts. */
+  /** prompt.sends run one at a time: two at once would trade drafts. */
   queue: Promise<void>;
   sidecar?: { sid: string; child: AsyncGenerator<unknown, unknown> };
   delay: number;
@@ -193,7 +234,7 @@ function nextGeneration(state: ModuleState): void {
 }
 
 /** Whether `request` still belongs to the session as it is now. */
-async function stillCurrent($: Engine, state: ModuleState, request: QueuedFill): Promise<boolean> {
+async function stillCurrent($: Engine, state: ModuleState, request: QueuedSend): Promise<boolean> {
   if (request.generation !== state.generation || request.sid !== state.sid) return false;
   return (await $.session.id()) === request.sid;
 }
@@ -207,15 +248,12 @@ async function putBackUnsent($: Engine, text: string, draft: string): Promise<bo
   return true;
 }
 
-/** One fill request, start to finish. Undefined when nothing should be
- * reported: Enter went out but no UserPromptSubmit came and the composer no
- * longer holds the text, or the session changed its id under the request —
- * the daemon then answers unconfirmed. */
-export async function handleFill(
+/** One prompt.send, start to finish. */
+export async function handlePromptSend(
   $: Engine,
   state: ModuleState,
-  request: QueuedFill,
-): Promise<Report | undefined> {
+  request: QueuedSend,
+): Promise<PromptSendResult> {
   const hyouiSessionId = await $.env.get("HYOUI_SESSION_ID");
   // Checked before the composer is touched: a session outside hyoui has no
   // terminal to press Enter on, and the person's draft is left as it is.
@@ -228,7 +266,7 @@ export async function handleFill(
   // not meant for.
   if (!(await stillCurrent($, state, request))) {
     await putBackUnsent($, request.text, draft);
-    return undefined;
+    return UNCONFIRMED;
   }
   const accepted = Promise.withResolvers<boolean>();
   state.awaiting = { text: request.text, accept: () => accepted.resolve(true) };
@@ -250,13 +288,13 @@ export async function handleFill(
   if (state.awaiting?.text === request.text) state.awaiting = undefined;
   // Enter went out under an id that is no longer the session's: whatever it
   // did, it is not this request's to report.
-  if (request.generation !== state.generation) return undefined;
+  if (request.generation !== state.generation) return UNCONFIRMED;
   if (isAccepted) return { outcome: "accepted" };
   if (state.restoring?.text === request.text) state.restoring = undefined;
   if (await putBackUnsent($, request.text, draft)) {
     return { outcome: "not_delivered", reason: entered ? "not_submitted" : "enter_failed" };
   }
-  return undefined;
+  return UNCONFIRMED;
 }
 
 /** After a filled prompt went in: give the person their draft back, unless
@@ -273,46 +311,110 @@ async function putBackDraft($: Engine, submitted: string, draft: string): Promis
   await $.prompt.fill({ text: draft, mode: "replace" });
 }
 
-export function reportArgv(root: string, sid: string, id: string, report: Report): string[] {
-  return [
-    `${root}/bin/ccmsg`,
-    "sidecar",
-    "report",
-    "--sid",
-    sid,
-    "--id",
-    id,
-    "--outcome",
-    report.outcome,
-    ...(report.outcome === "not_delivered" ? ["--reason", report.reason] : []),
-  ];
+/** `ccmsg sidecar reply` for a reply to a request that arrived under `sid`.
+ * The reply itself goes on standard input (see `sendReply`). */
+export function replyArgv(root: string, sid: string): string[] {
+  return [`${root}/bin/ccmsg`, "sidecar", "reply", "--sid", sid];
 }
 
-async function serve($: Engine, state: ModuleState, request: QueuedFill): Promise<void> {
-  if (request.generation !== state.generation || request.sid !== state.sid) {
-    $.ui.log(`ccmsg: fill ${request.id} dropped: the session changed its id`, { to: "debug" });
-    return;
-  }
-  let report: Report | undefined;
+/** Hand `reply` to the daemon. On standard input rather than as an argument:
+ * a reply carries whatever its op returns, an argument is bounded in size and
+ * shown to every user by `ps`, and `$.process.run` writes `stdin` once and
+ * closes it, which is all one reply needs. */
+async function sendReply($: Engine, sid: string, reply: Reply): Promise<void> {
   try {
-    report = await handleFill($, state, request);
-  } catch (e) {
-    $.ui.log(`ccmsg: fill ${request.id} failed: ${String(e)}`, { to: "debug" });
-    return;
-  }
-  if (report === undefined) return;
-  try {
-    const done = await $.process.run(reportArgv($.plugin.root, request.sid, request.id, report), {
-      timeoutMs: REPORT_TIMEOUT_MS,
+    const done = await $.process.run(replyArgv($.plugin.root, sid), {
+      stdin: JSON.stringify(reply),
+      timeoutMs: REPLY_TIMEOUT_MS,
     });
     if (done.exitCode !== 0) {
-      $.ui.log(`ccmsg: report ${request.id} exited ${done.exitCode}: ${done.stderr.trim()}`, {
+      $.ui.log(`ccmsg: reply ${reply.id} exited ${done.exitCode}: ${done.stderr.trim()}`, {
         to: "debug",
       });
     }
   } catch (e) {
-    $.ui.log(`ccmsg: report ${request.id} failed: ${String(e)}`, { to: "debug" });
+    $.ui.log(`ccmsg: reply ${reply.id} failed: ${String(e)}`, { to: "debug" });
   }
+}
+
+async function promptSend($: Engine, state: ModuleState, request: QueuedSend): Promise<Reply> {
+  if (request.generation !== state.generation || request.sid !== state.sid) {
+    $.ui.log(`ccmsg: prompt.send ${request.id} not filled: the session changed its id`, {
+      to: "debug",
+    });
+    return { id: request.id, ok: true, result: UNCONFIRMED };
+  }
+  try {
+    return { id: request.id, ok: true, result: await handlePromptSend($, state, request) };
+  } catch (e) {
+    $.ui.log(`ccmsg: prompt.send ${request.id} failed: ${String(e)}`, { to: "debug" });
+    return failed(request.id, "internal", String(e));
+  }
+}
+
+/** describe's result. The version is the one `ccmsg` beside this module
+ * prints; left out when it cannot be had. */
+async function describe($: Engine): Promise<{ v: number[]; ops: string[]; version?: string }> {
+  const described = { v: [REQUEST_VERSION], ops: [...OPS] };
+  try {
+    const run = await $.process.run([`${$.plugin.root}/bin/ccmsg`, "version"], {
+      timeoutMs: REPLY_TIMEOUT_MS,
+    });
+    const version = run.stdout.trim();
+    if (run.exitCode === 0 && version !== "") return { ...described, version };
+  } catch (e) {
+    $.ui.log(`ccmsg: describe could not read the version: ${String(e)}`, { to: "debug" });
+  }
+  return described;
+}
+
+/** Run one request line that arrived under `sid` in `generation`, and reply. */
+export function answer(
+  $: Engine,
+  state: ModuleState,
+  sid: string,
+  generation: number,
+  line: string,
+): Promise<void> {
+  const request = parseRequest(line);
+  if (request === undefined) {
+    $.ui.log(`ccmsg sidecar: dropped a line that names no request id: ${line.slice(0, 200)}`, {
+      to: "debug",
+    });
+    return Promise.resolve();
+  }
+  const { id } = request;
+  const reply = async (): Promise<Reply> => {
+    if (request.v !== REQUEST_VERSION) {
+      return failed(
+        id,
+        "unsupported_version",
+        `request version ${String(request.v)} is not read here; this module reads ${REQUEST_VERSION}`,
+      );
+    }
+    if (request.op === "describe") return { id, ok: true, result: await describe($) };
+    if (request.op === "prompt.send") {
+      const text = promptSendText(request.args);
+      if (text === undefined) {
+        return failed(
+          id,
+          "invalid_args",
+          "prompt.send takes args { text } with text other than whitespace",
+        );
+      }
+      const queued: QueuedSend = { id, text, sid, generation };
+      // One at a time: two at once would trade drafts.
+      const result = state.queue.then(() => promptSend($, state, queued));
+      state.queue = result.then(() => undefined);
+      return result;
+    }
+    return failed(
+      id,
+      "unknown_op",
+      `no op ${JSON.stringify(request.op)}; this module has ${OPS.join(", ")}`,
+    );
+  };
+  return reply().then((r) => sendReply($, sid, r));
 }
 
 /** Run one sidecar for `sid` until it ends, then start the next one unless it
@@ -327,10 +429,7 @@ async function runSidecar($: Engine, state: ModuleState, sid: string): Promise<v
   state.sidecar = mine;
   const startedAt = await $.clock.now();
   const onLine = lineSplitter((line) => {
-    const request = parseFillRequest(line);
-    if (request === undefined) return;
-    const queued = { ...request, sid, generation: state.generation };
-    state.queue = state.queue.then(() => serve($, state, queued));
+    void answer($, state, sid, state.generation, line);
   });
   try {
     for await (const piece of child) {
