@@ -44,10 +44,6 @@ export function classifySessionInputReply(
       return { kind: "not_delivered", reason: reply.reason };
     case "unconfirmed":
       return { kind: "unconfirmed" };
-    default:
-      // この webui が知らない outcome (新しい daemon)。届いたかどうか判断
-      // できないので、文を残す側の `unconfirmed` に倒す。
-      return { kind: "unconfirmed" };
   }
 }
 
@@ -105,9 +101,7 @@ export function sessionInputNotice(outcome: SessionInputOutcome): SessionInputNo
       return {
         tone: "danger",
         title: "届きませんでした",
-        detail:
-          REASON_DETAIL[outcome.reason] ??
-          `セッションが入力を受け取れませんでした (理由: ${outcome.reason})。セッションの画面を確かめてから送り直してください。続く場合は、この画面を再読み込みし、ccmsg plugin を更新してください。`,
+        detail: REASON_DETAIL[outcome.reason],
       };
     case "unconfirmed":
       return {

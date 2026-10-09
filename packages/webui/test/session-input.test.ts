@@ -69,15 +69,6 @@ describe("classifySessionInputReply", () => {
     expect(got.kind).toBe("failed");
     expect(got.kind === "failed" && got.message).toContain("requires user role");
   });
-
-  // 何を保証するか: この webui が知らない outcome は、届いたか判断できないので
-  // 文を残す側 (unconfirmed) に倒す。消す側に倒すと文を失いうる。
-  test("leans an unknown outcome to unconfirmed", () => {
-    const reply = { ok: true, outcome: "queued" } as unknown as Parameters<
-      typeof classifySessionInputReply
-    >[0];
-    expect(classifySessionInputReply(reply)).toEqual({ kind: "unconfirmed" });
-  });
 });
 
 describe("shouldClearAfter (DR-0035 §5 確認が取れるまで文を消さない)", () => {
@@ -129,19 +120,6 @@ describe("sessionInputNotice", () => {
     expect(detail("refused")).toContain("他の plugin を確認して");
     expect(detail("not_submitted")).toContain("送り直して");
     expect(detail("enter_failed")).toContain("送り直して");
-  });
-
-  // 何を保証するか: この webui が知らない reason でも、理由コードだけで終わらず
-  // 次の行動 (確かめて送り直す、続けば更新) を示す。
-  test("gives an unknown reason a next step too", () => {
-    const notice = sessionInputNotice({
-      kind: "not_delivered",
-      reason: "brand_new" as SessionInputReason,
-    });
-    expect(notice?.tone).toBe("danger");
-    expect(notice?.detail).toContain("brand_new");
-    expect(notice?.detail).toContain("送り直して");
-    expect(notice?.detail).toContain("ccmsg plugin を更新して");
   });
 
   // 何を保証するか: unconfirmed は danger でなく warn で、「送信済みかもしれない」

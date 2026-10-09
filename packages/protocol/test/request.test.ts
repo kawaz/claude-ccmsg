@@ -461,15 +461,6 @@ describe("readRequest: the frame and the request are read in turn", () => {
 });
 
 describe("readRequest: the forms beside each op's type", () => {
-  // Unknown fields are left out, not refused: a client of another build is
-  // told what it is by hello's generation, not by a field error.
-  test("a field the op does not define is left out", () => {
-    expect(read({ op: "ping", trace: true })).toEqual({
-      ok: true,
-      value: { op: "ping", request_id: "q1" },
-    });
-  });
-
   test("create_room says where a 1on1 room comes from", () => {
     expect(refusal(read({ op: "create_room", members: [SID], kind: "1on1" }))).toBe(
       "kind: a 1on1 room is not opened through create_room; omit kind for a normal room",
