@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, type RequestInput } from "@ccmsg/protocol";
 import { PeerInjector } from "../src/peer-inject.ts";
 import { parseDirectDeliveries } from "@ccmsg/protocol";
 import { createMidIssuer } from "../src/direct-send.ts";
@@ -16,6 +16,8 @@ import {
   sessionWithConfig,
   type FakeHarness,
 } from "./peer-harness.ts";
+
+type MessageSendInput = Extract<RequestInput, { op: "message_send" }>;
 
 const T = 15000;
 const A = "aaaaaaaa-2222-4333-8444-555555555555";
@@ -62,8 +64,9 @@ describe("message_send", () => {
       const a = await sessionWithConfig(ctx, A, ha.configDir);
       const b = await sessionWithConfig(ctx, B, hb.configDir);
 
-      const sent = await a.request({ op: "message_send", to: B, text: "question\nline 2" });
+      const sent = await a.requestOk({ op: "message_send", to: B, text: "question\nline 2" });
       expect(sent).toEqual({ ok: true, outcome: "delivered", mid: expect.stringMatching(MID_RE) });
+      if (sent.outcome !== "delivered") throw new Error("not delivered");
       const content = await hb.nextContent();
       const { attrs, body } = parseEnvelope(content);
       expect(attrs).toEqual({
@@ -82,13 +85,13 @@ describe("message_send", () => {
       ]);
 
       // The reply line is `reply <mid> --to <A>`: the CLI turns it into this.
-      const replied = await b.request({
+      const replied = await b.requestOk({
         op: "message_send",
         to: A,
         text: "answer",
         reply_to: sent.mid,
       });
-      expect(replied.outcome).toBe("delivered");
+      if (replied.outcome !== "delivered") throw new Error("not delivered");
       expect(replied.mid).toBe(`${sent.mid.slice(0, 32)}/${Number(sent.mid.split("/")[1]) + 1}`);
       const back = parseEnvelope(await ha.nextContent());
       expect(back.attrs["ccmsg-reply-to"]).toBe(sent.mid);
@@ -97,7 +100,7 @@ describe("message_send", () => {
         `answer\n\nReply with: ${LAUNCHER} reply ${replied.mid} --to ${B} <text>`,
       );
 
-      const rooms = await a.request<{ rooms: unknown[] }>({ op: "rooms" });
+      const rooms = await a.requestOk({ op: "rooms" });
       expect(rooms.rooms).toEqual([]);
     },
     T,
@@ -117,19 +120,22 @@ describe("message_send", () => {
       });
 
       await sessionWithConfig(ctx, B);
-      expect((await send(B)).reason).toBe("no_config_dir");
+      expect(await send(B)).toMatchObject({ outcome: "not_delivered", reason: "no_config_dir" });
 
       // A config dir whose sessions/ has no state file for this sid.
       const elsewhere = harness(NOBODY);
       const c = "dddddddd-2222-4333-8444-555555555555";
       await sessionWithConfig(ctx, c, elsewhere.configDir);
-      expect((await send(c)).reason).toBe("no_peer_socket");
+      expect(await send(c)).toMatchObject({ outcome: "not_delivered", reason: "no_peer_socket" });
       expect(elsewhere.frames).toEqual([]);
 
       const gone = harness("eeeeeeee-2222-4333-8444-555555555555");
       gone.stop();
       await sessionWithConfig(ctx, "eeeeeeee-2222-4333-8444-555555555555", gone.configDir);
-      expect((await send("eeeeeeee-2222-4333-8444-555555555555")).reason).toBe("unreachable");
+      expect(await send("eeeeeeee-2222-4333-8444-555555555555")).toMatchObject({
+        outcome: "not_delivered",
+        reason: "unreachable",
+      });
     },
     T,
   );
@@ -145,7 +151,7 @@ describe("message_send", () => {
       await hb.listening;
       const a = await sessionWithConfig(ctx, A);
       await sessionWithConfig(ctx, B, hb.configDir);
-      const res = await a.request<Record<string, unknown>>({
+      const res = await a.request({
         op: "message_send",
         to: B,
         text: "x".repeat(4 * 1024 * 1024),
@@ -163,9 +169,7 @@ describe("message_send", () => {
       hb.refuseWith = "denied";
       const a = await sessionWithConfig(ctx, A);
       await sessionWithConfig(ctx, B, hb.configDir);
-      expect(
-        await a.request<Record<string, unknown>>({ op: "message_send", to: B, text: "hi" }),
-      ).toEqual({
+      expect(await a.request({ op: "message_send", to: B, text: "hi" })).toEqual({
         ok: true,
         outcome: "not_delivered",
         reason: "refused",
@@ -182,8 +186,8 @@ describe("message_send", () => {
       await sessionWithConfig(ctx, B);
       const u = await connect(ctx.sock);
       await u.hello({ role: "user" });
-      const code = async (client: typeof a, req: Record<string, unknown>) =>
-        (await client.request<{ ok: boolean; error?: { code: string } }>(req)).error?.code;
+      const code = async (client: typeof a, req: MessageSendInput) =>
+        (await client.requestError(req)).error.code;
 
       expect(await code(u, { op: "message_send", to: B, text: "hi" })).toBe("invalid_args");
       expect(await code(a, { op: "message_send", to: "user", text: "hi" })).toBe("invalid_args");
@@ -212,9 +216,7 @@ describe("message_send", () => {
       const socketDir = path.dirname(hb.socketPath);
       fs.chmodSync(socketDir, 0o500);
       cleanups.push(() => fs.chmodSync(socketDir, 0o700));
-      expect(
-        await a.request<Record<string, unknown>>({ op: "message_send", to: B, text: "hi" }),
-      ).toEqual({
+      expect(await a.request({ op: "message_send", to: B, text: "hi" })).toEqual({
         ok: true,
         outcome: "not_delivered",
         reason: "no_status_socket",
@@ -242,7 +244,7 @@ describe("message_send", () => {
       for (const sid of ["x; printf PWNED >&2; #", "A", `${A} `, A.toUpperCase(), `ccmsg:${A}`]) {
         const c = await connect(ctx.sock);
         cleanups.push(() => c.close());
-        const res = await c.request<{ ok: boolean; error?: { code: string } }>({
+        const res = await c.requestError({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
@@ -252,7 +254,7 @@ describe("message_send", () => {
           cwd: "/tmp",
         });
         expect({ sid, code: res.error?.code }).toEqual({ sid, code: "invalid_args" });
-        const after = await c.request<{ error?: { code: string } }>({
+        const after = await c.requestError({
           op: "message_send",
           to: B,
           text: "hi",
@@ -261,7 +263,7 @@ describe("message_send", () => {
       }
       const peers = await (
         await sessionWithConfig(ctx, A)
-      ).request<{ peers: { sid: string }[] }>({
+      ).requestOk({
         op: "peers",
       });
       expect(peers.peers.map((p) => p.sid)).toEqual([A]);
@@ -274,7 +276,7 @@ describe("message_send", () => {
     async () => {
       const ctx = await daemon();
       const raw = await connect(ctx.sock);
-      const res = await raw.request<{ error?: { code: string } }>({
+      const res = await raw.requestError({
         op: "message_send",
         to: B,
         text: "hi",

@@ -258,13 +258,10 @@ describe("hello-time transcript adoption", () => {
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
 
-        const peers = await user.request<{
-          ok: true;
-          peers: { sid: string; transcript_path?: string }[];
-        }>({ op: "peers" });
+        const peers = await user.requestOk({ op: "peers" });
         expect(peers.peers.find((peer) => peer.sid === sid())?.transcript_path).toBe(file);
 
-        const read = await user.request<{ ok: true; lines: string[] }>({
+        const read = await user.requestOk({
           op: "transcript_read",
           sid: sid(),
         });
@@ -318,10 +315,7 @@ describe("hello-time transcript adoption", () => {
       try {
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const initial = await user.request<{
-          ok: true;
-          todos: { id: string; subject: string; status: string }[];
-        }>({ op: "session_status_subscribe", sid: sid() });
+        const initial = await user.requestOk({ op: "session_status_subscribe", sid: sid() });
         expect(initial.ok).toBe(true);
         expect(initial.todos).toHaveLength(1);
         expect(initial.todos[0]?.status).toBe("pending");
@@ -359,9 +353,7 @@ describe("hello-time transcript adoption", () => {
             .map((row) => `${JSON.stringify(row)}\n`)
             .join(""),
         );
-        const { ev } = await user.readEventUntil<{ todos: { status: string }[] }>(
-          (event) => event.ev === "session_status",
-        );
+        const { ev } = await user.readEventUntil("session_status");
         expect(ev.todos[0]?.status).toBe("completed");
         user.close();
       } finally {
@@ -386,7 +378,7 @@ describe("session_search wire authorization", () => {
           sid: "aaaaaaaa-0000-4000-8000-000000000001",
           cwd: "/tmp",
         });
-        const response = await client.request<{ ok: false; error: { code: string } }>({
+        const response = await client.requestError({
           op: "session_search",
         });
         expect(response.ok).toBe(false);

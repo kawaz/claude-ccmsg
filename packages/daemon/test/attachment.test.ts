@@ -29,7 +29,7 @@ async function startHttpDaemon(extraEnv: Record<string, string> = {}): Promise<D
 async function httpAddress(ctx: DaemonCtx): Promise<string> {
   const c = await connect(ctx.sock);
   await c.hello({ role: "user" });
-  const pong = await c.request<{ http: string[] }>({ op: "ping" });
+  const pong = await c.requestOk({ op: "ping" });
   c.close();
   expect(pong.http.length).toBe(1);
   return pong.http[0]!;

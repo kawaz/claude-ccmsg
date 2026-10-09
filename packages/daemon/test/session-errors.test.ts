@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { SessionErrorEntry } from "@ccmsg/protocol";
 import {
   connect,
   startTestDaemon,
@@ -77,18 +76,6 @@ async function userHello(ctx: DaemonCtx): Promise<TestClient> {
   return client;
 }
 
-interface ErrorsOk {
-  ok: true;
-  errors: SessionErrorEntry[];
-}
-interface ErrorsEvent {
-  ev: "session_errors";
-  errors: SessionErrorEntry[];
-}
-interface ErrorLite {
-  error: { code: string };
-}
-
 describe("session_errors daemon op / push", () => {
   test(
     "接続中セッションが最終 turn のエラーで止まっていれば一覧に出る",
@@ -107,7 +94,7 @@ describe("session_errors daemon op / push", () => {
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
-        const res = await user.request<ErrorsOk>({ op: "session_errors" });
+        const res = await user.requestOk({ op: "session_errors" });
         expect(res.errors).toEqual([{ sid: A, text: "Prompt is too long", timestamp: START }]);
       } finally {
         await stopTestDaemon(ctx);
@@ -129,14 +116,15 @@ describe("session_errors daemon op / push", () => {
         await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toEqual([]);
+        expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
 
         fs.appendFileSync(
           file,
           apiErrorLine("You're out of extra usage · resets 7pm (Asia/Tokyo)"),
         );
-        const raised = await user.readEventUntil<ErrorsEvent>(
-          (event) => event.ev === "session_errors" && event.errors.length > 0,
+        const raised = await user.readEventUntil(
+          "session_errors",
+          (event) => event.errors.length > 0,
         );
         expect(raised.ev.errors).toEqual([
           {
@@ -147,8 +135,9 @@ describe("session_errors daemon op / push", () => {
         ]);
 
         fs.appendFileSync(file, assistantLine("back"));
-        const cleared = await user.readEventUntil<ErrorsEvent>(
-          (event) => event.ev === "session_errors" && event.errors.length === 0,
+        const cleared = await user.readEventUntil(
+          "session_errors",
+          (event) => event.errors.length === 0,
         );
         expect(cleared.ev.errors).toEqual([]);
       } finally {
@@ -173,7 +162,7 @@ describe("session_errors daemon op / push", () => {
         await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toEqual([]);
+        expect((await user.requestOk({ op: "session_errors" })).errors).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -191,7 +180,7 @@ describe("session_errors daemon op / push", () => {
         const file = path.join(dir, `${A}.jsonl`);
         fs.writeFileSync(file, assistantLine("hello"));
         const session = await sessionHello(ctx, A, file);
-        const res = await session.request<ErrorLite>({ op: "session_errors" });
+        const res = await session.requestError({ op: "session_errors" });
         expect(res.error.code).toBe("bad_request");
       } finally {
         await stopTestDaemon(ctx);
@@ -213,11 +202,11 @@ describe("session_errors daemon op / push", () => {
         const session = await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toHaveLength(1);
+        expect((await user.requestOk({ op: "session_errors" })).errors).toHaveLength(1);
 
         session.close();
         await new Promise((r) => setTimeout(r, 50));
-        expect((await user.request<ErrorsOk>({ op: "session_errors" })).errors).toHaveLength(1);
+        expect((await user.requestOk({ op: "session_errors" })).errors).toHaveLength(1);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });

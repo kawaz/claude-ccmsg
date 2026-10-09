@@ -70,7 +70,7 @@ interface PeersEv {
  *  none of them was ev:"peers", rather than a blind timeout sleep. The reader
  *  is a user-role subscriber (admin sees every room, and its stream carries msg). */
 async function postMarkerVia(poster: TestClient, text: string): Promise<void> {
-  const room = (await poster.request<{ room: string }>({ op: "create_room", members: [] })).room;
+  const room = (await poster.requestOk({ op: "create_room", members: [] })).room;
   await poster.request({ op: "post", room, msg: text });
 }
 
@@ -83,7 +83,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const helloP = sessionHello(ctx, SID_A);
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
+        const { ev } = await u.readEventUntil("peers");
         expect(ev.peers.some((p) => p.sid === SID_A)).toBe(true);
         (await helloP).close();
       } finally {
@@ -104,9 +104,9 @@ describe("ev:peers push", () => {
         await u.request({ op: "subscribe" });
         a.close();
         await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
-        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const res = await u.requestOk({ op: "peers" });
         expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         m.close();
       } finally {
@@ -129,9 +129,7 @@ describe("ev:peers push", () => {
         // is the ordering anchor (the daemon writes every subscriber's copy in
         // one synchronous loop); a round trip on S then orders its stream past it.
         const b = await sessionHello(ctx, SID_B);
-        await u.readEventUntil<PeersEv>(
-          (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === SID_B),
-        );
+        await u.readEventUntil("peers", (e) => (e as PeersEv).peers.some((p) => p.sid === SID_B));
         await s.request({ op: "rooms" });
         const seen = await s.pendingEvents();
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
@@ -152,9 +150,9 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const m = await sessionHello(ctx, SID_M); // marker poster, connected up front
-        await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // drain M's own registration push
+        await u.readEventUntil("peers"); // drain M's own registration push
         const a = await sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp" });
-        await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // drain A's registration push
+        await u.readEventUntil("peers"); // drain A's registration push
 
         // identical re-hello on the same conn — must not push again.
         await a.request({
@@ -167,7 +165,7 @@ describe("ev:peers push", () => {
           cwd: "/tmp",
         });
         await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
         a.close();
         m.close();
@@ -186,7 +184,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = await sessionHello(ctx, SID_A, { repo: "r1", ws: "w", cwd: "/tmp" });
-        await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // first push (new sid)
+        await u.readEventUntil("peers"); // first push (new sid)
 
         await a.request({
           op: "hello",
@@ -197,7 +195,7 @@ describe("ev:peers push", () => {
           ws: "w",
           cwd: "/tmp",
         });
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
+        const { ev } = await u.readEventUntil("peers");
         const me = ev.peers.find((p) => p.sid === SID_A);
         expect(me?.repo).toBe("r2");
         a.close();
@@ -223,7 +221,7 @@ describe("ev:peers push", () => {
 
         a1.close(); // one of two conns for sid A closes; A stays registered via a2
         await postMarkerVia(m, "marker");
-        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
         expect(seen.some((e: any) => e.ev === "peers")).toBe(false);
         a2.close();
         m.close();
@@ -242,7 +240,7 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = await sessionHello(ctx, SID_A);
-        await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // A's registration push
+        await u.readEventUntil("peers"); // A's registration push
 
         // same conn, re-hello as a different sid
         await a.request({
@@ -254,12 +252,12 @@ describe("ev:peers push", () => {
           ws: "w",
           cwd: "/tmp",
         });
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
+        const { ev } = await u.readEventUntil("peers");
         expect(ev.peers.some((p) => p.sid === SID_A)).toBe(true);
         expect(ev.peers.some((p) => p.sid === SID_B)).toBe(true);
 
         // op:"peers" one-shot poll agrees
-        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const res = await u.requestOk({ op: "peers" });
         expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         expect(res.peers.some((p) => p.sid === SID_B)).toBe(true);
         a.close();
@@ -278,11 +276,11 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = await sessionHello(ctx, SID_A);
-        await u.readEventUntil<PeersEv>((e) => e.ev === "peers"); // A's registration push
+        await u.readEventUntil("peers"); // A's registration push
 
         // same conn, re-hello as user role instead of session
         await a.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const res = await u.requestOk({ op: "peers" });
         expect(res.peers.some((p) => p.sid === SID_A)).toBe(true);
         a.close();
       } finally {
@@ -315,10 +313,10 @@ describe("ev:peers push", () => {
         const u = await userConn(ctx);
         await u.request({ op: "subscribe" });
         const a = sessionHello(ctx, SID_A, { repo: "r", ws: "w", cwd: "/tmp", branch: "main" });
-        const { ev } = await u.readEventUntil<PeersEv>((e) => e.ev === "peers");
+        const { ev } = await u.readEventUntil("peers");
         const pushed = ev.peers.find((p) => p.sid === SID_A)!;
 
-        const res = await u.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const res = await u.requestOk({ op: "peers" });
         const polled = res.peers.find((p) => p.sid === SID_A)!;
         const { last_activity_at: _pushedLastActivity, ...pushedRest } = pushed;
         const { last_activity_at: _polledLastActivity, ...polledRest } = polled;

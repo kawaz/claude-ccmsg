@@ -111,7 +111,7 @@ describe("fs_list / fs_read", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await connect(ctx.sock);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_list",
           sid: "whatever",
         });
@@ -130,7 +130,7 @@ describe("fs_list / fs_read", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionAt(ctx, A, mkfixture());
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_list",
           sid: "no-such-sid",
         });
@@ -157,11 +157,7 @@ describe("fs_list / fs_read", () => {
         fs.mkdirSync(path.join(root, "m_dir"));
 
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{
-          ok: true;
-          path: string;
-          entries: { name: string; type: string; size?: number }[];
-        }>({ op: "fs_list", sid: A });
+        const res = await c.requestOk({ op: "fs_list", sid: A });
 
         expect(res.ok).toBe(true);
         expect(res.path).toBe(""); // root itself
@@ -195,7 +191,7 @@ describe("fs_list / fs_read", () => {
         fs.writeFileSync(path.join(root, "sub", "hello.txt"), "hello world");
 
         const c = await sessionAt(ctx, A, root);
-        const listed = await c.request<{ ok: true; path: string; entries: { name: string }[] }>({
+        const listed = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: "sub",
@@ -203,14 +199,7 @@ describe("fs_list / fs_read", () => {
         expect(listed.path).toBe("sub");
         expect(listed.entries.map((e) => e.name)).toEqual(["hello.txt"]);
 
-        const read = await c.request<{
-          ok: true;
-          path: string;
-          size: number;
-          truncated: boolean;
-          binary: boolean;
-          content: string;
-        }>({ op: "fs_read", sid: A, path: "sub/hello.txt" });
+        const read = await c.requestOk({ op: "fs_read", sid: A, path: "sub/hello.txt" });
         expect(read.path).toBe(path.join("sub", "hello.txt"));
         expect(read.content).toBe("hello world");
         expect(read.size).toBe(11);
@@ -232,7 +221,7 @@ describe("fs_list / fs_read", () => {
       try {
         fs.mkdirSync(path.join(root, "empty"));
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: true; entries: unknown[] }>({
+        const res = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: "empty",
@@ -255,16 +244,16 @@ describe("fs_list / fs_read", () => {
         fs.writeFileSync(path.join(root, "only.txt"), "x");
         const c = await sessionAt(ctx, A, root);
 
-        const noPath = await c.request<{ ok: true; path: string; entries: { name: string }[] }>({
+        const noPath = await c.requestOk({
           op: "fs_list",
           sid: A,
         });
-        const dotPath = await c.request<{ ok: true; path: string; entries: { name: string }[] }>({
+        const dotPath = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: ".",
         });
-        const emptyPath = await c.request<{ ok: true; path: string; entries: { name: string }[] }>({
+        const emptyPath = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: "",
@@ -294,7 +283,7 @@ describe("fs_list / fs_read", () => {
         // an absolute path — even one that literally *is* inside root — is a
         // contract violation, not something clients have a legitimate way to
         // construct (they never learn the root's absolute filesystem path).
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_list",
           sid: A,
           path: root, // absolute, coincidentally == root
@@ -316,7 +305,7 @@ describe("fs_list / fs_read", () => {
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const list = await c.request<{ ok: false; error: { code: string } }>({
+        const list = await c.requestError({
           op: "fs_list",
           sid: A,
           path: "../etc",
@@ -324,7 +313,7 @@ describe("fs_list / fs_read", () => {
         expect(list.ok).toBe(false);
         expect(list.error.code).toBe("path_forbidden");
 
-        const read = await c.request<{ ok: false; error: { code: string } }>({
+        const read = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "../etc/passwd",
@@ -352,7 +341,7 @@ describe("fs_list / fs_read", () => {
         fs.symlinkSync(path.join(outside, "secret_dir"), path.join(root, "link_out_dir"));
 
         const c = await sessionAt(ctx, A, root);
-        const read = await c.request<{ ok: false; error: { code: string } }>({
+        const read = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "link_out_file",
@@ -360,7 +349,7 @@ describe("fs_list / fs_read", () => {
         expect(read.ok).toBe(false);
         expect(read.error.code).toBe("path_forbidden");
 
-        const list = await c.request<{ ok: false; error: { code: string } }>({
+        const list = await c.requestError({
           op: "fs_list",
           sid: A,
           path: "link_out_dir",
@@ -390,7 +379,7 @@ describe("fs_list / fs_read", () => {
 
         // listing root: link_in must show up with type "symlink" (never
         // promoted to "dir" just because its target is a directory)
-        const rootList = await c.request<{ ok: true; entries: { name: string; type: string }[] }>({
+        const rootList = await c.requestOk({
           op: "fs_list",
           sid: A,
         });
@@ -399,14 +388,14 @@ describe("fs_list / fs_read", () => {
 
         // but traversing *through* it works: fs_list("link_in") and
         // fs_read("link_in/hello.txt") both succeed against the real target
-        const listed = await c.request<{ ok: true; entries: { name: string }[] }>({
+        const listed = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: "link_in",
         });
         expect(listed.entries.map((e) => e.name)).toEqual(["hello.txt"]);
 
-        const read = await c.request<{ ok: true; content: string }>({
+        const read = await c.requestOk({
           op: "fs_read",
           sid: A,
           path: "link_in/hello.txt",
@@ -427,7 +416,7 @@ describe("fs_list / fs_read", () => {
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "does/not/exist.txt",
@@ -452,7 +441,7 @@ describe("fs_list / fs_read", () => {
         fs.mkdirSync(path.join(root, "a_dir"));
         const c = await sessionAt(ctx, A, root);
 
-        const listFile = await c.request<{ ok: false; error: { code: string } }>({
+        const listFile = await c.requestError({
           op: "fs_list",
           sid: A,
           path: "a_file.txt",
@@ -460,7 +449,7 @@ describe("fs_list / fs_read", () => {
         expect(listFile.ok).toBe(false);
         expect(listFile.error.code).toBe("invalid_args");
 
-        const readDir = await c.request<{ ok: false; error: { code: string } }>({
+        const readDir = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "a_dir",
@@ -487,7 +476,7 @@ describe("fs_list / fs_read", () => {
         fs.writeFileSync(path.join(root, "bin.dat"), buf);
 
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: true; binary: boolean; content: string; size: number }>({
+        const res = await c.requestOk({
           op: "fs_read",
           sid: A,
           path: "bin.dat",
@@ -519,13 +508,7 @@ describe("fs_list / fs_read", () => {
         fs.writeFileSync(path.join(root, "big.txt"), full);
 
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{
-          ok: true;
-          size: number;
-          truncated: boolean;
-          binary: boolean;
-          content: string;
-        }>({ op: "fs_read", sid: A, path: "big.txt" });
+        const res = await c.requestOk({ op: "fs_read", sid: A, path: "big.txt" });
 
         expect(res.size).toBe(FS_READ_MAX_BYTES + extra); // true on-disk size, not the capped read
         expect(res.truncated).toBe(true);
@@ -552,7 +535,7 @@ describe("fs_list / fs_read", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionAt(ctx, A, "/");
-        const res = await c.request<{ ok: boolean; error?: { code: string } }>({
+        const res = await c.request({
           op: "fs_list",
           sid: A,
           path: "tmp",
@@ -574,7 +557,7 @@ describe("fs_list / fs_read", () => {
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request({ op: "fs_list", sid: A, path: 123 });
+        const res = await c.requestRefusal({ op: "fs_list", sid: A, path: 123 });
         expect(res).toEqual({
           ok: false,
           error: {
@@ -601,7 +584,7 @@ describe("fs_list / fs_read", () => {
         fs.symlinkSync(path.join(outside, "secret_dir"), path.join(root, "lnk_out_dir"));
 
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "lnk_out_dir/missing",
@@ -624,7 +607,7 @@ describe("fs_list / fs_read", () => {
       const root = mkfixture();
       try {
         const c = await sessionAt(ctx, A, root);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "",
@@ -656,7 +639,7 @@ describe("fs_read_external (DR-0024)", () => {
         const canonicalTarget = fs.realpathSync(target);
         await sessionAtWithTranscript(ctx, A, root, [externalAttachmentRow(target)]);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: true; path: string; content: string }>({
+        const res = await user.requestOk({
           op: "fs_read_external",
           sid: A,
           path: canonicalTarget,
@@ -686,13 +669,7 @@ describe("fs_read_external (DR-0024)", () => {
         const canonicalTarget = fs.realpathSync(target);
         await sessionAtWithTranscript(ctx, A, root, [externalToolUse("r1", "Read", target)]);
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          path: string;
-          content: string;
-          truncated: boolean;
-          binary: boolean;
-        }>({ op: "fs_read_external", sid: A, path: canonicalTarget });
+        const res = await user.requestOk({ op: "fs_read_external", sid: A, path: canonicalTarget });
         expect(res.path).toBe(canonicalTarget);
         expect(res.content).toBe("allowed content");
         expect(res.truncated).toBe(false);
@@ -730,7 +707,7 @@ describe("fs_read_external (DR-0024)", () => {
         await sessionAtWithTranscript(ctx, A, root, [externalToolUse("r1", "Read", viaLink)]);
         const user = await userAt(ctx);
         for (const candidate of [viaLink, viaReal]) {
-          const res = await user.request<{ ok: true; path: string; content: string }>({
+          const res = await user.requestOk({
             op: "fs_read_external",
             sid: A,
             path: candidate,
@@ -762,7 +739,7 @@ describe("fs_read_external (DR-0024)", () => {
         fs.writeFileSync(secret, "secret");
         await sessionAtWithTranscript(ctx, A, root, [externalToolUse("r1", "Read", allowed)]);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_read_external",
           sid: A,
           path: secret,
@@ -800,7 +777,7 @@ describe("fs_read_external (DR-0024)", () => {
           path.join(allowedDir, "file.txt", "..", "..", "secret.txt"),
           allowedDir,
         ]) {
-          const res = await user.request<{ ok: false; error: { code: string } }>({
+          const res = await user.requestError({
             op: "fs_read_external",
             sid: A,
             path: candidate,
@@ -825,14 +802,14 @@ describe("fs_read_external (DR-0024)", () => {
       try {
         const user = await userAt(ctx);
         for (const candidate of ["relative.txt", ""]) {
-          const res = await user.request<{ ok: false; error: { code: string } }>({
+          const res = await user.requestError({
             op: "fs_read_external",
             sid: A,
             path: candidate,
           });
           expect(res.error.code).toBe("invalid_args");
         }
-        const res = await user.request({ op: "fs_read_external", sid: A, path: 42 });
+        const res = await user.requestRefusal({ op: "fs_read_external", sid: A, path: 42 });
         expect(res.error.code).toBe("invalid_args");
       } finally {
         await stopTestDaemon(ctx);
@@ -863,7 +840,7 @@ describe("fs_read_external (DR-0024)", () => {
 
         fs.rmSync(parent, { recursive: true, force: true });
         fs.symlinkSync(replacement, parent);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_read_external",
           sid: A,
           path: canonicalTarget,
@@ -900,7 +877,7 @@ describe("fs_read_external (DR-0024)", () => {
 
         fs.unlinkSync(target);
         fs.symlinkSync(secret, target);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_read_external",
           sid: A,
           path: canonicalTarget,
@@ -939,14 +916,14 @@ describe("fs_read_external (DR-0024)", () => {
         ]);
         const user = await userAt(ctx);
         for (const candidate of [missingCanonical, missing]) {
-          const missingRes = await user.request<{ ok: false; error: { code: string } }>({
+          const missingRes = await user.requestError({
             op: "fs_read_external",
             sid: A,
             path: candidate,
           });
           expect(missingRes.error.code).toBe("not_found");
         }
-        const dirRes = await user.request<{ ok: false; error: { code: string } }>({
+        const dirRes = await user.requestError({
           op: "fs_read_external",
           sid: A,
           path: fs.realpathSync(dir),
@@ -970,14 +947,14 @@ describe("fs_read_external (DR-0024)", () => {
       const root = mkfixture();
       try {
         const user = await userAt(ctx);
-        const missingSession = await user.request<{ ok: false; error: { code: string } }>({
+        const missingSession = await user.requestError({
           op: "fs_read_external",
           sid: "missing",
           path: "/absolute/file",
         });
         expect(missingSession.error.code).toBe("session_not_found");
         await sessionAt(ctx, A, root);
-        const missingTranscript = await user.request<{ ok: false; error: { code: string } }>({
+        const missingTranscript = await user.requestError({
           op: "fs_read_external",
           sid: A,
           path: "/absolute/file",
@@ -1000,14 +977,14 @@ describe("fs_read_external (DR-0024)", () => {
       const root = mkfixture();
       try {
         const anonymous = await connect(ctx.sock);
-        const noHello = await anonymous.request<{ ok: false; error: { code: string } }>({
+        const noHello = await anonymous.requestError({
           op: "fs_read_external",
           sid: A,
           path: "/absolute/file",
         });
         expect(noHello.error.code).toBe("hello_required");
         const session = await sessionAt(ctx, A, root);
-        const denied = await session.request<{ ok: false; error: { code: string } }>({
+        const denied = await session.requestError({
           op: "fs_read_external",
           sid: A,
           path: "/absolute/file",
@@ -1077,10 +1054,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
           }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          workspace_folders?: { name: string; path: string }[];
-        }>({ op: "session_status", sid: A });
+        const res = await user.requestOk({ op: "session_status", sid: A });
         expect(res.workspace_folders).toEqual([
           { name: "self", path: cwd },
           { name: "sib", path: sibling },
@@ -1118,11 +1092,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         const user = await userAt(ctx);
 
         // (a) list the folder root itself
-        const rootRes = await user.request<{
-          ok: true;
-          path: string;
-          entries: { name: string; type: string }[];
-        }>({ op: "fs_list_workspace", sid: A, path: sibling });
+        const rootRes = await user.requestOk({ op: "fs_list_workspace", sid: A, path: sibling });
         expect(rootRes.path).toBe(sibling);
         expect(rootRes.entries.map((e) => [e.name, e.type])).toEqual([
           ["sub", "dir"],
@@ -1130,11 +1100,11 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         ]);
 
         // (b) list a descendant of the folder root
-        const subRes = await user.request<{
-          ok: true;
-          path: string;
-          entries: { name: string; type: string }[];
-        }>({ op: "fs_list_workspace", sid: A, path: path.join(sibling, "sub") });
+        const subRes = await user.requestOk({
+          op: "fs_list_workspace",
+          sid: A,
+          path: path.join(sibling, "sub"),
+        });
         expect(subRes.entries.map((e) => e.name)).toEqual(["child.txt"]);
       } finally {
         await stopTestDaemon(ctx);
@@ -1163,11 +1133,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          content: string;
-          binary: boolean;
-        }>({ op: "fs_read_workspace", sid: A, path: target });
+        const res = await user.requestOk({ op: "fs_read_workspace", sid: A, path: target });
         expect(res.content).toBe("workspace content");
         expect(res.binary).toBe(false);
       } finally {
@@ -1202,14 +1168,14 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         );
         const user = await userAt(ctx);
         for (const bad of [secret, path.join(secret, "s.txt")]) {
-          const listRes = await user.request<{ ok: false; error: { code: string } }>({
+          const listRes = await user.requestError({
             op: "fs_list_workspace",
             sid: A,
             path: bad,
           });
           expect(listRes.error.code).toBe("path_forbidden");
         }
-        const readRes = await user.request<{ ok: false; error: { code: string } }>({
+        const readRes = await user.requestError({
           op: "fs_read_workspace",
           sid: A,
           path: path.join(secret, "s.txt"),
@@ -1246,7 +1212,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         );
         const user = await userAt(ctx);
         const traversal = path.join(listed, "..", "secret.txt");
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_read_workspace",
           sid: A,
           path: traversal,
@@ -1286,7 +1252,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
           JSON.stringify({ folders: [{ path: "../listed" }] }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_read_workspace",
           sid: A,
           path: path.join(escape, "target.txt"),
@@ -1318,7 +1284,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         );
         const user = await userAt(ctx);
         for (const bad of ["relative/path", ""]) {
-          const res = await user.request<{ ok: false; error: { code: string } }>({
+          const res = await user.requestError({
             op: "fs_list_workspace",
             sid: A,
             path: bad,
@@ -1346,7 +1312,7 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
         // sessionAtWithTranscript avoids creating a workspace file
         await sessionAtWithTranscript(ctx, A, cwd, []);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_list_workspace",
           sid: A,
           path: outside,
@@ -1370,8 +1336,8 @@ describe("fs_list_workspace / fs_read_workspace (DR-0026)", () => {
       const cwd = mkfixture();
       try {
         const session = await sessionAt(ctx, A, cwd);
-        for (const op of ["fs_list_workspace", "fs_read_workspace"]) {
-          const res = await session.request<{ ok: false; error: { code: string } }>({
+        for (const op of ["fs_list_workspace", "fs_read_workspace"] as const) {
+          const res = await session.requestError({
             op,
             sid: A,
             path: "/tmp",
@@ -1397,7 +1363,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
       const root = mkfixture();
       try {
         const session = await sessionAt(ctx, A, root);
-        const res = await session.request<{ ok: false; error: { code: string } }>({
+        const res = await session.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/denied.md",
@@ -1427,7 +1393,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
         const outsidePath = path.join(outside, "escaped.md");
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: outsidePath,
@@ -1456,7 +1422,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/../../../escaped.md",
@@ -1486,7 +1452,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/escaped.md",
@@ -1521,7 +1487,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/evil.md",
@@ -1549,7 +1515,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "",
@@ -1577,7 +1543,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inboxx/memo.md",
@@ -1605,7 +1571,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox",
@@ -1632,7 +1598,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/note.md",
@@ -1663,7 +1629,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/existing.md",
@@ -1699,7 +1665,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAtWithRoot(ctx, A, cwd, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/memo.md",
@@ -1732,7 +1698,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/created.md",
@@ -1762,7 +1728,7 @@ describe("fs_write (DR-0019 Phase W1)", () => {
         await sessionAt(ctx, A, root);
         const user = await connect(ctx.sock);
         await user.hello({ role: "user" });
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_write",
           sid: A,
           path: "docs/inbox/memo.md",
@@ -1795,7 +1761,7 @@ describe("fs_edit (viewer text edit)", () => {
         fs.writeFileSync(target, "before\n");
         const stat = fs.lstatSync(target);
         const session = await sessionAt(ctx, A, root);
-        const res = await session.request<{ ok: false; error: { code: string } }>({
+        const res = await session.requestError({
           op: "fs_edit",
           sid: A,
           path: "hello.txt",
@@ -1826,13 +1792,7 @@ describe("fs_edit (viewer text edit)", () => {
         const before = fs.lstatSync(target);
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          sid: string;
-          path: string;
-          size: number;
-          mtime: string;
-        }>({
+        const res = await user.requestOk({
           op: "fs_edit",
           sid: A,
           path: "note.md",
@@ -1868,7 +1828,7 @@ describe("fs_edit (viewer text edit)", () => {
         fs.writeFileSync(target, "external edit\n");
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_edit",
           sid: A,
           path: "note.md",
@@ -1900,7 +1860,7 @@ describe("fs_edit (viewer text edit)", () => {
         const stat = fs.lstatSync(target);
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_edit",
           sid: A,
           path: "blob.bin",
@@ -1933,7 +1893,7 @@ describe("fs_edit (viewer text edit)", () => {
         const stat = fs.lstatSync(escaped);
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_edit",
           sid: A,
           path: escaped,
@@ -1962,7 +1922,7 @@ describe("fs_edit (viewer text edit)", () => {
       try {
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_edit",
           sid: A,
           path: "missing.txt",
@@ -1997,7 +1957,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
       const root = mkfixture();
       try {
         const session = await sessionAt(ctx, A, root);
-        const res = await session.request<{ ok: false; error: { code: string } }>({
+        const res = await session.requestError({
           op: "fs_create",
           sid: A,
           path: "new.txt",
@@ -2023,7 +1983,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
       try {
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_create",
           sid: A,
           path: "new.txt",
@@ -2050,7 +2010,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
         fs.mkdirSync(path.join(root, "sub"));
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_create",
           sid: A,
           path: "sub/hello.md",
@@ -2077,7 +2037,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
         fs.writeFileSync(path.join(root, "dup.txt"), "original\n");
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_create",
           sid: A,
           path: "dup.txt",
@@ -2104,7 +2064,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
       try {
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_create",
           sid: A,
           path: "missing/leaf.txt",
@@ -2131,7 +2091,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
       try {
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_create",
           sid: A,
           path: path.join(outside, "escape.txt"),
@@ -2161,7 +2121,7 @@ describe("fs_create (kawaz r46 mid=24)", () => {
         fs.mkdirSync(sibling, { recursive: true });
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_create",
           sid: A,
           path: "../sibling/escape.txt",
@@ -2195,7 +2155,7 @@ describe("fs_delete (kawaz r46 m25)", () => {
         const target = path.join(root, "keep.txt");
         fs.writeFileSync(target, "keep\n");
         const session = await sessionAt(ctx, A, root);
-        const res = await session.request<{ ok: false; error: { code: string } }>({
+        const res = await session.requestError({
           op: "fs_delete",
           sid: A,
           path: "keep.txt",
@@ -2222,7 +2182,7 @@ describe("fs_delete (kawaz r46 m25)", () => {
         fs.writeFileSync(target, "bye\n");
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: true; sid: string; path: string }>({
+        const res = await user.requestOk({
           op: "fs_delete",
           sid: A,
           path: "gone.txt",
@@ -2250,7 +2210,7 @@ describe("fs_delete (kawaz r46 m25)", () => {
         fs.writeFileSync(path.join(dir, "child.txt"), "child\n");
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_delete",
           sid: A,
           path: "keepdir",
@@ -2282,7 +2242,7 @@ describe("fs_delete (kawaz r46 m25)", () => {
         fs.writeFileSync(outsideFile, "safe\n");
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_delete",
           sid: A,
           path: outsideFile,
@@ -2308,7 +2268,7 @@ describe("fs_delete (kawaz r46 m25)", () => {
       try {
         await sessionAt(ctx, A, root);
         const user = await userAt(ctx);
-        const res = await user.request<{ ok: false; error: { code: string } }>({
+        const res = await user.requestError({
           op: "fs_delete",
           sid: A,
           path: "missing.txt",
@@ -2349,16 +2309,12 @@ describe("repo_root containment (DR-0008 addendum)", () => {
 
         // root listing now shows the *container's* children (main, feature),
         // not main's own (empty) children — proof the root actually widened.
-        const rootList = await c.request<{
-          ok: true;
-          path: string;
-          entries: { name: string; type: string }[];
-        }>({ op: "fs_list", sid: A });
+        const rootList = await c.requestOk({ op: "fs_list", sid: A });
         expect(rootList.path).toBe("");
         expect(rootList.entries.map((e) => e.name).sort()).toEqual(["feature", "main"]);
 
         // sibling workspace is listable...
-        const listed = await c.request<{ ok: true; entries: { name: string }[] }>({
+        const listed = await c.requestOk({
           op: "fs_list",
           sid: A,
           path: "feature",
@@ -2366,7 +2322,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         expect(listed.entries.map((e) => e.name)).toEqual(["note.txt"]);
 
         // ...and its file is readable, despite living outside cwd entirely.
-        const read = await c.request<{ ok: true; content: string }>({
+        const read = await c.requestOk({
           op: "fs_read",
           sid: A,
           path: "feature/note.txt",
@@ -2387,7 +2343,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const cwd = mkfixture();
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, "relative/not-allowed");
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2407,7 +2363,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const unrelated = mkfixture(); // a sibling tmpdir, NOT an ancestor of cwd
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, unrelated);
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2427,7 +2383,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const cwd = mkfixture();
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, cwd);
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2446,7 +2402,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const cwd = mkfixture(); // any tmpdir is trivially a strict descendant of "/"
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, "/");
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2469,7 +2425,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const cwd = fs.mkdtempSync(path.join(home, ".ccmsg-fsroot-home-test-"));
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, home);
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2495,7 +2451,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       const cwd = fs.mkdtempSync(path.join(home, ".ccmsg-fsroot-homeanc-test-"));
       try {
         const c = await sessionAtWithRoot(ctx, A, cwd, homeAncestor);
-        const peers = await c.request<{ ok: true; peers: { sid: string; repo_root?: string }[] }>({
+        const peers = await c.requestOk({
           op: "peers",
         });
         expect(peers.peers.find((p) => p.sid === A)!.repo_root).toBeUndefined();
@@ -2523,11 +2479,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       fs.writeFileSync(path.join(feature, "note.txt"), "hello from feature");
       try {
         const c = await sessionAtWithRoot(ctx, A, main, container);
-        const rootList = await c.request<{
-          ok: true;
-          path: string;
-          entries: { name: string; type: string }[];
-        }>({ op: "fs_list", sid: A });
+        const rootList = await c.requestOk({ op: "fs_list", sid: A });
         expect(rootList.path).toBe("");
         expect(rootList.entries.map((e) => e.name).sort()).toEqual(["feature", "main"]);
       } finally {
@@ -2549,7 +2501,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         // fs_list/fs_read must still resolve strictly against cwd, exactly as
         // if repo_root had never been sent at all.
         const c = await sessionAtWithRoot(ctx, A, cwd, unrelated);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_list",
           sid: A,
           path: "../etc",
@@ -2579,7 +2531,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
         // going one level further ("../..") must still escape and be
         // forbidden, proving containment tracks the *widened* root, not "no
         // containment at all".
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_list",
           sid: A,
           path: "../../etc",
@@ -2606,7 +2558,7 @@ describe("repo_root containment (DR-0008 addendum)", () => {
       fs.symlinkSync(path.join(outside, "secret.txt"), path.join(main, "link_out"));
       try {
         const c = await sessionAtWithRoot(ctx, A, main, container);
-        const res = await c.request<{ ok: false; error: { code: string } }>({
+        const res = await c.requestError({
           op: "fs_read",
           sid: A,
           path: "main/link_out",
@@ -2782,10 +2734,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         const containedAbs = path.join(cwd, containedRel);
 
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          results: ({ kind: string; path: string } | null)[];
-        }>({
+        const res = await user.requestOk({
           op: "fs_stat_batch",
           sid: A,
           paths: [containedAbs, workspaceAbs, externalAbs, unrelatedAbs],
@@ -2829,10 +2778,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
           cwd,
         });
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          results: ({ kind: string; path: string } | null)[];
-        }>({ op: "fs_stat_batch", sid: A, paths: [subdir, cwd] });
+        const res = await user.requestOk({ op: "fs_stat_batch", sid: A, paths: [subdir, cwd] });
         expect(res.results).toEqual([null, null]);
       } finally {
         await stopTestDaemon(ctx);
@@ -2864,10 +2810,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         });
         const user = await userAt(ctx);
         const okAbs = path.join(cwd, "ok.md");
-        const res = await user.request<{
-          ok: true;
-          results: ({ kind: string; path: string } | null)[];
-        }>({
+        const res = await user.requestOk({
           op: "fs_stat_batch",
           sid: A,
           paths: [okAbs, "", "relative.md", okAbs],
@@ -2902,10 +2845,11 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         fs.writeFileSync(secret, "s");
         await sessionAtWithTranscript(ctx, A, cwd, [externalToolUse("r1", "Read", allowed)]);
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          results: ({ kind: string; path: string } | null)[];
-        }>({ op: "fs_stat_batch", sid: A, paths: [allowed, secret, nonexistent] });
+        const res = await user.requestOk({
+          op: "fs_stat_batch",
+          sid: A,
+          paths: [allowed, secret, nonexistent],
+        });
         expect(res.results[0]).toEqual({ kind: "external", path: fs.realpathSync(allowed) });
         expect(res.results[1]).toBeNull();
         expect(res.results[2]).toBeNull();
@@ -2937,7 +2881,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
           ws: "w",
           cwd,
         });
-        const res = await session.request<{ ok: false; error: { code: string } }>({
+        const res = await session.requestError({
           op: "fs_stat_batch",
           sid: A,
           paths: [path.join(cwd, "any.md")],
@@ -2980,10 +2924,7 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
           cwd: link,
         });
         const user = await userAt(ctx);
-        const res = await user.request<{
-          ok: true;
-          results: ({ kind: string; path: string } | null)[];
-        }>({
+        const res = await user.requestOk({
           op: "fs_stat_batch",
           sid: A,
           paths: [path.join(link, "note.md"), path.join(real, "note.md")],
@@ -3023,11 +2964,11 @@ describe("fs_stat_batch (kawaz r46 m55-m58, message-body path linkifier)", () =>
         });
         const user = await userAt(ctx);
         for (const paths of ["not-an-array", ["/abs/a", 42]]) {
-          const res1 = await user.request({ op: "fs_stat_batch", sid: A, paths });
+          const res1 = await user.requestRefusal({ op: "fs_stat_batch", sid: A, paths });
           expect(res1.error.code).toBe("invalid_args");
         }
         const oversized = Array.from({ length: 257 }, (_, i) => `/abs/${i}`);
-        const res2 = await user.request<{ ok: false; error: { code: string } }>({
+        const res2 = await user.requestError({
           op: "fs_stat_batch",
           sid: A,
           paths: oversized,
@@ -3060,17 +3001,14 @@ describe("session cwd canonicalization (hello)", () => {
         fs.symlinkSync(real, link);
 
         const session = await sessionAt(ctx, A, link);
-        const peers = await session.request<{
-          ok: true;
-          peers: { sid: string; cwd: string; repo_root?: string }[];
-        }>({ op: "peers" });
+        const peers = await session.requestOk({ op: "peers" });
         const self = peers.peers.find((p) => p.sid === A)!;
         expect(self.repo_root).toBeUndefined();
         expect(self.cwd).toBe(real);
 
         // The advertised cwd is the client's containment root here, so it must
         // be the same spelling the daemon checks against.
-        const read = await session.request<{ ok: true; content: string }>({
+        const read = await session.requestOk({
           op: "fs_read",
           sid: A,
           path: "note.md",
@@ -3100,10 +3038,7 @@ describe("session cwd canonicalization (hello)", () => {
         fs.symlinkSync(main, link);
 
         const session = await sessionAtWithRoot(ctx, A, link, container);
-        const peers = await session.request<{
-          ok: true;
-          peers: { sid: string; cwd: string; repo_root?: string }[];
-        }>({ op: "peers" });
+        const peers = await session.requestOk({ op: "peers" });
         const self = peers.peers.find((p) => p.sid === A)!;
         expect(self.cwd).toBe(main);
         expect(self.repo_root).toBe(container);

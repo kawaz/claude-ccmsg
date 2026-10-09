@@ -41,7 +41,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * this reads the stream itself — which is also what the assertion needs. */
 async function fetchHistory(c: TestClient, room: string): Promise<any[]> {
   c.write({ op: "room_history", room, request_id: "history" });
-  const { seen } = await c.readEventUntil((ev) => ev.ok !== undefined);
+  const { seen } = await c.readEventUntil("reply");
   return seen;
 }
 
@@ -52,7 +52,7 @@ describe("room_history", () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, A);
-        const room = (await a.request<{ room: string }>({ op: "create_room", members: [B] })).room;
+        const room = (await a.requestOk({ op: "create_room", members: [B] })).room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
 
@@ -62,9 +62,8 @@ describe("room_history", () => {
         // Only the cursors summary — no `type:"msg"` line. This is the whole
         // point of the change: the user role used to get every msg of every
         // room here, uncapped.
-        const first = await u.readEvent<{ ev?: string; rooms?: { room: string }[] }>();
-        expect(first?.ev).toBe("room_cursors");
-        expect(first?.rooms?.map((r) => r.room)).toEqual([room]);
+        const first = await u.readEvent("room_cursors");
+        expect(first.rooms.map((r) => r.room)).toEqual([room]);
 
         const seen = await fetchHistory(u, room);
         expect(seen.filter((e) => e.type === "msg").map((e) => e.mid)).toEqual([1, 2]);
@@ -85,7 +84,7 @@ describe("room_history", () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, A);
-        const room = (await a.request<{ room: string }>({ op: "create_room", members: [B] })).room;
+        const room = (await a.requestOk({ op: "create_room", members: [B] })).room;
         // more than DEFAULT_JOIN_BACKLOG=50: the cap exists to bound an agent's
         // context, and an explicitly opened room is not that.
         for (let i = 1; i <= 55; i++) await a.request({ op: "post", room, msg: `m${i}` });
@@ -100,7 +99,7 @@ describe("room_history", () => {
 
         // The room is open; new posts must keep arriving on the same stream.
         await a.request({ op: "post", room, msg: "live" });
-        const { ev } = await u.readEventUntil((e) => e.type === "msg");
+        const { ev } = await u.readEventUntil("msg");
         expect(ev).toMatchObject({ r: room, mid: 56, msg: "live" });
       } finally {
         await stopTestDaemon(ctx);
@@ -115,11 +114,9 @@ describe("room_history", () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, A);
-        const shared = (await a.request<{ room: string }>({ op: "create_room", members: [B] }))
-          .room;
+        const shared = (await a.requestOk({ op: "create_room", members: [B] })).room;
         await a.request({ op: "post", room: shared, msg: "hello B" });
-        const other = (await a.request<{ room: string }>({ op: "create_room", members: ["C"] }))
-          .room;
+        const other = (await a.requestOk({ op: "create_room", members: ["C"] })).room;
         await a.request({ op: "post", room: other, msg: "not for B" });
 
         const b = await session(ctx, B);
@@ -133,10 +130,10 @@ describe("room_history", () => {
         // permission error — room ids are opaque, "exists but not yours" would
         // leak that this one is live.
         b.write({ op: "room_history", room: other, request_id: "history-other" });
-        const { ev } = await b.readEventUntil((e) => e.ok !== undefined);
+        const { ev } = await b.readEventUntil("reply");
         expect(ev).toMatchObject({ ok: false, error: { code: "room_not_found" } });
 
-        const missing = await b.request<any>({ op: "room_history", room: "r9999" });
+        const missing = await b.request({ op: "room_history", room: "r9999" });
         expect(missing).toMatchObject({ ok: false, error: { code: "room_not_found" } });
       } finally {
         await stopTestDaemon(ctx);

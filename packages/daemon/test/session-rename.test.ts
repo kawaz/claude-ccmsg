@@ -131,9 +131,8 @@ describe("session_rename over the wire", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "session", sid: "a9e47000-0000-4000-8000-000000000001" });
-      const res = await c.request({
+      const res = await c.requestError({
         op: "session_rename",
-        request_id: "r1",
         session_id: "sid-victim",
         title: "hijacked",
       });
@@ -152,9 +151,8 @@ describe("session_rename over the wire", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const res = await c.request({
+      const res = await c.requestError({
         op: "session_rename",
-        request_id: "r2",
         session_id: "00000000-0000-0000-0000-000000000000",
         title: "line one\nline two",
       });
@@ -172,9 +170,8 @@ describe("session_rename over the wire", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const res = await c.request({
+      const res = await c.requestError({
         op: "session_rename",
-        request_id: "r3",
         session_id: "00000000-0000-0000-0000-000000000000",
         title: "   ",
       });
@@ -212,9 +209,8 @@ describe("session_rename over the wire", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const reply = await c.request<{ ok: boolean; error?: { code: string } }>({
+      const reply = await c.requestError({
         op: "session_rename",
-        request_id: "r4",
         session_id: "00000000-0000-0000-0000-000000000000",
         title: "新しい名前",
       });

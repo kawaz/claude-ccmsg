@@ -138,12 +138,6 @@ describe("deriveRepoWs", () => {
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 
-interface PeerLite {
-  sid: string;
-  repo?: string;
-  ws?: string;
-}
-
 /** Session hello over a real daemon (same UDS fixture pattern as
  *  branch.test.ts), announcing only what each case is about. */
 async function sessionHello(
@@ -162,7 +156,7 @@ describe("hello の repo/ws フォールバック", () => {
     const ctx = await startTestDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: root });
-      const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+      const peers = await c.requestOk({ op: "peers" });
       const me = peers.peers.find((p) => p.sid === A)!;
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "kawaz/demo", ws: "main" });
     } finally {
@@ -175,7 +169,7 @@ describe("hello の repo/ws フォールバック", () => {
     const ctx = await startTestDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: root, repo: "declared/repo", ws: "declared" });
-      const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+      const peers = await c.requestOk({ op: "peers" });
       const me = peers.peers.find((p) => p.sid === A)!;
       expect({ repo: me.repo, ws: me.ws }).toEqual({ repo: "declared/repo", ws: "declared" });
     } finally {
@@ -189,7 +183,7 @@ describe("hello の repo/ws フォールバック", () => {
     const ctx = await startTestDaemon();
     try {
       const c = await sessionHello(ctx, A, { cwd: plain });
-      const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+      const peers = await c.requestOk({ op: "peers" });
       const me = peers.peers.find((p) => p.sid === A)!;
       expect(me.repo ?? "").toBe("");
       expect(me.ws ?? "").toBe("");

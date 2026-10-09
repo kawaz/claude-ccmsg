@@ -43,25 +43,21 @@ describe("subscribe: duplicate session subscribe", () => {
         await newSub.request({ op: "subscribe" });
 
         // 古い方は終了通知を受け取る。sid はどのセッションが重複したかを示す。
-        const superseded = await oldSub.readEventUntil<{ ev: string; sid: string }>(
-          (ev) => ev?.ev === "subscribe_superseded",
-        );
+        const superseded = await oldSub.readEventUntil("subscribe_superseded");
         expect(superseded.ev.ev).toBe("subscribe_superseded");
         expect(superseded.ev.sid).toBe(SID_B);
 
         // 配信は新しい方だけに届く (= 二重通知が消えている)。session の
         // subscribe stream に流れる room イベント (新 room の member snapshot) で見る。
-        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
-        const delivered = await newSub.readEventUntil<{ type?: string; r?: string }>(
-          (ev) => ev?.type === "member" && ev?.r === created.room,
-        );
+        const created = await a.requestOk({ op: "create_room", members: [SID_B] });
+        const delivered = await newSub.readEventUntil("member", (ev) => ev?.r === created.room);
         expect(delivered.ev.r).toBe(created.room);
 
         // 古い conn は superseded 以降なにも push されない (room 作成の snapshot
         // も含め subscriber 集合から外れている)。「届かないこと」は待ち時間で
         // なく往復で確かめる: 配信が漏れていればこの request の応答より先に
         // その行が stream に積まれている。
-        const roundTrip = await oldSub.request<{ ok?: boolean; type?: string }>({ op: "rooms" });
+        const roundTrip = await oldSub.request({ op: "rooms" });
         expect(roundTrip.ok).toBe(true);
         expect(await oldSub.pendingEvents()).toEqual([]);
       } finally {
@@ -86,13 +82,11 @@ describe("subscribe: duplicate session subscribe", () => {
         await s.request({ op: "subscribe" });
 
         const a = await session(ctx, SID_Z);
-        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_A] });
+        const created = await a.requestOk({ op: "create_room", members: [SID_A] });
         await a.request({ op: "post", room: created.room, msg: "hi" });
 
         for (const u of [u1, u2]) {
-          const got = await u.readEventUntil<{ type?: string; msg?: string }>(
-            (ev) => ev?.type === "msg",
-          );
+          const got = await u.readEventUntil("msg");
           expect(got.ev.msg).toBe("hi");
         }
       } finally {

@@ -92,7 +92,7 @@ async function sessionHello(
 }
 
 async function peersOf(c: Awaited<ReturnType<typeof connect>>): Promise<Map<string, PeerLite>> {
-  const res = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+  const res = await c.requestOk({ op: "peers" });
   return new Map(res.peers.map((p) => [p.sid, p]));
 }
 

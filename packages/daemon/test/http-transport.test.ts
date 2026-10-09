@@ -118,7 +118,7 @@ async function startHttpDaemon(extraEnv: Record<string, string> = {}): Promise<D
 async function httpAddress(ctx: DaemonCtx): Promise<string> {
   const c = await connect(ctx.sock);
   await c.hello({ role: "user" });
-  const pong = await c.request<{ http: string[] }>({ op: "ping" });
+  const pong = await c.requestOk({ op: "ping" });
   c.close();
   expect(pong.http.length).toBe(1);
   return pong.http[0]!;
@@ -155,7 +155,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
       try {
         const c = await connect(ctx.sock);
         await c.hello({ role: "user" });
-        const pong = await c.request<{ http: string[] }>({ op: "ping" });
+        const pong = await c.requestOk({ op: "ping" });
         expect(pong.http).toEqual([]);
         c.close();
       } finally {
@@ -190,7 +190,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
         // set one up over UDS first, the way an AI session normally would.
         const owner = await connect(ctx.sock);
         await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        const created = await owner.request<{ ok: true; room: string }>({
+        const created = await owner.requestOk({
           op: "create_room",
           members: [],
         });
@@ -241,7 +241,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
       try {
         const owner = await connect(ctx.sock);
         await owner.hello({ role: "session", sid: S, repo: "", ws: "", cwd: "" });
-        const created = await owner.request<{ ok: true; room: string }>({
+        const created = await owner.requestOk({
           op: "create_room",
           members: [],
         });
@@ -284,7 +284,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
       const harness = fakeHarness(S);
       try {
         const udsSession = await sessionWithConfig(ctx, S, harness.configDir);
-        const created = await udsSession.request<{ ok: true; room: string }>({
+        const created = await udsSession.requestOk({
           op: "create_room",
           members: [],
         });
@@ -351,7 +351,7 @@ describe("HTTP/WS transport (DR-0004)", () => {
       try {
         const c = await connect(ctx.sock);
         await c.hello({ role: "user" });
-        const pong = await c.request<{ httpAllow: string[] }>({ op: "ping" });
+        const pong = await c.requestOk({ op: "ping" });
         // tailscale CGNAT/ULA ranges removed from the default: source-IP alone can't
         // distinguish "this daemon's own webui" from "any browser tab kawaz has open"
         // on a device he owns via tailscale (docs/issue/2026-07-10-webui-transport-
@@ -704,7 +704,7 @@ describe("tailscale serve origin auto-allow (docs/issue/2026-07-11)", () => {
         // regression where it accidentally becomes synchronous/blocking.
         expect(Date.now() - start).toBeLessThan(5000);
         const c = await connect(ctx.sock);
-        const pong = await c.request<{ ok: true; pong: true }>({ op: "ping" });
+        const pong = await c.requestOk({ op: "ping" });
         expect(pong.ok).toBe(true);
         c.close();
       } finally {

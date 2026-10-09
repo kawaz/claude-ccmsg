@@ -26,7 +26,7 @@ describe("client_trace", () => {
       try {
         const c = await connect(ctx.sock);
         await c.hello({ role: "user" });
-        const res = await c.request<{ ok: boolean; written: number }>({
+        const res = await c.requestOk({
           op: "client_trace",
           sid: "S1",
           start: 100,
@@ -67,8 +67,14 @@ describe("client_trace", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await connect(ctx.sock);
-        await c.hello({ role: "session", sid: "S1", repo: "r", ws: "w", cwd: "/tmp/x" });
-        const res = await c.request<{ ok: boolean; error?: string }>({
+        await c.hello({
+          role: "session",
+          sid: "a9e47000-0000-4000-8000-000000000001",
+          repo: "r",
+          ws: "w",
+          cwd: "/tmp/x",
+        });
+        const res = await c.requestError({
           op: "client_trace",
           sid: "S1",
           start: 0,
@@ -80,7 +86,10 @@ describe("client_trace", () => {
             { ts: "2026-07-29T00:00:00.000Z", comp: "webui", edge: "in", kind: "ws_receive" },
           ],
         });
-        expect(res.ok).toBe(false);
+        expect(res.error).toEqual({
+          code: "bad_request",
+          msg: "op 'client_trace' requires user role",
+        });
         expect(traceLines(ctx).filter((l) => l.comp === "webui")).toHaveLength(0);
         c.close();
       } finally {
@@ -98,7 +107,7 @@ describe("client_trace", () => {
       try {
         const c = await connect(ctx.sock);
         await c.hello({ role: "user" });
-        const res = await c.request<{ written: number }>({
+        const res = await c.requestOk({
           op: "client_trace",
           sid: "S1",
           start: 0,

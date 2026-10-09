@@ -48,7 +48,7 @@ async function startWebhookDaemon(options: { configured?: boolean } = {}): Promi
   await waitConnectable(sock);
   const c = await connect(sock);
   await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-  const pong = await c.request<{ http: string[] }>({ op: "ping" });
+  const pong = await c.requestOk({ op: "ping" });
   c.close();
   return {
     base,
@@ -107,18 +107,6 @@ async function userSubscriber(ctx: Ctx): Promise<TestClient> {
   return c;
 }
 
-interface LlmRequestsEv {
-  ev: "llm_requests";
-  requests: {
-    ts: number;
-    session_id: string;
-    prefix: string;
-    main: boolean;
-    model?: string;
-    status?: number;
-  }[];
-}
-
 /** Connect a session that exists only to post a marker msg (peers-push.test.ts's
  * pattern): the room is created BY the poster so it is a member of it. The
  * reader is a user-role subscriber — the only role whose stream carries msgs —
@@ -134,7 +122,7 @@ async function markerSession(ctx: Ctx, members: string[]): Promise<[TestClient, 
     ws: "w",
     cwd: "/tmp",
   });
-  const { room } = await c.request<{ room: string }>({ op: "create_room", members });
+  const { room } = await c.requestOk({ op: "create_room", members });
   return [c, room];
 }
 
@@ -146,7 +134,7 @@ async function seenBeforeMarker(
   room: string,
 ): Promise<Record<string, any>[]> {
   await poster.request({ op: "post", room, msg: "marker" });
-  const { seen } = await reader.readEventUntil<any>((e) => e.type === "msg" && e.msg === "marker");
+  const { seen } = await reader.readEventUntil("msg", (e) => e.msg === "marker");
   return seen;
 }
 
@@ -166,7 +154,7 @@ describe("webhook → ev:llm_requests", () => {
           status: 200,
         });
         expect(status).toBe(204);
-        const { ev } = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        const { ev } = await u.readEventUntil("llm_requests");
         expect(ev.requests).toEqual([
           {
             ts,
@@ -198,9 +186,7 @@ describe("webhook → ev:llm_requests", () => {
             { ts, session_id: "S3", prefix: "aa11bb22" },
           ]),
         ).toBe(204);
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 2,
-        );
+        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
         expect(ev.requests.map((r) => r.session_id).sort()).toEqual(["S2", "S3"]);
         u.close();
       } finally {
@@ -220,15 +206,13 @@ describe("webhook → ev:llm_requests", () => {
         const u = await userSubscriber(ctx);
         const ts = Date.now() - 100_000;
         await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
-        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        await u.readEventUntil("llm_requests");
         await postEvents(ctx, { ts, session_id: "S4", prefix: "484eda9c" });
         // The duplicate is dropped by the cache, so its ts is unchanged. Anchor
         // on a later, genuinely new event to prove the assertion isn't just
         // reading the first push again.
         await postEvents(ctx, { ts: ts + 50_000, session_id: "S5", prefix: "aa11bb22" });
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 2,
-        );
+        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
         expect(ev.requests.find((r) => r.session_id === "S4")?.ts).toBe(ts);
         u.close();
       } finally {
@@ -254,7 +238,7 @@ describe("webhook → ev:llm_requests", () => {
             { nonsense: true },
           ]),
         ).toBe(204);
-        const { ev } = await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        const { ev } = await u.readEventUntil("llm_requests");
         expect(ev.requests).toHaveLength(1);
         expect(ev.requests[0]?.session_id).toBe("S6");
         u.close();
@@ -273,15 +257,13 @@ describe("webhook → ev:llm_requests", () => {
         const u = await userSubscriber(ctx);
         const mainTs = Date.now() - 240_000;
         await postEvents(ctx, { ts: mainTs, session_id: "S7", prefix: "484eda9c" });
-        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        await u.readEventUntil("llm_requests");
         // Same session id, different system prompt: a subagent. The session's
         // own window must survive it untouched — that is what keeps the ring
         // counting down while a subagent chatters.
         const subTs = Date.now();
         await postEvents(ctx, { ts: subTs, session_id: "S7", prefix: "9c31aa02" });
-        const { ev } = await u.readEventUntil<LlmRequestsEv>(
-          (e) => e.ev === "llm_requests" && e.requests.length === 2,
-        );
+        const { ev } = await u.readEventUntil("llm_requests", (e) => e.requests.length === 2);
         expect(ev.requests.find((r) => r.main)).toEqual({
           ts: mainTs,
           session_id: "S7",
@@ -305,12 +287,12 @@ describe("webhook → ev:llm_requests", () => {
         const first = await userSubscriber(ctx);
         const ts = Date.now();
         await postEvents(ctx, { ts, session_id: "S8", prefix: "484eda9c" });
-        await first.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        await first.readEventUntil("llm_requests");
         first.close();
 
         // The reload case: a brand-new connection subscribing mid-window.
         const second = await userSubscriber(ctx);
-        const { ev } = await second.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        const { ev } = await second.readEventUntil("llm_requests");
         expect(ev.requests).toEqual([{ ts, session_id: "S8", prefix: "484eda9c", main: true }]);
         second.close();
       } finally {
@@ -346,7 +328,7 @@ describe("webhook → ev:llm_requests", () => {
         // daemon writes both sends in one synchronous loop, so once the user
         // side has it, a session-side copy would already be on the socket.
         // A round trip on the session connection then orders its stream past it.
-        await u.readEventUntil<LlmRequestsEv>((e) => e.ev === "llm_requests");
+        await u.readEventUntil("llm_requests");
         await s.request({ op: "rooms" });
         const seen = await s.pendingEvents();
         expect(seen.some((e: any) => e.ev === "llm_requests")).toBe(false);

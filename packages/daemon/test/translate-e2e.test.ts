@@ -22,12 +22,13 @@ e2eTest("daemon translate replies with a real en→ja mixed-text result", async 
   try {
     expect(await client.hello({ role: "user" })).toMatchObject({ ok: true });
     const input = "The build completed successfully.ここから日本語です。";
-    const reply = await client.request({ op: "translate", request_id: "e2e-1", texts: [input] });
+    const reply = await client.requestOk({ op: "translate", texts: [input] });
     expect(reply.ok).toBe(true);
     expect(reply.results).toHaveLength(1);
-    expect(reply.results[0].ok).toBe(true);
-    expect(reply.results[0].text).toContain("ここから日本語です。");
-    expect(reply.results[0].text).not.toContain("The build completed successfully.");
+    const [result] = reply.results;
+    if (result === undefined || !result.ok) throw new Error(`not translated: ${result?.error}`);
+    expect(result.text).toContain("ここから日本語です。");
+    expect(result.text).not.toContain("The build completed successfully.");
   } finally {
     client.close();
   }

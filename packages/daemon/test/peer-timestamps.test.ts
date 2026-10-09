@@ -48,7 +48,7 @@ interface PeerLite {
 }
 
 async function getPeer(admin: TestClient, sid: string): Promise<PeerLite> {
-  const res = await admin.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+  const res = await admin.requestOk({ op: "peers" });
   const me = res.peers.find((p) => p.sid === sid);
   if (!me) throw new Error(`peer ${sid} not found in ${JSON.stringify(res.peers)}`);
   return me;

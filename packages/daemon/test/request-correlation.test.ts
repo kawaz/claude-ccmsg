@@ -54,7 +54,7 @@ describe("request correlation", () => {
     await withDaemon(async (ctx) => {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      c.write({ op: "fs_list", sid: A, path: 123, request_id: "f1" });
+      c.writeRaw(`${JSON.stringify({ op: "fs_list", sid: A, path: 123, request_id: "f1" })}\n`);
       expect(await c.readEvent()).toMatchObject({
         ok: false,
         error: {
@@ -63,7 +63,7 @@ describe("request correlation", () => {
         },
         request_id: "f1",
       });
-      c.write({ op: "no_such_op", request_id: "u1" });
+      c.writeRaw(`${JSON.stringify({ op: "no_such_op", request_id: "u1" })}\n`);
       expect(await c.readEvent()).toMatchObject({
         ok: false,
         error: { code: "invalid_args" },
@@ -161,8 +161,8 @@ describe("request correlation", () => {
           await c.hello({ role: "user" });
           // Both in flight at once, the slow one sent first: each Promise gets
           // its own answer, not whichever reply happens to arrive first.
-          const slow = c.request<{ ok: true; sid: string }>({ op: "session_status", sid: A });
-          const fast = c.request<{ ok: true; pong: true }>({ op: "ping" });
+          const slow = c.requestOk({ op: "session_status", sid: A });
+          const fast = c.requestOk({ op: "ping" });
           expect(await fast).toMatchObject({ ok: true, pong: true });
           expect(await slow).toMatchObject({ ok: true, sid: A });
 

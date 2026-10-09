@@ -13,7 +13,7 @@ import {
   waitConnectable,
   type DaemonCtx,
 } from "./helpers.ts";
-import { PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { PROTOCOL_VERSION, type RequestInput } from "@ccmsg/protocol";
 
 const T = 15000;
 
@@ -82,12 +82,13 @@ describe("session launcher wire ops", () => {
           cwd: root,
         });
 
-        for (const req of [
+        const requests: RequestInput[] = [
           { op: "dir_tree", roots: [root] },
           { op: "session_launch", cwd: root, params: { PROMPT: "p" } },
           { op: "session_launcher_config" },
-        ]) {
-          const response = await client.request<{ ok: false; error: { code: string } }>(req);
+        ];
+        for (const req of requests) {
+          const response = await client.requestError(req);
           expect(response.ok).toBe(false);
           expect(response.error.code).toBe("bad_request");
         }
@@ -113,7 +114,7 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const reply = await client.request<Record<string, unknown>>({
+        const reply = await client.request({
           op: "session_launch",
           request_id: "launch-1",
           cwd: root,
@@ -144,7 +145,7 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const response = await client.requestRaw<{ ok: false; error: { code: string } }>({
+        const response = await client.requestRaw({
           op: "session_launch",
           cwd: root,
           params: { PROMPT: "p" },
@@ -226,7 +227,7 @@ describe("session launcher wire ops", () => {
     try {
       const client = await connect(sock);
       await client.hello({ role: "user" });
-      const response = await client.request<{ ok: true; root_dirs: string[] }>({
+      const response = await client.requestOk({
         op: "session_launcher_config",
       });
       expect(response.ok).toBe(true);
@@ -263,13 +264,13 @@ describe("session launcher wire ops", () => {
           }),
         );
 
-        const original = await client.request<{ ok: boolean }>({
+        const original = await client.request({
           op: "dir_tree",
           roots: [root],
           depth: 1,
         });
         expect(original.ok).toBe(true);
-        const newlyWritten = await client.request<{ ok: false; error: { code: string } }>({
+        const newlyWritten = await client.requestError({
           op: "dir_tree",
           roots: [replacement],
           depth: 1,
@@ -335,15 +336,7 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const response = await client.request<{
-          ok: true;
-          root_dirs: string[];
-          templates: {
-            name: string;
-            command: string;
-            params: { name: string; default: string }[];
-          }[];
-        }>({ op: "session_launcher_config" });
+        const response = await client.requestOk({ op: "session_launcher_config" });
         expect(response.ok).toBe(true);
         // DR-0018 §3.2 addendum 2026-07-17: the raw command template is part
         // of the read-only projection (webui uses it as SessionCreator's
@@ -377,7 +370,7 @@ describe("session launcher wire ops", () => {
       try {
         const client = await connect(ctx.sock);
         await client.hello({ role: "user" });
-        const response = await client.request<{ ok: false; error: { code: string; msg: string } }>({
+        const response = await client.requestError({
           op: "session_launcher_config",
         });
         expect(response).toEqual({
@@ -401,7 +394,7 @@ describe("session launcher wire ops", () => {
       const configured = await startConfiguredDaemon(root);
       try {
         const client = await connect(configured.sock);
-        const hello = await client.request<{ fork_available?: boolean }>({
+        const hello = await client.requestOk({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "user",
@@ -414,7 +407,7 @@ describe("session launcher wire ops", () => {
       const bare = await startTestDaemon();
       try {
         const client = await connect(bare.sock);
-        const hello = await client.request<{ fork_available?: boolean }>({
+        const hello = await client.requestOk({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "user",

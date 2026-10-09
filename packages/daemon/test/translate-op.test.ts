@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestFrames, requestOnce } from "./drive-request.ts";
+import { requestFrames, requestRefusal } from "./drive-request.ts";
 import type { TranslateService } from "../src/translate-helper.ts";
 
 function daemonWith(translator: TranslateService): Daemon {
@@ -65,7 +65,7 @@ describe("translate op", () => {
       stop() {},
     };
 
-    const response = await requestOnce(
+    const response = await requestRefusal(
       daemonWith(translator),
       { role: "user" },
       { op: "translate", texts: ["x"] },
@@ -90,10 +90,11 @@ describe("translate op", () => {
       stop() {},
     };
 
-    const response = await requestOnce(
+    const [response] = await requestFrames(
       daemonWith(translator),
       { role: "session", sid: "s1", repo: "", ws: "", cwd: "" },
       { op: "translate", request_id: "q1", texts: ["secret"] },
+      1,
     );
     expect(calls).toBe(0);
     expect(response).toEqual({
@@ -113,7 +114,7 @@ describe("translate op", () => {
       stop() {},
     };
 
-    const response = await requestOnce(
+    const response = await requestRefusal(
       daemonWith(translator),
       { role: "user" },
       {

@@ -59,7 +59,7 @@ describe("DR-0016 seq: assignment and delivery", () => {
         // exactly what mid was, and why non-msg events had no cursor).
         const a = await session(ctx, A);
         const b = await session(ctx, B);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [B],
           msg: "hello",
@@ -92,7 +92,8 @@ describe("DR-0016 seq: assignment and delivery", () => {
         const maxSeq = Math.max(...seqs, 0);
         await a.request({ op: "set_title", room, title: "seq test 2" });
         const { ev: liveTitle } = await sub.readEventUntil(
-          (ev) => ev.type === "title" && ev.title === "seq test 2",
+          "title",
+          (ev) => ev.title === "seq test 2",
         );
         expect((liveTitle as any).seq).toBeGreaterThan(maxSeq);
         sub.close();
@@ -118,7 +119,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // the last msg). With since_seq pointing at (or past) the archive's
         // seq, the replay must be empty.
         const a = await session(ctx, A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [B],
           msg: "m1",
@@ -132,9 +133,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const sub1 = await connect(ctx.sock);
         await sub1.hello({ role: "session", sid: B });
         await sub1.request({ op: "subscribe", backlog: true });
-        const { ev: archiveEv } = await sub1.readEventUntil(
-          (ev) => ev.type === "archive" && ev.r === room,
-        );
+        const { ev: archiveEv } = await sub1.readEventUntil("archive", (ev) => ev.r === room);
         const tailSeq = (archiveEv as any).seq as number;
         expect(typeof tailSeq).toBe("number");
         sub1.close();
@@ -167,7 +166,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // "skip non-msg on reconnect" loses events). Once seen and the cursor
         // advanced to the archive's seq, a further reconnect replays nothing.
         const a = await session(ctx, A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [B],
           msg: "m1",
@@ -178,7 +177,8 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         const sub1 = await user(ctx);
         await sub1.request({ op: "subscribe", backlog: true });
         const { ev: msgEv } = await sub1.readEventUntil(
-          (ev) => ev.type === "msg" && ev.r === room && ev.msg === "m1",
+          "msg",
+          (ev) => ev.r === room && ev.msg === "m1",
         );
         const msgSeq = (msgEv as any).seq as number;
         sub1.close();
@@ -220,7 +220,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // is the compatibility half of DR-0016 §4 (old client × new daemon =
         // no regression).
         const a = await session(ctx, A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [B],
           msg: "m1",
@@ -253,7 +253,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
         // §6). A huge but VALID value means "seen everything" → zero replay,
         // and must not hang or error the scan.
         const a = await session(ctx, A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [B],
           msg: "m1",
@@ -262,7 +262,7 @@ describe("DR-0016 seq: reconnect cursor (the origin bug)", () => {
 
         for (const cursor of [-5, "nope"]) {
           const sub = await user(ctx);
-          const refused = await sub.request({
+          const refused = await sub.requestRefusal({
             op: "subscribe",
             since_seq: { [room]: cursor },
           });

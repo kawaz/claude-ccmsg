@@ -12,6 +12,7 @@
 // 抑制ルールは storage 単体テストでは踏めないので、出荷する線の上で確かめる。
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import type { ResponseOf } from "@ccmsg/protocol";
 import {
   connect,
   spawnDaemonProc,
@@ -20,6 +21,7 @@ import {
   waitConnectable,
   type DaemonCtx,
   type TestClient,
+  isKind,
 } from "./helpers.ts";
 
 const SID_SAY_1 = "5a900000-0000-4000-8000-000000000001";
@@ -45,9 +47,15 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
-async function roomsOf(c: TestClient): Promise<any[]> {
-  const res = await c.request<{ ok: true; rooms: any[] }>({ op: "rooms" });
+async function roomsOf(c: TestClient): Promise<ResponseOf<"rooms">["rooms"]> {
+  const res = await c.requestOk({ op: "rooms" });
   return res.rooms;
+}
+
+async function roomOf(c: TestClient, id: string): Promise<ResponseOf<"rooms">["rooms"][number]> {
+  const room = (await roomsOf(c)).find((r) => r.id === id);
+  if (room === undefined) throw new Error(`no room ${id}`);
+  return room;
 }
 
 describe("say op", () => {
@@ -60,12 +68,12 @@ describe("say op", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_1);
-        const first = await s.request<any>({ op: "say", text: "hello" });
+        const first = await s.requestOk({ op: "say", text: "hello" });
         expect(first.ok).toBe(true);
         expect(first.created).toBe(true);
         expect(typeof first.seq).toBe("number");
 
-        const second = await s.request<any>({ op: "say", text: "again" });
+        const second = await s.requestOk({ op: "say", text: "again" });
         expect(second.created).toBe(false);
         expect(second.room).toBe(first.room);
         expect(second.seq).toBeGreaterThan(first.seq);
@@ -135,12 +143,11 @@ describe("say op", () => {
 
         const s = await session(ctx, SID_SAY_2);
         const u = await user(ctx);
-        const said = await s.request<any>({ op: "say", text: "yo" });
+        const said = await s.requestOk({ op: "say", text: "yo" });
         expect(said.created).toBe(false);
         expect(said.room).toBe("r1");
         // 既存 room の title は say が上書きしない。
-        const rooms = await roomsOf(u);
-        expect(rooms.find((r) => r.id === "r1").title).toBe("existing 1on1");
+        expect((await roomOf(u, "r1")).title).toBe("existing 1on1");
         u.close();
         s.close();
       } finally {
@@ -163,8 +170,8 @@ describe("say op", () => {
         const u = await user(ctx);
         await u.request({ op: "subscribe" });
 
-        const said = await speaker.request<any>({ op: "say", text: "listen up" });
-        const { ev } = await u.readEventUntil((e) => e.type === "say");
+        const said = await speaker.requestOk({ op: "say", text: "listen up" });
+        const { ev } = await u.readEventUntil("say");
         expect(ev).toMatchObject({
           type: "say",
           r: said.room,
@@ -176,8 +183,8 @@ describe("say op", () => {
         // 話者側の stream に say が無いことを、順序の確定した round trip の後で
         // 確認する (pendingEvents は「今そこに無い」しか言えないため)。
         await speaker.request({ op: "ping" });
-        const speakerEvents = await speaker.pendingEvents<any>();
-        expect(speakerEvents.filter((e) => e.type === "say")).toEqual([]);
+        const speakerEvents = await speaker.pendingEvents();
+        expect(speakerEvents.filter(isKind("say"))).toEqual([]);
         u.close();
         speaker.close();
       } finally {
@@ -195,23 +202,23 @@ describe("say op", () => {
       const ctx = await startTestDaemon();
       try {
         const speaker = await session(ctx, SID_SAY_4);
-        const said = await speaker.request<any>({ op: "say", text: "before subscribing" });
+        const said = await speaker.requestOk({ op: "say", text: "before subscribing" });
 
         // 話者は room の member なので room_history を引ける。それでも say は無い。
         await speaker.request({ op: "subscribe", backlog: true });
         await speaker.request({ op: "room_history", room: said.room });
-        const events = await speaker.pendingEvents<any>();
-        expect(events.filter((e) => e.type === "say")).toEqual([]);
+        const events = await speaker.pendingEvents();
+        expect(events.filter(isKind("say"))).toEqual([]);
         // member イベントは通常どおり見えている = 抑制が say に限定されている。
-        expect(events.some((e) => e.type === "member")).toBe(true);
+        expect(events.some(isKind("member"))).toBe(true);
 
         const u = await user(ctx);
         await u.request({ op: "subscribe", backlog: true });
         // subscribe replies before writing its snapshot, so order the stream
         // with a round trip before asserting on what did (not) arrive.
         await u.request({ op: "ping" });
-        const userEvents = await u.pendingEvents<any>();
-        expect(userEvents.filter((e) => e.type === "say" && e.seq === said.seq)).toHaveLength(1);
+        const userEvents = await u.pendingEvents();
+        expect(userEvents.filter(isKind("say")).filter((e) => e.seq === said.seq)).toHaveLength(1);
         u.close();
         speaker.close();
       } finally {
@@ -231,23 +238,23 @@ describe("say_read op", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_5);
-        const a = await s.request<any>({ op: "say", text: "one" });
-        const b = await s.request<any>({ op: "say", text: "two" });
+        const a = await s.requestOk({ op: "say", text: "one" });
+        const b = await s.requestOk({ op: "say", text: "two" });
         const u = await user(ctx);
         await u.request({ op: "subscribe" });
 
-        const ack = await u.request<any>({ op: "say_read", room: a.room, seq: a.seq });
+        const ack = await u.request({ op: "say_read", room: a.room, seq: a.seq });
         expect(ack).toMatchObject({ ok: true, room: a.room, ref: a.seq });
-        const { ev } = await u.readEventUntil((e) => e.type === "say_read");
+        const { ev } = await u.readEventUntil("say_read");
         expect(ev).toMatchObject({ type: "say_read", r: a.room, ref: a.seq });
 
-        expect((await roomsOf(u)).find((r) => r.id === a.room).say_unread_seqs).toEqual([b.seq]);
+        expect((await roomOf(u, a.room)).say_unread_seqs).toEqual([b.seq]);
         await u.request({ op: "say_read", room: a.room, seq: a.seq });
-        expect((await roomsOf(u)).find((r) => r.id === a.room).say_unread_seqs).toEqual([b.seq]);
+        expect((await roomOf(u, a.room)).say_unread_seqs).toEqual([b.seq]);
 
         await u.request({ op: "say_read", room: b.room, seq: b.seq });
         // 全部読んだ room はフィールドごと消える (「未読 0」は不在で表す契約)。
-        expect((await roomsOf(u)).find((r) => r.id === a.room).say_unread_seqs).toBeUndefined();
+        expect((await roomOf(u, a.room)).say_unread_seqs).toBeUndefined();
         u.close();
         s.close();
       } finally {
@@ -265,12 +272,12 @@ describe("say_read op", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_6);
-        const said = await s.request<any>({ op: "say", text: "hi" });
+        const said = await s.requestOk({ op: "say", text: "hi" });
         const u = await user(ctx);
-        const res = await u.request<any>({ op: "say_read", room: said.room, seq: 9999 });
+        const res = await u.requestError({ op: "say_read", room: said.room, seq: 9999 });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("invalid_args");
-        const missing = await u.request<any>({ op: "say_read", room: "r9999", seq: 1 });
+        const missing = await u.requestError({ op: "say_read", room: "r9999", seq: 1 });
         expect(missing.error.code).toBe("room_not_found");
         u.close();
         s.close();
@@ -292,12 +299,12 @@ describe("say role gates", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_7);
-        const said = await s.request<any>({ op: "say", text: "hi" });
+        const said = await s.requestOk({ op: "say", text: "hi" });
         const u = await user(ctx);
 
-        const userSay = await u.request<any>({ op: "say", text: "nope" });
+        const userSay = await u.requestError({ op: "say", text: "nope" });
         expect(userSay.error.code).toBe("bad_request");
-        const sessionAck = await s.request<any>({
+        const sessionAck = await s.requestError({
           op: "say_read",
           room: said.room,
           seq: said.seq,
@@ -323,8 +330,8 @@ describe("say persistence", () => {
       const ctx = await startTestDaemon();
       try {
         const s = await session(ctx, SID_SAY_8);
-        const a = await s.request<any>({ op: "say", text: "kept" });
-        const b = await s.request<any>({ op: "say", text: "acked" });
+        const a = await s.requestOk({ op: "say", text: "kept" });
+        const b = await s.requestOk({ op: "say", text: "acked" });
         const u = await user(ctx);
         await u.request({ op: "say_read", room: b.room, seq: b.seq });
         u.close();
@@ -345,7 +352,7 @@ describe("say persistence", () => {
         await waitConnectable(ctx.sock);
 
         const u2 = await user(ctx);
-        const room = (await roomsOf(u2)).find((r) => r.id === a.room);
+        const room = await roomOf(u2, a.room);
         expect(room.kind).toBe("1on1");
         expect(room.say_unread_seqs).toEqual([a.seq]);
         u2.close();

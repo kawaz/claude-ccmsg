@@ -6,7 +6,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestFrames } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
 
 const GATEWAY_PORT = 18941;
 
@@ -59,38 +59,31 @@ const SESSION: Conn["identity"] = {
 
 describe("llm_stats op", () => {
   test("delivers the gateway document as the reply", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(URL_OK),
-      USER,
-      { op: "llm_stats", request_id: "q1", days: 30 },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
-    expect(reply?.generated_at).toBe(1785552299000);
-    expect(reply?.days["2026-07-31"].total_usd).toBe(1.25);
+    const reply = await requestOk(daemonWith(URL_OK), USER, {
+      op: "llm_stats",
+      request_id: "q1",
+      days: 30,
+    });
+    expect(reply.ok).toBe(true);
+    expect(reply.generated_at).toBe(1785552299000);
+    expect(reply.days["2026-07-31"].total_usd).toBe(1.25);
   });
 
   // The whole point of the parameter: a window chosen in the UI has to reach
   // the gateway, not just the daemon.
   test("passes the caller's window through to the gateway", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(URL_OK),
-      USER,
-      { op: "llm_stats", request_id: "q2", days: 7 },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
+    const reply = await requestOk(daemonWith(URL_OK), USER, {
+      op: "llm_stats",
+      request_id: "q2",
+      days: 7,
+    });
+    expect(reply.ok).toBe(true);
     expect(received.at(-1)).toBe("7");
   });
 
   test("omitting the window leaves the gateway's own default in place", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(URL_OK),
-      USER,
-      { op: "llm_stats", request_id: "q3" },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
+    const reply = await requestOk(daemonWith(URL_OK), USER, { op: "llm_stats", request_id: "q3" });
+    expect(reply.ok).toBe(true);
     expect(received.at(-1)).toBeNull();
   });
 
@@ -100,64 +93,54 @@ describe("llm_stats op", () => {
   test("refuses an out-of-range window without reaching the gateway", async () => {
     const before = received.length;
     for (const days of [0, 36_525, 1.5]) {
-      const [reply] = await requestFrames(
-        daemonWith(URL_OK),
-        USER,
-        { op: "llm_stats", request_id: "q4", days },
-        1,
-      );
-      expect(reply?.ok).toBe(false);
-      expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+      const reply = await requestError(daemonWith(URL_OK), USER, {
+        op: "llm_stats",
+        request_id: "q4",
+        days,
+      });
+      expect(reply.ok).toBe(false);
+      expect(reply.error.code).toBe(ErrorCode.invalid_args);
     }
     // A window that is not a number is refused the same way.
-    const [reply] = await requestFrames(
-      daemonWith(URL_OK),
-      USER,
-      { op: "llm_stats", request_id: "q4", days: "30" },
-      1,
-    );
-    expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+    const reply = await requestRefusal(daemonWith(URL_OK), USER, {
+      op: "llm_stats",
+      request_id: "q4",
+      days: "30",
+    });
+    expect(reply.error.code).toBe(ErrorCode.invalid_args);
     expect(received.length).toBe(before);
   });
 
   test("a failing gateway settles the request as an error event", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`),
-      USER,
-      { op: "llm_stats", request_id: "q5", days: 7 },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_stats_unavailable);
+    const reply = await requestError(daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`), USER, {
+      op: "llm_stats",
+      request_id: "q5",
+      days: 7,
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_stats_unavailable);
   });
 
   // The signal the webui uses to hide the spend section, and the reason it is
   // a distinct code from llm_stats_unavailable.
   test("replies llm_stats_not_configured when no URL is configured", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(),
-      USER,
-      { op: "llm_stats", request_id: "q6" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_stats_not_configured);
+    const reply = await requestError(daemonWith(), USER, { op: "llm_stats", request_id: "q6" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_stats_not_configured);
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(URL_OK),
-      SESSION,
-      { op: "llm_stats", request_id: "q7" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestError(daemonWith(URL_OK), SESSION, {
+      op: "llm_stats",
+      request_id: "q7",
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 
   test("refuses a request with no request_id (every op needs one to be answered)", async () => {
-    const [reply] = await requestFrames(daemonWith(URL_OK), USER, { op: "llm_stats" }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestRefusal(daemonWith(URL_OK), USER, { op: "llm_stats" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 });

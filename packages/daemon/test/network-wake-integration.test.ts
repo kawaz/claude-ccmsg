@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon, type DaemonCtx, isKind } from "./helpers.ts";
 import { PROTOCOL_VERSION } from "@ccmsg/protocol";
 
 const T = 20_000;
@@ -82,7 +82,7 @@ async function startFixture(): Promise<Fixture> {
   await observer.hello({ role: "user" });
   // The seam signals ctx.proc directly, so a daemon that lives in some other
   // process would silently never see a transition. Fail on that here instead.
-  const hello = await observer.request<{ pid: number; network: string }>({ op: "ping" });
+  const hello = await observer.requestOk({ op: "ping" });
   expect(hello.pid).toBe(ctx.proc.pid);
   expect(hello.network).toBe("offline");
   return {
@@ -98,13 +98,13 @@ async function startFixture(): Promise<Fixture> {
       // delivering it (verified against this daemon).
       process.kill(ctx.proc.pid, "SIGUSR2");
       await waitFor(`daemon to observe the link as ${state}`, async () => {
-        const pong = await observer.request<{ network: string }>({ op: "ping" });
+        const pong = await observer.requestOk({ op: "ping" });
         return pong.network === state;
       });
     },
     waitStall: async (sid, timestamp) => {
       await waitFor(`${sid} to be reported stopped at ${timestamp}`, async () => {
-        const res = await observer.request<{ errors: { sid: string; timestamp: string }[] }>({
+        const res = await observer.requestOk({
           op: "session_errors",
         });
         return res.errors.some((e) => e.sid === sid && e.timestamp === timestamp);
@@ -166,9 +166,7 @@ describe("network online wake", () => {
         await f.waitStall(A, ERR_TS);
         await f.setLink("online");
 
-        const woken = await a.readEventUntil<{ ev: string; text: string; error_ts: string }>(
-          (ev) => ev.ev === "net_online",
-        );
+        const woken = await a.readEventUntil("net_online");
         expect(woken.ev.error_ts).toBe(ERR_TS);
         expect(woken.ev.text).toContain("API error");
 
@@ -183,10 +181,8 @@ describe("network online wake", () => {
         await f.waitStall(A, NEW_TS);
         await f.setLink("offline");
         await f.setLink("online");
-        const second = await a.readEventUntil<{ ev: string; error_ts: string }>(
-          (ev) => ev.ev === "net_online" && ev.error_ts === NEW_TS,
-        );
-        expect(second.seen.filter((ev) => ev.ev === "net_online")).toHaveLength(1);
+        const second = await a.readEventUntil("net_online", (ev) => ev.error_ts === NEW_TS);
+        expect(second.seen.filter(isKind("net_online"))).toHaveLength(1);
 
         // B never stopped, so the wake was never addressed to it — checked
         // after A's second wake, which orders B's stream past both recoveries.

@@ -82,7 +82,7 @@ function sleep(ms: number): Promise<void> {
 async function helloCapabilities(sock: string): Promise<Record<string, unknown>> {
   const client = await connect(sock);
   try {
-    return await client.request<Record<string, unknown>>({
+    return await client.request({
       op: "hello",
       role: "user",
       protocol: PROTOCOL_VERSION,

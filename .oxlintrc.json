@@ -54,7 +54,9 @@
         "packages/cli/src/client.ts",
         "packages/webui/src/client/ws.ts",
         "packages/daemon/test/log.test.ts",
-        "packages/daemon/test/sidecar-call.test.ts"
+        "packages/daemon/test/sidecar-call.test.ts",
+        "packages/daemon/test/helpers.ts",
+        "packages/daemon/test/drive-request.ts"
       ],
       "rules": {
         "typescript/no-explicit-any": "error",

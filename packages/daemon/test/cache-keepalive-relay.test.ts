@@ -48,7 +48,7 @@ async function startKeepaliveDaemon(): Promise<Ctx> {
   await waitConnectable(sock);
   const c = await connect(sock);
   await c.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-  const pong = await c.request<{ http: string[] }>({ op: "ping" });
+  const pong = await c.requestOk({ op: "ping" });
   c.close();
   return {
     base,
@@ -133,12 +133,6 @@ async function anchor(ctx: Ctx, sid: string, text: string): Promise<void> {
   u.close();
 }
 
-interface NotifyEv {
-  ev: "notify";
-  text: string;
-  from: { role: string; sid?: string };
-}
-
 describe("webhook cache_keepalive → session notify", () => {
   test(
     "an idle session gets the marker verbatim on its subscribe stream",
@@ -147,7 +141,7 @@ describe("webhook cache_keepalive → session notify", () => {
       try {
         const s = await sessionSubscriber(ctx);
         expect(await postEvents(ctx, keepalivePayload())).toBe(204);
-        const { ev } = await s.readEventUntil<NotifyEv>((e) => e.ev === "notify");
+        const { ev } = await s.readEventUntil("notify");
         // Verbatim: the gateway matches this exact string back on the request
         // it is waiting for, and a decorated one would also risk truncation.
         expect(ev.text).toBe(MARKER);
@@ -168,11 +162,9 @@ describe("webhook cache_keepalive → session notify", () => {
         const s = await sessionSubscriber(ctx);
         expect(await postEvents(ctx, keepalivePayload({ deadline: Date.now() - 1000 }))).toBe(204);
         await anchor(ctx, SID, "anchor");
-        const { ev, seen } = await s.readEventUntil<NotifyEv>(
-          (e) => e.ev === "notify" && e.text === "anchor",
-        );
+        const { ev, seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
         expect(ev.text).toBe("anchor");
-        expect(seen.some((e) => e.text === MARKER)).toBe(false);
+        expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
         s.close();
       } finally {
         await stop(ctx);
@@ -189,10 +181,8 @@ describe("webhook cache_keepalive → session notify", () => {
         const s = await sessionSubscriber(ctx);
         expect(await postEvents(ctx, keepalivePayload({ session_id: "NOBODY" }))).toBe(204);
         await anchor(ctx, SID, "anchor");
-        const { seen } = await s.readEventUntil<NotifyEv>(
-          (e) => e.ev === "notify" && e.text === "anchor",
-        );
-        expect(seen.some((e) => e.text === MARKER)).toBe(false);
+        const { seen } = await s.readEventUntil("notify", (e) => e.text === "anchor");
+        expect(seen.some((e) => "text" in e && e.text === MARKER)).toBe(false);
         s.close();
       } finally {
         await stop(ctx);
@@ -217,10 +207,7 @@ describe("webhook cache_keepalive → session notify", () => {
             { ts, session_id: "OTHER", prefix: "aa11bb22" },
           ]),
         ).toBe(204);
-        const { ev } = await u.readEventUntil<{
-          ev: string;
-          requests: { session_id: string }[];
-        }>((e) => e.ev === "llm_requests");
+        const { ev } = await u.readEventUntil("llm_requests");
         expect(ev.requests.map((r) => r.session_id)).toEqual(["OTHER"]);
         u.close();
       } finally {

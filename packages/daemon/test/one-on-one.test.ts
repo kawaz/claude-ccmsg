@@ -65,7 +65,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
 /** The 1on1 room of the session behind `conn`. The say op is the only path
  * that still opens a 1on1 room, so it stands in for "an existing 1on1 room". */
 async function oneOnOneOf(conn: TestClient): Promise<string> {
-  const res = await conn.request<{ ok: true; room: string }>({ op: "say", text: "hello" });
+  const res = await conn.requestOk({ op: "say", text: "hello" });
   expect(res.ok).toBe(true);
   return res.room;
 }
@@ -139,7 +139,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           [a, { members: [SID_A], msg: "session initial" }],
         ];
         for (const [c, extra] of attempts) {
-          const res = await c.request({ op: "create_room", kind: "1on1", ...extra });
+          const res = await c.requestRefusal({ op: "create_room", kind: "1on1", ...extra });
           expect(res).toEqual({
             ok: false,
             error: {
@@ -150,7 +150,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         }
         const after = fs.existsSync(ctx.roomsDir) ? fs.readdirSync(ctx.roomsDir).length : 0;
         expect(after).toBe(before);
-        const rooms = await u.request<{ rooms: unknown[] }>({ op: "rooms" });
+        const rooms = await u.requestOk({ op: "rooms" });
         expect(rooms.rooms).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
@@ -167,7 +167,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await user(ctx);
-        const res = await u.request({ op: "create_room", members: [SID_A], kind: "group" });
+        const res = await u.requestRefusal({ op: "create_room", members: [SID_A], kind: "group" });
         expect(res).toEqual({
           ok: false,
           error: {
@@ -195,7 +195,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         const a = await session(ctx, SID_A);
         const room = await oneOnOneOf(a);
         for (const c of [u, a]) {
-          const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
+          const res = await c.requestError({
             op: "post",
             room,
             msg: "into a read-only room",
@@ -233,7 +233,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           [u, 2],
         ];
         for (const [c, mid] of attempts) {
-          const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
+          const res = await c.requestError({
             op: "reply",
             room: "r1",
             mid,
@@ -259,12 +259,12 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       try {
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [SID_A],
         });
 
-        const res = await a.request<{ ok: true; mid: number }>({
+        const res = await a.requestOk({
           op: "post",
           room: created.room,
           msg: "new message",
@@ -287,7 +287,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
       const ctx = await startTestDaemon();
       try {
         const a = await session(ctx, SID_A);
-        const res = await a.request<{ ok: true; room: string; mid?: number }>({
+        const res = await a.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -321,7 +321,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           [a, { msg: "session initial on next" }],
         ];
         for (const [c, extra] of attempts) {
-          const res = await c.request<{ ok: false; error: { code: string; msg: string } }>({
+          const res = await c.requestError({
             op: "next_room",
             room: parent,
             ...extra,
@@ -329,7 +329,7 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
           expect(res.ok).toBe(false);
           expect(res.error).toEqual(readOnlyError(parent, "next_room"));
         }
-        const rooms = await u.request<{ rooms: { id: string }[] }>({ op: "rooms" });
+        const rooms = await u.requestOk({ op: "rooms" });
         expect(rooms.rooms.map((r) => r.id)).toEqual([parent]);
         const raw = fs.readFileSync(`${ctx.roomsDir}/${parent}.jsonl`, "utf8");
         expect(raw).not.toContain('"type":"next"');
@@ -364,12 +364,10 @@ describe("DR-0014 1on1 room: creation and read-only (DR-0035 §2)", () => {
         // refused as a read-only 1on1 room — proves computeDerived recovered
         // kind, not just that the KindEvent is in the jsonl.
         const u2 = await user(ctx);
-        const rooms = await u2.request<{
-          rooms: { id: string; kind?: string }[];
-        }>({ op: "rooms" });
+        const rooms = await u2.requestOk({ op: "rooms" });
         expect(rooms.rooms.find((r) => r.id === roomId)!.kind).toBe("1on1");
 
-        const res = await u2.request<{ ok: false; error: { code: string; msg: string } }>({
+        const res = await u2.requestError({
           op: "post",
           room: roomId,
           msg: "after restart",
@@ -396,13 +394,13 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
         const b = await receiver(ctx, SID_B);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [SID_A, SID_B],
         });
         const room = res.room;
 
-        const posted = await a.request<{ mid: number }>({ op: "post", room, msg: "全員へ" });
+        const posted = await a.requestOk({ op: "post", room, msg: "全員へ" });
         const env = await b.next();
         expect(env.attrs["ccmsg-mid"]).toBe(`${room}m${posted.mid}`);
         expect(env.body).toBe(`全員へ\n\n${replyWith(`${room}m${posted.mid}`)}`);
@@ -426,13 +424,13 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
         const a = await session(ctx, SID_A);
         const b = await receiver(ctx, SID_B);
         const c = await receiver(ctx, SID_C);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [SID_A, SID_B, SID_C],
         });
         const room = res.room;
 
-        const posted = await a.request<{ mid: number }>({
+        const posted = await a.requestOk({
           op: "post",
           room,
           msg: "peer priv",
@@ -459,14 +457,14 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
       try {
         const u = await user(ctx);
         const a = await receiver(ctx, SID_A);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
         const room = res.room;
 
-        const posted = await u.request<{ mid: number }>({
+        const posted = await u.requestOk({
           op: "post",
           room,
           msg: "全員へ broadcast",
@@ -493,14 +491,14 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
         const a = await receiver(ctx, SID_A);
         const b = await receiver(ctx, SID_B);
         await session(ctx, SID_C);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
         const room = res.room;
 
-        const posted = await u.request<{ mid: number }>({
+        const posted = await u.requestOk({
           op: "post",
           room,
           msg: "selected peers",
@@ -527,7 +525,7 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
         const b = await receiver(ctx, SID_B);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [SID_A, SID_B],
         });
@@ -560,7 +558,7 @@ describe("DR-0017 reply instruction in the peer-inject envelope", () => {
         const u = await user(ctx);
         const a = await session(ctx, SID_A);
         const b = await receiver(ctx, SID_B);
-        const res = await u.request<{ room: string }>({
+        const res = await u.requestOk({
           op: "create_room",
           members: [SID_A, SID_B],
         });

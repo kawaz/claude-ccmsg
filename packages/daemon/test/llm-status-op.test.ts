@@ -12,7 +12,7 @@ import {
   type Conn,
   type Daemon,
 } from "../src/server.ts";
-import { requestFrames } from "./drive-request.ts";
+import { requestError, requestFrames, requestOk, requestRefusal } from "./drive-request.ts";
 import { fetchLlmStatus, LlmStatusRefresher } from "../src/llm-status.ts";
 import { LlmRequestCache } from "../src/llm-events.ts";
 
@@ -75,39 +75,30 @@ const SESSION: Conn["identity"] = {
 
 describe("llm_status op", () => {
   test("delivers the gateway report as the reply", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(STATUS_URL),
-      USER,
-      { op: "llm_status", request_id: "q1" },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
-    expect(reply?.overall.severity).toBe("warning");
-    expect(reply?.services.map((s: { id: string }) => s.id)).toEqual(["anthropic", "openai"]);
+    const reply = await requestOk(daemonWith(STATUS_URL), USER, {
+      op: "llm_status",
+      request_id: "q1",
+    });
+    expect(reply.ok).toBe(true);
+    expect(reply.overall.severity).toBe("warning");
+    expect(reply.services.map((s: { id: string }) => s.id)).toEqual(["anthropic", "openai"]);
   });
 
   test("a failing gateway settles the request as an error event", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`),
-      USER,
-      { op: "llm_status", request_id: "q2" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_status_unavailable);
+    const reply = await requestError(daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`), USER, {
+      op: "llm_status",
+      request_id: "q2",
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_status_unavailable);
   });
 
   // The signal the webui uses to hide the strip, and the reason it is a
   // distinct code from llm_status_unavailable.
   test("replies llm_status_not_configured when no URL is configured", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(),
-      USER,
-      { op: "llm_status", request_id: "q3" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_status_not_configured);
+    const reply = await requestError(daemonWith(), USER, { op: "llm_status", request_id: "q3" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_status_not_configured);
   });
 
   test("passes a refresh through, and only when asked for explicitly", async () => {
@@ -122,32 +113,29 @@ describe("llm_status op", () => {
     // anything, so it can never stand for "refresh".
     const asked = received.length;
     for (const refresh of ["true", 1, null]) {
-      const [reply] = await requestFrames(
-        daemon,
-        USER,
-        { op: "llm_status", request_id: "r4", refresh },
-        1,
-      );
-      expect(reply?.error.code).toBe(ErrorCode.invalid_args);
+      const reply = await requestRefusal(daemon, USER, {
+        op: "llm_status",
+        request_id: "r4",
+        refresh,
+      });
+      expect(reply.error.code).toBe(ErrorCode.invalid_args);
     }
     expect(received.length).toBe(asked);
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(STATUS_URL),
-      SESSION,
-      { op: "llm_status", request_id: "q4" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestError(daemonWith(STATUS_URL), SESSION, {
+      op: "llm_status",
+      request_id: "q4",
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 
   test("refuses a request with no request_id (every op needs one to be answered)", async () => {
-    const [reply] = await requestFrames(daemonWith(STATUS_URL), USER, { op: "llm_status" }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestRefusal(daemonWith(STATUS_URL), USER, { op: "llm_status" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 });
 

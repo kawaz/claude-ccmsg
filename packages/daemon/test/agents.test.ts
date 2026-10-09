@@ -14,6 +14,7 @@ import {
   testConfigDir,
   waitConnectable,
   type DaemonCtx,
+  type ItemOf,
   type TestClient,
 } from "./helpers.ts";
 
@@ -159,10 +160,6 @@ interface AgentsOk {
   }>;
   polled_at: string | null;
 }
-interface ErrLite {
-  ok: false;
-  error: { code: string };
-}
 
 describe("agents polling: config dir detection", () => {
   test(
@@ -200,9 +197,7 @@ describe("agents polling: config dir detection", () => {
         try {
           const u = await userConn(ctx);
           await u.request({ op: "subscribe" });
-          const { ev } = await u.readEventUntil<{ ev: string; agents: unknown[] }>(
-            (e) => e.ev === "agents",
-          );
+          const { ev } = await u.readEventUntil("agents");
           const agents = (ev as unknown as AgentsOk & { ev: string }).agents;
           const sids = agents.map((a) => a.sessionId).sort();
           expect(sids).toEqual(["sA", "sB"]);
@@ -233,7 +228,7 @@ describe("agents polling: config dir detection", () => {
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
           const u = await userConn(ctx);
-          const res = await u.request<AgentsOk>({ op: "agents" });
+          const res = await u.requestOk({ op: "agents" });
           expect(res.agents).toEqual([]);
         } finally {
           await stopAgentsTestDaemon(ctx);
@@ -256,7 +251,7 @@ describe("agents polling: permission (user role only)", () => {
         const ctx = await startAgentsTestDaemon(home, binDir);
         try {
           const s = await sessionConn(ctx, SID_A);
-          const res = await s.request<ErrLite>({ op: "agents" });
+          const res = await s.requestError({ op: "agents" });
           expect(res.ok).toBe(false);
           expect(res.error.code).toBe("bad_request");
         } finally {
@@ -286,7 +281,7 @@ describe("agents polling: lifecycle", () => {
           // A session-role conn only asks for peers; nothing here starts a poll.
           const s = await sessionConn(ctx, SID_S);
           for (;;) {
-            const res = await s.request<{ peers: { sid: string }[] }>({ op: "peers" });
+            const res = await s.requestOk({ op: "peers" });
             if (res.peers.some((p) => p.sid === "sA")) break;
             await new Promise((r) => setTimeout(r, POLL_MS));
           }
@@ -315,13 +310,11 @@ describe("agents polling: lifecycle", () => {
         try {
           const u = await userConn(ctx);
           await u.request({ op: "subscribe" });
-          const { ev } = await u.readEventUntil<AgentsOk & { ev: string }>(
-            (e) => e.ev === "agents",
-          );
+          const { ev } = await u.readEventUntil("agents");
           expect(ev.agents.map((a) => a.sessionId)).toEqual(["sA"]);
           expect(ev.polled_at).not.toBeNull();
 
-          const cached = await u.request<AgentsOk>({ op: "agents" });
+          const cached = await u.requestOk({ op: "agents" });
           expect(cached.agents.map((a) => a.sessionId)).toEqual(["sA"]);
           // >= rather than === : the poller keeps ticking every POLL_MS in the
           // background, so a poll cycle can legitimately land between the ev
@@ -356,7 +349,7 @@ describe("agents polling: lifecycle", () => {
         try {
           const u = await userConn(ctx);
           await u.request({ op: "subscribe" });
-          await u.readEventUntil((e) => e.ev === "agents"); // first (only) agents event
+          await u.readEventUntil("agents"); // first (only) agents event
 
           // Let several more poll cycles actually run underneath (proves this
           // isn't just "the second poll hasn't happened yet").
@@ -369,9 +362,9 @@ describe("agents polling: lifecycle", () => {
           // proves the unchanged poll result was suppressed, not just unlucky
           // timing.
           const s = await sessionConn(ctx, SID_S);
-          const created = await s.request<{ room: string }>({ op: "create_room", members: [] });
+          const created = await s.requestOk({ op: "create_room", members: [] });
           await s.request({ op: "post", room: created.room, msg: "marker" });
-          const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+          const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
           expect(seen.some((e: any) => e.ev === "agents")).toBe(false);
         } finally {
           await stopAgentsTestDaemon(ctx);
@@ -431,7 +424,7 @@ exit 1
         try {
           const u = await userConn(ctx);
           await u.request({ op: "subscribe" });
-          await u.readEventUntil((e) => e.ev === "agents"); // first poll landed
+          await u.readEventUntil("agents"); // first poll landed
 
           // Let several POLL_MS periods elapse while the mock is still busy
           // (each call takes 400ms, interval is 150ms) — proves several
@@ -492,7 +485,7 @@ exit 1
           const u = await userConn(ctx);
           const start = Date.now();
           await u.request({ op: "subscribe" });
-          await u.readEventUntil((e) => e.ev === "agents");
+          await u.readEventUntil("agents");
           const elapsedMs = Date.now() - start;
           // POLL_TIMEOUT_MS is 5000ms; a blocked-on-stderr child would only
           // resolve after that full timeout + SIGKILL. A generous margin
@@ -525,11 +518,6 @@ fi
 exit 1
 `;
   writeMockBin(path.join(binDir, "claude"), script);
-}
-
-interface PeersEv {
-  ev: string;
-  peers: { sid: string; repo: string; ws: string; cwd: string; transcript_path?: string }[];
 }
 
 function row(sessionId: string, cwd: string, extra: Record<string, unknown> = {}): unknown {
@@ -576,11 +564,11 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
     return u;
   }
 
-  function hasPeer(sid: string): (e: any) => boolean {
-    return (e) => e.ev === "peers" && (e as PeersEv).peers.some((p) => p.sid === sid);
+  function hasPeer(sid: string): (e: ItemOf<"peers">) => boolean {
+    return (e) => e.peers.some((p) => p.sid === sid);
   }
-  function lacksPeer(sid: string): (e: any) => boolean {
-    return (e) => e.ev === "peers" && !(e as PeersEv).peers.some((p) => p.sid === sid);
+  function lacksPeer(sid: string): (e: ItemOf<"peers">) => boolean {
+    return (e) => !e.peers.some((p) => p.sid === sid);
   }
 
   test(
@@ -595,7 +583,7 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         }
         const u = await watcher(ctx);
         setRows(dirA, [row("sA", cwd)]);
-        const { ev } = await u.readEventUntil<PeersEv>(hasPeer("sA"));
+        const { ev } = await u.readEventUntil("peers", hasPeer("sA"));
         expect(ev.peers.find((p) => p.sid === "sA")).toMatchObject({
           cwd,
           repo: expect.stringContaining("somerepo"),
@@ -612,20 +600,18 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
       await withRegistryFixture(async ({ ctx, dirA, setRows, cwd }) => {
         const u = await watcher(ctx);
         setRows(dirA, [row("sA", cwd), row("sB", cwd)]);
-        await u.readEventUntil((e) => hasPeer("sA")(e) && hasPeer("sB")(e));
-        const created = await u.request<{ room: string }>({
+        await u.readEventUntil("peers", (e) => hasPeer("sA")(e) && hasPeer("sB")(e));
+        const created = await u.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
-        const rooms = await u.request<{
-          rooms: { id: string; members: { id: string; sid: string }[] }[];
-        }>({ op: "rooms" });
+        const rooms = await u.requestOk({ op: "rooms" });
         const room = rooms.rooms.find((r) => r.id === created.room);
         const aId = room?.members.find((m) => m.sid === "sA")?.id;
         expect(aId).toBeDefined();
         setRows(dirA, [row("sB", cwd)]);
-        const { ev } = await u.readEventUntil<PeersEv>(lacksPeer("sA"));
+        const { ev } = await u.readEventUntil("peers", lacksPeer("sA"));
         expect(ev.peers.map((p) => p.sid)).toEqual(["sB"]);
         const lines = fs
           .readFileSync(path.join(ctx.roomsDir, `${created.room}.jsonl`), "utf-8")
@@ -645,9 +631,9 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         const u = await watcher(ctx);
         const s = await connect(ctx.sock);
         await s.hello({ role: "session", sid: SID_A, repo: "hello-repo", ws: "hello-ws", cwd });
-        await u.readEventUntil(hasPeer(SID_A));
+        await u.readEventUntil("peers", hasPeer(SID_A));
         setRows(dirA, [row(SID_A, os.tmpdir()), row("sMarker", cwd)]);
-        const { ev } = await u.readEventUntil<PeersEv>(hasPeer("sMarker"));
+        const { ev } = await u.readEventUntil("peers", hasPeer("sMarker"));
         expect(ev.peers.find((p) => p.sid === SID_A)).toMatchObject({
           repo: "hello-repo",
           ws: "hello-ws",
@@ -666,9 +652,9 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         const s = await connect(ctx.sock);
         await s.hello({ role: "session", sid: SID_HELLO, repo: "r", ws: "w", cwd });
         setRows(dirA, [row("sA", cwd)]);
-        await u.readEventUntil(hasPeer("sA"));
+        await u.readEventUntil("peers", hasPeer("sA"));
         setRows(dirA, []);
-        const { ev } = await u.readEventUntil<PeersEv>(lacksPeer("sA"));
+        const { ev } = await u.readEventUntil("peers", lacksPeer("sA"));
         expect(ev.peers.map((p) => p.sid)).toEqual([SID_HELLO]);
       });
     },
@@ -684,14 +670,14 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         fs.mkdirSync(dirB);
         setRows(dirA, [row("sA", cwd)]);
         setRows(dirB, [row("sB", cwd)]);
-        await u.readEventUntil((e) => hasPeer("sA")(e) && hasPeer("sB")(e));
+        await u.readEventUntil("peers", (e) => hasPeer("sA")(e) && hasPeer("sB")(e));
         // dirA fails while dirB drops sB: only the answered dir's loss counts.
         setRows(dirA, "FAIL");
         setRows(dirB, []);
         // The push that follows the registry update for a poll in which dirA
         // failed and dirB listed nothing.
-        await u.readEventUntil((e) => e.ev === "agents" && e.agents.length === 0);
-        const res = await u.request<{ peers: { sid: string }[] }>({ op: "peers" });
+        await u.readEventUntil("agents", (e) => e.agents.length === 0);
+        const res = await u.requestOk({ op: "peers" });
         expect(res.peers.map((p) => p.sid)).toEqual(["sA"]);
       });
     },
@@ -705,16 +691,14 @@ describe("session registry derived from the agents poll (DR-0034)", () => {
         const sid = "231e3d3d-1aed-4050-be17-7e5cdf2f7402";
         const u = await watcher(ctx);
         setRows(dirA, [row(sid, cwd)]);
-        const first = await u.readEventUntil<PeersEv>(hasPeer(sid));
+        const first = await u.readEventUntil("peers", hasPeer(sid));
         expect(first.ev.peers.find((p) => p.sid === sid)?.transcript_path).toBeUndefined();
         const projectDir = path.join(dirA, "projects", "-some-project");
         fs.mkdirSync(projectDir, { recursive: true });
         const file = path.join(projectDir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
-        const { ev } = await u.readEventUntil<PeersEv>(
-          (e) =>
-            e.ev === "peers" &&
-            (e as PeersEv).peers.some((p) => p.sid === sid && p.transcript_path !== undefined),
+        const { ev } = await u.readEventUntil("peers", (e) =>
+          e.peers.some((p) => p.sid === sid && p.transcript_path !== undefined),
         );
         expect(ev.peers.find((p) => p.sid === sid)?.transcript_path).toBe(file);
       });

@@ -44,7 +44,7 @@ describe("DR-0017 reply op", () => {
         const u = await user(ctx);
         const a = await session(ctx, A);
         const b = await session(ctx, B);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [A, B, C],
         });
@@ -54,13 +54,13 @@ describe("DR-0017 reply op", () => {
         // [a1, a3] — original from (a1) + original to minus B himself (a3).
         // u1 is NOT included (delivered via always-exempt fanout instead).
         // Sorted canonical: a-prefix, numeric ascending.
-        const posted = await a.request<{ mid: number }>({
+        const posted = await a.requestOk({
           op: "post",
           room,
           msg: "question",
           to: ["a2", "a3"],
         });
-        const replied = await b.request<{ ok: boolean; mid: number; to: string[] }>({
+        const replied = await b.requestOk({
           op: "reply",
           room,
           mid: posted.mid,
@@ -94,16 +94,16 @@ describe("DR-0017 reply op", () => {
       try {
         const u = await user(ctx);
         const a = await session(ctx, A);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [A, B],
         });
-        const posted = await a.request<{ mid: number }>({
+        const posted = await a.requestOk({
           op: "post",
           room: created.room,
           msg: "mine",
         });
-        const res = await a.request<{ ok: false; error: { code: string } }>({
+        const res = await a.requestError({
           op: "reply",
           room: created.room,
           mid: posted.mid,
@@ -128,11 +128,11 @@ describe("DR-0017 reply op", () => {
       try {
         const u = await user(ctx);
         const a = await session(ctx, A);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [A],
         });
-        const res = await a.request<{ ok: false; error: { code: string } }>({
+        const res = await a.requestError({
           op: "reply",
           room: created.room,
           mid: 999,
@@ -160,17 +160,17 @@ describe("DR-0017 reply op", () => {
       try {
         const u = await user(ctx);
         const a = await session(ctx, A);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
-        const posted = await u.request<{ mid: number }>({
+        const posted = await u.requestOk({
           op: "post",
           room: created.room,
           msg: "broadcast question",
         });
-        const replied = await a.request<{ ok: boolean; to: string[] }>({
+        const replied = await a.requestOk({
           op: "reply",
           room: created.room,
           mid: posted.mid,
@@ -195,16 +195,16 @@ describe("DR-0017 reply op", () => {
         const u = await user(ctx);
         const a = await session(ctx, A);
         const outsider = await session(ctx, X);
-        const created = await u.request<{ room: string }>({
+        const created = await u.requestOk({
           op: "create_room",
           members: [A],
         });
-        const posted = await a.request<{ mid: number }>({
+        const posted = await a.requestOk({
           op: "post",
           room: created.room,
           msg: "insiders only",
         });
-        const res = await outsider.request<{ ok: false; error: { code: string } }>({
+        const res = await outsider.requestError({
           op: "reply",
           room: created.room,
           mid: posted.mid,

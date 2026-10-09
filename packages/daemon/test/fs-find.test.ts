@@ -64,16 +64,6 @@ async function sessionWithWorkspace(
   return session;
 }
 
-interface FindOk {
-  ok: true;
-  hits: { path: string; type: string }[];
-  truncated: boolean;
-}
-interface FindErr {
-  ok: false;
-  error: { code: string; msg: string };
-}
-
 /** Builds the tree every op-level test searches:
  *   src/components/FileTree.tsx
  *   src/components/FileViewer.tsx
@@ -103,7 +93,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -131,7 +121,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -164,7 +154,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -187,7 +177,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -215,7 +205,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -239,7 +229,7 @@ describe("fs_find (contained)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -264,7 +254,7 @@ describe("fs_find authorization", () => {
       buildTree(cwd);
       try {
         const session = await sessionAt(ctx, A, cwd);
-        const res = await session.request<FindErr>({
+        const res = await session.requestError({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -285,7 +275,7 @@ describe("fs_find authorization", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await connect(ctx.sock);
-        const res = await c.request<FindErr>({
+        const res = await c.requestError({
           op: "fs_find",
           sid: "whatever",
           kind: "contained",
@@ -309,7 +299,7 @@ describe("fs_find authorization", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestError({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -337,7 +327,7 @@ describe("fs_find authorization", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestError({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -370,7 +360,7 @@ describe("fs_find authorization", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -397,7 +387,7 @@ describe("fs_find authorization", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -431,7 +421,7 @@ describe("fs_find (workspace, DR-0026)", () => {
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "workspace",
@@ -468,7 +458,7 @@ describe("fs_find (workspace, DR-0026)", () => {
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestError({
           op: "fs_find",
           sid: A,
           kind: "workspace",
@@ -501,7 +491,7 @@ describe("fs_find (workspace, DR-0026)", () => {
           JSON.stringify({ folders: [{ path: "../sibling" }] }),
         );
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestError({
           op: "fs_find",
           sid: A,
           kind: "workspace",
@@ -546,7 +536,7 @@ describe("fs_find (workspace, DR-0026)", () => {
           transcript_path: transcript,
         });
         const user = await userAt(ctx);
-        const res = await user.request<FindErr>({
+        const res = await user.requestError({
           op: "fs_find",
           sid: A,
           kind: "workspace",
@@ -570,7 +560,7 @@ describe("fs_find (workspace, DR-0026)", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request({
+        const res = await user.requestRefusal({
           op: "fs_find",
           sid: A,
           kind: "external",
@@ -599,7 +589,7 @@ describe("fs_find query grammar at the op level", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -622,7 +612,7 @@ describe("fs_find query grammar at the op level", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -647,7 +637,7 @@ describe("fs_find query grammar at the op level", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -684,7 +674,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -707,7 +697,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -742,7 +732,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, repo);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -771,7 +761,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -798,7 +788,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request<FindOk>({
+        const res = await user.requestOk({
           op: "fs_find",
           sid: A,
           kind: "contained",
@@ -821,7 +811,7 @@ describe("fs_find .gitignore filtering", () => {
       try {
         await sessionAt(ctx, A, cwd);
         const user = await userAt(ctx);
-        const res = await user.request({
+        const res = await user.requestRefusal({
           op: "fs_find",
           sid: A,
           kind: "contained",

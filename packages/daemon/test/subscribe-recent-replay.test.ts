@@ -10,6 +10,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  isKind,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -36,7 +37,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -47,13 +48,13 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         const bSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
         // Recent-replay msgs arrive first (replay:true), then the room_cursors summary.
-        const { seen } = await bSub.readEventUntil((ev) => ev.ev === "room_cursors");
-        const msgFrames = seen.filter((e) => e.type === "msg");
+        const { seen } = await bSub.readEventUntil("room_cursors");
+        const msgFrames = seen.filter(isKind("msg"));
         expect(msgFrames.map((e) => e.mid)).toEqual([1, 2]);
         for (const m of msgFrames) expect(m.replay).toBe(true);
         // room_cursors still fires with the current last_mid — a room with recent
         // replay is still a room without a durable cursor for this subscriber.
-        const cursors = seen.find((e) => e.ev === "room_cursors");
+        const cursors = seen.find(isKind("room_cursors"));
         expect(cursors?.rooms).toEqual([{ room, last_mid: 2 }]);
       } finally {
         await stopTestDaemon(ctx);
@@ -70,7 +71,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "0" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -79,14 +80,13 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
 
         const bSub = await user(ctx);
         await bSub.request({ op: "subscribe" });
-        const first = await bSub.readEvent<{ ev?: string; type?: string }>();
-        expect(first?.ev).toBe("room_cursors");
+        await bSub.readEvent("room_cursors");
         // Post a live msg to close out the read; assert no msg preceded room_cursors.
         await a.request({ op: "post", room, msg: "m2" });
-        const { seen } = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 2);
+        const { seen } = await bSub.readEventUntil("msg", (ev) => ev.mid === 2);
         // seen collects everything up to (and including) the terminator, so m2
         // will be there; m1 must not.
-        expect(seen.filter((e) => e.type === "msg").map((e) => e.mid)).toEqual([2]);
+        expect(seen.filter(isKind("msg")).map((e) => e.mid)).toEqual([2]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -102,7 +102,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         const a = await session(ctx, SID_A);
         await session(ctx, SID_B);
         await session(ctx, SID_C);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B, SID_C],
         });
@@ -111,8 +111,8 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
 
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe" });
-        const { seen } = await uSub.readEventUntil((ev) => ev.ev === "room_cursors");
-        const msgs = seen.filter((e) => e.type === "msg");
+        const { seen } = await uSub.readEventUntil("room_cursors");
+        const msgs = seen.filter(isKind("msg"));
         expect(msgs.map((e) => [e.mid, e.to, e.replay])).toEqual([[1, ["a2"], true]]);
       } finally {
         await stopTestDaemon(ctx);
@@ -127,7 +127,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -137,8 +137,8 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         // First subscribe: recent-replay fires and gives us the msg + cursors.
         const bSub1 = await user(ctx);
         await bSub1.request({ op: "subscribe" });
-        const first = await bSub1.readEventUntil((ev) => ev.ev === "room_cursors");
-        const firstSeq = first.seen.find((e) => e.type === "msg")?.seq;
+        const first = await bSub1.readEventUntil("room_cursors");
+        const firstSeq = first.seen.find(isKind("msg"))?.seq;
         expect(typeof firstSeq).toBe("number");
 
         // Second subscribe with since_seq at that cursor: delta path, no recent-replay,
@@ -148,12 +148,12 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         // Nothing to read up to a terminator we can force: post m2 live and assert
         // that only m2 arrives, with no replay flag.
         await a.request({ op: "post", room, msg: "m2" });
-        const { seen } = await bSub2.readEventUntil((ev) => ev.type === "msg" && ev.mid === 2);
-        const msgs = seen.filter((e) => e.type === "msg");
+        const { seen } = await bSub2.readEventUntil("msg", (ev) => ev.mid === 2);
+        const msgs = seen.filter(isKind("msg"));
         expect(msgs.map((e) => e.mid)).toEqual([2]);
         expect(msgs[0].replay).toBeUndefined();
         // no room_cursors summary in the delta path
-        expect(seen.some((e) => e.ev === "room_cursors")).toBe(false);
+        expect(seen.some(isKind("room_cursors"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -167,7 +167,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -177,7 +177,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
         for (const sid of [SID_A, SID_B]) {
           const sub = await session(ctx, sid);
           await sub.request({ op: "subscribe" });
-          const first = await sub.readEvent<{ ev?: string; rooms?: unknown }>();
+          const first = await sub.readEvent();
           expect(first).toEqual({ ev: "room_cursors", rooms: [{ room, last_mid: 1 }] });
           await sub.request({ op: "rooms" });
           expect(await sub.pendingEvents()).toEqual([]);
@@ -195,7 +195,7 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -204,14 +204,14 @@ describe("subscribe: recent-replay (bare default, within window)", () => {
 
         const bSub = await user(ctx);
         await bSub.request({ op: "subscribe", backlog: true });
-        const { seen } = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 1);
-        const msgs = seen.filter((e) => e.type === "msg");
+        const { seen } = await bSub.readEventUntil("msg", (ev) => ev.mid === 1);
+        const msgs = seen.filter(isKind("msg"));
         // full-replay path: msg present but NOT flagged replay (marker is
         // recent-replay-only, backlog path is the pre-existing snapshot).
         expect(msgs.map((e) => e.mid)).toEqual([1]);
         expect(msgs[0].replay).toBeUndefined();
         // no room_cursors summary because the room got a real replay.
-        expect(seen.some((e) => e.ev === "room_cursors")).toBe(false);
+        expect(seen.some(isKind("room_cursors"))).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
       }

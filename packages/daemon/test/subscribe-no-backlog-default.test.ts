@@ -16,6 +16,7 @@ import {
   stopTestDaemon,
   type DaemonCtx,
   type TestClient,
+  isKind,
 } from "./helpers.ts";
 
 const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -50,7 +51,7 @@ describe("subscribe: no-backlog bare default", () => {
       const ctx = await startTestDaemon(NO_RECENT);
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -62,20 +63,16 @@ describe("subscribe: no-backlog bare default", () => {
         await bSub.request({ op: "subscribe" });
         // the very first pushed frame must be the cursors summary, carrying this
         // room's current last_mid — not a replayed `type:"msg"` backlog line.
-        const first = await bSub.readEvent<{
-          ev?: string;
-          rooms?: { room: string; last_mid: number }[];
-        }>();
-        expect(first?.ev).toBe("room_cursors");
-        expect(first?.rooms).toEqual([{ room, last_mid: 2 }]);
+        const first = await bSub.readEvent("room_cursors");
+        expect(first.rooms).toEqual([{ room, last_mid: 2 }]);
 
         // a live-terminator msg posted AFTER subscribe still arrives normally —
         // the no-backlog default only withholds pre-existing history, not future
         // live delivery.
         await a.request({ op: "post", room, msg: "m3" }); // mid 3, delivered live
-        const { seen } = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 3);
+        const { seen } = await bSub.readEventUntil("msg", (ev) => ev.mid === 3);
         // no `type:"msg"` line for mid 1 or 2 ever arrived on this connection.
-        const backlogMids = seen.filter((e) => e.type === "msg").map((e) => e.mid);
+        const backlogMids = seen.filter(isKind("msg")).map((e) => e.mid);
         expect(backlogMids).toEqual([3]);
       } finally {
         await stopTestDaemon(ctx);
@@ -94,23 +91,16 @@ describe("subscribe: no-backlog bare default", () => {
         // distinct member sets (B-only vs B+C) so create_room's dedup fold
         // (same author + same member set within the window) doesn't collapse
         // these into a single room.
-        const r1 = (await a.request<{ room: string }>({ op: "create_room", members: [SID_B] }))
-          .room;
+        const r1 = (await a.requestOk({ op: "create_room", members: [SID_B] })).room;
         await a.request({ op: "post", room: r1, msg: "r1m1" });
-        const r2 = (
-          await a.request<{ room: string }>({ op: "create_room", members: [SID_B, SID_C] })
-        ).room;
+        const r2 = (await a.requestOk({ op: "create_room", members: [SID_B, SID_C] })).room;
         await a.request({ op: "post", room: r2, msg: "r2m1" });
         await a.request({ op: "post", room: r2, msg: "r2m2" });
 
         const bSub = await session(ctx, SID_B);
         await bSub.request({ op: "subscribe" });
-        const first = await bSub.readEvent<{
-          ev?: string;
-          rooms?: { room: string; last_mid: number }[];
-        }>();
-        expect(first?.ev).toBe("room_cursors");
-        const byRoom = new Map((first?.rooms ?? []).map((r) => [r.room, r.last_mid]));
+        const first = await bSub.readEvent("room_cursors");
+        const byRoom = new Map(first.rooms.map((r) => [r.room, r.last_mid]));
         expect(byRoom.get(r1)).toBe(1);
         expect(byRoom.get(r2)).toBe(2);
       } finally {
@@ -126,7 +116,7 @@ describe("subscribe: no-backlog bare default", () => {
       const ctx = await startTestDaemon();
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
+        const created = await a.requestOk({ op: "create_room", members: [SID_B] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
@@ -136,9 +126,9 @@ describe("subscribe: no-backlog bare default", () => {
         // `since_seq: 0` is a positional-delta replay from the start (DR-0016), not
         // the room_cursors summary — both pre-existing msgs arrive as real events
         // (preceded by the room's member-join event, also part of the full replay).
-        const { seen } = await bSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 2);
-        expect(seen.some((e) => e.ev === "room_cursors")).toBe(false);
-        const mids = seen.filter((e) => e.type === "msg").map((e) => e.mid);
+        const { seen } = await bSub.readEventUntil("msg", (ev) => ev.mid === 2);
+        expect(seen.some(isKind("room_cursors"))).toBe(false);
+        const mids = seen.filter(isKind("msg")).map((e) => e.mid);
         expect(mids).toEqual([1, 2]);
       } finally {
         await stopTestDaemon(ctx);
@@ -153,7 +143,7 @@ describe("subscribe: no-backlog bare default", () => {
       const ctx = await startTestDaemon();
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({ op: "create_room", members: [SID_B] });
+        const created = await a.requestOk({ op: "create_room", members: [SID_B] });
         const room = created.room;
         await a.request({ op: "post", room, msg: "m1" });
         await a.request({ op: "post", room, msg: "m2" });
@@ -161,12 +151,12 @@ describe("subscribe: no-backlog bare default", () => {
         // user role: uncapped join snapshot, same shape webui gets on every connect.
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe", backlog: true });
-        const first = await uSub.readEvent<{ type?: string }>();
+        const first = await uSub.readEvent();
         // first frame is the room's member snapshot (create_room's member event),
         // not a room_cursors summary — `backlog: true` suppresses it entirely.
-        expect(first?.type).not.toBeUndefined();
-        const { seen } = await uSub.readEventUntil((ev) => ev.type === "msg" && ev.mid === 2);
-        const mids = seen.filter((e) => e.type === "msg").map((e) => e.mid);
+        expect(first !== null && "type" in first).toBe(true);
+        const { seen } = await uSub.readEventUntil("msg", (ev) => ev.mid === 2);
+        const mids = seen.filter(isKind("msg")).map((e) => e.mid);
         expect(mids).toEqual([1, 2]);
       } finally {
         await stopTestDaemon(ctx);

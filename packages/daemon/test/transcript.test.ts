@@ -51,36 +51,6 @@ async function userHello(ctx: DaemonCtx): Promise<TestClient> {
   return c;
 }
 
-interface PeerLite {
-  sid: string;
-  transcript_path?: string;
-}
-interface TranscriptReadOk {
-  ok: true;
-  sid: string;
-  lines: string[];
-  start: number;
-  end: number;
-  size: number;
-}
-interface ErrLite {
-  ok: false;
-  error: { code: string };
-}
-interface TranscriptSubscribeOk {
-  ok: true;
-  sid: string;
-  size: number;
-}
-interface TranscriptTailEvent {
-  ev: "transcript";
-  sid: string;
-  lines: string[];
-  start: number;
-  end: number;
-  size: number;
-}
-
 describe("hello transcript_path validation (DR-0009)", () => {
   test(
     "正当なパス (絶対 + .jsonl + basename===sid.jsonl) は採用され peers に載る",
@@ -92,7 +62,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.transcript_path).toBe(file);
       } finally {
@@ -110,7 +80,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       try {
         const sid = SID_A;
         const c = await sessionHello(ctx, sid, { transcript_path: `${sid}.jsonl` });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.transcript_path).toBeUndefined();
       } finally {
@@ -130,7 +100,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         const file = path.join(dir, "other.jsonl"); // basename mismatch: not "A.jsonl"
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.transcript_path).toBeUndefined();
       } finally {
@@ -151,7 +121,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         const file = path.join(dir, `${sid}.json`); // wrong extension
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.transcript_path).toBeUndefined();
       } finally {
@@ -168,7 +138,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await connect(ctx.sock);
-        const res = await c.request<{ ok: boolean }>({
+        const res = await c.request({
           op: "hello",
           protocol: PROTOCOL_VERSION,
           role: "session",
@@ -210,9 +180,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         // transcript_path must be preserved from the first hello.
         await sessionHello(ctx, sid, { cwd: "/tmp/other" });
 
-        const peers = await (
-          await connect(ctx.sock)
-        ).request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.transcript_path).toBe(file);
       } finally {
@@ -240,9 +208,7 @@ describe("hello transcript_path validation (DR-0009)", () => {
         try {
           await sessionHello(ctx, sid, { transcript_path: file2 });
 
-          const peers = await (
-            await connect(ctx.sock)
-          ).request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+          const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
           const me = peers.peers.find((p) => p.sid === sid)!;
           expect(me.transcript_path).toBe(file2);
         } finally {
@@ -264,7 +230,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await connect(ctx.sock);
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid: "whatever" });
+        const res = await c.requestError({ op: "transcript_read", sid: "whatever" });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("hello_required");
       } finally {
@@ -280,7 +246,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, SID_A);
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid: "no-such-sid" });
+        const res = await c.requestError({ op: "transcript_read", sid: "no-such-sid" });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("session_not_found");
       } finally {
@@ -296,7 +262,7 @@ describe("transcript_read errors", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, SID_A); // no transcript_path
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid: SID_A });
+        const res = await c.requestError({ op: "transcript_read", sid: SID_A });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("not_found");
       } finally {
@@ -317,7 +283,7 @@ describe("transcript_read errors", () => {
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
         fs.rmSync(file);
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid });
+        const res = await c.requestError({ op: "transcript_read", sid });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("not_found");
       } finally {
@@ -338,7 +304,7 @@ describe("transcript_read errors", () => {
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid, before: -1 });
+        const res = await c.requestError({ op: "transcript_read", sid, before: -1 });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("invalid_args");
       } finally {
@@ -359,7 +325,7 @@ describe("transcript_read errors", () => {
         const file = path.join(dir, `${sid}.jsonl`);
         fs.writeFileSync(file, "x\n");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
-        const res = await c.request<ErrLite>({ op: "transcript_read", sid, max_bytes: 0 });
+        const res = await c.requestError({ op: "transcript_read", sid, max_bytes: 0 });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("invalid_args");
       } finally {
@@ -398,7 +364,7 @@ describe("transcript_read pagination", () => {
         // Design detail under test: that raw window's leading byte IS itself the
         // line terminator of the (excluded) prior line, so trimming it leaves an
         // empty leading fragment — not a spurious empty line in the output.
-        const res = await c.request<TranscriptReadOk>({
+        const res = await c.requestOk({
           op: "transcript_read",
           sid,
           max_bytes: 7,
@@ -428,7 +394,7 @@ describe("transcript_read pagination", () => {
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
         // Page 1 (tail): max_bytes=13 -> rawStart=17, lands mid "L5\n" terminator.
-        const page1 = await c.request<TranscriptReadOk>({
+        const page1 = await c.requestOk({
           op: "transcript_read",
           sid,
           max_bytes: 13,
@@ -439,7 +405,7 @@ describe("transcript_read pagination", () => {
 
         // Page 2 (older): before = page1.start, generously large max_bytes so it
         // reaches all the way back to byte 0.
-        const page2 = await c.request<TranscriptReadOk>({
+        const page2 = await c.requestOk({
           op: "transcript_read",
           sid,
           before: page1.start,
@@ -472,7 +438,7 @@ describe("transcript_read pagination", () => {
         fs.writeFileSync(file, fixedWidthContent(10));
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
-        const res = await c.request<TranscriptReadOk>({ op: "transcript_read", sid, before: 0 });
+        const res = await c.requestOk({ op: "transcript_read", sid, before: 0 });
         expect(res.lines).toEqual([]);
         expect(res.start).toBe(0);
         expect(res.end).toBe(0);
@@ -496,12 +462,12 @@ describe("transcript_read pagination", () => {
         fs.writeFileSync(file, fixedWidthContent(10)); // size 30
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
-        const tail = await c.request<TranscriptReadOk>({
+        const tail = await c.requestOk({
           op: "transcript_read",
           sid,
           max_bytes: 7,
         });
-        const clamped = await c.request<TranscriptReadOk>({
+        const clamped = await c.requestOk({
           op: "transcript_read",
           sid,
           before: 999_999,
@@ -527,7 +493,7 @@ describe("transcript_read pagination", () => {
         fs.writeFileSync(file, "");
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
-        const res = await c.request<TranscriptReadOk>({ op: "transcript_read", sid });
+        const res = await c.requestOk({ op: "transcript_read", sid });
         expect(res.lines).toEqual([]);
         expect(res.start).toBe(0);
         expect(res.end).toBe(0);
@@ -558,7 +524,7 @@ describe("transcript_read pagination", () => {
         // Ask for more than the file's total size as max_bytes: without clamping
         // this would read the whole 440,000-byte file; TRANSCRIPT_READ_MAX_BYTES
         // (256 KiB = 262,144 bytes) must cap the actual window instead.
-        const res = await c.request<TranscriptReadOk>({
+        const res = await c.requestOk({
           op: "transcript_read",
           sid,
           max_bytes: size, // 440,000 > TRANSCRIPT_READ_MAX_BYTES
@@ -600,7 +566,7 @@ describe("transcript_read pagination", () => {
         // first line's first multi-byte character (each Japanese char is 3
         // bytes; byte 0/1/2 are all part of the same character) — a naive
         // byte-boundary cut here would slice a UTF-8 character in half.
-        const res = await c.request<TranscriptReadOk>({
+        const res = await c.requestOk({
           op: "transcript_read",
           sid,
           max_bytes: size - 1,
@@ -638,7 +604,7 @@ describe("transcript_read pagination", () => {
         fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
-        const page1 = await c.request<TranscriptReadOk>({ op: "transcript_read", sid });
+        const page1 = await c.requestOk({ op: "transcript_read", sid });
         expect(page1.ok).toBe(true);
         expect(page1.lines).toEqual(["S1"]);
 
@@ -648,7 +614,7 @@ describe("transcript_read pagination", () => {
         // byte — leading trim used to return an empty page anchored right
         // back at page1.start (start === before), so passing it back as the
         // next `before` never moved and looped forever.
-        const page2 = await c.request<TranscriptReadOk>({
+        const page2 = await c.requestOk({
           op: "transcript_read",
           sid,
           before: page1.start,
@@ -658,7 +624,7 @@ describe("transcript_read pagination", () => {
         expect(page2.lines).toEqual([giantContent]); // whole line recovered, uncapped
         expect(page2.end).toBe(page1.start);
 
-        const page3 = await c.request<TranscriptReadOk>({
+        const page3 = await c.requestOk({
           op: "transcript_read",
           sid,
           before: page2.start,
@@ -701,10 +667,10 @@ describe("transcript_read pagination", () => {
         fs.writeFileSync(file, `S0\n${giantContent}\nS1\n`);
         const c = await sessionHello(ctx, sid, { transcript_path: file });
 
-        const page1 = await c.request<TranscriptReadOk>({ op: "transcript_read", sid });
+        const page1 = await c.requestOk({ op: "transcript_read", sid });
         expect(page1.lines).toEqual(["S1"]);
 
-        const page2 = await c.request<TranscriptReadOk>({
+        const page2 = await c.requestOk({
           op: "transcript_read",
           sid,
           before: page1.start,
@@ -734,10 +700,10 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, SID_A);
-        const subRes = await c.request<ErrLite>({ op: "transcript_subscribe", sid: SID_A });
+        const subRes = await c.requestError({ op: "transcript_subscribe", sid: SID_A });
         expect(subRes.ok).toBe(false);
         expect(subRes.error.code).toBe("bad_request");
-        const unsubRes = await c.request<ErrLite>({ op: "transcript_unsubscribe", sid: SID_A });
+        const unsubRes = await c.requestError({ op: "transcript_unsubscribe", sid: SID_A });
         expect(unsubRes.ok).toBe(false);
         expect(unsubRes.error.code).toBe("bad_request");
       } finally {
@@ -753,7 +719,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       const ctx = await startTestDaemon();
       try {
         const u = await userHello(ctx);
-        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: "no-such-sid" });
+        const res = await u.requestError({ op: "transcript_subscribe", sid: "no-such-sid" });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("session_not_found");
       } finally {
@@ -770,7 +736,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
       try {
         await sessionHello(ctx, SID_A); // no transcript_path
         const u = await userHello(ctx);
-        const res = await u.request<ErrLite>({ op: "transcript_subscribe", sid: SID_A });
+        const res = await u.requestError({ op: "transcript_subscribe", sid: SID_A });
         expect(res.ok).toBe(false);
         expect(res.error.code).toBe("not_found");
       } finally {
@@ -792,12 +758,12 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u = await userHello(ctx);
-        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        const sub = await u.requestOk({ op: "transcript_subscribe", sid });
         expect(sub.ok).toBe(true);
         expect(sub.size).toBe(3); // anchored at current size — pre-existing content is not replayed
 
         fs.appendFileSync(file, "L1\nL2\n"); // 6 bytes appended, both lines complete
-        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        const { ev } = await u.readEventUntil("transcript");
         expect(ev.sid).toBe(sid);
         expect(ev.lines).toEqual(["L1", "L2"]);
         expect(ev.start).toBe(3);
@@ -823,7 +789,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u = await userHello(ctx);
-        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        const sub = await u.requestOk({ op: "transcript_subscribe", sid });
         expect(sub.size).toBe(0);
 
         // Partial write with no trailing newline — must not surface as a line.
@@ -833,7 +799,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // fragment was deferred rather than dropped or split wrongly).
         fs.appendFileSync(file, " done\nsecond\n");
 
-        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        const { ev } = await u.readEventUntil("transcript");
         expect(ev.lines).toEqual(["partial-no-newline-yet done", "second"]);
         expect(ev.start).toBe(0);
         expect(ev.end).toBe(fs.statSync(file).size);
@@ -857,12 +823,12 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u = await userHello(ctx);
-        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        const sub = await u.requestOk({ op: "transcript_subscribe", sid });
         expect(sub.size).toBe(9);
 
         // Simulate a log rotation / rewrite: file shrinks to 4 bytes.
         fs.writeFileSync(file, "X0\n\n"); // deliberately not a clean jsonl line, tests the reset itself
-        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        const { ev } = await u.readEventUntil("transcript");
         expect(ev.lines).toEqual([]); // safe-side reset never tries to diff stale content
         expect(ev.start).toBe(4);
         expect(ev.end).toBe(4);
@@ -870,9 +836,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
         // Tail resumes correctly from the new offset for content appended after the reset.
         fs.appendFileSync(file, "Y0\n");
-        const { ev: ev2 } = await u.readEventUntil<TranscriptTailEvent>(
-          (e) => e.ev === "transcript" && e.lines.length > 0,
-        );
+        const { ev: ev2 } = await u.readEventUntil("transcript", (e) => e.lines.length > 0);
         expect(ev2.lines).toEqual(["Y0"]);
         expect(ev2.start).toBe(4);
         expect(ev2.end).toBe(7);
@@ -903,7 +867,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u = await userHello(ctx);
-        const sub = await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        const sub = await u.requestOk({ op: "transcript_subscribe", sid });
         expect(sub.size).toBe(9);
 
         // Rewrite via unlink+recreate (NOT an in-place write) at the same
@@ -912,7 +876,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // as ordinary growth and try to read [9, 12) of the new file.
         fs.rmSync(file);
         fs.writeFileSync(file, "Y0\nY1\nY2\nY3\n"); // 12 bytes, new inode
-        const { ev } = await u.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        const { ev } = await u.readEventUntil("transcript");
         expect(ev.lines).toEqual([]); // safe-side reset, no attempt to diff stale content
         expect(ev.start).toBe(12);
         expect(ev.end).toBe(12);
@@ -920,9 +884,7 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
 
         // Tail resumes correctly from the new offset for content appended after the reset.
         fs.appendFileSync(file, "Y4\n");
-        const { ev: ev2 } = await u.readEventUntil<TranscriptTailEvent>(
-          (e) => e.ev === "transcript" && e.lines.length > 0,
-        );
+        const { ev: ev2 } = await u.readEventUntil("transcript", (e) => e.lines.length > 0);
         expect(ev2.lines).toEqual(["Y4"]);
         expect(ev2.start).toBe(12);
         expect(ev2.end).toBe(15);
@@ -953,13 +915,11 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // listener が新 Watch を要求しても、同じ Watch を共有する Timeline の
         // wire subscriber は失われず、新 path の追記を受け続ける必要がある。
         await u.request({ op: "subscribe" });
-        await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        await u.requestOk({ op: "transcript_subscribe", sid });
 
         await sessionHello(ctx, sid, { transcript_path: file2 });
         fs.appendFileSync(file2, "after-path-change\n");
-        const { ev } = await u.readEventUntil<TranscriptTailEvent>(
-          (event) => event.ev === "transcript" && event.lines.length > 0,
-        );
+        const { ev } = await u.readEventUntil("transcript", (event) => event.lines.length > 0);
         expect(ev.lines).toEqual(["after-path-change"]);
         expect(ev.start).toBe(Buffer.byteLength("new\n"));
       } finally {
@@ -989,11 +949,11 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // itself would never reach `u` and the test would hang instead of
         // proving anything.
         await u.request({ op: "subscribe" });
-        await u.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        await u.requestOk({ op: "transcript_subscribe", sid });
         fs.appendFileSync(file, "L0\n");
-        await u.readEventUntil((e) => e.ev === "transcript"); // confirm the tail really was live
+        await u.readEventUntil("transcript"); // confirm the tail really was live
 
-        const unsub = await u.request<{ ok: true; sid: string }>({
+        const unsub = await u.requestOk({
           op: "transcript_unsubscribe",
           sid,
         });
@@ -1004,9 +964,9 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // msg from a fresh session in a fresh room) and confirm no "transcript"
         // event snuck in among the events collected while waiting for it.
         const s2 = await sessionHello(ctx, SID_B);
-        const created = await s2.request<{ room: string }>({ op: "create_room", members: [] });
+        const created = await s2.requestOk({ op: "create_room", members: [] });
         await s2.request({ op: "post", room: created.room, msg: "marker" });
-        const { seen } = await u.readEventUntil((e) => e.type === "msg" && e.msg === "marker");
+        const { seen } = await u.readEventUntil("msg", (e) => e.msg === "marker");
         expect(seen.some((e: any) => e.ev === "transcript")).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
@@ -1028,9 +988,9 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         await sessionHello(ctx, sid, { transcript_path: file });
 
         const u1 = await userHello(ctx);
-        await u1.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        await u1.requestOk({ op: "transcript_subscribe", sid });
         fs.appendFileSync(file, "L0\n");
-        await u1.readEventUntil((e) => e.ev === "transcript");
+        await u1.readEventUntil("transcript");
         u1.close();
 
         // A second subscriber re-subscribing to the same sid after the first's
@@ -1044,10 +1004,10 @@ describe("transcript live tail (DR-0009 live-tail addendum)", () => {
         // close/reopen cycle cleanly. This test would hang forever on the
         // regression.
         const u2 = await userHello(ctx);
-        const sub2 = await u2.request<TranscriptSubscribeOk>({ op: "transcript_subscribe", sid });
+        const sub2 = await u2.requestOk({ op: "transcript_subscribe", sid });
         expect(sub2.ok).toBe(true);
         fs.appendFileSync(file, "L1\n");
-        const { ev } = await u2.readEventUntil<TranscriptTailEvent>((e) => e.ev === "transcript");
+        const { ev } = await u2.readEventUntil("transcript");
         expect(ev.lines).toEqual(["L1"]);
       } finally {
         await stopTestDaemon(ctx);

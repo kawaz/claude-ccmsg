@@ -207,21 +207,6 @@ async function userHello(ctx: DaemonCtx): Promise<TestClient> {
   return client;
 }
 
-interface StatusOk extends SessionStatusSnapshot {
-  ok: true;
-  sid: string;
-}
-
-interface StatusEvent extends SessionStatusSnapshot {
-  ev: "session_status";
-  sid: string;
-}
-
-interface ErrorLite {
-  ok: false;
-  error: { code: string };
-}
-
 describe("session status fold (DR-0020 Phase 1)", () => {
   test("直近 assistant usage の 3 入力トークン値を合算し model/timestamp と保存する", async () => {
     // 実 transcript の usage shape を最小化した fixture で、出力 token を含めず main context だけを測る。
@@ -2229,9 +2214,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         );
         await sessionHello(ctx, sid, file);
         const user = await userHello(ctx);
-        const ok = await user.request<StatusOk>({ op: "session_status", sid });
+        const ok = await user.requestOk({ op: "session_status", sid });
         expect(ok.todos[0]?.status).toBe("completed");
-        const missing = await user.request<ErrorLite>({ op: "session_status", sid: "missing" });
+        const missing = await user.requestError({ op: "session_status", sid: "missing" });
         expect(missing.error.code).toBe("session_not_found");
       } finally {
         await stopTestDaemon(ctx);
@@ -2259,7 +2244,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         await sessionHello(ctx, sid, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await user.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.todos[0]?.status).toBe("pending");
 
         fs.appendFileSync(
@@ -2268,9 +2253,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             .map((line) => `${line}\n`)
             .join(""),
         );
-        const { ev } = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status",
-        );
+        const { ev } = await user.readEventUntil("session_status");
         expect(ev.todos[0]?.status).toBe("completed");
         expect(ev.workflows).toEqual([]);
         expect(ev.background).toEqual([]);
@@ -2280,11 +2263,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "plain" }] } })}\n`,
         );
         const peer = await sessionHello(ctx, SID_B);
-        const room = await peer.request<{ room: string }>({ op: "create_room", members: [] });
+        const room = await peer.requestOk({ op: "create_room", members: [] });
         await peer.request({ op: "post", room: room.room, msg: "marker" });
-        const { seen } = await user.readEventUntil(
-          (event) => event.type === "msg" && event.msg === "marker",
-        );
+        const { seen } = await user.readEventUntil("msg", (event) => event.msg === "marker");
         expect(seen.some((event: any) => event.ev === "session_status")).toBe(false);
       } finally {
         await stopTestDaemon(ctx);
@@ -2311,12 +2292,13 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         await sessionHello(ctx, sid, file, root);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await user.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.external_files).toEqual([]);
 
         fs.appendFileSync(file, `${toolUse("tail-read", "Read", { file_path: external })}\n`);
-        const pushed = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status" && event.external_files?.length === 1,
+        const pushed = await user.readEventUntil(
+          "session_status",
+          (event) => event.external_files?.length === 1,
         );
         expect(pushed.ev.external_files).toEqual([
           { path: fs.realpathSync(external), origin: "tool" },
@@ -2347,7 +2329,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         fs.writeFileSync(file, `${toolUse("read-a", "Read", { file_path: touched })}\n`);
         const session = await sessionHello(ctx, sid, file, rootA);
         const firstUser = await userHello(ctx);
-        const initial = await firstUser.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await firstUser.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.external_files).toEqual([]);
 
         await session.request({
@@ -2361,7 +2343,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           transcript_path: file,
         });
         const secondUser = await userHello(ctx);
-        const rebuilt = await secondUser.request<StatusOk>({
+        const rebuilt = await secondUser.requestOk({
           op: "session_status_subscribe",
           sid,
         });
@@ -2393,7 +2375,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         await sessionHello(ctx, sid, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await user.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.context?.tokens).toBe(100);
         expect(initial.teammates).toEqual([]);
 
@@ -2404,8 +2386,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             { timestamp: END },
           )}\n`,
         );
-        const contextPush = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status" && event.context?.tokens === 520_000,
+        const contextPush = await user.readEventUntil(
+          "session_status",
+          (event) => event.context?.tokens === 520_000,
         );
         expect(contextPush.ev.context).toEqual({
           tokens: 520_000,
@@ -2420,8 +2403,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             "2026-07-17T00:05:00.000Z",
           )}\n`,
         );
-        const teammatePush = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status" && event.teammates?.[0]?.name === "worker",
+        const teammatePush = await user.readEventUntil(
+          "session_status",
+          (event) => event.teammates?.[0]?.name === "worker",
         );
         expect(teammatePush.ev.context?.tokens).toBe(520_000);
         expect(teammatePush.ev.teammates?.[0]).toMatchObject({
@@ -2465,9 +2449,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             .map((line) => `${line}\n`)
             .join(""),
         );
-        const status = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status",
-        );
+        const status = await user.readEventUntil("session_status");
         expect(status.ev.todos[0]?.status).toBe("completed");
 
         await user.request({ op: "transcript_subscribe", sid });
@@ -2478,7 +2460,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             .map((line) => `${line}\n`)
             .join(""),
         );
-        const transcript = await user.readEventUntil((event) => event.ev === "transcript");
+        const transcript = await user.readEventUntil("transcript");
         expect(transcript.ev.lines).toHaveLength(2);
         expect(transcript.seen.some((event: any) => event.ev === "session_status")).toBe(false);
       } finally {
@@ -2509,7 +2491,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         await sessionHello(ctx, sid, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        const initial = await user.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await user.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.todos).toEqual([{ id: "1", subject: "Old world", status: "completed" }]);
 
         // 同一パスへ小さい内容で置換 (truncate 検出経路)。
@@ -2519,8 +2501,9 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             .map((line) => `${line}\n`)
             .join(""),
         );
-        const { ev } = await user.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status" && event.todos[0]?.id === "9",
+        const { ev } = await user.readEventUntil(
+          "session_status",
+          (event) => event.todos[0]?.id === "9",
         );
         expect(ev.todos).toEqual([{ id: "9", subject: "New world", status: "pending" }]);
       } finally {
@@ -2552,7 +2535,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
         first.close();
 
         const second = await userHello(ctx);
-        const initial = await second.request<StatusOk>({ op: "session_status_subscribe", sid });
+        const initial = await second.requestOk({ op: "session_status_subscribe", sid });
         expect(initial.todos[0]?.status).toBe("pending");
         fs.appendFileSync(
           file,
@@ -2560,9 +2543,7 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
             .map((line) => `${line}\n`)
             .join(""),
         );
-        const pushed = await second.readEventUntil<StatusEvent>(
-          (event) => event.ev === "session_status",
-        );
+        const pushed = await second.readEventUntil("session_status");
         expect(pushed.ev.todos[0]?.status).toBe("completed");
       } finally {
         await stopTestDaemon(ctx);
@@ -2587,8 +2568,8 @@ describe("session_status daemon ops (DR-0020 Phase 1)", () => {
           "session_status",
           "session_status_subscribe",
           "session_status_unsubscribe",
-        ]) {
-          const response = await session.request<ErrorLite>({ op, sid });
+        ] as const) {
+          const response = await session.requestError({ op, sid });
           expect(response.error.code).toBe("bad_request");
         }
       } finally {
@@ -2676,8 +2657,8 @@ describe("session_status event loop yielding (DR-0029)", () => {
         const subscriber = await userHello(ctx);
         const observer = await userHello(ctx);
 
-        const subscribed = subscriber.request<StatusOk>({ op: "session_status_subscribe", sid });
-        const observed = observer.request<StatusOk>({ op: "session_status", sid });
+        const subscribed = subscriber.requestOk({ op: "session_status_subscribe", sid });
+        const observed = observer.requestOk({ op: "session_status", sid });
         expect((await subscribed).todos[0]?.status).toBe("completed");
         expect((await observed).todos[0]?.status).toBe("completed");
       } finally {
@@ -2708,8 +2689,8 @@ describe("session_status event loop yielding (DR-0029)", () => {
         leaving.close();
 
         const user = await userHello(ctx);
-        await user.request<StatusOk>({ op: "session_status", sid });
-        const peers = await user.request<{ ok: true; peers: { sid: string }[] }>({ op: "peers" });
+        await user.requestOk({ op: "session_status", sid });
+        const peers = await user.requestOk({ op: "peers" });
         expect(peers.peers.map((p) => p.sid)).toEqual([sid]);
       } finally {
         await stopTestDaemon(ctx);

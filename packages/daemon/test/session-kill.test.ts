@@ -440,9 +440,8 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "session", sid: "a9e47000-0000-4000-8000-000000000001" });
-      const res = await c.request({
+      const res = await c.requestError({
         op: "session_kill",
-        request_id: "k1",
         session_id: "sid-victim",
       });
       expect(res.ok).toBe(false);
@@ -461,9 +460,8 @@ describe("session_kill over the wire (role gate + not_found)", () => {
     try {
       const c = await connect(ctx.sock);
       await c.hello({ role: "user" });
-      const reply = await c.request<{ ok: boolean; error?: { code: string } }>({
+      const reply = await c.requestError({
         op: "session_kill",
-        request_id: "k2",
         session_id: "00000000-0000-0000-0000-000000000000",
       });
       expect(reply.ok).toBe(false);

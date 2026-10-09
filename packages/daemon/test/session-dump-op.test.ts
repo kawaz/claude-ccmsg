@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestFrames } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
 const RECORD_1 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeee01";
@@ -71,54 +71,51 @@ const SESSION: Conn["identity"] = {
 describe("session_dump_file op", () => {
   test("answers with the absolute path of the written text dump", async () => {
     const { daemon, dataDir } = daemonWith({ transcript: true });
-    const [reply] = await requestFrames(
-      daemon,
-      USER,
-      { op: "session_dump_file", request_id: "q1", sid: SID },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
+    const reply = await requestOk(daemon, USER, {
+      op: "session_dump_file",
+      request_id: "q1",
+      sid: SID,
+    });
+    expect(reply.ok).toBe(true);
     // The path is what the caller hands to another session, so it must be
     // absolute, under the daemon's own dumps/, and actually readable.
-    expect(path.isAbsolute(reply?.path)).toBe(true);
-    expect(path.dirname(reply?.path)).toBe(path.join(dataDir, "dumps"));
-    expect(path.basename(reply?.path).startsWith(`${SID}-`)).toBe(true);
+    expect(path.isAbsolute(reply.path)).toBe(true);
+    expect(path.dirname(reply.path)).toBe(path.join(dataDir, "dumps"));
+    expect(path.basename(reply.path).startsWith(`${SID}-`)).toBe(true);
     // Text, not jsonl: a successor session reads this file directly instead
     // of parsing it as structured data.
-    expect(path.basename(reply?.path).endsWith(".txt")).toBe(true);
-    const written = fs.readFileSync(reply?.path, "utf8");
+    expect(path.basename(reply.path).endsWith(".txt")).toBe(true);
+    const written = fs.readFileSync(reply.path, "utf8");
     expect(written).toContain(`Session: ${SID}`);
     expect(written).toContain("[+0ms user user→self]\nhello");
-    expect(reply?.bytes).toBe(Buffer.byteLength(written));
-    expect(reply?.entries).toBe(2);
+    expect(reply.bytes).toBe(Buffer.byteLength(written));
+    expect(reply.entries).toBe(2);
   });
 
   // The dump is the whole session's contents; a session-role peer asking for
   // another session's would be reading past its own boundary.
   test("refuses a session-role caller before doing any work", async () => {
     const { daemon, dataDir } = daemonWith({ transcript: true });
-    const [reply] = await requestFrames(
-      daemon,
-      SESSION,
-      { op: "session_dump_file", request_id: "q2", sid: SID },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestError(daemon, SESSION, {
+      op: "session_dump_file",
+      request_id: "q2",
+      sid: SID,
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
     expect(fs.existsSync(path.join(dataDir, "dumps"))).toBe(false);
   });
 
   // "pick another session" is the fix, so it must not read as a daemon fault.
   test("reports an unresolvable sid as session_not_found", async () => {
     const { daemon } = daemonWith({ transcript: false });
-    const [reply] = await requestFrames(
-      daemon,
-      USER,
-      { op: "session_dump_file", request_id: "q3", sid: SID },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.session_not_found);
+    const reply = await requestError(daemon, USER, {
+      op: "session_dump_file",
+      request_id: "q3",
+      sid: SID,
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.session_not_found);
   });
 
   // The wire fields exist so the webui can dump "from this message on" using a
@@ -126,40 +123,35 @@ describe("session_dump_file op", () => {
   // look identical to a full dump.
   test("passes a record-uuid bound through to the dump", async () => {
     const { daemon } = daemonWith({ transcript: true });
-    const [reply] = await requestFrames(
-      daemon,
-      USER,
-      { op: "session_dump_file", request_id: "q5", sid: SID, since: RECORD_2 },
-      1,
-    );
-    expect(reply?.ok).toBe(true);
-    expect(reply?.entries).toBe(1);
-    const written = fs.readFileSync(reply?.path, "utf8");
+    const reply = await requestOk(daemon, USER, {
+      op: "session_dump_file",
+      request_id: "q5",
+      sid: SID,
+      since: RECORD_2,
+    });
+    expect(reply.ok).toBe(true);
+    expect(reply.entries).toBe(1);
+    const written = fs.readFileSync(reply.path, "utf8");
     expect(written).toContain("second");
     expect(written).not.toContain("hello");
   });
 
   test("reports a uuid this session never recorded as an error event", async () => {
     const { daemon } = daemonWith({ transcript: true });
-    const [reply] = await requestFrames(
-      daemon,
-      USER,
-      {
-        op: "session_dump_file",
-        request_id: "q6",
-        sid: SID,
-        since: "ffffffff-ffff-4fff-8fff-ffffffffffff",
-      },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.msg).toContain("not found in this session's transcript");
+    const reply = await requestError(daemon, USER, {
+      op: "session_dump_file",
+      request_id: "q6",
+      sid: SID,
+      since: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.msg).toContain("not found in this session's transcript");
   });
 
   test("requires a request_id, like every other op", async () => {
     const { daemon } = daemonWith({ transcript: true });
-    const [reply] = await requestFrames(daemon, USER, { op: "session_dump_file", sid: SID }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestRefusal(daemon, USER, { op: "session_dump_file", sid: SID });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 });

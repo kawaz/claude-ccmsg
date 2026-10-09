@@ -12,7 +12,7 @@ import {
   writeSocket,
   type InjectMessage,
 } from "../src/peer-inject.ts";
-import { connect, startTestDaemon, stopTestDaemon } from "./helpers.ts";
+import { connect, startTestDaemon, stopTestDaemon, isKind } from "./helpers.ts";
 import {
   PEER_TOKEN,
   fakeHarness as spawnHarness,
@@ -132,14 +132,14 @@ describe("daemon delivery through the peer socket", () => {
         const h = fakeHarness();
         const a = await sessionWithConfig(ctx, SENDER);
         const b = await sessionWithConfig(ctx, SID, h.configDir);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SENDER, SID],
         });
         const room = created.room;
         await b.request({ op: "subscribe" });
 
-        const first = await a.request<{ mid: number }>({ op: "post", room, msg: "via socket" });
+        const first = await a.requestOk({ op: "post", room, msg: "via socket" });
         const { attrs, body } = parseEnvelope(await h.nextContent());
         expect(attrs["ccmsg-mid"]).toBe(`${room}m${first.mid}`);
         expect(attrs["ccmsg-from"]).toBe(SENDER);
@@ -150,7 +150,7 @@ describe("daemon delivery through the peer socket", () => {
         // a round trip on b orders its stream past the moment in question.
         await b.request({ op: "rooms" });
         const pushed = await b.pendingEvents();
-        expect(pushed.filter((e) => e.type === "msg")).toEqual([]);
+        expect(pushed.filter(isKind("msg"))).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -166,7 +166,7 @@ describe("daemon delivery through the peer socket", () => {
         const a = await sessionWithConfig(ctx, SENDER);
         await sessionWithConfig(ctx, SID);
         const room = (
-          await a.request<{ room: string }>({
+          await a.requestOk({
             op: "create_room",
             members: [SENDER, SID],
             msg: "opening",
@@ -185,17 +185,19 @@ describe("daemon delivery through the peer socket", () => {
           await sub.request({ op: "subscribe", ...extra });
           await sub.request({ op: "rooms" });
           const pushed = await sub.pendingEvents();
-          const inRoom = pushed.filter((e) => e.r === room || e.ev === "room_cursors");
-          expect({ name, msgs: inRoom.filter((e) => e.type === "msg") }).toEqual({
+          const inRoom = pushed.filter(
+            (e) => ("r" in e && e.r === room) || ("ev" in e && e.ev === "room_cursors"),
+          );
+          expect({ name, msgs: inRoom.filter(isKind("msg")) }).toEqual({
             name,
             msgs: [],
           });
           // The path did run: the cursor replays and the snapshot carry the
           // room's member events, the bare default its cursor summary.
           if (name === "recent") {
-            expect(inRoom.some((e) => e.ev === "room_cursors")).toBe(true);
+            expect(inRoom.some(isKind("room_cursors"))).toBe(true);
           } else {
-            expect({ name, member: inRoom.some((e) => e.type === "member") }).toEqual({
+            expect({ name, member: inRoom.some(isKind("member")) }).toEqual({
               name,
               member: true,
             });
@@ -218,7 +220,7 @@ describe("daemon delivery through the peer socket", () => {
         const b = await sessionWithConfig(ctx, SID, h.configDir);
         await b.request({ op: "subscribe" });
         const room = (
-          await a.request<{ room: string }>({
+          await a.requestOk({
             op: "create_room",
             members: [SENDER, SID],
             msg: "opening",
@@ -226,9 +228,9 @@ describe("daemon delivery through the peer socket", () => {
         ).room;
         expect(parseEnvelope(await h.nextContent()).attrs["ccmsg-mid"]).toBe(`${room}m1`);
         await b.request({ op: "rooms" });
-        const pushed = (await b.pendingEvents()).filter((e) => e.r === room);
-        expect(pushed.some((e) => e.type === "member")).toBe(true);
-        expect(pushed.filter((e) => e.type === "msg")).toEqual([]);
+        const pushed = (await b.pendingEvents()).filter((e) => "r" in e && e.r === room);
+        expect(pushed.some(isKind("member"))).toBe(true);
+        expect(pushed.filter(isKind("msg"))).toEqual([]);
       } finally {
         await stopTestDaemon(ctx);
       }
@@ -245,7 +247,7 @@ describe("daemon delivery through the peer socket", () => {
         await sessionWithConfig(ctx, SID, h.configDir);
         const u = await connect(ctx.sock);
         await u.hello({ role: "user" });
-        const created = await u.request<{ room: string }>({ op: "create_room", members: [SID] });
+        const created = await u.requestOk({ op: "create_room", members: [SID] });
         await u.request({ op: "post", room: created.room, msg: "from kawaz" });
         const { attrs } = parseEnvelope(await h.nextContent());
         expect(attrs["from-name"]).toBe("user");

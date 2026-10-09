@@ -84,7 +84,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       const ctx = await startTestDaemon();
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -111,7 +111,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       const a = await session(ctx, SID_A);
       await session(ctx, SID_B);
       await session(ctx, SID_C);
-      const created = await u.request<{ room: string }>({
+      const created = await u.requestOk({
         op: "create_room",
         members: [SID_A, SID_B, SID_C],
       });
@@ -135,12 +135,12 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       const u = await user(ctx);
       const a = await session(ctx, SID_A);
       const b = await session(ctx, SID_B);
-      const created = await u.request<{ room: string }>({
+      const created = await u.requestOk({
         op: "create_room",
         members: [SID_A, SID_B],
       });
       const room = created.room;
-      const posted = await a.request<{ mid: number }>({ op: "post", room, msg: "question" });
+      const posted = await a.requestOk({ op: "post", room, msg: "question" });
 
       const sub = await user(ctx);
       await sub.request({ op: "subscribe" });
@@ -160,7 +160,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
       const ctx = await startTestDaemon({ CCMSG_RECENT_REPLAY_MS: "60000" });
       try {
         const a = await session(ctx, SID_A);
-        const created = await a.request<{ room: string }>({
+        const created = await a.requestOk({
           op: "create_room",
           members: [SID_B],
         });
@@ -182,7 +182,7 @@ describe("subscribe wire order: msg events place `msg` last", () => {
     const ctx = await startTestDaemon();
     try {
       const a = await session(ctx, SID_A);
-      const created = await a.request<{ room: string }>({
+      const created = await a.requestOk({
         op: "create_room",
         members: [SID_B],
       });

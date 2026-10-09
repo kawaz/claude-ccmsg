@@ -197,7 +197,7 @@ describe("DR-0002 §4 version mismatch upgrade", () => {
 
       // 別スレッドで restarting event を待つ。ensureDaemon 完了より先に来ることも
       // 後になることもあるので Promise で並行に受ける。
-      const restartingSeen = watcher.readEventUntil((ev) => ev?.ev === "restarting");
+      const restartingSeen = watcher.readEventUntil("restarting");
 
       // ensureDaemon で upgrade を発動。
       const paths = resolvePaths();

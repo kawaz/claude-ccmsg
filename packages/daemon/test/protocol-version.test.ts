@@ -24,7 +24,7 @@ const SID_S6 = "56000000-0000-4000-8000-000000000006";
 
 const T = 15000;
 
-async function peersOf(ctx: DaemonCtx): Promise<PeerInfo[]> {
+async function peersOf(ctx: DaemonCtx): Promise<readonly PeerInfo[]> {
   const c = await connect(ctx.sock);
   await c.request({
     op: "hello",
@@ -32,7 +32,7 @@ async function peersOf(ctx: DaemonCtx): Promise<PeerInfo[]> {
     client_version: VERSION,
     protocol: PROTOCOL_VERSION,
   });
-  const res = await c.request<{ peers: PeerInfo[] }>({ op: "peers" });
+  const res = await c.requestOk({ op: "peers" });
   c.close();
   return res.peers;
 }
@@ -52,7 +52,7 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const c = await connect(ctx.sock);
-        const hello = await c.request<{ ok: boolean; version: string; protocol: number }>({
+        const hello = await c.requestOk({
           op: "hello",
           role: "session",
           sid: SID_S1,
@@ -95,7 +95,7 @@ describe("protocol version handshake", () => {
         });
 
         const old = await connect(ctx.sock);
-        const err = await old.request<{ ok: boolean; error: { code: string; msg: string } }>({
+        const err = await old.requestRefusal({
           op: "hello",
           role: "session",
           sid: SID_S2,
@@ -131,7 +131,7 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const old = await connect(ctx.sock);
-        const err = await old.request<{ ok: boolean; error: { code: string; msg: string } }>({
+        const err = await old.requestRefusal({
           op: "hello",
           role: "session",
           sid: SID_S2,
@@ -172,7 +172,7 @@ describe("protocol version handshake", () => {
         // Exactly what a pre-v0.136.0 `ccmsg subscribe` sends: no correlation
         // envelope, no build fields.
         const old = await connect(ctx.sock);
-        const err = await old.requestRaw<{ ok: boolean; error: { code: string; msg: string } }>({
+        const err = await old.requestRaw({
           op: "hello",
           role: "session",
           sid: SID_S3,
@@ -199,7 +199,7 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const c = await connect(ctx.sock);
-        const hello = await c.request<{ ok: boolean }>({
+        const hello = await c.request({
           op: "hello",
           role: "session",
           sid: SID_S4,
@@ -229,7 +229,7 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const c = await connect(ctx.sock);
-        const err = await c.request<{ ok: boolean; error: { code: string; msg: string } }>({
+        const err = await c.requestRefusal({
           op: "hello",
           role: "session",
           sid: SID_S4B,
@@ -252,7 +252,7 @@ describe("protocol version handshake", () => {
     async () => {
       await withDaemon(async (ctx) => {
         const old = await connect(ctx.sock);
-        await old.request({
+        await old.requestRefusal({
           op: "hello",
           role: "session",
           sid: SID_S5,
@@ -307,7 +307,7 @@ describe("protocol version handshake", () => {
         await watcher.request({ op: "subscribe" });
 
         const old = await connect(ctx.sock);
-        await old.request({
+        await old.requestRefusal({
           op: "hello",
           role: "session",
           sid: SID_S6,
@@ -315,8 +315,8 @@ describe("protocol version handshake", () => {
           protocol: PROTOCOL_VERSION + 1,
         });
 
-        const { ev } = await watcher.readEventUntil<{ ev: "peers"; peers: PeerInfo[] }>(
-          (e) => e.ev === "peers" && e.peers.some((p: PeerInfo) => p.stale_client),
+        const { ev } = await watcher.readEventUntil("peers", (e) =>
+          e.peers.some((p: PeerInfo) => p.stale_client),
         );
         expect(ev.peers.find((p) => p.sid === SID_S6)?.stale_client).toBeDefined();
         old.close();

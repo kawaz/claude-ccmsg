@@ -38,11 +38,6 @@ async function sessionHello(
   return c;
 }
 
-interface PeerLite {
-  sid: string;
-  branch?: string;
-}
-
 describe("hello branch field", () => {
   test(
     "非空の branch は peers に載る",
@@ -50,7 +45,7 @@ describe("hello branch field", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, A, { branch: "feat/branch-label" });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBe("feat/branch-label");
       } finally {
@@ -66,7 +61,7 @@ describe("hello branch field", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, A);
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBeUndefined();
       } finally {
@@ -82,7 +77,7 @@ describe("hello branch field", () => {
       const ctx = await startTestDaemon();
       try {
         const c = await sessionHello(ctx, A, { branch: "" });
-        const peers = await c.request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await c.requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === A)!;
         expect(me.branch).toBeUndefined();
       } finally {
@@ -104,9 +99,7 @@ describe("hello branch field", () => {
         await sessionHello(ctx, sid, { branch: "main" });
         await sessionHello(ctx, sid, { cwd: "/tmp/other" });
 
-        const peers = await (
-          await connect(ctx.sock)
-        ).request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.branch).toBeUndefined();
       } finally {
@@ -125,9 +118,7 @@ describe("hello branch field", () => {
         await sessionHello(ctx, sid, { branch: "main" });
         await sessionHello(ctx, sid, { branch: "feature/x" });
 
-        const peers = await (
-          await connect(ctx.sock)
-        ).request<{ ok: true; peers: PeerLite[] }>({ op: "peers" });
+        const peers = await (await connect(ctx.sock)).requestOk({ op: "peers" });
         const me = peers.peers.find((p) => p.sid === sid)!;
         expect(me.branch).toBe("feature/x");
       } finally {

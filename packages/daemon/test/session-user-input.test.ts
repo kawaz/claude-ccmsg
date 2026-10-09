@@ -138,16 +138,7 @@ async function userHello(ctx: DaemonCtx): Promise<TestClient> {
   return client;
 }
 
-interface PeersOk {
-  ok: true;
-  peers: PeerInfo[];
-}
-interface PeersEvent {
-  ev: "peers";
-  peers: PeerInfo[];
-}
-
-function inputAt(peers: PeerInfo[], sid: string): string | undefined {
+function inputAt(peers: readonly PeerInfo[], sid: string): string | undefined {
   return peers.find((p) => p.sid === sid)?.last_user_input_at;
 }
 
@@ -376,7 +367,7 @@ describe("last_user_input_at on peers", () => {
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
-        const res = await user.request<PeersOk>({ op: "peers" });
+        const res = await user.requestOk({ op: "peers" });
         expect(inputAt(res.peers, A)).toBe(T1);
       } finally {
         await stopTestDaemon(ctx);
@@ -397,12 +388,13 @@ describe("last_user_input_at on peers", () => {
         await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
+        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
         // tail 駆動 (ポーリングではない): 届いた瞬間に ev:"peers" が飛ぶ。
         fs.appendFileSync(file, ccmsgDeliveryLine("u1", "ソート順変えて", T2));
-        const pushed = await user.readEventUntil<PeersEvent>(
-          (event) => event.ev === "peers" && inputAt(event.peers, A) === T2,
+        const pushed = await user.readEventUntil(
+          "peers",
+          (event) => inputAt(event.peers, A) === T2,
         );
         expect(inputAt(pushed.ev.peers, A)).toBe(T2);
       } finally {
@@ -426,14 +418,14 @@ describe("last_user_input_at on peers", () => {
         await sessionHello(ctx, A, file);
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
+        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
 
         fs.appendFileSync(
           file,
           assistantLine(T2) + teammateRelayLine(T2) + ccmsgDeliveryLine("a3", "できました", T3),
         );
         // 変化が無いことの確認なので、push を待つのではなく往復 1 回で確定させる。
-        expect(inputAt((await user.request<PeersOk>({ op: "peers" })).peers, A)).toBe(T1);
+        expect(inputAt((await user.requestOk({ op: "peers" })).peers, A)).toBe(T1);
       } finally {
         await stopTestDaemon(ctx);
         fs.rmSync(dir, { recursive: true, force: true });
@@ -457,7 +449,7 @@ describe("last_user_input_at on peers", () => {
         const user = await userHello(ctx);
         await user.request({ op: "subscribe" });
 
-        const res = await user.request<PeersOk>({ op: "peers" });
+        const res = await user.requestOk({ op: "peers" });
         expect(inputAt(res.peers, A)).toBe(T1);
         expect(inputAt(res.peers, B)).toBeUndefined();
       } finally {

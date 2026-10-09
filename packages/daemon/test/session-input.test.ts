@@ -9,6 +9,7 @@ import {
   jsonText,
   parseWith,
   type PromptSendResult,
+  type RequestInput,
   resolveSidecarDir,
   type SidecarErrorCode,
   type SidecarReply,
@@ -400,7 +401,7 @@ async function nextRequest(sidecar: {
 }
 
 /** A module's reply as `ccmsg sidecar reply` hands it to the daemon. */
-function sidecarReply(reply: object) {
+function sidecarReply(reply: SidecarReply): Extract<RequestInput, { op: "sidecar_reply" }> {
   return { op: "sidecar_reply", reply };
 }
 
@@ -483,29 +484,36 @@ describe("session_input over the wire", () => {
     try {
       const session = await connect(ctx.sock);
       await session.hello({ role: "session", sid: SID });
-      const asSession = await session.request({ op: "session_input", session_id: SID, text: "x" });
+      const asSession = await session.requestError({
+        op: "session_input",
+        session_id: SID,
+        text: "x",
+      });
       expect(asSession.error.code).toBe("bad_request");
 
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
-      const blank = await user.request({
+      const blank = await user.requestError({
         op: "session_input",
         session_id: SID,
         text: " \n ",
       });
       expect(blank.error.code).toBe("invalid_args");
-      const noSid = await user.request({ op: "session_input", text: "x" });
+      const noSid = await user.requestRefusal({ op: "session_input", text: "x" });
       expect(noSid.error.code).toBe("invalid_args");
-      const replyAsUser = await user.request(sidecarReply({ id: "x", ok: true, result: {} }));
+      const replyAsUser = await user.requestError(sidecarReply({ id: "x", ok: true, result: {} }));
       expect(replyAsUser.error.code).toBe("bad_request");
 
-      const unknown = await session.request(
+      const unknown = await session.requestError(
         sidecarReply({ id: "never-sent", ok: true, result: {} }),
       );
       expect(unknown.error.code).toBe("not_found");
-      const malformed = await session.request(sidecarReply({ id: "never-sent", ok: false }));
+      const malformed = await session.requestRefusal({
+        op: "sidecar_reply",
+        reply: { id: "never-sent", ok: false },
+      });
       expect(malformed.error.code).toBe("invalid_args");
-      const noReply = await session.request({ op: "sidecar_reply" });
+      const noReply = await session.requestRefusal({ op: "sidecar_reply" });
       expect(noReply.error.code).toBe("invalid_args");
       // A refused reply leaves a line in daemon.log, with its id when it has one.
       const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
@@ -531,7 +539,7 @@ describe("session_input over the wire", () => {
       const line = await nextRequest(sidecar);
       const other = await connect(ctx.sock);
       await other.hello({ role: "session", sid: "99999999-2222-4333-8444-555555555555" });
-      const res = await other.request(
+      const res = await other.requestError(
         sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
       );
       expect(res.error.code).toBe("not_found");

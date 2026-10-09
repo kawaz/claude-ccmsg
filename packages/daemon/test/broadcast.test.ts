@@ -42,7 +42,7 @@ async function user(ctx: DaemonCtx): Promise<TestClient> {
  * wait, so an event that never arrives fails the test — no local timeout knob
  * is needed. */
 async function readUntilMsg(sub: TestClient, pred: (ev: any) => boolean = () => true) {
-  return sub.readEventUntil((ev) => ev.type === "msg" && pred(ev));
+  return sub.readEventUntil("msg", (ev) => pred(ev));
 }
 
 describe("DR-0013 broadcast room", () => {
@@ -59,12 +59,7 @@ describe("DR-0013 broadcast room", () => {
         // A pre-registers so it's an active peer at broadcast create time
         await session(ctx, SID_A);
         const creator = await user(ctx);
-        const res = await creator.request<{
-          ok: true;
-          room: string;
-          reused: boolean;
-          warning?: string;
-        }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: ["X", "Y"], // explicit list — should be ignored
           kind: "broadcast",
@@ -74,9 +69,7 @@ describe("DR-0013 broadcast room", () => {
         expect(res.warning).toBe(
           "--members is ignored for broadcast rooms (members are auto-populated)",
         );
-        const rooms = await creator.request<{
-          rooms: { id: string; kind?: string; members: { sid: string }[] }[];
-        }>({ op: "rooms" });
+        const rooms = await creator.requestOk({ op: "rooms" });
         const room = rooms.rooms.find((r) => r.id === res.room)!;
         // §2.1 rooms response surfaces kind so the CLI/webui can badge
         expect(room.kind).toBe("broadcast");
@@ -103,14 +96,12 @@ describe("DR-0013 broadcast room", () => {
         await session(ctx, SID_B);
         await session(ctx, SID_C);
         const creator = await user(ctx);
-        const res = await creator.request<{ ok: true; room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
-        const rooms = await creator.request<{
-          rooms: { id: string; members: { id: string; sid: string }[] }[];
-        }>({ op: "rooms" });
+        const rooms = await creator.requestOk({ op: "rooms" });
         const room = rooms.rooms.find((r) => r.id === res.room)!;
         expect(room.members.map((m) => m.sid)).toEqual([SID_A, SID_B, SID_C]);
         expect(room.members.map((m) => m.id)).toEqual(["a1", "a2", "a3"]);
@@ -139,7 +130,7 @@ describe("DR-0013 broadcast room", () => {
         await aSub.request({ op: "subscribe" });
         // u1 creates a broadcast; A is initial member (a1)
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -149,9 +140,7 @@ describe("DR-0013 broadcast room", () => {
         await session(ctx, SID_B);
         // The broadcast now has a1=A and a2=B (sids sorted deterministically
         // via auto-populate; nextAgentMemberId picks the next free `a`).
-        const rooms = await creator.request<{
-          rooms: { id: string; members: { id: string; sid: string }[] }[];
-        }>({ op: "rooms" });
+        const rooms = await creator.requestOk({ op: "rooms" });
         const roomMembers = rooms.rooms.find((r) => r.id === room)!.members;
         expect(roomMembers.some((m) => m.sid === SID_B)).toBe(true);
         // A sends a post so we have a positive marker to read towards. Include
@@ -205,7 +194,7 @@ describe("DR-0013 broadcast room", () => {
       try {
         const aPost = await session(ctx, SID_A);
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -213,15 +202,12 @@ describe("DR-0013 broadcast room", () => {
         const room = res.room;
 
         // No `to` at all
-        const rNo = await aPost.request<{
-          ok: false;
-          error: { code: string; msg: string };
-        }>({ op: "post", room, msg: "no to" });
+        const rNo = await aPost.requestError({ op: "post", room, msg: "no to" });
         expect(rNo.ok).toBe(false);
         expect(rNo.error.code).toBe("broadcast_agent_target_required");
 
         // `to` with only another agent, no u1
-        const rNoU1 = await aPost.request<{ ok: false; error: { code: string } }>({
+        const rNoU1 = await aPost.requestError({
           op: "post",
           room,
           msg: "peer only",
@@ -231,7 +217,7 @@ describe("DR-0013 broadcast room", () => {
         expect(rNoU1.error.code).toBe("broadcast_agent_target_required");
 
         // u1 alone succeeds
-        const rOk = await aPost.request<{ ok: true; mid: number }>({
+        const rOk = await aPost.requestOk({
           op: "post",
           room,
           msg: "hi u1",
@@ -258,21 +244,21 @@ describe("DR-0013 broadcast room", () => {
         await session(ctx, SID_A);
         await session(ctx, SID_B);
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
         const room = res.room;
         // Omit to (full-room)
-        const r1 = await creator.request<{ ok: true }>({
+        const r1 = await creator.requestOk({
           op: "post",
           room,
           msg: "全員へ",
         });
         expect(r1.ok).toBe(true);
         // to: ["a1"] individual
-        const r2 = await creator.request<{ ok: true }>({
+        const r2 = await creator.requestOk({
           op: "post",
           room,
           msg: "to a1",
@@ -280,7 +266,7 @@ describe("DR-0013 broadcast room", () => {
         });
         expect(r2.ok).toBe(true);
         // to: ["a1","a2"] multi
-        const r3 = await creator.request<{ ok: true }>({
+        const r3 = await creator.requestOk({
           op: "post",
           room,
           msg: "to both",
@@ -310,7 +296,7 @@ describe("DR-0013 broadcast room", () => {
         // A (a session) opens a broadcast with an initial msg — the u1-in-to
         // rule would apply to a plain `post` from A, but §2.10 excludes it
         // from the create_room's own initial msg. `to` omitted deliberately.
-        const res = await a.request<{ ok: true; room: string; mid?: number }>({
+        const res = await a.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -337,23 +323,23 @@ describe("DR-0013 broadcast room", () => {
       try {
         const aPost = await session(ctx, SID_A);
         const creator = await user(ctx);
-        const parent = await creator.request<{ room: string }>({
+        const parent = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
         });
         // next_room is issued by a member session (A is a1 in the parent)
-        const nextRes = await aPost.request<{ ok: true; room: string }>({
+        const nextRes = await aPost.requestOk({
           op: "next_room",
           room: parent.room,
         });
         const nextRoom = nextRes.room;
-        const rooms = await creator.request<{ rooms: { id: string; kind?: string }[] }>({
+        const rooms = await creator.requestOk({
           op: "rooms",
         });
         expect(rooms.rooms.find((r) => r.id === nextRoom)!.kind).toBe("broadcast");
         // §2.4 constraint applies to the new room too
-        const rej = await aPost.request<{ ok: false; error: { code: string } }>({
+        const rej = await aPost.requestError({
           op: "post",
           room: nextRoom,
           msg: "no to",
@@ -380,7 +366,7 @@ describe("DR-0013 broadcast room", () => {
       try {
         await session(ctx, SID_A);
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -390,7 +376,7 @@ describe("DR-0013 broadcast room", () => {
         const uSub = await user(ctx);
         await uSub.request({ op: "subscribe" });
 
-        const arch = await creator.request<{ ok: true; archived: boolean }>({
+        const arch = await creator.requestOk({
           op: "archive_room",
           room,
           archived: true,
@@ -398,12 +384,10 @@ describe("DR-0013 broadcast room", () => {
         expect(arch.archived).toBe(true);
 
         // u1's stream sees the archive event on the broadcast room
-        const got = await uSub.readEventUntil((ev: any) => ev.type === "archive" && ev.r === room);
+        const got = await uSub.readEventUntil("archive", (ev) => ev.r === room);
         expect((got.ev as any).archived).toBe(true);
 
-        const rooms = await creator.request<{
-          rooms: { id: string; archived?: boolean }[];
-        }>({ op: "rooms" });
+        const rooms = await creator.requestOk({ op: "rooms" });
         expect(rooms.rooms.find((r) => r.id === room)!.archived).toBe(true);
       } finally {
         await stopTestDaemon(ctx);
@@ -425,7 +409,7 @@ describe("DR-0013 broadcast room", () => {
         const a = await session(ctx, SID_A);
         await session(ctx, SID_B);
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",
@@ -440,9 +424,7 @@ describe("DR-0013 broadcast room", () => {
         await new Promise((r) => setTimeout(r, 50));
 
         // Post-close snapshot: A still on the broadcast member list
-        const rooms = await creator.request<{
-          rooms: { id: string; members: { sid: string }[] }[];
-        }>({ op: "rooms" });
+        const rooms = await creator.requestOk({ op: "rooms" });
         const members = rooms.rooms.find((r) => r.id === room)!.members;
         expect(members.map((m) => m.sid).sort()).toEqual([SID_A, SID_B]);
 
@@ -451,7 +433,7 @@ describe("DR-0013 broadcast room", () => {
         // — u1's stream should reach the archive event with NO intervening
         // leave-type event referencing this broadcast room.
         await creator.request({ op: "archive_room", room, archived: true });
-        const got = await uSub.readEventUntil((ev: any) => ev.type === "archive" && ev.r === room);
+        const got = await uSub.readEventUntil("archive", (ev) => ev.r === room);
         const leaveInBetween = got.seen.filter((ev: any) => ev.r === room && ev.type === "leave");
         expect(leaveInBetween).toEqual([]);
       } finally {
@@ -475,7 +457,7 @@ describe("DR-0013 broadcast room", () => {
         await session(ctx, SID_A);
         {
           const creator = await user(ctx);
-          const res = await creator.request<{ room: string }>({
+          const res = await creator.requestOk({
             op: "create_room",
             members: [],
             kind: "broadcast",
@@ -510,9 +492,7 @@ describe("DR-0013 broadcast room", () => {
 
         // After restart, rooms reports the room as broadcast still
         const c2 = await user(ctx);
-        const rooms = await c2.request<{
-          rooms: { id: string; kind?: string }[];
-        }>({ op: "rooms" });
+        const rooms = await c2.requestOk({ op: "rooms" });
         const bcast = rooms.rooms.find((r) => r.kind === "broadcast");
         expect(bcast).toBeDefined();
 
@@ -520,7 +500,7 @@ describe("DR-0013 broadcast room", () => {
         // set room.kind = "broadcast", not just that the KindEvent is in the
         // jsonl.
         const aAfter = await session(ctx, SID_A);
-        const rej = await aAfter.request<{ ok: false; error: { code: string } }>({
+        const rej = await aAfter.requestError({
           op: "post",
           room: bcast!.id,
           msg: "no to",
@@ -549,7 +529,7 @@ describe("DR-0013 broadcast room", () => {
         await session(ctx, SID_A);
         {
           const creator = await user(ctx);
-          const res = await creator.request<{ room: string }>({
+          const res = await creator.requestOk({
             op: "create_room",
             members: [],
             kind: "broadcast",
@@ -619,7 +599,7 @@ describe("DR-0013 broadcast room", () => {
         // Session A joins, broadcast is created (A auto-populates as a1).
         const a1 = await session(ctx, SID_A);
         const creator = await user(ctx);
-        const res = await creator.request<{ room: string }>({
+        const res = await creator.requestOk({
           op: "create_room",
           members: [],
           kind: "broadcast",

@@ -5,7 +5,27 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Socket } from "bun";
-import { PROTOCOL_VERSION, readDaemonFrame, REQUEST_OPS, type RequestOp } from "@ccmsg/protocol";
+import {
+  ErrorResponseSchema,
+  JsonTextSchema,
+  jsonText,
+  parseWith,
+  PROTOCOL_VERSION,
+  readDaemonFrame,
+  RESPONSE_SCHEMAS,
+  type DaemonFrame,
+  type DeliveredEvent,
+  type ErrorResponse,
+  type PushStreamEvent,
+  type ReplyOf,
+  type Request,
+  type RequestInput,
+  type RequestOp,
+  type ResponseBody,
+  type ResponseOf,
+  type Response as WireReply,
+  type StreamEvent,
+} from "@ccmsg/protocol";
 
 const DAEMON_ENTRY = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
@@ -180,52 +200,117 @@ export async function connect(sock: string): Promise<TestClient> {
   return client;
 }
 
-/** Why a line the daemon wrote is not what the wire's schemas say it is, or
- * undefined when it is. Every line a TestClient receives is read here, so a
- * reply or push the daemon sends outside its schema fails the test that got
- * it: a client reading it with the schema would not see it as sent.
+/** What a line of the readable stream is, read with the wire's schemas: a
+ * push or delivered event, or a reply no in-flight `request` claimed (read as
+ * the answer to the op of the request it names, with that `request_id`). */
+export type StreamItem = StreamEvent | WireReply;
+
+/** What names a stream item's kind: a delivered event's `type`, a push's
+ * `ev`, or `"reply"` for a reply. */
+export type StreamKind = DeliveredEvent["type"] | PushStreamEvent["ev"] | "reply";
+
+/** The stream items of one kind. */
+export type ItemOf<K extends StreamKind> =
+  | Extract<DeliveredEvent, { readonly type: K }>
+  | Extract<PushStreamEvent, { readonly ev: K }>
+  | (K extends "reply" ? WireReply : never);
+
+/** The kind a stream item is of: only a reply has `ok`, only a push `ev`. */
+function kindOf(item: StreamItem): StreamKind {
+  if ("ok" in item) return "reply";
+  return "ev" in item ? item.ev : item.type;
+}
+
+/** Whether a stream item is of `kind`: for picking one kind out of what a
+ * test has seen. */
+export function isKind<K extends StreamKind>(kind: K): (item: StreamItem) => item is ItemOf<K> {
+  return (item): item is ItemOf<K> => kindOf(item) === kind;
+}
+
+/** A line the daemon wrote, read as a StreamItem, or why it is not what the
+ * wire's schemas say it is. */
+export type StreamItemRead =
+  | { readonly ok: true; readonly item: StreamItem }
+  | { readonly ok: false; readonly problem: string };
+
+function withRequestId(reply: ResponseBody, requestId: string | undefined): WireReply {
+  return requestId === undefined ? reply : { ...reply, request_id: requestId };
+}
+
+/** Read one line the daemon wrote. Every line a TestClient receives is read
+ * here, so a reply or push the daemon sends outside its schema fails the test
+ * that got it: a client reading it with the schema would not see it as sent.
  *
  * `op` is the op of the request a reply answers, when the client knows it.
  * Read with that op's schema, the reply has to come back whole — a field the
  * schema does not name would be left out by a client reading it. */
-export function frameProblem(line: string, op: RequestOp | undefined): string | undefined {
-  const frame = readDaemonFrame(line);
-  if (frame.kind === "invalid") return frame.failure.summary;
+export function readStreamItem(
+  line: string,
+  frame: DaemonFrame,
+  op: RequestOp | undefined,
+): StreamItemRead {
+  if (frame.kind === "invalid") return { ok: false, problem: frame.failure.summary };
   const raw: unknown = JSON.parse(line);
   if (frame.kind === "event") {
-    return Bun.deepEquals(frame.event, raw) ? undefined : "fields outside its schema";
+    return Bun.deepEquals(frame.event, raw)
+      ? { ok: true, item: frame.event }
+      : { ok: false, problem: "fields outside its schema" };
   }
   if (op === undefined) {
     // A reply this client did not ask for under an op: only an error can be one.
     const read = frame.reply("ping");
     return read.ok && !read.value.ok
-      ? undefined
-      : "a reply to no request this client named, and not an error";
+      ? { ok: true, item: withRequestId(read.value, frame.requestId) }
+      : { ok: false, problem: "a reply to no request this client named, and not an error" };
   }
   const read = frame.reply(op);
-  if (!read.ok) return `as the answer to ${op}: ${read.failure.summary}`;
-  const whole =
-    frame.requestId === undefined ? read.value : { ...read.value, request_id: frame.requestId };
-  return Bun.deepEquals(whole, raw)
-    ? undefined
-    : `as the answer to ${op}: fields outside its schema`;
+  if (!read.ok) return { ok: false, problem: `as the answer to ${op}: ${read.failure.summary}` };
+  const item = withRequestId(read.value, frame.requestId);
+  return Bun.deepEquals(item, raw)
+    ? { ok: true, item }
+    : { ok: false, problem: `as the answer to ${op}: fields outside its schema` };
 }
 
-export function requestOpOf(obj: unknown): RequestOp | undefined {
-  if (typeof obj !== "object" || obj === null || !("op" in obj)) return undefined;
-  const op = obj.op;
-  return REQUEST_OPS.find((known) => known === op);
+/** A reply line read as the success reply to a request of `op`; a refusal,
+ * or a reply that is not the op's answer, is an error thrown. */
+export function servedReply<Op extends RequestOp>(op: Op, line: string): ResponseOf<Op> {
+  const decoded = parseWith(JsonTextSchema, line);
+  if (!decoded.ok) throw new Error(`the reply to ${op} is not JSON: ${line}`);
+  const refusal = parseWith(ErrorResponseSchema, decoded.value);
+  if (refusal.ok) {
+    const { code, msg } = refusal.value.error;
+    throw new Error(`${op} was refused: ${code}: ${msg}`);
+  }
+  const read = parseWith(RESPONSE_SCHEMAS[op], decoded.value);
+  if (!read.ok) throw new Error(`the reply to ${op} is not its answer: ${read.failure.summary}`);
+  return read.value;
+}
+
+const ErrorResponseTextSchema = jsonText(ErrorResponseSchema);
+
+/** A reply line read as the refusal of what was `asked`; a reply that is not
+ * an error is an error thrown. */
+export function refusedReply(asked: string, line: string): ErrorResponse {
+  const refusal = parseWith(ErrorResponseTextSchema, line);
+  if (!refusal.ok) throw new Error(`${asked} was not refused: ${line}`);
+  return refusal.value;
+}
+
+/** A line of the readable stream: as it came, and what it reads as. */
+interface StreamLine {
+  readonly line: string;
+  readonly item: StreamItem;
 }
 
 export class TestClient {
-  private socket!: Socket;
+  private socket: Socket | undefined;
   private decoder = new TextDecoder();
   private buf = "";
-  private lines: string[] = [];
-  private waiters: Array<(l: string | null) => void> = [];
+  private lines: StreamLine[] = [];
+  private waiters: Array<(l: StreamLine | null) => void> = [];
   private ended = false;
-  /** Stream events that arrived while `requestRaw` was waiting for a reply. */
-  private eventBacklog: string[] = [];
+  /** Stream items that arrived while `requestRaw` was waiting for a reply. */
+  private eventBacklog: StreamItem[] = [];
   private nextRequestId = 0;
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
   private pendingReplies = new Map<string, (line: string | null) => void>();
@@ -252,9 +337,10 @@ export class TestClient {
     this.socket = socket;
   }
   onDrain(): void {
-    while (this.unsent.length > 0) {
-      const head = this.unsent[0]!;
-      const taken = this.socket.write(head);
+    const socket = this.socket;
+    if (socket === undefined) return;
+    for (let head = this.unsent[0]; head !== undefined; head = this.unsent[0]) {
+      const taken = socket.write(head);
       if (taken < 0) {
         this.unsent = [];
         return;
@@ -274,45 +360,56 @@ export class TestClient {
       this.buf = this.buf.slice(idx + 1);
       const frame = readDaemonFrame(line);
       const rid = frame.kind === "reply" ? frame.requestId : undefined;
-      const problem = frameProblem(line, rid === undefined ? undefined : this.opsById.get(rid));
-      if (problem !== undefined) this.invalidFrames.push(`${problem}: ${line.slice(0, 400)}`);
+      const read = readStreamItem(
+        line,
+        frame,
+        rid === undefined ? undefined : this.opsById.get(rid),
+      );
+      if (!read.ok) this.invalidFrames.push(`${read.problem}: ${line.slice(0, 400)}`);
       // A reply someone is waiting for goes straight to them; anything else
       // (stream events, replies nobody claimed) joins the readable stream.
       const claimant = rid === undefined ? undefined : this.pendingReplies.get(rid);
-      if (rid !== undefined && claimant) {
+      if (rid !== undefined && claimant !== undefined) {
         this.pendingReplies.delete(rid);
         claimant(line);
-      } else this.lines.push(line);
+      } else if (read.ok) this.lines.push({ line, item: read.item });
     }
     this.drain();
   }
   private drain(): void {
-    while (this.waiters.length > 0 && this.lines.length > 0) {
-      this.waiters.shift()!(this.lines.shift()!);
+    for (;;) {
+      if (this.waiters.length === 0 || this.lines.length === 0) return;
+      const waiter = this.waiters.shift();
+      const line = this.lines.shift();
+      if (waiter !== undefined && line !== undefined) waiter(line);
     }
   }
   onClose(): void {
     this.ended = true;
-    while (this.waiters.length) this.waiters.shift()!(null);
+    for (const waiter of this.waiters.splice(0)) waiter(null);
     for (const settle of this.pendingReplies.values()) settle(null);
     this.pendingReplies.clear();
   }
-  readLine(): Promise<string | null> {
-    if (this.lines.length) return Promise.resolve(this.lines.shift()!);
+  private readStreamLine(): Promise<StreamLine | null> {
+    const buffered = this.lines.shift();
+    if (buffered !== undefined) return Promise.resolve(buffered);
     if (this.ended) return Promise.resolve(null);
     return new Promise((res) => this.waiters.push(res));
+  }
+  /** The next line of the readable stream as the daemon wrote it. */
+  async readLine(): Promise<string | null> {
+    const next = await this.readStreamLine();
+    return next === null ? null : next.line;
   }
   writeRaw(s: string): void {
     this.unsent.push(new TextEncoder().encode(s));
     this.onDrain();
   }
-  write(obj: unknown): void {
-    const op = requestOpOf(obj);
-    if (op !== undefined && typeof obj === "object" && obj !== null && "request_id" in obj) {
-      const rid = obj.request_id;
-      if (typeof rid === "string") this.opsById.set(rid, op);
-    }
-    this.writeRaw(`${JSON.stringify(obj)}\n`);
+  /** Write a request as given, its reply left in the readable stream for
+   * readEvent and read there as the answer to its op. */
+  write(request: Request): void {
+    this.opsById.set(request.request_id, request.op);
+    this.writeRaw(`${JSON.stringify(request)}\n`);
   }
   /** Send an op and return its reply, pairing the way the real clients do: by
    * the `request_id` this stamps on the way out. Everything else on the socket
@@ -320,85 +417,126 @@ export class TestClient {
    * requests — keeps its place in the readable stream for readEvent. Several
    * requests may therefore be outstanding at once.
    *
-   * The reply comes back without its correlation envelope, the same shape the
-   * webui client hands its callers; a test that asserts the echo itself reads
-   * the raw frame (write + readEvent) instead. */
-  async request<T = any>(obj: unknown): Promise<T> {
-    const body = obj as Record<string, unknown>;
-    const rid = typeof body.request_id === "string" ? body.request_id : `t${++this.nextRequestId}`;
-    const reply = new Promise<string | null>((resolve) => {
+   * The reply is read as the answer to the request's op — its success reply
+   * or an error — and comes back without its correlation envelope, the same
+   * shape the webui client hands its callers; a test that asserts the echo
+   * itself reads the raw frame (write + readEvent) instead. */
+  async request<B extends RequestInput>(body: B): Promise<ReplyOf<B["op"]>> {
+    const frame = readDaemonFrame(await this.replyLine(body, body.op));
+    if (frame.kind !== "reply") throw new Error(`the reply to ${body.op} is not a reply`);
+    const read = frame.reply<B["op"]>(body.op);
+    if (!read.ok) {
+      throw new Error(`the reply to ${body.op} is not its answer: ${read.failure.summary}`);
+    }
+    return read.value;
+  }
+  /** `request`, for a request the test expects served: its success reply,
+   * or an error thrown with the refusal. */
+  async requestOk<B extends RequestInput>(body: B): Promise<ResponseOf<B["op"]>> {
+    return servedReply<B["op"]>(body.op, await this.replyLine(body, body.op));
+  }
+  /** `request`, for a request the test expects refused: the error reply, or
+   * an error thrown when it was served. */
+  async requestError(body: RequestInput): Promise<ErrorResponse> {
+    return refusedReply(body.op, await this.replyLine(body, body.op));
+  }
+  /** Send a value the daemon cannot read as a request of its op (a field of
+   * another type, a field missing, an op it does not serve) under a
+   * request_id of its own, and return the refusal that names it. */
+  async requestRefusal(malformed: object): Promise<ErrorResponse> {
+    return refusedReply("a malformed request", await this.replyLine(malformed, undefined));
+  }
+  /** Send `body` under a request_id of its own and wait for the reply that
+   * names it, as the daemon wrote it. `op` is the op the reply is read as the
+   * answer to; with none, the reply can only be an error. */
+  private async replyLine(body: object, op: RequestOp | undefined): Promise<string> {
+    const rid = `t${++this.nextRequestId}`;
+    const line = await new Promise<string | null>((resolve) => {
       this.pendingReplies.set(rid, resolve);
       // Frames buffered before this request even went out cannot be its reply,
       // so only newly arriving ones are inspected (see onData).
-      this.write({ ...body, request_id: rid });
+      if (op !== undefined) this.opsById.set(rid, op);
+      this.writeRaw(`${JSON.stringify({ ...body, request_id: rid })}\n`);
     });
-    const line = await reply;
     this.assertFrames();
     if (line === null) throw new Error("connection closed before response");
-    const { request_id: _rid, ...payload } = JSON.parse(line);
-    return payload as T;
+    return line;
   }
-  /** Send a request exactly as given — no request_id stamped — and return the
-   * next reply frame. For the malformed-request cases, whose reply carries no
-   * request_id to correlate on. */
-  async requestRaw<T = any>(obj: unknown): Promise<T> {
-    this.write(obj);
+  /** Send a line the daemon cannot read as a request — exactly as given, no
+   * request_id stamped — and return its refusal, the next reply on the
+   * stream. Such a reply names no request, so it can only be an error. */
+  async requestRaw(malformed: object): Promise<ErrorResponse> {
+    this.writeRaw(`${JSON.stringify(malformed)}\n`);
     for (;;) {
-      const line = await this.readLine();
+      const next = await this.readStreamLine();
       this.assertFrames();
-      if (line === null) throw new Error("connection closed before response");
-      const parsed = JSON.parse(line);
-      if (parsed !== null && typeof parsed === "object" && !Object.hasOwn(parsed, "ok")) {
-        this.eventBacklog.push(line);
+      if (next === null) throw new Error("connection closed before response");
+      const item = next.item;
+      if (!("ok" in item)) {
+        this.eventBacklog.push(item);
         continue;
       }
-      return parsed as T;
+      if (item.ok) throw new Error(`a malformed request was served: ${next.line}`);
+      return item;
     }
   }
-  async readEvent<T = any>(): Promise<T | null> {
+  /** The next stream item, or null once the connection has closed. Given a
+   * kind, the next item has to be of it. */
+  async readEvent(): Promise<StreamItem | null>;
+  async readEvent<K extends StreamKind>(kind: K): Promise<ItemOf<K>>;
+  async readEvent<K extends StreamKind>(kind?: K): Promise<StreamItem | null> {
     this.assertFrames();
     const buffered = this.eventBacklog.shift();
-    if (buffered !== undefined) return JSON.parse(buffered) as T;
-    const line = await this.readLine();
+    const next = buffered ?? (await this.readStreamLine())?.item ?? null;
     this.assertFrames();
-    return line === null ? null : (JSON.parse(line) as T);
+    if (kind === undefined) return next;
+    if (next === null) throw new Error(`connection closed before a ${kind}`);
+    if (!isKind(kind)(next)) throw new Error(`expected a ${kind}, got ${JSON.stringify(next)}`);
+    return next;
   }
   /** Events already delivered to this socket, without waiting for more — for
    * asserting that a push was *not* addressed to this client. Only meaningful
    * after something else has ordered the stream past the moment in question
    * (e.g. a request round-trip). */
-  async pendingEvents<T = any>(): Promise<T[]> {
+  async pendingEvents(): Promise<StreamItem[]> {
     this.assertFrames();
-    const events: T[] = [];
-    for (;;) {
-      const buffered = this.eventBacklog.shift();
-      if (buffered !== undefined) {
-        events.push(JSON.parse(buffered) as T);
-        continue;
-      }
-      if (this.lines.length === 0) return events;
-      events.push(JSON.parse(this.lines.shift()!) as T);
-    }
+    const events = this.eventBacklog.splice(0);
+    for (const next of this.lines.splice(0)) events.push(next.item);
+    return events;
   }
-  /** Read events until pred matches (skipping backlog). Relies on the expected event
-   *  actually arriving; if it never does, the bun test timeout fails the test. */
-  async readEventUntil<T = any>(pred: (ev: any) => boolean): Promise<{ ev: T; seen: any[] }> {
-    const seen: any[] = [];
+  /** Read events until one of `kind` that `pred` accepts (or, given only a
+   * predicate, any item it accepts) arrives, with every item seen on the way.
+   * Relies on the expected event actually arriving; if it never does, the bun
+   * test timeout fails the test. */
+  async readEventUntil<K extends StreamKind>(
+    kind: K,
+    pred?: (ev: ItemOf<K>) => boolean,
+  ): Promise<{ ev: ItemOf<K>; seen: StreamItem[] }>;
+  async readEventUntil(
+    pred: (ev: StreamItem) => boolean,
+  ): Promise<{ ev: StreamItem; seen: StreamItem[] }>;
+  async readEventUntil<K extends StreamKind>(
+    kindOrPred: K | ((ev: StreamItem) => boolean),
+    pred: (ev: ItemOf<K>) => boolean = () => true,
+  ): Promise<{ ev: StreamItem; seen: StreamItem[] }> {
+    const seen: StreamItem[] = [];
     for (;;) {
       const ev = await this.readEvent();
       if (ev === null) throw new Error(`connection closed; seen ${JSON.stringify(seen)}`);
       seen.push(ev);
-      if (pred(ev)) return { ev: ev as T, seen };
+      if (typeof kindOrPred === "string") {
+        if (isKind(kindOrPred)(ev) && pred(ev)) return { ev, seen };
+      } else if (kindOrPred(ev)) return { ev, seen };
     }
   }
   async hello(
     identity:
       | { role: "user" }
       | { role: "session"; sid: string; repo?: string; ws?: string; cwd?: string },
-  ): Promise<any> {
+  ): Promise<ResponseOf<"hello">> {
     if (identity.role === "user")
-      return this.request({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
-    return this.request({
+      return this.requestOk({ op: "hello", role: "user", protocol: PROTOCOL_VERSION });
+    return this.requestOk({
       op: "hello",
       role: "session",
       protocol: PROTOCOL_VERSION,
@@ -410,7 +548,7 @@ export class TestClient {
   }
   close(): void {
     try {
-      this.socket.end();
+      this.socket?.end();
     } catch {
       // already closing
     }

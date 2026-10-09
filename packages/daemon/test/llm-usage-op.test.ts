@@ -5,7 +5,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
 import type { Conn, Daemon } from "../src/server.ts";
-import { requestFrames } from "./drive-request.ts";
+import { requestError, requestOk, requestRefusal } from "./drive-request.ts";
 
 const GATEWAY_PORT = 18921;
 const USAGE_BODY = {
@@ -77,57 +77,53 @@ const SESSION: Conn["identity"] = {
 describe("llm_usage op", () => {
   test("delivers the gateway document as the reply", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q1" }, 1);
-    expect(reply?.ok).toBe(true);
-    expect(reply?.generated_at).toBe(1785450000000);
-    expect(reply?.credentials).toHaveLength(2);
-    expect(reply?.credentials[1].snapshot.windows["5h"].utilization).toBe(0.13);
+    const reply = await requestOk(daemon, USER, { op: "llm_usage", request_id: "q1" });
+    expect(reply.ok).toBe(true);
+    expect(reply.generated_at).toBe(1785450000000);
+    expect(reply.credentials).toHaveLength(2);
+    expect(reply.credentials[1]).toMatchObject({
+      snapshot: { windows: { "5h": { utilization: 0.13 } } },
+    });
   });
 
   // The gateway is reachable but the path is wrong: the failure has to reach
   // the client as an error reply, not as a hang.
   test("a failing gateway settles the request as an error reply", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/typo`);
-    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "q2" }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_usage_unavailable);
+    const reply = await requestError(daemon, USER, { op: "llm_usage", request_id: "q2" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_usage_unavailable);
   });
 
   // The signal the webui uses to hide the usage screen entirely, and the
   // reason it is a distinct code from llm_usage_unavailable.
   test("replies llm_usage_not_configured when no URL is configured", async () => {
-    const [reply] = await requestFrames(
-      daemonWith(),
-      USER,
-      { op: "llm_usage", request_id: "q3" },
-      1,
-    );
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.llm_usage_not_configured);
+    const reply = await requestError(daemonWith(), USER, { op: "llm_usage", request_id: "q3" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.llm_usage_not_configured);
   });
 
   // Only a probe response carries limits, so the flag has to reach the
   // gateway — and must not be sent when the client did not ask for one.
   test("passes a refresh through to the gateway and surfaces its limits", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [reply] = await requestFrames(
-      daemon,
-      USER,
-      { op: "llm_usage", request_id: "r1", refresh: true },
-      1,
-    );
+    const reply = await requestOk(daemon, USER, {
+      op: "llm_usage",
+      request_id: "r1",
+      refresh: true,
+    });
     expect(received.at(-1)).toBe("true");
-    expect(reply?.ok).toBe(true);
-    expect(reply?.credentials[1].limits).toEqual([
+    expect(reply.ok).toBe(true);
+    expect(reply.credentials[1].limits).toEqual([
       { kind: "weekly_all", percent: 100, severity: "critical" },
     ]);
   });
 
   test("a request without the flag reads the cache and gets no limits", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r2" }, 1);
+    const reply = await requestOk(daemon, USER, { op: "llm_usage", request_id: "r2" });
     expect(received.at(-1)).toBeNull();
-    expect(reply?.credentials[1].limits).toBeUndefined();
+    expect(reply.credentials[1].limits).toBeUndefined();
   });
 
   // Anything other than an explicit `true` is a plain read: a probe spends
@@ -135,22 +131,22 @@ describe("llm_usage op", () => {
   test("a non-true refresh value does not trigger a probe", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
     for (const refresh of ["true", 1, null]) {
-      await requestFrames(daemon, USER, { op: "llm_usage", request_id: "r3", refresh }, 1);
+      await requestRefusal(daemon, USER, { op: "llm_usage", request_id: "r3", refresh });
       expect(received.at(-1)).toBeNull();
     }
   });
 
   test("refuses a session-role caller before reaching the gateway", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [reply] = await requestFrames(daemon, SESSION, { op: "llm_usage", request_id: "q4" }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestError(daemon, SESSION, { op: "llm_usage", request_id: "q4" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 
   test("refuses a request with no request_id (every op needs one to be answered)", async () => {
     const daemon = daemonWith(`http://127.0.0.1:${GATEWAY_PORT}/usage`);
-    const [reply] = await requestFrames(daemon, USER, { op: "llm_usage" }, 1);
-    expect(reply?.ok).toBe(false);
-    expect(reply?.error.code).toBe(ErrorCode.bad_request);
+    const reply = await requestRefusal(daemon, USER, { op: "llm_usage" });
+    expect(reply.ok).toBe(false);
+    expect(reply.error.code).toBe(ErrorCode.bad_request);
   });
 });
