@@ -243,7 +243,9 @@ function withRequestId(reply: ResponseBody, requestId: string | undefined): Wire
  *
  * `op` is the op of the request a reply answers, when the client knows it.
  * Read with that op's schema, the reply has to come back whole — a field the
- * schema does not name would be left out by a client reading it. */
+ * schema does not name would be left out by a client reading it. Without an
+ * op the reply can only be an error, and it has to come back whole the same
+ * way. */
 export function readStreamItem(
   line: string,
   frame: DaemonFrame,
@@ -259,9 +261,13 @@ export function readStreamItem(
   if (op === undefined) {
     // A reply this client did not ask for under an op: only an error can be one.
     const read = frame.reply("ping");
-    return read.ok && !read.value.ok
-      ? { ok: true, item: withRequestId(read.value, frame.requestId) }
-      : { ok: false, problem: "a reply to no request this client named, and not an error" };
+    if (!read.ok || read.value.ok) {
+      return { ok: false, problem: "a reply to no request this client named, and not an error" };
+    }
+    const item = withRequestId(read.value, frame.requestId);
+    return Bun.deepEquals(item, raw)
+      ? { ok: true, item }
+      : { ok: false, problem: "as an error: fields outside its schema" };
   }
   const read = frame.reply(op);
   if (!read.ok) return { ok: false, problem: `as the answer to ${op}: ${read.failure.summary}` };
