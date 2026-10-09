@@ -5,6 +5,8 @@ import * as path from "node:path";
 import {
   callSidecar,
   liveSidecars,
+  RunPids,
+  runMovedOn,
   SidecarReplies,
   type SidecarDeps,
 } from "../src/sidecar-call.ts";
@@ -151,5 +153,38 @@ describe("callSidecar", () => {
       write: "uncertain",
       reply: { id: "id1", ok: true, result: 1 },
     });
+  });
+});
+
+describe("RunPids", () => {
+  test("keeps an id's pids past the poll that last listed it, until they end", () => {
+    const runs = new RunPids();
+    const alive = new Set([100, 200]);
+    runs.record([{ sessionId: SID, pid: 100 }], (pid) => alive.has(pid));
+    // /clear: the process is listed under the new id from now on.
+    runs.record([{ sessionId: OTHER, pid: 100 }], (pid) => alive.has(pid));
+    expect(runs.pidsOf(SID)).toEqual([100]);
+    expect(runs.pidsOf(OTHER)).toEqual([100]);
+    alive.delete(100);
+    runs.record([], (pid) => alive.has(pid));
+    expect(runs.pidsOf(SID)).toEqual([]);
+    expect(runs.pidsOf(OTHER)).toEqual([]);
+  });
+
+  test("rows without a usable id or pid are skipped", () => {
+    const runs = new RunPids();
+    runs.record([{ sessionId: "", pid: 5 }, { sessionId: SID, pid: 1 }, { pid: 7 }], () => true);
+    expect(runs.pidsOf(SID)).toEqual([]);
+  });
+});
+
+describe("runMovedOn", () => {
+  test("a live process of the id bound under another id", async () => {
+    const d = deps({ listDir: async () => [`${OTHER}.100.sock`, `${SID}.abc.sock`, "junk"] });
+    expect(await runMovedOn(SID, [100], d)).toBe(true);
+    expect(await runMovedOn(SID, [200], d)).toBe(false);
+    expect(await runMovedOn(SID, [], d)).toBe(false);
+    expect(await runMovedOn(OTHER, [100], d)).toBe(false);
+    expect(await runMovedOn(SID, [100], { ...d, isAlive: () => false })).toBe(false);
   });
 });

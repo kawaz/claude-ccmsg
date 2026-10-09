@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 function fakeHarness(
-  opts: { peerProtocol?: number; sid?: string; stall?: boolean } = {},
+  opts: { peerProtocol?: number; sid?: string; stall?: boolean; readAfterMs?: number } = {},
 ): FakeHarness {
   const h = spawnHarness(opts.sid ?? SID, opts);
   cleanups.push(() => h.dispose());
@@ -86,6 +86,19 @@ describe("PeerInjector", () => {
     gone.stop();
     expect(await injector.send(gone.configDir, SID, MESSAGE)).toBe("unavailable");
     expect(await injector.send("/nonexistent-pi-config", SID, MESSAGE)).toBe("unavailable");
+  });
+
+  // The write takes longer than the refusal window: the recipient starts
+  // reading after 600 ms and refuses the moment it has the frame. The window
+  // starts when the write has finished, so the refusal is still heard.
+  test("a refusal right after a write longer than the refusal window is refused", async () => {
+    const h = fakeHarness({ readAfterMs: 600 });
+    await h.listening;
+    h.refuseWith = "held";
+    const injector = new PeerInjector();
+    cleanups.push(() => injector.close());
+    const big = { ...MESSAGE, text: "x".repeat(4 * 1024 * 1024) };
+    expect(await injector.send(h.configDir, SID, big)).toBe("refused");
   });
 
   // A socket that stopped reading takes part of a large message: it may hold

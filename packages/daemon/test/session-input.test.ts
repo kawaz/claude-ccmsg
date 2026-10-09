@@ -112,6 +112,7 @@ function scripted(
     },
     now: Date.now,
     deadlineMs: 5_000,
+    pidsOf: () => [],
     ...extra,
   };
   return { deps, written };
@@ -129,6 +130,29 @@ describe("sessionInput asks one run at a time", () => {
       outcome: "not_delivered",
       reason: "no_module",
     });
+  });
+
+  // After /clear the old id has no sidecar; the process it ran in serves the
+  // new id. The person is told the session changed, not to update the plugin.
+  test("no run of the id, its process serving another id: session_changed", async () => {
+    const OTHER = "99999999-2222-4333-8444-555555555555";
+    const moved = (extra: Partial<SessionInputDeps>) =>
+      scripted({}, { listDir: async () => [`${OTHER}.100.sock`], ...extra }).deps;
+    expect(await sessionInput(SID, "hi", moved({ pidsOf: () => [100] }))).toMatchObject({
+      outcome: "not_delivered",
+      reason: "session_changed",
+    });
+    // Not known to have run in that process, or that process gone: no module.
+    for (const extra of [
+      { pidsOf: () => [] },
+      { pidsOf: () => [200] },
+      { pidsOf: () => [100], isAlive: () => false },
+    ]) {
+      expect(await sessionInput(SID, "hi", moved(extra))).toMatchObject({
+        outcome: "not_delivered",
+        reason: "no_module",
+      });
+    }
   });
 
   test("a run whose session changed its id passes the text to the next", async () => {

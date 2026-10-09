@@ -18,6 +18,7 @@ import {
   callSidecar,
   liveSidecars,
   productionSidecarDeps,
+  runMovedOn,
   type SidecarDeps,
   type SidecarReplies,
 } from "./sidecar-call.ts";
@@ -41,6 +42,8 @@ export type SessionInputOutcome =
 
 export interface SessionInputDeps extends SidecarDeps {
   deadlineMs: number;
+  /** The harness pids `sid` has been seen running under (RunPids). */
+  pidsOf(sid: string): readonly number[];
 }
 
 /** A `prompt.send` reply as the person's outcome, or `cannot_run` when the
@@ -134,12 +137,24 @@ export async function sessionInput(
     if (!TRY_NEXT.has(read.reason)) return { outcome: "not_delivered", reason: read.reason, tries };
     unable = read.reason;
   }
-  return { outcome: "not_delivered", reason: unable ?? "no_module", tries };
+  if (unable !== undefined) return { outcome: "not_delivered", reason: unable, tries };
+  // No module of `sid` took it. When the process `sid` ran in now serves
+  // another id, the session changed (/clear, /resume) rather than lacks a
+  // module, and the person is told so instead of to update the plugin.
+  if (await runMovedOn(sid, deps.pidsOf(sid), deps)) {
+    return { outcome: "not_delivered", reason: "session_changed", tries };
+  }
+  return { outcome: "not_delivered", reason: "no_module", tries };
 }
 
-export function productionInputDeps(sidecarDir: string, replies: SidecarReplies): SessionInputDeps {
+export function productionInputDeps(
+  sidecarDir: string,
+  replies: SidecarReplies,
+  pidsOf: (sid: string) => readonly number[] = () => [],
+): SessionInputDeps {
   return {
     ...productionSidecarDeps(sidecarDir, replies),
     deadlineMs: SESSION_INPUT_DEADLINE_MS,
+    pidsOf,
   };
 }

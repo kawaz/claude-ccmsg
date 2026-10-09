@@ -55,10 +55,14 @@ export interface FakeHarness {
 
 /** `stall`: the socket accepts connections and never reads them, as a
  * harness that has stopped reading does — a write bigger than the socket's
- * buffer goes in part-way and then waits. Nothing is recorded. */
+ * buffer goes in part-way and then waits. Nothing is recorded.
+ *
+ * `readAfterMs`: the socket starts reading each connection that long after
+ * accepting it, so a write bigger than its buffer finishes only then. Frames
+ * are recorded and answered as usual. */
 export function fakeHarness(
   sid: string,
-  opts: { peerProtocol?: number; stall?: boolean } = {},
+  opts: { peerProtocol?: number; stall?: boolean; readAfterMs?: number } = {},
 ): FakeHarness {
   const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cfg-"));
   const sockDir = fs.mkdtempSync("/tmp/pi-");
@@ -80,7 +84,6 @@ export function fakeHarness(
   );
   const waiters: ((f: Record<string, any>) => void)[] = [];
   const users: Record<string, any>[] = [];
-  let buf = "";
   const nextUser = (): Promise<Record<string, any>> =>
     users.length > 0
       ? Promise.resolve(users.shift()!)
@@ -100,51 +103,74 @@ export function fakeHarness(
       fs.rmSync(sockDir, { recursive: true, force: true });
     },
   };
-  if (opts.stall === true) {
+
+  /** One frame read: recorded, refused at once when asked to, handed on. */
+  const onFrame = (frame: Record<string, any>): void => {
+    harness.frames.push(frame);
+    if (frame.type !== "user") return;
+    if (harness.refuseWith !== undefined && typeof frame.from === "string") {
+      void Bun.connect({
+        unix: frame.from.slice("uds:".length),
+        socket: {
+          open(s) {
+            s.write(
+              `${JSON.stringify({ action: "peer_message_status", status: harness.refuseWith, orig_msg_id: frame.msg_id })}\n`,
+            );
+            s.end();
+          },
+          data() {},
+        },
+      });
+    }
+    const w = waiters.shift();
+    if (w) w(frame);
+    else users.push(frame);
+  };
+  /** A line splitter for one connection. */
+  const reader = (): ((chunk: Uint8Array) => void) => {
+    let buf = "";
+    return (chunk) => {
+      buf += Buffer.from(chunk).toString("utf8");
+      const parts = buf.split("\n");
+      buf = parts.pop() ?? "";
+      for (const line of parts) onFrame(JSON.parse(line));
+    };
+  };
+
+  if (opts.stall === true || opts.readAfterMs !== undefined) {
     const held = new Set<net.Socket>();
-    const stalled = net.createServer({ pauseOnConnect: true }, (c) => {
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const paused = net.createServer({ pauseOnConnect: true }, (c) => {
       held.add(c);
       c.on("close", () => held.delete(c));
+      if (opts.stall === true) return;
+      c.on("data", reader());
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        c.resume();
+      }, opts.readAfterMs);
+      timers.add(timer);
     });
-    harness.listening = new Promise((resolve) => stalled.listen(socketPath, resolve));
+    harness.listening = new Promise((resolve) => paused.listen(socketPath, resolve));
     stopServer = (): void => {
+      for (const timer of timers) clearTimeout(timer);
       for (const c of held) c.destroy();
-      stalled.close();
+      paused.close();
     };
     return harness;
   }
   stopServer = (): void => {
     server.stop(true);
   };
+  const readers = new WeakMap<object, (chunk: Uint8Array) => void>();
   const server = Bun.listen({
     unix: socketPath,
     socket: {
-      data(_s, chunk) {
-        buf += Buffer.from(chunk).toString("utf8");
-        const parts = buf.split("\n");
-        buf = parts.pop() ?? "";
-        for (const line of parts) {
-          const frame = JSON.parse(line);
-          harness.frames.push(frame);
-          if (frame.type !== "user") continue;
-          if (harness.refuseWith !== undefined && typeof frame.from === "string") {
-            void Bun.connect({
-              unix: frame.from.slice("uds:".length),
-              socket: {
-                open(s) {
-                  s.write(
-                    `${JSON.stringify({ action: "peer_message_status", status: harness.refuseWith, orig_msg_id: frame.msg_id })}\n`,
-                  );
-                  s.end();
-                },
-                data() {},
-              },
-            });
-          }
-          const w = waiters.shift();
-          if (w) w(frame);
-          else users.push(frame);
-        }
+      open(socket) {
+        readers.set(socket, reader());
+      },
+      data(socket, chunk) {
+        readers.get(socket)?.(chunk);
       },
     },
   });

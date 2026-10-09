@@ -108,6 +108,15 @@ export function injectFrames(
   return `${JSON.stringify(auth)}\n${JSON.stringify(user)}\n`;
 }
 
+/** Statuses for one message, heard from `watch` on. */
+interface StatusWatch {
+  /** The first status heard so far or within `ms` from now, or undefined.
+   * Stops hearing either way. */
+  within(ms: number): Promise<string | undefined>;
+  /** Stop hearing without waiting. */
+  stop(): void;
+}
+
 /** The socket the receiving session reports refusals to. It sits beside the
  * target's own socket because the harness drops a reply address outside its
  * socket namespace. Bound once per directory for the life of the injector. */
@@ -146,14 +155,32 @@ class StatusInbox {
     return true;
   }
 
-  status(mid: string, withinMs: number): Promise<string | undefined> {
-    const settled = Promise.withResolvers<string | undefined>();
-    this.#waiting.set(mid, settled.resolve);
-    const deadline = setTimeout(() => settled.resolve(undefined), withinMs);
-    return settled.promise.finally(() => {
-      clearTimeout(deadline);
-      this.#waiting.delete(mid);
+  /** Start hearing statuses for `mid` now, before the frames go out: a
+   * recipient may refuse the moment it reads them, which can be while a long
+   * write is still finishing. A status heard before `within` is kept. */
+  watch(mid: string): StatusWatch {
+    let heard: string | undefined;
+    let wake: ((status: string) => void) | undefined;
+    this.#waiting.set(mid, (status) => {
+      heard ??= status;
+      wake?.(heard);
     });
+    const forget = (): void => {
+      this.#waiting.delete(mid);
+    };
+    return {
+      within: (ms) => {
+        const settled = Promise.withResolvers<string | undefined>();
+        if (heard !== undefined) settled.resolve(heard);
+        wake = settled.resolve;
+        const deadline = setTimeout(() => settled.resolve(undefined), ms);
+        return settled.promise.finally(() => {
+          clearTimeout(deadline);
+          forget();
+        });
+      },
+      stop: forget,
+    };
   }
 
   close(): void {
@@ -237,15 +264,21 @@ export class PeerInjector {
     if (token === undefined) return { outcome: "unavailable", cause: "no_peer_socket" };
     const inbox = await this.#inbox(target.socketPath);
     if (inbox === undefined) return { outcome: "unavailable", cause: "no_status_socket" };
-    const watching = inbox.status(frame.mid, this.#statusMs);
+    // Heard from before the write; the refusal window starts once the write
+    // has finished, so a write that takes long does not use the window up.
+    const watching = inbox.watch(frame.mid);
     const written = await writeSocket(
       target.socketPath,
       injectFrames(sid, token, frame, `uds:${inbox.path}`),
       this.#writeMs,
     );
-    if (written === "not_written") return { outcome: "unavailable", cause: "unreachable" };
-    if (written === "uncertain") return { outcome: "unconfirmed" };
-    const status = await watching;
+    if (written !== "written") {
+      watching.stop();
+      return written === "not_written"
+        ? { outcome: "unavailable", cause: "unreachable" }
+        : { outcome: "unconfirmed" };
+    }
+    const status = await watching.within(this.#statusMs);
     return status !== undefined && REFUSING.has(status)
       ? { outcome: "refused" }
       : { outcome: "delivered" };

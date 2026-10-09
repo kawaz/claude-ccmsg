@@ -106,7 +106,7 @@ import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts"
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
 import { productionInputDeps, sessionInput } from "./session-input.ts";
-import { SidecarReplies } from "./sidecar-call.ts";
+import { RunPids, SidecarReplies } from "./sidecar-call.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -320,6 +320,10 @@ export interface Daemon {
   /** Requests to a session's hooks module waiting for its sidecar_reply
    * (sidecar-call.ts, DR-0035 §3). */
   sidecarReplies: SidecarReplies;
+  /** The harness pids each session id has run under, from the agents poll
+   * (sidecar-call.ts), so session_input can tell a session that changed its
+   * id from one with no module. */
+  runPids: RunPids;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -2673,7 +2677,9 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       const { tries, ...outcome } = await sessionInput(
         req.session_id,
         req.text,
-        productionInputDeps(daemon.paths.sidecars, daemon.sidecarReplies),
+        productionInputDeps(daemon.paths.sidecars, daemon.sidecarReplies, (sid) =>
+          daemon.runPids.pidsOf(sid),
+        ),
       );
       daemon.log.info(
         `session-input -> ${req.session_id}: ${outcome.outcome}` +
@@ -3629,6 +3635,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     launcher: resolveLauncher(),
     issueDirectMid: createMidIssuer(),
     sidecarReplies: new SidecarReplies(),
+    runPids: new RunPids(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
@@ -3639,6 +3646,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
       daemon.agentsPoller,
       log,
       async (poll, polledAt) => {
+        daemon.runPids.record(poll.agents);
         await syncSessionsFromAgents(daemon, poll);
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role === "user") {
