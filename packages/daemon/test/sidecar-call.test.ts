@@ -1,0 +1,139 @@
+// Requests to a session's hooks module through its sidecar (DR-0035 §3), with
+// no op in particular: the line written, the reply matched to its request.
+import { describe, expect, test } from "bun:test";
+import * as path from "node:path";
+import {
+  callSidecar,
+  liveSidecars,
+  SidecarReplies,
+  type SidecarDeps,
+} from "../src/sidecar-call.ts";
+
+const SID = "11111111-2222-4333-8444-555555555555";
+const OTHER = "99999999-2222-4333-8444-555555555555";
+
+describe("SidecarReplies", () => {
+  test("the first reply under an id is the one that counts", async () => {
+    const replies = new SidecarReplies();
+    replies.open("i1", SID);
+    const waited = replies.wait("i1", 5_000);
+    const first = { id: "i1", ok: false, error: { code: "unknown_op", message: "x" } } as const;
+    expect(replies.take(SID, first)).toBe(true);
+    expect(replies.take(SID, { id: "i1", ok: true, result: {} })).toBe(true);
+    expect(await waited).toEqual(first);
+  });
+
+  test("a reply that arrives before the wait still counts", async () => {
+    const replies = new SidecarReplies();
+    replies.open("i2", SID);
+    replies.take(SID, { id: "i2", ok: true, result: 1 });
+    expect(await replies.wait("i2", 5_000)).toEqual({ id: "i2", ok: true, result: 1 });
+  });
+
+  test("silence until the deadline is no reply, and the id is forgotten", async () => {
+    const replies = new SidecarReplies();
+    replies.open("i3", SID);
+    expect(await replies.wait("i3", 20)).toBeUndefined();
+    expect(replies.take(SID, { id: "i3", ok: true, result: 1 })).toBe(false);
+  });
+
+  test("a reply from another session is not taken", () => {
+    const replies = new SidecarReplies();
+    replies.open("i4", SID);
+    expect(replies.take(OTHER, { id: "i4", ok: true, result: 1 })).toBe(false);
+  });
+
+  test("a closed id takes no reply", () => {
+    const replies = new SidecarReplies();
+    replies.open("i5", SID);
+    replies.close("i5");
+    expect(replies.take(SID, { id: "i5", ok: true, result: 1 })).toBe(false);
+  });
+});
+
+function deps(extra: Partial<SidecarDeps> = {}): SidecarDeps {
+  return {
+    sidecarDir: "/sidecars",
+    replies: new SidecarReplies(),
+    newId: () => "id1",
+    listDir: async () => [],
+    isAlive: () => true,
+    write: async () => "delivered",
+    now: Date.now,
+    ...extra,
+  };
+}
+
+describe("liveSidecars", () => {
+  test("takes the session's sockets of live harness pids only, in name order", async () => {
+    const d = deps({
+      listDir: async () => [
+        `${SID}.200.sock`,
+        `${SID}.100.sock`,
+        `${SID}.300.sock`,
+        `${OTHER}.100.sock`,
+        `${SID}.abc.sock`,
+        `${SID}.100.sock.tmp`,
+      ],
+      isAlive: (pid) => pid !== 300,
+    });
+    expect(await liveSidecars(SID, d)).toEqual([
+      `/sidecars/${SID}.100.sock`,
+      `/sidecars/${SID}.200.sock`,
+    ]);
+  });
+
+  test("a missing directory is no sidecar", async () => {
+    const d = deps({
+      listDir: async () => {
+        throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      },
+    });
+    expect(await liveSidecars(SID, d)).toEqual([]);
+  });
+});
+
+describe("callSidecar", () => {
+  // Any op goes out the same way; `describe` stands for one the daemon has no
+  // dedicated code for.
+  test("writes one versioned line naming the op and waits for its reply", async () => {
+    const lines: { socket: string; line: string }[] = [];
+    const d: SidecarDeps = deps({
+      write: async (socket, line) => {
+        lines.push({ socket: path.basename(socket), line });
+        d.replies.take(SID, {
+          id: JSON.parse(line).id,
+          ok: true,
+          result: { v: [1], ops: ["describe", "prompt.send"] },
+        });
+        return "delivered";
+      },
+    });
+    const call = await callSidecar(`/sidecars/${SID}.100.sock`, SID, "describe", {}, 1_000, d);
+    expect(lines).toEqual([
+      {
+        socket: `${SID}.100.sock`,
+        line: `${JSON.stringify({ v: 1, op: "describe", id: "id1", args: {} })}\n`,
+      },
+    ]);
+    expect(call).toEqual({
+      id: "id1",
+      written: true,
+      reply: { id: "id1", ok: true, result: { v: [1], ops: ["describe", "prompt.send"] } },
+    });
+  });
+
+  test("a line nobody took is not written, and its id takes no reply", async () => {
+    const d = deps({ write: async () => "unavailable" });
+    expect(await callSidecar("/s", SID, "describe", {}, 1_000, d)).toEqual({
+      id: "id1",
+      written: false,
+    });
+    expect(d.replies.take(SID, { id: "id1", ok: true, result: 1 })).toBe(false);
+  });
+
+  test("no reply within the time is a written call without a reply", async () => {
+    const call = await callSidecar("/s", SID, "describe", {}, 20, deps());
+    expect(call).toEqual({ id: "id1", written: true, reply: undefined });
+  });
+});

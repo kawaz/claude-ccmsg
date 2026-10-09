@@ -1,17 +1,17 @@
-// session_input (DR-0035 §1, §5): the daemon writes a fill request to every
-// live sidecar of a session and answers with what the session's hooks module
-// reports, or unconfirmed.
+// session_input (DR-0035 §1, §5): the daemon asks the hooks module of one run
+// of a session at a time to `prompt.send` the text, and answers with what the
+// module replies, or unconfirmed.
 import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { resolveSidecarDir, sidecarSocketName } from "@ccmsg/protocol";
 import {
-  type ModuleReport,
-  PendingInputs,
-  liveSidecars,
-  sessionInput,
-  type SessionInputDeps,
-} from "../src/session-input.ts";
+  resolveSidecarDir,
+  type SidecarErrorCode,
+  type SidecarReply,
+  sidecarSocketName,
+} from "@ccmsg/protocol";
+import { readPromptSendReply, sessionInput, type SessionInputDeps } from "../src/session-input.ts";
+import { SidecarReplies } from "../src/sidecar-call.ts";
 import {
   connect,
   spawnDaemonProc,
@@ -23,42 +23,52 @@ import {
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
-describe("PendingInputs", () => {
-  test("the first report under an id is the one that counts", async () => {
-    const pending = new PendingInputs();
-    pending.open("i1", SID);
-    const waited = pending.wait("i1", 5_000);
-    expect(pending.report("i1", SID, { outcome: "not_delivered", reason: "dialog" })).toBe(true);
-    expect(pending.report("i1", SID, { outcome: "accepted" })).toBe(true);
-    expect(await waited).toEqual({ outcome: "not_delivered", reason: "dialog" });
+describe("readPromptSendReply", () => {
+  const ok = (result: unknown): SidecarReply => ({ id: "i", ok: true, result });
+  const failed = (code: SidecarErrorCode): SidecarReply => ({
+    id: "i",
+    ok: false,
+    error: { code, message: "m" },
   });
 
-  test("a report that arrives before the wait still counts", async () => {
-    const pending = new PendingInputs();
-    pending.open("i2", SID);
-    pending.report("i2", SID, { outcome: "accepted" });
-    expect(await pending.wait("i2", 5_000)).toEqual({ outcome: "accepted" });
+  test("the result of a prompt.send that ran is the outcome", () => {
+    expect(readPromptSendReply(ok({ outcome: "accepted" }))).toEqual({ outcome: "accepted" });
+    expect(readPromptSendReply(ok({ outcome: "not_delivered", reason: "dialog" }))).toEqual({
+      outcome: "not_delivered",
+      reason: "dialog",
+    });
+    expect(readPromptSendReply(ok({ outcome: "unconfirmed" }))).toEqual({
+      outcome: "unconfirmed",
+    });
   });
 
-  test("silence until the deadline is no report, and the id is forgotten", async () => {
-    const pending = new PendingInputs();
-    pending.open("i3", SID);
-    expect(await pending.wait("i3", 20)).toBeUndefined();
-    expect(pending.report("i3", SID, { outcome: "accepted" })).toBe(false);
-  });
+  // The op never ran, so nothing reached the composer.
+  for (const code of ["unknown_op", "unsupported_version", "invalid_args"] as const) {
+    test(`${code} is an op that could not run`, () => {
+      expect(readPromptSendReply(failed(code))).toEqual({ outcome: "cannot_run", code });
+    });
+  }
 
-  test("a report naming another session is not taken", () => {
-    const pending = new PendingInputs();
-    pending.open("i4", SID);
-    expect(
-      pending.report("i4", "99999999-2222-4333-8444-555555555555", { outcome: "accepted" }),
-    ).toBe(false);
+  // What the composer holds is unknown after these.
+  test("an op that failed part-way, or a result of no known shape, is unconfirmed", () => {
+    expect(readPromptSendReply(failed("internal"))).toEqual({ outcome: "unconfirmed" });
+    expect(readPromptSendReply(ok(null))).toEqual({ outcome: "unconfirmed" });
+    expect(readPromptSendReply(ok({ outcome: "delivered" }))).toEqual({ outcome: "unconfirmed" });
+    expect(readPromptSendReply(ok({ outcome: "not_delivered", reason: "no_module" }))).toEqual({
+      outcome: "unconfirmed",
+    });
   });
 });
 
-/** What one run does with the line written to it: not take it, answer with a
- * report, or stay silent. */
-type RunBehaviour = "unwritten" | "silent" | ModuleReport;
+/** What one run does with the line written to it: not take it, stay silent,
+ * reply with a result of the op, or reply that the op could not run. */
+type RunBehaviour = "unwritten" | "silent" | { result: unknown } | { error: SidecarErrorCode };
+
+function replyFor(id: string, behaviour: { result: unknown } | { error: SidecarErrorCode }) {
+  return "result" in behaviour
+    ? ({ id, ok: true, result: behaviour.result } as const)
+    : ({ id, ok: false, error: { code: behaviour.error, message: "m" } } as const);
+}
 
 /** Deps over a fake sidecar directory whose runs behave as `runs` says, in
  * socket-name order. Records every line written, by socket. */
@@ -66,12 +76,12 @@ function scripted(
   runs: Record<string, RunBehaviour>,
   extra: Partial<SessionInputDeps> = {},
 ): { deps: SessionInputDeps; written: { socket: string; line: Record<string, unknown> }[] } {
-  const pending = new PendingInputs();
+  const replies = new SidecarReplies();
   let n = 0;
   const written: { socket: string; line: Record<string, unknown> }[] = [];
   const deps: SessionInputDeps = {
     sidecarDir: "/sidecars",
-    pending,
+    replies,
     newId: () => `id${++n}`,
     listDir: async () => Object.keys(runs).map((pid) => `${SID}.${pid}.sock`),
     isAlive: () => true,
@@ -81,7 +91,7 @@ function scripted(
       if (behaviour === "unwritten") return "unavailable";
       const parsed = JSON.parse(line) as Record<string, unknown>;
       written.push({ socket: path.basename(socket), line: parsed });
-      if (behaviour !== "silent") pending.report(parsed.id as string, SID, behaviour);
+      if (behaviour !== "silent") replies.take(SID, replyFor(parsed.id as string, behaviour));
       return "delivered";
     },
     now: Date.now,
@@ -91,40 +101,10 @@ function scripted(
   return { deps, written };
 }
 
-describe("liveSidecars", () => {
-  test("takes the session's sockets of live harness pids only, in name order", async () => {
-    const { deps } = scripted(
-      {},
-      {
-        listDir: async () => [
-          `${SID}.200.sock`,
-          `${SID}.100.sock`,
-          `${SID}.300.sock`,
-          `99999999-2222-4333-8444-555555555555.100.sock`,
-          `${SID}.abc.sock`,
-          `${SID}.100.sock.tmp`,
-        ],
-        isAlive: (pid) => pid !== 300,
-      },
-    );
-    expect(await liveSidecars(SID, deps)).toEqual([
-      `/sidecars/${SID}.100.sock`,
-      `/sidecars/${SID}.200.sock`,
-    ]);
-  });
-
-  test("a missing directory is no sidecar", async () => {
-    const { deps } = scripted(
-      {},
-      {
-        listDir: async () => {
-          throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
-        },
-      },
-    );
-    expect(await liveSidecars(SID, deps)).toEqual([]);
-  });
+const notDelivered = (reason: string): RunBehaviour => ({
+  result: { outcome: "not_delivered", reason },
 });
+const ACCEPTED: RunBehaviour = { result: { outcome: "accepted" } };
 
 describe("sessionInput asks one run at a time", () => {
   test("no live run: not_delivered no_module", async () => {
@@ -137,31 +117,55 @@ describe("sessionInput asks one run at a time", () => {
 
   test("a run that cannot take input passes the text to the next, under a new id", async () => {
     const { deps, written } = scripted({
-      "100": { outcome: "not_delivered", reason: "no_terminal" },
-      "200": { outcome: "accepted" },
+      "100": notDelivered("no_terminal"),
+      "200": ACCEPTED,
     });
     const text = "two\nlines  ";
     expect(await sessionInput(SID, text, deps)).toMatchObject({ outcome: "accepted" });
     expect(written).toEqual([
-      { socket: `${SID}.100.sock`, line: { kind: "prompt.fill", id: "id1", text } },
-      { socket: `${SID}.200.sock`, line: { kind: "prompt.fill", id: "id2", text } },
+      {
+        socket: `${SID}.100.sock`,
+        line: { v: 1, op: "prompt.send", id: "id1", args: { text } },
+      },
+      {
+        socket: `${SID}.200.sock`,
+        line: { v: 1, op: "prompt.send", id: "id2", args: { text } },
+      },
     ]);
   });
 
   test("a run that did not take the line is passed over", async () => {
-    const { deps, written } = scripted({ "100": "unwritten", "200": { outcome: "accepted" } });
+    const { deps, written } = scripted({ "100": "unwritten", "200": ACCEPTED });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "accepted" });
     expect(written.map((w) => w.socket)).toEqual([`${SID}.200.sock`]);
+  });
+
+  // A module of another ccmsg did not run the op: the composer was not
+  // touched, so the next run is asked.
+  test("a run whose module cannot run prompt.send is passed over", async () => {
+    const { deps, written } = scripted({ "100": { error: "unknown_op" }, "200": ACCEPTED });
+    const res = await sessionInput(SID, "hi", deps);
+    expect(res).toMatchObject({ outcome: "accepted" });
+    expect(res.tries.map((t) => t.result)).toEqual(["cannot_run:unknown_op", "accepted"]);
+    expect(written.length).toBe(2);
+  });
+
+  test("no run able to run prompt.send: not_delivered no_module", async () => {
+    const { deps } = scripted({
+      "100": { error: "unknown_op" },
+      "200": { error: "unsupported_version" },
+    });
+    expect(await sessionInput(SID, "hi", deps)).toMatchObject({
+      outcome: "not_delivered",
+      reason: "no_module",
+    });
   });
 
   // Each of these may mean the run holding the composer answered: asking the
   // next run could put the text in twice.
   for (const reason of ["dialog", "refused", "not_submitted", "enter_failed"] as const) {
     test(`${reason} stops at that run`, async () => {
-      const { deps, written } = scripted({
-        "100": { outcome: "not_delivered", reason },
-        "200": { outcome: "accepted" },
-      });
+      const { deps, written } = scripted({ "100": notDelivered(reason), "200": ACCEPTED });
       expect(await sessionInput(SID, "hi", deps)).toMatchObject({
         outcome: "not_delivered",
         reason,
@@ -170,19 +174,22 @@ describe("sessionInput asks one run at a time", () => {
     });
   }
 
-  test("silence stops at that run and is unconfirmed", async () => {
-    const { deps, written } = scripted(
-      { "100": "silent", "200": { outcome: "accepted" } },
-      { deadlineMs: 30 },
-    );
-    expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
-    expect(written.length).toBe(1);
-  });
+  for (const [name, behaviour] of [
+    ["silence", "silent"],
+    ["the module's own unconfirmed", { result: { outcome: "unconfirmed" } }],
+    ["an op that failed part-way", { error: "internal" }],
+  ] as const) {
+    test(`${name} stops at that run and is unconfirmed`, async () => {
+      const { deps, written } = scripted({ "100": behaviour, "200": ACCEPTED }, { deadlineMs: 30 });
+      expect(await sessionInput(SID, "hi", deps)).toMatchObject({ outcome: "unconfirmed" });
+      expect(written.length).toBe(1);
+    });
+  }
 
   test("every run unable: not_delivered with the last run's reason", async () => {
     const { deps } = scripted({
-      "100": { outcome: "not_delivered", reason: "no_terminal" },
-      "200": { outcome: "not_delivered", reason: "no_composer" },
+      "100": notDelivered("no_terminal"),
+      "200": notDelivered("no_composer"),
     });
     expect(await sessionInput(SID, "hi", deps)).toMatchObject({
       outcome: "not_delivered",
@@ -194,19 +201,17 @@ describe("sessionInput asks one run at a time", () => {
   test("the deadline is one budget for all tries", async () => {
     let clock = 0;
     const { deps, written } = scripted(
-      {
-        "100": { outcome: "not_delivered", reason: "no_terminal" },
-        "200": { outcome: "accepted" },
-      },
+      { "100": notDelivered("no_terminal"), "200": ACCEPTED },
       {
         now: () => clock,
         deadlineMs: 1_000,
         write: async (socket, line) => {
           written.push({ socket: path.basename(socket), line: JSON.parse(line) });
           clock += 1_000;
-          deps.pending.report(JSON.parse(line).id, SID, {
-            outcome: "not_delivered",
-            reason: "no_terminal",
+          deps.replies.take(SID, {
+            id: JSON.parse(line).id,
+            ok: true,
+            result: { outcome: "not_delivered", reason: "no_terminal" },
           });
           return "delivered";
         },
@@ -277,8 +282,13 @@ function fakeSidecar(
   return { lines: lines(), close: () => server.stop(true) };
 }
 
+/** A module's reply as `ccmsg sidecar reply` hands it to the daemon. */
+function sidecarReply(reply: Record<string, unknown>) {
+  return { op: "sidecar_reply", reply };
+}
+
 describe("session_input over the wire", () => {
-  test("the module's accepted report is the reply", async () => {
+  test("the module's accepted reply is the answer", async () => {
     const ctx = await startShortDaemon();
     const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
     try {
@@ -286,14 +296,12 @@ describe("session_input over the wire", () => {
       await user.hello({ role: "user" });
       const reply = user.request({ op: "session_input", session_id: SID, text: "hi there" });
       const line = JSON.parse((await sidecar.lines.next()).value as string);
-      expect(line).toEqual({ kind: "prompt.fill", id: line.id, text: "hi there" });
+      expect(line).toEqual({ v: 1, op: "prompt.send", id: line.id, args: { text: "hi there" } });
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
-      const taken = await module.request({
-        op: "session_input_result",
-        id: line.id,
-        outcome: "accepted",
-      });
+      const taken = await module.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
+      );
       expect(taken).toEqual({ ok: true });
       expect(await reply).toEqual({ ok: true, outcome: "accepted" });
       user.close();
@@ -304,7 +312,7 @@ describe("session_input over the wire", () => {
     }
   });
 
-  test("a not_delivered report comes back with its reason", async () => {
+  test("a not_delivered result comes back with its reason", async () => {
     const ctx = await startShortDaemon();
     const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
     try {
@@ -314,13 +322,42 @@ describe("session_input over the wire", () => {
       const line = JSON.parse((await sidecar.lines.next()).value as string);
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
-      await module.request({
-        op: "session_input_result",
-        id: line.id,
-        outcome: "not_delivered",
-        reason: "dialog",
-      });
+      await module.request(
+        sidecarReply({
+          id: line.id,
+          ok: true,
+          result: { outcome: "not_delivered", reason: "dialog" },
+        }),
+      );
       expect(await reply).toEqual({ ok: true, outcome: "not_delivered", reason: "dialog" });
+      user.close();
+      module.close();
+    } finally {
+      sidecar.close();
+      await stopTestDaemon(ctx);
+    }
+  });
+
+  // The only run's module is of a ccmsg without prompt.send: answered at once
+  // rather than at the deadline.
+  test("unknown_op from the only run is not_delivered no_module", async () => {
+    const ctx = await startShortDaemon();
+    const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
+    try {
+      const user = await connect(ctx.sock);
+      await user.hello({ role: "user" });
+      const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
+      const line = JSON.parse((await sidecar.lines.next()).value as string);
+      const module = await connect(ctx.sock);
+      await module.hello({ role: "session", sid: SID });
+      await module.request(
+        sidecarReply({
+          id: line.id,
+          ok: false,
+          error: { code: "unknown_op", message: "no op prompt.send" },
+        }),
+      );
+      expect(await reply).toEqual({ ok: true, outcome: "not_delivered", reason: "no_module" });
       user.close();
       module.close();
     } finally {
@@ -352,7 +389,7 @@ describe("session_input over the wire", () => {
     }
   });
 
-  test("refusals: role, arguments, and reports nobody waits for", async () => {
+  test("refusals: role, arguments, and replies nobody waits for", async () => {
     const ctx = await startShortDaemon();
     try {
       const session = await connect(ctx.sock);
@@ -366,25 +403,17 @@ describe("session_input over the wire", () => {
       expect(blank.error.code).toBe("invalid_args");
       const noSid = await user.request({ op: "session_input", text: "x" });
       expect(noSid.error.code).toBe("invalid_args");
-      const resultAsUser = await user.request({
-        op: "session_input_result",
-        id: "x",
-        outcome: "accepted",
-      });
-      expect(resultAsUser.error.code).toBe("bad_request");
+      const replyAsUser = await user.request(sidecarReply({ id: "x", ok: true, result: {} }));
+      expect(replyAsUser.error.code).toBe("bad_request");
 
-      const unknown = await session.request({
-        op: "session_input_result",
-        id: "never-sent",
-        outcome: "accepted",
-      });
+      const unknown = await session.request(
+        sidecarReply({ id: "never-sent", ok: true, result: {} }),
+      );
       expect(unknown.error.code).toBe("not_found");
-      const noReason = await session.request({
-        op: "session_input_result",
-        id: "never-sent",
-        outcome: "not_delivered",
-      });
-      expect(noReason.error.code).toBe("invalid_args");
+      const malformed = await session.request(sidecarReply({ id: "never-sent", ok: false }));
+      expect(malformed.error.code).toBe("invalid_args");
+      const noReply = await session.request({ op: "sidecar_reply" });
+      expect(noReply.error.code).toBe("invalid_args");
       user.close();
       session.close();
     } finally {
@@ -392,7 +421,7 @@ describe("session_input over the wire", () => {
     }
   });
 
-  test("a report from another session does not answer the request", async () => {
+  test("a reply from another session does not answer the request", async () => {
     const ctx = await startShortDaemon();
     const sidecar = fakeSidecar(ctx.stateDir, SID, process.pid);
     try {
@@ -405,11 +434,9 @@ describe("session_input over the wire", () => {
       const line = JSON.parse((await sidecar.lines.next()).value as string);
       const other = await connect(ctx.sock);
       await other.hello({ role: "session", sid: "99999999-2222-4333-8444-555555555555" });
-      const res = await other.request({
-        op: "session_input_result",
-        id: line.id,
-        outcome: "accepted",
-      });
+      const res = await other.request(
+        sidecarReply({ id: line.id, ok: true, result: { outcome: "accepted" } }),
+      );
       expect(res.error.code).toBe("not_found");
       user.close();
       other.close();

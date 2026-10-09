@@ -13,9 +13,9 @@ import {
   LLM_STATS_DAYS_MIN,
   VERSION,
   PROTOCOL_VERSION,
-  SESSION_INPUT_MODULE_REASONS,
   UNANNOUNCED_PROTOCOL_VERSION,
   isSessionIdShape,
+  parseSidecarReply,
   resolvePaths,
   type AgentInfo,
   type ArchiveEvent,
@@ -105,7 +105,8 @@ import { deriveRepoWs } from "./repo-derive.ts";
 import { canNativeSendMessage, normalizeConfigDir } from "./native-messaging.ts";
 import { type InjectMessage, PeerInjector, resolveLauncher } from "./peer-inject.ts";
 import { createMidIssuer, messageSendArgsError, sendDirect } from "./direct-send.ts";
-import { PendingInputs, productionInputDeps, sessionInput } from "./session-input.ts";
+import { productionInputDeps, sessionInput } from "./session-input.ts";
+import { SidecarReplies } from "./sidecar-call.ts";
 import {
   adoptTranscriptPath,
   createTranscriptTailStore,
@@ -316,9 +317,9 @@ export interface Daemon {
   launcher: string;
   /** Issues the mid of each direct message this daemon sends (direct-send.ts). */
   issueDirectMid: () => string;
-  /** session_input requests waiting for their hooks module's report
-   * (session-input.ts, DR-0035). */
-  pendingInputs: PendingInputs;
+  /** Requests to a session's hooks module waiting for its sidecar_reply
+   * (sidecar-call.ts, DR-0035 §3). */
+  sidecarReplies: SidecarReplies;
 }
 
 const nowIso = (): string => new Date().toISOString();
@@ -1534,7 +1535,7 @@ const IDENTITY_OPS = new Set([
   "session_kill",
   "session_rename",
   "session_input",
-  "session_input_result",
+  "sidecar_reply",
   "session_launcher_config",
   "leave",
   "invite",
@@ -2666,13 +2667,13 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
         sendErr(conn, ErrorCode.invalid_args, "session_input requires a non-empty text");
         return;
       }
-      // Slow reply: it waits for the session's hooks module to report, up to
+      // Slow reply: it waits for the session's hooks module to reply, up to
       // SESSION_INPUT_DEADLINE_MS. Other requests on this connection run on
       // meanwhile (DR-0029).
       const { tries, ...outcome } = await sessionInput(
         req.session_id,
         req.text,
-        productionInputDeps(daemon.paths.sidecars, daemon.pendingInputs),
+        productionInputDeps(daemon.paths.sidecars, daemon.sidecarReplies),
       );
       daemon.log.info(
         `session-input -> ${req.session_id}: ${outcome.outcome}` +
@@ -2683,42 +2684,24 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       return;
     }
 
-    case "session_input_result": {
-      // The reporter is the session the request went to: its hooks module
-      // runs `ccmsg sidecar report`, which hellos as that session.
+    case "sidecar_reply": {
+      // The replier is the session the request went to: its hooks module
+      // runs `ccmsg sidecar reply`, which hellos as that session.
       if (conn.identity?.role !== "session") {
-        sendErr(conn, ErrorCode.bad_request, "op 'session_input_result' requires session role");
+        sendErr(conn, ErrorCode.bad_request, "op 'sidecar_reply' requires session role");
         return;
       }
-      if (typeof req.id !== "string" || req.id === "") {
-        sendErr(conn, ErrorCode.invalid_args, "session_input_result requires a non-empty id");
+      const reply = parseSidecarReply(req.reply);
+      if ("invalid" in reply) {
+        sendErr(conn, ErrorCode.invalid_args, `sidecar_reply: ${reply.invalid}`);
         return;
       }
-      if (req.outcome !== "accepted" && req.outcome !== "not_delivered") {
+      if (!daemon.sidecarReplies.take(conn.identity.sid, reply)) {
         sendErr(
           conn,
-          ErrorCode.invalid_args,
-          "session_input_result outcome must be 'accepted' or 'not_delivered'",
+          ErrorCode.not_found,
+          `no request to this session's module is waiting under id ${reply.id}`,
         );
-        return;
-      }
-      if (
-        req.outcome === "not_delivered" &&
-        (req.reason === undefined || !SESSION_INPUT_MODULE_REASONS.includes(req.reason))
-      ) {
-        sendErr(
-          conn,
-          ErrorCode.invalid_args,
-          `session_input_result with not_delivered requires a reason (${SESSION_INPUT_MODULE_REASONS.join(", ")})`,
-        );
-        return;
-      }
-      const known = daemon.pendingInputs.report(req.id, conn.identity.sid, {
-        outcome: req.outcome,
-        ...(req.reason !== undefined ? { reason: req.reason } : {}),
-      });
-      if (!known) {
-        sendErr(conn, ErrorCode.not_found, `no session_input is waiting under id ${req.id}`);
         return;
       }
       send(conn, { ok: true });
@@ -3638,7 +3621,7 @@ export async function startDaemon(opts: StartOptions = {}): Promise<void> {
     peerInjector: new PeerInjector(),
     launcher: resolveLauncher(),
     issueDirectMid: createMidIssuer(),
-    pendingInputs: new PendingInputs(),
+    sidecarReplies: new SidecarReplies(),
   };
 
   daemon.webhooks = buildWebhookSources(daemon, log);
