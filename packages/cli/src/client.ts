@@ -27,6 +27,12 @@ export class Client {
   private nextRequestId = 0;
   /** In-flight `request` calls, keyed by the request_id each is waiting for. */
   private pendingReplies = new Map<string, (line: string | null) => void>();
+  /** Bytes written but not yet taken by the socket. Bun's `write` takes what
+   * the socket has room for and keeps nothing, so a request bigger than that
+   * (a long message body) is finished on `drain`, in order. */
+  private unsent: Uint8Array = new Uint8Array(0);
+  /** `close` was asked for while bytes were still unsent: end once they go. */
+  private closing = false;
 
   static async connect(sockPath: string): Promise<Client> {
     const client = new Client();
@@ -35,6 +41,9 @@ export class Client {
       socket: {
         data(_s, chunk) {
           client.onData(chunk);
+        },
+        drain() {
+          client.flush();
         },
         close() {
           client.onClose();
@@ -109,7 +118,26 @@ export class Client {
   }
 
   write(obj: unknown): void {
-    this.socket.write(`${JSON.stringify(obj)}\n`);
+    const bytes = new TextEncoder().encode(`${JSON.stringify(obj)}\n`);
+    // Behind bytes still waiting, so lines never interleave.
+    this.unsent = this.unsent.length === 0 ? bytes : Buffer.concat([this.unsent, bytes]);
+    this.flush();
+  }
+
+  /** Hand the socket as much of the unsent bytes as it takes now; the rest
+   * waits for the next `drain`. */
+  private flush(): void {
+    if (this.unsent.length > 0) {
+      let taken: number;
+      try {
+        taken = this.socket.write(this.unsent);
+      } catch {
+        taken = -1;
+      }
+      // -1: the socket is closed or closing; onClose settles whoever waits.
+      this.unsent = taken < 0 ? new Uint8Array(0) : this.unsent.subarray(taken);
+    }
+    if (this.closing && this.unsent.length === 0) this.end();
   }
 
   /** Send one request and wait for the reply carrying its `request_id`. The
@@ -129,7 +157,13 @@ export class Client {
     return JSON.parse(line) as T;
   }
 
+  /** End the connection once everything written has gone out. */
   close(): void {
+    this.closing = true;
+    if (this.unsent.length === 0) this.end();
+  }
+
+  private end(): void {
     try {
       this.socket.end();
     } catch {

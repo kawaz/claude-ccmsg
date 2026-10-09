@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DIRECT_SEND_UNCONFIRMED_EXIT,
   PROTOCOL_VERSION,
   classifyCcmsgSendResult,
   directDeliveryReplyLine,
@@ -354,6 +355,103 @@ describe("the reply line is one shell command whatever its words hold", () => {
       }
       const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
       expect(status.running).toBe(false);
+    },
+    T,
+  );
+});
+
+/** `count` words of `size` bytes each, spread over the alphabet so a lost or
+ * reordered piece shows. Several words rather than one: Linux bounds a single
+ * argument at 128 KiB. */
+function bodyWords(count: number, size: number): string[] {
+  return Array.from({ length: count }, (_, i) => String.fromCharCode(97 + (i % 26)).repeat(size));
+}
+
+/** The CLI with only the environment it needs: a 1 MB body leaves no room in
+ * the system's argument and environment budget for the whole of process.env. */
+async function runCliLean(args: string[], env: Record<string, string>): Promise<CliResult> {
+  const proc = Bun.spawn([process.execPath, CLI, ...args], {
+    env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = await new Response(proc.stdout).text();
+  const err = await new Response(proc.stderr).text();
+  return { out, err, code: await proc.exited };
+}
+
+describe("message bodies", () => {
+  // The request is larger than the socket takes at once: the CLI finishes
+  // writing it as the daemon reads, rather than leaving the daemon waiting
+  // for the rest of the line.
+  test(
+    "100 KB and 1 MB bodies arrive whole in the recipient's envelope",
+    async () => {
+      const { env, sock } = makeEnv();
+      expect((await runCli(["daemon", "start"], env)).code).toBe(0);
+      const hb = harness(B);
+      await hold(sock, B, hb.configDir);
+      for (const words of [bodyWords(4, 25_000), bodyWords(10, 99_000)]) {
+        const res = await runCliLean(["--sid", A, "post", B, ...words], env);
+        expect({ code: res.code, err: res.err }).toEqual({ code: 0, err: "" });
+        const body = parseEnvelope(await hb.nextContent()).body;
+        expect(body.slice(0, body.lastIndexOf("\n\nReply with: "))).toBe(words.join(" "));
+      }
+    },
+    T,
+  );
+
+  // Agents write a reply line's <text> without quotes: every word is the
+  // body, as the timeline and the dump read the same command.
+  test(
+    "an unquoted body of several words arrives whole, as the timeline reads it",
+    async () => {
+      const { env, sock } = makeEnv();
+      expect((await runCli(["daemon", "start"], env)).code).toBe(0);
+      const ha = harness(A);
+      const hb = harness(B);
+      await hold(sock, A, ha.configDir);
+      await hold(sock, B, hb.configDir);
+      // Each CLI runs inside its session, under that session's config dir.
+      const asA = { ...env, CLAUDE_CONFIG_DIR: ha.configDir };
+      const asB = { ...env, CLAUDE_CONFIG_DIR: hb.configDir };
+      const posted = await runCli(["--sid", A, "post", B, "T5", "質問", "です"], asA);
+      expect(posted.code).toBe(0);
+      const received = parseEnvelope(await hb.nextContent());
+      expect(received.body.startsWith("T5 質問 です\n\nReply with: ")).toBe(true);
+      expect(parseCcmsgSendCommand(`ccmsg post ${B} T5 質問 です`)?.text).toBe("T5 質問 です");
+
+      const mid = received.attrs["ccmsg-mid"]!;
+      const replied = await runCli(["--sid", B, "reply", mid, "--to", A, "T6", "受領"], asB);
+      expect({ code: replied.code, err: replied.err }).toEqual({ code: 0, err: "" });
+      expect(parseEnvelope(await ha.nextContent()).body.startsWith("T6 受領\n\nReply with: ")).toBe(
+        true,
+      );
+      expect(parseCcmsgSendCommand(`ccmsg reply ${mid} --to ${A} T6 受領`)?.text).toBe("T6 受領");
+    },
+    T,
+  );
+
+  // The recipient's socket stopped reading: the daemon's write goes in
+  // part-way and runs out of time. The CLI says it cannot tell, with its own
+  // exit status, and the timeline and dump read that as unconfirmed.
+  test(
+    "a write that may or may not have arrived exits DIRECT_SEND_UNCONFIRMED_EXIT",
+    async () => {
+      const { env, sock } = makeEnv();
+      expect((await runCli(["daemon", "start"], env)).code).toBe(0);
+      const hb = fakeHarness(B, { stall: true });
+      cleanups.push(() => hb.dispose());
+      await hb.listening;
+      await hold(sock, B, hb.configDir);
+      const res = await runCliLean(["--sid", A, "post", B, ...bodyWords(8, 100_000)], env);
+      expect(res.code).toBe(DIRECT_SEND_UNCONFIRMED_EXIT);
+      expect(res.out).toBe("");
+      expect(res.err).toContain("届いたか確かめられなかった (unconfirmed)");
+      expect(res.err).toContain("二重に届くかもしれない");
+      expect(classifyCcmsgSendResult(`Exit code ${res.code}\n${res.err}`, true)).toMatchObject({
+        status: "unconfirmed",
+      });
     },
     T,
   );

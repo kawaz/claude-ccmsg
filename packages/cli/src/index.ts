@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   DIRECT_DELIVERY_USER_SENDER,
+  DIRECT_SEND_UNCONFIRMED_EXIT,
   VERSION,
   directAddressSid,
   isDirectMid,
@@ -101,6 +102,13 @@ function parseArgs(args: string[]): Parsed {
     }
   }
   return { positionals, opts };
+}
+
+/** The message body of `post` / `reply`: the positional arguments from
+ * `from` on, joined by one space, or undefined when there are none. */
+function bodyOf(args: readonly string[], from: number): string | undefined {
+  const words = args.slice(from);
+  return words.length === 0 ? undefined : words.join(" ");
 }
 
 function str(opts: Record<string, string | boolean>, key: string): string | undefined {
@@ -382,7 +390,8 @@ const NOT_DELIVERED: Record<MessageSendReason, (to: string) => string> = {
 /** One message_send. A delivered message prints `{"delivered":true,"mid":…}`
  * on stdout. Anything else is a line of text on stderr and a non-zero exit —
  * never JSON carrying `ok`, which the timeline and dump read as the room CLI's
- * answer and leave out (classifyCcmsgSendResult). */
+ * answer and leave out (classifyCcmsgSendResult). One that may or may not have
+ * arrived exits DIRECT_SEND_UNCONFIRMED_EXIT, which they read as such. */
 async function runDirectSend(
   identity: Identity,
   req: Omit<MessageSendRequest, "op">,
@@ -400,6 +409,12 @@ async function runDirectSend(
   if (res.outcome === "delivered") {
     process.stdout.write(`${JSON.stringify({ delivered: true, mid: res.mid })}\n`);
     process.exit(0);
+  }
+  if (res.outcome === "unconfirmed") {
+    process.stderr.write(
+      `ccmsg: 届いたか確かめられなかった (unconfirmed)。宛先のセッションの peer socket への書き込みが途中で時間切れになり、届いたかどうか分からない。届いていれば相手には mid ${res.mid} として見えている。送り直すと二重に届くかもしれないので、まず相手の返事を待ち、送り直す時は重複しうることを本文に書く\n`,
+    );
+    process.exit(DIRECT_SEND_UNCONFIRMED_EXIT);
   }
   process.stderr.write(
     `ccmsg: 届かなかった (${res.reason})。メッセージは daemon に残らない。${NOT_DELIVERED[res.reason](req.to)}\n`,
@@ -1121,9 +1136,13 @@ async function main(): Promise<void> {
     case "post": {
       const usage = "ccmsg post <sid> <text>  |  ccmsg post <room> <msg> [--to <ids>]";
       const target = requireArg(args[0], "sid|room", usage);
+      // The body is every word after the target, joined by one space: a body
+      // written without quotes arrives whole, as the timeline shows it
+      // (parseCcmsgSendCommand reads it the same way).
+      const body = bodyOf(args, 1);
       if (!ROOM_ID_RE.test(target)) {
         const to = directRecipient(target);
-        const text = requireArg(args[1], "text", usage);
+        const text = requireArg(body, "text", usage);
         if (opts.to !== undefined) {
           throw new Error(
             "--to は room への post の配信先の指定で、セッションへの直送では使わない",
@@ -1132,7 +1151,7 @@ async function main(): Promise<void> {
         await runDirectSend(identity, { to, text });
       }
       const room = target;
-      const msg = requireArg(args[1], "msg", usage);
+      const msg = requireArg(body, "msg", usage);
       const to = parseIdList(str(opts, "to"));
       await runOnce(identity, { op: "post", room, msg, ...(to ? { to } : {}) });
       return;
@@ -1143,7 +1162,7 @@ async function main(): Promise<void> {
       const usage =
         "ccmsg reply <mid> --to <sid> <text>  |  ccmsg reply <rNmN> <msg>   (e.g. ccmsg reply r17m16 'answer')";
       const ref = requireArg(args[0], "mid", usage);
-      const msg = requireArg(args[1], "msg", usage);
+      const msg = requireArg(bodyOf(args, 1), "msg", usage);
       if (isDirectMid(ref)) {
         const address = str(opts, "to");
         if (address === undefined) {
