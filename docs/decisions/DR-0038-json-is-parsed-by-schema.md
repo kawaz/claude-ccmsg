@@ -59,8 +59,9 @@ kawaz 2026-10-09: 「validator は外部データを JSON.parse したら何も�
 
 - `JSON.parse` の出力は、何も加工せずにそのままスキーマに渡す。スキーマに通す前に形を変えない (entries に分解する、object を組み立て直す等をしない)
 - スキーマの出力の型は不変にする (`Readonly` / `ReadonlyArray`、valibot の `v.readonly()`)。受け取った側は値を書き換えない
-- 名前で引く辞書を読む側は、own key だけを見る (`Object.hasOwn`、または使う所で Map を作る)。ふつうの object を `[]` で引いて、宣言の無い名前で継承したメンバーを拾わない
-- 辞書のキーになる名前を設定で宣言させる時は、`__proto__` / `constructor` / `prototype` を名前の規則で禁じる (valibot の object / record はこれらのキーを出力から落とすので、宣言できなければ落ちても何も変わらない)。キーを落とさないための特別なスキーマは作らない
+- 値を名前で引かない (`params[name]` のような、外から来た object を任意の名前で引く書き方をしない)。kawaz 2026-10-09:「そもそも params[name] なんてものが存在することがおかしい。params を validator にかけて型付きオブジェクトにして扱うべき」
+- どの名前が来うるかが設定で決まる値 (例: session launcher のテンプレートが宣言する params) は、その宣言からスキーマを組み立てる (宣言された名前ごとの field を持つ `v.strictObject`。既定値は `v.optional(schema, default)`)。依頼はそのスキーマに通し、出力の型付きの値をそのまま使う。宣言に無い名前は strict で失敗になる
+- 設定で宣言させる名前は、`__proto__` / `constructor` / `prototype` を名前の規則で禁じる (valibot の object 系のスキーマはこれらのキーを扱わないので、宣言できないようにしておく)。キーを落とさないための特別なスキーマは作らない
 - 型に合わない値を別の値に読み替えない (`v.fallback` で不正な値を `null` 等にしない)。型に合わなければ失敗として返す。値が無い時の既定値が要るなら、スキーマで定義する (`v.optional(schema, default)`)
 
 ## Alternatives Considered
