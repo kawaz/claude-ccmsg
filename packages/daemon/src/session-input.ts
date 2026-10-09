@@ -6,13 +6,13 @@
 // module fills its own composer and presses Enter on its own terminal. The
 // request and its reply go through sidecar-call.ts; what this file owns is
 // which run is asked, what a reply means for the person, and the deadline.
-import {
-  type PromptSendResult,
-  SESSION_INPUT_MODULE_REASONS,
-  type SessionInputModuleReason,
-  type SessionInputReason,
-  type SidecarErrorCode,
-  type SidecarReply,
+import type {
+  Parsed,
+  PromptSendResult,
+  SessionInputModuleReason,
+  SessionInputReason,
+  SidecarErrorCode,
+  SidecarReplyOf,
 } from "@ccmsg/protocol";
 import {
   callSidecar,
@@ -49,26 +49,17 @@ export interface SessionInputDeps extends SidecarDeps {
 /** A `prompt.send` reply as the person's outcome, or `cannot_run` when the
  * module did not run the op at all (another ccmsg version on either side):
  * nothing reached the composer then, so another run may be asked. An op that
- * failed part-way (`internal`) or a result of no known shape says nothing
- * about the composer, and is unconfirmed. */
+ * failed part-way (`internal`) or a result not of prompt.send's shape says
+ * nothing about the composer, and is unconfirmed. */
 export function readPromptSendReply(
-  reply: SidecarReply,
+  reply: Parsed<SidecarReplyOf<"prompt.send">>,
 ): PromptSendResult | { outcome: "cannot_run"; code: SidecarErrorCode } {
-  if (!reply.ok) {
-    return reply.error.code === "internal"
-      ? { outcome: "unconfirmed" }
-      : { outcome: "cannot_run", code: reply.error.code };
-  }
-  const result = reply.result as Record<string, unknown> | null;
-  if (typeof result !== "object" || result === null) return { outcome: "unconfirmed" };
-  if (result.outcome === "accepted") return { outcome: "accepted" };
-  if (
-    result.outcome === "not_delivered" &&
-    (SESSION_INPUT_MODULE_REASONS as readonly unknown[]).includes(result.reason)
-  ) {
-    return { outcome: "not_delivered", reason: result.reason as SessionInputModuleReason };
-  }
-  return { outcome: "unconfirmed" };
+  if (!reply.ok) return { outcome: "unconfirmed" };
+  const answer = reply.value;
+  if (answer.ok) return answer.result;
+  return answer.error.code === "internal"
+    ? { outcome: "unconfirmed" }
+    : { outcome: "cannot_run", code: answer.error.code };
 }
 
 /** Reasons that say the run cannot take a person's input at all (or, for

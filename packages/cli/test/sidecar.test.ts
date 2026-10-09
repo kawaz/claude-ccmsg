@@ -325,11 +325,11 @@ describe("ccmsg sidecar reply", () => {
   // Refused before a daemon is looked for: the state dir has none.
   for (const [name, stdin, says] of [
     ["input that is not JSON", "accepted", "must be one JSON reply"],
-    ["a reply without an id", '{"ok":true,"result":{}}', "needs the request's id"],
+    ["a reply without an id", '{"ok":true,"result":{}}', "id: Invalid key"],
     [
       "an error code nobody defined",
       '{"id":"x","ok":false,"error":{"code":"bogus","message":""}}',
-      "code one of",
+      'error.code: Invalid type: Expected ("unknown_op"',
     ],
   ] as const) {
     test(`${name} is refused before reaching the daemon`, async () => {

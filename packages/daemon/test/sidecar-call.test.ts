@@ -2,6 +2,7 @@
 // no op in particular: the line written, the reply matched to its request.
 import { describe, expect, test } from "bun:test";
 import * as path from "node:path";
+import { parseJsonWith, type SidecarRequest, SidecarRequestSchema } from "@ccmsg/protocol";
 import {
   callSidecar,
   liveSidecars,
@@ -95,6 +96,13 @@ describe("liveSidecars", () => {
   });
 });
 
+/** The request in a line the daemon wrote. */
+function requestIn(line: string): SidecarRequest {
+  const read = parseJsonWith(SidecarRequestSchema, line);
+  if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}`);
+  return read.value;
+}
+
 describe("callSidecar", () => {
   // Any op goes out the same way; `describe` stands for one the daemon has no
   // dedicated code for.
@@ -104,7 +112,7 @@ describe("callSidecar", () => {
       write: async (socket, line) => {
         lines.push({ socket: path.basename(socket), line });
         d.replies.take(SID, {
-          id: JSON.parse(line).id,
+          id: requestIn(line).id,
           ok: true,
           result: { v: [1], ops: ["describe", "prompt.send"] },
         });
@@ -121,7 +129,38 @@ describe("callSidecar", () => {
     expect(call).toEqual({
       id: "id1",
       write: "written",
-      reply: { id: "id1", ok: true, result: { v: [1], ops: ["describe", "prompt.send"] } },
+      reply: {
+        ok: true,
+        value: { id: "id1", ok: true, result: { v: [1], ops: ["describe", "prompt.send"] } },
+      },
+    });
+  });
+
+  // The reply names its request, not its op: the result is read by the op's
+  // schema here, where the request was made.
+  test("a result not of the op's shape is a failure, not a reply", async () => {
+    const d: SidecarDeps = deps({
+      write: async (_socket, line) => {
+        d.replies.take(SID, { id: requestIn(line).id, ok: true, result: { outcome: "accepted" } });
+        return "written";
+      },
+    });
+    const call = await callSidecar("/s", SID, "describe", {}, 1_000, d);
+    expect(call).toMatchObject({ id: "id1", write: "written", reply: { ok: false } });
+  });
+
+  test("a failed reply is read whatever the op", async () => {
+    const error = { code: "unknown_op", message: "no op describe" } as const;
+    const d: SidecarDeps = deps({
+      write: async (_socket, line) => {
+        d.replies.take(SID, { id: requestIn(line).id, ok: false, error });
+        return "written";
+      },
+    });
+    expect(await callSidecar("/s", SID, "describe", {}, 1_000, d)).toEqual({
+      id: "id1",
+      write: "written",
+      reply: { ok: true, value: { id: "id1", ok: false, error } },
     });
   });
 
@@ -142,16 +181,17 @@ describe("callSidecar", () => {
   // The line may have reached the module after all: its reply is still
   // waited for, and settles the call.
   test("a write that may have gone in still takes the module's reply", async () => {
+    const result = { v: [1], ops: ["describe"] };
     const d: SidecarDeps = deps({
       write: async (_socket, line) => {
-        d.replies.take(SID, { id: JSON.parse(line).id, ok: true, result: 1 });
+        d.replies.take(SID, { id: requestIn(line).id, ok: true, result });
         return "uncertain";
       },
     });
     expect(await callSidecar("/s", SID, "describe", {}, 1_000, d)).toEqual({
       id: "id1",
       write: "uncertain",
-      reply: { id: "id1", ok: true, result: 1 },
+      reply: { ok: true, value: { id: "id1", ok: true, result } },
     });
   });
 });

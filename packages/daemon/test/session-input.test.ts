@@ -5,9 +5,15 @@ import { describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+  type Parsed,
+  parseJsonWith,
+  type PromptSendResult,
   resolveSidecarDir,
   type SidecarErrorCode,
   type SidecarReply,
+  type SidecarReplyOf,
+  type SidecarRequest,
+  SidecarRequestSchema,
   sidecarSocketName,
 } from "@ccmsg/protocol";
 import * as net from "node:net";
@@ -29,12 +35,21 @@ import {
 
 const SID = "11111111-2222-4333-8444-555555555555";
 
+/** A line the daemon wrote to a sidecar, read as the request it must be. */
+function requestIn(line: string): SidecarRequest {
+  const read = parseJsonWith(SidecarRequestSchema, line);
+  if (!read.ok) throw new Error(`not a sidecar request: ${read.failure.summary}`);
+  return read.value;
+}
+
 describe("readPromptSendReply", () => {
-  const ok = (result: unknown): SidecarReply => ({ id: "i", ok: true, result });
-  const failed = (code: SidecarErrorCode): SidecarReply => ({
-    id: "i",
-    ok: false,
-    error: { code, message: "m" },
+  const ok = (result: PromptSendResult): Parsed<SidecarReplyOf<"prompt.send">> => ({
+    ok: true,
+    value: { id: "i", ok: true, result },
+  });
+  const failed = (code: SidecarErrorCode): Parsed<SidecarReplyOf<"prompt.send">> => ({
+    ok: true,
+    value: { id: "i", ok: false, error: { code, message: "m" } },
   });
 
   test("the result of a prompt.send that ran is the outcome", () => {
@@ -58,31 +73,44 @@ describe("readPromptSendReply", () => {
     });
   }
 
-  // What the composer holds is unknown after these.
-  test("an op that failed part-way, or a result of no known shape, is unconfirmed", () => {
+  // What the composer holds is unknown after these. Which results are not of
+  // prompt.send's shape is the schema's (sessionInput below, and the
+  // protocol's own tests).
+  test("an op that failed part-way, or a result not of prompt.send's shape, is unconfirmed", () => {
     expect(readPromptSendReply(failed("internal"))).toEqual({ outcome: "unconfirmed" });
-    expect(readPromptSendReply(ok(null))).toEqual({ outcome: "unconfirmed" });
-    expect(readPromptSendReply(ok({ outcome: "delivered" }))).toEqual({ outcome: "unconfirmed" });
-    expect(readPromptSendReply(ok({ outcome: "not_delivered", reason: "no_module" }))).toEqual({
-      outcome: "unconfirmed",
-    });
+    expect(
+      readPromptSendReply({ ok: false, failure: { issues: [], summary: "not a result" } }),
+    ).toEqual({ outcome: "unconfirmed" });
   });
 });
 
 /** What one run does with the line written to it: not take it, take part of
- * it and stay silent, stay silent, reply with a result of the op, or reply
- * that the op could not run. */
+ * it and stay silent, stay silent, reply with a result (of any shape: the
+ * module may be of another ccmsg), or reply that the op could not run. */
 type RunBehaviour =
   | "unwritten"
   | "uncertain"
   | "silent"
-  | { result: unknown }
+  | { result: SidecarResultInTransit }
   | { error: SidecarErrorCode };
 
-function replyFor(id: string, behaviour: { result: unknown } | { error: SidecarErrorCode }) {
+/** A result as a reply carries it, before the op's schema reads it. */
+type SidecarResultInTransit = Extract<SidecarReply, { ok: true }>["result"];
+
+function replyFor(
+  id: string,
+  behaviour: { result: SidecarResultInTransit } | { error: SidecarErrorCode },
+): SidecarReply {
   return "result" in behaviour
-    ? ({ id, ok: true, result: behaviour.result } as const)
-    : ({ id, ok: false, error: { code: behaviour.error, message: "m" } } as const);
+    ? { id, ok: true, result: behaviour.result }
+    : { id, ok: false, error: { code: behaviour.error, message: "m" } };
+}
+
+/** The pid a sidecar socket of SID is named after. */
+function pidOf(socket: string): string {
+  const pid = /\.(\d+)\.sock$/.exec(socket)?.[1];
+  if (pid === undefined) throw new Error(`not a sidecar socket: ${socket}`);
+  return pid;
 }
 
 /** Deps over a fake sidecar directory whose runs behave as `runs` says, in
@@ -90,10 +118,10 @@ function replyFor(id: string, behaviour: { result: unknown } | { error: SidecarE
 function scripted(
   runs: Record<string, RunBehaviour>,
   extra: Partial<SessionInputDeps> = {},
-): { deps: SessionInputDeps; written: { socket: string; line: Record<string, unknown> }[] } {
+): { deps: SessionInputDeps; written: { socket: string; line: SidecarRequest }[] } {
   const replies = new SidecarReplies();
   let n = 0;
-  const written: { socket: string; line: Record<string, unknown> }[] = [];
+  const written: { socket: string; line: SidecarRequest }[] = [];
   const deps: SessionInputDeps = {
     sidecarDir: "/sidecars",
     replies,
@@ -101,13 +129,13 @@ function scripted(
     listDir: async () => Object.keys(runs).map((pid) => `${SID}.${pid}.sock`),
     isAlive: () => true,
     write: async (socket, line) => {
-      const pid = /\.(\d+)\.sock$/.exec(socket)![1]!;
-      const behaviour = runs[pid]!;
+      const behaviour = runs[pidOf(socket)];
+      if (behaviour === undefined) throw new Error(`no run behind ${socket}`);
       if (behaviour === "unwritten") return "not_written";
-      const parsed = JSON.parse(line) as Record<string, unknown>;
-      written.push({ socket: path.basename(socket), line: parsed });
+      const request = requestIn(line);
+      written.push({ socket: path.basename(socket), line: request });
       if (behaviour === "uncertain") return "uncertain";
-      if (behaviour !== "silent") replies.take(SID, replyFor(parsed.id as string, behaviour));
+      if (behaviour !== "silent") replies.take(SID, replyFor(request.id, behaviour));
       return "written";
     },
     now: Date.now,
@@ -228,6 +256,14 @@ describe("sessionInput asks one run at a time", () => {
     ["a write that stopped part-way, with no reply", "uncertain"],
     ["the module's own unconfirmed", { result: { outcome: "unconfirmed" } }],
     ["an op that failed part-way", { error: "internal" }],
+    // A module of another ccmsg: what its result says about the composer is
+    // not known.
+    ["a result of no shape", { result: null }],
+    ["an outcome prompt.send does not have", { result: { outcome: "delivered" } }],
+    [
+      "a reason the module does not give",
+      { result: { outcome: "not_delivered", reason: "no_module" } },
+    ],
   ] as const) {
     test(`${name} stops at that run and is unconfirmed`, async () => {
       const { deps, written } = scripted({ "100": behaviour, "200": ACCEPTED }, { deadlineMs: 30 });
@@ -256,10 +292,11 @@ describe("sessionInput asks one run at a time", () => {
         now: () => clock,
         deadlineMs: 1_000,
         write: async (socket, line) => {
-          written.push({ socket: path.basename(socket), line: JSON.parse(line) });
+          const request = requestIn(line);
+          written.push({ socket: path.basename(socket), line: request });
           clock += 1_000;
           deps.replies.take(SID, {
-            id: JSON.parse(line).id,
+            id: request.id,
             ok: true,
             result: { outcome: "not_delivered", reason: "no_terminal" },
           });
@@ -341,7 +378,7 @@ function fakeSidecar(
   stateDir: string,
   sid: string,
   pid: number,
-): { lines: AsyncGenerator<string>; close(): void } {
+): { lines: AsyncGenerator<string, void>; close(): void } {
   const dir = resolveSidecarDir(stateDir);
   expect(dir.startsWith(stateDir)).toBe(true);
   fs.mkdirSync(dir, { recursive: true });
@@ -358,7 +395,7 @@ function fakeSidecar(
       },
     },
   });
-  async function* lines(): AsyncGenerator<string> {
+  async function* lines(): AsyncGenerator<string, void> {
     for (;;) {
       const next = queue.shift();
       if (next !== undefined) {
@@ -371,8 +408,17 @@ function fakeSidecar(
   return { lines: lines(), close: () => server.stop(true) };
 }
 
+/** The next request the daemon wrote to `sidecar`. */
+async function nextRequest(sidecar: {
+  lines: AsyncGenerator<string, void>;
+}): Promise<SidecarRequest> {
+  const next = await sidecar.lines.next();
+  if (next.done === true) throw new Error("the sidecar closed");
+  return requestIn(next.value);
+}
+
 /** A module's reply as `ccmsg sidecar reply` hands it to the daemon. */
-function sidecarReply(reply: Record<string, unknown>) {
+function sidecarReply(reply: object) {
   return { op: "sidecar_reply", reply };
 }
 
@@ -384,7 +430,7 @@ describe("session_input over the wire", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const reply = user.request({ op: "session_input", session_id: SID, text: "hi there" });
-      const line = JSON.parse((await sidecar.lines.next()).value as string);
+      const line = await nextRequest(sidecar);
       expect(line).toEqual({ v: 1, op: "prompt.send", id: line.id, args: { text: "hi there" } });
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
@@ -408,7 +454,7 @@ describe("session_input over the wire", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
-      const line = JSON.parse((await sidecar.lines.next()).value as string);
+      const line = await nextRequest(sidecar);
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
       await module.request(
@@ -436,7 +482,7 @@ describe("session_input over the wire", () => {
       const user = await connect(ctx.sock);
       await user.hello({ role: "user" });
       const reply = user.request({ op: "session_input", session_id: SID, text: "hi" });
-      const line = JSON.parse((await sidecar.lines.next()).value as string);
+      const line = await nextRequest(sidecar);
       const module = await connect(ctx.sock);
       await module.hello({ role: "session", sid: SID });
       await module.request(
@@ -506,7 +552,7 @@ describe("session_input over the wire", () => {
       // A refused reply leaves a line in daemon.log, with its id when it has one.
       const log = fs.readFileSync(path.join(ctx.stateDir, "daemon.log"), "utf8");
       expect(log).toContain(`sidecar_reply never-sent from ${SID} refused: no request is waiting`);
-      expect(log).toContain(`sidecar_reply from ${SID} refused: a failed reply carries error`);
+      expect(log).toContain(`sidecar_reply from ${SID} refused: error: Invalid key`);
       user.close();
       session.close();
     } finally {
@@ -524,7 +570,7 @@ describe("session_input over the wire", () => {
       const reply = user
         .request({ op: "session_input", session_id: SID, text: "hi" })
         .catch(() => undefined);
-      const line = JSON.parse((await sidecar.lines.next()).value as string);
+      const line = await nextRequest(sidecar);
       const other = await connect(ctx.sock);
       await other.hello({ role: "session", sid: "99999999-2222-4333-8444-555555555555" });
       const res = await other.request(

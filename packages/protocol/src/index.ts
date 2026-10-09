@@ -17,6 +17,9 @@ export * from "./config-migration.ts";
 export * from "./search-query.ts";
 export * from "./file-search-query.ts";
 export * from "./ccmsg-direct-transcript.ts";
+export * from "./parse.ts";
+export * from "./sidecar.ts";
+import type { SessionInputModuleReason, SidecarReply } from "./sidecar.ts";
 
 /** Reserved id for the User (kawaz), admin role. Implicit member of every room. */
 export const ADMIN_ID = "u1";
@@ -1369,162 +1372,18 @@ export interface SessionInputRequest {
 /** Why a session_input did not reach the session (DR-0035 §5). Nothing is
  * sent by another route in any of these cases.
  *
- * - `dialog`: a dialog holds the keys, so the composer refused the text
- * - `no_composer`: the session draws no composer (headless)
- * - `refused`: another plugin's hook kept the text out of the composer
- * - `no_terminal`: the session was not started under hyoui, so there is no
- *   terminal to send Enter to
- * - `not_submitted`: Enter did not submit the text; the composer was put back
- *   to what the person had typed
- * - `enter_failed`: sending Enter to the terminal failed, and the text never
- *   left the composer; the composer was put back as for `not_submitted`
- * - `session_changed`: the run moved to another session id (/clear, /resume)
- *   before Enter, so the text was not put in
- * - `no_module`: no run of the session has a hooks module that took the request
- *   (the plugin not loaded or of a ccmsg that does not know `prompt.send`, a
- *   session without a composer, the session gone)
+ * The module's own reasons are SessionInputModuleReason (sidecar.ts). The
+ * daemon adds `no_module`: no run of the session has a hooks module that took
+ * the request (the plugin not loaded or of a ccmsg that does not know
+ * `prompt.send`, a session without a composer, the session gone).
  *
  * With several runs, `no_composer` / `no_terminal` / `session_changed` are
  * the last run's answer after every run gave one of the three. */
-export type SessionInputReason =
-  | "dialog"
-  | "no_composer"
-  | "refused"
-  | "no_terminal"
-  | "not_submitted"
-  | "enter_failed"
-  | "session_changed"
-  | "no_module";
-
-/** The reasons a session's hooks module gives in a prompt.send result;
- * `no_module` is the daemon's own conclusion when no run's module took the
- * request. */
-export type SessionInputModuleReason = Exclude<SessionInputReason, "no_module">;
-
-export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] = [
-  "dialog",
-  "no_composer",
-  "refused",
-  "no_terminal",
-  "not_submitted",
-  "enter_failed",
-  "session_changed",
-];
+export type SessionInputReason = SessionInputModuleReason | "no_module";
 
 // --- the sidecar's requests and replies (DR-0035 §3) -----------------------
 //
-// The daemon writes one SidecarRequest per line to a session run's sidecar
-// socket; the sidecar copies the line to the session's hooks module unread.
-// The module answers every request it can name (one with an `id`) with one
-// SidecarReply, which `ccmsg sidecar reply` carries to the daemon as a
-// SidecarReplyRequest. A request names an operation (`op`), so what the
-// module can be asked grows by adding ops, not by changing the line.
-
-/** The version of the request line. A module answers a line of another
- * version with `unsupported_version` rather than guessing at it. */
-export const SIDECAR_REQUEST_VERSION = 1;
-
-/** One request to a session's hooks module. `id` is unique per request and is
- * what the reply names; `args` is the op's own object. */
-export interface SidecarRequest<Op extends string = string, Args = Record<string, unknown>> {
-  v: typeof SIDECAR_REQUEST_VERSION;
-  op: Op;
-  id: string;
-  args: Args;
-}
-
-/** Why a module could not run an op at all, as opposed to an op that ran and
- * reports how it went inside its `result`.
- *
- * - `unknown_op`: the module has no such op (another ccmsg version)
- * - `unsupported_version`: the line's `v` is not one the module reads
- * - `invalid_args`: the op's `args` are not what it takes
- * - `internal`: the op started and failed; what it changed is unknown */
-export type SidecarErrorCode = "unknown_op" | "unsupported_version" | "invalid_args" | "internal";
-
-export interface SidecarError {
-  code: SidecarErrorCode;
-  message: string;
-}
-
-/** The module's answer to one SidecarRequest. */
-export type SidecarReply =
-  | { id: string; ok: true; result: unknown }
-  | { id: string; ok: false; error: SidecarError };
-
-const SIDECAR_ERROR_CODES: readonly string[] = [
-  "unknown_op",
-  "unsupported_version",
-  "invalid_args",
-  "internal",
-] satisfies readonly SidecarErrorCode[];
-
-/** `value` as a SidecarReply, or why it is not one. Shared by the CLI that
- * carries a reply and the daemon that takes it, so both refuse the same
- * shapes. What a `result` holds is the op's business, checked where the op's
- * caller reads it. */
-export function parseSidecarReply(value: unknown): SidecarReply | { invalid: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { invalid: "a reply is a JSON object" };
-  }
-  const reply = value as Record<string, unknown>;
-  if (typeof reply.id !== "string" || reply.id === "") {
-    return { invalid: "a reply needs the request's id" };
-  }
-  if (reply.ok === true) {
-    if (!("result" in reply)) return { invalid: "an ok reply carries a result" };
-    return { id: reply.id, ok: true, result: reply.result };
-  }
-  if (reply.ok === false) {
-    const error = reply.error as Record<string, unknown> | null | undefined;
-    if (
-      typeof error !== "object" ||
-      error === null ||
-      typeof error.code !== "string" ||
-      !SIDECAR_ERROR_CODES.includes(error.code) ||
-      typeof error.message !== "string"
-    ) {
-      return {
-        invalid: `a failed reply carries error { code, message }, code one of ${SIDECAR_ERROR_CODES.join(", ")}`,
-      };
-    }
-    return {
-      id: reply.id,
-      ok: false,
-      error: { code: error.code as SidecarErrorCode, message: error.message },
-    };
-  }
-  return { invalid: "a reply's ok is true or false" };
-}
-
-/** `prompt.send`: put `text` into the session as the person's own prompt —
- * fill the composer, press Enter on the session's terminal, and keep the
- * person's half-typed draft (DR-0035 §1, §5). */
-export type PromptSendRequest = SidecarRequest<"prompt.send", { text: string }>;
-
-/** What a `prompt.send` that ran says. `accepted` means the harness raised
- * `UserPromptSubmit` for the filled text: the prompt is in the session, idle
- * or busy. `unconfirmed` is the module not knowing: Enter went out but no
- * `UserPromptSubmit` came and the composer no longer holds the text, or the
- * session changed its id (/clear, /resume) after Enter, or after the fill with
- * the composer no longer holding the text. */
-export type PromptSendResult =
-  | { outcome: "accepted" }
-  | { outcome: "not_delivered"; reason: SessionInputModuleReason }
-  | { outcome: "unconfirmed" };
-
-/** `describe`: what the module can be asked. */
-export type DescribeRequest = SidecarRequest<"describe", Record<string, never>>;
-
-export interface DescribeResult {
-  /** The request versions (`v`) the module reads. */
-  v: number[];
-  /** The ops the module runs, `describe` included. */
-  ops: string[];
-  /** The ccmsg version of the plugin the module was loaded from; absent when
-   * the module could not tell. */
-  version?: string;
-}
+// The request and reply lines themselves are schemas in sidecar.ts.
 
 /** Hand the daemon a session's hooks module's SidecarReply (session role,
  * DR-0035 §1). Taken only from the session the request was written to, and

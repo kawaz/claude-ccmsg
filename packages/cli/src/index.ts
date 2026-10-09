@@ -12,7 +12,8 @@ import {
   isDirectMid,
   isSessionIdShape,
   migrateLegacyConfigFiles,
-  parseSidecarReply,
+  parseJsonWith,
+  SidecarReplySchema,
   splitSendWords,
   resolvePaths,
   sessionProjectDir,
@@ -525,17 +526,15 @@ async function runSidecar(opts: Record<string, string | boolean>): Promise<never
  * and closed, so the end of input is the end of the reply. */
 async function runSidecarReply(opts: Record<string, string | boolean>): Promise<never> {
   const usage = "ccmsg sidecar reply --sid <sid> < reply.json";
-  let value: unknown;
-  try {
-    value = JSON.parse(await Bun.stdin.text());
-  } catch {
-    throw new Error(`standard input must be one JSON reply\n  usage: ${usage}`);
+  const read = parseJsonWith(SidecarReplySchema, await Bun.stdin.text());
+  if (!read.ok) {
+    throw new Error(
+      `standard input must be one JSON reply: ${read.failure.summary}\n  usage: ${usage}`,
+    );
   }
-  const reply = parseSidecarReply(value);
-  if ("invalid" in reply) throw new Error(`${reply.invalid}\n  usage: ${usage}`);
   const identity = resolveSessionIdentity(opts, "sidecar");
   if (identity === null) refuseWriteWithoutSid("sidecar reply");
-  return runOnce(identity, { op: "sidecar_reply", reply });
+  return runOnce(identity, { op: "sidecar_reply", reply: read.value });
 }
 
 // --- say -------------------------------------------------------------------

@@ -1,0 +1,64 @@
+// The boundary helpers every reader of outside JSON goes through (DR-0038):
+// a typed value or a typed failure, never a throw.
+import { describe, expect, test } from "bun:test";
+import * as v from "valibot";
+import { errorText, parseJsonWith, parseWith } from "../src/parse.ts";
+
+const Point = v.object({ x: v.number(), y: v.number() });
+
+describe("parseWith", () => {
+  test("a value of the shape is the typed value, extra fields left out", () => {
+    expect(parseWith(Point, { x: 1, y: 2, z: 3 })).toEqual({ ok: true, value: { x: 1, y: 2 } });
+  });
+
+  test("a value not of the shape is a failure naming each issue by its path", () => {
+    const read = parseWith(Point, { x: "1" });
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.failure.issues.map((i) => i.path)).toEqual(["x", "y"]);
+    expect(read.failure.summary).toBe(
+      'x: Invalid type: Expected number but received "1"; y: Invalid key: Expected "y" but received undefined',
+    );
+  });
+
+  test("an issue with the value itself has the empty path, and the summary no prefix", () => {
+    const read = parseWith(Point, null);
+    expect(read).toEqual({
+      ok: false,
+      failure: {
+        issues: [{ path: "", message: "Invalid type: Expected Object but received null" }],
+        summary: "Invalid type: Expected Object but received null",
+      },
+    });
+  });
+});
+
+describe("parseJsonWith", () => {
+  test("JSON text of the shape is the typed value", () => {
+    expect(parseJsonWith(Point, '{"x":1,"y":2}')).toEqual({ ok: true, value: { x: 1, y: 2 } });
+  });
+
+  // Not JSON at all is a failure like a wrong shape, not a throw.
+  for (const text of ["", "{", "not json", '{"x":1,}']) {
+    test(`text that is not JSON (${JSON.stringify(text)}) is a failure`, () => {
+      const read = parseJsonWith(Point, text);
+      expect(read.ok).toBe(false);
+      if (read.ok) return;
+      expect(read.failure.summary).toStartWith("Invalid JSON");
+    });
+  }
+
+  test("JSON of another shape is a failure", () => {
+    expect(parseJsonWith(Point, "[1,2]").ok).toBe(false);
+    expect(parseJsonWith(Point, '"x"').ok).toBe(false);
+  });
+});
+
+describe("errorText", () => {
+  test("names an Error and says only the type of anything else", () => {
+    expect(errorText(new TypeError("bad"))).toBe("TypeError: bad");
+    expect(errorText({ toString: null })).toBe("a thrown object");
+    expect(errorText("x")).toBe("a thrown string");
+    expect(errorText(undefined)).toBe("a thrown undefined");
+  });
+});

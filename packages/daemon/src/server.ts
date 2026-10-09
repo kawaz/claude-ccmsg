@@ -15,7 +15,8 @@ import {
   PROTOCOL_VERSION,
   UNANNOUNCED_PROTOCOL_VERSION,
   isSessionIdShape,
-  parseSidecarReply,
+  parseWith,
+  SidecarReplySchema,
   resolvePaths,
   type AgentInfo,
   type ArchiveEvent,
@@ -2700,12 +2701,15 @@ async function dispatch(daemon: Daemon, conn: Conn, req: Request): Promise<void>
       // A refused reply is logged: the module's own debug log is the only
       // other place it would show, and a late or misaddressed reply is what
       // explains a session_input that came back unconfirmed.
-      const reply = parseSidecarReply(req.reply);
-      if ("invalid" in reply) {
-        daemon.log.warn(`sidecar_reply from ${conn.identity.sid} refused: ${reply.invalid}`);
-        sendErr(conn, ErrorCode.invalid_args, `sidecar_reply: ${reply.invalid}`);
+      // The request line itself is not read by a schema here, so its `reply`
+      // is read as what it claims to be.
+      const read = parseWith(SidecarReplySchema, req.reply);
+      if (!read.ok) {
+        daemon.log.warn(`sidecar_reply from ${conn.identity.sid} refused: ${read.failure.summary}`);
+        sendErr(conn, ErrorCode.invalid_args, `sidecar_reply: ${read.failure.summary}`);
         return;
       }
+      const reply = read.value;
       if (!daemon.sidecarReplies.take(conn.identity.sid, reply)) {
         daemon.log.warn(
           `sidecar_reply ${reply.id} from ${conn.identity.sid} refused: no request is waiting under that id for this session (answered already, past its wait, or sent elsewhere)`,

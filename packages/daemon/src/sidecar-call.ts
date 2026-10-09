@@ -11,10 +11,15 @@ import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import * as path from "node:path";
 import {
+  type Parsed,
   parseSidecarSocketName,
+  parseWith,
+  SIDECAR_OPS,
   SIDECAR_REQUEST_VERSION,
+  type SidecarArgs,
+  type SidecarOp,
   type SidecarReply,
-  type SidecarRequest,
+  type SidecarReplyOf,
   sidecarSocketPid,
 } from "@ccmsg/protocol";
 import { type WriteOutcome, writeSocket } from "./peer-inject.ts";
@@ -168,28 +173,42 @@ export class RunPids {
   }
 }
 
-/** What became of one request. `not_written`: the sidecar has none of the
- * line, so the module never saw it. Otherwise the line went in (`written`) or
- * may have (`uncertain`), and `reply` is the module's answer — undefined when
- * none came in time. A reply settles an `uncertain` write: the module read the
- * line. */
-export type SidecarCall =
+/** What became of one request of `Op`. `not_written`: the sidecar has none of
+ * the line, so the module never saw it. Otherwise the line went in (`written`)
+ * or may have (`uncertain`), and `reply` is the module's answer with its
+ * result read by the op's schema — undefined when none came in time, a
+ * failure when the result is not of the op's shape (a module of another
+ * ccmsg). A reply settles an `uncertain` write: the module read the line. */
+export type SidecarCall<Op extends SidecarOp> =
   | { id: string; write: "not_written" }
-  | { id: string; write: "written" | "uncertain"; reply: SidecarReply | undefined };
+  | {
+      id: string;
+      write: "written" | "uncertain";
+      reply: Parsed<SidecarReplyOf<Op>> | undefined;
+    };
+
+/** `reply`, to a request of `op`, with its result read: which op a reply
+ * answers is known here, where the request was made, and nowhere on the way. */
+function readReply<Op extends SidecarOp>(op: Op, reply: SidecarReply): Parsed<SidecarReplyOf<Op>> {
+  if (!reply.ok) return { ok: true, value: reply };
+  const result = parseWith(SIDECAR_OPS[op].result, reply.result);
+  if (!result.ok) return result;
+  return { ok: true, value: { id: reply.id, ok: true, result: result.value } };
+}
 
 /** Ask the module behind `socket` (a run of `sid`) to run `op`, and wait for
  * its reply. `ms` bounds the write and the wait together. */
-export async function callSidecar(
+export async function callSidecar<Op extends SidecarOp>(
   socket: string,
   sid: string,
-  op: string,
-  args: Record<string, unknown>,
+  op: Op,
+  args: SidecarArgs<Op>,
   ms: number,
   deps: SidecarDeps,
-): Promise<SidecarCall> {
+): Promise<SidecarCall<Op>> {
   const until = deps.now() + ms;
   const id = deps.newId();
-  const request: SidecarRequest = { v: SIDECAR_REQUEST_VERSION, op, id, args };
+  const request = { v: SIDECAR_REQUEST_VERSION, op, id, args };
   deps.replies.open(id, sid);
   const written = await deps.write(
     socket,
@@ -200,7 +219,8 @@ export async function callSidecar(
     deps.replies.close(id);
     return { id, write: written };
   }
-  return { id, write: written, reply: await deps.replies.wait(id, until - deps.now()) };
+  const reply = await deps.replies.wait(id, until - deps.now());
+  return { id, write: written, reply: reply === undefined ? undefined : readReply(op, reply) };
 }
 
 export function isProcessAlive(pid: number): boolean {
