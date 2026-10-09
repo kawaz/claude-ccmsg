@@ -1345,13 +1345,13 @@ export interface SessionRenameRequest {
 /** Put what the person wrote into a session as their own prompt (user role
  * only, DR-0035 §1).
  *
- * The daemon writes one SidecarFillRequest line to a sidecar of a live run of
- * the session. The session's hooks module fills the composer with the text
- * and sends Enter to its own terminal, so the harness records the prompt as
- * typed by a person (`origin: { kind: "human" }`, `promptSource: "typed"`),
- * not as a message from a peer. The module answers with
- * SessionInputResultRequest, and the reply to this op is that answer — or
- * `unconfirmed` when none came in time.
+ * The daemon writes one `prompt.send` SidecarRequest to a sidecar of a live
+ * run of the session. The session's hooks module fills the composer with the
+ * text and sends Enter to its own terminal, so the harness records the prompt
+ * as typed by a person (`origin: { kind: "human" }`, `promptSource: "typed"`),
+ * not as a message from a peer. The module answers with a SidecarReply
+ * (through SidecarReplyRequest), and the reply to this op is what that answer
+ * says — or `unconfirmed` when none came in time.
  *
  * Runs are asked one at a time, each try under an id of its own: the next run
  * is asked only after one answers `no_composer` or `no_terminal`, which say it
@@ -1377,8 +1377,9 @@ export interface SessionInputRequest {
  *   to what the person had typed
  * - `enter_failed`: sending Enter to the terminal failed, and the text never
  *   left the composer; the composer was put back as for `not_submitted`
- * - `no_module`: no run of the session has a sidecar that took the request
- *   (the plugin not loaded, a session without a composer, the session gone)
+ * - `no_module`: no run of the session has a hooks module that took the request
+ *   (the plugin not loaded or of a ccmsg that does not know `prompt.send`, a
+ *   session without a composer, the session gone)
  *
  * With several runs, `no_composer` / `no_terminal` are the last run's answer
  * after every run gave one of the two. */
@@ -1391,8 +1392,9 @@ export type SessionInputReason =
   | "enter_failed"
   | "no_module";
 
-/** The reasons a session's hooks module reports; `no_module` is the daemon's
- * own conclusion when no sidecar took the request. */
+/** The reasons a session's hooks module gives in a prompt.send result;
+ * `no_module` is the daemon's own conclusion when no run's module took the
+ * request. */
 export type SessionInputModuleReason = Exclude<SessionInputReason, "no_module">;
 
 export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] = [
@@ -1404,26 +1406,126 @@ export const SESSION_INPUT_MODULE_REASONS: readonly SessionInputModuleReason[] =
   "enter_failed",
 ];
 
-/** What a session's hooks module reports for one SidecarFillRequest
- * (DR-0035 §1, §5). `accepted` means the harness raised `UserPromptSubmit`
- * for the filled text: the prompt is in the session, idle or busy. Only the
- * first report under an id counts. */
-export interface SessionInputResultRequest {
-  op: "session_input_result";
-  /** The SidecarFillRequest's id. */
+// --- the sidecar's requests and replies (DR-0035 §3) -----------------------
+//
+// The daemon writes one SidecarRequest per line to a session run's sidecar
+// socket; the sidecar copies the line to the session's hooks module unread.
+// The module answers every request it can name (one with an `id`) with one
+// SidecarReply, which `ccmsg sidecar reply` carries to the daemon as a
+// SidecarReplyRequest. A request names an operation (`op`), so what the
+// module can be asked grows by adding ops, not by changing the line.
+
+/** The version of the request line. A module answers a line of another
+ * version with `unsupported_version` rather than guessing at it. */
+export const SIDECAR_REQUEST_VERSION = 1;
+
+/** One request to a session's hooks module. `id` is unique per request and is
+ * what the reply names; `args` is the op's own object. */
+export interface SidecarRequest<Op extends string = string, Args = Record<string, unknown>> {
+  v: typeof SIDECAR_REQUEST_VERSION;
+  op: Op;
   id: string;
-  outcome: "accepted" | "not_delivered";
-  /** Required with `not_delivered`. */
-  reason?: SessionInputModuleReason;
+  args: Args;
 }
 
-/** One line the daemon writes to a session run's sidecar socket, which the
- * sidecar copies to the hooks module unread (DR-0035 §3). `id` is what the
- * module's SessionInputResultRequest names. */
-export interface SidecarFillRequest {
-  kind: "prompt.fill";
-  id: string;
-  text: string;
+/** Why a module could not run an op at all, as opposed to an op that ran and
+ * reports how it went inside its `result`.
+ *
+ * - `unknown_op`: the module has no such op (another ccmsg version)
+ * - `unsupported_version`: the line's `v` is not one the module reads
+ * - `invalid_args`: the op's `args` are not what it takes
+ * - `internal`: the op started and failed; what it changed is unknown */
+export type SidecarErrorCode = "unknown_op" | "unsupported_version" | "invalid_args" | "internal";
+
+export interface SidecarError {
+  code: SidecarErrorCode;
+  message: string;
+}
+
+/** The module's answer to one SidecarRequest. */
+export type SidecarReply =
+  | { id: string; ok: true; result: unknown }
+  | { id: string; ok: false; error: SidecarError };
+
+const SIDECAR_ERROR_CODES: readonly string[] = [
+  "unknown_op",
+  "unsupported_version",
+  "invalid_args",
+  "internal",
+] satisfies readonly SidecarErrorCode[];
+
+/** `value` as a SidecarReply, or why it is not one. Shared by the CLI that
+ * carries a reply and the daemon that takes it, so both refuse the same
+ * shapes. What a `result` holds is the op's business, checked where the op's
+ * caller reads it. */
+export function parseSidecarReply(value: unknown): SidecarReply | { invalid: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { invalid: "a reply is a JSON object" };
+  }
+  const reply = value as Record<string, unknown>;
+  if (typeof reply.id !== "string" || reply.id === "") {
+    return { invalid: "a reply needs the request's id" };
+  }
+  if (reply.ok === true) {
+    if (!("result" in reply)) return { invalid: "an ok reply carries a result" };
+    return { id: reply.id, ok: true, result: reply.result };
+  }
+  if (reply.ok === false) {
+    const error = reply.error as Record<string, unknown> | null | undefined;
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      typeof error.code !== "string" ||
+      !SIDECAR_ERROR_CODES.includes(error.code) ||
+      typeof error.message !== "string"
+    ) {
+      return {
+        invalid: `a failed reply carries error { code, message }, code one of ${SIDECAR_ERROR_CODES.join(", ")}`,
+      };
+    }
+    return {
+      id: reply.id,
+      ok: false,
+      error: { code: error.code as SidecarErrorCode, message: error.message },
+    };
+  }
+  return { invalid: "a reply's ok is true or false" };
+}
+
+/** `prompt.send`: put `text` into the session as the person's own prompt —
+ * fill the composer, press Enter on the session's terminal, and keep the
+ * person's half-typed draft (DR-0035 §1, §5). */
+export type PromptSendRequest = SidecarRequest<"prompt.send", { text: string }>;
+
+/** What a `prompt.send` that ran says. `accepted` means the harness raised
+ * `UserPromptSubmit` for the filled text: the prompt is in the session, idle
+ * or busy. `unconfirmed` is the module not knowing: Enter went out but no
+ * `UserPromptSubmit` came and the composer no longer holds the text, or the
+ * session changed its id (/clear, /resume) under the request. */
+export type PromptSendResult =
+  | { outcome: "accepted" }
+  | { outcome: "not_delivered"; reason: SessionInputModuleReason }
+  | { outcome: "unconfirmed" };
+
+/** `describe`: what the module can be asked. */
+export type DescribeRequest = SidecarRequest<"describe", Record<string, never>>;
+
+export interface DescribeResult {
+  /** The request versions (`v`) the module reads. */
+  v: number[];
+  /** The ops the module runs, `describe` included. */
+  ops: string[];
+  /** The ccmsg version of the plugin the module was loaded from; absent when
+   * the module could not tell. */
+  version?: string;
+}
+
+/** Hand the daemon a session's hooks module's SidecarReply (session role,
+ * DR-0035 §1). Taken only from the session the request was written to, and
+ * only the first reply under an id counts. */
+export interface SidecarReplyRequest {
+  op: "sidecar_reply";
+  reply: SidecarReply;
 }
 
 /** Read the environment variables of a session's own process (user role
@@ -2069,7 +2171,7 @@ export type RequestBody =
   | SessionKillRequest
   | SessionRenameRequest
   | SessionInputRequest
-  | SessionInputResultRequest
+  | SidecarReplyRequest
   | SessionEnvRequest
   | SessionLauncherConfigRequest
   | LlmUsageRequest
@@ -2419,8 +2521,8 @@ export type SessionInputResponse =
 export type MessageSendResponse =
   | { ok: true; outcome: "delivered"; mid: string }
   | { ok: true; outcome: "not_delivered"; reason: MessageSendReason };
-/** Payload of a session_input_result the daemon was waiting for. */
-export interface SessionInputResultResponse {
+/** Payload of a sidecar_reply the daemon was waiting for. */
+export interface SidecarReplyResponse {
   ok: true;
 }
 /** Payload of a completed session_env.
@@ -3110,7 +3212,7 @@ export type ResponseBody =
   | SessionKillResponse
   | SessionRenameResponse
   | SessionInputResponse
-  | SessionInputResultResponse
+  | SidecarReplyResponse
   | SessionEnvResponse
   | SessionSearchResponse
   | ForkOriginResponse
