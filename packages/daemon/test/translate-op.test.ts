@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
+import type { Conn, Daemon } from "../src/server.ts";
+import { requestFrames, requestOnce } from "./drive-request.ts";
 import type { TranslateService } from "../src/translate-helper.ts";
 
 function daemonWith(translator: TranslateService): Daemon {
@@ -10,39 +11,6 @@ function daemonWith(translator: TranslateService): Daemon {
     log: { error() {}, warn() {} },
   } as unknown as Daemon;
   return daemon;
-}
-
-/** Drive one request and resolve with the single frame written back. */
-function requestOnce(
-  daemon: Daemon,
-  identity: Conn["identity"],
-  request: unknown,
-): Promise<Record<string, any>> {
-  return requestFrames(daemon, identity, request, 1).then((frames) => frames[0]!);
-}
-
-/** Drive one request against a registered conn and resolve once `count`
- * frames (in write order) have been captured. */
-function requestFrames(
-  daemon: Daemon,
-  identity: Conn["identity"],
-  request: unknown,
-  count: number,
-): Promise<Record<string, any>[]> {
-  return new Promise((resolve) => {
-    const frames: Record<string, any>[] = [];
-    const conn: Conn = {
-      identity,
-      subscribed: false,
-      write(line) {
-        frames.push(JSON.parse(line));
-        if (frames.length === count) resolve(frames);
-      },
-    };
-    // Register like the real transports do.
-    daemon.connections.add(conn);
-    handleRequest(daemon, conn, JSON.stringify(request));
-  });
 }
 
 describe("translate op", () => {

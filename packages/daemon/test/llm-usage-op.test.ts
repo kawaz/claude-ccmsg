@@ -4,7 +4,8 @@
 // object would not exercise the wiring under test).
 import { afterAll, describe, expect, test } from "bun:test";
 import { ErrorCode } from "@ccmsg/protocol";
-import { handleRequest, type Conn, type Daemon } from "../src/server.ts";
+import type { Conn, Daemon } from "../src/server.ts";
+import { requestFrames } from "./drive-request.ts";
 
 const GATEWAY_PORT = 18921;
 const USAGE_BODY = {
@@ -63,29 +64,6 @@ function daemonWith(llmUsageUrl?: string): Daemon {
     connections: new Set<Conn>(),
     log: { error() {}, warn() {} },
   } as unknown as Daemon;
-}
-
-/** Drive one request and resolve once `count` frames (replies AND events, in
- * write order) have been written back — same harness as translate-op. */
-function requestFrames(
-  daemon: Daemon,
-  identity: Conn["identity"],
-  request: unknown,
-  count: number,
-): Promise<Record<string, any>[]> {
-  return new Promise((resolve) => {
-    const frames: Record<string, any>[] = [];
-    const conn: Conn = {
-      identity,
-      subscribed: false,
-      write(line) {
-        frames.push(JSON.parse(line));
-        if (frames.length === count) resolve(frames);
-      },
-    };
-    daemon.connections.add(conn);
-    handleRequest(daemon, conn, JSON.stringify(request));
-  });
 }
 
 const USER: Conn["identity"] = { role: "user", id: "u1" } as Conn["identity"];

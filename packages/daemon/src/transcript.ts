@@ -15,6 +15,7 @@ import {
 import { resolveVirtualTranscript } from "./virtual-sessions.ts";
 import { resolveAgentTranscript } from "./agent-transcripts.ts";
 import type { TraceWriter } from "./trace.ts";
+import { wireLine } from "./wire-line.ts";
 
 /** Minimal shape transcript-read needs from `Daemon.sessions` — kept structural
  *  (same rationale as fs-access.ts's SessionLookup) so this module has no
@@ -461,7 +462,7 @@ function sendTail(
   conn: TailConn,
   payload: { sid: string; lines: string[]; start: number; end: number; size: number },
 ): void {
-  conn.write(`${JSON.stringify({ ev: "transcript", ...payload })}\n`);
+  conn.write(wireLine({ ev: "transcript", ...payload }));
 }
 
 function broadcast(

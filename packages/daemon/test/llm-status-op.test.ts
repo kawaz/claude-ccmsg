@@ -4,15 +4,15 @@
 // the one thing this endpoint has that the other two do not — a 529 in the
 // gateway's webhook making the daemon re-read and push the report.
 import { afterAll, describe, expect, test } from "bun:test";
-import { ErrorCode, PROTOCOL_VERSION } from "@ccmsg/protocol";
+import { ErrorCode, PROTOCOL_VERSION, VERSION } from "@ccmsg/protocol";
 import {
   broadcastLlmStatus,
   createStatusRefresher,
-  handleRequest,
   recordLlmRequests,
   type Conn,
   type Daemon,
 } from "../src/server.ts";
+import { requestFrames } from "./drive-request.ts";
 import { fetchLlmStatus, LlmStatusRefresher } from "../src/llm-status.ts";
 import { LlmRequestCache } from "../src/llm-events.ts";
 
@@ -54,6 +54,7 @@ const STATUS_URL = `http://127.0.0.1:${GATEWAY_PORT}/status`;
 
 function daemonWith(llmStatusUrl?: string): Daemon {
   return {
+    version: VERSION,
     config: llmStatusUrl ? { llm_status_url: llmStatusUrl } : {},
     sessions: new Map(),
     connections: new Set<Conn>(),
@@ -62,29 +63,6 @@ function daemonWith(llmStatusUrl?: string): Daemon {
     llmStatusRefresher: null,
     log: { error() {}, info() {}, warn() {} },
   } as unknown as Daemon;
-}
-
-/** Drive one request and resolve once `count` frames (replies AND events, in
- * write order) have been written back — same harness as llm-usage-op. */
-function requestFrames(
-  daemon: Daemon,
-  identity: Conn["identity"],
-  request: unknown,
-  count: number,
-): Promise<Record<string, any>[]> {
-  return new Promise((resolve) => {
-    const frames: Record<string, any>[] = [];
-    const conn: Conn = {
-      identity,
-      subscribed: false,
-      write(line) {
-        frames.push(JSON.parse(line));
-        if (frames.length === count) resolve(frames);
-      },
-    };
-    daemon.connections.add(conn);
-    handleRequest(daemon, conn, JSON.stringify(request));
-  });
 }
 
 const USER: Conn["identity"] = { role: "user", id: "u1" } as Conn["identity"];

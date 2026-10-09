@@ -31,6 +31,7 @@ import { RUN_ID_RE } from "./agent-transcripts.ts";
 import { readWorkflowDrilldown } from "./workflow-drilldown.ts";
 import { discoverWorkspaceFolders } from "./workspace-folders.ts";
 import { createMtimeCache } from "./mtime-cache.ts";
+import { wireLine } from "./wire-line.ts";
 
 const SCAN_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_TOOL_USES = 1000;
@@ -1802,9 +1803,10 @@ export function createSessionStatusStore(): SessionStatusStore {
   return { sessions: new Map() };
 }
 
+/** The push of `sid`'s current fold, as one line for every subscriber. */
 async function statusEventLine(sid: string, live: LiveSessionStatus): Promise<string> {
   const data = await snapshot(live.state, live.sidDir, live.cwd);
-  return `${JSON.stringify({ ev: "session_status", sid, ...data })}\n`;
+  return wireLine({ ev: "session_status", sid, ...data });
 }
 
 /** Publish the current fold to every subscriber of `sid`.

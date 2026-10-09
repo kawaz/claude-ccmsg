@@ -188,7 +188,7 @@ export async function connect(sock: string): Promise<TestClient> {
  * `op` is the op of the request a reply answers, when the client knows it.
  * Read with that op's schema, the reply has to come back whole — a field the
  * schema does not name would be left out by a client reading it. */
-function frameProblem(line: string, op: RequestOp | undefined): string | undefined {
+export function frameProblem(line: string, op: RequestOp | undefined): string | undefined {
   const frame = readDaemonFrame(line);
   if (frame.kind === "invalid") return frame.failure.summary;
   const raw: unknown = JSON.parse(line);
@@ -211,7 +211,7 @@ function frameProblem(line: string, op: RequestOp | undefined): string | undefin
     : `as the answer to ${op}: fields outside its schema`;
 }
 
-function requestOpOf(obj: unknown): RequestOp | undefined {
+export function requestOpOf(obj: unknown): RequestOp | undefined {
   if (typeof obj !== "object" || obj === null || !("op" in obj)) return undefined;
   const op = obj.op;
   return REQUEST_OPS.find((known) => known === op);

@@ -32,7 +32,12 @@ import {
   type HelloRequest,
   type OtherGenerationHelloRequest,
   type RequestOp,
+  type DeliveredEvent,
+  type NotifyStreamEvent,
+  type ResponseBody,
+  type RestartingStreamEvent,
   type ServedRequest,
+  type StreamEvent,
   type RoomKind,
   type SayEvent,
   type SayReadEvent,
@@ -43,6 +48,7 @@ import {
   migrateLegacyConfigFiles,
 } from "@ccmsg/protocol";
 import { Logger } from "./log.ts";
+import { wireLine } from "./wire-line.ts";
 import { TraceWriter } from "./trace.ts";
 import { loadConfig, writeConfigTypesFile, type ResolvedCcmsgConfig } from "./config.ts";
 import { dirTree } from "./dir-tree.ts";
@@ -343,31 +349,25 @@ const nowIso = (): string => new Date().toISOString();
  * answering" is not a property of the connection. */
 const activeRequest = new AsyncLocalStorage<{ conn: Conn; requestId: string }>();
 
-/** True for the frames that answer a request: replies carry `ok`, pushes carry
- * `ev`. A frame carrying both is a push, and one carrying a `request_id`
- * already has its correlation stamped. */
-function isReplyFrame(obj: unknown): obj is Record<string, unknown> {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    Object.hasOwn(obj, "ok") &&
-    !Object.hasOwn(obj, "ev") &&
-    !Object.hasOwn(obj, "request_id")
-  );
+/** Whether a frame answers a request: a reply carries `ok`, and no push
+ * does. */
+function isReply(frame: ResponseBody | StreamEvent): frame is ResponseBody {
+  return "ok" in frame;
 }
 
-export function send(conn: Conn, obj: unknown): void {
+/** Write one reply or push to `conn`. */
+export function send(conn: Conn, frame: ResponseBody | StreamEvent): void {
   // Stamp the correlation id on the way out, so no dispatch case has to
   // remember to. Only the reply going back to the connection that asked gets
   // one: a broadcast reaching other connections while this request runs is
   // nobody's answer.
   const active = activeRequest.getStore();
-  const frame =
-    active && active.conn === conn && isReplyFrame(obj)
-      ? { ...obj, request_id: active.requestId }
-      : obj;
+  const line =
+    active && active.conn === conn && isReply(frame)
+      ? wireLine({ ...frame, request_id: active.requestId })
+      : wireLine(frame);
   try {
-    conn.write(`${JSON.stringify(frame)}\n`);
+    conn.write(line);
   } catch {
     // transport may be closing; delivery is best-effort
   }
@@ -413,15 +413,19 @@ const RECENT_REPLAY_WINDOW_MS = readRecentReplayMsEnv();
  * follows insertion order, so this rebuilds the object explicitly rather than
  * spreading `ev`. Storage (`rooms/*.jsonl`, the `MsgEvent` type) keeps its own
  * field order. */
-function orderedMsgFrame(ev: MsgEvent, roomId: string, replay: boolean): Record<string, unknown> {
-  const out: Record<string, unknown> = { type: ev.type, r: roomId, mid: ev.mid, from: ev.from };
-  if (ev.seq !== undefined) out.seq = ev.seq;
-  if (ev.to !== undefined) out.to = ev.to;
-  if (ev.reply_to !== undefined) out.reply_to = ev.reply_to;
-  if (replay) out.replay = true;
-  out.ts = ev.ts;
-  out.msg = ev.msg;
-  return out;
+function orderedMsgFrame(ev: MsgEvent, roomId: string, replay: boolean): DeliveredEvent {
+  return {
+    type: ev.type,
+    r: roomId,
+    mid: ev.mid,
+    from: ev.from,
+    ...(ev.seq !== undefined ? { seq: ev.seq } : {}),
+    ...(ev.to !== undefined ? { to: ev.to } : {}),
+    ...(ev.reply_to !== undefined ? { reply_to: ev.reply_to } : {}),
+    ...(replay ? { replay: true as const } : {}),
+    ts: ev.ts,
+    msg: ev.msg,
+  };
 }
 
 /** Room messages reach a session through peer-inject (`injectToSessions`), so a
@@ -915,7 +919,7 @@ function reportsUpstreamOverload(item: unknown): boolean {
  * session-targeted notify is written, so the webhook-driven cache keepalive and
  * the `notify` op deliver through identical frames. */
 function notifySession(daemon: Daemon, sid: string, from: NotifyFrom, text: string): number {
-  const ephem = { ev: "notify", text, from };
+  const ephem: NotifyStreamEvent = { ev: "notify", text, from };
   let delivered = 0;
   for (const sub of daemon.subscribers) {
     const id = sub.identity;
@@ -2502,7 +2506,7 @@ async function dispatch(daemon: Daemon, conn: Conn, req: ServedRequest): Promise
       const from: NotifyFrom =
         id.role === "user" ? { role: "user" } : { role: "session", sid: id.sid };
       if (targetUser) {
-        const ephem = { ev: "notify", text: req.text, from };
+        const ephem: NotifyStreamEvent = { ev: "notify", text: req.text, from };
         for (const sub of daemon.subscribers) {
           if (sub.identity?.role !== "user") continue;
           send(sub, ephem);
@@ -3451,7 +3455,7 @@ async function gracefulShutdown(daemon: Daemon, reason?: string): Promise<void> 
 
   // Notify every connection — UDS and WS alike, `send` doesn't care which — before
   // tearing down either transport so both sides can receive the restarting frame.
-  const ev = { ev: "restarting", ...(reason ? { reason } : {}) };
+  const ev: RestartingStreamEvent = { ev: "restarting", ...(reason ? { reason } : {}) };
   for (const conn of daemon.connections) send(conn, ev);
 
   for (const room of daemon.rooms.values()) closeRoom(room);
