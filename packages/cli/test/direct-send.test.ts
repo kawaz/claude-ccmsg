@@ -7,7 +7,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROTOCOL_VERSION, classifyCcmsgSendResult } from "@ccmsg/protocol";
+import {
+  PROTOCOL_VERSION,
+  classifyCcmsgSendResult,
+  directDeliveryReplyLine,
+  parseCcmsgSendCommand,
+  shellQuote,
+} from "@ccmsg/protocol";
+import { dumpSession } from "@ccmsg/daemon/session-dump";
 import { connect, type TestClient } from "../../daemon/test/helpers.ts";
 import {
   LAUNCHER,
@@ -176,6 +183,175 @@ describe("ccmsg post <sid> / reply <mid> --to <sid>", () => {
       expect(bad.code).toBe(1);
       expect(bad.err).toContain("<instance id>/<n>");
       // None of these reached for a daemon.
+      const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
+      expect(status.running).toBe(false);
+    },
+    T,
+  );
+});
+
+/** A launcher at `dir/bin/ccmsg` that records its arguments, one per line, to
+ * `dir/args` — what a reply line ran, without running anything else. */
+function recordingLauncher(dir: string): { launcher: string; args: () => string[] } {
+  const launcher = path.join(dir, "bin", "ccmsg");
+  const record = path.join(dir, "args");
+  fs.mkdirSync(path.dirname(launcher), { recursive: true });
+  fs.writeFileSync(
+    launcher,
+    `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > ${shellQuote(record)}\n`,
+    { mode: 0o755 },
+  );
+  return { launcher, args: () => fs.readFileSync(record, "utf8").split("\n").slice(0, -1) };
+}
+
+/** Run a reply line the way a recipient does: `<text>` replaced by its text
+ * as one quoted word, the whole line handed to `sh -c`. */
+async function runReplyLine(
+  line: string,
+  text: string,
+  env: Record<string, string> = {},
+  cwd?: string,
+): Promise<{ command: string } & CliResult> {
+  const command = line.replace(/^Reply with: /, "").replace(/ <text>$/, ` ${shellQuote(text)}`);
+  const proc = Bun.spawn(["/bin/sh", "-c", command], {
+    env: { ...process.env, ...env },
+    ...(cwd ? { cwd } : {}),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const out = await new Response(proc.stdout).text();
+  const err = await new Response(proc.stderr).text();
+  return { command, out, err, code: await proc.exited };
+}
+
+/** A directory name a shell would act on if it were spliced in unquoted. */
+const HOSTILE_DIR = `my dir; touch PWNED-semi $(touch PWNED-sub) \`touch PWNED-tick\` it's`;
+
+describe("the reply line is one shell command whatever its words hold", () => {
+  test(
+    "a launcher path and a sid with shell syntax run as words: nothing injected, the intended reply",
+    async () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-replyline-"));
+      cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+      const { launcher, args } = recordingLauncher(path.join(base, HOSTILE_DIR));
+      const sid = "x; touch PWNED-sid; #";
+      const mid = "0123456789abcdef0123456789abcdef/3";
+      const line = directDeliveryReplyLine(mid, sid, launcher);
+      const ran = await runReplyLine(line, "it's $(done)", {}, base);
+      expect({ code: ran.code, err: ran.err }).toEqual({ code: 0, err: "" });
+      expect(args()).toEqual(["reply", mid, "--to", sid, "it's $(done)"]);
+      expect(fs.readdirSync(base).filter((name) => name.startsWith("PWNED"))).toEqual([]);
+      expect(fs.readdirSync(path.join(base, HOSTILE_DIR)).sort()).toEqual(["args", "bin"]);
+    },
+    T,
+  );
+
+  test(
+    "a quoted launcher: the reply arrives, and the timeline and dump read the call as sent",
+    async () => {
+      const { env, sock } = makeEnv();
+      expect((await runCli(["daemon", "start"], env)).code).toBe(0);
+      const ha = harness(A);
+      const hb = harness(B);
+      await hold(sock, A, ha.configDir);
+      await hold(sock, B, hb.configDir);
+      const asA = { ...env, CLAUDE_CONFIG_DIR: ha.configDir };
+      const asB = { ...env, CLAUDE_CONFIG_DIR: hb.configDir };
+      const sent = JSON.parse((await runCli(["--sid", A, "post", B, "question"], asA)).out) as {
+        mid: string;
+      };
+      expect(parseEnvelope(await hb.nextContent()).attrs["ccmsg-mid"]).toBe(sent.mid);
+
+      // This CLI, reached through a path that needs quoting.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "ccmsg-launcher-"));
+      cleanups.push(() => fs.rmSync(home, { recursive: true, force: true }));
+      const launcher = path.join(home, HOSTILE_DIR, "bin", "ccmsg");
+      fs.mkdirSync(path.dirname(launcher), { recursive: true });
+      fs.writeFileSync(
+        launcher,
+        `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(CLI)} "$@"\n`,
+        { mode: 0o755 },
+      );
+      const line = directDeliveryReplyLine(sent.mid, A, launcher);
+      expect(line.startsWith(`Reply with: '${home}/my dir; `)).toBe(true);
+
+      const ran = await runReplyLine(line, "answer", { ...asB, CCMSG_SID: B }, home);
+      expect({ code: ran.code, err: ran.err }).toEqual({ code: 0, err: "" });
+      expect(fs.readdirSync(home).filter((name) => name.startsWith("PWNED"))).toEqual([]);
+      const back = parseEnvelope(await ha.nextContent());
+      expect(back.attrs["ccmsg-reply-to"]).toBe(sent.mid);
+      expect(back.attrs["ccmsg-from"]).toBe(B);
+
+      // What the timeline and the dump take from the Bash call and its result.
+      expect(parseCcmsgSendCommand(ran.command)).toEqual({
+        verb: "reply",
+        replyTo: sent.mid,
+        to: A,
+        text: "answer",
+      });
+      expect(classifyCcmsgSendResult(ran.out, false)).toEqual({ status: "sent" });
+      const configDir = path.join(home, ".claude-test");
+      const projectDir = path.join(configDir, "projects", "-repo");
+      const dataDir = path.join(home, "data");
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.mkdirSync(path.join(dataDir, "rooms"), { recursive: true });
+      const rows = [
+        {
+          type: "assistant",
+          timestamp: "2026-10-09T10:00:00Z",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "tool_use", id: "t1", name: "Bash", input: { command: ran.command } },
+            ],
+          },
+        },
+        {
+          type: "user",
+          timestamp: "2026-10-09T10:00:01Z",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "t1", content: ran.out }],
+          },
+        },
+      ];
+      fs.writeFileSync(
+        path.join(projectDir, `${B}.jsonl`),
+        rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+      );
+      const { entries } = await dumpSession(B, { dataDir, configDirs: [configDir] });
+      expect(entries.filter((entry) => entry.kind === "ccmsg-sent")).toMatchObject([
+        { to: A, text: "answer", meta: { op: "reply", reply_to: sent.mid, status: "sent" } },
+      ]);
+    },
+    T,
+  );
+
+  test(
+    "the CLI refuses an identity that is not a session id, before reaching for a daemon",
+    async () => {
+      const { env } = makeEnv();
+      for (const [args, extra] of [
+        [["--sid", "x; printf PWNED >&2; #", "post", B, "hi"], {}],
+        [["post", B, "hi"], { CCMSG_SID: "S1" }],
+        [
+          [
+            "--as-session",
+            A.toUpperCase(),
+            "reply",
+            "0123456789abcdef0123456789abcdef/1",
+            "hi",
+            "--to",
+            B,
+          ],
+          {},
+        ],
+      ] as [string[], Record<string, string>][]) {
+        const res = await runCli(args, { ...env, ...extra });
+        expect({ args, code: res.code }).toEqual({ args, code: 1 });
+        expect(res.err).toContain("lowercase UUID");
+        expect(res.err).not.toContain("PWNED\n");
+      }
       const status = JSON.parse((await runCli(["status"], env)).out) as { running: boolean };
       expect(status.running).toBe(false);
     },

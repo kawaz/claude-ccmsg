@@ -208,6 +208,15 @@ function resolveSessionIdentity(
   // elsewhere in this function for CCMSG_TRANSCRIPT_PATH and friends.
   const sid =
     sidOverride ?? strField(process.env.CCMSG_SID) ?? strField(process.env.CLAUDE_CODE_SESSION_ID);
+  // The daemon refuses a session hello whose sid is not a Claude Code session
+  // id (the sid is written into reply lines other sessions run); refuse it
+  // here first so the reason names the flag or variable it came from.
+  if (sid && !isSessionIdShape(sid)) {
+    throw new Error(
+      `session id must be a Claude Code session id (lowercase UUID), got "${sid}" ` +
+        "(from --sid / --as-session / CCMSG_SID / CLAUDE_CODE_SESSION_ID)",
+    );
+  }
   if (sid) {
     // CCMSG_TRANSCRIPT_PATH/CCMSG_REPO/CCMSG_WS env vars are an override knob
     // (manual invocation, tests) — when present they win over whatever the
@@ -363,6 +372,8 @@ const NOT_DELIVERED: Record<MessageSendReason, (to: string) => string> = {
     "daemon が宛先のセッションの config dir を知らないため、peer socket を探せない。送り直しても同じ結果になるので、送るのをやめる",
   no_peer_socket: () =>
     "宛先のセッションの peer socket が見つからない (セッションが終了した、別の config dir で動いている、または peer messaging に対応しない Claude Code)。ccmsg peers で宛先がまだ居るか確かめ、居なければ送るのをやめる",
+  no_status_socket: () =>
+    "送り手側で、受け手からの受領拒否の知らせを受ける socket を作れなかったため、送っていない (届いたか確かめられない送り方はしない)。daemon の側の問題なので、少し置いて一度だけ送り直し、また同じなら送るのをやめる",
   unreachable: () =>
     "宛先のセッションの peer socket に書き込めなかった (終了した直後か、応答しない)。少し置いて一度だけ送り直すか、送るのをやめる",
   refused: () =>
@@ -542,7 +553,13 @@ Environment Variables:
  * starting one from a speech path would be a surprising side effect that
  * benefits nobody. */
 async function recordSayEvent(args: string[]): Promise<void> {
-  const identity = resolveSessionIdentity({}, "say");
+  let identity: Identity | null;
+  try {
+    identity = resolveSessionIdentity({}, "say");
+  } catch {
+    // Not a session id: nothing to record it under, and the speech proceeds.
+    return;
+  }
   if (identity === null || identity.role !== "session") return;
   let client: Client | null = null;
   const timer = setTimeout(() => client?.close(), SAY_RECORD_TIMEOUT_MS);
